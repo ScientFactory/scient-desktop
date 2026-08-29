@@ -11,7 +11,7 @@ For the behavior shared by all assisted providers, see [Providers in Scient](./p
 
 ## Setup and account connection
 
-The local desktop app can install a reviewed Droid runtime privately for Scient. A custom binary
+The local desktop app can install a qualified Droid runtime privately for Scient. A custom binary
 path or a healthy system installation is preserved and used as-is; Scient never replaces or
 removes it. Managed install, repair, and removal appear only when the runtime is Scient-owned.
 
@@ -27,19 +27,20 @@ Droid supports two existing-account modes:
 
 You can still point Scient at an existing binary under **Settings > Providers > Droid > Binary
 path**. With no custom path, Scient preserves a healthy `droid` found on the app's `PATH`; otherwise
-it can offer the reviewed app-private runtime.
+it can offer the qualified app-private runtime.
 
 ## Enabling Droid
 
 1. Open **Settings > Providers** and enable **Droid**, or pick Droid from the composer's provider
    rail.
-2. If Droid is missing, choose **Install** and review the official artifact before continuing.
+2. If Droid is missing, choose **Install** and review the qualified release details before continuing.
 3. Choose **Sign in with Factory**, finish the provider-opened browser flow, and wait for Scient to
    verify the connected account.
 4. When Droid reports **Ready**, pick a model and start a thread.
 
-Repair downloads and verifies a fresh reviewed copy before atomically replacing Scient's managed
-runtime. Remove deletes only that app-private copy; neither action changes Factory credentials,
+Repair downloads and verifies the exact active release before atomically replacing Scient's managed
+runtime. A newer qualified stable release appears separately as Update. Remove deletes only that
+app-private copy; neither action changes Factory credentials,
 custom paths, or system installations. **Sign out** appears only if the exact running Droid version
 advertises ACP logout. When it does not, Scient hides the action instead of offering an unreliable
 terminal-automation fallback.

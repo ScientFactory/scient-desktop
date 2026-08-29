@@ -36,7 +36,7 @@ led here; it is not a second source of current behavior.
 | Owner                                     | Responsibilities                                                                                                                                                                                                                                                       |
 | ----------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Existing T3 provider host                 | Provider instances, enablement settings, adapters, sessions, model discovery, turn routing, external update discovery and commands, and the canonical `ServerProvider` snapshot.                                                                                       |
-| Shared Scient lifecycle                   | Operation supervision, cancellation and teardown, same-provider coordination, reviewed runtime planning, download and filesystem safety, atomic activation, transient snapshot overlays, shared Settings/composer routing, and generic capability presentation.        |
+| Shared Scient lifecycle                   | Operation supervision, cancellation and teardown, same-provider coordination, qualified runtime planning, download and filesystem safety, atomic activation, transient snapshot overlays, shared Settings/composer routing, and generic capability presentation.       |
 | Provider lifecycle adapter                | Available login methods, browser ownership, URL validation, code behavior, login environment, credential verification, logout support, package-completeness policy, managed-runtime eligibility, system-to-managed qualification, and provider-specific error wording. |
 | Official provider tool or account service | Passwords, tokens, credential persistence, refresh, expiry, revocation, account creation, subscriptions, billing, hosted authorization pages, and provider service availability.                                                                                       |
 
@@ -48,16 +48,16 @@ and maintenance behavior.
 
 The UI derives a provider's next action from several independent facts:
 
-| Dimension       | Examples                                                                      | Authority                                                                                  |
-| --------------- | ----------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------ |
-| Enablement      | enabled, disabled                                                             | Provider settings and the canonical provider instance.                                     |
-| Runtime source  | custom, system, Scient-managed, missing, unknown                              | Provider runtime resolution on the server.                                                 |
-| Runtime support | fully assisted, external runtime supported, manual/advanced only, unsupported | Reviewed artifact availability, host mode, target, and provider policy.                    |
-| Authentication  | not required, unauthenticated, authenticated, unknown                         | Provider-specific passive probe.                                                           |
-| Entitlement     | subscription or billing mode, usable models, no eligible models               | Provider-reported account and model state.                                                 |
-| Readiness       | ready, attention, unavailable, probing                                        | Canonical provider snapshot after runtime, account, and model reconciliation.              |
-| Maintenance     | external update advisory, managed install/update/repair/remove                | Existing T3 updater for external sources; reviewed lifecycle actions for a managed source. |
-| Operation       | starting, waiting, verifying, downloading, testing, activating, terminal      | Process-scoped connection or runtime manager.                                              |
+| Dimension       | Examples                                                                      | Authority                                                                                   |
+| --------------- | ----------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------- |
+| Enablement      | enabled, disabled                                                             | Provider settings and the canonical provider instance.                                      |
+| Runtime source  | custom, system, Scient-managed, missing, unknown                              | Provider runtime resolution on the server.                                                  |
+| Runtime support | fully assisted, external runtime supported, manual/advanced only, unsupported | App-owned artifact policy, qualified catalog availability, host mode, and target.           |
+| Authentication  | not required, unauthenticated, authenticated, unknown                         | Provider-specific passive probe.                                                            |
+| Entitlement     | subscription or billing mode, usable models, no eligible models               | Provider-reported account and model state.                                                  |
+| Readiness       | ready, attention, unavailable, probing                                        | Canonical provider snapshot after runtime, account, and model reconciliation.               |
+| Maintenance     | external update advisory, managed install/update/repair/remove                | Existing T3 updater for external sources; qualified lifecycle actions for a managed source. |
+| Operation       | starting, waiting, verifying, downloading, testing, activating, terminal      | Process-scoped connection or runtime manager.                                               |
 
 Consequences:
 
@@ -81,7 +81,7 @@ instance may expose two optional seams through
 
 - `connectionActions` starts and cancels official provider account flows and disconnects when the
   provider can truthfully do so;
-- `managedRuntimeActions` reports runtime source and support, plans reviewed mutations, and executes
+- `managedRuntimeActions` reports runtime source and support, plans qualified mutations, and executes
   advertised install, update, repair, or remove actions.
 
 The canonical provider snapshot carries the resulting capabilities:
@@ -109,10 +109,10 @@ scanner never guesses that a newline ended terminal metadata and exposes a URL f
 | Action             | Exact meaning                                                                                                                                                                    |
 | ------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Enable             | Changes only the provider's enabled setting. It does not install, sign in, or open a browser.                                                                                    |
-| Install            | Adds and selects a reviewed app-private runtime after confirmation, verification, smoke testing, and atomic activation.                                                          |
-| Use Scient-managed | Runs the same reviewed install path while a healthy default system runtime remains active. The system installation is not removed or modified.                                   |
-| Update             | Replaces an active Scient-managed runtime with a newer reviewed artifact through the safe replacement path.                                                                      |
-| Repair             | Downloads a fresh copy of the reviewed artifact, verifies and smoke-tests it, then replaces the managed copy. The previous usable copy remains active until activation succeeds. |
+| Install            | Adds and selects a qualified app-private runtime after confirmation, verification, smoke testing, and atomic activation.                                                         |
+| Use Scient-managed | Runs the same qualified install path while a healthy default system runtime remains active. The system installation is not removed or modified.                                  |
+| Update             | Replaces an active Scient-managed runtime with a strictly newer qualified stable release through the safe replacement path.                                                      |
+| Repair             | Restores the exact activated release when its durable receipt remains compatible with this app. It never silently turns into Update.                                             |
 | Remove             | Deletes only Scient's app-private runtime. It preserves provider credentials, custom paths, and system installations, then re-probes the provider.                               |
 | Sign in            | Starts one official provider-owned account flow and verifies the resulting provider state before reporting success.                                                              |
 | Submit code        | Sends a bounded transient code only to the matching live provider operation when that operation explicitly advertises support. It is not persisted.                              |
@@ -144,9 +144,9 @@ healthy system runtime. A failed or cancelled install cannot write the managed s
 
 ### System-to-managed handoff
 
-The presence of a reviewed artifact does not automatically permit **Use Scient-managed**. A provider
+The presence of an app-approved artifact policy does not automatically permit **Use Scient-managed**. A provider
 must explicitly qualify and advertise that transition. The action is available only for a healthy
-default system source, a writable local desktop host, and a fully assisted reviewed target. Custom
+default system source, a writable local desktop host, and a fully assisted qualified target. Custom
 paths always remain authoritative.
 
 During the handoff, the system runtime remains active until the private copy has downloaded, passed
@@ -159,25 +159,57 @@ The [capability audit](./provider-lifecycle-capability-audit.md#phase-4b-runtime
 records each provider's qualification and evidence level. These rows remain code-confirmed until the
 corresponding real-app and platform scenarios are recorded.
 
+### Release catalog and promotion
+
+The app ships both provider packaging policy and a last-known-good release catalog. A process-scoped
+catalog service may fetch a newer catalog from `main` when provider update checks are enabled. Status
+and provider discovery remain non-blocking: they use the current memory or disk value and start a
+bounded background refresh. Opening an Install or Update confirmation is the one user action that may
+wait for the TTL-gated refresh so the plan shows the release it will actually install.
+
+The remote catalog can change only immutable release facts: version, artifact name, URL, digest, and
+size. It cannot add a provider or target, widen an allowed host, escape a provider-owned URL path
+family, change the checksum algorithm, alter archive or extraction policy, choose executable paths,
+change smoke commands or environments, or raise a support tier. Missing providers, unsupported
+targets, contract drift, malformed data, provider-channel downgrades, and same-version repacks fail
+closed. A newer app-bundled catalog also outranks an older disk cache. An authoritative catalog commit
+may withdraw a previously cached candidate down to this app's bundled floor; it never downgrades an
+already active runtime.
+
+The scheduled promotion workflow checks official stable channels every four hours. A changed provider
+is promoted only after every app-approved target has complete immutable metadata and the candidate has
+passed native download, checksum, package, smoke, activation, and removal qualification on the hosted
+macOS Apple-silicon, macOS Intel, Linux x64, and Windows x64 runners. The release-app then opens one
+catalog-only PR and enables auto-merge behind the repository's required checks. Normal stable updates
+therefore do not wait for a Scient desktop release or manual approval. Discovery ambiguity, failed
+qualification, unsupported targets, and required-check failures stop promotion and preserve the
+current catalog.
+
+Promotion never installs anything on a user's computer. It only makes the existing **Update** action
+available. The user still reviews the exact plan and starts the mutation; the previous runtime remains
+active until local verification and activation succeed.
+
 ### Download and activation boundary
 
 [`packages/scient-provider-runtime`](../../packages/scient-provider-runtime/) owns the shared runtime
-engine and provider manifests. The manifests—not prose documentation—are authoritative for current
-versions, URLs, checksums, sizes, archive shapes, executable paths, and supported targets.
+engine and provider policy manifests. Those manifests—not prose documentation—are authoritative for
+allowed hosts and URL path families, targets, checksum algorithms, archive and extraction behavior,
+package contents, executable paths, smoke tests, environments, and support tiers. The qualified
+catalog is authoritative for the selected release's version, artifact name, URL, digest, and size.
 
 An install, update, or repair:
 
 1. creates a unique private staging directory;
 2. downloads with size, total-time, idle-time, redirect-host, and cancellation bounds;
-3. verifies the exact reviewed digest;
+3. verifies the exact qualified digest;
 4. extracts in process while rejecting traversal, links, duplicates, excessive files, and excessive
-   expanded data, or stages the reviewed raw executable;
+   expanded data, or stages the qualified raw executable;
 5. validates provider-specific required package contents;
 6. runs the provider's bounded smoke test with an explicit environment; and
 7. activates the verified directory atomically and cleans staging.
 
 Routine status refresh never deletes staging because a serialized mutation may still own it.
-Abandoned staging is reconciled when the next mutation acquires ownership. A newly reviewed artifact
+Abandoned staging is reconciled when the next mutation acquires ownership. A newly qualified artifact
 does not invalidate the currently activated healthy copy; replacement happens only after successful
 activation.
 
@@ -185,10 +217,11 @@ Managed runtime mutation is local-desktop-only. Remote and read-only clients may
 server state but cannot mutate the host runtime. Unsupported targets fail closed without a guessed
 binary or command.
 
-### Reviewed target coverage
+### Managed target coverage
 
-The following table is **code-confirmed catalog coverage**, not packaged-app qualification. Current
-versions and artifact coordinates remain authoritative only in the provider manifests.
+The following table is **code-confirmed policy and catalog coverage**, not complete packaged-app
+qualification. Current release coordinates live in the qualified catalog; supported targets and
+execution policy live in the provider manifests.
 
 | Provider    | macOS                   | Windows            | Linux                          | Known exclusion                             |
 | ----------- | ----------------------- | ------------------ | ------------------------------ | ------------------------------------------- |
@@ -218,7 +251,7 @@ because several provider instances may use one executable. Different providers c
 independently. Independent account sign-ins may overlap only where they do not conflict with runtime
 mutation.
 
-Every operation has an identity and cleanup owner. Duplicate starts and stale reviewed plans are
+Every operation has an identity and cleanup owner. Duplicate starts and stale qualified plans are
 rejected. Explicit cancellation, request interruption during startup, normal completion, and server
 teardown converge on the same idempotent cleanup path. The exported production layers register that
 teardown path as a finalizer, so closing the service scope interrupts active work and releases each
@@ -284,18 +317,19 @@ inheriting unsupported lifecycle behavior.
 
 ## Provider-specific capabilities
 
-Managed availability is conditional on host mode, target, and reviewed manifest. The table documents
+Managed availability is conditional on host mode, app-approved policy, target, and a qualified
+catalog release. The table documents
 policy and protocol differences, not universal platform qualification.
 
-| Provider    | Assisted account flow and verification                                                                                                                                                                                                                           | Sign out                                                                                                                                     | Runtime and update policy                                                                                                                                                                                     |
-| ----------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Codex       | Structured app-server browser or device-code login. The device code is copied from Scient to the provider page, never pasted back into Scient. Account state is verified through Codex's account API and a fresh process.                                        | Available only for Codex-owned interactive authentication. Hidden for API-key or workload-controlled configurations.                         | Custom, system, and Scient-managed sources. Bespoke package-health selection. External sources retain T3's package-aware updater; managed sources use reviewed actions.                                       |
-| Claude      | Claude subscription or Anthropic Console through `claude auth login`. Claude normally opens the browser; a validated fallback URL can reopen it. A returned code is accepted only while the live process supports it. Verification uses Claude's account status. | Available for Claude-owned credentials and hidden for API-key, Bedrock, Vertex, Foundry, or custom-endpoint ownership.                       | Custom, system, and Scient-managed sources. External sources retain package-aware and qualified native update behavior; managed sources use reviewed actions.                                                 |
-| Antigravity | Google subscription flow through the official interactive client. Browser completion or a returned code may be supported by the live operation. Verification requires a successful account-owned model inventory.                                                | Uses provider logout and verification, with a bounded provider-owned local credential cleanup fallback when the official command is blocked. | Custom, system, and Scient-managed sources. Ambient API-key/custom-endpoint variables are excluded from this subscription integration. External updates are manual; managed updates use the reviewed catalog. |
-| Grok        | ACP browser login or explicit device code. A pasted code appears only when the exact live ACP operation advertises it. Passive probes never start authentication.                                                                                                | Available for Grok-owned account credentials; it never claims to remove an environment-provided API key.                                     | Custom, system, and Scient-managed sources. External updates remain manual pending installation-source qualification.                                                                                         |
-| Droid       | ACP device pairing only when the initialized peer advertises it and an external Factory API key is not controlling authentication. Droid may open a browser without giving Scient a URL.                                                                         | Visible only when the exact ACP peer advertises logout; there is no terminal-automation fallback.                                            | Custom, system, and Scient-managed sources. External updates remain manual pending installation-source qualification.                                                                                         |
-| Cursor      | Browser login. Scient runs Cursor in no-open-browser mode, validates and opens any captured official URL once, or verifies directly if the flow has already completed. There is no pasted-code flow. Final verification uses a fresh account probe.              | Available for Cursor-owned credentials and hidden when API endpoint, key, or token configuration owns authentication.                        | Custom, system, and Scient-managed sources. External sources retain Cursor's native update path; managed sources use reviewed actions and disable in-place self-update.                                       |
-| OpenCode    | No single assisted account flow. OpenCode manages credentials for multiple unrelated upstream providers.                                                                                                                                                         | No universal sign-out is advertised.                                                                                                         | System, custom, or remote runtime use. No Scient-managed lifecycle or system-to-managed handoff is currently advertised; inherited updater behavior remains authoritative.                                    |
+| Provider    | Assisted account flow and verification                                                                                                                                                                                                                           | Sign out                                                                                                                                     | Runtime and update policy                                                                                                                                                                                      |
+| ----------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Codex       | Structured app-server browser or device-code login. The device code is copied from Scient to the provider page, never pasted back into Scient. Account state is verified through Codex's account API and a fresh process.                                        | Available only for Codex-owned interactive authentication. Hidden for API-key or workload-controlled configurations.                         | Custom, system, and Scient-managed sources. Bespoke package-health selection. External sources retain T3's package-aware updater; managed sources use qualified actions.                                       |
+| Claude      | Claude subscription or Anthropic Console through `claude auth login`. Claude normally opens the browser; a validated fallback URL can reopen it. A returned code is accepted only while the live process supports it. Verification uses Claude's account status. | Available for Claude-owned credentials and hidden for API-key, Bedrock, Vertex, Foundry, or custom-endpoint ownership.                       | Custom, system, and Scient-managed sources. External sources retain package-aware and qualified native update behavior; managed sources use qualified actions.                                                 |
+| Antigravity | Google subscription flow through the official interactive client. Browser completion or a returned code may be supported by the live operation. Verification requires a successful account-owned model inventory.                                                | Uses provider logout and verification, with a bounded provider-owned local credential cleanup fallback when the official command is blocked. | Custom, system, and Scient-managed sources. Ambient API-key/custom-endpoint variables are excluded from this subscription integration. External updates are manual; managed updates use the qualified catalog. |
+| Grok        | ACP browser login or explicit device code. A pasted code appears only when the exact live ACP operation advertises it. Passive probes never start authentication.                                                                                                | Available for Grok-owned account credentials; it never claims to remove an environment-provided API key.                                     | Custom, system, and Scient-managed sources. External updates remain manual pending installation-source qualification.                                                                                          |
+| Droid       | ACP device pairing only when the initialized peer advertises it and an external Factory API key is not controlling authentication. Droid may open a browser without giving Scient a URL.                                                                         | Visible only when the exact ACP peer advertises logout; there is no terminal-automation fallback.                                            | Custom, system, and Scient-managed sources. External updates remain manual pending installation-source qualification.                                                                                          |
+| Cursor      | Browser login. Scient runs Cursor in no-open-browser mode, validates and opens any captured official URL once, or verifies directly if the flow has already completed. There is no pasted-code flow. Final verification uses a fresh account probe.              | Available for Cursor-owned credentials and hidden when API endpoint, key, or token configuration owns authentication.                        | Custom, system, and Scient-managed sources. External sources retain Cursor's native update path; managed sources use qualified actions and disable in-place self-update.                                       |
+| OpenCode    | No single assisted account flow. OpenCode manages credentials for multiple unrelated upstream providers.                                                                                                                                                         | No universal sign-out is advertised.                                                                                                         | System, custom, or remote runtime use. No Scient-managed lifecycle or system-to-managed handoff is currently advertised; inherited updater behavior remains authoritative.                                     |
 
 The detailed evidence and unresolved questions for these rows live in the
 [capability audit](./provider-lifecycle-capability-audit.md), not in provider-name branches in shared

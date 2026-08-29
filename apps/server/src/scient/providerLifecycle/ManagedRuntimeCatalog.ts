@@ -6,10 +6,12 @@
  * into the app and is re-applied by `hydrateManagedRuntimeArtifact`.
  */
 import {
+  compareManagedRuntimeVersions,
   hydrateManagedRuntimeArtifact,
   managedRuntimeTargetKey,
   type ManagedRuntimeArtifact,
   type ManagedRuntimeArtifactReceipt,
+  type ManagedRuntimeProvider,
 } from "@scientfactory/provider-runtime";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
@@ -24,6 +26,7 @@ import { HttpClient, HttpClientResponse, HttpIncomingMessage } from "effect/unst
 import { writeFileStringAtomically } from "../../atomicWrite.ts";
 import { ServerConfig } from "../../config.ts";
 import * as ServerSettings from "../../serverSettings.ts";
+import { isManagedRuntimeUpdate } from "./managedRuntimeVersion.ts";
 import bundledCatalogJson from "./managed-runtime-catalog.json" with { type: "json" };
 
 export const MANAGED_RUNTIME_CATALOG_URL =
@@ -92,6 +95,48 @@ export const BUNDLED_MANAGED_RUNTIME_CATALOG: ManagedRuntimeCatalogData = Schema
   ManagedRuntimeCatalogDataSchema,
 )(bundledCatalogJson);
 
+const managedProviders: ReadonlyArray<ManagedRuntimeProvider> = [
+  "codex",
+  "claudeAgent",
+  "antigravity",
+  "cursor",
+  "droid",
+  "grok",
+];
+
+/**
+ * Merges only strictly newer provider releases. Missing entries, downgrades,
+ * contract drift, and same-version repacks never displace a known-good entry.
+ */
+export function mergeManagedRuntimeCatalogs(
+  current: ManagedRuntimeCatalogData,
+  candidate: ManagedRuntimeCatalogData,
+): ManagedRuntimeCatalogData {
+  const providers = { ...current.providers };
+  for (const provider of managedProviders) {
+    const existing = current.providers[provider];
+    const next = candidate.providers[provider];
+    if (!existing || !next || next.contractRevision !== existing.contractRevision) continue;
+    if (
+      compareManagedRuntimeVersions({
+        provider,
+        current: existing.version,
+        candidate: next.version,
+      }) === "newer"
+    ) {
+      providers[provider] = next;
+    }
+  }
+  return { schemaVersion: 1, providers };
+}
+
+/** A successful authoritative fetch may withdraw a cached release, but never undercut this app's bundle. */
+export function resolveFetchedManagedRuntimeCatalog(
+  fetched: ManagedRuntimeCatalogData,
+): ManagedRuntimeCatalogData {
+  return mergeManagedRuntimeCatalogs(BUNDLED_MANAGED_RUNTIME_CATALOG, fetched);
+}
+
 function decodeBoundedCatalogJson(raw: string) {
   return decodeBoundedJsonText(raw).pipe(Effect.flatMap(decodeCatalogJson));
 }
@@ -154,6 +199,44 @@ export function resolveManagedRuntimeCatalogArtifact(input: {
   });
 }
 
+function isSameManagedRuntimeRelease(
+  left: ManagedRuntimeArtifact,
+  right: ManagedRuntimeArtifact,
+): boolean {
+  return (
+    left.version === right.version &&
+    left.artifactName === right.artifactName &&
+    left.url === right.url &&
+    left.checksum.algorithm === right.checksum.algorithm &&
+    left.checksum.digest === right.checksum.digest &&
+    left.size === right.size
+  );
+}
+
+/** Selects only a strictly newer qualified release, never a downgrade or same-version repack. */
+export function resolveManagedRuntimeCatalogCandidate(input: {
+  readonly catalog: ManagedRuntimeCatalogData;
+  readonly bundledArtifact: ManagedRuntimeArtifact | undefined;
+  readonly contractRevision: number;
+}): ManagedRuntimeArtifact | undefined {
+  const { bundledArtifact } = input;
+  if (!bundledArtifact) return undefined;
+  const remote = resolveManagedRuntimeCatalogArtifact({
+    catalog: input.catalog,
+    policy: bundledArtifact,
+    contractRevision: input.contractRevision,
+  });
+  if (!remote) return bundledArtifact;
+  if (isSameManagedRuntimeRelease(remote, bundledArtifact)) return remote;
+  return isManagedRuntimeUpdate({
+    provider: bundledArtifact.provider,
+    current: bundledArtifact.version,
+    candidate: remote.version,
+  })
+    ? remote
+    : bundledArtifact;
+}
+
 export interface ManagedRuntimeCatalogService {
   /** Already-cached catalog; never waits on the network. */
   readonly current: Effect.Effect<ManagedRuntimeCatalogData>;
@@ -198,8 +281,10 @@ export const make = Effect.gen(function* () {
         Effect.catchCause(() => Effect.succeed(null)),
       );
       if (cached === null) return;
-      catalog = cached.catalog;
-      fetchedAtMs = cached.fetchedAtMs;
+      catalog = mergeManagedRuntimeCatalogs(catalog, cached.catalog);
+      // Revalidate once per process. This prevents a recent but older cache
+      // from delaying a newly bundled catalog or another provider's update.
+      fetchedAtMs = null;
     }),
   );
 
@@ -233,9 +318,9 @@ export const make = Effect.gen(function* () {
     );
     if (fetched === null) return catalog;
 
-    catalog = fetched;
+    catalog = resolveFetchedManagedRuntimeCatalog(fetched);
     fetchedAtMs = now;
-    yield* encodeCatalogCacheJson({ fetchedAtMs: now, catalog: fetched }).pipe(
+    yield* encodeCatalogCacheJson({ fetchedAtMs: now, catalog }).pipe(
       Effect.flatMap((contents) =>
         writeFileStringAtomically({ filePath: cachePath, contents, mode: 0o600 }),
       ),

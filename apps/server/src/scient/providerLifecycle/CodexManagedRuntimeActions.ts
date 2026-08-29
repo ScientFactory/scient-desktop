@@ -35,7 +35,7 @@ import type {
 import { ProviderConnectionActionError } from "./ProviderConnectionActions.ts";
 import {
   ManagedRuntimeCatalog,
-  resolveManagedRuntimeCatalogArtifact,
+  resolveManagedRuntimeCatalogCandidate,
   type ManagedRuntimeCatalogData,
 } from "./ManagedRuntimeCatalog.ts";
 import { isManagedRuntimeUpdate } from "./managedRuntimeVersion.ts";
@@ -83,7 +83,7 @@ const runtimeError = (message: string, cause?: unknown) =>
 function mapProgress(progress: ManagedCodexRuntimeProgress): ProviderManagedRuntimeProgress {
   const messages = {
     preparing: "Preparing the private Codex runtime.",
-    downloading: "Downloading Codex from the reviewed OpenAI release.",
+    downloading: "Downloading Codex from the qualified OpenAI release.",
     verifying: "Verifying the Codex download.",
     installing: "Installing the private Codex runtime.",
     testing: "Testing the installed Codex runtime.",
@@ -105,41 +105,16 @@ function runtimeBackendLabel(platform: string): string {
   return "Linux native";
 }
 
-function isSameManagedRuntimeRelease(
-  left: ManagedRuntimeArtifact,
-  right: ManagedRuntimeArtifact,
-): boolean {
-  return (
-    left.version === right.version &&
-    left.artifactName === right.artifactName &&
-    left.url === right.url &&
-    left.checksum.algorithm === right.checksum.algorithm &&
-    left.checksum.digest === right.checksum.digest &&
-    left.size === right.size
-  );
-}
-
 /** Selects only a strictly newer qualified release, never a remote downgrade or repack. */
 export function resolveCodexCatalogCandidate(input: {
   readonly bundledArtifact: ManagedRuntimeArtifact | undefined;
   readonly catalog: ManagedRuntimeCatalogData;
 }): ManagedRuntimeArtifact | undefined {
-  const { bundledArtifact } = input;
-  if (!bundledArtifact) return undefined;
-  const remote = resolveManagedRuntimeCatalogArtifact({
+  return resolveManagedRuntimeCatalogCandidate({
     catalog: input.catalog,
-    policy: bundledArtifact,
+    bundledArtifact: input.bundledArtifact,
     contractRevision: CODEX_MANAGED_RUNTIME_CONTRACT_REVISION,
   });
-  if (!remote) return bundledArtifact;
-  if (isSameManagedRuntimeRelease(remote, bundledArtifact)) return remote;
-  return isManagedRuntimeUpdate({
-    provider: "codex",
-    current: bundledArtifact.version,
-    candidate: remote.version,
-  })
-    ? remote
-    : bundledArtifact;
 }
 
 /** Repair preserves the exact activated release whenever a durable receipt exists. */
@@ -522,7 +497,7 @@ export const makeCodexManagedRuntimeResolution = Effect.fn("CodexManagedRuntime.
                   ? input.managedInstallationAllowed
                     ? currentArtifact.supportMessage
                     : "Scient can use a healthy Codex runtime here, but managed installation is only proven in the local desktop app."
-                  : "Scient does not have a reviewed managed Codex artifact for this computer.";
+                  : "Scient does not have a qualified managed Codex artifact for this computer.";
       return {
         source: latestSource,
         supportTier: policy.supportTier,
@@ -573,7 +548,7 @@ export const makeCodexManagedRuntimeResolution = Effect.fn("CodexManagedRuntime.
         return yield* runtimeError(
           action === "repair" && latestStatus?.activeArtifact
             ? "The exact installed Codex release is no longer compatible with this Scient build. Update or remove it instead of replacing it silently."
-            : "No reviewed Codex artifact is available for this computer.",
+            : "No qualified Codex artifact is available for this computer.",
         );
       }
       const plan = {
@@ -610,7 +585,7 @@ export const makeCodexManagedRuntimeResolution = Effect.fn("CodexManagedRuntime.
         const planned = prepared.plan;
         if (planned.catalogRevision !== catalogRevision) {
           return yield* runtimeError(
-            "The reviewed Codex setup plan changed. Review it again before continuing.",
+            "The qualified Codex setup plan changed. Review it again before continuing.",
           );
         }
         const context = yield* Effect.context<never>();
@@ -631,7 +606,7 @@ export const makeCodexManagedRuntimeResolution = Effect.fn("CodexManagedRuntime.
         }
         const actionArtifact = prepared.artifact;
         if (!actionArtifact) {
-          return yield* runtimeError("No reviewed Codex artifact is available.");
+          return yield* runtimeError("No qualified Codex artifact is available.");
         }
         let lastStatus: ManagedCodexRuntimeProgress["stage"] | undefined;
         let lastReportedBytes = 0;

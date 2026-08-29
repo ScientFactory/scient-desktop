@@ -11,11 +11,11 @@ For the behavior shared by all assisted providers, see [Providers in Scient](./p
 
 Enable Cursor in **Settings > Providers** or choose it from the composer's provider rail. Scient
 preserves an explicit custom binary path or a healthy `cursor-agent` already installed on the server.
-When neither is usable, a supported local desktop can offer a reviewed Scient-managed copy.
+When neither is usable, a supported local desktop can offer a qualified Scient-managed copy.
 
 Install, update, repair, and remove affect only Scient's private runtime. They never overwrite or
 delete a custom or system Cursor installation. If a healthy system runtime is active and
-**Use Scient-managed Cursor** is available, the reviewed private install remains an explicit choice.
+**Use Scient-managed Cursor** is available, the qualified private install remains an explicit choice.
 
 ## Sign in
 
@@ -33,7 +33,8 @@ irrelevant browser sign-in or sign-out action.
 
 ## Updates and removal
 
-An active Scient-managed copy uses Scient's reviewed update, repair, and removal path. A custom or
+An active Scient-managed copy uses Scient's qualified update, repair, and removal path. Update is
+offered only for a strictly newer stable release; Repair restores the exact active release. A custom or
 system Cursor installation keeps Cursor's existing external update behavior. Removing the managed
 copy preserves the Cursor account and returns eligible default instances to a healthy system runtime.
 

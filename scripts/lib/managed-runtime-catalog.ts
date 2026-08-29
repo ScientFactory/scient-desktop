@@ -1,0 +1,596 @@
+// @effect-diagnostics nodeBuiltinImport:off globalFetch:off -- Release discovery is a bounded CI-only network boundary; app runtime policy stays in @scientfactory/provider-runtime.
+import * as NodeCrypto from "node:crypto";
+
+import {
+  hydrateManagedRuntimeArtifact,
+  isManagedRuntimeUpdate,
+  managedRuntimeTargetKey,
+  resolveReviewedAntigravityArtifact,
+  resolveReviewedClaudeArtifact,
+  resolveReviewedCodexArtifact,
+  resolveReviewedCursorArtifact,
+  resolveReviewedDroidArtifact,
+  resolveReviewedGrokArtifact,
+  type ManagedRuntimeArtifact,
+  type ManagedRuntimeProvider,
+  type ManagedRuntimeTarget,
+} from "@scientfactory/provider-runtime";
+
+const MAX_METADATA_BYTES = 2 * 1_024 * 1_024;
+const MAX_ARTIFACT_BYTES = 4 * 1_024 * 1_024 * 1_024;
+const REQUEST_TIMEOUT_MS = 30_000;
+const ARTIFACT_TIMEOUT_MS = 15 * 60_000;
+const CONTRACT_REVISION = 1;
+
+export interface ManagedRuntimeCatalogArtifactData {
+  readonly artifactName: string;
+  readonly url: string;
+  readonly checksum: {
+    readonly algorithm: "sha256" | "sha512";
+    readonly digest: string;
+  };
+  readonly size: number;
+}
+
+export interface ManagedRuntimeCatalogProviderData {
+  readonly contractRevision: number;
+  readonly channel: "stable";
+  readonly version: string;
+  readonly artifacts: Readonly<Record<string, ManagedRuntimeCatalogArtifactData>>;
+}
+
+export interface ManagedRuntimeCatalogData {
+  readonly schemaVersion: 1;
+  readonly providers: Readonly<
+    Partial<Record<ManagedRuntimeProvider, ManagedRuntimeCatalogProviderData>>
+  >;
+}
+
+export interface ManagedRuntimeCatalogRefreshResult {
+  readonly catalog: ManagedRuntimeCatalogData;
+  readonly changedProviders: ReadonlyArray<ManagedRuntimeProvider>;
+}
+
+type Fetch = typeof fetch;
+type PolicyResolver = (target: ManagedRuntimeTarget) => ManagedRuntimeArtifact | undefined;
+
+const targets: ReadonlyArray<ManagedRuntimeTarget> = [
+  { platform: "darwin", arch: "arm64" },
+  { platform: "darwin", arch: "x64" },
+  { platform: "linux", arch: "arm64", libc: "glibc" },
+  { platform: "linux", arch: "arm64", libc: "musl" },
+  { platform: "linux", arch: "x64", libc: "glibc" },
+  { platform: "linux", arch: "x64", libc: "musl" },
+  { platform: "win32", arch: "arm64" },
+  { platform: "win32", arch: "x64" },
+];
+
+const policyResolvers: Readonly<Record<ManagedRuntimeProvider, PolicyResolver>> = {
+  codex: resolveReviewedCodexArtifact,
+  claudeAgent: resolveReviewedClaudeArtifact,
+  antigravity: resolveReviewedAntigravityArtifact,
+  cursor: resolveReviewedCursorArtifact,
+  droid: resolveReviewedDroidArtifact,
+  grok: resolveReviewedGrokArtifact,
+};
+
+const providerOrder: ReadonlyArray<ManagedRuntimeProvider> = [
+  "codex",
+  "claudeAgent",
+  "antigravity",
+  "cursor",
+  "droid",
+  "grok",
+];
+
+function policyEntries(provider: ManagedRuntimeProvider) {
+  const resolve = policyResolvers[provider];
+  return targets.flatMap((target) => {
+    const policy = resolve(target);
+    return policy ? [{ key: managedRuntimeTargetKey(target), policy }] : [];
+  });
+}
+
+function strictVersion(value: string, label: string): string {
+  const version = value.trim();
+  if (!/^[0-9]+(?:\.[0-9]+)+(?:-[0-9A-Za-z._]+)?$/u.test(version) || version.length > 128) {
+    throw new Error(`${label} returned an invalid stable version '${version}'.`);
+  }
+  return version;
+}
+
+function strictDigest(value: string, algorithm: "sha256" | "sha512", label: string): string {
+  const digest = value.trim().toLowerCase();
+  const expected = algorithm === "sha256" ? 64 : 128;
+  if (digest.length !== expected || !/^[0-9a-f]+$/u.test(digest)) {
+    throw new Error(`${label} returned an invalid ${algorithm} digest.`);
+  }
+  return digest;
+}
+
+function strictSize(value: number, label: string): number {
+  if (!Number.isSafeInteger(value) || value <= 0 || value > MAX_ARTIFACT_BYTES) {
+    throw new Error(`${label} returned an invalid artifact size.`);
+  }
+  return value;
+}
+
+async function request(input: {
+  readonly fetch: Fetch;
+  readonly url: string;
+  readonly method?: "GET" | "HEAD";
+  readonly timeoutMs?: number;
+}): Promise<Response> {
+  const url = new URL(input.url);
+  if (
+    url.protocol !== "https:" ||
+    url.username ||
+    url.password ||
+    (url.port && url.port !== "443")
+  ) {
+    throw new Error(`Release metadata URL is not standard HTTPS: ${input.url}`);
+  }
+  const response = await input.fetch(url, {
+    method: input.method ?? "GET",
+    redirect: "follow",
+    signal: AbortSignal.timeout(input.timeoutMs ?? REQUEST_TIMEOUT_MS),
+    headers: { "user-agent": "Scient-managed-runtime-catalog/1" },
+  });
+  if (!response.ok) {
+    throw new Error(`Release request failed with HTTP ${response.status}: ${input.url}`);
+  }
+  return response;
+}
+
+async function metadataText(fetch_: Fetch, url: string): Promise<string> {
+  const response = await request({ fetch: fetch_, url });
+  const declared = Number(response.headers.get("content-length") ?? "0");
+  if (declared > MAX_METADATA_BYTES) throw new Error(`Release metadata is too large: ${url}`);
+  const text = await response.text();
+  if (Buffer.byteLength(text) > MAX_METADATA_BYTES) {
+    throw new Error(`Release metadata is too large: ${url}`);
+  }
+  return text;
+}
+
+async function metadataJson(fetch_: Fetch, url: string): Promise<unknown> {
+  return JSON.parse(await metadataText(fetch_, url));
+}
+
+function record(value: unknown, label: string): Record<string, unknown> {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    throw new Error(`${label} is not a JSON object.`);
+  }
+  return value as Record<string, unknown>;
+}
+
+function stringField(value: Record<string, unknown>, key: string, label: string): string {
+  const field = value[key];
+  if (typeof field !== "string" || field.length === 0) {
+    throw new Error(`${label} is missing '${key}'.`);
+  }
+  return field;
+}
+
+async function artifactSize(fetch_: Fetch, url: string): Promise<number> {
+  const response = await request({ fetch: fetch_, url, method: "HEAD" });
+  return strictSize(Number(response.headers.get("content-length")), url);
+}
+
+async function artifactDigest(
+  fetch_: Fetch,
+  url: string,
+  algorithm: "sha256" | "sha512",
+): Promise<{ readonly digest: string; readonly size: number }> {
+  const response = await request({ fetch: fetch_, url, timeoutMs: ARTIFACT_TIMEOUT_MS });
+  if (!response.body) throw new Error(`Release artifact has no response body: ${url}`);
+  const hash = NodeCrypto.createHash(algorithm);
+  const reader = response.body.getReader();
+  let size = 0;
+  for (;;) {
+    const result = await reader.read();
+    if (result.done) break;
+    size += result.value.byteLength;
+    strictSize(size, url);
+    hash.update(result.value);
+  }
+  return { digest: hash.digest("hex"), size: strictSize(size, url) };
+}
+
+async function mapConcurrent<T, R>(
+  values: ReadonlyArray<T>,
+  limit: number,
+  f: (value: T) => Promise<R>,
+): Promise<ReadonlyArray<R>> {
+  const results: R[] = [];
+  let index = 0;
+  await Promise.all(
+    Array.from({ length: Math.min(limit, values.length) }, async () => {
+      for (;;) {
+        const current = index++;
+        if (current >= values.length) return;
+        results[current] = await f(values[current]!);
+      }
+    }),
+  );
+  return results;
+}
+
+function candidateProvider(input: {
+  readonly provider: ManagedRuntimeProvider;
+  readonly version: string;
+  readonly artifacts: Readonly<Record<string, ManagedRuntimeCatalogArtifactData>>;
+}): ManagedRuntimeCatalogProviderData {
+  const policies = policyEntries(input.provider);
+  if (Object.keys(input.artifacts).length !== policies.length) {
+    throw new Error(`${input.provider} discovery did not return every app-approved target.`);
+  }
+  for (const { key, policy } of policies) {
+    const artifact = input.artifacts[key];
+    if (!artifact) throw new Error(`${input.provider} is missing ${key}.`);
+    const hydrated = hydrateManagedRuntimeArtifact(policy, {
+      provider: input.provider,
+      version: input.version,
+      target: policy.target,
+      ...artifact,
+      catalogRevision: `automation:${input.provider}:${input.version}:${key}`,
+    });
+    if (!hydrated) throw new Error(`${input.provider} ${key} violates app-owned runtime policy.`);
+  }
+  return {
+    contractRevision: CONTRACT_REVISION,
+    channel: "stable",
+    version: input.version,
+    artifacts: input.artifacts,
+  };
+}
+
+function releaseChanged(
+  provider: ManagedRuntimeProvider,
+  current: ManagedRuntimeCatalogProviderData,
+  version: string,
+): boolean {
+  if (current.version === version) return false;
+  if (!isManagedRuntimeUpdate({ provider, current: current.version, candidate: version })) {
+    throw new Error(
+      `${provider} stable discovery moved backwards from ${current.version} to ${version}.`,
+    );
+  }
+  return true;
+}
+
+export function parseCursorInstallerVersion(source: string): string {
+  const versions = [
+    ...source.matchAll(/downloads\.cursor\.com\/lab\/([^/"']+)\/\$\{OS\}\/\$\{ARCH\}/gu),
+  ].map((match) => match[1]);
+  const unique = [...new Set(versions)];
+  if (unique.length !== 1 || !unique[0]) {
+    throw new Error("Cursor installer did not expose one unambiguous stable CLI version.");
+  }
+  return strictVersion(unique[0], "Cursor installer");
+}
+
+export function parseDroidRssVersion(source: string): string {
+  const match = /<title><!\[CDATA\[[^\]]*\bCLI v([0-9]+(?:\.[0-9]+)+(?:-[0-9A-Za-z._]+)?)/u.exec(
+    source,
+  );
+  if (!match?.[1])
+    throw new Error("Factory release feed did not expose a stable Droid CLI version.");
+  return strictVersion(match[1], "Factory release feed");
+}
+
+export function parseGrokStableVersion(source: string): string {
+  return strictVersion(source, "Grok stable channel");
+}
+
+async function discoverCodex(fetch_: Fetch): Promise<ManagedRuntimeCatalogProviderData> {
+  const channel = record(
+    await metadataJson(fetch_, "https://releases.openai.com/codex/channels/latest"),
+    "Codex stable channel",
+  );
+  const version = strictVersion(
+    stringField(channel, "tag_name", "Codex stable channel").replace(/^rust-v/u, ""),
+    "Codex stable channel",
+  );
+  const assets = channel.assets;
+  if (!Array.isArray(assets)) throw new Error("Codex stable channel is missing assets.");
+  const byName = new Map(
+    assets.map((value) => {
+      const asset = record(value, "Codex release asset");
+      return [stringField(asset, "name", "Codex release asset"), asset] as const;
+    }),
+  );
+  const entries = await mapConcurrent(policyEntries("codex"), 4, async ({ key, policy }) => {
+    const asset = byName.get(policy.artifactName);
+    if (!asset) throw new Error(`Codex stable channel is missing ${policy.artifactName}.`);
+    // The channel is the authoritative identity/digest source. Keep the app's
+    // existing reviewed GitHub release host contract for the actual download.
+    stringField(asset, "browser_download_url", `Codex ${key}`);
+    const url = `https://github.com/openai/codex/releases/download/rust-v${version}/${policy.artifactName}`;
+    const digest = strictDigest(
+      stringField(asset, "digest", `Codex ${key}`).replace(/^sha256:/u, ""),
+      "sha256",
+      `Codex ${key}`,
+    );
+    return [
+      key,
+      {
+        artifactName: policy.artifactName,
+        url,
+        checksum: { algorithm: "sha256" as const, digest },
+        size: await artifactSize(fetch_, url),
+      },
+    ] as const;
+  });
+  return candidateProvider({ provider: "codex", version, artifacts: Object.fromEntries(entries) });
+}
+
+const claudePlatforms: Readonly<Record<string, string>> = {
+  "darwin-arm64": "darwin-arm64",
+  "darwin-x64": "darwin-x64",
+  "linux-arm64-glibc": "linux-arm64",
+  "linux-arm64-musl": "linux-arm64-musl",
+  "linux-x64-glibc": "linux-x64",
+  "linux-x64-musl": "linux-x64-musl",
+  "win32-arm64": "win32-arm64",
+  "win32-x64": "win32-x64",
+};
+
+async function discoverClaude(fetch_: Fetch): Promise<ManagedRuntimeCatalogProviderData> {
+  const version = strictVersion(
+    await metadataText(fetch_, "https://downloads.claude.ai/claude-code-releases/latest"),
+    "Claude stable channel",
+  );
+  const manifest = record(
+    await metadataJson(
+      fetch_,
+      `https://downloads.claude.ai/claude-code-releases/${version}/manifest.json`,
+    ),
+    "Claude release manifest",
+  );
+  const platforms = record(manifest.platforms, "Claude release platforms");
+  const entries = policyEntries("claudeAgent").map(({ key }) => {
+    const platform = claudePlatforms[key];
+    if (!platform) throw new Error(`Claude has no approved platform mapping for ${key}.`);
+    const release = record(platforms[platform], `Claude ${key}`);
+    const binary = stringField(release, "binary", `Claude ${key}`);
+    const digest = strictDigest(
+      stringField(release, "checksum", `Claude ${key}`),
+      "sha256",
+      `Claude ${key}`,
+    );
+    return [
+      key,
+      {
+        artifactName: `claude-${version}-${platform}`,
+        url: `https://downloads.claude.ai/claude-code-releases/${version}/${platform}/${binary}`,
+        checksum: { algorithm: "sha256" as const, digest },
+        size: strictSize(Number(release.size), `Claude ${key}`),
+      },
+    ] as const;
+  });
+  return candidateProvider({
+    provider: "claudeAgent",
+    version,
+    artifacts: Object.fromEntries(entries),
+  });
+}
+
+const antigravityPlatforms: Readonly<Record<string, string>> = {
+  "darwin-arm64": "darwin_arm64",
+  "darwin-x64": "darwin_amd64",
+  "linux-arm64-glibc": "linux_arm64",
+  "linux-x64-glibc": "linux_amd64",
+  "win32-arm64": "windows_arm64",
+  "win32-x64": "windows_amd64",
+};
+
+async function discoverAntigravity(fetch_: Fetch): Promise<ManagedRuntimeCatalogProviderData> {
+  const entries = await mapConcurrent(policyEntries("antigravity"), 4, async ({ key }) => {
+    const platform = antigravityPlatforms[key];
+    if (!platform) throw new Error(`Antigravity has no approved platform mapping for ${key}.`);
+    const manifest = record(
+      await metadataJson(
+        fetch_,
+        `https://antigravity-cli-auto-updater-974169037036.us-central1.run.app/manifests/${platform}.json`,
+      ),
+      `Antigravity ${key}`,
+    );
+    const version = strictVersion(
+      stringField(manifest, "version", `Antigravity ${key}`),
+      `Antigravity ${key}`,
+    );
+    const url = stringField(manifest, "url", `Antigravity ${key}`);
+    return {
+      key,
+      version,
+      artifact: {
+        artifactName: new URL(url).pathname.split("/").at(-1)!,
+        url,
+        checksum: {
+          algorithm: "sha512" as const,
+          digest: strictDigest(
+            stringField(manifest, "sha512", `Antigravity ${key}`),
+            "sha512",
+            `Antigravity ${key}`,
+          ),
+        },
+        size: await artifactSize(fetch_, url),
+      },
+    };
+  });
+  const versions = [...new Set(entries.map((entry) => entry.version))];
+  if (versions.length !== 1 || !versions[0]) {
+    throw new Error("Antigravity platform manifests disagree on the stable version.");
+  }
+  return candidateProvider({
+    provider: "antigravity",
+    version: versions[0],
+    artifacts: Object.fromEntries(entries.map((entry) => [entry.key, entry.artifact])),
+  });
+}
+
+function cursorReleaseUrl(version: string, key: string): string {
+  const [platform, arch] = key.split("-");
+  const os = platform === "win32" ? "windows" : platform;
+  const extension = platform === "win32" ? "zip" : "tar.gz";
+  return `https://downloads.cursor.com/lab/${version}/${os}/${arch}/agent-cli-package.${extension}`;
+}
+
+async function discoverCursor(fetch_: Fetch): Promise<ManagedRuntimeCatalogProviderData> {
+  const version = parseCursorInstallerVersion(
+    await metadataText(fetch_, "https://cursor.com/install"),
+  );
+  const entries = await mapConcurrent(policyEntries("cursor"), 2, async ({ key, policy }) => {
+    const url = cursorReleaseUrl(version, key);
+    const release = await artifactDigest(fetch_, url, "sha256");
+    return [
+      key,
+      {
+        artifactName: policy.artifactName,
+        url,
+        checksum: { algorithm: "sha256" as const, digest: release.digest },
+        size: release.size,
+      },
+    ] as const;
+  });
+  return candidateProvider({ provider: "cursor", version, artifacts: Object.fromEntries(entries) });
+}
+
+async function discoverDroid(fetch_: Fetch): Promise<ManagedRuntimeCatalogProviderData> {
+  const version = parseDroidRssVersion(
+    await metadataText(fetch_, "https://docs.factory.ai/changelog/rss.xml"),
+  );
+  const entries = await mapConcurrent(policyEntries("droid"), 4, async ({ key, policy }) => {
+    const current = new URL(policy.url);
+    current.pathname = current.pathname.replace(
+      /\/factory-cli\/releases\/[^/]+\//u,
+      `/factory-cli/releases/${version}/`,
+    );
+    const url = current.href;
+    const checksum = (await metadataText(fetch_, `${url}.sha256`)).split(/\s+/u)[0];
+    return [
+      key,
+      {
+        artifactName: policy.artifactName,
+        url,
+        checksum: {
+          algorithm: "sha256" as const,
+          digest: strictDigest(checksum ?? "", "sha256", `Droid ${key}`),
+        },
+        size: await artifactSize(fetch_, url),
+      },
+    ] as const;
+  });
+  return candidateProvider({ provider: "droid", version, artifacts: Object.fromEntries(entries) });
+}
+
+async function discoverGrok(fetch_: Fetch): Promise<ManagedRuntimeCatalogProviderData> {
+  const version = parseGrokStableVersion(await metadataText(fetch_, "https://x.ai/cli/stable"));
+  const entries = await mapConcurrent(policyEntries("grok"), 2, async ({ key, policy }) => {
+    const url = policy.url.replace(policy.version, version);
+    const release = await artifactDigest(fetch_, url, "sha512");
+    return [
+      key,
+      {
+        artifactName: policy.artifactName.replace(policy.version, version),
+        url,
+        checksum: { algorithm: "sha512" as const, digest: release.digest },
+        size: release.size,
+      },
+    ] as const;
+  });
+  return candidateProvider({ provider: "grok", version, artifacts: Object.fromEntries(entries) });
+}
+
+const discoverers: Readonly<
+  Record<ManagedRuntimeProvider, (fetch_: Fetch) => Promise<ManagedRuntimeCatalogProviderData>>
+> = {
+  codex: discoverCodex,
+  claudeAgent: discoverClaude,
+  antigravity: discoverAntigravity,
+  cursor: discoverCursor,
+  droid: discoverDroid,
+  grok: discoverGrok,
+};
+
+export async function refreshManagedRuntimeCatalog(
+  current: ManagedRuntimeCatalogData,
+  fetch_: Fetch = fetch,
+  report: (message: string) => void = () => undefined,
+): Promise<ManagedRuntimeCatalogRefreshResult> {
+  if (current.schemaVersion !== 1)
+    throw new Error("Managed runtime catalog schema is unsupported.");
+  const providers = { ...current.providers };
+  const changedProviders: ManagedRuntimeProvider[] = [];
+  for (const provider of providerOrder) {
+    const existing = current.providers[provider];
+    if (!existing) throw new Error(`Managed runtime catalog is missing ${provider}.`);
+    report(`Checking ${provider} stable channel.`);
+    const latestVersion = await discoverLatestVersion(provider, fetch_);
+    if (!releaseChanged(provider, existing, latestVersion)) {
+      report(`${provider} is already current at ${latestVersion}.`);
+      continue;
+    }
+    report(`Qualifying ${provider} ${latestVersion} release metadata.`);
+    const candidate = await discoverers[provider](fetch_);
+    if (candidate.version !== latestVersion) {
+      throw new Error(`${provider} stable release changed during discovery.`);
+    }
+    providers[provider] = candidate;
+    changedProviders.push(provider);
+    report(`${provider} ${latestVersion} candidate metadata is complete.`);
+  }
+  return { catalog: { schemaVersion: 1, providers }, changedProviders };
+}
+
+async function discoverLatestVersion(
+  provider: ManagedRuntimeProvider,
+  fetch_: Fetch,
+): Promise<string> {
+  switch (provider) {
+    case "codex": {
+      const channel = record(
+        await metadataJson(fetch_, "https://releases.openai.com/codex/channels/latest"),
+        "Codex stable channel",
+      );
+      return strictVersion(
+        stringField(channel, "tag_name", "Codex stable channel").replace(/^rust-v/u, ""),
+        "Codex stable channel",
+      );
+    }
+    case "claudeAgent":
+      return strictVersion(
+        await metadataText(fetch_, "https://downloads.claude.ai/claude-code-releases/latest"),
+        "Claude stable channel",
+      );
+    case "antigravity": {
+      const manifest = record(
+        await metadataJson(
+          fetch_,
+          "https://antigravity-cli-auto-updater-974169037036.us-central1.run.app/manifests/darwin_arm64.json",
+        ),
+        "Antigravity stable channel",
+      );
+      return strictVersion(
+        stringField(manifest, "version", "Antigravity stable channel"),
+        "Antigravity stable channel",
+      );
+    }
+    case "cursor":
+      return parseCursorInstallerVersion(await metadataText(fetch_, "https://cursor.com/install"));
+    case "droid":
+      return parseDroidRssVersion(
+        await metadataText(fetch_, "https://docs.factory.ai/changelog/rss.xml"),
+      );
+    case "grok":
+      return parseGrokStableVersion(await metadataText(fetch_, "https://x.ai/cli/stable"));
+  }
+}
+
+export function qualificationMatrix(
+  providers: ReadonlyArray<ManagedRuntimeProvider>,
+): ReadonlyArray<{ readonly provider: ManagedRuntimeProvider; readonly runner: string }> {
+  const runners = ["macos-26", "macos-15-intel", "ubuntu-24.04", "windows-2025"];
+  return providers.flatMap((provider) => runners.map((runner) => ({ provider, runner })));
+}

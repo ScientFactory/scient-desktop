@@ -17,9 +17,9 @@ action: **Install**, **Sign in**, **Update**, or **Manage**.
 The flow:
 
 1. detects a healthy custom, system, or Scient-managed Codex runtime;
-2. offers managed installation on reviewed macOS, Windows, and Linux desktop targets;
+2. offers managed installation on approved macOS, Windows, and Linux desktop targets;
 3. starts a private managed installation only after the user explicitly chooses **Install Codex**,
-   using the reviewed artifact selected for that computer;
+   using the qualified stable artifact selected for that computer;
 4. opens Codex's official browser or device-code sign-in flow and lets Codex's local callback page
    confirm that the browser can be closed; and
 5. asks Codex for fresh account, model, and runtime state before reporting the provider as ready.
@@ -35,13 +35,22 @@ another app using those same account files; Scient explains that scope beside th
 Scient never silently replaces a healthy custom or system installation. A Scient-managed copy is
 kept in the app's private data, and removing it does not remove a system or custom Codex install.
 
-The local desktop offers managed installation only when the server reports a reviewed artifact for
+The local desktop offers managed installation only when the server reports a qualified artifact for
 the exact operating system and architecture. Remote clients use the runtime administered on their
-server, and unsupported targets receive no invented fallback. The app displays the reviewed version
+server, and unsupported targets receive no invented fallback. The app displays the qualified version
 and download details before installation.
 
-If an install, repair, or update fails, the previous working managed copy
-remains available.
+If a managed install, repair, or update fails, Scient cleans the incomplete work and keeps the
+previous working managed copy available.
+
+When a newer qualified stable version is available, **Update** downloads and verifies the
+replacement without deactivating the current version. Scient switches versions only after the new
+copy passes its smoke test. Provider-tool updates and provider sign-in are serialized so one cannot
+change shared runtime state underneath the other.
+
+Scient checks for qualified managed releases in the background and again when you open an Install or
+Update plan. It never installs one automatically. **Repair** restores the exact active release rather
+than silently changing versions.
 
 ## Why Use More Than One Account?
 

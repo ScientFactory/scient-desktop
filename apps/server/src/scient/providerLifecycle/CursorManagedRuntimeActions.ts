@@ -16,6 +16,7 @@ import {
 } from "./ManagedProviderRuntimeActions.ts";
 
 const DEFAULT_CURSOR_BINARY = "cursor-agent";
+export const CURSOR_MANAGED_RUNTIME_CONTRACT_REVISION = 1;
 
 function detectTargetSafely(input: { readonly platform: NodeJS.Platform; readonly arch: string }) {
   try {
@@ -48,7 +49,8 @@ export const makeCursorManagedRuntimeResolution = Effect.fn("CursorManagedRuntim
       providerName: "Cursor",
       providerSlug: "cursor",
       runtime: new ManagedCursorRuntime(input.baseDir),
-      artifact,
+      bundledArtifact: artifact,
+      contractRevision: CURSOR_MANAGED_RUNTIME_CONTRACT_REVISION,
       targetLabel,
       environment: input.environment,
       spawner: input.spawner,

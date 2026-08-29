@@ -12,7 +12,7 @@ For the behavior shared by all assisted providers, see [Providers in Scient](./p
 Grok is an Early Access provider and is off by default. Enable it from the provider lifecycle
 surface or in **Settings > Providers**.
 
-In the local desktop app, choose **Install** to add Scient's reviewed Grok Build runtime. This copy
+In the local desktop app, choose **Install** to add Scient's qualified Grok Build runtime. This copy
 lives in Scient's private app data. Repair, update, and remove actions affect only that private copy;
 a custom path or system installation is left untouched.
 
@@ -46,8 +46,8 @@ cached account session; it does not remove an environment-provided API key.
   device-code option.
 - **Sign-in is stuck:** cancel the current flow and start it again. Scient sends cancellation to the
   exact Grok auth request and stops its local process.
-- **Runtime needs repair:** repair downloads and verifies a fresh reviewed copy before atomically
-  replacing the private runtime. The previous working copy remains available until verification
-  succeeds.
+- **Runtime needs repair:** repair downloads and verifies the exact active release before atomically
+  replacing the private runtime. A newer qualified stable release appears separately as Update. The
+  previous working copy remains available until verification succeeds.
 - **System or custom install:** run `grok login` or `grok logout` on the machine running the Scient
   server when you need manual recovery.
