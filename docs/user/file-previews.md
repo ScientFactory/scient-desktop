@@ -6,6 +6,26 @@ first. Project files keep their editable Files-panel behavior. Files elsewhere
 in the connected environment open in a read-only side panel or, for HTML, the
 integrated browser.
 
+## Browse workspace files
+
+The Files tree loads folders as you open them. Useful project material remains
+visible whether it is Git-tracked, ignored, or named with a leading dot.
+Low-level machinery such as version-control data, dependency stores, temporary
+caches, and private Scient runtime state stays out of the ordinary view.
+
+To inspect that machinery deliberately, open the Files menu and enable **Show
+workspace internals**. The choice lasts for the current workspace session.
+Managed and tool-owned files—including raw Scient source records—open read-only
+in Files; use their owning Scient surface when you need to change them.
+
+Filename search currently uses the existing project index. Its results are
+labeled as indexed results because ignored files may not appear there even
+when they are available through folder browsing.
+
+What appears in Files does not change what an agent can access and does not add
+file contents to a conversation. Those boundaries are enforced separately when
+an action reads or shares a file.
+
 In a project file's header, select the project name or any parent folder to
 browse that folder, drill into its subfolders, and open a nearby file. The final
 file name identifies the current file and is not a navigation control.

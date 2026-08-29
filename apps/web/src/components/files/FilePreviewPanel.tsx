@@ -193,6 +193,40 @@ const ScientPythonComputeSurface = lazy(() =>
 );
 type FilePostRender = NonNullable<FileOptions<unknown>["onPostRender"]>;
 
+function StaticTextFileSurface(props: {
+  readonly contents: string;
+  readonly cwd: string;
+  readonly onPostRender: FilePostRender;
+  readonly relativePath: string;
+  readonly resolvedTheme: "light" | "dark";
+  readonly wordWrap: boolean;
+}) {
+  return (
+    <Virtualizer
+      className="file-preview-virtualizer min-h-0 flex-1 overflow-auto"
+      config={{ overscrollSize: 600, intersectionObserverMargin: 1200 }}
+    >
+      <File
+        file={{
+          name: props.relativePath,
+          contents: props.contents,
+          ...scientificSourceLanguageOverride(props.relativePath),
+          cacheKey: projectFileCacheKey(props.cwd, props.relativePath, props.contents),
+        }}
+        options={{
+          disableFileHeader: true,
+          overflow: props.wordWrap ? "wrap" : "scroll",
+          theme: resolveDiffThemeName(props.resolvedTheme),
+          themeType: props.resolvedTheme,
+          unsafeCSS: FILE_LINK_REVEAL_UNSAFE_CSS,
+          onPostRender: props.onPostRender,
+        }}
+        className="min-h-full"
+      />
+    </Virtualizer>
+  );
+}
+
 function WorkspaceImagePreview(props: {
   readonly environmentId: EnvironmentId;
   readonly threadRef: ScopedThreadRef;
@@ -1188,7 +1222,7 @@ export default function FilePreviewPanel({
               enableShortcut={false}
             />
           ) : null}
-          {isMarkdown ? (
+          {isMarkdown && !file.data?.readOnly ? (
             <Tooltip>
               <TooltipTrigger
                 render={
@@ -1271,6 +1305,11 @@ export default function FilePreviewPanel({
         onRequestOverwrite={requestOverwrite}
         onResolve={resolveReloadNotice}
       />
+      {relativePath && !isPdf && file.data?.readOnly ? (
+        <div className="shrink-0 border-b border-border/50 bg-muted/35 px-3 py-1.5 text-[11px] text-muted-foreground">
+          This file is read-only in Files.
+        </div>
+      ) : null}
       {relativePath && !isPdf && file.data?.truncated ? (
         <div className="shrink-0 border-b border-warning/20 bg-warning-surface px-3 py-1.5 text-[11px] text-warning-foreground">
           Read-only preview limited to the first 1 MB of a {file.data.byteLength.toLocaleString()}{" "}
@@ -1317,6 +1356,16 @@ export default function FilePreviewPanel({
             <div className="flex min-h-0 flex-1 items-center justify-center text-muted-foreground">
               <LoaderCircle className="size-5 animate-spin" />
             </div>
+          ) : relativePath && file.data?.readOnly ? (
+            <StaticTextFileSurface
+              key={`${relativePath}:${resolvedTheme}:${file.data.revision}`}
+              cwd={cwd}
+              relativePath={relativePath}
+              contents={file.data.contents}
+              resolvedTheme={resolvedTheme}
+              wordWrap={wordWrap}
+              onPostRender={onFilePostRender}
+            />
           ) : relativePath && file.data && isLatexPreviewFile(relativePath) ? (
             <Suspense
               fallback={
@@ -1397,32 +1446,15 @@ export default function FilePreviewPanel({
                 saveResolution={saveResolution}
               />
             ) : file.data.truncated ? (
-              <Virtualizer
-                key={`${relativePath}:${resolvedTheme}:${file.data.byteLength}`}
-                className="file-preview-virtualizer min-h-0 flex-1 overflow-auto"
-                config={{
-                  overscrollSize: 600,
-                  intersectionObserverMargin: 1200,
-                }}
-              >
-                <File
-                  file={{
-                    name: relativePath,
-                    contents: file.data.contents,
-                    ...scientificSourceLanguageOverride(relativePath),
-                    cacheKey: projectFileCacheKey(cwd, relativePath, file.data.contents),
-                  }}
-                  options={{
-                    disableFileHeader: true,
-                    overflow: wordWrap ? "wrap" : "scroll",
-                    theme: resolveDiffThemeName(resolvedTheme),
-                    themeType: resolvedTheme,
-                    unsafeCSS: FILE_LINK_REVEAL_UNSAFE_CSS,
-                    onPostRender: onFilePostRender,
-                  }}
-                  className="min-h-full"
-                />
-              </Virtualizer>
+              <StaticTextFileSurface
+                key={`${relativePath}:${resolvedTheme}:${file.data.revision}`}
+                cwd={cwd}
+                relativePath={relativePath}
+                contents={file.data.contents}
+                resolvedTheme={resolvedTheme}
+                wordWrap={wordWrap}
+                onPostRender={onFilePostRender}
+              />
             ) : (
               <EditableFileSurface
                 key={`${relativePath}:${resolvedTheme}`}
