@@ -5443,6 +5443,10 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       yield* fs.writeFileString(path.join(workspaceDir, ".git", "config"), "[core]\n");
       yield* fs.makeDirectory(path.join(workspaceDir, ".scient"), { recursive: true });
       yield* fs.writeFileString(path.join(workspaceDir, ".scient", "project.json"), "{}\n");
+      yield* fs.symlink(
+        path.join(workspaceDir, ".scient", "project.json"),
+        path.join(workspaceDir, "managed-alias.json"),
+      );
 
       yield* buildAppUnderTest();
 
@@ -5469,6 +5473,10 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
               cwd: workspaceDir,
               relativePath: ".scient/project.json",
             }),
+            managedAlias: client[WS_METHODS.projectsReadFile]({
+              cwd: workspaceDir,
+              relativePath: "managed-alias.json",
+            }),
           }),
         ),
       );
@@ -5489,6 +5497,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
         readOnly: false,
       });
       assert.equal(response.managedFile.readOnly, true);
+      assert.equal(response.managedAlias.readOnly, true);
     }).pipe(Effect.provide(NodeHttpServer.layerTest), TestClock.withLive),
   );
 
@@ -5746,8 +5755,10 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
         prefix: "scient-ws-project-managed-write-",
       });
       const projectFile = path.join(workspaceDir, ".scient", "project.json");
+      const aliasFile = path.join(workspaceDir, "managed-alias.json");
       yield* fs.makeDirectory(path.dirname(projectFile), { recursive: true });
       yield* fs.writeFileString(projectFile, '{"id":"original"}\n');
+      yield* fs.symlink(projectFile, aliasFile);
 
       yield* buildAppUnderTest();
 
@@ -5770,6 +5781,30 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
         result.failure.message,
         "Workspace file '.scient/project.json' is managed and read-only in Files.",
       );
+      assert.equal(yield* fs.readFileString(projectFile), '{"id":"original"}\n');
+
+      const aliasRead = yield* Effect.scoped(
+        withWsRpcClient(wsUrl, (client) =>
+          client[WS_METHODS.projectsReadFile]({
+            cwd: workspaceDir,
+            relativePath: "managed-alias.json",
+          }),
+        ),
+      );
+      const aliasWrite = yield* Effect.scoped(
+        withWsRpcClient(wsUrl, (client) =>
+          client[WS_METHODS.projectsWriteFile]({
+            cwd: workspaceDir,
+            relativePath: "managed-alias.json",
+            contents: '{"id":"changed-through-alias"}\n',
+            expectedRevision: aliasRead.revision,
+          }),
+        ).pipe(Effect.result),
+      );
+      if (aliasWrite._tag !== "Failure" || aliasWrite.failure._tag !== "ProjectWriteFileError") {
+        assert.fail("Expected a ProjectWriteFileError for a symlink path");
+      }
+      assert.equal(aliasWrite.failure.failure, "managed_path_read_only");
       assert.equal(yield* fs.readFileString(projectFile), '{"id":"original"}\n');
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );

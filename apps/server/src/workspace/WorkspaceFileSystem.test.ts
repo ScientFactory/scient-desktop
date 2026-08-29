@@ -122,6 +122,31 @@ it.layer(TestLayer, { excludeTestServices: true })("WorkspaceFileSystemLive", (i
       }),
     );
 
+    it.effect("marks in-workspace symlink reads as read-only", () =>
+      Effect.gen(function* () {
+        const workspaceFileSystem = yield* WorkspaceFileSystem.WorkspaceFileSystem;
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const cwd = yield* makeTempDir;
+        yield* writeTextFile(cwd, "managed/source.txt", "managed\n");
+        yield* fileSystem.symlink(
+          path.join(cwd, "managed/source.txt"),
+          path.join(cwd, "source-link.txt"),
+        );
+
+        const result = yield* workspaceFileSystem.readFile({
+          cwd,
+          relativePath: "source-link.txt",
+        });
+
+        expect(result).toMatchObject({
+          relativePath: "source-link.txt",
+          contents: "managed\n",
+          readOnly: true,
+        });
+      }),
+    );
+
     it.effect("rejects directories without manufacturing an I/O cause", () =>
       Effect.gen(function* () {
         const workspaceFileSystem = yield* WorkspaceFileSystem.WorkspaceFileSystem;

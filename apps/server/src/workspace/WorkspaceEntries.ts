@@ -78,6 +78,12 @@ export const WorkspaceEntriesBrowseError = Schema.Union([
 ]);
 export type WorkspaceEntriesBrowseError = typeof WorkspaceEntriesBrowseError.Type;
 
+type WorkspaceRootNormalizationError =
+  | WorkspacePaths.WorkspaceRootNotExistsError
+  | WorkspacePaths.WorkspaceRootCreateFailedError
+  | WorkspacePaths.WorkspaceRootStatFailedError
+  | WorkspacePaths.WorkspaceRootNotDirectoryError;
+
 export const WorkspaceEntriesError = Schema.Union([
   WorkspacePaths.WorkspaceRootNotExistsError,
   WorkspacePaths.WorkspaceRootCreateFailedError,
@@ -190,7 +196,7 @@ export const make = Effect.gen(function* () {
 
   const normalizeWorkspaceRoot = Effect.fn("WorkspaceEntries.normalizeWorkspaceRoot")(function* (
     cwd: string,
-  ): Effect.fn.Return<string, WorkspaceEntriesError> {
+  ): Effect.fn.Return<string, WorkspaceRootNormalizationError> {
     return yield* workspacePaths.normalizeWorkspaceRoot(cwd);
   });
 

@@ -240,7 +240,11 @@ export const make = Effect.gen(function* () {
   const readFile: WorkspaceFileSystem["Service"]["readFile"] = Effect.fn(
     "WorkspaceFileSystem.readFile",
   )(function* (input) {
-    const { target, realTargetPath } = yield* resolveRealFileTarget(input);
+    const { target, realWorkspaceRoot, realTargetPath } = yield* resolveRealFileTarget(input);
+    const canonicalRelativePath = path
+      .relative(realWorkspaceRoot, realTargetPath)
+      .replaceAll("\\", "/");
+    const traversesSymlink = canonicalRelativePath !== target.relativePath;
 
     return yield* Effect.acquireUseRelease(
       Effect.tryPromise({
@@ -306,6 +310,7 @@ export const make = Effect.gen(function* () {
             byteLength: stat.size,
             truncated: stat.size > PROJECT_READ_FILE_MAX_BYTES,
             revision: revisionForBytes(fileBytes),
+            ...(traversesSymlink ? { readOnly: true } : {}),
           };
         }),
       (handle) =>

@@ -384,10 +384,12 @@ function projectDirectoryFailureContext(
     case "WorkspaceDirectoryError":
       return {
         failure: error.failure,
-        resolvedPath: error.resolvedPath,
-        resolvedWorkspaceRoot: error.resolvedWorkspaceRoot,
-        operation: error.operation,
-        operationPath: error.operationPath,
+        ...(error.resolvedPath === undefined ? {} : { resolvedPath: error.resolvedPath }),
+        ...(error.resolvedWorkspaceRoot === undefined
+          ? {}
+          : { resolvedWorkspaceRoot: error.resolvedWorkspaceRoot }),
+        ...(error.operation === undefined ? {} : { operation: error.operation }),
+        ...(error.operationPath === undefined ? {} : { operationPath: error.operationPath }),
       };
     default:
       return unexpectedCompatibilityError(error);
@@ -2329,7 +2331,9 @@ const makeWsRpcLayer = (
             workspaceFileSystem.readFile(input).pipe(
               Effect.map((result) => ({
                 ...result,
-                readOnly: workspaceEntryDisposition(result.relativePath).mutation === "owner",
+                readOnly:
+                  result.readOnly === true ||
+                  workspaceEntryDisposition(result.relativePath).mutation === "owner",
               })),
               Effect.mapError(
                 (cause) =>
@@ -2395,6 +2399,26 @@ const makeWsRpcLayer = (
                   relativePath: target.relativePath,
                   failure: "managed_path_read_only",
                 });
+              }
+              if (input.expectedRevision !== undefined) {
+                const opened = yield* workspaceFileSystem.readFile(input).pipe(
+                  Effect.mapError(
+                    (cause) =>
+                      new ProjectWriteFileError({
+                        cwd: input.cwd,
+                        relativePath: input.relativePath,
+                        ...projectFileFailureContext(cause),
+                        cause,
+                      }),
+                  ),
+                );
+                if (opened.readOnly === true) {
+                  return yield* new ProjectWriteFileError({
+                    cwd: input.cwd,
+                    relativePath: target.relativePath,
+                    failure: "managed_path_read_only",
+                  });
+                }
               }
               return yield* workspaceFileSystem.writeFile(input).pipe(
                 Effect.mapError(
