@@ -26,8 +26,9 @@ import {
   scientCm6FindState,
   type ScientCm6FindConfig,
 } from "./find";
+import { MarkdownImageResourceScope } from "./imageResources";
 import { markdownEditingKeymap } from "./keymap";
-import { livePreview } from "./livePreview";
+import { livePreview, refreshLivePreview } from "./livePreview";
 import { revealFreezeExtension } from "./reveal";
 import { livePreviewTheme } from "./theme";
 
@@ -58,6 +59,7 @@ export class ScientCm6EditorView {
   private findFocusRequest = 0;
   private readonly findListeners = new Set<() => void>();
   private findSnapshotCache: ScientFindBarState | null = null;
+  private readonly imageResources: MarkdownImageResourceScope | null;
 
   constructor(options: ScientCm6EditorViewOptions) {
     this.options = options;
@@ -65,6 +67,11 @@ export class ScientCm6EditorView {
       source: options.source,
       revision: options.revision,
     });
+    this.imageResources = options.resolveImageSource
+      ? new MarkdownImageResourceScope(options.resolveImageSource, () => {
+          this.cmView?.dispatch({ effects: refreshLivePreview.of(null) });
+        })
+      : null;
   }
 
   mount(element: HTMLElement): EditorView {
@@ -79,6 +86,15 @@ export class ScientCm6EditorView {
 
   get sessionState(): MarkdownDocumentSession {
     return this.session;
+  }
+
+  /** Release the mounted CodeMirror view and all controller subscriptions. */
+  destroy(): void {
+    this.imageResources?.dispose();
+    this.cmView?.destroy();
+    this.cmView = null;
+    this.findListeners.clear();
+    this.findSnapshotCache = null;
   }
 
   focus(): void {
@@ -214,9 +230,7 @@ export class ScientCm6EditorView {
         scientCm6FindField,
         livePreview({
           placeholder: this.options.placeholder,
-          ...(this.options.resolveImageSource
-            ? { resolveImageSource: this.options.resolveImageSource }
-            : {}),
+          ...(this.imageResources ? { imageResources: this.imageResources } : {}),
         }),
         EditorView.updateListener.of((update) => {
           if (

@@ -7,8 +7,9 @@ import {
   type DecorationSet,
   type ViewUpdate,
 } from "@codemirror/view";
-import type { EditorState, Extension, Range } from "@codemirror/state";
+import { StateEffect, type EditorState, type Extension, type Range } from "@codemirror/state";
 import { activeLineNumbers, pointerFreezeField, selectionTouches } from "./reveal";
+import type { MarkdownImageResourceScope } from "./imageResources";
 import {
   BulletWidget,
   HorizontalRuleWidget,
@@ -16,8 +17,6 @@ import {
   MathWidget,
   PlaceholderWidget,
   TaskCheckboxWidget,
-  lookupImageUrl,
-  resolveAndCacheImageUrl,
 } from "./widgets";
 
 const HEADING_CLASSES: ReadonlyMap<string, string> = new Map([
@@ -32,9 +31,12 @@ const HEADING_CLASSES: ReadonlyMap<string, string> = new Map([
 const FENCE_NODE = "FencedCode";
 
 interface LivePreviewConfig {
-  readonly resolveImageSource?: (authoredSource: string) => Promise<string | null>;
+  readonly imageResources?: MarkdownImageResourceScope;
   readonly placeholder: string;
 }
+
+/** Rebuild decorations after an async document resource changes. */
+export const refreshLivePreview = StateEffect.define<null>();
 
 /**
  * Obsidian-style live preview for Markdown source. The buffer always holds the
@@ -57,7 +59,10 @@ export function livePreview(config: LivePreviewConfig): Extension {
       }
 
       update(update: ViewUpdate) {
-        if (update.docChanged || update.viewportChanged || update.selectionSet) {
+        const resourceChanged = update.transactions.some((transaction) =>
+          transaction.effects.some((effect) => effect.is(refreshLivePreview)),
+        );
+        if (update.docChanged || update.viewportChanged || update.selectionSet || resourceChanged) {
           this.decorations = buildDecorations(update.view, config);
         }
       }
@@ -194,14 +199,12 @@ function buildDecorations(view: EditorView, config: LivePreviewConfig): Decorati
             const match = /^!\[([^\]]*)\]\(([^)\s]+)[^)]*\)$/u.exec(imageSyntax);
             if (!match?.[1] || !match[2]) return;
             const authoredSource = match[2];
-            if (lookupImageUrl(authoredSource) === null && config.resolveImageSource) {
-              resolveAndCacheImageUrl(authoredSource, config.resolveImageSource);
-            }
+            config.imageResources?.request(authoredSource);
             decorations.push(
               Decoration.replace({
                 widget: new MarkdownImageWidget(
                   authoredSource,
-                  lookupImageUrl(authoredSource),
+                  config.imageResources?.lookup(authoredSource) ?? null,
                   match[1],
                 ),
               }).range(from, to),

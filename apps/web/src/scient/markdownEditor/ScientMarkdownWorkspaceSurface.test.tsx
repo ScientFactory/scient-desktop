@@ -1,10 +1,13 @@
 // @vitest-environment happy-dom
 
-import { act } from "react";
+import { act, StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 
+import { MarkdownSaveQueue } from "@scientfactory/scient-markdown";
+
 import { ScientMarkdownWorkspaceSurface } from "./ScientMarkdownWorkspaceSurface";
+import { ScientMarkdownEditorView } from "./prosemirror/view";
 
 describe("ScientMarkdownWorkspaceSurface", () => {
   const roots: ReturnType<typeof createRoot>[] = [];
@@ -14,6 +17,7 @@ describe("ScientMarkdownWorkspaceSurface", () => {
       const root = roots.pop();
       if (root) await act(() => root.unmount());
     }
+    await new Promise((resolve) => setTimeout(resolve, 0));
     document.body.replaceChildren();
     vi.unstubAllGlobals();
   });
@@ -127,5 +131,88 @@ describe("ScientMarkdownWorkspaceSurface", () => {
     expect(findBar).not.toBeNull();
     expect(findBar?.parentElement).toBe(richPane);
     expect(host.querySelector(".scient-markdown-find-popover")).toBeNull();
+  });
+
+  it("disposes the save lane and its externally owned editor on unmount", async () => {
+    vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+    const dispose = vi.spyOn(MarkdownSaveQueue.prototype, "dispose");
+    const destroy = vi.spyOn(ScientMarkdownEditorView.prototype, "destroy");
+    const host = document.createElement("div");
+    document.body.append(host);
+    const root = createRoot(host);
+
+    await act(() =>
+      root.render(
+        <ScientMarkdownWorkspaceSurface
+          source="# Results\n"
+          revision="r0"
+          ariaLabel="Results"
+          persist={vi.fn(async () => ({ revision: "r1" }))}
+          onPendingChange={vi.fn()}
+          onSaveConfirmed={vi.fn()}
+          onSaveFailure={vi.fn()}
+          onExternalConflict={vi.fn()}
+        />,
+      ),
+    );
+    expect(host.querySelector(".ProseMirror")).not.toBeNull();
+
+    await act(() => root.unmount());
+
+    await vi.waitFor(() => {
+      expect(dispose).toHaveBeenCalledOnce();
+      expect(destroy).toHaveBeenCalledOnce();
+    });
+    expect(dispose).toHaveBeenCalledWith({ flush: true });
+    expect(host.querySelector(".ProseMirror")).toBeNull();
+  });
+
+  it("keeps its queue and editor alive through React Strict Mode effect rehearsal", async () => {
+    vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+    const dispose = vi.spyOn(MarkdownSaveQueue.prototype, "dispose");
+    const destroy = vi.spyOn(ScientMarkdownEditorView.prototype, "destroy");
+    const mount = vi.spyOn(ScientMarkdownEditorView.prototype, "mount");
+    const onPendingChange = vi.fn();
+    const host = document.createElement("div");
+    document.body.append(host);
+    const root = createRoot(host);
+
+    await act(() =>
+      root.render(
+        <StrictMode>
+          <ScientMarkdownWorkspaceSurface
+            source="# Results\n"
+            revision="r0"
+            ariaLabel="Results"
+            persist={vi.fn(async () => ({ revision: "r1" }))}
+            onPendingChange={onPendingChange}
+            onSaveConfirmed={vi.fn()}
+            onSaveFailure={vi.fn()}
+            onExternalConflict={vi.fn()}
+          />
+        </StrictMode>,
+      ),
+    );
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(host.querySelector(".ProseMirror")).not.toBeNull();
+    const mountedControllers = mount.mock.instances as unknown as ScientMarkdownEditorView[];
+    const activeController = mountedControllers.find(
+      (controller) => controller.view?.dom.isConnected,
+    );
+    expect(activeController).not.toBeUndefined();
+    expect(() => {
+      const view = activeController!.view!;
+      view.dispatch(view.state.tr.insertText("Edited", 1));
+    }).not.toThrow();
+    expect(onPendingChange).toHaveBeenCalledWith(true);
+    const disposedBeforeFinalUnmount = dispose.mock.calls.length;
+    const destroyedBeforeFinalUnmount = destroy.mock.calls.length;
+
+    await act(() => root.unmount());
+    await vi.waitFor(() => {
+      expect(dispose).toHaveBeenCalledTimes(disposedBeforeFinalUnmount + 1);
+      expect(destroy).toHaveBeenCalledTimes(destroyedBeforeFinalUnmount + 1);
+    });
   });
 });

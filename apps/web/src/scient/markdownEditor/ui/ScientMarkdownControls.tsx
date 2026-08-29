@@ -62,7 +62,6 @@ import { createPortal } from "react-dom";
 import { Button } from "~/components/ui/button";
 import { Input } from "~/components/ui/input";
 import {
-  MenuGroupLabel,
   MenuItem,
   MenuRadioGroup,
   MenuRadioItem,
@@ -870,9 +869,9 @@ export function ScientMarkdownControls({
               <DockDivider />
             </>
           ),
+          overflowLabel: "History",
           overflow: (
             <>
-              <MenuGroupLabel>History</MenuGroupLabel>
               <MenuItem disabled={!snapshot.canUndo} onClick={() => controller.execute("undo")}>
                 <Undo2 />
                 <span>Undo</span>
@@ -931,12 +930,8 @@ export function ScientMarkdownControls({
           priority: 50,
           estimatedWidth: 44,
           bar: <StyleMenu controller={controller} snapshot={snapshot} />,
-          overflow: (
-            <>
-              <MenuGroupLabel>Style</MenuGroupLabel>
-              <StyleMenuItems controller={controller} snapshot={snapshot} />
-            </>
-          ),
+          overflowLabel: "Style",
+          overflow: <StyleMenuItems controller={controller} snapshot={snapshot} />,
         },
         {
           id: "lists",
@@ -948,12 +943,8 @@ export function ScientMarkdownControls({
               <DockDivider />
             </>
           ),
-          overflow: (
-            <>
-              <MenuGroupLabel>Lists</MenuGroupLabel>
-              <ListsMenuItems controller={controller} snapshot={snapshot} />
-            </>
-          ),
+          overflowLabel: "Lists",
+          overflow: <ListsMenuItems controller={controller} snapshot={snapshot} />,
         },
         {
           id: "insert",
@@ -965,24 +956,16 @@ export function ScientMarkdownControls({
               <DockDivider />
             </>
           ),
-          overflow: (
-            <>
-              <MenuGroupLabel>Insert</MenuGroupLabel>
-              <InsertBlockMenuItems controller={controller} />
-            </>
-          ),
+          overflowLabel: "Insert",
+          overflow: <InsertBlockMenuItems controller={controller} />,
         },
         {
           id: "direction",
           priority: 10,
           estimatedWidth: 44,
           bar: <DirectionMenu controller={controller} snapshot={snapshot} />,
-          overflow: (
-            <>
-              <MenuGroupLabel>Text direction</MenuGroupLabel>
-              <DirectionMenuItems controller={controller} snapshot={snapshot} />
-            </>
-          ),
+          overflowLabel: "Text direction",
+          overflow: <DirectionMenuItems controller={controller} snapshot={snapshot} />,
         },
       ];
 

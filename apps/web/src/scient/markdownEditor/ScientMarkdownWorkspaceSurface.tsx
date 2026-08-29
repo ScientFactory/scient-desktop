@@ -5,6 +5,7 @@ import { ScientMarkdownDocument } from "./ScientMarkdownDocument";
 import type { ScientMarkdownImageSourceResolver } from "./nodes";
 import { ScientMarkdownEditorView, type ScientMarkdownUploadedImage } from "./prosemirror/view";
 import { ScientMarkdownControls } from "./ui/ScientMarkdownControls";
+import { useFinalUnmount } from "./useFinalUnmount";
 
 const SAVE_DEBOUNCE_MS = 500;
 
@@ -133,12 +134,14 @@ export function ScientMarkdownWorkspaceSurface(props: ScientMarkdownWorkspaceSur
     onSaveResolutionAppliedRef.current?.();
   }, [controller, props.saveResolution, saveQueue]);
 
-  useEffect(
-    () => () => {
-      void saveQueue.flush();
-    },
-    [saveQueue],
-  );
+  useFinalUnmount(() => {
+    // Normal surface departures are held by the shared pending-save guard.
+    // Dispose remains a best-effort final flush for direct tree/app teardown,
+    // then release the externally owned ProseMirror view deterministically.
+    void saveQueue.dispose({ flush: true });
+    controller.destroy();
+    controllerRef.current = null;
+  });
 
   return (
     <div className="scient-markdown-workspace" data-markdown-workspace-mode="write">

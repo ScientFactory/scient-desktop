@@ -150,6 +150,7 @@ export interface DockGroup {
   readonly estimatedWidth: number;
   readonly pinned?: boolean | undefined;
   readonly bar: ReactNode;
+  readonly overflowLabel?: string;
   readonly overflow?: ReactNode;
 }
 
@@ -294,7 +295,14 @@ export function DockOverflowRow(props: {
                 {hidden.map((group, index) => (
                   <Fragment key={group.id}>
                     {index > 0 ? <MenuSeparator /> : null}
-                    {group.overflow}
+                    {group.overflowLabel ? (
+                      <MenuGroup>
+                        <MenuGroupLabel>{group.overflowLabel}</MenuGroupLabel>
+                        {group.overflow}
+                      </MenuGroup>
+                    ) : (
+                      group.overflow
+                    )}
                   </Fragment>
                 ))}
                 {hidden.length > 0 && props.overflowItems !== undefined ? <MenuSeparator /> : null}

@@ -33,7 +33,7 @@ import {
 } from "lucide-react";
 import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 
-import { MenuGroupLabel, MenuItem, MenuSeparator, MenuShortcut } from "~/components/ui/menu";
+import { MenuItem, MenuSeparator, MenuShortcut } from "~/components/ui/menu";
 import { cn } from "~/lib/utils";
 
 import {
@@ -56,6 +56,7 @@ import {
   type DockGroup,
 } from "../ui/dockChrome";
 import { ScientFindBar } from "../ui/ScientFindBar";
+import { useFinalUnmount } from "../useFinalUnmount";
 import "../scient-markdown-editor.css";
 
 const SAVE_DEBOUNCE_MS = 600;
@@ -166,10 +167,15 @@ export function ScientCm6SpikeSurface(props: ScientCm6SpikeSurfaceProps) {
     const element = containerRef.current;
     if (!element) return;
     controller.mount(element);
-    return () => {
-      void saveQueue.flush();
-    };
-  }, [controller, saveQueue]);
+  }, [controller]);
+
+  useFinalUnmount(() => {
+    // The shared pending-save guard owns coordinated departures. This is the
+    // final direct-unmount fallback and resource teardown.
+    void saveQueue.dispose({ flush: true });
+    controller.destroy();
+    controllerRef.current = null;
+  });
 
   useEffect(() => {
     const result = controller.receiveExternalSource({
@@ -323,9 +329,9 @@ export function ScientCm6SpikeSurface(props: ScientCm6SpikeSurfaceProps) {
           <DockDivider />
         </>
       ),
+      overflowLabel: "History",
       overflow: (
         <>
-          <MenuGroupLabel>History</MenuGroupLabel>
           <MenuItem onClick={() => run(undo)}>
             <Undo2 />
             <span>Undo</span>
@@ -384,12 +390,8 @@ export function ScientCm6SpikeSurface(props: ScientCm6SpikeSurfaceProps) {
           {styleItems}
         </DockMenu>
       ),
-      overflow: (
-        <>
-          <MenuGroupLabel>Style</MenuGroupLabel>
-          {styleItems}
-        </>
-      ),
+      overflowLabel: "Style",
+      overflow: styleItems,
     },
     {
       id: "lists",
@@ -403,12 +405,8 @@ export function ScientCm6SpikeSurface(props: ScientCm6SpikeSurfaceProps) {
           <DockDivider />
         </>
       ),
-      overflow: (
-        <>
-          <MenuGroupLabel>Lists</MenuGroupLabel>
-          {listItems}
-        </>
-      ),
+      overflowLabel: "Lists",
+      overflow: listItems,
     },
     {
       id: "insert",
@@ -427,12 +425,8 @@ export function ScientCm6SpikeSurface(props: ScientCm6SpikeSurfaceProps) {
           <DockDivider />
         </>
       ),
-      overflow: (
-        <>
-          <MenuGroupLabel>Insert</MenuGroupLabel>
-          {insertItems}
-        </>
-      ),
+      overflowLabel: "Insert",
+      overflow: insertItems,
     },
     {
       id: "direction",
@@ -447,12 +441,8 @@ export function ScientCm6SpikeSurface(props: ScientCm6SpikeSurfaceProps) {
           {directionItems}
         </DockMenu>
       ),
-      overflow: (
-        <>
-          <MenuGroupLabel>Text direction</MenuGroupLabel>
-          {directionItems}
-        </>
-      ),
+      overflowLabel: "Text direction",
+      overflow: directionItems,
     },
   ];
 

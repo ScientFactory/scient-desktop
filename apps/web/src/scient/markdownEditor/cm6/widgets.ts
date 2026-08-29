@@ -1,26 +1,6 @@
 import { WidgetType } from "@codemirror/view";
 import katex from "katex";
 
-const imageUrlCache = new Map<string, string>();
-
-/** Look up a resolved image URL, if a resolution already completed for it. */
-export function lookupImageUrl(authoredSource: string): string | null {
-  return imageUrlCache.get(authoredSource) ?? null;
-}
-
-/** Kick off (or reuse) an async image resolution and cache the result. */
-export function resolveAndCacheImageUrl(
-  authoredSource: string,
-  resolver: (authoredSource: string) => Promise<string | null>,
-): void {
-  if (imageUrlCache.has(authoredSource)) return;
-  void resolver(authoredSource).then((url) => {
-    if (url !== null && !imageUrlCache.has(authoredSource)) {
-      imageUrlCache.set(authoredSource, url);
-    }
-  });
-}
-
 /** Renders KaTeX output for a math range. The TeX source stays in the buffer. */
 export class MathWidget extends WidgetType {
   constructor(

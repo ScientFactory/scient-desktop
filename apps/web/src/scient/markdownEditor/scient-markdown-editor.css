@@ -358,6 +358,30 @@
   padding-inline-start: 1.6em;
 }
 
+.scient-markdown-document ul {
+  list-style-type: disc;
+}
+
+.scient-markdown-document ol {
+  list-style-type: decimal;
+}
+
+.scient-markdown-document ul ul {
+  list-style-type: circle;
+}
+
+.scient-markdown-document ul ul ul {
+  list-style-type: square;
+}
+
+.scient-markdown-document ol ol {
+  list-style-type: lower-alpha;
+}
+
+.scient-markdown-document ol ol ol {
+  list-style-type: lower-roman;
+}
+
 .scient-markdown-document li > ul,
 .scient-markdown-document li > ol {
   margin-block: 0.2em;
