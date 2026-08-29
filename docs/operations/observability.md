@@ -1,8 +1,8 @@
 # Observability
 
-> For maintainers. Using T3 Code? See [docs/user](../user/).
+> For maintainers. Using Scient? See [docs/user](../user/).
 
-T3 Code has one server-side observability model:
+Scient has one server-side observability model:
 
 - pretty logs go to stdout for humans
 - completed spans go to a local NDJSON trace file
@@ -48,6 +48,12 @@ records instead carry OTLP resource, scope, and optional status fields.
 
 The `TraceRecord`, `EffectTraceRecord`, and `OtlpTraceRecord` schemas live in
 `packages/shared/src/observability.ts`.
+
+DPoP proof failures include the safe `environment.dpop.failure_code` span
+attribute. A `time_window` failure means that a signed proof was too old or too
+far in the future for the environment server's allowed window. It can point to
+a date or time problem on either device, but it can also result from a delayed
+request.
 
 ### Metrics
 
@@ -155,7 +161,7 @@ macOS app bundle example:
 T3CODE_OTLP_TRACES_URL=http://localhost:4318/v1/traces \
 T3CODE_OTLP_METRICS_URL=http://localhost:4318/v1/metrics \
 T3CODE_OTLP_SERVICE_NAME=t3-desktop \
-"/Applications/T3 Code.app/Contents/MacOS/T3 Code"
+"/Applications/Scient.app/Contents/MacOS/Scient"
 ```
 
 Direct binary example:

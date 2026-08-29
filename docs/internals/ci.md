@@ -1,6 +1,6 @@
 # CI quality gates
 
-> For maintainers. Using T3 Code? See [docs/user](../user/).
+> For maintainers. Using Scient? See [docs/user](../user/).
 
 Branch protection requires both the product and documentation status contexts. Both workflows
 therefore run on every pull request and every push to `main`; workflow-level path filters could
@@ -22,8 +22,9 @@ gates on pull requests and pushes to `main`:
 
 - **Check**: `vp check` (format and lint; this repo sets `typeCheck: false` in its lint options),
   then `vpr typecheck` for the workspace type check. The same job
-  builds the desktop pipeline (`vp run build:desktop`) and verifies the preload bundle exists and
-  still exports its expected symbols.
+  builds the desktop pipeline (`vp run build:desktop`) and verifies the preload bundle exists,
+  imports only modules that Electron's sandbox can load, and still exports callable expected APIs.
+  The verifier first parses imports, then executes the trusted artifact with controlled bridge stubs.
 - **Test**: `vp run --parallel --concurrency-limit 4 --filter '!t3' --filter '!@t3tools/monorepo'
 test` across every workspace package except the server app and the monorepo root, dropping the
   dependency-ordering wait that only bought idle runner time. The 20-minute job ceiling is wider

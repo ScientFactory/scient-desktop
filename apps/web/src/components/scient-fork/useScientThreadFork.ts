@@ -13,7 +13,7 @@ import {
   useComposerDraftStore,
 } from "~/composerDraftStore";
 import { newThreadId } from "~/lib/utils";
-import type { ChatAttachment } from "~/types";
+import { isImageAttachment, type ChatAttachment } from "~/types";
 import { threadEnvironment } from "../../state/threads";
 import { useAtomCommand } from "../../state/use-atom-command";
 import {
@@ -66,6 +66,11 @@ export async function prepareForkDraftAttachments(
 ): Promise<ReadonlyArray<PreparedDraftAttachment>> {
   return Promise.all(
     attachments.map(async (attachment) => {
+      if (!isImageAttachment(attachment)) {
+        throw new Error(
+          `fork draft attachment '${attachment.name}' is not a supported image attachment`,
+        );
+      }
       if (!attachment.previewUrl) {
         throw new Error(`fork draft attachment '${attachment.name}' has no authorized URL`);
       }

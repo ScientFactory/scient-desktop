@@ -2355,25 +2355,30 @@ describe("session activity performance", () => {
       }),
     );
     const initialEntries = deriveWorkLogEntries(activities);
-    const appendedActivity = makeActivity({
-      id: "benchmark-tool-appended",
-      createdAt: new Date(1_700_000_000_000 + activities.length).toISOString(),
-      kind: "tool.completed",
-      summary: "Ran command",
-      sequence: activities.length,
-      payload: {
-        itemType: "command_execution",
-        title: "Ran command",
-        data: { toolCallId: "benchmark-tool-appended", item: { command: ["git", "diff"] } },
-      },
-    });
+    expect(initialEntries).toHaveLength(20_000);
+    const updatedActivities = [
+      ...activities,
+      makeActivity({
+        id: "benchmark-tool-appended",
+        createdAt: new Date(1_700_000_000_000 + activities.length).toISOString(),
+        kind: "tool.completed",
+        summary: "Ran command",
+        sequence: activities.length,
+        payload: {
+          itemType: "command_execution",
+          title: "Ran command",
+          data: { toolCallId: "benchmark-tool-appended", item: { command: ["git", "diff"] } },
+        },
+      }),
+    ];
 
-    const updatedEntries = deriveWorkLogEntries([...activities, appendedActivity]);
-
+    const updatedEntries = deriveWorkLogEntries(updatedActivities);
     expect(updatedEntries).toHaveLength(20_001);
-    expect(updatedEntries[0]).toBe(initialEntries[0]);
-    expect(updatedEntries[10_000]).toBe(initialEntries[10_000]);
-    expect(updatedEntries[19_999]).toBe(initialEntries[19_999]);
-    expect(updatedEntries[20_000]?.id).toBe("benchmark-tool-appended");
+    expect(initialEntries.every((entry, index) => updatedEntries[index] === entry)).toBe(true);
+    expect(updatedEntries.at(-1)).toMatchObject({
+      id: "benchmark-tool-appended",
+      command: "git diff",
+      toolLifecycleStatus: "completed",
+    });
   });
 });

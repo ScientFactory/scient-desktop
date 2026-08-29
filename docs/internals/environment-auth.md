@@ -1,6 +1,6 @@
 # Environment Authentication Profile
 
-> For maintainers. Using T3 Code? See [docs/user](../user/).
+> For maintainers. Using Scient? See [docs/user](../user/).
 
 The environment server and the relay use separate credentials, issuers, and trust
 boundaries. They intentionally use a similar OAuth-shaped model so that permission
@@ -84,7 +84,9 @@ that sends a `DPoP` header has its proof verified by `verifyRequestDpopProof`;
 the resulting JWK thumbprint is stored on the session, which is then issued with
 method `dpop-access-token` and a one-hour TTL instead of the bearer default. An
 invalid proof gets a DPoP challenge header and a credential error rather than a
-bearer token.
+bearer token. Newer servers include a safe `dpopFailureReason` category in that
+error. When an older server omits the category, clients mention clock skew as
+one possible cause rather than presenting it as confirmed.
 
 `dpop-access-token` is advertised alongside `browser-session-cookie` and
 `bearer-access-token` in the descriptor's `sessionMethods`

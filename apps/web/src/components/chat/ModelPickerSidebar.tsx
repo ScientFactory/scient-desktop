@@ -94,6 +94,8 @@ export const ModelPickerSidebar = memo(function ModelPickerSidebar(props: {
   showFavorites?: boolean;
   /** Instance ids shown in the rail but unavailable for the current picker context. */
   disabledInstanceIds?: ReadonlySet<ProviderInstanceId>;
+  /** Non-ready instances whose selected unavailable model remains reachable. */
+  selectableUnavailableInstanceIds?: ReadonlySet<ProviderInstanceId>;
   getDisabledInstanceTooltip?: (entry: ProviderInstanceEntry) => string;
   /**
    * Not-ready instances that have an in-picker setup surface. They remain
@@ -181,7 +183,11 @@ export const ModelPickerSidebar = memo(function ModelPickerSidebar(props: {
             const isUnavailable = !isProviderInstancePickerReady(entry);
             const isContextDisabled = props.disabledInstanceIds?.has(entry.instanceId) ?? false;
             const hasSetupSurface = props.setupAvailableInstanceIds?.has(entry.instanceId) ?? false;
-            const isDisabled = (isUnavailable && !hasSetupSurface) || isContextDisabled;
+            const unavailableSelectionIsReachable =
+              props.selectableUnavailableInstanceIds?.has(entry.instanceId) ?? false;
+            const isDisabled =
+              (isUnavailable && !hasSetupSurface && !unavailableSelectionIsReachable) ||
+              isContextDisabled;
             const isSelected = props.selectedInstanceId === entry.instanceId;
             const isHovered = hoveredInstanceId === entry.instanceId;
             const showNewBadge = props.newBadgeInstanceIds?.has(entry.instanceId) ?? false;

@@ -40,6 +40,7 @@ export type ModelEsque = {
   isLegacy?: boolean | undefined;
   /** Provider-reported compact cost label (e.g. `"0.5×"`); absent when unknown. */
   providerCostLabel?: string | undefined;
+  isUnavailable?: boolean | undefined;
 };
 
 function escapeRegExp(value: string): string {
