@@ -131,6 +131,12 @@ export const WorkspaceFileSystemError = Schema.Union([
 ]);
 export type WorkspaceFileSystemError = typeof WorkspaceFileSystemError.Type;
 
+export interface WorkspaceWriteTargetInspection {
+  readonly relativePath: string;
+  readonly canonicalRelativePath: string;
+  readonly traversesSymlink: boolean;
+}
+
 /** Service tag for workspace file operations. */
 export class WorkspaceFileSystem extends Context.Service<
   WorkspaceFileSystem,
@@ -152,6 +158,13 @@ export class WorkspaceFileSystem extends Context.Service<
       input: ProjectWriteFileInput,
     ) => Effect.Effect<
       ProjectWriteFileResult,
+      WorkspaceFileSystemError | WorkspacePaths.WorkspacePathOutsideRootError
+    >;
+    /** Resolve the canonical destination used by a workspace write. */
+    readonly inspectWriteTarget: (
+      input: Pick<ProjectWriteFileInput, "cwd" | "relativePath">,
+    ) => Effect.Effect<
+      WorkspaceWriteTargetInspection,
       WorkspaceFileSystemError | WorkspacePaths.WorkspacePathOutsideRootError
     >;
     /** Observe native filesystem hints for one currently open file. */
@@ -414,17 +427,114 @@ export const make = Effect.gen(function* () {
     },
   );
 
-  const writeFile: WorkspaceFileSystem["Service"]["writeFile"] = Effect.fn(
-    "WorkspaceFileSystem.writeFile",
-  )(function* (input) {
+  // Resolve the nearest existing ancestor before creating missing segments.
+  // This keeps revision-less creates from escaping through a directory symlink.
+  const resolveRealWriteTarget = Effect.fn("WorkspaceFileSystem.resolveRealWriteTarget")(function* (
+    input: Pick<ProjectWriteFileInput, "cwd" | "relativePath">,
+  ) {
     const target = yield* workspacePaths.resolveRelativePathWithinRoot({
       workspaceRoot: input.cwd,
       relativePath: input.relativePath,
     });
-    const writeSemaphore = yield* writeSemaphoreFor(target.absolutePath);
+    const realWorkspaceRoot = yield* Effect.tryPromise({
+      try: () => NodeFSP.realpath(input.cwd),
+      catch: (cause) =>
+        new WorkspaceFileSystemOperationError({
+          workspaceRoot: input.cwd,
+          relativePath: input.relativePath,
+          resolvedPath: target.absolutePath,
+          operationPath: input.cwd,
+          operation: "realpath-workspace-root",
+          cause,
+        }),
+    });
+    const realTargetPath = yield* Effect.tryPromise({
+      try: async () => {
+        let unresolvedSymlink = false;
+        const recordSymlink = async (candidate: string) => {
+          try {
+            if ((await NodeFSP.lstat(candidate)).isSymbolicLink()) unresolvedSymlink = true;
+          } catch (error) {
+            if (!isNodeError(error, "ENOENT")) throw error;
+          }
+        };
+        try {
+          return { path: await NodeFSP.realpath(target.absolutePath), unresolvedSymlink };
+        } catch (error) {
+          if (!isNodeError(error, "ENOENT")) throw error;
+          await recordSymlink(target.absolutePath);
+        }
+
+        const missingSegments = [path.basename(target.absolutePath)];
+        let ancestor = path.dirname(target.absolutePath);
+        for (;;) {
+          try {
+            const realAncestor = await NodeFSP.realpath(ancestor);
+            return {
+              path: path.join(realAncestor, ...missingSegments),
+              unresolvedSymlink,
+            };
+          } catch (error) {
+            if (!isNodeError(error, "ENOENT")) throw error;
+            await recordSymlink(ancestor);
+            const parent = path.dirname(ancestor);
+            if (parent === ancestor) throw error;
+            missingSegments.unshift(path.basename(ancestor));
+            ancestor = parent;
+          }
+        }
+      },
+      catch: (cause) =>
+        new WorkspaceFileSystemOperationError({
+          workspaceRoot: input.cwd,
+          relativePath: input.relativePath,
+          resolvedPath: target.absolutePath,
+          operationPath: target.absolutePath,
+          operation: "realpath-target",
+          cause,
+        }),
+    });
+    const relativeRealPath = path.relative(realWorkspaceRoot, realTargetPath.path);
+    if (
+      relativeRealPath.startsWith(`..${path.sep}`) ||
+      relativeRealPath === ".." ||
+      path.isAbsolute(relativeRealPath)
+    ) {
+      return yield* new WorkspaceFilePathEscapeError({
+        workspaceRoot: input.cwd,
+        relativePath: input.relativePath,
+        resolvedWorkspaceRoot: realWorkspaceRoot,
+        resolvedPath: realTargetPath.path,
+      });
+    }
+    const canonicalRelativePath = relativeRealPath.replaceAll("\\", "/");
+    return {
+      target,
+      realTargetPath: realTargetPath.path,
+      canonicalRelativePath,
+      traversesSymlink:
+        realTargetPath.unresolvedSymlink || canonicalRelativePath !== target.relativePath,
+    };
+  });
+
+  const inspectWriteTarget: WorkspaceFileSystem["Service"]["inspectWriteTarget"] = Effect.fn(
+    "WorkspaceFileSystem.inspectWriteTarget",
+  )(function* (input) {
+    const resolved = yield* resolveRealWriteTarget(input);
+    return {
+      relativePath: resolved.target.relativePath,
+      canonicalRelativePath: resolved.canonicalRelativePath,
+      traversesSymlink: resolved.traversesSymlink,
+    };
+  });
+
+  const writeFile: WorkspaceFileSystem["Service"]["writeFile"] = Effect.fn(
+    "WorkspaceFileSystem.writeFile",
+  )(function* (input) {
+    const { target, realTargetPath: writeTargetPath } = yield* resolveRealWriteTarget(input);
+    const writeSemaphore = yield* writeSemaphoreFor(writeTargetPath);
     return yield* writeSemaphore.withPermits(1)(
       Effect.gen(function* () {
-        let writeTargetPath = target.absolutePath;
         if (input.expectedRevision !== undefined) {
           const current = yield* readFile({ cwd: input.cwd, relativePath: input.relativePath });
           if (current.truncated || current.revision !== input.expectedRevision) {
@@ -433,46 +543,6 @@ export const make = Effect.gen(function* () {
               relativePath: input.relativePath,
               resolvedPath: target.absolutePath,
               currentRevision: current.revision,
-            });
-          }
-          // Atomic rename replaces a symlink instead of following it. Viewer saves have
-          // already verified that the existing target stays within the workspace, so write
-          // through its real path to preserve the user's in-project link.
-          writeTargetPath = yield* Effect.tryPromise({
-            try: () => NodeFSP.realpath(target.absolutePath),
-            catch: (cause) =>
-              new WorkspaceFileSystemOperationError({
-                workspaceRoot: input.cwd,
-                relativePath: input.relativePath,
-                resolvedPath: target.absolutePath,
-                operationPath: target.absolutePath,
-                operation: "realpath-target",
-                cause,
-              }),
-          });
-          const realWorkspaceRoot = yield* Effect.tryPromise({
-            try: () => NodeFSP.realpath(input.cwd),
-            catch: (cause) =>
-              new WorkspaceFileSystemOperationError({
-                workspaceRoot: input.cwd,
-                relativePath: input.relativePath,
-                resolvedPath: writeTargetPath,
-                operationPath: input.cwd,
-                operation: "realpath-workspace-root",
-                cause,
-              }),
-          });
-          const relativeRealPath = path.relative(realWorkspaceRoot, writeTargetPath);
-          if (
-            relativeRealPath.startsWith(`..${path.sep}`) ||
-            relativeRealPath === ".." ||
-            path.isAbsolute(relativeRealPath)
-          ) {
-            return yield* new WorkspaceFilePathEscapeError({
-              workspaceRoot: input.cwd,
-              relativePath: input.relativePath,
-              resolvedWorkspaceRoot: realWorkspaceRoot,
-              resolvedPath: writeTargetPath,
             });
           }
         }
@@ -615,7 +685,7 @@ export const make = Effect.gen(function* () {
       ),
     );
 
-  return WorkspaceFileSystem.of({ readFile, watchFile, writeFile });
+  return WorkspaceFileSystem.of({ inspectWriteTarget, readFile, watchFile, writeFile });
 });
 
 export const layer = Layer.effect(WorkspaceFileSystem, make);

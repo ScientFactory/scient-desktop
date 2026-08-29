@@ -5756,9 +5756,13 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       });
       const projectFile = path.join(workspaceDir, ".scient", "project.json");
       const aliasFile = path.join(workspaceDir, "managed-alias.json");
+      const sourcesDirectory = path.join(workspaceDir, ".scient", "sources");
+      const sourcesAlias = path.join(workspaceDir, "managed-directory-alias");
       yield* fs.makeDirectory(path.dirname(projectFile), { recursive: true });
+      yield* fs.makeDirectory(sourcesDirectory, { recursive: true });
       yield* fs.writeFileString(projectFile, '{"id":"original"}\n');
       yield* fs.symlink(projectFile, aliasFile);
+      yield* fs.symlink(sourcesDirectory, sourcesAlias);
 
       yield* buildAppUnderTest();
 
@@ -5806,6 +5810,25 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       }
       assert.equal(aliasWrite.failure.failure, "read_only_in_files");
       assert.equal(yield* fs.readFileString(projectFile), '{"id":"original"}\n');
+
+      const aliasCreate = yield* Effect.scoped(
+        withWsRpcClient(wsUrl, (client) =>
+          client[WS_METHODS.projectsWriteFile]({
+            cwd: workspaceDir,
+            relativePath: "managed-directory-alias/created.json",
+            contents: "{}\n",
+          }),
+        ).pipe(Effect.result),
+      );
+      if (aliasCreate._tag !== "Failure" || aliasCreate.failure._tag !== "ProjectWriteFileError") {
+        assert.fail("Expected a ProjectWriteFileError for a symlinked directory");
+      }
+      assert.equal(aliasCreate.failure.failure, "read_only_in_files");
+      assert.isTrue(
+        Option.isNone(
+          yield* fs.stat(path.join(sourcesDirectory, "created.json")).pipe(Effect.option),
+        ),
+      );
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 

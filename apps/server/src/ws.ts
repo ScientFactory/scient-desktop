@@ -650,7 +650,6 @@ const makeWsRpcLayer = (
       const startup = yield* ServerRuntimeStartup.ServerRuntimeStartup;
       const workspaceEntries = yield* WorkspaceEntries.WorkspaceEntries;
       const workspaceFileSystem = yield* WorkspaceFileSystem.WorkspaceFileSystem;
-      const workspacePaths = yield* WorkspacePaths.WorkspacePaths;
       const analysis = yield* AnalysisService.AnalysisService;
       const compute = yield* ComputeSessionService.ComputeSessionService;
       const computeGateway = makeComputeRpcGateway({
@@ -2377,48 +2376,29 @@ const makeWsRpcLayer = (
           observeRpcEffect(
             WS_METHODS.projectsWriteFile,
             Effect.gen(function* () {
-              const target = yield* workspacePaths
-                .resolveRelativePathWithinRoot({
-                  workspaceRoot: input.cwd,
-                  relativePath: input.relativePath,
-                })
-                .pipe(
-                  Effect.mapError(
-                    (cause) =>
-                      new ProjectWriteFileError({
-                        cwd: input.cwd,
-                        relativePath: input.relativePath,
-                        ...projectFileFailureContext(cause),
-                        cause,
-                      }),
-                  ),
-                );
-              if (workspaceEntryDisposition(target.relativePath).mutation === "owner") {
+              const target = yield* workspaceFileSystem.inspectWriteTarget(input).pipe(
+                Effect.mapError(
+                  (cause) =>
+                    new ProjectWriteFileError({
+                      cwd: input.cwd,
+                      relativePath: input.relativePath,
+                      ...projectFileFailureContext(cause),
+                      cause,
+                    }),
+                ),
+              );
+              const requestedDisposition = workspaceEntryDisposition(target.relativePath);
+              const canonicalDisposition = workspaceEntryDisposition(target.canonicalRelativePath);
+              if (
+                target.traversesSymlink ||
+                requestedDisposition.mutation === "owner" ||
+                canonicalDisposition.mutation === "owner"
+              ) {
                 return yield* new ProjectWriteFileError({
                   cwd: input.cwd,
                   relativePath: target.relativePath,
                   failure: "read_only_in_files",
                 });
-              }
-              if (input.expectedRevision !== undefined) {
-                const opened = yield* workspaceFileSystem.readFile(input).pipe(
-                  Effect.mapError(
-                    (cause) =>
-                      new ProjectWriteFileError({
-                        cwd: input.cwd,
-                        relativePath: input.relativePath,
-                        ...projectFileFailureContext(cause),
-                        cause,
-                      }),
-                  ),
-                );
-                if (opened.readOnly === true) {
-                  return yield* new ProjectWriteFileError({
-                    cwd: input.cwd,
-                    relativePath: target.relativePath,
-                    failure: "read_only_in_files",
-                  });
-                }
               }
               return yield* workspaceFileSystem.writeFile(input).pipe(
                 Effect.mapError(
