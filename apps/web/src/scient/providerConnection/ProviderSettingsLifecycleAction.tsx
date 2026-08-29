@@ -11,10 +11,11 @@ import {
   Settings2Icon,
   WrenchIcon,
 } from "lucide-react";
-import { useState } from "react";
+import { type ReactNode, useState } from "react";
 
 import { Button } from "../../components/ui/button";
 import { stackedThreadToast, toastManager } from "../../components/ui/toast";
+import { Tooltip, TooltipPopup, TooltipTrigger } from "../../components/ui/tooltip";
 import { startCodexBrowserSignIn } from "./codexLifecycleActions";
 import { startReviewedProviderRuntimeAction } from "./providerLifecycleActions";
 import { PRIMARY_GHOST_ACTION_CLASS } from "./providerConnectionActionStyles";
@@ -107,11 +108,13 @@ export function ProviderSettingsLifecycleAction(props: {
   }
   if (primaryAction.kind === "managed-update") {
     return (
-      <ManagedRuntimeUpdateButton
-        displayName={props.displayName}
-        environmentId={props.environmentId}
-        provider={props.provider}
-      />
+      <ProviderSettingsUpdateActions displayName={props.displayName} onManage={props.onManage}>
+        <ManagedRuntimeUpdateButton
+          displayName={props.displayName}
+          environmentId={props.environmentId}
+          provider={props.provider}
+        />
+      </ProviderSettingsUpdateActions>
     );
   }
   if (primaryAction.kind === "none") return null;
@@ -130,7 +133,7 @@ export function ProviderSettingsLifecycleAction(props: {
     }
   };
 
-  return (
+  const actionButton = (
     <Button
       className={
         presentation.actionKind === "manage"
@@ -158,6 +161,44 @@ export function ProviderSettingsLifecycleAction(props: {
       )}
       {externallyUpdating ? "Updating" : presentation.actionLabel}
     </Button>
+  );
+
+  return primaryAction.kind === "external-update" ? (
+    <ProviderSettingsUpdateActions displayName={props.displayName} onManage={props.onManage}>
+      {actionButton}
+    </ProviderSettingsUpdateActions>
+  ) : (
+    actionButton
+  );
+}
+
+function ProviderSettingsUpdateActions(props: {
+  readonly children: ReactNode;
+  readonly displayName: string;
+  readonly onManage: () => void;
+}) {
+  const manageLabel = `Manage ${props.displayName}`;
+  return (
+    <div className="flex shrink-0 items-center gap-0.5">
+      {props.children}
+      <Tooltip>
+        <TooltipTrigger
+          render={
+            <Button
+              aria-label={manageLabel}
+              className="size-7 text-muted-foreground hover:text-foreground"
+              onClick={props.onManage}
+              size="icon-sm"
+              type="button"
+              variant="ghost-muted"
+            >
+              <Settings2Icon />
+            </Button>
+          }
+        />
+        <TooltipPopup side="top">{manageLabel}</TooltipPopup>
+      </Tooltip>
+    </div>
   );
 }
 

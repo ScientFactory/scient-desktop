@@ -8,7 +8,7 @@ models, tools, account requirements, and usage limits.
 Scient connects the provider to your current project and presents its work in
 one interface. The provider still owns its account, subscription, and models.
 You can use an existing provider installation or, when available, let Scient
-install a reviewed private copy on the machine where the project runs.
+install a qualified private copy on the machine where the project runs.
 
 ## The fastest setup path
 
@@ -16,7 +16,7 @@ When no provider is ready, choose one from **Choose your AI** in the composer. S
 available step without requiring you to leave the conversation:
 
 - **Enable** makes a disabled provider available;
-- **Install** adds a reviewed Scient-managed runtime when no usable provider tool exists;
+- **Install** adds a qualified Scient-managed runtime when no usable provider tool exists;
 - **Sign in** starts the provider's official account flow; and
 - **Manage** opens the complete runtime and account controls in **Settings > Providers**.
 
@@ -34,7 +34,7 @@ Scient distinguishes three local runtime sources:
 
 - **Custom**: an explicit binary path configured for this provider instance.
 - **System**: a healthy provider tool already available on the Scient server.
-- **Scient-managed**: a reviewed copy stored privately in Scient's app data.
+- **Scient-managed**: a qualified copy stored privately in Scient's app data.
 
 A healthy custom or system installation remains first-class. Scient does not silently replace or
 modify it. When **Use Scient-managed** is available, choosing it installs and verifies a private copy
@@ -48,11 +48,17 @@ that environment; it does not install or remove provider software on the device 
 
 | Action   | What it does                                                             | What it preserves                                                               |
 | -------- | ------------------------------------------------------------------------ | ------------------------------------------------------------------------------- |
-| Install  | Downloads, verifies, tests, and activates a reviewed private runtime.    | System/custom installations and provider credentials.                           |
-| Update   | Safely replaces a Scient-managed runtime with a newer reviewed version.  | The previous working copy until activation succeeds, plus provider credentials. |
-| Repair   | Downloads and verifies a fresh copy of the reviewed runtime.             | The previous working copy until repair succeeds, plus provider credentials.     |
+| Install  | Downloads, verifies, tests, and activates a qualified private runtime.   | System/custom installations and provider credentials.                           |
+| Update   | Safely replaces a Scient-managed runtime with a newer qualified version. | The previous working copy until activation succeeds, plus provider credentials. |
+| Repair   | Restores and verifies the exact active managed release.                  | The previous working copy until repair succeeds, plus provider credentials.     |
 | Remove   | Deletes only Scient's private runtime.                                   | System/custom installations and provider credentials.                           |
 | Sign out | Asks the provider to revoke the account session and verifies the result. | Every provider runtime.                                                         |
+
+When provider update checks are enabled, Scient refreshes its qualified stable-release catalog in
+the background and when you open an Install or Update plan. It never installs a provider update by
+itself. You still confirm the exact release, and the local computer independently verifies and tests
+it before activation. Repair keeps a separate meaning: it restores the exact active managed release
+instead of silently updating it.
 
 Removing a runtime does not sign out. Signing out does not uninstall anything. Disabling a provider
 also preserves both its runtime and its credentials.
@@ -82,7 +88,7 @@ usable model. Scient keeps those states separate and reports the provider's actu
 A disabled provider can be enabled directly from its lifecycle surface when the current client has
 permission to change settings. Enabling never starts installation or sign-in automatically.
 
-Managed installation is offered only by a writable local desktop host on a reviewed target. Remote,
+Managed installation is offered only by a writable local desktop host on an approved target. Remote,
 read-only, manual-only, and unsupported environments show truthful guidance without a broken action.
 You can still use an installation administered directly on the server when that provider supports it.
 

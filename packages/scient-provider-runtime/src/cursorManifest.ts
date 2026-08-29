@@ -7,6 +7,7 @@ import type { ManagedRuntimeTarget } from "./target.ts";
 const VERSION = "2026.08.11-e8db854";
 const RELEASE_BASE = `https://downloads.cursor.com/lab/${VERSION}`;
 const ALLOWED_HOSTS = ["downloads.cursor.com"] as const;
+const ALLOWED_URL_PATH_PREFIXES = ["/lab/"] as const;
 const EXTRACTION_LIMITS = {
   // The reviewed Cursor bundles currently contain fewer than 570 entries and
   // expand to roughly 220-240 MB. Keep bounded headroom for every target.
@@ -106,6 +107,7 @@ export function resolveReviewedCursorArtifact(
     artifactName: artifact.artifactName,
     url: `${RELEASE_BASE}/${artifact.releasePath}`,
     allowedHosts: ALLOWED_HOSTS,
+    allowedUrlPathPrefixes: ALLOWED_URL_PATH_PREFIXES,
     checksum: { algorithm: "sha256", digest: artifact.sha256 },
     size: artifact.size,
     archiveFormat: artifact.archiveFormat,
@@ -119,6 +121,6 @@ export function resolveReviewedCursorArtifact(
     catalogRevision: `cursor-agent:${VERSION}:${key}:${artifact.sha256}`,
     supportTier: "fully_assisted",
     supportMessage:
-      "Scient can install this reviewed official Cursor Agent runtime privately for this computer.",
+      "Scient can install this qualified official Cursor Agent runtime privately for this computer.",
   };
 }

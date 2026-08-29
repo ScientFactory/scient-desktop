@@ -9,6 +9,7 @@ import type { ManagedRuntimeTarget } from "./target.ts";
 const VERSION = "2.1.245";
 const RELEASE_BASE = "https://downloads.claude.ai/claude-code-releases";
 const ALLOWED_HOSTS = ["downloads.claude.ai"] as const;
+const ALLOWED_URL_PATH_PREFIXES = ["/claude-code-releases/"] as const;
 
 interface ArtifactRecord {
   readonly platform: string;
@@ -87,6 +88,7 @@ export function resolveReviewedClaudeArtifact(
     artifactName,
     url: `${RELEASE_BASE}/${VERSION}/${artifact.platform}/${artifact.executablePath}`,
     allowedHosts: ALLOWED_HOSTS,
+    allowedUrlPathPrefixes: ALLOWED_URL_PATH_PREFIXES,
     checksum: { algorithm: "sha256", digest: artifact.sha256 },
     size: artifact.size,
     archiveFormat: "raw",
@@ -94,6 +96,6 @@ export function resolveReviewedClaudeArtifact(
     smokeArgs: ["--version"],
     catalogRevision: `anthropic-claude-code:${VERSION}:${artifact.platform}:${artifact.sha256}`,
     supportTier: "fully_assisted",
-    supportMessage: "Scient can install this reviewed official Claude Code runtime privately.",
+    supportMessage: "Scient can install this qualified official Claude Code runtime privately.",
   };
 }

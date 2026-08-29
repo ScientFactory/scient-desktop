@@ -4,6 +4,7 @@ import type { ManagedRuntimeTarget } from "./target.ts";
 const VERSION = "0.203.0";
 const RELEASE_BASE = `https://downloads.factory.ai/factory-cli/releases/${VERSION}`;
 const ALLOWED_HOSTS = ["downloads.factory.ai"] as const;
+const ALLOWED_URL_PATH_PREFIXES = ["/factory-cli/releases/"] as const;
 
 interface ArtifactRecord {
   readonly releaseDirectory: string;
@@ -82,6 +83,7 @@ export function resolveReviewedDroidArtifact(
     artifactName: artifact.artifactName,
     url: `${RELEASE_BASE}/${artifact.releaseDirectory}/${artifact.artifactName}`,
     allowedHosts: ALLOWED_HOSTS,
+    allowedUrlPathPrefixes: ALLOWED_URL_PATH_PREFIXES,
     checksum: { algorithm: "sha256", digest: artifact.sha256 },
     size: artifact.size,
     archiveFormat: "raw",
@@ -90,6 +92,6 @@ export function resolveReviewedDroidArtifact(
     smokeEnvironment: { FACTORY_DROID_AUTO_UPDATE_ENABLED: "false" },
     catalogRevision: `factory-droid:${VERSION}:${key}:${artifact.sha256}`,
     supportTier: "fully_assisted",
-    supportMessage: "Scient can install this reviewed official Factory Droid runtime privately.",
+    supportMessage: "Scient can install this qualified official Factory Droid runtime privately.",
   };
 }

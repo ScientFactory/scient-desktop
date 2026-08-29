@@ -13,7 +13,7 @@ When Claude is not ready, choose it from **Choose your AI** in the composer or o
 Providers**. The same guided surface appears in both places:
 
 1. Scient preserves and verifies a healthy custom or system Claude installation when one exists;
-2. otherwise, the local desktop app can install a reviewed official Claude Code executable in
+2. otherwise, the local desktop app can install a qualified official Claude Code executable in
    Scient's private app data;
 3. the available sign-in button starts Claude Code's official account flow and opens its secure
    page in your browser; and
@@ -51,9 +51,13 @@ For a Scient-managed copy, expand Claude in **Settings > Providers** to repair o
 private runtime. If the executable stops working, **Manage** opens directly on that recovery path
 instead of asking you to sign in again.
 
-Managed installation is offered only when the local desktop server reports a reviewed artifact for
+Managed installation is offered only when the local desktop server reports a qualified artifact for
 its exact operating system and architecture. Remote clients continue using the runtime administered
-on their server. The app displays the reviewed version and download details before installation.
+on their server. The app displays the qualified version and download details before installation.
+
+When a newer qualified stable release is available, **Update** preserves the current working copy
+until the replacement passes local verification and activation. **Repair** restores the exact active
+release; it does not silently update Claude.
 
 ## Advanced And Multiple-Account Setups
 

@@ -14,9 +14,9 @@ For the behavior shared by all assisted providers, see [Providers in Scient](./p
 
 Select **Antigravity** in the first-provider setup or model picker.
 
-1. If `agy` is missing, choose **Install Antigravity**. On supported desktop
-   targets, Scient downloads and verifies a reviewed official Google release
-   in its private app data. This does not modify your shell profile or system
+1. If `agy` is missing, choose **Install Antigravity**. On supported desktop targets, Scient
+   downloads and verifies a qualified stable official Google release in its private app data,
+   smoke-tests it, and only then activates it. This does not modify your shell profile or system
    package manager.
 2. Choose **Sign in with Google**. Scient launches the official interactive `agy` client in a
    supervised terminal. Antigravity opens Google's sign-in page, or reuses a valid session already
@@ -72,7 +72,7 @@ of simulating success.
 
 ## Troubleshooting
 
-- **Antigravity is missing:** use the reviewed install action, Google's official installer, or set
+- **Antigravity is missing:** use the qualified install action, Google's official installer, or set
   the absolute binary path in provider settings.
 - **Sign-in did not open:** use **Reopen sign-in page** when Scient captured Antigravity's secure
   authorization URL, or **Open sign-in help** for Google's authentication instructions.
@@ -80,5 +80,5 @@ of simulating success.
   sign-in. `agy models` must succeed and return at least one model before the provider is ready.
 - **API-key configuration error:** return the standalone Antigravity CLI to its default account-based
   authentication mode; Scient intentionally does not run this provider with API keys.
-- **Broken managed copy:** choose **Repair Antigravity**. A failed repair leaves the previously
-  activated healthy version in place.
+- **Broken managed copy:** choose **Repair Antigravity**. Repair restores the exact active release,
+  and a failed repair leaves the previously activated healthy version in place.

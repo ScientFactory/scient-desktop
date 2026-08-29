@@ -2,6 +2,7 @@ import { describe, expect, it } from "vite-plus/test";
 import { ProviderDriverKind, ProviderInstanceId, type ServerProvider } from "@t3tools/contracts";
 
 import {
+  activeProviderRuntimeUpdateOperation,
   canManageProviderLifecycle,
   hasActiveProviderRuntimeOperation,
   isActiveProviderConnectionOperation,
@@ -16,6 +17,7 @@ import {
   providerConnectionPresentation,
   providerLifecycleFailureMessage,
   providerRuntimeComputerLabel,
+  shouldShowProviderLifecycleSetupInComposer,
 } from "./providerConnectionPresentation";
 
 const provider: ServerProvider = {
@@ -186,6 +188,56 @@ describe("providerConnectionPresentation", () => {
       },
     };
     expect(isProviderAccountPresentedAsConnected(missingRuntime)).toBe(false);
+  });
+
+  it("keeps a selected provider in the composer while its managed runtime updates", () => {
+    const updating: ServerProvider = {
+      ...provider,
+      status: "ready",
+      auth: { status: "authenticated", required: true },
+      connection: {
+        ...provider.connection!,
+        runtime: {
+          source: "scient_managed",
+          supportTier: "fully_assisted",
+          target: "darwin-arm64",
+          actions: ["repair", "remove"],
+          managedVersion: "0.149.1",
+          previousManagedVersion: null,
+          operation: {
+            operationId: "runtime-update-1",
+            action: "update",
+            status: "downloading",
+            startedAt: "2026-08-29T00:00:00.000Z",
+            finishedAt: null,
+            message: "Updating Codex.",
+          },
+          message: "Managed Codex is updating.",
+        },
+      },
+    };
+
+    expect(providerConnectionPresentation(updating).kind).toBe("setting-up");
+    expect(activeProviderRuntimeUpdateOperation(updating.connection?.runtime)?.action).toBe(
+      "update",
+    );
+    expect(shouldShowProviderLifecycleSetupInComposer(updating)).toBe(false);
+
+    const installing = {
+      ...updating,
+      connection: {
+        ...updating.connection!,
+        runtime: {
+          ...updating.connection!.runtime!,
+          operation: {
+            ...updating.connection!.runtime!.operation!,
+            action: "install" as const,
+          },
+        },
+      },
+    };
+    expect(activeProviderRuntimeUpdateOperation(installing.connection.runtime)).toBeNull();
+    expect(shouldShowProviderLifecycleSetupInComposer(installing)).toBe(true);
   });
 
   it("classifies lifecycle operations from their terminal states", () => {

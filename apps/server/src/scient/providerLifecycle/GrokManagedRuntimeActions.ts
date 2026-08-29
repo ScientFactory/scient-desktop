@@ -16,6 +16,7 @@ import {
 } from "./ManagedProviderRuntimeActions.ts";
 
 const DEFAULT_GROK_BINARY = "grok";
+export const GROK_MANAGED_RUNTIME_CONTRACT_REVISION = 1;
 
 function detectTargetSafely(input: { readonly platform: NodeJS.Platform; readonly arch: string }) {
   try {
@@ -47,7 +48,8 @@ export const makeGrokManagedRuntimeResolution = Effect.fn("GrokManagedRuntime.ma
       providerName: "Grok",
       providerSlug: "grok",
       runtime: new ManagedGrokRuntime(input.baseDir),
-      artifact,
+      bundledArtifact: artifact,
+      contractRevision: GROK_MANAGED_RUNTIME_CONTRACT_REVISION,
       targetLabel,
       environment: input.environment,
       spawner: input.spawner,
