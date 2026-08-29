@@ -11,7 +11,7 @@ import {
 import { BUILT_IN_SKILL_SOURCES } from "./BuiltInSkillSources.ts";
 
 describe("Scient built-in skill releases", () => {
-  it("embeds the three reviewed releases with explicit product-owned defaults", () => {
+  it("embeds the six reviewed releases with explicit product-owned defaults", () => {
     expect(BUILT_IN_SKILL_RELEASES).toMatchObject([
       {
         id: "scient.workspace-readiness-review",
@@ -48,12 +48,48 @@ describe("Scient built-in skill releases", () => {
         origin: "scient",
         resources: [],
       },
+      {
+        id: "scient.pdf-authoring",
+        version: "0.1.0",
+        category: "Document creation",
+        categoryDescription: "Create polished documents and reliable final outputs.",
+        displayOrder: 40,
+        supportedScopes: ["user"],
+        defaultInvocationPolicy: "automatic",
+        origin: "scient",
+        resources: [],
+      },
+      {
+        id: "scient.html-pdf-authoring",
+        version: "0.1.0",
+        category: "Document creation",
+        categoryDescription: "Create polished documents and reliable final outputs.",
+        displayOrder: 50,
+        supportedScopes: ["user"],
+        defaultInvocationPolicy: "automatic",
+        origin: "scient",
+        resources: [],
+      },
+      {
+        id: "scient.latex-authoring",
+        version: "0.1.0",
+        category: "Document creation",
+        categoryDescription: "Create polished documents and reliable final outputs.",
+        displayOrder: 60,
+        supportedScopes: ["user"],
+        defaultInvocationPolicy: "automatic",
+        origin: "scient",
+        resources: [],
+      },
     ]);
     expect(BUILT_IN_SKILL_RELEASES.every((release) => release.instructions.length > 0)).toBe(true);
     expect(Object.fromEntries(BUILT_IN_SKILL_DEFAULT_ACTIVE_BY_ID)).toEqual({
       "scient.workspace-readiness-review": true,
       "scient.improve-workspace-readiness": true,
       "scient.skill-authoring": true,
+      "scient.pdf-authoring": true,
+      "scient.html-pdf-authoring": true,
+      "scient.latex-authoring": true,
     });
   });
 
@@ -66,5 +102,47 @@ describe("Scient built-in skill releases", () => {
         );
       }
     }
+  });
+
+  it("keeps route selection general and format-specific guidance focused", () => {
+    const pdfAuthoring = BUILT_IN_SKILL_RELEASES.find(
+      (release) => release.id === "scient.pdf-authoring",
+    )!;
+    const htmlPdfAuthoring = BUILT_IN_SKILL_RELEASES.find(
+      (release) => release.id === "scient.html-pdf-authoring",
+    )!;
+    const latexAuthoring = BUILT_IN_SKILL_RELEASES.find(
+      (release) => release.id === "scient.latex-authoring",
+    )!;
+
+    expect(pdfAuthoring.instructions).toContain("Honor the user's requested source format");
+    expect(pdfAuthoring.instructions).toContain("not its topic or length alone");
+    expect(pdfAuthoring.instructions).toContain("use `html-pdf-authoring` when available");
+    expect(pdfAuthoring.instructions).toContain("use `latex-authoring` when available");
+    expect(pdfAuthoring.instructions).not.toContain("If `scient_pdf_build` is available");
+    expect(pdfAuthoring.instructions).toContain("exact `outputPath` returned by a build operation");
+    expect(htmlPdfAuthoring.description).toContain(
+      "Use only when PDF or printable output is the purpose of the HTML work",
+    );
+    expect(htmlPdfAuthoring.description).toContain("not for ordinary webpage creation or editing");
+    expect(htmlPdfAuthoring.instructions).toContain("If `scient_pdf_build` is available");
+    expect(htmlPdfAuthoring.instructions).toContain(
+      "only when HTML is being created or modified specifically to produce a PDF",
+    );
+    expect(htmlPdfAuthoring.instructions).toContain("returned `outputPath`");
+    expect(htmlPdfAuthoring.instructions).toContain("blocks remote resources");
+    expect(htmlPdfAuthoring.instructions).toContain("only in `@media screen`");
+    expect(htmlPdfAuthoring.instructions).toContain("print-visible padding");
+    expect(htmlPdfAuthoring.instructions).toContain("project-relative Markdown links");
+    expect(htmlPdfAuthoring.instructions).toContain("This skill grants no tools or authority");
+    expect(latexAuthoring.description).toContain("user requests LaTeX or a .tex source");
+    expect(latexAuthoring.instructions).toContain("preserve an existing project's document class");
+    expect(latexAuthoring.instructions).toContain("use `% !TEX root = main.tex`");
+    expect(latexAuthoring.instructions).toContain("provide a project-relative Markdown link");
+    expect(latexAuthoring.instructions).toContain("is not evidence that compilation succeeded");
+    expect(latexAuthoring.instructions).toContain(
+      "grants no tools, packages, credentials, or permissions",
+    );
+    expect(pdfAuthoring.instructions).toContain("project-relative Markdown links");
   });
 });
