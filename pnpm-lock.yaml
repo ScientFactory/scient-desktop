@@ -651,6 +651,9 @@ importers:
       '@lexical/react':
         specifier: ^0.41.0
         version: 0.41.0(react-dom@19.2.6(react@19.2.6))(react@19.2.6)(yjs@13.6.31)
+      '@lezer/markdown':
+        specifier: ^1.7.2
+        version: 1.7.2
       '@noble/hashes':
         specifier: 'catalog:'
         version: 1.8.0

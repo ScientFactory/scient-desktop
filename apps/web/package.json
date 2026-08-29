@@ -31,6 +31,7 @@
     "@legendapp/list": "catalog:",
     "@lexical/markdown": "^0.41.0",
     "@lexical/react": "^0.41.0",
+    "@lezer/markdown": "^1.7.2",
     "@noble/hashes": "catalog:",
     "@pierre/diffs": "catalog:",
     "@pierre/trees": "1.0.0-beta.4",

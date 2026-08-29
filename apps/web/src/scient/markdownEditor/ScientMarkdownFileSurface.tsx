@@ -1,6 +1,6 @@
 import type { EnvironmentId, ScopedThreadRef } from "@t3tools/contracts";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
-import { useCallback, useMemo, useRef } from "react";
+import { Suspense, lazy, useCallback, useMemo, useRef } from "react";
 
 import { resolveAssetUrl } from "~/assets/assetUrls";
 import {
@@ -18,6 +18,7 @@ import { useAtomCommand } from "~/state/use-atom-command";
 import { useAtomQueryRunner } from "~/state/use-atom-query-runner";
 
 import { ScientMarkdownWorkspaceSurface } from "./ScientMarkdownWorkspaceSurface";
+import { isCm6SpikeEnabled } from "./cm6/spikeFlag";
 import { uploadMarkdownImage } from "./assets/client";
 import type { MarkdownDocumentMode, MarkdownSaveIntent } from "@scientfactory/scient-markdown";
 import {
@@ -50,6 +51,12 @@ export interface ScientMarkdownFileSurfaceProps {
   readonly revealLine?: number | null;
   readonly revealRequestId?: number;
 }
+
+const LazyScientCm6SpikeSurface = lazy(() =>
+  import("./cm6/ScientCm6SpikeSurface").then((module) => ({
+    default: module.ScientCm6SpikeSurface,
+  })),
+);
 
 export function ScientMarkdownFileSurface(props: ScientMarkdownFileSurfaceProps) {
   const writeFile = useAtomCommand(projectEnvironment.writeFile, { reportFailure: false });
@@ -160,6 +167,37 @@ export function ScientMarkdownFileSurface(props: ScientMarkdownFileSurfaceProps)
     },
     [props.cwd, props.environmentId, props.relativePath],
   );
+  if (import.meta.env.DEV && isCm6SpikeEnabled()) {
+    return (
+      <Suspense fallback={<div className="scient-markdown-source-loading" />}>
+        <LazyScientCm6SpikeSurface
+          source={props.contents}
+          revision={props.revision}
+          mode={props.mode}
+          ariaLabel={`${props.relativePath} Markdown document (CM6 spike)`}
+          persist={persist}
+          onPendingChange={(pending) => props.onPendingChange(props.relativePath, pending)}
+          onSaveConfirmed={(source, revision) => {
+            confirmProjectFileQueryData(
+              props.environmentId,
+              props.cwd,
+              props.relativePath,
+              source,
+              revision,
+            );
+            props.onSaveConfirmed(props.relativePath, source, revision);
+          }}
+          onSaveFailure={(error) => props.onSaveFailure(props.relativePath, error)}
+          onExternalConflict={props.onExternalConflict}
+          resolveImageSource={resolveImageSource}
+          {...(props.saveResolution === undefined ? {} : { saveResolution: props.saveResolution })}
+          {...(props.onSaveResolutionApplied
+            ? { onSaveResolutionApplied: props.onSaveResolutionApplied }
+            : {})}
+        />
+      </Suspense>
+    );
+  }
   return (
     <ScientMarkdownWorkspaceSurface
       source={props.contents}
