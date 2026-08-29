@@ -3,7 +3,7 @@
 - Status: Active
 - Owner: Yaacov
 - Created: 2026-08-09
-- Last updated: 2026-08-09
+- Last updated: 2026-08-29
 - Purpose: Define the reusable in-app release-note system and its release boundary.
 - Document type: Current implementation
 
@@ -11,9 +11,9 @@
 
 Scient has a local, reusable **What’s New** system for approved Scient releases.
 It can show a persistent sidebar card, the current release detail, and a
-newest-first history of earlier Scient releases. The catalog currently carries
-the approved v0.6.0 candidate copy; its presence does not publish a release or
-enable the release workflow.
+newest-first history of earlier Scient releases. Catalog entries are approved
+product communication; their presence does not publish a release or enable the
+release workflow.
 
 The system does not fetch release copy, infer it from commits, or inherit T3
 release notes. Its presentation and state are local to the web client and do
@@ -99,12 +99,10 @@ lifecycle, and presentation. The separate release-flow work owns candidate
 versioning, packaging, signing, publication, rollback, and the decision to
 ship.
 
-When the release flow gains a release-note gate, it must reuse
-`validateScientReleaseNotesCatalog` and this catalog rather than introduce a
-second schema or source of truth. A release that is deliberately note-free may
-remain possible, but that must be an explicit release decision. The v0.6.0
-entry is candidate copy and must remain aligned with the exact version and
-features that are ultimately approved for publication.
+Release preflight reuses `validateScientReleaseNotesCatalog` and this catalog
+rather than defining a second schema or source of truth. The exact stable
+version normally requires an approved entry. A deliberately note-free release
+remains possible only through an explicit release decision.
 
 ## Verification boundary
 
@@ -112,8 +110,9 @@ Pure selection, sorting, formatting, and catalog validation are covered by
 unit tests. Typecheck, lint, formatting, the web test suite, build, desktop
 smoke, brand checks, and `git diff --check` protect integration.
 
-The v0.6.0 entry renders the candidate release card only when the installed
-application version is exactly 0.6.0 and the user is upgrading from an earlier
-handled version. It requires a separate manual visual review of the sidebar
-card, current-release dialog, history navigation, compact sidebar behavior,
-dark mode, keyboard focus, and small-window scrolling before publication.
+An entry renders as the current release card only when the installed
+application version matches it exactly and the user is upgrading from an
+earlier handled version. Every new entry requires a separate manual visual
+review of the sidebar card, current-release dialog, history navigation, compact
+sidebar behavior, dark mode, keyboard focus, and small-window scrolling before
+publication.

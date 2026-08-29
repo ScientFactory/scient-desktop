@@ -9,6 +9,46 @@ import type { ScientReleaseNote } from "./model";
  */
 export const SCIENT_RELEASE_NOTES = [
   {
+    version: "0.6.8",
+    publishedAt: "2026-08-29",
+    kicker: "Deeper scientific work, safer provider updates, and files that stay current.",
+    headline: "Run stateful Python, give projects their own Skills, and build PDFs with agents",
+    summary:
+      "Scient 0.6.8 adds a stateful Python workspace, project-specific guidance for agents, and controlled PDF authoring. It also makes Scient-managed provider updates safer and reduces stale previews and unnecessary setup.",
+    highlights: [
+      {
+        id: "stateful-python",
+        title: "Run Python as a working session",
+        description:
+          "Run a selection, # %% cell, or complete Python file; inspect results and variables; interrupt, restart, or stop safely; and keep generated figures with the project. Scient uses a compatible Python environment you already control and never silently modifies it.",
+      },
+      {
+        id: "project-skills",
+        title: "Give each project its own Skills",
+        description:
+          "Add reusable instructions that apply only inside a project, and choose whether agents can select them automatically, use them only through $name, or not see them. The built-in Skill Authoring guidance helps create and improve them.",
+      },
+      {
+        id: "agent-pdf-authoring",
+        title: "Build PDFs with agents",
+        description:
+          "Agents can create editable project-owned HTML and turn it into a validated PDF through Scient's controlled local build. Source files and finished documents stay together, with local assets preserved and remote resources blocked.",
+      },
+      {
+        id: "managed-provider-updates",
+        title: "Update managed providers safely",
+        description:
+          "Scient now shows updates for supported Scient-managed providers. Every replacement is checked and tested before activation, the previous working version remains available if something fails, and system or custom installations are left untouched. Updates always require your action.",
+      },
+      {
+        id: "current-files-and-simpler-defaults",
+        title: "Spend less time refreshing and configuring",
+        description:
+          "File previews and HTML-exported PDFs follow changes on disk while preserving the last successful result on failure. Provider settings open on Models by default, signed-in account addresses are visible, and browser and Sources access start enabled while remaining fully configurable.",
+      },
+    ],
+  },
+  {
     version: "0.6.7",
     publishedAt: "2026-08-25",
     kicker: "Reusable guidance, simpler connections, and better local voice.",

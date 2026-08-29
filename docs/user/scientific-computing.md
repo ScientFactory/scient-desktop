@@ -1,7 +1,5 @@
 # Scientific computing
 
-Status: candidate behavior under review; not yet a released Scient capability.
-
 Scient can run Python from an initialized project without turning the project into a notebook or
 installing a second copy of its files. Python is the first supported stateful runtime; the compute
 contracts and settings are language-neutral so later languages can remain independently optional.
