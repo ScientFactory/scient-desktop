@@ -2121,8 +2121,6 @@ validation.layer("ProviderServiceLive validation", (it) => {
 });
 
 describe("agent browser access", () => {
-  const revokedThreads: Array<ThreadId> = [];
-
   const startSessionWith = (
     enableAgentBrowserAccess: boolean,
     threadId: ThreadId,
@@ -2136,8 +2134,10 @@ describe("agent browser access", () => {
     observeSkillResolution?: (
       input: Parameters<ScientSkillSession.ScientSkillSessionPlannerShape["resolve"]>[0],
     ) => void,
+    providerDriver: ProviderDriverKind = CODEX_DRIVER,
   ) =>
     Effect.gen(function* () {
+      const providerInstanceId = ProviderInstanceId.make(String(providerDriver));
       const issued: Array<{
         readonly threadId: ThreadId;
         readonly capabilities: ReadonlySet<string>;
@@ -2146,10 +2146,10 @@ describe("agent browser access", () => {
           readonly skills: ReadonlyArray<ScientSkillSession.ScientSkillSessionSkill>;
         };
       }> = [];
-      const codex = makeFakeCodexAdapter();
+      const codex = makeFakeCodexAdapter(providerDriver);
       const providerAdapterLayer = Layer.succeed(
         ProviderAdapterRegistry.ProviderAdapterRegistry,
-        makeAdapterRegistryMock({ [CODEX_DRIVER]: codex.adapter }),
+        makeAdapterRegistryMock({ [providerDriver]: codex.adapter }),
       );
       const runtimeRepositoryLayer = ProviderSessionRuntime.layer.pipe(
         Layer.provide(SqlitePersistenceMemory),
@@ -2174,7 +2174,6 @@ describe("agent browser access", () => {
             });
             return undefined;
           }),
-        revokeMcpCredential: (revoked) => Effect.sync(() => void revokedThreads.push(revoked)),
       }).pipe(
         Layer.provide(providerAdapterLayer),
         Layer.provide(directoryLayer),
@@ -2204,8 +2203,8 @@ describe("agent browser access", () => {
       yield* Effect.gen(function* () {
         const provider = yield* ProviderService.ProviderService;
         return yield* provider.startSession(threadId, {
-          provider: CODEX_DRIVER,
-          providerInstanceId: codexInstanceId,
+          provider: providerDriver,
+          providerInstanceId,
           threadId,
           runtimeMode: "full-access",
           ...(sessionCwd ? { cwd: sessionCwd } : {}),
@@ -2340,32 +2339,26 @@ describe("agent browser access", () => {
     }).pipe(Effect.provide(NodeServices.layer)),
   );
 
-  it.effect("keeps an empty skill transport available when browser access is off", () =>
+  it.effect("keeps project capabilities available when browser access is off", () =>
     Effect.gen(function* () {
       const issued = yield* startSessionWith(false, asThreadId("thread-browser-off"));
 
       assert.deepEqual(issued, [
         {
           threadId: asThreadId("thread-browser-off"),
-          capabilities: new Set(["skills:read"]),
+          capabilities: new Set([
+            "documents:build",
+            "sources:read",
+            "sources:write",
+            "skills:read",
+          ]),
           skillScope: { releases: new Map(), skills: [] },
         },
       ]);
     }).pipe(Effect.provide(NodeServices.layer)),
   );
 
-  it.effect("does not revoke the stable skill transport when browser access is off", () =>
-    Effect.gen(function* () {
-      const threadId = asThreadId("thread-browser-revoke");
-      revokedThreads.length = 0;
-
-      yield* startSessionWith(false, threadId);
-
-      assert.deepEqual(revokedThreads, []);
-    }).pipe(Effect.provide(NodeServices.layer)),
-  );
-
-  it.effect("requests an MCP credential when agent browser access is on", () =>
+  it.effect("adds preview access when agent browser access is on", () =>
     Effect.gen(function* () {
       const threadId = asThreadId("thread-browser-on");
 
@@ -2374,8 +2367,36 @@ describe("agent browser access", () => {
       assert.deepEqual(issued, [
         {
           threadId,
-          capabilities: new Set(["preview", "sources:read", "sources:write", "skills:read"]),
+          capabilities: new Set([
+            "preview",
+            "documents:build",
+            "sources:read",
+            "sources:write",
+            "skills:read",
+          ]),
           skillScope: { releases: new Map(), skills: [] },
+        },
+      ]);
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("keeps project capabilities independent of Scient skill delivery", () =>
+    Effect.gen(function* () {
+      const threadId = asThreadId("thread-project-capabilities-only");
+
+      const issued = yield* startSessionWith(
+        false,
+        threadId,
+        undefined,
+        undefined,
+        undefined,
+        CURSOR_DRIVER,
+      );
+
+      assert.deepEqual(issued, [
+        {
+          threadId,
+          capabilities: new Set(["documents:build", "sources:read", "sources:write"]),
         },
       ]);
     }).pipe(Effect.provide(NodeServices.layer)),
@@ -2417,7 +2438,12 @@ describe("agent browser access", () => {
       assert.deepEqual(issued, [
         {
           threadId,
-          capabilities: new Set(["skills:read"]),
+          capabilities: new Set([
+            "documents:build",
+            "sources:read",
+            "sources:write",
+            "skills:read",
+          ]),
           skillScope: {
             releases: new Map(),
             skills: [],

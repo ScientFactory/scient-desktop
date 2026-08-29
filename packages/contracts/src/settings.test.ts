@@ -307,7 +307,7 @@ describe("ServerSettings worktree defaults", () => {
     expect(decodeServerSettings({}).newWorktreesStartFromOrigin).toBe(true);
   });
 
-  it("enables agent browser and Sources access for legacy configs", () => {
+  it("enables agent browser access for legacy configs", () => {
     expect(decodeServerSettings({}).enableAgentBrowserAccess).toBe(true);
   });
 

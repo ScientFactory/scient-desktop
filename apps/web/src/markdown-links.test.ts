@@ -10,7 +10,6 @@ import {
   resolveMarkdownFileLinkMeta,
   resolveMarkdownFileLinkTarget,
   rewriteMarkdownFileUriHref,
-  shouldOpenMarkdownFileLinkInBrowserByDefault,
   shouldOpenMarkdownFileLinkInEditor,
 } from "./markdown-links";
 
@@ -82,15 +81,6 @@ describe("shouldOpenMarkdownFileLinkInEditor", () => {
     expect(
       shouldOpenMarkdownFileLinkInEditor({ metaKey: true, ctrlKey: false }, "Linux x86_64"),
     ).toBe(false);
-  });
-});
-
-describe("shouldOpenMarkdownFileLinkInBrowserByDefault", () => {
-  it("keeps PDFs browser-first while source files open in the file viewer", () => {
-    expect(shouldOpenMarkdownFileLinkInBrowserByDefault("report.pdf")).toBe(true);
-    expect(shouldOpenMarkdownFileLinkInBrowserByDefault("report.PDF?download=1")).toBe(true);
-    expect(shouldOpenMarkdownFileLinkInBrowserByDefault("report.html")).toBe(false);
-    expect(shouldOpenMarkdownFileLinkInBrowserByDefault("report.xml")).toBe(false);
   });
 });
 

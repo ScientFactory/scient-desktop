@@ -213,6 +213,8 @@ contextBridge.exposeInMainWorld("desktopBridge", {
     captureScreenshot: (tabId) =>
       ipcRenderer.invoke(IpcChannels.PREVIEW_CAPTURE_SCREENSHOT_CHANNEL, { tabId }),
     exportPdf: (tabId) => ipcRenderer.invoke(IpcChannels.PREVIEW_EXPORT_PDF_CHANNEL, { tabId }),
+    renderHtmlPdf: (sourceUrl) =>
+      ipcRenderer.invoke(IpcChannels.PREVIEW_RENDER_HTML_PDF_CHANNEL, { sourceUrl }),
     revealArtifact: (path) =>
       ipcRenderer.invoke(IpcChannels.PREVIEW_REVEAL_ARTIFACT_CHANNEL, { path }),
     copyArtifactToClipboard: (path) =>

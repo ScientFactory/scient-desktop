@@ -96,6 +96,22 @@ describe("turn-local Scient skill routing", () => {
     });
   });
 
+  it("can project a deferred provider loader without changing canonical skill identity", () => {
+    const result = prepareScientSkillTurn("Review this workspace.", skills, releases, {
+      skillLoadToolName: "mcp__t3-code__scient_skill_load",
+      providerNativeSkillTool: true,
+      deferred: true,
+    });
+
+    expect(result.input).toContain("`mcp__t3-code__scient_skill_load`");
+    expect(result.input).toContain("not provider-native skills");
+    expect(result.input).toContain("Do not use the provider's native `Skill` tool");
+    expect(result.input).toContain("`ToolSearch`");
+    expect(result.input).not.toContain("Use `scient_skill_load`");
+    expect(result.input).toContain(`{"name":"${automatic.name}"}`);
+    expect(result.skillScope.skills).toEqual([automatic]);
+  });
+
   it("returns an empty, inert scope when no skills are active", () => {
     expect(prepareScientSkillTurn("Review this workspace.", [], new Map())).toEqual({
       input: "Review this workspace.",

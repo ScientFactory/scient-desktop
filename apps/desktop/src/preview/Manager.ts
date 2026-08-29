@@ -9,6 +9,7 @@ import type {
   DesktopPreviewAnnotationTheme,
   DesktopPreviewAutomationStatus,
   DesktopPreviewColorScheme,
+  DesktopControlledHtmlPdfRenderArtifact,
   DesktopPreviewFavicon,
   DesktopPreviewPointerEvent,
   PreviewAnnotationPayload,
@@ -68,6 +69,7 @@ import { playwrightInjectedRuntimeInstallExpression } from "./PlaywrightInjected
 import { makePreviewAutomationKeySequence } from "./PreviewKeyboard.ts";
 import { captureFavicon, safeHttpOrigin, selectFaviconCandidates } from "./FaviconCapture.ts";
 import { createBrowserPdfRenderer } from "../scient/documentExport/BrowserPdfRenderer.ts";
+import { createControlledHtmlPdfRenderer } from "../scient/documentExport/ControlledHtmlPdfRenderer.ts";
 
 export type PreviewNavStatus =
   | { kind: "Idle" }
@@ -540,6 +542,12 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
   >();
   const tabLifecycleGenerations = new Map<string, number>();
   const browserPdfRenderer = createBrowserPdfRenderer({});
+  const controlledDocumentPdfRenderer = createBrowserPdfRenderer({
+    marginPolicy: "source-authored",
+  });
+  const controlledHtmlPdfRenderer = createControlledHtmlPdfRenderer({
+    render: controlledDocumentPdfRenderer,
+  });
 
   const attempt = <A>(errorContext: PreviewOperationContext, evaluate: () => A) =>
     Effect.try({
@@ -2530,6 +2538,20 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
     );
   });
 
+  const renderHtmlPdf = Effect.fn("PreviewManager.renderHtmlPdf")(function* (sourceUrl: string) {
+    return yield* browserPdfExportSemaphore.withPermit(
+      controlledHtmlPdfRenderer(sourceUrl).pipe(
+        Effect.mapError(
+          (cause) =>
+            new PreviewOperationError({
+              operation: cause.operation,
+              cause: cause.cause ?? cause,
+            }),
+        ),
+      ),
+    );
+  });
+
   const capturePreviewFrame = Effect.fn("PreviewManager.capturePreviewFrame")(function* (
     tabId: string,
   ) {
@@ -3759,6 +3781,7 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
     cancelPickElement,
     captureScreenshot,
     exportPdf,
+    renderHtmlPdf,
     closeTab,
     copyArtifactToClipboard,
     createTab,
@@ -4111,6 +4134,9 @@ export class PreviewManager extends Context.Service<
     readonly exportPdf: (
       tabId: string,
     ) => Effect.Effect<DesktopPreviewPdfExportArtifact, PreviewManagerError>;
+    readonly renderHtmlPdf: (
+      sourceUrl: string,
+    ) => Effect.Effect<DesktopControlledHtmlPdfRenderArtifact, PreviewManagerError>;
     readonly revealArtifact: (path: string) => Effect.Effect<void, PreviewManagerError>;
     readonly copyArtifactToClipboard: (path: string) => Effect.Effect<void, PreviewManagerError>;
     readonly openPictureInPicture: (tabId: string) => Effect.Effect<void, PreviewManagerError>;
@@ -4227,6 +4253,7 @@ export const make = Effect.gen(function* PreviewManagerMake() {
     cancelPickElement: operations.cancelPickElement,
     captureScreenshot: operations.captureScreenshot,
     exportPdf: operations.exportPdf,
+    renderHtmlPdf: operations.renderHtmlPdf,
     revealArtifact: operations.revealArtifact,
     copyArtifactToClipboard: operations.copyArtifactToClipboard,
     openPictureInPicture: operations.openPictureInPicture,

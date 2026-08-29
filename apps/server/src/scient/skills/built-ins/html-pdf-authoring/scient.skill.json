@@ -1,0 +1,13 @@
+{
+  "apiVersion": "scient.skills/v1alpha1",
+  "id": "scient.html-pdf-authoring",
+  "version": "0.1.0",
+  "category": "Document creation",
+  "categoryDescription": "Create polished documents and reliable final outputs.",
+  "displayOrder": 50,
+  "supportedScopes": ["user"],
+  "defaultInvocationPolicy": "automatic",
+  "origin": {
+    "kind": "scient"
+  }
+}

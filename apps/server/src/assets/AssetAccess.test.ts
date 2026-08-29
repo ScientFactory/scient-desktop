@@ -928,6 +928,36 @@ describe("AssetAccess", () => {
     }).pipe(Effect.provide(testLayer), Effect.scoped),
   );
 
+  it.effect("honors a shorter internal lifetime for controlled HTML rendering", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const root = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "scient-controlled-html-file-",
+      });
+      const htmlPath = path.join(root, "report.html");
+      yield* fileSystem.writeFileString(htmlPath, "<main>Report</main>");
+
+      const issued = yield* issueAssetUrl({
+        resource: {
+          _tag: "environment-file",
+          path: EnvironmentFilePath.make(htmlPath),
+          access: "html-document",
+        },
+        expiresInMs: 2 * 60_000,
+      });
+      const suffix = issued.relativeUrl.slice(`${ASSET_ROUTE_PREFIX}/`.length);
+      const separatorIndex = suffix.indexOf("/");
+      const token = suffix.slice(0, separatorIndex);
+
+      expect(yield* resolveAsset(token, "report.html")).not.toBeNull();
+      yield* TestClock.adjust("119 seconds");
+      expect(yield* resolveAsset(token, "report.html")).not.toBeNull();
+      yield* TestClock.adjust("2 seconds");
+      expect(yield* resolveAsset(token, "report.html")).toBeNull();
+    }).pipe(Effect.provide(testLayer), Effect.scoped),
+  );
+
   it.effect("rejects relative paths and non-HTML document grants", () =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;

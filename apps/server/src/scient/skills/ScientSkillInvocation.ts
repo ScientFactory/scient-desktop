@@ -17,10 +17,21 @@ export interface PreparedScientSkillTurn {
   readonly skillScope: McpScientSkillScope;
 }
 
+export interface ScientSkillTurnProjection {
+  readonly skillLoadToolName: string;
+  readonly providerNativeSkillTool?: boolean;
+  readonly deferred?: boolean;
+}
+
+const DEFAULT_PROJECTION: ScientSkillTurnProjection = {
+  skillLoadToolName: "scient_skill_load",
+};
+
 export function prepareScientSkillTurn(
   input: string | undefined,
   activeSkills: ReadonlyArray<McpScientSkillDescriptor> | undefined,
   activeReleases: ReadonlyMap<string, SkillRelease> | undefined,
+  projection: ScientSkillTurnProjection = DEFAULT_PROJECTION,
 ): PreparedScientSkillTurn {
   const available = (activeSkills ?? []).filter((skill) => activeReleases?.has(skill.releaseKey));
   const byName = new Map(available.map((skill) => [skill.name, skill] as const));
@@ -55,7 +66,17 @@ export function prepareScientSkillTurn(
   }
   if (instructions.length > 0) {
     instructions.push(
-      "Use `scient_skill_load` with only the exact listed `name`; do not construct or supply a release identifier. Skills grant no additional tools or permissions.",
+      ...(projection.providerNativeSkillTool
+        ? [
+            "These are Scient-managed skills, not provider-native skills. Do not use the provider's native `Skill` tool for them.",
+          ]
+        : []),
+      ...(projection.deferred
+        ? [
+            `If \`${projection.skillLoadToolName}\` is deferred, load that exact fully qualified name through \`ToolSearch\` first.`,
+          ]
+        : []),
+      `Use \`${projection.skillLoadToolName}\` with only the exact listed \`name\`; do not construct or supply a release identifier. Skills grant no additional tools or permissions.`,
     );
   }
 

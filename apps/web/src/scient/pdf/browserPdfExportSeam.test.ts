@@ -77,4 +77,28 @@ describe("browser PDF export seams", () => {
     expect(notification).toContain("documents.revealSavedAsset");
     expect(notification).toContain("revealSavedAsset(result.path)");
   });
+
+  it("keeps agent HTML builds on the hidden renderer and existing generated-PDF surface", () => {
+    const host = read("../../components/preview/PreviewAutomationHosts.tsx");
+    const manager = read("../../../../desktop/src/preview/Manager.ts");
+    const renderer = read(
+      "../../../../desktop/src/scient/documentExport/ControlledHtmlPdfRenderer.ts",
+    );
+    const handler = read("../../../../server/src/mcp/toolkits/documents/handlers.ts");
+
+    expect(host).toContain('request.operation === "documentPdfRender"');
+    expect(host).toContain("bridge.renderHtmlPdf(sourceUrl)");
+    expect(host).toContain("scientGeneratedPdfSurface(input.source)");
+    expect(host.indexOf('request.operation === "documentPdfRender"')).toBeLessThan(
+      host.indexOf("const needsSessionSync = needsPreviewAutomationSessionSync"),
+    );
+    expect(renderer).toContain('CONTROLLED_RENDER_PARTITION = "scient-next-controlled-html-pdf"');
+    expect(manager).toContain('marginPolicy: "source-authored"');
+    expect(manager).toContain("render: controlledDocumentPdfRenderer");
+    expect(renderer).toContain("setPermissionRequestHandler((_contents, _permission, callback)");
+    expect(renderer).toContain("onBeforeRequest");
+    expect(handler).toContain('provenanceKind: "controlled-render"');
+    expect(handler).toContain('validationProfile: "browser-export"');
+    expect(handler).toContain("visualReviewPerformed: false");
+  });
 });

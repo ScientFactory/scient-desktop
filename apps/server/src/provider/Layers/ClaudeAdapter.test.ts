@@ -14,6 +14,7 @@ import type {
 import {
   ApprovalRequestId,
   ClaudeSettings,
+  EnvironmentId,
   ProviderDriverKind,
   ProviderItemId,
   ProviderRuntimeEvent,
@@ -34,9 +35,11 @@ import * as TestClock from "effect/testing/TestClock";
 
 import { attachmentRelativePath } from "../../attachmentStore.ts";
 import { ServerConfig } from "../../config.ts";
+import * as McpProviderSession from "../../mcp/McpProviderSession.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
 import { ProviderAdapterProcessError, ProviderAdapterValidationError } from "../Errors.ts";
 import { buildScientAwareness } from "../ScientAwareness.ts";
+import { CLAUDE_SCIENT_TOOL_PROJECTION } from "../ScientToolProjection.ts";
 import type { ClaudeAdapterShape } from "../Services/ClaudeAdapter.ts";
 import { makeClaudeAdapter, type ClaudeAdapterLiveOptions } from "./ClaudeAdapter.ts";
 const decodeClaudeSettings = Schema.decodeSync(ClaudeSettings);
@@ -4103,6 +4106,51 @@ describe("ClaudeAdapterLive", () => {
         append: buildScientAwareness(),
       });
     }).pipe(
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(harness.layer),
+    );
+  });
+
+  it.effect("connects the Scient MCP server and advertises exact tool names", () => {
+    const harness = makeHarness();
+    const capabilities = new Set(["documents:build", "skills:read"] as const);
+    return Effect.gen(function* () {
+      McpProviderSession.setMcpProviderSession({
+        environmentId: EnvironmentId.make("environment-claude-tools"),
+        threadId: THREAD_ID,
+        providerSessionId: "provider-session-claude-tools",
+        providerInstanceId: ProviderInstanceId.make("claudeAgent"),
+        endpoint: "http://127.0.0.1:43123/mcp",
+        authorizationHeader: "Bearer claude-tools-test",
+        capabilities,
+      });
+
+      const adapter = yield* ClaudeAdapter;
+      yield* adapter.startSession({
+        threadId: THREAD_ID,
+        provider: ProviderDriverKind.make("claudeAgent"),
+        runtimeMode: "full-access",
+      });
+
+      const createInput = harness.getLastCreateQueryInput();
+      assert.deepEqual(createInput?.options.systemPrompt, {
+        type: "preset",
+        preset: "claude_code",
+        append: buildScientAwareness(capabilities, CLAUDE_SCIENT_TOOL_PROJECTION),
+      });
+      assert.deepEqual(createInput?.options.mcpServers, {
+        "t3-code": {
+          type: "http",
+          url: "http://127.0.0.1:43123/mcp",
+          headers: { Authorization: "Bearer claude-tools-test" },
+        },
+      });
+    }).pipe(
+      Effect.ensuring(
+        Effect.sync(() => {
+          McpProviderSession.clearMcpProviderSession(THREAD_ID);
+        }),
+      ),
       Effect.provideService(Random.Random, makeDeterministicRandomService()),
       Effect.provide(harness.layer),
     );

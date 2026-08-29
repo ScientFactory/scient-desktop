@@ -8,9 +8,10 @@ import type { WebContents } from "electron";
 
 const READINESS_TIMEOUT_MS = 2_500;
 const MAX_TITLE_LENGTH = 512;
-// printToPDF margins are measured in inches. One sixth of an inch is 16 CSS
-// pixels at Chromium's 96 px/in reference ratio.
-const DOCUMENT_MARGIN_INCHES = 1 / 6;
+// printToPDF margins are measured in inches. Manual Browser export gets a
+// small readable fallback; controlled document builds instead let the
+// source's @page rule own physical page geometry without a second margin.
+const READABLE_FALLBACK_MARGIN_INCHES = 1 / 6;
 // Chromium lays an un-sized PDF onto Letter paper at scale 1, leaving only
 // about 784 CSS pixels for content. Repeated page canvases authored for a
 // desktop viewport can consequently reflow and spill onto a second PDF page.
@@ -49,7 +50,10 @@ export interface BrowserPdfRendererError {
 
 export interface BrowserPdfRendererOptions {
   readonly waitForReadiness?: (webContents: WebContents) => Promise<BrowserPdfPageSignals>;
+  readonly marginPolicy?: BrowserPdfMarginPolicy;
 }
+
+export type BrowserPdfMarginPolicy = "readable-fallback" | "source-authored";
 
 export interface BrowserPdfPageSignals {
   readonly sourceUrl: string;
@@ -244,15 +248,19 @@ function isReadinessResult(value: unknown): value is BrowserPdfReadinessResult {
   );
 }
 
-export function buildDocumentLayoutPrintOptions(scale = 1) {
+export function buildDocumentLayoutPrintOptions(
+  scale = 1,
+  marginPolicy: BrowserPdfMarginPolicy = "readable-fallback",
+) {
+  const margin = marginPolicy === "source-authored" ? 0 : READABLE_FALLBACK_MARGIN_INCHES;
   return {
     printBackground: true,
     displayHeaderFooter: false,
     margins: {
-      top: DOCUMENT_MARGIN_INCHES,
-      bottom: DOCUMENT_MARGIN_INCHES,
-      left: DOCUMENT_MARGIN_INCHES,
-      right: DOCUMENT_MARGIN_INCHES,
+      top: margin,
+      bottom: margin,
+      left: margin,
+      right: margin,
     },
     preferCSSPageSize: true,
     generateTaggedPDF: true,
@@ -285,6 +293,7 @@ export function warningsForSignals(
 }
 
 export function createBrowserPdfRenderer(options: BrowserPdfRendererOptions) {
+  const marginPolicy = options.marginPolicy ?? "readable-fallback";
   const waitForReadiness =
     options.waitForReadiness ??
     (async (webContents: WebContents): Promise<BrowserPdfPageSignals> => {
@@ -353,7 +362,10 @@ export function createBrowserPdfRenderer(options: BrowserPdfRendererOptions) {
           const page = await waitForReadiness(webContents);
           assertStableSurface(page.sourceUrl);
           const data = await webContents.printToPDF(
-            buildDocumentLayoutPrintOptions(scaleForDocumentLayout(page.documentLayout)),
+            buildDocumentLayoutPrintOptions(
+              scaleForDocumentLayout(page.documentLayout),
+              marginPolicy,
+            ),
           );
           // Chromium cannot cancel an in-flight print safely. Wait for it to
           // settle under the global print permit, then discard raced output.

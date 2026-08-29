@@ -45,16 +45,23 @@ describe("Scient skill management", () => {
           "workspace-readiness-review",
           "improve-workspace-readiness",
           "scient-skill-authoring",
+          "pdf-authoring",
+          "html-pdf-authoring",
+          "latex-authoring",
         ]);
         expect(initial.skills.map((skill) => skill.category)).toEqual([
           "Workspace readiness",
           "Workspace readiness",
           "Skill creation",
+          "Document creation",
+          "Document creation",
+          "Document creation",
         ]);
         expect(new Set(initial.skills.map((skill) => skill.categoryDescription))).toEqual(
           new Set([
             "Review and improve a workspace so people and agents can understand it and work safely.",
             "Create and improve reusable guidance for Scient agents.",
+            "Create polished documents and reliable final outputs.",
           ]),
         );
         expect(initial.skills.every((skill) => skill.scope === "user")).toBe(true);
@@ -144,7 +151,7 @@ describe("Scient skill management", () => {
           active: false,
           invocationPolicy: "explicit",
         });
-        expect(updated.skills.filter((skill) => skill.scope === "user")).toHaveLength(3);
+        expect(updated.skills.filter((skill) => skill.scope === "user")).toHaveLength(6);
       }).pipe(Effect.provide(managementLayer));
     }),
   );

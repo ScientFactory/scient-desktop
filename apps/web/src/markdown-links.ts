@@ -72,10 +72,6 @@ export function shouldOpenMarkdownFileLinkInEditor(
   return isTerminalLinkActivation(event, platform);
 }
 
-export function shouldOpenMarkdownFileLinkInBrowserByDefault(path: string): boolean {
-  return /\.pdf$/i.test(path.split(/[?#]/, 1)[0] ?? "");
-}
-
 function safeDecode(value: string): string {
   try {
     return decodeURIComponent(value);

@@ -673,6 +673,42 @@ it.effect("does not route new operations to legacy hosts that did not advertise 
   ),
 );
 
+it.effect("routes internal document builds only to a host that advertises the renderer", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const broker = yield* makeBroker;
+      const legacyEvents = yield* broker.connect(makeHost({ clientId: "client-legacy" }));
+      yield* Stream.runDrain(legacyEvents).pipe(Effect.forkScoped);
+      const capableRequests = requestsFrom(
+        yield* broker.connect(
+          makeHost({
+            clientId: "client-document-renderer",
+            supportedOperations: ["documentPdfRender", "documentPdfPresent"],
+          }),
+        ),
+      );
+      yield* Stream.runForEach(capableRequests, (request) =>
+        broker.respond({
+          clientId: "client-document-renderer",
+          connectionId: request.connectionId,
+          requestId: request.requestId,
+          ok: true,
+          result: "controlled-renderer",
+        }),
+      ).pipe(Effect.forkScoped);
+      yield* Effect.yieldNow;
+
+      expect(
+        yield* broker.invoke<string>({
+          scope,
+          operation: "documentPdfRender",
+          input: { assetRelativeUrl: "/api/assets/token/report.html" },
+        }),
+      ).toBe("controlled-renderer");
+    }),
+  ),
+);
+
 it.effect("routes resize to a capable host instead of a newer legacy connection", () =>
   Effect.scoped(
     Effect.gen(function* () {

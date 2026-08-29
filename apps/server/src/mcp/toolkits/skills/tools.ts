@@ -4,6 +4,10 @@ import { Tool, Toolkit } from "effect/unstable/ai";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
 
 const NonEmptyString = Schema.Trimmed.check(Schema.isMinLength(1));
+// Effect models an empty Struct as the broad `{}` TypeScript type, so its JSON
+// Schema accepts both objects and arrays. MCP tool inputs must be objects; an
+// invalid definition can make a client discard the server's entire tool list.
+const EmptyToolInput = Schema.Record(Schema.String, Schema.Never);
 const SkillName = Schema.Trimmed.check(
   Schema.isMinLength(1),
   Schema.isMaxLength(64),
@@ -47,7 +51,7 @@ export const ScientSkillResource = Schema.Struct({
 export const ScientSkillsListTool = Tool.make("scient_skills_list", {
   description:
     "List exact Scient-managed skill releases selected for this session and whether each may be chosen automatically or only when explicitly named. Provider-native skills remain separate. Skills never grant tools, credentials, or permissions.",
-  parameters: Schema.Struct({}),
+  parameters: EmptyToolInput,
   success: Schema.Struct({
     skills: Schema.Array(ScientSkillSummary).pipe(Schema.check(Schema.isMaxLength(500))),
   }),

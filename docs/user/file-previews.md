@@ -35,6 +35,13 @@ relocate an already open file automatically.
 - If the integrated browser is unavailable or an HTML preview fails, Scient
   opens the source instead.
 
+In a project conversation, an agent can also turn an existing project HTML file
+into a PDF. Scient builds it with local project assets, opens the generated PDF
+in its reader, and preserves the HTML as the editable source. Remote assets are
+not loaded during this controlled build, so keep required styles, fonts, data,
+and images inside the project. A compatible Scient Desktop must be connected
+while Scient performs this Chromium build.
+
 Direct files outside the current project support:
 
 - images, including SVG, with pan and zoom;
