@@ -25,6 +25,24 @@ export const setScientSkillUserActivation = createEnvironmentRpcCommand(connecti
     Effect.sync(() => registry.refresh(scientSkillsInventory({ environmentId, input: {} }))),
 });
 
+export const setScientSkillProjectPreference = createEnvironmentRpcCommand(connectionAtomRuntime, {
+  label: "environment-command:skills:set-project-preference",
+  tag: WS_METHODS.skillsSetProjectPreference,
+  concurrency: {
+    mode: "serial",
+    key: ({ environmentId, input }) => JSON.stringify([environmentId, input.projectId]),
+  },
+  onSuccess: ({ environmentId, input }, registry) =>
+    Effect.sync(() =>
+      registry.refresh(
+        scientSkillsInventory({
+          environmentId,
+          input: { projectId: input.projectId },
+        }),
+      ),
+    ),
+});
+
 export const setProviderSkillEnabled = createEnvironmentRpcCommand(connectionAtomRuntime, {
   label: "environment-command:provider-skills:set-enabled",
   tag: WS_METHODS.providerSkillsSetEnabled,

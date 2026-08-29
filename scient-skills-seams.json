@@ -8,6 +8,7 @@
     "packages/scient-skills"
   ],
   "ownedFiles": [
+    "apps/mobile/src/state/scientSkills.ts",
     "apps/server/src/provider/ScientAwareness.ts",
     "apps/web/src/routes/settings.skills_.external.tsx",
     "apps/web/src/routes/settings.skills.tsx",
@@ -26,6 +27,21 @@
       "path": "apps/mobile/src/features/threads/composerSlashSkillSearch.ts",
       "anchor": "isGlobalProviderSkill",
       "purpose": "Keep project-native skills out of the mobile global skill picker."
+    },
+    {
+      "path": "apps/mobile/src/features/threads/ThreadComposer.tsx",
+      "anchor": "mergeEffectiveProviderSkills",
+      "purpose": "Merge the exact current thread project skill inventory into mobile composer selection."
+    },
+    {
+      "path": "apps/mobile/src/features/threads/ThreadDetailScreen.tsx",
+      "anchor": "scientSkillsInventory",
+      "purpose": "Keep mobile thread rendering aware of its contextual Scient skill inventory."
+    },
+    {
+      "path": "apps/mobile/src/features/threads/new-task-flow-provider.tsx",
+      "anchor": "scientSkillsInventory",
+      "purpose": "Merge project skills into the mobile new-task composer before a thread exists."
     },
     {
       "path": "apps/server/package.json",
@@ -118,6 +134,11 @@
       "purpose": "Label the nested external-skills page inside the maintained Settings shell."
     },
     {
+      "path": "apps/web/src/components/settings/ProjectSettingsPanel.tsx",
+      "anchor": "ProjectSkillsSettings",
+      "purpose": "Mount project-owned skill controls in the maintained project settings surface."
+    },
+    {
       "path": "apps/web/src/components/settings/SettingsSidebarNav.tsx",
       "anchor": "/settings/skills",
       "purpose": "Link the fork-owned skill management page from the maintained Settings shell."
@@ -140,7 +161,7 @@
     {
       "path": "packages/client-runtime/src/providerSkills.ts",
       "anchor": "isGlobalProviderSkill",
-      "purpose": "Keep project-native skills out of global Settings and composer menus while preserving provider ownership."
+      "purpose": "Keep provider-native project skills global-hidden while allowing exact contextual Scient project entries."
     },
     {
       "path": "packages/contracts/src/index.ts",

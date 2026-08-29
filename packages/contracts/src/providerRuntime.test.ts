@@ -69,6 +69,27 @@ describe("ProviderRuntimeEvent", () => {
     expect(parsed.payload.planMarkdown).toBe("# Ship it");
   });
 
+  it("decodes an authoritative provider reauthentication signal", () => {
+    const parsed = decodeRuntimeEvent({
+      type: "auth.status",
+      eventId: "event-auth-expired",
+      provider: "claudeAgent",
+      providerInstanceId: "claudeAgent",
+      createdAt: "2026-02-28T00:00:00.000Z",
+      threadId: "thread-1",
+      payload: {
+        requiresReauthentication: true,
+        error: "OAuth access token has been revoked.",
+      },
+    });
+
+    expect(parsed.type).toBe("auth.status");
+    if (parsed.type !== "auth.status") {
+      throw new Error("expected auth.status");
+    }
+    expect(parsed.payload.requiresReauthentication).toBe(true);
+  });
+
   it("decodes user-input.requested with structured questions", () => {
     const parsed = decodeRuntimeEvent({
       type: "user-input.requested",

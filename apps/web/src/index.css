@@ -2218,6 +2218,36 @@ code {
   background: var(--app-scrollbar-thumb-hover);
 }
 
+/* Compact horizontal selectors reveal their scrollbar only on interaction. */
+.skill-source-strip {
+  scrollbar-color: transparent transparent;
+  scrollbar-width: thin;
+}
+
+.skill-source-strip::-webkit-scrollbar {
+  height: 3px;
+}
+
+.skill-source-strip::-webkit-scrollbar-thumb {
+  border-radius: 999px;
+  background: transparent;
+}
+
+.skill-source-strip:hover,
+.skill-source-strip:has(:focus-visible) {
+  scrollbar-color: var(--app-scrollbar-thumb) transparent;
+}
+
+.skill-source-strip:hover::-webkit-scrollbar-thumb,
+.skill-source-strip:has(:focus-visible)::-webkit-scrollbar-thumb {
+  background: var(--app-scrollbar-thumb);
+}
+
+.skill-source-strip:hover::-webkit-scrollbar-thumb:hover,
+.skill-source-strip:has(:focus-visible)::-webkit-scrollbar-thumb:hover {
+  background: var(--app-scrollbar-thumb-hover);
+}
+
 /* Chat markdown rendering */
 
 .chat-markdown > :first-child {
@@ -2387,13 +2417,13 @@ code {
   font-size: 0.75rem;
 }
 
-.chat-markdown a.chat-markdown-file-link,
-.chat-markdown a.chat-markdown-file-link:hover {
+.chat-markdown .chat-markdown-file-link,
+.chat-markdown .chat-markdown-file-link:hover {
   color: var(--contrast-foreground);
   text-decoration: none;
 }
 
-.chat-markdown a.chat-markdown-file-link:focus-visible {
+.chat-markdown .chat-markdown-file-link:focus-visible {
   outline: none;
   box-shadow: 0 0 0 2px color-mix(in srgb, var(--ring) 70%, transparent);
 }

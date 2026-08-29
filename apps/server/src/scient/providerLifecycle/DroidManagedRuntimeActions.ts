@@ -16,6 +16,7 @@ import {
 } from "./ManagedProviderRuntimeActions.ts";
 
 const DEFAULT_DROID_BINARY = "droid";
+export const DROID_MANAGED_RUNTIME_CONTRACT_REVISION = 1;
 
 function detectTargetSafely(input: { readonly platform: NodeJS.Platform; readonly arch: string }) {
   try {
@@ -47,11 +48,13 @@ export const makeDroidManagedRuntimeResolution = Effect.fn("DroidManagedRuntime.
       providerName: "Droid",
       providerSlug: "droid",
       runtime: new ManagedDroidRuntime(input.baseDir),
-      artifact,
+      bundledArtifact: artifact,
+      contractRevision: DROID_MANAGED_RUNTIME_CONTRACT_REVISION,
       targetLabel,
       environment: input.environment,
       spawner: input.spawner,
       managedInstallationAllowed: input.managedInstallationAllowed,
+      systemToManagedSwitchAllowed: true,
       sourceLabel: "Official Factory Droid release",
       managedInstallationLimitation:
         "Scient can use a healthy Droid runtime here, but managed installation is only enabled in the local desktop app.",

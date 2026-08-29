@@ -24,7 +24,7 @@ describe("ManagedClaudeRuntime", () => {
     const launchPath = new ManagedClaudeRuntime("/scient-data").launchPath(artifact!);
 
     expect(launchPath.replaceAll("\\", "/")).toMatch(
-      /\/provider-runtimes\/claude\/versions\/2\.1\.170\/darwin-arm64\/claude$/u,
+      /\/provider-runtimes\/claude\/versions\/2\.1\.245\/darwin-arm64\/claude$/u,
     );
   });
 
@@ -88,7 +88,8 @@ describe("ManagedClaudeRuntime", () => {
         "smoke:claude.exe",
       ]);
       expect(await runtime.readState()).toMatchObject({
-        schemaVersion: 1,
+        schemaVersion: 3,
+        selection: "managed",
         targetKey: `win32-${arch}`,
         activeVersion: artifact!.version,
         executableRelativePath: expect.stringMatching(/claude\.exe$/u),

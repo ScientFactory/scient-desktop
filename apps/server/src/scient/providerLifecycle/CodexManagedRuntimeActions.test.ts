@@ -7,9 +7,15 @@ import { it as effectIt } from "@effect/vitest";
 import { describe, expect, it } from "vite-plus/test";
 import * as Effect from "effect/Effect";
 
-import type { ManagedRuntimeArtifact } from "@scientfactory/provider-runtime";
+import {
+  managedRuntimeArtifactReceipt,
+  resolveReviewedCodexArtifact,
+  type ManagedRuntimeArtifact,
+} from "@scientfactory/provider-runtime";
 import {
   hasManagedCodexCodeModeHost,
+  resolveCodexActionArtifact,
+  resolveCodexCatalogCandidate,
   resolveCodexCodeModeHostPath,
   resolveCodexManagedRuntimePolicy,
   resolveCodexRuntimeHomePath,
@@ -17,11 +23,40 @@ import {
   shouldProbeManagedCodexRuntime,
   shouldSkipConfiguredCodexProbe,
 } from "./CodexManagedRuntimeActions.ts";
+import {
+  BUNDLED_MANAGED_RUNTIME_CATALOG,
+  type ManagedRuntimeCatalogData,
+} from "./ManagedRuntimeCatalog.ts";
 
 const artifact = {
   version: "2.0.0",
   supportTier: "fully_assisted",
 } as ManagedRuntimeArtifact;
+
+const codexCatalogAt = (version: string): ManagedRuntimeCatalogData => {
+  const codex = BUNDLED_MANAGED_RUNTIME_CATALOG.providers.codex;
+  if (!codex) throw new Error("Bundled Codex catalog entry is missing.");
+  const darwinArm = codex.artifacts["darwin-arm64"];
+  if (!darwinArm) throw new Error("Bundled Codex darwin-arm64 artifact is missing.");
+  return {
+    schemaVersion: 1,
+    providers: {
+      codex: {
+        ...codex,
+        version,
+        artifacts: {
+          ...codex.artifacts,
+          "darwin-arm64": {
+            ...darwinArm,
+            artifactName: `codex-${version}.tar.gz`,
+            url: `https://github.com/openai/codex/releases/download/rust-v${version}/codex-${version}.tar.gz`,
+            checksum: { algorithm: "sha256", digest: "b".repeat(64) },
+          },
+        },
+      },
+    },
+  };
+};
 
 describe("Codex managed runtime policy", () => {
   effectIt.effect("requires a real executable code-mode host beside a managed Codex binary", () =>
@@ -196,6 +231,27 @@ describe("Codex managed runtime policy", () => {
     });
   });
 
+  it("does not claim managed-update ownership for system or custom runtimes", () => {
+    expect(
+      resolveCodexManagedRuntimePolicy({
+        source: "system",
+        artifact,
+        installed: false,
+        installedVersion: null,
+        managedInstallationAllowed: true,
+      }).actions,
+    ).toEqual(["install"]);
+    expect(
+      resolveCodexManagedRuntimePolicy({
+        source: "custom",
+        artifact,
+        installed: false,
+        installedVersion: null,
+        managedInstallationAllowed: true,
+      }).actions,
+    ).toEqual([]);
+  });
+
   it("keeps a broken private copy repairable while using healthy PATH Codex", () => {
     expect(
       resolveCodexManagedRuntimePolicy({
@@ -255,5 +311,97 @@ describe("Codex managed runtime policy", () => {
         managedInstallationAllowed: true,
       }).actions,
     ).toEqual(["update", "repair", "remove"]);
+  });
+
+  it("does not offer a downgrade when the managed runtime is newer than the artifact", () => {
+    expect(
+      resolveCodexManagedRuntimePolicy({
+        source: "scient_managed",
+        artifact,
+        installed: true,
+        installedVersion: "3.0.0",
+        managedInstallationAllowed: true,
+      }).actions,
+    ).toEqual(["repair", "remove"]);
+  });
+});
+
+describe("Codex managed runtime release selection", () => {
+  const bundled = resolveReviewedCodexArtifact({ platform: "darwin", arch: "arm64" });
+  if (!bundled) throw new Error("Reviewed Codex darwin-arm64 artifact is missing.");
+
+  it("selects a strictly newer qualified catalog release", () => {
+    const candidate = resolveCodexCatalogCandidate({
+      bundledArtifact: bundled,
+      catalog: codexCatalogAt("0.150.0"),
+    });
+    expect(candidate?.version).toBe("0.150.0");
+    expect(candidate?.executablePath).toBe(bundled.executablePath);
+    expect(candidate?.smokeArgs).toEqual(bundled.smokeArgs);
+  });
+
+  it("never accepts a catalog downgrade or same-version repack", () => {
+    expect(
+      resolveCodexCatalogCandidate({
+        bundledArtifact: bundled,
+        catalog: codexCatalogAt("0.148.0"),
+      }),
+    ).toBe(bundled);
+    expect(
+      resolveCodexCatalogCandidate({
+        bundledArtifact: bundled,
+        catalog: codexCatalogAt(bundled.version),
+      }),
+    ).toBe(bundled);
+  });
+
+  it("repairs the exact activated release instead of silently updating it", () => {
+    const installed = resolveCodexCatalogCandidate({
+      bundledArtifact: bundled,
+      catalog: codexCatalogAt("0.150.0"),
+    });
+    const newer = resolveCodexCatalogCandidate({
+      bundledArtifact: bundled,
+      catalog: codexCatalogAt("0.151.0"),
+    });
+    expect(installed).toBeDefined();
+    expect(newer).toBeDefined();
+    const repaired = resolveCodexActionArtifact({
+      action: "repair",
+      bundledArtifact: bundled,
+      candidateArtifact: newer,
+      status: {
+        launchPath: "/private/codex",
+        activeVersion: installed?.version ?? null,
+        previousVersion: null,
+        installed: true,
+        selected: true,
+        activeArtifact: installed ? managedRuntimeArtifactReceipt(installed) : null,
+        previousArtifact: null,
+      },
+    });
+    expect(repaired?.version).toBe("0.150.0");
+    expect(repaired?.checksum).toEqual(installed?.checksum);
+  });
+
+  it("uses the bundled artifact only for legacy receipt-less repairs", () => {
+    const repaired = resolveCodexActionArtifact({
+      action: "repair",
+      bundledArtifact: bundled,
+      candidateArtifact: resolveCodexCatalogCandidate({
+        bundledArtifact: bundled,
+        catalog: codexCatalogAt("0.151.0"),
+      }),
+      status: {
+        launchPath: "/private/codex",
+        activeVersion: "0.148.0",
+        previousVersion: null,
+        installed: true,
+        selected: true,
+        activeArtifact: null,
+        previousArtifact: null,
+      },
+    });
+    expect(repaired).toBe(bundled);
   });
 });

@@ -1,4 +1,9 @@
-import type { ServerProviderSkill, ServerProviderSlashCommand } from "@t3tools/contracts";
+import type {
+  ProviderDriverKind,
+  ScientSkillInventory,
+  ServerProviderSkill,
+  ServerProviderSlashCommand,
+} from "@t3tools/contracts";
 
 export type ProviderSkillSourceKind = "app" | "repo" | "project" | "personal" | "system" | "other";
 
@@ -30,7 +35,11 @@ export function getProviderSkillsForSlashMenu(
   showSkillsInSlashMenu: boolean,
 ): ServerProviderSkill[] {
   return showSkillsInSlashMenu
-    ? skills.filter((skill) => skill.enabled && isGlobalProviderSkill(skill))
+    ? skills.filter(
+        (skill) =>
+          skill.enabled &&
+          (isGlobalProviderSkill(skill) || skill.path.startsWith(SCIENT_SKILL_PATH_PREFIX)),
+      )
     : [];
 }
 
@@ -88,4 +97,39 @@ export function resolveProviderSkillSourceKind(
 export function isGlobalProviderSkill(skill: Pick<ServerProviderSkill, "path" | "scope">): boolean {
   const source = resolveProviderSkillSourceKind(skill);
   return source !== "repo" && source !== "project";
+}
+
+const SCIENT_SKILL_PATH_PREFIX = "scient://skills/";
+
+/** Merge the contextual Scient inventory into one provider's composer menu. */
+export function mergeEffectiveProviderSkills(input: {
+  readonly provider: ProviderDriverKind;
+  readonly providerSkills: ReadonlyArray<ServerProviderSkill>;
+  readonly inventory: ScientSkillInventory | null;
+}): ReadonlyArray<ServerProviderSkill> {
+  const { inventory, provider, providerSkills } = input;
+  const visibleProviderSkills = providerSkills.filter(isGlobalProviderSkill);
+  if (!inventory?.supportedProviders.includes(provider)) return visibleProviderSkills;
+
+  // Provider-native behavior remains authoritative. A Scient skill with the
+  // same visible name is withheld so `$name` can never route ambiguously.
+  const occupiedNames = new Set(
+    visibleProviderSkills.map((skill) => skill.name.trim().toLowerCase()),
+  );
+  const scientSkills = inventory.skills
+    .filter((skill) => skill.active && !occupiedNames.has(skill.name.trim().toLowerCase()))
+    .map(
+      (skill): ServerProviderSkill => ({
+        name: skill.name,
+        description: skill.description,
+        shortDescription: skill.description,
+        path: `${SCIENT_SKILL_PATH_PREFIX}${encodeURIComponent(skill.releaseKey)}`,
+        scope: skill.scope === "project" ? "project" : "personal",
+        enabled: true,
+      }),
+    )
+    .sort((left, right) => left.name.localeCompare(right.name));
+  return scientSkills.length === 0
+    ? visibleProviderSkills
+    : [...visibleProviderSkills, ...scientSkills];
 }

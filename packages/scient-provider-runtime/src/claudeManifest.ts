@@ -2,13 +2,14 @@ import type { ManagedRuntimeArtifact } from "./managedRuntimeArtifact.ts";
 import type { ManagedRuntimeTarget } from "./target.ts";
 
 /**
- * Matches the native Claude Code executable bundled with
- * @anthropic-ai/claude-agent-sdk 0.3.170. Keeping these versions paired avoids
- * silently changing T3's already-proven Claude SDK/runtime protocol.
+ * Reviewed Claude Code executable qualified against T3's inherited
+ * @anthropic-ai/claude-agent-sdk 0.3.170 integration. The SDK launches this
+ * explicit path rather than its bundled executable.
  */
-const VERSION = "2.1.170";
+const VERSION = "2.1.245";
 const RELEASE_BASE = "https://downloads.claude.ai/claude-code-releases";
 const ALLOWED_HOSTS = ["downloads.claude.ai"] as const;
+const ALLOWED_URL_PATH_PREFIXES = ["/claude-code-releases/"] as const;
 
 interface ArtifactRecord {
   readonly platform: string;
@@ -20,50 +21,50 @@ interface ArtifactRecord {
 const ARTIFACTS = {
   "darwin-arm64": {
     platform: "darwin-arm64",
-    sha256: "e903646d8b7a31882a80ecd27569a27d8ac57b3708745f349709632c84117fdf",
-    size: 222_102_816,
+    sha256: "9f7c2260251765a18d0b35198669dacc1912f6e8129a3b01f6b58d93365ff1f1",
+    size: 376_109_392,
     executablePath: "claude",
   },
   "darwin-x64": {
     platform: "darwin-x64",
-    sha256: "914f23a70bbed5d9ae567e3e04b86206ed9971b371bc9baca3f79c8885bfddb4",
-    size: 224_616_976,
+    sha256: "de044bb543e826352f31587a74356e1b2dae94dc1b9c960a362d9f07df96c2a7",
+    size: 385_137_136,
     executablePath: "claude",
   },
   "linux-arm64-glibc": {
     platform: "linux-arm64",
-    sha256: "1bb9d032440a75532f7dd4cafbc687f220aaf16c63eba17e192dfbec2f04bd25",
-    size: 247_379_592,
+    sha256: "d0da299303d710a7cc5cdece9629958f5128ce1a727e15463c651ed5cf385c7f",
+    size: 389_077_224,
     executablePath: "claude",
   },
   "linux-x64-glibc": {
     platform: "linux-x64",
-    sha256: "849e007277a0442ab27570d3e3d6d43787507946590e8dd1947e5a39b7081f9e",
-    size: 247_469_776,
+    sha256: "16ad2b94deaf7b29abed966d981c9991a47af0420f5be8ed4a3f83bea9f678bc",
+    size: 391_948_592,
     executablePath: "claude",
   },
   "linux-arm64-musl": {
     platform: "linux-arm64-musl",
-    sha256: "73154fd674aaf233254edea8fbfb6a53d82d5297ae7546b998e36983def4dddc",
-    size: 240_234_328,
+    sha256: "8707fbe629fdd9876d9c356baa833a697dac76cd9a7157088f667199b8492851",
+    size: 382_222_104,
     executablePath: "claude",
   },
   "linux-x64-musl": {
     platform: "linux-x64-musl",
-    sha256: "5d19b7c91a03182ccb69da249f721684aebecfa4c52fe46b9205a81d8fc64a47",
-    size: 241_863_728,
+    sha256: "d25564bc5d84ec988a762cfe25fe51cb706b96eaec614f704ddbf653ab08ba00",
+    size: 386_060_256,
     executablePath: "claude",
   },
   "win32-arm64": {
     platform: "win32-arm64",
-    sha256: "9abd330bcc191aecc877a8ee9da2b448852cfe3bda15e5e4608385ea1d9d1709",
-    size: 238_894_240,
+    sha256: "9cff8169be24a8b3e59e89e58d9e3d37f3c17ca1b3a149e60666fe53c789d80a",
+    size: 372_111_520,
     executablePath: "claude.exe",
   },
   "win32-x64": {
     platform: "win32-x64",
-    sha256: "193061508fe619abf534b2c9d48151f26971d1d5b8460ad75c0af4be3d3525fb",
-    size: 242_929_824,
+    sha256: "d1649bf5261792fee7e1a1b63fdd2197082adec36ce9701aa0c1723bdcd2348a",
+    size: 384_213_664,
     executablePath: "claude.exe",
   },
 } as const satisfies Readonly<Record<string, ArtifactRecord>>;
@@ -87,6 +88,7 @@ export function resolveReviewedClaudeArtifact(
     artifactName,
     url: `${RELEASE_BASE}/${VERSION}/${artifact.platform}/${artifact.executablePath}`,
     allowedHosts: ALLOWED_HOSTS,
+    allowedUrlPathPrefixes: ALLOWED_URL_PATH_PREFIXES,
     checksum: { algorithm: "sha256", digest: artifact.sha256 },
     size: artifact.size,
     archiveFormat: "raw",
@@ -94,6 +96,6 @@ export function resolveReviewedClaudeArtifact(
     smokeArgs: ["--version"],
     catalogRevision: `anthropic-claude-code:${VERSION}:${artifact.platform}:${artifact.sha256}`,
     supportTier: "fully_assisted",
-    supportMessage: "Scient can install this reviewed official Claude Code runtime privately.",
+    supportMessage: "Scient can install this qualified official Claude Code runtime privately.",
   };
 }

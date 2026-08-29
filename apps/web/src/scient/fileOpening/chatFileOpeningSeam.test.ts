@@ -33,8 +33,9 @@ describe("universal chat-file opening seam", () => {
   it("routes HTML through the integrated Browser with an explicit document capability", () => {
     expect(chatMarkdownSource).toContain("openEnvironmentHtmlInPreview(fileLinkMeta.filePath)");
     expect(chatMarkdownSource).toContain(
-      'resolveWorkspaceFileLinkOpenTarget(iconPath) === "browser"',
+      'resolveWorkspaceFileLinkOpenTarget(fileLinkMeta.filePath) === "browser"',
     );
+    expect(chatMarkdownSource).toContain("shouldUseMarkdownFileBrowserPrimaryAction({");
     expect(
       chatMarkdownSource.match(/handleOpenInFilePreview\(\);/gu)?.length,
     ).toBeGreaterThanOrEqual(3);
@@ -47,7 +48,7 @@ describe("universal chat-file opening seam", () => {
       '() => import("../scient/fileOpening/EnvironmentFilePreview")',
     );
     expect(chatViewSource.match(/<EnvironmentFilePreview/gu)).toHaveLength(1);
-    expect(environmentPreviewSource).toContain("environmentFilePreparation({");
+    expect(environmentPreviewSource).toContain("useEnvironmentFileRefresh({");
     expect(environmentPreviewSource).toContain("fileLinkWorkspaceRoot={null}");
     expect(environmentPreviewSource).not.toContain("projects.writeFile");
   });

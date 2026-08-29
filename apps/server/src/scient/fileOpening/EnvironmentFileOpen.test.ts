@@ -219,4 +219,36 @@ describe("EnvironmentFileOpen", () => {
       expect(yield* fileSystem.readFileString(selectedPath)).toBe("<p>after</p>\n");
     }).pipe(Effect.provide(TestLayer), Effect.scoped, TestClock.withLive),
   );
+
+  it.effect("watches creation of a selected file that is initially missing", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const root = yield* fileSystem.makeTempDirectoryScoped({ prefix: "scient-file-create-" });
+      const selectedPath = path.join(root, "new-report.md");
+
+      const event = yield* watchEnvironmentFile({
+        path: EnvironmentFilePath.make(selectedPath),
+      }).pipe(
+        Stream.tap((event) =>
+          event._tag === "watch-ready"
+            ? fileSystem.writeFileString(selectedPath, "# Created later\n")
+            : Effect.void,
+        ),
+        Stream.filter((event) => event._tag === "file-changed"),
+        Stream.runHead,
+      );
+
+      expect(event).toEqual(
+        Option.some({
+          _tag: "file-changed",
+          path: EnvironmentFilePath.make(selectedPath),
+        }),
+      );
+      const refreshed = yield* prepareEnvironmentFileOpen({
+        path: EnvironmentFilePath.make(selectedPath),
+      });
+      expect(refreshed.presentation.kind).toBe("markdown");
+    }).pipe(Effect.provide(TestLayer), Effect.scoped, TestClock.withLive),
+  );
 });

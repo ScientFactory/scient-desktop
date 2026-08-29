@@ -1,8 +1,8 @@
 # Provider architecture
 
-> For maintainers. Using T3 Code? See [docs/user](../user/).
+> For maintainers. Using Scient? See [provider guides](../user/providers.md).
 
-A provider is the agent runtime that does the actual work. T3 Code supports several, and the
+A provider is the agent runtime that does the actual work. Scient supports several, and the
 orchestration layer does not know which one is behind a thread.
 
 ## Built-in drivers
@@ -54,8 +54,8 @@ Each built-in driver has an explicit native delivery decision, guarded against `
 
 - Codex uses developer instructions; Claude appends to its preset system prompt; OpenCode uses its
   per-prompt system field; Grok uses `--rules`; Droid uses `--append-system-prompt`.
-- Cursor 2026.08.11 accepts a documented `--plugin-dir`, but live CLI and ACP verification found
-  that session-local plugin rules were not applied. Antigravity 1.1.19 likewise has no verified
+- Cursor accepts a documented `--plugin-dir`, but live CLI and ACP verification found that
+  session-local plugin rules were not applied. Antigravity likewise has no verified
   application-private system extension. Both integrations are therefore marked unsupported for
   Scient awareness instead of rewriting the user's first message, writing rules into the project,
   or modifying global configuration.
@@ -67,292 +67,100 @@ or undocumented ACP metadata.
 ### Droid (Factory) driver
 
 Droid runs the `@factory/cli` binary over ACP (`droid exec --output-format acp`), sharing the ACP
-session runtime with Grok and Cursor. See [providers-droid.md](../user/providers-droid.md) for the
+session runtime with Grok and Cursor. See [Droid in Scient](../user/providers-droid.md) for the
 user-facing setup flow. Implementation notes that go beyond the shared runtime:
 
 - `Drivers/DroidDriver.ts` composes the existing adapter with the optional Scient lifecycle seam.
   It preserves healthy custom and system binaries, otherwise resolves the reviewed app-private
-  runtime and exposes only the actions that match the current runtime and ACP capabilities.
-- `Layers/DroidProvider.ts` probes status as version check → one passive ACP connection. That
-  connection initializes once to read account capabilities, then calls `session/new` without
-  `authenticate` to classify account state and read the model inventory from
-  `sessionSetupResult.configOptions`. It then walks
-  every catalog entry to observe its own reasoning-effort ladder (best-effort and time-bounded; on
-  failure the snapshot inventory stands with unknown per-model ladders rather than wrong ones). Only an
-  "Authentication required" failure maps to an unauthenticated snapshot; any other startup or spawn
-  failure is a generic probe error. Factory custom (`custom:`) models remain marked custom for
-  ownership and presentation, while their reasoning-effort capabilities come from the same
-  selected-model ACP snapshot as Factory-managed models.
-- `acp/DroidAcpSupport.ts` owns Droid-specific vocabulary: auth-method selection
-  (`FACTORY_API_KEY` env vs device pairing), model/effort config-option parsing (including the
-  per-model factory-token cost label parsed from each option description), autonomy-mode
-  mapping, and the shared `applyDroidModelAndEffort` used by both the interactive adapter and
-  headless text generation.
-- `Layers/DroidAdapter.ts` follows the Grok adapter chassis (thread-locked prompt preparation,
-  steering by prompt counting, atomic turn settlement under `Effect.ensuring`, two-phase interrupt)
-  and advertises standard ACP form elicitation so structured Droid questions use Scient's existing
-  user-input request/response lifecycle. It also adds a Droid idle watchdog: a silent child turn is cancelled after
-  `SCIENT_DROID_TURN_IDLE_TIMEOUT_MS` (default 600s; capped at 3600s while nested Tasks run).
-- `scient/providerLifecycle/DroidConnectionActions.ts` invokes only the standard ACP
-  `device-pairing` method advertised by the exact initialized peer. Droid owns its dynamic browser
-  flow; because ACP exposes no URL to Scient, the generic connection attempt represents that
-  provider-opened-browser state explicitly and publishes no invented fallback URL or code. Sign out
-  is exposed only when the passive probe advertises ACP logout and is rechecked against the exact
-  connection used for logout; there is no terminal-output fallback.
-- `scient/providerLifecycle/DroidManagedRuntimeActions.ts` delegates immutable download,
-  verification, staging, smoke testing, atomic activation, repair, and removal to the shared
-  provider-runtime package. Scient disables Droid's in-place updater for managed processes.
+  runtime and exposes only actions that match the current runtime and ACP capabilities.
+- `Layers/DroidProvider.ts` probes version, opens one passive ACP connection, and initializes it to
+  inspect account capabilities. It calls `session/new` without `authenticate` to classify account
+  state and read the model inventory. Model-specific reasoning ladders are discovered best-effort
+  and time-bounded; failure keeps the models with unknown ladders instead of publishing wrong ones.
+- `acp/DroidAcpSupport.ts` owns auth-method selection, model and effort parsing, autonomy mapping,
+  and the shared model/effort application used by interactive and headless paths.
+- `Layers/DroidAdapter.ts` owns prompt preparation, steering, atomic turn settlement, interruption,
+  ACP elicitation, and the Droid idle watchdog.
+- `scient/providerLifecycle/DroidConnectionActions.ts` invokes device pairing only when the exact
+  initialized peer advertises it. Droid owns its browser flow, and Sign out is exposed only when the
+  peer advertises ACP logout.
+- `scient/providerLifecycle/DroidManagedRuntimeActions.ts` delegates download, verification, staging,
+  smoke testing, atomic activation, repair, and removal to the shared provider-runtime package.
+  Scient disables Droid's in-place updater for managed processes.
 
-Shared-runtime edits this driver required (reconcile on upstream refreshes):
+Shared ACP compatibility edits required by Droid remain narrow and tested. `AcpSessionRuntime.ts`
+folds configuration notifications into cached session state and handles Droid's model-option
+notification behavior. `packages/effect-acp` decodes missing or null configuration inventories
+tolerantly without weakening non-array validation or editing generated schemas.
 
-- `AcpSessionRuntime.ts`: pass-through of authenticate metadata, folding of
-  `config_option_update` notifications into cached config state, and resolution of mode-selector
-  ids by category when `session/set_mode` names a value rather than an option id. Factory CLI 0.200.0
-  applies model writes and publishes their updates but never completes those JSON-RPC requests, so
-  Droid selects notification transport only for the `model` option and waits for the matching
-  authoritative update. Reasoning and autonomy keep normal request transport; a successful empty
-  acknowledgment updates the cached value only when no concurrent notification replaced the snapshot.
-- `packages/effect-acp`: `SetSessionConfigOptionResponse` decoding is made tolerant in
-  `rpc.ts` via a hand-written lenient wire codec (`LenientSetSessionConfigOptionResponse`), not by
-  editing the generated `schema.gen.ts`: a missing or `null` `configOptions` field normalizes to an
-  empty array while non-array payloads are still rejected. Keeping this out of generated code means
-  regeneration from the pinned schema assets cannot silently drop it; `rpc.test.ts` guards both
-  behaviors. Missing or null inventories remain absent rather than being normalized to an
-  authoritative empty list.
+### Antigravity driver
+
+Antigravity is a native integration, not an ACP compatibility bridge. Its provider-specific runtime
+is intentionally separate from the assisted lifecycle machinery:
+
+- [`AgySession.ts`][agy-session] starts one official `agy` process per Scient thread using the
+  documented `stream-json` transport. It keeps the process warm across turns, emits typed init,
+  delta, tool, result, usage, and conversation-ID events, and resumes from the last completed
+  conversation after interruption.
+- [`AntigravityAdapter.ts`][antigravity-adapter] maps those events into the provider contract, owns
+  process and session scopes, stages attachments privately, and rejects unsupported approvals,
+  model switching, and rollback rather than presenting unavailable controls.
+- [`AntigravityTextGeneration.ts`][antigravity-text] uses the native structured-output path with a
+  JSON schema and validates `structured_output`; it does not scrape JSON from prose.
+
+Antigravity's Google account flow, managed runtime, and capability-specific lifecycle behavior are
+documented in [Provider lifecycle architecture](./provider-lifecycle.md).
 
 ## Scient-assisted provider lifecycle
 
-Scient adds an optional lifecycle seam to the existing T3 provider instance. It does not add a
-second provider registry, model catalog, session router, or credential store. A driver without the
-optional seam keeps its inherited setup and provider behavior.
+Codex, Claude, Cursor, Antigravity, Grok, and Droid optionally expose assisted runtime and account
+capabilities on their existing provider instances. OpenCode keeps its inherited multi-provider setup.
+The lifecycle extension does not create another provider registry, session router, model catalog,
+credential store, or updater.
 
-The current vertical implementations are Codex, Claude, Antigravity, Grok, and Droid:
+The canonical architecture, action semantics, provider matrix, extension checklist, evidence levels,
+and T3 maintenance boundary are documented in
+[Provider lifecycle architecture](./provider-lifecycle.md). The
+[capability audit](./provider-lifecycle-capability-audit.md) records provider-specific evidence and
+open qualification questions.
 
-- [`ProviderDriver.ts`][driver] exposes optional provider-owned connection and managed-runtime
-  actions on a materialized provider instance;
-- [`ProviderRegistry`][provider-registry] applies transient operation summaries to the canonical
-  provider snapshot without persisting them as provider truth;
-- [`ProviderConnectionManager`][connection-manager] supervises official browser, device-code, and
-  Claude account sign-in, cancellation, verification, and logout;
-- [`ProviderRuntimeManager`][runtime-manager] plans, starts, cancels, and reconciles an app-private
-  runtime action; and
-- [`packages/scient-provider-runtime`][runtime-package] owns the reviewed artifact catalog and the
-  small filesystem/download boundary.
+At the integration boundary:
 
-Grok uses the same lifecycle seam without adding a credential store. Its reviewed raw executable is
-installed atomically into Scient's private runtime directory. Account sign-in, device-code sign-in,
-authorization-code submission, cancellation, account inspection, and logout use Grok Build's
-official ACP auth extensions. Readiness probes initialize ACP only: they never call authenticate,
-create a session, or request token-bearing extension data. A configured `XAI_API_KEY` remains a
-distinct ready state and is not presented as a connected Grok subscription.
+- [`ProviderDriver.ts`][driver] exposes optional connection and managed-runtime capabilities;
+- [`ProviderRegistry`][provider-registry] overlays transient operations on canonical provider
+  snapshots without persisting them as provider truth;
+- [`ProviderConnectionManager`][connection-manager] supervises official provider account flows;
+- [`ProviderRuntimeManager`][runtime-manager] supervises reviewed app-private runtime mutations; and
+- [`packages/scient-provider-runtime`][runtime-package] owns the reviewed artifact and filesystem
+  boundary.
 
-The contracts are additive. `ServerProvider.auth.required` distinguishes a provider that needs no
-account from one whose account state is not yet known. The optional `connection` summary adds only
-supported actions, transient progress, and runtime ownership. Existing `installed`, `auth`,
-`models`, version, update, instance, and driver facts remain canonical.
+The surrounding T3 provider host remains authoritative for provider instances, enablement, adapters,
+sessions, models, external maintenance, and turn execution.
 
-### Operation ownership and concurrency
+### Settings presentation seam
 
-The connection and runtime managers are constructed once per server process and shared by every
-WebSocket client. Closing a dialog or disconnecting one client therefore does not create a second
-operation or make an in-flight provider flow disappear.
+The provider editor's initial presentation is a small Scient-owned policy over that host state.
+Shipped drivers open on **Models** when the tab exists; unknown/custom drivers stay on their only
+**Configuration** tab. Provider-reported authenticated email is shown initially so multiple account
+instances can be distinguished, while the same reusable sensitive-text component remains redacted
+by default for other uses and lets the user hide or reveal the email. These defaults live in
+`apps/web/src/components/settings/ProviderInstanceCard.tsx` and are guarded by
+`ProviderInstanceCard.tabs.test.tsx` and `RedactedSensitiveText.test.tsx`.
 
-One lifecycle coordinator serializes connection, managed-runtime mutation, and inherited T3
-provider maintenance for the same provider instance. Managed runtime mutation and provider-tool
-updates also have a driver-wide reservation because every Codex account in one environment may
-resolve to the same executable. Independent account sign-ins may proceed together, but no sign-in
-can overlap an install, repair, removal, or update of that provider's shared runtime. Separate
-providers can proceed independently; T3's existing update-command lock still serializes package
-manager commands that share an external lock such as `npm-global`.
+## Model manifest
 
-Operation identities and reviewed-plan revisions reject duplicate starts and stale consent.
-Progress is semantic and coalesced by stage or meaningful download advance; renderer clients do
-not receive raw process output or every network chunk. Current operations are intentionally
-transient. After restart, the runtime service safely reconciles atomic state and derives truth
-again from the filesystem and provider probe instead of restoring a stale wizard page. Abandoned
-staging is removed only when the next serialized runtime mutation begins, so a concurrent status
-refresh cannot delete an active installation.
+The model picker's legacy section is driven by `apps/server/src/provider/model-manifest.json`, which
+lists the current (non-legacy) model slugs per driver kind. The `ModelManifest` service
+(`apps/server/src/provider/ModelManifest.ts`) refreshes that policy from the same file on Scient's
+`main` branch, so changing a model's classification is a reviewed Scient commit rather than an app
+release. Preference order is remote fetch, then the on-disk copy of the last successful fetch in
+the state directory, then the bundled copy.
 
-### Codex authentication
-
-[`CodexConnectionActions`][codex-connection] uses the structured Codex app-server account API. It
-does not parse terminal text. The browser or device-code URL and short-lived user code may cross
-the RPC boundary; passwords, access tokens, refresh tokens, credential files, and unredacted
-provider output may not. Browser login uses Codex's official local success page rather than its
-hosted Codex-app handoff, so a successful Scient login ends with a closeable browser page. Codex
-owns credential persistence, refresh, expiry, and revocation.
-
-The server does not report connection success from a button click. It waits for Codex completion,
-refreshes the provider instance, and derives the next UI state from the resulting runtime, account,
-and model snapshot. Logout uses the provider operation and then refreshes the same canonical
-snapshot.
-
-### Claude authentication
-
-[`ClaudeConnectionActions`][claude-connection] supervises Claude Code's official `auth login`
-process. It does not replace T3's Claude Agent SDK adapter, session transport, permissions, or model
-execution. Claude.ai subscription authentication is the default assisted method, with Anthropic
-Console authentication available as an alternative. Both account methods are executed by Claude
-Code itself; Scient never receives the provider password or becomes the credential owner. Configured
-API keys, custom endpoints, and Bedrock, Vertex, or Foundry backends keep their existing
-provider-specific setup and do not receive an irrelevant interactive account flow.
-
-Claude normally completes its local browser callback automatically. When Claude's browser page
-instead displays a one-time code, the UI may send that transient value to the stdin of the matching
-live Claude process. The operation identity is checked first, the value is bounded and rejected if
-it contains control characters, and it is never added to the provider snapshot, URL, logs, settings,
-or persistent storage. Claude owns the resulting credentials and Scient verifies success through
-`claude auth status --json` before refreshing the canonical models.
-
-Claude Code also owns the initial browser launch. Scient captures and validates the printed HTTPS
-authorization URL only to provide a **Reopen browser** recovery action; it does not open the same
-page a second time and create duplicate tabs.
-
-### Antigravity architecture and authentication
-
-Antigravity is a native integration, not an ACP compatibility bridge:
-
-- **Session transport (`AgySession.ts`)**: Starts one official `agy` process per Scient thread with
-  documented `stream-json` input and output. The process stays warm for multiple turns and emits
-  typed init, delta, tool, result, usage, and conversation-ID data. Cancellation terminates the
-  process; the next turn starts a fresh process with the last completed conversation ID.
-- **Adapter (`AntigravityAdapter.ts`)**: Maps native events into canonical provider events, owns
-  process/session scopes, stages attachments in a private directory, and rejects unsupported
-  interactive approvals, model switching, and rollback honestly.
-- **Authentication (`AntigravityConnectionActions.ts`)**: Launches the official interactive client
-  in a PTY, lets Antigravity open Google sign-in, and verifies completion with `agy models`.
-  Disconnect sends `/logout`. If the CLI blocks that command behind first-run screens, Scient
-  removes only Antigravity's provider-owned local consumer credential entries and then verifies that
-  `agy models` is unauthenticated. Scient never reads or copies token contents. The process
-  environment is allowlisted, disables Antigravity's in-place updater, and omits API-key and
-  custom-endpoint variables, preserving the Google-account subscription boundary.
-- **Structured text generation (`AntigravityTextGeneration.ts`)**: Uses the same native transport
-  with `--json-schema` and validates `structured_output`; it does not scrape JSON from prose.
-- **Assisted onboarding (`AntigravityInlineSetup.tsx`)**: Surfaces reviewed managed install,
-  cancellation/recovery, Google sign-in, model readiness, updates, and sign-out in the
-  composer and Settings surfaces.
-
-### Managed runtime trust boundary
-
-The reviewed runtime catalogs currently include OpenAI Codex `0.147.0`, release tag
-`rust-v0.147.0`; Anthropic Claude Code `2.1.170`, paired with the Claude Agent SDK version already
-used by T3; Google Antigravity CLI `1.1.19`; and Factory Droid `0.202.0`. Each known artifact has an
-exact HTTPS URL,
-allowlisted redirect hosts, byte size, SHA-256 or SHA-512 digest, archive shape, executable path,
-and smoke command compiled into the signed application source.
-
-That paired Claude runtime satisfies the current Fable 5 capability threshold, but it does not
-claim Opus 5 support: Opus 5 remains hidden until a healthy Claude Code `2.1.219` or newer is
-actually detected. A managed upgrade must review the Claude Agent SDK and executable together, or
-prove that the existing SDK is compatible with the newer executable; the executable must not be
-advanced alone merely to expose a model label.
-
-An install, update, or repair:
-
-1. opens a unique private staging directory;
-2. downloads with size, overall-time, idle-time, redirect-host, and cancellation bounds;
-3. verifies the exact digest;
-4. extracts in-process while rejecting traversal, links, duplicates, excessive files, and excessive
-   expanded data (or stages the reviewed raw Windows executable shape);
-5. runs a bounded `--version` smoke test with an explicit environment allowlist;
-6. activates the verified directory atomically; and
-7. removes staging data on success, failure, or cancellation.
-
-Routine status reconciliation never deletes staging because another serialized install may still
-own it. Abandoned staging is removed only after the installation reservation has been acquired and
-a new install, update, or repair begins.
-
-A newly reviewed artifact does not make an older healthy managed copy disappear. Status and launch
-resolution continue to use the atomically activated executable recorded in the private runtime
-state. An update stages and verifies the reviewed replacement, then switches that state only after
-activation. A failed replacement leaves the previous working managed runtime in place. `Remove`
-deletes only the selected Scient-private provider runtime root. It never changes a custom path,
-system package,
-provider credential home, or provider-owned account data. A user-visible manual rollback action is
-not exposed until two distinct managed releases have each passed the required release proof.
-Settings exposes repair and removal for a managed copy. When the canonical provider probe reports
-that an existing managed executable cannot run, the assisted dialog routes directly to runtime
-recovery rather than presenting authentication as the next step.
-
-The app-private store has one owning Scient server process per data directory. The desktop
-single-instance and server lifecycle enforce that deployment invariant; independent server
-processes must not be configured to mutate the same application data directory.
-
-### Codex platform capability matrix
-
-Support is selected by host mode, operating system, architecture, and, for Linux diagnostics,
-runtime libc. The shared UI consumes the resulting support tier; it contains no operating-system
-installation branches.
-
-| Host target                                 | Tier in this implementation  | Managed action                                                 |
-| ------------------------------------------- | ---------------------------- | -------------------------------------------------------------- |
-| Local desktop, macOS Apple silicon          | `fully_assisted`             | Install, repair, and remove the reviewed private artifact      |
-| Local desktop, macOS Intel                  | `fully_assisted`             | Install, repair, and remove the reviewed private artifact      |
-| Local desktop, Windows ARM64 or x64         | `fully_assisted`             | Install, repair, and remove the reviewed private executable    |
-| Local desktop, Linux ARM64 or x64           | `fully_assisted`             | Install, repair, and remove the reviewed private static binary |
-| Remote or web/server mode on a known target | `external_runtime_supported` | Use the runtime administered on that host; no managed mutation |
-| Unknown operating system or architecture    | `unsupported`                | No invented fallback action                                    |
-
-Official Intel-macOS, Windows, and Linux artifact metadata is represented and contract-tested, and
-the local desktop offers the same verified managed lifecycle on each reviewed row. Platform release
-validation remains a separate acceptance responsibility: a failure on one row must not be treated
-as evidence that another row is healthy or unhealthy.
-
-### Claude platform capability matrix
-
-Claude's official native catalog covers Apple-silicon and Intel macOS, Windows ARM64 and x64, and
-Linux ARM64 and x64 with glibc or musl. Those targets share the same fail-closed download, digest,
-smoke-test, atomic-activation, and recovery pipeline. Managed mutation remains local-desktop-only;
-remote and web hosts use an externally administered runtime.
-
-Catalog coverage is implementation evidence, not a public release-proof claim. Before a packaged
-build enables or advertises a target, that exact operating-system and architecture row must pass
-clean-machine installation, cancellation, authentication, update, interruption, and recovery
-qualification. Passing those checks on one target does not certify another.
-
-### Antigravity platform capability matrix
-
-The reviewed Antigravity `1.1.19` catalog covers Apple-silicon and Intel macOS, Windows ARM64 and
-x64, and glibc Linux ARM64 and x64. Google's macOS and Linux archives contain one native
-`antigravity` executable; the Windows release is a reviewed raw `agy.exe`. Musl Linux is not
-advertised because Google does not publish a matching artifact in this release.
-
-Known local-desktop targets receive managed install, repair, update, and removal. Remote/server
-hosts may use an externally administered runtime but cannot mutate it through Scient. As with the
-other provider catalogs, each operating-system and architecture row still requires packaged-app
-qualification before release; catalog metadata and unit tests alone are not cross-platform proof.
-
-### Droid platform capability matrix
-
-The reviewed Droid `0.202.0` catalog covers Apple-silicon and Intel macOS, ARM64 and x64 Windows,
-and ARM64 and x64 glibc Linux. X64 targets use Factory's official baseline binaries so managed
-installation does not require a separate CPU-detection subsystem. Musl Linux is not advertised
-because Factory does not publish a distinct reviewed artifact for it.
-
-Known local-desktop targets receive managed install, repair, and removal. Remote/server hosts may
-use an externally administered runtime but cannot mutate it through Scient. Catalog metadata and
-unit tests do not replace packaged-app qualification of every operating-system and architecture
-row.
-
-### Upstream-maintenance boundary
-
-Most lifecycle behavior is under `apps/server/src/scient`, `apps/web/src/scient`, and
-`packages/scient-provider-runtime`. The intentional inherited seams are narrow: optional driver
-actions, additive contracts/RPCs, registry overlays, one shared reservation around T3's existing
-maintenance runner, server composition, and small composer and Settings entry points. Upstream T3
-remains authoritative for provider instances, adapters, sessions, model discovery, process
-ownership, update commands, provider enablement, and the surrounding UI. Future T3 refreshes should
-preserve those seams and reconcile only the bounded inherited edits rather than porting the
-lifecycle into a parallel host architecture.
-
-The composer keeps T3's model picker and model-selection logic. Two optional presentation callbacks
-allow an enabled provider that is not ready to remain selectable in the picker rail and render its
-Scient-owned setup surface in place of the model list. Once the canonical provider snapshot becomes
-ready, the callback stops applying and the same selected rail item returns to T3's model list. This
-keeps other providers reachable after the first connection without creating a second model picker.
-When setup began in the first-provider onboarding picker, readiness hands the provider's declared
-default model to that same T3 selection path and closes onboarding; it does not create a separate
-Scient model-selection state.
+Refreshes are TTL-gated, run concurrently with provider probes, respect the
+`enableProviderUpdateChecks` setting, and never fail a provider check. Codex and Claude currently
+apply the classification to every snapshot; driver kinds absent from the manifest have no legacy
+classification. Keep the remote source Scient-owned: pointing it at upstream would let an unrelated
+repository change Scient's model policy outside Scient's review and release boundary.
 
 ## How provider work is requested
 
@@ -378,8 +186,8 @@ synchronization.
    commands.
 2. [`ProviderCommandReactor`][cmd] reacts to orchestration intent events and dispatches provider
    calls.
-3. [`CheckpointReactor`][checkpoint] captures workspace checkpoints on turn start and completion, and
-   performs reverts.
+3. [`CheckpointReactor`][checkpoint] captures workspace checkpoints on turn start and completion,
+   and performs reverts.
 
 ### Buffered assistant delivery
 
@@ -398,6 +206,9 @@ when a request opens (approval) or user input is requested, via
 [opencode]: ../../apps/server/src/provider/Drivers/OpenCodeDriver.ts
 [droid]: ../../apps/server/src/provider/Drivers/DroidDriver.ts
 [antigravity]: ../../apps/server/src/provider/Drivers/AntigravityDriver.ts
+[agy-session]: ../../apps/server/src/provider/antigravity/AgySession.ts
+[antigravity-adapter]: ../../apps/server/src/provider/Layers/AntigravityAdapter.ts
+[antigravity-text]: ../../apps/server/src/textGeneration/AntigravityTextGeneration.ts
 [adapter]: ../../apps/server/src/provider/Services/ProviderAdapter.ts
 [awareness]: ../../apps/server/src/provider/ScientAwareness.ts
 [instances]: ../../apps/server/src/provider/Services/ProviderInstanceRegistry.ts
@@ -407,9 +218,6 @@ when a request opens (approval) or user input is requested, via
 [provider-registry]: ../../apps/server/src/provider/Layers/ProviderRegistry.ts
 [connection-manager]: ../../apps/server/src/scient/providerLifecycle/ProviderConnectionManager.ts
 [runtime-manager]: ../../apps/server/src/scient/providerLifecycle/ProviderRuntimeManager.ts
-[codex-connection]: ../../apps/server/src/scient/providerLifecycle/CodexConnectionActions.ts
-[claude-connection]: ../../apps/server/src/scient/providerLifecycle/ClaudeConnectionActions.ts
-[antigravity-connection]: ../../apps/server/src/scient/providerLifecycle/AntigravityConnectionActions.ts
 [runtime-package]: ../../packages/scient-provider-runtime/
 [contracts]: ../../packages/contracts/src/orchestration.ts
 [worker]: ../../packages/shared/src/DrainableWorker.ts

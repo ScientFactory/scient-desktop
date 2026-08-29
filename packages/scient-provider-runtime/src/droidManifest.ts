@@ -1,9 +1,10 @@
 import type { ManagedRuntimeArtifact } from "./managedRuntimeArtifact.ts";
 import type { ManagedRuntimeTarget } from "./target.ts";
 
-const VERSION = "0.202.0";
+const VERSION = "0.203.0";
 const RELEASE_BASE = `https://downloads.factory.ai/factory-cli/releases/${VERSION}`;
 const ALLOWED_HOSTS = ["downloads.factory.ai"] as const;
+const ALLOWED_URL_PATH_PREFIXES = ["/factory-cli/releases/"] as const;
 
 interface ArtifactRecord {
   readonly releaseDirectory: string;
@@ -21,43 +22,43 @@ const ARTIFACTS = {
   "darwin-arm64": {
     releaseDirectory: "darwin/arm64",
     artifactName: "droid",
-    sha256: "f5cde1b1faefd3b95f7f0a5e3b71fd94aa27d57b0b96b3b751b23ea4805030c6",
-    size: 259_182_128,
+    sha256: "e0d1f1969ae2971c7986def14127742e368d0de8e3d808dbd4bb380642d29147",
+    size: 259_363_760,
     executablePath: "droid",
   },
   "darwin-x64": {
     releaseDirectory: "darwin/x64-baseline",
     artifactName: "droid",
-    sha256: "8854b9677db218fc0f7fe18d6741b97ea92264cfdc7c4760f51fa27605f5df8f",
-    size: 273_311_136,
+    sha256: "08f69000160884946e22f99e0d33962458de5d33f2724d8d142fdb256a383fc1",
+    size: 273_492_768,
     executablePath: "droid",
   },
   "linux-arm64": {
     releaseDirectory: "linux/arm64",
     artifactName: "droid",
-    sha256: "7629e0e254b4be6dbaff5426b8d7e8c10e8bbe802593c5bd17b0e1f26bac2a76",
-    size: 295_086_224,
+    sha256: "bd01fc8adaee56db3c5a0c8ae96c799889fe6611b0e62688b72c57435600e5a2",
+    size: 295_282_832,
     executablePath: "droid",
   },
   "linux-x64": {
     releaseDirectory: "linux/x64-baseline",
     artifactName: "droid",
-    sha256: "5846730ce218e42e9c3114c93a0ffb007345fc8fc760b7111912df1d2e3ead9c",
-    size: 297_658_496,
+    sha256: "577bc12b328b65d521873bfa66c492f5e3ff80b3504c94eb9b23242b3e1ba1a7",
+    size: 297_842_816,
     executablePath: "droid",
   },
   "win32-arm64": {
     releaseDirectory: "windows/arm64",
     artifactName: "droid.exe",
-    sha256: "2ebf39e3fb39e6614d1a3f62060a7d767355d1318d8a06311401655ba02b8074",
-    size: 154_938_080,
+    sha256: "40b9e5d09dc42f3aacc5d4904e3613465fd212d57da2d54f164dca6026c375b3",
+    size: 154_980_064,
     executablePath: "droid.exe",
   },
   "win32-x64": {
     releaseDirectory: "windows/x64-baseline",
     artifactName: "droid.exe",
-    sha256: "032b615390a240c384dbed7a019628065cbf0056458e1f06869d8223ec1ff157",
-    size: 295_243_488,
+    sha256: "f0ea989c182081d8a18d8a4ffb55a82539ade52a56ee15fa1c7030b0e7fb1ed8",
+    size: 295_423_712,
     executablePath: "droid.exe",
   },
 } as const satisfies Readonly<Record<string, ArtifactRecord>>;
@@ -82,6 +83,7 @@ export function resolveReviewedDroidArtifact(
     artifactName: artifact.artifactName,
     url: `${RELEASE_BASE}/${artifact.releaseDirectory}/${artifact.artifactName}`,
     allowedHosts: ALLOWED_HOSTS,
+    allowedUrlPathPrefixes: ALLOWED_URL_PATH_PREFIXES,
     checksum: { algorithm: "sha256", digest: artifact.sha256 },
     size: artifact.size,
     archiveFormat: "raw",
@@ -90,6 +92,6 @@ export function resolveReviewedDroidArtifact(
     smokeEnvironment: { FACTORY_DROID_AUTO_UPDATE_ENABLED: "false" },
     catalogRevision: `factory-droid:${VERSION}:${key}:${artifact.sha256}`,
     supportTier: "fully_assisted",
-    supportMessage: "Scient can install this reviewed official Factory Droid runtime privately.",
+    supportMessage: "Scient can install this qualified official Factory Droid runtime privately.",
   };
 }

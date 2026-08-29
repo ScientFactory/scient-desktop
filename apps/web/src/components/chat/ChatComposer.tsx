@@ -3,8 +3,10 @@ import type {
   EnvironmentId,
   ModelSelection,
   PreviewAnnotationPayload,
+  ProjectId,
   ProviderApprovalDecision,
   ProviderInteractionMode,
+  ProviderRuntimeSummary,
   ResolvedKeybindingsConfig,
   RuntimeMode,
   ScopedThreadRef,
@@ -44,9 +46,16 @@ import {
   ProviderOnboardingPicker,
 } from "../../scient/providerConnection/ProviderOnboardingPicker.tsx";
 import {
+  activeProviderRuntimeUpdateOperation,
   canManageProviderLifecycle,
   providerConnectionPresentation,
+  shouldShowProviderLifecycleSetupInComposer,
 } from "../../scient/providerConnection/providerConnectionPresentation.ts";
+import { ComposerProviderUpdateFooter } from "../../scient/providerConnection/ComposerProviderUpdateFooter.tsx";
+import {
+  currentOptimisticProviderValue,
+  type OptimisticProviderValue,
+} from "../../scient/providerConnection/optimisticProviderValue.ts";
 import {
   clampCollapsedComposerCursor,
   type ComposerSubmissionIntent,
@@ -572,6 +581,7 @@ export interface ChatComposerProps {
 
   // Thread context
   activeThreadId: ThreadId | null;
+  activeProjectId: ProjectId | null;
   activeThreadEnvironmentId: EnvironmentId | undefined;
   activeThread: Thread | undefined;
   isServerThread: boolean;
@@ -698,6 +708,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     routeThreadRef,
     draftId,
     activeThreadId,
+    activeProjectId,
     activeThreadEnvironmentId: _activeThreadEnvironmentId,
     activeThread,
     isServerThread: _isServerThread,
@@ -778,10 +789,6 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         environmentId,
       })
     : null;
-  const sendDisabledReason =
-    externalSendDisabledReason ?? (activePendingProgress ? null : attachmentBlockReason);
-  const isSendDisabled = sendDisabledReason !== null;
-
   const setComposerDraftPrompt = useComposerDraftStore((store) => store.setPrompt);
   const addComposerDraftImage = useComposerDraftStore((store) => store.addImage);
   const addComposerDraftImages = useComposerDraftStore((store) => store.addImages);
@@ -946,16 +953,55 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     () => providerInstanceEntries.find((entry) => entry.instanceId === selectedInstanceId),
     [providerInstanceEntries, selectedInstanceId],
   );
+  const [localRuntimeUpdate, setLocalRuntimeUpdate] =
+    useState<OptimisticProviderValue<ProviderRuntimeSummary> | null>(null);
+  const [preparingRuntimeUpdateInstanceId, setPreparingRuntimeUpdateInstanceId] =
+    useState<ProviderInstanceId | null>(null);
+  const optimisticRuntimeUpdate = selectedProviderEntry
+    ? currentOptimisticProviderValue(localRuntimeUpdate, selectedProviderEntry.snapshot)
+    : null;
+  const selectedProviderRuntime =
+    optimisticRuntimeUpdate ?? selectedProviderEntry?.snapshot.connection?.runtime;
+  const activeSelectedProviderRuntimeUpdate =
+    activeProviderRuntimeUpdateOperation(selectedProviderRuntime);
+  const selectedProviderIsUpdating =
+    preparingRuntimeUpdateInstanceId === selectedInstanceId ||
+    activeSelectedProviderRuntimeUpdate !== null;
+  const selectedProviderUpdateLabel = selectedProviderEntry
+    ? `Updating ${selectedProviderEntry.displayName}…`
+    : "Updating provider…";
+  const providerRuntimeUpdateSendDisabledReason = selectedProviderIsUpdating
+    ? `${selectedProviderEntry?.displayName ?? "Provider"} is updating.`
+    : null;
+  const getComposerModelDisabledReason = useCallback(
+    (instanceId: ProviderInstanceId, model: string) =>
+      instanceId === selectedInstanceId && providerRuntimeUpdateSendDisabledReason
+        ? providerRuntimeUpdateSendDisabledReason
+        : getModelDisabledReason(instanceId, model),
+    [getModelDisabledReason, providerRuntimeUpdateSendDisabledReason, selectedInstanceId],
+  );
+  const sendDisabledReason =
+    externalSendDisabledReason ??
+    providerRuntimeUpdateSendDisabledReason ??
+    (activePendingProgress ? null : attachmentBlockReason);
+  const isSendDisabled = sendDisabledReason !== null;
   const noProviderAvailable = selectedProviderEntry === undefined;
+  const selectedProviderNeedsConnection =
+    selectedProviderEntry !== undefined &&
+    shouldShowProviderLifecycleSetupInComposer(
+      selectedProviderEntry.snapshot,
+      selectedProviderRuntime,
+    );
   const selectedProviderConnectionKind = providerConnectionPresentation(
     selectedProviderEntry?.snapshot,
   ).kind;
-  const selectedProviderNeedsConnection =
+  const reconnectProviderEntry =
+    lockedProvider !== null &&
     selectedProviderEntry !== undefined &&
-    (selectedProviderConnectionKind === "not-installed" ||
-      selectedProviderConnectionKind === "setting-up" ||
-      selectedProviderConnectionKind === "not-connected" ||
-      selectedProviderConnectionKind === "connecting");
+    (selectedProviderConnectionKind === "not-connected" ||
+      selectedProviderConnectionKind === "connecting")
+      ? selectedProviderEntry
+      : undefined;
   // The driver kind follows the instance that will actually run the turn,
   // which can differ from the persisted selection when that selection is
   // disabled.
@@ -976,7 +1022,14 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     [selectedProviderEntry],
   );
   const scientSkills = useEnvironmentQuery(
-    scientSkillsInventory({ environmentId, input: {} }),
+    scientSkillsInventory({
+      environmentId,
+      input: activeThreadId
+        ? { threadId: activeThreadId, ...(activeProjectId ? { projectId: activeProjectId } : {}) }
+        : activeProjectId
+          ? { projectId: activeProjectId }
+          : {},
+    }),
   ).data;
   const effectiveSelectedProviderSkills = useMemo(
     () =>
@@ -1094,6 +1147,38 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   const [isComposerFooterCompact, setIsComposerFooterCompact] = useState(false);
   const [isComposerPrimaryActionsCompact, setIsComposerPrimaryActionsCompact] = useState(false);
   const [isComposerModelPickerOpen, setIsComposerModelPickerOpen] = useState(false);
+  const providerUpdateDisabledReason =
+    phase === "running" || isSendBusy || isConnecting || isPreparingWorktree
+      ? "Available when the provider is idle."
+      : environmentUnavailable !== null
+        ? "Available when this environment reconnects."
+        : undefined;
+  const renderProviderUpdateFooter = useCallback(
+    (entry: ProviderInstanceEntry) => (
+      <ComposerProviderUpdateFooter
+        key={entry.instanceId}
+        environmentId={environmentId}
+        entry={entry}
+        {...(preparingRuntimeUpdateInstanceId !== null &&
+        preparingRuntimeUpdateInstanceId !== entry.instanceId
+          ? { disabledReason: "Another provider update is being prepared." }
+          : providerUpdateDisabledReason
+            ? { disabledReason: providerUpdateDisabledReason }
+            : {})}
+        onPreparingChange={(isPreparing) => {
+          setPreparingRuntimeUpdateInstanceId(isPreparing ? entry.instanceId : null);
+        }}
+        onUpdateStarted={(provider) => {
+          const runtime = provider.connection?.runtime;
+          if (runtime) {
+            setLocalRuntimeUpdate({ baseProvider: entry.snapshot, value: runtime });
+          }
+        }}
+      />
+    ),
+    [environmentId, preparingRuntimeUpdateInstanceId, providerUpdateDisabledReason],
+  );
+
   const [isComposerFocused, setIsComposerFocused] = useState(false);
   const [composerSubmissionError, setComposerSubmissionError] = useState<string | null>(null);
   const [providerInputSubmissionError, setProviderInputSubmissionError] = useState<string | null>(
@@ -3535,6 +3620,9 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                       compact={isComposerFooterCompact}
                       environmentId={environmentId}
                       instanceEntries={providerInstanceEntries}
+                      {...(reconnectProviderEntry
+                        ? { reconnectEntry: reconnectProviderEntry }
+                        : {})}
                       onInstanceModelChange={onProviderModelSelect}
                     />
                   ) : (
@@ -3550,6 +3638,12 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                       triggerClassName="-ms-2.5"
                       terminalOpen={terminalOpen}
                       open={isComposerModelPickerOpen}
+                      {...(selectedProviderIsUpdating
+                        ? {
+                            statusLabel: selectedProviderUpdateLabel,
+                            triggerAriaLabel: `${selectedProviderEntry?.displayName ?? "Provider"} update in progress`,
+                          }
+                        : {})}
                       {...(composerProviderState.modelPickerIconClassName
                         ? {
                             activeProviderIconClassName:
@@ -3559,9 +3653,10 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                       onOpenChange={(open) => {
                         setIsComposerModelPickerOpen(open);
                       }}
-                      getModelDisabledReason={getModelDisabledReason}
+                      getModelDisabledReason={getComposerModelDisabledReason}
                       isProviderSetupAvailable={isProviderSetupAvailable}
                       renderProviderSetup={renderProviderSetup}
+                      renderProviderFooter={renderProviderUpdateFooter}
                       onForkToSwitchProvider={handleForkToSwitchProvider}
                       forkToSwitchProviderDisabled={
                         phase === "running" ||

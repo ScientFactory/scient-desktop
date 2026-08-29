@@ -57,6 +57,7 @@ import Migration0041 from "./Migrations/041_ProjectlessThreads.ts";
 import Migration0042 from "./Migrations/042_AuthSessionClientConnection.ts";
 import Migration0043 from "./Migrations/043_RetireProjectlessThreads.ts";
 import Migration0044 from "./Migrations/044_ProjectionThreadLinkedPullRequest.ts";
+import Migration0045 from "./Migrations/045_ProjectionThreadsUnsettledAt.ts";
 
 /**
  * Migration loader with all migrations defined inline.
@@ -113,6 +114,7 @@ export const migrationEntries = [
   [42, "AuthSessionClientConnection", Migration0042],
   [43, "RetireProjectlessThreads", Migration0043],
   [44, "ProjectionThreadLinkedPullRequest", Migration0044],
+  [45, "ProjectionThreadsUnsettledAt", Migration0045],
 ] as const;
 
 export const migrationManifest = migrationEntries.map(([id, name]) => [id, name] as const);

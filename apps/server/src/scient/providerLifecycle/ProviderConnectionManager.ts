@@ -66,6 +66,9 @@ interface ActiveConnection {
   readonly transitionLock: Semaphore.Semaphore;
 }
 
+type ActiveConnectionCleanupMode = "complete" | "interrupt";
+
+const PROVIDER_CANCEL_TIMEOUT = "5 seconds";
 const nowIso = DateTime.now.pipe(Effect.map(DateTime.formatIso));
 
 function operation(input: {
@@ -127,22 +130,71 @@ export const make = Effect.fn("ProviderConnectionManager.make")(function* () {
     return { actions, providers, snapshot, provider };
   });
 
-  const removeIfCurrent = (instanceId: ProviderInstanceId, operationId: string) =>
-    Effect.gen(function* () {
-      const removed = yield* Ref.modify(activeRef, (active) => {
-        const current = active.get(instanceId);
-        if (current?.operationId !== operationId) {
-          return [undefined, active] as const;
-        }
-        const next = new Map(active);
-        next.delete(instanceId);
-        return [current, next] as const;
-      });
-      if (removed) {
-        yield* lifecycleCoordinator.release({ operationId });
+  const takeIfCurrent = (instanceId: ProviderInstanceId, operationId: string) =>
+    Ref.modify(activeRef, (active) => {
+      const current = active.get(instanceId);
+      if (current?.operationId !== operationId) {
+        return [undefined, active] as const;
       }
-      return removed;
+      const next = new Map(active);
+      next.delete(instanceId);
+      return [current, next] as const;
     });
+
+  const cleanupOwnedResources = Effect.fn("ProviderConnectionManager.cleanupOwnedResources")(
+    function* (active: ActiveConnection, mode: ActiveConnectionCleanupMode) {
+      if (mode === "interrupt") {
+        const attempt = yield* Ref.get(active.attemptRef);
+        if (attempt) {
+          yield* attempt.cancel.pipe(
+            Effect.interruptible,
+            Effect.timeout(PROVIDER_CANCEL_TIMEOUT),
+            Effect.ignoreCause({ log: true }),
+          );
+        }
+        const supervisor = yield* Ref.get(active.fiberRef);
+        if (supervisor) yield* Fiber.interrupt(supervisor);
+      }
+      yield* Scope.close(active.scope, Exit.void).pipe(Effect.ignoreCause({ log: true }));
+    },
+  );
+
+  const settleActive = <A, E, R>(
+    active: ActiveConnection,
+    mode: ActiveConnectionCleanupMode,
+    terminalPublication: Effect.Effect<A, E, R>,
+  ): Effect.Effect<A, E, R> =>
+    // Stop owned resources first, but keep lifecycle ownership until the
+    // terminal write settles so an older operation cannot overwrite a newer one.
+    cleanupOwnedResources(active, mode).pipe(
+      Effect.andThen(terminalPublication),
+      Effect.ensuring(
+        lifecycleCoordinator.release({ operationId: active.operationId }).pipe(Effect.asVoid),
+      ),
+    );
+
+  const cleanupActive = (active: ActiveConnection, mode: ActiveConnectionCleanupMode) =>
+    settleActive(active, mode, Effect.void);
+
+  const cleanupIfCurrent = (
+    instanceId: ProviderInstanceId,
+    operationId: string,
+    mode: ActiveConnectionCleanupMode,
+  ) =>
+    Effect.gen(function* () {
+      const active = yield* takeIfCurrent(instanceId, operationId);
+      if (active) yield* cleanupActive(active, mode);
+      return active;
+    });
+
+  const cleanupAll = Effect.gen(function* () {
+    const active = yield* Ref.getAndSet(activeRef, new Map());
+    yield* Effect.forEach(active.values(), (connection) => cleanupActive(connection, "interrupt"), {
+      discard: true,
+    });
+  });
+
+  yield* Effect.addFinalizer(() => cleanupAll);
 
   const cleanupInterruptedStart = Effect.fn("ProviderConnectionManager.cleanupInterruptedStart")(
     function* (input: {
@@ -151,31 +203,30 @@ export const make = Effect.fn("ProviderConnectionManager.make")(function* () {
       readonly method: ProviderConnectionStartInput["method"];
       readonly startedAt: string;
     }) {
-      const active = yield* removeIfCurrent(input.instanceId, input.operationId);
+      const active = yield* takeIfCurrent(input.instanceId, input.operationId);
       if (!active) return;
-
-      const attempt = yield* Ref.get(active.attemptRef);
-      if (attempt) yield* attempt.cancel.pipe(Effect.ignore);
-      const supervisor = yield* Ref.get(active.fiberRef);
-      if (supervisor) yield* Fiber.interrupt(supervisor);
-      yield* Scope.close(active.scope, Exit.void).pipe(Effect.ignore);
-
-      const previousOperation = (yield* providerRegistry.getProviders).find(
-        (provider) => provider.instanceId === input.instanceId,
-      )?.connection?.operation;
-      if (previousOperation?.operationId !== input.operationId) return;
-      const finishedAt = yield* nowIso;
-      yield* providerRegistry.setProviderConnectionOperation({
-        instanceId: input.instanceId,
-        operation: operation({
-          operationId: input.operationId,
-          method: input.method,
-          status: "cancelled",
-          startedAt: input.startedAt,
-          finishedAt,
-          message: "Provider sign in cancelled.",
+      yield* settleActive(
+        active,
+        "interrupt",
+        Effect.gen(function* () {
+          const previousOperation = (yield* providerRegistry.getProviders).find(
+            (provider) => provider.instanceId === input.instanceId,
+          )?.connection?.operation;
+          if (previousOperation?.operationId !== input.operationId) return;
+          const finishedAt = yield* nowIso;
+          yield* providerRegistry.setProviderConnectionOperation({
+            instanceId: input.instanceId,
+            operation: operation({
+              operationId: input.operationId,
+              method: input.method,
+              status: "cancelled",
+              startedAt: input.startedAt,
+              finishedAt,
+              message: "Provider sign in cancelled.",
+            }),
+          });
         }),
-      });
+      );
     },
   );
 
@@ -186,7 +237,19 @@ export const make = Effect.fn("ProviderConnectionManager.make")(function* () {
     // install/reload. Re-probe before reserving or launching an account flow
     // so an existing provider session is treated as ready, not as a reason to
     // start a duplicate sign-in process.
-    yield* providerRegistry.refreshInstance(input.instanceId);
+    const providerBeforeRefresh = (yield* providerRegistry.getProviders).find(
+      (provider) => provider.instanceId === input.instanceId,
+    )?.driver;
+    yield* providerRegistry.refreshInstanceStrict(input.instanceId).pipe(
+      Effect.mapError(() =>
+        makeError({
+          provider: providerBeforeRefresh ?? ProviderDriverKind.make("unknown"),
+          instanceId: input.instanceId,
+          reason: "connection_failed",
+          message: "Scient could not verify the provider before starting sign in. Try again.",
+        }),
+      ),
+    );
     const target = yield* readTarget(input.instanceId);
     if (!target.actions || !target.snapshot) {
       return yield* makeError({
@@ -274,18 +337,18 @@ export const make = Effect.fn("ProviderConnectionManager.make")(function* () {
       });
     }
 
-    yield* providerRegistry.setProviderConnectionOperation({
-      instanceId: input.instanceId,
-      operation: operation({
-        operationId,
-        method: input.method,
-        status: "starting",
-        startedAt,
-        message: "Starting secure provider sign in.",
-      }),
-    });
-
     return yield* Effect.gen(function* () {
+      yield* providerRegistry.setProviderConnectionOperation({
+        instanceId: input.instanceId,
+        operation: operation({
+          operationId,
+          method: input.method,
+          status: "starting",
+          startedAt,
+          message: "Starting secure provider sign in.",
+        }),
+      });
+
       const attemptResult = yield* actions.start(input.method).pipe(
         Effect.provideService(Scope.Scope, scope),
         Effect.result,
@@ -298,8 +361,7 @@ export const make = Effect.fn("ProviderConnectionManager.make")(function* () {
         ),
       );
       if (attemptResult._tag === "Failure") {
-        const removed = yield* removeIfCurrent(input.instanceId, operationId);
-        yield* Scope.close(scope, Exit.void).pipe(Effect.ignore);
+        const removed = yield* takeIfCurrent(input.instanceId, operationId);
         // A second client may have cancelled while the provider was still
         // preparing its browser flow. Preserve that authoritative cancelled
         // state instead of overwriting it with a late startup failure.
@@ -307,17 +369,21 @@ export const make = Effect.fn("ProviderConnectionManager.make")(function* () {
           return { providers: yield* providerRegistry.getProviders };
         }
         const finishedAt = yield* nowIso;
-        yield* providerRegistry.setProviderConnectionOperation({
-          instanceId: input.instanceId,
-          operation: operation({
-            operationId,
-            method: input.method,
-            status: "failed",
-            startedAt,
-            finishedAt,
-            message: attemptResult.failure.message,
+        yield* settleActive(
+          removed,
+          "complete",
+          providerRegistry.setProviderConnectionOperation({
+            instanceId: input.instanceId,
+            operation: operation({
+              operationId,
+              method: input.method,
+              status: "failed",
+              startedAt,
+              finishedAt,
+              message: attemptResult.failure.message,
+            }),
           }),
-        });
+        );
         return yield* makeError({
           provider: target.provider,
           instanceId: input.instanceId,
@@ -341,8 +407,8 @@ export const make = Effect.fn("ProviderConnectionManager.make")(function* () {
             // Cancellation can race the provider's initial URL discovery. The
             // scope has already been closed by cancel; ask the provider process
             // to stop as a best-effort fallback and never resurrect waiting.
-            yield* attempt.cancel.pipe(Effect.ignore);
-            yield* Scope.close(scope, Exit.void).pipe(Effect.ignore);
+            yield* attempt.cancel.pipe(Effect.ignoreCause({ log: true }));
+            yield* Scope.close(scope, Exit.void).pipe(Effect.ignoreCause({ log: true }));
             return undefined;
           }
           yield* Ref.set(attemptRef, attempt);
@@ -383,6 +449,9 @@ export const make = Effect.fn("ProviderConnectionManager.make")(function* () {
               }
               let completion = result;
               if (completion._tag === "Success") {
+                // Final account verification decides the truthful terminal state.
+                // Keep it in the same transition claim as publication so a late
+                // cancel cannot overwrite the probe-derived terminal result.
                 yield* providerRegistry.setProviderConnectionOperation({
                   instanceId: input.instanceId,
                   operation: operation({
@@ -393,23 +462,25 @@ export const make = Effect.fn("ProviderConnectionManager.make")(function* () {
                     message: "Verifying the connected provider account.",
                   }),
                 });
-                const refreshed = yield* providerRegistry.refreshInstance(input.instanceId);
-                const refreshedProvider = refreshed.find(
-                  (provider) => provider.instanceId === input.instanceId,
-                );
+                const refreshResult = yield* providerRegistry
+                  .refreshInstanceAfterAccountChange(input.instanceId)
+                  .pipe(Effect.result);
+                const refreshedProvider =
+                  refreshResult._tag === "Success"
+                    ? refreshResult.success.find(
+                        (provider) => provider.instanceId === input.instanceId,
+                      )
+                    : undefined;
                 if (
-                  refreshedProvider?.auth.required !== false &&
-                  refreshedProvider?.auth.status !== "authenticated"
+                  refreshResult._tag === "Failure" ||
+                  (refreshedProvider?.auth.required !== false &&
+                    refreshedProvider?.auth.status !== "authenticated")
                 ) {
                   completion = Result.fail({
                     message:
                       "The provider finished sign in, but Scient could not verify the connected account.",
                   });
                 }
-              }
-              const removed = yield* removeIfCurrent(input.instanceId, operationId);
-              if (!removed) {
-                return;
               }
               const finishedAt = yield* nowIso;
               yield* providerRegistry.setProviderConnectionOperation({
@@ -426,17 +497,18 @@ export const make = Effect.fn("ProviderConnectionManager.make")(function* () {
                       : completion.failure.message,
                 }),
               });
-              yield* Scope.close(scope, Exit.void).pipe(Effect.ignore);
+              yield* cleanupIfCurrent(input.instanceId, operationId, "complete");
             }),
           ),
         ),
         Effect.catchCause(() =>
           transitionLock.withPermits(1)(
             Effect.gen(function* () {
-              const removed = yield* removeIfCurrent(input.instanceId, operationId);
-              if (removed) {
-                const finishedAt = yield* nowIso;
-                yield* providerRegistry.setProviderConnectionOperation({
+              const current = (yield* Ref.get(activeRef)).get(input.instanceId);
+              if (current?.operationId !== operationId) return;
+              const finishedAt = yield* nowIso;
+              yield* providerRegistry
+                .setProviderConnectionOperation({
                   instanceId: input.instanceId,
                   operation: operation({
                     operationId,
@@ -446,33 +518,45 @@ export const make = Effect.fn("ProviderConnectionManager.make")(function* () {
                     finishedAt,
                     message: "The provider sign-in flow stopped unexpectedly.",
                   }),
-                });
-                yield* Scope.close(scope, Exit.void).pipe(Effect.ignore);
-              }
+                })
+                .pipe(
+                  Effect.ensuring(
+                    cleanupIfCurrent(input.instanceId, operationId, "complete").pipe(Effect.asVoid),
+                  ),
+                );
               yield* Effect.logError("Provider connection supervisor failed");
             }),
           ),
         ),
       );
-      const fiber = yield* Effect.forkDetach(supervise);
-      yield* Ref.set(fiberRef, fiber);
-      const stillCurrent = (yield* Ref.get(activeRef)).get(input.instanceId)?.operationId;
-      if (stillCurrent !== operationId) {
-        // Cancellation can arrive between publishing the browser state and
-        // storing the supervisor. Do not leave that late fiber detached.
-        yield* Fiber.interrupt(fiber);
+      const handedOff = yield* Effect.uninterruptible(
+        Effect.gen(function* () {
+          const fiber = yield* Effect.forkDetach(supervise);
+          yield* Ref.set(fiberRef, fiber);
+          const stillCurrent = (yield* Ref.get(activeRef)).get(input.instanceId)?.operationId;
+          if (stillCurrent === operationId) return true;
+          // Cancellation can claim the operation before this handoff begins.
+          // Register the detached fiber and close that race atomically so no
+          // supervisor can outlive both manager ownership and its fiber handle.
+          yield* Fiber.interrupt(fiber);
+          return false;
+        }),
+      );
+      if (!handedOff) {
         return { providers: yield* providerRegistry.getProviders };
       }
 
       return { providers: waitingProviders };
     }).pipe(
-      Effect.onInterrupt(() =>
-        cleanupInterruptedStart({
-          instanceId: input.instanceId,
-          operationId,
-          method: input.method,
-          startedAt,
-        }),
+      Effect.onExit((exit) =>
+        Exit.isSuccess(exit)
+          ? Effect.void
+          : cleanupInterruptedStart({
+              instanceId: input.instanceId,
+              operationId,
+              method: input.method,
+              startedAt,
+            }),
       ),
     );
   });
@@ -582,33 +666,26 @@ export const make = Effect.fn("ProviderConnectionManager.make")(function* () {
         message: "The connection operation is no longer active.",
       });
     }
-    return yield* candidate.transitionLock.withPermits(1)(
+    const active = yield* candidate.transitionLock.withPermits(1)(
+      takeIfCurrent(input.instanceId, input.operationId),
+    );
+    if (!active) {
+      return yield* makeError({
+        provider: target.provider,
+        instanceId: input.instanceId,
+        reason: "operation_not_found",
+        message: "The connection operation is no longer active.",
+      });
+    }
+    const providers = yield* settleActive(
+      active,
+      "interrupt",
       Effect.gen(function* () {
-        const active = yield* removeIfCurrent(input.instanceId, input.operationId);
-        if (!active) {
-          return yield* makeError({
-            provider: target.provider,
-            instanceId: input.instanceId,
-            reason: "operation_not_found",
-            message: "The connection operation is no longer active.",
-          });
-        }
-
-        const attempt = yield* Ref.get(active.attemptRef);
-        if (attempt) {
-          yield* attempt.cancel.pipe(Effect.ignore);
-        }
-        const fiber = yield* Ref.get(active.fiberRef);
-        if (fiber) {
-          yield* Fiber.interrupt(fiber);
-        }
-        yield* Scope.close(active.scope, Exit.void).pipe(Effect.ignore);
-
         const previousOperation = (yield* providerRegistry.getProviders).find(
           (provider) => provider.instanceId === input.instanceId,
         )?.connection?.operation;
         const finishedAt = yield* nowIso;
-        const providers = yield* providerRegistry.setProviderConnectionOperation({
+        return yield* providerRegistry.setProviderConnectionOperation({
           instanceId: input.instanceId,
           operation: previousOperation
             ? {
@@ -619,9 +696,9 @@ export const make = Effect.fn("ProviderConnectionManager.make")(function* () {
               }
             : null,
         });
-        return { providers };
       }),
     );
+    return { providers };
   });
 
   const disconnect: ProviderConnectionManagerShape["disconnect"] = Effect.fn(
@@ -636,6 +713,7 @@ export const make = Effect.fn("ProviderConnectionManager.make")(function* () {
         message: "This provider does not support assisted disconnection yet.",
       });
     }
+    const actions = target.actions;
     const operationId = `disconnect-${yield* crypto.randomUUIDv4.pipe(Effect.orDie)}`;
     const reserved = yield* lifecycleCoordinator.reserve({
       instanceId: input.instanceId,
@@ -651,31 +729,45 @@ export const make = Effect.fn("ProviderConnectionManager.make")(function* () {
       });
     }
 
-    const result = yield* target.actions.disconnect.pipe(
-      Effect.scoped,
-      Effect.result,
-      Effect.catchCause(() =>
-        Effect.succeed(
-          Result.fail({
-            message: "The provider sign-out flow stopped unexpectedly.",
-          }),
+    return yield* Effect.gen(function* () {
+      const result = yield* actions.disconnect.pipe(
+        Effect.scoped,
+        Effect.result,
+        Effect.catchCause(() =>
+          Effect.succeed(
+            Result.fail({
+              message: "The provider sign-out flow stopped unexpectedly.",
+            }),
+          ),
         ),
-      ),
-      Effect.ensuring(lifecycleCoordinator.release({ operationId }).pipe(Effect.asVoid)),
-    );
-    if (result._tag === "Failure") {
-      return yield* makeError({
-        provider: target.provider,
+      );
+      if (result._tag === "Failure") {
+        return yield* makeError({
+          provider: target.provider,
+          instanceId: input.instanceId,
+          reason: "disconnect_failed",
+          message: result.failure.message,
+        });
+      }
+      yield* providerRegistry.setProviderConnectionOperation({
         instanceId: input.instanceId,
-        reason: "disconnect_failed",
-        message: result.failure.message,
+        operation: null,
       });
-    }
-    yield* providerRegistry.setProviderConnectionOperation({
-      instanceId: input.instanceId,
-      operation: null,
-    });
-    return { providers: yield* providerRegistry.refreshInstance(input.instanceId) };
+      const providers = yield* providerRegistry
+        .refreshInstanceAfterAccountChange(input.instanceId)
+        .pipe(
+          Effect.mapError(() =>
+            makeError({
+              provider: target.provider,
+              instanceId: input.instanceId,
+              reason: "disconnect_failed",
+              message:
+                "The provider completed sign out, but Scient could not verify the current account state.",
+            }),
+          ),
+        );
+      return { providers };
+    }).pipe(Effect.ensuring(lifecycleCoordinator.release({ operationId }).pipe(Effect.asVoid)));
   });
 
   return ProviderConnectionManager.of({ start, cancel, submitAuthorizationCode, disconnect });

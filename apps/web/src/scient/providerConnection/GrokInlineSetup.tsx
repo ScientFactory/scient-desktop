@@ -6,6 +6,7 @@ import type {
 import {
   CheckCircle2Icon,
   CopyIcon,
+  DownloadIcon,
   ExternalLinkIcon,
   LoaderIcon,
   RefreshCwIcon,
@@ -26,8 +27,18 @@ import {
 import { startGrokSignIn, startReviewedGrokRuntimeAction } from "./grokLifecycleActions";
 import { ProviderAuthorizationCodeDisclosure } from "./ProviderAuthorizationCodeForm";
 import { resolveProviderRuntimeForPresentation } from "./ProviderRuntimeSection";
-import { needsManagedRuntimeRecovery } from "./providerConnectionPresentation";
-import { DESTRUCTIVE_GHOST_ACTION_CLASS } from "./providerConnectionActionStyles";
+import {
+  isActiveProviderConnectionOperation,
+  isActiveProviderRuntimeOperation,
+  isProviderRuntimePresentedAsInstalled,
+  needsManagedRuntimeRecovery,
+  providerAccountIdentity,
+  providerLifecycleFailureMessage,
+} from "./providerConnectionPresentation";
+import {
+  DESTRUCTIVE_GHOST_ACTION_CLASS,
+  PRIMARY_GHOST_ACTION_CLASS,
+} from "./providerConnectionActionStyles";
 import type { ProviderLifecycleController } from "./useProviderLifecycleController";
 
 type PendingAction =
@@ -40,20 +51,6 @@ type PendingAction =
   | "cancel-runtime"
   | "cancel-sign-in"
   | null;
-
-const ACTIVE_RUNTIME_STATUSES = new Set<ProviderRuntimeOperation["status"]>([
-  "preparing",
-  "downloading",
-  "verifying",
-  "installing",
-  "testing",
-  "activating",
-  "removing",
-]);
-
-function failureMessage(value: unknown, fallback: string): string {
-  return value instanceof Error && value.message.trim().length > 0 ? value.message : fallback;
-}
 
 function runtimeStage(operation: ProviderRuntimeOperation | null): string {
   switch (operation?.status) {
@@ -102,16 +99,13 @@ export function GrokInlineSetup(props: {
   const serverRuntime = props.provider.connection?.runtime;
   const runtime = resolveProviderRuntimeForPresentation(serverRuntime, localRuntime);
   const runtimeOperation = runtime?.operation ?? null;
-  const activeRuntimeOperation =
-    runtimeOperation && ACTIVE_RUNTIME_STATUSES.has(runtimeOperation.status)
-      ? runtimeOperation
-      : null;
+  const activeRuntimeOperation = isActiveProviderRuntimeOperation(runtimeOperation)
+    ? runtimeOperation
+    : null;
   const connectionOperation = props.provider.connection?.operation ?? null;
-  const activeConnectionOperation =
-    connectionOperation &&
-    !["connected", "cancelled", "failed"].includes(connectionOperation.status)
-      ? connectionOperation
-      : null;
+  const activeConnectionOperation = isActiveProviderConnectionOperation(connectionOperation)
+    ? connectionOperation
+    : null;
 
   useEffect(() => {
     setShowAuthorizationCode(false);
@@ -142,7 +136,7 @@ export function GrokInlineSetup(props: {
     try {
       await operation();
     } catch (error) {
-      setLocalError(failureMessage(error, `Scient could not ${action} Grok.`));
+      setLocalError(providerLifecycleFailureMessage(error, `Scient could not ${action} Grok.`));
     } finally {
       setPendingAction(null);
     }
@@ -173,18 +167,6 @@ export function GrokInlineSetup(props: {
     );
     setAuthorizationCode("");
   };
-
-  if (!props.provider.enabled) {
-    return (
-      <SetupFrame>
-        <AssistedSetupStatus
-          body="Enable Grok in provider settings before installing or connecting it."
-          icon={<ShieldCheckIcon className="size-5 text-primary" />}
-          title="Grok is disabled"
-        />
-      </SetupFrame>
-    );
-  }
 
   if (activeRuntimeOperation || ["install", "repair", "update"].includes(pendingAction ?? "")) {
     const action = activeRuntimeOperation?.action ?? pendingAction;
@@ -239,7 +221,12 @@ export function GrokInlineSetup(props: {
           title="Grok needs repair"
         />
         <AssistedSetupActions>
-          <Button onClick={() => void run("repair", () => runtimeAction("repair"))} size="sm">
+          <Button
+            className={PRIMARY_GHOST_ACTION_CLASS}
+            onClick={() => void run("repair", () => runtimeAction("repair"))}
+            size="sm"
+            variant="ghost"
+          >
             <RefreshCwIcon aria-hidden /> Repair Grok
           </Button>
         </AssistedSetupActions>
@@ -247,7 +234,7 @@ export function GrokInlineSetup(props: {
     );
   }
 
-  if (!props.provider.installed) {
+  if (!isProviderRuntimePresentedAsInstalled(props.provider)) {
     const canInstall = runtime?.actions.includes("install") ?? false;
     return (
       <SetupFrame>
@@ -262,12 +249,7 @@ export function GrokInlineSetup(props: {
             localError ? (
               <TriangleAlertIcon className="size-5 text-destructive" />
             ) : (
-              <ProviderInstanceIcon
-                className="size-8"
-                displayName={props.displayName}
-                driverKind={props.provider.driver}
-                iconClassName="size-8"
-              />
+              <GrokSetupIcon displayName={props.displayName} driver={props.provider.driver} />
             )
           }
           role={localError ? "alert" : undefined}
@@ -275,7 +257,13 @@ export function GrokInlineSetup(props: {
         />
         {canInstall ? (
           <AssistedSetupActions>
-            <Button onClick={() => void run("install", () => runtimeAction("install"))} size="sm">
+            <Button
+              className={PRIMARY_GHOST_ACTION_CLASS}
+              onClick={() => void run("install", () => runtimeAction("install"))}
+              size="sm"
+              variant="ghost"
+            >
+              {localError ? <RefreshCwIcon aria-hidden /> : <DownloadIcon aria-hidden />}
               {localError ? "Retry installation" : "Install"}
             </Button>
           </AssistedSetupActions>
@@ -388,7 +376,7 @@ export function GrokInlineSetup(props: {
     ) : undefined;
 
   if (accountConnected) {
-    const account = props.provider.auth.email ?? props.provider.auth.label ?? "Grok subscription";
+    const account = providerAccountIdentity(props.provider) ?? "Grok subscription";
     return (
       <StatusFrame
         accountAction={connectedActions}
@@ -448,12 +436,7 @@ export function GrokInlineSetup(props: {
           signInError ? (
             <TriangleAlertIcon className="size-5 text-destructive" />
           ) : (
-            <ProviderInstanceIcon
-              className="size-8"
-              displayName={props.displayName}
-              driverKind={props.provider.driver}
-              iconClassName="size-8"
-            />
+            <GrokSetupIcon displayName={props.displayName} driver={props.provider.driver} />
           )
         }
         role={signInError ? "alert" : undefined}
@@ -471,8 +454,10 @@ export function GrokInlineSetup(props: {
           Use device code
         </Button>
         <Button
+          className={PRIMARY_GHOST_ACTION_CLASS}
           onClick={() => void run("sign-in", () => startGrokSignIn(props.controller))}
           size="sm"
+          variant="ghost"
         >
           <ExternalLinkIcon aria-hidden /> {signInError ? "Try again" : "Sign in with Grok"}
         </Button>
@@ -499,7 +484,24 @@ function StatusFrame(props: {
 }
 
 function SetupFrame(props: { readonly children: ReactNode }) {
-  return <AssistedSetupFrame flow="grok">{props.children}</AssistedSetupFrame>;
+  return <AssistedSetupFrame>{props.children}</AssistedSetupFrame>;
+}
+
+function GrokSetupIcon(props: {
+  readonly displayName: string;
+  readonly driver: ServerProvider["driver"];
+}) {
+  return (
+    <>
+      <ShieldCheckIcon className="size-5 text-primary in-[[data-model-picker-content=true]]:hidden" />
+      <ProviderInstanceIcon
+        className="hidden size-8 in-[[data-model-picker-content=true]]:inline-flex"
+        displayName={props.displayName}
+        driverKind={props.driver}
+        iconClassName="size-8"
+      />
+    </>
+  );
 }
 
 function GrokLoadingIcon(props: {

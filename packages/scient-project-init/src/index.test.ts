@@ -103,6 +103,10 @@ describe("Scient project initialization", () => {
     const root = await fixture();
     await initializeScientProject({ root });
     const identity = await NodeFSP.readFile(NodePath.join(root, SCIENT_IDENTITY_FILE), "utf8");
+    const skillPath = NodePath.join(root, ".scient", "skills", "project-method", "SKILL.md");
+    const skillBytes = Buffer.from("project-owned skill bytes\n");
+    await NodeFSP.mkdir(NodePath.dirname(skillPath), { recursive: true });
+    await NodeFSP.writeFile(skillPath, skillBytes);
 
     const second = await initializeScientProject({ root, title: "A different title" });
 
@@ -111,6 +115,7 @@ describe("Scient project initialization", () => {
     expect(await NodeFSP.readFile(NodePath.join(root, SCIENT_IDENTITY_FILE), "utf8")).toBe(
       identity,
     );
+    expect(await NodeFSP.readFile(skillPath)).toEqual(skillBytes);
   });
 
   it("exposes the validated project identity to Scient-owned feature stores", async () => {
@@ -181,6 +186,10 @@ describe("Scient project initialization", () => {
     const project = "# Recovered study\n";
     const agents = "# Project agent guidance\n";
     await NodeFSP.mkdir(NodePath.join(root, ".scient"));
+    const skillPath = NodePath.join(root, ".scient", "skills", "project-method", "SKILL.md");
+    const skillBytes = Buffer.from("preserve this project skill during recovery\n");
+    await NodeFSP.mkdir(NodePath.dirname(skillPath), { recursive: true });
+    await NodeFSP.writeFile(skillPath, skillBytes);
     await NodeFSP.writeFile(
       NodePath.join(root, SCIENT_TRANSACTION_FILE),
       `${JSON.stringify(
@@ -209,6 +218,7 @@ describe("Scient project initialization", () => {
     expect(await NodeFSP.readFile(NodePath.join(root, SCIENT_IDENTITY_FILE), "utf8")).toContain(
       identity.projectId,
     );
+    expect(await NodeFSP.readFile(skillPath)).toEqual(skillBytes);
   });
 
   it("finishes recovery when identity was written before the transaction was removed", async () => {

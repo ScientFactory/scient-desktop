@@ -1,6 +1,7 @@
 import type { ProviderRuntimeOperation, ServerProvider } from "@t3tools/contracts";
 import {
   CheckCircle2Icon,
+  DownloadIcon,
   ExternalLinkIcon,
   LoaderIcon,
   RefreshCwIcon,
@@ -23,10 +24,20 @@ import {
   startReviewedClaudeRuntimeAction,
   updateClaudeRuntime,
 } from "./claudeLifecycleActions";
-import { needsManagedRuntimeRecovery } from "./providerConnectionPresentation";
+import {
+  isActiveProviderConnectionOperation,
+  isActiveProviderRuntimeOperation,
+  isProviderRuntimePresentedAsInstalled,
+  needsManagedRuntimeRecovery,
+  providerLifecycleFailureMessage,
+  providerRuntimeComputerLabel,
+} from "./providerConnectionPresentation";
 import { ProviderAccountManagementLink } from "./ProviderAccountManagementLink";
 import { ProviderAuthorizationCodeDisclosure } from "./ProviderAuthorizationCodeForm";
-import { DESTRUCTIVE_GHOST_ACTION_CLASS } from "./providerConnectionActionStyles";
+import {
+  DESTRUCTIVE_GHOST_ACTION_CLASS,
+  PRIMARY_GHOST_ACTION_CLASS,
+} from "./providerConnectionActionStyles";
 import type { ProviderLifecycleController } from "./useProviderLifecycleController";
 
 type PendingAction =
@@ -39,19 +50,6 @@ type PendingAction =
   | "cancel-sign-in"
   | null;
 type ClaudeSignInMethod = "claude_subscription" | "claude_console";
-
-const ACTIVE_RUNTIME_STATUSES = new Set<ProviderRuntimeOperation["status"]>([
-  "preparing",
-  "downloading",
-  "verifying",
-  "installing",
-  "testing",
-  "activating",
-]);
-
-function failureMessage(value: unknown, fallback: string): string {
-  return value instanceof Error && value.message.trim().length > 0 ? value.message : fallback;
-}
 
 function runtimeStage(operation: ProviderRuntimeOperation | null): string {
   switch (operation?.status) {
@@ -70,14 +68,6 @@ function runtimeStage(operation: ProviderRuntimeOperation | null): string {
     default:
       return "Preparing Claude…";
   }
-}
-
-function computerLabel(provider: ServerProvider): string {
-  const target = provider.connection?.runtime?.target;
-  if (target?.startsWith("darwin-")) return "this Mac";
-  if (target?.startsWith("win32-")) return "this Windows computer";
-  if (target?.startsWith("linux-")) return "this Linux computer";
-  return "this computer";
 }
 
 export function ClaudeInlineSetup(props: {
@@ -102,16 +92,13 @@ export function ClaudeInlineSetup(props: {
 
   const runtime = props.provider.connection?.runtime;
   const runtimeOperation = runtime?.operation ?? null;
-  const activeRuntimeOperation =
-    runtimeOperation && ACTIVE_RUNTIME_STATUSES.has(runtimeOperation.status)
-      ? runtimeOperation
-      : null;
+  const activeRuntimeOperation = isActiveProviderRuntimeOperation(runtimeOperation)
+    ? runtimeOperation
+    : null;
   const connectionOperation = props.provider.connection?.operation ?? null;
-  const activeConnectionOperation =
-    connectionOperation &&
-    !["connected", "cancelled", "failed"].includes(connectionOperation.status)
-      ? connectionOperation
-      : null;
+  const activeConnectionOperation = isActiveProviderConnectionOperation(connectionOperation)
+    ? connectionOperation
+    : null;
 
   useEffect(() => {
     setShowAuthorizationCode(false);
@@ -159,7 +146,7 @@ export function ClaudeInlineSetup(props: {
     try {
       await startReviewedClaudeRuntimeAction(props.controller, "install");
     } catch (error) {
-      setLocalError(failureMessage(error, "Scient could not install Claude."));
+      setLocalError(providerLifecycleFailureMessage(error, "Scient could not install Claude."));
     } finally {
       setPendingAction(null);
     }
@@ -171,7 +158,7 @@ export function ClaudeInlineSetup(props: {
     try {
       await updateClaudeRuntime(props.controller, props.provider);
     } catch (error) {
-      setLocalError(failureMessage(error, "Scient could not update Claude."));
+      setLocalError(providerLifecycleFailureMessage(error, "Scient could not update Claude."));
     } finally {
       setPendingAction(null);
     }
@@ -189,7 +176,7 @@ export function ClaudeInlineSetup(props: {
         props.onRepairSucceeded?.();
       }
     } catch (error) {
-      setLocalError(failureMessage(error, "Scient could not repair Claude."));
+      setLocalError(providerLifecycleFailureMessage(error, "Scient could not repair Claude."));
     } finally {
       setPendingAction(null);
     }
@@ -222,7 +209,9 @@ export function ClaudeInlineSetup(props: {
     try {
       await props.controller.cancelRuntime(activeRuntimeOperation.operationId);
     } catch (error) {
-      setLocalError(failureMessage(error, "Scient could not cancel Claude setup."));
+      setLocalError(
+        providerLifecycleFailureMessage(error, "Scient could not cancel Claude setup."),
+      );
     } finally {
       setPendingAction(null);
     }
@@ -235,7 +224,9 @@ export function ClaudeInlineSetup(props: {
     try {
       await startClaudeSignIn(props.controller, method);
     } catch (error) {
-      setLocalError(failureMessage(error, "Scient could not start Claude sign in."));
+      setLocalError(
+        providerLifecycleFailureMessage(error, "Scient could not start Claude sign in."),
+      );
     } finally {
       setPendingAction(null);
     }
@@ -251,7 +242,12 @@ export function ClaudeInlineSetup(props: {
       await props.controller.submitAuthorizationCode(activeConnectionOperation.operationId, code);
       setShowAuthorizationCode(false);
     } catch (error) {
-      setLocalError(failureMessage(error, "Scient could not return the one-time code to Claude."));
+      setLocalError(
+        providerLifecycleFailureMessage(
+          error,
+          "Scient could not return the one-time code to Claude.",
+        ),
+      );
     } finally {
       setPendingAction(null);
     }
@@ -264,7 +260,12 @@ export function ClaudeInlineSetup(props: {
     try {
       await props.controller.openAuthorizationPage(authorizationUrl);
     } catch (error) {
-      setLocalError(failureMessage(error, "Scient could not open Claude’s fallback sign-in page."));
+      setLocalError(
+        providerLifecycleFailureMessage(
+          error,
+          "Scient could not open Claude’s fallback sign-in page.",
+        ),
+      );
     }
   };
 
@@ -276,7 +277,9 @@ export function ClaudeInlineSetup(props: {
     try {
       await props.controller.cancelConnection(activeConnectionOperation.operationId);
     } catch (error) {
-      setLocalError(failureMessage(error, "Scient could not cancel Claude sign in."));
+      setLocalError(
+        providerLifecycleFailureMessage(error, "Scient could not cancel Claude sign in."),
+      );
     } finally {
       setPendingAction(null);
     }
@@ -338,7 +341,13 @@ export function ClaudeInlineSetup(props: {
           title="Claude needs repair"
         />
         <AssistedSetupActions>
-          <Button onClick={() => void repair()} size="sm" type="button">
+          <Button
+            className={PRIMARY_GHOST_ACTION_CLASS}
+            onClick={() => void repair()}
+            size="sm"
+            type="button"
+            variant="ghost"
+          >
             <RefreshCwIcon aria-hidden /> Repair Claude
           </Button>
         </AssistedSetupActions>
@@ -346,7 +355,7 @@ export function ClaudeInlineSetup(props: {
     );
   }
 
-  if (!props.provider.installed) {
+  if (!isProviderRuntimePresentedAsInstalled(props.provider)) {
     const error =
       localError ?? (runtimeOperation?.status === "failed" ? runtimeOperation.message : null);
     const canInstall = runtime?.actions.includes("install") ?? false;
@@ -356,8 +365,8 @@ export function ClaudeInlineSetup(props: {
           body={
             error ??
             (canInstall
-              ? `Claude is not installed on ${computerLabel(props.provider)}.`
-              : `Assisted installation is not available for ${computerLabel(props.provider)}. You can use an existing Claude installation.`)
+              ? `Claude is not installed on ${providerRuntimeComputerLabel(props.provider)}.`
+              : `Assisted installation is not available for ${providerRuntimeComputerLabel(props.provider)}. You can use an existing Claude installation.`)
           }
           icon={
             error ? (
@@ -371,8 +380,14 @@ export function ClaudeInlineSetup(props: {
         />
         {canInstall ? (
           <AssistedSetupActions>
-            <Button onClick={() => void install()} size="sm" type="button">
-              {error ? <RefreshCwIcon aria-hidden /> : null}
+            <Button
+              className={PRIMARY_GHOST_ACTION_CLASS}
+              onClick={() => void install()}
+              size="sm"
+              type="button"
+              variant="ghost"
+            >
+              {error ? <RefreshCwIcon aria-hidden /> : <DownloadIcon aria-hidden />}
               {error ? "Retry installation" : "Install Claude"}
             </Button>
           </AssistedSetupActions>
@@ -490,8 +505,14 @@ export function ClaudeInlineSetup(props: {
           />
           <AssistedSetupActions>
             {props.accountAction}
-            <Button onClick={() => void update()} size="sm" type="button">
-              {error ? "Try again" : "Update Claude"}
+            <Button
+              className={PRIMARY_GHOST_ACTION_CLASS}
+              onClick={() => void update()}
+              size="sm"
+              type="button"
+              variant="ghost"
+            >
+              <RefreshCwIcon aria-hidden /> {error ? "Try again" : "Update Claude"}
             </Button>
           </AssistedSetupActions>
         </SetupFrame>
@@ -580,7 +601,13 @@ export function ClaudeInlineSetup(props: {
               : "Use Claude subscription"}
           </Button>
         ) : null}
-        <Button onClick={() => void signIn()} size="sm" type="button">
+        <Button
+          className={PRIMARY_GHOST_ACTION_CLASS}
+          onClick={() => void signIn()}
+          size="sm"
+          type="button"
+          variant="ghost"
+        >
           {signInError ? <RefreshCwIcon aria-hidden /> : <ExternalLinkIcon aria-hidden />}
           {signInError
             ? "Try sign in again"
@@ -621,5 +648,5 @@ function StatusFrame(props: {
 }
 
 function SetupFrame({ children }: { readonly children: ReactNode }) {
-  return <AssistedSetupFrame flow="claude">{children}</AssistedSetupFrame>;
+  return <AssistedSetupFrame>{children}</AssistedSetupFrame>;
 }

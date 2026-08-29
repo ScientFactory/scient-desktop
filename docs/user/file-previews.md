@@ -1,8 +1,10 @@
 # File previews
 
-Scient opens files linked in chat inside Scient first. Project files keep their
-editable Files-panel behavior. Files elsewhere in the connected environment
-open in a read-only side panel or, for HTML, the integrated browser.
+File previews let you inspect the project's documents, data, code, figures, and
+other outputs without leaving Scient. Files linked in chat open inside Scient
+first. Project files keep their editable Files-panel behavior. Files elsewhere
+in the connected environment open in a read-only side panel or, for HTML, the
+integrated browser.
 
 In a project file's header, select the project name or any parent folder to
 browse that folder, drill into its subfolders, and open a nearby file. The final
@@ -11,6 +13,16 @@ file name identifies the current file and is not a navigation control.
 Right-click a file tab to copy either its project-relative path or its full path.
 For a remote project, the full path belongs to the connected environment rather
 than the computer displaying Scient.
+
+Workspace and chat-linked host-file previews follow changes made on disk. The
+compact reload action in the file header remains available for an immediate
+retry or manual refresh. If automatic updates pause, that action is highlighted
+and its tooltip explains that reloading will retry them. A failed read keeps the
+last available preview visible while reporting the problem.
+
+Current limitation: automatic refresh follows the exact known path. If the file
+is renamed or moved, reopen it from its new location; Scient does not yet
+relocate an already open file automatically.
 
 - Markdown files open as rendered documents. Use the source/preview control in
   the file header to switch modes; Scient remembers that preference. A link to
@@ -32,10 +44,10 @@ Direct files outside the current project support:
   CSV, and LaTeX source;
 - browser-supported audio and video; and
 - a stable file-information view for formats that do not yet have a rich
-  renderer. On the primary desktop environment, the header can still open the
+  preview. On the primary desktop environment, the header can still open the
   file in a preferred editor.
 
-Text previews are read-only and bounded to 2 MiB. Large files show that limit
+Text previews are read-only and limited to 2 MiB. Large files show that limit
 explicitly. An optional line target is revealed once after the source view is
 ready.
 

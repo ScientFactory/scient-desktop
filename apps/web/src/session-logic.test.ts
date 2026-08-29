@@ -935,6 +935,28 @@ describe("deriveWorkLogEntries", () => {
     expect(entries.map((entry) => entry.id)).toEqual(["tool-complete"]);
   });
 
+  it("drops runtime warnings with no displayable content, keeps ones with a preview", () => {
+    const activities: OrchestrationThreadActivity[] = [
+      makeActivity({
+        id: "warning-noise",
+        createdAt: "2026-02-23T00:00:01.000Z",
+        kind: "runtime.warning",
+        summary: "Claude system message 'background_tasks_changed' (no displayable text content)",
+        tone: "info",
+      }),
+      makeActivity({
+        id: "warning-signal",
+        createdAt: "2026-02-23T00:00:02.000Z",
+        kind: "runtime.warning",
+        summary: "Reconnecting... 2/5",
+        tone: "info",
+      }),
+    ];
+
+    const entries = deriveWorkLogEntries(activities);
+    expect(entries.map((entry) => entry.id)).toEqual(["warning-signal"]);
+  });
+
   it("omits task.started but shows task.progress and task.completed", () => {
     const activities: OrchestrationThreadActivity[] = [
       makeActivity({
@@ -1191,7 +1213,7 @@ describe("deriveWorkLogEntries", () => {
       server: "t3-code",
       tool: "scient_skill_load",
       arguments: {
-        releaseKey: `scient.workspace-readiness-review@0.1.0#sha256:${"a".repeat(64)}`,
+        name: "workspace-readiness-review",
       },
       status: "completed",
     };
@@ -1211,6 +1233,31 @@ describe("deriveWorkLogEntries", () => {
     expect(entry?.label).toBe("Used Workspace Readiness Review");
     expect(entry?.toolTitle).toBe("Used Workspace Readiness Review");
     expect(entry?.toolData).toEqual(item);
+  });
+
+  it("does not claim a failed Scient skill load was used", () => {
+    const item = {
+      type: "mcpToolCall",
+      server: "t3-code",
+      tool: "scient_skill_load",
+      arguments: { name: "scient-skill-authoring" },
+      status: "failed",
+    };
+    const [entry] = deriveWorkLogEntries([
+      makeActivity({
+        id: "scient-skill-failed",
+        kind: "tool.completed",
+        summary: "t3-code · scient_skill_load",
+        payload: {
+          itemType: "mcp_tool_call",
+          title: "Load a Scient skill",
+          data: { item },
+        },
+      }),
+    ]);
+
+    expect(entry?.label).toBe("Couldn't load Scient Skill Authoring");
+    expect(entry?.toolTitle).toBe("Couldn't load Scient Skill Authoring");
   });
 
   it("keeps MCP payloads while collapsing lifecycle updates", () => {

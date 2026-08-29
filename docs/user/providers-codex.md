@@ -1,7 +1,11 @@
 # Codex in Scient
 
-Scient keeps installing the Codex tool and connecting a Codex account as two separate, visible
-facts. A saved provider configuration is not treated as a working connection.
+Codex is OpenAI's agent for working with project files, code, commands, and
+connected tools. Scient can use an existing Codex installation or manage a
+private copy, then connect it to your OpenAI account. Installing the tool and
+signing in are separate steps.
+
+For the behavior shared by all assisted providers, see [Providers in Scient](./providers.md).
 
 ## The Easiest Setup Path
 
@@ -13,9 +17,9 @@ action: **Install**, **Sign in**, **Update**, or **Manage**.
 The flow:
 
 1. detects a healthy custom, system, or Scient-managed Codex runtime;
-2. offers managed installation on reviewed macOS, Windows, and Linux desktop targets;
+2. offers managed installation on approved macOS, Windows, and Linux desktop targets;
 3. starts a private managed installation only after the user explicitly chooses **Install Codex**,
-   using the reviewed artifact selected for that computer;
+   using the qualified stable artifact selected for that computer;
 4. opens Codex's official browser or device-code sign-in flow and lets Codex's local callback page
    confirm that the browser can be closed; and
 5. asks Codex for fresh account, model, and runtime state before reporting the provider as ready.
@@ -23,40 +27,30 @@ The flow:
 Scient never asks for or receives the provider password. Codex continues to own its credentials,
 refresh, expiry, and revocation.
 
-`Sign out on this computer` logs out the configured Codex credential home. It can therefore affect
-the Codex CLI or another app using those same account files; Scient explains that scope beside the
-action.
+**Sign out** logs out the configured Codex credential home. It can therefore affect the Codex CLI or
+another app using those same account files; Scient explains that scope beside the action.
 
 ## Computers And Installations
 
 Scient never silently replaces a healthy custom or system installation. A Scient-managed copy is
 kept in the app's private data, and removing it does not remove a system or custom Codex install.
 
-The current support boundary is intentionally explicit:
+The local desktop offers managed installation only when the server reports a qualified artifact for
+the exact operating system and architecture. Remote clients use the runtime administered on their
+server, and unsupported targets receive no invented fallback. The app displays the qualified version
+and download details before installation.
 
-| Computer or host                            | What Scient currently promises                                                              |
-| ------------------------------------------- | ------------------------------------------------------------------------------------------- |
-| Local Scient desktop on Apple-silicon macOS | Fully assisted installation of the reviewed Codex artifact, plus guided sign-in             |
-| Intel Mac                                   | Fully assisted installation of the reviewed Codex artifact, plus guided sign-in             |
-| Windows on ARM64 or x64                     | Fully assisted installation of the reviewed Codex executable, plus guided sign-in           |
-| Linux on ARM64 or x64                       | Fully assisted installation of the reviewed static Codex artifact, plus guided sign-in      |
-| Remote or web-hosted Scient server          | Use the runtime already administered on that server; the client cannot take ownership of it |
-| Other operating systems or architectures    | No managed Codex promise; Scient explains that the target is unsupported                    |
+If a managed install, repair, or update fails, Scient cleans the incomplete work and keeps the
+previous working managed copy available.
 
-The application selects a target-specific official Codex artifact for each supported operating
-system and architecture. Every managed download is bounded by the catalogued byte size and verified
-against its exact SHA-256 digest before Scient runs or activates it. Unknown operating systems and
-architectures remain unsupported instead of receiving an invented fallback.
-
-If a managed install, repair, or download fails, that operation cleans its incomplete staging
-directory and the previous working copy remains active. Routine status refreshes never delete an
-active operation's staging directory. A manual rollback button is deliberately not offered until
-Scient has two separately reviewed releases to roll between.
-
-When a newer reviewed managed version is available, **Update** downloads and verifies the
+When a newer qualified stable version is available, **Update** downloads and verifies the
 replacement without deactivating the current version. Scient switches versions only after the new
 copy passes its smoke test. Provider-tool updates and provider sign-in are serialized so one cannot
 change shared runtime state underneath the other.
+
+Scient checks for qualified managed releases in the background and again when you open an Install or
+Update plan. It never installs one automatically. **Repair** restores the exact active release rather
+than silently changing versions.
 
 ## Why Use More Than One Account?
 
@@ -85,14 +79,15 @@ custom or externally managed Codex runtime, the advanced terminal flow remains a
 ## Send feedback to OpenAI
 
 In an existing Codex thread, send `/feedback` or `/feedback` followed by a description of the
-issue. T3 Code uploads the thread and Codex logs to OpenAI and shows a thread ID that you can copy
+issue. Scient uploads the thread and Codex logs to OpenAI and shows a thread ID that you can copy
 and share with OpenAI employees.
 
 ## Approve access to other apps
 
-When a Codex tool needs access to an app such as Safari, T3 Code shows the app name and asks for
-approval. You can approve, decline, or cancel the request from the desktop app, web app, or mobile
-app. Some tools also offer approval for the current session or permanent approval.
+When a Codex tool needs access to an app such as Safari, Scient shows the app name and asks for
+approval. You can approve, decline, or cancel the request from the desktop app
+or a connected web client. Some tools also offer approval for the current
+session or permanent approval.
 
 ## I Want Work And Personal Codex Accounts
 
@@ -151,8 +146,8 @@ has a `Shadow home path`.
 
 Open Settings and look at the provider row.
 
-Scient shows the authenticated email for providers that report one. Emails are blurred by default;
-click the blurred email to reveal it.
+Scient shows the authenticated email for providers that report one. The email is visible initially
+so accounts can be distinguished; select it to hide or show it.
 
 Use display names and accent colors to make accounts easy to tell apart in the model picker.
 
@@ -189,13 +184,10 @@ If two Codex providers show the same account or the same unexpected model list:
 2. Refresh provider status.
 3. Confirm the second provider has `Shadow home path` set.
 4. Confirm the shadow directory has its own `auth.json`.
-5. If you copied `~/.codex` into the shadow directory, remove everything except `auth.json`.
-
-Example cleanup:
-
-```bash
-find ~/.codex_p -mindepth 1 ! -name auth.json -exec rm -rf {} +
-```
+5. If you copied `~/.codex` into the shadow directory, first confirm that this really is the
+   secondary shadow home and make a backup. Then move its non-`auth.json` entries out of that
+   directory. Never clean the primary `CODEX_HOME`, and keep the backup until the secondary account
+   has been verified in Scient.
 
 ## When To Use A Separate CODEX_HOME
 

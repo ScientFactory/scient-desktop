@@ -16,27 +16,17 @@ import type {
   ProviderConnectionActionFailure,
 } from "../../provider/ProviderDriver.ts";
 import { spawnAndCollect } from "../../provider/providerSnapshot.ts";
-import { ProviderConnectionActionError } from "./ProviderConnectionActions.ts";
+import {
+  findTerminalAuthorizationUrl,
+  pickProcessEnvironment,
+  ProviderConnectionActionError,
+} from "./ProviderConnectionActions.ts";
 
 const MAX_AUTH_OUTPUT_BYTES = 128 * 1024;
 const AUTH_URL_TIMEOUT = "30 seconds";
 const AUTH_LOGIN_TIMEOUT = "10 minutes";
 const AUTH_STATUS_TIMEOUT = "15 seconds";
 const AUTHORIZATION_CODE_MAX_LENGTH = 8_192;
-const ANSI_ESCAPE_CHARACTER = String.fromCharCode(27);
-const ANSI_BELL_CHARACTER = String.fromCharCode(7);
-const ANSI_OSC_HYPERLINK = new RegExp(
-  `${ANSI_ESCAPE_CHARACTER}\\]8;[^;]*;(https:\\/\\/[^${ANSI_BELL_CHARACTER}${ANSI_ESCAPE_CHARACTER}]*)` +
-    `(?:${ANSI_BELL_CHARACTER}|${ANSI_ESCAPE_CHARACTER}\\\\)`,
-  "gu",
-);
-const ANSI_OSC_SEQUENCE = new RegExp(
-  `${ANSI_ESCAPE_CHARACTER}\\][^${ANSI_BELL_CHARACTER}]*(?:${ANSI_BELL_CHARACTER}|${ANSI_ESCAPE_CHARACTER}\\\\)`,
-  "gu",
-);
-const ANSI_ESCAPE = new RegExp(`${ANSI_ESCAPE_CHARACTER}\\[[0-?]*[ -/]*[@-~]`, "gu");
-const URL_CANDIDATE = /https:\/\/[^\s<>"']+/gu;
-
 const connectionError = (message: string, cause?: unknown) =>
   new ProviderConnectionActionError({
     message,
@@ -68,32 +58,10 @@ function hasControlCharacters(value: string): boolean {
 }
 
 export function findClaudeAuthorizationUrl(output: string): string | undefined {
-  // OSC 8 hyperlinks may expose the authorization URL only as terminal
-  // metadata while rendering an ordinary label such as "Open browser".
-  // Preserve that URL before removing the remaining terminal control
-  // sequences, otherwise a valid official flow can appear to have supplied
-  // no sign-in page at all.
-  const normalized = output
-    .replace(ANSI_OSC_HYPERLINK, "$1 ")
-    .replace(ANSI_OSC_SEQUENCE, "")
-    .replace(ANSI_ESCAPE, "");
-  for (const match of normalized.matchAll(URL_CANDIDATE)) {
-    const candidate = match[0]?.replace(/[),.;]+$/u, "");
-    if (!candidate) continue;
-    try {
-      const url = new URL(candidate);
-      if (
-        url.protocol === "https:" &&
-        isClaudeAuthorizationHost(url.hostname) &&
-        isClaudeAuthorizationPath(url)
-      ) {
-        return url.toString();
-      }
-    } catch {
-      // Ignore malformed, provider-controlled output and keep scanning.
-    }
-  }
-  return undefined;
+  return findTerminalAuthorizationUrl(
+    output,
+    (url) => isClaudeAuthorizationHost(url.hostname) && isClaudeAuthorizationPath(url),
+  );
 }
 
 export interface ClaudeLoginProcess {
@@ -201,13 +169,7 @@ export function officialClaudeAccountEnvironment(
     "SSL_CERT_DIR",
     "NODE_EXTRA_CA_CERTS",
   ] as const;
-  const allowedKeyNames = new Set(allowedKeys.map((key) => key.toLowerCase()));
-  const result: NodeJS.ProcessEnv = {};
-  for (const [key, value] of Object.entries(environment)) {
-    if (value !== undefined && allowedKeyNames.has(key.toLowerCase())) {
-      result[key] = value;
-    }
-  }
+  const result = pickProcessEnvironment(environment, allowedKeys);
   // Scient owns this private runtime version. Claude must not mutate it or
   // route around the reviewed artifact pipeline.
   result.DISABLE_UPDATES = "1";

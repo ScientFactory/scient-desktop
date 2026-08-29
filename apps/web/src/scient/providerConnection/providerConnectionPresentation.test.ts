@@ -2,13 +2,22 @@ import { describe, expect, it } from "vite-plus/test";
 import { ProviderDriverKind, ProviderInstanceId, type ServerProvider } from "@t3tools/contracts";
 
 import {
+  activeProviderRuntimeUpdateOperation,
   canManageProviderLifecycle,
   hasActiveProviderRuntimeOperation,
+  isActiveProviderConnectionOperation,
+  isActiveProviderRuntimeOperation,
   isProviderAccountConnected,
+  isProviderAccountPresentedAsConnected,
+  isProviderRuntimePresentedAsInstalled,
   isSafeProviderAuthorizationUrl,
   needsManagedRuntimeRecovery,
   preferredProviderConnectionMethod,
+  providerAccountIdentity,
   providerConnectionPresentation,
+  providerLifecycleFailureMessage,
+  providerRuntimeComputerLabel,
+  shouldShowProviderLifecycleSetupInComposer,
 } from "./providerConnectionPresentation";
 
 const provider: ServerProvider = {
@@ -112,6 +121,29 @@ describe("providerConnectionPresentation", () => {
     ).toBe("setting-up");
   });
 
+  it("hands a settled managed install to account setup before the next probe catches up", () => {
+    const settledManagedRuntime: ServerProvider = {
+      ...provider,
+      installed: false,
+      connection: {
+        ...provider.connection!,
+        runtime: {
+          source: "scient_managed",
+          supportTier: "fully_assisted",
+          target: "darwin-arm64",
+          actions: ["repair", "remove"],
+          managedVersion: "0.147.0",
+          previousManagedVersion: null,
+          operation: null,
+          message: "Managed Codex is ready.",
+        },
+      },
+    };
+
+    expect(isProviderRuntimePresentedAsInstalled(settledManagedRuntime)).toBe(true);
+    expect(providerConnectionPresentation(settledManagedRuntime).kind).toBe("not-connected");
+  });
+
   it("keeps runtime activity separate from the connected account state", () => {
     const repairing: ServerProvider = {
       ...provider,
@@ -141,6 +173,135 @@ describe("providerConnectionPresentation", () => {
     expect(providerConnectionPresentation(repairing).kind).toBe("setting-up");
     expect(hasActiveProviderRuntimeOperation(repairing)).toBe(true);
     expect(isProviderAccountConnected(repairing)).toBe(true);
+    expect(isProviderAccountPresentedAsConnected(repairing)).toBe(true);
+
+    const missingRuntime = {
+      ...repairing,
+      installed: false,
+      connection: {
+        ...repairing.connection!,
+        runtime: {
+          ...repairing.connection!.runtime!,
+          source: "missing" as const,
+          operation: null,
+        },
+      },
+    };
+    expect(isProviderAccountPresentedAsConnected(missingRuntime)).toBe(false);
+  });
+
+  it("keeps a selected provider in the composer while its managed runtime updates", () => {
+    const updating: ServerProvider = {
+      ...provider,
+      status: "ready",
+      auth: { status: "authenticated", required: true },
+      connection: {
+        ...provider.connection!,
+        runtime: {
+          source: "scient_managed",
+          supportTier: "fully_assisted",
+          target: "darwin-arm64",
+          actions: ["repair", "remove"],
+          managedVersion: "0.149.1",
+          previousManagedVersion: null,
+          operation: {
+            operationId: "runtime-update-1",
+            action: "update",
+            status: "downloading",
+            startedAt: "2026-08-29T00:00:00.000Z",
+            finishedAt: null,
+            message: "Updating Codex.",
+          },
+          message: "Managed Codex is updating.",
+        },
+      },
+    };
+
+    expect(providerConnectionPresentation(updating).kind).toBe("setting-up");
+    expect(activeProviderRuntimeUpdateOperation(updating.connection?.runtime)?.action).toBe(
+      "update",
+    );
+    expect(shouldShowProviderLifecycleSetupInComposer(updating)).toBe(false);
+
+    const installing = {
+      ...updating,
+      connection: {
+        ...updating.connection!,
+        runtime: {
+          ...updating.connection!.runtime!,
+          operation: {
+            ...updating.connection!.runtime!.operation!,
+            action: "install" as const,
+          },
+        },
+      },
+    };
+    expect(activeProviderRuntimeUpdateOperation(installing.connection.runtime)).toBeNull();
+    expect(shouldShowProviderLifecycleSetupInComposer(installing)).toBe(true);
+  });
+
+  it("classifies lifecycle operations from their terminal states", () => {
+    const connection = {
+      operationId: "connect-1",
+      method: "codex_browser" as const,
+      status: "waiting_for_browser" as const,
+      startedAt: "2026-08-09T00:00:00.000Z",
+      finishedAt: null,
+      message: "Waiting",
+    };
+    const runtime = {
+      operationId: "runtime-1",
+      action: "remove" as const,
+      status: "removing" as const,
+      startedAt: "2026-08-09T00:00:00.000Z",
+      finishedAt: null,
+      message: "Removing",
+    };
+
+    expect(isActiveProviderConnectionOperation(connection)).toBe(true);
+    expect(isActiveProviderConnectionOperation({ ...connection, status: "connected" })).toBe(false);
+    expect(isActiveProviderConnectionOperation({ ...connection, status: "failed" })).toBe(false);
+    expect(isActiveProviderConnectionOperation({ ...connection, status: "cancelled" })).toBe(false);
+    expect(isActiveProviderRuntimeOperation(runtime)).toBe(true);
+    expect(isActiveProviderRuntimeOperation({ ...runtime, status: "succeeded" })).toBe(false);
+    expect(isActiveProviderRuntimeOperation({ ...runtime, status: "failed" })).toBe(false);
+    expect(isActiveProviderRuntimeOperation({ ...runtime, status: "cancelled" })).toBe(false);
+  });
+
+  it("normalizes shared failure and host labels without owning provider copy", () => {
+    expect(providerLifecycleFailureMessage({ message: "Provider detail" }, "Fallback")).toBe(
+      "Provider detail",
+    );
+    expect(providerLifecycleFailureMessage({ message: "  " }, "Fallback")).toBe("Fallback");
+    expect(
+      providerRuntimeComputerLabel({
+        ...provider,
+        connection: {
+          ...provider.connection!,
+          runtime: {
+            source: "missing",
+            supportTier: "fully_assisted",
+            target: "darwin-arm64",
+            actions: ["install"],
+            managedVersion: null,
+            previousManagedVersion: null,
+            operation: null,
+            message: "Missing",
+          },
+        },
+      }),
+    ).toBe("this Mac");
+    expect(
+      providerAccountIdentity({
+        ...provider,
+        auth: {
+          status: "authenticated",
+          required: true,
+          email: "  person@example.com  ",
+          label: "Subscription",
+        },
+      }),
+    ).toBe("person@example.com");
   });
 
   it("routes a broken managed executable to repair instead of account sign-in", () => {

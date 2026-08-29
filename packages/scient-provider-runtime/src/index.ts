@@ -5,6 +5,7 @@ export * from "./grokManifest.ts";
 export * from "./droidManifest.ts";
 export * from "./cursorManifest.ts";
 export * from "./managedRuntimeArtifact.ts";
+export * from "./managedRuntimeVersion.ts";
 export * from "./managedCodexRuntime.ts";
 export * from "./managedProviderRuntime.ts";
 export * from "./managedClaudeRuntime.ts";

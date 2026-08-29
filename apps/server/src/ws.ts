@@ -20,6 +20,8 @@ import {
   CommandId,
   type DiscoveredLocalServerList,
   EventId,
+  type EditorId,
+  type FileManagerRevealKind,
   type OrchestrationClientOrigin,
   type OrchestrationCommand,
   type GitActionProgressEvent,
@@ -49,6 +51,7 @@ import {
   type ServerSelfUpdateError,
   type ServerSelfUpdateProgressEvent,
   type ServerProvider,
+  ScientSkillManagementError,
   type FilesystemBrowseFailure,
   FilesystemBrowseError,
   AssetWorkspaceContextNotFoundError,
@@ -167,15 +170,24 @@ const isScientForkCompletionError = Schema.is(ScientForkReactor.ScientForkComple
 // SCIENT-FORK:END
 
 const nowIso = Effect.map(DateTime.now, DateTime.formatIso);
-const EDITOR_DISCOVERY_TIMEOUT = Duration.seconds(5);
+const CONFIG_DISCOVERY_TIMEOUT = Duration.seconds(5);
+
+const resolveDiscoveryForConfig = <A, E, R>(
+  discovery: Effect.Effect<A, E, R>,
+  onTimeout: () => A,
+) =>
+  discovery.pipe(
+    Effect.timeoutOption(CONFIG_DISCOVERY_TIMEOUT),
+    Effect.map(Option.getOrElse(onTimeout)),
+  );
 
 export const resolveAvailableEditorsForConfig = <A, E, R>(
   discovery: Effect.Effect<ReadonlyArray<A>, E, R>,
-) =>
-  discovery.pipe(
-    Effect.timeoutOption(EDITOR_DISCOVERY_TIMEOUT),
-    Effect.map(Option.getOrElse(() => [])),
-  );
+) => resolveDiscoveryForConfig(discovery, () => []);
+
+export const resolveFileManagerRevealKindForConfig = <E, R>(
+  discovery: Effect.Effect<FileManagerRevealKind | undefined, E, R>,
+) => resolveDiscoveryForConfig(discovery, () => undefined);
 
 export const redactProviderAuthorizationForReadOnlyClient = (
   provider: ServerProvider,
@@ -569,6 +581,60 @@ const makeWsRpcLayer = (
         workspaceFileSystem,
       });
       const scientSkillManagement = yield* ScientSkillManagement.ScientSkillManagement;
+      const skillContextError = (operation: string, message: string) =>
+        new ScientSkillManagementError({ operation, message });
+      const resolveScientSkillProjectRoot = Effect.fn("ws.resolveScientSkillProjectRoot")(
+        function* (input: {
+          readonly projectId?: ProjectId | undefined;
+          readonly threadId?: ThreadId | undefined;
+        }) {
+          if (input.threadId) {
+            const thread = yield* projectionSnapshotQuery
+              .getThreadShellById(input.threadId)
+              .pipe(
+                Effect.mapError(() =>
+                  skillContextError("list", "The thread workspace could not be resolved."),
+                ),
+              );
+            if (Option.isNone(thread)) {
+              return yield* skillContextError("list", "That thread is not available.");
+            }
+            if (input.projectId && thread.value.projectId !== input.projectId) {
+              return yield* skillContextError(
+                "list",
+                "The requested thread does not belong to that project.",
+              );
+            }
+            if (thread.value.worktreePath) return thread.value.worktreePath;
+            if (thread.value.projectId) {
+              const project = yield* projectionSnapshotQuery
+                .getProjectShellById(thread.value.projectId)
+                .pipe(
+                  Effect.mapError(() =>
+                    skillContextError("list", "The project workspace could not be resolved."),
+                  ),
+                );
+              if (Option.isSome(project)) return project.value.workspaceRoot;
+            }
+            if (thread.value.workspaceRoot) return thread.value.workspaceRoot;
+            return yield* skillContextError("list", "That thread has no project workspace.");
+          }
+          if (input.projectId) {
+            const project = yield* projectionSnapshotQuery
+              .getProjectShellById(input.projectId)
+              .pipe(
+                Effect.mapError(() =>
+                  skillContextError("list", "The project workspace could not be resolved."),
+                ),
+              );
+            if (Option.isNone(project)) {
+              return yield* skillContextError("list", "That project is not available.");
+            }
+            return project.value.workspaceRoot;
+          }
+          return undefined;
+        },
+      );
       const providerSkillManagement =
         ProviderSkillManagement.makeProviderSkillManagement(providerRegistry);
       const projectSetupScriptRunner = yield* ProjectSetupScriptRunner.ProjectSetupScriptRunner;
@@ -1217,6 +1283,14 @@ const makeWsRpcLayer = (
         );
         const environment = yield* serverEnvironment.getDescriptor;
         const auth = yield* serverAuth.getDescriptor();
+        const availableEditors: ReadonlyArray<EditorId> = yield* resolveAvailableEditorsForConfig(
+          externalLauncher.resolveAvailableEditors(),
+        );
+        const fileManagerRevealKind = availableEditors.includes("file-manager")
+          ? yield* resolveFileManagerRevealKindForConfig(
+              externalLauncher.resolveFileManagerRevealKind(),
+            )
+          : undefined;
 
         return {
           environment,
@@ -1226,9 +1300,7 @@ const makeWsRpcLayer = (
           keybindings: keybindingsConfig.keybindings,
           issues: keybindingsConfig.issues,
           providers,
-          availableEditors: yield* resolveAvailableEditorsForConfig(
-            externalLauncher.resolveAvailableEditors(),
-          ),
+          availableEditors,
           // Same discovery-with-timeout treatment as editors: a slow probe
           // must not stall server.getConfig, so it degrades to no targets.
           remoteOpenTargets: yield* resolveAvailableEditorsForConfig(
@@ -1246,6 +1318,12 @@ const makeWsRpcLayer = (
           },
           settings,
           shellResumeCompletionMarker: true,
+          ...(fileManagerRevealKind === undefined
+            ? {}
+            : {
+                shellRevealInFileManager: true,
+                shellRevealInFileManagerKind: fileManagerRevealKind,
+              }),
           threadResumeCompletionMarker: true,
           threadSnapshotPagination: true,
         };
@@ -1831,10 +1909,37 @@ const makeWsRpcLayer = (
               "rpc.aggregate": "server",
             },
           ),
-        [WS_METHODS.skillsList]: (_input) =>
-          observeRpcEffect(WS_METHODS.skillsList, scientSkillManagement.list, {
-            "rpc.aggregate": "skills",
-          }),
+        [WS_METHODS.skillsList]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.skillsList,
+            Effect.gen(function* () {
+              const projectRoot = yield* resolveScientSkillProjectRoot(input);
+              return yield* scientSkillManagement.list(projectRoot);
+            }),
+            { "rpc.aggregate": "skills" },
+          ),
+        [WS_METHODS.skillsSetProjectPreference]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.skillsSetProjectPreference,
+            Effect.gen(function* () {
+              const projectRoot = yield* resolveScientSkillProjectRoot({
+                projectId: input.projectId,
+              });
+              if (!projectRoot) {
+                return yield* skillContextError(
+                  "setProjectPreference",
+                  "That project has no workspace.",
+                );
+              }
+              return yield* scientSkillManagement.setProjectPreference({
+                projectRoot,
+                name: input.name,
+                active: input.active,
+                invocationPolicy: input.invocationPolicy,
+              });
+            }),
+            { "rpc.aggregate": "skills" },
+          ),
         [WS_METHODS.skillsSetUserActivation]: (input) =>
           observeRpcEffect(
             WS_METHODS.skillsSetUserActivation,

@@ -3,7 +3,7 @@ import * as NodeFSP from "node:fs/promises";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 
-import { loadSkillCatalog, skillReleaseKey } from "@scientfactory/scient-skills";
+import { loadSkillCatalog, skillReleaseKey, type SkillRelease } from "@scientfactory/scient-skills";
 import { EnvironmentId, ProviderInstanceId, ThreadId } from "@t3tools/contracts";
 import { afterEach, describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
@@ -52,7 +52,7 @@ async function makeCatalogFixture() {
 }
 
 const makeInvocation = (
-  releaseKeys: ReadonlySet<string>,
+  releases: ReadonlyArray<SkillRelease>,
   capabilities: ReadonlySet<McpInvocationContext.McpCapability> = new Set(["skills:read"]),
   invocationPolicy: "automatic" | "explicit" = "automatic",
 ) =>
@@ -63,12 +63,14 @@ const makeInvocation = (
     providerInstanceId: ProviderInstanceId.make("codex"),
     capabilities,
     skillScope: {
-      releaseKeys,
-      skills: [...releaseKeys].map((releaseKey) => ({
-        releaseKey,
-        id: "scient.evidence-review",
-        name: "evidence-review",
-        description: "Reviews evidence without widening authority.",
+      releases: new Map(releases.map((release) => [skillReleaseKey(release), release] as const)),
+      skills: releases.map((release) => ({
+        releaseKey: skillReleaseKey(release),
+        id: release.id,
+        name: release.name,
+        description: release.description,
+        origin: release.origin,
+        activationScope: "user" as const,
         invocationPolicy,
       })),
     },
@@ -99,7 +101,7 @@ describe("Scient skills MCP handlers", () => {
       const catalog = yield* Effect.promise(makeCatalogFixture);
       const release = catalog.releases[0]!;
       const releaseKey = skillReleaseKey(release);
-      const invocation = makeInvocation(new Set([releaseKey]));
+      const invocation = makeInvocation([release]);
 
       const listed = yield* provideContext(listScientSkillsForInvocation(), {
         catalog,
@@ -108,8 +110,18 @@ describe("Scient skills MCP handlers", () => {
       expect(listed.skills).toHaveLength(1);
       expect(listed.skills[0]).toMatchObject({ releaseKey, id: release.id });
 
-      const loaded = yield* provideContext(loadScientSkillForInvocation({ releaseKey }), {
-        catalog,
+      const releaseRoot = NodePath.join(fixtures[0]!, "evidence-review");
+      yield* Effect.promise(() =>
+        NodeFSP.writeFile(
+          NodePath.join(releaseRoot, "references", "rubric.md"),
+          "mutated after the turn snapshot\n",
+          "utf8",
+        ),
+      );
+      const currentCatalog = yield* Effect.promise(() => loadSkillCatalog([releaseRoot]));
+
+      const loaded = yield* provideContext(loadScientSkillForInvocation({ name: release.name }), {
+        catalog: currentCatalog,
         invocation,
       });
       expect(loaded.instructions).toContain("Load the rubric");
@@ -119,10 +131,10 @@ describe("Scient skills MCP handlers", () => {
 
       const resource = yield* provideContext(
         readScientSkillResourceForInvocation({
-          releaseKey,
+          name: release.name,
           path: "references/rubric.md",
         }),
-        { catalog, invocation },
+        { catalog: currentCatalog, invocation },
       );
       expect(resource).toEqual({
         path: "references/rubric.md",
@@ -136,48 +148,74 @@ describe("Scient skills MCP handlers", () => {
     Effect.gen(function* () {
       const catalog = yield* Effect.promise(makeCatalogFixture);
       const releaseKey = skillReleaseKey(catalog.releases[0]!);
-      const emptyScope = makeInvocation(new Set());
+      const emptyScope = makeInvocation([]);
 
-      const unavailable = yield* provideContext(loadScientSkillForInvocation({ releaseKey }), {
-        catalog,
-        invocation: emptyScope,
-      }).pipe(Effect.flip);
+      const unavailable = yield* provideContext(
+        loadScientSkillForInvocation({ name: catalog.releases[0]!.name }),
+        {
+          catalog,
+          invocation: emptyScope,
+        },
+      ).pipe(Effect.flip);
       expect(unavailable.code).toBe("not-found");
 
       const traversal = yield* provideContext(
-        readScientSkillResourceForInvocation({ releaseKey, path: "../SKILL.md" }),
-        { catalog, invocation: makeInvocation(new Set([releaseKey])) },
+        readScientSkillResourceForInvocation({
+          name: catalog.releases[0]!.name,
+          path: "../SKILL.md",
+        }),
+        { catalog, invocation: makeInvocation([catalog.releases[0]!]) },
       ).pipe(Effect.flip);
       expect(traversal.code).toBe("resource-unavailable");
 
       const noCapability = yield* provideContext(listScientSkillsForInvocation(), {
         catalog,
-        invocation: makeInvocation(new Set([releaseKey]), new Set()),
+        invocation: makeInvocation([catalog.releases[0]!], new Set()),
       }).pipe(Effect.flip);
       expect(noCapability.code).toBe("capability-unavailable");
+
+      const invocation = makeInvocation([catalog.releases[0]!]);
+      const descriptor = invocation.skillScope!.skills[0]!;
+      const ambiguous = McpInvocationContext.McpInvocationContext.of({
+        ...invocation,
+        skillScope: {
+          releases: invocation.skillScope!.releases,
+          skills: [descriptor, { ...descriptor, releaseKey: `${releaseKey}-other` }],
+        },
+      });
+      const nameConflict = yield* provideContext(
+        loadScientSkillForInvocation({ name: descriptor.name }),
+        { catalog, invocation: ambiguous },
+      ).pipe(Effect.flip);
+      expect(nameConflict.code).toBe("ambiguous-name");
     }),
   );
 
   it.effect("exposes an explicit skill only when the exact turn scope includes it", () =>
     Effect.gen(function* () {
       const catalog = yield* Effect.promise(makeCatalogFixture);
-      const releaseKey = skillReleaseKey(catalog.releases[0]!);
       const selectedInvocation = makeInvocation(
-        new Set([releaseKey]),
+        [catalog.releases[0]!],
         new Set(["skills:read"]),
         "explicit",
       );
 
-      const loaded = yield* provideContext(loadScientSkillForInvocation({ releaseKey }), {
-        catalog,
-        invocation: selectedInvocation,
-      });
+      const loaded = yield* provideContext(
+        loadScientSkillForInvocation({ name: catalog.releases[0]!.name }),
+        {
+          catalog,
+          invocation: selectedInvocation,
+        },
+      );
       expect(loaded.skill.invocationPolicy).toBe("explicit");
 
-      const hidden = yield* provideContext(loadScientSkillForInvocation({ releaseKey }), {
-        catalog,
-        invocation: makeInvocation(new Set()),
-      }).pipe(Effect.flip);
+      const hidden = yield* provideContext(
+        loadScientSkillForInvocation({ name: catalog.releases[0]!.name }),
+        {
+          catalog,
+          invocation: makeInvocation([]),
+        },
+      ).pipe(Effect.flip);
       expect(hidden.code).toBe("not-found");
     }),
   );

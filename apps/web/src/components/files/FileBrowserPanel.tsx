@@ -81,7 +81,10 @@ function FileSearchField(props: {
   value: string;
 }) {
   return (
-    <InputGroup variant="ghost" className="h-7 min-w-0 flex-1">
+    <InputGroup
+      variant="ghost"
+      className="h-7 min-w-0 flex-1 has-[input:focus-visible,textarea:focus-visible]:border-transparent has-[input:focus-visible,textarea:focus-visible]:ring-2 has-[input:focus-visible,textarea:focus-visible]:ring-inset has-[input:focus-visible,textarea:focus-visible]:ring-ring"
+    >
       <InputGroupInput
         type="search"
         name={props.name}

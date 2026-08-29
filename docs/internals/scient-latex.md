@@ -790,9 +790,9 @@ Ownership, wired into `.github/workflows/scient-upstream-provenance.yml`.
   build-state vocabulary (`queued`/`running`/`publishing`/`succeeded`/
   `failed`/`cancelled`, `ScientLatexBuildSnapshot`) is specific to this
   contract. Generalizing it into a shared `DocumentBuild` vocabulary other
-  future producer lanes (Typst, Quarto) could reuse is raised to the platform
-  owner of `docs/internals/scient-pdf-export-rendering-plan.md` rather than
-  decided unilaterally here.
+  future producer lanes (Typst, Quarto) could reuse belongs to the cross-product
+  Scientific Document Platform and computing/execution owners rather than this
+  LaTeX lane or the historical PDF export plan.
 - **Build-dir GC.** Candidate PDFs are removed after every build, but
   `<latexDir>/builds/<digest>` work directories are never cleaned up
   automatically, so every document a workspace has ever built leaves its small

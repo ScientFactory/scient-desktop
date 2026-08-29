@@ -16,6 +16,7 @@ import {
 } from "./ManagedProviderRuntimeActions.ts";
 
 const DEFAULT_CURSOR_BINARY = "cursor-agent";
+export const CURSOR_MANAGED_RUNTIME_CONTRACT_REVISION = 1;
 
 function detectTargetSafely(input: { readonly platform: NodeJS.Platform; readonly arch: string }) {
   try {
@@ -29,7 +30,8 @@ export interface CursorManagedRuntimeResolution extends ManagedProviderRuntimeRe
 
 export const makeCursorManagedRuntimeResolution = Effect.fn("CursorManagedRuntime.makeResolution")(
   function* (input: {
-    readonly settings: CursorSettings;
+    readonly settings: Pick<CursorSettings, "binaryPath">;
+    readonly enabled: boolean;
     readonly baseDir: string;
     readonly environment: NodeJS.ProcessEnv;
     readonly spawner: ChildProcessSpawner.ChildProcessSpawner["Service"];
@@ -47,12 +49,14 @@ export const makeCursorManagedRuntimeResolution = Effect.fn("CursorManagedRuntim
       providerName: "Cursor",
       providerSlug: "cursor",
       runtime: new ManagedCursorRuntime(input.baseDir),
-      artifact,
+      bundledArtifact: artifact,
+      contractRevision: CURSOR_MANAGED_RUNTIME_CONTRACT_REVISION,
       targetLabel,
       environment: input.environment,
       spawner: input.spawner,
-      configuredRuntimeProbeAllowed: input.settings.enabled,
+      configuredRuntimeProbeAllowed: input.enabled,
       managedInstallationAllowed: input.managedInstallationAllowed,
+      systemToManagedSwitchAllowed: true,
       sourceLabel: "Official Cursor Agent release",
       managedInstallationLimitation:
         "Scient can use a healthy Cursor runtime here, but managed installation is only enabled in the local desktop app.",

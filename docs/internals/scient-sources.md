@@ -200,13 +200,29 @@ italic controls in this slice. Their text direction is resolved by the browser
 from the note itself, so Hebrew, Arabic, English, and mixed research notes do
 not inherit an unrelated application direction.
 
-Provider agents use the same canonical store through the bounded Sources MCP
-toolkit. `scient_sources_get` returns the current note and revision, while
-`scient_sources_note_update` adds, replaces, or clears it with optimistic
-revision safety. The tool is idempotent and project-scoped; it does not expose
-host paths, write Zotero, or create a second agent-owned notes format. Normal
-agent tool authorization remains the approval boundary rather than a separate
-Sources permission UI.
+Provider agents use the same canonical store through a bounded nine-tool Sources
+MCP toolkit:
+
+- `scient_sources_list` and `scient_sources_get` are bounded, read-only views;
+- `scient_sources_note_update` and `scient_sources_update` use optimistic
+  revision safety for notes and canonical metadata;
+- `scient_sources_add` creates an idempotent source from supplied metadata or a
+  project-relative PDF and marks every agent-added source pending review;
+- `scient_sources_attach_pdf` and `scient_sources_detach_pdf` change canonical
+  attachments without exposing host paths;
+- `scient_sources_review` approves or rejects a pending agent-added source; and
+- `scient_sources_remove` removes a canonical source only through the same
+  revisioned removal path as the UI.
+
+The toolkit is project-scoped, does not write Zotero, and does not create a
+second agent-owned notes or source format. Read and write capabilities are
+separate, mutating tool descriptions require an explicit user request, and
+normal agent tool authorization remains the approval boundary rather than a
+separate Sources permission UI. Agent Browser and Sources access are currently
+enabled by default together in the server-authoritative Integrations setting;
+turning that setting off withholds `preview`, `sources:read`, and
+`sources:write` from new provider sessions. A settings-read failure also fails
+closed by withholding those capabilities.
 
 Metadata refresh is an explicitly destructive operation guarded by a compact
 confirmation surface. The environment server re-runs the existing local-PDF

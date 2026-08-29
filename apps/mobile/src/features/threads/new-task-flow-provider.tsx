@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { mergeEffectiveProviderSkills } from "@t3tools/client-runtime/providerSkills";
 
 import type {
   EnvironmentId,
@@ -39,6 +40,7 @@ import { scopedProjectKey } from "../../lib/scopedEntities";
 import { appAtomRegistry } from "../../state/atom-registry";
 import { projectEnvironment } from "../../state/projects";
 import { useEnvironmentQuery } from "../../state/query";
+import { scientSkillsInventory } from "../../state/scientSkills";
 import {
   appendComposerDraftAttachments,
   clearComposerDraft,
@@ -444,12 +446,31 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
         option.selection.instanceId === selectedModel.instanceId &&
         option.selection.model === selectedModel.model,
     ) ?? null;
-  const selectedProviderSkills = useMemo(
+  const selectedProviderStatus = useMemo(
     () =>
       selectedEnvironmentServerConfig?.providers.find(
         (provider) => provider.instanceId === selectedModel?.instanceId,
-      )?.skills ?? [],
+      ) ?? null,
     [selectedEnvironmentServerConfig, selectedModel?.instanceId],
+  );
+  const scientSkills = useEnvironmentQuery(
+    selectedProject
+      ? scientSkillsInventory({
+          environmentId: selectedProject.environmentId,
+          input: { projectId: selectedProject.id },
+        })
+      : null,
+  ).data;
+  const selectedProviderSkills = useMemo(
+    () =>
+      selectedProviderStatus
+        ? mergeEffectiveProviderSkills({
+            provider: selectedProviderStatus.driver,
+            providerSkills: selectedProviderStatus.skills,
+            inventory: scientSkills,
+          })
+        : [],
+    [scientSkills, selectedProviderStatus],
   );
   const setSelectedModelKey = useCallback(
     // Options ride along in the same write: a follow-up setSelectedModelOptions

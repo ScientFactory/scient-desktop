@@ -62,17 +62,6 @@ const REASONING_EFFORT_LABELS: Readonly<Record<string, string>> = {
 };
 
 const DEFAULT_SERVICE_TIER_ID = "default";
-const CURRENT_CODEX_MODELS = new Set([
-  "gpt-5.6-luna",
-  "gpt-5.6-terra",
-  "gpt-5.6-sol",
-  "gpt-daybreak-blue-latest",
-  "gpt-daybreak-red-latest",
-]);
-
-export function isLegacyCodexModel(model: string): boolean {
-  return !CURRENT_CODEX_MODELS.has(model);
-}
 
 function reasoningEffortLabel(reasoningEffort: string): string {
   return REASONING_EFFORT_LABELS[reasoningEffort] ?? reasoningEffort;
@@ -97,13 +86,18 @@ function codexAccountAuthLabel(account: CodexSchema.V2GetAccountResponse["accoun
       return "ChatGPT Pro 5x Subscription";
     case "team":
       return "ChatGPT Team Subscription";
+    case "self_serve_business_prolite":
     case "self_serve_business_usage_based":
     case "business":
       return "ChatGPT Business Subscription";
+    case "ent26":
+    case "enterprise_cbp_automation":
     case "enterprise_cbp_usage_based":
     case "enterprise":
       return "ChatGPT Enterprise Subscription";
     case "edu":
+    case "edu_plus":
+    case "edu_pro":
       return "ChatGPT Edu Subscription";
     case "unknown":
       return "ChatGPT Subscription";
@@ -201,7 +195,6 @@ function parseCodexModelListResponse(
     name: toDisplayName(model),
     isCustom: false,
     ...(model.isDefault ? { isDefault: true } : {}),
-    ...(isLegacyCodexModel(model.model) ? { isLegacy: true } : {}),
     capabilities: mapCodexModelCapabilities(model),
   }));
 }
@@ -342,6 +335,8 @@ export const openCodexAppServerConnection = Effect.fn("openCodexAppServerConnect
     readonly launchArgs?: string;
     readonly cwd: string;
     readonly environment?: NodeJS.ProcessEnv;
+    /** Defaults to true for normal provider launches; qualification uses false. */
+    readonly extendEnvironment?: boolean;
   }) {
     const resolvedHomePath = input.homePath ? expandHomePath(input.homePath) : undefined;
     const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
@@ -354,7 +349,7 @@ export const openCodexAppServerConnection = Effect.fn("openCodexAppServerConnect
       codexAppServerArgs(input.launchArgs),
       {
         env: environment,
-        extendEnv: true,
+        extendEnv: input.extendEnvironment ?? true,
       },
     );
     const child = yield* spawner
@@ -362,7 +357,7 @@ export const openCodexAppServerConnection = Effect.fn("openCodexAppServerConnect
         ChildProcess.make(spawnCommand.command, spawnCommand.args, {
           cwd: input.cwd,
           env: environment,
-          extendEnv: true,
+          extendEnv: input.extendEnvironment ?? true,
           forceKillAfter: CODEX_APP_SERVER_PROBE_FORCE_KILL_AFTER,
           shell: spawnCommand.shell,
         }),

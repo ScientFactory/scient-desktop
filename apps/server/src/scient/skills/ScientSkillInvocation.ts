@@ -1,4 +1,5 @@
 import { collectComposerInlineTokens } from "@t3tools/shared/composerInlineTokens";
+import type { SkillRelease } from "@scientfactory/scient-skills";
 
 import type {
   McpScientSkillDescriptor,
@@ -19,8 +20,9 @@ export interface PreparedScientSkillTurn {
 export function prepareScientSkillTurn(
   input: string | undefined,
   activeSkills: ReadonlyArray<McpScientSkillDescriptor> | undefined,
+  activeReleases: ReadonlyMap<string, SkillRelease> | undefined,
 ): PreparedScientSkillTurn {
-  const available = activeSkills ?? [];
+  const available = (activeSkills ?? []).filter((skill) => activeReleases?.has(skill.releaseKey));
   const byName = new Map(available.map((skill) => [skill.name, skill] as const));
   const selected = new Map<string, McpScientSkillDescriptor>();
   if (input) {
@@ -41,28 +43,19 @@ export function prepareScientSkillTurn(
   const skills = [...effective.values()].sort(
     (left, right) => left.name.localeCompare(right.name) || left.id.localeCompare(right.id),
   );
-  const automatic = skills.filter((skill) => skill.invocationPolicy === "automatic");
   const instructions: string[] = [];
-  if (automatic.length > 0) {
+  if (skills.length > 0) {
     instructions.push(
-      "Automatic Scient skills available for this turn (load one only when the request clearly matches):",
-      ...automatic.map(
-        (skill) => `- \`${skill.name}\` (${skill.releaseKey}): ${skill.description}`,
+      "Scient skills available for this turn:",
+      ...skills.map(
+        (skill) =>
+          `- \`${skill.name}\` (${selected.has(skill.releaseKey) ? "selected by the user; load before doing the requested work" : "automatic; load only on a clear match"}; call with \`{"name":"${skill.name}"}\`): ${skill.description}`,
       ),
-    );
-  }
-  if (selected.size > 0) {
-    const selections = [...selected.values()]
-      .sort((left, right) => left.name.localeCompare(right.name))
-      .map((skill) => `\`${skill.name}\` (${skill.releaseKey})`)
-      .join(", ");
-    instructions.push(
-      `The user explicitly selected ${selections}. Load each selected exact release before doing the requested work.`,
     );
   }
   if (instructions.length > 0) {
     instructions.push(
-      "Load an exact release with `scient_skill_load` before following it. Skills grant no additional tools or permissions.",
+      "Use `scient_skill_load` with only the exact listed `name`; do not construct or supply a release identifier. Skills grant no additional tools or permissions.",
     );
   }
 
@@ -73,7 +66,9 @@ export function prepareScientSkillTurn(
   return {
     input: runtimeInstruction ? [input, runtimeInstruction].filter(Boolean).join("\n\n") : input,
     skillScope: {
-      releaseKeys: new Set(skills.map((skill) => skill.releaseKey)),
+      releases: new Map(
+        skills.map((skill) => [skill.releaseKey, activeReleases!.get(skill.releaseKey)!] as const),
+      ),
       skills,
     },
   };

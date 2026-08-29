@@ -296,6 +296,17 @@ export function workEntryDisplayIndicatesToolFailure(entry: WorkLogEntry): boole
   return workEntryIndicatesToolFailureFromOutput(entry, false);
 }
 
+/** Severe failures keep the red treatment ordinary tool failures lost: runtime
+ *  errors and orchestration `*.failed` activities (provider.turn.start.failed,
+ *  checkpoint.capture.failed, ...) mean the turn or a core side effect broke,
+ *  not that a command exited nonzero. */
+export function workEntrySignalsSevereFailure(entry: WorkLogEntry): boolean {
+  return (
+    entry.sourceActivityKind === "runtime.error" ||
+    entry.sourceActivityKind?.endsWith(".failed") === true
+  );
+}
+
 /** Tool/command row completed without failure (blue check affordance). */
 export function workEntryIndicatesToolSuccess(entry: WorkLogEntry): boolean {
   if (!workLogEntryIsToolLike(entry)) {
@@ -887,11 +898,23 @@ export function deriveWorkLogEntries(
     if (activity.kind === "tool.progress") continue;
     if (activity.kind === "context-window.updated") continue;
     if (activity.summary === "Checkpoint captured") continue;
+    if (isNoContentRuntimeWarning(activity)) continue;
     if (isPlanBoundaryToolActivity(activity)) continue;
     if (isAgentInternalActivity(activity)) continue;
     entries.push(toDerivedWorkLogEntry(activity));
   }
   return collapseDerivedWorkLogEntries(entries);
+}
+
+/** Adapters forward unknown wire-only SDK messages (background_tasks_changed,
+ *  commands_changed, ...) as runtime warnings. The suffix comes from
+ *  describeUnknownSdkMessage in the Claude adapter; a row with no displayable
+ *  text carries nothing a user can act on, so it does not render. */
+function isNoContentRuntimeWarning(activity: OrchestrationThreadActivity): boolean {
+  return (
+    activity.kind === "runtime.warning" &&
+    activity.summary.endsWith("(no displayable text content)")
+  );
 }
 
 function isPlanBoundaryToolActivity(activity: OrchestrationThreadActivity): boolean {
@@ -930,15 +953,25 @@ function scientSkillUsageLabel(itemValue: unknown): string | null {
   if (asTrimmedString(item?.tool) !== "scient_skill_load") return null;
   const args = asRecord(item?.arguments);
   const releaseKey = asTrimmedString(args?.releaseKey);
-  if (!releaseKey) return null;
-  const id = releaseKey.split("@")[0]?.split(".").at(-1);
-  if (!id) return null;
-  const displayName = id
+  const name = asTrimmedString(args?.name) ?? releaseKey?.split("@")[0]?.split(".").at(-1);
+  if (!name) return null;
+  const displayName = name
     .split("-")
     .filter(Boolean)
     .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
     .join(" ");
-  return displayName ? `Used ${displayName}` : null;
+  if (!displayName) return null;
+  switch (asTrimmedString(item?.status)) {
+    case "completed":
+      return `Used ${displayName}`;
+    case "failed":
+      return `Couldn't load ${displayName}`;
+    case "declined":
+    case "stopped":
+      return `Didn't load ${displayName}`;
+    default:
+      return `Loading ${displayName}`;
+  }
 }
 
 function toDerivedWorkLogEntry(activity: OrchestrationThreadActivity): DerivedWorkLogEntry {

@@ -16,6 +16,7 @@ import {
 } from "./ManagedProviderRuntimeActions.ts";
 
 const DEFAULT_GROK_BINARY = "grok";
+export const GROK_MANAGED_RUNTIME_CONTRACT_REVISION = 1;
 
 function detectTargetSafely(input: { readonly platform: NodeJS.Platform; readonly arch: string }) {
   try {
@@ -47,11 +48,13 @@ export const makeGrokManagedRuntimeResolution = Effect.fn("GrokManagedRuntime.ma
       providerName: "Grok",
       providerSlug: "grok",
       runtime: new ManagedGrokRuntime(input.baseDir),
-      artifact,
+      bundledArtifact: artifact,
+      contractRevision: GROK_MANAGED_RUNTIME_CONTRACT_REVISION,
       targetLabel,
       environment: input.environment,
       spawner: input.spawner,
       managedInstallationAllowed: input.managedInstallationAllowed,
+      systemToManagedSwitchAllowed: true,
       sourceLabel: "Official xAI Grok Build release",
       managedInstallationLimitation:
         "Scient can use a healthy Grok runtime here, but managed installation is only enabled in the local desktop app.",

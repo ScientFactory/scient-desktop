@@ -154,7 +154,14 @@ The most common defect in this repo is a change that works on the path you teste
 - **Contracts.** Anything crossing the wire is typed in `packages/contracts`. Change the schema and the server, web, mobile, and desktop all follow.
 - **Reverse states.** If you added a way in, add the way out and the way to see it. Snooze needs unsnooze. Close needs reopen. A one-way door is a bug.
 - **Connection modes.** Local, remote/relay, and tunnel behave differently. Multi-device and multi-environment cases are real.
-- **Docs.** `docs/` splits by audience. Behavior changes that a user would notice belong in `docs/user/` (shipped-product voice, no repo tooling or source paths); architecture and contributor changes in `docs/internals/`; runbooks in `docs/operations/`; new vocabulary in `docs/internals/glossary.md`.
+- **Docs.** Start at `docs/README.md`. Released user behavior, steps,
+  limitations, privacy, and recovery belong in `docs/user/` (the authored
+  source for public Scient Docs). Current capability and architecture facts,
+  development guidance, and historical records currently share
+  `docs/internals/` and must state their real role; runbooks belong in
+  `docs/operations/`; T3 divergence belongs in `UPSTREAM.md` and its linked
+  receipts; new vocabulary belongs in `docs/internals/glossary.md`. These are
+  logical roles over compatibility paths, not permission for a folder move.
 
 ## Dev servers
 
@@ -206,8 +213,15 @@ An empty database is a bad test. Seed your worktree's `.t3` with a copy of real 
 
 - Do not commit implementation plans, research notes, or agent scratch files. Keep temporary working material outside the worktree. `.plans/` is gitignored only as a safety net for legacy tooling.
 - Track active maintainer work in the GitHub issue or project item that owns it. External proposals follow `CONTRIBUTING.md` and belong in Ideas discussions.
-- Put durable architecture, constraints, and decisions in `docs/internals/`. Update those docs when the product changes so agents find current facts instead of abandoned intentions.
+- Update the existing Help, capability, architecture, development, operations,
+  upstream, or record owner when its fact changes. Features often land in
+  slices; do not create one document per PR, phase, component, or milestone.
+- Create a durable file only for a distinct lasting question that no existing
+  owner can hold coherently, with a clear role, evidence boundary, update
+  trigger, and route from `docs/README.md`.
 - A merged PR is the implementation record. Close or update its tracking item when the work lands; do not preserve a second checklist in the repository.
+- Include one `Documentation impact` declaration in every PR: `None — reason`,
+  `Updated — paths`, or `Dependent PR — repository and link`.
 
 ## How it works
 

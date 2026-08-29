@@ -1,14 +1,18 @@
 // @effect-diagnostics nodeBuiltinImport:off -- Managed Codex capability checks must verify the provider-owned companion executable beside the selected binary.
 import * as NodeFSP from "node:fs/promises";
+import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 
 import {
   ManagedCodexRuntime,
   detectManagedRuntimeTarget,
+  hydrateManagedRuntimeArtifact,
+  managedRuntimeSmokeEnvironment,
   managedRuntimeTargetKey,
   resolveReviewedCodexArtifact,
   type ManagedCodexRuntimeProgress,
   type ManagedRuntimeArtifact,
+  type ManagedProviderRuntimeStatus,
 } from "@scientfactory/provider-runtime";
 import type {
   CodexSettings,
@@ -29,8 +33,15 @@ import type {
   ProviderManagedRuntimeProgress,
 } from "../../provider/ProviderDriver.ts";
 import { ProviderConnectionActionError } from "./ProviderConnectionActions.ts";
+import {
+  ManagedRuntimeCatalog,
+  resolveManagedRuntimeCatalogCandidate,
+  type ManagedRuntimeCatalogData,
+} from "./ManagedRuntimeCatalog.ts";
+import { isManagedRuntimeUpdate } from "./managedRuntimeVersion.ts";
 
 const DEFAULT_CODEX_BINARY = "codex";
+export const CODEX_MANAGED_RUNTIME_CONTRACT_REVISION = 1;
 
 export function resolveCodexCodeModeHostPath(
   binaryPath: string,
@@ -72,7 +83,7 @@ const runtimeError = (message: string, cause?: unknown) =>
 function mapProgress(progress: ManagedCodexRuntimeProgress): ProviderManagedRuntimeProgress {
   const messages = {
     preparing: "Preparing the private Codex runtime.",
-    downloading: "Downloading Codex from the reviewed OpenAI release.",
+    downloading: "Downloading Codex from the qualified OpenAI release.",
     verifying: "Verifying the Codex download.",
     installing: "Installing the private Codex runtime.",
     testing: "Testing the installed Codex runtime.",
@@ -93,6 +104,62 @@ function runtimeBackendLabel(platform: string): string {
   if (platform === "darwin") return "macOS native";
   return "Linux native";
 }
+
+/** Selects only a strictly newer qualified release, never a remote downgrade or repack. */
+export function resolveCodexCatalogCandidate(input: {
+  readonly bundledArtifact: ManagedRuntimeArtifact | undefined;
+  readonly catalog: ManagedRuntimeCatalogData;
+}): ManagedRuntimeArtifact | undefined {
+  return resolveManagedRuntimeCatalogCandidate({
+    catalog: input.catalog,
+    bundledArtifact: input.bundledArtifact,
+    contractRevision: CODEX_MANAGED_RUNTIME_CONTRACT_REVISION,
+  });
+}
+
+/** Repair preserves the exact activated release whenever a durable receipt exists. */
+export function resolveCodexActionArtifact(input: {
+  readonly action: ProviderManagedRuntimeAction;
+  readonly bundledArtifact: ManagedRuntimeArtifact | undefined;
+  readonly candidateArtifact: ManagedRuntimeArtifact | undefined;
+  readonly status: ManagedProviderRuntimeStatus | undefined;
+}): ManagedRuntimeArtifact | undefined {
+  if (input.action !== "repair") return input.candidateArtifact;
+  if (!input.bundledArtifact) return undefined;
+  if (input.status?.activeArtifact) {
+    return hydrateManagedRuntimeArtifact(input.bundledArtifact, input.status.activeArtifact);
+  }
+  // State schema v1/v2 predates durable receipts. Preserve the previous
+  // behavior for those installations by repairing from the bundled release.
+  return input.bundledArtifact;
+}
+
+const qualifyManagedCodexRuntime = Effect.fn("CodexManagedRuntime.qualify")(function* (input: {
+  readonly binaryPath: string;
+  readonly expectedVersion: string;
+  readonly cwd: string;
+  readonly environment: NodeJS.ProcessEnv;
+  readonly spawner: ChildProcessSpawner.ChildProcessSpawner["Service"];
+}) {
+  const connection = yield* Effect.scoped(
+    openCodexAppServerConnection({
+      binaryPath: input.binaryPath,
+      homePath: input.cwd,
+      launchArgs: "",
+      cwd: input.cwd,
+      environment: managedRuntimeSmokeEnvironment(input.environment),
+      extendEnvironment: false,
+    }),
+  ).pipe(
+    Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, input.spawner),
+    Effect.timeout("8 seconds"),
+  );
+  if (connection.version !== input.expectedVersion) {
+    return yield* runtimeError(
+      `The installed Codex package reported ${connection.version ?? "an unknown version"} instead of ${input.expectedVersion}.`,
+    );
+  }
+});
 
 /**
  * Prefer a Codex binary only when it can speak the app-server protocol used
@@ -198,7 +265,12 @@ export function resolveCodexManagedRuntimePolicy(input: {
         : input.source === "system" && input.installed
           ? ["repair", "remove"]
           : input.source === "scient_managed" && input.installed
-            ? input.artifact && input.installedVersion !== input.artifact.version
+            ? input.artifact &&
+              isManagedRuntimeUpdate({
+                provider: input.artifact.provider,
+                current: input.installedVersion,
+                candidate: input.artifact.version,
+              })
               ? ["update", "repair", "remove"]
               : ["repair", "remove"]
             : [];
@@ -234,7 +306,14 @@ export const makeCodexManagedRuntimeResolution = Effect.fn("CodexManagedRuntime.
     const platform = yield* HostProcessPlatform;
     const arch = yield* HostProcessArchitecture;
     const target = detectTargetSafely({ platform, arch });
-    const artifact = target ? resolveReviewedCodexArtifact(target) : undefined;
+    const bundledArtifact = target ? resolveReviewedCodexArtifact(target) : undefined;
+    const catalogService = yield* ManagedRuntimeCatalog;
+    yield* catalogService.refreshInBackground;
+    const resolveCandidate = (refresh: boolean) =>
+      (refresh ? catalogService.refresh : catalogService.current).pipe(
+        Effect.map((catalog) => resolveCodexCatalogCandidate({ bundledArtifact, catalog })),
+      );
+    const artifact = yield* resolveCandidate(false);
     const targetLabel = target ? managedRuntimeTargetKey(target) : `${platform}-${arch}`;
     const runtime = new ManagedCodexRuntime(input.baseDir);
     yield* Effect.tryPromise({
@@ -357,9 +436,10 @@ export const makeCodexManagedRuntimeResolution = Effect.fn("CodexManagedRuntime.
     });
 
     const getSummary = Effect.gen(function* () {
-      const latest = artifact
+      const currentArtifact = yield* resolveCandidate(false);
+      const latest = bundledArtifact
         ? yield* Effect.tryPromise({
-            try: () => runtime.status(artifact),
+            try: () => runtime.status(bundledArtifact),
             catch: (cause) =>
               runtimeError("Scient could not inspect its private Codex runtime.", cause),
           })
@@ -385,7 +465,7 @@ export const makeCodexManagedRuntimeResolution = Effect.fn("CodexManagedRuntime.
       });
       const policy = resolveCodexManagedRuntimePolicy({
         source: latestSource,
-        artifact,
+        artifact: currentArtifact,
         installed: latestManagedInstalled,
         installedVersion: latest?.activeVersion ?? null,
         managedInstallationAllowed: input.managedInstallationAllowed,
@@ -393,12 +473,12 @@ export const makeCodexManagedRuntimeResolution = Effect.fn("CodexManagedRuntime.
       const latestExecutable = policy.useManagedPath
         ? latestManagedInstalled && latest
           ? latest.launchPath
-          : artifact
-            ? runtime.launchPath(artifact)
+          : currentArtifact
+            ? runtime.launchPath(currentArtifact)
             : configuredBinaryPath
         : configuredBinaryPath;
       const managedVersion = latestManagedInstalled
-        ? (latest?.activeVersion ?? artifact?.version ?? null)
+        ? (latest?.activeVersion ?? currentArtifact?.version ?? null)
         : null;
       const message =
         latestSource === "custom"
@@ -413,11 +493,11 @@ export const makeCodexManagedRuntimeResolution = Effect.fn("CodexManagedRuntime.
                 : "Scient selected its app-private Codex runtime, but its runtime capability check failed. Repair the private runtime before signing in."
               : hasCustomRuntime
                 ? "Scient could not launch the custom Codex runtime configured for this account. Update or clear the custom path in advanced provider settings."
-                : artifact
+                : currentArtifact
                   ? input.managedInstallationAllowed
-                    ? artifact.supportMessage
+                    ? currentArtifact.supportMessage
                     : "Scient can use a healthy Codex runtime here, but managed installation is only proven in the local desktop app."
-                  : "Scient does not have a reviewed managed Codex artifact for this computer.";
+                  : "Scient does not have a qualified managed Codex artifact for this computer.";
       return {
         source: latestSource,
         supportTier: policy.supportTier,
@@ -435,53 +515,82 @@ export const makeCodexManagedRuntimeResolution = Effect.fn("CodexManagedRuntime.
       } satisfies ProviderRuntimeSummary;
     });
 
-    const plan: ProviderManagedRuntimeActions["plan"] = (action) =>
-      getSummary.pipe(
-        Effect.flatMap((summary) => {
-          if (!summary.actions.includes(action)) {
-            return Effect.fail(
-              runtimeError(`The ${action} action is not available for this Codex runtime.`),
-            );
-          }
-          const isDownload = action === "install" || action === "update" || action === "repair";
-          if (isDownload && !artifact) {
-            return Effect.fail(
-              runtimeError("No reviewed Codex artifact is available for this computer."),
-            );
-          }
-          return Effect.succeed({
-            action,
-            target: targetLabel,
-            version: isDownload ? (artifact?.version ?? null) : summary.managedVersion,
-            downloadBytes: isDownload ? (artifact?.size ?? null) : null,
-            sourceLabel: "Official OpenAI Codex release on GitHub",
-            catalogRevision: isDownload
-              ? (artifact?.catalogRevision ?? "unavailable")
-              : `managed-codex:${action}:${summary.managedVersion ?? "none"}`,
-            message:
-              action === "remove"
-                ? "Scient will remove only its app-private Codex copy. Custom and system installations are untouched."
-                : action === "update"
-                  ? `Scient will download, verify, test, and activate Codex ${artifact?.version ?? ""}. The current version remains active until then.`
-                  : action === "repair" && summary.source === "system"
-                    ? `Scient will replace the unhealthy private Codex copy with verified Codex ${artifact?.version ?? ""} and use it after verification. The working system installation is untouched.`
-                    : action === "install" && summary.source === "system"
-                      ? `Scient will install private Codex ${artifact?.version ?? ""} beside the system installation. Codex accounts in this environment that use the default runtime will use the verified private copy; custom paths remain unchanged.`
-                      : `Scient will download, verify, stage, test, and activate Codex ${artifact?.version ?? ""}.`,
-          });
-        }),
+    const prepareAction = Effect.fn("CodexManagedRuntime.prepareAction")(function* (
+      action: ProviderManagedRuntimeAction,
+    ) {
+      // A user opening an install/update confirmation is the one path that
+      // deliberately waits for a TTL-gated refresh. Provider checks remain
+      // non-blocking and use `current` plus the process-owned background fetch.
+      const candidateArtifact = yield* resolveCandidate(
+        action === "install" || action === "update",
       );
+      const summary = yield* getSummary;
+      if (!summary.actions.includes(action)) {
+        return yield* runtimeError(`The ${action} action is not available for this Codex runtime.`);
+      }
+      const isDownload = action === "install" || action === "update" || action === "repair";
+      const latestStatus = bundledArtifact
+        ? yield* Effect.tryPromise({
+            try: () => runtime.status(bundledArtifact),
+            catch: (cause) =>
+              runtimeError("Scient could not inspect its private Codex runtime.", cause),
+          })
+        : undefined;
+      const actionArtifact = isDownload
+        ? resolveCodexActionArtifact({
+            action,
+            bundledArtifact,
+            candidateArtifact,
+            status: latestStatus,
+          })
+        : undefined;
+      if (isDownload && !actionArtifact) {
+        return yield* runtimeError(
+          action === "repair" && latestStatus?.activeArtifact
+            ? "The exact installed Codex release is no longer compatible with this Scient build. Update or remove it instead of replacing it silently."
+            : "No qualified Codex artifact is available for this computer.",
+        );
+      }
+      const plan = {
+        action,
+        target: targetLabel,
+        version: isDownload ? (actionArtifact?.version ?? null) : summary.managedVersion,
+        downloadBytes: isDownload ? (actionArtifact?.size ?? null) : null,
+        sourceLabel: "Official OpenAI Codex release on GitHub",
+        catalogRevision: isDownload
+          ? (actionArtifact?.catalogRevision ?? "unavailable")
+          : `managed-codex:${action}:${summary.managedVersion ?? "none"}`,
+        message:
+          action === "remove"
+            ? "Scient will remove only its app-private Codex copy. Custom and system installations are untouched."
+            : action === "update"
+              ? `Scient will download, verify, test, and activate Codex ${actionArtifact?.version ?? ""}. The current version remains active until then.`
+              : action === "repair" && summary.source === "system"
+                ? `Scient will restore the exact private Codex ${actionArtifact?.version ?? ""} release and use it after verification. The working system installation is untouched.`
+                : action === "repair"
+                  ? `Scient will download, verify, test, and restore the exact Codex ${actionArtifact?.version ?? ""} release currently selected.`
+                  : action === "install" && summary.source === "system"
+                    ? `Scient will install private Codex ${actionArtifact?.version ?? ""} beside the system installation. Codex accounts in this environment that use the default runtime will use the verified private copy; custom paths remain unchanged.`
+                    : `Scient will download, verify, stage, test, and activate Codex ${actionArtifact?.version ?? ""}.`,
+      };
+      return { plan, artifact: actionArtifact };
+    });
+
+    const plan: ProviderManagedRuntimeActions["plan"] = (action) =>
+      prepareAction(action).pipe(Effect.map((prepared) => prepared.plan));
 
     const run: ProviderManagedRuntimeActions["run"] = (action, catalogRevision, report) =>
       Effect.gen(function* () {
-        const planned = yield* plan(action);
+        const prepared = yield* prepareAction(action);
+        const planned = prepared.plan;
         if (planned.catalogRevision !== catalogRevision) {
           return yield* runtimeError(
-            "The reviewed Codex setup plan changed. Review it again before continuing.",
+            "The qualified Codex setup plan changed. Review it again before continuing.",
           );
         }
         const context = yield* Effect.context<never>();
         const runFork = Effect.runForkWith(context);
+        const runPromise = Effect.runPromiseWith(context);
         if (action === "remove") {
           yield* report({
             status: "removing",
@@ -495,14 +604,40 @@ export const makeCodexManagedRuntimeResolution = Effect.fn("CodexManagedRuntime.
           yield* Ref.set(managedHealthCache, null);
           return;
         }
-        if (!artifact) return yield* runtimeError("No reviewed Codex artifact is available.");
+        const actionArtifact = prepared.artifact;
+        if (!actionArtifact) {
+          return yield* runtimeError("No qualified Codex artifact is available.");
+        }
         let lastStatus: ManagedCodexRuntimeProgress["stage"] | undefined;
         let lastReportedBytes = 0;
         yield* Effect.tryPromise({
           try: (signal) =>
             runtime.install({
-              artifact,
+              artifact: actionArtifact,
               signal,
+              qualify: async ({ executablePath, signal: qualificationSignal }) => {
+                qualificationSignal.throwIfAborted();
+                const qualificationDirectory = await NodeFSP.mkdtemp(
+                  NodePath.join(NodeOS.tmpdir(), "scient-codex-qualification-"),
+                );
+                try {
+                  await runPromise(
+                    qualifyManagedCodexRuntime({
+                      binaryPath: executablePath,
+                      expectedVersion: actionArtifact.version,
+                      cwd: qualificationDirectory,
+                      environment: input.environment,
+                      spawner: input.spawner,
+                    }),
+                    { signal: qualificationSignal },
+                  );
+                } finally {
+                  await NodeFSP.rm(qualificationDirectory, {
+                    recursive: true,
+                    force: true,
+                  }).catch(() => undefined);
+                }
+              },
               onProgress: (progress) => {
                 const stageChanged = progress.stage !== lastStatus;
                 const downloadedBytes = progress.downloadedBytes ?? 0;

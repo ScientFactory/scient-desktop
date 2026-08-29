@@ -60,6 +60,7 @@ import {
 import * as ServerConfig from "../../config.ts";
 import * as ServerSettings from "../../serverSettings.ts";
 import * as ScientSkillSession from "../../scient/skills/ScientSkillSession.ts";
+import { BUILT_IN_SKILL_RELEASES } from "../../scient/skills/BuiltInSkillReleases.ts";
 import * as AnalyticsService from "../../telemetry/AnalyticsService.ts";
 import { makeAdapterRegistryMock } from "../testUtils/providerAdapterRegistryMock.ts";
 
@@ -2127,7 +2128,7 @@ describe("agent browser access", () => {
     threadId: ThreadId,
     skillPlan: ScientSkillSession.ScientSkillSessionPlan = {
       delivery: "none",
-      releaseKeys: new Set(),
+      releases: new Map(),
       skills: [],
       diagnostics: [],
     },
@@ -2141,7 +2142,7 @@ describe("agent browser access", () => {
         readonly threadId: ThreadId;
         readonly capabilities: ReadonlySet<string>;
         readonly skillScope?: {
-          readonly releaseKeys: ReadonlySet<string>;
+          readonly releases: ReadonlyMap<string, (typeof BUILT_IN_SKILL_RELEASES)[number]>;
           readonly skills: ReadonlyArray<ScientSkillSession.ScientSkillSessionSkill>;
         };
       }> = [];
@@ -2165,7 +2166,7 @@ describe("agent browser access", () => {
               ...(request.skillScope
                 ? {
                     skillScope: {
-                      releaseKeys: new Set(request.skillScope.releaseKeys),
+                      releases: new Map(request.skillScope.releases),
                       skills: request.skillScope.skills.map((skill) => ({ ...skill })),
                     },
                   }
@@ -2222,6 +2223,8 @@ describe("agent browser access", () => {
         id: "scient.review",
         name: "review",
         description: "Review the workspace.",
+        origin: "scient",
+        activationScope: "user" as const,
         invocationPolicy: "automatic" as const,
       };
       const explicit = {
@@ -2229,12 +2232,17 @@ describe("agent browser access", () => {
         id: "scient.improve",
         name: "improve",
         description: "Improve the workspace.",
+        origin: "scient",
+        activationScope: "user" as const,
         invocationPolicy: "explicit" as const,
       };
       let skillPlan: ScientSkillSession.ScientSkillSessionPlan = {
         delivery: "mcp",
         projectRoot: "/tmp/dynamic-skills",
-        releaseKeys: new Set([automatic.releaseKey, explicit.releaseKey]),
+        releases: new Map([
+          [automatic.releaseKey, BUILT_IN_SKILL_RELEASES[0]!],
+          [explicit.releaseKey, BUILT_IN_SKILL_RELEASES[1]!],
+        ]),
         skills: [automatic, explicit],
         diagnostics: [],
       };
@@ -2242,7 +2250,7 @@ describe("agent browser access", () => {
         Parameters<ScientSkillSession.ScientSkillSessionPlannerShape["resolve"]>[0]
       > = [];
       const replaced: Array<{
-        readonly releaseKeys: ReadonlySet<string>;
+        readonly releases: ReadonlyMap<string, (typeof BUILT_IN_SKILL_RELEASES)[number]>;
         readonly skills: ReadonlyArray<ScientSkillSession.ScientSkillSessionSkill>;
       }> = [];
       const codex = makeFakeCodexAdapter();
@@ -2258,7 +2266,7 @@ describe("agent browser access", () => {
         replaceMcpSkillScope: (_threadId, scope) =>
           Effect.sync(() => {
             replaced.push({
-              releaseKeys: new Set(scope.releaseKeys),
+              releases: new Map(scope.releases),
               skills: scope.skills.map((skill) => ({ ...skill })),
             });
           }),
@@ -2302,7 +2310,7 @@ describe("agent browser access", () => {
         skillPlan = {
           delivery: "mcp",
           projectRoot: "/tmp/dynamic-skills",
-          releaseKeys: new Set([explicit.releaseKey]),
+          releases: new Map([[explicit.releaseKey, BUILT_IN_SKILL_RELEASES[1]!]]),
           skills: [explicit],
           diagnostics: [],
         };
@@ -2319,13 +2327,15 @@ describe("agent browser access", () => {
         })),
       );
       assert.deepEqual(
-        replaced.map((scope) => scope.releaseKeys),
+        replaced.map((scope) => new Set(scope.releases.keys())),
         [new Set([automatic.releaseKey]), new Set([explicit.releaseKey]), new Set<string>()],
       );
       const sent = codex.sendTurn.mock.calls.map((call) => call[0].input ?? "");
-      assert.include(sent[0] ?? "", automatic.releaseKey);
-      assert.notInclude(sent[0] ?? "", explicit.releaseKey);
-      assert.include(sent[1] ?? "", explicit.releaseKey);
+      assert.include(sent[0] ?? "", `{"name":"${automatic.name}"}`);
+      assert.notInclude(sent[0] ?? "", `{"name":"${explicit.name}"}`);
+      assert.include(sent[1] ?? "", `{"name":"${explicit.name}"}`);
+      assert.notInclude(sent[0] ?? "", automatic.releaseKey);
+      assert.notInclude(sent[1] ?? "", explicit.releaseKey);
       assert.equal(sent[2], "What changed?");
     }).pipe(Effect.provide(NodeServices.layer)),
   );
@@ -2338,7 +2348,7 @@ describe("agent browser access", () => {
         {
           threadId: asThreadId("thread-browser-off"),
           capabilities: new Set(["skills:read"]),
-          skillScope: { releaseKeys: new Set<string>(), skills: [] },
+          skillScope: { releases: new Map(), skills: [] },
         },
       ]);
     }).pipe(Effect.provide(NodeServices.layer)),
@@ -2365,7 +2375,7 @@ describe("agent browser access", () => {
         {
           threadId,
           capabilities: new Set(["preview", "sources:read", "sources:write", "skills:read"]),
-          skillScope: { releaseKeys: new Set<string>(), skills: [] },
+          skillScope: { releases: new Map(), skills: [] },
         },
       ]);
     }).pipe(Effect.provide(NodeServices.layer)),
@@ -2374,13 +2384,15 @@ describe("agent browser access", () => {
   it.effect("does not expose active releases before the first turn snapshot", () =>
     Effect.gen(function* () {
       const threadId = asThreadId("thread-skills-only");
-      const releaseKeys = new Set(["scient.review@0.1.0#sha256:exact"]);
+      const releaseKey = "scient.review@0.1.0#sha256:exact";
       const skills: ReadonlyArray<ScientSkillSession.ScientSkillSessionSkill> = [
         {
           releaseKey: "scient.review@0.1.0#sha256:exact",
           id: "scient.review",
           name: "review",
           description: "Review the workspace.",
+          origin: "scient",
+          activationScope: "user",
           invocationPolicy: "automatic",
         },
       ];
@@ -2394,7 +2406,7 @@ describe("agent browser access", () => {
         {
           delivery: "mcp",
           projectRoot: "/tmp/scient-project",
-          releaseKeys,
+          releases: new Map([[releaseKey, BUILT_IN_SKILL_RELEASES[0]!]]),
           skills,
           diagnostics: [],
         },
@@ -2407,7 +2419,7 @@ describe("agent browser access", () => {
           threadId,
           capabilities: new Set(["skills:read"]),
           skillScope: {
-            releaseKeys: new Set<string>(),
+            releases: new Map(),
             skills: [],
           },
         },

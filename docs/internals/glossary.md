@@ -1,8 +1,8 @@
 # Glossary
 
-> For maintainers. Using T3 Code? See [docs/user](../user/).
+> For maintainers. Using Scient? See [docs/user](../user/).
 
-This is a living glossary for T3 Code. It explains what common terms mean in this codebase.
+This is a living glossary for Scient. It explains what common terms mean in this codebase.
 
 ## Table of contents
 
@@ -90,11 +90,21 @@ A typed signal emitted when an async milestone completes, such as `checkpoint.ba
 
 ### Provider runtime
 
-The live backend agent implementation and its event stream. The main service is [ProviderService.ts][14], the adapter contract is [ProviderAdapter.ts][15], and the overview is in [providers.md][16].
+The live backend agent implementation and its event stream. The main service is
+[ProviderService.ts][14], the adapter contract is [ProviderAdapter.ts][15], and the overview is in
+[providers.md][16].
 
 #### Provider
 
-The backend agent runtime that actually performs work. Five drivers ship built in: Codex, Claude, Cursor, Grok, and OpenCode. See [ProviderService.ts][14], [ProviderAdapter.ts][15], and [CodexAdapter.ts][17] as a representative adapter.
+The backend agent runtime that actually performs work. Seven drivers ship built in: Codex, Claude,
+Cursor, Grok, OpenCode, Droid, and Antigravity. See [ProviderService.ts][14],
+[ProviderAdapter.ts][15], and [CodexAdapter.ts][17] as a representative adapter.
+
+#### Provider lifecycle
+
+The independent runtime, account, entitlement, readiness, maintenance, and transient-operation state
+used to install, connect, repair, update, remove, and sign out a provider. See
+[provider-lifecycle.md][25].
 
 #### Session
 
@@ -115,6 +125,10 @@ Controls how assistant text reaches the thread timeline. In [the contracts][1], 
 #### Snapshot
 
 A point-in-time view of state. The word is used in multiple layers, including orchestration, provider, and checkpointing. See [ProjectionSnapshotQuery.ts][10], [ProviderAdapter.ts][15], and [CheckpointStore.ts][19].
+
+#### Model manifest
+
+The per-driver list of current model slugs that decides which models land in the model picker's legacy section. Bundled at `apps/server/src/provider/model-manifest.json` and refreshed at runtime from the same file on `main`, so classification updates ship as commits instead of releases. See the [provider architecture][16] model manifest section.
 
 ### Checkpointing
 
@@ -152,6 +166,7 @@ The file patch and changed-file summary for one turn. It is usually computed in 
 
 - [Architecture overview][24]
 - [Provider architecture][16]
+- [Provider lifecycle architecture][25]
 - [Permission modes][18]
 - [Workspace layout][2]
 
@@ -179,3 +194,4 @@ The file patch and changed-file summary for one turn. It is usually computed in 
 [22]: ../../apps/server/src/checkpointing/Utils.ts
 [23]: ../../apps/server/src/checkpointing/Diffs.ts
 [24]: ./overview.md
+[25]: ./provider-lifecycle.md

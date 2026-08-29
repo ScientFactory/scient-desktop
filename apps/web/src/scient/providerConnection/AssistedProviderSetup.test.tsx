@@ -10,7 +10,7 @@ import {
 describe("AssistedProviderSetup", () => {
   it("centers compact picker content without changing dialog layout classes", () => {
     const markup = renderToStaticMarkup(
-      <AssistedSetupFrame flow="codex">
+      <AssistedSetupFrame>
         <AssistedSetupStatus
           body="Connected account"
           icon={<span>status</span>}
@@ -31,6 +31,9 @@ describe("AssistedProviderSetup", () => {
     expect(markup).toContain("in-[[data-model-picker-content=true]]:text-center");
     expect(markup).toContain("in-[[data-model-picker-content=true]]:hidden");
     expect(markup).toContain("in-[[data-slot=dialog-panel]]:p-0");
+    expect(markup).toContain("items-center");
+    expect(markup).toContain("self-center");
+    expect(markup).not.toContain("self-end");
     expect(markup).toContain(">Repair<");
     const installButtonIndex = markup.indexOf(">Install<");
     const actionStart = markup.lastIndexOf("<div", installButtonIndex);
@@ -40,23 +43,15 @@ describe("AssistedProviderSetup", () => {
     expect(actionMarkup).toContain("in-[[data-model-picker-content=true]]:pt-0");
   });
 
-  it("nudges only the Grok composer surface slightly left and up", () => {
-    const grokMarkup = renderToStaticMarkup(
-      <AssistedSetupFrame flow="grok">
-        <span>Grok setup</span>
-      </AssistedSetupFrame>,
-    );
-    const codexMarkup = renderToStaticMarkup(
-      <AssistedSetupFrame flow="codex">
-        <span>Codex setup</span>
+  it("uses one stable composer layout for every assisted provider", () => {
+    const markup = renderToStaticMarkup(
+      <AssistedSetupFrame>
+        <span>Provider setup</span>
       </AssistedSetupFrame>,
     );
 
-    expect(grokMarkup).toContain("in-[[data-model-picker-content=true]]:-translate-x-2.5");
-    expect(grokMarkup).toContain("in-[[data-model-picker-content=true]]:-translate-y-2.5");
-    expect(grokMarkup).toContain("[data-assisted-setup-icon=true]]:-translate-y-1");
-    expect(grokMarkup).toContain("[data-assisted-setup-title=true]]:-translate-y-1");
-    expect(codexMarkup).not.toContain("translate-x-2.5");
-    expect(codexMarkup).not.toContain("translate-y-2.5");
+    expect(markup).toContain('data-provider-onboarding-view="assisted"');
+    expect(markup).not.toContain("translate-x-2.5");
+    expect(markup).not.toContain("translate-y-2.5");
   });
 });

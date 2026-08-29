@@ -1,6 +1,10 @@
 # T3 Connect
 
-> For maintainers. Using T3 Code? See [docs/user](../user/).
+> Inherited T3 architecture for maintainers. Scient does not currently operate
+> or publish T3 Connect, `app.t3.codes`, its relay, or its mobile distribution.
+> Preserve this document for upstream compatibility and source development; do
+> not use it as Scient setup guidance. See Scient's supported
+> [remote access](../user/remote-access.md).
 
 T3 Connect uses one Clerk application for web, desktop, and mobile authentication. The relay verifies
 two kinds of bearer credential: template JWTs generated from the `t3-relay` template with the shared

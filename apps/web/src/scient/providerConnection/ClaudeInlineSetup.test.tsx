@@ -133,6 +133,9 @@ describe("ClaudeInlineSetup", () => {
     );
     expect(subscriptionMarkup).toContain("Sign in to Claude");
     expect(subscriptionMarkup).toContain("Use Anthropic Console");
+    expect(subscriptionMarkup).toContain("border-transparent");
+    expect(subscriptionMarkup).toContain("text-primary");
+    expect(subscriptionMarkup).not.toContain("text-primary-foreground");
     expect(subscriptionMarkup).toContain("Scient never sees your password.");
     expect(subscriptionMarkup).not.toContain("The secure flow opens in your browser");
 

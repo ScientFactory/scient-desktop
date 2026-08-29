@@ -21,13 +21,15 @@ revision remains literal ancestry of owned `main`; it is not merely a reviewed
 or observed tip.
 
 The current verified T3 ancestry is recorded in
-[`docs/internals/2026-08-25-upstream-sync-1a4a7596c2.md`](docs/internals/2026-08-25-upstream-sync-1a4a7596c2.md)
+[`docs/internals/2026-08-28-upstream-sync-c8aba2587d.md`](docs/internals/2026-08-28-upstream-sync-c8aba2587d.md)
 and in `upstream-state.json`. The latest refresh merged the exact official
-checkpoint `1a4a7596c2c557fcc26a5dceefc04ac6268640b4` into the refresh
+checkpoint `c8aba2587d56edbf3b7872987719a12b42031f48` into the refresh
 branch, preserving the exact range after the previously integrated tip
-`99960383d094b850f0001d3067fa604aa3adf7d6`. Later observed T3
-tips never move `integrationBase` by themselves; it advances only after the
-exact ancestry and verification gate are complete.
+`082e6ea521861fff37b90fcd789b5eaa5ef5d6a6`. The earlier Claude compaction
+feature remains literal ancestry but is still reversed by its dedicated,
+documented deferral commit. Later observed T3 tips never move `integrationBase`
+by themselves; it advances only after the exact ancestry and verification gate
+are complete.
 
 ## Receiving T3 updates
 
@@ -282,6 +284,30 @@ workspace/fork projection contracts, rich Markdown and scientific surfaces,
 shared sidebar row, release safeguards, and desktop identity while composing
 the corresponding T3 behavior. The exact record documents two contract-level
 omissions caught and corrected by the changed-test gate.
+
+The next 2026-08-25 sync through `082e6ea521` receives eight official commits
+covering macOS provider-CLI PATH inheritance, reconnect-safe runtime queries,
+optional-provider upgrade recovery, label-triggered unsigned macOS previews,
+dictation shortcut cleanup, grouped project renaming, system file-manager
+reveal, and Claude compaction. Nine textual conflicts preserve Scient's service
+identity, provider lifecycle, effective skills, rich Markdown and scientific
+surfaces, queue and reconnection behavior, reading defaults, and release
+authority. Scient extends the upgrade-recovery policy to its opt-in Droid
+provider. Claude compaction is deliberately reversed in one traceable commit
+until after the next release; the exact record explains how to reconsider it
+without rewriting upstream ancestry.
+
+The 2026-08-28 sync through `c8aba2587d` receives 25 official commits covering
+provider model classification, Grok skills, reasoning, plans, usage and turn
+reliability, Codex multi-agent and account-plan behavior, complete projection
+replay, active-thread re-entry ordering, safer branch publication, a simpler
+provider Settings editor, anonymous PR preview downloads, mobile refinements,
+Clerk stability, and upstream test maintenance. Nineteen textual conflicts
+preserve Scient's release authority, migration order, provider lifecycle,
+passive-probe safety, account redaction, compact sidebar, awareness and voice
+composition, and provider documentation. The exact record also documents the
+three missing integration seams found and corrected by focused and complete
+verification.
 
 The earlier 2026-08-12 record through `849bac894` remains preserved as the
 partial checkpoint merged by PR #69. It covers the first 11 commits of this

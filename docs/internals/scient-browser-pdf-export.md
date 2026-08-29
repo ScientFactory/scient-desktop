@@ -61,16 +61,22 @@ destination picker.
   capability can remove the 64 MiB ceiling without changing the renderer, artifact, or reader
   contracts.
 
-For local HTML, Scient retains a small source relation after the Browser opens the file. The server
-watches the exact file (through its parent directory so atomic editor saves remain observable),
-coalesces invalidation hints, renews the authorized asset URL, and reloads the existing Browser tab.
-After a PDF has been exported once, a successful reload publishes a new immutable revision into the
-same artifact and replaces the already-open PDF surface without stealing focus. Concurrent changes
-are serialized per logical document; a revision rendered from an overtaken source generation is not
-presented. Failure leaves the last successful PDF readable and exposes a compact manual Update action
-beside the generated document title. Automatic updating stops rather than redirecting a Browser tab
-that the user has navigated away from the tracked file. External web pages remain explicit one-shot
-exports because Scient has no authoritative local source to watch.
+For local HTML, Scient retains one small thread-scoped relation per logical document after the
+Browser opens the file. The Browser tab and renewable asset URL are replaceable renderer bindings,
+not document identity: reopening the same source rebinds the existing relation and preserves its
+artifact history, while persisted legacy per-tab relations collapse to that document relationship.
+The server watches the exact file (through its parent directory so atomic editor saves remain
+observable), and watcher readiness as well as later change hints trigger an authoritative
+synchronization after the first user-requested export. Scient coalesces rapid hints, renews the
+authorized asset URL, and reloads the bound Browser tab. After a PDF has been exported once, a
+successful reload publishes a new immutable revision into the same artifact and replaces the
+already-open PDF surface without stealing focus. Concurrent changes are serialized per logical
+document; a revision rendered from an overtaken source generation or a replaced Browser binding is
+not presented. Failure leaves the last successful PDF readable and exposes a compact, always-visible
+manual Update action beside the generated document title. Reopening a missing source tab resumes a
+pending update. Automatic updating stops rather than redirecting a Browser tab that the user has
+navigated away from the tracked file. External web pages remain explicit one-shot exports because
+Scient has no authoritative local source to watch.
 
 The generated revision is immutable, authority-bound, retained by the existing 500 MiB / 100
 revision policy, and resolved through the existing signed `generated-document` asset path. The PDF

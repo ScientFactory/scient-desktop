@@ -19,6 +19,12 @@ we may close it without merging it, or never review it.
 
 <!-- Explain the problem being solved and why this approach is the right one. -->
 
+## Documentation Impact
+
+<!-- Keep one: None — reason | Updated — paths | Dependent PR — repository and link -->
+
+Documentation impact:
+
 ## UI Changes
 
 <!-- If this PR changes UI, include clear before/after screenshots.

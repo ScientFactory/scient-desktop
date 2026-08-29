@@ -1,9 +1,12 @@
 import {
   EnvironmentId,
+  ProviderConnectionError,
   ProviderDriverKind,
   ProviderInstanceId,
   type ServerProvider,
 } from "@t3tools/contracts";
+import * as Cause from "effect/Cause";
+import type { ReactElement, ReactNode } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
@@ -52,6 +55,12 @@ vi.mock("../../state/server", () => ({
 vi.mock("../../state/use-atom-command", () => ({
   useAtomCommand: (atom: symbol) =>
     atom === atoms.plan ? commands.plan : atom === atoms.start ? commands.start : commands.cancel,
+}));
+
+vi.mock("../../components/ui/tooltip", () => ({
+  Tooltip: ({ children }: { children: ReactNode }) => children,
+  TooltipTrigger: ({ render }: { render: ReactElement }) => render,
+  TooltipPopup: ({ children }: { children: ReactNode }) => <div>{children}</div>,
 }));
 
 import {
@@ -130,6 +139,92 @@ describe("ProviderRuntimeSection", () => {
     expect(commands.start).not.toHaveBeenCalled();
   });
 
+  it("presents a qualified system-to-managed action as a compact secondary choice", () => {
+    hooks.beginRender();
+    const markup = renderToStaticMarkup(
+      ProviderRuntimeSection({
+        compact: true,
+        environmentId,
+        displayName: "Grok",
+        provider: {
+          ...provider,
+          instanceId: ProviderInstanceId.make("grok"),
+          driver: ProviderDriverKind.make("grok"),
+          displayName: "Grok",
+          installed: true,
+          version: "1.0.5",
+          connection: {
+            methods: ["grok_account"],
+            canDisconnect: false,
+            operation: null,
+            runtime: {
+              ...provider.connection!.runtime!,
+              source: "system",
+              actions: ["install"],
+              message: "Using a compatible system Grok runtime.",
+            },
+          },
+        },
+      }),
+    );
+
+    expect(markup).toContain("System installation");
+    expect(markup).toContain('aria-label="Use Scient-managed Grok"');
+    expect(markup).toContain(">Use Scient-managed</button>");
+    expect(markup).toContain("Your system installation stays unchanged and remains available.");
+    expect(markup).not.toContain("Use Scient-managed Codex");
+    const actionIndex = markup.indexOf(">Use Scient-managed</button>");
+    const actionStart = markup.lastIndexOf("<button", actionIndex);
+    const actionMarkup = markup.slice(actionStart, actionIndex);
+    expect(actionMarkup).toContain("text-muted-foreground");
+    expect(actionMarkup).not.toContain("bg-primary");
+  });
+
+  it("keeps the reviewed system-to-managed handoff concise and explicit", async () => {
+    const systemProvider: ServerProvider = {
+      ...provider,
+      installed: true,
+      connection: {
+        ...provider.connection!,
+        runtime: {
+          ...provider.connection!.runtime!,
+          source: "system",
+          actions: ["install"],
+          message: "Using a compatible system Antigravity runtime.",
+        },
+      },
+    };
+
+    hooks.beginRender();
+    ProviderRuntimeSection({
+      compact: true,
+      environmentId,
+      provider: systemProvider,
+      displayName: "Antigravity",
+      initialAction: "install",
+    });
+
+    await vi.waitFor(() => expect(commands.plan).toHaveBeenCalledTimes(1));
+
+    hooks.beginRender();
+    const markup = renderToStaticMarkup(
+      ProviderRuntimeSection({
+        compact: true,
+        environmentId,
+        provider: systemProvider,
+        displayName: "Antigravity",
+        initialAction: "install",
+      }),
+    );
+
+    expect(markup).toContain("Use Scient-managed Antigravity?");
+    expect(markup).toContain(
+      "Accounts using the default installation will use Scient’s private copy",
+    );
+    expect(markup).toContain("system and custom installations stay unchanged");
+    expect(markup).not.toContain("Review Antigravity setup");
+  });
+
   it("keeps the managed install review flat in the Antigravity dialog", async () => {
     hooks.beginRender();
     ProviderRuntimeSection({
@@ -163,9 +258,243 @@ describe("ProviderRuntimeSection", () => {
     expect(markup).not.toContain("Source");
     expect(markup).not.toContain("rounded-lg border");
     expect(markup).not.toContain("bg-primary/[0.03]");
+    expect(markup).toContain("border-transparent");
+    expect(markup).toContain("text-primary");
+    expect(markup).not.toContain("text-primary-foreground");
+  });
+
+  it("drops an install-plan failure superseded by an active runtime operation", async () => {
+    let settlePlan:
+      | ((result: {
+          readonly _tag: "Failure";
+          readonly cause: Cause.Cause<ProviderConnectionError>;
+        }) => void)
+      | undefined;
+    commands.plan.mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          settlePlan = resolve;
+        }),
+    );
+    const droidProvider: ServerProvider = {
+      ...provider,
+      instanceId: ProviderInstanceId.make("droid"),
+      driver: ProviderDriverKind.make("droid"),
+      displayName: "Droid",
+    };
+
+    hooks.beginRender();
+    ProviderRuntimeSection({
+      compact: true,
+      environmentId,
+      provider: droidProvider,
+      displayName: "Droid",
+      initialAction: "install",
+    });
+    await vi.waitFor(() => expect(commands.plan).toHaveBeenCalledTimes(1));
+
+    const installingDroidProvider: ServerProvider = {
+      ...droidProvider,
+      connection: {
+        ...droidProvider.connection!,
+        runtime: {
+          ...droidProvider.connection!.runtime!,
+          // The actions list can briefly lag behind the canonical operation.
+          // Once installation is active, it still supersedes an older plan.
+          actions: ["install"],
+          operation: {
+            operationId: "droid-install-active",
+            action: "install",
+            status: "activating",
+            startedAt: "2026-08-25T12:00:00.000Z",
+            finishedAt: null,
+            message: "Activating the verified Droid runtime.",
+          },
+        },
+      },
+    };
+    hooks.beginRender();
+    ProviderRuntimeSection({
+      compact: true,
+      environmentId,
+      provider: installingDroidProvider,
+      displayName: "Droid",
+    });
+
+    settlePlan?.({
+      _tag: "Failure",
+      cause: Cause.fail(
+        new ProviderConnectionError({
+          provider: ProviderDriverKind.make("droid"),
+          instanceId: ProviderInstanceId.make("droid"),
+          reason: "invalid_runtime_action",
+          message: "The install action is not available for this Droid runtime.",
+        }),
+      ),
+    });
+    await Promise.resolve();
+
+    hooks.beginRender();
+    const markup = renderToStaticMarkup(
+      ProviderRuntimeSection({
+        compact: true,
+        environmentId,
+        provider: installingDroidProvider,
+        displayName: "Droid",
+      }),
+    );
+
+    expect(markup).toContain("Activating the verified Droid runtime");
+    expect(markup).toContain(">Cancel<");
+    expect(markup).not.toContain("install action is not available");
+  });
+
+  it("does not request an initial plan while a runtime operation is active", async () => {
+    const installingProvider: ServerProvider = {
+      ...provider,
+      connection: {
+        ...provider.connection!,
+        runtime: {
+          ...provider.connection!.runtime!,
+          operation: {
+            operationId: "install-active",
+            action: "install",
+            status: "activating",
+            startedAt: "2026-08-25T12:00:00.000Z",
+            finishedAt: null,
+            message: "Activating the verified Antigravity runtime.",
+          },
+        },
+      },
+    };
+
+    hooks.beginRender();
+    const markup = renderToStaticMarkup(
+      ProviderRuntimeSection({
+        compact: true,
+        environmentId,
+        provider: installingProvider,
+        displayName: "Antigravity",
+        initialAction: "install",
+      }),
+    );
+    await Promise.resolve();
+
+    expect(markup).toContain("Activating the verified Antigravity runtime");
+    expect(commands.plan).not.toHaveBeenCalled();
+  });
+
+  it("keeps a plan failure visible while its runtime action remains current", async () => {
+    commands.plan.mockResolvedValue({
+      _tag: "Failure",
+      cause: Cause.fail(
+        new ProviderConnectionError({
+          provider: ProviderDriverKind.make("antigravity"),
+          instanceId,
+          reason: "connection_failed",
+          message: "Scient could not load the installation details.",
+        }),
+      ),
+    });
+
+    hooks.beginRender();
+    ProviderRuntimeSection({
+      compact: true,
+      environmentId,
+      provider,
+      displayName: "Antigravity",
+      initialAction: "install",
+    });
+    await vi.waitFor(() => expect(commands.plan).toHaveBeenCalledTimes(1));
+
+    hooks.beginRender();
+    const markup = renderToStaticMarkup(
+      ProviderRuntimeSection({
+        compact: true,
+        environmentId,
+        provider,
+        displayName: "Antigravity",
+        initialAction: "install",
+      }),
+    );
+
+    expect(markup).toContain("Scient could not load the installation details");
+  });
+
+  it("closes a prepared plan when a newer runtime no longer offers its action", async () => {
+    const onPlanOpenChange = vi.fn();
+
+    hooks.beginRender();
+    ProviderRuntimeSection({
+      compact: true,
+      environmentId,
+      provider,
+      displayName: "Antigravity",
+      initialAction: "install",
+      onPlanOpenChange,
+    });
+    await vi.waitFor(() => expect(commands.plan).toHaveBeenCalledTimes(1));
+
+    hooks.beginRender();
+    expect(
+      renderToStaticMarkup(
+        ProviderRuntimeSection({
+          compact: true,
+          environmentId,
+          provider,
+          displayName: "Antigravity",
+          initialAction: "install",
+          onPlanOpenChange,
+        }),
+      ),
+    ).toContain("Install Antigravity");
+
+    const managedProvider: ServerProvider = {
+      ...provider,
+      installed: true,
+      version: "1.1.17",
+      status: "ready",
+      connection: {
+        ...provider.connection!,
+        runtime: {
+          ...provider.connection!.runtime!,
+          source: "scient_managed",
+          actions: ["repair", "remove"],
+          managedVersion: "1.1.17",
+        },
+      },
+    };
+    hooks.beginRender();
+    const markup = renderToStaticMarkup(
+      ProviderRuntimeSection({
+        compact: true,
+        environmentId,
+        provider: managedProvider,
+        displayName: "Antigravity",
+        onPlanOpenChange,
+      }),
+    );
+
+    expect(markup).toContain("Managed by Scient");
+    expect(markup).not.toContain("Install Antigravity");
+    expect(onPlanOpenChange).toHaveBeenLastCalledWith(false);
   });
 
   it("keeps removal confirmation focused on the decision", async () => {
+    const removableProvider: ServerProvider = {
+      ...provider,
+      installed: true,
+      version: "1.1.17",
+      connection: {
+        ...provider.connection!,
+        runtime: {
+          ...provider.connection!.runtime!,
+          source: "scient_managed",
+          actions: ["repair", "remove"],
+          managedVersion: "1.1.17",
+        },
+      },
+    };
     commands.plan.mockResolvedValue({
       _tag: "Success",
       value: {
@@ -184,7 +513,7 @@ describe("ProviderRuntimeSection", () => {
     ProviderRuntimeSection({
       compact: true,
       environmentId,
-      provider,
+      provider: removableProvider,
       displayName: "Antigravity",
       initialAction: "remove",
     });
@@ -196,7 +525,7 @@ describe("ProviderRuntimeSection", () => {
       ProviderRuntimeSection({
         compact: true,
         environmentId,
-        provider,
+        provider: removableProvider,
         displayName: "Antigravity",
         initialAction: "remove",
       }),
@@ -221,7 +550,7 @@ describe("ProviderRuntimeSection", () => {
     expect(removeButton).not.toContain("text-white");
   });
 
-  it("uses a quiet cancel action for compact runtime progress", () => {
+  it("shows compact download progress beside the quiet cancel action", () => {
     const activeProvider: ServerProvider = {
       ...provider,
       installed: true,
@@ -234,11 +563,11 @@ describe("ProviderRuntimeSection", () => {
           operation: {
             operationId: "repair-active",
             action: "repair",
-            status: "testing",
+            status: "downloading",
             startedAt: "2026-08-22T12:00:00.000Z",
             finishedAt: null,
-            message: "Testing the installed Antigravity runtime.",
-            downloadedBytes: 0,
+            message: "Downloading Antigravity from the reviewed official release.",
+            downloadedBytes: 64,
             totalBytes: 100,
           },
         },
@@ -255,13 +584,14 @@ describe("ProviderRuntimeSection", () => {
       }),
     );
 
-    expect(markup).toContain("Testing the installed Antigravity runtime");
+    expect(markup).toContain("Downloading Antigravity from the reviewed official release");
     expect(markup).not.toContain("previous working runtime");
     expect(markup).not.toContain("Provider download progress");
-    expect(markup).not.toContain(">0%<");
+    expect(markup).toContain('aria-label="Download progress 64%"');
+    expect(markup).toContain(">64%<");
     expect(markup).toContain("space-y-4 py-1");
     expect(markup).not.toContain("min-h-44");
-    expect(markup).toContain('class="flex justify-end pt-1"><button');
+    expect(markup).toContain('class="flex items-center justify-end gap-3 pt-1"');
     const cancelButtonStart = markup.lastIndexOf("<button", markup.indexOf(">Cancel<"));
     const cancelButton = markup.slice(
       cancelButtonStart,
@@ -342,6 +672,20 @@ describe("ProviderRuntimeSection", () => {
 
   it("reports repair success only after the matching streamed operation succeeds", async () => {
     const onActionSucceeded = vi.fn();
+    const repairableProvider: ServerProvider = {
+      ...provider,
+      installed: true,
+      version: "1.1.17",
+      connection: {
+        ...provider.connection!,
+        runtime: {
+          ...provider.connection!.runtime!,
+          source: "scient_managed",
+          actions: ["repair", "remove"],
+          managedVersion: "1.1.17",
+        },
+      },
+    };
     commands.plan.mockResolvedValue({
       _tag: "Success",
       value: {
@@ -383,7 +727,7 @@ describe("ProviderRuntimeSection", () => {
     hooks.beginRender();
     ProviderRuntimeSection({
       environmentId,
-      provider,
+      provider: repairableProvider,
       displayName: "Antigravity",
       initialAction: "repair",
       onActionSucceeded,
@@ -565,11 +909,17 @@ describe("ProviderRuntimeSection", () => {
           source: "scient_managed",
           supportTier: "fully_assisted",
           target: "darwin-arm64",
-          actions: ["repair", "remove"],
+          actions: ["update", "repair", "remove"],
           managedVersion: "1.1.17",
           previousManagedVersion: null,
           operation: null,
           message: "The provider runtime is installed and verified.",
+          diagnostics: {
+            executable: "/Applications/Scient.app/Contents/Resources/antigravity",
+            version: "1.1.17",
+            homePath: "/Users/server/.gemini",
+            backend: "macOS native",
+          },
         },
       },
     };
@@ -586,6 +936,17 @@ describe("ProviderRuntimeSection", () => {
 
     expect(markup).toContain("Managed by Scient");
     expect(markup).toContain("Antigravity 1.1.17");
+    const updateIndex = markup.indexOf(">Update<");
+    const updateStart = markup.lastIndexOf("<button", updateIndex);
+    const updateMarkup = markup.slice(updateStart, updateIndex);
+    expect(updateMarkup).toContain("lucide-refresh-cw");
+    expect(updateMarkup).toContain("text-primary");
+    expect(updateMarkup).not.toContain("lucide-wrench");
+    const diagnosticsIndex = markup.indexOf("Runtime diagnostics");
+    expect(markup.indexOf(">Repair<")).toBeLessThan(diagnosticsIndex);
+    expect(markup.indexOf(">Remove<")).toBeLessThan(diagnosticsIndex);
+    expect(diagnosticsIndex).toBeLessThan(updateIndex);
+    expect(markup).toContain("flex items-center justify-between gap-3 pt-1");
     expect(markup).toContain(">Repair<");
     expect(markup).toContain(">Remove<");
     expect(markup).not.toContain("installed and verified");
@@ -634,6 +995,53 @@ describe("ProviderRuntimeSection", () => {
 
     expect(markup).toContain("Verification failed after repair");
     expect(markup).toContain("Antigravity 1.1.17");
+  });
+
+  it("returns to the current runtime state after setup is cancelled", () => {
+    const cancelledProvider: ServerProvider = {
+      ...provider,
+      installed: true,
+      version: "2.1.170",
+      status: "ready",
+      connection: {
+        methods: ["claude_subscription"],
+        canDisconnect: true,
+        operation: null,
+        runtime: {
+          source: "system",
+          supportTier: "fully_assisted",
+          target: "darwin-arm64",
+          actions: ["install"],
+          managedVersion: null,
+          previousManagedVersion: null,
+          operation: {
+            operationId: "install-cancelled",
+            action: "install",
+            status: "cancelled",
+            startedAt: "2026-08-22T12:00:00.000Z",
+            finishedAt: "2026-08-22T12:00:05.000Z",
+            message:
+              "Provider runtime setup cancelled. The previous working runtime was preserved.",
+          },
+          message: "Using a compatible system Claude runtime.",
+        },
+      },
+    };
+
+    hooks.beginRender();
+    const markup = renderToStaticMarkup(
+      ProviderRuntimeSection({
+        compact: true,
+        environmentId,
+        provider: cancelledProvider,
+        displayName: "Claude",
+      }),
+    );
+
+    expect(markup).toContain("System installation");
+    expect(markup).toContain('aria-label="Use Scient-managed Claude"');
+    expect(markup).not.toContain("Provider runtime setup cancelled");
+    expect(markup).not.toContain("previous working runtime");
   });
 
   it("shows the current missing-runtime state after removal instead of a stale success row", () => {

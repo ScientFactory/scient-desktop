@@ -73,9 +73,14 @@ function controller(): ProviderLifecycleController {
   };
 }
 
-function render(value: ServerProvider): string {
+function render(value: ServerProvider, managedRuntimePresentedExternally = false): string {
   return renderToStaticMarkup(
-    <CodexInlineSetup controller={controller()} displayName="Codex" provider={value} />,
+    <CodexInlineSetup
+      controller={controller()}
+      displayName="Codex"
+      managedRuntimePresentedExternally={managedRuntimePresentedExternally}
+      provider={value}
+    />,
   );
 }
 
@@ -88,6 +93,9 @@ describe("CodexInlineSetup", () => {
     );
     expect(markup).toContain("Sign in with ChatGPT");
     expect(markup).toContain("Use device code");
+    expect(markup).toContain("border-transparent");
+    expect(markup).toContain("text-primary");
+    expect(markup).not.toContain("text-primary-foreground");
     expect(markup).not.toContain("The secure flow opens in your browser");
   });
 
@@ -203,6 +211,7 @@ describe("CodexInlineSetup", () => {
 
   it("offers managed recovery for an automatically selected system runtime", () => {
     expect(render(provider())).toContain("Use Scient-managed Codex");
+    expect(render(provider(), true)).not.toContain("Use Scient-managed Codex");
   });
 
   it("does not offer a managed switch when the server exposes no install action", () => {

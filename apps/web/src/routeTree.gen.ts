@@ -31,6 +31,7 @@ import { Route as ProjectsProjectKeyRouteImport } from './routes/projects.$proje
 import { Route as ConnectCallbackRouteImport } from './routes/connect_.callback'
 import { Route as ChatPullRequestsRouteImport } from './routes/_chat.pull-requests'
 import { Route as ChatGettingStartedRouteImport } from './routes/_chat.getting-started'
+import { Route as SettingsSkillsProjectRouteImport } from './routes/settings.skills_.project'
 import { Route as SettingsSkillsExternalRouteImport } from './routes/settings.skills_.external'
 import { Route as ChatDraftDraftIdRouteImport } from './routes/_chat.draft.$draftId'
 import { Route as ChatEnvironmentIdThreadIdRouteImport } from './routes/_chat.$environmentId.$threadId'
@@ -145,6 +146,11 @@ const ChatGettingStartedRoute = ChatGettingStartedRouteImport.update({
   path: '/getting-started',
   getParentRoute: () => ChatRoute,
 } as any)
+const SettingsSkillsProjectRoute = SettingsSkillsProjectRouteImport.update({
+  id: '/skills_/project',
+  path: '/skills/project',
+  getParentRoute: () => SettingsRoute,
+} as any)
 const SettingsSkillsExternalRoute = SettingsSkillsExternalRouteImport.update({
   id: '/skills_/external',
   path: '/skills/external',
@@ -187,6 +193,7 @@ export interface FileRoutesByFullPath {
   '/$environmentId/$threadId': typeof ChatEnvironmentIdThreadIdRoute
   '/draft/$draftId': typeof ChatDraftDraftIdRoute
   '/settings/skills/external': typeof SettingsSkillsExternalRoute
+  '/settings/skills/project': typeof SettingsSkillsProjectRoute
 }
 export interface FileRoutesByTo {
   '/connect': typeof ConnectRoute
@@ -213,6 +220,7 @@ export interface FileRoutesByTo {
   '/$environmentId/$threadId': typeof ChatEnvironmentIdThreadIdRoute
   '/draft/$draftId': typeof ChatDraftDraftIdRoute
   '/settings/skills/external': typeof SettingsSkillsExternalRoute
+  '/settings/skills/project': typeof SettingsSkillsProjectRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
@@ -241,6 +249,7 @@ export interface FileRoutesById {
   '/_chat/$environmentId/$threadId': typeof ChatEnvironmentIdThreadIdRoute
   '/_chat/draft/$draftId': typeof ChatDraftDraftIdRoute
   '/settings/skills_/external': typeof SettingsSkillsExternalRoute
+  '/settings/skills_/project': typeof SettingsSkillsProjectRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
@@ -269,6 +278,7 @@ export interface FileRouteTypes {
     | '/$environmentId/$threadId'
     | '/draft/$draftId'
     | '/settings/skills/external'
+    | '/settings/skills/project'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/connect'
@@ -295,6 +305,7 @@ export interface FileRouteTypes {
     | '/$environmentId/$threadId'
     | '/draft/$draftId'
     | '/settings/skills/external'
+    | '/settings/skills/project'
   id:
     | '__root__'
     | '/_chat'
@@ -322,6 +333,7 @@ export interface FileRouteTypes {
     | '/_chat/$environmentId/$threadId'
     | '/_chat/draft/$draftId'
     | '/settings/skills_/external'
+    | '/settings/skills_/project'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
@@ -490,6 +502,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ChatGettingStartedRouteImport
       parentRoute: typeof ChatRoute
     }
+    '/settings/skills_/project': {
+      id: '/settings/skills_/project'
+      path: '/skills/project'
+      fullPath: '/settings/skills/project'
+      preLoaderRoute: typeof SettingsSkillsProjectRouteImport
+      parentRoute: typeof SettingsRoute
+    }
     '/settings/skills_/external': {
       id: '/settings/skills_/external'
       path: '/skills/external'
@@ -546,6 +565,7 @@ interface SettingsRouteChildren {
   SettingsSourceControlRoute: typeof SettingsSourceControlRoute
   SettingsVoiceRoute: typeof SettingsVoiceRoute
   SettingsSkillsExternalRoute: typeof SettingsSkillsExternalRoute
+  SettingsSkillsProjectRoute: typeof SettingsSkillsProjectRoute
 }
 
 const SettingsRouteChildren: SettingsRouteChildren = {
@@ -562,6 +582,7 @@ const SettingsRouteChildren: SettingsRouteChildren = {
   SettingsSourceControlRoute: SettingsSourceControlRoute,
   SettingsVoiceRoute: SettingsVoiceRoute,
   SettingsSkillsExternalRoute: SettingsSkillsExternalRoute,
+  SettingsSkillsProjectRoute: SettingsSkillsProjectRoute,
 }
 
 const SettingsRouteWithChildren = SettingsRoute._addFileChildren(

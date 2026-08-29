@@ -1,5 +1,9 @@
 # Images in chat
 
+Images in chat let you inspect plots, figures, diagrams, microscopy, and other
+visual project outputs in the context of the conversation that produced or
+discussed them.
+
 Scient displays supported project images directly in a completed chat message
 when the message uses ordinary Markdown image syntax:
 
@@ -11,6 +15,12 @@ The path is resolved relative to the current project. PNG, SVG, JPEG, WebP,
 GIF, AVIF, and ICO files use the same image card. While an answer is still
 streaming, the image remains ordinary Markdown and is loaded only after the
 answer settles.
+
+The resolved file must remain inside the current workspace. An absolute path,
+an outside-workspace traversal, or a path in another environment is not granted
+workspace-file authority merely because it appears in Markdown. Remote web
+images retain ordinary Markdown image behavior rather than these project-file
+actions.
 
 The image card lets you:
 

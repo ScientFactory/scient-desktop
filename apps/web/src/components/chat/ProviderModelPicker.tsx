@@ -44,6 +44,8 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
   getModelDisabledReason?: (instanceId: ProviderInstanceId, model: string) => string | null;
   isProviderSetupAvailable?: (entry: ProviderInstanceEntry) => boolean;
   renderProviderSetup?: (entry: ProviderInstanceEntry) => ReactNode;
+  renderProviderFooter?: (entry: ProviderInstanceEntry) => ReactNode;
+  statusLabel?: string;
   onForkToSwitchProvider?: () => void;
   forkToSwitchProviderDisabled?: boolean;
   onInstanceModelChange: (instanceId: ProviderInstanceId, model: string) => void;
@@ -69,8 +71,10 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
   const selectedModel =
     selectedInstanceOptions.find((option) => option.slug === props.model) ??
     selectedInstanceOptions[0];
-  const triggerTitle = selectedModel ? getTriggerDisplayModelName(selectedModel) : props.model;
-  const triggerLabel = selectedModel ? getTriggerDisplayModelLabel(selectedModel) : props.model;
+  const triggerTitle =
+    props.statusLabel ?? (selectedModel ? getTriggerDisplayModelName(selectedModel) : props.model);
+  const triggerLabel =
+    props.statusLabel ?? (selectedModel ? getTriggerDisplayModelLabel(selectedModel) : props.model);
   const showInstanceBadge =
     activeEntry !== null && shouldShowInstanceBadge(activeEntry, props.instanceEntries);
 
@@ -183,7 +187,7 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
             </TooltipTrigger>
             <TooltipPopup side="top">{triggerLabel}</TooltipPopup>
           </Tooltip>
-          {selectedModel?.providerCostLabel ? (
+          {!props.statusLabel && selectedModel?.providerCostLabel ? (
             <Tooltip>
               <TooltipTrigger
                 render={
@@ -224,6 +228,9 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
             ? { isProviderSetupAvailable: props.isProviderSetupAvailable }
             : {})}
           {...(props.renderProviderSetup ? { renderProviderSetup: props.renderProviderSetup } : {})}
+          {...(props.renderProviderFooter
+            ? { renderProviderFooter: props.renderProviderFooter }
+            : {})}
           {...(props.onForkToSwitchProvider
             ? { onForkToSwitchProvider: props.onForkToSwitchProvider }
             : {})}

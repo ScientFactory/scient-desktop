@@ -2992,7 +2992,17 @@ function ChatViewContent(props: ChatViewProps) {
     return providerStatuses.find((status) => status.instanceId === defaultInstanceId) ?? null;
   }, [activeProviderInstanceId, providerStatuses, selectedProvider]);
   const scientSkills = useEnvironmentQuery(
-    scientSkillsInventory({ environmentId, input: {} }),
+    scientSkillsInventory({
+      environmentId,
+      input: activeThreadId
+        ? {
+            threadId: activeThreadId,
+            ...(activeProject?.id ? { projectId: activeProject.id } : {}),
+          }
+        : activeProject?.id
+          ? { projectId: activeProject.id }
+          : {},
+    }),
   ).data;
   const effectiveActiveProviderSkills = useMemo(
     () =>
@@ -7567,6 +7577,7 @@ function ChatViewContent(props: ChatViewProps) {
                             routeThreadRef={routeThreadRef}
                             draftId={draftId}
                             activeThreadId={activeThreadId}
+                            activeProjectId={activeProject?.id ?? null}
                             activeThreadEnvironmentId={activeThread?.environmentId}
                             activeThread={activeThread}
                             isServerThread={isServerThread}

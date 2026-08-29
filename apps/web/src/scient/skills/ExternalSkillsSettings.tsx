@@ -1,5 +1,5 @@
 import { useAtomValue } from "@effect/atom-react";
-import { ArrowLeftIcon, ChevronDownIcon, LibraryBigIcon } from "lucide-react";
+import { ArrowLeftIcon, LibraryBigIcon } from "lucide-react";
 import { Link } from "@tanstack/react-router";
 import { useMemo, useState } from "react";
 
@@ -16,6 +16,7 @@ import { useAtomCommand } from "../../state/use-atom-command";
 import { AVAILABLE_PROVIDER_OPTIONS } from "../../components/chat/providerIconUtils";
 import { collectExternalSkillProviders, externalSkillSourceLabel } from "./externalSkills";
 import { setProviderSkillEnabled } from "./scientSkillsState";
+import { SkillSourceStrip, SkillSourceStripItem } from "./SkillSourceStrip";
 
 function providerLabel(driver: string, displayName: string | undefined): string {
   if (displayName) return displayName;
@@ -67,25 +68,25 @@ export function ExternalSkillsSettings() {
           />
         ) : (
           <div className="px-3 sm:px-4">
-            <div className="flex items-center overflow-x-auto py-1">
+            <SkillSourceStrip label="Agent providers">
               {groups.map(({ provider, skills }, index) => {
                 const label = providerLabel(provider.driver, provider.displayName);
                 const isOpen = expandedInstanceId === provider.instanceId;
                 const panelId = `external-skills-${provider.instanceId}`;
                 return (
-                  <div key={provider.instanceId} className="flex shrink-0 items-center">
-                    {index > 0 ? <span aria-hidden className="mx-2 h-7 w-px bg-border/65" /> : null}
-                    <button
-                      type="button"
-                      aria-controls={panelId}
-                      aria-expanded={isOpen}
-                      className="group flex cursor-pointer items-center gap-2.5 rounded-lg px-2.5 py-2 text-left outline-none transition-colors hover:bg-foreground/[0.025] focus-visible:z-10 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring aria-expanded:bg-muted/35"
-                      onClick={() =>
-                        setExpandedInstanceId((current) =>
-                          current === provider.instanceId ? null : provider.instanceId,
-                        )
-                      }
-                    >
+                  <SkillSourceStripItem
+                    key={provider.instanceId}
+                    controls={panelId}
+                    detail={`${skills.length} ${skills.length === 1 ? "skill" : "skills"}`}
+                    expanded={isOpen}
+                    separated={index > 0}
+                    label={label}
+                    onToggle={() =>
+                      setExpandedInstanceId((current) =>
+                        current === provider.instanceId ? null : provider.instanceId,
+                      )
+                    }
+                    icon={
                       <ProviderInstanceIcon
                         driverKind={provider.driver}
                         displayName={label}
@@ -93,25 +94,11 @@ export function ExternalSkillsSettings() {
                         className="size-6"
                         iconClassName="size-5"
                       />
-                      <span className="min-w-0">
-                        <span className="flex items-center gap-1.5">
-                          <span className="truncate text-sm font-medium text-foreground">
-                            {label}
-                          </span>
-                          <ChevronDownIcon
-                            aria-hidden
-                            className="size-3.5 shrink-0 text-muted-foreground transition-transform group-aria-expanded:rotate-180"
-                          />
-                        </span>
-                        <span className="block text-xs text-muted-foreground">
-                          {skills.length} {skills.length === 1 ? "skill" : "skills"}
-                        </span>
-                      </span>
-                    </button>
-                  </div>
+                    }
+                  />
                 );
               })}
-            </div>
+            </SkillSourceStrip>
             {expandedGroup ? (
               <div
                 id={`external-skills-${expandedGroup.provider.instanceId}`}

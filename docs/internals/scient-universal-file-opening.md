@@ -50,10 +50,33 @@ valid prefix if the range ends within a multibyte character.
 
 The thread-scoped surface persists only the requested absolute path and an
 optional line; the thread supplies environment authority. It never persists an
-expiring URL. Refresh reruns inspection and renews transport. Direct PDFs use
-environment plus normalized canonical path as logical identity, so URL renewal
-and thread changes preserve reader state while identical paths in different
-environments remain isolated.
+expiring URL. One shared exact-file subscription per environment and canonical
+path invalidates every mounted consumer; watcher readiness closes the
+inspection-to-subscription race, and later changes rerun inspection and renew
+transport. Until inspection succeeds, the requested absolute path is watched so
+creation of a previously missing file can recover the preview. Manual reload
+remains an explicit recovery path and restarts the subscription. Direct PDFs
+use environment plus normalized canonical path as logical identity, so URL
+renewal and thread changes preserve reader state while identical paths in
+different environments remain isolated.
+
+## Current identity and relocation limit
+
+The current contract is exact-path reliable but path-bound. If a watched file
+is renamed or moved, the old path can report missing and later recover if a
+file reappears there, but Scient does not yet prove that a different path is
+the same logical file. Direct and workspace entry points also use related but
+separate presentation dispatch.
+
+The proposed
+[file/resource/presentation foundation](https://github.com/ScientFactory/Scient/blob/main/docs/planning/file-resource-and-presentation-foundation.md)
+would add stable `FileReference` identity, bounded relocation evidence,
+explicit ambiguity recovery, and one presenter registry/shell. It must preserve
+the current environment authority, canonicalization, signed-asset transport,
+editor conflict protection, PDF logical identity, HTML document-root policy,
+watcher behavior, and typed failure states. It must not treat a stale absolute
+path, filename-only match, or workspace-wide scan as sufficient proof of
+identity.
 
 ## File transport and HTML documents
 
@@ -104,10 +127,13 @@ inherited T3 files:
    full path copying through the shared handler.
 
 The inherited editor/save lifecycle, Browser manager, and attachment/image paths
-are unchanged. Static seam tests guard the file-opening boundary, while focused
-component tests pin the additive breadcrumb and clipboard behavior. If T3 later
-provides an extensible file-presentation registry, Scient should adapt these
-owned presenters to it and retire the host seams.
+are unchanged. The workspace viewer consumes the same native watcher stream
+through one Scient-owned hook, preserving optimistic edits and revision-conflict
+handling while exposing watcher failure and restart at its existing reload
+control. Static seam tests guard the file-opening boundary, while focused
+component tests pin the additive breadcrumb, freshness, and clipboard behavior.
+If T3 later provides an extensible file-presentation registry, Scient should
+adapt these owned presenters to it and retire the host seams.
 
 The breadcrumb picker is shared by browser and desktop file previews and uses
 the existing ignore-aware `projects.listEntries` cache. File-tab copy actions use
@@ -115,10 +141,11 @@ the native desktop context menu or the browser fallback. Mobile retains its
 existing single `Copy path` action, and the file explorer tree remains unchanged;
 those surfaces require separate product decisions rather than implicit parity.
 
-New rich formats should extend preparation metadata and add a presenter without
-adding producer-specific branches to the reader. Office/manuscript documents,
-notebooks, TIFF/HEIC, scientific datasets, and future Artifact Studio
-representations can therefore arrive incrementally. Producers should continue
+Until that registry lands, new rich formats should extend preparation metadata
+and add a Scient-owned presenter without adding producer-specific branches to
+the reader or widening inherited dispatch unnecessarily. Office/manuscript
+documents, notebooks, TIFF/HEIC, scientific datasets, and future Artifact
+Studio representations can therefore arrive incrementally. Producers continue
 to own durable identity and provenance; this opener owns only inspection,
 authorization, routing, and viewing.
 

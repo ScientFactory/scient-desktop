@@ -1,4 +1,4 @@
-import { AlertTriangle, RotateCw } from "lucide-react";
+import { AlertTriangle, RefreshCw } from "lucide-react";
 
 import { Button } from "~/components/ui/button";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "~/components/ui/tooltip";
@@ -7,27 +7,39 @@ import { cn } from "~/lib/utils";
 import type { FileReloadNotice } from "./useWorkspaceFileRefresh";
 
 export function ScientFileReloadButton(props: {
+  readonly automaticRefreshUnavailable?: boolean;
   readonly isPending: boolean;
+  readonly label?: string;
   readonly onReload: () => void;
+  readonly size?: "icon-sm" | "icon-xs";
 }) {
+  const label = props.label ?? "Reload file from disk";
+  const actionLabel = props.isPending
+    ? "Reloading file…"
+    : props.automaticRefreshUnavailable
+      ? `Automatic updates paused — ${label.toLowerCase()}`
+      : label;
   return (
     <Tooltip>
       <TooltipTrigger
         render={
           <Button
-            className="shrink-0"
+            className={cn(
+              "shrink-0",
+              props.automaticRefreshUnavailable && "text-warning hover:text-warning",
+            )}
             onClick={props.onReload}
-            aria-label="Reload file from disk"
+            aria-label={actionLabel}
             aria-busy={props.isPending}
             disabled={props.isPending}
             variant="ghost"
-            size="icon-sm"
+            size={props.size ?? "icon-sm"}
           >
-            <RotateCw className={cn("size-3.5", props.isPending && "animate-spin")} />
+            <RefreshCw className={cn("size-3.5", props.isPending && "animate-spin")} />
           </Button>
         }
       />
-      <TooltipPopup>Reload file from disk</TooltipPopup>
+      <TooltipPopup>{actionLabel}</TooltipPopup>
     </Tooltip>
   );
 }

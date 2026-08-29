@@ -73,9 +73,14 @@ function controller(): ProviderLifecycleController {
   };
 }
 
-function render(value: ServerProvider): string {
+function render(value: ServerProvider, managedRuntimePresentedExternally = false): string {
   return renderToStaticMarkup(
-    <CursorInlineSetup controller={controller()} displayName="Cursor" provider={value} />,
+    <CursorInlineSetup
+      controller={controller()}
+      displayName="Cursor"
+      managedRuntimePresentedExternally={managedRuntimePresentedExternally}
+      provider={value}
+    />,
   );
 }
 
@@ -85,8 +90,16 @@ describe("CursorInlineSetup", () => {
 
     expect(markup).toContain("Sign in to Cursor");
     expect(markup).toContain("Scient never sees your password.");
+    expect(markup).toContain("border-transparent");
+    expect(markup).toContain("text-primary");
+    expect(markup).not.toContain("text-primary-foreground");
     expect(markup).not.toContain("device code");
     expect(markup).not.toContain("Paste code");
+  });
+
+  it("does not duplicate a managed switch owned by the shared management surface", () => {
+    expect(render(provider())).toContain("Use Scient-managed Cursor");
+    expect(render(provider(), true)).not.toContain("Use Scient-managed Cursor");
   });
 
   it("uses the Cursor mark for composer installation while preserving dialog status styling", () => {
@@ -143,7 +156,7 @@ describe("CursorInlineSetup", () => {
     expect(markup).toContain(">Cancel<");
     expect(markup).toContain("text-destructive/80");
     expect(markup).not.toContain("progressbar");
-    expect(markup).toContain('data-provider-onboarding-view="cursor-flow"');
+    expect(markup).toContain('data-provider-onboarding-view="assisted"');
     expect(markup).toContain(
       "hidden size-4.5 animate-spin text-primary in-[[data-model-picker-content=true]]:inline",
     );

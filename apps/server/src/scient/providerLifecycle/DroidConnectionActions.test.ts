@@ -8,6 +8,7 @@ import {
   makeDroidConnectionActionsFromOpen,
   supportsDroidAcpLogout,
   type DroidAccountAcpSession,
+  withDroidSessionShutdown,
 } from "./DroidConnectionActions.ts";
 
 const initializeResponse = (input?: {
@@ -110,6 +111,34 @@ describe("DroidConnectionActions", () => {
 
       yield* Effect.scoped(actionsFor(session(true)).disconnect);
       assert.strictEqual(yield* Ref.get(logoutCalls), 1);
+    }),
+  );
+
+  it.effect("stops active sessions before logout and preserves the shutdown failure", () =>
+    Effect.gen(function* () {
+      const events = yield* Ref.make<ReadonlyArray<string>>([]);
+      const record = (event: string) => Ref.update(events, (current) => [...current, event]);
+      const session: DroidAccountAcpSession = {
+        initializeResult: initializeResponse({ devicePairing: true, logout: true }),
+        authenticate: Effect.void,
+        logout: record("logout"),
+      };
+
+      yield* Effect.scoped(
+        withDroidSessionShutdown(actionsFor(session), record("stop-sessions")).disconnect,
+      );
+      assert.deepStrictEqual(yield* Ref.get(events), ["stop-sessions", "logout"]);
+
+      const stopFailure = new Error("session remained active");
+      const failure = yield* Effect.scoped(
+        withDroidSessionShutdown(actionsFor(session), Effect.fail(stopFailure)).disconnect,
+      ).pipe(Effect.flip);
+      assert.strictEqual(
+        failure.message,
+        "Scient could not stop active Droid sessions before sign out.",
+      );
+      assert.strictEqual(failure.cause, stopFailure);
+      assert.deepStrictEqual(yield* Ref.get(events), ["stop-sessions", "logout"]);
     }),
   );
 
