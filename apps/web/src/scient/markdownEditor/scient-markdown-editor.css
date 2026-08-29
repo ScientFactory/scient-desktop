@@ -662,64 +662,7 @@ sup.scient-markdown-reference {
   z-index: 20;
   display: flex;
   width: 100%;
-  flex: 0 0 auto;
-  flex-direction: column;
-  gap: 0.4rem;
-  border-block-end: 1px solid var(--border);
   background: var(--background);
-  padding: 0.5rem 0.65rem;
-}
-
-.scient-markdown-find-row,
-.scient-markdown-find-actions {
-  display: flex;
-  min-width: 0;
-  align-items: center;
-  gap: 0.3rem;
-  overflow-x: auto;
-}
-
-.scient-markdown-find-row input {
-  min-width: 0;
-  flex: 1;
-  border: 1px solid var(--border);
-  border-radius: 0.35rem;
-  background: var(--background);
-  padding: 0.35rem 0.45rem;
-  color: var(--foreground);
-  outline: none;
-}
-
-.scient-markdown-find-row button,
-.scient-markdown-find-actions button {
-  min-height: 1.75rem;
-  border-radius: 0.35rem;
-  padding-inline: 0.45rem;
-  color: var(--muted-foreground);
-  font-size: 0.72rem;
-}
-
-.scient-markdown-find-row button:hover:not(:disabled),
-.scient-markdown-find-row button.is-active,
-.scient-markdown-find-actions button:hover:not(:disabled) {
-  background: var(--accent);
-  color: var(--foreground);
-}
-
-.scient-markdown-find-row button:disabled,
-.scient-markdown-find-actions button:disabled {
-  opacity: 0.45;
-}
-
-.scient-markdown-find-count {
-  min-width: 2.6rem;
-  color: var(--muted-foreground);
-  font-size: 0.68rem;
-  text-align: center;
-}
-
-.scient-markdown-find-actions {
-  justify-content: flex-end;
 }
 
 .scient-markdown-wiki-link.is-selected {

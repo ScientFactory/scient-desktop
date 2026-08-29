@@ -1,12 +1,19 @@
-import { CaseSensitive, ChevronDown, ChevronRight, ChevronUp, WholeWord, X } from "lucide-react";
+import {
+  CaseSensitive,
+  ChevronDown,
+  ChevronRight,
+  ChevronUp,
+  Replace,
+  ReplaceAll,
+  WholeWord,
+  X,
+} from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 
-import { Button } from "~/components/ui/button";
 import { Input } from "~/components/ui/input";
-import { Tooltip, TooltipPopup, TooltipTrigger } from "~/components/ui/tooltip";
 import { cn } from "~/lib/utils";
 
-import { DockButton, dockButtonClass } from "./dockChrome";
+import { DockButton } from "./dockChrome";
 
 /** The find-state slice a surface must publish for the shared find bar. */
 export interface ScientFindBarState {
@@ -33,6 +40,12 @@ export interface ScientFindBarController {
   setFindOpen(open: boolean): void;
 }
 
+/**
+ * Compact find & replace strip under the dock. One row while searching;
+ * expanding the replace chevron reveals a second slim row aligned under the
+ * find field. All controls are dock-sized so the bar reads as one chrome
+ * family with the editing dock above it.
+ */
 export function ScientFindBar({
   controller,
   snapshot,
@@ -60,39 +73,44 @@ export function ScientFindBar({
     });
   };
 
+  const close = () => {
+    controller.setFindOpen(false);
+    controller.view?.focus();
+  };
+
+  const noMatches = snapshot.findQuery !== "" && snapshot.findMatchCount === 0;
+  const countLabel =
+    snapshot.findQuery === ""
+      ? null
+      : noMatches
+        ? "No results"
+        : `${snapshot.findActiveIndex + 1} of ${snapshot.findMatchCount}`;
+
   return (
     <div
-      className="scient-markdown-find-bar flex flex-col gap-1.5 border-b border-border/80 bg-background/95 px-2 py-1.5 backdrop-blur-xs"
+      className="scient-markdown-find-bar flex flex-col gap-1 border-b border-border/80 bg-background/95 px-2 py-1 backdrop-blur-xs"
       role="search"
       aria-label="Find and replace"
     >
-      <div className="scient-markdown-find-row flex items-center gap-1">
+      <div className="flex items-center gap-1">
         {snapshot.editable ? (
-          <Tooltip>
-            <TooltipTrigger
-              render={
-                <button
-                  type="button"
-                  className={dockButtonClass()}
-                  aria-label={replaceOpen ? "Hide replace" : "Show replace"}
-                  aria-expanded={replaceOpen}
-                  onClick={() => setReplaceOpen((open) => !open)}
-                >
-                  <ChevronRight
-                    className={cn("size-4 transition-transform", replaceOpen && "rotate-90")}
-                  />
-                </button>
-              }
-            />
-            <TooltipPopup>Toggle replace</TooltipPopup>
-          </Tooltip>
+          <DockButton
+            label={replaceOpen ? "Hide replace" : "Show replace"}
+            icon={
+              <ChevronRight
+                className={cn("size-4 transition-transform", replaceOpen && "rotate-90")}
+              />
+            }
+            onClick={() => setReplaceOpen((open) => !open)}
+          />
         ) : null}
 
-        <div className="relative flex min-w-44 max-w-96 flex-1 items-center">
+        <div className="relative min-w-36 max-w-64 flex-1">
           <Input
             ref={inputRef}
+            size="compact"
             aria-label="Find text"
-            className="h-7 pe-14 text-xs"
+            className={cn(countLabel !== null && "pe-16")}
             placeholder="Find"
             type="search"
             value={snapshot.findQuery}
@@ -103,19 +121,21 @@ export function ScientFindBar({
                 controller.navigateFind(event.shiftKey ? -1 : 1);
               } else if (event.key === "Escape") {
                 event.preventDefault();
-                controller.setFindOpen(false);
-                controller.view?.focus();
+                close();
               }
             }}
           />
-          <span
-            aria-live="polite"
-            className="scient-markdown-find-count pointer-events-none absolute end-2.5 text-[10px] text-muted-foreground font-mono"
-          >
-            {snapshot.findMatchCount === 0
-              ? "0"
-              : `${snapshot.findActiveIndex + 1}/${snapshot.findMatchCount}`}
-          </span>
+          {countLabel !== null ? (
+            <span
+              aria-live="polite"
+              className={cn(
+                "pointer-events-none absolute end-2 top-1/2 -translate-y-1/2 text-[10px] whitespace-nowrap",
+                noMatches ? "text-destructive" : "font-mono text-muted-foreground",
+              )}
+            >
+              {countLabel}
+            </span>
+          ) : null}
         </div>
 
         <DockButton
@@ -142,49 +162,44 @@ export function ScientFindBar({
           disabled={snapshot.findMatchCount === 0}
           onClick={() => controller.navigateFind(1)}
         />
-        <DockButton
-          label="Close (Esc)"
-          icon={<X className="size-4" />}
-          onClick={() => controller.setFindOpen(false)}
-        />
+        <div className="ms-auto">
+          <DockButton label="Close (Esc)" icon={<X className="size-4" />} onClick={close} />
+        </div>
       </div>
 
       {snapshot.editable && replaceOpen ? (
-        <div className="scient-markdown-find-row flex items-center gap-1 ps-8">
-          <Input
-            aria-label="Replacement text"
-            className="h-7 max-w-96 flex-1 text-xs"
-            placeholder="Replace with..."
-            type="text"
-            value={replacement}
-            onChange={(event) => setReplacement(event.target.value)}
-            onKeyDown={(event) => {
-              if (event.key === "Enter") {
-                event.preventDefault();
-                controller.replaceFind(replacement, false);
-              }
-            }}
-          />
-          <Button
-            className="h-7 text-xs"
+        <div className="flex items-center gap-1 ps-8">
+          <div className="min-w-36 max-w-64 flex-1">
+            <Input
+              size="compact"
+              aria-label="Replacement text"
+              placeholder="Replace"
+              type="text"
+              value={replacement}
+              onChange={(event) => setReplacement(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key === "Enter") {
+                  event.preventDefault();
+                  controller.replaceFind(replacement, false);
+                } else if (event.key === "Escape") {
+                  event.preventDefault();
+                  close();
+                }
+              }}
+            />
+          </div>
+          <DockButton
+            label="Replace current match (Enter)"
+            icon={<Replace className="size-4" />}
             disabled={snapshot.findMatchCount === 0}
-            size="sm"
-            type="button"
-            variant="outline"
             onClick={() => controller.replaceFind(replacement, false)}
-          >
-            Replace
-          </Button>
-          <Button
-            className="h-7 text-xs"
+          />
+          <DockButton
+            label="Replace all matches"
+            icon={<ReplaceAll className="size-4" />}
             disabled={snapshot.findMatchCount === 0}
-            size="sm"
-            type="button"
-            variant="outline"
             onClick={() => controller.replaceFind(replacement, true)}
-          >
-            All
-          </Button>
+          />
         </div>
       ) : null}
     </div>

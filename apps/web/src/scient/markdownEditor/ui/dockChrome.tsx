@@ -29,8 +29,8 @@ export function DockButton(props: {
   readonly label: string;
   readonly icon: ReactNode;
   readonly onClick: () => void;
-  readonly active?: boolean;
-  readonly disabled?: boolean;
+  readonly active?: boolean | undefined;
+  readonly disabled?: boolean | undefined;
 }) {
   return (
     <Tooltip>
@@ -58,7 +58,7 @@ export function DockButton(props: {
 export function DockMenu(props: {
   readonly label: string;
   readonly icon: ReactNode;
-  readonly active?: boolean;
+  readonly active?: boolean | undefined;
   readonly chevron?: boolean;
   readonly align?: "start" | "end";
   readonly popupClassName?: string;
