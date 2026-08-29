@@ -35,6 +35,11 @@ function assertAllowedHttpsUrl(url: URL, allowedHosts: ReadonlySet<string>): voi
   if (url.protocol !== "https:") {
     throw new ManagedRuntimeFileError("Managed runtime downloads must use HTTPS.");
   }
+  if (url.port !== "" && url.port !== "443") {
+    throw new ManagedRuntimeFileError(
+      "Managed runtime downloads must use the standard HTTPS port.",
+    );
+  }
   if (url.username || url.password) {
     throw new ManagedRuntimeFileError("Managed runtime download URLs cannot contain credentials.");
   }

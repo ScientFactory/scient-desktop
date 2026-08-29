@@ -1,4 +1,5 @@
 import type { ManagedRuntimeTarget } from "./target.ts";
+import { managedRuntimeTargetKey } from "./target.ts";
 
 export type ManagedRuntimeArchiveFormat = "raw" | "tar.gz" | "zip";
 export type ManagedRuntimeProvider =
@@ -86,5 +87,67 @@ export function managedRuntimeArtifactReceipt(
     checksum: artifact.checksum,
     size: artifact.size,
     catalogRevision: artifact.catalogRevision,
+  };
+}
+
+/**
+ * Applies immutable release facts to an app-owned packaging policy.
+ *
+ * Remote catalog data can select a release, but it cannot add targets, hosts,
+ * checksum algorithms, extraction behavior, executable paths, smoke commands,
+ * environment access, or support tiers that this Scient build did not ship.
+ */
+export function hydrateManagedRuntimeArtifact(
+  policy: ManagedRuntimeArtifact,
+  receipt: ManagedRuntimeArtifactReceipt,
+): ManagedRuntimeArtifact | undefined {
+  if (
+    receipt.provider !== policy.provider ||
+    managedRuntimeTargetKey(receipt.target) !== managedRuntimeTargetKey(policy.target) ||
+    receipt.checksum.algorithm !== policy.checksum.algorithm ||
+    receipt.version.length === 0 ||
+    receipt.version.length > 128 ||
+    receipt.version === "." ||
+    receipt.version === ".." ||
+    /[\\/]/u.test(receipt.version) ||
+    receipt.catalogRevision.length === 0 ||
+    receipt.catalogRevision.length > 512 ||
+    receipt.artifactName.length === 0 ||
+    receipt.artifactName.length > 512 ||
+    receipt.artifactName === "." ||
+    receipt.artifactName === ".." ||
+    /[\\/]/u.test(receipt.artifactName) ||
+    receipt.url.length > 2_048 ||
+    !URL.canParse(receipt.url)
+  ) {
+    return undefined;
+  }
+  const url = new URL(receipt.url);
+  if (
+    url.protocol !== "https:" ||
+    (url.port !== "" && url.port !== "443") ||
+    url.username.length > 0 ||
+    url.password.length > 0 ||
+    !policy.allowedHosts.some((host) => host.toLowerCase() === url.hostname.toLowerCase())
+  ) {
+    return undefined;
+  }
+  const expectedDigestLength = receipt.checksum.algorithm === "sha256" ? 64 : 128;
+  if (
+    receipt.size <= 0 ||
+    !Number.isSafeInteger(receipt.size) ||
+    receipt.checksum.digest.length !== expectedDigestLength ||
+    !/^[0-9a-f]+$/u.test(receipt.checksum.digest)
+  ) {
+    return undefined;
+  }
+  return {
+    ...policy,
+    version: receipt.version,
+    artifactName: receipt.artifactName,
+    url: receipt.url,
+    checksum: receipt.checksum,
+    size: receipt.size,
+    catalogRevision: receipt.catalogRevision,
   };
 }

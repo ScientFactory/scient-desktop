@@ -335,6 +335,8 @@ export const openCodexAppServerConnection = Effect.fn("openCodexAppServerConnect
     readonly launchArgs?: string;
     readonly cwd: string;
     readonly environment?: NodeJS.ProcessEnv;
+    /** Defaults to true for normal provider launches; qualification uses false. */
+    readonly extendEnvironment?: boolean;
   }) {
     const resolvedHomePath = input.homePath ? expandHomePath(input.homePath) : undefined;
     const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
@@ -347,7 +349,7 @@ export const openCodexAppServerConnection = Effect.fn("openCodexAppServerConnect
       codexAppServerArgs(input.launchArgs),
       {
         env: environment,
-        extendEnv: true,
+        extendEnv: input.extendEnvironment ?? true,
       },
     );
     const child = yield* spawner
@@ -355,7 +357,7 @@ export const openCodexAppServerConnection = Effect.fn("openCodexAppServerConnect
         ChildProcess.make(spawnCommand.command, spawnCommand.args, {
           cwd: input.cwd,
           env: environment,
-          extendEnv: true,
+          extendEnv: input.extendEnvironment ?? true,
           forceKillAfter: CODEX_APP_SERVER_PROBE_FORCE_KILL_AFTER,
           shell: spawnCommand.shell,
         }),
