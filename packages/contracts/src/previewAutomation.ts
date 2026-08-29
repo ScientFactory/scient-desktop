@@ -47,6 +47,7 @@ export const PREVIEW_AUTOMATION_OPERATIONS = [
   // authenticated desktop request rail but are not exposed as preview tools.
   "documentPdfRender",
   "documentPdfPresent",
+  "documentLatexPresent",
 ] as const;
 
 export const PreviewAutomationOperation = Schema.Literals(PREVIEW_AUTOMATION_OPERATIONS);

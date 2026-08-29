@@ -40,6 +40,7 @@ import { getLocalStorageItem, setLocalStorageItem, useLocalStorage } from "~/hoo
 import { DIFF_SURFACE_THEME_UNSAFE_CSS, resolveDiffThemeName } from "~/lib/diffRendering";
 import { cn } from "~/lib/utils";
 import { isPreviewSupportedInRuntime } from "~/previewStateStore";
+import type { LatexFilePresentationRequest } from "~/rightPanelStore";
 import { resolvePathLinkTarget } from "~/terminal-links";
 import { ScrollArea } from "~/components/ui/scroll-area";
 import { Toggle } from "~/components/ui/toggle";
@@ -109,8 +110,13 @@ interface FilePreviewPanelProps {
   availableEditors: ReadonlyArray<EditorId>;
   revealLine: number | null;
   revealRequestId: number;
+  latexPresentationRequest: LatexFilePresentationRequest | null;
   onOpenFile: (relativePath: string) => void;
   onOpenFileSource: (relativePath: string, line?: number) => void;
+  onLatexPresentationRequestHandled: (
+    relativePath: string,
+    request: LatexFilePresentationRequest,
+  ) => void;
   onPendingChange: (relativePath: string, pending: boolean) => void;
 }
 
@@ -1039,8 +1045,10 @@ export default function FilePreviewPanel({
   availableEditors,
   revealLine,
   revealRequestId,
+  latexPresentationRequest,
   onOpenFile,
   onOpenFileSource,
+  onLatexPresentationRequestHandled,
   onPendingChange,
 }: FilePreviewPanelProps) {
   const { resolvedTheme } = useTheme();
@@ -1386,10 +1394,12 @@ export default function FilePreviewPanel({
                 resolvedTheme={resolvedTheme}
                 revealLine={revealLine}
                 revealRequestId={revealRequestId}
+                latexPresentationRequest={latexPresentationRequest}
                 wordWrap={wordWrap}
                 onPostRender={onFilePostRender}
                 onPendingChange={handlePendingChange}
                 onOpenFileSource={onOpenFileSource}
+                onLatexPresentationRequestHandled={onLatexPresentationRequestHandled}
                 onSaveFailure={handleSaveFailure}
                 onSaveConfirmed={handleSaveConfirmed}
                 onSaveResolutionApplied={handleSaveResolutionApplied}

@@ -17,6 +17,7 @@ describe("Scient tool projection", () => {
     expect(CLAUDE_SCIENT_TOOL_PROJECTION).toMatchObject({
       skillLoad: "mcp__t3-code__scient_skill_load",
       pdfBuild: "mcp__t3-code__scient_pdf_build",
+      latexBuild: "mcp__t3-code__scient_latex_build",
       providerNativeSkillTool: true,
       deferred: false,
     });

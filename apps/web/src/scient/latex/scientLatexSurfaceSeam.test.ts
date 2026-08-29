@@ -11,6 +11,10 @@ const surfaceSource = NodeFS.readFileSync(
   new URL("./ScientLatexSurface.tsx", import.meta.url),
   "utf8",
 );
+const automationHostSource = NodeFS.readFileSync(
+  new URL("../../components/preview/PreviewAutomationHosts.tsx", import.meta.url),
+  "utf8",
+);
 const surfaceStyles = NodeFS.readFileSync(new URL("./scient-latex.css", import.meta.url), "utf8");
 
 function mountedPropNames(): ReadonlyArray<string> {
@@ -37,6 +41,23 @@ describe("Scient LaTeX file-preview seam", () => {
 
   it("passes exactly the props the surface declares", () => {
     expect([...mountedPropNames()].sort()).toEqual([...declaredPropNames()].sort());
+  });
+
+  it("consumes an automatic Split presentation without changing the saved user preference", () => {
+    expect(surfaceSource).toContain("props.latexPresentationRequest?.mode ?? initialPreviewMode()");
+    expect(surfaceSource).toContain("setPreferredMode(request.mode)");
+    expect(surfaceSource).toContain(
+      "props.onLatexPresentationRequestHandled(props.relativePath, request)",
+    );
+    expect(surfaceSource).not.toMatch(/persist\([^)]*request\.mode/u);
+  });
+
+  it("opens successful agent builds on the resolved LaTeX root surface", () => {
+    expect(automationHostSource).toContain('request.operation === "documentLatexPresent"');
+    expect(automationHostSource).toContain(
+      "openFile(threadRef, input.rootSourcePath, undefined, {",
+    );
+    expect(automationHostSource).toContain('latexPreviewMode: "split"');
   });
 
   it("hands the surface the save bindings the panel's own editor mount gets", () => {

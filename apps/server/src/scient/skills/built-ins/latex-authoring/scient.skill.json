@@ -1,7 +1,7 @@
 {
   "apiVersion": "scient.skills/v1alpha1",
   "id": "scient.latex-authoring",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "category": "Document creation",
   "categoryDescription": "Create polished documents and reliable final outputs.",
   "displayOrder": 60,

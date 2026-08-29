@@ -9,7 +9,7 @@ The goal is to produce a correct, polished PDF that fits the user's purpose whil
 
 ## Choose an Authoring Route
 
-Honor the user's requested source format. If they ask for LaTeX or a `.tex` source, create LaTeX and do not substitute HTML merely because HTML has a direct build tool. Preserve an existing authoring format unless the user asks to convert it.
+Honor the user's requested source format. If they ask for LaTeX or a `.tex` source, create LaTeX and do not substitute HTML merely because another route is easier to build. Preserve an existing authoring format unless the user asks to convert it.
 
 When the user has not chosen a format, select the source model whose strengths match the document's hardest requirements and expected revision workflow, not its topic or length alone:
 
@@ -35,4 +35,4 @@ Review the result in the dimensions that matter for the document:
 
 Inspect rendered pages rather than relying only on successful compilation or structural parsing. Review every page of a short document and representative high-risk pages of a long one. Fix meaningful defects and rebuild when possible.
 
-Link the editable source and the final project PDF when one was actually produced. Use project-relative Markdown links, wrap link destinations containing spaces in angle brackets, and link the exact `outputPath` returned by a build operation. If no PDF was built, link the source and state that limitation clearly. Do not rebuild through another route merely to obtain a clickable link. Then report the authoring route, verification performed, and any unresolved warning or unverified property.
+When reporting completion to the user in Scient chat, provide clickable project-relative Markdown links to the exact editable source and final project PDF actually produced. Link the exact `outputPath` returned by a build operation, and wrap link destinations containing spaces in angle brackets. If no PDF was built, link the editable source and state that clearly. Do not rebuild through another route merely to obtain a link. Then report the authoring route, verification performed, and any unresolved warning or unverified property.

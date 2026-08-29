@@ -15,16 +15,22 @@ import * as NodeCrypto from "node:crypto";
 import * as Effect from "effect/Effect";
 import * as Encoding from "effect/Encoding";
 import * as FileSystem from "effect/FileSystem";
-import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 
 import { issueAssetUrl } from "../../../assets/AssetAccess.ts";
-import * as ProjectionSnapshotQuery from "../../../orchestration/Services/ProjectionSnapshotQuery.ts";
 import * as GeneratedDocumentStore from "../../../scient/documentArtifacts/GeneratedDocumentStore.ts";
-import * as McpInvocationContext from "../../McpInvocationContext.ts";
 import * as PreviewAutomationBroker from "../../PreviewAutomationBroker.ts";
+import { buildScientLatexForInvocation } from "./latexHandler.ts";
+import {
+  commitStagedProjectPdfOutput,
+  isWindowsAbsolutePath,
+  type ProjectDocumentBuildBoundaryError,
+  resolveDocumentBuildProject,
+  resolveProjectPdfOutput,
+  stageProjectPdfOutput,
+} from "./projectDocumentBuild.ts";
 import { ScientDocumentsToolkit, ScientPdfBuildToolError } from "./tools.ts";
 
 type ErrorCode = ConstructorParameters<typeof ScientPdfBuildToolError>[0]["code"];
@@ -50,17 +56,6 @@ interface ResolvedHtmlSource {
   readonly sha256: string;
 }
 
-interface ResolvedPdfOutput {
-  readonly absolutePath: string;
-  readonly canonicalRoot: string;
-  readonly outputPath: string;
-}
-
-interface StagedPdfOutput {
-  readonly finalPath: string;
-  readonly temporaryPath: string;
-}
-
 const sourceHash = (bytes: Uint8Array): string =>
   NodeCrypto.createHash("sha256").update(bytes).digest("hex");
 
@@ -69,18 +64,8 @@ const sourceLogicalDocumentKey = (canonicalPath: string): LogicalDocumentKey =>
     `html-pdf:${NodeCrypto.createHash("sha256").update(canonicalPath).digest("hex")}`,
   );
 
-const isWindowsAbsolutePath = (value: string): boolean =>
-  /^[A-Za-z]:[\\/]/u.test(value) || value.startsWith("\\\\");
-
-const isInsideRoot = (root: string, candidate: string, path: Path.Path): boolean => {
-  const relativePath = path.relative(root, candidate);
-  return (
-    relativePath === "" ||
-    (relativePath !== ".." &&
-      !relativePath.startsWith(`..${path.sep}`) &&
-      !path.isAbsolute(relativePath))
-  );
-};
+const boundaryToolError = (cause: ProjectDocumentBuildBoundaryError) =>
+  toolError(cause.code, cause.message);
 
 const resolveHtmlSource = Effect.fn("ScientPdfBuild.resolveHtmlSource")(function* (
   root: string,
@@ -156,182 +141,6 @@ const resolveHtmlSource = Effect.fn("ScientPdfBuild.resolveHtmlSource")(function
   } satisfies ResolvedHtmlSource;
 });
 
-const resolvePdfOutput = Effect.fn("ScientPdfBuild.resolvePdfOutput")(function* (
-  root: string,
-  requestedPath: string,
-) {
-  const fileSystem = yield* FileSystem.FileSystem;
-  const path = yield* Path.Path;
-  if (path.isAbsolute(requestedPath) || isWindowsAbsolutePath(requestedPath)) {
-    return yield* toolError(
-      "invalid-output-path",
-      "outputPath must be relative to the current Scient project.",
-    );
-  }
-  const segments = requestedPath.split(/[\\/]/u);
-  if (
-    segments.some((segment) => segment === "..") ||
-    path.extname(requestedPath).toLowerCase() !== ".pdf"
-  ) {
-    return yield* toolError(
-      "invalid-output-path",
-      "outputPath must identify a project-relative .pdf file.",
-    );
-  }
-
-  const canonicalRoot = yield* fileSystem
-    .realPath(root)
-    .pipe(
-      Effect.mapError(() =>
-        toolError("project-changed", "The current project workspace is unavailable."),
-      ),
-    );
-  const absolutePath = path.resolve(canonicalRoot, requestedPath);
-  if (!isInsideRoot(canonicalRoot, absolutePath, path) || absolutePath === canonicalRoot) {
-    return yield* toolError(
-      "invalid-output-path",
-      "The PDF output must remain inside the current project workspace.",
-    );
-  }
-
-  const existingOutput = yield* fileSystem.stat(absolutePath).pipe(Effect.option);
-  if (Option.isSome(existingOutput) && existingOutput.value.type !== "File") {
-    return yield* toolError(
-      "invalid-output-path",
-      "The PDF output path must identify a file, not an existing directory or special entry.",
-    );
-  }
-
-  let existingAncestor = path.dirname(absolutePath);
-  while (true) {
-    const canonicalAncestor = yield* fileSystem.realPath(existingAncestor).pipe(Effect.option);
-    if (Option.isSome(canonicalAncestor)) {
-      if (!isInsideRoot(canonicalRoot, canonicalAncestor.value, path)) {
-        return yield* toolError(
-          "invalid-output-path",
-          "The PDF output must remain inside the current project workspace.",
-        );
-      }
-      break;
-    }
-    const parent = path.dirname(existingAncestor);
-    if (parent === existingAncestor) {
-      return yield* toolError(
-        "invalid-output-path",
-        "Scient could not resolve the PDF output directory inside this project.",
-      );
-    }
-    existingAncestor = parent;
-  }
-
-  return {
-    absolutePath,
-    canonicalRoot,
-    outputPath: path.relative(canonicalRoot, absolutePath).split(path.sep).join("/"),
-  } satisfies ResolvedPdfOutput;
-});
-
-const stagePdfOutput = Effect.fn("ScientPdfBuild.stagePdfOutput")(function* (
-  output: ResolvedPdfOutput,
-  bytes: Uint8Array,
-) {
-  const fileSystem = yield* FileSystem.FileSystem;
-  const path = yield* Path.Path;
-  const targetDirectory = path.dirname(output.absolutePath);
-  const writeError = () =>
-    toolError(
-      "output-write-failed",
-      "Scient validated the PDF but could not write it to the requested project path.",
-    );
-
-  yield* fileSystem
-    .makeDirectory(targetDirectory, { recursive: true })
-    .pipe(Effect.mapError(writeError));
-  const canonicalTargetDirectory = yield* fileSystem
-    .realPath(targetDirectory)
-    .pipe(Effect.mapError(writeError));
-  if (!isInsideRoot(output.canonicalRoot, canonicalTargetDirectory, path)) {
-    return yield* toolError(
-      "invalid-output-path",
-      "The PDF output directory no longer belongs to the current project.",
-    );
-  }
-
-  const finalPath = path.join(canonicalTargetDirectory, path.basename(output.absolutePath));
-  const existingOutput = yield* fileSystem.stat(finalPath).pipe(Effect.option);
-  if (Option.isSome(existingOutput) && existingOutput.value.type !== "File") {
-    return yield* writeError();
-  }
-
-  const temporaryDirectory = yield* fileSystem
-    .makeTempDirectoryScoped({
-      directory: canonicalTargetDirectory,
-      prefix: `.${path.basename(output.absolutePath)}.`,
-    })
-    .pipe(Effect.mapError(writeError));
-  const temporaryPath = path.join(temporaryDirectory, "document.pdf");
-  yield* fileSystem.writeFile(temporaryPath, bytes).pipe(Effect.mapError(writeError));
-  yield* Effect.scoped(
-    fileSystem.open(temporaryPath, { flag: "r+" }).pipe(Effect.flatMap((file) => file.sync)),
-  ).pipe(Effect.mapError(writeError));
-
-  return { finalPath, temporaryPath } satisfies StagedPdfOutput;
-});
-
-const commitStagedPdfOutput = Effect.fn("ScientPdfBuild.commitStagedPdfOutput")(function* (
-  staged: StagedPdfOutput,
-) {
-  const fileSystem = yield* FileSystem.FileSystem;
-  yield* fileSystem
-    .rename(staged.temporaryPath, staged.finalPath)
-    .pipe(
-      Effect.mapError(() =>
-        toolError(
-          "output-write-failed",
-          "Scient validated the PDF but could not write it to the requested project path.",
-        ),
-      ),
-    );
-});
-
-const resolveProject = Effect.fn("ScientPdfBuild.resolveProject")(function* () {
-  const invocation = yield* McpInvocationContext.McpInvocationContext;
-  if (!invocation.capabilities.has("documents:build")) {
-    return yield* toolError(
-      "capability-unavailable",
-      "This provider session does not grant document build access.",
-    );
-  }
-  const snapshots = yield* ProjectionSnapshotQuery.ProjectionSnapshotQuery;
-  const thread = yield* snapshots
-    .getThreadShellById(invocation.threadId)
-    .pipe(
-      Effect.mapError(() =>
-        toolError("project-changed", "The current thread could not be resolved."),
-      ),
-    );
-  if (Option.isNone(thread) || thread.value.projectId === null) {
-    return yield* toolError(
-      "project-required",
-      "PDF builds require a thread that belongs to a Scient project.",
-    );
-  }
-  const project = yield* snapshots
-    .getProjectShellById(thread.value.projectId)
-    .pipe(
-      Effect.mapError(() =>
-        toolError("project-changed", "The current project could not be resolved."),
-      ),
-    );
-  if (Option.isNone(project)) {
-    return yield* toolError("project-changed", "The project for this thread is no longer active.");
-  }
-  return {
-    invocation,
-    root: thread.value.worktreePath ?? project.value.workspaceRoot,
-  };
-});
-
 const abandonQuietly = (
   store: GeneratedDocumentStore.GeneratedDocumentStore["Service"],
   handle: GeneratedDocumentStore.GeneratedDocumentProductionHandle,
@@ -347,9 +156,13 @@ const failQuietly = (
 export const buildScientPdfForInvocation = Effect.fn("ScientPdfBuild.build")(function* (
   input: ScientPdfBuildInput,
 ) {
-  const { invocation, root } = yield* resolveProject();
+  const { invocation, root } = yield* resolveDocumentBuildProject().pipe(
+    Effect.mapError(boundaryToolError),
+  );
   const initial = yield* resolveHtmlSource(root, input.sourcePath);
-  const output = yield* resolvePdfOutput(root, input.outputPath);
+  const output = yield* resolveProjectPdfOutput(root, input.outputPath).pipe(
+    Effect.mapError(boundaryToolError),
+  );
   const generatedDocuments = yield* GeneratedDocumentStore.GeneratedDocumentStore;
   const broker = yield* PreviewAutomationBroker.PreviewAutomationBroker;
   const handle = yield* generatedDocuments
@@ -460,7 +273,8 @@ export const buildScientPdfForInvocation = Effect.fn("ScientPdfBuild.build")(fun
   const title = rendered.title.trim() || fallbackTitle || "Document";
   const { source, projectOutputWritten } = yield* Effect.scoped(
     Effect.gen(function* () {
-      const staged = yield* stagePdfOutput(output, bytes).pipe(
+      const staged = yield* stageProjectPdfOutput(output, bytes).pipe(
+        Effect.mapError(boundaryToolError),
         Effect.tapError(() =>
           abandonQuietly(
             generatedDocuments,
@@ -490,7 +304,8 @@ export const buildScientPdfForInvocation = Effect.fn("ScientPdfBuild.build")(fun
         return yield* toolError("publication-failed", "Scient returned an unsupported PDF source.");
       }
 
-      const projectOutputWritten = yield* commitStagedPdfOutput(staged).pipe(
+      const projectOutputWritten = yield* commitStagedProjectPdfOutput(staged).pipe(
+        Effect.mapError(boundaryToolError),
         Effect.as(true),
         Effect.catch((cause) =>
           Effect.logWarning("published HTML PDF could not replace its project output", {
@@ -549,6 +364,7 @@ export const buildScientPdfForInvocation = Effect.fn("ScientPdfBuild.build")(fun
 
 const handlers = {
   scient_pdf_build: buildScientPdfForInvocation,
+  scient_latex_build: (input) => buildScientLatexForInvocation(input),
 } satisfies Parameters<typeof ScientDocumentsToolkit.toLayer>[0];
 
 export const ScientDocumentsToolkitHandlersLive = ScientDocumentsToolkit.toLayer(handlers);

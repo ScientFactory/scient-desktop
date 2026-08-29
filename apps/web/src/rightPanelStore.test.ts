@@ -156,7 +156,14 @@ describe("rightPanelStore", () => {
           "env-1:thread-A": {
             isOpen: true,
             activeSurfaceId: "file:src/index.ts",
-            surfaces: [{ id: "file:src/index.ts", kind: "file", relativePath: "src/index.ts" }],
+            surfaces: [
+              {
+                id: "file:src/index.ts",
+                kind: "file",
+                relativePath: "src/index.ts",
+                latexPresentationRequest: { id: 9, mode: "split" },
+              },
+            ],
           },
         },
       }),
@@ -550,6 +557,64 @@ describe("rightPanelStore", () => {
           relativePath: "src/index.ts",
           revealLine: null,
           revealRequestId: 3,
+        },
+      ],
+    });
+  });
+
+  it("carries and consumes a one-shot LaTeX Split presentation request", () => {
+    useRightPanelStore
+      .getState()
+      .openFile(refA, "paper.tex", undefined, { latexPreviewMode: "split" });
+
+    expect(selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, refA)).toEqual({
+      isOpen: true,
+      activeSurfaceId: "file:paper.tex",
+      surfaces: [
+        {
+          id: "file:paper.tex",
+          kind: "file",
+          relativePath: "paper.tex",
+          revealLine: null,
+          revealRequestId: 1,
+          latexPresentationRequest: { id: 1, mode: "split" },
+        },
+      ],
+    });
+
+    useRightPanelStore
+      .getState()
+      .openFile(refA, "paper.tex", undefined, { latexPreviewMode: "split" });
+
+    useRightPanelStore.getState().consumeLatexPresentationRequest(refA, "paper.tex", 1);
+
+    expect(selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, refA)).toEqual({
+      isOpen: true,
+      activeSurfaceId: "file:paper.tex",
+      surfaces: [
+        {
+          id: "file:paper.tex",
+          kind: "file",
+          relativePath: "paper.tex",
+          revealLine: null,
+          revealRequestId: 2,
+          latexPresentationRequest: { id: 2, mode: "split" },
+        },
+      ],
+    });
+
+    useRightPanelStore.getState().consumeLatexPresentationRequest(refA, "paper.tex", 2);
+
+    expect(selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, refA)).toEqual({
+      isOpen: true,
+      activeSurfaceId: "file:paper.tex",
+      surfaces: [
+        {
+          id: "file:paper.tex",
+          kind: "file",
+          relativePath: "paper.tex",
+          revealLine: null,
+          revealRequestId: 2,
         },
       ],
     });

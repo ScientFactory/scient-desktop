@@ -26,6 +26,7 @@ import { type DraftId } from "~/composerDraftStore";
 import { getLocalStorageItem, setLocalStorageItem } from "~/hooks/useLocalStorage";
 import { DIFF_SURFACE_THEME_UNSAFE_CSS, resolveDiffThemeName } from "~/lib/diffRendering";
 import { cn } from "~/lib/utils";
+import type { LatexFilePresentationRequest } from "~/rightPanelStore";
 import { scientificSourceLanguageOverride } from "~/scient/analysis/sourceLanguage";
 import { type FileSaveResolution } from "~/scient/fileSurfaces/useWorkspaceFileRefresh";
 import { useScientSplit } from "~/scient/layout/useScientSplit";
@@ -84,10 +85,15 @@ interface ScientLatexSurfaceProps {
   readonly resolvedTheme: "light" | "dark";
   readonly revealLine: number | null;
   readonly revealRequestId: number;
+  readonly latexPresentationRequest: LatexFilePresentationRequest | null;
   readonly wordWrap: boolean;
   readonly onPostRender: FilePostRender;
   readonly onPendingChange: (relativePath: string, pending: boolean) => void;
   readonly onOpenFileSource: (relativePath: string, line?: number) => void;
+  readonly onLatexPresentationRequestHandled: (
+    relativePath: string,
+    request: LatexFilePresentationRequest,
+  ) => void;
   readonly onSaveFailure: (relativePath: string, error: unknown) => void;
   readonly onSaveConfirmed: (relativePath: string, contents: string, revision: string) => void;
   readonly onSaveResolutionApplied: () => void;
@@ -412,7 +418,9 @@ export function ScientLatexSurface(props: ScientLatexSurfaceProps) {
   const build = useLatexBuild(target);
   const bindingChange = useLatexBindingChange(props.environmentId, build.snapshot);
   const status = useMemo(() => latexStatusStripModel(build, props.cwd), [build, props.cwd]);
-  const [preferredMode, setPreferredMode] = useState(initialPreviewMode);
+  const [preferredMode, setPreferredMode] = useState(
+    () => props.latexPresentationRequest?.mode ?? initialPreviewMode(),
+  );
   const [splitFraction, setSplitFraction] = useState(initialSplitFraction);
   const [diagnosticsOpen, setDiagnosticsOpen] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
@@ -422,6 +430,19 @@ export function ScientLatexSurface(props: ScientLatexSurfaceProps) {
   const lastBindingChangeRef = useRef<DocumentBindingChange | null>(null);
   const syncRequestRef = useRef(0);
   const pdfPageRef = useRef<number | null>(null);
+
+  useEffect(() => {
+    const request = props.latexPresentationRequest;
+    if (request === null) return;
+    setPreferredMode(request.mode);
+    setHandledRevealRequestId(props.revealRequestId);
+    props.onLatexPresentationRequestHandled(props.relativePath, request);
+  }, [
+    props.latexPresentationRequest,
+    props.onLatexPresentationRequestHandled,
+    props.relativePath,
+    props.revealRequestId,
+  ]);
 
   useEffect(() => startWatchingLatexBuild(target), [target]);
   useEffect(() => {
