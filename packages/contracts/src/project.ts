@@ -10,6 +10,7 @@ const PROJECT_SEARCH_ENTRIES_MAX_LIMIT = 200;
 const PROJECT_SEARCH_CONTENTS_MAX_LIMIT = 500;
 const PROJECT_WRITE_FILE_PATH_MAX_LENGTH = 512;
 const PROJECT_READ_FILE_PATH_MAX_LENGTH = 512;
+const PROJECT_DIRECTORY_PATH_MAX_LENGTH = 512;
 
 export const ProjectEntryKind = Schema.Literals(["file", "directory"]);
 export type ProjectEntryKind = typeof ProjectEntryKind.Type;
@@ -80,6 +81,54 @@ export const ProjectListEntriesResult = Schema.Struct({
   truncated: Schema.Boolean,
 });
 export type ProjectListEntriesResult = typeof ProjectListEntriesResult.Type;
+
+export const ProjectDirectoryView = Schema.Literals(["ordinary", "with-internals"]);
+export type ProjectDirectoryView = typeof ProjectDirectoryView.Type;
+
+export const ProjectDirectoryEntryKind = Schema.Literals(["file", "directory", "symlink"]);
+export type ProjectDirectoryEntryKind = typeof ProjectDirectoryEntryKind.Type;
+
+export const ProjectDirectoryEntry = Schema.Struct({
+  name: TrimmedNonEmptyString,
+  relativePath: TrimmedNonEmptyString,
+  kind: ProjectDirectoryEntryKind,
+  readOnly: Schema.Boolean,
+});
+export type ProjectDirectoryEntry = typeof ProjectDirectoryEntry.Type;
+
+export const ProjectListDirectoryInput = Schema.Struct({
+  cwd: TrimmedNonEmptyString,
+  relativeDirectory: TrimmedString.check(Schema.isMaxLength(PROJECT_DIRECTORY_PATH_MAX_LENGTH)),
+  view: ProjectDirectoryView,
+});
+export type ProjectListDirectoryInput = typeof ProjectListDirectoryInput.Type;
+
+export const ProjectListDirectoryResult = Schema.Struct({
+  entries: Schema.Array(ProjectDirectoryEntry),
+  complete: Schema.Boolean,
+});
+export type ProjectListDirectoryResult = typeof ProjectListDirectoryResult.Type;
+
+export const ProjectDirectoryFailure = Schema.Literals([
+  "workspace_root_not_found",
+  "workspace_root_create_failed",
+  "workspace_root_stat_failed",
+  "workspace_root_not_directory",
+  "workspace_path_outside_root",
+  "resolved_path_outside_root",
+  "path_not_directory",
+  "path_not_visible",
+  "operation_failed",
+]);
+export type ProjectDirectoryFailure = typeof ProjectDirectoryFailure.Type;
+
+export const ProjectDirectoryOperation = Schema.Literals([
+  "realpath-workspace-root",
+  "lstat-directory",
+  "realpath-directory",
+  "read-directory",
+]);
+export type ProjectDirectoryOperation = typeof ProjectDirectoryOperation.Type;
 
 export const ProjectEntriesFailure = Schema.Literals([
   "workspace_root_not_found",
@@ -191,6 +240,44 @@ export class ProjectListEntriesError extends Schema.TaggedErrorClass<ProjectList
   }
 }
 
+type ProjectDirectoryFailureContext = {
+  readonly cwd: string;
+  readonly relativeDirectory: string;
+  readonly view: ProjectDirectoryView;
+  readonly failure: ProjectDirectoryFailure;
+  readonly resolvedPath?: string;
+  readonly resolvedWorkspaceRoot?: string;
+  readonly operation?: ProjectDirectoryOperation;
+  readonly operationPath?: string;
+  readonly cause?: unknown;
+};
+
+export class ProjectListDirectoryError extends Schema.TaggedErrorClass<ProjectListDirectoryError>()(
+  "ProjectListDirectoryError",
+  {
+    cwd: Schema.optional(TrimmedNonEmptyString),
+    relativeDirectory: Schema.optional(TrimmedString),
+    view: Schema.optional(ProjectDirectoryView),
+    failure: Schema.optional(ProjectDirectoryFailure),
+    resolvedPath: Schema.optional(TrimmedNonEmptyString),
+    resolvedWorkspaceRoot: Schema.optional(TrimmedNonEmptyString),
+    operation: Schema.optional(ProjectDirectoryOperation),
+    operationPath: Schema.optional(TrimmedNonEmptyString),
+    message: TrimmedNonEmptyString,
+    cause: Schema.optional(Schema.Defect()),
+  },
+) {
+  // @effect-diagnostics-next-line overriddenSchemaConstructor:off
+  constructor(props: ProjectDirectoryFailureContext) {
+    super({
+      ...props,
+      message:
+        decodedProjectErrorMessage(props) ??
+        `Failed to list workspace directory '${props.relativeDirectory}' in '${props.cwd}'.`,
+    } as any);
+  }
+}
+
 export const ProjectReadFileInput = Schema.Struct({
   cwd: TrimmedNonEmptyString,
   relativePath: TrimmedNonEmptyString.check(Schema.isMaxLength(PROJECT_READ_FILE_PATH_MAX_LENGTH)),
@@ -203,6 +290,9 @@ export const ProjectReadFileResult = Schema.Struct({
   byteLength: NonNegativeInt,
   truncated: Schema.Boolean,
   revision: TrimmedNonEmptyString,
+  // Optional for rolling compatibility with servers predating managed-path
+  // read-only metadata. Current servers always provide it.
+  readOnly: Schema.optional(Schema.Boolean),
 });
 export type ProjectReadFileResult = typeof ProjectReadFileResult.Type;
 
@@ -233,6 +323,7 @@ export const ProjectFileFailure = Schema.Literals([
   "path_not_file",
   "binary_file",
   "revision_conflict",
+  "read_only_in_files",
   "operation_failed",
 ]);
 export type ProjectFileFailure = typeof ProjectFileFailure.Type;
@@ -324,7 +415,9 @@ export class ProjectWriteFileError extends Schema.TaggedErrorClass<ProjectWriteF
       ...props,
       message:
         decodedProjectErrorMessage(props) ??
-        `Failed to write workspace file '${props.relativePath}' in '${props.cwd}'.`,
+        (props.failure === "read_only_in_files"
+          ? `Workspace file '${props.relativePath}' is read-only in Files.`
+          : `Failed to write workspace file '${props.relativePath}' in '${props.cwd}'.`),
     } as any);
   }
 }

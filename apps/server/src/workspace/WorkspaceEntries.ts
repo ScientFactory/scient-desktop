@@ -9,20 +9,28 @@ import * as Path from "effect/Path";
 import * as RcMap from "effect/RcMap";
 import * as Schema from "effect/Schema";
 
-import type {
-  FilesystemBrowseInput,
-  FilesystemBrowseResult,
-  ProjectListEntriesInput,
-  ProjectListEntriesResult,
-  ProjectSearchContentsInput,
-  ProjectSearchContentsResult,
-  ProjectSearchEntriesInput,
-  ProjectSearchEntriesResult,
+import {
+  type FilesystemBrowseInput,
+  type FilesystemBrowseResult,
+  ProjectDirectoryFailure,
+  ProjectDirectoryOperation,
+  type ProjectListDirectoryInput,
+  type ProjectListDirectoryResult,
+  type ProjectListEntriesInput,
+  type ProjectListEntriesResult,
+  type ProjectSearchContentsInput,
+  type ProjectSearchContentsResult,
+  type ProjectSearchEntriesInput,
+  type ProjectSearchEntriesResult,
 } from "@t3tools/contracts";
 import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import { isExplicitRelativePath, isWindowsAbsolutePath } from "@t3tools/shared/path";
 import { normalizeSearchQuery } from "@t3tools/shared/searchRanking";
 
+import {
+  workspaceEntryDisposition,
+  workspaceEntryVisibleInView,
+} from "../scient/workspace/WorkspaceEntryPolicy.ts";
 import * as WorkspacePaths from "./WorkspacePaths.ts";
 import * as WorkspaceSearchIndex from "./WorkspaceSearchIndex.ts";
 
@@ -73,6 +81,12 @@ export const WorkspaceEntriesBrowseError = Schema.Union([
 ]);
 export type WorkspaceEntriesBrowseError = typeof WorkspaceEntriesBrowseError.Type;
 
+type WorkspaceRootNormalizationError =
+  | WorkspacePaths.WorkspaceRootNotExistsError
+  | WorkspacePaths.WorkspaceRootCreateFailedError
+  | WorkspacePaths.WorkspaceRootStatFailedError
+  | WorkspacePaths.WorkspaceRootNotDirectoryError;
+
 export const WorkspaceEntriesError = Schema.Union([
   WorkspacePaths.WorkspaceRootNotExistsError,
   WorkspacePaths.WorkspaceRootCreateFailedError,
@@ -84,6 +98,43 @@ export const WorkspaceEntriesError = Schema.Union([
 ]);
 export type WorkspaceEntriesError = typeof WorkspaceEntriesError.Type;
 
+export class WorkspaceDirectoryError extends Schema.TaggedErrorClass<WorkspaceDirectoryError>()(
+  "WorkspaceDirectoryError",
+  {
+    cwd: Schema.String,
+    relativeDirectory: Schema.String,
+    failure: ProjectDirectoryFailure,
+    resolvedPath: Schema.optional(Schema.String),
+    resolvedWorkspaceRoot: Schema.optional(Schema.String),
+    operation: Schema.optional(ProjectDirectoryOperation),
+    operationPath: Schema.optional(Schema.String),
+    cause: Schema.optional(Schema.Defect()),
+  },
+) {
+  override get message(): string {
+    switch (this.failure) {
+      case "path_not_directory":
+        return `Workspace path '${this.relativeDirectory}' in '${this.cwd}' is not a directory.`;
+      case "path_not_visible":
+        return `Workspace directory '${this.relativeDirectory}' is not available in the selected Files view.`;
+      case "resolved_path_outside_root":
+        return `Workspace directory '${this.relativeDirectory}' resolves outside '${this.cwd}'.`;
+      default:
+        return `Failed to list workspace directory '${this.relativeDirectory}' in '${this.cwd}'.`;
+    }
+  }
+}
+
+export const WorkspaceEntriesListDirectoryError = Schema.Union([
+  WorkspacePaths.WorkspaceRootNotExistsError,
+  WorkspacePaths.WorkspaceRootCreateFailedError,
+  WorkspacePaths.WorkspaceRootStatFailedError,
+  WorkspacePaths.WorkspaceRootNotDirectoryError,
+  WorkspacePaths.WorkspacePathOutsideRootError,
+  WorkspaceDirectoryError,
+]);
+export type WorkspaceEntriesListDirectoryError = typeof WorkspaceEntriesListDirectoryError.Type;
+
 export class WorkspaceEntries extends Context.Service<
   WorkspaceEntries,
   {
@@ -93,6 +144,9 @@ export class WorkspaceEntries extends Context.Service<
     readonly list: (
       input: ProjectListEntriesInput,
     ) => Effect.Effect<ProjectListEntriesResult, WorkspaceEntriesError>;
+    readonly listDirectory: (
+      input: ProjectListDirectoryInput,
+    ) => Effect.Effect<ProjectListDirectoryResult, WorkspaceEntriesListDirectoryError>;
     readonly search: (
       input: ProjectSearchEntriesInput,
     ) => Effect.Effect<ProjectSearchEntriesResult, WorkspaceEntriesError>;
@@ -145,7 +199,7 @@ export const make = Effect.gen(function* () {
 
   const normalizeWorkspaceRoot = Effect.fn("WorkspaceEntries.normalizeWorkspaceRoot")(function* (
     cwd: string,
-  ): Effect.fn.Return<string, WorkspaceEntriesError> {
+  ): Effect.fn.Return<string, WorkspaceRootNormalizationError> {
     return yield* workspacePaths.normalizeWorkspaceRoot(cwd);
   });
 
@@ -245,7 +299,18 @@ export const make = Effect.gen(function* () {
       });
       return yield* Effect.gen(function* () {
         const searchIndex = yield* WorkspaceSearchIndex.WorkspaceSearchIndex;
-        return yield* searchIndex.search(normalizedQuery, input.limit, input.kind, input.imageOnly);
+        const result = yield* searchIndex.search(
+          normalizedQuery,
+          input.limit,
+          input.kind,
+          input.imageOnly,
+        );
+        return {
+          ...result,
+          entries: result.entries.filter(
+            (entry) => workspaceEntryDisposition(entry.path).visibility === "ordinary",
+          ),
+        };
       }).pipe(
         Effect.provide(
           workspaceSearchIndexes.get(
@@ -288,7 +353,163 @@ export const make = Effect.gen(function* () {
     },
   );
 
-  return WorkspaceEntries.of({ browse, list, refresh, search, searchContents });
+  const listDirectory: WorkspaceEntries["Service"]["listDirectory"] = Effect.fn(
+    "WorkspaceEntries.listDirectory",
+  )(function* (input) {
+    const normalizedCwd = yield* normalizeWorkspaceRoot(input.cwd);
+    const requestedDirectory = input.relativeDirectory.trim();
+    const target =
+      requestedDirectory.length === 0
+        ? { absolutePath: normalizedCwd, relativePath: "" }
+        : yield* workspacePaths.resolveRelativePathWithinRoot({
+            workspaceRoot: normalizedCwd,
+            relativePath: requestedDirectory,
+          });
+
+    const requestedDisposition = workspaceEntryDisposition(target.relativePath);
+    if (!workspaceEntryVisibleInView(requestedDisposition.visibility, input.view)) {
+      return yield* new WorkspaceDirectoryError({
+        cwd: normalizedCwd,
+        relativeDirectory: target.relativePath,
+        failure: "path_not_visible",
+        resolvedPath: target.absolutePath,
+      });
+    }
+
+    const targetStat = yield* Effect.tryPromise({
+      try: () => NodeFSP.lstat(target.absolutePath),
+      catch: (cause) =>
+        new WorkspaceDirectoryError({
+          cwd: normalizedCwd,
+          relativeDirectory: target.relativePath,
+          failure: "operation_failed",
+          resolvedPath: target.absolutePath,
+          operation: "lstat-directory",
+          operationPath: target.absolutePath,
+          cause,
+        }),
+    });
+    if (targetStat.isSymbolicLink() || !targetStat.isDirectory()) {
+      return yield* new WorkspaceDirectoryError({
+        cwd: normalizedCwd,
+        relativeDirectory: target.relativePath,
+        failure: "path_not_directory",
+        resolvedPath: target.absolutePath,
+      });
+    }
+
+    const realWorkspaceRoot = yield* Effect.tryPromise({
+      try: () => NodeFSP.realpath(normalizedCwd),
+      catch: (cause) =>
+        new WorkspaceDirectoryError({
+          cwd: normalizedCwd,
+          relativeDirectory: target.relativePath,
+          failure: "operation_failed",
+          resolvedPath: target.absolutePath,
+          operation: "realpath-workspace-root",
+          operationPath: normalizedCwd,
+          cause,
+        }),
+    });
+    const realTargetPath = yield* Effect.tryPromise({
+      try: () => NodeFSP.realpath(target.absolutePath),
+      catch: (cause) =>
+        new WorkspaceDirectoryError({
+          cwd: normalizedCwd,
+          relativeDirectory: target.relativePath,
+          failure: "operation_failed",
+          resolvedPath: target.absolutePath,
+          operation: "realpath-directory",
+          operationPath: target.absolutePath,
+          cause,
+        }),
+    });
+    const relativeRealDirectory = path.relative(realWorkspaceRoot, realTargetPath);
+    if (
+      relativeRealDirectory.startsWith(`..${path.sep}`) ||
+      relativeRealDirectory === ".." ||
+      path.isAbsolute(relativeRealDirectory)
+    ) {
+      return yield* new WorkspaceDirectoryError({
+        cwd: normalizedCwd,
+        relativeDirectory: target.relativePath,
+        failure: "resolved_path_outside_root",
+        resolvedWorkspaceRoot: realWorkspaceRoot,
+        resolvedPath: realTargetPath,
+      });
+    }
+    const canonicalDirectory = relativeRealDirectory.replaceAll("\\", "/");
+    const canonicalDisposition = workspaceEntryDisposition(canonicalDirectory);
+    if (!workspaceEntryVisibleInView(canonicalDisposition.visibility, input.view)) {
+      return yield* new WorkspaceDirectoryError({
+        cwd: normalizedCwd,
+        relativeDirectory: target.relativePath,
+        failure: "path_not_visible",
+        resolvedWorkspaceRoot: realWorkspaceRoot,
+        resolvedPath: realTargetPath,
+      });
+    }
+
+    const dirents = yield* Effect.tryPromise({
+      try: () => NodeFSP.readdir(realTargetPath, { withFileTypes: true }),
+      catch: (cause) =>
+        new WorkspaceDirectoryError({
+          cwd: normalizedCwd,
+          relativeDirectory: target.relativePath,
+          failure: "operation_failed",
+          resolvedPath: realTargetPath,
+          operation: "read-directory",
+          operationPath: realTargetPath,
+          cause,
+        }),
+    });
+
+    const entries: ProjectListDirectoryResult["entries"][number][] = [];
+    for (const dirent of dirents) {
+      const kind = dirent.isDirectory()
+        ? ("directory" as const)
+        : dirent.isFile()
+          ? ("file" as const)
+          : dirent.isSymbolicLink()
+            ? ("symlink" as const)
+            : null;
+      if (kind === null) continue;
+
+      const relativePath =
+        target.relativePath.length === 0 ? dirent.name : `${target.relativePath}/${dirent.name}`;
+      const canonicalRelativePath =
+        canonicalDirectory.length === 0 ? dirent.name : `${canonicalDirectory}/${dirent.name}`;
+      const disposition = workspaceEntryDisposition(relativePath);
+      const canonicalChildDisposition = workspaceEntryDisposition(canonicalRelativePath);
+      if (
+        !workspaceEntryVisibleInView(disposition.visibility, input.view) ||
+        !workspaceEntryVisibleInView(canonicalChildDisposition.visibility, input.view)
+      ) {
+        continue;
+      }
+
+      entries.push({
+        name: dirent.name,
+        relativePath,
+        kind,
+        readOnly:
+          kind === "symlink" ||
+          disposition.mutation === "owner" ||
+          canonicalChildDisposition.mutation === "owner",
+      });
+    }
+
+    const kindRank = { directory: 0, file: 1, symlink: 2 } as const;
+    return {
+      entries: entries.toSorted(
+        (left, right) =>
+          kindRank[left.kind] - kindRank[right.kind] || left.name.localeCompare(right.name),
+      ),
+      complete: true,
+    };
+  });
+
+  return WorkspaceEntries.of({ browse, list, listDirectory, refresh, search, searchContents });
 });
 
 export const layer = Layer.effect(WorkspaceEntries, make).pipe(

@@ -135,6 +135,12 @@ const serviceTestLayer = Effect.gen(function* () {
       }),
   };
   const workspaceFileSystem = WorkspaceFileSystem.WorkspaceFileSystem.of({
+    inspectWriteTarget: (input) =>
+      Effect.succeed({
+        relativePath: input.relativePath,
+        canonicalRelativePath: input.relativePath,
+        traversesSymlink: false,
+      }),
     readFile: (input) =>
       Effect.succeed({
         relativePath: input.relativePath,

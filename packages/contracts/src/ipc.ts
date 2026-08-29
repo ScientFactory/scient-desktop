@@ -37,6 +37,8 @@ import type { FilesystemBrowseInput, FilesystemBrowseResult } from "./filesystem
 import type { EnvironmentFilePrepareInput, EnvironmentFilePrepareResult } from "./fileOpening.ts";
 import type { AssetCreateUrlInput, AssetCreateUrlResult } from "./assets.ts";
 import type {
+  ProjectListDirectoryInput,
+  ProjectListDirectoryResult,
   ProjectListEntriesInput,
   ProjectListEntriesResult,
   ProjectReadFileInput,
@@ -1454,6 +1456,7 @@ export interface EnvironmentApi {
     ) => () => void;
   };
   projects: {
+    listDirectory: (input: ProjectListDirectoryInput) => Promise<ProjectListDirectoryResult>;
     listEntries: (input: ProjectListEntriesInput) => Promise<ProjectListEntriesResult>;
     readFile: (input: ProjectReadFileInput) => Promise<ProjectReadFileResult>;
     searchEntries: (input: ProjectSearchEntriesInput) => Promise<ProjectSearchEntriesResult>;

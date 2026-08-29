@@ -61,6 +61,10 @@ export function createProjectEnvironmentAtoms<R, E>(
       tag: WS_METHODS.projectsSearchEntries,
       staleTimeMs: 15_000,
     }),
+    listDirectory: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:projects:list-directory",
+      tag: WS_METHODS.projectsListDirectory,
+    }),
     listEntries: createEnvironmentRpcQueryAtomFamily(runtime, {
       label: "environment-data:projects:list-entries",
       tag: WS_METHODS.projectsListEntries,
