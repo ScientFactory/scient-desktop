@@ -35,6 +35,15 @@ export const RIGHT_PANEL_KINDS = [
 ] as const;
 export type RightPanelKind = (typeof RIGHT_PANEL_KINDS)[number];
 
+export interface LatexFilePresentationRequest {
+  readonly id: number;
+  readonly mode: "split";
+}
+
+export interface OpenFileOptions {
+  readonly latexPreviewMode?: LatexFilePresentationRequest["mode"];
+}
+
 export type RightPanelSurface =
   | { id: `browser:${string}`; kind: "preview"; resourceId: string }
   | { id: "browser:new"; kind: "preview"; resourceId: null }
@@ -54,6 +63,7 @@ export type RightPanelSurface =
       relativePath: string;
       revealLine: number | null;
       revealRequestId: number;
+      latexPresentationRequest?: LatexFilePresentationRequest;
     }
   | {
       /**
@@ -104,7 +114,17 @@ interface RightPanelStoreState {
     kind: Exclude<RightPanelKind, "file" | "terminal" | "pull-request" | "scient">,
   ) => void;
   openBrowser: (ref: ScopedThreadRef, tabId: string | null) => void;
-  openFile: (ref: ScopedThreadRef, relativePath: string, line?: number) => void;
+  openFile: (
+    ref: ScopedThreadRef,
+    relativePath: string,
+    line?: number,
+    options?: OpenFileOptions,
+  ) => void;
+  consumeLatexPresentationRequest: (
+    ref: ScopedThreadRef,
+    relativePath: string,
+    requestId: number,
+  ) => void;
   openPullRequest: (
     ref: ScopedThreadRef,
     target: { environmentId?: string; projectId: string; repository: string; number: number },
@@ -173,12 +193,21 @@ const fileSurface = (
   relativePath: string,
   revealLine: number | null,
   revealRequestId: number,
+  options?: OpenFileOptions,
 ): RightPanelSurface => ({
   id: `file:${relativePath}`,
   kind: "file",
   relativePath,
   revealLine,
   revealRequestId,
+  ...(options?.latexPreviewMode === undefined
+    ? {}
+    : {
+        latexPresentationRequest: {
+          id: revealRequestId,
+          mode: options.latexPreviewMode,
+        },
+      }),
 });
 
 const terminalSurface = (terminalId: string): RightPanelSurface => ({
@@ -292,6 +321,10 @@ export function migratePersistedRightPanelState(persistedState: unknown): {
                     // transcript (v9).
                     if ((surface as { kind?: string }).kind === "plan") return [];
                     if (surface.kind === "file") {
+                      const {
+                        latexPresentationRequest: _transientLatexPresentationRequest,
+                        ...persistentSurface
+                      } = surface;
                       const revealLine =
                         typeof surface.revealLine === "number" &&
                         Number.isFinite(surface.revealLine)
@@ -303,7 +336,7 @@ export function migratePersistedRightPanelState(persistedState: unknown): {
                         surface.revealRequestId >= 0
                           ? surface.revealRequestId
                           : 0;
-                      return [{ ...surface, revealLine, revealRequestId }];
+                      return [{ ...persistentSurface, revealLine, revealRequestId }];
                     }
                     if (surface.kind === "pull-request") {
                       if (
@@ -491,7 +524,7 @@ export const useRightPanelStore = create<RightPanelStoreState>()(
             };
           }),
         })),
-      openFile: (ref, relativePath, line) =>
+      openFile: (ref, relativePath, line, options) =>
         set((state) => ({
           byThreadKey: updateThread(state.byThreadKey, scopedThreadKey(ref), (current) => {
             const withoutStandaloneExplorer = current.surfaces.filter(
@@ -502,10 +535,12 @@ export const useRightPanelStore = create<RightPanelStoreState>()(
               (surface): surface is Extract<RightPanelSurface, { kind: "file" }> =>
                 surface.id === surfaceId && surface.kind === "file",
             );
+            const revealRequestId = (existing?.revealRequestId ?? 0) + 1;
             const surface = fileSurface(
               relativePath,
               normalizeRevealLine(line),
-              (existing?.revealRequestId ?? 0) + 1,
+              revealRequestId,
+              options,
             );
             return {
               isOpen: true,
@@ -516,6 +551,28 @@ export const useRightPanelStore = create<RightPanelStoreState>()(
                   )
                 : [...withoutStandaloneExplorer, surface],
             };
+          }),
+        })),
+      consumeLatexPresentationRequest: (ref, relativePath, requestId) =>
+        set((state) => ({
+          byThreadKey: updateThread(state.byThreadKey, scopedThreadKey(ref), (current) => {
+            let changed = false;
+            const surfaces = current.surfaces.map((surface): RightPanelSurface => {
+              if (
+                surface.kind !== "file" ||
+                surface.relativePath !== relativePath ||
+                surface.latexPresentationRequest?.id !== requestId
+              ) {
+                return surface;
+              }
+              changed = true;
+              const {
+                latexPresentationRequest: _consumedLatexPresentationRequest,
+                ...remainingSurface
+              } = surface;
+              return remainingSurface;
+            });
+            return changed ? { ...current, surfaces } : current;
           }),
         })),
       openTerminal: (ref, terminalId) =>
@@ -770,9 +827,22 @@ export const useRightPanelStore = create<RightPanelStoreState>()(
       ),
       partialize: (state) => ({
         byThreadKey: Object.fromEntries(
-          Object.entries(state.byThreadKey).filter(
-            ([threadKey]) => !isPullRequestsPanelKey(threadKey),
-          ),
+          Object.entries(state.byThreadKey)
+            .filter(([threadKey]) => !isPullRequestsPanelKey(threadKey))
+            .map(([threadKey, threadState]) => [
+              threadKey,
+              {
+                ...threadState,
+                surfaces: threadState.surfaces.map((surface): RightPanelSurface => {
+                  if (surface.kind !== "file") return surface;
+                  const {
+                    latexPresentationRequest: _transientLatexPresentationRequest,
+                    ...persistentSurface
+                  } = surface;
+                  return persistentSurface;
+                }),
+              },
+            ]),
         ),
       }),
       migrate: migratePersistedRightPanelState,

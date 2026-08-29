@@ -19,19 +19,25 @@ describe("Scient awareness", () => {
     expect(SCIENT_CORE_AWARENESS).toContain("project workspace");
     expect(SCIENT_CORE_AWARENESS).toContain("inspect and edit workspace files");
     expect(SCIENT_CORE_AWARENESS).toContain("Scient's Markdown chat");
-    expect(SCIENT_CORE_AWARENESS).toContain("compiles project `.tex` files locally");
-    expect(SCIENT_CORE_AWARENESS).toContain("project-relative Markdown link");
-    expect(SCIENT_CORE_AWARENESS).toContain("compiler and source/PDF view");
-    expect(SCIENT_CORE_AWARENESS).toContain("When LaTeX fits");
+    expect(SCIENT_CORE_AWARENESS).toContain("Project `.tex` files open");
+    expect(SCIENT_CORE_AWARENESS).toContain("editable LaTeX source/PDF workspace");
+    expect(SCIENT_CORE_AWARENESS).not.toContain("project-relative Markdown link");
+    expect(SCIENT_CORE_AWARENESS).not.toContain("When LaTeX fits");
     expect(SCIENT_CORE_AWARENESS).toContain("diagram declaration first");
     expect(SCIENT_CORE_AWARENESS).toContain("self-contained Plotly figure JSON");
-    expect(SCIENT_CORE_AWARENESS).toContain("Do not emit HTML");
+    expect(SCIENT_CORE_AWARENESS).toContain(
+      "For these inline visual blocks, do not wrap them in HTML",
+    );
     expect(SCIENT_CORE_AWARENESS).toContain("not durable project artifacts");
     expect(SCIENT_CORE_AWARENESS).not.toContain("sources_");
   });
 
   it("mentions Scient skills only when exact skill access is granted", () => {
     expect(wordCount(SCIENT_SKILLS_AWARENESS)).toBeLessThanOrEqual(50);
+    expect(SCIENT_SKILLS_AWARENESS).toContain("private turn-scoped index");
+    expect(SCIENT_SKILLS_AWARENESS).toContain("provide guidance and grant no tools or authority");
+    expect(SCIENT_SKILLS_AWARENESS).not.toContain("automatic skill");
+    expect(SCIENT_SKILLS_AWARENESS).not.toContain("user-selected");
     expect(buildScientAwareness(new Set(["skills:read"]))).toBe(
       `${SCIENT_CORE_AWARENESS}\n\n${SCIENT_SKILLS_AWARENESS}`,
     );
@@ -52,9 +58,20 @@ describe("Scient awareness", () => {
   it("adds compact, truthful PDF build guidance only with document authority", () => {
     expect(wordCount(SCIENT_DOCUMENT_BUILD_AWARENESS)).toBeLessThanOrEqual(50);
     expect(SCIENT_DOCUMENT_BUILD_AWARENESS).toContain("`scient_pdf_build`");
-    expect(SCIENT_DOCUMENT_BUILD_AWARENESS).toContain("structural validation");
-    expect(SCIENT_DOCUMENT_BUILD_AWARENESS).toContain("returned `outputPath`");
-    expect(SCIENT_DOCUMENT_BUILD_AWARENESS).toContain("Do not claim visual review");
+    expect(SCIENT_DOCUMENT_BUILD_AWARENESS).toContain("`scient_latex_build`");
+    expect(SCIENT_DOCUMENT_BUILD_AWARENESS).toContain("requested PDF deliverable");
+    expect(SCIENT_DOCUMENT_BUILD_AWARENESS).toContain("existing project HTML source");
+    expect(SCIENT_DOCUMENT_BUILD_AWARENESS).toContain("existing project LaTeX source");
+    for (const skillWorkflowDetail of [
+      "retryAfterMs",
+      "pageCount",
+      "sourcePath",
+      "outputPath",
+      "rootSourcePath",
+      "visual review",
+    ]) {
+      expect(SCIENT_DOCUMENT_BUILD_AWARENESS).not.toContain(skillWorkflowDetail);
+    }
     expect(buildScientAwareness(new Set(["documents:build"]))).toBe(
       `${SCIENT_CORE_AWARENESS}\n\n${SCIENT_DOCUMENT_BUILD_AWARENESS}`,
     );
@@ -67,6 +84,7 @@ describe("Scient awareness", () => {
     );
 
     expect(awareness).toContain("`mcp__t3-code__scient_pdf_build`");
+    expect(awareness).toContain("`mcp__t3-code__scient_latex_build`");
     expect(awareness).not.toContain("`ToolSearch`");
     expect(awareness).not.toContain("use `scient_pdf_build`");
     expect(awareness).toContain(SCIENT_SKILLS_AWARENESS);

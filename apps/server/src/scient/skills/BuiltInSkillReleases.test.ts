@@ -50,7 +50,7 @@ describe("Scient built-in skill releases", () => {
       },
       {
         id: "scient.pdf-authoring",
-        version: "0.1.0",
+        version: "0.2.0",
         category: "Document creation",
         categoryDescription: "Create polished documents and reliable final outputs.",
         displayOrder: 40,
@@ -61,7 +61,7 @@ describe("Scient built-in skill releases", () => {
       },
       {
         id: "scient.html-pdf-authoring",
-        version: "0.1.0",
+        version: "0.2.0",
         category: "Document creation",
         categoryDescription: "Create polished documents and reliable final outputs.",
         displayOrder: 50,
@@ -72,7 +72,7 @@ describe("Scient built-in skill releases", () => {
       },
       {
         id: "scient.latex-authoring",
-        version: "0.1.0",
+        version: "0.2.0",
         category: "Document creation",
         categoryDescription: "Create polished documents and reliable final outputs.",
         displayOrder: 60,
@@ -131,22 +131,55 @@ describe("Scient built-in skill releases", () => {
     );
     expect(htmlPdfAuthoring.instructions).toContain("returned `outputPath`");
     expect(htmlPdfAuthoring.instructions).toContain("blocks remote resources");
-    expect(htmlPdfAuthoring.instructions).toContain("inside `@media screen`");
-    expect(htmlPdfAuthoring.instructions).toContain("physical PDF margins only with `@page`");
-    expect(htmlPdfAuthoring.instructions).toContain('actual `<a href="...">` element');
+    expect(htmlPdfAuthoring.instructions).toContain("page count as a pagination outcome");
+    expect(htmlPdfAuthoring.instructions).toContain(
+      "physical margins deliberately and express them with `@page`",
+    );
+    expect(htmlPdfAuthoring.instructions).toContain(
+      "ordinary layout styles for typography and content spacing",
+    );
+    expect(htmlPdfAuthoring.instructions).toContain(
+      "do not recreate the same page margins with print-visible body or wrapper spacing",
+    );
+    expect(htmlPdfAuthoring.instructions).toContain(
+      "printed document needs to differ from the normal HTML",
+    );
+    expect(htmlPdfAuthoring.instructions).toContain("semantic HTML anchors");
     expect(htmlPdfAuthoring.instructions).toContain("actual clickable link annotations");
-    expect(htmlPdfAuthoring.instructions).toContain("project-relative Markdown links");
+    expect(htmlPdfAuthoring.instructions).not.toContain("24px");
+    expect(htmlPdfAuthoring.instructions).not.toContain("html, body { margin: 0; }");
     expect(htmlPdfAuthoring.instructions).toContain("This skill grants no tools or authority");
     expect(latexAuthoring.description).toContain("user requests LaTeX or a .tex source");
     expect(latexAuthoring.instructions).toContain("preserve an existing project's document class");
     expect(latexAuthoring.instructions).toContain("use `% !TEX root = main.tex`");
-    expect(latexAuthoring.instructions).toContain("prefer `\\usepackage[hidelinks]{hyperref}`");
-    expect(latexAuthoring.instructions).toContain("instead of default boxed annotations");
-    expect(latexAuthoring.instructions).toContain("provide a project-relative Markdown link");
+    expect(latexAuthoring.instructions).toContain("reconcile the document body with its preamble");
+    expect(latexAuthoring.instructions).toContain(
+      "Validate custom commands in every context where they expand",
+    );
+    expect(latexAuthoring.instructions).toContain("unobtrusive, accessible styling");
+    expect(latexAuthoring.instructions).toContain("default boxed annotations");
+    expect(latexAuthoring.instructions).not.toContain("`\\mathscr`");
+    expect(latexAuthoring.instructions).not.toContain("`\\middle`");
+    expect(latexAuthoring.instructions).not.toContain("hidelinks");
+    expect(latexAuthoring.instructions).toContain("LaTeX Source, Split, and PDF surface");
+    expect(latexAuthoring.instructions).toContain("`scient_latex_build` is available");
+    expect(latexAuthoring.instructions).toContain("returned `retryAfterMs`");
+    expect(latexAuthoring.instructions).toContain("exact returned `sourcePath` and `outputPath`");
+    expect(latexAuthoring.instructions).toContain("identify it as the compiled root");
+    expect(latexAuthoring.instructions).toContain("returned `pageCount`");
+    expect(latexAuthoring.instructions).toContain(
+      "Automatic opening in Scient does not replace these links",
+    );
+    expect(latexAuthoring.instructions).toContain("fix fatal compiler errors first");
+    expect(latexAuthoring.instructions).toContain("secondary reference and navigation warnings");
+    expect(latexAuthoring.instructions).not.toContain("/PageLabels");
     expect(latexAuthoring.instructions).toContain("is not evidence that compilation succeeded");
     expect(latexAuthoring.instructions).toContain(
       "grants no tools, packages, credentials, or permissions",
     );
-    expect(pdfAuthoring.instructions).toContain("project-relative Markdown links");
+    for (const authoringSkill of [pdfAuthoring, htmlPdfAuthoring, latexAuthoring]) {
+      expect(authoringSkill.instructions).toContain("Scient chat");
+      expect(authoringSkill.instructions).toContain("clickable project-relative Markdown link");
+    }
   });
 });

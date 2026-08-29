@@ -7,6 +7,7 @@ import {
   PREVIEW_AUTOMATION_OPERATIONS,
   type ControlledHtmlPdfRenderRequest,
   type ControlledHtmlPdfRenderResult,
+  type ControlledLatexPresentRequest,
   type ControlledPdfPresentRequest,
   type EnvironmentId,
   type PreviewAutomationNavigateInput,
@@ -364,6 +365,13 @@ function PreviewAutomationHost(props: { readonly environmentId: EnvironmentId })
           useRightPanelStore
             .getState()
             .openScient(threadRef, scientGeneratedPdfSurface(input.source));
+          return {};
+        }
+        if (request.operation === "documentLatexPresent") {
+          const input = request.input as ControlledLatexPresentRequest;
+          useRightPanelStore.getState().openFile(threadRef, input.rootSourcePath, undefined, {
+            latexPreviewMode: "split",
+          });
           return {};
         }
         let state = readThreadPreviewState(threadRef);

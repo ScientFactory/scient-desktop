@@ -683,7 +683,11 @@ it.effect("routes internal document builds only to a host that advertises the re
         yield* broker.connect(
           makeHost({
             clientId: "client-document-renderer",
-            supportedOperations: ["documentPdfRender", "documentPdfPresent"],
+            supportedOperations: [
+              "documentPdfRender",
+              "documentPdfPresent",
+              "documentLatexPresent",
+            ],
           }),
         ),
       );
@@ -703,6 +707,13 @@ it.effect("routes internal document builds only to a host that advertises the re
           scope,
           operation: "documentPdfRender",
           input: { assetRelativeUrl: "/api/assets/token/report.html" },
+        }),
+      ).toBe("controlled-renderer");
+      expect(
+        yield* broker.invoke<string>({
+          scope,
+          operation: "documentLatexPresent",
+          input: { rootSourcePath: "main.tex" },
         }),
       ).toBe("controlled-renderer");
     }),

@@ -34,7 +34,7 @@ The goal is to produce a correct, polished PDF that fits the user's purpose whil
 
 ## Choose an Authoring Route
 
-Honor the user's requested source format. If they ask for LaTeX or a \`.tex\` source, create LaTeX and do not substitute HTML merely because HTML has a direct build tool. Preserve an existing authoring format unless the user asks to convert it.
+Honor the user's requested source format. If they ask for LaTeX or a \`.tex\` source, create LaTeX and do not substitute HTML merely because another route is easier to build. Preserve an existing authoring format unless the user asks to convert it.
 
 When the user has not chosen a format, select the source model whose strengths match the document's hardest requirements and expected revision workflow, not its topic or length alone:
 
@@ -60,7 +60,7 @@ Review the result in the dimensions that matter for the document:
 
 Inspect rendered pages rather than relying only on successful compilation or structural parsing. Review every page of a short document and representative high-risk pages of a long one. Fix meaningful defects and rebuild when possible.
 
-Link the editable source and the final project PDF when one was actually produced. Use project-relative Markdown links, wrap link destinations containing spaces in angle brackets, and link the exact \`outputPath\` returned by a build operation. If no PDF was built, link the source and state that limitation clearly. Do not rebuild through another route merely to obtain a clickable link. Then report the authoring route, verification performed, and any unresolved warning or unverified property.
+When reporting completion to the user in Scient chat, provide clickable project-relative Markdown links to the exact editable source and final project PDF actually produced. Link the exact \`outputPath\` returned by a build operation, and wrap link destinations containing spaces in angle brackets. If no PDF was built, link the editable source and state that clearly. Do not rebuild through another route merely to obtain a link. Then report the authoring route, verification performed, and any unresolved warning or unverified property.
 `;
 
 const htmlPdfAuthoring = `---
@@ -78,15 +78,13 @@ Use this guidance only when HTML is being created or modified specifically to pr
 
 Understand the document's audience, content, and intended paper size before styling. Honor an existing design and source structure. When adapting an existing page, prefer a narrow print layer over rewriting its screen behavior unless the user asks for a redesign.
 
-Use normal document flow as the foundation. Avoid fixed-height page canvases, viewport-sized sections, nested scrolling regions, overflow clipping, and fixed or sticky interface elements unless the requested design genuinely requires them and the exported PDF has been verified. Let content reflow across pages.
+Treat page count as a pagination outcome, not as a collection of fixed-height canvases. Start from normal document flow and use page-break controls as guidance. Use rigid page canvases only when the requested format genuinely requires them and the exported PDF has been verified.
 
-Choose page size, orientation, and margins deliberately when they matter, and express them with \`@page\`. Do not silently assume A4 or Letter when the choice could change the result. Use \`@media print\` to adapt layout and remove controls or navigation, but confirm that it does not hide meaningful content.
-
-Keep screen and print spacing separate. A reliable baseline is \`html, body { margin: 0; }\`, a modest \`body\` padding such as \`24px\` inside \`@media screen\`, and \`body { padding: 0; }\` inside \`@media print\`; adapt the selector when the document uses a dedicated page wrapper. Define physical PDF margins only with \`@page\`. Unless edge-to-edge screen presentation is intentional, do not leave the preview flush to the viewport, and never repeat the same page margin as print-visible body or wrapper padding.
+Choose page size, orientation, and physical margins deliberately and express them with \`@page\`. Do not silently assume A4 or Letter when the choice could change the result. Use ordinary layout styles for typography and content spacing; do not recreate the same page margins with print-visible body or wrapper spacing. Use \`@media print\` only where the printed document needs to differ from the normal HTML, and confirm that it does not hide meaningful content.
 
 ## Preserve Document Meaning
 
-Use semantic headings in a logical hierarchy, real links, lists, figures with captions, and native tables with header and body structure. These preserve document meaning and support useful outlines, links, accessibility, and later inspection. A link must be an actual \`<a href="...">\` element: use absolute URLs for external destinations and stable workspace-relative destinations for local ones; styled text alone is not a link. Set the document language and use \`dir\` on the document or relevant sections for RTL and mixed-direction content.
+Use semantic headings in a logical hierarchy, real links, lists, figures with captions, and native tables with header and body structure. These preserve document meaning and support useful outlines, links, accessibility, and later inspection. When the document itself includes links, use semantic HTML anchors and verify that the intended links remain clickable in the exported PDF. Set the document language and use \`dir\` on the document or relevant sections for RTL and mixed-direction content.
 
 Keep assets stable and workspace-relative. Give images useful intrinsic dimensions, ensure fonts cover every required glyph, and prefer SVG or HTML and CSS for diagrams and charts that should remain sharp. Avoid depending on slow or transient remote assets. Canvas, WebGL, video, embedded frames, virtualization, and lazy content may flatten, omit, or destabilize output; use static alternatives when fidelity matters.
 
@@ -102,7 +100,7 @@ If \`scient_pdf_build\` is available, call it with the project-relative HTML sou
 
 Judge the exported PDF, not only the browser page. Check representative page boundaries and every page of a short document for blank pages, clipping, overlaps, awkward breaks, missing glyphs, and weak visual hierarchy. Verify page size and count, selectable text and logical copy order, RTL where relevant, actual clickable link annotations and outline, font rendering, and image or vector sharpness. Fix meaningful defects and export again when possible.
 
-Link the editable HTML and the returned \`outputPath\` with project-relative Markdown links. Wrap link destinations containing spaces in angle brackets. Do not rebuild through another route merely to obtain a clickable link. Then report what was verified and any unresolved warning or untested property.
+When reporting completion to the user in Scient chat, provide clickable project-relative Markdown links to the exact editable HTML source and the final PDF at the returned \`outputPath\`. Wrap link destinations containing spaces in angle brackets. If no PDF was built, link the HTML source and state that clearly. Do not rebuild through another route merely to obtain a link. Then report what was verified and any unresolved warning or untested property.
 `;
 
 const latexAuthoring = `---
@@ -118,13 +116,19 @@ Honor the user's requested format and preserve an existing project's document cl
 
 Do not assume a particular engine or package is available. Follow existing magic comments and preamble choices. For a new document with no engine requirement, prefer broadly supported LaTeX; when the content genuinely requires engine-specific features, state that requirement rather than silently changing formats. Keep assets workspace-relative. In a multi-file document, use \`% !TEX root = main.tex\` in subordinate files only when needed.
 
-Reconcile the body against the preamble before reporting a source ready: every command, environment, and glyph the document uses must have its defining package or engine feature loaded. Undefined control sequences from an unloaded package are the most common failure in generated LaTeX; a typical slip is \`\\mathscr\` without \`mathrsfs\` or \`unicode-math\`.
+Before reporting source ready, reconcile the document body with its preamble: every command, environment, and required glyph must be supported by the selected engine and packages. Validate custom commands in every context where they expand.
 
-Configure PDF hyperlinks deliberately. For a new document, prefer \`\\usepackage[hidelinks]{hyperref}\` unless visible link styling materially helps; if links should be visible, use restrained accessible text colors instead of default boxed annotations. Preserve an existing project's link style. After compilation, verify that contents entries, citations, cross-references, and URLs are clickable.
+Configure PDF hyperlinks deliberately. Preserve an existing project's link style. For a new document, choose unobtrusive, accessible styling and avoid accidental default boxed annotations. After compilation, verify the intended contents entries, citations, cross-references, and URLs.
 
-In Scient, a workspace \`.tex\` file is a first-class editable source. Create it in the project and provide a project-relative Markdown link. Opening the link opens Scient's LaTeX source and PDF view, starts local compilation, and shows the PDF after a successful build. If direct build access is unavailable, state that the source is ready to compile; opening a link or creating a source is not evidence that compilation succeeded.
+In Scient, a workspace \`.tex\` file is a first-class editable source. Create it in the project. Opening a project-relative link opens Scient's LaTeX Source, Split, and PDF surface, starts local compilation, and shows the PDF after a successful build.
 
-When build evidence is available, inspect meaningful diagnostics and the rendered PDF rather than treating a successful compiler exit as proof of quality. Check the parts that matter for the document, such as equations, citations and references, pagination, figures, tables, and required glyphs. Fix material defects when possible. Link an actual project PDF only when one was produced, and report any unverified build or output property clearly.
+When the requested deliverable includes a PDF and \`scient_latex_build\` is available, call it with the project-relative \`.tex\` source path and intended project-relative \`.pdf\` output path. The tool follows \`% !TEX root\`, joins an existing build for the same resolved root, and returns either \`completed\` or \`in-progress\`. For \`in-progress\`, wait at least the returned \`retryAfterMs\`, then call the same tool again with the same paths; do not poll rapidly or launch parallel builds. On completion, treat the returned evidence as authoritative. When reporting completion to the user in Scient chat, provide clickable project-relative Markdown links to the exact returned \`sourcePath\` and \`outputPath\`; if \`rootSourcePath\` differs, also link it and identify it as the compiled root. Wrap link destinations containing spaces in angle brackets. Report the returned \`pageCount\` and meaningful diagnostics rather than intended values. Automatic opening in Scient does not replace these links.
+
+If direct build access is unavailable, provide a clickable project-relative Markdown link to the \`.tex\` source and state that compilation was not verified; the user can open that link to use Scient's built-in compiler. Opening a link or creating a source is not evidence that compilation succeeded.
+
+When build evidence is available, fix fatal compiler errors first. After a successful normal multipass build, reassess secondary reference and navigation warnings that may have resulted from the interrupted build.
+
+A completed build proves structural compilation and publication, not visual quality. Inspect meaningful diagnostics and the rendered PDF when those views are available rather than treating a successful compiler exit as proof of quality. Check the parts that matter for the document, such as equations, citations and references, pagination, figures, tables, and required glyphs. Fix material defects when possible. Link an actual project PDF only when one was produced, and report any unverified build or output property clearly.
 
 This skill provides guidance only and grants no tools, packages, credentials, or permissions.
 `;
@@ -280,7 +284,7 @@ export const BUILT_IN_SKILL_SOURCES: ReadonlyArray<BuiltInSkillSource> = Object.
       "scient.skill.json": `{
   "apiVersion": "scient.skills/v1alpha1",
   "id": "scient.pdf-authoring",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "category": "Document creation",
   "categoryDescription": "Create polished documents and reliable final outputs.",
   "displayOrder": 40,
@@ -301,7 +305,7 @@ export const BUILT_IN_SKILL_SOURCES: ReadonlyArray<BuiltInSkillSource> = Object.
       "scient.skill.json": `{
   "apiVersion": "scient.skills/v1alpha1",
   "id": "scient.html-pdf-authoring",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "category": "Document creation",
   "categoryDescription": "Create polished documents and reliable final outputs.",
   "displayOrder": 50,
@@ -322,7 +326,7 @@ export const BUILT_IN_SKILL_SOURCES: ReadonlyArray<BuiltInSkillSource> = Object.
       "scient.skill.json": `{
   "apiVersion": "scient.skills/v1alpha1",
   "id": "scient.latex-authoring",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "category": "Document creation",
   "categoryDescription": "Create polished documents and reliable final outputs.",
   "displayOrder": 60,

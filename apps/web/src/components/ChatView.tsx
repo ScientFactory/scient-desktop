@@ -150,6 +150,7 @@ import {
   selectActiveRightPanel,
   selectActiveRightPanelSurface,
   selectThreadRightPanelState,
+  type LatexFilePresentationRequest,
   type RightPanelSurface,
   updatePullRequestTabStatus,
   useRightPanelStore,
@@ -3759,6 +3760,15 @@ function ChatViewContent(props: ChatViewProps) {
       useRightPanelStore.getState().openFile(activeThreadRef, relativePath, line);
     },
     [activeThreadRef, activeWorkspaceRoot],
+  );
+  const handleLatexPresentationRequestHandled = useCallback(
+    (relativePath: string, request: LatexFilePresentationRequest) => {
+      if (!activeThreadRef) return;
+      useRightPanelStore
+        .getState()
+        .consumeLatexPresentationRequest(activeThreadRef, relativePath, request.id);
+    },
+    [activeThreadRef],
   );
   const openFileSurface = useScientFileOpening({
     threadRef: activeThreadRef,
@@ -7531,8 +7541,10 @@ function ChatViewContent(props: ChatViewProps) {
           }
           revealLine={activeFileSurface?.revealLine ?? null}
           revealRequestId={activeFileSurface?.revealRequestId ?? 0}
+          latexPresentationRequest={activeFileSurface?.latexPresentationRequest ?? null}
           onOpenFile={openFileSurface}
           onOpenFileSource={openFileSourceSurface}
+          onLatexPresentationRequestHandled={handleLatexPresentationRequestHandled}
           onPendingChange={handleFilePendingChange}
         />
       </Suspense>
