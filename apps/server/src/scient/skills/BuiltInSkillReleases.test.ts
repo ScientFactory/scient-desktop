@@ -131,13 +131,17 @@ describe("Scient built-in skill releases", () => {
     );
     expect(htmlPdfAuthoring.instructions).toContain("returned `outputPath`");
     expect(htmlPdfAuthoring.instructions).toContain("blocks remote resources");
-    expect(htmlPdfAuthoring.instructions).toContain("only in `@media screen`");
-    expect(htmlPdfAuthoring.instructions).toContain("print-visible padding");
+    expect(htmlPdfAuthoring.instructions).toContain("inside `@media screen`");
+    expect(htmlPdfAuthoring.instructions).toContain("physical PDF margins only with `@page`");
+    expect(htmlPdfAuthoring.instructions).toContain('actual `<a href="...">` element');
+    expect(htmlPdfAuthoring.instructions).toContain("actual clickable link annotations");
     expect(htmlPdfAuthoring.instructions).toContain("project-relative Markdown links");
     expect(htmlPdfAuthoring.instructions).toContain("This skill grants no tools or authority");
     expect(latexAuthoring.description).toContain("user requests LaTeX or a .tex source");
     expect(latexAuthoring.instructions).toContain("preserve an existing project's document class");
     expect(latexAuthoring.instructions).toContain("use `% !TEX root = main.tex`");
+    expect(latexAuthoring.instructions).toContain("prefer `\\usepackage[hidelinks]{hyperref}`");
+    expect(latexAuthoring.instructions).toContain("instead of default boxed annotations");
     expect(latexAuthoring.instructions).toContain("provide a project-relative Markdown link");
     expect(latexAuthoring.instructions).toContain("is not evidence that compilation succeeded");
     expect(latexAuthoring.instructions).toContain(

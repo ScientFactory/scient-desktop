@@ -82,11 +82,11 @@ Use normal document flow as the foundation. Avoid fixed-height page canvases, vi
 
 Choose page size, orientation, and margins deliberately when they matter, and express them with \`@page\`. Do not silently assume A4 or Letter when the choice could change the result. Use \`@media print\` to adapt layout and remove controls or navigation, but confirm that it does not hide meaningful content.
 
-Keep screen and print spacing separate: define PDF margins with \`@page\`; if the screen preview would otherwise touch the viewport edge, add a modest outer gutter only in \`@media screen\`, unless edge-to-edge presentation is intentional. Do not reproduce page margins as print-visible padding inside the document.
+Keep screen and print spacing separate. A reliable baseline is \`html, body { margin: 0; }\`, a modest \`body\` padding such as \`24px\` inside \`@media screen\`, and \`body { padding: 0; }\` inside \`@media print\`; adapt the selector when the document uses a dedicated page wrapper. Define physical PDF margins only with \`@page\`. Unless edge-to-edge screen presentation is intentional, do not leave the preview flush to the viewport, and never repeat the same page margin as print-visible body or wrapper padding.
 
 ## Preserve Document Meaning
 
-Use semantic headings in a logical hierarchy, real links, lists, figures with captions, and native tables with header and body structure. These preserve document meaning and support useful outlines, links, accessibility, and later inspection. Set the document language and use \`dir\` on the document or relevant sections for RTL and mixed-direction content.
+Use semantic headings in a logical hierarchy, real links, lists, figures with captions, and native tables with header and body structure. These preserve document meaning and support useful outlines, links, accessibility, and later inspection. A link must be an actual \`<a href="...">\` element: use absolute URLs for external destinations and stable workspace-relative destinations for local ones; styled text alone is not a link. Set the document language and use \`dir\` on the document or relevant sections for RTL and mixed-direction content.
 
 Keep assets stable and workspace-relative. Give images useful intrinsic dimensions, ensure fonts cover every required glyph, and prefer SVG or HTML and CSS for diagrams and charts that should remain sharp. Avoid depending on slow or transient remote assets. Canvas, WebGL, video, embedded frames, virtualization, and lazy content may flatten, omit, or destabilize output; use static alternatives when fidelity matters.
 
@@ -100,7 +100,7 @@ Page counters and margin-box content may be used only when the actual Chromium e
 
 If \`scient_pdf_build\` is available, call it with the project-relative HTML source path and intended project-relative PDF output path. Scient renders the document with print media in isolated Chromium, permits its local sibling assets, blocks remote resources, validates the PDF structurally, publishes an immutable revision, writes the validated PDF to \`outputPath\`, and opens it. Tool success does not prove visual quality. If direct build access is unavailable, create and link the workspace HTML so the user can open it in Scient and choose Export PDF. This skill grants no tools or authority, and source creation alone is not a completed PDF.
 
-Judge the exported PDF, not only the browser page. Check representative page boundaries and every page of a short document for blank pages, clipping, overlaps, awkward breaks, missing glyphs, and weak visual hierarchy. Verify page size and count, selectable text and logical copy order, RTL where relevant, links and outline, font rendering, and image or vector sharpness. Fix meaningful defects and export again when possible.
+Judge the exported PDF, not only the browser page. Check representative page boundaries and every page of a short document for blank pages, clipping, overlaps, awkward breaks, missing glyphs, and weak visual hierarchy. Verify page size and count, selectable text and logical copy order, RTL where relevant, actual clickable link annotations and outline, font rendering, and image or vector sharpness. Fix meaningful defects and export again when possible.
 
 Link the editable HTML and the returned \`outputPath\` with project-relative Markdown links. Wrap link destinations containing spaces in angle brackets. Do not rebuild through another route merely to obtain a clickable link. Then report what was verified and any unresolved warning or untested property.
 `;
@@ -119,6 +119,8 @@ Honor the user's requested format and preserve an existing project's document cl
 Do not assume a particular engine or package is available. Follow existing magic comments and preamble choices. For a new document with no engine requirement, prefer broadly supported LaTeX; when the content genuinely requires engine-specific features, state that requirement rather than silently changing formats. Keep assets workspace-relative. In a multi-file document, use \`% !TEX root = main.tex\` in subordinate files only when needed.
 
 Reconcile the body against the preamble before reporting a source ready: every command, environment, and glyph the document uses must have its defining package or engine feature loaded. Undefined control sequences from an unloaded package are the most common failure in generated LaTeX; a typical slip is \`\\mathscr\` without \`mathrsfs\` or \`unicode-math\`.
+
+Configure PDF hyperlinks deliberately. For a new document, prefer \`\\usepackage[hidelinks]{hyperref}\` unless visible link styling materially helps; if links should be visible, use restrained accessible text colors instead of default boxed annotations. Preserve an existing project's link style. After compilation, verify that contents entries, citations, cross-references, and URLs are clickable.
 
 In Scient, a workspace \`.tex\` file is a first-class editable source. Create it in the project and provide a project-relative Markdown link. Opening the link opens Scient's LaTeX source and PDF view, starts local compilation, and shows the PDF after a successful build. If direct build access is unavailable, state that the source is ready to compile; opening a link or creating a source is not evidence that compilation succeeded.
 

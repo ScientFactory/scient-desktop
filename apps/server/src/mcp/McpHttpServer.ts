@@ -26,6 +26,8 @@ import { ScientSourcesToolkitHandlersLive } from "./toolkits/sources/handlers.ts
 import { ScientSourcesToolkit } from "./toolkits/sources/tools.ts";
 import { ScientSkillsToolkitHandlersLive } from "./toolkits/skills/handlers.ts";
 import { ScientSkillsToolkit } from "./toolkits/skills/tools.ts";
+import { ScientDocumentsToolkitHandlersLive } from "./toolkits/documents/handlers.ts";
+import { ScientDocumentsToolkit } from "./toolkits/documents/tools.ts";
 
 const unauthorized = HttpServerResponse.jsonUnsafe(
   {
@@ -228,6 +230,10 @@ export const ScientSkillsToolkitRegistrationLive = McpServer.toolkit(ScientSkill
   Layer.provide(ScientSkillsToolkitHandlersLive),
 );
 
+export const ScientDocumentsToolkitRegistrationLive = McpServer.toolkit(
+  ScientDocumentsToolkit,
+).pipe(Layer.provide(ScientDocumentsToolkitHandlersLive));
+
 const McpTransportLive = McpServer.layerHttp({
   name: "Scient",
   version: packageJson.version,
@@ -239,4 +245,5 @@ export const layer = Layer.mergeAll(
   PreviewToolkitRegistrationLive,
   ScientSourcesToolkitRegistrationLive,
   ScientSkillsToolkitRegistrationLive,
+  ScientDocumentsToolkitRegistrationLive,
 ).pipe(Layer.provideMerge(McpTransportLive));

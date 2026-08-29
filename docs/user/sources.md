@@ -98,17 +98,15 @@ unknown values.
 
 ## Work with agents
 
-When Sources access is enabled, an agent can search and read the same
-project-owned library, maintain source notes, update metadata, attach or detach
-a project PDF, remove a source, or propose a new one. Agent-proposed sources are
-marked for your review; approve one to add it normally or reject it to remove
-the proposal.
+In a project conversation, an agent can search and read the same project-owned
+library, maintain source notes, update metadata, attach or detach a project PDF,
+remove a source, or propose a new one. Agent-proposed sources are marked for
+your review; approve one to add it normally or reject it to remove the proposal.
 
-Manage this access in **Settings → Integrations**. Turning agent access off does
-not remove Sources or prevent you from using the library yourself. The
-conversation's [permission mode](permission-modes.md) and provider approval
-flow still apply to writes. Access to Sources does not grant arbitrary host
-file paths, change Zotero, or turn uncertain metadata into verified evidence.
+The conversation's [permission mode](permission-modes.md) and provider approval
+flow still apply to writes. Sources tools stay scoped to the current project:
+they do not grant arbitrary host file paths, change Zotero, or turn uncertain
+metadata into verified evidence.
 
 ## Current limits
 

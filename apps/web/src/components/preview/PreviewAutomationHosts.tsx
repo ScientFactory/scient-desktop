@@ -5,6 +5,9 @@ import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime"
 import {
   FILL_PREVIEW_VIEWPORT,
   PREVIEW_AUTOMATION_OPERATIONS,
+  type ControlledHtmlPdfRenderRequest,
+  type ControlledHtmlPdfRenderResult,
+  type ControlledPdfPresentRequest,
   type EnvironmentId,
   type PreviewAutomationNavigateInput,
   type PreviewAutomationOpenInput,
@@ -21,6 +24,7 @@ import {
 } from "@t3tools/contracts";
 import { resolvePreviewViewport } from "@t3tools/shared/previewViewport";
 import { useCallback, useContext, useEffect, useMemo, useState } from "react";
+import * as Encoding from "effect/Encoding";
 import { Atom } from "effect/unstable/reactivity";
 
 import {
@@ -42,10 +46,13 @@ import { browserDefaultOpenViewport, resolveBrowserDefaults } from "~/browser/br
 import { runBrowserViewportMutation } from "~/browser/browserViewportActions";
 import { previewRuntimeTabId } from "~/browser/previewRuntimeTabId";
 import { isElectron } from "~/env";
-import { useEnvironments } from "~/state/environments";
+import { resolveAssetUrl } from "~/assets/assetUrls";
+import { useEnvironments, useEnvironmentHttpBaseUrl } from "~/state/environments";
 import { previewEnvironment } from "~/state/preview";
 import { useAtomQueryRunner } from "~/state/use-atom-query-runner";
 import { useAtomCommand } from "~/state/use-atom-command";
+import { useRightPanelStore } from "~/rightPanelStore";
+import { scientGeneratedPdfSurface } from "~/scient/rightPanel/surfaces";
 
 import { previewBridge } from "./previewBridge";
 import {
@@ -266,6 +273,7 @@ export function PreviewAutomationHosts() {
 
 function PreviewAutomationHost(props: { readonly environmentId: EnvironmentId }) {
   const { environmentId } = props;
+  const httpBaseUrl = useEnvironmentHttpBaseUrl(environmentId);
   const registry = useContext(RegistryContext);
   const [automationClientId] = useState(createPreviewAutomationClientId);
   const initialAutomationHost = useMemo<PreviewAutomationHostState>(
@@ -308,6 +316,43 @@ function PreviewAutomationHost(props: { readonly environmentId: EnvironmentId })
       };
       let tabId = request.tabId ?? null;
       try {
+        if (request.operation === "documentPdfRender") {
+          const bridge = previewBridge;
+          if (!bridge || httpBaseUrl === null) {
+            throw new PreviewAutomationTargetUnavailableError({
+              requestId: request.requestId,
+              operation: request.operation,
+              environmentId,
+              threadId: request.threadId,
+              tabId: null,
+              bridgeAvailable: Boolean(bridge),
+            });
+          }
+          const input = request.input as ControlledHtmlPdfRenderRequest;
+          const sourceUrl = resolveAssetUrl(httpBaseUrl, input.assetRelativeUrl);
+          if (sourceUrl === null) throw new Error("The signed HTML source URL is invalid.");
+          const artifact = await bridge.renderHtmlPdf(sourceUrl);
+          return {
+            title: artifact.title,
+            sourceUrl: artifact.sourceUrl,
+            profile: artifact.profile,
+            media: artifact.media,
+            warnings: artifact.warnings,
+            sourceSignals: artifact.sourceSignals,
+            blockedRequestCount: artifact.blockedRequestCount,
+            bytesBase64: Encoding.encodeBase64Url(artifact.data),
+          } satisfies ControlledHtmlPdfRenderResult;
+        }
+        if (request.operation === "documentPdfPresent") {
+          const input = request.input as ControlledPdfPresentRequest;
+          if (input.source._tag !== "generated-pdf") {
+            throw new Error("The document build returned an unsupported PDF source.");
+          }
+          useRightPanelStore
+            .getState()
+            .openScient(threadRef, scientGeneratedPdfSurface(input.source));
+          return {};
+        }
         let state = readThreadPreviewState(threadRef);
         const needsSessionSync = needsPreviewAutomationSessionSync(state, request.tabId);
         if (needsSessionSync) {
@@ -680,7 +725,7 @@ function PreviewAutomationHost(props: { readonly environmentId: EnvironmentId })
         });
       }
     },
-    [environmentId, listPreviews, open, registry, resize],
+    [environmentId, httpBaseUrl, listPreviews, open, registry, resize],
   );
   const [requestHandlerAtom] = useState(() => Atom.make({ handle: handleRequest }));
   const setRequestHandler = useAtomSet(requestHandlerAtom);

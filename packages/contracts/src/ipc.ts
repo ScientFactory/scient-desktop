@@ -838,6 +838,37 @@ export const DesktopPreviewPdfExportArtifactSchema: Schema.Codec<DesktopPreviewP
     sourceSignals: DesktopPreviewPdfExportSourceSignalsSchema,
   });
 
+export interface DesktopControlledHtmlPdfRenderInput {
+  sourceUrl: string;
+}
+
+export const DesktopControlledHtmlPdfRenderInputSchema = Schema.Struct({
+  sourceUrl: Schema.String.check(
+    Schema.isTrimmed(),
+    Schema.isNonEmpty(),
+    Schema.isMaxLength(32_768),
+  ),
+});
+
+export interface DesktopControlledHtmlPdfRenderArtifact extends DesktopPreviewPdfExportArtifact {
+  /** Requests denied because they escaped the signed document capability. */
+  blockedRequestCount: number;
+}
+
+export const DesktopControlledHtmlPdfRenderArtifactSchema: Schema.Codec<DesktopControlledHtmlPdfRenderArtifact> =
+  Schema.Struct({
+    data: Schema.Uint8Array,
+    sourceUrl: Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(32_768)),
+    title: Schema.String.check(Schema.isMaxLength(512)),
+    profile: Schema.Literal("document-layout"),
+    media: Schema.Literal("print"),
+    warnings: Schema.Array(Schema.String.check(Schema.isMaxLength(256))).check(
+      Schema.isMaxLength(32),
+    ),
+    sourceSignals: DesktopPreviewPdfExportSourceSignalsSchema,
+    blockedRequestCount: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),
+  });
+
 /**
  * Single stack frame captured by react-grab's `getElementContext`. We surface
  * the source file/line so coding agents can jump straight to the JSX that
@@ -1316,6 +1347,8 @@ export interface DesktopPreviewBridge {
   captureScreenshot: (tabId: string) => Promise<DesktopPreviewScreenshotArtifact>;
   /** Print the current live guest state without navigating or reloading it. */
   exportPdf: (tabId: string) => Promise<DesktopPreviewPdfExportArtifact>;
+  /** Render one signed project HTML document in an isolated hidden Chromium guest. */
+  renderHtmlPdf: (sourceUrl: string) => Promise<DesktopControlledHtmlPdfRenderArtifact>;
   revealArtifact: (path: string) => Promise<void>;
   copyArtifactToClipboard: (path: string) => Promise<void>;
   pictureInPicture: {

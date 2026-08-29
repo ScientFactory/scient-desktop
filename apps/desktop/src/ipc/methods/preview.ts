@@ -12,6 +12,8 @@ import {
   DesktopPreviewNavigateInputSchema,
   DesktopPreviewRecordingArtifactSchema,
   DesktopPreviewRecordingSaveInputSchema,
+  DesktopControlledHtmlPdfRenderArtifactSchema,
+  DesktopControlledHtmlPdfRenderInputSchema,
   DesktopPreviewRegisterWebviewInputSchema,
   DesktopPreviewScreenshotArtifactSchema,
   DesktopPreviewPdfExportArtifactSchema,
@@ -270,6 +272,16 @@ export const exportPdf = DesktopIpc.makeIpcMethod({
   }),
 });
 
+export const renderHtmlPdf = DesktopIpc.makeIpcMethod({
+  channel: IpcChannels.PREVIEW_RENDER_HTML_PDF_CHANNEL,
+  payload: DesktopControlledHtmlPdfRenderInputSchema,
+  result: DesktopControlledHtmlPdfRenderArtifactSchema,
+  handler: Effect.fn("desktop.ipc.preview.renderHtmlPdf")(function* ({ sourceUrl }) {
+    const manager = yield* PreviewManager.PreviewManager;
+    return yield* manager.renderHtmlPdf(sourceUrl);
+  }),
+});
+
 export const revealArtifact = DesktopIpc.makeIpcMethod({
   channel: IpcChannels.PREVIEW_REVEAL_ARTIFACT_CHANNEL,
   payload: DesktopPreviewArtifactInputSchema,
@@ -403,6 +415,7 @@ export const methods = [
   cancelPickElement,
   captureScreenshot,
   exportPdf,
+  renderHtmlPdf,
   revealArtifact,
   copyArtifactToClipboard,
   openPictureInPicture,

@@ -96,7 +96,6 @@ import {
   resolveInlineCodeFileLinkMeta,
   resolveMarkdownFileLinkMeta,
   rewriteMarkdownFileUriHref,
-  shouldOpenMarkdownFileLinkInBrowserByDefault,
   shouldOpenMarkdownFileLinkInEditor,
   type MarkdownFileLinkMeta,
 } from "../markdown-links";
@@ -218,16 +217,11 @@ export function hasMarkdownFilePrimaryAction(input: {
 }
 
 export function shouldUseMarkdownFileBrowserPrimaryAction(input: {
-  iconPath: string;
-  canOpenInEditor: boolean;
   canOpenInBrowser: boolean;
-  canOpenInPanel: boolean;
 }): boolean {
-  return (
-    input.canOpenInBrowser &&
-    (shouldOpenMarkdownFileLinkInBrowserByDefault(input.iconPath) ||
-      (!input.canOpenInEditor && !input.canOpenInPanel))
-  );
+  // The caller supplies this action only when the canonical workspace-file
+  // policy selected Browser preview. Do not duplicate extension policy here.
+  return input.canOpenInBrowser;
 }
 
 const EMPTY_MARKDOWN_SKILLS: ReadonlyArray<Pick<ServerProviderSkill, "name" | "displayName">> = [];
@@ -1591,10 +1585,7 @@ const MarkdownFileLink = memo(function MarkdownFileLink({
     canOpenInPanel,
   });
   const useBrowserPrimaryAction = shouldUseMarkdownFileBrowserPrimaryAction({
-    iconPath,
-    canOpenInEditor,
     canOpenInBrowser,
-    canOpenInPanel,
   });
 
   return (

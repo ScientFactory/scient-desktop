@@ -68,6 +68,7 @@ export const PREVIEW_PICK_ELEMENT_CHANNEL = "desktop:preview-pick-element";
 export const PREVIEW_CANCEL_PICK_ELEMENT_CHANNEL = "desktop:preview-cancel-pick-element";
 export const PREVIEW_CAPTURE_SCREENSHOT_CHANNEL = "desktop:preview-capture-screenshot";
 export const PREVIEW_EXPORT_PDF_CHANNEL = "desktop:preview-export-pdf";
+export const PREVIEW_RENDER_HTML_PDF_CHANNEL = "desktop:preview-render-html-pdf";
 export const PREVIEW_REVEAL_ARTIFACT_CHANNEL = "desktop:preview-reveal-artifact";
 export const PREVIEW_COPY_ARTIFACT_CHANNEL = "desktop:preview-copy-artifact";
 export const PREVIEW_PICTURE_IN_PICTURE_OPEN_CHANNEL = "desktop:preview-pip-open";

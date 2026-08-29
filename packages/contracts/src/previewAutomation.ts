@@ -43,6 +43,10 @@ export const PREVIEW_AUTOMATION_OPERATIONS = [
   ...PREVIEW_AUTOMATION_V1_OPERATIONS,
   "resize",
   "setColorScheme",
+  // Internal Scient document-host operations. These use the existing
+  // authenticated desktop request rail but are not exposed as preview tools.
+  "documentPdfRender",
+  "documentPdfPresent",
 ] as const;
 
 export const PreviewAutomationOperation = Schema.Literals(PREVIEW_AUTOMATION_OPERATIONS);

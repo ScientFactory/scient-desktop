@@ -105,45 +105,20 @@ describe("ChatMarkdown file option chips", () => {
 });
 
 describe("shouldUseMarkdownFileBrowserPrimaryAction", () => {
-  it("uses the browser when it is the only available primary action", () => {
+  it("uses the browser whenever the resolved file policy supplies it", () => {
     expect(
       shouldUseMarkdownFileBrowserPrimaryAction({
-        iconPath: "/tmp/report.html",
-        canOpenInEditor: false,
         canOpenInBrowser: true,
-        canOpenInPanel: false,
       }),
     ).toBe(true);
   });
 
-  it("preserves the normal editor and panel defaults for HTML files", () => {
+  it("falls back to the file actions when browser preview is unavailable", () => {
     expect(
       shouldUseMarkdownFileBrowserPrimaryAction({
-        iconPath: "/tmp/report.html",
-        canOpenInEditor: true,
-        canOpenInBrowser: true,
-        canOpenInPanel: false,
+        canOpenInBrowser: false,
       }),
     ).toBe(false);
-    expect(
-      shouldUseMarkdownFileBrowserPrimaryAction({
-        iconPath: "/tmp/report.html",
-        canOpenInEditor: false,
-        canOpenInBrowser: true,
-        canOpenInPanel: true,
-      }),
-    ).toBe(false);
-  });
-
-  it("continues to open PDF files in the browser by default", () => {
-    expect(
-      shouldUseMarkdownFileBrowserPrimaryAction({
-        iconPath: "/tmp/report.pdf",
-        canOpenInEditor: true,
-        canOpenInBrowser: true,
-        canOpenInPanel: true,
-      }),
-    ).toBe(true);
   });
 });
 

@@ -8,7 +8,12 @@ import type { SkillRelease } from "@scientfactory/scient-skills";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 
-export type McpCapability = "preview" | "skills:read" | "sources:read" | "sources:write";
+export type McpCapability =
+  | "preview"
+  | "documents:build"
+  | "skills:read"
+  | "sources:read"
+  | "sources:write";
 
 export interface McpScientSkillDescriptor {
   readonly releaseKey: string;

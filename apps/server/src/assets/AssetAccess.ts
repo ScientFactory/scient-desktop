@@ -314,6 +314,8 @@ const resolveCanonicalEnvironmentFileForRequest = (canonicalPath: string) =>
 
 export const issueAssetUrl = Effect.fn("AssetAccess.issueAssetUrl")(function* (input: {
   readonly resource: AssetResource;
+  /** Internal-only override for short-lived, single-operation asset capabilities. */
+  readonly expiresInMs?: number;
   readonly workspaceRoot?: string;
   readonly projectFaviconPath?: string;
   readonly generatedDocument?: ResolvedGeneratedDocumentRevision;
@@ -326,7 +328,11 @@ export const issueAssetUrl = Effect.fn("AssetAccess.issueAssetUrl")(function* (i
   const path = yield* Path.Path;
   const workspacePaths = yield* WorkspacePaths.WorkspacePaths;
   const issuedAt = yield* Clock.currentTimeMillis;
-  let expiresAt = issuedAt + ASSET_TOKEN_TTL_MS;
+  let expiresAt =
+    issuedAt +
+    (input.expiresInMs !== undefined && Number.isFinite(input.expiresInMs) && input.expiresInMs > 0
+      ? Math.min(input.expiresInMs, ASSET_TOKEN_TTL_MS)
+      : ASSET_TOKEN_TTL_MS);
   let claims: AssetClaims;
   let fileName: string;
   let sourcePath: string | undefined;
@@ -743,7 +749,7 @@ export const issueAssetUrl = Effect.fn("AssetAccess.issueAssetUrl")(function* (i
         // Browser tabs cannot replace an expired document token without
         // reloading and losing interactive state. Keep one normal workday plus
         // restart headroom while exact file capabilities retain the short TTL.
-        expiresAt = issuedAt + ENVIRONMENT_HTML_TOKEN_TTL_MS;
+        if (input.expiresInMs === undefined) expiresAt = issuedAt + ENVIRONMENT_HTML_TOKEN_TTL_MS;
         claims = {
           version: 1,
           kind: "environment-html-document",

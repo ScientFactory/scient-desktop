@@ -218,11 +218,11 @@ The toolkit is project-scoped, does not write Zotero, and does not create a
 second agent-owned notes or source format. Read and write capabilities are
 separate, mutating tool descriptions require an explicit user request, and
 normal agent tool authorization remains the approval boundary rather than a
-separate Sources permission UI. Agent Browser and Sources access are currently
-enabled by default together in the server-authoritative Integrations setting;
-turning that setting off withholds `preview`, `sources:read`, and
-`sources:write` from new provider sessions. A settings-read failure also fails
-closed by withholding those capabilities.
+separate Sources permission UI. Providers that receive Scient's MCP session
+always receive `sources:read` and `sources:write`; these baseline capabilities
+are independent of optional preview-browser control. The capability checks
+remain the server authorization boundary, and exact project/worktree
+resolution remains server-owned.
 
 Metadata refresh is an explicitly destructive operation guarded by a compact
 confirmation surface. The environment server re-runs the existing local-PDF

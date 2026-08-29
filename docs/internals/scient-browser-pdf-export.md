@@ -29,11 +29,12 @@ destination picker.
   page must still fragment rather than overflow or disappear. The stylesheet is removed after every
   successful, failed, or navigation-raced export.
 - Background graphics, CSS page size, tagged PDF, and document outline generation are enabled;
-  headers and footers are disabled. A deterministic one-sixth-inch margin (16 CSS px at Chromium's
-  96 px/in reference ratio) on every edge replaces Chromium's larger implicit margin, leaving a
-  small readable boundary while source styles control the document's internal spacing. Electron's
-  `printToPDF` margin values are inches, even though its printer-margin type declarations describe
-  pixels.
+  headers and footers are disabled. A user-initiated Browser export gets a deterministic
+  one-sixth-inch fallback margin (16 CSS px at Chromium's 96 px/in reference ratio) in place of
+  Chromium's larger implicit margin. A controlled agent document build instead adds zero host
+  margin: its source-authored `@page` size and margins are the sole physical page geometry, avoiding
+  a hidden second margin. Electron's `printToPDF` margin values are inches, even though its
+  printer-margin type declarations describe pixels.
 - Chromium prints the live DOM rather than a screenshot. For ordinary HTML, Chromium retains text as
   selectable/searchable text, lays out RTL and mixed-direction runs with its bidi engine, and carries
   surviving anchors into PDF link annotations. Author CSS, font behavior, and browser engine changes
@@ -94,6 +95,41 @@ final filesystem path. Generated document and right-panel titles use content-der
 so Hebrew and Arabic titles align and truncate naturally. PDF rotation remains available under the
 reader's More menu rather than appearing as a second ambiguous refresh-like icon.
 
+## Agent-authored project documents
+
+Providers that receive Scient's MCP session get baseline document-build authority and expose
+`scient_pdf_build`, independently of optional preview-browser control. A PDF is produced only when
+the tool is invoked with the path of an existing project-relative HTML document and an explicit
+project-relative `.pdf` output path. The server resolves the thread's current project or worktree on
+every call, canonicalizes the source, rejects absolute, traversing, non-HTML, missing, and
+symlink-escaping source paths, validates that the output and its existing ancestors remain inside
+the project, and fingerprints the source bytes before rendering. It then
+issues a two-minute internal asset capability and asks the connected desktop to print the document
+in a hidden, sandboxed Chromium window. The renderer permits only that signed document, sibling
+assets under the same capability, and `data:` or `blob:` content; it denies permissions,
+navigations, downloads, new windows, and external network requests, and clears the nonpersistent
+session after every outcome.
+
+The desktop returns PDF bytes only over the authenticated host rail. They never enter the public
+tool result or a preview tab. Before publication, the server re-reads the canonical source and
+abandons the attempt if its path or fingerprint changed. It then applies the same 64 MiB transport
+ceiling as user-initiated exports. An existing non-file output is rejected before rendering. After
+the source checks, the server stages and fsyncs the candidate PDF in the resolved project output
+directory. Immutable publication applies the `browser-export` structural validation and commits
+the same bytes as a `controlled-render` revision; only then does the server atomically rename the
+staged file over the requested project output. Rendering, source-currentness, output staging, or
+publication failure cleans the stage and leaves an earlier project output untouched.
+
+The final rename is the only residual cross-store race: if the destination changes after staging,
+the immutable revision remains valid and the tool returns an explicit `partial-publication` receipt
+containing its descriptor and the unwritten `outputPath`. It does not claim that project file exists.
+Scient still asks the desktop to open the available revision. If presentation alone is interrupted,
+the build remains successful and reports a `presentation-unavailable` warning rather than
+encouraging a duplicate build. The tool reports structural validation and source warnings
+truthfully; it never represents this as visual inspection. Publication failure marks the acquired
+production failed, while render, authorization, invalid-response, source-race, and pre-publication
+output failures abandon the attempt without discrediting the last successful revision.
+
 Substantive implementation stays in Scient-owned modules. The Browser action reuses the inherited
 chrome's existing trailing-action slot; it does not add PDF-specific state or props to that component.
 Inherited Browser, server, desktop IPC, and right-panel files contain only the narrow mounts recorded
@@ -101,7 +137,7 @@ in `UPSTREAM.md` and enforced by the browser-export seam audit.
 
 ## Explicitly deferred
 
-Current-appearance capture, controlled-document adapters, page-range and paper controls, Attach to
-Chat, a binary upload transport for exports above 64 MiB, and packaged cross-platform acceptance
-remain later slices. They must extend this contract rather than bypass the generated-document store
-or the PDF reader.
+Current-appearance capture, additional controlled-document adapters, page-range and paper controls,
+Attach to Chat, a binary upload transport for exports above 64 MiB, agent-visible page inspection,
+and packaged cross-platform acceptance remain later slices. They must extend this contract rather
+than bypass the generated-document store or the PDF reader.

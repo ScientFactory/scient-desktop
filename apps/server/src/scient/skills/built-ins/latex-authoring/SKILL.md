@@ -13,6 +13,8 @@ Do not assume a particular engine or package is available. Follow existing magic
 
 Reconcile the body against the preamble before reporting a source ready: every command, environment, and glyph the document uses must have its defining package or engine feature loaded. Undefined control sequences from an unloaded package are the most common failure in generated LaTeX; a typical slip is `\mathscr` without `mathrsfs` or `unicode-math`.
 
+Configure PDF hyperlinks deliberately. For a new document, prefer `\usepackage[hidelinks]{hyperref}` unless visible link styling materially helps; if links should be visible, use restrained accessible text colors instead of default boxed annotations. Preserve an existing project's link style. After compilation, verify that contents entries, citations, cross-references, and URLs are clickable.
+
 In Scient, a workspace `.tex` file is a first-class editable source. Create it in the project and provide a project-relative Markdown link. Opening the link opens Scient's LaTeX source and PDF view, starts local compilation, and shows the PDF after a successful build. If direct build access is unavailable, state that the source is ready to compile; opening a link or creating a source is not evidence that compilation succeeded.
 
 When build evidence is available, inspect meaningful diagnostics and the rendered PDF rather than treating a successful compiler exit as proof of quality. Check the parts that matter for the document, such as equations, citations and references, pagination, figures, tables, and required glyphs. Fix material defects when possible. Link an actual project PDF only when one was produced, and report any unverified build or output property clearly.

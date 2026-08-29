@@ -479,7 +479,7 @@ export function ThreadPreviewMiniPlayer({ threadRef }: Props) {
       ref={rootRef}
       aria-label="Floating preview"
       data-preview-mini-player={content.id}
-      className="pointer-events-none fixed z-[29] select-none"
+      className="pointer-events-none fixed z-[45] select-none"
       onKeyDownCapture={handleCardKeyDownCapture}
       style={
         position

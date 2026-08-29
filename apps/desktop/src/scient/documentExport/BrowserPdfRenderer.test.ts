@@ -4,7 +4,11 @@ import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import { expect, vi } from "vite-plus/test";
 
-import { createBrowserPdfRenderer, warningsForSignals } from "./BrowserPdfRenderer.ts";
+import {
+  buildDocumentLayoutPrintOptions,
+  createBrowserPdfRenderer,
+  warningsForSignals,
+} from "./BrowserPdfRenderer.ts";
 
 const signals = {
   bodyTextLength: 120,
@@ -89,6 +93,53 @@ describe("BrowserPdfRenderer", () => {
       expect(result.media).toBe("print");
       expect(result.sourceSignals).toEqual(signals);
       expect([...listeners.values()].every((registered) => registered.size === 0)).toBe(true);
+    }),
+  );
+
+  it("lets controlled document builds use only source-authored page margins", () => {
+    expect(buildDocumentLayoutPrintOptions(1, "source-authored")).toMatchObject({
+      margins: { top: 0, bottom: 0, left: 0, right: 0 },
+    });
+    expect(buildDocumentLayoutPrintOptions()).toMatchObject({
+      margins: {
+        top: 1 / 6,
+        bottom: 1 / 6,
+        left: 1 / 6,
+        right: 1 / 6,
+      },
+    });
+  });
+
+  it.effect("forwards the controlled-build margin policy to Chromium", () =>
+    Effect.gen(function* () {
+      const printToPDF = vi.fn(async () => Buffer.from("%PDF-1.7\nsynthetic"));
+      const webContents = {
+        isDestroyed: () => false,
+        isLoading: () => false,
+        getURL: () => "https://example.test/report.html",
+        on: vi.fn(),
+        off: vi.fn(),
+        insertCSS: vi.fn(async () => "pagination-css"),
+        removeInsertedCSS: vi.fn(async () => undefined),
+        printToPDF,
+      };
+      const render = createBrowserPdfRenderer({
+        marginPolicy: "source-authored",
+        waitForReadiness: async () => ({
+          sourceUrl: "https://example.test/report.html",
+          title: "Report",
+          sourceSignals: signals,
+          warnings: [],
+        }),
+      });
+
+      yield* render(webContents as never);
+
+      expect(printToPDF).toHaveBeenCalledWith(
+        expect.objectContaining({
+          margins: { top: 0, bottom: 0, left: 0, right: 0 },
+        }),
+      );
     }),
   );
 

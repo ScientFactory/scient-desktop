@@ -62,6 +62,7 @@ import * as McpSessionRegistry from "../../mcp/McpSessionRegistry.ts";
 import * as ServerSettings from "../../serverSettings.ts";
 import * as ScientSkillSession from "../../scient/skills/ScientSkillSession.ts";
 import { prepareScientSkillTurn } from "../../scient/skills/ScientSkillInvocation.ts";
+import { scientToolProjectionForProvider } from "../ScientToolProjection.ts";
 const isModelSelection = Schema.is(ModelSelection);
 
 /**
@@ -73,13 +74,10 @@ export interface ProviderServiceLiveOptions {
   readonly canonicalEventLogger?: EventNdjsonLogger;
   /**
    * Overrides MCP credential issuance. The real issuer reads a module-global
-   * registry that only a running MCP server installs, which makes the
-   * agent-browser-access gate unobservable from a unit test; this seam lets a
-   * test see whether a credential was requested at all.
+   * registry that only a running MCP server installs; this seam lets tests
+   * observe the capabilities assigned to a provider session.
    */
   readonly issueMcpCredential?: typeof McpSessionRegistry.issueActiveMcpCredential;
-  /** Same seam as `issueMcpCredential`, for observing the deny path's revoke. */
-  readonly revokeMcpCredential?: typeof McpSessionRegistry.revokeActiveMcpThread;
   /** Test seam for replacing the stable credential's exact turn-local skill scope. */
   readonly replaceMcpSkillScope?: typeof McpSessionRegistry.replaceActiveMcpSkillScope;
 }
@@ -235,8 +233,6 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
   const skillSessionPlanner = yield* ScientSkillSession.ScientSkillSessionPlanner;
   const issueMcpCredential =
     options?.issueMcpCredential ?? McpSessionRegistry.issueActiveMcpCredential;
-  const revokeMcpCredential =
-    options?.revokeMcpCredential ?? McpSessionRegistry.revokeActiveMcpThread;
   const replaceMcpSkillScope =
     options?.replaceMcpSkillScope ?? McpSessionRegistry.replaceActiveMcpSkillScope;
   const runtimeEventPubSub = yield* PubSub.unbounded<ProviderRuntimeEvent>();
@@ -244,15 +240,13 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
   /**
    * Attach the provider-scoped MCP server to the session that is about to
    * start. The capability set is the complete authority carried by the
-   * credential: browser/source access and Scient skill delivery are granted
-   * independently, and omitted capabilities remain unavailable.
+   * credential. Project Sources and document building are baseline Scient
+   * capabilities; preview-browser control remains optional, and Scient skill
+   * delivery depends on provider support.
    *
-   * Deny on an unreadable settings file rather than letting the read failure
-   * escape: adding `ServerSettingsError` to `ProviderServiceError` would widen
-   * a union every caller handles, for a branch that only decides whether one
-   * optional toolset is attached. Denying is the safe direction — an explicit
-   * "off" silently becoming "on" would violate the user's stated choice,
-   * whereas the reverse costs an agent one toolset and is visible immediately.
+   * Fail closed for the optional preview capability when settings cannot be
+   * read. The baseline project capabilities are intentionally independent of
+   * this preference.
    */
   const agentBrowserAccessEnabled = serverSettings.getSettings.pipe(
     Effect.map((settings) => settings.enableAgentBrowserAccess),
@@ -274,22 +268,12 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
       const supportsScientSkills =
         ScientSkillSession.scientSkillDeliveryForProvider(provider) === "mcp";
       const capabilities = new Set<McpCapability>([
-        ...(browserAccessEnabled
-          ? (["preview", "sources:read", "sources:write"] satisfies ReadonlyArray<McpCapability>)
-          : []),
+        "documents:build",
+        "sources:read",
+        "sources:write",
+        ...(browserAccessEnabled ? (["preview"] satisfies ReadonlyArray<McpCapability>) : []),
         ...(supportsScientSkills ? (["skills:read"] satisfies ReadonlyArray<McpCapability>) : []),
       ]);
-      if (capabilities.size === 0) {
-        // Revoke as well as clear. Every other prepare path reaches
-        // `issueActiveMcpCredential`, which revokes the thread first, so
-        // skipping it here would leave a previously issued bearer token valid
-        // against `/mcp` for the rest of its liveness window — and later turns
-        // would keep refreshing it. A session restart (runtime mode, cwd,
-        // model) re-prepares without stopping, so it relies on this.
-        yield* revokeMcpCredential(threadId);
-        yield* Effect.sync(() => McpProviderSession.clearMcpProviderSession(threadId));
-        return undefined;
-      }
       const credential = yield* issueMcpCredential({
         threadId,
         providerInstanceId,
@@ -833,10 +817,16 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
           }),
         { discard: true },
       );
+      const scientTools = scientToolProjectionForProvider(routed.adapter.provider);
       const skillTurn = prepareScientSkillTurn(
         input.input,
         skillPlan.delivery === "mcp" ? skillPlan.skills : [],
         skillPlan.delivery === "mcp" ? skillPlan.releases : new Map(),
+        {
+          skillLoadToolName: scientTools.skillLoad,
+          providerNativeSkillTool: scientTools.providerNativeSkillTool,
+          deferred: scientTools.deferred,
+        },
       );
       if (ScientSkillSession.scientSkillDeliveryForProvider(routed.adapter.provider) === "mcp") {
         // The bearer token remains stable for the provider process, but its

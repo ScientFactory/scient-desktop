@@ -699,17 +699,17 @@ export const ServerSettings = Schema.Struct({
   ),
   enableProviderUpdateChecks: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
   /**
-   * Whether agents may drive the in-app preview browser and read or update
-   * project Sources. Turning this off withholds the `preview`, `sources:read`,
-   * and `sources:write` capabilities from provider sessions. The user's own
+   * Whether agents may drive the in-app preview browser. Turning this off
+   * withholds the `preview` capability from provider sessions. The user's own
    * browser panel is unaffected — this gates agent access only.
    *
    * Server-authoritative rather than client-local: tool injection and prompt
    * construction both happen on the server, and the answer must not differ
    * between a desktop window and a phone attached to the same server.
    *
-   * Scient enables this useful tool access by default. A user can turn it off
-   * explicitly from Integrations.
+   * Scient enables preview-browser access by default. A user can turn it off
+   * explicitly from Integrations. Project Sources and document-building
+   * capabilities are baseline Scient features and are not controlled here.
    */
   enableAgentBrowserAccess: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
   backgroundActivity: BackgroundActivitySettings,
