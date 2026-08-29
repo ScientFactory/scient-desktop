@@ -27,4 +27,12 @@ describe("dock chrome overflow contract", () => {
       /\.scient-markdown-editor-dock \{[^}]*flex-wrap: nowrap[^}]*overflow-x: auto[^}]*scrollbar-width: none/su,
     );
   });
+
+  it("renders dock icons in the app's muted control color like every other icon button", () => {
+    // App chrome (components/ui/button.tsx) resolves icon buttons to
+    // text-muted-foreground → --contrast-muted-foreground; the dock must match.
+    expect(cssSource).toMatch(
+      /\.scient-markdown-command-button,\s*\.scient-markdown-slash-menu button \{[^}]*color: var\(--contrast-muted-foreground\)/su,
+    );
+  });
 });
