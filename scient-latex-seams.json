@@ -10,10 +10,16 @@
     "packages/scient-pdf-validation"
   ],
   "ownedFiles": [
+    "apps/server/src/mcp/toolkits/documents/handlers.ts",
+    "apps/server/src/mcp/toolkits/documents/latexHandler.ts",
+    "apps/server/src/mcp/toolkits/documents/tools.ts",
+    "apps/server/src/provider/ScientToolProjection.ts",
+    "apps/server/src/scient/skills/BuiltInSkillSources.ts",
     "scripts/stage-synctex-runtime.ts",
     "scripts/lib/scient-synctex-build.ts",
     "packages/client-runtime/src/state/scientLatexHttp.ts",
-    "packages/contracts/src/scientLatex.ts"
+    "packages/contracts/src/scientLatex.ts",
+    "packages/contracts/src/latexPdfBuild.ts"
   ],
   "latexDiffSignals": [
     "ScientLatex",
