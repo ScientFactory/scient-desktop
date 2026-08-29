@@ -1,9 +1,26 @@
 # Scient PDF Export And Rendering Implementation Plan
 
-Status: Implementation-ready repository plan; implementation not started
+Status: Historical planning record; superseded in part by current implementation
 Planning baseline: `ScientFactory/scient-desktop-next` `origin/main` at
 `cf4cfdab38289968336c147e7226eb2838519c77`
 Prepared: 2026-08-12
+
+## Current Disposition
+
+The active repository is now `ScientFactory/scient-desktop`. Browser live-page
+HTML-to-PDF, generated-document publication, structural validation, opening in
+the Scient PDF reader, native Save Copy, reveal-after-save, bounded export
+transport, automatic source refresh, and print-fragmentation preparation are
+implemented and maintained in
+[`scient-browser-pdf-export.md`](scient-browser-pdf-export.md).
+
+This document preserves the evidence, contracts, quality envelope, and
+unimplemented controlled-document/export ideas that informed that work. It is
+not the current implementation plan, and its old slice numbering, baseline,
+paths, and “implementation not started” statements must not be used as current
+source truth. Future controlled Markdown/chat/manuscript export should receive a
+new bounded plan against the then-current implementation rather than resuming
+this document mechanically.
 
 ## Purpose And Authority Boundary
 

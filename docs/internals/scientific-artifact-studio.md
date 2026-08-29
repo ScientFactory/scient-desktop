@@ -1,9 +1,14 @@
 # Scientific Artifact Studio roadmap
 
-Status: proposed product architecture and staged implementation roadmap. This
-document is the canonical coordination point for scientific artifacts, their
-chat representations, and the future Studio. It is not a release record and
-does not claim that planned formats are implemented.
+Status: Superseded repository-local planning copy.
+
+The cross-product Scientific Artifact Studio roadmap is now owned in the
+[`ScientFactory/Scient` planning repository](https://github.com/ScientFactory/Scient/blob/main/docs/planning/scientific-artifact-studio.md),
+alongside the Scientific Document Platform, Scientific Computing, and
+file/resource/presentation foundation.
+This copy is retained as historical implementation-context evidence and must
+not be updated as a competing product roadmap. Current shipped behavior belongs
+in focused implementation and user documentation in this repository.
 
 ## Decision
 

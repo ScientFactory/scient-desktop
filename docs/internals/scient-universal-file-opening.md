@@ -60,6 +60,24 @@ use environment plus normalized canonical path as logical identity, so URL
 renewal and thread changes preserve reader state while identical paths in
 different environments remain isolated.
 
+## Current identity and relocation limit
+
+The current contract is exact-path reliable but path-bound. If a watched file
+is renamed or moved, the old path can report missing and later recover if a
+file reappears there, but Scient does not yet prove that a different path is
+the same logical file. Direct and workspace entry points also use related but
+separate presentation dispatch.
+
+The proposed
+[file/resource/presentation foundation](https://github.com/ScientFactory/Scient/blob/main/docs/planning/file-resource-and-presentation-foundation.md)
+would add stable `FileReference` identity, bounded relocation evidence,
+explicit ambiguity recovery, and one presenter registry/shell. It must preserve
+the current environment authority, canonicalization, signed-asset transport,
+editor conflict protection, PDF logical identity, HTML document-root policy,
+watcher behavior, and typed failure states. It must not treat a stale absolute
+path, filename-only match, or workspace-wide scan as sufficient proof of
+identity.
+
 ## File transport and HTML documents
 
 `AssetResource.environment-file` has two explicit modes:
@@ -123,10 +141,11 @@ the native desktop context menu or the browser fallback. Mobile retains its
 existing single `Copy path` action, and the file explorer tree remains unchanged;
 those surfaces require separate product decisions rather than implicit parity.
 
-New rich formats should extend preparation metadata and add a presenter without
-adding producer-specific branches to the reader. Office/manuscript documents,
-notebooks, TIFF/HEIC, scientific datasets, and future Artifact Studio
-representations can therefore arrive incrementally. Producers should continue
+Until that registry lands, new rich formats should extend preparation metadata
+and add a Scient-owned presenter without adding producer-specific branches to
+the reader or widening inherited dispatch unnecessarily. Office/manuscript
+documents, notebooks, TIFF/HEIC, scientific datasets, and future Artifact
+Studio representations can therefore arrive incrementally. Producers continue
 to own durable identity and provenance; this opener owns only inspection,
 authorization, routing, and viewing.
 

@@ -18,6 +18,11 @@ retry or manual refresh. If automatic updates pause, that action is highlighted
 and its tooltip explains that reloading will retry them. A failed read keeps the
 last available preview visible while reporting the problem.
 
+Current limitation: automatic refresh follows the exact known path. If the file
+is renamed or moved, reopen it from its new location; Scient does not yet
+relocate an already open file automatically. A proposed stable-file-reference
+foundation would add bounded recovery without guessing among ambiguous copies.
+
 - Markdown files open as rendered documents. Use the source/preview control in
   the file header to switch modes; Scient remembers that preference. A link to
   a specific Markdown line opens source so the requested line can be shown.

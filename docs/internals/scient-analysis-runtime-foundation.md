@@ -1,9 +1,10 @@
 # Scient analysis runtime foundation
 
-Status: local implementation candidate for review. This is not a release record or cross-platform
-acceptance claim. The realigned candidate includes the PDF foundation and current shared Scient
-file/viewer seams. A real installed MATLAB R2026a has passed the focused local verification and
-hidden PNG/FIG capture acceptance on the current Apple Silicon host.
+Status: Current implemented foundation. This is an implementation record, not
+a release-availability or full cross-platform parity claim. A real installed
+MATLAB R2026a passed the focused local verification and hidden PNG/FIG capture
+acceptance on the recorded Apple Silicon host; other releases and platforms
+remain governed by their own verification evidence.
 
 ## Decision
 
@@ -12,7 +13,7 @@ streams output, supports Stop and per-file history, and publishes captured figur
 establishes the runtime-neutral contracts needed by later Python, R, notebook, typesetting, and
 agent-triggered execution without pretending those integrations already exist.
 
-The candidate follows the Scientific Computing and Data Analysis roadmap owned in the Scient
+The foundation follows the Scientific Computing and Data Analysis roadmap owned in the Scient
 documentation repository. The user explicitly selected MATLAB as the first analysis proof. That
 changes adapter sequencing, not the shared architecture or the later Python/R parity gate.
 
@@ -133,7 +134,7 @@ The canonical `run.json` retains the full verified runtime profile. Paged histor
 summary updates omit the repeated toolbox inventory; runtime inspection and `getRun` remain the
 authoritative paths for that detail.
 
-Per-run growth is bounded, and this candidate never silently deletes old run directories. The
+Per-run growth is bounded, and this foundation never silently deletes old run directories. The
 indexed/paginated projection removes history-query growth from normal interaction, while receipts
 and artifact hashes on disk remain canonical. Explicit per-run and project cleanup first confirms
 the currently measured retained bytes, transactionally removes only output/artifact payloads, and
@@ -187,7 +188,7 @@ not turn `AnalysisService` into a viewer, manuscript editor, or universal artifa
 
 ## Current boundary
 
-This candidate includes Run file, Stop, deterministic runtime-level FIFO queueing, stdout/stderr,
+This foundation includes Run file, Stop, deterministic runtime-level FIFO queueing, stdout/stderr,
 explicit startup/license/Java/toolbox verification, structured clickable errors, durable indexed
 and keyset-paginated terminal history, crash recovery, revision-safe source execution, exact-file
 refresh, bounded PNG/FIG figure capture with explicit artifact-collection status, and deliberate
