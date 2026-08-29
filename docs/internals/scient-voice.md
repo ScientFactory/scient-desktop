@@ -21,6 +21,12 @@ contracts.
   The main-process IPC decoder rejects oversized base64 before the core
   allocates its decoded audio buffer, and the core independently enforces the
   10 MiB decoded-audio limit.
+- `apps/server/src/scient/voice/` owns optional provider transcript correction.
+  It resolves the selected server provider, requires an enabled, installed,
+  ready, authenticated instance with an advertised correction capability, and
+  applies a bounded provider-specific adapter. `packages/contracts/src/voice.ts`
+  also owns the correction request/result/failure contract; client settings
+  keep correction disabled by default.
 
 The direct inherited-host changes are deliberately narrow: one composer mount,
 one positioned-footer class, one IPC method-group loop, one preload-adapter
@@ -48,6 +54,14 @@ the inherited preload, or the artifact orchestrator.
 - The helper binds to loopback on a random port and a cryptographically random
   request path. It receives only an allowlist of OS environment variables, not
   provider or cloud credentials.
+- Recorded audio never enters provider correction. Correction receives only the
+  bounded local transcript text and optional language preference. The request
+  is limited to 20,000 characters and a 12-second server window, and requires
+  the selected provider to be ready and authenticated.
+- Transcript correction is fail-open: the exact local transcript remains
+  visible and usable while correction is pending, and every unsupported,
+  unauthenticated, unavailable, timed-out, malformed, or provider-error path
+  falls back to it.
 - A model is trusted only after size, GGML header, and SHA-256 verification.
   The first status check in each app process re-hashes the installed model;
   later checks reuse a size/mtime cache for that process.
@@ -104,10 +118,11 @@ pnpm voice:runtime:stage
 
 ## Deliberate exclusions
 
-M1 does not run speculative background benchmarks or continuous partial
-transcriptions. Both add CPU contention and stale-draft failure modes without
-being required for reliable dictation. The client boundary can support a later
-cloud or mobile adapter, but this implementation does not enable either.
+M1 does not run speculative background benchmarks, continuous partial
+transcriptions, cloud audio transcription, or a mobile voice adapter. Those
+would add different privacy, runtime, and stale-draft failure boundaries. The
+only provider path is the explicit, default-off correction of already-local
+transcript text described above.
 
 The default multilingual Small quantized model keeps setup bounded, but model
 accuracy remains a separate product-quality gate. The manifest-driven model

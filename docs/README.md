@@ -5,11 +5,22 @@ Some internal documents retain inherited T3 terminology where it describes the
 host platform or historical ancestry; that terminology is not product identity
 or release authority.
 
+The logical roles are Help, Capabilities, Architecture, Development,
+Operations, Upstream, and Records. They map to the real compatibility paths
+below: `docs/user/` is the authored Help source for public Scient Docs;
+`docs/internals/` currently contains several maintainer roles;
+`docs/operations/` contains runbooks; `UPSTREAM.md` owns T3 divergence and
+routes to dated receipts; and package READMEs stay beside the package they
+explain. Update the existing owner before creating a new file. The roles do not
+require a cosmetic folder migration.
+
 ## Using Scient Desktop
 
+- [Getting started](./user/getting-started.md)
 - [Install and first run](./user/install.md)
 - [Permission modes](./user/permission-modes.md)
 - [Keyboard shortcuts](./user/keybindings.md)
+- [Writing and sending messages](./user/composer.md)
 - [Organizing threads](./user/thread-sidebar.md)
 - [Forking conversations](./user/conversation-forks.md)
 - [Review usage](./user/usage.md)
@@ -23,11 +34,13 @@ or release authority.
 - [Reading PDFs](./user/pdf-reader.md)
 - [Math in chat and Markdown](./user/math-in-chat.md)
 - [LaTeX projects](./user/latex.md)
+- [Content direction and RTL/LTR](./user/content-direction.md)
 - [Diagrams in chat](./user/diagrams-in-chat.md)
 - [Images in chat](./user/images-in-chat.md)
 - [Interactive charts in chat](./user/charts-in-chat.md)
 - [Run a MATLAB file](./user/matlab-run-file.md)
 - [Sources and Zotero import](./user/sources.md)
+- [Voice dictation](./user/voice-dictation.md)
 - [Background service (Linux)](./user/background-service.md)
 - [Providers and assisted setup](./user/providers.md)
   - [Codex](./user/providers-codex.md)
@@ -54,6 +67,7 @@ policy in [CONTRIBUTING.md](../CONTRIBUTING.md); agent rules in [AGENTS.md](../A
 - [Providers](./internals/providers.md)
 - [Provider lifecycle architecture](./internals/provider-lifecycle.md)
 - [Provider lifecycle capability audit](./internals/provider-lifecycle-capability-audit.md)
+- [Codex runtime and authentication](./internals/scient-codex-runtime-auth.md)
 - [Remote environments](./internals/remote.md)
 - [Server updates](./internals/server-updates.md)
 - [Resource telemetry](./internals/resource-telemetry.md)
@@ -61,8 +75,11 @@ policy in [CONTRIBUTING.md](../CONTRIBUTING.md); agent rules in [AGENTS.md](../A
 - [Environment auth](./internals/environment-auth.md)
 - [T3 Connect](./internals/t3-connect.md)
 - [Scient project initialization](./internals/scient-project-initialization.md)
+- [Scient onboarding](./internals/scient-onboarding.md)
 - [Scient skills core](./internals/scient-skills.md)
 - [Scient Sources foundation](./internals/scient-sources.md)
+- [Scient thread queue and upstream retirement seam](./internals/scient-thread-queue.md)
+- [Scient voice architecture](./internals/scient-voice.md)
 - [Scient Browser PDF export](./internals/scient-browser-pdf-export.md)
 - [Historical PDF export and rendering plan](./internals/scient-pdf-export-rendering-plan.md)
 - [Scient analysis runtime foundation](./internals/scient-analysis-runtime-foundation.md)
@@ -71,14 +88,37 @@ policy in [CONTRIBUTING.md](../CONTRIBUTING.md); agent rules in [AGENTS.md](../A
 - [Scient universal file opening](./internals/scient-universal-file-opening.md)
 - [Scient PDF reader](./internals/scient-pdf-reader.md)
 - [Scient LaTeX](./internals/scient-latex.md)
+- [Scient content direction](./internals/scient-content-direction.md)
+- [Scient typography profile](./internals/scient-typography.md)
+- [Scient math rendering](./internals/scient-math.md)
 - [Scient rich chat diagrams](./internals/scient-chat-diagrams.md)
 - [Scient inline workspace images](./internals/scient-chat-images.md)
 - [Scient rich chat visualizations](./internals/scient-chat-visualizations.md)
+- [Scient release-note system](./internals/scient-release-notes.md)
 - [D4 bootstrap record](./internals/scient-next-d4-bootstrap.md)
 - [T3 foundation refresh (2026-08-07)](./internals/t3-foundation-refresh-20260807.md)
-- [Upstream maintenance](../UPSTREAM.md)
+- [Upstream maintenance and dated integration-record collection](../UPSTREAM.md)
 - [CI gates](./internals/ci.md)
 - [Engineering work artifacts](./internals/work-artifacts.md)
+
+### Dated forensic records
+
+These reports preserve investigation evidence and evolution history. They are
+not substitutes for current implementation, `UPSTREAM.md`, or maintained help
+and capability owners.
+
+- [Scient-specific capability catalog](./reports/scient-specific-capabilities.md)
+- [Scient PR and evolution ledger](./reports/scient-pr-and-evolution-ledger.md)
+- [Scient/T3 divergence, integration, provenance, and retirements](./reports/scient-t3-divergence-integration-and-retirements.md)
+
+### Historical delivery and migration records
+
+These records preserve completed plans, review wording, or migration evidence.
+Follow their linked successors for current behavior.
+
+- [Provider lifecycle unification delivery proposal](./internals/provider-lifecycle-unification-proposal.md)
+- [Conversation-fork modernization PR drafts](./internals/scient-fork-pr-descriptions.md)
+- [v0.6.0 migration rehearsal](./operations/v060-migration-rehearsal.md)
 
 ### Runbooks
 
