@@ -98,10 +98,6 @@ function insertNode(node: ProseMirrorNode): Command {
   };
 }
 
-function emptyParagraph() {
-  return requiredNodeType("paragraph").create();
-}
-
 function createTable(): ProseMirrorNode {
   const rowType = requiredNodeType("table_row");
   const headerType = requiredNodeType("table_header");
@@ -109,9 +105,7 @@ function createTable(): ProseMirrorNode {
   const rows = Array.from({ length: 3 }, (_row, rowIndex) =>
     rowType.create(
       null,
-      Array.from({ length: 3 }, () =>
-        (rowIndex === 0 ? headerType : cellType).create(null, emptyParagraph()),
-      ),
+      Array.from({ length: 3 }, () => (rowIndex === 0 ? headerType : cellType).create(null)),
     ),
   );
   return requiredNodeType("table").create(null, rows);

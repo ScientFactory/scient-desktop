@@ -43,10 +43,23 @@ describe("Scient Markdown file-preview seam", () => {
     }
   });
 
+  it("presents Read, Write, Source, and Split as unambiguous persistent modes", () => {
+    expect(panelSource).toContain('aria-label="Markdown mode"');
+    for (const mode of ["read", "write", "source", "split"]) {
+      expect(panelSource).toContain(`value="${mode}"`);
+    }
+  });
+
   it("limits workspace lifecycle UI to one owned create and rename mount", () => {
     expect(browserSource.match(/<ScientMarkdownCreateButton\b/gu)).toHaveLength(1);
     expect(panelSource.match(/<ScientMarkdownRenameButton\b/gu)).toHaveLength(1);
     expect(browserSource).not.toContain("createOnly: true");
     expect(panelSource).not.toContain("projects.renameFile");
+  });
+
+  it("uses the current filename itself as the Markdown rename affordance", () => {
+    expect(panelSource).toContain("currentFileControl={");
+    expect(panelSource).toContain("<ScientMarkdownRenameButton");
+    expect(panelSource).toContain('label={relativePath.slice(relativePath.lastIndexOf("/") + 1)}');
   });
 });

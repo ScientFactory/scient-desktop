@@ -71,6 +71,38 @@ describe("ScientMarkdownEditorView", () => {
     expect(onUserSourceChange.mock.calls[0]?.[0]).toContain("# Updated Heading");
   });
 
+  it("opens an empty file with a focused caret and accepts the first text", () => {
+    const onUserSourceChange = vi.fn();
+    const controller = new ScientMarkdownEditorView({
+      source: "",
+      revision: "sha256:empty",
+      mode: "write",
+      ariaLabel: "Empty Markdown document",
+      onUserSourceChange,
+    });
+    const host = document.createElement("div");
+    document.body.append(host);
+    mounted.push(controller);
+    const view = controller.mount(host);
+
+    expect(view.state.doc.childCount).toBe(1);
+    expect(view.state.doc.firstChild?.type.name).toBe("paragraph");
+    expect(view.dom.getAttribute("contenteditable")).toBe("true");
+    expect(view.dom.getAttribute("aria-placeholder")).toBe("Start writing");
+    expect(view.dom.classList.contains("is-empty")).toBe(true);
+    expect(document.activeElement).toBe(view.dom);
+
+    view.dispatch(view.state.tr.insertText("First note", 1));
+
+    expect(controller.session.session.draftSource).toBe("First note");
+    expect(onUserSourceChange).toHaveBeenCalledExactlyOnceWith(
+      "First note",
+      expect.objectContaining({ source: "First note" }),
+    );
+    expect(view.dom.classList.contains("is-empty")).toBe(false);
+    expect(view.dom.hasAttribute("aria-placeholder")).toBe(false);
+  });
+
   it("destroys only its own view", () => {
     const { controller, host, view } = mountEditor();
     controller.destroy();

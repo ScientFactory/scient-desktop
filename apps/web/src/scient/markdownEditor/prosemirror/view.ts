@@ -1,5 +1,6 @@
 import type { MarkdownDocumentMode, MarkdownSaveIntent } from "@scientfactory/scient-markdown";
 import { toggleMark } from "prosemirror-commands";
+import type { Node as ProseMirrorNode } from "prosemirror-model";
 import { Selection, TextSelection, type Transaction } from "prosemirror-state";
 import { EditorView, type DirectEditorProps } from "prosemirror-view";
 
@@ -89,18 +90,32 @@ function modeIsEditable(mode: MarkdownDocumentMode): boolean {
   return mode === "write" || mode === "split";
 }
 
+function documentIsEmpty(document: ProseMirrorNode): boolean {
+  return (
+    document.childCount === 1 &&
+    document.firstChild?.type.name === "paragraph" &&
+    document.firstChild.content.size === 0
+  );
+}
+
 function accessibilityAttributes(
   mode: MarkdownDocumentMode,
   ariaLabel: string,
+  empty: boolean,
 ): Readonly<Record<string, string>> {
   const editable = modeIsEditable(mode);
   const common = {
     "aria-label": ariaLabel,
-    class: `scient-markdown-document is-${mode}`,
+    class: `scient-markdown-document is-${mode}${empty ? " is-empty" : ""}`,
     dir: "auto",
   };
   return editable
-    ? { ...common, "aria-multiline": "true", role: "textbox" }
+    ? {
+        ...common,
+        "aria-multiline": "true",
+        ...(empty ? { "aria-placeholder": "Start writing" } : {}),
+        role: "textbox",
+      }
     : { ...common, role: "document" };
 }
 
@@ -145,32 +160,46 @@ export class ScientMarkdownEditorView {
     this.editorView = new EditorView(element, this.directProps());
     this.syncNodeViewEditability();
     this.publishSnapshot();
+    if (modeIsEditable(this.mode)) this.editorView.focus();
     return this.editorView;
   }
 
   setMode(mode: MarkdownDocumentMode): void {
     if (this.mode === mode) return;
+    const wasEditable = modeIsEditable(this.mode);
     this.mode = mode;
     this.session.setMode(mode);
-    this.editorView?.setProps({
-      attributes: accessibilityAttributes(mode, this.options.ariaLabel),
-      editable: () => modeIsEditable(mode),
-    });
+    this.syncViewProps();
     this.syncNodeViewEditability();
     this.publishSnapshot();
+    if (!wasEditable && modeIsEditable(mode)) this.editorView?.focus();
+  }
+
+  focus(): void {
+    if (this.editorView && modeIsEditable(this.mode)) {
+      this.editorView.focus();
+    }
   }
 
   applyTransaction(transaction: Transaction, origin: ScientMarkdownTransactionOrigin): void {
     if (this.editorView === null) throw new Error("Scient Markdown EditorView is not mounted.");
+    const wasEmpty = documentIsEmpty(this.editorView.state.doc);
     const state = this.session.applyTransaction(transaction, origin);
     this.editorView.updateState(state);
+    if (wasEmpty !== documentIsEmpty(state.doc)) {
+      this.syncViewProps();
+    }
     this.slashActiveIndex = 0;
     this.publishSnapshot();
   }
 
   replaceUserSource(source: string): void {
+    const wasEmpty = this.editorView ? documentIsEmpty(this.editorView.state.doc) : true;
     const state = this.session.replaceUserSource(source);
     this.editorView?.updateState(state);
+    if (wasEmpty !== documentIsEmpty(state.doc)) {
+      this.syncViewProps();
+    }
     this.slashActiveIndex = 0;
     this.publishSnapshot(false);
   }
@@ -186,6 +215,7 @@ export class ScientMarkdownEditorView {
     const result = this.session.receiveExternalSource(input);
     if (result === "adopted") {
       this.editorView?.updateState(this.session.state);
+      this.syncViewProps();
       this.slashActiveIndex = 0;
       this.publishSnapshot(false);
     }
@@ -195,12 +225,14 @@ export class ScientMarkdownEditorView {
   resolveExternalConflict(resolution: ScientExternalConflictResolution): void {
     const state = this.session.resolveExternalConflict(resolution);
     this.editorView?.updateState(state);
+    this.syncViewProps();
     this.publishSnapshot(false);
   }
 
   execute(command: ScientMarkdownCommand): boolean {
     const view = this.editorView;
     if (!view || !modeIsEditable(this.mode)) return false;
+    view.focus();
     if (command === "image" && this.options.selectImage) {
       this.options.selectImage();
       return true;
@@ -441,7 +473,11 @@ export class ScientMarkdownEditorView {
   private directProps(): DirectEditorProps {
     return {
       state: this.session.state,
-      attributes: accessibilityAttributes(this.mode, this.options.ariaLabel),
+      attributes: accessibilityAttributes(
+        this.mode,
+        this.options.ariaLabel,
+        documentIsEmpty(this.session.state.doc),
+      ),
       editable: () => modeIsEditable(this.mode),
       dispatchTransaction: (transaction) => {
         const taggedOrigin: unknown = transaction.getMeta(scientMarkdownTransactionOriginKey);
@@ -535,6 +571,19 @@ export class ScientMarkdownEditorView {
     const editable = modeIsEditable(this.mode);
     this.taskCheckboxes.forEach((checkbox) => {
       checkbox.disabled = !editable;
+    });
+  }
+
+  private syncViewProps(): void {
+    const view = this.editorView;
+    if (!view) return;
+    view.setProps({
+      attributes: accessibilityAttributes(
+        this.mode,
+        this.options.ariaLabel,
+        documentIsEmpty(view.state.doc),
+      ),
+      editable: () => modeIsEditable(this.mode),
     });
   }
 

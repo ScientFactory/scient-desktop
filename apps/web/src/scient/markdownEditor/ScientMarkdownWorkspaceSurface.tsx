@@ -149,7 +149,7 @@ export function ScientMarkdownWorkspaceSurface(props: ScientMarkdownWorkspaceSur
 
   useEffect(
     () => () => {
-      void saveQueue.dispose({ flush: true });
+      void saveQueue.flush();
     },
     [saveQueue],
   );

@@ -3,6 +3,7 @@
   flex: 1;
   overflow: auto;
   background: var(--background);
+  cursor: text;
 }
 
 .scient-markdown-workspace {
@@ -23,39 +24,42 @@
 
 .scient-markdown-rich-pane {
   position: relative;
+  flex-direction: column;
 }
 
 .scient-markdown-editor-dock,
 .scient-markdown-selection-toolbar,
 .scient-markdown-table-toolbar {
-  position: absolute;
+  position: relative;
   z-index: 20;
   display: flex;
+  max-width: 100%;
+  min-height: 2.35rem;
+  flex: 0 0 auto;
+  flex-wrap: wrap;
   align-items: center;
   gap: 0.15rem;
-  border: 1px solid color-mix(in oklab, var(--border) 85%, transparent);
-  border-radius: 0.5rem;
-  background: color-mix(in oklab, var(--background) 94%, transparent);
-  padding: 0.2rem;
-  box-shadow: 0 0.25rem 1rem color-mix(in oklab, black 10%, transparent);
-  backdrop-filter: blur(12px);
+  overflow: visible;
+  border: 0;
+  border-block-end: 1px solid var(--border);
+  border-radius: 0;
+  background: var(--background);
+  padding: 0.35rem 0.65rem;
+  box-shadow: none;
 }
 
 .scient-markdown-editor-dock {
-  inset-block-start: 0.55rem;
-  inset-inline-start: 0.65rem;
+  inset: auto;
 }
 
 .scient-markdown-selection-toolbar {
-  inset-block-start: 0.55rem;
-  inset-inline-start: 50%;
-  transform: translateX(-50%);
+  inset: auto;
+  transform: none;
 }
 
 .scient-markdown-table-toolbar {
-  inset-block-end: 0.75rem;
-  inset-inline-start: 50%;
-  transform: translateX(-50%);
+  inset: auto;
+  transform: none;
 }
 
 .scient-markdown-command-button,
@@ -75,7 +79,7 @@
   color: var(--foreground);
   font-size: 0.75rem;
   line-height: 1;
-  cursor: default;
+  cursor: pointer;
 }
 
 .scient-markdown-command-button:hover,
@@ -93,6 +97,7 @@
 }
 
 .scient-markdown-command-button:disabled {
+  cursor: not-allowed;
   opacity: 0.38;
 }
 
@@ -294,12 +299,16 @@ summary.scient-markdown-command-button::-webkit-details-marker {
 
 .scient-markdown-document-host {
   min-height: 100%;
+  display: flex;
+  flex: 1;
+  flex-direction: column;
 }
 
 .scient-markdown-document {
   box-sizing: border-box;
   width: min(100%, 56rem);
   min-height: 100%;
+  flex: 1;
   margin-inline: auto;
   padding: 1.25rem 1.5rem 5rem;
   color: var(--foreground);
@@ -316,6 +325,20 @@ summary.scient-markdown-command-button::-webkit-details-marker {
 
 .scient-markdown-document > :last-child {
   margin-block-end: 0;
+}
+
+.scient-markdown-document.is-write.is-empty > p:only-child::before,
+.scient-markdown-document.is-split.is-empty > p:only-child::before {
+  content: "Start writing…";
+  float: inline-start;
+  height: 0;
+  color: var(--muted-foreground);
+  pointer-events: none;
+}
+
+.scient-markdown-document.is-write.is-empty:focus-visible,
+.scient-markdown-document.is-split.is-empty:focus-visible {
+  outline: none;
 }
 
 .scient-markdown-document :is(p, h1, h2, h3, h4, h5, h6, li, blockquote, td, th, figcaption) {
@@ -640,32 +663,26 @@ sup.scient-markdown-reference {
   box-shadow: 0 0 0 1px color-mix(in oklab, var(--warning) 65%, var(--foreground));
 }
 
-.scient-markdown-find-control {
+.scient-markdown-find-bar {
   position: relative;
-}
-
-.scient-markdown-find-popover {
-  position: absolute;
   z-index: 20;
-  inset-block-start: calc(100% + 0.35rem);
-  inset-inline-end: 0;
   display: flex;
-  width: min(24rem, calc(100vw - 2rem));
+  width: 100%;
+  flex: 0 0 auto;
   flex-direction: column;
   gap: 0.4rem;
-  border: 1px solid var(--border);
-  border-radius: 0.55rem;
-  background: color-mix(in oklab, var(--background) 94%, transparent);
-  padding: 0.55rem;
-  box-shadow: 0 12px 32px rgb(0 0 0 / 18%);
-  backdrop-filter: blur(14px);
+  border-block-end: 1px solid var(--border);
+  background: var(--background);
+  padding: 0.5rem 0.65rem;
 }
 
 .scient-markdown-find-row,
 .scient-markdown-find-actions {
   display: flex;
+  min-width: 0;
   align-items: center;
   gap: 0.3rem;
+  overflow-x: auto;
 }
 
 .scient-markdown-find-row input {

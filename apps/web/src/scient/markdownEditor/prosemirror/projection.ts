@@ -76,6 +76,11 @@ function parseBlock(block: MarkdownSourceBlock): ProseMirrorNode {
 export function createScientMarkdownProjection(source: string): ScientMarkdownProjection {
   const ledger = createMarkdownSourceLedger(source);
   const children = ledger.blocks.map(parseBlock);
+  if (children.length === 0) {
+    const paragraph = scientMarkdownSchema.nodes.paragraph?.create();
+    if (!paragraph) throw new Error("Scient Markdown schema is missing paragraph.");
+    children.push(paragraph);
+  }
   const document = scientMarkdownSchema.topNodeType.createAndFill(null, children);
   if (!document) throw new Error("Unable to create the Scient Markdown document.");
   return { ledger, baselineDocument: document, document };

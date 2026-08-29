@@ -38,4 +38,20 @@ describe("FileBreadcrumbNavigator", () => {
     expect(label).toBeGreaterThan(groupStart);
     expect(groupEnd).toBeGreaterThan(label);
   });
+
+  it("can turn the current filename into an owned inline action", () => {
+    const html = renderToStaticMarkup(
+      <FileBreadcrumbNavigator
+        environmentId={EnvironmentId.make("breadcrumb-test")}
+        cwd="/repo"
+        projectName="Scient"
+        relativePath="notes/result.md"
+        onOpenFile={() => undefined}
+        currentFileControl={<button aria-label="Rename result.md">result.md</button>}
+      />,
+    );
+
+    expect(html).toContain('data-current-file-crumb="true"');
+    expect(html).toContain('aria-label="Rename result.md"');
+  });
 });

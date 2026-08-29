@@ -6,7 +6,6 @@ import { useEffect, useRef, useState } from "react";
 import { Button } from "~/components/ui/button";
 import { Input } from "~/components/ui/input";
 import { Popover, PopoverPopup, PopoverTitle, PopoverTrigger } from "~/components/ui/popover";
-import { Tooltip, TooltipPopup, TooltipTrigger } from "~/components/ui/tooltip";
 import { projectEnvironment } from "~/state/projects";
 import { useAtomCommand } from "~/state/use-atom-command";
 
@@ -23,6 +22,7 @@ interface ScientMarkdownRenameButtonProps {
   readonly relativePath: string;
   readonly revision: string;
   readonly disabled: boolean;
+  readonly label: string;
   readonly onRenamed: (destinationRelativePath: string, revision: string) => void;
 }
 
@@ -93,29 +93,23 @@ export function ScientMarkdownRenameButton(props: ScientMarkdownRenameButtonProp
 
   return (
     <Popover open={open} onOpenChange={setOpen}>
-      <Tooltip>
-        <TooltipTrigger
-          render={
-            <PopoverTrigger
-              disabled={props.disabled}
-              render={
-                <Button
-                  aria-label="Rename Markdown file"
-                  disabled={props.disabled}
-                  size="icon-xs"
-                  type="button"
-                  variant="ghost"
-                />
-              }
+      <PopoverTrigger
+        disabled={props.disabled}
+        render={
+          <button
+            type="button"
+            aria-label={`Rename ${props.label}`}
+            className="group/markdown-filename -mx-1 inline-flex max-w-48 items-center gap-1 rounded-sm px-1 py-0.5 font-medium text-foreground outline-none hover:bg-accent/60 focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-default disabled:opacity-70"
+            disabled={props.disabled}
+          >
+            <span className="truncate">{props.label}</span>
+            <FilePenLine
+              aria-hidden
+              className="size-3 shrink-0 opacity-0 transition-opacity group-hover/markdown-filename:opacity-70 group-focus-visible/markdown-filename:opacity-70"
             />
-          }
-        >
-          <FilePenLine />
-        </TooltipTrigger>
-        <TooltipPopup>
-          {props.disabled ? "Wait for the document to finish saving" : "Rename Markdown file"}
-        </TooltipPopup>
-      </Tooltip>
+          </button>
+        }
+      />
       <PopoverPopup align="end" className="w-80" side="bottom">
         <form
           className="flex flex-col gap-3"

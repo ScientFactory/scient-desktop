@@ -62,8 +62,10 @@ export function ScientMarkdownDocument(props: ScientMarkdownDocumentProps) {
     const host = hostRef.current;
     if (!host) return;
     controller.mount(host);
-    return () => controller.destroy();
-  }, [controller]);
+    return () => {
+      if (!props.controller) controller.destroy();
+    };
+  }, [controller, props.controller]);
 
   useEffect(() => controller.setMode(props.mode), [controller, props.mode]);
 
@@ -79,7 +81,15 @@ export function ScientMarkdownDocument(props: ScientMarkdownDocumentProps) {
   }, [controller, props.controller, props.revision, props.source]);
 
   return (
-    <div className="scient-markdown-document-shell" data-markdown-mode={props.mode}>
+    <div
+      className="scient-markdown-document-shell"
+      data-markdown-mode={props.mode}
+      onClick={(event) => {
+        if (event.target === event.currentTarget || event.target === hostRef.current) {
+          controller.focus();
+        }
+      }}
+    >
       <div ref={hostRef} className="scient-markdown-document-host" />
     </div>
   );

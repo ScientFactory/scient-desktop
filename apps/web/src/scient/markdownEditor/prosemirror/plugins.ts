@@ -19,7 +19,7 @@ import {
 import { keymap } from "prosemirror-keymap";
 import { liftListItem, sinkListItem, splitListItem, wrapInList } from "prosemirror-schema-list";
 import { Plugin, PluginKey, type Command } from "prosemirror-state";
-import { columnResizing, tableEditing } from "prosemirror-tables";
+import { columnResizing, goToNextCell, tableEditing } from "prosemirror-tables";
 
 import { scientMarkdownSchema } from "./schema";
 import { imageUploadPlugin } from "./imageUploads";
@@ -72,8 +72,8 @@ function buildKeyBindings(): Readonly<Record<string, Command>> {
       liftEmptyBlock,
       splitBlock,
     ),
-    Tab: sinkListItem(listItem),
-    "Shift-Tab": liftListItem(listItem),
+    Tab: chainCommands(goToNextCell(1), sinkListItem(listItem)),
+    "Shift-Tab": chainCommands(goToNextCell(-1), liftListItem(listItem)),
   };
 }
 

@@ -4039,17 +4039,17 @@ function ChatViewContent(props: ChatViewProps) {
       runAfterPendingFileSave(null, () => {
         useRightPanelStore.getState().openPullRequest(activeThreadRef, {
           projectId: activeProject.id,
-          repository: threadRepository,
+          repository: activeProjectRepository,
           number,
         });
       });
     },
     [
       activeProject,
+      activeProjectRepository,
       activeThreadRef,
       runAfterPendingFileSave,
       supportsPullRequests,
-      threadRepository,
     ],
   );
   const togglePreviewPanel = useCallback(() => {
@@ -4090,13 +4090,12 @@ function ChatViewContent(props: ChatViewProps) {
       setTerminalFocusRequestId((value) => value + 1);
       void openTerminal({
         environmentId: activeThreadRef.environmentId,
-        input: buildScientThreadTerminalOpenInput({
+        input: buildProjectThreadTerminalOpenInput({
           target: activeTerminalTarget,
           threadId: activeThreadId,
           terminalId,
         }),
       });
-    });
     });
   }, [
     activeTerminalTarget,

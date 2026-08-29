@@ -17,7 +17,7 @@ import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
-import { Code2, Columns2, Eye, FolderTree, Globe2, LoaderCircle, PencilLine } from "lucide-react";
+import { BookOpen, Code2, Columns2, FolderTree, Globe2, LoaderCircle, PenLine } from "lucide-react";
 import * as Schema from "effect/Schema";
 import {
   lazy,
@@ -44,6 +44,7 @@ import type { LatexFilePresentationRequest } from "~/rightPanelStore";
 import { resolvePathLinkTarget } from "~/terminal-links";
 import { ScrollArea } from "~/components/ui/scroll-area";
 import { Toggle } from "~/components/ui/toggle";
+import { ToggleGroup } from "~/components/ui/toggle-group";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "~/components/ui/tooltip";
 import { stackedThreadToast, toastManager } from "~/components/ui/toast";
 import { type DraftId, useComposerDraftStore } from "~/composerDraftStore";
@@ -1053,7 +1054,7 @@ export default function FilePreviewPanel({
     Schema.Boolean,
   );
   const [markdownMode, setMarkdownModeState] = useState<MarkdownDocumentMode>(
-    renderMarkdownPreferred ? "read" : "source",
+    renderMarkdownPreferred ? "write" : "source",
   );
   const breadcrumbRef = useRef<HTMLDivElement>(null);
   const isMarkdown = relativePath ? isMarkdownPreviewFile(relativePath) : false;
@@ -1185,6 +1186,34 @@ export default function FilePreviewPanel({
               projectName={projectName}
               relativePath={relativePath}
               onOpenFile={onOpenFile}
+              currentFileControl={
+                isMarkdown ? (
+                  <ScientMarkdownRenameButton
+                    environmentId={environmentId}
+                    cwd={cwd}
+                    relativePath={relativePath}
+                    revision={file.data?.revision ?? "unavailable"}
+                    disabled={
+                      sourcePending || file.data === null || (file.data?.truncated ?? false)
+                    }
+                    label={relativePath.slice(relativePath.lastIndexOf("/") + 1)}
+                    onRenamed={(destinationRelativePath, revision) => {
+                      if (file.data) {
+                        setProjectFileQueryData(
+                          environmentId,
+                          cwd,
+                          destinationRelativePath,
+                          file.data.contents,
+                          revision,
+                        );
+                      }
+                      clearProjectFileQueryData(environmentId, cwd, relativePath);
+                      refreshProjectEntriesQuery(environmentId, cwd);
+                      onOpenFile(destinationRelativePath);
+                    }}
+                  />
+                ) : undefined
+              }
             />
           </ScrollArea>
           {absolutePath &&
@@ -1198,113 +1227,88 @@ export default function FilePreviewPanel({
               enableShortcut={false}
             />
           ) : null}
-          {isMarkdown ? (
-            <ScientMarkdownRenameButton
-              environmentId={environmentId}
-              cwd={cwd}
-              relativePath={relativePath}
-              revision={file.data?.revision ?? "unavailable"}
-              disabled={sourcePending || file.data === null || (file.data?.truncated ?? false)}
-              onRenamed={(destinationRelativePath, revision) => {
-                if (file.data) {
-                  setProjectFileQueryData(
-                    environmentId,
-                    cwd,
-                    destinationRelativePath,
-                    file.data.contents,
-                    revision,
-                  );
-                }
-                clearProjectFileQueryData(environmentId, cwd, relativePath);
-                refreshProjectEntriesQuery(environmentId, cwd);
-                onOpenFile(destinationRelativePath);
-              }}
-            />
-          ) : null}
           {isMarkdown ? <ScientMarkdownSaveStatus status={markdownSaveStatus} /> : null}
           {isMarkdown && !file.data?.readOnly ? (
-            <div className="flex shrink-0 items-center gap-0.5" aria-label="Markdown view mode">
+            <ToggleGroup
+              aria-label="Markdown mode"
+              className="h-6 shrink-0 gap-0.5 rounded-md bg-muted/40 p-0.5"
+              size="sm"
+              value={[markdownMode]}
+              onValueChange={(val) => {
+                const next = val[0];
+                if (next === "write" || next === "read" || next === "split" || next === "source") {
+                  setMarkdownMode(next);
+                }
+              }}
+            >
               <Tooltip>
                 <TooltipTrigger
                   render={
                     <Toggle
-                      className="shrink-0"
-                      pressed={markdownMode === "write"}
+                      aria-label="Edit Markdown (Rich editor)"
+                      className="size-5 p-0 data-[state=on]:bg-background data-[state=on]:text-foreground data-[state=on]:shadow-xs"
                       disabled={file.data?.truncated ?? false}
-                      onPressedChange={() =>
-                        setMarkdownMode(markdownMode === "write" ? "read" : "write")
-                      }
-                      aria-label={
-                        markdownMode === "write" ? "Stop editing Markdown" : "Edit Markdown"
-                      }
+                      value="write"
                       variant="ghost"
-                      size="sm"
                     >
-                      {markdownMode === "write" ? (
-                        <Eye className="size-3.5" />
-                      ) : (
-                        <PencilLine className="size-3.5" />
-                      )}
+                      <PenLine className="size-3" />
                     </Toggle>
                   }
                 />
-                <TooltipPopup>
-                  {markdownMode === "write" ? "Stop editing" : "Edit rendered document"}
-                </TooltipPopup>
+                <TooltipPopup>Rich Editor (Write)</TooltipPopup>
               </Tooltip>
+
               <Tooltip>
                 <TooltipTrigger
                   render={
                     <Toggle
-                      className="shrink-0"
-                      pressed={markdownMode === "source"}
+                      aria-label="Read Markdown (Rendered view)"
+                      className="size-5 p-0 data-[state=on]:bg-background data-[state=on]:text-foreground data-[state=on]:shadow-xs"
                       disabled={file.data?.truncated ?? false}
-                      onPressedChange={() =>
-                        setMarkdownMode(markdownMode === "source" ? "read" : "source")
-                      }
-                      aria-label={
-                        markdownMode === "source"
-                          ? "Show rendered Markdown"
-                          : "Show Markdown source"
-                      }
+                      value="read"
                       variant="ghost"
-                      size="sm"
                     >
-                      <Code2 className="size-3.5" />
+                      <BookOpen className="size-3" />
                     </Toggle>
                   }
                 />
-                <TooltipPopup>
-                  {markdownMode === "source" ? "Show rendered document" : "Show source"}
-                </TooltipPopup>
+                <TooltipPopup>Rendered View (Read)</TooltipPopup>
               </Tooltip>
+
               <Tooltip>
                 <TooltipTrigger
                   render={
                     <Toggle
-                      className="shrink-0"
-                      pressed={markdownMode === "split"}
+                      aria-label="Split View (Rich & Source)"
+                      className="size-5 p-0 data-[state=on]:bg-background data-[state=on]:text-foreground data-[state=on]:shadow-xs"
                       disabled={file.data?.truncated ?? false}
-                      onPressedChange={() =>
-                        setMarkdownMode(markdownMode === "split" ? "read" : "split")
-                      }
-                      aria-label={
-                        markdownMode === "split"
-                          ? "Close split Markdown view"
-                          : "Show split Markdown view"
-                      }
+                      value="split"
                       variant="ghost"
-                      size="sm"
                     >
-                      <Columns2 className="size-3.5" />
+                      <Columns2 className="size-3" />
                     </Toggle>
                   }
                 />
-                <TooltipPopup>
-                  {markdownMode === "split" ? "Close split view" : "Show rendered and source"}
-                </TooltipPopup>
+                <TooltipPopup>Split View (Rich & Source)</TooltipPopup>
               </Tooltip>
-            </div>
+
+              <Tooltip>
+                <TooltipTrigger
+                  render={
+                    <Toggle
+                      aria-label="Source Markdown View"
+                      className="size-5 p-0 data-[state=on]:bg-background data-[state=on]:text-foreground data-[state=on]:shadow-xs"
+                      disabled={file.data?.truncated ?? false}
+                      value="source"
+                      variant="ghost"
+                    >
+                      <Code2 className="size-3" />
+                    </Toggle>
+                  }
+                />
+                <TooltipPopup>Source Markdown</TooltipPopup>
+              </Tooltip>
+            </ToggleGroup>
           ) : null}
           {canOpenInBrowser ? (
             <Tooltip>

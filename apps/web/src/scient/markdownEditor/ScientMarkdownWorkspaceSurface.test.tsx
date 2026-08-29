@@ -67,4 +67,38 @@ describe("ScientMarkdownWorkspaceSurface", () => {
     expect(host.querySelector("[aria-label='Document actions']")).not.toBeNull();
     expect(persist).not.toHaveBeenCalled();
   });
+
+  it("opens find as a bounded row in document flow instead of a clipped popover", async () => {
+    vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+    const host = document.createElement("div");
+    document.body.append(host);
+    const root = createRoot(host);
+    roots.push(root);
+
+    await act(() =>
+      root.render(
+        <ScientMarkdownWorkspaceSurface
+          source="Find this text.\n"
+          revision="r0"
+          mode="read"
+          ariaLabel="Find fixture"
+          persist={vi.fn(async () => ({ revision: "r1" }))}
+          onPendingChange={vi.fn()}
+          onSaveConfirmed={vi.fn()}
+          onSaveFailure={vi.fn()}
+          onExternalConflict={vi.fn()}
+        />,
+      ),
+    );
+
+    const findButton = host.querySelector<HTMLButtonElement>("[aria-label='Find in document']");
+    expect(findButton).not.toBeNull();
+    await act(() => findButton!.click());
+
+    const richPane = host.querySelector(".scient-markdown-rich-pane");
+    const findBar = host.querySelector(".scient-markdown-find-bar");
+    expect(findBar?.parentElement).toBe(richPane);
+    expect(host.querySelector(".scient-markdown-find-popover")).toBeNull();
+    expect(findBar?.querySelector("[aria-label='Find text']")).toBe(document.activeElement);
+  });
 });

@@ -34,7 +34,6 @@ import { Tooltip, TooltipPopup, TooltipTrigger } from "~/components/ui/tooltip";
 import { Kbd } from "~/components/ui/kbd";
 import { Menu, MenuItem, MenuPopup, MenuShortcut, MenuTrigger } from "~/components/ui/menu";
 import { ScrollArea } from "~/components/ui/scroll-area";
-import { PanelTabCloseButton } from "~/components/ui/panel-tab-close-button";
 import { toastManager } from "~/components/ui/toast";
 import { faviconUrlForOrigin } from "~/lib/favicon";
 import { useTheme } from "~/hooks/useTheme";
@@ -990,7 +989,6 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
                     aria-label={`Close ${title}`}
                     aria-disabled={pending}
                     onClick={() => closeSurfaces([surface.id], () => props.onCloseSurface(surface))}
-
                   >
                     <SurfaceIcon
                       surface={surface}
@@ -1005,7 +1003,7 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
                         aria-hidden
                       />
                     ) : null}
-                  </PanelTabCloseButton>
+                  </button>
                   {audio === "none" || !audioRuntimeTabId ? null : (
                     <Tooltip>
                       <TooltipTrigger

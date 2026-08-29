@@ -148,10 +148,11 @@ export class ScientProseMirrorSession {
     ) {
       return "unchanged";
     }
+    const previousDraft = this.documentSession.draftSource;
     const nextSession = receiveExternalMarkdownSource(this.documentSession, input);
     this.documentSession = nextSession;
     if (nextSession.conflict !== null) return "conflict";
-    if (nextSession.draftSource === this.projection.ledger.source) return "unchanged";
+    if (input.source === previousDraft) return "unchanged";
 
     this.projection = createScientMarkdownProjection(nextSession.draftSource);
     this.projectedBlockRanges = blockRanges(this.projection);
@@ -198,7 +199,13 @@ export class ScientProseMirrorSession {
     if (nextSession === this.documentSession) return nextState;
     this.documentSession = nextSession;
     const intent = beginMarkdownSave(nextSession);
-    if (intent !== null) this.options.onUserSourceChange?.(source, intent);
+    if (intent !== null) {
+      try {
+        this.options.onUserSourceChange?.(source, intent);
+      } catch (error) {
+        console.error("Scient Markdown onUserSourceChange error:", error);
+      }
+    }
     return nextState;
   }
 }

@@ -26,6 +26,14 @@ const SOURCE = [
 ].join("\n");
 
 describe("Scient ProseMirror projection", () => {
+  it("projects an empty file as one writable paragraph without changing its bytes", () => {
+    const projection = createScientMarkdownProjection("");
+
+    expect(projection.document.childCount).toBe(1);
+    expect(projection.document.firstChild?.type.name).toBe("paragraph");
+    expect(serializeScientMarkdownProjection(projection, projection.document)).toBe("");
+  });
+
   it("returns exact Markdown when the projected document is untouched", () => {
     const projection = createScientMarkdownProjection(SOURCE);
     expect(serializeScientMarkdownProjection(projection, projection.document)).toBe(SOURCE);
