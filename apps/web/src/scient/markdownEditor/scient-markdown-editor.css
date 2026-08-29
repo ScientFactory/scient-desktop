@@ -78,6 +78,7 @@
 .scient-markdown-command-button,
 .scient-markdown-slash-menu button {
   display: inline-flex;
+  flex-shrink: 0;
   min-width: 1.65rem;
   min-height: 1.65rem;
   align-items: center;

@@ -19,7 +19,7 @@ import { cn } from "~/lib/utils";
  */
 export function dockButtonClass(active?: boolean): string {
   return cn(
-    "scient-markdown-command-button inline-flex h-7 items-center justify-center gap-1 rounded-md transition-colors",
+    "scient-markdown-command-button inline-flex h-7 shrink-0 items-center justify-center gap-1 whitespace-nowrap rounded-md transition-colors",
     active && "bg-accent text-accent-foreground",
   );
 }
@@ -78,7 +78,9 @@ export function DockMenu(props: {
                   aria-label={props.label}
                 >
                   {props.icon}
-                  {(props.chevron ?? true) ? <ChevronDown className="size-3 opacity-60" /> : null}
+                  {(props.chevron ?? true) ? (
+                    <ChevronDown className="size-3 shrink-0 opacity-60" />
+                  ) : null}
                 </button>
               }
             />
@@ -121,7 +123,7 @@ export function MenuRow(props: {
 
 /** Vertical separator between dock control groups; sized by the stylesheet. */
 export function DockDivider() {
-  return <span className="scient-markdown-command-divider" />;
+  return <span className="scient-markdown-command-divider shrink-0" />;
 }
 
 /**
