@@ -2397,7 +2397,7 @@ const makeWsRpcLayer = (
                 return yield* new ProjectWriteFileError({
                   cwd: input.cwd,
                   relativePath: target.relativePath,
-                  failure: "managed_path_read_only",
+                  failure: "read_only_in_files",
                 });
               }
               if (input.expectedRevision !== undefined) {
@@ -2416,7 +2416,7 @@ const makeWsRpcLayer = (
                   return yield* new ProjectWriteFileError({
                     cwd: input.cwd,
                     relativePath: target.relativePath,
-                    failure: "managed_path_read_only",
+                    failure: "read_only_in_files",
                   });
                 }
               }

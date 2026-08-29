@@ -296,6 +296,7 @@ it.layer(TestLayer, { excludeTestServices: true })("WorkspaceEntries", (it) => {
         yield* writeTextFile(cwd, "README.md");
         yield* writeTextFile(cwd, ".git/HEAD");
         yield* writeTextFile(cwd, "node_modules/pkg/index.js");
+        yield* writeTextFile(cwd, ".scient/sources/records/source.json");
 
         const result = yield* searchWorkspaceEntries({ cwd, query: "", limit: 100 });
         const paths = result.entries.map((entry) => entry.path);
@@ -306,6 +307,7 @@ it.layer(TestLayer, { excludeTestServices: true })("WorkspaceEntries", (it) => {
         expect(paths).toContain("README.md");
         expect(paths.some((entryPath) => entryPath.startsWith(".git"))).toBe(false);
         expect(paths.some((entryPath) => entryPath.startsWith("node_modules"))).toBe(false);
+        expect(paths.some((entryPath) => entryPath.startsWith(".scient/sources"))).toBe(false);
         expect(result.truncated).toBe(false);
       }),
     );

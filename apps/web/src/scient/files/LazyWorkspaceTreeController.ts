@@ -57,6 +57,7 @@ export class LazyWorkspaceTreeController {
   readonly #entries = new Map<string, ProjectDirectoryEntry>();
   readonly #requestVersions = new Map<string, number>();
   readonly #inFlight = new Map<string, Promise<boolean>>();
+  readonly #unloadedDirectories = new Set<string>();
 
   #view: ProjectDirectoryView;
   #generation = 0;
@@ -90,6 +91,14 @@ export class LazyWorkspaceTreeController {
     if (view === this.#view) return Promise.resolve();
     this.#view = view;
     this.#generation += 1;
+    for (const [relativeDirectory, branch] of this.#branches) {
+      if (branch.status !== "loading") continue;
+      this.#branches.set(relativeDirectory, {
+        ...branch,
+        status: "idle",
+      });
+      if (relativeDirectory.length > 0) this.#unloadedDirectories.add(relativeDirectory);
+    }
     return this.refresh();
   }
 
@@ -113,6 +122,7 @@ export class LazyWorkspaceTreeController {
     } finally {
       this.#refreshing = false;
       this.#emit();
+      this.#loadExpandedBranches();
     }
   }
 
@@ -146,6 +156,7 @@ export class LazyWorkspaceTreeController {
     }
 
     const generation = this.#generation;
+    this.#unloadedDirectories.delete(relativeDirectory);
     const requestVersion = (this.#requestVersions.get(relativeDirectory) ?? 0) + 1;
     this.#requestVersions.set(relativeDirectory, requestVersion);
     this.#branches.set(relativeDirectory, {
@@ -221,6 +232,11 @@ export class LazyWorkspaceTreeController {
         operations.push({ type: "add", path: treePath(entry) });
       }
       this.#entries.set(entry.relativePath, entry);
+      if (entry.kind === "directory" && !this.#branches.has(entry.relativePath)) {
+        this.#unloadedDirectories.add(entry.relativePath);
+      } else if (entry.kind !== "directory") {
+        this.#unloadedDirectories.delete(entry.relativePath);
+      }
     }
     this.#branches.set(relativeDirectory, {
       status: "loaded",
@@ -235,27 +251,38 @@ export class LazyWorkspaceTreeController {
   #forgetSubtree(relativePath: string): void {
     const prefix = `${relativePath}/`;
     for (const path of this.#entries.keys()) {
-      if (path === relativePath || path.startsWith(prefix)) this.#entries.delete(path);
+      if (path !== relativePath && !path.startsWith(prefix)) continue;
+      this.#entries.delete(path);
+      this.#unloadedDirectories.delete(path);
     }
     for (const path of this.#branches.keys()) {
-      if (path === relativePath || path.startsWith(prefix)) this.#branches.delete(path);
+      if (path !== relativePath && !path.startsWith(prefix)) continue;
+      this.#branches.delete(path);
+      this.#requestVersions.set(path, (this.#requestVersions.get(path) ?? 0) + 1);
+      this.#inFlight.delete(path);
+      this.#unloadedDirectories.delete(path);
     }
   }
 
   #loadExpandedBranches(): void {
-    if (this.#destroyed) return;
-    for (const entry of this.#entries.values()) {
-      if (entry.kind !== "directory") continue;
-      const branch = this.#branches.get(entry.relativePath);
+    if (this.#destroyed || this.#refreshing) return;
+    for (const relativePath of [...this.#unloadedDirectories]) {
+      const entry = this.#entries.get(relativePath);
+      if (entry?.kind !== "directory") {
+        this.#unloadedDirectories.delete(relativePath);
+        continue;
+      }
+      const branch = this.#branches.get(relativePath);
       if (
         branch?.status === "loading" ||
         branch?.status === "loaded" ||
         branch?.status === "failed"
       ) {
+        this.#unloadedDirectories.delete(relativePath);
         continue;
       }
-      const item = this.#model.getItem(entry.relativePath);
-      if (item && "isExpanded" in item && item.isExpanded()) void this.load(entry.relativePath);
+      const item = this.#model.getItem(relativePath);
+      if (item && "isExpanded" in item && item.isExpanded()) void this.load(relativePath);
     }
   }
 

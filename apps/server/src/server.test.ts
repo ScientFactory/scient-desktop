@@ -5776,10 +5776,10 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       if (result._tag !== "Failure" || result.failure._tag !== "ProjectWriteFileError") {
         assert.fail("Expected a ProjectWriteFileError");
       }
-      assert.equal(result.failure.failure, "managed_path_read_only");
+      assert.equal(result.failure.failure, "read_only_in_files");
       assert.equal(
         result.failure.message,
-        "Workspace file '.scient/project.json' is managed and read-only in Files.",
+        "Workspace file '.scient/project.json' is read-only in Files.",
       );
       assert.equal(yield* fs.readFileString(projectFile), '{"id":"original"}\n');
 
@@ -5804,7 +5804,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       if (aliasWrite._tag !== "Failure" || aliasWrite.failure._tag !== "ProjectWriteFileError") {
         assert.fail("Expected a ProjectWriteFileError for a symlink path");
       }
-      assert.equal(aliasWrite.failure.failure, "managed_path_read_only");
+      assert.equal(aliasWrite.failure.failure, "read_only_in_files");
       assert.equal(yield* fs.readFileString(projectFile), '{"id":"original"}\n');
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );

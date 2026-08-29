@@ -323,7 +323,7 @@ export const ProjectFileFailure = Schema.Literals([
   "path_not_file",
   "binary_file",
   "revision_conflict",
-  "managed_path_read_only",
+  "read_only_in_files",
   "operation_failed",
 ]);
 export type ProjectFileFailure = typeof ProjectFileFailure.Type;
@@ -415,8 +415,8 @@ export class ProjectWriteFileError extends Schema.TaggedErrorClass<ProjectWriteF
       ...props,
       message:
         decodedProjectErrorMessage(props) ??
-        (props.failure === "managed_path_read_only"
-          ? `Workspace file '${props.relativePath}' is managed and read-only in Files.`
+        (props.failure === "read_only_in_files"
+          ? `Workspace file '${props.relativePath}' is read-only in Files.`
           : `Failed to write workspace file '${props.relativePath}' in '${props.cwd}'.`),
     } as any);
   }

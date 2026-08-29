@@ -296,7 +296,18 @@ export const make = Effect.gen(function* () {
       });
       return yield* Effect.gen(function* () {
         const searchIndex = yield* WorkspaceSearchIndex.WorkspaceSearchIndex;
-        return yield* searchIndex.search(normalizedQuery, input.limit, input.kind, input.imageOnly);
+        const result = yield* searchIndex.search(
+          normalizedQuery,
+          input.limit,
+          input.kind,
+          input.imageOnly,
+        );
+        return {
+          ...result,
+          entries: result.entries.filter(
+            (entry) => workspaceEntryDisposition(entry.path).visibility === "ordinary",
+          ),
+        };
       }).pipe(
         Effect.provide(
           workspaceSearchIndexes.get(

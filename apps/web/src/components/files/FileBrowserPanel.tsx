@@ -27,7 +27,7 @@ import {
 } from "~/scient/files/LazyWorkspaceTreeController";
 import { projectEnvironment } from "~/state/projects";
 import { useProjectPathSearch } from "~/state/queries";
-import { useAtomQueryRunner } from "~/state/use-atom-query-runner";
+import { useAtomCommand } from "~/state/use-atom-command";
 
 import { createFileTreeDragMentionController } from "./fileTreeDragMention";
 
@@ -208,7 +208,7 @@ export default function FileBrowserPanel({
 }: FileBrowserPanelProps) {
   const { resolvedTheme } = useTheme();
   const composerRef = useComposerHandleContext();
-  const runListDirectory = useAtomQueryRunner(projectEnvironment.listDirectory, {
+  const runListDirectory = useAtomCommand(projectEnvironment.listDirectory, {
     reportDefect: false,
     reportFailure: false,
   });
