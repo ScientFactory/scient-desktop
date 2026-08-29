@@ -22,11 +22,11 @@ revision remains literal ancestry of owned `main`; it is not merely a reviewed
 or observed tip.
 
 The current verified T3 ancestry is recorded in
-[`docs/internals/2026-08-28-upstream-sync-c8aba2587d.md`](docs/internals/2026-08-28-upstream-sync-c8aba2587d.md)
+[`docs/internals/2026-08-29-upstream-sync-660cddd3bc.md`](docs/internals/2026-08-29-upstream-sync-660cddd3bc.md)
 and in `upstream-state.json`. The latest refresh merged the exact official
-checkpoint `c8aba2587d56edbf3b7872987719a12b42031f48` into the refresh
+checkpoint `660cddd3bc9801e089afcabba11c62f41aeac5c3` into the refresh
 branch, preserving the exact range after the previously integrated tip
-`082e6ea521861fff37b90fcd789b5eaa5ef5d6a6`. The earlier Claude compaction
+`c8aba2587d56edbf3b7872987719a12b42031f48`. The earlier Claude compaction
 feature remains literal ancestry but is still reversed by its dedicated,
 documented deferral commit. Later observed T3 tips never move `integrationBase`
 by themselves; it advances only after the exact ancestry and verification gate
@@ -313,6 +313,22 @@ passive-probe safety, account redaction, compact sidebar, awareness and voice
 composition, and provider documentation. The exact record also documents the
 three missing integration seams found and corrected by focused and complete
 verification.
+
+The 2026-08-29 sync through `660cddd3bc` receives 46 official commits covering
+provider Settings stabilization, project model defaults, Codex sub-agent
+models, OpenCode child lifecycle handling, WSL runtime caching, preview power
+and OAuth fixes, environment-published themes, sidebar and keybinding polish,
+retry and pull-request refresh reliability, mobile theme and Expo maintenance,
+and composer spacing. Fifty-one textual conflicts preserve Scient identity,
+state and migration compatibility, provider lifecycle, account redaction,
+scientific and browser seams, analytics and trust policy, and manual stable
+release authority. T3's generic PDF, ZIP, and file-attachment machinery is
+retained behind an explicit capability, command, and UI compatibility gate
+until every enabled client, including mobile and persisted replay, supports the
+contract. The complete gate found and corrected two semantic auto-merges in
+desktop packaging and theme persistence, reinforcing the maintained alignment
+protocol's requirement to audit overlapping files even when Git reports no
+textual conflict.
 
 The earlier 2026-08-12 record through `849bac894` remains preserved as the
 partial checkpoint merged by PR #69. It covers the first 11 commits of this
