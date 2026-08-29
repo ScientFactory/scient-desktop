@@ -166,6 +166,37 @@ describe("LazyWorkspaceTreeController", () => {
     harness.destroy();
   });
 
+  it("keeps refresh state owned by the latest view request", async () => {
+    const pending: Array<{
+      view: ProjectDirectoryView;
+      resolve: (result: ProjectListDirectoryResult) => void;
+    }> = [];
+    const loadDirectory = vi.fn(
+      (_relativeDirectory: string, view: ProjectDirectoryView) =>
+        new Promise<ProjectListDirectoryResult>((resolve) => pending.push({ view, resolve })),
+    );
+    const harness = makeController(loadDirectory);
+
+    const ordinaryStart = harness.controller.start();
+    const internalsRefresh = harness.controller.setView("with-internals");
+    const ordinaryRefresh = harness.controller.setView("ordinary");
+
+    pending.find(({ view }) => view === "with-internals")!.resolve(complete(directory(".git")));
+    await internalsRefresh;
+    expect(harness.snapshot()?.isPending).toBe(true);
+
+    pending.at(-1)!.resolve(complete(file("README.md")));
+    await ordinaryRefresh;
+    pending[0]!.resolve(complete(file("stale.txt")));
+    await ordinaryStart;
+
+    expect(harness.snapshot()?.isPending).toBe(false);
+    expect(harness.model.getItem("README.md")).not.toBeNull();
+    expect(harness.model.getItem(".git")).toBeNull();
+    expect(harness.model.getItem("stale.txt")).toBeNull();
+    harness.destroy();
+  });
+
   it("does not restore a branch removed while its request is pending", async () => {
     let rootRevision = 0;
     let resolveBranch!: (result: ProjectListDirectoryResult) => void;

@@ -61,6 +61,7 @@ export class LazyWorkspaceTreeController {
 
   #view: ProjectDirectoryView;
   #generation = 0;
+  #refreshVersion = 0;
   #refreshing = false;
   #destroyed = false;
   #unsubscribe: (() => void) | null = null;
@@ -104,6 +105,8 @@ export class LazyWorkspaceTreeController {
 
   async refresh(): Promise<void> {
     if (this.#destroyed) return;
+    const refreshVersion = this.#refreshVersion + 1;
+    this.#refreshVersion = refreshVersion;
     const branchesToRefresh = [...this.#branches.keys()];
     this.#refreshing = true;
     this.#emit();
@@ -120,9 +123,11 @@ export class LazyWorkspaceTreeController {
           .map((relativeDirectory) => this.load(relativeDirectory, true)),
       );
     } finally {
-      this.#refreshing = false;
-      this.#emit();
-      this.#loadExpandedBranches();
+      if (refreshVersion === this.#refreshVersion) {
+        this.#refreshing = false;
+        this.#emit();
+        this.#loadExpandedBranches();
+      }
     }
   }
 
@@ -266,7 +271,7 @@ export class LazyWorkspaceTreeController {
 
   #loadExpandedBranches(): void {
     if (this.#destroyed || this.#refreshing) return;
-    for (const relativePath of [...this.#unloadedDirectories]) {
+    for (const relativePath of this.#unloadedDirectories) {
       const entry = this.#entries.get(relativePath);
       if (entry?.kind !== "directory") {
         this.#unloadedDirectories.delete(relativePath);

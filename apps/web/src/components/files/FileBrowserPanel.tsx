@@ -64,6 +64,7 @@ const INITIAL_TREE_SNAPSHOT: LazyWorkspaceTreeSnapshot = {
 };
 
 const FILE_SEARCH_LIMIT = 200;
+const INTERNAL_VIEW_BY_WORKSPACE = new Map<string, boolean>();
 
 function RefreshFilesButton(props: { isPending: boolean; onRefresh: () => void }) {
   return (
@@ -214,15 +215,20 @@ export default function FileBrowserPanel({
   });
   const [treeSnapshot, setTreeSnapshot] =
     useState<LazyWorkspaceTreeSnapshot>(INITIAL_TREE_SNAPSHOT);
-  const [showInternals, setShowInternals] = useState(false);
+  const workspaceSessionKey = JSON.stringify([environmentId, cwd]);
+  const [showInternals, setShowInternals] = useState(
+    () => INTERNAL_VIEW_BY_WORKSPACE.get(workspaceSessionKey) ?? false,
+  );
   const showInternalsRef = useRef(showInternals);
   showInternalsRef.current = showInternals;
   const [searchValue, setSearchValue] = useState("");
-  const isSearching = searchValue.trim().length > 0;
+  const normalizedSearchValue = searchValue.trim();
+  const isSearching = normalizedSearchValue.length > 0;
   const fileSearch = useProjectPathSearch(
     { environmentId, cwd, query: searchValue, kind: "file" },
     FILE_SEARCH_LIMIT,
   );
+  const hasCurrentSearch = fileSearch.searchedQuery === normalizedSearchValue;
   const entryKinds = useMemo(
     () =>
       new Map(
@@ -415,7 +421,10 @@ export default function FileBrowserPanel({
   }, [showInternals]);
 
   const handleSearchValueChange = (value: string) => {
-    if (value.trim().length === 0) searchSelectionPathRef.current = null;
+    if (value.trim().length === 0) {
+      if (searchSelectionPathRef.current === selectedPath) handledRevealRef.current = null;
+      searchSelectionPathRef.current = null;
+    }
     setSearchValue(value);
   };
   const handleSearchClose = () => {
@@ -535,19 +544,30 @@ export default function FileBrowserPanel({
         />
         <WorkspaceFilesMenu
           showInternals={showInternals}
-          onShowInternalsChange={setShowInternals}
+          onShowInternalsChange={(nextShowInternals) => {
+            if (nextShowInternals) {
+              INTERNAL_VIEW_BY_WORKSPACE.set(workspaceSessionKey, true);
+            } else {
+              INTERNAL_VIEW_BY_WORKSPACE.delete(workspaceSessionKey);
+            }
+            setShowInternals(nextShowInternals);
+          }}
         />
       </div>
       <div className="sr-only" aria-live="polite">
-        {treeSnapshot.isPending ? "Loading workspace files." : "Workspace files loaded."}
+        {treeSnapshot.isPending
+          ? "Loading workspace files."
+          : treeSnapshot.failures.length > 0
+            ? "Some workspace files could not be loaded."
+            : "Workspace files loaded."}
       </div>
       {isSearching ? (
         <FileSearchResults
-          entries={fileSearch.searchedQuery === searchValue.trim() ? fileSearch.entries : []}
-          error={fileSearch.searchedQuery === searchValue.trim() ? fileSearch.error : null}
+          entries={hasCurrentSearch ? fileSearch.entries : []}
+          error={hasCurrentSearch ? fileSearch.error : null}
           isPending={fileSearch.isPending}
-          query={fileSearch.searchedQuery || searchValue.trim()}
-          truncated={fileSearch.truncated}
+          query={hasCurrentSearch ? fileSearch.searchedQuery : normalizedSearchValue}
+          truncated={hasCurrentSearch && fileSearch.truncated}
           onOpenFile={(relativePath) => {
             searchSelectionPathRef.current = relativePath;
             onOpenFile(relativePath);
