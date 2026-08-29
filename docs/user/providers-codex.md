@@ -1,7 +1,9 @@
 # Codex in Scient
 
-Scient keeps installing the Codex tool and connecting a Codex account as two separate, visible
-facts. A saved provider configuration is not treated as a working connection.
+Codex is OpenAI's agent for working with project files, code, commands, and
+connected tools. Scient can use an existing Codex installation or manage a
+private copy, then connect it to your OpenAI account. Installing the tool and
+signing in are separate steps.
 
 For the behavior shared by all assisted providers, see [Providers in Scient](./providers.md).
 
@@ -38,15 +40,8 @@ the exact operating system and architecture. Remote clients use the runtime admi
 server, and unsupported targets receive no invented fallback. The app displays the reviewed version
 and download details before installation.
 
-If a managed install, repair, or download fails, that operation cleans its incomplete staging
-directory and the previous working copy remains active. Routine status refreshes never delete an
-active operation's staging directory. A manual rollback button is deliberately not offered until
-Scient has two separately reviewed releases to roll between.
-
-When a newer reviewed managed version is available, **Update** downloads and verifies the
-replacement without deactivating the current version. Scient switches versions only after the new
-copy passes its smoke test. Provider-tool updates and provider sign-in are serialized so one cannot
-change shared runtime state underneath the other.
+If an install, repair, or update fails, the previous working managed copy
+remains available.
 
 ## Why Use More Than One Account?
 
@@ -81,8 +76,9 @@ and share with OpenAI employees.
 ## Approve access to other apps
 
 When a Codex tool needs access to an app such as Safari, Scient shows the app name and asks for
-approval. You can approve, decline, or cancel the request from the desktop app, web app, or mobile
-app. Some tools also offer approval for the current session or permanent approval.
+approval. You can approve, decline, or cancel the request from the desktop app
+or a connected web client. Some tools also offer approval for the current
+session or permanent approval.
 
 ## I Want Work And Personal Codex Accounts
 
@@ -141,8 +137,8 @@ has a `Shadow home path`.
 
 Open Settings and look at the provider row.
 
-Scient shows the authenticated email for providers that report one. Emails are blurred by default;
-click the blurred email to reveal it.
+Scient shows the authenticated email for providers that report one. The email is visible initially
+so accounts can be distinguished; select it to hide or show it.
 
 Use display names and accent colors to make accounts easy to tell apart in the model picker.
 
@@ -179,13 +175,10 @@ If two Codex providers show the same account or the same unexpected model list:
 2. Refresh provider status.
 3. Confirm the second provider has `Shadow home path` set.
 4. Confirm the shadow directory has its own `auth.json`.
-5. If you copied `~/.codex` into the shadow directory, remove everything except `auth.json`.
-
-Example cleanup:
-
-```bash
-find ~/.codex_p -mindepth 1 ! -name auth.json -exec rm -rf {} +
-```
+5. If you copied `~/.codex` into the shadow directory, first confirm that this really is the
+   secondary shadow home and make a backup. Then move its non-`auth.json` entries out of that
+   directory. Never clean the primary `CODEX_HOME`, and keep the backup until the secondary account
+   has been verified in Scient.
 
 ## When To Use A Separate CODEX_HOME
 

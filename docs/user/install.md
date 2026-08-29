@@ -1,87 +1,46 @@
-# Install T3 Code
+# Install Scient
 
-T3 Code is a web and desktop GUI for running coding agents on your machine.
+Scient is available as a desktop app for macOS, Windows, and Linux. A normal
+local installation does not require Node.js or a separate server.
 
-## Requirements
+## Download the desktop app
 
-Node.js `^22.16 || ^23.11 || >=24.10` on the machine that runs the T3 Code server.
+Choose the installer for your computer below. Each link downloads the latest
+public build from the official Scient release.
 
-At least one provider CLI, installed and authenticated. See [Providers](#providers) below.
+| Platform            | Current public artifact                                            |
+| ------------------- | ------------------------------------------------------------------ |
+| macOS Apple Silicon | [Arm64 DMG](https://scientfactory.com/api/download/macArm64)       |
+| macOS Intel         | [x64 DMG](https://scientfactory.com/api/download/macX64)           |
+| Windows             | [x64 installer](https://scientfactory.com/api/download/windowsX64) |
+| Linux               | [x64 AppImage](https://scientfactory.com/api/download/linuxX64)    |
 
-## Run Without Installing
+## First launch
 
-```bash
-npx t3@latest
-```
+### macOS
 
-This starts the T3 Code server on your machine and opens the local web app. Use
-`npx t3@latest --help` for the full CLI reference.
+Choose the Apple Silicon build for an M-series Mac and the Intel build for an
+Intel Mac. Open the DMG and move **Scient** to **Applications**. If macOS asks
+you to confirm the first launch, verify that you downloaded Scient from the
+official page and follow the system prompt. Do not disable Gatekeeper or other
+operating-system security controls.
 
-## Desktop App
+### Windows
 
-Download the latest release from
-[GitHub Releases](https://github.com/pingdotgg/t3code/releases), or install from a package
-registry.
+Run the x64 installer. If Windows displays a SmartScreen warning, verify that
+you downloaded the installer from the official Scient page before deciding
+whether to continue.
 
-Windows:
+### Linux
 
-```bash
-winget install T3Tools.T3Code
-```
+Download the x64 AppImage, make it executable if your file manager did not do
+so, and open it. Keep the AppImage in a permanent location if you want Scient's
+built-in desktop updater to continue finding it.
 
-macOS:
+## Start using Scient
 
-```bash
-brew install --cask t3-code
-```
-
-## Providers
-
-Scient drives provider-owned tools. In the local desktop app, **Choose your AI** can privately
-install reviewed Codex, Claude, Antigravity, and Grok runtimes and start their official sign-in
-flows. A healthy system or custom installation remains supported and is never silently replaced.
-Other providers still use their externally installed tools.
-
-| Provider   | CLI                                                   | Default binary | Manual recovery command        |
-| ---------- | ----------------------------------------------------- | -------------- | ------------------------------ |
-| Codex      | [Codex CLI](https://developers.openai.com/codex/cli)  | `codex`        | `codex login`                  |
-| Claude     | [Claude Code](https://claude.com/product/claude-code) | `claude`       | `claude auth login --claudeai` |
-| Cursor     | [Cursor CLI](https://cursor.com/cli)                  | `cursor-agent` | `agent login`                  |
-| Grok Build | [Grok Build CLI](https://x.ai/cli)                    | `grok`         | `grok login`                   |
-| OpenCode   | [OpenCode](https://opencode.ai)                       | `opencode`     | `opencode auth login`          |
-
-Codex and Claude are on by default. Cursor, Grok Build, and OpenCode are off by default; turn
-them on in **Settings** → the provider's card when you want to use them.
-
-Cursor is the one to watch: install Cursor CLI, which provides the `cursor-agent` binary that
-T3 Code looks for, but authenticate with `agent login`, not `cursor-agent login`.
-
-Grok models that advertise adjustable reasoning expose a **Reasoning** control beside the model
-picker. The available levels and default come from the installed Grok CLI, so they can vary by model
-and CLI version.
-
-Run a manual recovery command on the machine running the Scient server, not on the device you browse
-from.
-
-### Binary Discovery
-
-Each provider CLI must be on the server's `PATH`, or have an explicit binary path set in
-**Settings** → the provider instance → **Binary path**. Use the explicit path when a version
-manager or a non-standard install location keeps the CLI off the `PATH` of the shell that
-started T3 Code.
-
-### When Auth Is Needed
-
-Provider auth is required before you start a session with that provider, not before you start
-Scient. You can open Scient and connect providers afterwards. The composer and **Settings >
-Providers** show whether the tool is missing, sign-in is required, or a usable model is ready.
-
-For provider-specific setup, see [Codex](./providers-codex.md), [Claude](./providers-claude.md),
-[Antigravity](./providers-antigravity.md), and [Grok](./providers-grok.md).
-
-## Next Steps
-
-- [Permission modes](./permission-modes.md): how much T3 Code asks before acting
-- [Remote access](./remote-access.md): connect from a phone, tablet, or another desktop
-- [Keeping T3 Code in sync](./updating.md): client and server version skew
-- [Running in the background](./background-service.md): Linux background service
+When Scient opens, the optional [Getting started](./getting-started.md) flow can
+help you connect an AI provider and add your first project. You can skip it and
+configure providers later from **Settings → Providers**. See
+[AI providers](./providers.md) or [Projects](./projects.md) when you need more
+detail.

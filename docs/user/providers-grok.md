@@ -1,8 +1,9 @@
 # Grok in Scient
 
-Scient can use your existing Grok subscription through the official Grok Build CLI. Grok owns the
-account session and credentials; Scient starts the provider's official sign-in flow and checks the
-result without receiving your password or tokens.
+Grok Build is xAI's agent for working with project files, code, and commands.
+Scient can use it through an existing Grok subscription or supported API-key
+environment. Grok owns the account session and credentials; Scient starts the
+official sign-in flow without receiving your password or tokens.
 
 For the behavior shared by all assisted providers, see [Providers in Scient](./providers.md).
 

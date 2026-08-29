@@ -1,7 +1,10 @@
 # Conversation text direction
 
 Scient can control the direction of conversational text without mirroring the
-application shell. In Settings → Appearance → Conversation text direction:
+application shell. This is useful when working in Hebrew, Arabic, or another
+right-to-left language while code, paths, and the rest of the app remain in
+their familiar layout. In **Settings → Appearance → Conversation text
+direction**:
 
 - **Automatic** infers a stable direction for each complete message. RTL prose
   makes the message RTL; an English-only message is LTR.

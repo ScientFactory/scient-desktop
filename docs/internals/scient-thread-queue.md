@@ -10,9 +10,12 @@ feature when upstream T3 ships a native queue.
 - **Enter while a turn is running queues.** The composer clears and the
   message appears in a strip directly above the composer. It is _not_ sent.
 - **Cmd/Ctrl+Enter steers.** The message dispatches immediately, even while a
-  turn is running. Steering is provider-native today: the Claude adapter
-  injects into the live SDK turn loop and Grok tracks in-flight prompts, so a
-  steer is an ordinary `thread.turn.start` issued while `phase === "running"`.
+  turn is running, as an ordinary `thread.turn.start` issued while
+  `phase === "running"`. The client and orchestration layer accepting that
+  command is not by itself proof that the provider adopted it into the active
+  turn. In-flight adoption is explicit today in the Claude, Grok, Cursor,
+  Droid, and OpenCode adapters; behavior in another adapter must be verified
+  rather than inferred. A provider rejection remains a visible failed start.
 - **Queued messages auto-send in order.** When the active turn moves from
   running to ready, the client dispatches the first queued item through the
   ordinary `thread.turn.start` command. It waits for that next turn to settle

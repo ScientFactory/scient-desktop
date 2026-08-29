@@ -1,81 +1,73 @@
-# Keeping T3 Code in Sync
+# Update Scient
 
-The T3 Code web or desktop app and the server it connects to work best when they use the same
-version. If they do not match, T3 Code shows a warning with the right update option for that server.
+Scient keeps the desktop app and the server attached to each environment as
+separate versioned runtimes. A local desktop environment is bundled with the
+app, while an SSH or manually managed environment may run its own Scient server.
 
-## Where to Find the Update
+## Update the desktop app
 
-You may see the warning in either of these places:
+Packaged Scient releases check the selected update channel after startup and
+periodically while the app is open. Updates are deliberate:
 
-- above the message box in the current conversation
-- **Settings** → **Connections**, beside the affected connection
+1. Select the update control near the bottom of the sidebar, or use
+   **Scient → Check for Updates…** on macOS.
+2. When a release is available, choose the control again to download it.
+3. After the download finishes, review the restart confirmation and install it.
 
-Dismissing the conversation warning only hides that reminder for those two versions. It does not
-update the server, and the version difference remains visible in Connections.
+Scient does not install an update silently while work is running. Let active
+agent turns and terminal commands finish before restarting. Threads, settings,
+and project files remain in their existing locations.
 
-## Before You Update
+**Settings → General → Desktop updates** selects **Stable** or **Nightly**.
+Stable follows full public releases. Nightly is a preview channel and can move
+more often; switch back to Stable when you no longer want preview builds.
 
-Let active agent work and terminal commands finish first. Updating restarts the server, so the
-connection will disappear briefly and work that is still running may be interrupted.
+Automatic update checks require an official packaged build and a configured
+release feed. On Linux they additionally require running the AppImage. If the
+updater is unavailable, download the current installer from the
+[official Scient download page](https://scientfactory.com/download/).
 
-The update does not remove saved threads, settings, or project files.
+## Keep a connected server in sync
 
-## Choose the Action You See
+If a connected environment uses a different server version, Scient shows the
+version warning above the composer and in **Settings → Connections**. Hiding
+the composer warning does not change either runtime.
 
-| Action                     | What to do                                                                                                                                                                  |
-| -------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Update server**          | Available for the T3 Code Linux background service. Select the button and leave T3 Code open while it prepares, tests, restarts, and reconnects.                            |
-| **Update the desktop app** | Open the T3 Code desktop app on the machine that runs the server and install the app update there. Reopen it if needed.                                                     |
-| **Copy update command**    | Copy the command, open a terminal on the server machine, stop the current T3 Code server, and relaunch it with the copied command and any startup options you normally use. |
+The action depends on how that environment started:
 
-The available action depends on how that server was started. T3 Code does not update connected
-servers silently in the background.
+| Action                     | Meaning                                                                                                           |
+| -------------------------- | ----------------------------------------------------------------------------------------------------------------- |
+| **Update the desktop app** | Update Scient on the machine that owns the bundled local server.                                                  |
+| **Update server**          | Prepare and trial an exact replacement for a supported background service, then reconnect only after it is ready. |
+| **Copy update command**    | Copy the exact Scient release-asset command for a manually managed server and run it on that server machine.      |
 
-An older background-service launcher may ask you to run the exact
-`npx t3@<version> service update` command on the server machine. That one local update installs the
-rollback support needed for later remote updates, including versions that change the database.
+Run the copied update command exactly as Scient provides it. Changing its
+package, version, or release URL can install a server that does not match the
+desktop client.
 
-After selecting **Update**, the notice becomes a live status line: **Downloading…** while the new
-version is fetched and verified, then **Restarting…** while the server restarts into it. The same
-status appears in the conversation and in Connections, so navigating between them does not lose the
-update. A failure remains visible with its error and an option to retry.
+## Background-service updates
 
-**Copy update command** gives you `npx t3@<client-version>`, which relaunches the server directly
-at the matching version. Add whatever startup options you normally use.
+A supported background service prepares the target version before replacing
+the active server. It reports one of these outcomes:
 
-If the server instead runs as the T3 Code background service, update the service on the host and
-pin the same version:
+- **committed**: the target version is ready and becomes the normal runtime;
+- **rolled back**: the trial failed before commit and the previous runtime and
+  database snapshot were restored; or
+- **failed**: the launcher could not safely complete the operation.
 
-```sh
-npx t3@<client-version> service update
-```
+Keep Scient open while the server restarts. The update is complete only when
+the replacement server reports ready, not merely when the initial update
+request is accepted. A failure remains visible for review and retry.
 
-`service update` installs the version of the CLI that invoked it, so `npx t3@latest service update`
-only resolves the skew when your client happens to be on the latest release. The exact version from
-the warning always works.
+An older service installation may require one local repair or update first.
+Use the exact command supplied by Scient or the procedure
+in [Run Scient in the background](./background-service.md).
 
-See [Running T3 Code in the Background](./background-service.md) for install, status, and removal
-commands.
+## Troubleshooting
 
-## After the Update
-
-Keep the web or desktop app open while the server restarts. The update completes only after the
-service launcher reports that exact update committed and the replacement server is ready to accept
-commands. A rollback is reported immediately instead of waiting for a generic reconnect timeout.
-
-If a step fails:
-
-1. Retry the offered action once.
-2. Make sure you updated the machine named in the warning, not only the device you are using.
-3. For a command-line server, relaunch it with `npx t3@<client-version>`, replacing
-   `<client-version>` with the client version shown in the warning.
-
-## The Mobile App
-
-The mobile app keeps itself current on its own. When it finds a new version, it downloads it in the
-background and installs it automatically the next time you leave the app. Unsent drafts and queued
-messages are saved before the restart. Only if the app stays open long enough that the update never
-gets that chance does it ask whether to install right away; choosing **Later** is safe and keeps the
-automatic install armed.
-
-For remote connection setup and access troubleshooting, see [Remote Access](./remote-access.md).
+1. Confirm that you are updating the machine named in the warning.
+2. Let active work finish, then retry the offered action once.
+3. For a manually managed server, copy the command again instead of reusing an
+   older version or changing its release URL.
+4. If a desktop update cannot be checked or downloaded, install the same or a
+   newer official release manually; do not remove the existing data directory.

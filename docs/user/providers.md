@@ -1,8 +1,14 @@
 # Providers in Scient
 
-Scient connects to AI providers through the provider tools running on the Scient server. You can use
-an existing installation or, when the server offers it, let Scient install a reviewed private copy.
-Provider accounts and subscriptions remain owned by the provider.
+A provider supplies the AI models that work inside Scient. For example, you
+can connect Codex, Claude, Cursor, Grok, Droid, or Antigravity, then choose an
+available model for each conversation. Different providers can have different
+models, tools, account requirements, and usage limits.
+
+Scient connects the provider to your current project and presents its work in
+one interface. The provider still owns its account, subscription, and models.
+You can use an existing provider installation or, when available, let Scient
+install a reviewed private copy on the machine where the project runs.
 
 ## The fastest setup path
 
@@ -17,6 +23,11 @@ available step without requiring you to leave the conversation:
 Scient verifies the provider again after installation or sign-in. It reports Ready only when the
 runtime, account configuration, and available models are usable together.
 
+In **Settings > Providers**, a shipped provider opens on **Models** when that tab is available; use
+**Configuration** for paths, environment variables, and advanced instance settings. An
+authenticated email reported by a provider is shown initially so you can distinguish accounts;
+select it to hide or show it. Other sensitive configuration values remain redacted by default.
+
 ## Existing and Scient-managed installations
 
 Scient distinguishes three local runtime sources:
@@ -30,8 +41,8 @@ modify it. When **Use Scient-managed** is available, choosing it installs and ve
 for default provider instances while leaving the system installation untouched. Removing that private
 copy returns eligible instances to the healthy system runtime.
 
-Runtime controls always apply to the machine running the Scient server. A remote browser or mobile
-client cannot install or remove software on its own device through these controls.
+Runtime controls always apply to the machine running the Scient server. A remote browser controls
+that environment; it does not install or remove provider software on the device displaying the UI.
 
 ## What each action changes
 

@@ -6,6 +6,12 @@ Remote server updates use one stable launcher selected by the platform service m
 Linux, launchd on macOS). Foreground CLI processes do not self-update, and a running server never
 edits its service definition or durable service state.
 
+Scient release authority is `ScientFactory/scient-desktop`. Every eligible target is the immutable
+`scient-server-<version>.tgz` asset attached to the matching Scient release; neither the updater nor
+the operator may substitute T3's npm package or T3's release channel. The package and executable
+still use the internal name `t3` for host compatibility. Product source and internal package identity
+are separate concerns.
+
 ## Ownership
 
 The service files under `<baseDir>/runtime` are:
@@ -29,7 +35,8 @@ Every write uses same-directory replacement plus file and directory fsync.
 
 ## Remote Update
 
-1. The active server installs `t3@<target>` into a unique staging directory.
+1. The active server installs the exact Scient release package selected by the update request into a
+   unique staging directory.
 2. The target runs `__service-preflight` and verifies that the stable launcher supports its update
    protocol.
 3. The staging directory is renamed to its immutable version path only after preflight succeeds.
@@ -62,10 +69,13 @@ requiring down migrations. The snapshot is retained across launcher restarts and
 after commit or after both restore and the terminal rollback state are durable.
 
 The protocol version is part of the safety boundary. A target that requires database snapshots is
-blocked when the installed launcher is too old. Upgrade the launcher once with:
+blocked when the installed launcher is too old. Upgrade the launcher once with the matching Scient
+release asset (replace the quoted placeholder before running):
 
 ```sh
-npx t3@<version> service update
+SCIENT_SERVER_VERSION="<matching-release-version>"
+SCIENT_SERVER_PACKAGE="https://github.com/ScientFactory/scient-desktop/releases/download/v${SCIENT_SERVER_VERSION}/scient-server-${SCIENT_SERVER_VERSION}.tgz"
+npx --yes --allow-scripts=node-pty@1.1.0,msgpackr-extract@3.0.4 --package="$SCIENT_SERVER_PACKAGE" t3 service update
 ```
 
 The local command stops the unit, selects the new launcher and exact runtime, then restarts the
@@ -97,3 +107,5 @@ manual command; the old detached foreground respawn path no longer exists.
 - Service installation: `apps/server/src/cloud/bootService.ts`
 - Activation boundary: `apps/server/src/serverRuntimeStartup.ts` and `serverActivation.ts`
 - Client outcome correlation: `packages/client-runtime/src/state/server.ts`
+- Scient release package policy and command construction: `packages/shared/src/scientRelease.ts`
+- Release-asset contract: `docs/operations/release.md`

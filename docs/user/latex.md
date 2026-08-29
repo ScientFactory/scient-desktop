@@ -1,27 +1,27 @@
 # LaTeX
 
-Opening a `.tex` file in Scient opens it as a live LaTeX document instead of
-plain source: a source view, a split view with the compiled PDF alongside your
-editing, and a PDF-only view. Switch between them, and drag the divider in
-split view to resize either side.
+Use the LaTeX workspace to write a paper, report, thesis, or other scientific
+document while seeing the compiled PDF beside its source. Opening a `.tex` file
+shows a source view, a split source-and-PDF view, and a PDF-only view. Switch
+between them, and drag the divider in split view to resize either side.
+
+## Build and review
 
 Builds happen automatically — save the file and Scient compiles it. Errors and
 warnings from the build appear in a list above the document; each one shows
 the file and line it came from when the compiler reported one. Click a message
 that names a project file to open that file at the reported line.
 
+## Move between source and PDF
+
 In Split, double-click a line of source to jump to the matching place in the
 current successful PDF. Double-clicking a word in the PDF keeps the normal word
 selection and reveals the corresponding source line in the source pane. These
 gestures never open Split automatically; select Split first when you want both
-sides to follow one another. Scient briefly marks a source-to-PDF destination so
-the matching place is easy to see. This needs a successful current build. If the
-PDF has no navigation index, it still opens and reads normally. Scient ships
-the small source-navigation helper itself, so this works the same way with
-TinyTeX, TeX Live, MiKTeX, or Tectonic and requires no extra package or PATH
-setup. If navigation cannot run, the status names the actual condition — for
-example a missing index, no mapping at that position, a timed-out query, or a
-damaged application helper — while leaving the PDF usable.
+sides to follow one another. Scient briefly marks the destination so it is easy
+to see. This needs a successful current build with a navigation index. If no
+mapping is available, the PDF remains usable and the status explains why the
+jump could not be completed.
 The exactness comes from the compiler's navigation index: some complex or RTL
 lines contain only a line-level location, so those lines can land near the
 typeset line instead of on the exact word.
@@ -30,6 +30,8 @@ The PDF keeps your place across rebuilds: your page, zoom, and scroll position
 stay put while a new version comes in, instead of snapping back to the top. If
 the PDF you're looking at is older than the source it was built from, a stale
 badge tells you so.
+
+## Choose a LaTeX engine
 
 Scient compiles with pdfLaTeX, driven through `latexmk` — or through Tectonic
 instead, if that's what it finds. On the `latexmk` path, XeLaTeX and LuaLaTeX
@@ -40,11 +42,10 @@ the error explains what the document needs instead of failing partway through a
 compile that was never going to work. Tectonic's engine is XeTeX-based, so with
 Tectonic installed those same documents build normally and nothing is refused.
 
-A document that loads `fontspec` only inside an engine test — the
-`\usepackage{iftex}` and `\ifPDFTeX … \else … \fi` pattern Pandoc's default
-template writes — isn't refused either. That document compiles fine under
-pdfLaTeX, because the branch loading those packages is never taken, so Scient
-lets the build run and answer for itself.
+Engine-aware documents that load packages only in the appropriate conditional
+branch are allowed to build normally.
+
+## Install a LaTeX distribution
 
 If Scient can't find a LaTeX installation on your computer, it offers to
 install TinyTeX for you — a small distribution, about 70 MB, that lives with
@@ -67,6 +68,8 @@ or restarting.
 
 Compiling never leaves clutter in your files: build output, logs, and other
 compiler byproducts stay out of your project entirely.
+
+## Choose the root document
 
 For a project with multiple `.tex` files, add a comment near the top of a file
 that isn't the main document:
