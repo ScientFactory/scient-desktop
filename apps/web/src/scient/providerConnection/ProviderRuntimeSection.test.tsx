@@ -909,11 +909,17 @@ describe("ProviderRuntimeSection", () => {
           source: "scient_managed",
           supportTier: "fully_assisted",
           target: "darwin-arm64",
-          actions: ["repair", "remove"],
+          actions: ["update", "repair", "remove"],
           managedVersion: "1.1.17",
           previousManagedVersion: null,
           operation: null,
           message: "The provider runtime is installed and verified.",
+          diagnostics: {
+            executable: "/Applications/Scient.app/Contents/Resources/antigravity",
+            version: "1.1.17",
+            homePath: "/Users/server/.gemini",
+            backend: "macOS native",
+          },
         },
       },
     };
@@ -930,6 +936,17 @@ describe("ProviderRuntimeSection", () => {
 
     expect(markup).toContain("Managed by Scient");
     expect(markup).toContain("Antigravity 1.1.17");
+    const updateIndex = markup.indexOf(">Update<");
+    const updateStart = markup.lastIndexOf("<button", updateIndex);
+    const updateMarkup = markup.slice(updateStart, updateIndex);
+    expect(updateMarkup).toContain("lucide-refresh-cw");
+    expect(updateMarkup).toContain("text-primary");
+    expect(updateMarkup).not.toContain("lucide-wrench");
+    const diagnosticsIndex = markup.indexOf("Runtime diagnostics");
+    expect(markup.indexOf(">Repair<")).toBeLessThan(diagnosticsIndex);
+    expect(markup.indexOf(">Remove<")).toBeLessThan(diagnosticsIndex);
+    expect(diagnosticsIndex).toBeLessThan(updateIndex);
+    expect(markup).toContain("flex items-center justify-between gap-3 pt-1");
     expect(markup).toContain(">Repair<");
     expect(markup).toContain(">Remove<");
     expect(markup).not.toContain("installed and verified");

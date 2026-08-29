@@ -631,6 +631,11 @@ export function ProviderRuntimeSection(props: {
     ) : (
       <CheckCircle2Icon className="mt-0.5 size-5 shrink-0 text-success" aria-hidden />
     );
+  const presentsCompactUpdateSeparately = props.compact && runtime.actions.includes("update");
+  const trailingActions: ReadonlyArray<ProviderManagedRuntimeAction> =
+    presentsCompactUpdateSeparately
+      ? runtime.actions.filter((action) => action !== "update")
+      : runtime.actions;
 
   return (
     <div className={props.compact ? "space-y-2 border-b pb-3" : "space-y-3 rounded-lg border p-3"}>
@@ -661,9 +666,9 @@ export function ProviderRuntimeSection(props: {
             ) : null}
           </div>
         </div>
-        {runtime.actions.length > 0 ? (
+        {trailingActions.length > 0 ? (
           <div className="flex flex-wrap justify-end gap-1">
-            {runtime.actions.map((action) => {
+            {trailingActions.map((action) => {
               const isSystemManagedSwitch = action === "install" && runtime.source === "system";
               const actionButton = (
                 <Button
@@ -674,14 +679,14 @@ export function ProviderRuntimeSection(props: {
                   type="button"
                   size={props.compact ? "compact" : "sm"}
                   variant={
-                    action === "install" && !isSystemManagedSwitch
+                    action === "update" || (action === "install" && !isSystemManagedSwitch)
                       ? "ghost"
                       : props.compact
                         ? "ghost-muted"
                         : "outline"
                   }
                   className={
-                    action === "install" && !isSystemManagedSwitch
+                    action === "update" || (action === "install" && !isSystemManagedSwitch)
                       ? PRIMARY_GHOST_ACTION_CLASS
                       : props.compact && action === "remove"
                         ? "hover:bg-destructive/8 hover:text-destructive"
@@ -694,6 +699,8 @@ export function ProviderRuntimeSection(props: {
                     <LoaderIcon className="animate-spin" />
                   ) : action === "install" ? (
                     <DownloadIcon />
+                  ) : action === "update" ? (
+                    <RefreshCwIcon />
                   ) : action === "remove" ? (
                     <Trash2Icon />
                   ) : (
@@ -737,10 +744,32 @@ export function ProviderRuntimeSection(props: {
           {localError}
         </p>
       ) : null}
-      <ProviderRuntimeDiagnosticsDetails
-        displayName={props.displayName}
-        provider={props.provider}
-      />
+      {presentsCompactUpdateSeparately ? (
+        <div className="flex items-center justify-between gap-3 pt-1">
+          <div className="min-w-0 flex-1">
+            <ProviderRuntimeDiagnosticsDetails
+              displayName={props.displayName}
+              provider={props.provider}
+            />
+          </div>
+          <Button
+            className={`${PRIMARY_GHOST_ACTION_CLASS} shrink-0`}
+            disabled={isWorking}
+            onClick={() => void requestPlan("update")}
+            size="compact"
+            type="button"
+            variant="ghost"
+          >
+            {pendingAction === "plan" ? <LoaderIcon className="animate-spin" /> : <RefreshCwIcon />}
+            Update
+          </Button>
+        </div>
+      ) : (
+        <ProviderRuntimeDiagnosticsDetails
+          displayName={props.displayName}
+          provider={props.provider}
+        />
+      )}
     </div>
   );
 }

@@ -28,7 +28,7 @@ const currentCatalog: ManagedRuntimeCatalogData = {
 
 function stableChannelFetch(codexVersion = "0.150.1") {
   const requested: string[] = [];
-  const fetch_: typeof fetch = async (input) => {
+  const fetch_ = async (input: URL) => {
     const url = input.toString();
     requested.push(url);
     if (url === "https://releases.openai.com/codex/channels/latest") {

@@ -2,6 +2,7 @@ import type {
   ProviderConnectionMethod,
   ProviderConnectionOperation,
   ProviderRuntimeOperation,
+  ProviderRuntimeSummary,
   ServerProvider,
 } from "@t3tools/contracts";
 
@@ -45,6 +46,15 @@ export function isActiveProviderRuntimeOperation(
     operation !== undefined &&
     !TERMINAL_RUNTIME_STATUSES.has(operation.status)
   );
+}
+
+export function activeProviderRuntimeUpdateOperation(
+  runtime: ProviderRuntimeSummary | null | undefined,
+): ProviderRuntimeOperation | null {
+  const operation = runtime?.operation;
+  return operation?.action === "update" && isActiveProviderRuntimeOperation(operation)
+    ? operation
+    : null;
 }
 
 export function providerLifecycleFailureMessage(value: unknown, fallback: string): string {
@@ -117,6 +127,20 @@ export function providerConnectionPresentation(
     return { kind: "not-connected", label: "Not connected" };
   }
   return { kind: "unsupported", label: "Manual setup" };
+}
+
+export function shouldShowProviderLifecycleSetupInComposer(
+  provider: ServerProvider | undefined,
+  runtime: ProviderRuntimeSummary | null | undefined = provider?.connection?.runtime,
+): boolean {
+  const presentation = providerConnectionPresentation(provider);
+  return (
+    presentation.kind === "not-installed" ||
+    (presentation.kind === "setting-up" &&
+      activeProviderRuntimeUpdateOperation(runtime) === null) ||
+    presentation.kind === "not-connected" ||
+    presentation.kind === "connecting"
+  );
 }
 
 export function isProviderAccountPresentedAsConnected(

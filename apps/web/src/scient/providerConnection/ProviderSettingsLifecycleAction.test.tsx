@@ -76,12 +76,20 @@ function provider(input: {
   };
 }
 
-function render(value: ServerProvider): string {
+function render(
+  value: ServerProvider,
+  options: {
+    readonly externalUpdateRunning?: boolean;
+    readonly onRunExternalUpdate?: () => void;
+  } = {},
+): string {
   return renderToStaticMarkup(
     <ProviderSettingsLifecycleAction
       displayName={value.displayName ?? "Provider"}
       environmentId={EnvironmentId.make("local")}
+      externalUpdateRunning={options.externalUpdateRunning}
       onManage={vi.fn()}
+      onRunExternalUpdate={options.onRunExternalUpdate}
       provider={value}
     />,
   );
@@ -218,5 +226,46 @@ describe("ProviderSettingsLifecycleAction", () => {
         canRunExternalUpdate: false,
       }),
     ).toEqual({ kind: "open", runtimeAction: null });
+  });
+
+  it("keeps management available beside system and Scient-managed updates", () => {
+    const externalUpdate = {
+      ...provider({ source: "system", actions: ["install"] }),
+      versionAdvisory: {
+        status: "behind_latest" as const,
+        currentVersion: "0.147.0",
+        latestVersion: "0.148.0",
+        updateCommand: "brew upgrade codex",
+        canUpdate: true,
+        checkedAt: "2026-08-23T08:00:00.000Z",
+        message: "Update available.",
+      },
+    };
+    const managedUpdate = provider({
+      source: "scient_managed",
+      actions: ["update", "repair", "remove"],
+    });
+
+    for (const markup of [
+      render(externalUpdate, { onRunExternalUpdate: vi.fn() }),
+      render(managedUpdate),
+    ]) {
+      expect(markup).toContain(">Update</button>");
+      expect(markup).toContain('aria-label="Manage Codex"');
+      expect(markup).toContain("lucide-settings-2");
+      expect(markup).not.toContain(">Manage</button>");
+    }
+
+    const updatingMarkup = render(externalUpdate, {
+      externalUpdateRunning: true,
+      onRunExternalUpdate: vi.fn(),
+    });
+    expect(updatingMarkup).toContain(">Updating</button>");
+    const manageButtonEnd = updatingMarkup.indexOf('aria-label="Manage Codex"');
+    const manageButtonStart = updatingMarkup.lastIndexOf("<button", manageButtonEnd);
+    const manageButtonClose = updatingMarkup.indexOf("</button>", manageButtonEnd);
+    expect(updatingMarkup.slice(manageButtonStart, manageButtonClose)).not.toMatch(
+      /\sdisabled(?:=|[\s>])/,
+    );
   });
 });

@@ -51,7 +51,7 @@ export interface ManagedRuntimeCatalogRefreshResult {
   readonly changedProviders: ReadonlyArray<ManagedRuntimeProvider>;
 }
 
-type Fetch = typeof fetch;
+type Fetch = (input: URL, init?: RequestInit) => Promise<Response>;
 type PolicyResolver = (target: ManagedRuntimeTarget) => ManagedRuntimeArtifact | undefined;
 
 const targets: ReadonlyArray<ManagedRuntimeTarget> = [
