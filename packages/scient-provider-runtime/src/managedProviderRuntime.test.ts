@@ -122,6 +122,10 @@ function statePath(root: string): string {
   return NodePath.join(privateRoot(root), "state.json");
 }
 
+function activationPath(root: string): string {
+  return NodePath.join(privateRoot(root), "activation.json");
+}
+
 describe("managed provider runtime smoke environment", () => {
   it("keeps credential-free Windows host coordinates without forwarding provider secrets", () => {
     const environment = managedRuntimeSmokeEnvironment({
@@ -171,8 +175,14 @@ describe("ManagedProviderRuntime contract", () => {
       selected: true,
     });
     expect(JSON.parse(await NodeFSP.readFile(statePath(root), "utf8"))).toMatchObject({
-      schemaVersion: 2,
+      schemaVersion: 3,
       selection: "managed",
+      activeArtifact: {
+        provider: "codex",
+        version: "1.0.0",
+        catalogRevision: "test:1.0.0",
+      },
+      previousArtifact: null,
     });
     expect(stages).toEqual([
       "preparing",
@@ -209,8 +219,37 @@ describe("ManagedProviderRuntime contract", () => {
     });
   });
 
+  it("upgrades explicit v2 state on the next successful operation without losing legacy history", async () => {
+    const { root, runtime } = await makeRuntime();
+    const recipe = artifact("1.0.0");
+    await install(runtime, recipe);
+    const current = await runtime.readState();
+    expect(current).toBeDefined();
+    await NodeFSP.writeFile(
+      statePath(root),
+      `${JSON.stringify({
+        schemaVersion: 2,
+        selection: "managed",
+        targetKey: current!.targetKey,
+        activeVersion: current!.activeVersion,
+        previousVersion: "0.9.0",
+        executableRelativePath: current!.executableRelativePath,
+      })}\n`,
+    );
+
+    await install(runtime, recipe);
+
+    expect(await runtime.readState()).toMatchObject({
+      schemaVersion: 3,
+      activeVersion: "1.0.0",
+      previousVersion: "0.9.0",
+      activeArtifact: { catalogRevision: "test:1.0.0" },
+      previousArtifact: null,
+    });
+  });
+
   it("activates an update while recording and preserving the previous version", async () => {
-    const { runtime } = await makeRuntime();
+    const { root, runtime } = await makeRuntime();
     const first = await install(runtime, artifact("1.0.0"));
 
     const updated = await install(runtime, artifact("2.0.0"));
@@ -223,6 +262,55 @@ describe("ManagedProviderRuntime contract", () => {
     expect(updated.launchPath).not.toBe(first.launchPath);
     expect(await NodeFSP.readFile(first.launchPath, "utf8")).toBe("install 1");
     expect(await NodeFSP.readFile(updated.launchPath, "utf8")).toBe("install 2");
+    expect(JSON.parse(await NodeFSP.readFile(statePath(root), "utf8"))).toMatchObject({
+      activeArtifact: { version: "2.0.0", catalogRevision: "test:2.0.0" },
+      previousArtifact: { version: "1.0.0", catalogRevision: "test:1.0.0" },
+    });
+  });
+
+  it("qualifies the final path before committing activation", async () => {
+    const { root, runtime, events } = await makeRuntime();
+    const recipe = artifact("1.0.0");
+
+    const status = await runtime.install({
+      artifact: recipe,
+      signal: new AbortController().signal,
+      qualify: async ({ artifact: candidate, executablePath, payloadPath }) => {
+        events.push("qualify");
+        expect(candidate).toBe(recipe);
+        expect(executablePath).toBe(runtime.launchPath(recipe));
+        expect(payloadPath).toBe(NodePath.dirname(executablePath));
+        expect(await NodeFSP.readFile(executablePath, "utf8")).toBe("install 1");
+        expect(await runtime.readState()).toBeUndefined();
+      },
+    });
+
+    expect(status).toMatchObject({ installed: true, activeVersion: "1.0.0" });
+    expect(events).toEqual(["download", "verify", "materialize", "smoke", "qualify", "commit"]);
+    expect(JSON.parse(await NodeFSP.readFile(statePath(root), "utf8"))).toMatchObject({
+      activeVersion: "1.0.0",
+    });
+  });
+
+  it("restores the active runtime when final-path qualification rejects an update", async () => {
+    const { runtime } = await makeRuntime();
+    const first = artifact("1.0.0");
+    const installed = await install(runtime, first);
+    const replacement = artifact("2.0.0");
+
+    await expect(
+      runtime.install({
+        artifact: replacement,
+        signal: new AbortController().signal,
+        qualify: async () => {
+          throw new Error("runtime incompatible");
+        },
+      }),
+    ).rejects.toThrow("runtime incompatible");
+
+    expect(await runtime.readState()).toMatchObject({ activeVersion: "1.0.0" });
+    expect(await NodeFSP.readFile(installed.launchPath, "utf8")).toBe("install 1");
+    await expect(NodeFSP.access(runtime.launchPath(replacement))).rejects.toThrow();
   });
 
   it("keeps launching the active release while a newer artifact is only reviewed", async () => {
@@ -326,6 +414,56 @@ describe("ManagedProviderRuntime contract", () => {
     expect((await runtime.status(recipe)).installed).toBe(true);
     await expect(NodeFSP.access(replacement)).rejects.toThrow();
     await expect(NodeFSP.access(interruptedState)).rejects.toThrow();
+  });
+
+  it("restores a replaced runtime when final-path qualification was interrupted", async () => {
+    const { root, runtime } = await makeRuntime();
+    const recipe = artifact("1.0.0");
+    const installed = await install(runtime, recipe);
+    const targetDirectory = NodePath.dirname(installed.launchPath);
+    const replacement = `${targetDirectory}.replaced-99`;
+    await NodeFSP.rename(targetDirectory, replacement);
+    await NodeFSP.mkdir(targetDirectory, { recursive: true });
+    await NodeFSP.writeFile(installed.launchPath, "unqualified replacement", { mode: 0o755 });
+    await NodeFSP.writeFile(
+      activationPath(root),
+      `${JSON.stringify({
+        schemaVersion: 1,
+        activationId: "interrupted-activation",
+        destinationRelativePath: NodePath.relative(privateRoot(root), targetDirectory),
+        replacedRelativePath: NodePath.relative(privateRoot(root), replacement),
+      })}\n`,
+    );
+    await runtime.reconcile(recipe);
+
+    expect(await NodeFSP.readFile(installed.launchPath, "utf8")).toBe("install 1");
+    await expect(NodeFSP.access(replacement)).rejects.toThrow();
+  });
+
+  it("keeps a committed replacement while cleaning its interrupted backup", async () => {
+    const { root, runtime } = await makeRuntime();
+    const recipe = artifact("1.0.0");
+    const installed = await install(runtime, recipe);
+    const targetDirectory = NodePath.dirname(installed.launchPath);
+    const replacement = `${targetDirectory}.replaced-99`;
+    await NodeFSP.mkdir(replacement, { recursive: true });
+    await NodeFSP.writeFile(NodePath.join(replacement, "provider"), "old runtime", { mode: 0o755 });
+    const state = await runtime.readState();
+    expect(state?.schemaVersion).toBe(3);
+    await NodeFSP.writeFile(
+      activationPath(root),
+      `${JSON.stringify({
+        schemaVersion: 1,
+        activationId: state?.schemaVersion === 3 ? state.activationId : "missing",
+        destinationRelativePath: NodePath.relative(privateRoot(root), targetDirectory),
+        replacedRelativePath: NodePath.relative(privateRoot(root), replacement),
+      })}\n`,
+    );
+
+    await runtime.reconcile(recipe);
+
+    expect(await NodeFSP.readFile(installed.launchPath, "utf8")).toBe("install 1");
+    await expect(NodeFSP.access(replacement)).rejects.toThrow();
   });
 
   it("does not launch state recorded for another computer target", async () => {

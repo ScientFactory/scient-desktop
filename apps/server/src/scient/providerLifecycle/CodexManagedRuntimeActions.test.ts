@@ -277,4 +277,16 @@ describe("Codex managed runtime policy", () => {
       }).actions,
     ).toEqual(["update", "repair", "remove"]);
   });
+
+  it("does not offer a downgrade when the managed runtime is newer than the artifact", () => {
+    expect(
+      resolveCodexManagedRuntimePolicy({
+        source: "scient_managed",
+        artifact,
+        installed: true,
+        installedVersion: "3.0.0",
+        managedInstallationAllowed: true,
+      }).actions,
+    ).toEqual(["repair", "remove"]);
+  });
 });

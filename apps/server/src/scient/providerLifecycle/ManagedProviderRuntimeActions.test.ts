@@ -234,6 +234,30 @@ describe("managed provider runtime policy", () => {
     ).toEqual(["repair", "remove"]);
   });
 
+  it("offers Update only when the reviewed artifact is provably newer", () => {
+    const base = {
+      source: "scient_managed" as const,
+      artifact: reviewedArtifact,
+      installed: true,
+      managedInstallationAllowed: true,
+      systemToManagedSwitchAllowed: true,
+    };
+
+    expect(resolveManagedRuntimePolicy({ ...base, installedVersion: "0.9.0" }).actions).toEqual([
+      "update",
+      "repair",
+      "remove",
+    ]);
+    expect(resolveManagedRuntimePolicy({ ...base, installedVersion: "1.0.0" }).actions).toEqual([
+      "repair",
+      "remove",
+    ]);
+    expect(resolveManagedRuntimePolicy({ ...base, installedVersion: "2.0.0" }).actions).toEqual([
+      "repair",
+      "remove",
+    ]);
+  });
+
   it("fails closed outside the local managed-install boundary", () => {
     expect(
       resolveManagedRuntimePolicy({

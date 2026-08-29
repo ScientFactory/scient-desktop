@@ -1,6 +1,13 @@
 import type { ManagedRuntimeTarget } from "./target.ts";
 
 export type ManagedRuntimeArchiveFormat = "raw" | "tar.gz" | "zip";
+export type ManagedRuntimeProvider =
+  | "codex"
+  | "claudeAgent"
+  | "antigravity"
+  | "cursor"
+  | "droid"
+  | "grok";
 export type ManagedRuntimeSupportTier =
   | "fully_assisted"
   | "external_runtime_supported"
@@ -24,7 +31,7 @@ export interface ManagedRuntimeExtractionLimits {
  * verification, staging, smoke testing, and atomic activation are shared.
  */
 export interface ManagedRuntimeArtifact {
-  readonly provider: "codex" | "claudeAgent" | "antigravity" | "cursor" | "droid" | "grok";
+  readonly provider: ManagedRuntimeProvider;
   readonly version: string;
   readonly target: ManagedRuntimeTarget;
   readonly artifactName: string;
@@ -47,4 +54,37 @@ export interface ManagedRuntimeArtifact {
   readonly catalogRevision: string;
   readonly supportTier: ManagedRuntimeSupportTier;
   readonly supportMessage: string;
+}
+
+/**
+ * Durable release identity for an artifact that Scient actually activated.
+ *
+ * Packaging and execution policy deliberately stay in the installed app. The
+ * receipt records only the immutable release facts needed to repair the exact
+ * active version after a remote catalog moves on.
+ */
+export interface ManagedRuntimeArtifactReceipt {
+  readonly provider: ManagedRuntimeProvider;
+  readonly version: string;
+  readonly target: ManagedRuntimeTarget;
+  readonly artifactName: string;
+  readonly url: string;
+  readonly checksum: ManagedRuntimeChecksum;
+  readonly size: number;
+  readonly catalogRevision: string;
+}
+
+export function managedRuntimeArtifactReceipt(
+  artifact: ManagedRuntimeArtifact,
+): ManagedRuntimeArtifactReceipt {
+  return {
+    provider: artifact.provider,
+    version: artifact.version,
+    target: artifact.target,
+    artifactName: artifact.artifactName,
+    url: artifact.url,
+    checksum: artifact.checksum,
+    size: artifact.size,
+    catalogRevision: artifact.catalogRevision,
+  };
 }

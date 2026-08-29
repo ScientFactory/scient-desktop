@@ -29,6 +29,7 @@ import type {
   ProviderManagedRuntimeProgress,
 } from "../../provider/ProviderDriver.ts";
 import { ProviderConnectionActionError } from "./ProviderConnectionActions.ts";
+import { isManagedRuntimeUpdate } from "./managedRuntimeVersion.ts";
 
 const DEFAULT_CODEX_BINARY = "codex";
 
@@ -198,7 +199,12 @@ export function resolveCodexManagedRuntimePolicy(input: {
         : input.source === "system" && input.installed
           ? ["repair", "remove"]
           : input.source === "scient_managed" && input.installed
-            ? input.artifact && input.installedVersion !== input.artifact.version
+            ? input.artifact &&
+              isManagedRuntimeUpdate({
+                provider: input.artifact.provider,
+                current: input.installedVersion,
+                candidate: input.artifact.version,
+              })
               ? ["update", "repair", "remove"]
               : ["repair", "remove"]
             : [];

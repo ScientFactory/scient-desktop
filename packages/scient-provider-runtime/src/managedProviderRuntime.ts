@@ -1,9 +1,14 @@
 // @effect-diagnostics nodeBuiltinImport:off globalTimers:off globalDate:off -- This package is the reviewed Node process and filesystem boundary for app-private provider runtimes; orchestration remains in the Effect server layer.
 import * as NodeChildProcess from "node:child_process";
+import * as NodeCrypto from "node:crypto";
 import * as NodeFSP from "node:fs/promises";
 import * as NodePath from "node:path";
 
-import type { ManagedRuntimeArtifact } from "./managedRuntimeArtifact.ts";
+import {
+  managedRuntimeArtifactReceipt,
+  type ManagedRuntimeArtifact,
+  type ManagedRuntimeArtifactReceipt,
+} from "./managedRuntimeArtifact.ts";
 import {
   downloadManagedRuntime,
   materializeManagedRuntimeArtifact,
@@ -43,17 +48,46 @@ export interface ManagedProviderRuntimeStateV2 {
   readonly executableRelativePath: string;
 }
 
+export interface ManagedProviderRuntimeStateV3 {
+  readonly schemaVersion: 3;
+  readonly selection: "managed";
+  readonly activationId: string;
+  readonly targetKey: string;
+  readonly activeVersion: string;
+  readonly previousVersion: string | null;
+  readonly executableRelativePath: string;
+  readonly activeArtifact: ManagedRuntimeArtifactReceipt;
+  readonly previousArtifact: ManagedRuntimeArtifactReceipt | null;
+}
+
 export type ManagedProviderRuntimeState =
   | ManagedProviderRuntimeStateV1
-  | ManagedProviderRuntimeStateV2;
+  | ManagedProviderRuntimeStateV2
+  | ManagedProviderRuntimeStateV3;
 
 export interface ManagedProviderRuntimeStatus {
   readonly launchPath: string;
   readonly activeVersion: string | null;
   readonly previousVersion: string | null;
   readonly installed: boolean;
-  /** True only after the user explicitly activates a managed runtime with state schema v2. */
+  /** True only after the user explicitly activates a managed runtime with state schema v2+. */
   readonly selected: boolean;
+  readonly activeArtifact: ManagedRuntimeArtifactReceipt | null;
+  readonly previousArtifact: ManagedRuntimeArtifactReceipt | null;
+}
+
+export interface ManagedProviderRuntimeQualificationInput {
+  readonly artifact: ManagedRuntimeArtifact;
+  readonly executablePath: string;
+  readonly payloadPath: string;
+  readonly signal: AbortSignal;
+}
+
+interface ManagedProviderRuntimeActivation {
+  readonly schemaVersion: 1;
+  readonly activationId: string;
+  readonly destinationRelativePath: string;
+  readonly replacedRelativePath: string | null;
 }
 
 export class ManagedProviderRuntimeError extends Error {
@@ -178,6 +212,7 @@ export interface ManagedProviderRuntimeDependencies {
     nonce: number,
   ) => Promise<void>;
   readonly now: () => number;
+  readonly activationId: () => string;
 }
 
 export interface ManagedProviderRuntimeIdentity {
@@ -206,29 +241,141 @@ const DEFAULT_DEPENDENCIES: ManagedProviderRuntimeDependencies = {
   smoke: smokeExecutable,
   commitState: commitManagedRuntimeState,
   now: Date.now,
+  activationId: NodeCrypto.randomUUID,
 };
+
+const MANAGED_RUNTIME_PROVIDERS = new Set([
+  "codex",
+  "claudeAgent",
+  "antigravity",
+  "cursor",
+  "droid",
+  "grok",
+]);
+
+function decodeArtifactReceipt(value: unknown): ManagedRuntimeArtifactReceipt | undefined {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
+  const receipt = value as Record<string, unknown>;
+  const target = receipt.target;
+  const checksum = receipt.checksum;
+  if (
+    typeof receipt.provider !== "string" ||
+    !MANAGED_RUNTIME_PROVIDERS.has(receipt.provider) ||
+    typeof receipt.version !== "string" ||
+    receipt.version.length === 0 ||
+    typeof receipt.artifactName !== "string" ||
+    receipt.artifactName.length === 0 ||
+    typeof receipt.url !== "string" ||
+    receipt.url.length === 0 ||
+    typeof receipt.size !== "number" ||
+    !Number.isSafeInteger(receipt.size) ||
+    receipt.size <= 0 ||
+    typeof receipt.catalogRevision !== "string" ||
+    receipt.catalogRevision.length === 0 ||
+    !target ||
+    typeof target !== "object" ||
+    Array.isArray(target) ||
+    !checksum ||
+    typeof checksum !== "object" ||
+    Array.isArray(checksum)
+  ) {
+    return undefined;
+  }
+  const targetRecord = target as Record<string, unknown>;
+  const checksumRecord = checksum as Record<string, unknown>;
+  if (
+    !(
+      targetRecord.platform === "darwin" ||
+      targetRecord.platform === "linux" ||
+      targetRecord.platform === "win32"
+    ) ||
+    !(targetRecord.arch === "arm64" || targetRecord.arch === "x64") ||
+    (targetRecord.platform === "linux"
+      ? !(targetRecord.libc === "glibc" || targetRecord.libc === "musl")
+      : targetRecord.libc !== undefined) ||
+    !(checksumRecord.algorithm === "sha256" || checksumRecord.algorithm === "sha512") ||
+    typeof checksumRecord.digest !== "string" ||
+    !/^[0-9a-f]+$/u.test(checksumRecord.digest) ||
+    checksumRecord.digest.length !== (checksumRecord.algorithm === "sha256" ? 64 : 128) ||
+    receipt.artifactName === "." ||
+    receipt.artifactName === ".." ||
+    NodePath.basename(receipt.artifactName as string) !== receipt.artifactName ||
+    !URL.canParse(receipt.url as string) ||
+    new URL(receipt.url as string).protocol !== "https:"
+  ) {
+    return undefined;
+  }
+  return receipt as unknown as ManagedRuntimeArtifactReceipt;
+}
 
 function decodeState(value: unknown): ManagedProviderRuntimeState | undefined {
   if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
   const state = value as Record<string, unknown>;
   if (
-    !(state.schemaVersion === 1 || state.schemaVersion === 2) ||
-    (state.schemaVersion === 2 && state.selection !== "managed") ||
+    !(state.schemaVersion === 1 || state.schemaVersion === 2 || state.schemaVersion === 3) ||
+    ((state.schemaVersion === 2 || state.schemaVersion === 3) && state.selection !== "managed") ||
+    (state.schemaVersion === 3 &&
+      (typeof state.activationId !== "string" || state.activationId.length === 0)) ||
     typeof state.targetKey !== "string" ||
     typeof state.activeVersion !== "string" ||
     !(state.previousVersion === null || typeof state.previousVersion === "string") ||
     typeof state.executableRelativePath !== "string" ||
+    state.executableRelativePath.length === 0 ||
+    state.executableRelativePath === "." ||
     NodePath.isAbsolute(state.executableRelativePath) ||
     state.executableRelativePath.split(/[\\/]/u).includes("..")
   ) {
     return undefined;
   }
+  if (state.schemaVersion === 3) {
+    const activeArtifact = decodeArtifactReceipt(state.activeArtifact);
+    const previousArtifact =
+      state.previousArtifact === null ? null : decodeArtifactReceipt(state.previousArtifact);
+    if (
+      !activeArtifact ||
+      previousArtifact === undefined ||
+      activeArtifact.version !== state.activeVersion ||
+      (previousArtifact !== null && previousArtifact.version !== state.previousVersion) ||
+      managedRuntimeTargetKey(activeArtifact.target) !== state.targetKey ||
+      (previousArtifact !== null &&
+        managedRuntimeTargetKey(previousArtifact.target) !== state.targetKey)
+    ) {
+      return undefined;
+    }
+  }
   return state as unknown as ManagedProviderRuntimeState;
+}
+
+function decodeActivation(value: unknown): ManagedProviderRuntimeActivation | undefined {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
+  const activation = value as Record<string, unknown>;
+  if (
+    activation.schemaVersion !== 1 ||
+    typeof activation.activationId !== "string" ||
+    activation.activationId.length === 0 ||
+    typeof activation.destinationRelativePath !== "string" ||
+    activation.destinationRelativePath.length === 0 ||
+    activation.destinationRelativePath.split(/[\\/]/u)[0] !== "versions" ||
+    NodePath.isAbsolute(activation.destinationRelativePath) ||
+    activation.destinationRelativePath.split(/[\\/]/u).includes("..") ||
+    !(
+      activation.replacedRelativePath === null ||
+      (typeof activation.replacedRelativePath === "string" &&
+        activation.replacedRelativePath.length > 0 &&
+        activation.replacedRelativePath.split(/[\\/]/u)[0] === "versions" &&
+        !NodePath.isAbsolute(activation.replacedRelativePath) &&
+        !activation.replacedRelativePath.split(/[\\/]/u).includes(".."))
+    )
+  ) {
+    return undefined;
+  }
+  return activation as unknown as ManagedProviderRuntimeActivation;
 }
 
 export class ManagedProviderRuntime {
   readonly #root: string;
   readonly #statePath: string;
+  readonly #activationPath: string;
   readonly #versionsDir: string;
   readonly #stagingDir: string;
   readonly #dependencies: ManagedProviderRuntimeDependencies;
@@ -241,6 +388,7 @@ export class ManagedProviderRuntime {
   ) {
     this.#root = NodePath.join(baseDir, "provider-runtimes", identity.providerDirectory);
     this.#statePath = NodePath.join(this.#root, "state.json");
+    this.#activationPath = NodePath.join(this.#root, "activation.json");
     this.#versionsDir = NodePath.join(this.#root, "versions");
     this.#stagingDir = NodePath.join(this.#root, "staging");
     this.#dependencies = { ...DEFAULT_DEPENDENCIES, ...dependencies };
@@ -285,7 +433,9 @@ export class ManagedProviderRuntime {
       installed,
       activeVersion: activeState?.activeVersion ?? null,
       previousVersion: activeState?.previousVersion ?? null,
-      selected: activeState?.schemaVersion === 2,
+      selected: activeState?.schemaVersion === 2 || activeState?.schemaVersion === 3,
+      activeArtifact: activeState?.schemaVersion === 3 ? activeState.activeArtifact : null,
+      previousArtifact: activeState?.schemaVersion === 3 ? activeState.previousArtifact : null,
     };
   }
 
@@ -294,9 +444,14 @@ export class ManagedProviderRuntime {
     const rootEntries = await NodeFSP.readdir(this.#root).catch(() => []);
     await Promise.all(
       rootEntries
-        .filter((entry) => entry.startsWith("state.json.") && entry.endsWith(".tmp"))
+        .filter(
+          (entry) =>
+            (entry.startsWith("state.json.") || entry.startsWith("activation.json.")) &&
+            entry.endsWith(".tmp"),
+        )
         .map((entry) => NodeFSP.rm(NodePath.join(this.#root, entry), { force: true })),
     );
+    await this.#reconcileActivation();
     if (artifact) await this.#reconcileReplacement(artifact);
   }
 
@@ -304,8 +459,9 @@ export class ManagedProviderRuntime {
     readonly artifact: ManagedRuntimeArtifact;
     readonly signal: AbortSignal;
     readonly onProgress?: (progress: ManagedProviderRuntimeProgress) => void;
+    readonly qualify?: (input: ManagedProviderRuntimeQualificationInput) => Promise<void>;
   }): Promise<ManagedProviderRuntimeStatus> {
-    const { artifact, signal, onProgress } = input;
+    const { artifact, signal, onProgress, qualify } = input;
     if (artifact.supportTier !== "fully_assisted") {
       throw new ManagedProviderRuntimeError(artifact.supportMessage);
     }
@@ -386,30 +542,61 @@ export class ManagedProviderRuntime {
         () => true,
         () => false,
       );
-      if (hadExisting) await NodeFSP.rename(destination, replaced);
+      const activationId = this.#dependencies.activationId();
+      await this.#writeActivation({
+        schemaVersion: 1,
+        activationId,
+        destinationRelativePath: NodePath.relative(this.#root, destination),
+        replacedRelativePath: hadExisting ? NodePath.relative(this.#root, replaced) : null,
+      });
+      let existingMoved = false;
+      let candidateMoved = false;
       try {
+        if (hadExisting) {
+          await NodeFSP.rename(destination, replaced);
+          existingMoved = true;
+        }
         await NodeFSP.rename(payloadPath, destination);
-      } catch (cause) {
-        if (hadExisting) await NodeFSP.rename(replaced, destination).catch(() => undefined);
-        throw cause;
-      }
-      const previousVersion =
-        previousState?.activeVersion && previousState.activeVersion !== artifact.version
-          ? previousState.activeVersion
-          : (previousState?.previousVersion ?? null);
-      try {
+        candidateMoved = true;
+        if (qualify) {
+          await qualify({
+            artifact,
+            executablePath: this.launchPath(artifact),
+            payloadPath: destination,
+            signal,
+          });
+        }
+        if (signal.aborted) throw new DOMException("Installation cancelled.", "AbortError");
+        const previousVersion =
+          previousState?.activeVersion && previousState.activeVersion !== artifact.version
+            ? previousState.activeVersion
+            : (previousState?.previousVersion ?? null);
+        const previousArtifact =
+          previousState?.activeVersion && previousState.activeVersion !== artifact.version
+            ? previousState.schemaVersion === 3
+              ? previousState.activeArtifact
+              : null
+            : previousState?.schemaVersion === 3
+              ? previousState.previousArtifact
+              : null;
         await this.#writeState({
-          schemaVersion: 2,
+          schemaVersion: 3,
           selection: "managed",
+          activationId,
           targetKey: managedRuntimeTargetKey(artifact.target),
           activeVersion: artifact.version,
           previousVersion,
           executableRelativePath: NodePath.relative(this.#root, this.launchPath(artifact)),
+          activeArtifact: managedRuntimeArtifactReceipt(artifact),
+          previousArtifact,
         });
       } catch (cause) {
         try {
-          await NodeFSP.rm(destination, { recursive: true, force: true });
-          if (hadExisting) await NodeFSP.rename(replaced, destination);
+          if (candidateMoved) {
+            await NodeFSP.rm(destination, { recursive: true, force: true });
+          }
+          if (existingMoved) await NodeFSP.rename(replaced, destination);
+          await NodeFSP.rm(this.#activationPath, { force: true });
         } catch (rollbackCause) {
           throw new ManagedProviderRuntimeError(
             `Managed ${this.#displayName} activation failed and the previous runtime could not be restored.`,
@@ -418,6 +605,7 @@ export class ManagedProviderRuntime {
         }
         throw cause;
       }
+      await NodeFSP.rm(this.#activationPath, { force: true }).catch(() => undefined);
       if (hadExisting) {
         await NodeFSP.rm(replaced, { recursive: true, force: true }).catch(() => undefined);
       }
@@ -474,6 +662,54 @@ export class ManagedProviderRuntime {
     await this.#dependencies.commitState(this.#statePath, state, this.#dependencies.now());
   }
 
+  async #writeActivation(activation: ManagedProviderRuntimeActivation): Promise<void> {
+    await NodeFSP.mkdir(this.#root, { recursive: true, mode: 0o700 });
+    const temporary = `${this.#activationPath}.${process.pid}.${this.#dependencies.now()}.tmp`;
+    await NodeFSP.writeFile(temporary, `${JSON.stringify(activation, null, 2)}\n`, {
+      mode: 0o600,
+      flag: "wx",
+    });
+    await NodeFSP.rename(temporary, this.#activationPath);
+  }
+
+  async #reconcileActivation(): Promise<void> {
+    const raw = await NodeFSP.readFile(this.#activationPath, "utf8").catch(() => undefined);
+    if (raw === undefined) return;
+    const activation = (() => {
+      try {
+        return decodeActivation(JSON.parse(raw) as unknown);
+      } catch {
+        return undefined;
+      }
+    })();
+    if (!activation) {
+      await NodeFSP.rm(this.#activationPath, { force: true });
+      return;
+    }
+
+    const destination = NodePath.resolve(this.#root, activation.destinationRelativePath);
+    const replaced = activation.replacedRelativePath
+      ? NodePath.resolve(this.#root, activation.replacedRelativePath)
+      : null;
+    const state = await this.readState();
+    const committed = state?.schemaVersion === 3 && state.activationId === activation.activationId;
+    if (committed) {
+      if (replaced) await NodeFSP.rm(replaced, { recursive: true, force: true });
+    } else if (replaced) {
+      const replacedExists = await NodeFSP.access(replaced).then(
+        () => true,
+        () => false,
+      );
+      if (replacedExists) {
+        await NodeFSP.rm(destination, { recursive: true, force: true });
+        await NodeFSP.rename(replaced, destination);
+      }
+    } else {
+      await NodeFSP.rm(destination, { recursive: true, force: true });
+    }
+    await NodeFSP.rm(this.#activationPath, { force: true });
+  }
+
   async #cleanStaging(): Promise<void> {
     const entries = await NodeFSP.readdir(this.#stagingDir).catch(() => []);
     await Promise.all(
@@ -513,8 +749,25 @@ export class ManagedProviderRuntime {
       return;
     }
 
+    const state = await this.readState();
+    const candidateWasCommitted =
+      state?.schemaVersion === 3 &&
+      state.targetKey === managedRuntimeTargetKey(artifact.target) &&
+      state.activeArtifact.catalogRevision === artifact.catalogRevision;
+    if (candidateWasCommitted) {
+      await Promise.all(
+        replacements.map((entry) =>
+          NodeFSP.rm(NodePath.join(parent, entry), { recursive: true, force: true }),
+        ),
+      );
+      return;
+    }
+
+    const [newest, ...older] = replacements;
+    await NodeFSP.rm(destination, { recursive: true, force: true });
+    if (newest) await NodeFSP.rename(NodePath.join(parent, newest), destination);
     await Promise.all(
-      replacements.map((entry) =>
+      older.map((entry) =>
         NodeFSP.rm(NodePath.join(parent, entry), { recursive: true, force: true }),
       ),
     );

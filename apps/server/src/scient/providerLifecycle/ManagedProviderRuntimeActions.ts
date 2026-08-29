@@ -23,6 +23,7 @@ import type {
 } from "../../provider/ProviderDriver.ts";
 import { spawnAndCollect } from "../../provider/providerSnapshot.ts";
 import { ProviderConnectionActionError } from "./ProviderConnectionActions.ts";
+import { isManagedRuntimeUpdate } from "./managedRuntimeVersion.ts";
 
 const runtimeError = (message: string, cause?: unknown) =>
   new ProviderConnectionActionError({
@@ -101,7 +102,13 @@ export function resolveManagedRuntimePolicy(input: {
       : input.source === "system" && input.systemToManagedSwitchAllowed
         ? ["install"]
         : input.source === "scient_managed"
-          ? input.installed && input.artifact && input.installedVersion !== input.artifact.version
+          ? input.installed &&
+            input.artifact &&
+            isManagedRuntimeUpdate({
+              provider: input.artifact.provider,
+              current: input.installedVersion,
+              candidate: input.artifact.version,
+            })
             ? ["update", "repair", "remove"]
             : ["repair", "remove"]
           : [];
