@@ -1,8 +1,10 @@
 # Scient rich Markdown editor
 
 Status: accepted architecture and product contract for Scient's file-native rich Markdown
-surface. This document records durable invariants, dependency decisions, module boundaries, and
-acceptance requirements; pull requests and their evidence remain the implementation record.
+surface. Amended 2026-08-29 to re-select the editor core from ProseMirror plus a source ledger to
+CodeMirror 6 source-preserving live preview (see "Amendment record (2026-08-29)"). This document
+records durable invariants, dependency decisions, module boundaries, and acceptance requirements;
+pull requests and their evidence remain the implementation record.
 
 ## Outcome
 
@@ -144,42 +146,100 @@ The scientific preview stack is also fully local and ownable:
 - [Vega](https://github.com/vega/vega) is BSD-3-Clause and
   [Plotly.js](https://github.com/plotly/plotly.js) is MIT; both can render local declarative
   visualization specifications without a hosted service.
-- [prosemirror-tables](https://github.com/ProseMirror/prosemirror-tables) is MIT and supplies the
-  proven table selection and structural-command layer.
+- Table editing follows the Zettlr pattern (GPL, concept reference only): a table widget whose
+  cells are small embedded CodeMirror editors clamped to cell boundaries, with row and column
+  commands implemented as Scient-owned CodeMirror commands.
 
-These renderers remain behind Scient NodeView adapters. Their input text stays in the Markdown
+These renderers remain behind Scient widget adapters. Their input text stays in the Markdown
 file, rendering runs locally, invalid intermediate edits retain the last valid visual, and no
 renderer is allowed to rewrite the document.
 
 ### Answer to rich editing without losing the preview
 
-This is feasible and is the selected design. Read and Write use the same mounted ProseMirror
-`EditorView` and the same document nodes. Write changes only `editable`, focus, selection, and
-interaction plugins. A bullet remains a bullet, a table remains a laid-out table with editable
-cells, an equation remains typeset with a compact TeX editor when active, and a figure or diagram
-keeps its last valid preview while its source is being edited. Source and Split are precision
-tools, not the default writing experience.
+This is feasible and is the selected design. The editor's buffer is the file's bytes; Read and
+Write are the same CodeMirror `EditorView` over that buffer. Write changes only decorations,
+focus, selection, and interaction plugins, never the text. A bullet remains a bullet, a table
+remains a laid-out table with editable cells, an equation remains typeset with a compact TeX
+editor when active, and a figure or diagram keeps its last valid preview while its source is
+being edited. Source and Split are the same buffer with the live-preview projection disabled;
+they are precision tools, not the default writing experience.
 
-This continuity cannot be achieved safely by hiding Markdown punctuation in a textarea alone:
-tables, nested structures, selections, accessibility, and unsupported syntax all need a semantic
-document model. Conversely, a semantic model alone is unsafe for real files because normal
-serialization changes untouched syntax. The combined persistent-view plus source-ledger design is
-therefore a product requirement, not implementation ornament.
+Rendering is a projection over source text, not a parallel document: inline and block Markdown
+punctuation is hidden or dimmed by decorations only where the selection does not intersect it,
+and complex constructs are replaced visually by widgets whose underlying source stays in the
+buffer until explicitly edited. This is the interaction model of Typora and Obsidian, and it has
+permissive-license production evidence: Zettlr's renderer architecture covers math, citations,
+tables, and diagrams as widgets over an untouched buffer, and the MIT atomic-editor package
+ships the layout-stability (line-level reveal without reflow) and cursor-freeze mechanisms that
+resolve the interaction's known failure modes. The prior concern that this path amounts to
+hiding punctuation in a textarea does not hold: CodeMirror 6 supplies the selection, IME,
+accessibility, viewport, and structure machinery, and its ecosystem demonstrates tables, nested
+lists, and embedded editors on exactly this architecture. Conversely, a semantic document model
+alone is unsafe for real files because normal serialization changes untouched bytes, which is
+the property this product exists to guarantee.
 
 ### Selected foundation
 
-Use ProseMirror directly behind a Scient-owned adapter, paired with CodeMirror 6 for source and
-nested code/source islands. ProseMirror's persistent `EditorView`, transaction model, schema,
-`NodeView` boundary, selection mapping, and mature table implementation align with the required
-invariants. Direct use avoids adopting another framework's document conversion and UI policy.
+Use CodeMirror 6 as the editing substrate: the buffer holds the file's exact bytes, live preview
+is a decoration and widget projection over that buffer, and Source/Split are the same buffer with
+the projection disabled. CodeMirror's transaction model, selection and IME handling, viewport
+rendering, decoration system, and nested-editor support carry the invariants directly; the file
+is canonical by construction rather than by preservation engineering. Complex constructs (math,
+tables, figures, diagrams, code) are widget projections with embedded editors, following Zettlr's
+renderer architecture and atomic-editor's stability mechanisms (cursor-proximity source reveal,
+line-level reveal without reflow, post-release reveal freeze).
 
-All selected ProseMirror and CodeMirror packages are MIT-licensed. The rich surface is isolated
-behind the Markdown file mount; expensive nested source and scientific renderers load only when
-their surfaces are needed, so the ordinary chat path does not initialize them.
+The document session, save queue with compare-and-swap revisions, conflict handling, typed server
+layer, contracts, and asset pipeline are editor-agnostic and carry over unchanged. The source
+ledger and ProseMirror surface retire when the CodeMirror surface reaches parity; the transition
+is staged behind the spike gate in the amendment record below.
 
-Milkdown, MDXEditor, Vditor, MarkText, Muya, and newer Typora-like projects remain interaction and
-test references, not runtime foundations. Their useful ideas may be reimplemented through the
-Scient adapter; their serializer behavior is not the file-authority contract.
+All selected packages are MIT-licensed. The rich surface remains isolated behind the Markdown
+file mount; expensive nested source and scientific renderers load only when their surfaces are
+needed, so the ordinary chat path does not initialize them.
+
+Milkdown, MDXEditor, Vditor, MarkText, Muya, and newer Typora-like projects remain interaction
+and test references, not runtime foundations. Their useful ideas may be reimplemented through
+Scient-owned modules; their serializer behavior is not the file-authority contract.
+
+### Amendment record (2026-08-29): editor core re-selection
+
+The 2026-08-23 selection (ProseMirror core plus a source ledger performing surgical byte
+patches) is superseded. Trigger: sustained quality failures in the implemented surface (broken
+controls, unwritable regions, latency) and a precedent study of twelve editor codebases
+(MarkText/Muya, Milkdown, Vrite, BlockNote, Zettlr, HedgeDoc, StackEdit, ByteMD,
+codemirror-live-markdown, atomic-editor, prosemirror-markdown, mdast-util-to-markdown) analyzed
+at source level, plus Typora's own documented interaction gaps.
+
+Findings that drove the change:
+
+- No working editor patches source bytes through a semantic model. Editors either keep source
+  text as the document (fidelity by construction: Obsidian, Zettlr, atomic-editor) or
+  re-serialize a semantic tree and accept normalization (Milkdown, BlockNote, Vrite; BlockNote
+  names its own markdown API lossy). The source-ledger mechanism has no precedent among them and
+  concentrated the implementation's worst defects.
+- prosemirror-markdown is a lossy transcoder: unknown tokens throw, reference links, HTML, and
+  front matter are dropped, and list markers, emphasis, and setext headings normalize. No
+  preservation hook exists in it.
+- The CodeMirror live-preview path has production evidence for the full scientific surface:
+  Zettlr renders math, citations, tables (per-cell embedded editors), and diagrams as widgets
+  over an untouched buffer, and atomic-editor ships the stability mechanisms with unit and
+  end-to-end tests under MIT.
+- Logseq's lossy round-trip of user files, which drove a community repair tool and reported
+  unrecoverable data loss, is the standing cost of abandoning file fidelity.
+
+Consequences: the buffer is the file and preservation is structural. Structural commands that
+ProseMirror provided (list splitting, table structure operations) become Scient-owned CodeMirror
+commands. The 2026-08-23 landscape table above remains as research history; where its decisions
+conflict with this record, this record governs, notably ProseMirror "adopt the core" and
+CodeMirror "not the rich document model".
+
+Staging: a disposable spike branch first mounts the CodeMirror live-preview core (reveal policy,
+widget projections over a real fixture corpus, existing session/save integration) and passes a
+human feel gate against the interaction model in this document. Production surface migration,
+tables, and ledger and ProseMirror retirement proceed only after that gate. The product contract
+in this document (states, node behavior, file lifecycle, verification matrix, budgets) is
+unchanged by this amendment.
 
 ### Why the previous Lexical pass is not the base
 
@@ -194,12 +254,13 @@ autosave design must not be reused.
 
 ### Implemented product shape
 
-The surface contains a persistent rich view and source ledger, minimal source patching,
+The surface provides the rendered view as the editor over the file buffer,
 Read/Write/Source/Split, revision-bound serial
 autosave, external-conflict handling, rich formatting/lists/tasks/tables, math, highlighted nested
 code editing, images, wiki links, citations/footnotes, Mermaid/Vega/Plotly previews, raw source
 islands, find/replace, outline navigation, structural block operations, create/rename, and secure
-asset insertion.
+asset insertion. During the staged 2026-08-29 transition, the ProseMirror and source-ledger
+implementation remains in place until the CodeMirror surface reaches parity.
 
 Changes to that shape require proportional evidence for unchanged-source reuse, CRLF and Unicode,
 malformed input, composition safety, RTL block direction, last-valid scientific rendering,
@@ -210,16 +271,16 @@ latency.
 
 ```text
 packages/scient-markdown/
-  source/        Markdown block ledger, source ranges, preservation, patches
+  source/        Buffer integrity: external-change diffing, preservation invariants, fixtures
   model/         Framework-neutral document/node capabilities and invariants
   file/          Revisions, conflict state machine, save intent, asset policy
   fixtures/      Round-trip and adversarial scientific Markdown corpus
 
 apps/web/src/scient/markdownEditor/
   session/       One ScientDocumentSession per open file
-  prosemirror/   Schema, parser, serializer adapter, plugins, NodeViews
-  source/        Lazy CodeMirror source and split surface
-  nodes/         Tables, math, code, figures, citations, diagrams, raw islands
+  cm6/           Live-preview projection: reveal policy, decorations, commands, plugins
+  widgets/       Math, table, code, figure, citation, diagram widget implementations
+  source/        Source and split surfaces over the same buffer
   ui/            Minimal header, contextual controls, menus, status
   styles/        Owned tokens and node styles aligned with reading typography
 
@@ -248,39 +309,43 @@ A seam test records these mounts and fails if Scient editor logic spreads into i
 disk bytes + revision
         |
         v
-source ledger -> ProseMirror state <-> rich EditorView
+CodeMirror buffer (the file's exact bytes) <-> live-preview projection (decorations/widgets)
         |                |
-        |                +-> user transactions -> dirty source ranges
-        +-> source view edits -> reparsed transaction
+        |                +-> user edits -> dirty buffer -> debounced save intent
+        +-> Source/Split edits -> the same buffer, projection disabled
         |
         v
-minimal source patch -> pending bytes -> CAS atomic write
+buffer bytes -> pending bytes -> CAS atomic write
 ```
 
-The mounted `EditorView` remains the same instance in Read and Write. The view's `editable`
-property and interaction plugins change; the document does not. Read/Write changes are session UI
-events, never ProseMirror document transactions.
+The same `EditorView` remains mounted in Read and Write. Decorations, focus, selection, and
+interaction plugins change; the buffer text does not. Read/Write changes are session UI events,
+never document edits. Source and Split bind the same buffer, so caret, selection, and scroll
+continue across mode changes.
 
-External file updates enter through a separate rebase/conflict transition. Programmatic parsing,
-selection, decoration, viewport, and remote-sync transactions carry explicit metadata and can
-never create save intent.
+External file updates enter through a separate diff-and-merge transition that reconciles the
+buffer with new disk bytes and reports conflicts. Programmatic selection, decoration, viewport,
+and remote-sync transactions carry explicit metadata and can never create save intent.
 
-### Source-preserving projection
+### Source preservation
 
-The parser produces a source ledger with stable IDs and exact source ranges for top-level blocks
-and supported nested constructs. Each ProseMirror node retains the corresponding source identity.
+Preservation is structural: the buffer holds the file's bytes, so untouched regions are intact by
+construction rather than by reconstruction.
 
-- Unchanged nodes reuse their exact original source slices.
-- Changed nodes serialize only their smallest safe owning range.
-- Inserted nodes use the document's inferred local style.
-- Deleted nodes remove their owned range while preserving surrounding trivia deliberately.
-- Raw and unsupported nodes are opaque source islands.
-- A full canonical serialization is available only as an explicit Format Document action with a
-  preview/diff; it is never an autosave path.
+- The editor never re-serializes the document; every save writes buffer bytes.
+- Unsupported or unknown syntax is ordinary buffer text with no special handling. It renders as
+  an editable source island by default and survives every edit elsewhere.
+- Widget projections (math, tables, figures, diagrams, code) replace construct ranges visually
+  only. Their source text stays in the buffer until the user edits it through the widget's
+  controls or after dissolving the widget to source.
+- A canonicalizing Format Document remains an explicit action with a preview/diff; it is never an
+  autosave path.
+- External changes are diffed into the buffer or raise a conflict; the editor never rewrites
+  untouched regions to match its own preferences.
 
-The source ledger must preserve CRLF/LF, final newline state, Unicode and bidi controls, front
-matter, HTML comments, reference definitions, fence length, list markers, indentation, table
-alignment, entity spelling, and untouched whitespace.
+The buffer must preserve CRLF/LF, final newline state, Unicode and bidi controls, front matter,
+HTML comments, reference definitions, fence length, list markers, indentation, table alignment,
+entity spelling, and untouched whitespace, by never writing anything except the user's edits.
 
 ## Server and security contract
 
