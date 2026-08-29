@@ -1,13 +1,14 @@
 # Scient workspace file browsing and visibility
 
-Status: Proposed
+Status: Accepted architecture
 Owner: ScientFactory
 Purpose: Defines truthful, useful, and scalable workspace file browsing without
 turning Files into a recursive dump of project machinery.
 Doc type: Architecture decision record
 Scope: Desktop Files browsing, deliberate internal inspection, and the minimum
 policy needed to render and edit entries truthfully
-Implementation status: Not started; this ADR does not authorize implementation
+Implementation status: Implemented and automatically validated in this candidate;
+manual desktop acceptance remains pending
 Deferred work: [GitHub issue #201](https://github.com/ScientFactory/scient-desktop/issues/201)
 
 ## Decision
