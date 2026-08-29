@@ -130,6 +130,10 @@ class ScientCodeBlockNodeView implements NodeView {
     const richKind = resolveScientRichFenceKind(language);
     const metadata = fenceMetadata(this.node);
     this.languageLabel.textContent = language === "text" ? "Plain text" : language;
+    this.dom.classList.toggle(
+      "is-empty",
+      code.length === 0 && language === "text" && richKind === null,
+    );
     if (richKind) {
       this.highlightVersion += 1;
       this.reactRoot ??= createRoot(this.rendered);

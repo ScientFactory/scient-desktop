@@ -80,12 +80,23 @@
 }
 
 .scient-markdown-command-button:hover,
-.scient-markdown-command-button:focus-visible,
-.scient-markdown-command-button[aria-pressed="true"],
+.scient-markdown-command-button:focus-visible {
+  background: var(--accent);
+  color: var(--accent-foreground);
+  outline: none;
+}
+
+.scient-markdown-command-button[aria-pressed="true"] {
+  background: var(--accent);
+  color: var(--accent-foreground);
+  font-weight: 600;
+}
+
 .scient-markdown-slash-menu button:hover,
 .scient-markdown-slash-menu button:focus-visible,
 .scient-markdown-slash-menu button[aria-selected="true"] {
-  background: var(--muted);
+  background: var(--accent);
+  color: var(--accent-foreground);
   outline: none;
 }
 
@@ -408,8 +419,16 @@
   min-height: 1.8rem;
   align-items: center;
   justify-content: flex-end;
-  border-block-end: 1px solid color-mix(in oklab, var(--border) 70%, transparent);
   padding-inline: 0.7rem;
+}
+
+.scient-markdown-code-block.is-empty .scient-markdown-code-header {
+  display: none;
+}
+
+.scient-markdown-code-render:empty::before {
+  content: "Empty code block";
+  color: var(--muted-foreground);
 }
 
 .scient-markdown-code-language {
@@ -435,10 +454,6 @@
   border: 0;
   background: transparent !important;
   padding: 0;
-}
-
-.scient-markdown-code-editor {
-  border-block-start: 1px solid var(--border);
 }
 
 .scient-markdown-code-editor .cm-editor {

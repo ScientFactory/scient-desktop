@@ -2,7 +2,6 @@ import {
   AlignCenter,
   AlignLeft,
   AlignRight,
-  ALargeSmall,
   ArrowDown,
   ArrowRightLeft,
   ArrowUp,
@@ -17,6 +16,9 @@ import {
   Heading1,
   Heading2,
   Heading3,
+  Heading4,
+  Heading5,
+  Heading6,
   Image as ImageIcon,
   Italic,
   Link2,
@@ -26,15 +28,15 @@ import {
   ListTree,
   Minus,
   MoreHorizontal,
+  Pilcrow,
   Plus,
   Quote,
   Redo2,
-  Rows3,
-  Columns3,
   Search,
   Sigma,
   Strikethrough,
   Table as TableIcon,
+  TextQuote,
   Trash2,
   Undo2,
   X,
@@ -139,6 +141,32 @@ function styleMenuLabel(snapshot: ScientMarkdownEditorSnapshot): string {
   }
 }
 
+function styleTriggerIcon(snapshot: ScientMarkdownEditorSnapshot): ReactNode {
+  switch (snapshot.blockType) {
+    case "heading":
+      switch (snapshot.headingLevel) {
+        case 2:
+          return <Heading2 className="size-3.5" />;
+        case 3:
+          return <Heading3 className="size-3.5" />;
+        case 4:
+          return <Heading4 className="size-3.5" />;
+        case 5:
+          return <Heading5 className="size-3.5" />;
+        case 6:
+          return <Heading6 className="size-3.5" />;
+        default:
+          return <Heading1 className="size-3.5" />;
+      }
+    case "blockquote":
+      return <TextQuote className="size-3.5" />;
+    case "code_block":
+      return <Code2 className="size-3.5" />;
+    default:
+      return <Pilcrow className="size-3.5" />;
+  }
+}
+
 function StyleMenu({
   controller,
   snapshot,
@@ -158,18 +186,21 @@ function StyleMenu({
               render={
                 <button
                   type="button"
-                  className="inline-flex h-7 max-w-36 items-center gap-1 rounded-md px-2 text-xs font-medium text-foreground/85 transition-colors hover:bg-accent hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring"
-                  aria-label="Paragraph style"
+                  className={cn(
+                    "scient-markdown-command-button inline-flex size-7 items-center justify-center gap-0.5 rounded-md text-foreground/80 transition-colors",
+                    snapshot.blockType !== "paragraph" &&
+                      "bg-accent text-accent-foreground font-semibold shadow-xs",
+                  )}
+                  aria-label={`Style: ${styleMenuLabel(snapshot)}`}
                 >
-                  <ALargeSmall className="size-3.5 shrink-0 opacity-70" />
-                  <span className="truncate">{styleMenuLabel(snapshot)}</span>
-                  <ChevronDown className="size-3 shrink-0 opacity-60" />
+                  {styleTriggerIcon(snapshot)}
+                  <ChevronDown className="size-2.5 opacity-60" />
                 </button>
               }
             />
           }
         />
-        <TooltipPopup side="top">Paragraph style</TooltipPopup>
+        <TooltipPopup side="top">Style: {styleMenuLabel(snapshot)}</TooltipPopup>
       </Tooltip>
       <MenuPopup align="start" className="w-44 p-1">
         <MenuGroup>
@@ -204,11 +235,11 @@ function StyleMenu({
 function listIcon(kind: ScientMarkdownEditorSnapshot["listKind"]) {
   switch (kind) {
     case "ordered":
-      return <ListOrdered className="size-3.5 shrink-0 opacity-70" />;
+      return <ListOrdered className="size-3.5" />;
     case "task":
-      return <ListTodo className="size-3.5 shrink-0 opacity-70" />;
+      return <ListTodo className="size-3.5" />;
     default:
-      return <List className="size-3.5 shrink-0 opacity-70" />;
+      return <List className="size-3.5" />;
   }
 }
 
@@ -240,21 +271,20 @@ function ListsMenu({
                 <button
                   type="button"
                   className={cn(
-                    "inline-flex h-7 items-center gap-1 rounded-md px-2 text-xs font-medium text-foreground/85 transition-colors hover:bg-accent hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring",
+                    "scient-markdown-command-button inline-flex size-7 items-center justify-center gap-0.5 rounded-md text-foreground/80 transition-colors",
                     snapshot.listKind !== null &&
                       "bg-accent text-accent-foreground font-semibold shadow-xs",
                   )}
-                  aria-label="List style"
+                  aria-label={`List: ${listMenuLabel(snapshot.listKind)}`}
                 >
                   {listIcon(snapshot.listKind)}
-                  <span>{listMenuLabel(snapshot.listKind)}</span>
-                  <ChevronDown className="size-3 shrink-0 opacity-60" />
+                  <ChevronDown className="size-2.5 opacity-60" />
                 </button>
               }
             />
           }
         />
-        <TooltipPopup side="top">List style</TooltipPopup>
+        <TooltipPopup side="top">List: {listMenuLabel(snapshot.listKind)}</TooltipPopup>
       </Tooltip>
       <MenuPopup align="start" className="w-44 p-1">
         <MenuGroup>
@@ -263,22 +293,28 @@ function ListsMenu({
             checked={snapshot.listKind === "bullet"}
             onCheckedChange={() => controller.execute("bullet-list")}
           >
-            <List className="mr-2 size-4 text-muted-foreground" />
-            Bullet list
+            <span className="flex items-center gap-2">
+              <List className="size-4 text-muted-foreground" />
+              Bullet list
+            </span>
           </MenuCheckboxItem>
           <MenuCheckboxItem
             checked={snapshot.listKind === "ordered"}
             onCheckedChange={() => controller.execute("ordered-list")}
           >
-            <ListOrdered className="mr-2 size-4 text-muted-foreground" />
-            Numbered list
+            <span className="flex items-center gap-2">
+              <ListOrdered className="size-4 text-muted-foreground" />
+              Numbered list
+            </span>
           </MenuCheckboxItem>
           <MenuCheckboxItem
             checked={snapshot.listKind === "task"}
             onCheckedChange={() => controller.execute("task-list")}
           >
-            <ListTodo className="mr-2 size-4 text-muted-foreground" />
-            Task list
+            <span className="flex items-center gap-2">
+              <ListTodo className="size-4 text-muted-foreground" />
+              Task list
+            </span>
           </MenuCheckboxItem>
           <MenuSeparator />
           <MenuCheckboxItem
@@ -477,9 +513,11 @@ function BlockActionsMenu({
           checked={snapshot.findOpen}
           onCheckedChange={() => controller.setFindOpen(!snapshot.findOpen)}
         >
-          <Search className="mr-2 size-4 text-muted-foreground" />
-          Find & Replace
-          <MenuShortcut>⌘F</MenuShortcut>
+          <span className="flex w-full items-center gap-2">
+            <Search className="size-4 text-muted-foreground" />
+            Find & Replace
+            <MenuShortcut>⌘F</MenuShortcut>
+          </span>
         </MenuCheckboxItem>
         <MenuSeparator />
         <MenuItem disabled={!snapshot.canMoveBlockUp} onClick={blockAction("move-up")}>
@@ -1038,35 +1076,25 @@ export function ScientMarkdownControls({
             controller={controller}
             command="add-row-after"
             label="Add row below"
-            icon={<Rows3 className="size-3.5" />}
+            icon={<span className="text-[11px] font-semibold">+ Row</span>}
           />
           <CommandButton
             controller={controller}
             command="add-column-after"
             label="Add column after"
-            icon={<Columns3 className="size-3.5" />}
+            icon={<span className="text-[11px] font-semibold">+ Col</span>}
           />
           <CommandButton
             controller={controller}
             command="delete-row"
             label="Delete row"
-            icon={
-              <span className="flex items-center">
-                <Rows3 className="size-3.5" />
-                <span className="-ml-1 text-[10px] font-bold">×</span>
-              </span>
-            }
+            icon={<span className="text-[11px] font-semibold text-destructive">− Row</span>}
           />
           <CommandButton
             controller={controller}
             command="delete-column"
             label="Delete column"
-            icon={
-              <span className="flex items-center">
-                <Columns3 className="size-3.5" />
-                <span className="-ml-1 text-[10px] font-bold">×</span>
-              </span>
-            }
+            icon={<span className="text-[11px] font-semibold text-destructive">− Col</span>}
           />
           <span className="scient-markdown-command-divider mx-1 h-3.5 w-px bg-border/80" />
           <CommandButton
