@@ -204,6 +204,17 @@ export function useWorkspaceFileRefresh(input: {
     setReloadNotice((current) => (current?.relativePath === path ? null : current));
   }, []);
 
+  /** A surface-observed external change conflicts with the local draft. */
+  const handleExternalConflict = useCallback(
+    (path: string, revision: string) => {
+      if (path !== input.relativePath) return;
+      setSaveError(null);
+      setReloadNotice({ kind: "external-change", relativePath: path, revision });
+      refreshAuthoritativeFile();
+    },
+    [input.relativePath, refreshAuthoritativeFile],
+  );
+
   const handleSaveResolutionApplied = useCallback(() => {
     setSaveResolution(null);
     setSaveError(null);
@@ -298,6 +309,7 @@ export function useWorkspaceFileRefresh(input: {
     automaticRefreshUnavailable: fileChanges.unavailable,
     cancelReloadNotice,
     file,
+    handleExternalConflict,
     handleSaveConfirmed,
     handleSaveFailure,
     handleSaveResolutionApplied,

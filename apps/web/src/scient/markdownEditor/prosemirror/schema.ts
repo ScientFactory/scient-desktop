@@ -4,8 +4,15 @@ import {
   defaultMarkdownSerializer,
   MarkdownParser,
   MarkdownSerializer,
+  type MarkdownSerializerState,
 } from "prosemirror-markdown";
-import type { MarkSpec, Node as ProseMirrorNode, NodeSpec, SchemaSpec } from "prosemirror-model";
+import type {
+  DOMOutputSpec,
+  MarkSpec,
+  Node as ProseMirrorNode,
+  NodeSpec,
+  SchemaSpec,
+} from "prosemirror-model";
 import { Schema } from "prosemirror-model";
 import { tableNodes } from "prosemirror-tables";
 
@@ -281,6 +288,44 @@ for (const name of TOP_LEVEL_SOURCE_NODE_NAMES) {
   });
 }
 
+// Text direction lives on paragraph/heading blocks. The table cell nodes hold
+// inline content directly and get direction through their paragraph content,
+// so a block-level attribute is enough for body text and table cells alike.
+function withTextDirectionAttrs(
+  name: "paragraph" | "heading",
+  extraAttrs: (element: HTMLElement) => Record<string, unknown>,
+): void {
+  const spec = nodes.get(name);
+  if (!spec) throw new Error(`Missing ProseMirror node spec '${name}'.`);
+  nodes = nodes.update(name, {
+    ...spec,
+    attrs: { ...spec.attrs, dir: { default: null } },
+    parseDOM: (spec.parseDOM ?? []).map((rule) => ({
+      ...rule,
+      getAttrs: (element: HTMLElement) => ({
+        ...(rule.getAttrs?.(element) ?? {}),
+        ...extraAttrs(element),
+        dir: element.getAttribute("dir") === "rtl" ? "rtl" : null,
+      }),
+    })),
+    toDOM: (node) => {
+      const dom: DOMOutputSpec = spec.toDOM ? spec.toDOM(node) : [name, 0];
+      if (typeof node.attrs.dir !== "string") return dom;
+      const [tag, attrs, ...children] = dom as [string, unknown, ...unknown[]];
+      return [
+        tag,
+        { ...(typeof attrs === "object" && attrs !== null ? attrs : {}), dir: node.attrs.dir },
+        ...children,
+      ] as unknown as DOMOutputSpec;
+    },
+  });
+}
+
+withTextDirectionAttrs("paragraph", () => ({}));
+withTextDirectionAttrs("heading", (element) => ({
+  level: Number(element.tagName.slice(1)),
+}));
+
 export const scientMarkdownSchema: Schema = new Schema({
   nodes,
   marks: defaultMarkdownParser.schema.spec.marks.addToEnd("strike", strikeSpec),
@@ -401,8 +446,52 @@ gfmTokenizer.core.ruler.after("inline", "scient_task_lists", (state) => {
   }
 });
 
+// Text-direction convention: the only interoperable Markdown form is the HTML
+// wrapper the serializer emits (`<div dir="rtl">` ... `</div>` blocks). The
+// tokenizer keeps HTML disabled, so these lines arrive as literal paragraph
+// text and are rewritten here into attributes on the enclosed blocks.
+gfmTokenizer.core.ruler.after("scient_task_lists", "scient_direction_divs", (state) => {
+  let pendingDir: string | null = null;
+  const kept: typeof state.tokens = [];
+  for (let index = 0; index < state.tokens.length; index += 1) {
+    const token = state.tokens[index];
+    if (!token) continue;
+    const inline = state.tokens[index + 1];
+    if (token.type === "paragraph_open" && inline?.type === "inline") {
+      const content = inline.content.trim();
+      const openMatch = /^<div dir="(ltr|rtl|auto)">$/u.exec(content);
+      if (openMatch) {
+        pendingDir = openMatch[1] === "auto" || openMatch[1] === undefined ? null : openMatch[1];
+        index += 2;
+        continue;
+      }
+      if (/^<\/div>$/u.test(content)) {
+        pendingDir = null;
+        index += 2;
+        continue;
+      }
+    }
+    if (pendingDir !== null && (token.type === "paragraph_open" || token.type === "heading_open")) {
+      token.attrSet("data-scient-dir", pendingDir);
+    }
+    kept.push(token);
+  }
+  state.tokens = kept;
+});
+
 export const scientMarkdownParser = new MarkdownParser(scientMarkdownSchema, gfmTokenizer, {
   ...defaultMarkdownParser.tokens,
+  paragraph: {
+    block: "paragraph",
+    getAttrs: (token) => ({ dir: token.attrGet("data-scient-dir") }),
+  },
+  heading: {
+    block: "heading",
+    getAttrs: (token) => ({
+      level: Number(token.tag.slice(1)),
+      dir: token.attrGet("data-scient-dir"),
+    }),
+  },
   table: { block: "table" },
   thead: { ignore: true },
   tbody: { ignore: true },
@@ -483,9 +572,37 @@ function tableMarkdown(table: ProseMirrorNode): string {
   return rows.join("\n");
 }
 
+function blockWithDirection(
+  state: MarkdownSerializerState,
+  node: ProseMirrorNode,
+  render: () => void,
+): void {
+  const dir = node.attrs.dir;
+  if (typeof dir !== "string") {
+    render();
+    return;
+  }
+  state.write(`<div dir="${dir}">`);
+  state.closeBlock(node);
+  render();
+  state.closeBlock(node);
+  state.write("</div>");
+  state.closeBlock(node);
+}
+
 export const scientMarkdownSerializer = new MarkdownSerializer(
   {
     ...defaultMarkdownSerializer.nodes,
+    paragraph: (state, node, parent, index) => {
+      blockWithDirection(state, node, () => {
+        defaultMarkdownSerializer.nodes.paragraph?.(state, node, parent, index);
+      });
+    },
+    heading: (state, node, parent, index) => {
+      blockWithDirection(state, node, () => {
+        defaultMarkdownSerializer.nodes.heading?.(state, node, parent, index);
+      });
+    },
     raw_block: (state, node) => state.write(String(node.attrs.source)),
     wiki_link: (state, node) => {
       const target = String(node.attrs.target);

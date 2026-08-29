@@ -108,6 +108,10 @@ export function ScientMarkdownWorkspaceSurface(props: ScientMarkdownWorkspaceSur
     });
     if (result === "adopted") {
       setDraftSource(props.source);
+      // The queued draft is unchanged; rebase its revision so the debounced
+      // write does not dead-end on a stale compare-and-swap.
+      const rebased = controller.createSaveIntent();
+      if (rebased) saveQueue.enqueue(rebased);
     } else if (result === "conflict") {
       saveQueue.pause();
       onExternalConflictRef.current({ source: props.source, revision: props.revision });

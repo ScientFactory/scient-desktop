@@ -1,10 +1,46 @@
+import { redo, undo } from "@codemirror/commands";
 import type { MarkdownSaveIntent } from "@scientfactory/scient-markdown";
 import { MarkdownSaveQueue } from "@scientfactory/scient-markdown";
+import {
+  ALargeSmall,
+  ArrowRightLeft,
+  Bold,
+  ChevronDown,
+  Code2,
+  Columns3,
+  Image as ImageIcon,
+  Italic,
+  Link2,
+  List,
+  ListOrdered,
+  ListTodo,
+  Minus,
+  Redo2,
+  Sigma,
+  Strikethrough,
+  Table as TableIcon,
+  Undo2,
+} from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 
 import {
+  Menu,
+  MenuCheckboxItem,
+  MenuGroup,
+  MenuGroupLabel,
+  MenuItem,
+  MenuPopup,
+  MenuSeparator,
+  MenuTrigger,
+} from "~/components/ui/menu";
+import { Tooltip, TooltipPopup, TooltipTrigger } from "~/components/ui/tooltip";
+import { cn } from "~/lib/utils";
+
+import {
   insertBlockTemplate,
+  insertImageTemplate,
   insertLink,
+  toggleDirection,
   toggleLinePrefix,
   toggleNumberedList,
   toggleWrap,
@@ -17,35 +53,70 @@ const CODE_BLOCK_TEMPLATE = "```\n\n```";
 const MATH_BLOCK_TEMPLATE = "$$\n\n$$";
 const TABLE_TEMPLATE = "| Column | Column |\n| ------ | ------ |\n|        |        |";
 
-interface ToolbarAction {
+type Cm6View = NonNullable<ScientCm6EditorView["view"]>;
+
+function ToolbarIconButton(props: {
   readonly label: string;
-  readonly run: (view: NonNullable<ScientCm6EditorView["view"]>) => void;
+  readonly onClick: () => void;
+  readonly children: React.ReactNode;
+}) {
+  return (
+    <Tooltip>
+      <TooltipTrigger
+        render={
+          <button
+            type="button"
+            className="inline-flex size-7 items-center justify-center rounded-md text-foreground/80 transition-colors hover:bg-accent/80 hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring"
+            aria-label={props.label}
+            onMouseDown={(event) => event.preventDefault()}
+            onClick={() => {
+              props.onClick();
+            }}
+          >
+            {props.children}
+          </button>
+        }
+      />
+      <TooltipPopup side="top">{props.label}</TooltipPopup>
+    </Tooltip>
+  );
 }
 
-const PRIMARY_ACTIONS: ReadonlyArray<ToolbarAction> = [
-  { label: "B", run: (view) => void toggleWrap(view, "**") },
-  { label: "I", run: (view) => void toggleWrap(view, "*") },
-  { label: "S", run: (view) => void toggleWrap(view, "~~") },
-  { label: "</>", run: (view) => void toggleWrap(view, "`") },
-  { label: "H1", run: (view) => void toggleLinePrefix(view, "# ") },
-  { label: "H2", run: (view) => void toggleLinePrefix(view, "## ") },
-  { label: "H3", run: (view) => void toggleLinePrefix(view, "### ") },
-  { label: "• List", run: (view) => void toggleLinePrefix(view, "- ") },
-  { label: "1. List", run: (view) => void toggleNumberedList(view) },
-  { label: "☑ Task", run: (view) => void toggleLinePrefix(view, "- [ ] ") },
-  { label: "❝ Quote", run: (view) => void toggleLinePrefix(view, "> ") },
-  { label: "Link", run: (view) => void insertLink(view) },
-];
-
-const OVERFLOW_ACTIONS: ReadonlyArray<ToolbarAction> = [
-  { label: "Code block", run: (view) => void insertBlockTemplate(view, CODE_BLOCK_TEMPLATE) },
-  { label: "Math block", run: (view) => void insertBlockTemplate(view, MATH_BLOCK_TEMPLATE) },
-  { label: "Table", run: (view) => void insertBlockTemplate(view, TABLE_TEMPLATE) },
-  {
-    label: "Horizontal rule",
-    run: (view) => void insertBlockTemplate(view, "\n---\n"),
-  },
-];
+function ToolbarMenu(props: {
+  readonly label: string;
+  readonly summary?: React.ReactNode;
+  readonly children: React.ReactNode;
+}) {
+  return (
+    <Menu>
+      <Tooltip>
+        <TooltipTrigger
+          render={
+            <MenuTrigger
+              render={
+                <button
+                  type="button"
+                  className="inline-flex h-7 items-center gap-1 rounded-md px-2 text-xs font-medium text-foreground/85 transition-colors hover:bg-accent hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring"
+                  aria-label={props.label}
+                >
+                  {props.summary}
+                  <span className="truncate">{props.label}</span>
+                </button>
+              }
+            />
+          }
+        />
+        <TooltipPopup side="top">{props.label}</TooltipPopup>
+      </Tooltip>
+      <MenuPopup align="start" className="w-44 p-1">
+        <MenuGroup>
+          <MenuGroupLabel>{props.label}</MenuGroupLabel>
+          {props.children}
+        </MenuGroup>
+      </MenuPopup>
+    </Menu>
+  );
+}
 
 export interface ScientCm6SpikeSurfaceProps {
   readonly source: string;
@@ -86,9 +157,7 @@ export function ScientCm6SpikeSurface(props: ScientCm6SpikeSurfaceProps) {
 
   const containerRef = useRef<HTMLDivElement>(null);
   const controllerRef = useRef<ScientCm6EditorView | null>(null);
-  const [pending, setPending] = useState(false);
   const [conflict, setConflict] = useState(false);
-  const [overflowOpen, setOverflowOpen] = useState(false);
 
   const [saveQueue] = useState(
     () =>
@@ -96,7 +165,6 @@ export function ScientCm6SpikeSurface(props: ScientCm6SpikeSurfaceProps) {
         debounceMs: SAVE_DEBOUNCE_MS,
         persist: (intent) => persistRef.current(intent),
         onPendingChange: (isPending) => {
-          setPending(isPending);
           onPendingChangeRef.current(isPending);
         },
         onConfirmed: (intent, result) => {
@@ -140,6 +208,11 @@ export function ScientCm6SpikeSurface(props: ScientCm6SpikeSurfaceProps) {
       props.onExternalConflict({ source: props.source, revision: props.revision });
     } else {
       setConflict(false);
+      if (result === "adopted") {
+        // Same draft, fresher revision: rebase the queued save intent.
+        const rebased = controller.createSaveIntent();
+        if (rebased) saveQueue.enqueue(rebased);
+      }
     }
   }, [controller, props, saveQueue]);
 
@@ -167,143 +240,227 @@ export function ScientCm6SpikeSurface(props: ScientCm6SpikeSurfaceProps) {
     setConflict(false);
   };
 
-  const runAction = (action: ToolbarAction): void => {
+  const run = (action: (view: Cm6View) => boolean): void => {
     const view = controller.view;
     if (!view) return;
-    action.run(view);
+    action(view);
     view.focus();
-    setOverflowOpen(false);
-  };
-
-  const toolbarButtonStyle: React.CSSProperties = {
-    padding: "0.15rem 0.55rem",
-    borderRadius: "6px",
-    border: "1px solid transparent",
-    background: "transparent",
-    cursor: "pointer",
-    fontSize: "0.8rem",
-    minWidth: "1.7rem",
   };
 
   return (
     <div
-      className="scient-cm6-spike"
+      className="scient-cm6-spike flex h-full flex-col"
       aria-label={props.ariaLabel}
-      style={{ display: "flex", flexDirection: "column", height: "100%", position: "relative" }}
+      style={{ position: "relative" }}
     >
-      <div
-        style={{
-          display: "flex",
-          alignItems: "center",
-          gap: "0.75rem",
-          padding: "0.4rem 1rem",
-          borderBottom: "1px solid color-mix(in srgb, currentColor 12%, transparent)",
-          fontSize: "0.85rem",
-        }}
-      >
-        <span style={{ opacity: 0.6, fontWeight: 600 }}>CM6 spike</span>
-        <span style={{ opacity: 0.55, marginLeft: "auto", fontSize: "0.8rem" }}>
-          {conflict ? "conflict" : pending ? "saving…" : "saved"}
-        </span>
-      </div>
       {props.editChrome ? (
         <div
           aria-label="Markdown editing controls"
-          style={{
-            display: "flex",
-            alignItems: "center",
-            flexWrap: "wrap",
-            gap: "0.15rem",
-            padding: "0.3rem 1rem",
-            borderBottom: "1px solid color-mix(in srgb, currentColor 10%, transparent)",
-          }}
+          className="flex flex-wrap items-center gap-0.5 border-b border-border/80 bg-background/95 px-2 py-1 backdrop-blur-xs"
         >
-          {PRIMARY_ACTIONS.map((action) => (
-            <button
-              key={action.label}
-              type="button"
-              aria-label={action.label}
-              style={toolbarButtonStyle}
-              onClick={() => runAction(action)}
-            >
-              {action.label}
-            </button>
-          ))}
-          <div style={{ position: "relative" }}>
-            <button
-              type="button"
-              aria-label="More Markdown actions"
-              style={toolbarButtonStyle}
-              aria-expanded={overflowOpen}
-              onClick={() => {
-                setOverflowOpen((open) => !open);
-              }}
-            >
-              ⋯
-            </button>
-            {overflowOpen ? (
-              <div
-                role="menu"
-                style={{
-                  position: "absolute",
-                  top: "1.9rem",
-                  left: 0,
-                  zIndex: 20,
-                  minWidth: "10rem",
-                  padding: "0.3rem",
-                  borderRadius: "8px",
-                  border: "1px solid color-mix(in srgb, currentColor 15%, transparent)",
-                  background: "var(--background, white)",
-                  boxShadow: "0 8px 24px rgba(0,0,0,0.12)",
-                  display: "flex",
-                  flexDirection: "column",
-                }}
+          <ToolbarIconButton label="Undo (Cmd+Z)" onClick={() => run(undo)}>
+            <Undo2 className="size-3.5" />
+          </ToolbarIconButton>
+          <ToolbarIconButton label="Redo (Cmd+Shift+Z)" onClick={() => run(redo)}>
+            <Redo2 className="size-3.5" />
+          </ToolbarIconButton>
+          <span className="scient-markdown-command-divider mx-1 h-4 w-px bg-border/80" />
+          <ToolbarIconButton
+            label="Bold (Cmd+B)"
+            onClick={() => run((view) => toggleWrap(view, "**"))}
+          >
+            <Bold className="size-3.5" />
+          </ToolbarIconButton>
+          <ToolbarIconButton
+            label="Italic (Cmd+I)"
+            onClick={() => run((view) => toggleWrap(view, "*"))}
+          >
+            <Italic className="size-3.5" />
+          </ToolbarIconButton>
+          <ToolbarIconButton
+            label="Strikethrough (Cmd+Shift+X)"
+            onClick={() => run((view) => toggleWrap(view, "~~"))}
+          >
+            <Strikethrough className="size-3.5" />
+          </ToolbarIconButton>
+          <ToolbarIconButton
+            label="Inline Code (Cmd+E)"
+            onClick={() => run((view) => toggleWrap(view, "`"))}
+          >
+            <span className="text-[11px] font-semibold">{`</>`}</span>
+          </ToolbarIconButton>
+          <ToolbarIconButton label="Link (Cmd+K)" onClick={() => run(insertLink)}>
+            <Link2 className="size-3.5" />
+          </ToolbarIconButton>
+          <span className="scient-markdown-command-divider mx-1 h-4 w-px bg-border/80" />
+          <ToolbarMenu label="Paragraph">
+            {[
+              { label: "Paragraph", prefix: "" },
+              { label: "Heading 1", prefix: "# " },
+              { label: "Heading 2", prefix: "## " },
+              { label: "Heading 3", prefix: "### " },
+              { label: "Heading 4", prefix: "#### " },
+              { label: "Heading 5", prefix: "##### " },
+              { label: "Heading 6", prefix: "###### " },
+              { label: "Quote", prefix: "> " },
+            ].map((entry) => (
+              <MenuCheckboxItem
+                key={entry.label}
+                checked={false}
+                onCheckedChange={() =>
+                  run((view) =>
+                    entry.prefix === "" ? false : toggleLinePrefix(view, entry.prefix),
+                  )
+                }
               >
-                {OVERFLOW_ACTIONS.map((action) => (
-                  <button
-                    key={action.label}
-                    type="button"
-                    role="menuitem"
-                    style={{
-                      ...toolbarButtonStyle,
-                      textAlign: "left",
-                      border: "none",
-                      padding: "0.35rem 0.6rem",
-                    }}
-                    onClick={() => {
-                      runAction(action);
-                    }}
-                  >
-                    {action.label}
-                  </button>
-                ))}
-              </div>
-            ) : null}
-          </div>
+                {entry.label}
+              </MenuCheckboxItem>
+            ))}
+          </ToolbarMenu>
+          <ToolbarMenu label="List" summary={<List className="size-3.5 shrink-0 opacity-70" />}>
+            <MenuCheckboxItem
+              checked={false}
+              onCheckedChange={() => run((view) => toggleLinePrefix(view, "- "))}
+            >
+              <List className="mr-2 size-4 text-muted-foreground" />
+              Bullet list
+            </MenuCheckboxItem>
+            <MenuCheckboxItem checked={false} onCheckedChange={() => run(toggleNumberedList)}>
+              <ListOrdered className="mr-2 size-4 text-muted-foreground" />
+              Numbered list
+            </MenuCheckboxItem>
+            <MenuCheckboxItem
+              checked={false}
+              onCheckedChange={() => run((view) => toggleLinePrefix(view, "- [ ] "))}
+            >
+              <ListTodo className="mr-2 size-4 text-muted-foreground" />
+              Task list
+            </MenuCheckboxItem>
+          </ToolbarMenu>
+          <span className="scient-markdown-command-divider mx-1 h-4 w-px bg-border/80" />
+          <Menu>
+            <Tooltip>
+              <TooltipTrigger
+                render={
+                  <MenuTrigger
+                    render={
+                      <button
+                        type="button"
+                        className="inline-flex h-7 items-center gap-1 rounded-md px-2 text-xs font-medium text-foreground/85 transition-colors hover:bg-accent hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring"
+                        aria-label="Insert Markdown block"
+                      >
+                        <span className="text-sm leading-none">+</span>
+                        <span>Insert</span>
+                      </button>
+                    }
+                  />
+                }
+              />
+              <TooltipPopup side="top">Insert block or element</TooltipPopup>
+            </Tooltip>
+            <MenuPopup align="start" className="w-52 p-1">
+              <MenuGroup>
+                <MenuGroupLabel>Insert</MenuGroupLabel>
+                <MenuItem onClick={() => run((view) => insertBlockTemplate(view, TABLE_TEMPLATE))}>
+                  <Columns3 className="size-4 text-muted-foreground" />
+                  <span>Table (2×3)</span>
+                </MenuItem>
+                <MenuItem
+                  onClick={() => run((view) => insertBlockTemplate(view, CODE_BLOCK_TEMPLATE))}
+                >
+                  <span className="size-4 text-center text-[11px] font-semibold text-muted-foreground">
+                    {`</>`}
+                  </span>
+                  <span>Code block</span>
+                </MenuItem>
+                <MenuItem
+                  onClick={() => run((view) => insertBlockTemplate(view, MATH_BLOCK_TEMPLATE))}
+                >
+                  <span className="size-4 text-center text-xs text-muted-foreground">∑</span>
+                  <span>Math Equation ($$)</span>
+                </MenuItem>
+                <MenuItem onClick={() => run(insertImageTemplate)}>
+                  <ImageIcon className="size-4 text-muted-foreground" />
+                  <span>Image</span>
+                </MenuItem>
+                <MenuItem onClick={() => run((view) => insertBlockTemplate(view, "\n---\n"))}>
+                  <Minus className="size-4 text-muted-foreground" />
+                  <span>Divider line</span>
+                </MenuItem>
+              </MenuGroup>
+            </MenuPopup>
+          </Menu>
+          <span className="scient-markdown-command-divider mx-1 h-4 w-px bg-border/80" />
+          <Menu>
+            <Tooltip>
+              <TooltipTrigger
+                render={
+                  <MenuTrigger
+                    render={
+                      <button
+                        type="button"
+                        className="inline-flex size-7 items-center justify-center rounded-md text-foreground/80 transition-colors hover:bg-accent/80 hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring"
+                        aria-label="Text direction"
+                      >
+                        <ArrowRightLeft className="size-3.5" />
+                      </button>
+                    }
+                  />
+                }
+              />
+              <TooltipPopup side="top">Text direction</TooltipPopup>
+            </Tooltip>
+            <MenuPopup align="start" className="w-44 p-1">
+              <MenuGroup>
+                <MenuGroupLabel>Text direction</MenuGroupLabel>
+                <MenuCheckboxItem
+                  checked={false}
+                  onCheckedChange={() => run((view) => toggleDirection(view, null))}
+                >
+                  Auto
+                </MenuCheckboxItem>
+                <MenuCheckboxItem
+                  checked={false}
+                  onCheckedChange={() => run((view) => toggleDirection(view, "ltr"))}
+                >
+                  Left-to-right
+                </MenuCheckboxItem>
+                <MenuCheckboxItem
+                  checked={false}
+                  onCheckedChange={() => run((view) => toggleDirection(view, "rtl"))}
+                >
+                  Right-to-left
+                </MenuCheckboxItem>
+              </MenuGroup>
+            </MenuPopup>
+          </Menu>
         </div>
       ) : null}
       {conflict ? (
         <div
           role="alert"
-          style={{
-            padding: "0.5rem 1rem",
-            background: "color-mix(in srgb, #f59e0b 15%, transparent)",
-            display: "flex",
-            gap: "0.75rem",
-            alignItems: "center",
-            fontSize: "0.85rem",
-          }}
+          className="flex items-center gap-3 border-b border-border/80 bg-amber-500/15 px-4 py-2 text-sm"
         >
           <span>The file changed on disk while you were editing.</span>
-          <button type="button" onClick={() => startConflictResolution("discard")}>
+          <button
+            type="button"
+            className="rounded-md px-2 py-0.5 text-xs font-medium hover:bg-accent"
+            onClick={() => startConflictResolution("discard")}
+          >
             Reload from disk
           </button>
-          <button type="button" onClick={() => startConflictResolution("retry")}>
+          <button
+            type="button"
+            className={cn(
+              "rounded-md px-2 py-0.5 text-xs font-medium text-primary hover:bg-accent",
+            )}
+            onClick={() => startConflictResolution("retry")}
+          >
             Keep mine
           </button>
         </div>
       ) : null}
-      <div ref={containerRef} style={{ flex: 1, minHeight: 0 }} />
+      <div ref={containerRef} className="min-h-0 flex-1" />
     </div>
   );
 }

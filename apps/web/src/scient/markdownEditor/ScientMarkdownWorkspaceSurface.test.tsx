@@ -103,12 +103,22 @@ describe("ScientMarkdownWorkspaceSurface", () => {
       ),
     );
 
-    const findButton = host.querySelector<HTMLButtonElement>("[aria-label='Find in document']");
-    expect(findButton).not.toBeNull();
-    await act(() => findButton!.click());
+    const editor = host.querySelector(".ProseMirror");
+    expect(editor).not.toBeNull();
+    await act(() =>
+      editor!.dispatchEvent(
+        new KeyboardEvent("keydown", {
+          key: "f",
+          metaKey: true,
+          bubbles: true,
+          cancelable: true,
+        }),
+      ),
+    );
 
     const richPane = host.querySelector(".scient-markdown-rich-pane");
     const findBar = host.querySelector(".scient-markdown-find-bar");
+    expect(findBar).not.toBeNull();
     expect(findBar?.parentElement).toBe(richPane);
     expect(host.querySelector(".scient-markdown-find-popover")).toBeNull();
   });

@@ -63,9 +63,6 @@
 }
 
 .scient-markdown-command-button,
-.scient-markdown-link-actions button,
-.scient-markdown-insert-menu button,
-.scient-markdown-table-more-menu button,
 .scient-markdown-slash-menu button {
   display: inline-flex;
   min-width: 1.65rem;
@@ -85,10 +82,6 @@
 .scient-markdown-command-button:hover,
 .scient-markdown-command-button:focus-visible,
 .scient-markdown-command-button[aria-pressed="true"],
-.scient-markdown-insert-menu button:hover,
-.scient-markdown-insert-menu button:focus-visible,
-.scient-markdown-table-more-menu button:hover,
-.scient-markdown-table-more-menu button:focus-visible,
 .scient-markdown-slash-menu button:hover,
 .scient-markdown-slash-menu button:focus-visible,
 .scient-markdown-slash-menu button[aria-selected="true"] {
@@ -108,24 +101,6 @@
   background: var(--border);
 }
 
-summary.scient-markdown-command-button {
-  list-style: none;
-}
-
-summary.scient-markdown-command-button::-webkit-details-marker {
-  display: none;
-}
-
-.scient-markdown-insert-control,
-.scient-markdown-link-control,
-.scient-markdown-outline-control,
-.scient-markdown-table-more-control {
-  position: relative;
-}
-
-.scient-markdown-insert-menu,
-.scient-markdown-link-popover,
-.scient-markdown-table-more-menu,
 .scient-markdown-slash-menu {
   position: absolute;
   z-index: 30;
@@ -141,46 +116,9 @@ summary.scient-markdown-command-button::-webkit-details-marker {
   box-shadow: 0 0.6rem 2rem color-mix(in oklab, black 16%, transparent);
 }
 
-.scient-markdown-insert-menu {
-  inset-block-start: calc(100% + 0.4rem);
-  inset-inline-start: 0;
-}
-
-.scient-markdown-table-more-menu {
-  inset-block-end: calc(100% + 0.4rem);
-  inset-inline-end: 0;
-}
-
-.scient-markdown-insert-menu button,
-.scient-markdown-table-more-menu button,
 .scient-markdown-slash-menu button {
   justify-content: flex-start;
   padding-inline: 0.55rem;
-}
-
-.scient-markdown-link-popover {
-  inset-block-start: calc(100% + 0.4rem);
-  inset-inline-end: 0;
-  width: 18rem;
-  padding: 0.65rem;
-}
-
-.scient-markdown-link-popover label {
-  display: flex;
-  flex-direction: column;
-  gap: 0.35rem;
-  color: var(--muted-foreground);
-  font-size: 0.7rem;
-}
-
-.scient-markdown-link-popover input {
-  border: 1px solid var(--border);
-  border-radius: 0.35rem;
-  background: var(--background);
-  padding: 0.45rem 0.55rem;
-  color: var(--foreground);
-  font-size: 0.78rem;
-  outline: none;
 }
 
 .scient-markdown-link-actions {

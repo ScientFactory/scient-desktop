@@ -117,24 +117,32 @@ describe("MarkdownSaveQueue", () => {
     expect(pending.at(-1)).toBe(false);
   });
 
-  it("pauses a queued write when an external conflict arrives before debounce", async () => {
+  it("holds a queued write while paused, and a flush still attempts the latest draft", async () => {
     vi.useFakeTimers();
-    const persist = vi.fn(async () => ({ revision: "unexpected" }));
+    const persist = vi.fn(async () => ({ revision: "r1" }));
+    const onConfirmed = vi.fn();
     const queue = new MarkdownSaveQueue({
       debounceMs: 250,
       persist,
       onPendingChange: vi.fn(),
-      onConfirmed: vi.fn(),
+      onConfirmed,
       onFailure: vi.fn(),
     });
     queue.enqueue(intent("local", 1));
     queue.pause();
     await vi.advanceTimersByTimeAsync(500);
+
+    expect(persist).not.toHaveBeenCalled();
+    expect(queue.pending).toBe(true);
+
+    // A final flush (unmount) is decisive: the user's draft is never dropped
+    // on a paused lane; a conflicting disk state is resolved downstream.
     await queue.flush();
 
-    expect(queue.failureBlocked).toBe(true);
-    expect(queue.pending).toBe(true);
-    expect(persist).not.toHaveBeenCalled();
+    expect(persist).toHaveBeenCalledTimes(1);
+    expect(onConfirmed).toHaveBeenCalledTimes(1);
+    expect(queue.pending).toBe(false);
+    expect(queue.failureBlocked).toBe(false);
   });
 
   it("flushes the latest debounced edit before disposal completes", async () => {

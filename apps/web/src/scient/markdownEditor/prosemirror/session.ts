@@ -138,6 +138,11 @@ export class ScientProseMirrorSession {
     }
   }
 
+  /** A save intent for the current draft against the current baseline revision. */
+  createSaveIntent(): MarkdownSaveIntent | null {
+    return beginMarkdownSave(this.documentSession);
+  }
+
   receiveExternalSource(input: {
     readonly source: string;
     readonly revision: string;

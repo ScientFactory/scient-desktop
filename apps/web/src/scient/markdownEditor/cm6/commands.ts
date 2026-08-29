@@ -93,6 +93,51 @@ export function insertLink(view: EditorView): boolean {
   return true;
 }
 
+/** Insert an image template at the cursor with the alt text selected. */
+export function insertImageTemplate(view: EditorView): boolean {
+  const position = stateCursor(view);
+  const template = "![alt](url)";
+  view.dispatch({
+    changes: { from: position, insert: template },
+    selection: { anchor: position + 2, head: position + 5 },
+  });
+  view.focus();
+  return true;
+}
+
+/**
+ * Toggle the text-direction HTML region around the selected lines, matching
+ * the `<div dir="...">` convention the ProseMirror surface serializes.
+ * Repeating the same direction removes the wrapper; null unwraps any.
+ */
+export function toggleDirection(view: EditorView, direction: "ltr" | "rtl" | null): boolean {
+  const { state } = view;
+  const first = state.doc.lineAt(state.selection.main.from).number;
+  const last = state.doc.lineAt(state.selection.main.to).number;
+  const lineBefore = first > 1 ? state.doc.line(first - 1) : null;
+  const lineAfter = last < state.doc.lines ? state.doc.line(last + 1) : null;
+  const openMatch = lineBefore ? /^<div dir="(ltr|rtl|auto)">\s*$/u.exec(lineBefore.text) : null;
+  const closeMatch = lineBefore && lineAfter && lineAfter.text.trim() === "</div>";
+  if (openMatch && closeMatch) {
+    view.dispatch({
+      changes: [
+        { from: lineAfter!.from - 1, to: lineAfter!.to },
+        { from: lineBefore!.from, to: lineBefore!.to + 1 },
+      ],
+    });
+    return true;
+  }
+  if (direction === null) return false;
+  const lastLine = state.doc.line(last);
+  view.dispatch({
+    changes: [
+      { from: lastLine.to, insert: `\n</div>` },
+      { from: state.doc.line(first).from, insert: `<div dir="${direction}">\n` },
+    ],
+  });
+  return true;
+}
+
 /** Insert a block-level template at the cursor (code fence, math, table, rule). */
 export function insertBlockTemplate(view: EditorView, template: string): boolean {
   const position = stateCursor(view);

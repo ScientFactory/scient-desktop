@@ -40,20 +40,31 @@ export class MarkdownSaveQueue<A extends MarkdownSaveResult = MarkdownSaveResult
 
   enqueue(intent: MarkdownSaveIntent): void {
     if (this.disposed) throw new Error("Cannot enqueue a disposed Markdown save queue.");
-    if (this.pendingIntent && intent.editVersion <= this.pendingIntent.editVersion) return;
+    if (this.pendingIntent && intent.editVersion <= this.pendingIntent.editVersion) {
+      // Same edit rebased against a newer observed revision (unchanged-bytes
+      // external refresh): adopt the fresh expected revision so the queued
+      // write does not dead-end on a stale compare-and-swap.
+      if (intent.editVersion === this.pendingIntent.editVersion) this.pendingIntent = intent;
+      return;
+    }
     this.pendingIntent = intent;
     this.options.onPendingChange(true);
     if (!this.blocked && this.inFlight === null) this.schedule(this.options.debounceMs);
   }
 
   async flush(): Promise<void> {
+    // Final flush (unmount or dispose) must always attempt the latest draft:
+    // a paused queue would otherwise drop the user's edit silently.
     this.clearTimer();
-    while (!this.blocked && (this.pendingIntent !== null || this.inFlight !== null)) {
+    this.blocked = false;
+    while (this.pendingIntent !== null || this.inFlight !== null) {
       if (this.inFlight !== null) {
         await this.inFlight;
         continue;
       }
+      const stalled = this.pendingIntent;
       this.startPersist();
+      if (this.blocked && this.inFlight === null && this.pendingIntent === stalled) break;
     }
   }
 

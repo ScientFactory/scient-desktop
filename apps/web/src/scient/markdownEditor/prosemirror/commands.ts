@@ -1,6 +1,6 @@
-import { setBlockType, toggleMark, wrapIn } from "prosemirror-commands";
+import { lift, setBlockType, toggleMark, wrapIn } from "prosemirror-commands";
 import type { MarkType, Node as ProseMirrorNode, NodeType } from "prosemirror-model";
-import { wrapInList } from "prosemirror-schema-list";
+import { liftListItem, wrapInList } from "prosemirror-schema-list";
 import { redo, undo } from "prosemirror-history";
 import type { Command, EditorState, Transaction } from "prosemirror-state";
 import {
@@ -36,14 +36,22 @@ export type ScientMarkdownCommand =
   | "delete-column"
   | "delete-row"
   | "delete-table"
+  | "direction-auto"
+  | "direction-ltr"
+  | "direction-rtl"
   | "display-math"
+  | "clear-formatting"
   | "heading-1"
   | "heading-2"
   | "heading-3"
+  | "heading-4"
+  | "heading-5"
+  | "heading-6"
   | "horizontal-rule"
   | "image"
   | "inline-code"
   | "italic"
+  | "list-none"
   | "merge-cells"
   | "ordered-list"
   | "paragraph"
@@ -139,6 +147,127 @@ function setSelectedTableColumnAlignment(alignment: string | null): Command {
   };
 }
 
+export type ScientMarkdownListKind = "bullet" | "ordered" | "task";
+
+/** The list kind containing the selection, or null when outside any list. */
+export function listKindAt(state: EditorState): ScientMarkdownListKind | null {
+  const { $from } = state.selection;
+  for (let depth = $from.depth; depth > 0; depth -= 1) {
+    const node = $from.node(depth);
+    if (node.type.name === "bullet_list") {
+      const firstItem = node.firstChild;
+      return firstItem?.type.name === "list_item" && firstItem.attrs.taskChecked !== null
+        ? "task"
+        : "bullet";
+    }
+    if (node.type.name === "ordered_list") return "ordered";
+  }
+  return null;
+}
+
+function insideNodeOfType(state: EditorState, typeName: string): boolean {
+  const { $from } = state.selection;
+  for (let depth = $from.depth; depth > 0; depth -= 1) {
+    if ($from.node(depth).type.name === typeName) return true;
+  }
+  return false;
+}
+
+/** Toggle a list type: applying it inside its own list lifts the items out. */
+function toggleMarkdownList(kind: ScientMarkdownListKind): Command {
+  return (state, dispatch) => {
+    if (listKindAt(state) === kind) {
+      return liftListItem(requiredNodeType("list_item"))(state, dispatch);
+    }
+    // Match the tight "-" convention of hand-written Markdown lists.
+    const listAttrs = { tight: true, bullet: "-" };
+    if (kind !== "task") {
+      const listType = requiredNodeType(kind === "ordered" ? "ordered_list" : "bullet_list");
+      return wrapInList(listType, listAttrs)(state, dispatch);
+    }
+    // Task list: wrap in a bullet list and mark the wrapped items checked in
+    // one transaction, so Enter-continuation inherits the checkbox.
+    let wrapped: Transaction | null = null;
+    const ok = wrapInList(requiredNodeType("bullet_list"), listAttrs)(state, (transaction) => {
+      wrapped = transaction;
+    });
+    if (!ok || wrapped === null) return false;
+    if (dispatch && wrapped) {
+      const transaction: Transaction = wrapped;
+      const { from, to } = transaction.selection;
+      transaction.doc.nodesBetween(from, to, (node, pos) => {
+        if (node.type.name === "list_item" && node.attrs.taskChecked === null) {
+          transaction.setNodeMarkup(pos, undefined, { ...node.attrs, taskChecked: true });
+        }
+        return true;
+      });
+      dispatch(transaction);
+    }
+    return true;
+  };
+}
+
+/** Remove the list around the selection when one is present. */
+function removeMarkdownList(): Command {
+  return (state, dispatch) => {
+    if (listKindAt(state) === null) return false;
+    return liftListItem(requiredNodeType("list_item"))(state, dispatch);
+  };
+}
+
+/** Toggle a blockquote: applying it inside a quote lifts the block out. */
+function toggleMarkdownBlockquote(): Command {
+  return (state, dispatch) => {
+    if (insideNodeOfType(state, "blockquote")) {
+      return lift(state, dispatch);
+    }
+    return wrapIn(requiredNodeType("blockquote"))(state, dispatch);
+  };
+}
+
+/** Strip every character mark in the selection (or stored marks at the caret). */
+function clearMarkdownFormatting(): Command {
+  return (state, dispatch) => {
+    if (!dispatch) return true;
+    const { from, to, empty } = state.selection;
+    if (empty) {
+      dispatch(state.tr.setStoredMarks([]));
+      return true;
+    }
+    let transaction = state.tr;
+    for (const markType of Object.values(state.schema.marks)) {
+      transaction = transaction.removeMark(from, to, markType);
+    }
+    if (transaction.docChanged || transaction.storedMarks !== state.storedMarks) {
+      dispatch(transaction);
+    }
+    return true;
+  };
+}
+
+/** Set the text direction of every paragraph/heading in the selection (null = auto). */
+function setMarkdownTextDirection(direction: "ltr" | "rtl" | null): Command {
+  return (state, dispatch) => {
+    const { from, to } = state.selection;
+    let transaction: Transaction | null = null;
+    state.doc.nodesBetween(from, to, (node, pos) => {
+      if (
+        (node.type.name === "paragraph" || node.type.name === "heading") &&
+        node.attrs.dir !== direction
+      ) {
+        transaction = (transaction ?? state.tr).setNodeMarkup(pos, undefined, {
+          ...node.attrs,
+          dir: direction,
+        });
+        return false;
+      }
+      return true;
+    });
+    if (transaction && dispatch) dispatch(transaction);
+    return true;
+  };
+}
+
 function commandFor(command: ScientMarkdownCommand): Command {
   switch (command) {
     case "bold":
@@ -158,16 +287,30 @@ function commandFor(command: ScientMarkdownCommand): Command {
     case "heading-1":
     case "heading-2":
     case "heading-3":
+    case "heading-4":
+    case "heading-5":
+    case "heading-6":
       return setBlockType(requiredNodeType("heading"), {
         level: Number(command.at(-1)),
       });
+    case "clear-formatting":
+      return clearMarkdownFormatting();
+    case "direction-auto":
+      return setMarkdownTextDirection(null);
+    case "direction-ltr":
+      return setMarkdownTextDirection("ltr");
+    case "direction-rtl":
+      return setMarkdownTextDirection("rtl");
     case "blockquote":
-      return wrapIn(requiredNodeType("blockquote"));
+      return toggleMarkdownBlockquote();
     case "bullet-list":
+      return toggleMarkdownList("bullet");
     case "task-list":
-      return wrapInList(requiredNodeType("bullet_list"));
+      return toggleMarkdownList("task");
     case "ordered-list":
-      return wrapInList(requiredNodeType("ordered_list"));
+      return toggleMarkdownList("ordered");
+    case "list-none":
+      return removeMarkdownList();
     case "code-block":
       return setBlockType(requiredNodeType("code_block"), { params: "" });
     case "horizontal-rule":

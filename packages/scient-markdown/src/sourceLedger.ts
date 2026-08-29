@@ -123,6 +123,75 @@ function markdownLogicalText(
   return { logicalText, textSpans };
 }
 
+const DIRECTION_OPEN_PATTERN = /^<div dir="(ltr|rtl|auto)">$/u;
+const DIRECTION_CLOSE_TEXT = "</div>";
+
+/**
+ * Merge the blocks of a text-direction HTML region (`<div dir="...">` ...
+ * `</div>`) into one block so the rich editor sees a single directed block
+ * instead of literal wrapper lines. The wrapper is the only Markdown form
+ * that carries paragraph direction across files.
+ */
+function mergeDirectionRegions(
+  source: string,
+  blocks: ReadonlyArray<MarkdownSourceBlock>,
+): ReadonlyArray<MarkdownSourceBlock> {
+  const merged: MarkdownSourceBlock[] = [];
+  let index = 0;
+  while (index < blocks.length) {
+    const open = blocks[index];
+    if (!open || !DIRECTION_OPEN_PATTERN.test(open.source.trim())) {
+      if (open) merged.push(open);
+      index += 1;
+      continue;
+    }
+    let closeIndex = -1;
+    for (let cursor = index + 1; cursor < blocks.length; cursor += 1) {
+      if (blocks[cursor]?.source.trim() === DIRECTION_CLOSE_TEXT) {
+        closeIndex = cursor;
+        break;
+      }
+    }
+    if (closeIndex < 0) {
+      merged.push(open);
+      index += 1;
+      continue;
+    }
+    const close = blocks[closeIndex];
+    if (!close) {
+      merged.push(open);
+      index += 1;
+      continue;
+    }
+    const inner = blocks.slice(index + 1, closeIndex);
+    let logicalText = "";
+    const textSpans: MarkdownSourceTextSpan[] = [];
+    for (const block of inner) {
+      textSpans.push(
+        ...block.textSpans.map((span) => ({
+          ...span,
+          textStart: span.textStart + logicalText.length,
+          textEnd: span.textEnd + logicalText.length,
+        })),
+      );
+      logicalText += block.logicalText;
+    }
+    merged.push({
+      id: open.id,
+      kind: "paragraph",
+      start: open.start,
+      contentEnd: close.contentEnd,
+      end: close.end,
+      source: source.slice(open.start, close.contentEnd),
+      trailing: close.trailing,
+      logicalText,
+      textSpans,
+    });
+    index = closeIndex + 1;
+  }
+  return merged;
+}
+
 /**
  * Parse exact top-level Markdown source ownership without normalizing bytes.
  * The syntax tree is used only to locate blocks; the original string remains
@@ -143,26 +212,29 @@ export function createMarkdownSourceLedger(source: string): MarkdownSourceLedger
     contentEnd: requiredOffset(node.position?.end, "end"),
   }));
   const prefix = positioned.length > 0 ? source.slice(0, positioned[0]?.start ?? 0) : source;
-  const blocks = positioned.map(({ node, start, contentEnd }, index): MarkdownSourceBlock => {
-    const end = positioned[index + 1]?.start ?? source.length;
-    if (start > contentEnd || contentEnd > end) {
-      throw new Error(`Invalid Markdown source range for top-level ${node.type} block.`);
-    }
-    const text = markdownLogicalText(node as MdastValueNode, source);
-    return {
-      // Position is deliberately excluded: ordinary text edits can move every
-      // later block offset, while their session identities must remain stable.
-      id: `source-${index + 1}-${node.type}`,
-      kind: node.type,
-      start,
-      contentEnd,
-      end,
-      source: source.slice(start, contentEnd),
-      trailing: source.slice(contentEnd, end),
-      logicalText: text.logicalText,
-      textSpans: text.textSpans,
-    };
-  });
+  const blocks = mergeDirectionRegions(
+    source,
+    positioned.map(({ node, start, contentEnd }, index): MarkdownSourceBlock => {
+      const end = positioned[index + 1]?.start ?? source.length;
+      if (start > contentEnd || contentEnd > end) {
+        throw new Error(`Invalid Markdown source range for top-level ${node.type} block.`);
+      }
+      const text = markdownLogicalText(node as MdastValueNode, source);
+      return {
+        // Position is deliberately excluded: ordinary text edits can move every
+        // later block offset, while their session identities must remain stable.
+        id: `source-${index + 1}-${node.type}`,
+        kind: node.type,
+        start,
+        contentEnd,
+        end,
+        source: source.slice(start, contentEnd),
+        trailing: source.slice(contentEnd, end),
+        logicalText: text.logicalText,
+        textSpans: text.textSpans,
+      };
+    }),
+  );
   return {
     source,
     prefix,

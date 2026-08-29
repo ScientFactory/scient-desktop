@@ -75,6 +75,11 @@ export class ScientCm6EditorView {
     this.session = confirmMarkdownSave(this.session, intent, revision);
   }
 
+  /** A save intent for the current draft against the current baseline revision. */
+  createSaveIntent(): MarkdownSaveIntent | null {
+    return beginMarkdownSave(this.session);
+  }
+
   receiveExternalSource(input: {
     readonly source: string;
     readonly revision: string;

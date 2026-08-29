@@ -1023,6 +1023,7 @@ export default function FilePreviewPanel({
     automaticRefreshUnavailable,
     cancelReloadNotice,
     file,
+    handleExternalConflict,
     handleSaveConfirmed,
     handleSaveFailure,
     handleSaveResolutionApplied,
@@ -1481,7 +1482,9 @@ export default function FilePreviewPanel({
                   onSaveFailure={handleSaveFailure}
                   onSaveConfirmed={handleSaveConfirmed}
                   onSaveResolutionApplied={handleSaveResolutionApplied}
-                  onExternalConflict={() => undefined}
+                  onExternalConflict={({ revision }) =>
+                    handleExternalConflict(relativePath, revision)
+                  }
                   saveResolution={
                     saveResolution?.relativePath === relativePath ? saveResolution : null
                   }

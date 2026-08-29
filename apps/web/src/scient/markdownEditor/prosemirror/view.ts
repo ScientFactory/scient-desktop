@@ -77,12 +77,14 @@ export interface ScientMarkdownEditorSnapshot {
   readonly findQuery: string;
   readonly findWholeWord: boolean;
   readonly inTable: boolean;
+  readonly listKind: "bullet" | "ordered" | "task" | null;
   readonly outlineActiveIndex: number;
   readonly outlineItems: ReadonlyArray<ScientMarkdownOutlineItem>;
   readonly selectionEmpty: boolean;
   readonly slashActiveIndex: number;
   readonly slashQuery: string | null;
   readonly tableAlignment: string | null;
+  readonly textDirection: "ltr" | "rtl" | null;
   readonly version: number;
 }
 
@@ -206,6 +208,11 @@ export class ScientMarkdownEditorView {
 
   confirmSave(intent: MarkdownSaveIntent, revision: string): void {
     this.session.confirmSave(intent, revision);
+  }
+
+  /** A save intent for the current draft against the current baseline revision. */
+  createSaveIntent(): MarkdownSaveIntent | null {
+    return this.session.createSaveIntent();
   }
 
   receiveExternalSource(input: {
@@ -600,6 +607,8 @@ export class ScientMarkdownEditorView {
     let blockType = selection.$from.parent.type.name;
     let headingLevel: number | null =
       blockType === "heading" ? Number(selection.$from.parent.attrs.level) : null;
+    let listKind: "bullet" | "ordered" | "task" | null = null;
+    let textDirection: "ltr" | "rtl" | null = null;
     let inTable = false;
     let tableAlignment: string | null = null;
     for (let depth = selection.$from.depth; depth >= 0; depth -= 1) {
@@ -608,6 +617,23 @@ export class ScientMarkdownEditorView {
       if (node.type.spec.tableRole === "cell" || node.type.spec.tableRole === "header_cell") {
         tableAlignment =
           typeof node.attrs.alignment === "string" ? node.attrs.alignment : tableAlignment;
+      }
+      if (
+        textDirection === null &&
+        (node.type.name === "paragraph" || node.type.name === "heading")
+      ) {
+        textDirection = node.attrs.dir === "rtl" ? "rtl" : node.attrs.dir === "ltr" ? "ltr" : null;
+      }
+      if (listKind === null) {
+        if (node.type.name === "bullet_list") {
+          const firstItem = node.firstChild;
+          listKind =
+            firstItem?.type.name === "list_item" && firstItem.attrs.taskChecked !== null
+              ? "task"
+              : "bullet";
+        } else if (node.type.name === "ordered_list") {
+          listKind = "ordered";
+        }
       }
       if (blockType === "paragraph" && node.isBlock && node.type.name !== "doc") {
         blockType = node.type.name;
@@ -640,7 +666,9 @@ export class ScientMarkdownEditorView {
       findWholeWord: find.wholeWord,
       headingLevel,
       inTable,
+      listKind,
       outlineActiveIndex,
+      textDirection,
       outlineItems,
       selectionEmpty: selection.empty,
       slashActiveIndex: Math.min(this.slashActiveIndex, Math.max(0, slashItems.length - 1)),

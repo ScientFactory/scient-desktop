@@ -2,13 +2,17 @@ import {
   AlignCenter,
   AlignLeft,
   AlignRight,
+  ALargeSmall,
   ArrowDown,
+  ArrowRightLeft,
   ArrowUp,
   Bold,
   ChevronDown,
+  ChevronRight,
   ChevronUp,
   Code2,
   Copy,
+  Eraser,
   FileText,
   Heading1,
   Heading2,
@@ -25,6 +29,8 @@ import {
   Plus,
   Quote,
   Redo2,
+  Rows3,
+  Columns3,
   Search,
   Sigma,
   Strikethrough,
@@ -46,11 +52,16 @@ import { Button } from "~/components/ui/button";
 import { Input } from "~/components/ui/input";
 import {
   Menu,
+  MenuCheckboxItem,
   MenuGroup,
   MenuGroupLabel,
   MenuItem,
   MenuPopup,
   MenuSeparator,
+  MenuShortcut,
+  MenuSub,
+  MenuSubPopup,
+  MenuSubTrigger,
   MenuTrigger,
 } from "~/components/ui/menu";
 import { Popover, PopoverPopup, PopoverTrigger } from "~/components/ui/popover";
@@ -97,31 +108,189 @@ function CommandButton(props: {
   );
 }
 
-function BlockCommandButton(props: {
-  readonly action: ScientMarkdownBlockAction;
-  readonly controller: ScientMarkdownEditorView;
-  readonly disabled: boolean;
+function DockDivider() {
+  return <span className="scient-markdown-command-divider mx-1 h-4 w-px bg-border/80" />;
+}
+
+const HEADING_COMMANDS: ReadonlyArray<{
+  readonly command: ScientMarkdownCommand;
   readonly label: string;
-  readonly icon: ReactNode;
+}> = [
+  { command: "heading-1", label: "Heading 1" },
+  { command: "heading-2", label: "Heading 2" },
+  { command: "heading-3", label: "Heading 3" },
+  { command: "heading-4", label: "Heading 4" },
+  { command: "heading-5", label: "Heading 5" },
+  { command: "heading-6", label: "Heading 6" },
+];
+
+function styleMenuLabel(snapshot: ScientMarkdownEditorSnapshot): string {
+  switch (snapshot.blockType) {
+    case "heading":
+      return snapshot.headingLevel !== null ? `Heading ${snapshot.headingLevel}` : "Heading";
+    case "blockquote":
+      return "Quote";
+    case "list_item":
+      return "List item";
+    case "code_block":
+      return "Code block";
+    default:
+      return "Paragraph";
+  }
+}
+
+function StyleMenu({
+  controller,
+  snapshot,
+}: {
+  readonly controller: ScientMarkdownEditorView;
+  readonly snapshot: ScientMarkdownEditorSnapshot;
+}) {
+  const headingChecked = (level: number) =>
+    snapshot.blockType === "heading" && snapshot.headingLevel === level;
+
+  return (
+    <Menu>
+      <Tooltip>
+        <TooltipTrigger
+          render={
+            <MenuTrigger
+              render={
+                <button
+                  type="button"
+                  className="inline-flex h-7 max-w-36 items-center gap-1 rounded-md px-2 text-xs font-medium text-foreground/85 transition-colors hover:bg-accent hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring"
+                  aria-label="Paragraph style"
+                >
+                  <ALargeSmall className="size-3.5 shrink-0 opacity-70" />
+                  <span className="truncate">{styleMenuLabel(snapshot)}</span>
+                  <ChevronDown className="size-3 shrink-0 opacity-60" />
+                </button>
+              }
+            />
+          }
+        />
+        <TooltipPopup side="top">Paragraph style</TooltipPopup>
+      </Tooltip>
+      <MenuPopup align="start" className="w-44 p-1">
+        <MenuGroup>
+          <MenuGroupLabel>Style</MenuGroupLabel>
+          <MenuCheckboxItem
+            checked={snapshot.blockType === "paragraph"}
+            onCheckedChange={() => controller.execute("paragraph")}
+          >
+            Paragraph
+          </MenuCheckboxItem>
+          {HEADING_COMMANDS.map((entry) => (
+            <MenuCheckboxItem
+              key={entry.command}
+              checked={headingChecked(Number(entry.command.at(-1)))}
+              onCheckedChange={() => controller.execute(entry.command)}
+            >
+              {entry.label}
+            </MenuCheckboxItem>
+          ))}
+          <MenuCheckboxItem
+            checked={snapshot.blockType === "blockquote"}
+            onCheckedChange={() => controller.execute("blockquote")}
+          >
+            Quote
+          </MenuCheckboxItem>
+        </MenuGroup>
+      </MenuPopup>
+    </Menu>
+  );
+}
+
+function listIcon(kind: ScientMarkdownEditorSnapshot["listKind"]) {
+  switch (kind) {
+    case "ordered":
+      return <ListOrdered className="size-3.5 shrink-0 opacity-70" />;
+    case "task":
+      return <ListTodo className="size-3.5 shrink-0 opacity-70" />;
+    default:
+      return <List className="size-3.5 shrink-0 opacity-70" />;
+  }
+}
+
+function listMenuLabel(kind: ScientMarkdownEditorSnapshot["listKind"]): string {
+  switch (kind) {
+    case "ordered":
+      return "Numbered";
+    case "task":
+      return "Task";
+    default:
+      return "List";
+  }
+}
+
+function ListsMenu({
+  controller,
+  snapshot,
+}: {
+  readonly controller: ScientMarkdownEditorView;
+  readonly snapshot: ScientMarkdownEditorSnapshot;
 }) {
   return (
-    <Tooltip>
-      <TooltipTrigger
-        render={
-          <button
-            type="button"
-            className="scient-markdown-command-button inline-flex size-7 items-center justify-center rounded-md text-foreground/80 transition-colors hover:bg-accent/80 hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring disabled:pointer-events-none disabled:opacity-35"
-            aria-label={props.label}
-            disabled={props.disabled}
-            onMouseDown={(e) => e.preventDefault()}
-            onClick={() => props.controller.executeBlock(props.action)}
+    <Menu>
+      <Tooltip>
+        <TooltipTrigger
+          render={
+            <MenuTrigger
+              render={
+                <button
+                  type="button"
+                  className={cn(
+                    "inline-flex h-7 items-center gap-1 rounded-md px-2 text-xs font-medium text-foreground/85 transition-colors hover:bg-accent hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring",
+                    snapshot.listKind !== null &&
+                      "bg-accent text-accent-foreground font-semibold shadow-xs",
+                  )}
+                  aria-label="List style"
+                >
+                  {listIcon(snapshot.listKind)}
+                  <span>{listMenuLabel(snapshot.listKind)}</span>
+                  <ChevronDown className="size-3 shrink-0 opacity-60" />
+                </button>
+              }
+            />
+          }
+        />
+        <TooltipPopup side="top">List style</TooltipPopup>
+      </Tooltip>
+      <MenuPopup align="start" className="w-44 p-1">
+        <MenuGroup>
+          <MenuGroupLabel>Lists</MenuGroupLabel>
+          <MenuCheckboxItem
+            checked={snapshot.listKind === "bullet"}
+            onCheckedChange={() => controller.execute("bullet-list")}
           >
-            {props.icon}
-          </button>
-        }
-      />
-      <TooltipPopup side="top">{props.label}</TooltipPopup>
-    </Tooltip>
+            <List className="mr-2 size-4 text-muted-foreground" />
+            Bullet list
+          </MenuCheckboxItem>
+          <MenuCheckboxItem
+            checked={snapshot.listKind === "ordered"}
+            onCheckedChange={() => controller.execute("ordered-list")}
+          >
+            <ListOrdered className="mr-2 size-4 text-muted-foreground" />
+            Numbered list
+          </MenuCheckboxItem>
+          <MenuCheckboxItem
+            checked={snapshot.listKind === "task"}
+            onCheckedChange={() => controller.execute("task-list")}
+          >
+            <ListTodo className="mr-2 size-4 text-muted-foreground" />
+            Task list
+          </MenuCheckboxItem>
+          <MenuSeparator />
+          <MenuCheckboxItem
+            checked={false}
+            disabled={snapshot.listKind === null}
+            onCheckedChange={() => controller.execute("list-none")}
+          >
+            No list
+          </MenuCheckboxItem>
+        </MenuGroup>
+      </MenuPopup>
+    </Menu>
   );
 }
 
@@ -152,53 +321,9 @@ function InsertBlockMenu({ controller }: { readonly controller: ScientMarkdownEd
         />
         <TooltipPopup side="top">Insert block or element</TooltipPopup>
       </Tooltip>
-      <MenuPopup align="start" className="w-56 p-1">
+      <MenuPopup align="start" className="w-52 p-1">
         <MenuGroup>
-          <MenuGroupLabel>Text & Headings</MenuGroupLabel>
-          <MenuItem onClick={() => execute("paragraph")}>
-            <FileText className="size-4 text-muted-foreground" />
-            <span>Paragraph</span>
-          </MenuItem>
-          <MenuItem onClick={() => execute("heading-1")}>
-            <Heading1 className="size-4 text-muted-foreground" />
-            <span>Heading 1</span>
-          </MenuItem>
-          <MenuItem onClick={() => execute("heading-2")}>
-            <Heading2 className="size-4 text-muted-foreground" />
-            <span>Heading 2</span>
-          </MenuItem>
-          <MenuItem onClick={() => execute("heading-3")}>
-            <Heading3 className="size-4 text-muted-foreground" />
-            <span>Heading 3</span>
-          </MenuItem>
-        </MenuGroup>
-        <MenuSeparator />
-        <MenuGroup>
-          <MenuGroupLabel>Lists & Structure</MenuGroupLabel>
-          <MenuItem onClick={() => execute("bullet-list")}>
-            <List className="size-4 text-muted-foreground" />
-            <span>Bullet list</span>
-          </MenuItem>
-          <MenuItem onClick={() => execute("ordered-list")}>
-            <ListOrdered className="size-4 text-muted-foreground" />
-            <span>Numbered list</span>
-          </MenuItem>
-          <MenuItem onClick={() => execute("task-list")}>
-            <ListTodo className="size-4 text-muted-foreground" />
-            <span>Task list</span>
-          </MenuItem>
-          <MenuItem onClick={() => execute("blockquote")}>
-            <Quote className="size-4 text-muted-foreground" />
-            <span>Quote block</span>
-          </MenuItem>
-          <MenuItem onClick={() => execute("horizontal-rule")}>
-            <Minus className="size-4 text-muted-foreground" />
-            <span>Divider line</span>
-          </MenuItem>
-        </MenuGroup>
-        <MenuSeparator />
-        <MenuGroup>
-          <MenuGroupLabel>Scientific & Media</MenuGroupLabel>
+          <MenuGroupLabel>Insert</MenuGroupLabel>
           <MenuItem onClick={() => execute("table")}>
             <TableIcon className="size-4 text-muted-foreground" />
             <span>Table (3×3)</span>
@@ -219,7 +344,167 @@ function InsertBlockMenu({ controller }: { readonly controller: ScientMarkdownEd
             <Link2 className="size-4 text-muted-foreground" />
             <span>Wiki link ([[note]])</span>
           </MenuItem>
+          <MenuItem onClick={() => execute("horizontal-rule")}>
+            <Minus className="size-4 text-muted-foreground" />
+            <span>Divider line</span>
+          </MenuItem>
         </MenuGroup>
+      </MenuPopup>
+    </Menu>
+  );
+}
+
+function DirectionMenu({
+  controller,
+  snapshot,
+}: {
+  readonly controller: ScientMarkdownEditorView;
+  readonly snapshot: ScientMarkdownEditorSnapshot;
+}) {
+  return (
+    <Menu>
+      <Tooltip>
+        <TooltipTrigger
+          render={
+            <MenuTrigger
+              render={
+                <button
+                  type="button"
+                  className={cn(
+                    "scient-markdown-command-button inline-flex size-7 items-center justify-center rounded-md text-foreground/80 transition-colors hover:bg-accent/80 hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring",
+                    snapshot.textDirection !== null &&
+                      "bg-accent text-accent-foreground font-semibold shadow-xs",
+                  )}
+                  aria-label="Text direction"
+                >
+                  <ArrowRightLeft className="size-3.5" />
+                </button>
+              }
+            />
+          }
+        />
+        <TooltipPopup side="top">Text direction</TooltipPopup>
+      </Tooltip>
+      <MenuPopup align="start" className="w-44 p-1">
+        <MenuGroup>
+          <MenuGroupLabel>Text direction</MenuGroupLabel>
+          <MenuCheckboxItem
+            checked={snapshot.textDirection === null}
+            onCheckedChange={() => controller.execute("direction-auto")}
+          >
+            Auto
+          </MenuCheckboxItem>
+          <MenuCheckboxItem
+            checked={snapshot.textDirection === "ltr"}
+            onCheckedChange={() => controller.execute("direction-ltr")}
+          >
+            Left-to-right
+          </MenuCheckboxItem>
+          <MenuCheckboxItem
+            checked={snapshot.textDirection === "rtl"}
+            onCheckedChange={() => controller.execute("direction-rtl")}
+          >
+            Right-to-left
+          </MenuCheckboxItem>
+        </MenuGroup>
+      </MenuPopup>
+    </Menu>
+  );
+}
+
+function BlockActionsMenu({
+  controller,
+  snapshot,
+}: {
+  readonly controller: ScientMarkdownEditorView;
+  readonly snapshot: ScientMarkdownEditorSnapshot;
+}) {
+  const blockAction = (action: ScientMarkdownBlockAction) => () => {
+    controller.executeBlock(action);
+  };
+
+  return (
+    <Menu>
+      <Tooltip>
+        <TooltipTrigger
+          render={
+            <MenuTrigger
+              render={
+                <button
+                  type="button"
+                  className="scient-markdown-command-button inline-flex size-7 items-center justify-center rounded-md text-foreground/80 transition-colors hover:bg-accent/80 hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring"
+                  aria-label="More document actions"
+                >
+                  <MoreHorizontal className="size-4" />
+                </button>
+              }
+            />
+          }
+        />
+        <TooltipPopup side="top">More actions</TooltipPopup>
+      </Tooltip>
+      <MenuPopup align="end" className="w-56 p-1">
+        {snapshot.outlineItems.length === 0 ? (
+          <MenuItem disabled>
+            <ListTree className="size-4 text-muted-foreground" />
+            <span>Document outline</span>
+          </MenuItem>
+        ) : (
+          <MenuSub>
+            <MenuSubTrigger>
+              <ListTree className="size-4 text-muted-foreground" />
+              <span>Document outline</span>
+            </MenuSubTrigger>
+            <MenuSubPopup className="w-60 p-1">
+              {snapshot.outlineItems.map((item, index) => (
+                <MenuItem
+                  key={`${item.position}-${item.level}-${item.text}`}
+                  inset={item.level === 1}
+                  className={cn(
+                    item.level === 2 && "ps-5",
+                    item.level >= 3 && "ps-7 text-[13px]",
+                    index === snapshot.outlineActiveIndex && "bg-accent/70 font-medium",
+                  )}
+                  onClick={() => controller.navigateToOutline(item.position)}
+                >
+                  <span className="truncate">{item.text || "Untitled heading"}</span>
+                </MenuItem>
+              ))}
+            </MenuSubPopup>
+          </MenuSub>
+        )}
+        <MenuCheckboxItem
+          checked={snapshot.findOpen}
+          onCheckedChange={() => controller.setFindOpen(!snapshot.findOpen)}
+        >
+          <Search className="mr-2 size-4 text-muted-foreground" />
+          Find & Replace
+          <MenuShortcut>⌘F</MenuShortcut>
+        </MenuCheckboxItem>
+        <MenuSeparator />
+        <MenuItem disabled={!snapshot.canMoveBlockUp} onClick={blockAction("move-up")}>
+          <ArrowUp className="size-4 text-muted-foreground" />
+          <span>Move block up</span>
+          <MenuShortcut>⌥↑</MenuShortcut>
+        </MenuItem>
+        <MenuItem disabled={!snapshot.canMoveBlockDown} onClick={blockAction("move-down")}>
+          <ArrowDown className="size-4 text-muted-foreground" />
+          <span>Move block down</span>
+          <MenuShortcut>⌥↓</MenuShortcut>
+        </MenuItem>
+        <MenuItem disabled={!snapshot.canDuplicateBlock} onClick={blockAction("duplicate")}>
+          <Copy className="size-4 text-muted-foreground" />
+          <span>Duplicate block</span>
+          <MenuShortcut>⇧⌥↓</MenuShortcut>
+        </MenuItem>
+        <MenuItem
+          disabled={!snapshot.canDeleteBlock}
+          variant="destructive"
+          onClick={blockAction("delete")}
+        >
+          <Trash2 className="size-4" />
+          <span>Delete block</span>
+        </MenuItem>
       </MenuPopup>
     </Menu>
   );
@@ -323,88 +608,6 @@ function LinkEditor({
   );
 }
 
-function OutlineControl({
-  controller,
-  snapshot,
-}: {
-  readonly controller: ScientMarkdownEditorView;
-  readonly snapshot: ScientMarkdownEditorSnapshot;
-}) {
-  const [open, setOpen] = useState(false);
-
-  if (snapshot.outlineItems.length === 0) {
-    return (
-      <Tooltip>
-        <TooltipTrigger
-          render={
-            <button
-              type="button"
-              className="scient-markdown-command-button inline-flex size-7 items-center justify-center rounded-md text-foreground/45 transition-colors hover:bg-accent/80 hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring disabled:pointer-events-none disabled:opacity-40"
-              aria-label="Document outline (no headings)"
-              disabled
-            >
-              <ListTree className="size-3.5" />
-            </button>
-          }
-        />
-        <TooltipPopup side="top">Add headings to see outline</TooltipPopup>
-      </Tooltip>
-    );
-  }
-
-  return (
-    <Popover open={open} onOpenChange={setOpen}>
-      <Tooltip>
-        <TooltipTrigger
-          render={
-            <PopoverTrigger
-              render={
-                <button
-                  type="button"
-                  className={cn(
-                    "scient-markdown-command-button inline-flex size-7 items-center justify-center rounded-md text-foreground/80 transition-colors hover:bg-accent/80 hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring",
-                    open && "bg-accent text-accent-foreground font-semibold shadow-xs",
-                  )}
-                  aria-label="Document outline"
-                >
-                  <ListTree className="size-3.5" />
-                </button>
-              }
-            />
-          }
-        />
-        <TooltipPopup side="top">Document Outline</TooltipPopup>
-      </Tooltip>
-      <PopoverPopup align="end" className="w-64 max-h-80 overflow-y-auto p-1.5" side="bottom">
-        <div className="px-2 py-1 text-xs font-semibold text-muted-foreground">
-          Document Outline
-        </div>
-        <div className="flex flex-col gap-0.5 pt-1">
-          {snapshot.outlineItems.map((item, index) => (
-            <button
-              key={`${item.position}-${item.level}-${item.text}`}
-              type="button"
-              className={cn(
-                "flex w-full items-center rounded-sm px-2 py-1 text-left text-xs transition-colors hover:bg-accent hover:text-accent-foreground",
-                item.level === 1 && "font-semibold text-foreground",
-                item.level === 2 && "ps-4 text-foreground/90",
-                item.level >= 3 && "ps-6 text-foreground/75 text-[11px]",
-                index === snapshot.outlineActiveIndex && "bg-accent/70 font-medium text-foreground",
-              )}
-              onClick={() => {
-                controller.navigateToOutline(item.position);
-                setOpen(false);
-              }}
-            >
-              <span className="truncate">{item.text || "Untitled heading"}</span>
-            </button>
-          ))}
-        </div>
-      </PopoverPopup>
-    </Popover>
-  );
-}
-
 function TableMoreControl({ controller }: { readonly controller: ScientMarkdownEditorView }) {
   const execute = (command: ScientMarkdownCommand) => {
     controller.execute(command);
@@ -448,36 +651,6 @@ function TableMoreControl({ controller }: { readonly controller: ScientMarkdownE
   );
 }
 
-function FindButton({
-  controller,
-  snapshot,
-}: {
-  readonly controller: ScientMarkdownEditorView;
-  readonly snapshot: ScientMarkdownEditorSnapshot;
-}) {
-  return (
-    <Tooltip>
-      <TooltipTrigger
-        render={
-          <button
-            type="button"
-            className={cn(
-              "scient-markdown-command-button inline-flex size-7 items-center justify-center rounded-md text-foreground/80 transition-colors hover:bg-accent/80 hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring",
-              snapshot.findOpen && "bg-accent text-accent-foreground font-semibold shadow-xs",
-            )}
-            aria-label={snapshot.findOpen ? "Close find" : "Find in document"}
-            aria-pressed={snapshot.findOpen}
-            onClick={() => controller.setFindOpen(!snapshot.findOpen)}
-          >
-            <Search className="size-3.5" />
-          </button>
-        }
-      />
-      <TooltipPopup side="top">Find & Replace (Cmd+F)</TooltipPopup>
-    </Tooltip>
-  );
-}
-
 function FindBar({
   controller,
   snapshot,
@@ -486,6 +659,7 @@ function FindBar({
   readonly snapshot: ScientMarkdownEditorSnapshot;
 }) {
   const inputRef = useRef<HTMLInputElement>(null);
+  const [replaceOpen, setReplaceOpen] = useState(false);
   const [replacement, setReplacement] = useState("");
 
   useEffect(() => {
@@ -506,17 +680,38 @@ function FindBar({
 
   return (
     <div
-      className="scient-markdown-find-bar flex flex-col gap-2 border-b border-border/80 bg-background/95 p-2 shadow-xs backdrop-blur-md"
+      className="scient-markdown-find-bar flex flex-col gap-1.5 border-b border-border/80 bg-background/95 px-2 py-1.5 backdrop-blur-xs"
       role="search"
       aria-label="Find and replace"
     >
-      <div className="scient-markdown-find-row flex items-center gap-1.5">
-        <div className="relative flex min-w-44 flex-1 items-center">
+      <div className="scient-markdown-find-row flex items-center gap-1">
+        {snapshot.editable ? (
+          <Tooltip>
+            <TooltipTrigger
+              render={
+                <button
+                  type="button"
+                  className="inline-flex size-6 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+                  aria-label={replaceOpen ? "Hide replace" : "Show replace"}
+                  aria-expanded={replaceOpen}
+                  onClick={() => setReplaceOpen((open) => !open)}
+                >
+                  <ChevronRight
+                    className={cn("size-3.5 transition-transform", replaceOpen && "rotate-90")}
+                  />
+                </button>
+              }
+            />
+            <TooltipPopup>Toggle replace</TooltipPopup>
+          </Tooltip>
+        ) : null}
+
+        <div className="relative flex min-w-44 max-w-96 flex-1 items-center">
           <Input
             ref={inputRef}
             aria-label="Find text"
             className="h-7 pe-14 text-xs"
-            placeholder="Find in document..."
+            placeholder="Find"
             type="search"
             value={snapshot.findQuery}
             onChange={(event) => configure({ query: event.target.value })}
@@ -533,47 +728,13 @@ function FindBar({
           />
           <span
             aria-live="polite"
-            className="scient-markdown-find-count pointer-events-none absolute right-2 text-[10px] text-muted-foreground font-mono"
+            className="scient-markdown-find-count pointer-events-none absolute end-2.5 text-[10px] text-muted-foreground font-mono"
           >
             {snapshot.findMatchCount === 0
               ? "0"
               : `${snapshot.findActiveIndex + 1}/${snapshot.findMatchCount}`}
           </span>
         </div>
-
-        <Tooltip>
-          <TooltipTrigger
-            render={
-              <button
-                type="button"
-                className="inline-flex size-7 items-center justify-center rounded-md text-foreground/80 hover:bg-accent disabled:opacity-35"
-                aria-label="Previous match"
-                disabled={snapshot.findMatchCount === 0}
-                onClick={() => controller.navigateFind(-1)}
-              >
-                <ChevronUp className="size-3.5" />
-              </button>
-            }
-          />
-          <TooltipPopup>Previous (Shift+Enter)</TooltipPopup>
-        </Tooltip>
-
-        <Tooltip>
-          <TooltipTrigger
-            render={
-              <button
-                type="button"
-                className="inline-flex size-7 items-center justify-center rounded-md text-foreground/80 hover:bg-accent disabled:opacity-35"
-                aria-label="Next match"
-                disabled={snapshot.findMatchCount === 0}
-                onClick={() => controller.navigateFind(1)}
-              >
-                <ChevronDown className="size-3.5" />
-              </button>
-            }
-          />
-          <TooltipPopup>Next (Enter)</TooltipPopup>
-        </Tooltip>
 
         <Tooltip>
           <TooltipTrigger
@@ -620,6 +781,40 @@ function FindBar({
             render={
               <button
                 type="button"
+                className="inline-flex size-7 items-center justify-center rounded-md text-foreground/80 hover:bg-accent disabled:opacity-35"
+                aria-label="Previous match"
+                disabled={snapshot.findMatchCount === 0}
+                onClick={() => controller.navigateFind(-1)}
+              >
+                <ChevronUp className="size-3.5" />
+              </button>
+            }
+          />
+          <TooltipPopup>Previous (Shift+Enter)</TooltipPopup>
+        </Tooltip>
+
+        <Tooltip>
+          <TooltipTrigger
+            render={
+              <button
+                type="button"
+                className="inline-flex size-7 items-center justify-center rounded-md text-foreground/80 hover:bg-accent disabled:opacity-35"
+                aria-label="Next match"
+                disabled={snapshot.findMatchCount === 0}
+                onClick={() => controller.navigateFind(1)}
+              >
+                <ChevronDown className="size-3.5" />
+              </button>
+            }
+          />
+          <TooltipPopup>Next (Enter)</TooltipPopup>
+        </Tooltip>
+
+        <Tooltip>
+          <TooltipTrigger
+            render={
+              <button
+                type="button"
                 className="inline-flex size-7 items-center justify-center rounded-md text-muted-foreground hover:bg-accent hover:text-foreground"
                 aria-label="Close find"
                 onClick={() => controller.setFindOpen(false)}
@@ -632,11 +827,11 @@ function FindBar({
         </Tooltip>
       </div>
 
-      {snapshot.editable ? (
-        <div className="scient-markdown-find-row flex items-center gap-1.5">
+      {snapshot.editable && replaceOpen ? (
+        <div className="scient-markdown-find-row flex items-center gap-1 ps-7">
           <Input
             aria-label="Replacement text"
-            className="h-7 text-xs"
+            className="h-7 max-w-96 flex-1 text-xs"
             placeholder="Replace with..."
             type="text"
             value={replacement}
@@ -666,7 +861,7 @@ function FindBar({
             variant="outline"
             onClick={() => controller.replaceFind(replacement, true)}
           >
-            Replace all
+            All
           </Button>
         </div>
       ) : null}
@@ -728,32 +923,21 @@ export function ScientMarkdownControls({
         role="toolbar"
         aria-label="Document actions"
       >
-        {snapshot.editable ? <InsertBlockMenu controller={controller} /> : null}
-        {snapshot.editable ? (
-          <span className="scient-markdown-command-divider mx-1 h-4 w-px bg-border/80" />
-        ) : null}
-        {snapshot.editable ? (
-          <CommandButton
-            controller={controller}
-            command="undo"
-            label="Undo (Cmd+Z)"
-            icon={<Undo2 className="size-3.5" />}
-          />
-        ) : null}
-        {snapshot.editable ? (
-          <CommandButton
-            controller={controller}
-            command="redo"
-            label="Redo (Cmd+Shift+Z)"
-            icon={<Redo2 className="size-3.5" />}
-          />
-        ) : null}
-        {snapshot.editable ? (
-          <span className="scient-markdown-command-divider mx-1 h-4 w-px bg-border/80" />
-        ) : null}
-
         {snapshot.editable ? (
           <>
+            <CommandButton
+              controller={controller}
+              command="undo"
+              label="Undo (Cmd+Z)"
+              icon={<Undo2 className="size-3.5" />}
+            />
+            <CommandButton
+              controller={controller}
+              command="redo"
+              label="Redo (Cmd+Shift+Z)"
+              icon={<Redo2 className="size-3.5" />}
+            />
+            <DockDivider />
             <CommandButton
               controller={controller}
               command="bold"
@@ -783,90 +967,23 @@ export function ScientMarkdownControls({
               active={active.has("code")}
             />
             <LinkEditor controller={controller} active={active.has("link")} />
-            <span className="scient-markdown-command-divider mx-1 h-4 w-px bg-border/80" />
             <CommandButton
               controller={controller}
-              command="bullet-list"
-              label="Bullet List"
-              icon={<List className="size-3.5" />}
-              active={snapshot.blockType === "bullet_list"}
+              command="clear-formatting"
+              label="Clear formatting"
+              icon={<Eraser className="size-3.5" />}
             />
-            <CommandButton
-              controller={controller}
-              command="ordered-list"
-              label="Numbered List"
-              icon={<ListOrdered className="size-3.5" />}
-              active={snapshot.blockType === "ordered_list"}
-            />
-            <CommandButton
-              controller={controller}
-              command="task-list"
-              label="Task Checklist"
-              icon={<ListTodo className="size-3.5" />}
-              active={snapshot.blockType === "task_list"}
-            />
-            <CommandButton
-              controller={controller}
-              command="blockquote"
-              label="Blockquote"
-              icon={<Quote className="size-3.5" />}
-              active={snapshot.blockType === "blockquote"}
-            />
-            <CommandButton
-              controller={controller}
-              command="code-block"
-              label="Code Block"
-              icon={<Code2 className="size-3.5" />}
-              active={snapshot.blockType === "code_block"}
-            />
-            <CommandButton
-              controller={controller}
-              command="table"
-              label="Insert Table"
-              icon={<TableIcon className="size-3.5" />}
-            />
-            <CommandButton
-              controller={controller}
-              command="display-math"
-              label="Math Equation ($$)"
-              icon={<Sigma className="size-3.5" />}
-            />
-            <span className="scient-markdown-command-divider mx-1 h-4 w-px bg-border/80" />
-            <BlockCommandButton
-              controller={controller}
-              action="move-up"
-              label="Move block up (Option+Up)"
-              icon={<ArrowUp className="size-3.5" />}
-              disabled={!snapshot.canMoveBlockUp}
-            />
-            <BlockCommandButton
-              controller={controller}
-              action="move-down"
-              label="Move block down (Option+Down)"
-              icon={<ArrowDown className="size-3.5" />}
-              disabled={!snapshot.canMoveBlockDown}
-            />
-            <BlockCommandButton
-              controller={controller}
-              action="duplicate"
-              label="Duplicate block (Shift+Option+Down)"
-              icon={<Copy className="size-3.5" />}
-              disabled={!snapshot.canDuplicateBlock}
-            />
-            <BlockCommandButton
-              controller={controller}
-              action="delete"
-              label="Delete block"
-              icon={<Trash2 className="size-3.5 text-destructive" />}
-              disabled={!snapshot.canDeleteBlock}
-            />
-            <span className="scient-markdown-command-divider mx-1 h-4 w-px bg-border/80" />
+            <DockDivider />
+            <StyleMenu controller={controller} snapshot={snapshot} />
+            <ListsMenu controller={controller} snapshot={snapshot} />
+            <DockDivider />
+            <InsertBlockMenu controller={controller} />
+            <DockDivider />
+            <DirectionMenu controller={controller} snapshot={snapshot} />
           </>
         ) : null}
-
         <div className="ms-auto flex items-center gap-0.5">
-          <OutlineControl controller={controller} snapshot={snapshot} />
-          <FindButton controller={controller} snapshot={snapshot} />
+          <BlockActionsMenu controller={controller} snapshot={snapshot} />
         </div>
       </div>
 
@@ -921,25 +1038,35 @@ export function ScientMarkdownControls({
             controller={controller}
             command="add-row-after"
             label="Add row below"
-            icon={<span className="text-[11px] font-medium">+ Row</span>}
+            icon={<Rows3 className="size-3.5" />}
           />
           <CommandButton
             controller={controller}
             command="add-column-after"
             label="Add column after"
-            icon={<span className="text-[11px] font-medium">+ Col</span>}
+            icon={<Columns3 className="size-3.5" />}
           />
           <CommandButton
             controller={controller}
             command="delete-row"
             label="Delete row"
-            icon={<span className="text-[11px] font-medium text-destructive">− Row</span>}
+            icon={
+              <span className="flex items-center">
+                <Rows3 className="size-3.5" />
+                <span className="-ml-1 text-[10px] font-bold">×</span>
+              </span>
+            }
           />
           <CommandButton
             controller={controller}
             command="delete-column"
             label="Delete column"
-            icon={<span className="text-[11px] font-medium text-destructive">− Col</span>}
+            icon={
+              <span className="flex items-center">
+                <Columns3 className="size-3.5" />
+                <span className="-ml-1 text-[10px] font-bold">×</span>
+              </span>
+            }
           />
           <span className="scient-markdown-command-divider mx-1 h-3.5 w-px bg-border/80" />
           <CommandButton
