@@ -41,9 +41,12 @@ import {
   OrchestrationGetTurnDiffError,
   ORCHESTRATION_WS_METHODS,
   type ProjectId,
+  type ProjectDirectoryFailure,
+  type ProjectDirectoryOperation,
   type ProjectEntriesFailure,
   type ProjectFileFailure,
   type ProjectFileOperation,
+  ProjectListDirectoryError,
   ProjectListEntriesError,
   ProjectReadFileError,
   ProjectSearchContentsError,
@@ -112,6 +115,7 @@ import * as ProviderMaintenanceRunner from "./provider/providerMaintenanceRunner
 import * as ProviderConnectionManager from "./scient/providerLifecycle/ProviderConnectionManager.ts";
 import * as ProviderLifecycleCoordinator from "./scient/providerLifecycle/ProviderLifecycleCoordinator.ts";
 import * as ProviderRuntimeManager from "./scient/providerLifecycle/ProviderRuntimeManager.ts";
+import { workspaceEntryDisposition } from "./scient/workspace/WorkspaceEntryPolicy.ts";
 import * as GeneratedDocumentStore from "./scient/documentArtifacts/GeneratedDocumentStore.ts";
 import { publishBrowserPdfExport } from "./scient/documentArtifacts/BrowserPdfExportPublication.ts";
 import * as AnalysisService from "./scient/analysis/AnalysisService.ts";
@@ -345,6 +349,45 @@ function projectFileFailureContext(
         failure: "revision_conflict",
         resolvedPath: error.resolvedPath,
         currentRevision: error.currentRevision,
+      };
+    default:
+      return unexpectedCompatibilityError(error);
+  }
+}
+
+function projectDirectoryFailureContext(
+  error: WorkspaceEntries.WorkspaceEntriesListDirectoryError,
+): {
+  readonly failure: ProjectDirectoryFailure;
+  readonly resolvedPath?: string;
+  readonly resolvedWorkspaceRoot?: string;
+  readonly operation?: ProjectDirectoryOperation;
+  readonly operationPath?: string;
+} {
+  switch (error._tag) {
+    case "WorkspaceRootNotExistsError":
+      return { failure: "workspace_root_not_found", resolvedPath: error.normalizedWorkspaceRoot };
+    case "WorkspaceRootCreateFailedError":
+      return {
+        failure: "workspace_root_create_failed",
+        resolvedPath: error.normalizedWorkspaceRoot,
+      };
+    case "WorkspaceRootStatFailedError":
+      return { failure: "workspace_root_stat_failed", resolvedPath: error.normalizedWorkspaceRoot };
+    case "WorkspaceRootNotDirectoryError":
+      return {
+        failure: "workspace_root_not_directory",
+        resolvedPath: error.normalizedWorkspaceRoot,
+      };
+    case "WorkspacePathOutsideRootError":
+      return { failure: "workspace_path_outside_root" };
+    case "WorkspaceDirectoryError":
+      return {
+        failure: error.failure,
+        resolvedPath: error.resolvedPath,
+        resolvedWorkspaceRoot: error.resolvedWorkspaceRoot,
+        operation: error.operation,
+        operationPath: error.operationPath,
       };
     default:
       return unexpectedCompatibilityError(error);
@@ -605,6 +648,7 @@ const makeWsRpcLayer = (
       const startup = yield* ServerRuntimeStartup.ServerRuntimeStartup;
       const workspaceEntries = yield* WorkspaceEntries.WorkspaceEntries;
       const workspaceFileSystem = yield* WorkspaceFileSystem.WorkspaceFileSystem;
+      const workspacePaths = yield* WorkspacePaths.WorkspacePaths;
       const analysis = yield* AnalysisService.AnalysisService;
       const compute = yield* ComputeSessionService.ComputeSessionService;
       const computeGateway = makeComputeRpcGateway({
@@ -2264,10 +2308,29 @@ const makeWsRpcLayer = (
             ),
             { "rpc.aggregate": "workspace" },
           ),
+        [WS_METHODS.projectsListDirectory]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.projectsListDirectory,
+            workspaceEntries.listDirectory(input).pipe(
+              Effect.mapError(
+                (cause) =>
+                  new ProjectListDirectoryError({
+                    ...input,
+                    ...projectDirectoryFailureContext(cause),
+                    cause,
+                  }),
+              ),
+            ),
+            { "rpc.aggregate": "workspace" },
+          ),
         [WS_METHODS.projectsReadFile]: (input) =>
           observeRpcEffect(
             WS_METHODS.projectsReadFile,
             workspaceFileSystem.readFile(input).pipe(
+              Effect.map((result) => ({
+                ...result,
+                readOnly: workspaceEntryDisposition(result.relativePath).mutation === "owner",
+              })),
               Effect.mapError(
                 (cause) =>
                   new ProjectReadFileError({
@@ -2309,17 +2372,42 @@ const makeWsRpcLayer = (
         [WS_METHODS.projectsWriteFile]: (input) =>
           observeRpcEffect(
             WS_METHODS.projectsWriteFile,
-            workspaceFileSystem.writeFile(input).pipe(
-              Effect.mapError(
-                (cause) =>
-                  new ProjectWriteFileError({
-                    cwd: input.cwd,
-                    relativePath: input.relativePath,
-                    ...projectFileFailureContext(cause),
-                    cause,
-                  }),
-              ),
-            ),
+            Effect.gen(function* () {
+              const target = yield* workspacePaths
+                .resolveRelativePathWithinRoot({
+                  workspaceRoot: input.cwd,
+                  relativePath: input.relativePath,
+                })
+                .pipe(
+                  Effect.mapError(
+                    (cause) =>
+                      new ProjectWriteFileError({
+                        cwd: input.cwd,
+                        relativePath: input.relativePath,
+                        ...projectFileFailureContext(cause),
+                        cause,
+                      }),
+                  ),
+                );
+              if (workspaceEntryDisposition(target.relativePath).mutation === "owner") {
+                return yield* new ProjectWriteFileError({
+                  cwd: input.cwd,
+                  relativePath: target.relativePath,
+                  failure: "managed_path_read_only",
+                });
+              }
+              return yield* workspaceFileSystem.writeFile(input).pipe(
+                Effect.mapError(
+                  (cause) =>
+                    new ProjectWriteFileError({
+                      cwd: input.cwd,
+                      relativePath: input.relativePath,
+                      ...projectFileFailureContext(cause),
+                      cause,
+                    }),
+                ),
+              );
+            }),
             { "rpc.aggregate": "workspace" },
           ),
         [WS_METHODS.analysisInspectRuntimes]: (input) =>

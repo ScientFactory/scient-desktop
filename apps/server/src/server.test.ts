@@ -5428,7 +5428,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
     }).pipe(Effect.provide(NodeHttpServer.layerTest), TestClock.withLive),
   );
 
-  it.effect("routes websocket rpc projects.listEntries and projects.readFile", () =>
+  it.effect("routes websocket rpc project listing and exact file reads", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
@@ -5438,6 +5438,11 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
         path.join(workspaceDir, "src", "index.ts"),
         "export const answer = 42;\n",
       );
+      yield* fs.writeFileString(path.join(workspaceDir, ".env"), "LOCAL_ONLY=true\n");
+      yield* fs.makeDirectory(path.join(workspaceDir, ".git"), { recursive: true });
+      yield* fs.writeFileString(path.join(workspaceDir, ".git", "config"), "[core]\n");
+      yield* fs.makeDirectory(path.join(workspaceDir, ".scient"), { recursive: true });
+      yield* fs.writeFileString(path.join(workspaceDir, ".scient", "project.json"), "{}\n");
 
       yield* buildAppUnderTest();
 
@@ -5446,15 +5451,33 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
         withWsRpcClient(wsUrl, (client) =>
           Effect.all({
             listing: client[WS_METHODS.projectsListEntries]({ cwd: workspaceDir }),
+            directory: client[WS_METHODS.projectsListDirectory]({
+              cwd: workspaceDir,
+              relativeDirectory: "",
+              view: "ordinary",
+            }),
+            internals: client[WS_METHODS.projectsListDirectory]({
+              cwd: workspaceDir,
+              relativeDirectory: "",
+              view: "with-internals",
+            }),
             file: client[WS_METHODS.projectsReadFile]({
               cwd: workspaceDir,
               relativePath: "src/index.ts",
+            }),
+            managedFile: client[WS_METHODS.projectsReadFile]({
+              cwd: workspaceDir,
+              relativePath: ".scient/project.json",
             }),
           }),
         ),
       );
 
       assert.isTrue(response.listing.entries.some((entry) => entry.path === "src/index.ts"));
+      assert.isTrue(response.directory.complete);
+      assert.isTrue(response.directory.entries.some((entry) => entry.relativePath === ".env"));
+      assert.isFalse(response.directory.entries.some((entry) => entry.relativePath === ".git"));
+      assert.isTrue(response.internals.entries.some((entry) => entry.relativePath === ".git"));
       assert.deepEqual(response.file, {
         relativePath: "src/index.ts",
         contents: "export const answer = 42;\n",
@@ -5463,7 +5486,9 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
         revision: `sha256:${NodeCrypto.createHash("sha256")
           .update("export const answer = 42;\n")
           .digest("hex")}`,
+        readOnly: false,
       });
+      assert.equal(response.managedFile.readOnly, true);
     }).pipe(Effect.provide(NodeHttpServer.layerTest), TestClock.withLive),
   );
 
@@ -5556,6 +5581,11 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
             list: client[WS_METHODS.projectsListEntries]({ cwd: invalidWorkspace }).pipe(
               Effect.result,
             ),
+            directory: client[WS_METHODS.projectsListDirectory]({
+              cwd: invalidWorkspace,
+              relativeDirectory: "",
+              view: "ordinary",
+            }).pipe(Effect.result),
             read: client[WS_METHODS.projectsReadFile]({
               cwd: workspaceDir,
               relativePath: "linked-outside.txt",
@@ -5601,6 +5631,21 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       assert.equal(listError.failure, "workspace_root_not_found");
       assert.equal(listError.normalizedCwd, invalidWorkspace);
       assert.isDefined(listError.cause);
+
+      if (
+        results.directory._tag !== "Failure" ||
+        results.directory.failure._tag !== "ProjectListDirectoryError"
+      ) {
+        assert.fail("Expected a ProjectListDirectoryError");
+      }
+      const directoryError = results.directory.failure;
+      assert.equal(
+        directoryError.message,
+        `Failed to list workspace directory '' in '${invalidWorkspace}'.`,
+      );
+      assert.equal(directoryError.failure, "workspace_root_not_found");
+      assert.equal(directoryError.resolvedPath, invalidWorkspace);
+      assert.isDefined(directoryError.cause);
 
       if (results.read._tag !== "Failure" || results.read.failure._tag !== "ProjectReadFileError") {
         assert.fail("Expected a ProjectReadFileError");
@@ -5690,6 +5735,42 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       assert.equal(response.relativePath, "nested/created.txt");
       const persisted = yield* fs.readFileString(path.join(workspaceDir, "nested", "created.txt"));
       assert.equal(persisted, "written-by-rpc");
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
+  it.effect("rejects generic Files writes to owner-managed project paths", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const workspaceDir = yield* fs.makeTempDirectoryScoped({
+        prefix: "scient-ws-project-managed-write-",
+      });
+      const projectFile = path.join(workspaceDir, ".scient", "project.json");
+      yield* fs.makeDirectory(path.dirname(projectFile), { recursive: true });
+      yield* fs.writeFileString(projectFile, '{"id":"original"}\n');
+
+      yield* buildAppUnderTest();
+
+      const wsUrl = yield* getWsServerUrl("/ws");
+      const result = yield* Effect.scoped(
+        withWsRpcClient(wsUrl, (client) =>
+          client[WS_METHODS.projectsWriteFile]({
+            cwd: workspaceDir,
+            relativePath: ".scient/project.json",
+            contents: '{"id":"changed"}\n',
+          }),
+        ).pipe(Effect.result),
+      );
+
+      if (result._tag !== "Failure" || result.failure._tag !== "ProjectWriteFileError") {
+        assert.fail("Expected a ProjectWriteFileError");
+      }
+      assert.equal(result.failure.failure, "managed_path_read_only");
+      assert.equal(
+        result.failure.message,
+        "Workspace file '.scient/project.json' is managed and read-only in Files.",
+      );
+      assert.equal(yield* fs.readFileString(projectFile), '{"id":"original"}\n');
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 

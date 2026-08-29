@@ -3,6 +3,9 @@ import { describe, expect, it } from "vite-plus/test";
 
 import {
   ProjectFileWatchEvent,
+  ProjectListDirectoryError,
+  ProjectListDirectoryInput,
+  ProjectListDirectoryResult,
   ProjectReadFileError,
   ProjectSearchContentsError,
   ProjectSearchContentsInput,
@@ -14,6 +17,8 @@ import {
 const decodeSearchEntriesInput = Schema.decodeUnknownSync(ProjectSearchEntriesInput);
 const decodeSearchContentsInput = Schema.decodeUnknownSync(ProjectSearchContentsInput);
 const decodeFileWatchEvent = Schema.decodeUnknownSync(ProjectFileWatchEvent);
+const decodeListDirectoryInput = Schema.decodeUnknownSync(ProjectListDirectoryInput);
+const decodeListDirectoryResult = Schema.decodeUnknownSync(ProjectListDirectoryResult);
 
 describe("project file watch events", () => {
   it("carries only a readiness or change hint and never file contents", () => {
@@ -59,6 +64,35 @@ describe("project search inputs", () => {
   });
 });
 
+describe("project directory contracts", () => {
+  it("supports the workspace root without making partial listings look complete", () => {
+    expect(
+      decodeListDirectoryInput({
+        cwd: "/workspace",
+        relativeDirectory: "   ",
+        view: "ordinary",
+      }),
+    ).toEqual({ cwd: "/workspace", relativeDirectory: "", view: "ordinary" });
+
+    expect(
+      decodeListDirectoryResult({
+        entries: [
+          {
+            name: ".scient",
+            relativePath: ".scient",
+            kind: "directory",
+            readOnly: true,
+          },
+        ],
+        complete: true,
+      }),
+    ).toEqual({
+      entries: [{ name: ".scient", relativePath: ".scient", kind: "directory", readOnly: true }],
+      complete: true,
+    });
+  });
+});
+
 describe("project RPC errors", () => {
   it("derives stable messages from structured request context while retaining causes", () => {
     const cause = new Error("sensitive platform detail");
@@ -80,6 +114,12 @@ describe("project RPC errors", () => {
       resolvedPath: "/workspace/src/index.ts",
       cause,
     });
+    const directoryError = new ProjectListDirectoryError({
+      cwd: "/workspace",
+      relativeDirectory: ".git",
+      view: "ordinary",
+      failure: "path_not_visible",
+    });
 
     expect(searchError.message).toBe("Failed to search workspace entries in '/workspace'.");
     expect(searchError.message).not.toContain(cause.message);
@@ -91,6 +131,9 @@ describe("project RPC errors", () => {
     expect(readError.message).toBe("Failed to read workspace file 'src/index.ts' in '/workspace'.");
     expect(readError.message).not.toContain(cause.message);
     expect(readError.cause).toBe(cause);
+    expect(directoryError.message).toBe(
+      "Failed to list workspace directory '.git' in '/workspace'.",
+    );
 
     const contentSearchError = new ProjectSearchContentsError({
       cwd: "/workspace",
