@@ -1,4 +1,8 @@
-import { EnvironmentId, type ExecutionEnvironmentDescriptor } from "@t3tools/contracts";
+import {
+  EnvironmentId,
+  PROVIDER_SEND_TURN_MAX_FILE_BYTES,
+  type ExecutionEnvironmentDescriptor,
+} from "@t3tools/contracts";
 import { HostProcessArchitecture, HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import * as Context from "effect/Context";
 import * as Crypto from "effect/Crypto";
@@ -15,6 +19,7 @@ import { resolveServerSelfUpdateCapability } from "../cloud/selfUpdate.ts";
 import { resolveServiceLauncherMode } from "../cloud/serviceLauncherClient.ts";
 import * as ServerConfig from "../config.ts";
 import * as ProcessRunner from "../processRunner.ts";
+import { SCIENT_GENERIC_FILE_ATTACHMENTS_ENABLED } from "../scient/upstreamCompatibility.ts";
 import { resolveServerEnvironmentLabel } from "./ServerEnvironmentLabel.ts";
 
 export class ServerEnvironmentIdPersistenceError extends Schema.TaggedErrorClass<ServerEnvironmentIdPersistenceError>()(
@@ -147,9 +152,13 @@ export const make = Effect.gen(function* () {
       repositoryIdentity: true,
       connectionProbe: true,
       attachmentUploads: true,
+      ...(SCIENT_GENERIC_FILE_ATTACHMENTS_ENABLED
+        ? { fileAttachments: { maxUploadBytes: PROVIDER_SEND_TURN_MAX_FILE_BYTES } }
+        : {}),
       pullRequests: true,
       threadSettlement: true,
       threadSnooze: true,
+      environmentThemes: true,
       threadPinning: true,
       threadPinReorder: true,
       threadTitleRegeneration: true,

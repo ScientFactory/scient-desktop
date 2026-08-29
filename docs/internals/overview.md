@@ -1,8 +1,8 @@
 # Architecture
 
-> For maintainers. Using T3 Code? See [docs/user](../user/).
+> For maintainers. Using Scient? See [docs/user](../user/).
 
-T3 Code is a server runtime that owns agent sessions, workspaces, and version control, plus clients
+Scient uses a server runtime that owns agent sessions, workspaces, and version control, plus clients
 (web, desktop, mobile) that talk to it over one authenticated Effect RPC WebSocket. The server is the
 execution boundary: every provider process, terminal, git operation, and filesystem read happens
 there, never in the client.
@@ -24,7 +24,7 @@ there, never in the client.
                    │ per-driver transport
 ┌──────────────────▼─────────────────────────────┐
 │ Agent CLIs: Codex, Claude, Cursor, Grok,       │
-│ OpenCode                                       │
+│ OpenCode, Droid, Antigravity                   │
 └────────────────────────────────────────────────┘
 ```
 
@@ -106,8 +106,8 @@ build production behavior on receipts.
 
 ## Provider drivers
 
-Five drivers ship built in, registered in [`builtInDrivers.ts`][drivers] as `BUILT_IN_DRIVERS`:
-Codex, Claude, Cursor, Grok, and OpenCode. A driver declares its kind and config schema and creates a
+Seven drivers ship built in, registered in [`builtInDrivers.ts`][drivers] as `BUILT_IN_DRIVERS`:
+Codex, Claude, Cursor, Grok, OpenCode, Droid, and Antigravity. A driver declares its kind and config schema and creates a
 scoped adapter; `ProviderInstanceRegistry` owns live instances and `ProviderAdapterRegistry` resolves
 an instance to its adapter, so `ProviderService` routes session and turn operations without knowing
 which agent is behind them. See [providers.md](./providers.md).
@@ -135,6 +135,8 @@ already dispatch.
 - [Remote environments](./remote.md), [Server updates](./server-updates.md)
 - [Resource telemetry](./resource-telemetry.md)
 - [Scient conversation-fork architecture and T3 divergence](./scient-fork-divergence.md)
+- [Mobile navigation headers](./mobile-navigation.md)
+- [Scient product analytics](./product-analytics.md)
 - [Scripts](./scripts.md), [CI gates](./ci.md)
 - [D4 bootstrap record](./scient-next-d4-bootstrap.md)
 

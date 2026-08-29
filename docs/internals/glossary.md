@@ -11,6 +11,7 @@ This is a living glossary for Scient. It explains what common terms mean in this
 - [Orchestration](#orchestration)
 - [Provider runtime](#provider-runtime)
 - [Checkpointing](#checkpointing)
+- [Appearance](#appearance)
 
 ## Concepts
 
@@ -154,6 +155,22 @@ The patch difference between two checkpoints. Query logic lives in [CheckpointDi
 
 The file patch and changed-file summary for one turn. It is usually computed in [CheckpointDiffQuery.ts][20], represented in [the contracts][1], and recorded into thread state by [projector.ts][4].
 
+### Appearance
+
+#### Environment theme
+
+A theme published by the environment's machine, one file per theme under `themes/` in that
+environment's state directory. [environmentTheme.ts][26] watches the directory and streams the set
+through `subscribeServerConfig`; clients render each valid file as a theme card. See
+[environment-theme.md][27].
+
+#### Default theme
+
+The environment-selected theme recorded in `settings.json` as `defaultTheme`, with
+`defaultThemeSetAt` identifying the set generation. Web and desktop apply each generation once;
+mobile retains its own appearance setting. A later manual choice remains until the environment sets
+a theme again.
+
 ## Practical Shortcuts
 
 - If you see `requested`, think "intent recorded".
@@ -195,3 +212,5 @@ The file patch and changed-file summary for one turn. It is usually computed in 
 [23]: ../../apps/server/src/checkpointing/Diffs.ts
 [24]: ./overview.md
 [25]: ./provider-lifecycle.md
+[26]: ../../apps/server/src/environmentTheme.ts
+[27]: ../user/environment-theme.md

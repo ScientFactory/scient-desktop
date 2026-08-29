@@ -43,7 +43,11 @@ accountable owner.
   a release gate; repository visibility alone is not protection evidence.
 - Before changing a protected divergence, read [UPSTREAM.md](UPSTREAM.md),
   [upstream-state.json](upstream-state.json), and the
-  [D4 bootstrap record](docs/internals/scient-next-d4-bootstrap.md).
+  [D4 bootstrap record](docs/internals/scient-next-d4-bootstrap.md). Before any
+  upstream alignment, follow the complete
+  [T3 upstream alignment protocol](docs/internals/upstream-alignment-protocol.md),
+  including its auto-merge audit, cross-client compatibility gate, stop
+  conditions, exact receipt, and integrated-app review.
 - For any request to install, open, stop, refresh, or inspect the local
   development app, follow the
   [Scient local dev app runbook](docs/operations/local-dev-app.md). Always

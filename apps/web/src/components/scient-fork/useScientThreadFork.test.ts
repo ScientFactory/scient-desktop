@@ -96,6 +96,29 @@ describe("user-message fork draft staging", () => {
       useComposerDraftStore.getState().draftsByThreadKey[scopedThreadKey(destinationRef)],
     ).toBeUndefined();
   });
+
+  it("rejects non-image attachments without leaving a partial draft", async () => {
+    const fileAttachment: ChatAttachment = {
+      type: "file",
+      id: "origin-thread-00000000-0000-4000-8000-000000000002",
+      name: "notes.txt",
+      mimeType: "text/plain",
+      sizeBytes: 3,
+      previewUrl: "https://local.test/authorized/notes.txt",
+    };
+
+    await expect(
+      stageUserForkDraft({
+        destinationRef,
+        prompt: "Must not silently omit an unsupported attachment",
+        attachments: [fileAttachment],
+      }),
+    ).rejects.toThrow("is not a supported image attachment");
+
+    expect(
+      useComposerDraftStore.getState().draftsByThreadKey[scopedThreadKey(destinationRef)],
+    ).toBeUndefined();
+  });
 });
 
 describe("accepted fork composer draft movement", () => {

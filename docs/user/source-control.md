@@ -50,6 +50,8 @@ Scient works with the platforms your team already uses:
 - While working in a thread, open linked reviews in the same compact right-panel tabs without
   leaving the conversation
 - Open the review directly in your browser with one click
+- If Scient cannot load a GitHub pull request, including when GitHub rate-limits requests, use
+  **Open on GitHub** in the error view
 - Command-click (Control-click on Windows and Linux) a pull request number in the sidebar to open it in your browser instead of in Scient
 - Check out a teammate's branch to review code locally
 

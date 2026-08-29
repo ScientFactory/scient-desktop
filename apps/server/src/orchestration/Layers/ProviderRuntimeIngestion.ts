@@ -2,6 +2,7 @@ import {
   ApprovalRequestId,
   type AssistantDeliveryMode,
   CodexSettings,
+  type ChatAttachment,
   type ChatImageAttachment,
   CommandId,
   MessageId,
@@ -1150,11 +1151,11 @@ const make = Effect.gen(function* () {
     return parts.length > 0 ? parts.join("\n\n") : null;
   };
 
-  const mergeImageAttachments = (
-    current: ReadonlyArray<ChatImageAttachment> | undefined,
+  const mergeGeneratedImageAttachments = (
+    current: ReadonlyArray<ChatAttachment> | undefined,
     incoming: ReadonlyArray<ChatImageAttachment>,
-  ): ReadonlyArray<ChatImageAttachment> => {
-    const byId = new Map<string, ChatImageAttachment>();
+  ): ReadonlyArray<ChatAttachment> => {
+    const byId = new Map<string, ChatAttachment>();
     for (const attachment of [...(current ?? []), ...incoming]) byId.set(attachment.id, attachment);
     return Array.from(byId.values()).slice(0, PROVIDER_SEND_TURN_MAX_ATTACHMENTS);
   };
@@ -1448,7 +1449,7 @@ const make = Effect.gen(function* () {
     finalDeltaCommandTag: string;
     fallbackText?: string;
     hasProjectedMessage?: boolean;
-    attachments?: ReadonlyArray<ChatImageAttachment>;
+    attachments?: ReadonlyArray<ChatAttachment>;
     noticeText?: string;
   }) =>
     Effect.gen(function* () {
@@ -1504,7 +1505,10 @@ const make = Effect.gen(function* () {
     }) {
       const detail = yield* resolveThreadDetail(input.threadId);
       const current = findMessageById(detail?.messages ?? [], input.messageId);
-      const attachments = mergeImageAttachments(current?.attachments, input.pending.attachments);
+      const attachments = mergeGeneratedImageAttachments(
+        current?.attachments,
+        input.pending.attachments,
+      );
       const generatedNotice = generatedImageWarning(input.pending);
       const noticeText =
         generatedNotice && !current?.text.includes(generatedNotice) ? generatedNotice : null;
@@ -2231,7 +2235,7 @@ const make = Effect.gen(function* () {
             hasProjectedMessage: existingAssistantMessage !== undefined,
             ...(hasGeneratedImageResult
               ? {
-                  attachments: mergeImageAttachments(
+                  attachments: mergeGeneratedImageAttachments(
                     existingAssistantMessage?.attachments,
                     generatedImages.attachments,
                   ),

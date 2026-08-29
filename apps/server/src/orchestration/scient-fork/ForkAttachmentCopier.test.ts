@@ -49,8 +49,13 @@ it.layer(layer)("ScientForkAttachmentCopier", (it) => {
       const threadId = ThreadId.make("fork-thread");
       const source = image("origin-thread-00000000-0000-4000-8000-000000000001");
       const target = image("fork-thread-00000000-0000-4000-8000-000000000002");
-      const sourcePath = path.join(attachmentsDir, attachmentRelativePath(source));
-      const targetPath = path.join(attachmentsDir, attachmentRelativePath(target));
+      const sourceRelativePath = attachmentRelativePath(source);
+      const targetRelativePath = attachmentRelativePath(target);
+      if (sourceRelativePath === null || targetRelativePath === null) {
+        throw new Error("image fixtures must map to safe attachment paths");
+      }
+      const sourcePath = path.join(attachmentsDir, sourceRelativePath);
+      const targetPath = path.join(attachmentsDir, targetRelativePath);
       yield* fileSystem.makeDirectory(attachmentsDir, { recursive: true });
       yield* fileSystem.writeFileString(sourcePath, "evidence");
 

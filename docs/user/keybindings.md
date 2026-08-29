@@ -14,6 +14,23 @@ thread, toggling the terminal or right panel, finding a project file, searching
 inside project files, refreshing a preview, and running a configured project
 action. Project actions use command IDs such as `script.test.run`.
 
+Useful current commands include:
+
+- `filePicker.toggle` (`mod+p`) searches files in the active project;
+- `projectSearch.toggle` (`mod+shift+f`) searches inside project files;
+- `themeEditor.toggle` (`mod+alt+shift+t`) opens the floating theme editor;
+- `thread.settle` (`mod+shift+s`) settles or restores the active thread;
+- `thread.pin` (`mod+shift+p`) pins or unpins the active thread; and
+- `rightPanel.toggleMaximized` maximizes or restores the open right panel and has no default shortcut.
+
+Repeating either search shortcut closes it; opening the other replaces the current search. The theme
+editor's **Inspect** mode selects one visible element and reveals its color token, then disarms. Use
+**Cancel** or `Escape` to leave Inspect and clear its spotlight.
+
+The command palette searches active thread titles, projects, branches, user messages, and final agent
+responses across connected environments. Message search begins after two characters and keeps the
+matching thread's project, branch, and machine context visible.
+
 ## Edit the JSON directly
 
 Use **Open keybindings.json** only when you want advanced control. It opens the
@@ -50,9 +67,9 @@ in the server log.
 
 ## Conditional shortcuts
 
-A `when` expression can use the current UI context, including
+A `when` expression can use the current UI context. The keys supplied today include
 `terminalFocus`, `terminalOpen`, `previewFocus`, `previewOpen`, and
-`modelPickerOpen`. Unknown keys evaluate to `false`.
+`modelPickerOpen`. The set can grow over time; unknown keys evaluate to `false`.
 
 Supported operators are `!` (not), `&&` (and), `||` (or), and
 parentheses. For example:

@@ -41,7 +41,10 @@ import {
   stopBrowserRecording,
 } from "~/browser/browserRecording";
 import { resolveBrowserRecordingStopTarget } from "~/browser/browserRecordingScope";
-import { useBrowserSurfaceStore } from "~/browser/browserSurfaceStore";
+import {
+  acquireBrowserSurfaceActivity,
+  useBrowserSurfaceStore,
+} from "~/browser/browserSurfaceStore";
 import { browserDefaultOpenViewport, resolveBrowserDefaults } from "~/browser/browserDefaults";
 import { runBrowserViewportMutation } from "~/browser/browserViewportActions";
 import { previewRuntimeTabId } from "~/browser/previewRuntimeTabId";
@@ -105,7 +108,7 @@ const waitForDesktopOverlay = async (
       operation,
       requestId,
     });
-    if (state.desktopByTabId[tabId] && previewBridge) {
+    if (state.desktopByTabId[tabId] && previewBridge && isPreviewWebviewRendering(runtimeTabId)) {
       const status = await previewBridge.automation.status(runtimeTabId);
       if (status.available) return;
     }
@@ -127,6 +130,11 @@ const findPreviewWebview = (tabId: string): ExecutablePreviewWebview | null =>
   Array.from(document.querySelectorAll<ExecutablePreviewWebview>("webview[data-preview-tab]")).find(
     (candidate) => candidate.getAttribute("data-preview-tab") === tabId,
   ) ?? null;
+
+const isPreviewWebviewRendering = (runtimeTabId: string): boolean => {
+  const wrapper = findPreviewWebview(runtimeTabId)?.closest<HTMLElement>("[data-preview-viewport]");
+  return wrapper?.getAttribute("data-preview-rendering") === "active";
+};
 
 const readWebviewViewport = async (
   webview: ExecutablePreviewWebview,
@@ -219,8 +227,12 @@ const currentStatus = async (
   const visible = runtimeTabId
     ? (useBrowserSurfaceStore.getState().byTabId[runtimeTabId]?.visible ?? false)
     : false;
+  const renderingActive = runtimeTabId ? isPreviewWebviewRendering(runtimeTabId) : false;
   const viewportSetting = snapshot ? (snapshot.viewport ?? FILL_PREVIEW_VIEWPORT) : undefined;
-  const viewport = runtimeTabId ? await readRenderedViewport(runtimeTabId).catch(() => null) : null;
+  const viewport =
+    runtimeTabId && renderingActive
+      ? await readRenderedViewport(runtimeTabId).catch(() => null)
+      : null;
   const viewportStatus = {
     ...(viewportSetting === undefined ? {} : { viewportSetting }),
     ...(viewport === null ? {} : { viewport }),
@@ -315,6 +327,7 @@ function PreviewAutomationHost(props: { readonly environmentId: EnvironmentId })
         threadId: request.threadId,
       };
       let tabId = request.tabId ?? null;
+      const browserActivity = { release: null as (() => void) | null };
       try {
         if (request.operation === "documentPdfRender") {
           const bridge = previewBridge;
@@ -385,6 +398,7 @@ function PreviewAutomationHost(props: { readonly environmentId: EnvironmentId })
           }
           const readyState = readThreadPreviewState(threadRef);
           const runtimeTabId = previewRuntimeTabId(threadRef, readyState.serverEpoch, readyTabId);
+          browserActivity.release ??= acquireBrowserSurfaceActivity(runtimeTabId);
           await waitForDesktopOverlay(
             threadRef,
             request.requestId,
@@ -485,14 +499,7 @@ function PreviewAutomationHost(props: { readonly environmentId: EnvironmentId })
               usePreviewMiniPlayerStore.getState().open(threadRef, activeTabId);
             }
             if (activeSnapshot && previewAutomationOpenNeedsOverlay(input, activeSnapshot)) {
-              await waitForDesktopOverlay(
-                threadRef,
-                request.requestId,
-                activeTabId,
-                activeRuntimeTabId,
-                request.operation,
-                request.timeoutMs,
-              );
+              await requireReadyTab();
             }
             if (shouldPresentPreview) {
               // React commits the thread-bound surface asynchronously. Settle
@@ -723,6 +730,8 @@ function PreviewAutomationHost(props: { readonly environmentId: EnvironmentId })
           tabId,
           cause,
         });
+      } finally {
+        browserActivity.release?.();
       }
     },
     [environmentId, httpBaseUrl, listPreviews, open, registry, resize],

@@ -41,6 +41,33 @@ directory to route session and turn operations for a thread, so callers name a t
 Adding a driver means writing the driver plus adapter and adding it to `BUILT_IN_DRIVERS`. No
 orchestration, contract, or client change is required for the common case.
 
+## OpenCode server ownership and catalog
+
+Each OpenCode provider instance owns one lazy local server for catalog discovery and text-generation
+helpers through [`OpenCodeServerOwner.ts`][opencode-server-owner]. Concurrent borrowers share one
+startup. The helper closes 30 seconds after the last borrower releases it, or when the provider
+instance closes, and a failed or exited process can start again on the next use. An explicitly
+configured external server remains externally owned.
+
+The local server and its SDK clients use one resolved password. An explicit provider password
+overrides `OPENCODE_SERVER_PASSWORD` in the spawned environment. Without an explicit password, a
+local client uses the password inherited by the process. External servers use only the explicit
+provider password and never inherit the host's local password. Every connection must pass an
+authenticated `/global/health` check and report OpenCode 1.14.19 or newer before inventory or
+session work begins.
+
+Chat adapters keep one server per thread because OpenCode stores MCP connections by directory and
+each thread registers its own Scient MCP connection. Catalog discovery instead uses the provider
+instance's shared helper. It runs when an enabled instance starts, when a client subscribes to server
+configuration, and when provider status is refreshed. Successful snapshots are persisted through
+the existing per-instance cache. Failed discovery keeps the last known models, slash commands, and
+skills; a successful empty inventory is authoritative. Existing threads keep their explicit model
+and options when catalog metadata is temporarily absent.
+
+Native configuration files can remain cached while a local helper is alive. Refreshing after its
+idle shutdown starts a new helper and rereads those files. Scient does not own an external OpenCode
+process, so changes there may require that server's own reload or restart before refresh can see them.
+
 ## Scient awareness
 
 Interactive agents receive one compact, Scient-owned awareness contract from
@@ -162,6 +189,25 @@ apply the classification to every snapshot; driver kinds absent from the manifes
 classification. Keep the remote source Scient-owned: pointing it at upstream would let an unrelated
 repository change Scient's model policy outside Scient's review and release boundary.
 
+## Attachment access
+
+The server stores uploaded attachments outside the project workspace. Image attachments remain the
+only generic composer attachment currently advertised by Scient. Each provider receives images in
+its native supported form and applies its own filesystem and approval policy.
+
+The inherited T3 contracts and adapters can also represent generic files. That path is deliberately
+gated by `SCIENT_GENERIC_FILE_ATTACHMENTS_ENABLED` in the server and web compatibility modules until
+desktop, web, mobile, and supported older clients can all preserve, send, queue, and replay the same
+events safely. The server capability response omits file support and the command normalizer rejects
+file-bearing turns while the gate is closed. Do not enable only the picker: old image-only clients
+cannot decode persisted file-bearing events, which can prevent projection bootstrap for the whole
+environment.
+
+When the cross-client gate is eventually qualified, provider behavior remains capability-specific:
+OpenCode can ingest supported text, PDF, and image parts natively, while other providers may receive
+only a path in the prompt. The server must never copy a file into the project or bypass a provider's
+approval rules merely to make the shared UI uniform.
+
 ## How provider work is requested
 
 Clients never call a provider directly. They dispatch orchestration commands over the RPC method
@@ -204,6 +250,7 @@ when a request opens (approval) or user input is requested, via
 [cursor]: ../../apps/server/src/provider/Drivers/CursorDriver.ts
 [grok]: ../../apps/server/src/provider/Drivers/GrokDriver.ts
 [opencode]: ../../apps/server/src/provider/Drivers/OpenCodeDriver.ts
+[opencode-server-owner]: ../../apps/server/src/provider/OpenCodeServerOwner.ts
 [droid]: ../../apps/server/src/provider/Drivers/DroidDriver.ts
 [antigravity]: ../../apps/server/src/provider/Drivers/AntigravityDriver.ts
 [agy-session]: ../../apps/server/src/provider/antigravity/AgySession.ts
