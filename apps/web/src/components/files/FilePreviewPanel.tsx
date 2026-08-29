@@ -16,7 +16,7 @@ import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
-import { Code2, Eye, FolderTree, Globe2, LoaderCircle, PenLine } from "lucide-react";
+import { Code2, Eye, FolderTree, Globe2, LoaderCircle } from "lucide-react";
 import * as Schema from "effect/Schema";
 import {
   lazy,
@@ -129,7 +129,6 @@ interface FilePreviewPanelProps {
 
 const FILE_EXPLORER_STORAGE_KEY = "t3code.fileExplorerOpen";
 const RENDER_MARKDOWN_STORAGE_KEY = "*********************";
-const MARKDOWN_EDIT_CHROME_STORAGE_KEY = "scient-file-preview-markdown-edit-chrome";
 const FILE_SAVE_DEBOUNCE_MS = 500;
 const FILE_LINK_REVEAL_ATTRIBUTE = "data-file-link-reveal";
 const FILE_ACTIVE_RANGE_ATTRIBUTE = "data-scient-active-range";
@@ -1051,11 +1050,6 @@ export default function FilePreviewPanel({
     SCIENT_DEFAULT_RENDER_MARKDOWN,
     Schema.Boolean,
   );
-  const [markdownEditChromePreferred, setMarkdownEditChromePreferred] = useLocalStorage(
-    MARKDOWN_EDIT_CHROME_STORAGE_KEY,
-    false,
-    Schema.Boolean,
-  );
   // A reveal still wins over the preference: the line only exists in the source.
   const [handledReveal, setHandledReveal] = useState<{ path: string; requestId: number } | null>(
     null,
@@ -1227,27 +1221,6 @@ export default function FilePreviewPanel({
             />
           ) : null}
           {isMarkdown ? <ScientMarkdownSaveStatus status={markdownSaveStatus} /> : null}
-          {isMarkdown && !file.data?.truncated && !file.data?.readOnly ? (
-            <Tooltip>
-              <TooltipTrigger
-                render={
-                  <Toggle
-                    className="shrink-0"
-                    pressed={markdownEditChromePreferred}
-                    onPressedChange={setMarkdownEditChromePreferred}
-                    aria-label="Show Markdown editing controls"
-                    variant="ghost"
-                    size="sm"
-                  >
-                    <PenLine className="size-3.5" />
-                  </Toggle>
-                }
-              />
-              <TooltipPopup>
-                {markdownEditChromePreferred ? "Hide editing controls" : "Show editing controls"}
-              </TooltipPopup>
-            </Tooltip>
-          ) : null}
           {isMarkdown ? (
             <Tooltip>
               <TooltipTrigger
@@ -1476,7 +1449,6 @@ export default function FilePreviewPanel({
                   threadRef={threadRef}
                   contents={file.data.contents}
                   revision={file.data.revision}
-                  editChrome={markdownEditChromePreferred}
                   onOpenFile={onOpenFile}
                   onPendingChange={handlePendingChange}
                   onSaveFailure={handleSaveFailure}

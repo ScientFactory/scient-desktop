@@ -155,6 +155,27 @@ export class ScientMarkdownEditorView {
 
   getSnapshot = (): ScientMarkdownEditorSnapshot => this.snapshot;
 
+  /**
+   * Viewport anchor for the floating selection toolbar: the horizontal center
+   * of the first selected line plus the selection's outer top and bottom, or
+   * null when the selection is not inline text (empty, node, or cell).
+   */
+  selectionToolbarAnchor(): { left: number; top: number; bottom: number } | null {
+    const view = this.editorView;
+    if (!view) return null;
+    const { selection } = view.state;
+    if (selection.empty || !(selection instanceof TextSelection)) return null;
+    const fromCoords = view.coordsAtPos(selection.from);
+    const toCoords = view.coordsAtPos(selection.to);
+    const sameLine = Math.abs(fromCoords.top - toCoords.top) < 4;
+    const left = sameLine ? (fromCoords.left + toCoords.left) / 2 : fromCoords.left;
+    return {
+      left,
+      top: Math.min(fromCoords.top, toCoords.top),
+      bottom: Math.max(fromCoords.bottom, toCoords.bottom),
+    };
+  }
+
   subscribe = (listener: () => void): (() => void) => {
     this.listeners.add(listener);
     return () => this.listeners.delete(listener);

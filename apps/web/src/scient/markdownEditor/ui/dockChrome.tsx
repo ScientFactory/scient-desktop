@@ -1,4 +1,4 @@
-import { ChevronDown } from "lucide-react";
+import { ChevronDown, ChevronUp } from "lucide-react";
 import type { ReactNode } from "react";
 
 import {
@@ -20,7 +20,7 @@ import { cn } from "~/lib/utils";
 export function dockButtonClass(active?: boolean): string {
   return cn(
     "scient-markdown-command-button inline-flex h-7 items-center justify-center gap-1 rounded-md transition-colors",
-    active && "bg-accent text-accent-foreground font-semibold shadow-xs",
+    active && "bg-accent text-accent-foreground",
   );
 }
 
@@ -122,4 +122,40 @@ export function MenuRow(props: {
 /** Vertical separator between dock control groups; sized by the stylesheet. */
 export function DockDivider() {
   return <span className="scient-markdown-command-divider" />;
+}
+
+/**
+ * Expands or collapses the dock's formatting controls. The collapsed handle
+ * carries a label so the bar never reads as empty chrome.
+ */
+export function DockCollapseHandle(props: {
+  readonly expanded: boolean;
+  readonly onToggle: () => void;
+}) {
+  const label = props.expanded ? "Hide formatting tools" : "Show formatting tools";
+  return (
+    <Tooltip>
+      <TooltipTrigger
+        render={
+          <button
+            type="button"
+            className={dockButtonClass()}
+            aria-expanded={props.expanded}
+            aria-label={label}
+            onClick={props.onToggle}
+          >
+            {props.expanded ? (
+              <ChevronUp className="size-4" />
+            ) : (
+              <>
+                <ChevronDown className="size-4" />
+                <span className="pe-1 text-xs text-muted-foreground">Formatting</span>
+              </>
+            )}
+          </button>
+        }
+      />
+      <TooltipPopup side="top">{label}</TooltipPopup>
+    </Tooltip>
+  );
 }

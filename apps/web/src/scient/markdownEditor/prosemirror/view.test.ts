@@ -27,6 +27,27 @@ describe("ScientMarkdownEditorView", () => {
     return { controller, host, onUserSourceChange, view: controller.mount(host) };
   }
 
+  it("anchors the selection toolbar only to inline text selections", () => {
+    const { controller, view } = mountEditor();
+    expect(controller.selectionToolbarAnchor()).toBeNull();
+
+    view.dispatch(view.state.tr.setSelection(TextSelection.create(view.state.doc, 2, 5)));
+    expect(controller.selectionToolbarAnchor()).not.toBeNull();
+
+    const codeController = new ScientMarkdownEditorView({
+      source: "```\ncode\n```\n",
+      revision: "sha256:b",
+      ariaLabel: "Code document",
+      onUserSourceChange: () => undefined,
+    });
+    const codeHost = document.createElement("div");
+    document.body.append(codeHost);
+    mounted.push(codeController);
+    const codeView = codeController.mount(codeHost);
+    codeView.dispatch(codeView.state.tr.setSelection(NodeSelection.create(codeView.state.doc, 0)));
+    expect(codeController.selectionToolbarAnchor()).toBeNull();
+  });
+
   it("keeps one mounted view and document through 100 read/write cycles", () => {
     const { controller, host, onUserSourceChange, view } = mountEditor();
     const documentNode = view.state.doc;
@@ -371,7 +392,7 @@ describe("ScientMarkdownEditorView", () => {
     expect(onOpenLink).toHaveBeenCalledTimes(2);
   });
 
-  it("keeps a rendered code block visible when its nested editor activates", async () => {
+  it("hides the duplicate render while a plain code block is being edited", async () => {
     const onUserSourceChange = vi.fn();
     const controller = new ScientMarkdownEditorView({
       source: "```python linenos\nprint('result')\n```\n",
@@ -391,7 +412,7 @@ describe("ScientMarkdownEditorView", () => {
     await vi.waitFor(() => {
       expect(view.dom.querySelector(".scient-markdown-code-editor .cm-editor")).not.toBeNull();
     });
-    expect(rendered?.hidden).toBe(false);
+    expect(rendered?.hidden).toBe(true);
     expect(onUserSourceChange).not.toHaveBeenCalled();
   });
 

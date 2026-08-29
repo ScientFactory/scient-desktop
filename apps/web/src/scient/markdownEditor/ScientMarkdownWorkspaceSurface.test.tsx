@@ -39,7 +39,6 @@ describe("ScientMarkdownWorkspaceSurface", () => {
           {...callbacks}
           source={"# Results\n\n| A | B |\n| --- | --- |\n| 1 | 2 |\n"}
           revision="r0"
-          editChrome={false}
           ariaLabel="Results"
         />,
       ),
@@ -48,11 +47,14 @@ describe("ScientMarkdownWorkspaceSurface", () => {
     expect(richDocument?.querySelector("table")).not.toBeNull();
     expect(richDocument?.getAttribute("contenteditable")).toBe("true");
     expect(host.querySelector(".cm-editor")).toBeNull();
-    expect(host.querySelector("[aria-label='Document actions']")).toBeNull();
+    // The dock is always present but starts collapsed: only the handle shows.
+    expect(host.querySelector("[aria-label='Document actions']")).not.toBeNull();
+    expect(host.querySelector("[aria-label='Show formatting tools']")).not.toBeNull();
+    expect(host.querySelector("[aria-label='Bold (Cmd+B)']")).toBeNull();
     expect(persist).not.toHaveBeenCalled();
   });
 
-  it("shows the editing controls only when editChrome is on", async () => {
+  it("expands the collapsed editing controls from the handle", async () => {
     vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
     const host = document.createElement("div");
     document.body.append(host);
@@ -64,7 +66,6 @@ describe("ScientMarkdownWorkspaceSurface", () => {
         <ScientMarkdownWorkspaceSurface
           source={"# Results\n"}
           revision="r0"
-          editChrome
           ariaLabel="Results"
           persist={vi.fn(async () => ({ revision: "r1" }))}
           onPendingChange={vi.fn()}
@@ -76,8 +77,14 @@ describe("ScientMarkdownWorkspaceSurface", () => {
     );
 
     expect(host.querySelector(".ProseMirror")).not.toBeNull();
-    const actions = host.querySelector("[aria-label='Document actions']");
-    expect(actions).not.toBeNull();
+    const handle = host.querySelector<HTMLButtonElement>("[aria-label='Show formatting tools']");
+    expect(handle).not.toBeNull();
+    expect(host.querySelector("[aria-label='Bold (Cmd+B)']")).toBeNull();
+
+    await act(() => handle!.click());
+
+    expect(host.querySelector("[aria-label='Bold (Cmd+B)']")).not.toBeNull();
+    expect(host.querySelector("[aria-label='Hide formatting tools']")).not.toBeNull();
   });
 
   it("opens find as a bounded row in document flow instead of a clipped popover", async () => {
@@ -92,7 +99,6 @@ describe("ScientMarkdownWorkspaceSurface", () => {
         <ScientMarkdownWorkspaceSurface
           source="Find this text.\n"
           revision="r0"
-          editChrome
           ariaLabel="Find fixture"
           persist={vi.fn(async () => ({ revision: "r1" }))}
           onPendingChange={vi.fn()}

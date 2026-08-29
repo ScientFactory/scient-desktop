@@ -1,4 +1,5 @@
 import type { Node as ProseMirrorNode } from "prosemirror-model";
+import { NodeSelection } from "prosemirror-state";
 import type { EditorView, NodeView } from "prosemirror-view";
 import { createElement } from "react";
 import { createRoot, type Root } from "react-dom/client";
@@ -52,6 +53,20 @@ class ScientCodeBlockNodeView implements NodeView {
     this.editorHost.className = "scient-markdown-code-editor";
     this.editorHost.hidden = true;
     this.dom.append(this.editorHost);
+    // Clicking anywhere in the block opens the nested editor; without this a
+    // reader has no visible way in, since editing waits for a node selection.
+    this.dom.addEventListener("mousedown", (event) => {
+      if (!(event.target instanceof Element)) return;
+      if (this.editorHost.contains(event.target)) return;
+      if (event.target.closest("button, a, input, select, textarea, [role='button']")) return;
+      if (!this.view.editable) return;
+      const position = this.getPos();
+      if (position === undefined) return;
+      event.preventDefault();
+      this.view.dispatch(
+        this.view.state.tr.setSelection(NodeSelection.create(this.view.state.doc, position)),
+      );
+    });
     this.render();
   }
 
@@ -65,12 +80,16 @@ class ScientCodeBlockNodeView implements NodeView {
 
   selectNode(): void {
     this.dom.classList.add("is-selected");
+    // Plain code in the editor duplicates the highlighted render, so hide it;
+    // rich fences (diagrams, plots) stay visible as a live preview.
+    this.rendered.hidden = !this.dom.hasAttribute("data-scient-markdown-rich-fence");
     this.editorHost.hidden = false;
     void this.activateEditor();
   }
 
   deselectNode(): void {
     this.dom.classList.remove("is-selected");
+    this.rendered.hidden = false;
     this.editorHost.hidden = true;
   }
 

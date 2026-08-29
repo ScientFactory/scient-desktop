@@ -43,11 +43,11 @@ describe("Scient Markdown file-preview seam", () => {
     }
   });
 
-  it("keeps one rendered surface that is always editable, toggled only by the eye and chrome switches", () => {
+  it("keeps one rendered surface that is always editable, toggled only by the eye switch", () => {
     expect(panelSource).toContain('"Show markdown source"');
     expect(panelSource).toContain('"Show rendered markdown"');
-    expect(panelSource).toContain('aria-label="Show Markdown editing controls"');
-    expect(panelSource).toContain("editChrome={markdownEditChromePreferred}");
+    expect(panelSource).not.toContain("PenLine");
+    expect(panelSource).not.toContain("editChrome=");
     expect(panelSource).toContain("renderMarkdown ?");
     expect(panelSource).not.toContain('aria-label="Markdown mode"');
     for (const retired of ['value="write"', 'value="read"', 'value="split"', 'value="source"']) {

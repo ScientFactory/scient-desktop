@@ -11,7 +11,6 @@ const SAVE_DEBOUNCE_MS = 500;
 export interface ScientMarkdownWorkspaceSurfaceProps {
   readonly source: string;
   readonly revision: string;
-  readonly editChrome: boolean;
   readonly ariaLabel: string;
   readonly persist: (intent: MarkdownSaveIntent) => Promise<{ readonly revision: string }>;
   readonly onPendingChange: (pending: boolean) => void;
@@ -37,8 +36,8 @@ export interface ScientMarkdownWorkspaceSurfaceProps {
 
 /**
  * Coordinates one always-editable rich document and one serial save lane.
- * The rendered view is the editor: clicking into it edits it. `editChrome`
- * only shows or hides the editing controls; it never changes the document.
+ * The rendered view is the editor: clicking into it edits it. The editing
+ * controls stay collapsed until the reader opens them or starts typing.
  */
 export function ScientMarkdownWorkspaceSurface(props: ScientMarkdownWorkspaceSurfaceProps) {
   const persistRef = useRef(props.persist);
@@ -60,6 +59,7 @@ export function ScientMarkdownWorkspaceSurface(props: ScientMarkdownWorkspaceSur
   onImageUploadFailureRef.current = props.onImageUploadFailure;
 
   const [draftSource, setDraftSource] = useState(props.source);
+  const [chromeExpanded, setChromeExpanded] = useState(false);
   const controllerRef = useRef<ScientMarkdownEditorView | null>(null);
   const [saveQueue] = useState(
     () =>
@@ -95,6 +95,8 @@ export function ScientMarkdownWorkspaceSurface(props: ScientMarkdownWorkspaceSur
         ...(props.wikiLinkTargetExists ? { wikiLinkTargetExists: props.wikiLinkTargetExists } : {}),
         onUserSourceChange: (source, intent) => {
           setDraftSource(source);
+          // First real edit reveals the formatting controls.
+          setChromeExpanded(true);
           saveQueue.enqueue(intent);
         },
       }),
@@ -157,7 +159,11 @@ export function ScientMarkdownWorkspaceSurface(props: ScientMarkdownWorkspaceSur
         />
       ) : null}
       <div className="scient-markdown-rich-pane">
-        {props.editChrome ? <ScientMarkdownControls controller={controller} /> : null}
+        <ScientMarkdownControls
+          controller={controller}
+          expanded={chromeExpanded}
+          onExpandedChange={setChromeExpanded}
+        />
         <ScientMarkdownDocument
           source={draftSource}
           revision={props.revision}

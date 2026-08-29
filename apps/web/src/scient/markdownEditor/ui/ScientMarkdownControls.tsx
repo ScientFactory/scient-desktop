@@ -50,12 +50,14 @@ import {
 } from "lucide-react";
 import {
   useEffect,
+  useLayoutEffect,
   useRef,
   useState,
   useSyncExternalStore,
   type FormEvent,
   type ReactNode,
 } from "react";
+import { createPortal } from "react-dom";
 
 import { Button } from "~/components/ui/button";
 import { Input } from "~/components/ui/input";
@@ -79,7 +81,14 @@ import {
 } from "../prosemirror/commands";
 import type { ScientMarkdownBlockAction } from "../prosemirror/blocks";
 import type { ScientMarkdownEditorSnapshot, ScientMarkdownEditorView } from "../prosemirror/view";
-import { DockButton, DockDivider, DockMenu, MenuRow, dockButtonClass } from "./dockChrome";
+import {
+  DockButton,
+  DockCollapseHandle,
+  DockDivider,
+  DockMenu,
+  MenuRow,
+  dockButtonClass,
+} from "./dockChrome";
 import { ScientFindBar } from "./ScientFindBar";
 
 /** One icon per command, shared by the dock menus and the slash menu. */
@@ -232,7 +241,6 @@ function StyleMenu({
     <DockMenu
       label={`Style: ${styleMenuLabel(snapshot)}`}
       icon={styleTriggerIcon(snapshot)}
-      active={snapshot.blockType !== "paragraph" && snapshot.blockType !== "list_item"}
       groupLabel="Style"
     >
       <MenuRadioGroup
@@ -306,7 +314,6 @@ function ListsMenu({
     <DockMenu
       label={`List: ${listMenuLabel(snapshot.listKind)}`}
       icon={listTriggerIcon(snapshot.listKind)}
-      active={snapshot.listKind !== null}
       groupLabel="Lists"
     >
       <MenuRadioGroup
@@ -407,7 +414,6 @@ function DirectionMenu({
     <DockMenu
       label={`Text direction: ${directionMenuLabel(snapshot.textDirection)}`}
       icon={directionTriggerIcon(snapshot.textDirection)}
-      active={snapshot.textDirection !== null}
       groupLabel="Text direction"
     >
       <MenuRadioGroup
@@ -655,10 +661,135 @@ function TableMoreControl({ controller }: { readonly controller: ScientMarkdownE
   );
 }
 
-export function ScientMarkdownControls({
+/**
+ * Floating formatting toolbar anchored just above the text selection. It is
+ * portaled to the body and never participates in document flow, so selecting
+ * text cannot shift the document. While the pointer is held down (drag or
+ * double-click in progress) it stays hidden and appears on release.
+ */
+function SelectionToolbar({
   controller,
+  snapshot,
 }: {
   readonly controller: ScientMarkdownEditorView;
+  readonly snapshot: ScientMarkdownEditorSnapshot;
+}) {
+  const toolbarRef = useRef<HTMLDivElement>(null);
+  const [anchor, setAnchor] = useState<{ left: number; top: number; bottom: number } | null>(null);
+  const [place, setPlace] = useState<"above" | "below">("above");
+  const [pointerDown, setPointerDown] = useState(false);
+
+  useEffect(() => {
+    const onPointerDown = (event: PointerEvent) => {
+      if (event.button !== 0) return;
+      if (toolbarRef.current?.contains(event.target as globalThis.Node)) return;
+      setPointerDown(true);
+    };
+    const onPointerUp = () => setPointerDown(false);
+    window.addEventListener("pointerdown", onPointerDown, true);
+    window.addEventListener("pointerup", onPointerUp, true);
+    return () => {
+      window.removeEventListener("pointerdown", onPointerDown, true);
+      window.removeEventListener("pointerup", onPointerUp, true);
+    };
+  }, []);
+
+  useLayoutEffect(() => {
+    if (!snapshot.editable || snapshot.selectionEmpty) {
+      setAnchor(null);
+      return;
+    }
+    setAnchor(controller.selectionToolbarAnchor());
+  }, [controller, snapshot.version, snapshot.editable, snapshot.selectionEmpty]);
+
+  // Keep the toolbar glued to the selection while the document scrolls.
+  useEffect(() => {
+    if (anchor === null) return;
+    const update = () => setAnchor(controller.selectionToolbarAnchor());
+    window.addEventListener("scroll", update, true);
+    window.addEventListener("resize", update);
+    return () => {
+      window.removeEventListener("scroll", update, true);
+      window.removeEventListener("resize", update);
+    };
+  }, [controller, anchor !== null]);
+
+  // Clamp horizontally and flip below the selection when there is no room above.
+  useLayoutEffect(() => {
+    const element = toolbarRef.current;
+    if (!element || anchor === null) return;
+    const rect = element.getBoundingClientRect();
+    const margin = 8;
+    const half = rect.width / 2;
+    const left = Math.min(Math.max(anchor.left, margin + half), window.innerWidth - margin - half);
+    const fitsAbove = anchor.top - rect.height - margin >= margin;
+    const nextPlace = fitsAbove ? "above" : "below";
+    if (left !== anchor.left || nextPlace !== place) {
+      setAnchor({ ...anchor, left });
+      setPlace(nextPlace);
+    }
+  });
+
+  if (!snapshot.editable || snapshot.selectionEmpty || pointerDown || anchor === null) {
+    return null;
+  }
+
+  const active = new Set(snapshot.activeMarks);
+  return createPortal(
+    <div
+      ref={toolbarRef}
+      className="scient-markdown-selection-toolbar"
+      role="toolbar"
+      aria-label="Text formatting"
+      style={{
+        left: anchor.left,
+        top: place === "above" ? anchor.top : anchor.bottom,
+        transform:
+          place === "above" ? "translate(-50%, calc(-100% - 8px))" : "translate(-50%, 8px)",
+      }}
+    >
+      <CommandButton
+        controller={controller}
+        command="bold"
+        label="Bold (Cmd+B)"
+        icon={<Bold className="size-4" strokeWidth={2.5} />}
+        active={active.has("strong")}
+      />
+      <CommandButton
+        controller={controller}
+        command="italic"
+        label="Italic (Cmd+I)"
+        icon={<Italic className="size-4" />}
+        active={active.has("em")}
+      />
+      <CommandButton
+        controller={controller}
+        command="strike"
+        label="Strikethrough"
+        icon={<Strikethrough className="size-4" />}
+        active={active.has("strike")}
+      />
+      <CommandButton
+        controller={controller}
+        command="inline-code"
+        label="Inline Code"
+        icon={<Code className="size-4" />}
+        active={active.has("code")}
+      />
+      <LinkEditor controller={controller} active={active.has("link")} />
+    </div>,
+    document.body,
+  );
+}
+
+export function ScientMarkdownControls({
+  controller,
+  expanded,
+  onExpandedChange,
+}: {
+  readonly controller: ScientMarkdownEditorView;
+  readonly expanded: boolean;
+  readonly onExpandedChange: (expanded: boolean) => void;
 }) {
   const snapshot = useSyncExternalStore(
     controller.subscribe,
@@ -672,11 +803,16 @@ export function ScientMarkdownControls({
   return (
     <>
       <div
-        className="scient-markdown-editor-dock flex min-h-9 flex-wrap items-center gap-0.5 border-b border-border/80 bg-background/95 px-2 py-1 backdrop-blur-xs"
+        className="scient-markdown-editor-dock flex items-center gap-0.5 border-b border-border/80 bg-background/95 px-2 py-1 backdrop-blur-xs"
         role="toolbar"
         aria-label="Document actions"
       >
-        {snapshot.editable ? (
+        {!expanded ? (
+          <div className="ms-auto flex items-center">
+            <DockCollapseHandle expanded={false} onToggle={() => onExpandedChange(true)} />
+          </div>
+        ) : null}
+        {expanded && snapshot.editable ? (
           <>
             <CommandButton
               controller={controller}
@@ -697,7 +833,7 @@ export function ScientMarkdownControls({
               controller={controller}
               command="bold"
               label="Bold (Cmd+B)"
-              icon={<Bold className="size-4" />}
+              icon={<Bold className="size-4" strokeWidth={2.5} />}
               active={active.has("strong")}
             />
             <CommandButton
@@ -731,50 +867,17 @@ export function ScientMarkdownControls({
             <DirectionMenu controller={controller} snapshot={snapshot} />
           </>
         ) : null}
-        <div className="ms-auto flex items-center gap-0.5">
-          <BlockActionsMenu controller={controller} snapshot={snapshot} />
-        </div>
+        {expanded ? (
+          <div className="ms-auto flex items-center gap-0.5">
+            <BlockActionsMenu controller={controller} snapshot={snapshot} />
+            <DockCollapseHandle expanded onToggle={() => onExpandedChange(false)} />
+          </div>
+        ) : null}
       </div>
 
       {snapshot.findOpen ? <ScientFindBar controller={controller} snapshot={snapshot} /> : null}
 
-      {snapshot.editable && !snapshot.selectionEmpty ? (
-        <div
-          className="scient-markdown-selection-toolbar flex items-center gap-0.5 rounded-lg border border-border/80 bg-background/95 p-1 shadow-md backdrop-blur-md"
-          role="toolbar"
-          aria-label="Text formatting"
-        >
-          <CommandButton
-            controller={controller}
-            command="bold"
-            label="Bold (Cmd+B)"
-            icon={<Bold className="size-4" />}
-            active={active.has("strong")}
-          />
-          <CommandButton
-            controller={controller}
-            command="italic"
-            label="Italic (Cmd+I)"
-            icon={<Italic className="size-4" />}
-            active={active.has("em")}
-          />
-          <CommandButton
-            controller={controller}
-            command="strike"
-            label="Strikethrough"
-            icon={<Strikethrough className="size-4" />}
-            active={active.has("strike")}
-          />
-          <CommandButton
-            controller={controller}
-            command="inline-code"
-            label="Inline Code"
-            icon={<Code className="size-4" />}
-            active={active.has("code")}
-          />
-          <LinkEditor controller={controller} active={active.has("link")} />
-        </div>
-      ) : null}
+      <SelectionToolbar controller={controller} snapshot={snapshot} />
 
       {snapshot.editable && snapshot.inTable ? (
         <div

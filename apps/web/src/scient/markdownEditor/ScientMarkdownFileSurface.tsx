@@ -34,8 +34,6 @@ export interface ScientMarkdownFileSurfaceProps {
   readonly threadRef: ScopedThreadRef;
   readonly contents: string;
   readonly revision: string;
-  /** Shows or hides the editing controls; the document is always editable. */
-  readonly editChrome: boolean;
   readonly onOpenFile: (relativePath: string) => void;
   readonly onPendingChange: (relativePath: string, pending: boolean) => void;
   readonly onSaveConfirmed: (relativePath: string, contents: string, revision: string) => void;
@@ -172,7 +170,6 @@ export function ScientMarkdownFileSurface(props: ScientMarkdownFileSurfaceProps)
         <LazyScientCm6SpikeSurface
           source={props.contents}
           revision={props.revision}
-          editChrome={props.editChrome}
           ariaLabel={`${props.relativePath} Markdown document (CM6 spike)`}
           persist={persist}
           onPendingChange={(pending) => props.onPendingChange(props.relativePath, pending)}
@@ -201,7 +198,6 @@ export function ScientMarkdownFileSurface(props: ScientMarkdownFileSurfaceProps)
     <ScientMarkdownWorkspaceSurface
       source={props.contents}
       revision={props.revision}
-      editChrome={props.editChrome}
       ariaLabel={`${props.relativePath} Markdown document`}
       persist={persist}
       onPendingChange={(pending) => props.onPendingChange(props.relativePath, pending)}
