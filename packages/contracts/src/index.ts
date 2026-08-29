@@ -33,6 +33,7 @@ export * from "./scientProject.ts";
 export * from "./scientSources.ts";
 export * from "./scientAnalytics.ts";
 export * from "./scientAnalysis.ts";
+export * from "./scientCompute.ts";
 export * from "./scientSkills.ts";
 export * from "./scientLatex.ts";
 export * from "./browserPdfExport.ts";

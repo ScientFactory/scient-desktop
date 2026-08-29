@@ -18,6 +18,7 @@ import { Route as ChatIndexRouteImport } from './routes/_chat.index'
 import { Route as SettingsVoiceRouteImport } from './routes/settings.voice'
 import { Route as SettingsSourceControlRouteImport } from './routes/settings.source-control'
 import { Route as SettingsSkillsRouteImport } from './routes/settings.skills'
+import { Route as SettingsScientificComputingRouteImport } from './routes/settings.scientific-computing'
 import { Route as SettingsProvidersRouteImport } from './routes/settings.providers'
 import { Route as SettingsKeybindingsRouteImport } from './routes/settings.keybindings'
 import { Route as SettingsIntegrationsRouteImport } from './routes/settings.integrations'
@@ -79,6 +80,12 @@ const SettingsSkillsRoute = SettingsSkillsRouteImport.update({
   path: '/skills',
   getParentRoute: () => SettingsRoute,
 } as any)
+const SettingsScientificComputingRoute =
+  SettingsScientificComputingRouteImport.update({
+    id: '/scientific-computing',
+    path: '/scientific-computing',
+    getParentRoute: () => SettingsRoute,
+  } as any)
 const SettingsProvidersRoute = SettingsProvidersRouteImport.update({
   id: '/providers',
   path: '/providers',
@@ -179,6 +186,7 @@ export interface FileRoutesByFullPath {
   '/settings/integrations': typeof SettingsIntegrationsRoute
   '/settings/keybindings': typeof SettingsKeybindingsRoute
   '/settings/providers': typeof SettingsProvidersRoute
+  '/settings/scientific-computing': typeof SettingsScientificComputingRoute
   '/settings/skills': typeof SettingsSkillsRoute
   '/settings/source-control': typeof SettingsSourceControlRoute
   '/settings/voice': typeof SettingsVoiceRoute
@@ -204,6 +212,7 @@ export interface FileRoutesByTo {
   '/settings/integrations': typeof SettingsIntegrationsRoute
   '/settings/keybindings': typeof SettingsKeybindingsRoute
   '/settings/providers': typeof SettingsProvidersRoute
+  '/settings/scientific-computing': typeof SettingsScientificComputingRoute
   '/settings/skills': typeof SettingsSkillsRoute
   '/settings/source-control': typeof SettingsSourceControlRoute
   '/settings/voice': typeof SettingsVoiceRoute
@@ -232,6 +241,7 @@ export interface FileRoutesById {
   '/settings/integrations': typeof SettingsIntegrationsRoute
   '/settings/keybindings': typeof SettingsKeybindingsRoute
   '/settings/providers': typeof SettingsProvidersRoute
+  '/settings/scientific-computing': typeof SettingsScientificComputingRoute
   '/settings/skills': typeof SettingsSkillsRoute
   '/settings/source-control': typeof SettingsSourceControlRoute
   '/settings/voice': typeof SettingsVoiceRoute
@@ -261,6 +271,7 @@ export interface FileRouteTypes {
     | '/settings/integrations'
     | '/settings/keybindings'
     | '/settings/providers'
+    | '/settings/scientific-computing'
     | '/settings/skills'
     | '/settings/source-control'
     | '/settings/voice'
@@ -286,6 +297,7 @@ export interface FileRouteTypes {
     | '/settings/integrations'
     | '/settings/keybindings'
     | '/settings/providers'
+    | '/settings/scientific-computing'
     | '/settings/skills'
     | '/settings/source-control'
     | '/settings/voice'
@@ -313,6 +325,7 @@ export interface FileRouteTypes {
     | '/settings/integrations'
     | '/settings/keybindings'
     | '/settings/providers'
+    | '/settings/scientific-computing'
     | '/settings/skills'
     | '/settings/source-control'
     | '/settings/voice'
@@ -396,6 +409,13 @@ declare module '@tanstack/react-router' {
       path: '/skills'
       fullPath: '/settings/skills'
       preLoaderRoute: typeof SettingsSkillsRouteImport
+      parentRoute: typeof SettingsRoute
+    }
+    '/settings/scientific-computing': {
+      id: '/settings/scientific-computing'
+      path: '/scientific-computing'
+      fullPath: '/settings/scientific-computing'
+      preLoaderRoute: typeof SettingsScientificComputingRouteImport
       parentRoute: typeof SettingsRoute
     }
     '/settings/providers': {
@@ -540,6 +560,7 @@ interface SettingsRouteChildren {
   SettingsIntegrationsRoute: typeof SettingsIntegrationsRoute
   SettingsKeybindingsRoute: typeof SettingsKeybindingsRoute
   SettingsProvidersRoute: typeof SettingsProvidersRoute
+  SettingsScientificComputingRoute: typeof SettingsScientificComputingRoute
   SettingsSkillsRoute: typeof SettingsSkillsRoute
   SettingsSourceControlRoute: typeof SettingsSourceControlRoute
   SettingsVoiceRoute: typeof SettingsVoiceRoute
@@ -556,6 +577,7 @@ const SettingsRouteChildren: SettingsRouteChildren = {
   SettingsIntegrationsRoute: SettingsIntegrationsRoute,
   SettingsKeybindingsRoute: SettingsKeybindingsRoute,
   SettingsProvidersRoute: SettingsProvidersRoute,
+  SettingsScientificComputingRoute: SettingsScientificComputingRoute,
   SettingsSkillsRoute: SettingsSkillsRoute,
   SettingsSourceControlRoute: SettingsSourceControlRoute,
   SettingsVoiceRoute: SettingsVoiceRoute,
