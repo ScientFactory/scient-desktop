@@ -70,12 +70,15 @@ class ScientTaskListItemNodeView implements NodeView {
       this.checkbox = document.createElement("input");
       this.checkbox.type = "checkbox";
       this.checkbox.className = "scient-markdown-task-checkbox";
-      this.checkbox.setAttribute("aria-label", "Toggle task");
       this.checkbox.addEventListener("change", this.handleChange);
       this.unregisterCheckbox = this.registerCheckbox?.(this.checkbox) ?? null;
       this.dom.prepend(this.checkbox);
     }
     this.checkbox.checked = checked;
+    this.checkbox.setAttribute(
+      "aria-label",
+      `${checked ? "Mark task incomplete" : "Mark task complete"}: ${this.node.textContent.trim() || "Untitled task"}`,
+    );
     this.checkbox.disabled = !this.view.editable;
   }
 }

@@ -51,6 +51,11 @@ describe("DockOverflowRow", () => {
     document.body.append(host);
     const root = createRoot(host);
     roots.push(root);
+    const actions = {
+      undo: vi.fn(),
+      heading: vi.fn(),
+      table: vi.fn(),
+    };
 
     await act(() =>
       root.render(
@@ -61,23 +66,55 @@ describe("DockOverflowRow", () => {
           groups={[
             {
               id: "history",
-              priority: 10,
+              priority: 30,
               estimatedWidth: 80,
               bar: <button type="button">Undo</button>,
               overflowLabel: "History",
-              overflow: <MenuItem>Undo</MenuItem>,
+              overflow: <MenuItem onClick={actions.undo}>Undo</MenuItem>,
+            },
+            {
+              id: "style",
+              priority: 20,
+              estimatedWidth: 80,
+              bar: <button type="button">Heading</button>,
+              overflowLabel: "Style",
+              overflow: <MenuItem onClick={actions.heading}>Heading</MenuItem>,
+            },
+            {
+              id: "insert",
+              priority: 10,
+              estimatedWidth: 80,
+              bar: <button type="button">Table</button>,
+              overflowLabel: "Insert",
+              overflow: <MenuItem onClick={actions.table}>Table</MenuItem>,
             },
           ]}
         />,
       ),
     );
 
-    const trigger = host.querySelector<HTMLButtonElement>("[aria-label='More actions']");
-    expect(trigger).not.toBeNull();
-    await act(() => trigger!.click());
+    for (const [label, action] of Object.entries(actions)) {
+      const trigger = host.querySelector<HTMLButtonElement>("[aria-label='More actions']");
+      expect(trigger).not.toBeNull();
+      await act(() => trigger!.click());
 
-    expect(document.body.querySelector("[data-slot='menu-group']")).not.toBeNull();
-    expect(document.body.querySelector("[data-slot='menu-label']")?.textContent).toBe("History");
-    expect(document.body.querySelector("[data-slot='menu-item']")?.textContent).toBe("Undo");
+      const groupLabels = Array.from(
+        document.body.querySelectorAll("[data-slot='menu-label']"),
+        (node) => node.textContent?.trim(),
+      );
+      expect(groupLabels).toHaveLength(3);
+      expect(groupLabels).toEqual(expect.arrayContaining(["History", "Style", "Insert"]));
+      const item = Array.from(
+        document.body.querySelectorAll<HTMLElement>("[data-slot='menu-item']"),
+      ).find((candidate) => candidate.textContent?.toLocaleLowerCase() === label);
+      expect(item).not.toBeNull();
+      await act(() => item!.click());
+      expect(action).toHaveBeenCalledOnce();
+    }
+    expect(
+      Array.from(document.body.querySelectorAll("[data-slot='menu-label']"), (node) =>
+        node.textContent?.trim(),
+      ),
+    ).toEqual([]);
   });
 });

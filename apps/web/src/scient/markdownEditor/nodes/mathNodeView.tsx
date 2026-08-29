@@ -144,12 +144,16 @@ class ScientMathNodeView implements NodeView {
           }
           return;
         }
-        if (version !== this.validationVersion) return;
-        this.currentValidity = false;
-        this.dom.setAttribute("data-scient-markdown-math-validity", "invalid");
-        this.renderPreview(this.lastValidTex ?? tex, this.lastValidTex !== null);
+        this.settleInvalid(version, tex);
       })
-      .catch(() => undefined);
+      .catch(() => this.settleInvalid(version, tex));
+  }
+
+  private settleInvalid(version: number, tex: string): void {
+    if (this.destroyed || version !== this.validationVersion) return;
+    this.currentValidity = false;
+    this.dom.setAttribute("data-scient-markdown-math-validity", "invalid");
+    this.renderPreview(this.lastValidTex ?? tex, this.lastValidTex !== null);
   }
 
   private renderPreview(tex: string, retained: boolean): void {

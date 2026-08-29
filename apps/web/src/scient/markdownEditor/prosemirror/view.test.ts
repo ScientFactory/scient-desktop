@@ -258,6 +258,7 @@ describe("ScientMarkdownEditorView", () => {
 
     expect(checkbox?.checked).toBe(true);
     expect(checkbox?.disabled).toBe(true);
+    expect(checkbox?.getAttribute("aria-label")).toBe("Mark task incomplete: Done");
     expect(view.dom.querySelector("[data-scient-markdown-wiki-link]")?.textContent).toContain(
       "protocol",
     );
@@ -271,6 +272,7 @@ describe("ScientMarkdownEditorView", () => {
     checkbox!.dispatchEvent(new Event("change", { bubbles: true }));
     expect(onUserSourceChange).toHaveBeenCalledOnce();
     expect(onUserSourceChange.mock.calls[0]?.[0]).toContain("- [ ] Done");
+    expect(checkbox?.getAttribute("aria-label")).toBe("Mark task complete: Done");
   });
 
   it("does not persist an intermediate IME composition from a nested rich editor", () => {

@@ -99,6 +99,7 @@ export interface ScientCm6SpikeSurfaceProps {
     readonly source: string;
     readonly revision: string;
   }) => void;
+  readonly onOpenLink?: (target: string) => void;
   readonly resolveImageSource?: (authoredSource: string) => Promise<string | null>;
   readonly saveResolution?: {
     readonly action: "discard" | "retry";
@@ -149,6 +150,7 @@ export function ScientCm6SpikeSurface(props: ScientCm6SpikeSurfaceProps) {
         revision: props.revision,
         placeholder: "Start writing…",
         ...(props.resolveImageSource ? { resolveImageSource: props.resolveImageSource } : {}),
+        ...(props.onOpenLink ? { onOpenLink: props.onOpenLink } : {}),
         onUserSourceChange: (_source, intent) => {
           // First real edit reveals the formatting controls.
           setChromeExpanded(true);

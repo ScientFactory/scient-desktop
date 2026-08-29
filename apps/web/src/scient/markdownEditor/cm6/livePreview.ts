@@ -171,11 +171,15 @@ function buildDecorations(view: EditorView, config: LivePreviewConfig): Decorati
             if (revealedInline) return;
             decorations.push(
               Decoration.replace({
-                widget: new TaskCheckboxWidget(checked, () => {
-                  view.dispatch({
-                    changes: { from, to, insert: checked ? "[ ]" : "[x]" },
-                  });
-                }),
+                widget: new TaskCheckboxWidget(
+                  checked,
+                  state.sliceDoc(to, state.doc.lineAt(to).to).trim(),
+                  () => {
+                    view.dispatch({
+                      changes: { from, to, insert: checked ? "[ ]" : "[x]" },
+                    });
+                  },
+                ),
               }).range(from, to),
             );
             return;
@@ -197,7 +201,7 @@ function buildDecorations(view: EditorView, config: LivePreviewConfig): Decorati
             if (revealedInline) return;
             const imageSyntax = state.sliceDoc(from, to);
             const match = /^!\[([^\]]*)\]\(([^)\s]+)[^)]*\)$/u.exec(imageSyntax);
-            if (!match?.[1] || !match[2]) return;
+            if (!match || match[1] === undefined || !match[2]) return;
             const authoredSource = match[2];
             config.imageResources?.request(authoredSource);
             decorations.push(

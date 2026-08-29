@@ -19,6 +19,7 @@ describe("ScientMarkdownWorkspaceSurface", () => {
     }
     await new Promise((resolve) => setTimeout(resolve, 0));
     document.body.replaceChildren();
+    vi.restoreAllMocks();
     vi.unstubAllGlobals();
   });
 
@@ -214,5 +215,42 @@ describe("ScientMarkdownWorkspaceSurface", () => {
       expect(dispose).toHaveBeenCalledTimes(disposedBeforeFinalUnmount + 1);
       expect(destroy).toHaveBeenCalledTimes(destroyedBeforeFinalUnmount + 1);
     });
+  });
+
+  it("leaves one editor and no stale save lane through repeated file switches", async () => {
+    vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+    const dispose = vi.spyOn(MarkdownSaveQueue.prototype, "dispose");
+    const destroy = vi.spyOn(ScientMarkdownEditorView.prototype, "destroy");
+    const host = document.createElement("div");
+    document.body.append(host);
+    const root = createRoot(host);
+
+    for (let index = 0; index < 12; index += 1) {
+      await act(() =>
+        root.render(
+          <ScientMarkdownWorkspaceSurface
+            key={`document-${index}`}
+            source={`# Document ${index}\n`}
+            revision={`r${index}`}
+            ariaLabel={`Document ${index}`}
+            persist={vi.fn(async () => ({ revision: `saved-${index}` }))}
+            onPendingChange={vi.fn()}
+            onSaveConfirmed={vi.fn()}
+            onSaveFailure={vi.fn()}
+            onExternalConflict={vi.fn()}
+          />,
+        ),
+      );
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      expect(host.querySelectorAll(".ProseMirror")).toHaveLength(1);
+      expect(host.querySelector("h1")?.textContent).toContain(`Document ${index}`);
+    }
+
+    await act(() => root.unmount());
+    await vi.waitFor(() => {
+      expect(dispose).toHaveBeenCalledTimes(12);
+      expect(destroy).toHaveBeenCalledTimes(12);
+    });
+    expect(host.querySelector(".ProseMirror")).toBeNull();
   });
 });

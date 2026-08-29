@@ -164,6 +164,25 @@ export function ScientMarkdownFileSurface(props: ScientMarkdownFileSurfaceProps)
     },
     [props.cwd, props.environmentId, props.relativePath],
   );
+  const handleOpenLink = useCallback(
+    (target: string) => {
+      if (/^(?:https?:|mailto:)/iu.test(target)) {
+        void readLocalApi()
+          ?.shell.openExternal(target)
+          .catch((error: unknown) => {
+            toastManager.add({
+              type: "error",
+              title: "Unable to open link",
+              description: error instanceof Error ? error.message : "The link could not open.",
+            });
+          });
+        return;
+      }
+      const path = resolveMarkdownSiblingPath(props.relativePath, target);
+      if (path) props.onOpenFile(path.replace(/[?#].*$/u, ""));
+    },
+    [props.onOpenFile, props.relativePath],
+  );
   if (import.meta.env.DEV && isCm6SpikeEnabled()) {
     return (
       <Suspense fallback={<div className="scient-markdown-source-loading" />}>
@@ -185,6 +204,7 @@ export function ScientMarkdownFileSurface(props: ScientMarkdownFileSurfaceProps)
           }}
           onSaveFailure={(error) => props.onSaveFailure(props.relativePath, error)}
           onExternalConflict={props.onExternalConflict}
+          onOpenLink={handleOpenLink}
           resolveImageSource={resolveImageSource}
           {...(props.saveResolution === undefined ? {} : { saveResolution: props.saveResolution })}
           {...(props.onSaveResolutionApplied
@@ -219,22 +239,7 @@ export function ScientMarkdownFileSurface(props: ScientMarkdownFileSurfaceProps)
       }}
       wikiLinkSuggestions={wikiLinkSuggestions}
       wikiLinkTargetExists={wikiLinkTargetExists}
-      onOpenLink={(target) => {
-        if (/^(?:https?:|mailto:)/iu.test(target)) {
-          void readLocalApi()
-            ?.shell.openExternal(target)
-            .catch((error: unknown) => {
-              toastManager.add({
-                type: "error",
-                title: "Unable to open link",
-                description: error instanceof Error ? error.message : "The link could not open.",
-              });
-            });
-          return;
-        }
-        const path = resolveMarkdownSiblingPath(props.relativePath, target);
-        if (path) props.onOpenFile(path.replace(/[?#].*$/u, ""));
-      }}
+      onOpenLink={handleOpenLink}
       resolveImageSource={resolveImageSource}
       uploadImage={uploadImage}
       onImageUploadFailure={(error) => {

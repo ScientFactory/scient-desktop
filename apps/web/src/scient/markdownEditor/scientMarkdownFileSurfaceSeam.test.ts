@@ -30,6 +30,7 @@ describe("Scient Markdown file-preview seam", () => {
     expect(surfaceSource).toContain("projectEnvironment.writeFile");
     expect(surfaceSource).toContain("expectedRevision: intent.expectedRevision");
     expect(surfaceSource).toContain("confirmProjectFileQueryData(");
+    expect(surfaceSource.match(/onOpenLink=\{handleOpenLink\}/gu)).toHaveLength(2);
   });
 
   it("carries the existing conflict-resolution and line-reveal seams into the owned editor", () => {

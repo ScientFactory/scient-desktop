@@ -73,13 +73,14 @@ export class MarkdownImageWidget extends WidgetType {
 export class TaskCheckboxWidget extends WidgetType {
   constructor(
     readonly checked: boolean,
+    readonly taskText: string,
     readonly toggle: () => void,
   ) {
     super();
   }
 
   override eq(other: TaskCheckboxWidget): boolean {
-    return other.checked === this.checked;
+    return other.checked === this.checked && other.taskText === this.taskText;
   }
 
   override toDOM(): HTMLElement {
@@ -88,6 +89,10 @@ export class TaskCheckboxWidget extends WidgetType {
     const box = document.createElement("input");
     box.type = "checkbox";
     box.checked = this.checked;
+    box.setAttribute(
+      "aria-label",
+      `${this.checked ? "Mark task incomplete" : "Mark task complete"}: ${this.taskText || "Untitled task"}`,
+    );
     box.contentEditable = "false";
     box.addEventListener("change", () => this.toggle());
     wrapper.append(box);

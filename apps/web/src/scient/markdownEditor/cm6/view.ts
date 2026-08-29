@@ -285,7 +285,7 @@ export class ScientCm6EditorView {
         const linkText = state.sliceDoc(node.from, node.to);
         const match = /\]\([^)\s]+\)$/u.exec(linkText);
         if (match) {
-          target = match[0].slice(3, -1);
+          target = match[0].slice(2, -1);
         }
       },
     });
