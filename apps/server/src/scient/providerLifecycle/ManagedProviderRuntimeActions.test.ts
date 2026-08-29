@@ -40,6 +40,7 @@ const reviewedArtifact: ManagedRuntimeArtifact = {
   artifactName: "claude",
   url: "https://example.com/claude",
   allowedHosts: ["example.com"],
+  allowedUrlPathPrefixes: ["/"],
   checksum: { algorithm: "sha256", digest: "0".repeat(64) },
   size: 100,
   archiveFormat: "raw",

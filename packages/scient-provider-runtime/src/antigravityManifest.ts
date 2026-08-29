@@ -5,6 +5,7 @@ const VERSION = "1.1.20";
 const RELEASE_BASE =
   "https://storage.googleapis.com/antigravity-public/antigravity-cli/1.1.20-5830032204103680";
 const ALLOWED_HOSTS = ["storage.googleapis.com"] as const;
+const ALLOWED_URL_PATH_PREFIXES = ["/antigravity-public/antigravity-cli/"] as const;
 
 interface ArtifactRecord {
   readonly releaseDirectory: string;
@@ -91,6 +92,7 @@ export function resolveReviewedAntigravityArtifact(
     artifactName: artifact.artifactName,
     url: `${RELEASE_BASE}/${artifact.releaseDirectory}/${artifact.artifactName}`,
     allowedHosts: ALLOWED_HOSTS,
+    allowedUrlPathPrefixes: ALLOWED_URL_PATH_PREFIXES,
     checksum: { algorithm: "sha512", digest: artifact.sha512 },
     size: artifact.size,
     archiveFormat: artifact.archiveFormat,
@@ -100,6 +102,6 @@ export function resolveReviewedAntigravityArtifact(
     catalogRevision: `google-antigravity-cli:${VERSION}:${key}:${artifact.sha512}`,
     supportTier: "fully_assisted",
     supportMessage:
-      "Scient can install this reviewed official Google Antigravity CLI runtime privately.",
+      "Scient can install this qualified official Google Antigravity CLI runtime privately.",
   };
 }

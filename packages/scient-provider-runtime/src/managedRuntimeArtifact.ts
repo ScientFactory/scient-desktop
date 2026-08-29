@@ -38,6 +38,8 @@ export interface ManagedRuntimeArtifact {
   readonly artifactName: string;
   readonly url: string;
   readonly allowedHosts: ReadonlyArray<string>;
+  /** App-owned path families accepted from release catalogs on approved hosts. */
+  readonly allowedUrlPathPrefixes: ReadonlyArray<string>;
   readonly checksum: ManagedRuntimeChecksum;
   readonly size: number;
   readonly archiveFormat: ManagedRuntimeArchiveFormat;
@@ -128,7 +130,10 @@ export function hydrateManagedRuntimeArtifact(
     (url.port !== "" && url.port !== "443") ||
     url.username.length > 0 ||
     url.password.length > 0 ||
-    !policy.allowedHosts.some((host) => host.toLowerCase() === url.hostname.toLowerCase())
+    !policy.allowedHosts.some((host) => host.toLowerCase() === url.hostname.toLowerCase()) ||
+    !policy.allowedUrlPathPrefixes.some(
+      (prefix) => prefix.startsWith("/") && prefix.endsWith("/") && url.pathname.startsWith(prefix),
+    )
   ) {
     return undefined;
   }

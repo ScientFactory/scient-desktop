@@ -13,6 +13,7 @@ const policy: ManagedRuntimeArtifact = {
   artifactName: "codex.tar.gz",
   url: "https://github.com/example/codex.tar.gz",
   allowedHosts: ["github.com", "objects.githubusercontent.com"],
+  allowedUrlPathPrefixes: ["/example/"],
   checksum: { algorithm: "sha256", digest: "1".repeat(64) },
   size: 100,
   archiveFormat: "tar.gz",
@@ -30,7 +31,7 @@ describe("managed runtime artifact hydration", () => {
       ...managedRuntimeArtifactReceipt(policy),
       version: "1.1.0",
       artifactName: "codex-1.1.0.tar.gz",
-      url: "https://objects.githubusercontent.com/codex-1.1.0.tar.gz",
+      url: "https://objects.githubusercontent.com/example/codex-1.1.0.tar.gz",
       checksum: { algorithm: "sha256", digest: "2".repeat(64) },
       size: 120,
       catalogRevision: "catalog:1.1.0",
@@ -46,7 +47,7 @@ describe("managed runtime artifact hydration", () => {
     });
   });
 
-  it("cannot widen provider, target, host, or checksum policy", () => {
+  it("cannot widen provider, target, source path, or checksum policy", () => {
     const receipt = managedRuntimeArtifactReceipt(policy);
     expect(hydrateManagedRuntimeArtifact(policy, { ...receipt, provider: "grok" })).toBeUndefined();
     expect(
@@ -59,6 +60,12 @@ describe("managed runtime artifact hydration", () => {
       hydrateManagedRuntimeArtifact(policy, {
         ...receipt,
         url: "https://example.com/codex.tar.gz",
+      }),
+    ).toBeUndefined();
+    expect(
+      hydrateManagedRuntimeArtifact(policy, {
+        ...receipt,
+        url: "https://github.com/unrelated/project/codex.tar.gz",
       }),
     ).toBeUndefined();
     expect(

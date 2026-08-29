@@ -9,6 +9,7 @@ const ALLOWED_HOSTS = [
   "objects.githubusercontent.com",
   "release-assets.githubusercontent.com",
 ] as const;
+const ALLOWED_URL_PATH_PREFIXES = ["/openai/codex/releases/download/"] as const;
 
 interface ArtifactRecord {
   readonly name: string;
@@ -116,6 +117,7 @@ export function resolveReviewedCodexArtifact(
     artifactName: artifact.name,
     url: `${RELEASE_BASE}/${artifact.name}`,
     allowedHosts: ALLOWED_HOSTS,
+    allowedUrlPathPrefixes: ALLOWED_URL_PATH_PREFIXES,
     checksum: { algorithm: "sha256", digest: artifact.sha256 },
     size: artifact.size,
     archiveFormat: "tar.gz",

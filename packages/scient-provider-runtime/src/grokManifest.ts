@@ -4,6 +4,7 @@ import type { ManagedRuntimeTarget } from "./target.ts";
 const VERSION = "1.0.5";
 const RELEASE_BASE = "https://x.ai/cli";
 const ALLOWED_HOSTS = ["x.ai"] as const;
+const ALLOWED_URL_PATH_PREFIXES = ["/cli/"] as const;
 
 interface ArtifactRecord {
   readonly artifactName: string;
@@ -76,6 +77,7 @@ export function resolveReviewedGrokArtifact(
     artifactName: artifact.artifactName,
     url: `${RELEASE_BASE}/${artifact.artifactName}`,
     allowedHosts: ALLOWED_HOSTS,
+    allowedUrlPathPrefixes: ALLOWED_URL_PATH_PREFIXES,
     checksum: { algorithm: "sha512", digest: artifact.sha512 },
     size: artifact.size,
     archiveFormat: "raw",
@@ -83,6 +85,6 @@ export function resolveReviewedGrokArtifact(
     smokeArgs: ["--version"],
     catalogRevision: `xai-grok-build:${VERSION}:${key}:${artifact.sha512}`,
     supportTier: "fully_assisted",
-    supportMessage: "Scient can install this reviewed official Grok Build runtime privately.",
+    supportMessage: "Scient can install this qualified official Grok Build runtime privately.",
   };
 }

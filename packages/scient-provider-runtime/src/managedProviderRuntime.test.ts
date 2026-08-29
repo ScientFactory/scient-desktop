@@ -32,6 +32,7 @@ function artifact(
     artifactName: `provider-${version}`,
     url: `https://example.com/provider-${version}`,
     allowedHosts: ["example.com"],
+    allowedUrlPathPrefixes: ["/"],
     checksum: { algorithm: "sha256", digest: "0".repeat(64) },
     size: 5,
     archiveFormat: "raw",
