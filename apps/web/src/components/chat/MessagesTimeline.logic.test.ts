@@ -1112,6 +1112,44 @@ describe("deriveMessagesTimelineRows", () => {
       "assistant-thought-entry",
       "work-live:work-entry-1",
     ]);
+    expect(rows.find((row) => row.kind === "working")?.showThinking).toBe(false);
+  });
+
+  it("keeps the thinking indicator visible between active-turn events", () => {
+    const rows = deriveMessagesTimelineRows({
+      timelineEntries: [
+        {
+          id: "assistant-commentary-entry",
+          kind: "message",
+          createdAt: "2026-01-01T00:00:05Z",
+          message: {
+            id: "assistant-commentary" as never,
+            role: "assistant",
+            text: "I’ll inspect the project before making the change.",
+            turnId: "turn-1" as never,
+            createdAt: "2026-01-01T00:00:05Z",
+            updatedAt: "2026-01-01T00:00:06Z",
+            streaming: false,
+          },
+        },
+      ],
+      latestTurn: {
+        turnId: "turn-1" as never,
+        state: "running",
+        startedAt: "2026-01-01T00:00:00Z",
+        completedAt: null,
+      },
+      isWorking: true,
+      activeTurnStartedAt: "2026-01-01T00:00:00Z",
+      turnDiffSummaryByAssistantMessageId: new Map(),
+      revertTurnCountByUserMessageId: new Map(),
+    });
+
+    expect(rows.map((row) => row.id)).toEqual([
+      "assistant-commentary-entry",
+      "working-indicator-row",
+    ]);
+    expect(rows.find((row) => row.kind === "working")?.showThinking).toBe(true);
   });
 
   it("keeps adjacent active tool calls in one replacing row", () => {
