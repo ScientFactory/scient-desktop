@@ -50,23 +50,20 @@ Let active agent work and terminal commands finish before an install, update,
 or uninstall. If a remote update is already running, wait for its terminal
 outcome before starting a local service operation.
 
-## Reliability model
+## Safe updates
 
-The service manager starts a small stable launcher. Exact Scient server
-versions are installed in separate runtime directories. During a remote update,
-the launcher:
+During an update, the service prepares and checks the exact target version
+before it replaces the active server. It then:
 
 1. installs and preflights the exact target archive;
 2. stops the old child only after accepting the trial;
-3. snapshots the SQLite database and side files;
-4. starts the target and waits for its migrations and long-running services to
-   become ready; and
-5. commits the target or restores the previous runtime and database snapshot.
+3. saves a recovery snapshot of the server state;
+4. starts the target and waits until it is ready; and
+5. keeps the target or restores the previous working version and state.
 
-The installed service definition therefore does not point at an ephemeral
-`npx` cache. A target that requires a newer launcher protocol is blocked before
-it can alter the database; run the exact local `service update` command once to
-upgrade that launcher.
+If the installed service is too old to perform this safely, the update is
+blocked before it changes project state. Run the exact local `service update`
+command once to repair the service, then retry from Scient.
 
 ## Platform behavior
 

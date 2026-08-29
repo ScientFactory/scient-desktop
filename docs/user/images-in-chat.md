@@ -1,5 +1,9 @@
 # Images in chat
 
+Images in chat let you inspect plots, figures, diagrams, microscopy, and other
+visual project outputs in the context of the conversation that produced or
+discussed them.
+
 Scient displays supported project images directly in a completed chat message
 when the message uses ordinary Markdown image syntax:
 

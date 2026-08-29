@@ -4,6 +4,8 @@ Scient turns a completed `mermaid` Markdown fence into an inline diagram. This
 works well for research workflows, architectures, timelines, state changes,
 entity relationships, and other explanations where the connections matter.
 The same rendering is available for Mermaid fences in Markdown file previews.
+Ask the AI to make a Mermaid diagram when a process, hierarchy, or relationship
+would be easier to understand visually than as a list of steps.
 
 The diagram card lets you:
 
@@ -18,15 +20,14 @@ ordinary code block. Rendering begins only after the answer settles and the
 diagram is close to the visible conversation. A bad or unsupported diagram
 never makes the rest of the answer disappear.
 
-The Mermaid source remains the canonical content in the conversation. Copying
-the whole answer preserves a fenced `mermaid` block, so it remains readable in
-clients that do not have the rich renderer. Rendering and image export happen
+The Mermaid source remains the original content in the conversation. Copying
+the whole answer preserves a fenced `mermaid` block, so it remains readable
+where an interactive diagram is unavailable. Rendering and image export happen
 locally; Scient does not send diagram source to a rendering service.
 
-Mermaid runs in strict mode and Scient inserts only the sanitized SVG. Source
-callbacks are not activated, and no CDN, remote asset loader, or custom icon
-pack is registered. A diagram is limited to 50,000 source characters and 500
-edges so one message cannot monopolize the conversation renderer.
+Rendering is local and restricted: source callbacks and remote asset loaders
+are not activated. Very large diagrams are rejected instead of slowing the
+whole conversation.
 
 An inline diagram is not automatically saved as a project file. Ask the agent
 to create a real `.mmd`, SVG, or other project artifact when you need something

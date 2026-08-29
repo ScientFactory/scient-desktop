@@ -1,8 +1,14 @@
 # Providers in Scient
 
-Scient connects to AI providers through the provider tools running on the Scient server. You can use
-an existing installation or, when the server offers it, let Scient install a reviewed private copy.
-Provider accounts and subscriptions remain owned by the provider.
+A provider supplies the AI models that work inside Scient. For example, you
+can connect Codex, Claude, Cursor, Grok, Droid, or Antigravity, then choose an
+available model for each conversation. Different providers can have different
+models, tools, account requirements, and usage limits.
+
+Scient connects the provider to your current project and presents its work in
+one interface. The provider still owns its account, subscription, and models.
+You can use an existing provider installation or, when available, let Scient
+install a reviewed private copy on the machine where the project runs.
 
 ## The fastest setup path
 

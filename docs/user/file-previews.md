@@ -1,8 +1,10 @@
 # File previews
 
-Scient opens files linked in chat inside Scient first. Project files keep their
-editable Files-panel behavior. Files elsewhere in the connected environment
-open in a read-only side panel or, for HTML, the integrated browser.
+File previews let you inspect the project's documents, data, code, figures, and
+other outputs without leaving Scient. Files linked in chat open inside Scient
+first. Project files keep their editable Files-panel behavior. Files elsewhere
+in the connected environment open in a read-only side panel or, for HTML, the
+integrated browser.
 
 In a project file's header, select the project name or any parent folder to
 browse that folder, drill into its subfolders, and open a nearby file. The final
@@ -20,8 +22,7 @@ last available preview visible while reporting the problem.
 
 Current limitation: automatic refresh follows the exact known path. If the file
 is renamed or moved, reopen it from its new location; Scient does not yet
-relocate an already open file automatically. A proposed stable-file-reference
-foundation would add bounded recovery without guessing among ambiguous copies.
+relocate an already open file automatically.
 
 - Markdown files open as rendered documents. Use the source/preview control in
   the file header to switch modes; Scient remembers that preference. A link to
@@ -43,10 +44,10 @@ Direct files outside the current project support:
   CSV, and LaTeX source;
 - browser-supported audio and video; and
 - a stable file-information view for formats that do not yet have a rich
-  renderer. On the primary desktop environment, the header can still open the
+  preview. On the primary desktop environment, the header can still open the
   file in a preferred editor.
 
-Text previews are read-only and bounded to 2 MiB. Large files show that limit
+Text previews are read-only and limited to 2 MiB. Large files show that limit
 explicitly. An optional line target is revealed once after the source view is
 ready.
 

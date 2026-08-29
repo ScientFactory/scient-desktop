@@ -1,7 +1,9 @@
 # Claude in Scient
 
-Scient keeps installing the Claude tool and connecting a Claude account as two separate, visible
-facts. A saved provider configuration is not treated as a working connection.
+Claude Code is Anthropic's agent for working with project files, code,
+commands, and connected tools. Scient can use an existing Claude installation
+or manage a private copy, then connect it to a Claude or Anthropic Console
+account. Installing the tool and signing in are separate steps.
 
 For the behavior shared by all assisted providers, see [Providers in Scient](./providers.md).
 
@@ -17,10 +19,9 @@ Providers**. The same guided surface appears in both places:
    page in your browser; and
 4. Scient asks Claude for fresh account and model state before reporting it as ready.
 
-Connecting another AI does not hide Claude. Every enabled provider remains available from the
-model picker's provider rail. After Claude confirms the account and reports models, Scient hands
-Claude's declared default model to the existing composer selection path and closes onboarding. You
-can work immediately or reopen the normal model picker to choose another Claude model.
+Connecting another AI does not hide Claude. Every enabled provider remains
+available in the model picker, and you can choose any Claude model reported for
+the connected account.
 
 **Sign in to Claude** uses Claude Code's official sign-in flow for an existing Claude.ai Pro, Max,
 Team, or Enterprise subscription. **Use Anthropic Console** remains available as an alternative for
@@ -53,10 +54,6 @@ instead of asking you to sign in again.
 Managed installation is offered only when the local desktop server reports a reviewed artifact for
 its exact operating system and architecture. Remote clients continue using the runtime administered
 on their server. The app displays the reviewed version and download details before installation.
-
-Scient checks Claude Code and the Claude Agent SDK together before advertising models that require a
-newer provider capability. A model remains hidden until the active runtime combination actually
-supports it.
 
 ## Advanced And Multiple-Account Setups
 

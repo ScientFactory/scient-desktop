@@ -1,70 +1,64 @@
 # Run a MATLAB file
 
-Scient can open and edit a project-owned `.m` file even when MATLAB is not installed. When a
-user-installed MATLAB is available on the same environment as the Scient server, the file viewer
-adds a compact **Run file** panel.
+Use Scient's MATLAB panel to run a project analysis, inspect its output and
+figures, and save useful results beside the rest of the project. Scient can
+always open and edit a `.m` file. Running it additionally requires a
+user-installed and licensed MATLAB in the selected project environment.
 
 ## Run a file
 
 1. Open an initialized Scient project and select a text `.m` file.
-2. Wait for any pending save to finish. Scient runs the exact saved revision, not an unsaved or
-   stale buffer.
-3. If MATLAB was not found, choose **Set up MATLAB**, enter the path to the MATLAB executable, and
-   choose **Use path**. You can also ask Scient to scan again.
-4. **Verify** is optional: use it to check that MATLAB can actually start before a run or to
-   troubleshoot setup. Scient reports the detected
-   release, architecture, Java runtime, and toolbox count, or explains whether sign-in, licensing,
-   a missing local dependency, startup failure, or a timeout prevented readiness. **Details**
-   also lets you change the executable or scan again.
-5. Choose **Run file**. Standard output, errors, status, a local per-file run history, and any
-   captured figures appear in the panel.
-6. If another MATLAB run is active, the new run waits in the runtime queue and shows its position.
-   **Stop** cancels a waiting run without launching it, or stops the active MATLAB process tree.
-7. Select a figure and choose its reliable static view or floating card from the compact menu.
-   When a future producer supplies an interactive representation, the same menu can expose it
-   without changing the artifact contract. You can also drag the thumbnail directly into the chat
-   to create a floating card at the drop point. Floating cards can be moved and resized from every
-   edge and corner. Download the FIG representation when you want to continue working in MATLAB.
-8. Select **Load older runs** to page through long local history without loading every receipt or
-   output journal into memory.
-9. Choose **Save to project** when a useful terminal run should travel with the project. Scient
-   creates a portable folder under `results/<source>/<run>/`, opens its `README.md`, and includes
-   readable output, figures and native continuation files, a notes section, and a machine-readable
-   `manifest.json` with source/runtime provenance and SHA-256 hashes. Repeating the action reopens
-   the same result without overwriting researcher edits.
-10. Use **Remove this run** or **Clean up project** when retained output and figure files are no
-    longer needed. Scient confirms the measured byte count and keeps status, diagnostics, hashes,
-    source/runtime provenance, and artifact descriptions in metadata-only history.
+2. Wait for any pending save to finish. Scient runs the exact saved version,
+   not an unsaved editor buffer.
+3. If MATLAB was not found, choose **Set up MATLAB**, enter the path to the
+   MATLAB executable, and choose **Use path**. You can also ask Scient to scan
+   again.
+4. Use **Verify** when you want to confirm that MATLAB can start or understand
+   a setup failure. Scient reports the detected release and explains problems
+   such as sign-in, licensing, a missing dependency, startup failure, or a
+   timeout.
+5. Choose **Run file**. Standard output, errors, status, figures, and the
+   file's recent run history appear in the panel.
+6. If another MATLAB run is active, the new run waits in the queue and shows
+   its position. **Stop** cancels a waiting run or stops the active run.
+7. Select a captured figure to inspect it as a static view or floating card.
+   You can drag a thumbnail into the conversation, resize the floating card,
+   or download its FIG representation for continued work in MATLAB.
+8. Choose **Save to project** when a useful run should become an ordinary
+   project result. Scient creates a folder under
+   `results/<source>/<run>/` containing readable output, figures, continuation
+   files, notes, and a machine-readable manifest. Repeating the action reopens
+   the same result without overwriting your edits.
+
+Use **Remove this run** to remove one saved run, or **Clean up project** to
+review and remove saved run files that are no longer needed. Scient confirms
+the measured size before cleanup and keeps a lightweight history of what ran.
 
 On macOS, a typical executable is
-`/Applications/MATLAB_R2025b.app/bin/matlab`. Windows and Linux paths depend on the installed
-release. Scient uses the user's installed and licensed MATLAB; it does not bundle MATLAB or grant
-a license.
+`/Applications/MATLAB_R2025b.app/bin/matlab`. Windows and Linux paths depend
+on the installed release. Scient does not bundle MATLAB or provide a license.
 
-Viewing and editing never launches MATLAB. A missing or invalid runtime is a setup state, not a
-file-viewer failure. A folder opened without Scient project setup remains viewable and editable,
-but Run file stays disabled until the folder is set up. Output is capped with an explicit
-truncation notice, and an interrupted run is shown as lost after Scient restarts.
+## Understand results and failures
 
-When MATLAB reports an `MException`, Scient shows the structured error separately from raw output.
-Click a project-local file and line to open it, or choose **Ask agent** to place a focused repair
-request in the chat composer for review before sending.
+Viewing and editing a `.m` file never starts MATLAB. A missing or invalid
+runtime is a setup state, not a file-viewer failure. A folder opened without
+Scient project setup remains editable, but **Run file** stays disabled until
+the folder is set up.
 
-If another program or an agent changes the open file, Scient rereads it automatically. When local
-edits are still pending, Scient does not silently replace either version: choose whether to reload
-the disk version or explicitly overwrite it with the local edits. Figure collection failure is
-reported separately, so a successful MATLAB calculation is not mislabeled as failed and a broken
-capture is not mistaken for “this run produced no figures.” Saving a result is deliberate: hidden
-run data remains derived local state until the user promotes it into ordinary project files.
+When MATLAB reports an `MException`, Scient separates the structured error
+from raw output. Select a project-local file and line to open it, or choose
+**Ask agent** to place a focused repair request in the composer for review
+before sending.
 
-This released `AnalysisRun` workflow runs a complete `.m` file in noninteractive batch mode. It is
-separate from the draft stateful `ComputeSession` and Python/Jupyter work: neither foundation should
-be presented as the other or required to use this MATLAB panel. Selection/section
-execution, variables, optional SVG/PDF/interactive figure exports, `.mlx` and `.mat` viewers,
-debugging, MATLAB tests, notebooks, agent/MCP initiation, remote runtimes, and automatic retention
-policies remain future work.
+If another program or an agent changes the open file, Scient refreshes it.
+When you have unsaved edits, it asks whether to reload the disk version or
+overwrite it instead of silently discarding either version. Figure-capture
+failure is reported separately from calculation failure, and long output shows
+an explicit truncation notice.
 
-The implementation includes discovery adapters for macOS, Windows, and Linux, but release evidence
-is platform-specific. The recorded installed-runtime acceptance covers Apple Silicon with MATLAB
-R2026a; other operating systems, MATLAB releases, WSL, environment modules, and remote runtimes must
-not be called qualified without their own acceptance evidence.
+This workflow runs a complete `.m` file in noninteractive batch mode. It does
+not currently provide selection or section execution, a live variables
+workspace, debugging, MATLAB notebooks, or viewers for `.mlx` and `.mat`
+files. Use **Verify** in each environment to confirm that its installed MATLAB
+version, architecture, license, and dependencies are ready before relying on a
+run.

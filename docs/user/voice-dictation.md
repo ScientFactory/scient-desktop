@@ -14,9 +14,9 @@ text before Scient inserts or sends it.
 4. While recording, choose cancel, insert the transcript, or transcribe and
    send. `Esc` cancels and `Enter` inserts.
 
-Audio and the initial transcript are processed by the bundled local whisper.cpp
-runtime. Audio remains on the local computer and is never sent to Scient or an
-AI provider.
+Audio and the initial transcript are processed by a bundled local speech model.
+Audio remains on the local computer and is never sent to Scient or an AI
+provider.
 
 **Correct transcripts with an LLM** in **Settings → Voice** is off by default.
 When it remains off, the transcript stays local. When you turn it on, Scient
@@ -30,11 +30,9 @@ The model download and an enabled provider correction are therefore the two
 possible network paths for voice dictation. Provider correction follows that
 provider's own service and data-handling terms.
 
-Voice dictation currently belongs to the desktop app. Browser and mobile
-clients do not show the microphone because they do not have a local desktop
-runtime. The macOS voice runtime requires macOS 12 or newer. A recording is
-limited to three minutes. If no speech is detected, Scient leaves the draft
-unchanged.
+Voice dictation is available in the desktop app. The macOS voice runtime
+requires macOS 12 or newer. A recording is limited to three minutes. If no
+speech is detected, Scient leaves the draft unchanged.
 
 To change models later, open **Settings → Voice**. The page shows which model
 is recommended for the current machine, which model is in use, download

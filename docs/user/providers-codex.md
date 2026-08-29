@@ -1,7 +1,9 @@
 # Codex in Scient
 
-Scient keeps installing the Codex tool and connecting a Codex account as two separate, visible
-facts. A saved provider configuration is not treated as a working connection.
+Codex is OpenAI's agent for working with project files, code, commands, and
+connected tools. Scient can use an existing Codex installation or manage a
+private copy, then connect it to your OpenAI account. Installing the tool and
+signing in are separate steps.
 
 For the behavior shared by all assisted providers, see [Providers in Scient](./providers.md).
 
@@ -38,15 +40,8 @@ the exact operating system and architecture. Remote clients use the runtime admi
 server, and unsupported targets receive no invented fallback. The app displays the reviewed version
 and download details before installation.
 
-If a managed install, repair, or download fails, that operation cleans its incomplete staging
-directory and the previous working copy remains active. Routine status refreshes never delete an
-active operation's staging directory. A manual rollback button is deliberately not offered until
-Scient has two separately reviewed releases to roll between.
-
-When a newer reviewed managed version is available, **Update** downloads and verifies the
-replacement without deactivating the current version. Scient switches versions only after the new
-copy passes its smoke test. Provider-tool updates and provider sign-in are serialized so one cannot
-change shared runtime state underneath the other.
+If an install, repair, or update fails, the previous working managed copy
+remains available.
 
 ## Why Use More Than One Account?
 
@@ -81,9 +76,9 @@ and share with OpenAI employees.
 ## Approve access to other apps
 
 When a Codex tool needs access to an app such as Safari, Scient shows the app name and asks for
-approval. You can approve, decline, or cancel the request from the desktop app or a connected web
-client. Some tools also offer approval for the current session or permanent approval. Scient does
-not currently publish a mobile client.
+approval. You can approve, decline, or cancel the request from the desktop app
+or a connected web client. Some tools also offer approval for the current
+session or permanent approval.
 
 ## I Want Work And Personal Codex Accounts
 

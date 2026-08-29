@@ -1,4 +1,4 @@
-# Mobile appearance
+# Scient mobile release hold
 
 Status: not available in a public Scient release. Exclude this page from
 current Scient Docs.

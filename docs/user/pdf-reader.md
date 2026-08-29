@@ -1,5 +1,8 @@
 # PDF reader
 
+Use the PDF reader to study papers, reports, books, and other project documents
+while keeping them beside the conversation and related files.
+
 Selecting a PDF anywhere that opens a file in Scient opens it in the Files side
 panel. The reader uses the full panel by default; the project file explorer and
 the PDF pages/outline sidebar remain optional.
@@ -7,15 +10,15 @@ the PDF pages/outline sidebar remain optional.
 The first time a PDF opens, it starts fit to width with the PDF sidebar closed.
 When you return to the same document, Scient restores its page, exact reading
 position, zoom or fit mode, rotation, and sidebar mode. This survives leaving and
-returning to the conversation, restarting Scient, authorized-preview renewal, and
-new generated revisions that keep the same document identity. Opening the same
+returning to the conversation, restarting Scient, and refreshed versions that
+keep the same document identity. Opening the same
 workspace path from another conversation in the same environment shares that
 reading session. Files at different worktree paths remain separate. Search text
 and PDF passwords are not restored.
 
 The reader supports:
 
-- continuous, fit-to-width reading with bounded page rendering;
+- continuous, fit-to-width reading that remains responsive in long documents;
 - previous/next navigation and direct page-number entry;
 - zoom in five-percent steps, one-click actual size, fit width, smooth trackpad
   pinch zoom, and clockwise rotation;

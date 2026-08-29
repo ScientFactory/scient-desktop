@@ -1,8 +1,17 @@
-# Message composer
+# Message Scient
 
-Messages can contain up to 120,000 characters. If a draft is longer, Scient keeps it in the
-composer and shows how many characters need to be removed. Shorten the draft or split it into
-multiple messages, then send again in the same thread.
+Use the composer to tell your selected AI what you want to understand, create,
+change, or run in the current project. Describe the outcome, important
+constraints, and any files or evidence it should use. What the AI can do is
+also controlled by the selected provider, available tools, and
+[permission mode](permission-modes.md).
+
+## Send a message
+
+Messages can contain up to 120,000 characters. If a draft is longer, Scient
+keeps it in the composer and shows how many characters need to be removed.
+Shorten the draft or split it into multiple messages, then send again in the
+same thread.
 
 On servers that support direct uploads, images upload as soon as you add them. The send button
 becomes available after every upload finishes. Failed uploads can be retried or removed.
@@ -30,12 +39,29 @@ Project skills live at `.scient/skills/<name>/SKILL.md` inside an initialized Sc
 new valid project skill is available automatically on the next message and only in that project.
 Use **Settings → Skills → Project skills** or the project's **Skills** settings to choose **Agent
 access**, **$name only**, or **Deactivated**. Agents can create these ordinary project files when
-asked; Scient never asks them to edit the private preference store.
+asked; your access choice remains controlled in Settings.
 
 On desktop, press `Cmd+Enter` on macOS or `Ctrl+Enter` on Windows and Linux from a new thread to
 start it in the background. Scient opens another new thread and shows an **Open** action for the
 thread that started. The new thread keeps the selected workspace mode and base branch. If **New
 worktree** is selected, each background thread creates its own worktree.
+
+## Continue with another provider
+
+Forking lets you continue a conversation with a different provider or model
+without changing the original. Use **Fork** beside a sent message or completed
+response, use the compact **Fork** action in the model picker, or run `/fork`
+to start from the latest completed response. In the new conversation, choose
+the provider and model you want before sending.
+
+**New worktree** is off by default, so the fork uses the current workspace without rewinding its
+files. Turn it on to create an isolated worktree at the selected checkpoint. The switch is
+unavailable when the project is not a Git repository or the fork point has no saved checkpoint.
+
+Forking from a completed response keeps the conversation through that response.
+Forking from a sent user message places that message and its images in the new
+composer as an unsent draft. A temporary setup failure is safe to retry; Scient
+does not open a partially created conversation.
 
 ## Queue or steer while an agent is working
 

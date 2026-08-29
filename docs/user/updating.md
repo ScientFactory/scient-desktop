@@ -41,20 +41,14 @@ The action depends on how that environment started:
 | **Update server**          | Prepare and trial an exact replacement for a supported background service, then reconnect only after it is ready. |
 | **Copy update command**    | Copy the exact Scient release-asset command for a manually managed server and run it on that server machine.      |
 
-Scient does not publish a package under T3's npm identity. Current update
-commands use the immutable `scient-server-<version>.tgz` asset from the matching
-`ScientFactory/scient-desktop` GitHub release. The command may end with the
-internal executable name `t3`; that name is retained for upstream compatibility
-and does not mean the runtime was fetched from T3.
-
-Do not replace the copied command with `npx t3@latest`: that can fetch a
-different product and cannot guarantee a server matching the Scient client.
+Run the copied update command exactly as Scient provides it. Changing its
+package, version, or release URL can install a server that does not match the
+desktop client.
 
 ## Background-service updates
 
-A supported background service stages the exact target runtime before stopping
-the active server. It then starts the target as a trial, applies migrations,
-and reports one of these outcomes:
+A supported background service prepares the target version before replacing
+the active server. It reports one of these outcomes:
 
 - **committed**: the target version is ready and becomes the normal runtime;
 - **rolled back**: the trial failed before commit and the previous runtime and
@@ -65,8 +59,8 @@ Keep Scient open while the server restarts. The update is complete only when
 the replacement server reports ready, not merely when the initial update
 request is accepted. A failure remains visible for review and retry.
 
-An old service launcher may require one local repair/update before it supports
-transactional trials. Use the exact command supplied by Scient or the procedure
+An older service installation may require one local repair or update first.
+Use the exact command supplied by Scient or the procedure
 in [Run Scient in the background](./background-service.md).
 
 ## Troubleshooting
@@ -77,7 +71,3 @@ in [Run Scient in the background](./background-service.md).
    older version or changing its release URL.
 4. If a desktop update cannot be checked or downloaded, install the same or a
    newer official release manually; do not remove the existing data directory.
-
-Scient has no current public mobile release or Scient-hosted web client with a
-separate update channel. Mobile and hosted T3 update instructions do not apply
-to the Scient desktop product.

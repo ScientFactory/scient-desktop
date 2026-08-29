@@ -1,6 +1,14 @@
 # Source control integrations
 
-Scient connects to your Git hosting provider so you can create pull requests, review code, and manage repositories without leaving the app.
+Source control records how project files change over time and makes it possible
+to review, restore, and share those changes. It is useful for code, analysis
+scripts, manuscripts, configuration, and other text-based research material;
+you do not need to be a software developer to use it. Scient can connect a Git
+project to its hosting provider so you and the AI can create branches, publish
+changes, and review them without leaving the app.
+
+Source control is optional. An ordinary local folder can still be a Scient
+project without Git or a hosted repository.
 
 ## Supported providers
 
@@ -19,7 +27,7 @@ Scient works with the platforms your team already uses:
 
 - Open the Command Palette (`Cmd/Ctrl + K`) → **Add Project**
 - Choose **GitHub repository**, **GitLab repository**, **Bitbucket repository**, **Azure DevOps repository**, or paste any **Git URL**
-- Enter the repository path (`owner/repo`, `group/project`, `workspace/repository`, or `project/repository`) or a full Git URL, pick a destination, and start coding
+- Enter the repository path (`owner/repo`, `group/project`, `workspace/repository`, or `project/repository`) or a full Git URL, pick a destination, and start working
 
 **Publish local projects to the cloud**
 

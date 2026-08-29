@@ -1,8 +1,9 @@
 # Cursor in Scient
 
-Scient can use the official Cursor Agent CLI with an existing Cursor account. Cursor owns the
-account session and credentials; Scient starts Cursor's official browser flow and verifies the
-result without receiving your password or tokens.
+Cursor Agent works with project files, code, and commands through the official
+Cursor CLI. Scient can connect it to an existing Cursor account. Cursor owns
+the account session and credentials; Scient starts the official browser flow
+without receiving your password or tokens.
 
 For the behavior shared by all assisted providers, see [Providers in Scient](./providers.md).
 

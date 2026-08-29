@@ -22,5 +22,4 @@ can't be rendered, or is unreasonably large, Scient shows the original
 notation as typed instead of an error.
 
 Math renders locally on your device; no network request is involved.
-The rich renderer is currently part of the desktop/web Markdown pipeline.
-Clients that do not use that pipeline retain the readable TeX source.
+Where typeset math is unavailable, the readable TeX notation remains visible.

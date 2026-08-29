@@ -1,76 +1,63 @@
 # Interactive charts in chat
 
-Scient turns completed `vega-lite` and `plotly` Markdown fences into
-interactive charts. Vega-Lite is a good fit for concise declarative 2D
-comparisons, trends, distributions, uncertainty, and linked views. Plotly is a
-good fit for 3D figures, WebGL or large point sets, animation, specialized
-scientific traces, and figures already produced by Python, R, or MATLAB.
-Markdown file previews use the same renderers.
+Ask the AI to visualize project data when a comparison, trend, distribution,
+uncertainty, or relationship is easier to understand as a chart. Scient turns
+completed `vega-lite` and `plotly` Markdown fences into interactive figures
+inside the conversation. The same charts also render in Markdown file previews.
 
-Charts support their native interactions: Vega-Lite selections, brushing and
-bound controls, and Plotly zoom, pan, orbit, hover, legend, animation, and
-direct manipulation. Inline Cartesian figures preserve conversation scrolling
-and use the stable Scient toolbar for zoom, pan, box selection, lasso selection,
-and reset. Expanded figures additionally support scroll or pinch to zoom. The
-Zoom toolbar button switches dragging to rectangle zoom. The chart card also
-lets you:
+## Choose a chart format
 
-- expand the live chart without losing its current interaction state;
-- reset the interaction state;
+- **Vega-Lite** is a good fit for concise 2D charts, statistical comparisons,
+  distributions, uncertainty, and linked views.
+- **Plotly** is a good fit for 3D figures, large point sets, animation,
+  specialized scientific traces, and figures already produced by Python, R,
+  or MATLAB.
+
+You can ask the AI to choose the format, or name one when you need a particular
+interaction or a portable figure specification.
+
+## Explore and export a chart
+
+Charts keep their native interactions. Depending on the figure, you can hover,
+select, brush, zoom, pan, orbit, change a legend, use bound controls, or play an
+animation. The chart card also lets you:
+
+- expand the live chart without losing its current view;
+- reset its interaction state;
 - show, copy, or download the original JSON;
 - download the current view as SVG or high-resolution PNG; and
 - copy the current view as a PNG when the platform clipboard supports images.
 
-Hover tooltips remain anchored to the active Vega-Lite mark while you inspect
-it. Cursor changes distinguish tooltip inspection from clickable selections
-and movable brushes without overriding cursor behavior declared by the chart.
+The fenced JSON remains the source of truth in the conversation. Copying the
+whole answer preserves that source rather than replacing it with a generated
+image.
 
 While an answer is still streaming, Scient shows the JSON as an ordinary code
-block. Rendering starts only after the answer settles and the chart approaches
-the visible conversation. Invalid JSON, an invalid specification, a lost WebGL
-context, exhausted graphics resources, or failed external data shows a local
-recovery state without breaking the rest of the message. In long conversations,
-Scient releases offscreen WebGL figures and restores their live view when they
-return instead of leaving every GPU context mounted.
+block. Rendering begins after the answer settles. Invalid JSON, an unsupported
+specification, unavailable network data, or a browser graphics problem produces
+a recovery message for that chart without breaking the rest of the answer.
 
-Scient uses one bundled, current Vega-Lite compiler. Compatible charts that
-declare an older schema version render without a version-only warning, while a
-chart declaring a newer major version reports that incompatibility rather than
-silently dropping unsupported features. Plotly consumes portable figure JSON
-with `data` and optional `layout`, `config`, and `frames`; HTML, Dash/Jupyter
-wrappers, and Python source are not figure JSON. Plotly.py encoded arrays are
-supported when their complete `dtype`, `bdata`, and optional `shape` values are
-present; a truncated encoded array is reported as invalid source rather than as
-a browser graphics failure. Original source remains unchanged in both
-renderers.
+## Data and network access
 
-Inline data is the most portable choice. A `Network data` badge appears before
-a chart loads absolute HTTP or HTTPS resources. Those requests come from the
-device viewing the chart, and public servers must allow browser access through
-CORS. Localhost and private-network HTTP(S) addresses are supported for local
-scientific data servers; `localhost` refers to the viewing device. Plotly keeps
-its native handling for map tiles, remote images, GeoJSON, and geography
-topology: Scient does not apply Vega-Lite's resource loader, credential,
-timeout, or size policy to those Plotly requests. Relative or local file paths
-need a future project-file adapter because a chat message has no stable
-directory authority. The chart source is canonical: whole-message copy
-preserves the fenced JSON rather than generated SVG. Plotly map tiles, remote
-images, GeoJSON, and geography topology may require the network and are
-identified in the card.
+Inline data is the most portable choice. A **Network data** badge appears before
+a chart loads an absolute HTTP or HTTPS resource. The request comes from the
+device viewing the chart, and the server must allow browser access. In a remote
+session, `localhost` therefore means the viewing device, not necessarily the
+computer running the project.
 
-Unsized single and layered charts adapt to the available chat width. Faceted,
-repeated, and concatenated charts preserve their authored child dimensions so
-horizontal and vertical layouts are not silently distorted; their source
-should choose dimensions that fit the intended surface.
+Relative project paths do not work as chart data URLs inside a chat message
+because the message has no stable file location. Ask the AI to embed a
+reasonable amount of data, use a reachable data endpoint, or create a project
+artifact that loads the data in its own context. Remote images, map tiles,
+GeoJSON, and similar resources may also require network access.
 
-For layered charts, Scient prepares a disposable interaction-safe render copy
-when an otherwise shared selection would create duplicate internal signals.
-This also applies when the layered chart is nested in a facet or concatenated
-view. Theme changes preserve the chart's current selection and control state.
-For Plotly, the disposable view receives responsive host defaults and preserves
-authored templates. The JSON shown, copied, and downloaded from either card
-remains exactly what the conversation contains.
+Unsized charts adapt to the available conversation width. Multi-panel charts
+preserve their authored dimensions, so ask for dimensions appropriate to the
+surface where you plan to use them.
 
-An inline chart is not automatically a durable scientific artifact. Ask the
-agent to create a real `.vl.json`, `.plotly.json`, data, SVG, or PNG file when
-you need a versioned project asset.
+## Save a durable figure
+
+An inline chart is part of the conversation, not automatically a versioned
+scientific output. Ask the AI to save a real `.vl.json`, `.plotly.json`, data,
+SVG, or PNG file in the project when the figure should be reviewed, edited,
+cited, shared, or reproduced later.
