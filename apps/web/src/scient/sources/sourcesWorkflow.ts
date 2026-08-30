@@ -22,8 +22,8 @@ import {
  * per-item states, retries, and resumability; this reducer only tracks what
  * the panel presents between server snapshots. Request tokens are issued
  * synchronously by the hook (never derived from render timing) and carried on
- * response actions; stale tokens are dropped, so a late network response can
- * never overwrite newer state.
+ * import, overview, and Zotero browse response actions; stale tokens are
+ * dropped, so a late workflow response cannot overwrite newer state.
  *
  * Tokens are partitioned into three lanes because those concerns progress
  * independently: imports (and the review/preparation flow around them), the
@@ -79,8 +79,13 @@ export const initialSourcesWorkflowState: SourcesWorkflowState = {
 };
 
 export type SourcesWorkflowAction =
-  | { readonly type: "contextReset" }
-  | { readonly type: "requestStarted" }
+  | {
+      readonly type: "contextReset";
+      readonly request: number;
+      readonly overviewRequest: number;
+      readonly zoteroRequest: number;
+    }
+  | { readonly type: "requestStarted"; readonly request: number }
   | { readonly type: "overviewRequestStarted"; readonly request: number }
   | { readonly type: "zoteroRequestStarted"; readonly request: number }
   | {
@@ -197,13 +202,13 @@ export function sourcesWorkflowReducer(
       // A new project context invalidates every in-flight request at once.
       return {
         ...initialSourcesWorkflowState,
-        request: state.request + 1,
-        overviewRequest: state.overviewRequest + 1,
-        zoteroRequest: state.zoteroRequest + 1,
+        request: action.request,
+        overviewRequest: action.overviewRequest,
+        zoteroRequest: action.zoteroRequest,
       };
     }
     case "requestStarted":
-      return { ...state, request: state.request + 1 };
+      return { ...state, request: action.request };
     case "overviewRequestStarted":
       return { ...state, overviewRequest: action.request };
     case "zoteroRequestStarted":

@@ -167,7 +167,7 @@ describe("sources workflow tokens", () => {
     // overview lane must never invalidate import progress updates.
     const importing = reduceAll(
       initialSourcesWorkflowState,
-      { type: "requestStarted" },
+      { type: "requestStarted", request: 1 },
       {
         type: "operationArrived",
         request: 1,
@@ -195,7 +195,7 @@ describe("sources workflow tokens", () => {
     const browsing = reduceAll(
       initialSourcesWorkflowState,
       { type: "zoteroRequestStarted", request: 3 },
-      { type: "requestStarted" },
+      { type: "requestStarted", request: 1 },
       {
         type: "zoteroLibraryArrived",
         request: 3,
@@ -213,8 +213,11 @@ describe("sources workflow tokens", () => {
   });
 
   it("drops a late operation update after a newer import request started", () => {
-    const started = sourcesWorkflowReducer(initialSourcesWorkflowState, { type: "requestStarted" });
-    const newer = sourcesWorkflowReducer(started, { type: "requestStarted" });
+    const started = sourcesWorkflowReducer(initialSourcesWorkflowState, {
+      type: "requestStarted",
+      request: 1,
+    });
+    const newer = sourcesWorkflowReducer(started, { type: "requestStarted", request: 2 });
     const rejected = sourcesWorkflowReducer(newer, {
       type: "operationArrived",
       request: started.request,
@@ -266,7 +269,7 @@ describe("sources workflow tokens", () => {
   it("invalidates every in-flight request when the project context changes", () => {
     const started = reduceAll(
       initialSourcesWorkflowState,
-      { type: "requestStarted" },
+      { type: "requestStarted", request: 1 },
       { type: "overviewRequestStarted", request: 1 },
       {
         type: "overviewArrived",
@@ -274,11 +277,17 @@ describe("sources workflow tokens", () => {
         overview: overviewWith([{ sourceId: "old-context" }]),
       },
     );
-    const reset = sourcesWorkflowReducer(started, { type: "contextReset" });
+    const reset = sourcesWorkflowReducer(started, {
+      type: "contextReset",
+      request: 2,
+      overviewRequest: 2,
+      zoteroRequest: 1,
+    });
     expect(reset.overview).toBeNull();
     expect(reset.operation).toBeNull();
-    expect(reset.request).toBe(started.request + 1);
-    expect(reset.overviewRequest).toBe(started.overviewRequest + 1);
+    expect(reset.request).toBe(2);
+    expect(reset.overviewRequest).toBe(2);
+    expect(reset.zoteroRequest).toBe(1);
     const late = sourcesWorkflowReducer(reset, {
       type: "overviewArrived",
       request: started.overviewRequest,
@@ -304,7 +313,10 @@ describe("sources workflow data consistency", () => {
   });
 
   it("keeps a newer local operation when the overview has none", () => {
-    const started = sourcesWorkflowReducer(initialSourcesWorkflowState, { type: "requestStarted" });
+    const started = sourcesWorkflowReducer(initialSourcesWorkflowState, {
+      type: "requestStarted",
+      request: 1,
+    });
     const withOperation = sourcesWorkflowReducer(started, {
       type: "operationArrived",
       request: started.request,
@@ -398,7 +410,10 @@ describe("sources workflow data consistency", () => {
 
 describe("sources workflow import transitions", () => {
   it("routes a possible-match preflight into review and clears preparation", () => {
-    const started = sourcesWorkflowReducer(initialSourcesWorkflowState, { type: "requestStarted" });
+    const started = sourcesWorkflowReducer(initialSourcesWorkflowState, {
+      type: "requestStarted",
+      request: 1,
+    });
     const reviewing = sourcesWorkflowReducer(started, {
       type: "preflightArrived",
       request: started.request,
@@ -411,7 +426,10 @@ describe("sources workflow import transitions", () => {
   });
 
   it("clears preflight and library state when an operation starts", () => {
-    const started = sourcesWorkflowReducer(initialSourcesWorkflowState, { type: "requestStarted" });
+    const started = sourcesWorkflowReducer(initialSourcesWorkflowState, {
+      type: "requestStarted",
+      request: 1,
+    });
     const prepared = reduceAll(
       started,
       {
@@ -438,7 +456,10 @@ describe("sources workflow import transitions", () => {
   });
 
   it("keeps the ledger usable when one item fails mid-operation", () => {
-    const started = sourcesWorkflowReducer(initialSourcesWorkflowState, { type: "requestStarted" });
+    const started = sourcesWorkflowReducer(initialSourcesWorkflowState, {
+      type: "requestStarted",
+      request: 1,
+    });
     const failed = sourcesWorkflowReducer(started, {
       type: "operationArrived",
       request: started.request,
@@ -486,12 +507,15 @@ describe("sources workflow import transitions", () => {
   });
 
   it("keeps preparation visible only while the starting request is current", () => {
-    const started = sourcesWorkflowReducer(initialSourcesWorkflowState, { type: "requestStarted" });
+    const started = sourcesWorkflowReducer(initialSourcesWorkflowState, {
+      type: "requestStarted",
+      request: 1,
+    });
     const prepared = sourcesWorkflowReducer(started, {
       type: "importPreparationChanged",
       preparation: { kind: "local-files", names: ["a.pdf"] },
     });
-    const superseded = sourcesWorkflowReducer(prepared, { type: "requestStarted" });
+    const superseded = sourcesWorkflowReducer(prepared, { type: "requestStarted", request: 2 });
     const late = sourcesWorkflowReducer(superseded, {
       type: "operationArrived",
       request: started.request,
@@ -506,7 +530,7 @@ describe("sources workflow transient flags", () => {
   it("clears busy state through an explicit flag change even when requests race", () => {
     const started = reduceAll(
       initialSourcesWorkflowState,
-      { type: "requestStarted" },
+      { type: "requestStarted", request: 1 },
       { type: "busyChanged", busy: true },
     );
     const cleared = sourcesWorkflowReducer(started, { type: "busyChanged", busy: false });
@@ -535,8 +559,11 @@ describe("sources workflow transient flags", () => {
   });
 
   it("accepts a source detail without a request token so details land mid-import", () => {
-    const started = sourcesWorkflowReducer(initialSourcesWorkflowState, { type: "requestStarted" });
-    const superseded = sourcesWorkflowReducer(started, { type: "requestStarted" });
+    const started = sourcesWorkflowReducer(initialSourcesWorkflowState, {
+      type: "requestStarted",
+      request: 1,
+    });
+    const superseded = sourcesWorkflowReducer(started, { type: "requestStarted", request: 2 });
     const arrived = sourcesWorkflowReducer(superseded, {
       type: "sourceDetailArrived",
       sourceId: "any",
@@ -546,7 +573,10 @@ describe("sources workflow transient flags", () => {
   });
 
   it("clears errors explicitly without touching tokens", () => {
-    const started = sourcesWorkflowReducer(initialSourcesWorkflowState, { type: "requestStarted" });
+    const started = sourcesWorkflowReducer(initialSourcesWorkflowState, {
+      type: "requestStarted",
+      request: 1,
+    });
     const withError = sourcesWorkflowReducer(started, {
       type: "errorArrived",
       error: "failed",

@@ -57,8 +57,9 @@ function singleMatchingSourceId(preflight: ScientSourcesPreflightResult): string
  *
  * The durable server operation remains the only authority for import phase,
  * item states, retries, and resumability. This hook owns presentation
- * transitions only; every network response lands through a request token so a
- * late or superseded response can never overwrite newer state.
+ * transitions only. Import, overview, and Zotero browse responses land through
+ * independent request-token lanes so a late or superseded workflow response
+ * cannot overwrite newer state.
  */
 export function useScientSources(input: {
   readonly environmentId: EnvironmentId;
@@ -257,12 +258,26 @@ export function useScientSources(input: {
   );
 
   useEffect(() => {
-    dispatch({ type: "contextReset" });
-    nextOverviewRequestToken();
+    // Invalidate all three lanes synchronously and give the reducer those
+    // exact tokens. Reducer-derived increments can drift from these refs on
+    // the first request after a context change because dispatch commits later.
+    dispatch({
+      type: "contextReset",
+      request: nextRequestToken(),
+      overviewRequest: nextOverviewRequestToken(),
+      zoteroRequest: nextZoteroRequestToken(),
+    });
     void refreshOverview().catch((cause) => {
       if (isCurrentContext()) dispatch({ type: "errorArrived", error: message(cause) });
     });
-  }, [input.environmentId, input.root, nextOverviewRequestToken, refreshOverview]);
+  }, [
+    input.environmentId,
+    input.root,
+    nextOverviewRequestToken,
+    nextRequestToken,
+    nextZoteroRequestToken,
+    refreshOverview,
+  ]);
 
   const checkZotero = useCallback(
     async (showRetryFeedback: boolean) => {
@@ -372,7 +387,7 @@ export function useScientSources(input: {
     if (count === 0) return null;
     dispatch({ type: "operationCleared" });
     const request = nextRequestToken();
-    dispatch({ type: "requestStarted" });
+    dispatch({ type: "requestStarted", request });
     dispatch({ type: "importPreparationChanged", preparation: { kind: "zotero", count } });
     dispatch({ type: "busyChanged", busy: true });
     dispatch({ type: "errorCleared" });
@@ -581,7 +596,7 @@ export function useScientSources(input: {
       if (itemKeys.length === 0) return null;
       dispatch({ type: "operationCleared" });
       const request = nextRequestToken();
-      dispatch({ type: "requestStarted" });
+      dispatch({ type: "requestStarted", request });
       dispatch({
         type: "importPreparationChanged",
         preparation: { kind: "zotero", count: itemKeys.length },
@@ -631,7 +646,7 @@ export function useScientSources(input: {
           : null;
       dispatch({ type: "operationCleared" });
       const request = nextRequestToken();
-      dispatch({ type: "requestStarted" });
+      dispatch({ type: "requestStarted", request });
       dispatch({
         type: "importPreparationChanged",
         preparation: { kind: "local-files", names: validFiles.map((file) => file.name) },
@@ -707,7 +722,7 @@ export function useScientSources(input: {
       dispatch({ type: "cancellingChanged", cancelling: false });
       dispatch({ type: "errorCleared" });
       const request = nextRequestToken();
-      dispatch({ type: "requestStarted" });
+      dispatch({ type: "requestStarted", request });
       try {
         const selectedKeys = new Set(itemKeys);
         const reviewedCounts = workflowReviewedImportCounts(state.preflight, selectedKeys);
@@ -747,7 +762,7 @@ export function useScientSources(input: {
     dispatch({ type: "cancellingChanged", cancelling: false });
     dispatch({ type: "errorCleared" });
     const request = nextRequestToken();
-    dispatch({ type: "requestStarted" });
+    dispatch({ type: "requestStarted", request });
     try {
       const next = await continueSourceImport({
         environmentId: input.environmentId,
@@ -804,7 +819,7 @@ export function useScientSources(input: {
     // Supersede every in-flight import request, including the durable
     // continuation whose progress updates would otherwise keep arriving.
     const request = nextRequestToken();
-    dispatch({ type: "requestStarted" });
+    dispatch({ type: "requestStarted", request });
     dispatch({ type: "cancellingChanged", cancelling: true });
     dispatch({ type: "busyChanged", busy: true });
     dispatch({ type: "errorCleared" });
@@ -852,7 +867,7 @@ export function useScientSources(input: {
     dispatch({ type: "busyChanged", busy: true });
     dispatch({ type: "errorCleared" });
     const request = nextRequestToken();
-    dispatch({ type: "requestStarted" });
+    dispatch({ type: "requestStarted", request });
     try {
       const retried = await retrySourcesImport(input.environmentId, {
         root: input.root,

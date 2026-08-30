@@ -42,6 +42,14 @@ same Scient-owned panel. A source row opens details even when no attachment is
 present; an explicit PDF action opens a peer source-PDF surface. This keeps
 source identity and bibliographic information separate from document display
 without adding another host navigation concept or environment endpoint.
+`useScientSources` delegates the panel's transient import, overview, and Zotero
+browsing state to one reducer. The durable server import operation remains the
+only authority for import phase, per-item status, cancellation, retry, and
+resumption. Synchronous request tokens are partitioned by workflow lane and are
+reset to the exact same values in the hook and reducer when the selected project
+changes. This lets routine overview refreshes and Zotero searches progress
+without invalidating a running import, while late responses from an older
+request or project are discarded.
 Concrete material selection is centralized in
 `@scientfactory/scient-sources/material-selection`: one eligible PDF may be
 selected automatically, while several eligible PDFs require an explicit

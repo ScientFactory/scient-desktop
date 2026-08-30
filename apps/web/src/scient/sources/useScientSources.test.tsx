@@ -4,7 +4,11 @@
 // client functions: they exist to catch render-timing defects in the hook
 // itself — dispatch/commit ordering, token capture, and effect-driven loads —
 // which reducer-only tests cannot observe.
-import type { EnvironmentId, ScientSourcesOverviewResult } from "@t3tools/contracts";
+import type {
+  EnvironmentId,
+  ScientSourcesOverviewResult,
+  ScientSourcesPreflightResult,
+} from "@t3tools/contracts";
 import { act } from "react";
 import { beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
@@ -12,6 +16,7 @@ import { useScientSources } from "./useScientSources";
 
 const mocks = vi.hoisted(() => ({
   readScientSources: vi.fn(),
+  preflightZoteroItems: vi.fn(),
 }));
 
 vi.mock("./client", () => ({
@@ -24,7 +29,7 @@ vi.mock("./client", () => ({
   beginZoteroScopeImport: vi.fn(),
   cancelSourcesImport: vi.fn(),
   discardLocalSourcePdfs: vi.fn(),
-  preflightZoteroItems: vi.fn(),
+  preflightZoteroItems: mocks.preflightZoteroItems,
   refreshScientSourceMetadata: vi.fn(),
   removeScientSource: vi.fn(),
   retrySourcesImport: vi.fn(),
@@ -121,23 +126,28 @@ function overviewWith(sourceIds: ReadonlyArray<string>): ScientSourcesOverviewRe
 
 interface HookProbe {
   overview: ScientSourcesOverviewResult | null;
+  preflight: ScientSourcesPreflightResult | null;
   busy: boolean;
   error: string | null;
   reloadOverview: () => Promise<unknown>;
+  previewImport: (itemKeys: ReadonlyArray<string>) => Promise<unknown>;
 }
 
 async function withMountedHook(
-  run: (probe: { current: HookProbe }) => Promise<void>,
+  run: (
+    probe: { current: HookProbe },
+    controls: { rerender: (nextRoot: string) => Promise<void> },
+  ) => Promise<void>,
 ): Promise<void> {
   const { createRoot } = await import("react-dom/client");
   const document = installTestDom();
-  const root = createRoot(document.createElement("div") as unknown as Element);
+  const appRoot = createRoot(document.createElement("div") as unknown as Element);
   const probe = { current: { overview: null } as HookProbe };
   let lastError: unknown = null;
 
-  function Harness() {
+  function Harness(props: { readonly projectRoot: string }) {
     try {
-      const sources = useScientSources({ environmentId, root: "/project" });
+      const sources = useScientSources({ environmentId, root: props.projectRoot });
       probe.current = sources;
     } catch (error) {
       lastError = error;
@@ -147,25 +157,33 @@ async function withMountedHook(
   const flush = async () => {
     // The mocked fetch resolves on the microtask queue; drain enough turns
     // for the response dispatch and the render it triggers to settle.
-    for (let turn = 0; turn < 10 && probe.current.overview === null; turn += 1) {
+    for (let turn = 0; turn < 10; turn += 1) {
       await Promise.resolve();
     }
   };
   try {
     await act(async () => {
-      root.render(<Harness />);
+      appRoot.render(<Harness projectRoot="/project" />);
       await flush();
     });
-    await run(probe);
+    await run(probe, {
+      rerender: async (nextRoot) => {
+        await act(async () => {
+          appRoot.render(<Harness projectRoot={nextRoot} />);
+          await flush();
+        });
+      },
+    });
     expect(lastError).toBeNull();
   } finally {
-    await act(() => root.unmount());
+    await act(() => appRoot.unmount());
     vi.unstubAllGlobals();
   }
 }
 
 beforeEach(() => {
   mocks.readScientSources.mockReset();
+  mocks.preflightZoteroItems.mockReset();
 });
 
 describe("useScientSources mounted behavior", () => {
@@ -204,6 +222,85 @@ describe("useScientSources mounted behavior", () => {
       });
 
       expect(probe.current.overview?.records.map((record) => record.sourceId)).toEqual(["second"]);
+    });
+  });
+
+  it("accepts the first import preflight after the initial context reset", async () => {
+    mocks.readScientSources.mockResolvedValue(overviewWith([]));
+    mocks.preflightZoteroItems.mockResolvedValue({
+      items: [
+        {
+          candidate: {
+            sourceKey: "zotero-item-1",
+            type: "article",
+            title: "A possible duplicate",
+            creators: [],
+            issuedRaw: null,
+            issuedYear: 2024,
+            identifiers: [],
+            abstract: null,
+            containerTitle: null,
+            publisher: null,
+            volume: null,
+            issue: null,
+            pages: null,
+            language: null,
+            url: null,
+            tags: [],
+            externalReferences: [],
+            fieldProvenance: [],
+            pdfFileName: null,
+            pdfAvailable: false,
+            pdfAttachmentCount: 0,
+          },
+          duplicate: {
+            kind: "possible-metadata-match",
+            matchingSourceIds: ["source-existing"],
+            reason: "Title and year match",
+          },
+          metadataDiagnostics: [],
+        },
+      ],
+    } satisfies ScientSourcesPreflightResult);
+
+    await withMountedHook(async (probe) => {
+      let outcome: unknown;
+      await act(async () => {
+        outcome = await probe.current.previewImport(["zotero-item-1"]);
+      });
+
+      expect(outcome).toMatchObject({ kind: "review-required" });
+      expect(probe.current.preflight?.items[0]?.candidate.sourceKey).toBe("zotero-item-1");
+      expect(probe.current.busy).toBe(false);
+    });
+  });
+
+  it("rejects a late overview from the previous project context", async () => {
+    let releaseOldReload: ((value: ScientSourcesOverviewResult) => void) | undefined;
+    const oldReloadGate = new Promise<ScientSourcesOverviewResult>((resolve) => {
+      releaseOldReload = resolve;
+    });
+    mocks.readScientSources
+      .mockResolvedValueOnce(overviewWith(["project-a"]))
+      .mockImplementationOnce(() => oldReloadGate)
+      .mockResolvedValueOnce(overviewWith(["project-b"]));
+
+    await withMountedHook(async (probe, controls) => {
+      let oldReload: Promise<unknown> | undefined;
+      await act(async () => {
+        oldReload = probe.current.reloadOverview();
+        await Promise.resolve();
+      });
+      await controls.rerender("/project-b");
+      await act(async () => {
+        releaseOldReload?.(overviewWith(["stale-project-a"]));
+        await oldReload;
+      });
+
+      expect(probe.current.overview?.records.map((record) => record.sourceId)).toEqual([
+        "project-b",
+      ]);
+      expect(probe.current.busy).toBe(false);
     });
   });
 });
