@@ -6,6 +6,30 @@ function isSameCalendarDay(left: Date, right: Date): boolean {
   );
 }
 
+type ObservableSourceRecord = {
+  readonly sourceId: string;
+  readonly importedAt: string;
+  readonly origin?:
+    | {
+        readonly actor?: string;
+      }
+    | null
+    | undefined;
+};
+
+export function newlyObservedSourceIds(
+  records: ReadonlyArray<ObservableSourceRecord>,
+  previousIds: ReadonlySet<string> | null,
+  recentCutoff: number,
+): ReadonlyArray<string> {
+  return records
+    .filter((record) => {
+      if (previousIds) return !previousIds.has(record.sourceId);
+      return record.origin?.actor === "agent" && Date.parse(record.importedAt) >= recentCutoff;
+    })
+    .map((record) => record.sourceId);
+}
+
 export function sourceAddedLabel(
   importedAt: string,
   recentlyAdded: boolean,
