@@ -105,6 +105,10 @@ interactive, active-HTML, widget, notebook, or additional-language renderers.
 
 It coordinates with, but does not duplicate:
 
+- `scient-compute-toolkit-foundation.md`, which records the local Phase 5A
+  Toolkit-inspection and managed-Python activation candidate plus the
+  distribution, lock, ownership, UI, update, and agent-authority decisions
+  that must remain explicit before installation is exposed;
 - `scient-analysis-runtime-foundation.md`, which owns one-shot terminal
   execution, the shared `@scientfactory/execution` kernel, and the
   `AnalysisRun` lifecycle;
