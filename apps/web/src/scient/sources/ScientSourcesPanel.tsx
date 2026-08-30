@@ -4,6 +4,7 @@ import type {
   ScientSourcesOverviewResult,
   ScientSourcesPreflightResult,
 } from "@t3tools/contracts";
+import { selectScientSourceMaterial } from "@scientfactory/scient-sources/material-selection";
 import {
   AlertCircle,
   ArrowDownUp,
@@ -56,7 +57,7 @@ import { ScientTooltip } from "../presentation/ScientTooltip";
 import { SourceDetails } from "./SourceDetails";
 import { SourceEditor } from "./SourceEditor";
 import { SourceJournalIcon } from "./SourceJournalIcon";
-import { sourceAddedLabel } from "./sourceLabels";
+import { newlyObservedSourceIds, sourceAddedLabel } from "./sourceLabels";
 import {
   filterScientSourceSearchIndex,
   indexScientSourceSummaries,
@@ -86,7 +87,6 @@ type SourceDiagnostic =
   ScientSourcesOverviewResult["recordDiagnostics"][number]["diagnostics"][number];
 const RECENT_SOURCE_ADD_TTL_MS = 10 * 60 * 1000;
 const recentSourceAdds = new Map<string, Map<string, number>>();
-const observedSourceIds = new Map<string, Set<string>>();
 
 function readRecentSourceAdds(contextKey: string): ReadonlySet<string> {
   const now = Date.now();
@@ -254,6 +254,10 @@ export function ScientSourcesPanel(props: {
   const localFileInput = useRef<HTMLInputElement>(null);
   const panelMounted = useRef(true);
   const importRevealRequest = useRef(0);
+  const observedSourceIds = useRef<{
+    readonly contextKey: string;
+    readonly sourceIds: ReadonlySet<string>;
+  } | null>(null);
   const panelContextRef = useRef(panelContext);
   panelContextRef.current = panelContext;
 
@@ -302,12 +306,6 @@ export function ScientSourcesPanel(props: {
   }, [panelContext, props.environmentId, props.root]);
 
   useEffect(() => {
-    return () => {
-      observedSourceIds.delete(panelContext);
-    };
-  }, [panelContext]);
-
-  useEffect(() => {
     const entries = recentSourceAdds.get(panelContext);
     if (!entries || entries.size === 0) return;
     const expiresAt = Math.min(...entries.values());
@@ -339,17 +337,17 @@ export function ScientSourcesPanel(props: {
     const records = sources.overview?.records;
     if (!records) return;
     const currentIds = new Set(records.map((record) => record.sourceId));
-    const previousIds = observedSourceIds.get(panelContext);
-    observedSourceIds.set(panelContext, currentIds);
+    const previousObservation = observedSourceIds.current;
+    const previousIds =
+      previousObservation?.contextKey === panelContext ? previousObservation.sourceIds : null;
+    observedSourceIds.current = { contextKey: panelContext, sourceIds: currentIds };
     const cutoff = Date.now() - RECENT_SOURCE_ADD_TTL_MS;
-    const newlyObserved = records
-      .filter((record) =>
-        previousIds ? !previousIds.has(record.sourceId) : Date.parse(record.importedAt) >= cutoff,
-      )
-      .map((record) => record.sourceId);
-    if (newlyObserved.length === 0) return;
-
-    setRecentlyAddedSourceIds(rememberRecentSourceAdds(panelContext, newlyObserved));
+    const newlyObserved = newlyObservedSourceIds(records, previousIds, cutoff);
+    setRecentlyAddedSourceIds(
+      newlyObserved.length > 0
+        ? rememberRecentSourceAdds(panelContext, newlyObserved)
+        : readRecentSourceAdds(panelContext),
+    );
   }, [panelContext, sources.overview?.records]);
 
   const toggleSelected = useCallback((itemKey: string) => {
@@ -412,7 +410,8 @@ export function ScientSourcesPanel(props: {
     async (record: SourceRecord, anchorPoint: { readonly x: number; readonly y: number }) => {
       const api = readLocalApi();
       if (!api) return;
-      const pdf = record.attachments.find((attachment) => attachment.kind === "pdf");
+      const materialSelection = selectScientSourceMaterial({ materials: record.attachments });
+      const pdf = materialSelection._tag === "Selected" ? materialSelection.material : null;
       const items: ContextMenuItem<SourceContextAction>[] = [
         { id: "view", label: "View source details" },
         { id: "edit", label: "Edit source details", icon: "pencil" },
@@ -779,15 +778,44 @@ export function ScientSourcesPanel(props: {
           }
           onBack={sources.closeZoteroStatus}
         />
-        <div className="flex min-h-0 flex-1 items-center justify-center p-6">
+        <div className="flex min-h-0 flex-1 items-start justify-center overflow-y-auto px-6 pt-[clamp(2rem,7vh,4.5rem)] pb-6">
           <div className="w-full max-w-md">
-            <div className="flex items-center gap-2 text-sm text-muted-foreground">
-              <Info className="size-4 shrink-0" aria-hidden="true" />
-              <span className="min-w-0 flex-1">{connectionMessage}</span>
+            <p className="text-base leading-relaxed text-foreground">{connectionMessage}</p>
+            <div className="mt-6 flex w-44 flex-col items-stretch gap-1">
+              <Button
+                size="sm"
+                variant="ghost-muted"
+                className="w-full justify-start font-normal"
+                disabled={sources.checkingZotero}
+                aria-busy={sources.checkingZotero}
+                onClick={() => void sources.openZoteroLibrary(true)}
+              >
+                {sources.checkingZotero ? <LoaderCircle className="animate-spin" /> : <RefreshCw />}
+                Check again
+              </Button>
+              {status.state === "unreachable" ? (
+                <Button
+                  size="sm"
+                  variant="ghost-muted"
+                  className="w-full justify-start font-normal"
+                  onClick={() =>
+                    void readLocalApi()?.shell.openExternal("https://www.zotero.org/download/")
+                  }
+                >
+                  <ExternalLink />
+                  Download Zotero
+                </Button>
+              ) : null}
               <Popover>
                 <PopoverTrigger
                   render={
-                    <Button type="button" size="xs" variant="ghost" className="shrink-0">
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="ghost-muted"
+                      className="w-full justify-start font-normal"
+                    >
+                      <BookOpen />
                       How to connect
                     </Button>
                   }
@@ -811,30 +839,8 @@ export function ScientSourcesPanel(props: {
                 </PopoverPopup>
               </Popover>
             </div>
-            <div className="mt-4 flex flex-wrap items-center gap-2">
-              <Button
-                variant="outline"
-                disabled={sources.checkingZotero}
-                aria-busy={sources.checkingZotero}
-                onClick={() => void sources.openZoteroLibrary(true)}
-              >
-                {sources.checkingZotero ? <LoaderCircle className="animate-spin" /> : <RefreshCw />}
-                Check again
-              </Button>
-              {status.state === "unreachable" ? (
-                <Button
-                  variant="ghost"
-                  onClick={() =>
-                    void readLocalApi()?.shell.openExternal("https://www.zotero.org/download/")
-                  }
-                >
-                  <ExternalLink />
-                  Download Zotero
-                </Button>
-              ) : null}
-            </div>
             <div
-              className="min-h-4 pt-2 text-xs text-muted-foreground"
+              className="mt-5 min-h-4 text-xs text-muted-foreground"
               role="status"
               aria-live="polite"
             >
@@ -1075,7 +1081,7 @@ export function ScientSourcesPanel(props: {
               placeholder="Search title, author, DOI, year, or keyword"
               value={sourceQuery}
               onChange={(event) => setSourceQuery(event.currentTarget.value)}
-              className="min-w-0 flex-1 [&_[data-slot=input]]:h-8 [&_[data-slot=input]]:p-0 [&_[data-slot=input]]:leading-normal [&_[data-slot=input]]:text-sm [&_[data-slot=input]]:font-medium [&_[data-slot=input]]:text-foreground [&_[data-slot=input]]:placeholder:text-muted-foreground"
+              className="min-w-0 flex-1 [&_[data-slot=input]]:h-8 [&_[data-slot=input]]:p-0 [&_[data-slot=input]]:leading-normal [&_[data-slot=input]]:text-sm [&_[data-slot=input]]:font-medium [&_[data-slot=input]]:text-foreground [&_[data-slot=input]]:placeholder:text-muted-foreground/60"
             />
             {sourceQuery ? (
               <Button
@@ -1128,7 +1134,13 @@ export function ScientSourcesPanel(props: {
         <ScrollArea className="min-h-0 flex-1">
           <div className="divide-y divide-border">
             {filteredSourceRecords.map((record) => {
-              const pdf = record.attachments.find((attachment) => attachment.kind === "pdf");
+              const materialSelection = selectScientSourceMaterial({
+                materials: record.attachments,
+              });
+              const pdf = materialSelection._tag === "Selected" ? materialSelection.material : null;
+              const hasPdf =
+                materialSelection._tag === "Selected" ||
+                materialSelection._tag === "SeveralMaterials";
               const metadataDiagnostics = diagnosticsBySourceId.get(record.sourceId);
               return (
                 <div
@@ -1156,7 +1168,7 @@ export function ScientSourcesPanel(props: {
                             <span className="mt-0.5 block text-xs text-muted-foreground">
                               {creatorLabel(record)}
                               {record.issuedYear ? ` · ${record.issuedYear}` : ""}
-                              {pdf ? " · PDF" : " · Metadata only"}
+                              {hasPdf ? " · PDF" : " · Metadata only"}
                               {" · "}
                               <span
                                 className={
@@ -1202,6 +1214,17 @@ export function ScientSourcesPanel(props: {
                                 fileName: pdf.fileName,
                               });
                             }}
+                          >
+                            <FileText />
+                          </Button>
+                        </ScientTooltip>
+                      ) : materialSelection._tag === "SeveralMaterials" ? (
+                        <ScientTooltip content="Choose a PDF in source details">
+                          <Button
+                            variant="ghost"
+                            size="icon-sm"
+                            aria-label={`Choose a PDF to open: ${record.title ?? "Untitled source"}`}
+                            onClick={() => openSourceDetails(record.sourceId)}
                           >
                             <FileText />
                           </Button>

@@ -149,6 +149,36 @@ describe("SourceDetails", () => {
     expect(markup).toContain("Metadata needs review");
   });
 
+  it("requires an explicit PDF choice when a Source has several materials", () => {
+    const markup = renderToStaticMarkup(
+      <SourceDetails
+        record={{
+          ...record,
+          attachments: [
+            record.attachments[0]!,
+            {
+              ...record.attachments[0]!,
+              attachmentId: "pdf_supplement",
+              fileName: "supplement.pdf",
+              sha256: "def456",
+              relativePath: "files/sha256/de/def456.pdf",
+            },
+          ],
+        }}
+        diagnostics={[]}
+        onBack={() => undefined}
+        onEdit={() => undefined}
+        onSaveNote={saveNote}
+        onRefreshMetadata={async () => undefined}
+        onRemove={async () => undefined}
+        onOpenPdf={() => undefined}
+      />,
+    );
+
+    expect(markup).toContain('aria-label="Choose a PDF to open"');
+    expect(markup).toContain("Open PDF");
+  });
+
   it("keeps a project-owned note directly editable below the reference", () => {
     const markup = renderToStaticMarkup(
       <SourceDetails
