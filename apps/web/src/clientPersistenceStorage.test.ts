@@ -90,4 +90,34 @@ describe("clientPersistenceStorage", () => {
     expect(settings).not.toHaveProperty("chatWordWrap");
     expect(settings).not.toHaveProperty("diffWordWrap");
   });
+
+  it("uses new defaults only for preferences missing from browser storage", async () => {
+    const testWindow = getTestWindow();
+    testWindow.localStorage.setItem(
+      "scient-next:client-settings:v1",
+      JSON.stringify({
+        appearanceContrast: 100,
+        sidebarAutoSettleAfterDays: 3,
+        sidebarAutoSettleOnMerge: true,
+      }),
+    );
+    const { readBrowserClientSettings } = await import("./clientPersistenceStorage");
+
+    expect(readBrowserClientSettings()).toEqual(
+      expect.objectContaining({
+        appearanceContrast: 100,
+        sidebarAutoSettleAfterDays: 3,
+        sidebarAutoSettleOnMerge: true,
+      }),
+    );
+
+    testWindow.localStorage.setItem("scient-next:client-settings:v1", "{}");
+    expect(readBrowserClientSettings()).toEqual(
+      expect.objectContaining({
+        appearanceContrast: 120,
+        sidebarAutoSettleAfterDays: 7,
+        sidebarAutoSettleOnMerge: false,
+      }),
+    );
+  });
 });

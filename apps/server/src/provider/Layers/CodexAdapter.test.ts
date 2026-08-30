@@ -705,6 +705,7 @@ lifecycleLayer("CodexAdapterLive lifecycle", (it) => {
     Effect.gen(function* () {
       const { adapter, runtime } = yield* startLifecycleRuntime();
       const firstEventFiber = yield* Stream.runHead(adapter.streamEvents).pipe(Effect.forkChild);
+      const marker = "\uE200cite\uE202turn3view1\uE201";
 
       const event: ProviderEvent = {
         id: asEventId("evt-msg-complete"),
@@ -722,7 +723,7 @@ lifecycleLayer("CodexAdapterLive lifecycle", (it) => {
           item: {
             type: "agentMessage",
             id: "msg_1",
-            text: "done",
+            text: `תשובה ${marker}`,
           },
         },
       };
@@ -741,6 +742,62 @@ lifecycleLayer("CodexAdapterLive lifecycle", (it) => {
       NodeAssert.equal(firstEvent.value.itemId, "msg_1");
       NodeAssert.equal(firstEvent.value.turnId, "turn-1");
       NodeAssert.equal(firstEvent.value.payload.itemType, "assistant_message");
+      NodeAssert.deepStrictEqual(firstEvent.value.payload.textCitations, [
+        {
+          start: "תשובה ".length,
+          end: "תשובה ".length + marker.length,
+          sourceIds: ["turn3view1"],
+        },
+      ]);
+    }),
+  );
+
+  it.effect("normalizes completed web-search sources", () =>
+    Effect.gen(function* () {
+      const { adapter, runtime } = yield* startLifecycleRuntime();
+      const firstEventFiber = yield* Stream.runHead(adapter.streamEvents).pipe(Effect.forkChild);
+
+      yield* runtime.emit({
+        id: asEventId("evt-search-complete"),
+        kind: "notification",
+        provider: ProviderDriverKind.make("codex"),
+        createdAt: "2026-01-01T00:00:00.000Z",
+        method: "item/completed",
+        threadId: asThreadId("thread-1"),
+        turnId: asTurnId("turn-1"),
+        itemId: asItemId("search_1"),
+        payload: {
+          completedAtMs: 1_778_000_000_000,
+          threadId: "thread-1",
+          turnId: "turn-1",
+          item: {
+            type: "webSearch",
+            id: "search_1",
+            query: "clinical guideline",
+            results: [
+              {
+                ref_id: "turn3view1",
+                url: "https://example.com/guideline",
+                title: "Clinical guideline",
+              },
+            ],
+          },
+        },
+      });
+
+      const firstEvent = yield* Fiber.join(firstEventFiber);
+      NodeAssert.equal(firstEvent._tag, "Some");
+      if (firstEvent._tag !== "Some" || firstEvent.value.type !== "item.completed") {
+        return;
+      }
+      NodeAssert.equal(firstEvent.value.payload.itemType, "web_search");
+      NodeAssert.deepStrictEqual(firstEvent.value.payload.citationSources, [
+        {
+          id: "turn3view1",
+          url: "https://example.com/guideline",
+          title: "Clinical guideline",
+        },
+      ]);
     }),
   );
 

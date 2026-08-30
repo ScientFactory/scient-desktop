@@ -12,6 +12,13 @@ warnings from the build appear in a list above the document; each one shows
 the file and line it came from when the compiler reported one. Click a message
 that names a project file to open that file at the reported line.
 
+You can also ask an agent to create or edit a project LaTeX document and build
+it as a PDF. When the connected provider supports Scient's document tools, the
+agent uses the same qualified LaTeX toolchain, saves the requested PDF inside
+the project, and opens the compiled document in Split view. A successful build
+proves that the PDF compiled; ask the agent to inspect the rendered pages when
+visual quality matters.
+
 ## Move between source and PDF
 
 In Split, double-click a line of source to jump to the matching place in the

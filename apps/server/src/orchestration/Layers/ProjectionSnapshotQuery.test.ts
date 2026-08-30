@@ -2352,6 +2352,95 @@ projectionSnapshotLayer("ProjectionSnapshotQuery windowed thread detail", (it) =
     }),
   );
 
+  it.effect("recovers legacy citations outside the bounded activity window", () =>
+    Effect.gen(function* () {
+      yield* seedFanOutThread();
+      const snapshotQuery = yield* ProjectionSnapshotQuery;
+      const sql = yield* SqlClient.SqlClient;
+      const marker = "\uE200cite\uE202turn3view1\uE201";
+      const legacyText = `עברית ${marker}`;
+      const searchPayload =
+        '{"itemType":"web_search","data":{"item":{"results":[{"ref_id":"turn3view1","url":"https://example.com/guideline","title":"Clinical guideline"}]}}}';
+
+      yield* sql`DELETE FROM projection_thread_activities`;
+      yield* sql`
+        INSERT INTO projection_thread_messages (
+          message_id, thread_id, turn_id, role, text, is_streaming, created_at, updated_at
+        )
+        VALUES (
+          'message-legacy-citation', 'thread-w', 'turn-5', 'assistant', ${legacyText}, 0,
+          '2026-03-01T00:04:30.000Z', '2026-03-01T00:04:30.000Z'
+        )
+      `;
+      yield* sql`
+        INSERT INTO projection_thread_activities (
+          activity_id, thread_id, turn_id, tone, kind, summary, payload_json, sequence, created_at
+        )
+        VALUES (
+          'activity-legacy-search', 'thread-w', 'turn-5', 'tool', 'tool.completed',
+          'Web search', ${searchPayload}, 0, '2026-03-01T00:04:00.000Z'
+        )
+      `;
+      yield* sql`
+        WITH RECURSIVE activity_rows(sequence) AS (
+          SELECT 1
+          UNION ALL
+          SELECT sequence + 1 FROM activity_rows WHERE sequence < 501
+        )
+        INSERT INTO projection_thread_activities (
+          activity_id, thread_id, turn_id, tone, kind, summary, payload_json, sequence, created_at
+        )
+        SELECT
+          printf('activity-filler-%04d', sequence),
+          'thread-w',
+          'turn-5',
+          'tool',
+          'tool.completed',
+          'ran tool',
+          printf('{"sequence":%d}', sequence),
+          sequence,
+          '2026-03-01T00:04:01.000Z'
+        FROM activity_rows
+      `;
+
+      const fullDetail = yield* snapshotQuery.getThreadDetailById(threadW);
+      assert.equal(fullDetail._tag, "Some");
+      if (fullDetail._tag === "Some") {
+        assert.equal(fullDetail.value.activities.length, 500);
+        assert.equal(
+          fullDetail.value.activities.some((activity) => activity.id === "activity-legacy-search"),
+          false,
+        );
+        assert.equal(
+          fullDetail.value.messages.find((message) => message.id === "message-legacy-citation")
+            ?.text,
+          'עברית [1](<https://example.com/guideline> "Clinical guideline")',
+        );
+      }
+
+      const fullSnapshot = yield* snapshotQuery.getSnapshot();
+      assert.equal(
+        fullSnapshot.threads
+          .find((thread) => thread.id === "thread-w")
+          ?.messages.find((message) => message.id === "message-legacy-citation")?.text,
+        'עברית [1](<https://example.com/guideline> "Clinical guideline")',
+      );
+
+      const windowedDetail = yield* snapshotQuery.getThreadDetailSnapshot(threadW, {
+        turnLimit: 2,
+      });
+      assert.equal(windowedDetail._tag, "Some");
+      if (windowedDetail._tag === "Some") {
+        assert.equal(
+          windowedDetail.value.thread.messages.find(
+            (message) => message.id === "message-legacy-citation",
+          )?.text,
+          'עברית [1](<https://example.com/guideline> "Clinical guideline")',
+        );
+      }
+    }),
+  );
+
   it.effect("bounds activity hydration and preserves unresolved requests", () =>
     Effect.gen(function* () {
       yield* seedFanOutThread();

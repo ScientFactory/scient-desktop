@@ -412,6 +412,27 @@ export const ItemLifecyclePayload = Schema.Struct({
   title: Schema.optional(TrimmedNonEmptyStringSchema),
   detail: Schema.optional(TrimmedNonEmptyStringSchema),
   data: Schema.optional(Schema.Unknown),
+  citationSources: Schema.optional(
+    Schema.Array(
+      Schema.Struct({
+        id: TrimmedNonEmptyStringSchema.check(Schema.isMaxLength(256)),
+        url: TrimmedNonEmptyStringSchema.check(Schema.isMaxLength(32_768)),
+        title: Schema.optional(TrimmedNonEmptyStringSchema.check(Schema.isMaxLength(1_024))),
+      }),
+    ).check(Schema.isMaxLength(128)),
+  ),
+  textCitations: Schema.optional(
+    Schema.Array(
+      Schema.Struct({
+        start: NonNegativeInt,
+        end: NonNegativeInt,
+        sourceIds: Schema.Array(TrimmedNonEmptyStringSchema.check(Schema.isMaxLength(256))).check(
+          Schema.isMinLength(1),
+          Schema.isMaxLength(16),
+        ),
+      }),
+    ).check(Schema.isMaxLength(128)),
+  ),
   /**
    * Owning agent when this item ran inside a subagent (resolved from the
    * SDK's parent_tool_use_id). Clients re-home attributed items out of the
@@ -421,6 +442,9 @@ export const ItemLifecyclePayload = Schema.Struct({
   parentToolUseId: Schema.optional(TrimmedNonEmptyStringSchema),
 });
 export type ItemLifecyclePayload = typeof ItemLifecyclePayload.Type;
+
+export type RuntimeCitationSource = NonNullable<ItemLifecyclePayload["citationSources"]>[number];
+export type RuntimeTextCitation = NonNullable<ItemLifecyclePayload["textCitations"]>[number];
 
 const ContentDeltaPayload = Schema.Struct({
   streamKind: RuntimeContentStreamKind,

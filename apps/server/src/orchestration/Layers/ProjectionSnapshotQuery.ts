@@ -71,6 +71,10 @@ import {
   type ProjectionThreadCheckpointContext,
   type ProjectionSnapshotQueryShape,
 } from "../Services/ProjectionSnapshotQuery.ts";
+import {
+  CODEX_CITATION_MARKER_PREFIX,
+  projectLegacyCitationText,
+} from "../legacyCitationProjection.ts";
 
 const decodeReadModel = Schema.decodeUnknownEffect(OrchestrationReadModel);
 const decodeShellSnapshot = Schema.decodeUnknownEffect(OrchestrationShellSnapshot);
@@ -104,6 +108,30 @@ const ProjectionThreadActivityDbRowSchema = ProjectionThreadActivity.mapFields(
     sequence: Schema.NullOr(NonNegativeInt),
   }),
 );
+type ProjectionThreadActivityDbRow = typeof ProjectionThreadActivityDbRowSchema.Type;
+
+function citationTurnKey(threadId: string, turnId: string): string {
+  return `${threadId}\u0000${turnId}`;
+}
+
+function citationPayloadsByTurn(
+  rows: ReadonlyArray<ProjectionThreadActivityDbRow>,
+): ReadonlyMap<string, ReadonlyArray<unknown>> {
+  const payloads = new Map<string, unknown[]>();
+  for (const row of rows) {
+    if (row.turnId === null || row.kind !== "tool.completed") continue;
+    const payload =
+      typeof row.payload === "object" && row.payload !== null && !Array.isArray(row.payload)
+        ? (row.payload as { readonly itemType?: unknown })
+        : undefined;
+    if (payload?.itemType !== "web_search") continue;
+    const key = citationTurnKey(row.threadId, row.turnId);
+    const existing = payloads.get(key) ?? [];
+    existing.push(row.payload);
+    payloads.set(key, existing);
+  }
+  return payloads;
+}
 const ProjectionThreadSessionDbRowSchema = ProjectionThreadSession;
 const ProjectionCheckpointDbRowSchema = ProjectionCheckpoint.mapFields(
   Struct.assign({
@@ -1119,6 +1147,40 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
       `,
   });
 
+  // Citation sources are message content, not a work-log window. Load the
+  // completed web searches for turns whose legacy messages still contain a
+  // Codex marker even when those activities fell outside the 500-row UI cap.
+  const listLegacyCitationActivityRowsByThread = SqlSchema.findAll({
+    Request: ThreadIdLookupInput,
+    Result: ProjectionThreadActivityDbRowSchema,
+    execute: ({ threadId }) =>
+      sql`
+        SELECT
+          activity_id AS "activityId",
+          thread_id AS "threadId",
+          turn_id AS "turnId",
+          tone,
+          kind,
+          summary,
+          payload_json AS "payload",
+          sequence,
+          created_at AS "createdAt"
+        FROM projection_thread_activities AS activity
+        WHERE activity.thread_id = ${threadId}
+          AND activity.turn_id IS NOT NULL
+          AND activity.kind = 'tool.completed'
+          AND json_extract(activity.payload_json, '$.itemType') = 'web_search'
+          AND EXISTS (
+            SELECT 1
+            FROM projection_thread_messages AS message
+            WHERE message.thread_id = activity.thread_id
+              AND message.turn_id = activity.turn_id
+              AND instr(message.text, ${CODEX_CITATION_MARKER_PREFIX}) > 0
+          )
+        ORDER BY activity.sequence ASC, activity.created_at ASC, activity.activity_id ASC
+      `,
+  });
+
   const getThreadSessionRowByThread = SqlSchema.findOneOption({
     Request: ThreadIdLookupInput,
     Result: ProjectionThreadSessionDbRowSchema,
@@ -1483,6 +1545,50 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
       `,
   });
 
+  const listLegacyCitationActivityRowsByThreadWindow = SqlSchema.findAll({
+    Request: ThreadTurnRangeLookupInput,
+    Result: ProjectionThreadActivityDbRowSchema,
+    execute: ({ threadId, minAnchorAt, minTurnKey, beforeAnchorAt, beforeTurnKey }) =>
+      sql`
+        SELECT
+          activity.activity_id AS "activityId",
+          activity.thread_id AS "threadId",
+          activity.turn_id AS "turnId",
+          activity.tone,
+          activity.kind,
+          activity.summary,
+          activity.payload_json AS "payload",
+          activity.sequence,
+          activity.created_at AS "createdAt"
+        FROM projection_thread_activities AS activity
+        WHERE activity.thread_id = ${threadId}
+          AND activity.kind = 'tool.completed'
+          AND json_extract(activity.payload_json, '$.itemType') = 'web_search'
+          AND activity.turn_id IN (
+            SELECT turn_id
+            FROM projection_turns
+            WHERE thread_id = ${threadId}
+              AND turn_id IS NOT NULL
+              AND (
+                requested_at > ${minAnchorAt}
+                OR (requested_at = ${minAnchorAt} AND turn_id >= ${minTurnKey})
+              )
+              AND (
+                requested_at < ${beforeAnchorAt}
+                OR (requested_at = ${beforeAnchorAt} AND turn_id < ${beforeTurnKey})
+              )
+          )
+          AND EXISTS (
+            SELECT 1
+            FROM projection_thread_messages AS message
+            WHERE message.thread_id = activity.thread_id
+              AND message.turn_id = activity.turn_id
+              AND instr(message.text, ${CODEX_CITATION_MARKER_PREFIX}) > 0
+          )
+        ORDER BY activity.sequence ASC, activity.created_at ASC, activity.activity_id ASC
+      `,
+  });
+
   const getFullThreadDiffContextRow = SqlSchema.findOneOption({
     Request: FullThreadDiffContextLookupInput,
     Result: ProjectionFullThreadDiffContextRowSchema,
@@ -1624,6 +1730,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
               const forkLineageByThread = new Map<string, ProjectionForkLineageRow>();
               const sessionsByThread = new Map<string, OrchestrationSession>();
               const latestTurnByThread = new Map<string, OrchestrationLatestTurn>();
+              const legacyCitationPayloads = citationPayloadsByTurn(activityRows);
 
               let updatedAt: string | null = null;
 
@@ -1643,7 +1750,14 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
                 threadMessages.push({
                   id: row.messageId,
                   role: row.role,
-                  text: row.text,
+                  text:
+                    row.turnId === null
+                      ? row.text
+                      : projectLegacyCitationText(
+                          row.text,
+                          legacyCitationPayloads.get(citationTurnKey(row.threadId, row.turnId)) ??
+                            [],
+                        ),
                   ...(row.attachments !== null ? { attachments: row.attachments } : {}),
                   turnId: row.turnId,
                   streaming: row.isStreaming === 1,
@@ -2742,6 +2856,26 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
         return Option.none<OrchestrationThread>();
       }
 
+      // New messages are normalized before persistence. Only pay for the
+      // unbounded compatibility lookup when this loaded page actually
+      // contains a legacy Codex marker.
+      const legacyCitationActivityRows = messageRows.some((row) =>
+        row.text.includes(CODEX_CITATION_MARKER_PREFIX),
+      )
+        ? yield* (
+            bounds === undefined
+              ? listLegacyCitationActivityRowsByThread({ threadId })
+              : listLegacyCitationActivityRowsByThreadWindow({ threadId, ...bounds })
+          ).pipe(
+            Effect.mapError(
+              toPersistenceSqlOrDecodeError(
+                "ProjectionSnapshotQuery.getThreadDetailById:listLegacyCitationActivities:query",
+                "ProjectionSnapshotQuery.getThreadDetailById:listLegacyCitationActivities:decodeRows",
+              ),
+            ),
+          )
+        : [];
+
       const selectedActivityRows = [
         ...new Map(
           [...activityRows, ...pinnedActivityRows].map((row) => [row.activityId, row] as const),
@@ -2752,6 +2886,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           left.createdAt.localeCompare(right.createdAt) ||
           left.activityId.localeCompare(right.activityId),
       );
+      const legacyCitationPayloads = citationPayloadsByTurn(legacyCitationActivityRows);
 
       const thread = {
         id: threadRow.value.threadId,
@@ -2783,7 +2918,13 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           const message = {
             id: row.messageId,
             role: row.role,
-            text: row.text,
+            text:
+              row.turnId === null
+                ? row.text
+                : projectLegacyCitationText(
+                    row.text,
+                    legacyCitationPayloads.get(citationTurnKey(row.threadId, row.turnId)) ?? [],
+                  ),
             turnId: row.turnId,
             streaming: row.isStreaming === 1,
             createdAt: row.createdAt,

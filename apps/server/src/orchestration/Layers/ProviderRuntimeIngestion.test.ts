@@ -30,6 +30,7 @@ import * as ManagedRuntime from "effect/ManagedRuntime";
 import * as PubSub from "effect/PubSub";
 import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
+import * as SqlClient from "effect/unstable/sql/SqlClient";
 import { it as effectIt } from "@effect/vitest";
 import { afterEach, describe, expect, it } from "vite-plus/test";
 
@@ -200,7 +201,10 @@ async function waitForThread(
 
 describe("ProviderRuntimeIngestion", () => {
   let runtime: ManagedRuntime.ManagedRuntime<
-    OrchestrationEngineService | ProviderRuntimeIngestionService | ProjectionSnapshotQuery,
+    | OrchestrationEngineService
+    | ProviderRuntimeIngestionService
+    | ProjectionSnapshotQuery
+    | SqlClient.SqlClient,
     unknown
   > | null = null;
   let scope: Scope.Closeable | null = null;
@@ -342,6 +346,18 @@ describe("ProviderRuntimeIngestion", () => {
       engine,
       dispatch,
       readModel: () => Effect.runPromise(snapshotQuery.getSnapshot()),
+      readStoredMessageText: (messageId: MessageId) =>
+        runtime!.runPromise(
+          Effect.gen(function* () {
+            const sql = yield* SqlClient.SqlClient;
+            const rows = yield* sql<{ readonly text: string }>`
+              SELECT text
+              FROM projection_thread_messages
+              WHERE message_id = ${messageId}
+            `;
+            return rows[0]?.text;
+          }),
+        ),
       emit: provider.emit,
       setProviderSession: provider.setSession,
       drain,
@@ -1083,6 +1099,140 @@ describe("ProviderRuntimeIngestion", () => {
     );
     expect(message?.text).toBe("assistant-only final text");
     expect(message?.streaming).toBe(false);
+  });
+
+  it("persists provider citations as ordinary clickable Markdown", async () => {
+    const harness = await createHarness();
+    const now = "2026-01-01T00:00:00.000Z";
+    const marker = "\uE200cite\uE202turn3view1\uE201";
+    const text = `המלצה ${marker}`;
+    const markerStart = text.indexOf(marker);
+
+    harness.emit({
+      type: "item.completed",
+      eventId: asEventId("evt-citation-search-completed"),
+      provider: ProviderDriverKind.make("codex"),
+      createdAt: now,
+      threadId: asThreadId("thread-1"),
+      turnId: asTurnId("turn-citation"),
+      itemId: asItemId("search-citation"),
+      payload: {
+        itemType: "web_search",
+        status: "completed",
+        title: "Web search",
+        citationSources: [
+          {
+            id: "turn3view1",
+            url: "https://example.com/guideline",
+            title: "Clinical guideline",
+          },
+        ],
+      },
+    });
+    harness.emit({
+      type: "content.delta",
+      eventId: asEventId("evt-citation-message-delta"),
+      provider: ProviderDriverKind.make("codex"),
+      createdAt: now,
+      threadId: asThreadId("thread-1"),
+      turnId: asTurnId("turn-citation"),
+      itemId: asItemId("message-citation"),
+      payload: {
+        streamKind: "assistant_text",
+        delta: text,
+      },
+    });
+    harness.emit({
+      type: "item.completed",
+      eventId: asEventId("evt-citation-message-completed"),
+      provider: ProviderDriverKind.make("codex"),
+      createdAt: now,
+      threadId: asThreadId("thread-1"),
+      turnId: asTurnId("turn-citation"),
+      itemId: asItemId("message-citation"),
+      payload: {
+        itemType: "assistant_message",
+        status: "completed",
+        detail: text,
+        textCitations: [
+          {
+            start: markerStart,
+            end: markerStart + marker.length,
+            sourceIds: ["turn3view1"],
+          },
+        ],
+      },
+    });
+
+    const thread = await waitForThread(harness.readModel, (entry) =>
+      entry.messages.some(
+        (message: ProviderRuntimeTestMessage) =>
+          message.id === "assistant:message-citation" && !message.streaming,
+      ),
+    );
+    const message = thread.messages.find(
+      (entry: ProviderRuntimeTestMessage) => entry.id === "assistant:message-citation",
+    );
+    expect(message?.text).toBe('המלצה [1](<https://example.com/guideline> "Clinical guideline")');
+    expect(message?.text).not.toContain("\uE200cite");
+  });
+
+  it("shows a readable fallback without destroying unresolved stored citations", async () => {
+    const harness = await createHarness();
+    const now = "2026-01-01T00:00:00.000Z";
+    const marker = "\uE200cite\uE202missing-source\uE201";
+    const text = `Before ${marker} after`;
+    const markerStart = text.indexOf(marker);
+
+    harness.emit({
+      type: "content.delta",
+      eventId: asEventId("evt-missing-citation-delta"),
+      provider: ProviderDriverKind.make("codex"),
+      createdAt: now,
+      threadId: asThreadId("thread-1"),
+      turnId: asTurnId("turn-missing-citation"),
+      itemId: asItemId("message-missing-citation"),
+      payload: {
+        streamKind: "assistant_text",
+        delta: text,
+      },
+    });
+    harness.emit({
+      type: "item.completed",
+      eventId: asEventId("evt-missing-citation-completed"),
+      provider: ProviderDriverKind.make("codex"),
+      createdAt: now,
+      threadId: asThreadId("thread-1"),
+      turnId: asTurnId("turn-missing-citation"),
+      itemId: asItemId("message-missing-citation"),
+      payload: {
+        itemType: "assistant_message",
+        status: "completed",
+        detail: text,
+        textCitations: [
+          {
+            start: markerStart,
+            end: markerStart + marker.length,
+            sourceIds: ["missing-source"],
+          },
+        ],
+      },
+    });
+
+    const thread = await waitForThread(harness.readModel, (entry) =>
+      entry.messages.some(
+        (message: ProviderRuntimeTestMessage) =>
+          message.id === "assistant:message-missing-citation" && !message.streaming,
+      ),
+    );
+    const message = thread.messages.find(
+      (entry: ProviderRuntimeTestMessage) => entry.id === "assistant:message-missing-citation",
+    );
+    expect(message?.text).toBe("Before [citation unavailable] after");
+    expect(message?.text).not.toContain("\uE200cite");
+    expect(
+      await harness.readStoredMessageText(asMessageId("assistant:message-missing-citation")),
+    ).toBe(text);
   });
 
   it("preserves completed tool metadata on projected tool activities", async () => {
