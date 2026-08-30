@@ -62,6 +62,8 @@ const DOWNLOAD_MIME_TYPE_PATTERN = /^[\w!#$&^.+-]+\/[\w!#$&^.+-]+$/;
 const isSafeDownloadMimeType = (mimeType: string): boolean =>
   DOWNLOAD_MIME_TYPE_PATTERN.test(mimeType) &&
   !/(?:^text\/html$|\/xml(?:$|-)|\+xml$)/i.test(mimeType.trim().toLowerCase());
+const isSafeInlineVideoMimeType = (mimeType: string): boolean =>
+  DOWNLOAD_MIME_TYPE_PATTERN.test(mimeType) && mimeType.toLowerCase().startsWith("video/");
 
 /** RFC 6266 disposition with an ASCII fallback name plus a UTF-8 `filename*`. */
 export function downloadContentDisposition(fileName?: string): string {
@@ -92,6 +94,7 @@ export function assetResponseHeaders(
   },
 ): Record<string, string> {
   const lowerPath = filePath.toLowerCase();
+  const inlineVideoMimeType = options?.mimeType?.split(";", 1)[0]?.trim();
   return {
     "Cache-Control": options?.cacheControl ?? "private, max-age=3600",
     // Asset images are also fetched as bytes for copy/download. The initial
@@ -109,9 +112,11 @@ export function assetResponseHeaders(
               ? options.mimeType
               : "application/octet-stream",
         }
-      : lowerPath.endsWith(".html") || lowerPath.endsWith(".htm")
-        ? { "Content-Type": "text/html; charset=utf-8" }
-        : {}),
+      : inlineVideoMimeType !== undefined && isSafeInlineVideoMimeType(inlineVideoMimeType)
+        ? { "Content-Type": inlineVideoMimeType }
+        : lowerPath.endsWith(".html") || lowerPath.endsWith(".htm")
+          ? { "Content-Type": "text/html; charset=utf-8" }
+          : {}),
     ...(!options?.download && lowerPath.endsWith(".svg")
       ? { "Content-Security-Policy": SVG_CONTENT_SECURITY_POLICY }
       : {}),

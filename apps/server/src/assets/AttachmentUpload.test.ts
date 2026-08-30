@@ -151,36 +151,47 @@ describe("AttachmentUpload", () => {
     }).pipe(Effect.provide(testLayer)),
   );
 
-  it.effect("streams generic files to a path with their original extension", () =>
-    Effect.gen(function* () {
-      const config = yield* ServerConfig.ServerConfig;
-      const issued = yield* issueAttachmentUploadUrl({
-        type: "file",
-        name: "report.PDF",
-        mimeType: "application/pdf",
-        sizeBytes: 6,
-      });
-      const token = issued.relativeUrl.slice(`${ATTACHMENT_UPLOAD_ROUTE_PREFIX}/`.length);
-      const claims = yield* validateAttachmentUploadToken(token);
-      if (!claims) {
-        throw new Error("Expected valid upload claims.");
-      }
+  for (const fixture of [
+    { name: "report.PDF", mimeType: "application/pdf", extension: "pdf" },
+    { name: "page.html", mimeType: "text/html", extension: "html" },
+    { name: "diagram.svg", mimeType: "image/svg+xml", extension: "svg" },
+    { name: "program.exe", mimeType: "application/octet-stream", extension: "exe" },
+    { name: "README", mimeType: "application/octet-stream", extension: "bin" },
+    { name: "archive.part", mimeType: "application/octet-stream", extension: "bin" },
+  ]) {
+    it.effect(`streams generic ${fixture.name} without a format allowlist`, () =>
+      Effect.gen(function* () {
+        const config = yield* ServerConfig.ServerConfig;
+        const issued = yield* issueAttachmentUploadUrl({
+          type: "file",
+          name: fixture.name,
+          mimeType: fixture.mimeType,
+          sizeBytes: 6,
+        });
+        const token = issued.relativeUrl.slice(`${ATTACHMENT_UPLOAD_ROUTE_PREFIX}/`.length);
+        const claims = yield* validateAttachmentUploadToken(token);
+        if (!claims) {
+          throw new Error("Expected valid upload claims.");
+        }
 
-      expect(
-        yield* storeAttachmentUpload(
-          claims,
-          Stream.make(new Uint8Array([1, 2, 3]), new Uint8Array([4, 5, 6])),
-        ),
-      ).toEqual({ ok: true });
-      expect(issued.attachmentId).toMatch(/-pdf$/);
-      expect(
-        NodeFS.readFileSync(NodePath.join(config.attachmentsDir, `${issued.attachmentId}.pdf`)),
-      ).toEqual(Buffer.from([1, 2, 3, 4, 5, 6]));
+        expect(
+          yield* storeAttachmentUpload(
+            claims,
+            Stream.make(new Uint8Array([1, 2, 3]), new Uint8Array([4, 5, 6])),
+          ),
+        ).toEqual({ ok: true });
+        expect(issued.attachmentId.endsWith(`-${fixture.extension}`)).toBe(true);
+        expect(
+          NodeFS.readFileSync(
+            NodePath.join(config.attachmentsDir, `${issued.attachmentId}.${fixture.extension}`),
+          ),
+        ).toEqual(Buffer.from([1, 2, 3, 4, 5, 6]));
 
-      yield* deletePendingAttachment(issued.attachmentId);
-      expect(NodeFS.readdirSync(config.attachmentsDir)).toEqual([]);
-    }).pipe(Effect.provide(testLayer)),
-  );
+        yield* deletePendingAttachment(issued.attachmentId);
+        expect(NodeFS.readdirSync(config.attachmentsDir)).toEqual([]);
+      }).pipe(Effect.provide(testLayer)),
+    );
+  }
 
   it.effect("removes partial streamed uploads that exceed their signed size", () =>
     Effect.gen(function* () {

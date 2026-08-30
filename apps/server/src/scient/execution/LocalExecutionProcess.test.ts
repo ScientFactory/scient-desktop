@@ -46,7 +46,7 @@ describe("LocalExecutionProcess", () => {
 
         expect(processExists(childPid)).toBe(false);
       }),
-    ).pipe(Effect.provide(Live)),
+    ).pipe(Effect.provide(Live), TestClock.withLive),
   );
 
   it.effect("cleans up descendants after the direct parent exits successfully", () =>

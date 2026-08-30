@@ -36,8 +36,11 @@ type NavigateToThread = (input: {
   };
 }) => Promise<void>;
 
-function userFacingForkError(error: unknown): string {
+export function userFacingForkError(error: unknown): string {
   const message = error instanceof Error ? error.message : String(error);
+  if (message.includes("not a supported image attachment")) {
+    return "Editing a fork from a message with file attachments is not supported yet. Fork from a completed response to keep the conversation and its files.";
+  }
   if (message.includes("fork draft attachment")) {
     return "One of this message's images could not be prepared for editing. Wait for it to load and try again.";
   }
