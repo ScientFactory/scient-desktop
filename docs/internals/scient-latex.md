@@ -460,7 +460,14 @@ transcript. Builds run with `-file-line-error`, so most errors arrive as
 `./path.tex:12: message`; tectonic prefixes every line it forwards with
 `error:`/`warning:` labels, which the parser strips before matching so the
 label is read as severity, not swallowed into the file capture. Diagnostics
-are bounded to 200 entries and 500-character messages, and generated
+are deduplicated across engine passes by severity, normalized path, line, and
+the complete whitespace-normalized message, before the display message is
+truncated. Only recognizable continuation lines are joined; another diagnostic
+or engine progress note starts a separate record rather than leaking into the
+preceding message. The parser scans the bounded transcript even after reaching
+200 distinct entries, allowing a later error to replace a retained warning.
+The raw engine transcript is unchanged. Display messages are limited to 500
+characters, and generated
 extensions (`.aux`, `.bbl`, `.synctex`, …) are excluded from "missing file"
 warnings so a cold build's first-pass `No file main.aux.` line never becomes
 user-facing noise. Two shapes of wrapper noise are deliberately not
