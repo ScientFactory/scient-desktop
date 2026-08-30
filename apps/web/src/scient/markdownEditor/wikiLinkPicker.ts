@@ -6,6 +6,8 @@ import {
 } from "@t3tools/shared/searchRanking";
 import * as Schema from "effect/Schema";
 
+import { isScientMarkdownDocumentPath } from "./markdownDocumentPaths";
+
 export const WIKI_LINK_RECENT_LIMIT = 6;
 export const WIKI_LINK_PICKER_RESULT_LIMIT = 50;
 
@@ -36,7 +38,7 @@ function normalizeProjectMarkdownPath(path: string): string | null {
     normalized.length > 512 ||
     normalized.startsWith("/") ||
     segments.some((segment) => segment.length === 0 || segment === "." || segment === "..") ||
-    !normalized.toLocaleLowerCase().endsWith(".md")
+    !isScientMarkdownDocumentPath(normalized)
   ) {
     return null;
   }
@@ -71,7 +73,9 @@ export function sanitizeRecentWikiLinkPaths(paths: ReadonlyArray<string>): Reado
 }
 
 export function wikiLinkCandidateName(candidate: ScientMarkdownWikiLinkCandidate): string {
-  return candidate.path.slice(candidate.path.lastIndexOf("/") + 1).replace(/\.md$/iu, "");
+  return candidate.path
+    .slice(candidate.path.lastIndexOf("/") + 1)
+    .replace(/\.(?:md|markdown)$/iu, "");
 }
 
 function candidateSearchScore(

@@ -1,4 +1,4 @@
-export type MarkdownDocumentMode = "read" | "write" | "source" | "split";
+export type MarkdownDocumentMode = "read" | "write";
 
 export interface MarkdownExternalConflict {
   readonly externalSource: string;

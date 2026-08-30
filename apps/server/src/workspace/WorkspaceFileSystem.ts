@@ -690,7 +690,11 @@ export const make = Effect.gen(function* () {
   const writeFile: WorkspaceFileSystem["Service"]["writeFile"] = Effect.fn(
     "WorkspaceFileSystem.writeFile",
   )(function* (input) {
-    const { exists, target, realTargetPath: writeTargetPath } = yield* resolveRealWriteTarget(input);
+    const {
+      exists,
+      target,
+      realTargetPath: writeTargetPath,
+    } = yield* resolveRealWriteTarget(input);
     const writeSemaphore = yield* writeSemaphoreFor(writeTargetPath);
     return yield* writeSemaphore.withPermits(1)(
       Effect.gen(function* () {

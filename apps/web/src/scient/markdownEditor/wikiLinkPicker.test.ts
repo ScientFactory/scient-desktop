@@ -42,6 +42,19 @@ describe("wiki link picker", () => {
       "Notes/2.md",
       "Notes/3.md",
     ]);
+    expect(promoteRecentWikiLinkPath([], "Notes/Long-form.markdown")).toEqual([
+      "Notes/Long-form.markdown",
+    ]);
+  });
+
+  it("uses the visible stem for either supported plain-Markdown extension", () => {
+    expect(
+      buildWikiLinkPickerSections({
+        candidates: [{ path: "Notes/Long-form.markdown", target: "Notes/Long-form.markdown" }],
+        query: "long-form",
+        recentPaths: [],
+      }).results,
+    ).toHaveLength(1);
   });
 
   it("shows available recents separately and filters stale paths", () => {

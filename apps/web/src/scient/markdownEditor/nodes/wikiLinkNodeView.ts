@@ -1,4 +1,5 @@
 import type { Node as ProseMirrorNode } from "prosemirror-model";
+import { Selection } from "prosemirror-state";
 import type { EditorView, NodeView } from "prosemirror-view";
 
 let nextWikiListId = 1;
@@ -11,6 +12,8 @@ class ScientWikiLinkNodeView implements NodeView {
   private readonly suggestions = document.createElement("datalist");
   private node: ProseMirrorNode;
   private pendingOpen: ReturnType<typeof globalThis.setTimeout> | null = null;
+  private pointerOrigin: { readonly x: number; readonly y: number } | null = null;
+  private pointerDragged = false;
 
   constructor(
     node: ProseMirrorNode,
@@ -57,6 +60,11 @@ class ScientWikiLinkNodeView implements NodeView {
     this.render();
     this.sourceEditor.hidden = false;
     this.sourceEditor.value = this.sourceValue();
+    globalThis.queueMicrotask(() => {
+      if (this.sourceEditor.hidden || !this.dom.isConnected) return;
+      this.sourceEditor.focus();
+      this.sourceEditor.select();
+    });
   }
 
   deselectNode(): void {
@@ -79,6 +87,7 @@ class ScientWikiLinkNodeView implements NodeView {
     this.dom.removeEventListener("mousedown", this.handleMouseDown);
     this.dom.removeEventListener("click", this.handleClick);
     this.dom.removeEventListener("keydown", this.handleLinkKeyDown);
+    this.stopTrackingPointer();
   }
 
   private readonly handleInput = (event: Event) => {
@@ -100,12 +109,19 @@ class ScientWikiLinkNodeView implements NodeView {
 
   private readonly handleMouseDown = (event: MouseEvent) => {
     if (event.target === this.sourceEditor || event.button !== 0) return;
-    event.preventDefault();
-    event.stopPropagation();
+    this.pointerOrigin = { x: event.clientX, y: event.clientY };
+    this.pointerDragged = false;
+    this.dom.ownerDocument.addEventListener("mousemove", this.handlePointerMove);
+    this.dom.ownerDocument.addEventListener("mouseup", this.handlePointerUp, { once: true });
   };
 
   private readonly handleClick = (event: MouseEvent) => {
     if (event.target === this.sourceEditor || event.button !== 0 || !this.onOpen) return;
+    if (this.pointerDragged) {
+      this.pointerDragged = false;
+      this.cancelPendingOpen();
+      return;
+    }
     event.preventDefault();
     event.stopPropagation();
     if (!this.view.editable || event.metaKey || event.ctrlKey) {
@@ -124,17 +140,49 @@ class ScientWikiLinkNodeView implements NodeView {
     }, wikiLinkDoubleClickDelayMs);
   };
 
+  private readonly handlePointerMove = (event: MouseEvent) => {
+    if (
+      this.pointerOrigin &&
+      (Math.abs(event.clientX - this.pointerOrigin.x) > 4 ||
+        Math.abs(event.clientY - this.pointerOrigin.y) > 4)
+    ) {
+      this.pointerDragged = true;
+    }
+  };
+
+  private readonly handlePointerUp = () => {
+    this.stopTrackingPointer();
+  };
+
   private readonly handleLinkKeyDown = (event: KeyboardEvent) => {
-    if (event.target === this.sourceEditor || event.key !== "Enter" || !this.onOpen) return;
+    if (event.target === this.sourceEditor) return;
+    if (event.key === "Escape" && !this.sourceEditor.hidden) {
+      this.closeEditor(event);
+      return;
+    }
+    if (event.key !== "Enter" || !this.onOpen) return;
     event.preventDefault();
     this.openTarget();
   };
 
   private readonly handleKeyDown = (event: Event) => {
     if (!(event instanceof KeyboardEvent) || event.key !== "Escape") return;
-    event.preventDefault();
-    this.view.focus();
+    this.closeEditor(event);
   };
+
+  private closeEditor(event: KeyboardEvent): void {
+    event.preventDefault();
+    event.stopPropagation();
+    const position = this.getPos();
+    if (position !== undefined) {
+      this.view.dispatch(
+        this.view.state.tr.setSelection(
+          Selection.near(this.view.state.doc.resolve(position + this.node.nodeSize)),
+        ),
+      );
+    }
+    this.view.focus();
+  }
 
   private sourceValue(): string {
     const target = String(this.node.attrs.target);
@@ -151,6 +199,12 @@ class ScientWikiLinkNodeView implements NodeView {
     if (this.pendingOpen === null) return;
     globalThis.clearTimeout(this.pendingOpen);
     this.pendingOpen = null;
+  }
+
+  private stopTrackingPointer(): void {
+    this.pointerOrigin = null;
+    this.dom.ownerDocument.removeEventListener("mousemove", this.handlePointerMove);
+    this.dom.ownerDocument.removeEventListener("mouseup", this.handlePointerUp);
   }
 
   private populateSuggestions(): void {

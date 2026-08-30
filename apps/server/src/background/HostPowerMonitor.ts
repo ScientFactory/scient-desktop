@@ -67,7 +67,7 @@ export const make = Effect.fn("background.hostPower.make")(function* (
     }).pipe(
       Effect.flatMap(
         Option.match({
-          onNone: () => Effect.succeed(false),
+          onNone: () => Effect.void,
           onSome: (next) => PubSub.publish(changes, next),
         }),
       ),

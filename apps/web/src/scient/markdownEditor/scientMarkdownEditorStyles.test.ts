@@ -71,10 +71,14 @@ describe("rich Markdown compact-surface styles", () => {
     );
   });
 
-  it("keeps wiki links compact and presents one editing surface when selected", () => {
+  it("presents wiki links as selectable underlined text and one editing surface when selected", () => {
     expect(cssSource).toMatch(
-      /\.scient-markdown-wiki-link \{[^}]*background: color-mix\(in oklab, var\(--primary\) 6%, transparent\)[^}]*line-height: 1\.3/su,
+      /\.scient-markdown-wiki-link \{[^}]*user-select: text[^}]*vertical-align: baseline/su,
     );
+    expect(cssSource).toMatch(
+      /\.scient-markdown-wiki-link-label \{[^}]*text-decoration-line: underline[^}]*text-underline-offset: 0\.16em/su,
+    );
+    expect(cssSource).not.toMatch(/\.scient-markdown-wiki-link:hover/su);
     expect(cssSource).toMatch(
       /\.scient-markdown-wiki-link\.is-selected \.scient-markdown-wiki-link-label \{\s*display: none;/su,
     );

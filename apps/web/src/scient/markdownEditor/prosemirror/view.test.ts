@@ -99,6 +99,37 @@ describe("ScientMarkdownEditorView", () => {
     );
   });
 
+  it("retargets a deliberately selected wiki-link label", () => {
+    const controller = new ScientMarkdownEditorView({
+      source: "See [[Methods|the method]] next.\n",
+      revision: "sha256:before",
+      mode: "write",
+      ariaLabel: "Markdown document",
+      onUserSourceChange: () => undefined,
+    });
+    const host = document.createElement("div");
+    document.body.append(host);
+    mounted.push(controller);
+    const view = controller.mount(host);
+    let wikiPosition: number | null = null;
+    let wikiSize = 0;
+    view.state.doc.descendants((node, position) => {
+      if (node.type.name !== "wiki_link") return;
+      wikiPosition = position;
+      wikiSize = node.nodeSize;
+    });
+
+    expect(wikiPosition).not.toBeNull();
+    view.dispatch(
+      view.state.tr.setSelection(
+        TextSelection.create(view.state.doc, wikiPosition!, wikiPosition! + wikiSize),
+      ),
+    );
+    expect(controller.canSetWikiLink()).toBe(true);
+    expect(controller.setWikiLink("Results")).toBe(true);
+    expect(controller.session.session.draftSource).toBe("See [[Results|the method]] next.\n");
+  });
+
   it("keeps one mounted view and document through 100 read/write cycles", () => {
     const { controller, host, onUserSourceChange, view } = mountEditor();
     const documentNode = view.state.doc;
@@ -201,7 +232,7 @@ describe("ScientMarkdownEditorView", () => {
     const controller = new ScientMarkdownEditorView({
       source,
       revision: "sha256:before",
-      mode: "split",
+      mode: "write",
       ariaLabel: "Markdown document",
       onUserSourceChange,
       onSelectionSourceOffsetChange,
@@ -408,7 +439,16 @@ describe("ScientMarkdownEditorView", () => {
     });
     const wikiNode = view.state.doc.nodeAt(wikiPosition!);
     expect(wikiNode).not.toBeNull();
+    const mouseDown = new MouseEvent("mousedown", {
+      bubbles: true,
+      button: 0,
+      cancelable: true,
+    });
+    link!.dispatchEvent(mouseDown);
+    expect(mouseDown.defaultPrevented).toBe(false);
+    document.dispatchEvent(new MouseEvent("mouseup", { bubbles: true, button: 0 }));
     link!.dispatchEvent(new MouseEvent("click", { bubbles: true, button: 0, detail: 1 }));
+    expect(view.editable).toBe(true);
     link!.dispatchEvent(new MouseEvent("click", { bubbles: true, button: 0, detail: 2 }));
     expect(
       view.someProp("handleDoubleClickOn", (handler) =>
@@ -425,10 +465,36 @@ describe("ScientMarkdownEditorView", () => {
     await vi.advanceTimersByTimeAsync(220);
     expect(onOpenWikiLink).toHaveBeenCalledTimes(3);
     const input = host.querySelector<HTMLInputElement>("[aria-label='Wiki link target and label']");
-    expect(input?.hidden).toBe(false);
     expect(view.state.selection).toBeInstanceOf(NodeSelection);
+    expect(input?.hidden).toBe(false);
+    await Promise.resolve();
+    expect(document.activeElement).toBe(input);
 
-    view.dispatch(view.state.tr.setSelection(TextSelection.atEnd(view.state.doc)));
+    input!.dispatchEvent(
+      new KeyboardEvent("keydown", { bubbles: true, cancelable: true, key: "Escape" }),
+    );
+    expect(view.state.selection).not.toBeInstanceOf(NodeSelection);
+    expect(input?.hidden).toBe(true);
+    link!.dispatchEvent(
+      new MouseEvent("mousedown", {
+        bubbles: true,
+        button: 0,
+        clientX: 10,
+        clientY: 10,
+      }),
+    );
+    document.dispatchEvent(
+      new MouseEvent("mousemove", {
+        bubbles: true,
+        buttons: 1,
+        clientX: 20,
+        clientY: 10,
+      }),
+    );
+    document.dispatchEvent(new MouseEvent("mouseup", { bubbles: true, button: 0 }));
+    link!.dispatchEvent(new MouseEvent("click", { bubbles: true, button: 0 }));
+    await vi.advanceTimersByTimeAsync(220);
+    expect(onOpenWikiLink).toHaveBeenCalledTimes(3);
 
     controller.setMode("read");
     const currentLink = host.querySelector<HTMLElement>("[data-scient-markdown-wiki-link]");

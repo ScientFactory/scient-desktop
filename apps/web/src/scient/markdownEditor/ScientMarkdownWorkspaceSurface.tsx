@@ -63,7 +63,6 @@ export function ScientMarkdownWorkspaceSurface(props: ScientMarkdownWorkspaceSur
   uploadImageRef.current = props.uploadImage;
   onImageUploadFailureRef.current = props.onImageUploadFailure;
 
-  const [draftSource, setDraftSource] = useState(props.source);
   const [chromeExpanded, setChromeExpanded] = useState(false);
   const controllerRef = useRef<ScientMarkdownEditorView | null>(null);
   const [saveQueue] = useState(
@@ -98,8 +97,7 @@ export function ScientMarkdownWorkspaceSurface(props: ScientMarkdownWorkspaceSur
           : {}),
         ...(props.wikiLinkSuggestions ? { wikiLinkSuggestions: props.wikiLinkSuggestions } : {}),
         ...(props.wikiLinkTargetExists ? { wikiLinkTargetExists: props.wikiLinkTargetExists } : {}),
-        onUserSourceChange: (source, intent) => {
-          setDraftSource(source);
+        onUserSourceChange: (_source, intent) => {
           // First real edit reveals the formatting controls.
           setChromeExpanded(true);
           saveQueue.enqueue(intent);
@@ -114,7 +112,6 @@ export function ScientMarkdownWorkspaceSurface(props: ScientMarkdownWorkspaceSur
       revision: props.revision,
     });
     if (result === "adopted") {
-      setDraftSource(props.source);
       // The queued draft is unchanged; rebase its revision so the debounced
       // write does not dead-end on a stale compare-and-swap.
       const rebased = controller.createSaveIntent();
@@ -130,7 +127,6 @@ export function ScientMarkdownWorkspaceSurface(props: ScientMarkdownWorkspaceSur
     if (props.saveResolution.action === "discard") {
       saveQueue.discard();
       controller.resolveExternalConflict("disk");
-      setDraftSource(controller.session.session.draftSource);
     } else {
       controller.resolveExternalConflict("local");
       saveQueue.retry(props.saveResolution.revision);
@@ -148,7 +144,7 @@ export function ScientMarkdownWorkspaceSurface(props: ScientMarkdownWorkspaceSur
   });
 
   return (
-    <div className="scient-markdown-workspace" data-markdown-workspace-mode="write">
+    <div className="scient-markdown-workspace">
       {props.uploadImage ? (
         <input
           ref={imageInputRef}
@@ -174,14 +170,7 @@ export function ScientMarkdownWorkspaceSurface(props: ScientMarkdownWorkspaceSur
           {...(props.recentWikiLinkPaths ? { recentWikiLinkPaths: props.recentWikiLinkPaths } : {})}
           {...(props.onWikiLinkSelected ? { onWikiLinkSelected: props.onWikiLinkSelected } : {})}
         />
-        <ScientMarkdownDocument
-          source={draftSource}
-          revision={props.revision}
-          mode="write"
-          ariaLabel={props.ariaLabel}
-          onUserSourceChange={() => undefined}
-          controller={controller}
-        />
+        <ScientMarkdownDocument mode="write" controller={controller} />
       </div>
     </div>
   );

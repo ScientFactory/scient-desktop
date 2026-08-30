@@ -15,8 +15,8 @@ Both projects are licensed under the MIT License.
 
 ## CodeMirror
 
-Scient's Markdown source mode and source islands use unmodified, locally
-bundled [CodeMirror 6](https://codemirror.net/) packages. CodeMirror is
+Scient's editable Markdown code blocks use unmodified, locally bundled
+[CodeMirror 6](https://codemirror.net/) packages. CodeMirror is
 Copyright (C) 2018-2026 by Marijn Haverbeke and others and is licensed under
 the MIT License.
 

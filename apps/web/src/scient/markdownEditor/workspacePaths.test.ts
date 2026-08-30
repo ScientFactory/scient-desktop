@@ -32,6 +32,9 @@ describe("Markdown workspace paths", () => {
     );
     expect(markdownWikiTargetForPath("notes/result.md", "Overview.md")).toBe("../Overview");
     expect(markdownWikiTargetForPath("result.md", "result.md")).toBe("result");
+    expect(markdownWikiTargetForPath("result.md", "notes/archive.markdown")).toBe(
+      "notes/archive.markdown",
+    );
     expect(markdownWikiTargetForPath("result.md", "images/plot.png")).toBeNull();
     expect(markdownWikiTargetForPath("result.md", "../outside.md")).toBeNull();
   });

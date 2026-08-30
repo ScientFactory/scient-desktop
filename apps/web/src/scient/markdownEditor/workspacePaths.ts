@@ -1,3 +1,5 @@
+import { isScientMarkdownDocumentPath } from "./markdownDocumentPaths";
+
 export function resolveMarkdownSiblingPath(
   markdownRelativePath: string,
   authoredPath: string,
@@ -40,7 +42,7 @@ export function markdownWikiTargetForPath(
   if (
     targetSegments.length === 0 ||
     targetSegments.some((segment) => segment.length === 0 || segment === "." || segment === "..") ||
-    !targetSegments.at(-1)?.toLocaleLowerCase().endsWith(".md")
+    !isScientMarkdownDocumentPath(targetSegments.at(-1) ?? "")
   ) {
     return null;
   }

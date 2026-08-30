@@ -31,6 +31,7 @@ import {
 
 import { openFileInPreview, resolveWorkspaceFileLinkOpenTarget } from "~/browser/openFileInPreview";
 import { useAssetUrlState } from "~/assets/assetUrls";
+import ChatMarkdown from "~/components/ChatMarkdown";
 import { OpenInPicker } from "~/components/chat/OpenInPicker";
 import { useRemoteOpenState } from "~/remoteOpen";
 import { useClientSettings } from "~/hooks/useSettings";
@@ -61,6 +62,10 @@ import { scientificSourceLanguageOverride } from "~/scient/analysis/sourceLangua
 import { ScientFileAuxiliarySurface } from "~/scient/fileSurfaces/ScientFileAuxiliarySurface";
 import { ScientMarkdownRenameButton } from "~/scient/markdownEditor/ui/ScientMarkdownRenameButton";
 import {
+  isScientMarkdownDocumentPath,
+  shouldUseScientMarkdownEditor,
+} from "~/scient/markdownEditor/markdownDocumentPaths";
+import {
   ScientMarkdownSaveStatus,
   type ScientMarkdownSaveStatusKind,
 } from "~/scient/markdownEditor/ui/ScientMarkdownSaveStatus";
@@ -73,6 +78,7 @@ import {
   type FileSaveResolution,
   useWorkspaceFileRefresh,
 } from "~/scient/fileSurfaces/useWorkspaceFileRefresh";
+import { usePendingSurfaceDeparture } from "~/scient/fileSurfaces/usePendingSurfaceDeparture";
 
 import FileBrowserPanel from "./FileBrowserPanel";
 import { FileMarkdownPreview } from "./FileMarkdownPreview";
@@ -93,6 +99,7 @@ import { FileBreadcrumbNavigator } from "./FileBreadcrumbNavigator";
 import {
   isLatexPreviewFile,
   isMarkdownPreviewFile,
+  resolveMarkdownTaskPreviewUpdate,
   resolveFilePreviewKind,
   shouldLoadFileAsText,
 } from "./filePreviewMode";
@@ -100,6 +107,7 @@ import { FileSaveCoordinator } from "./fileSaveCoordinator";
 import {
   clearProjectFileQueryData,
   confirmProjectFileQueryData,
+  getOptimisticProjectFileQueryData,
   refreshProjectEntriesQuery,
   setProjectFileQueryData,
 } from "./projectFilesQueryState";
@@ -128,7 +136,7 @@ interface FilePreviewPanelProps {
 }
 
 const FILE_EXPLORER_STORAGE_KEY = "t3code.fileExplorerOpen";
-const RENDER_MARKDOWN_STORAGE_KEY = "*********************";
+const RENDER_MARKDOWN_STORAGE_KEY = "t3code.renderMarkdown";
 const FILE_SAVE_DEBOUNCE_MS = 500;
 const FILE_LINK_REVEAL_ATTRIBUTE = "data-file-link-reveal";
 const FILE_ACTIVE_RANGE_ATTRIBUTE = "data-scient-active-range";
@@ -972,6 +980,77 @@ export function EditableFileSurface({
   );
 }
 
+/** T3's ordinary rendered preview remains authoritative for MDX. */
+function RenderedMarkdownSurface({
+  environmentId,
+  cwd,
+  relativePath,
+  contents,
+  revision,
+  truncated,
+  readOnly,
+  threadRef,
+  onPendingChange,
+  onSaveFailure,
+  onSaveConfirmed,
+  onSaveResolutionApplied,
+  saveResolution,
+}: Omit<
+  EditableFileSurfaceProps,
+  | "resolvedTheme"
+  | "composerDraftTarget"
+  | "revealLine"
+  | "revealRequestId"
+  | "wordWrap"
+  | "onPostRender"
+> & {
+  truncated: boolean;
+  readOnly: boolean;
+  threadRef: ScopedThreadRef;
+}) {
+  const saveCoordinator = useFileSaveCoordinator({
+    environmentId,
+    cwd,
+    relativePath,
+    revision,
+    onPendingChange,
+    onSaveFailure,
+    onSaveConfirmed,
+    onSaveResolutionApplied,
+    saveResolution,
+  });
+
+  return (
+    <ScrollArea className="min-h-0 flex-1">
+      <ChatMarkdown
+        text={contents}
+        cwd={cwd}
+        threadRef={threadRef}
+        contentDirection="auto"
+        className="mx-auto max-w-4xl px-6 py-5"
+        onTaskListChange={
+          truncated || readOnly
+            ? undefined
+            : ({ markerOffset, checked }) => {
+                const currentContents =
+                  getOptimisticProjectFileQueryData(environmentId, cwd, relativePath)?.contents ??
+                  contents;
+                const nextContents = resolveMarkdownTaskPreviewUpdate({
+                  markdown: currentContents,
+                  markerOffset,
+                  checked,
+                  truncated,
+                });
+                if (nextContents === null) return;
+                setProjectFileQueryData(environmentId, cwd, relativePath, nextContents);
+                saveCoordinator.change(nextContents);
+              }
+        }
+      />
+    </ScrollArea>
+  );
+}
+
 function initialExplorerOpen(): boolean {
   try {
     return resolveInitialFileExplorerOpen(
@@ -1018,6 +1097,7 @@ export default function FilePreviewPanel({
   const isPdf = previewKind === "pdf";
   const [pendingPaths, setPendingPaths] = useState<ReadonlySet<string>>(() => new Set());
   const sourcePending = relativePath !== null && pendingPaths.has(relativePath);
+  const runAfterPendingSave = usePendingSurfaceDeparture(pendingPaths);
   const {
     automaticRefreshUnavailable,
     cancelReloadNotice,
@@ -1055,9 +1135,11 @@ export default function FilePreviewPanel({
     null,
   );
   const breadcrumbRef = useRef<HTMLDivElement>(null);
-  const isMarkdown = relativePath ? isMarkdownPreviewFile(relativePath) : false;
+  const isMarkdownPreview = relativePath ? isMarkdownPreviewFile(relativePath) : false;
+  const isRichMarkdown = relativePath ? isScientMarkdownDocumentPath(relativePath) : false;
+  const isMarkdownDocument = isMarkdownPreview || isRichMarkdown;
   const renderMarkdown =
-    isMarkdown &&
+    isMarkdownDocument &&
     renderMarkdownPreferred &&
     (revealLine === null ||
       (handledReveal?.path === relativePath && handledReveal.requestId === revealRequestId));
@@ -1073,6 +1155,24 @@ export default function FilePreviewPanel({
             : sourcePending
               ? "saving"
               : "saved";
+  const handleRenderMarkdownChange = useCallback(
+    (pressed: boolean) => {
+      const apply = () => {
+        setRenderMarkdownPreferred(pressed);
+        setHandledReveal(
+          pressed && relativePath !== null
+            ? { path: relativePath, requestId: revealRequestId }
+            : null,
+        );
+      };
+      if (relativePath === null) {
+        apply();
+        return;
+      }
+      runAfterPendingSave([relativePath], apply);
+    },
+    [relativePath, revealRequestId, runAfterPendingSave, setRenderMarkdownPreferred],
+  );
   const canOpenInBrowser =
     relativePath !== null &&
     isPreviewSupportedInRuntime() &&
@@ -1180,7 +1280,7 @@ export default function FilePreviewPanel({
               relativePath={relativePath}
               onOpenFile={onOpenFile}
               currentFileControl={
-                isMarkdown ? (
+                isRichMarkdown && !file.data?.readOnly ? (
                   <ScientMarkdownRenameButton
                     environmentId={environmentId}
                     cwd={cwd}
@@ -1220,22 +1320,17 @@ export default function FilePreviewPanel({
               enableShortcut={false}
             />
           ) : null}
-          {isMarkdown ? <ScientMarkdownSaveStatus status={markdownSaveStatus} /> : null}
-          {isMarkdown ? (
+          {isRichMarkdown && !file.data?.readOnly ? (
+            <ScientMarkdownSaveStatus status={markdownSaveStatus} />
+          ) : null}
+          {isMarkdownDocument ? (
             <Tooltip>
               <TooltipTrigger
                 render={
                   <Toggle
                     className="shrink-0"
                     pressed={renderMarkdown}
-                    onPressedChange={(pressed) => {
-                      setRenderMarkdownPreferred(pressed);
-                      setHandledReveal(
-                        pressed && relativePath !== null
-                          ? { path: relativePath, requestId: revealRequestId }
-                          : null,
-                      );
-                    }}
+                    onPressedChange={handleRenderMarkdownChange}
                     aria-label={renderMarkdown ? "Show markdown source" : "Show rendered markdown"}
                     variant="ghost"
                     size="sm"
@@ -1357,7 +1452,7 @@ export default function FilePreviewPanel({
             <div className="flex min-h-0 flex-1 items-center justify-center text-muted-foreground">
               <LoaderCircle className="size-5 animate-spin" />
             </div>
-          ) : relativePath && file.data?.readOnly ? (
+          ) : relativePath && file.data?.readOnly && !(isMarkdownDocument && renderMarkdown) ? (
             <StaticTextFileSurface
               key={`${relativePath}:${resolvedTheme}:${file.data.revision}`}
               cwd={cwd}
@@ -1433,7 +1528,12 @@ export default function FilePreviewPanel({
                   saveResolution={saveResolution}
                 />
               </Suspense>
-            ) : isMarkdown && !file.data.truncated && renderMarkdown ? (
+            ) : shouldUseScientMarkdownEditor({
+                path: relativePath,
+                readOnly: file.data.readOnly ?? false,
+                renderMarkdown,
+                truncated: file.data.truncated,
+              }) ? (
               <Suspense
                 fallback={
                   <div className="flex min-h-0 flex-1 items-center justify-center text-muted-foreground">
@@ -1462,6 +1562,22 @@ export default function FilePreviewPanel({
                   }
                 />
               </Suspense>
+            ) : isMarkdownDocument && renderMarkdown ? (
+              <RenderedMarkdownSurface
+                environmentId={environmentId}
+                cwd={cwd}
+                relativePath={relativePath}
+                threadRef={threadRef}
+                contents={file.data.contents}
+                revision={file.data.revision}
+                truncated={file.data.truncated}
+                readOnly={file.data.readOnly ?? false}
+                onPendingChange={handlePendingChange}
+                onSaveFailure={handleSaveFailure}
+                onSaveConfirmed={handleSaveConfirmed}
+                onSaveResolutionApplied={handleSaveResolutionApplied}
+                saveResolution={saveResolution}
+              />
             ) : file.data.truncated ? (
               <StaticTextFileSurface
                 key={`${relativePath}:${resolvedTheme}:${file.data.revision}`}

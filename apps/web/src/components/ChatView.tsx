@@ -74,7 +74,7 @@ import {
   useState,
 } from "react";
 import { flushSync } from "react-dom";
-import { useBlocker, useNavigate } from "@tanstack/react-router";
+import { useNavigate } from "@tanstack/react-router";
 import { useShallow } from "zustand/react/shallow";
 import {
   isAtomCommandInterrupted,
@@ -187,12 +187,7 @@ import { isThreadOwnPullRequest } from "./pullRequest/pullRequestDetail.logic";
 import { PullRequestDetailPanel } from "./pullRequest/PullRequestDetailPanel";
 import { PullRequestDetailGhost } from "./pullRequest/PullRequestGhosts";
 import { PullRequestsUnavailableState } from "./pullRequest/PullRequestsUnavailableState";
-import {
-  pendingSurfaceBlocksActivation,
-  RightPanelTabs,
-  type PullRequestTabStatus,
-  usePendingSurfaceDeparture,
-} from "./RightPanelTabs";
+import { RightPanelTabs, type PullRequestTabStatus } from "./RightPanelTabs";
 import {
   copyFilePathToClipboard,
   resolveFilePathCopyValue,
@@ -218,6 +213,11 @@ import {
 } from "lucide-react";
 import { cn, randomHex } from "~/lib/utils";
 import { useScientFileOpening } from "~/scient/fileOpening/useScientFileOpening";
+import {
+  useActivePendingSurfaceDeparture,
+  usePendingSurfaceDeparture,
+  usePendingSurfaceNavigationBlocker,
+} from "~/scient/fileSurfaces/usePendingSurfaceDeparture";
 import {
   scientComputeSurface,
   scientSourcePdfSurface,
@@ -2054,44 +2054,11 @@ function ChatViewContent(props: ChatViewProps) {
     [activeWorkspaceKey],
   );
   const runAfterPendingSurfaceSave = usePendingSurfaceDeparture(pendingFileSurfaceIds);
-  const runAfterPendingFileSave = useCallback(
-    (targetSurfaceId: string | null, run: () => void) => {
-      const activeSurfaceId = activeRightPanelSurface?.id ?? null;
-      const blockedSurfaceIds =
-        targetSurfaceId === null
-          ? activeSurfaceId !== null && pendingFileSurfaceIds.has(activeSurfaceId)
-            ? [activeSurfaceId]
-            : []
-          : pendingSurfaceBlocksActivation({
-                activeSurfaceId,
-                targetSurfaceId,
-                pendingSurfaceIds: pendingFileSurfaceIds,
-              })
-            ? [activeSurfaceId!]
-            : [];
-      return runAfterPendingSurfaceSave(blockedSurfaceIds, run);
-    },
-    [activeRightPanelSurface?.id, pendingFileSurfaceIds, runAfterPendingSurfaceSave],
-  );
-  const pendingFileNavigation = useBlocker({
-    shouldBlockFn: ({ current, next }) =>
-      pendingFileSurfaceIds.size > 0 && current.pathname !== next.pathname,
-    enableBeforeUnload: () => pendingFileSurfaceIds.size > 0,
-    withResolver: true,
+  const runAfterPendingFileSave = useActivePendingSurfaceDeparture({
+    activeSurfaceId: activeRightPanelSurface?.id ?? null,
+    pendingSurfaceIds: pendingFileSurfaceIds,
   });
-  useEffect(() => {
-    if (pendingFileNavigation.status !== "blocked") return;
-    if (pendingFileSurfaceIds.size === 0) {
-      pendingFileNavigation.proceed();
-      return;
-    }
-    toastManager.add({
-      type: "warning",
-      title: "Finishing the file save",
-      description:
-        "Scient will open the next page automatically when the file is safely saved. Resolve the file notice if saving cannot finish.",
-    });
-  }, [pendingFileNavigation, pendingFileSurfaceIds]);
+  usePendingSurfaceNavigationBlocker(pendingFileSurfaceIds);
   const configuredPreviewUrls = useMemo(
     () => getConfiguredPreviewUrls(activeProject?.scripts),
     [activeProject?.scripts],
@@ -3374,13 +3341,14 @@ function ChatViewContent(props: ChatViewProps) {
     if (!diffAvailable) {
       return;
     }
-    if (!diffOpen) {
-      onDiffPanelOpen?.();
-    }
-    if (activeThreadRef) {
+    if (!activeThreadRef) return;
+    runAfterPendingFileSave("diff", () => {
+      if (!diffOpen) {
+        onDiffPanelOpen?.();
+      }
       useRightPanelStore.getState().toggle(activeThreadRef, "diff");
-    }
-  }, [activeThreadRef, diffAvailable, diffOpen, onDiffPanelOpen]);
+    });
+  }, [activeThreadRef, diffAvailable, diffOpen, onDiffPanelOpen, runAfterPendingFileSave]);
 
   const envLocked = Boolean(
     activeThread &&
@@ -3958,10 +3926,11 @@ function ChatViewContent(props: ChatViewProps) {
   }, [activeProject, activeThreadRef, activeWorkspaceRoot, runAfterPendingFileSave]);
   const addComputeSurface = useCallback(() => {
     if (!activeThreadRef || activeWorkspaceRoot === undefined) return;
-    useRightPanelStore
-      .getState()
-      .openScient(activeThreadRef, scientComputeSurface({ cwd: activeWorkspaceRoot }));
-  }, [activeThreadRef, activeWorkspaceRoot]);
+    const surface = scientComputeSurface({ cwd: activeWorkspaceRoot });
+    runAfterPendingFileSave(surface.id, () => {
+      useRightPanelStore.getState().openScient(activeThreadRef, surface);
+    });
+  }, [activeThreadRef, activeWorkspaceRoot, runAfterPendingFileSave]);
   const openScientSourcePdf = useCallback(
     (input: {
       readonly sourceId: string;
@@ -4012,10 +3981,12 @@ function ChatViewContent(props: ChatViewProps) {
       const projectId = linkedThreadPullRequest?.projectId ?? activeProject?.id;
       const repository = linkedThreadPullRequest?.repository ?? activeProjectRepository;
       if (projectId === undefined || repository === null) return;
-      useRightPanelStore.getState().openPullRequest(activeThreadRef, {
-        projectId,
-        repository,
-        number,
+      runAfterPendingFileSave(null, () => {
+        useRightPanelStore.getState().openPullRequest(activeThreadRef, {
+          projectId,
+          repository,
+          number,
+        });
       });
     },
     [
@@ -4023,6 +3994,7 @@ function ChatViewContent(props: ChatViewProps) {
       activeProjectRepository,
       activeThreadRef,
       linkedThreadPullRequest,
+      runAfterPendingFileSave,
       supportsPullRequests,
     ],
   );
@@ -4261,31 +4233,35 @@ function ChatViewContent(props: ChatViewProps) {
   const closeRightPanelSurface = useCallback(
     (surface: RightPanelSurface) => {
       if (!activeThreadRef) return;
-      const finishClose = () => {
-        cleanupRightPanelSurfaces([surface]);
-        useRightPanelStore.getState().closeSurface(activeThreadRef, surface.id);
-        syncActivePreviewSurface();
-      };
-      if (surface.kind !== "terminal") {
-        finishClose();
-        return;
-      }
-      const activeLabel =
-        activeTerminalLabelsById.get(surface.activeTerminalId) ??
-        getTerminalLabel(surface.activeTerminalId);
-      const otherLabels = surface.terminalIds
-        .filter((terminalId) => terminalId !== surface.activeTerminalId)
-        .map(
-          (terminalId) => activeTerminalLabelsById.get(terminalId) ?? getTerminalLabel(terminalId),
-        );
-      void confirmTerminalClose([activeLabel, ...otherLabels]).then((confirmed) => {
-        if (confirmed) finishClose();
+      runAfterPendingSurfaceSave([surface.id], () => {
+        const finishClose = () => {
+          cleanupRightPanelSurfaces([surface]);
+          useRightPanelStore.getState().closeSurface(activeThreadRef, surface.id);
+          syncActivePreviewSurface();
+        };
+        if (surface.kind !== "terminal") {
+          finishClose();
+          return;
+        }
+        const activeLabel =
+          activeTerminalLabelsById.get(surface.activeTerminalId) ??
+          getTerminalLabel(surface.activeTerminalId);
+        const otherLabels = surface.terminalIds
+          .filter((terminalId) => terminalId !== surface.activeTerminalId)
+          .map(
+            (terminalId) =>
+              activeTerminalLabelsById.get(terminalId) ?? getTerminalLabel(terminalId),
+          );
+        void confirmTerminalClose([activeLabel, ...otherLabels]).then((confirmed) => {
+          if (confirmed) finishClose();
+        });
       });
     },
     [
       activeThreadRef,
       activeTerminalLabelsById,
       cleanupRightPanelSurfaces,
+      runAfterPendingSurfaceSave,
       syncActivePreviewSurface,
     ],
   );
@@ -4293,14 +4269,20 @@ function ChatViewContent(props: ChatViewProps) {
     (surface: RightPanelSurface) => {
       if (!activeThreadRef) return;
       const surfaces = rightPanelState.surfaces.filter((entry) => entry.id !== surface.id);
-      cleanupRightPanelSurfaces(surfaces);
-      useRightPanelStore.getState().closeOtherSurfaces(activeThreadRef, surface.id);
-      syncActivePreviewSurface();
+      runAfterPendingSurfaceSave(
+        surfaces.map((entry) => entry.id),
+        () => {
+          cleanupRightPanelSurfaces(surfaces);
+          useRightPanelStore.getState().closeOtherSurfaces(activeThreadRef, surface.id);
+          syncActivePreviewSurface();
+        },
+      );
     },
     [
       activeThreadRef,
       cleanupRightPanelSurfaces,
       rightPanelState.surfaces,
+      runAfterPendingSurfaceSave,
       syncActivePreviewSurface,
     ],
   );
@@ -4310,22 +4292,38 @@ function ChatViewContent(props: ChatViewProps) {
       const surfaceIndex = rightPanelState.surfaces.findIndex((entry) => entry.id === surface.id);
       if (surfaceIndex < 0) return;
       const surfaces = rightPanelState.surfaces.slice(surfaceIndex + 1);
-      cleanupRightPanelSurfaces(surfaces);
-      useRightPanelStore.getState().closeSurfacesToRight(activeThreadRef, surface.id);
-      syncActivePreviewSurface();
+      runAfterPendingSurfaceSave(
+        surfaces.map((entry) => entry.id),
+        () => {
+          cleanupRightPanelSurfaces(surfaces);
+          useRightPanelStore.getState().closeSurfacesToRight(activeThreadRef, surface.id);
+          syncActivePreviewSurface();
+        },
+      );
     },
     [
       activeThreadRef,
       cleanupRightPanelSurfaces,
       rightPanelState.surfaces,
+      runAfterPendingSurfaceSave,
       syncActivePreviewSurface,
     ],
   );
   const closeAllRightPanelSurfaces = useCallback(() => {
     if (!activeThreadRef) return;
-    cleanupRightPanelSurfaces(rightPanelState.surfaces);
-    useRightPanelStore.getState().closeAllSurfaces(activeThreadRef);
-  }, [activeThreadRef, cleanupRightPanelSurfaces, rightPanelState.surfaces]);
+    runAfterPendingSurfaceSave(
+      rightPanelState.surfaces.map((surface) => surface.id),
+      () => {
+        cleanupRightPanelSurfaces(rightPanelState.surfaces);
+        useRightPanelStore.getState().closeAllSurfaces(activeThreadRef);
+      },
+    );
+  }, [
+    activeThreadRef,
+    cleanupRightPanelSurfaces,
+    rightPanelState.surfaces,
+    runAfterPendingSurfaceSave,
+  ]);
   const copyRightPanelFilePath = useCallback(
     (relativePath: string, format: FilePathCopyFormat) => {
       const value = resolveFilePathCopyValue({

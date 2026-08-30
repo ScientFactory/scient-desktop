@@ -5,6 +5,7 @@ import { createRoot } from "react-dom/client";
 import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 
 import { ScientMarkdownDocument } from "./ScientMarkdownDocument";
+import { ScientMarkdownEditorView } from "./prosemirror/view";
 
 describe("ScientMarkdownDocument", () => {
   const roots: ReturnType<typeof createRoot>[] = [];
@@ -24,54 +25,50 @@ describe("ScientMarkdownDocument", () => {
     document.body.append(host);
     const root = createRoot(host);
     roots.push(root);
-    const onUserSourceChange = vi.fn();
-    return { host, onUserSourceChange, root };
+    return { host, root };
   }
 
   it("keeps the rendered document DOM while activating and deactivating editing", async () => {
-    const { host, onUserSourceChange, root } = renderDocument();
-    const common = {
+    const { host, root } = renderDocument();
+    const onUserSourceChange = vi.fn();
+    const controller = new ScientMarkdownEditorView({
       source: "# Results\n\n- one\n  - nested\n",
       revision: "sha256:one",
+      mode: "read",
       ariaLabel: "Results document",
       onUserSourceChange,
-    } as const;
-    await act(() => root.render(<ScientMarkdownDocument {...common} mode="read" />));
+    });
+    await act(() => root.render(<ScientMarkdownDocument controller={controller} mode="read" />));
     const proseMirror = host.querySelector(".ProseMirror");
     const heading = proseMirror?.querySelector("h1");
 
-    await act(() => root.render(<ScientMarkdownDocument {...common} mode="write" />));
+    await act(() => root.render(<ScientMarkdownDocument controller={controller} mode="write" />));
     expect(host.querySelector(".ProseMirror")).toBe(proseMirror);
     expect(host.querySelector("h1")).toBe(heading);
     expect(proseMirror?.getAttribute("contenteditable")).toBe("true");
 
-    await act(() => root.render(<ScientMarkdownDocument {...common} mode="read" />));
+    await act(() => root.render(<ScientMarkdownDocument controller={controller} mode="read" />));
     expect(host.querySelector(".ProseMirror")).toBe(proseMirror);
     expect(proseMirror?.getAttribute("contenteditable")).toBe("false");
     expect(onUserSourceChange).not.toHaveBeenCalled();
+    controller.destroy();
   });
 
-  it("adopts a clean agent edit in the same mounted view", async () => {
-    const { host, onUserSourceChange, root } = renderDocument();
-    const shared = {
+  it("leaves controller lifetime with the owning workspace", async () => {
+    const { root } = renderDocument();
+    const controller = new ScientMarkdownEditorView({
+      source: "# Before\n",
+      revision: "sha256:before",
+      mode: "write",
       ariaLabel: "Agent-edited document",
-      mode: "read" as const,
-      onUserSourceChange,
-    };
-    await act(() =>
-      root.render(
-        <ScientMarkdownDocument {...shared} source={"# Before\n"} revision="sha256:before" />,
-      ),
-    );
-    const proseMirror = host.querySelector(".ProseMirror");
+      onUserSourceChange: vi.fn(),
+    });
+    const destroy = vi.spyOn(controller, "destroy");
+    await act(() => root.render(<ScientMarkdownDocument controller={controller} mode="write" />));
 
-    await act(() =>
-      root.render(
-        <ScientMarkdownDocument {...shared} source={"# Agent update\n"} revision="sha256:agent" />,
-      ),
-    );
-    expect(host.querySelector(".ProseMirror")).toBe(proseMirror);
-    expect(host.querySelector("h1")?.textContent.trim()).toBe("Agent update");
-    expect(onUserSourceChange).not.toHaveBeenCalled();
+    roots.pop();
+    await act(() => root.unmount());
+    expect(destroy).not.toHaveBeenCalled();
+    controller.destroy();
   });
 });

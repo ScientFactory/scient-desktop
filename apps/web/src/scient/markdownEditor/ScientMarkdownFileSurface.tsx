@@ -1,7 +1,7 @@
 import type { EnvironmentId, ScopedThreadRef } from "@t3tools/contracts";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import { useLocalStorage } from "~/hooks/useLocalStorage";
-import { Suspense, lazy, useCallback, useMemo, useRef } from "react";
+import { useCallback, useMemo, useRef } from "react";
 
 import { resolveAssetUrl } from "~/assets/assetUrls";
 import {
@@ -19,7 +19,7 @@ import { useAtomCommand } from "~/state/use-atom-command";
 import { useAtomQueryRunner } from "~/state/use-atom-query-runner";
 
 import { ScientMarkdownWorkspaceSurface } from "./ScientMarkdownWorkspaceSurface";
-import { isCm6SpikeEnabled } from "./cm6/spikeFlag";
+import { isScientMarkdownDocumentPath } from "./markdownDocumentPaths";
 import { uploadMarkdownImage } from "./assets/client";
 import type { MarkdownSaveIntent } from "@scientfactory/scient-markdown";
 import {
@@ -57,12 +57,6 @@ export interface ScientMarkdownFileSurfaceProps {
   readonly onSaveResolutionApplied?: () => void;
 }
 
-const LazyScientCm6SpikeSurface = lazy(() =>
-  import("./cm6/ScientCm6SpikeSurface").then((module) => ({
-    default: module.ScientCm6SpikeSurface,
-  })),
-);
-
 export function ScientMarkdownFileSurface(props: ScientMarkdownFileSurfaceProps) {
   const writeFile = useAtomCommand(projectEnvironment.writeFile, { reportFailure: false });
   const createAssetUrl = useAtomQueryRunner(assetEnvironment.createUrl, { reportFailure: false });
@@ -71,7 +65,7 @@ export function ScientMarkdownFileSurface(props: ScientMarkdownFileSurfaceProps)
   const allMarkdownPaths = useMemo(
     () =>
       (entriesQuery.data?.entries ?? [])
-        .filter((entry) => entry.kind === "file" && entry.path.toLocaleLowerCase().endsWith(".md"))
+        .filter((entry) => entry.kind === "file" && isScientMarkdownDocumentPath(entry.path))
         .map((entry) => entry.path),
     [entriesQuery.data?.entries],
   );
@@ -216,37 +210,6 @@ export function ScientMarkdownFileSurface(props: ScientMarkdownFileSurfaceProps)
     },
     [props.onOpenFile, props.relativePath],
   );
-  if (import.meta.env.DEV && isCm6SpikeEnabled()) {
-    return (
-      <Suspense fallback={<div className="scient-markdown-source-loading" />}>
-        <LazyScientCm6SpikeSurface
-          source={props.contents}
-          revision={props.revision}
-          ariaLabel={`${props.relativePath} Markdown document (CM6 spike)`}
-          persist={persist}
-          onPendingChange={(pending) => props.onPendingChange(props.relativePath, pending)}
-          onSaveConfirmed={(source, revision) => {
-            confirmProjectFileQueryData(
-              props.environmentId,
-              props.cwd,
-              props.relativePath,
-              source,
-              revision,
-            );
-            props.onSaveConfirmed(props.relativePath, source, revision);
-          }}
-          onSaveFailure={(error) => props.onSaveFailure(props.relativePath, error)}
-          onExternalConflict={props.onExternalConflict}
-          onOpenLink={handleOpenLink}
-          resolveImageSource={resolveImageSource}
-          {...(props.saveResolution === undefined ? {} : { saveResolution: props.saveResolution })}
-          {...(props.onSaveResolutionApplied
-            ? { onSaveResolutionApplied: props.onSaveResolutionApplied }
-            : {})}
-        />
-      </Suspense>
-    );
-  }
   return (
     <ScientMarkdownWorkspaceSurface
       source={props.contents}

@@ -15,14 +15,26 @@ const browserSource = NodeFS.readFileSync(
   new URL("../../components/files/FileBrowserPanel.tsx", import.meta.url),
   "utf8",
 );
+const chatViewSource = NodeFS.readFileSync(
+  new URL("../../components/ChatView.tsx", import.meta.url),
+  "utf8",
+);
+const rightPanelTabsSource = NodeFS.readFileSync(
+  new URL("../../components/RightPanelTabs.tsx", import.meta.url),
+  "utf8",
+);
 
 describe("Scient Markdown file-preview seam", () => {
-  it("lazily mounts exactly one owned editor and removes the old ChatMarkdown preview path", () => {
+  it("lazily mounts one owned plain-Markdown editor while retaining T3's MDX preview", () => {
     expect(panelSource).toContain('import("~/scient/markdownEditor/ScientMarkdownFileSurface")');
     expect(panelSource.match(/<ScientMarkdownFileSurface\b/gu)).toHaveLength(1);
     expect(panelSource.match(/<ScientMarkdownSaveStatus\b/gu)).toHaveLength(1);
-    expect(panelSource).not.toContain("RenderedMarkdownSurface");
-    expect(panelSource).not.toContain("resolveMarkdownTaskPreviewUpdate");
+    expect(panelSource).toContain("isScientMarkdownDocumentPath(relativePath)");
+    expect(panelSource).toContain("isMarkdownDocument && renderMarkdown");
+    expect(panelSource).toContain("RenderedMarkdownSurface");
+    expect(panelSource).toContain("shouldUseScientMarkdownEditor({");
+    expect(panelSource).toContain("readOnly={file.data.readOnly ?? false}");
+    expect(panelSource).toContain("file.data?.readOnly && !(isMarkdownDocument && renderMarkdown)");
   });
 
   it("keeps parsing, editor state, and persistence policy out of the inherited panel", () => {
@@ -30,7 +42,7 @@ describe("Scient Markdown file-preview seam", () => {
     expect(surfaceSource).toContain("projectEnvironment.writeFile");
     expect(surfaceSource).toContain("expectedRevision: intent.expectedRevision");
     expect(surfaceSource).toContain("confirmProjectFileQueryData(");
-    expect(surfaceSource.match(/onOpenLink=\{handleOpenLink\}/gu)).toHaveLength(2);
+    expect(surfaceSource.match(/onOpenLink=\{handleOpenLink\}/gu)).toHaveLength(1);
   });
 
   it("carries the existing conflict-resolution and line-reveal seams into the owned editor", () => {
@@ -51,9 +63,20 @@ describe("Scient Markdown file-preview seam", () => {
     expect(panelSource).not.toContain("editChrome=");
     expect(panelSource).toContain("renderMarkdown ?");
     expect(panelSource).not.toContain('aria-label="Markdown mode"');
+    expect(panelSource).toContain('const RENDER_MARKDOWN_STORAGE_KEY = "t3code.renderMarkdown";');
+    expect(panelSource).toContain("runAfterPendingSave([relativePath], apply);");
     for (const retired of ['value="write"', 'value="read"', 'value="split"', 'value="source"']) {
       expect(panelSource).not.toContain(retired);
     }
+  });
+
+  it("keeps pending-save policy in one owned adapter instead of inherited tabs", () => {
+    expect(chatViewSource).toContain('from "~/scient/fileSurfaces/usePendingSurfaceDeparture";');
+    expect(chatViewSource).toContain("useActivePendingSurfaceDeparture({");
+    expect(chatViewSource).toContain("usePendingSurfaceNavigationBlocker(pendingFileSurfaceIds);");
+    expect(rightPanelTabsSource).not.toMatch(
+      /usePendingSurface|pendingSurfaceBlocks|Finishing the file save/gu,
+    );
   });
 
   it("limits workspace lifecycle UI to one owned create and rename mount", () => {
@@ -61,6 +84,7 @@ describe("Scient Markdown file-preview seam", () => {
     expect(panelSource.match(/<ScientMarkdownRenameButton\b/gu)).toHaveLength(1);
     expect(browserSource).not.toContain("createOnly: true");
     expect(panelSource).not.toContain("projects.renameFile");
+    expect(panelSource).toContain("isRichMarkdown && !file.data?.readOnly");
   });
 
   it("refreshes both the file tree and Markdown link index after refresh or creation", () => {

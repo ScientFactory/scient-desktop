@@ -14,8 +14,7 @@
   overflow: hidden;
 }
 
-.scient-markdown-rich-pane,
-.scient-markdown-source-pane {
+.scient-markdown-rich-pane {
   display: flex;
   min-width: 0;
   min-height: 0;
@@ -253,20 +252,6 @@
   overflow-y: auto;
 }
 
-.scient-markdown-workspace[data-markdown-workspace-mode="split"] .scient-markdown-source-pane {
-  border-inline-start: 1px solid var(--border);
-}
-
-.scient-markdown-rich-pane[hidden],
-.scient-markdown-source-pane[hidden] {
-  display: none;
-}
-
-.scient-markdown-source-loading {
-  min-height: 0;
-  flex: 1;
-}
-
 .scient-markdown-document-host {
   min-height: 100%;
   display: flex;
@@ -297,8 +282,7 @@
   margin-block-end: 0;
 }
 
-.scient-markdown-document.is-write.is-empty > p:only-child::before,
-.scient-markdown-document.is-split.is-empty > p:only-child::before {
+.scient-markdown-document.is-write.is-empty > p:only-child::before {
   content: "Start writing…";
   float: inline-start;
   height: 0;
@@ -306,8 +290,7 @@
   pointer-events: none;
 }
 
-.scient-markdown-document.is-write.is-empty:focus-visible,
-.scient-markdown-document.is-split.is-empty:focus-visible {
+.scient-markdown-document.is-write.is-empty:focus-visible {
   outline: none;
 }
 
@@ -582,20 +565,19 @@
 }
 
 .scient-markdown-wiki-link {
-  display: inline-flex;
+  display: inline;
   max-width: 100%;
-  align-items: baseline;
-  border-radius: 0.3rem;
-  background: color-mix(in oklab, var(--primary) 6%, transparent);
-  padding-inline: 0.2em;
   color: var(--primary);
   cursor: pointer;
-  line-height: 1.3;
+  user-select: text;
   vertical-align: baseline;
 }
 
-.scient-markdown-wiki-link:hover {
-  background: color-mix(in oklab, var(--primary) 9%, transparent);
+.scient-markdown-wiki-link-label {
+  text-decoration-line: underline;
+  text-decoration-color: color-mix(in oklab, currentColor 58%, transparent);
+  text-decoration-thickness: 0.06em;
+  text-underline-offset: 0.16em;
 }
 
 .scient-markdown-reference {
@@ -713,8 +695,6 @@ sup.scient-markdown-reference {
 }
 
 .scient-markdown-wiki-link.is-selected {
-  background: transparent;
-  padding-inline: 0;
   cursor: text;
 }
 
@@ -722,8 +702,7 @@ sup.scient-markdown-reference {
   display: none;
 }
 
-.scient-markdown-wiki-link.is-missing {
-  background: color-mix(in oklab, var(--warning) 12%, transparent);
+.scient-markdown-wiki-link.is-missing .scient-markdown-wiki-link-label {
   text-decoration: underline wavy color-mix(in oklab, var(--warning) 75%, currentColor);
   text-underline-offset: 0.2em;
 }
@@ -922,8 +901,7 @@ textarea.scient-markdown-math-source {
   outline-offset: 1px;
 }
 
-.scient-markdown-document.is-write,
-.scient-markdown-document.is-split {
+.scient-markdown-document.is-write {
   caret-color: var(--foreground);
 }
 
@@ -945,53 +923,4 @@ textarea.scient-markdown-math-source {
 
 .scient-markdown-document ::selection {
   background: color-mix(in oklab, var(--primary) 22%, transparent);
-}
-
-.scient-markdown-source-document {
-  min-width: 0;
-  min-height: 0;
-  height: 100%;
-  overflow: hidden;
-  background: var(--background);
-}
-
-.scient-markdown-source-document .cm-editor {
-  height: 100%;
-  background: transparent;
-  color: var(--foreground);
-  font-family: var(--font-mono);
-  font-size: 0.8125rem;
-}
-
-.scient-markdown-source-document .cm-scroller {
-  padding-block: 0.75rem 3rem;
-  font-family: inherit;
-  line-height: 1.65;
-}
-
-.scient-markdown-source-document .cm-content {
-  width: min(100%, 56rem);
-  margin-inline: auto;
-  padding-inline: 1rem 2rem;
-  caret-color: var(--foreground);
-}
-
-.scient-markdown-source-document .cm-gutters {
-  border: 0;
-  background: transparent;
-  color: var(--muted-foreground);
-}
-
-.scient-markdown-source-document .cm-activeLine,
-.scient-markdown-source-document .cm-activeLineGutter {
-  background: color-mix(in oklab, var(--muted) 45%, transparent);
-}
-
-.scient-markdown-source-document .cm-selectionBackground,
-.scient-markdown-source-document .cm-content ::selection {
-  background: color-mix(in oklab, var(--primary) 22%, transparent) !important;
-}
-
-.scient-markdown-source-document .cm-focused {
-  outline: none;
 }

@@ -1,17 +1,17 @@
 # Scient rich Markdown editor
 
 Status: accepted architecture and product contract for Scient's file-native rich Markdown
-surface. Amended 2026-08-29 to re-select the editor core from ProseMirror plus a source ledger to
-CodeMirror 6 source-preserving live preview (see "Amendment record (2026-08-29)"). This document
-records durable invariants, dependency decisions, module boundaries, and acceptance requirements;
-pull requests and their evidence remain the implementation record.
+surface. Reconciled 2026-08-30 with the selected ProseMirror plus source-ledger implementation and
+the removal of the non-product CodeMirror live-preview spike. This document records durable
+invariants, dependency decisions, module boundaries, and acceptance requirements; pull requests
+and their evidence remain the implementation record.
 
 ## Outcome
 
 Scient will provide a file-native scientific writing surface in which the rendered document is
-the editor. Entering edit mode must not replace the document, change its layout, serialize its
-contents, or write the file. Markdown files on disk remain authoritative, agent-editable, and
-portable outside Scient.
+the editor. Opening the formatting controls or placing a caret must not replace the document,
+change its layout, serialize its contents, or write the file. Markdown files on disk remain
+authoritative, agent-editable, and portable outside Scient.
 
 The finished experience must be suitable for sustained scientific writing rather than only
 demonstrating that plain text can round-trip through a rich-text component.
@@ -19,16 +19,16 @@ demonstrating that plain text can round-trip through a rich-text component.
 ## Product principles
 
 1. **The file is the document.** No opaque database or vendor service owns canonical content.
-2. **Reading and writing are one surface.** Edit mode activates the rendered view in place.
-3. **No action means no mutation.** Opening, previewing, focusing, toggling modes, or closing an
-   untouched file cannot change its bytes or revision.
+2. **Reading and writing are one surface.** The rendered document is directly editable in place.
+3. **No action means no mutation.** Opening, previewing, focusing, switching presentation, or
+   closing an untouched file cannot change its bytes or revision.
 4. **Preserve what Scient did not change.** User transactions patch the smallest safe source
    ranges; untouched Markdown, whitespace, delimiters, comments, and front matter remain intact.
 5. **Rich when possible, source when necessary.** Unsupported syntax becomes an editable source
    island. It never disables rich editing for the rest of the document.
 6. **Minimal chrome, complete behavior.** Ordinary writing needs a caret and contextual controls,
-   not a permanent ribbon. Advanced commands remain discoverable through selection and slash
-   menus, the command palette, and shortcuts.
+   not a permanent ribbon. Advanced commands remain discoverable through selection, slash menus,
+   and keyboard shortcuts.
 7. **Local, ownable, and durable.** Runtime editing has no paid API, hosted SDK, or network
    dependency. Dependencies must use permissive licenses and be replaceable behind Scient-owned
    adapters.
@@ -44,39 +44,40 @@ demonstrating that plain text can round-trip through a rich-text component.
 ### Document states
 
 Amended 2026-08-29 after human review of the four-mode control: the explicit Read/Write/Source/
-Split mode set is retired. Two surfaces remain, mirroring the inherited file panel:
+Split mode set is retired. Two presentations remain, mirroring the inherited file panel:
 
 - **Rendered (eye on):** the rich live-preview surface, always editable on click. No state to
   enter or leave; editing controls appear only while a separate chrome toggle is on.
-- **Raw (eye off):** the inherited read-only file viewer, byte-identical to every other text
-  file's preview. No Markdown-specific mode exists behind it.
+- **Source (eye off):** the inherited text-file editor. No second Markdown session or
+  Markdown-specific source mode exists behind it.
 
 The eye preference is global (stored exactly as `main` stores it) and a line reveal still wins
-over it, since the revealed line only exists in source. There is no split pane and no separate
-Source mode; exact-syntax work happens in the raw viewer or inline. Mode-like UI never creates a
-document transaction, and switching the eye or chrome toggle preserves scroll and selection where
-the surfaces allow.
+over it, since the revealed line only exists in source. There is no split pane and no second
+Markdown source editor; exact-syntax work happens in the inherited source view or an inline source
+island. Presentation controls never create a document transaction, and switching the eye or
+formatting controls preserves scroll and selection where the surfaces allow.
 
 ### Minimal interaction model
 
-- The file header keeps `main`'s eye toggle verbatim (same icons, tooltip, storage key, gating)
-  plus exactly one Scient addition: a chrome toggle next to it that shows or hides the editing
-  controls. The controls are off by default and remembered per app, not per file.
+- The file header keeps `main`'s eye toggle contract (same icons, tooltip, and
+  `t3code.renderMarkdown` preference). Formatting controls live in the rich surface and remain
+  collapsed until the user opens them or begins editing.
 - The editing controls provide text formatting, lists, headings, links, and an overflow home for
   block insertion and less common actions. Find and replace moves to the editor's native search
   panel now; a redesigned Scient search surface is a follow-up, not part of this control row.
-- Links open with primary click in Raw. In Rendered, primary click places the caret and
-  Command/Ctrl-click opens, preventing accidental navigation.
+- In Rendered, ordinary Markdown links use Command/Ctrl-click so text remains easy to edit. Wiki
+  links open with primary click, remain drag-selectable, and expose their editor only after an
+  explicit node selection or double-click.
 - Escape moves outward through nested editors and popovers in a predictable order.
 
 ### Node behavior
 
-| Node                          | Write-state behavior                                                   | Markdown authority                                                        |
+| Node                          | Rendered-editor behavior                                               | Markdown authority                                                        |
 | ----------------------------- | ---------------------------------------------------------------------- | ------------------------------------------------------------------------- |
 | Paragraph and heading         | Direct rich editing with stable typography                             | Preserve original marks and delimiters until edited                       |
 | Bulleted, numbered, task list | Rich list editing; Enter/Tab/Shift-Tab change structure                | Preserve bullet/delimiter style for untouched items                       |
 | Table                         | Editable cells; contextual row, column, alignment, merge/split actions | Patch the table source range; retain untouched alignment and cell content |
-| Link and `[[wiki link]]`      | Rendered label/chip with popover editing and completion                | Keep local relative destinations and wiki syntax                          |
+| Link and `[[wiki link]]`      | Underlined label; explicit selection opens editing and completion      | Keep local relative destinations and wiki syntax                          |
 | Code block                    | Syntax-highlighted; embedded CodeMirror activates on selection         | Preserve fence marker, length, language, and metadata when untouched      |
 | Inline/display math           | Typeset while inactive; compact TeX editor when selected               | Keep original delimiters and source until changed                         |
 | Image/figure                  | Rendered with selection, alt text, caption, path, and size controls    | Use portable relative paths and ordinary Markdown where possible          |
@@ -86,16 +87,16 @@ the surfaces allow.
 
 ### File lifecycle
 
-- Create `.md` from the Files panel and command palette with collision-safe naming.
+- Create `.md` or `.markdown` from the Files panel with collision-safe naming.
 - Rename from the header using an expected revision; never overwrite an existing path.
 - Paste, drop, or select an image; validate bytes and type on the server; write atomically to a
   configurable sibling asset directory; insert a relative path only after success.
 - Autosave begins only after a user-authored document transaction and is debounced.
 - Writes use compare-and-swap revisions. A conflicting external edit pauses saving and offers a
   clear compare/reload/keep-local workflow.
-- Closing, switching files, renaming, or changing modes flushes or resolves pending edits without
-  polling loops or fire-and-forget loss.
-- Undo/redo covers document transactions, not mode changes or server refreshes.
+- Closing, switching files, renaming, or changing presentation waits for pending edits to settle
+  or enter visible recovery, without polling loops or fire-and-forget loss.
+- Undo/redo covers document transactions, not presentation changes or server refreshes.
 
 ## Architecture decision
 
@@ -117,7 +118,7 @@ not change.
 | Candidate                                                                                   | License and current state                                            | What it gives us                                                                                             | Decision for Scient                                                                                                                                                                                                                                                                              |
 | ------------------------------------------------------------------------------------------- | -------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | [ProseMirror](https://prosemirror.net/docs/guide/)                                          | MIT; modular core maintained at its new upstream forge               | Mature schema, transactions, persistent view, NodeViews, selection mapping, tables, accessibility primitives | **Adopt the core**, behind a Scient adapter. Its normal Markdown serializer is not the file-authority layer.                                                                                                                                                                                     |
-| [CodeMirror 6](https://codemirror.net/docs/guide/)                                          | MIT; modular and actively maintained at its new upstream forge       | Excellent source editor, nested code/config editor, search, completion, language packages                    | **Adopt** for Source/Split and nested source islands. It is not the rich document model.                                                                                                                                                                                                         |
+| [CodeMirror 6](https://codemirror.net/docs/guide/)                                          | MIT; modular and actively maintained at its new upstream forge       | Excellent source editor and nested code/config editor                                                        | **Adopt** for editable code blocks. It is not the product's rich document model or a parallel Markdown save path.                                                                                                                                                                                |
 | [Lexical](https://github.com/facebook/lexical)                                              | MIT; active, large ecosystem                                         | Strong React integration, immutable state, accessibility, custom nodes, Markdown import/export               | Keep where inherited UI already uses it, but do not use its tree as Markdown authority. The promising [mdast package](https://lexical.dev/docs/packages/lexical-mdast) now retains several syntax choices, but is explicitly experimental and still does not preserve arbitrary untouched bytes. |
 | [Tiptap](https://github.com/ueberdosis/tiptap)                                              | MIT core; active; optional commercial/cloud suite exists             | Polished headless ProseMirror extension ecosystem and useful interaction references                          | Do not add the abstraction layer. It does not solve exact source authority, and Scient needs direct transaction and serialization policy. No paid or hosted Tiptap component is required.                                                                                                        |
 | [Milkdown](https://github.com/Milkdown/milkdown)                                            | MIT; active; ProseMirror plus remark                                 | The strongest Markdown-oriented framework reference, plugin architecture, polished Typora-like interactions  | Reference and selectively port ideas. Its parse-to-tree/serialize path does not establish unchanged-byte preservation.                                                                                                                                                                           |
@@ -145,9 +146,9 @@ The scientific preview stack is also fully local and ownable:
 - [Vega](https://github.com/vega/vega) is BSD-3-Clause and
   [Plotly.js](https://github.com/plotly/plotly.js) is MIT; both can render local declarative
   visualization specifications without a hosted service.
-- Table editing follows the Zettlr pattern (GPL, concept reference only): a table widget whose
-  cells are small embedded CodeMirror editors clamped to cell boundaries, with row and column
-  commands implemented as Scient-owned CodeMirror commands.
+- Table editing follows useful structural ideas from Zettlr (GPL, concept reference only), while
+  keeping table cells in the selected ProseMirror document and implementing row, column,
+  alignment, merge, and split commands in Scient-owned modules.
 
 These renderers remain behind Scient widget adapters. Their input text stays in the Markdown
 file, rendering runs locally, invalid intermediate edits retain the last valid visual, and no
@@ -155,43 +156,27 @@ renderer is allowed to rewrite the document.
 
 ### Answer to rich editing without losing the preview
 
-This is feasible and is the selected design. The editor's buffer is the file's bytes; Read and
-Write are the same CodeMirror `EditorView` over that buffer. Write changes only decorations,
-focus, selection, and interaction plugins, never the text. A bullet remains a bullet, a table
-remains a laid-out table with editable cells, an equation remains typeset with a compact TeX
-editor when active, and a figure or diagram keeps its last valid preview while its source is
-being edited. Source and Split are the same buffer with the live-preview projection disabled;
-they are precision tools, not the default writing experience.
+This is feasible, but it requires separating the rich interaction model from file authority.
+Scient presents one persistent ProseMirror document while a source ledger retains the original
+Markdown ranges. A user transaction serializes only the changed block or applies a bounded inline
+patch; every untouched range is reused from the source ledger. Unsupported constructs remain raw
+source nodes instead of being dropped or normalized.
 
-Rendering is a projection over source text, not a parallel document: inline and block Markdown
-punctuation is hidden or dimmed by decorations only where the selection does not intersect it,
-and complex constructs are replaced visually by widgets whose underlying source stays in the
-buffer until explicitly edited. This is the interaction model of Typora and Obsidian, and it has
-permissive-license production evidence: Zettlr's renderer architecture covers math, citations,
-tables, and diagrams as widgets over an untouched buffer, and the MIT atomic-editor package
-ships the layout-stability (line-level reveal without reflow) and cursor-freeze mechanisms that
-resolve the interaction's known failure modes. The prior concern that this path amounts to
-hiding punctuation in a textarea does not hold: CodeMirror 6 supplies the selection, IME,
-accessibility, viewport, and structure machinery, and its ecosystem demonstrates tables, nested
-lists, and embedded editors on exactly this architecture. Conversely, a semantic document model
-alone is unsafe for real files because normal serialization changes untouched bytes, which is
-the property this product exists to guarantee.
+The ordinary eye switch in the inherited file panel chooses between the rich editor and source
+view. It is a presentation change, not a document transaction. A pending save must settle before
+that switch, a tab departure, or route navigation can unmount the editor.
 
 ### Selected foundation
 
-Use CodeMirror 6 as the editing substrate: the buffer holds the file's exact bytes, live preview
-is a decoration and widget projection over that buffer, and Source/Split are the same buffer with
-the projection disabled. CodeMirror's transaction model, selection and IME handling, viewport
-rendering, decoration system, and nested-editor support carry the invariants directly; the file
-is canonical by construction rather than by preservation engineering. Complex constructs (math,
-tables, figures, diagrams, code) are widget projections with embedded editors, following Zettlr's
-renderer architecture and atomic-editor's stability mechanisms (cursor-proximity source reveal,
-line-level reveal without reflow, post-release reveal freeze).
+Use ProseMirror as the rich document and transaction layer, behind Scient-owned schema,
+projection, NodeView, and controller adapters. Use `markdown-it` for tokenization and a
+Scient-owned source ledger for bounded source reuse. Use CodeMirror only inside editable code
+blocks, where source editing is the interaction itself.
 
-The document session, save queue with compare-and-swap revisions, conflict handling, typed server
-layer, contracts, and asset pipeline are editor-agnostic and carry over unchanged. The source
-ledger and ProseMirror surface retire when the CodeMirror surface reaches parity; the transition
-is staged behind the spike gate in the amendment record below.
+One workspace surface owns exactly one editor controller, one document session, and one serial
+save queue. React mounts that controller but does not mirror the document source in component
+state. Compare-and-swap revisions, explicit retry/discard recovery, typed server operations, and
+the asset pipeline remain independent of the editor library.
 
 All selected packages are MIT-licensed. The rich surface remains isolated behind the Markdown
 file mount; expensive nested source and scientific renderers load only when their surfaces are
@@ -201,44 +186,16 @@ Milkdown, MDXEditor, Vditor, MarkText, Muya, and newer Typora-like projects rema
 and test references, not runtime foundations. Their useful ideas may be reimplemented through
 Scient-owned modules; their serializer behavior is not the file-authority contract.
 
-### Amendment record (2026-08-29): editor core re-selection
+### Amendment record (2026-08-30): one product editor
 
-The 2026-08-23 selection (ProseMirror core plus a source ledger performing surgical byte
-patches) is superseded. Trigger: sustained quality failures in the implemented surface (broken
-controls, unwritable regions, latency) and a precedent study of twelve editor codebases
-(MarkText/Muya, Milkdown, Vrite, BlockNote, Zettlr, HedgeDoc, StackEdit, ByteMD,
-codemirror-live-markdown, atomic-editor, prosemirror-markdown, mdast-util-to-markdown) analyzed
-at source level, plus Typora's own documented interaction gaps.
-
-Findings that drove the change:
-
-- No working editor patches source bytes through a semantic model. Editors either keep source
-  text as the document (fidelity by construction: Obsidian, Zettlr, atomic-editor) or
-  re-serialize a semantic tree and accept normalization (Milkdown, BlockNote, Vrite; BlockNote
-  names its own markdown API lossy). The source-ledger mechanism has no precedent among them and
-  concentrated the implementation's worst defects.
-- prosemirror-markdown is a lossy transcoder: unknown tokens throw, reference links, HTML, and
-  front matter are dropped, and list markers, emphasis, and setext headings normalize. No
-  preservation hook exists in it.
-- The CodeMirror live-preview path has production evidence for the full scientific surface:
-  Zettlr renders math, citations, tables (per-cell embedded editors), and diagrams as widgets
-  over an untouched buffer, and atomic-editor ships the stability mechanisms with unit and
-  end-to-end tests under MIT.
-- Logseq's lossy round-trip of user files, which drove a community repair tool and reported
-  unrecoverable data loss, is the standing cost of abandoning file fidelity.
-
-Consequences: the buffer is the file and preservation is structural. Structural commands that
-ProseMirror provided (list splitting, table structure operations) become Scient-owned CodeMirror
-commands. The 2026-08-23 landscape table above remains as research history; where its decisions
-conflict with this record, this record governs, notably ProseMirror "adopt the core" and
-CodeMirror "not the rich document model".
-
-Staging: a disposable spike branch first mounts the CodeMirror live-preview core (reveal policy,
-widget projections over a real fixture corpus, existing session/save integration) and passes a
-human feel gate against the interaction model in this document. Production surface migration,
-tables, and ledger and ProseMirror retirement proceed only after that gate. The product contract
-in this document (states, node behavior, file lifecycle, verification matrix, budgets) is
-unchanged by this amendment.
+A dev-only CodeMirror live-preview spike was evaluated after early ProseMirror interaction
+failures. Its source-buffer model remained technically interesting, but it did not reach feature
+or interaction parity with the repaired rich surface. Shipping both paths would create two save,
+conflict, command, and accessibility implementations selected by hidden local state. The spike
+and its runtime gate were therefore removed. This document records the product architecture that
+actually ships: ProseMirror plus the source ledger, with CodeMirror limited to code-block source
+islands. Reconsidering the substrate requires a separate measured replacement, not another
+in-product toggle.
 
 ### Why the previous Lexical pass is not the base
 
@@ -253,35 +210,33 @@ autosave design must not be reused.
 
 ### Implemented product shape
 
-The surface provides the rendered view as the editor over the file buffer,
-Read/Write/Source/Split, revision-bound serial
-autosave, external-conflict handling, rich formatting/lists/tasks/tables, math, highlighted nested
-code editing, images, wiki links, citations/footnotes, Mermaid/Vega/Plotly previews, raw source
-islands, find/replace, outline navigation, structural block operations, create/rename, and secure
-asset insertion. During the staged 2026-08-29 transition, the ProseMirror and source-ledger
-implementation remains in place until the CodeMirror surface reaches parity.
+The rendered view is directly editable and provides revision-bound serial autosave,
+external-conflict handling, rich formatting/lists/tasks/tables, math, highlighted nested code
+editing, images, wiki links, citations/footnotes, Mermaid/Vega/Plotly previews, raw source islands,
+find/replace, outline navigation, structural block operations, create/rename, and secure asset
+insertion. The inherited eye switch exposes the ordinary source editor when precision editing is
+needed. The rich editor claims plain Markdown (`.md` and `.markdown`) only; MDX remains on T3's
+ordinary rendered/source preview because MDX fidelity has not been established.
 
 Changes to that shape require proportional evidence for unchanged-source reuse, CRLF and Unicode,
 malformed input, composition safety, RTL block direction, last-valid scientific rendering,
-mode-safe links, collision-safe file operations, save recovery, and representative large-document
-latency.
+presentation-safe links, collision-safe file operations, save recovery, and representative
+large-document latency.
 
 ### Module boundaries
 
 ```text
 packages/scient-markdown/
-  source/        Buffer integrity: external-change diffing, preservation invariants, fixtures
-  model/         Framework-neutral document/node capabilities and invariants
-  file/          Revisions, conflict state machine, save intent, asset policy
-  fixtures/      Round-trip and adversarial scientific Markdown corpus
+  sourceLedger.ts  Reuses untouched source ranges and applies bounded patches
+  session.ts       Baseline, draft, revision, and explicit save intent
+  saveQueue.ts     Serial debounced CAS save and retry/discard recovery
 
 apps/web/src/scient/markdownEditor/
-  session/       One ScientDocumentSession per open file
-  cm6/           Live-preview projection: reveal policy, decorations, commands, plugins
-  widgets/       Math, table, code, figure, citation, diagram widget implementations
-  source/        Source and split surfaces over the same buffer
-  ui/            Minimal header, contextual controls, menus, status
-  styles/        Owned tokens and node styles aligned with reading typography
+  prosemirror/   Schema, source projection, commands, plugins, session, controller
+  nodes/         Owned math, code, image, reference, raw, task, and wiki NodeViews
+  ui/            Formatting, find, lifecycle, save status, and wiki-link controls
+  assets/        Authenticated image-upload client
+  *.tsx          File/workspace lifetime adapters
 
 apps/server/src/scient/markdown/
   WorkspaceMarkdownFiles.ts  Atomic create, rename, binary asset operations
@@ -291,60 +246,78 @@ packages/contracts/src/scientMarkdown.ts
 packages/client-runtime/src/state/scientMarkdownHttp.ts
 ```
 
-Inherited mounts are limited to:
+### T3 upstream seams
 
-- one lazy Markdown surface mount and mode control in `FilePreviewPanel`;
-- one create-document action mount in `FileBrowserPanel` and the command registry;
-- contract exports and server layer composition;
-- package manifests and the generated lockfile.
+Quality behavior stays in Scient-owned modules; inherited files only compose it with the host.
+These are the intentional overlaps to inspect during every bounded T3 alignment:
 
-A seam test records these mounts and fails if Scient editor logic spreads into inherited paths.
+| Inherited seam                                                     | Why it remains                                                                              | Composition rule                                                                                                                                        |
+| ------------------------------------------------------------------ | ------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `FilePreviewPanel.tsx`                                             | The host owns file loading, source preview, breadcrumbs, and save notices.                  | Keep one lazy rich-editor mount for `.md`/`.markdown`; retain T3's ordinary MDX renderer; do not move parser or save policy here.                       |
+| `FileBrowserPanel.tsx`                                             | The inherited file toolbar is the discoverable create location.                             | Keep one owned create button and refresh both the T3 tree and the shared completion index after success.                                                |
+| `FileBreadcrumbNavigator.tsx`                                      | Rename belongs on the visible current filename.                                             | Preserve only the generic optional current-file control slot; the rename operation remains owned.                                                       |
+| `ChatView.tsx`                                                     | It owns route and right-panel lifecycle, the points that can unmount a dirty file.          | Call the Scient pending-departure adapter before activation, close, panel, and route actions. Keep `RightPanelTabs` upstream-shaped and presentational. |
+| workspace contracts, RPC composition, and `WorkspaceFileSystem.ts` | Remote clients and filesystem authority must use the host's authenticated project boundary. | Extend the existing typed operation and path authority; never create a Markdown-only filesystem root or client-authoritative path.                      |
+| package manifests and lockfile                                     | The lazy rich bundle still needs local parser/editor dependencies.                          | Keep only runtime dependencies used by the selected product path.                                                                                       |
+
+The static seam test records the UI mounts. The server tests cover containment, exclusive create,
+revision-aware rename, atomic publication, and image validation. An upstream change that supplies
+equivalent behavior should replace the seam only after those acceptance tests still pass.
+
+#### Current upstream disposition (2026-08-30)
+
+Against the official T3 delta from Scient's integrated upstream base `660cddd3b` through
+`upstream/main` at `2daff8c25`, this feature overlaps only two paths:
+
+- `FilePreviewPanel.tsx`: upstream extracted the ordinary Markdown renderer into
+  `FileMarkdownPreview.tsx`. During the next bounded alignment, keep that extraction and compose
+  the Scient rich-editor branch beside it; do not preserve a second inline copy merely to reduce
+  diff churn.
+- `pnpm-lock.yaml`: regenerate the lockfile after reconciling manifests. It carries no product
+  policy.
+
+There is no current official-upstream overlap in `ChatView.tsx`, `RightPanelTabs.tsx`, the editor
+modules, or the Markdown server modules. This is a point-in-time integration record, not a reason
+to bypass the usual changed-path audit at the next alignment.
 
 ### Document session
 
 `ScientDocumentSession` owns one immutable baseline and a stream of explicit state transitions:
 
 ```text
-disk bytes + revision
-        |
-        v
-CodeMirror buffer (the file's exact bytes) <-> live-preview projection (decorations/widgets)
-        |                |
-        |                +-> user edits -> dirty buffer -> debounced save intent
-        +-> Source/Split edits -> the same buffer, projection disabled
-        |
-        v
-buffer bytes -> pending bytes -> CAS atomic write
+disk source + revision -> source ledger -> ProseMirror projection
+                                      |             |
+                                      |             +-> explicit user transaction
+                                      |                         |
+                                      +-> untouched ranges <----+ bounded patch/changed-block serialization
+                                                                |
+                                                                v
+                                                     save intent -> serial CAS write
 ```
 
-The same `EditorView` remains mounted in Read and Write. Decorations, focus, selection, and
-interaction plugins change; the buffer text does not. Read/Write changes are session UI events,
-never document edits. Source and Split bind the same buffer, so caret, selection, and scroll
-continue across mode changes.
-
-External file updates enter through a separate diff-and-merge transition that reconciles the
-buffer with new disk bytes and reports conflicts. Programmatic selection, decoration, viewport,
-and remote-sync transactions carry explicit metadata and can never create save intent.
+The workspace owns the controller and save queue; the React document adapter only mounts the
+controller. External file updates enter through an explicit session transition. A clean editor
+adopts the new source and revision; a dirty editor pauses the queue and exposes retry/discard
+recovery. Programmatic adoption, selection, decoration, viewport, and remote-sync transactions do
+not create save intent.
 
 ### Source preservation
 
-Preservation is structural: the buffer holds the file's bytes, so untouched regions are intact by
-construction rather than by reconstruction.
+Preservation is range-based, not a claim that a semantic editor never serializes:
 
-- The editor never re-serializes the document; every save writes buffer bytes.
-- Unsupported or unknown syntax is ordinary buffer text with no special handling. It renders as
-  an editable source island by default and survives every edit elsewhere.
-- Widget projections (math, tables, figures, diagrams, code) replace construct ranges visually
-  only. Their source text stays in the buffer until the user edits it through the widget's
-  controls or after dissolving the widget to source.
-- A canonicalizing Format Document remains an explicit action with a preview/diff; it is never an
-  autosave path.
-- External changes are diffed into the buffer or raise a conflict; the editor never rewrites
-  untouched regions to match its own preferences.
+- Unchanged source-ledger blocks are copied byte-for-byte into the next draft.
+- A bounded inline edit uses the minimal valid source patch when its mapping is safe.
+- A structurally changed block is serialized from the edited ProseMirror node; normalization is
+  confined to that changed block.
+- Unsupported syntax is retained as an owned raw node and reuses its original source while
+  unchanged.
+- Invalid mappings, including Unicode boundary hazards, fall back to changed-block serialization
+  rather than throwing or touching adjacent ranges.
+- External changes are adopted only while clean or surfaced as a revision conflict while dirty.
 
-The buffer must preserve CRLF/LF, final newline state, Unicode and bidi controls, front matter,
-HTML comments, reference definitions, fence length, list markers, indentation, table alignment,
-entity spelling, and untouched whitespace, by never writing anything except the user's edits.
+Golden and adversarial tests therefore assert that CRLF/LF, final newline state, Unicode and bidi
+controls, front matter, HTML comments, reference definitions, fence length, list markers,
+indentation, entity spelling, and whitespace remain unchanged outside the user's edited range.
 
 ## Server and security contract
 
@@ -384,7 +357,7 @@ tests are necessary but do not replace proportional review in the real web/deskt
 
 | Requirement                | Required evidence                                                              |
 | -------------------------- | ------------------------------------------------------------------------------ |
-| No mutation on mode change | transaction spy, save spy, before/after SHA, 100-toggle test                   |
+| No mutation on view switch | transaction spy, save spy, before/after SHA, repeated eye-toggle test          |
 | Rich visual continuity     | same mounted view identity plus geometry and screenshot differential           |
 | Source preservation        | golden and property tests showing only intended source ranges changed          |
 | External edit safety       | deterministic revision-conflict integration tests and real two-writer exercise |
@@ -402,15 +375,15 @@ tests are necessary but do not replace proportional review in the real web/deskt
 Budgets are qualification thresholds, not aspirations:
 
 - Rich editor code is absent from the initial chat bundle and loaded on demand.
-- Read/Write toggle performs no parse and settles in one animation frame for an already loaded
-  document.
+- Formatting-dock expansion does not remount or reparse the document and settles in one animation
+  frame for an already loaded editor.
 - Typing p95 stays below 16 ms for a 100 KiB representative document and below 32 ms for 500 KiB.
 - Opening a 100 KiB document reaches an interactive first viewport within 250 ms on the
   qualification Mac after the lazy chunk is available.
 - Long documents use viewport-aware decorations and defer heavy math/diagram work outside the
   active region.
 - Inactive Plotly and Mermaid nodes do not continuously animate or repaint.
-- Repeated mode toggles and file switches show no unbounded listener, DOM, or heap growth.
+- Repeated presentation switches and file changes show no unbounded listener, DOM, or heap growth.
 
 ## Change acceptance
 

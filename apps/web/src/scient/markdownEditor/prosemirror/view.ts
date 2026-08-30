@@ -92,7 +92,7 @@ export interface ScientMarkdownEditorSnapshot {
 }
 
 function modeIsEditable(mode: MarkdownDocumentMode): boolean {
-  return mode === "write" || mode === "split";
+  return mode === "write";
 }
 
 function documentIsEmpty(document: ProseMirrorNode): boolean {
@@ -211,6 +211,16 @@ export class ScientMarkdownEditorView {
     return node !== null && (this.editorView?.dom.contains(node) ?? false);
   }
 
+  private selectedWikiLink(): ProseMirrorNode | null {
+    const view = this.editorView;
+    if (!view) return null;
+    const { selection } = view.state;
+    if (selection.empty || !(selection instanceof TextSelection)) return null;
+    const node = view.state.doc.nodeAt(selection.from);
+    if (!node || node.type !== scientMarkdownSchema.nodes.wiki_link) return null;
+    return selection.to === selection.from + node.nodeSize ? node : null;
+  }
+
   /** Wiki-link labels must be one source-safe inline text selection. */
   canSetWikiLink(): boolean {
     const view = this.editorView;
@@ -224,6 +234,7 @@ export class ScientMarkdownEditorView {
     ) {
       return false;
     }
+    if (this.selectedWikiLink() !== null) return true;
     const label = view.state.doc.textBetween(selection.from, selection.to, " ", " ");
     return label.length > 0 && label === label.trim() && !label.includes("]]");
   }
@@ -342,7 +353,12 @@ export class ScientMarkdownEditorView {
       return false;
     }
     const { selection } = view.state;
-    const label = view.state.doc.textBetween(selection.from, selection.to, " ", " ");
+    const selectedWikiLink = this.selectedWikiLink();
+    const label = selectedWikiLink
+      ? typeof selectedWikiLink.attrs.label === "string"
+        ? selectedWikiLink.attrs.label
+        : null
+      : view.state.doc.textBetween(selection.from, selection.to, " ", " ");
     view.dispatch(
       view.state.tr
         .replaceSelectionWith(wikiLink.create({ target: normalizedTarget, label }), true)
@@ -583,6 +599,8 @@ export class ScientMarkdownEditorView {
           : {}),
       }),
       handleKeyDown: (_view, event) => this.handleEditorKeyDown(event),
+      handleClickOn: (_view, _position, node, _nodePosition, event, direct) =>
+        direct && event.button === 0 && node.type === scientMarkdownSchema.nodes.wiki_link,
       handleDoubleClickOn: (view, _position, node, nodePosition, event, direct) => {
         if (
           !direct ||

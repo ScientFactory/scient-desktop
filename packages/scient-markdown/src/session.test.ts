@@ -12,14 +12,12 @@ import {
 } from "./session.ts";
 
 describe("Markdown document session", () => {
-  it("toggles all presentation modes without creating a save intent", () => {
+  it("changes rich-document editability without creating a save intent", () => {
     const source = "- one\n  - two\n";
     let session = createMarkdownDocumentSession({ source, revision: "sha256:before" });
 
     for (let index = 0; index < 100; index += 1) {
       session = setMarkdownDocumentMode(session, "write");
-      session = setMarkdownDocumentMode(session, "source");
-      session = setMarkdownDocumentMode(session, "split");
       session = setMarkdownDocumentMode(session, "read");
     }
 

@@ -6,7 +6,7 @@ import { describe, expect, it, vi } from "vite-plus/test";
 import { ScientProseMirrorSession } from "./session";
 
 describe("ScientProseMirrorSession", () => {
-  it("does not parse, serialize, transact, or request a save during 100 mode cycles", () => {
+  it("does not parse, serialize, transact, or request a save during 100 editability cycles", () => {
     const onUserSourceChange = vi.fn();
     const session = new ScientProseMirrorSession({
       source: "- item\n  - nested\n",
@@ -18,8 +18,6 @@ describe("ScientProseMirrorSession", () => {
 
     for (let index = 0; index < 100; index += 1) {
       session.setMode("write");
-      session.setMode("source");
-      session.setMode("split");
       session.setMode("read");
     }
 
