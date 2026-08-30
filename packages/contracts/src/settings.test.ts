@@ -88,8 +88,13 @@ describe("ClientSettings glass opacity", () => {
 });
 
 describe("ClientSettings appearance contrast", () => {
-  it("defaults to the theme's original contrast", () => {
-    expect(decodeClientSettings({}).appearanceContrast).toBe(100);
+  it("defaults to 120% contrast", () => {
+    expect(decodeClientSettings({}).appearanceContrast).toBe(120);
+  });
+
+  it("preserves the previous default when it was explicitly persisted", () => {
+    expect(decodeClientSettings({ appearanceContrast: 100 }).appearanceContrast).toBe(100);
+    expect(decodeClientSettingsPatch({ appearanceContrast: 100 }).appearanceContrast).toBe(100);
   });
 
   it.each([49, 201, 92.5])("rejects an invalid appearance contrast: %s", (value) => {
@@ -138,11 +143,11 @@ describe("ClientSettings content direction", () => {
 });
 
 describe("ClientSettings sidebar", () => {
-  it("defaults to the current sidebar with automatic merge and inactivity settling", () => {
+  it("defaults to the current sidebar with merge settling off and a seven-day threshold", () => {
     const settings = decodeClientSettings({});
     expect(settings.legacySidebarEnabled).toBe(false);
-    expect(settings.sidebarAutoSettleAfterDays).toBe(3);
-    expect(settings.sidebarAutoSettleOnMerge).toBe(true);
+    expect(settings.sidebarAutoSettleAfterDays).toBe(7);
+    expect(settings.sidebarAutoSettleOnMerge).toBe(false);
   });
 
   it("drops the retired sidebar v2 beta keys, resetting everyone to the default", () => {
@@ -174,13 +179,22 @@ describe("ClientSettings sidebar", () => {
     ).toBeNull();
   });
 
-  it("allows auto-settle on merge to be disabled", () => {
-    expect(decodeClientSettings({ sidebarAutoSettleOnMerge: false }).sidebarAutoSettleOnMerge).toBe(
-      false,
+  it("preserves the previous inactivity threshold when it was explicitly persisted", () => {
+    expect(decodeClientSettings({ sidebarAutoSettleAfterDays: 3 }).sidebarAutoSettleAfterDays).toBe(
+      3,
     );
     expect(
-      decodeClientSettingsPatch({ sidebarAutoSettleOnMerge: false }).sidebarAutoSettleOnMerge,
-    ).toBe(false);
+      decodeClientSettingsPatch({ sidebarAutoSettleAfterDays: 3 }).sidebarAutoSettleAfterDays,
+    ).toBe(3);
+  });
+
+  it.each([true, false])("preserves an explicit auto-settle-on-merge choice: %s", (value) => {
+    expect(decodeClientSettings({ sidebarAutoSettleOnMerge: value }).sidebarAutoSettleOnMerge).toBe(
+      value,
+    );
+    expect(
+      decodeClientSettingsPatch({ sidebarAutoSettleOnMerge: value }).sidebarAutoSettleOnMerge,
+    ).toBe(value);
   });
 
   it.each([-1, 0, 91])("rejects an auto-settle threshold outside 1..90: %s", (value) => {

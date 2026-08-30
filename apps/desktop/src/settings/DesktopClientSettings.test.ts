@@ -212,7 +212,14 @@ describe("DesktopClientSettings", () => {
         yield* fileSystem.makeDirectory(environment.stateDir, { recursive: true });
         yield* fileSystem.writeFileString(environment.clientSettingsPath, "{}\n");
 
-        assert.deepEqual(yield* settings.get, Option.some(yield* decodeClientSettingsJson("{}")));
+        const persisted = yield* settings.get;
+        assert.deepEqual(persisted, Option.some(yield* decodeClientSettingsJson("{}")));
+        assert.isTrue(Option.isSome(persisted));
+        if (Option.isSome(persisted)) {
+          assert.equal(persisted.value.appearanceContrast, 120);
+          assert.equal(persisted.value.sidebarAutoSettleAfterDays, 7);
+          assert.equal(persisted.value.sidebarAutoSettleOnMerge, false);
+        }
       }),
     ),
   );
