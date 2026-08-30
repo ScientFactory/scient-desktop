@@ -144,7 +144,7 @@ import * as AnalysisRunIndex from "./scient/analysis/AnalysisRunIndex.ts";
 import * as LocalDuplexProcess from "./scient/execution/LocalDuplexProcess.ts";
 import * as LocalExecutionProcess from "./scient/execution/LocalExecutionProcess.ts";
 import * as LocalComputeStore from "./scient/compute/LocalComputeStore.ts";
-import * as PythonComputeRuntime from "./scient/compute/PythonComputeRuntime.ts";
+import * as ComputeRuntimeRegistry from "./scient/compute/ComputeRuntimeRegistry.ts";
 import * as LatexBuildService from "./scient/latex/LatexBuildService.ts";
 import * as LatexManagedToolchain from "./scient/latex/LatexManagedToolchain.ts";
 import * as LatexPackageInstaller from "./scient/latex/LatexPackageInstaller.ts";
@@ -526,7 +526,7 @@ const AnalysisServiceLive = AnalysisService.layer.pipe(
 // interpreter probe, duplex for the bridge it talks to. The store is mounted
 // here rather than inside the service so the disk that holds a session's
 // history has one owner for the life of the server.
-const ComputeSessionServiceLive = PythonComputeRuntime.layer.pipe(
+const ComputeSessionServiceLive = ComputeRuntimeRegistry.layer.pipe(
   Layer.provide(LocalComputeStore.layer),
   Layer.provide(LocalExecutionProcess.layer),
   Layer.provide(LocalDuplexProcess.layer),

@@ -32,7 +32,7 @@ import {
   layerWithRuntimeBindings,
   type ComputeRuntimeBinding,
 } from "./ComputeSessionService.ts";
-import { makeJupyterBridgeTransport } from "./JupyterBridgeTransport.ts";
+import { makeComputeBridgeTransport } from "./ComputeBridgeTransport.ts";
 import { makeManagedPythonEnvironmentManager } from "./ManagedPythonEnvironment.ts";
 import {
   makeManagedPythonProvisioner,
@@ -51,7 +51,7 @@ import { PYTHON_TOOLKIT_CATALOG, assessPythonToolkits } from "./PythonToolkitCat
  * the bridge script on disk.
  *
  * Everything language-specific is already in `PythonRuntimeAdapter`, and
- * everything protocol-specific is already in `JupyterBridgeTransport`. What is
+ * everything protocol-specific is already in `ComputeBridgeTransport`. What is
  * left, and all this module does, is the two things neither of them can answer
  * for itself: where the bridge script lives in this installation, and how a
  * probe process actually gets run.
@@ -359,7 +359,7 @@ export const pythonRuntimeBinding: Effect.Effect<
   );
   return {
     adapter,
-    transport: makeJupyterBridgeTransport(duplexProcesses, {}),
+    transport: makeComputeBridgeTransport(duplexProcesses, {}),
     descriptor: {
       languageId: PYTHON_LANGUAGE_ID,
       displayName: "Python",

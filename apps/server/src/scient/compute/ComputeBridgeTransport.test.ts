@@ -28,7 +28,7 @@ import * as Queue from "effect/Queue";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 
-import { makeJupyterBridgeTransport } from "./JupyterBridgeTransport.ts";
+import { makeComputeBridgeTransport } from "./ComputeBridgeTransport.ts";
 
 // ---------------------------------------------------------------------------
 // A bridge that never runs
@@ -220,7 +220,7 @@ const openChannel = Effect.fn("openChannel")(function* (
   bridge: FakeBridge,
   options: { readonly maxEventQueueBytes?: number } = {},
 ) {
-  const transport = makeJupyterBridgeTransport(bridge.port, {
+  const transport = makeComputeBridgeTransport(bridge.port, {
     startupTimeoutMs: 2_000,
     ...options,
   });

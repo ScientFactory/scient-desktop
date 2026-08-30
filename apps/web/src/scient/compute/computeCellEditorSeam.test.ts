@@ -11,13 +11,15 @@ const fileEditorSource = NodeFS.readFileSync(
   "utf8",
 );
 const pythonSurfaceSource = NodeFS.readFileSync(
-  NodePath.join(here, "ScientPythonComputeSurface.tsx"),
+  NodePath.join(here, "ScientComputeFileSurface.tsx"),
   "utf8",
 );
 
 describe("Python active-cell editor seam", () => {
   it("derives the active cell from the shared run-target model", () => {
-    expect(pythonSurfaceSource).toContain("pythonActiveCell(props.contents, editorSelection)");
+    expect(pythonSurfaceSource).toContain(
+      "computeActiveCell(props.contents, editorSelection, props.language.cellMarker)",
+    );
     expect(pythonSurfaceSource).toContain("activeLineRange={activeCellRange}");
   });
 

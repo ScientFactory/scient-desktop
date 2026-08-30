@@ -29,11 +29,11 @@ const imageActionButtonsSource = NodeFS.readFileSync(
   "utf8",
 );
 const pythonActionsSource = NodeFS.readFileSync(
-  NodePath.join(here, "PythonFileComputeActions.tsx"),
+  NodePath.join(here, "ComputeFileActions.tsx"),
   "utf8",
 );
 const pythonSurfaceSource = NodeFS.readFileSync(
-  NodePath.join(here, "ScientPythonComputeSurface.tsx"),
+  NodePath.join(here, "ScientComputeFileSurface.tsx"),
   "utf8",
 );
 const settingsSource = NodeFS.readFileSync(
@@ -62,11 +62,16 @@ describe("compute result surface seam", () => {
   });
 
   it("keeps Python setup contextual to the file toolbar", () => {
-    expect(pythonActionsSource).toContain("resolvePythonRuntimeToolbarState");
+    expect(pythonActionsSource).toContain("resolveComputeRuntimeToolbarState");
     expect(pythonActionsSource).toContain("Open Scientific Computing settings");
-    expect(pythonActionsSource).toContain('aria-label="Refresh Python detection"');
+    expect(pythonActionsSource).toContain(
+      "aria-label={`Refresh ${props.language.displayName} detection`}",
+    );
     expect(pythonActionsSource).toContain('runtimeToolbar.kind === "switch"');
-    expect(pythonActionsSource).toContain("the next run uses the Python selected");
+    expect(pythonActionsSource).toContain("the next run uses the");
+    expect(pythonActionsSource).toContain(
+      "{props.language.displayName} selected in Scientific Computing",
+    );
     expect(pythonActionsSource).not.toContain("Settings2");
     expect(panelSource).toContain("!props.embedded && allSessions.length > 0");
   });
@@ -78,7 +83,7 @@ describe("compute result surface seam", () => {
     expect(pythonActionsSource).toContain("@[9rem]/python-file-actions:block");
     expect(pythonActionsSource).toContain("@[15rem]/python-file-actions:inline");
     expect(pythonActionsSource).toContain("aria-label={primary.label}");
-    expect(pythonActionsSource).toContain("Switch Python environment…");
+    expect(pythonActionsSource).toContain("Switch {props.language.displayName} environment…");
   });
 
   it("sizes shared setup-card actions by the panel rather than the window", () => {

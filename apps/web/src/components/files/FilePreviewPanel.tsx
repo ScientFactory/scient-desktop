@@ -60,6 +60,7 @@ import {
 } from "~/scient/fileOpening/fileOpeningPolicy";
 import { scientificSourceLanguageOverride } from "~/scient/analysis/sourceLanguage";
 import { ScientFileAuxiliarySurface } from "~/scient/fileSurfaces/ScientFileAuxiliarySurface";
+import { computeSourceLanguageForPath } from "~/scient/compute/computeSourceLanguage";
 import { workspacePdfSourceForPreview } from "~/scient/pdf/pdfSource";
 import {
   ScientFileFreshnessNotices,
@@ -192,9 +193,9 @@ const ScientLatexSurface = lazy(() =>
     default: module.ScientLatexSurface,
   })),
 );
-const ScientPythonComputeSurface = lazy(() =>
-  import("~/scient/compute/ScientPythonComputeSurface").then((module) => ({
-    default: module.ScientPythonComputeSurface,
+const ScientComputeFileSurface = lazy(() =>
+  import("~/scient/compute/ScientComputeFileSurface").then((module) => ({
+    default: module.ScientComputeFileSurface,
   })),
 );
 type FilePostRender = NonNullable<FileOptions<unknown>["onPostRender"]>;
@@ -1105,6 +1106,8 @@ export default function FilePreviewPanel({
   );
   const breadcrumbRef = useRef<HTMLDivElement>(null);
   const isMarkdown = relativePath ? isMarkdownPreviewFile(relativePath) : false;
+  const computeSourceLanguage =
+    relativePath === null ? null : computeSourceLanguageForPath(relativePath);
   // A reveal still wins over the preference: the line only exists in the source.
   const renderMarkdown =
     isMarkdown &&
@@ -1407,7 +1410,7 @@ export default function FilePreviewPanel({
               />
             </Suspense>
           ) : relativePath && file.data ? (
-            relativePath.toLowerCase().endsWith(".py") && !file.data.truncated ? (
+            computeSourceLanguage !== null && !file.data.truncated ? (
               <Suspense
                 fallback={
                   <div className="flex min-h-0 flex-1 items-center justify-center text-muted-foreground">
@@ -1415,8 +1418,9 @@ export default function FilePreviewPanel({
                   </div>
                 }
               >
-                <ScientPythonComputeSurface
+                <ScientComputeFileSurface
                   key={`${relativePath}:${resolvedTheme}`}
+                  language={computeSourceLanguage}
                   environmentId={environmentId}
                   threadRef={threadRef}
                   cwd={cwd}

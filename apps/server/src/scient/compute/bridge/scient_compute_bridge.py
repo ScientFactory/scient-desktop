@@ -90,6 +90,64 @@ SERVER_MESSAGE_TYPES = {
 }
 REQUEST_ID_TYPES = {"execute", "interrupt", "inspect-variables"}
 
+# Registered by type name: pandas is never imported just to start a session.
+# Keep this in the selected kernel (not the transport) so it also survives restart.
+# No user namespace entries, global pandas settings, HTML, or package installation.
+PYTHON_RICH_DISPLAY_SETUP = r"""
+from IPython import get_ipython
+from IPython.core.formatters import JSONFormatter
+import datetime
+import json
+import math
+
+def table_preview(frame):
+    try:
+        if frame.columns.nlevels != 1 or frame.index.nlevels != 1:
+            return None
+        names = list(frame.columns[:20])
+        if any(type(name) is not str or not name or len(name) > 256 for name in names) or len(set(names)) != len(names):
+            return None
+        index_name = "index"
+        while index_name in names:
+            index_name = "_" + index_name
+        columns = [index_name] + names
+        clipped = len(frame) > 100 or len(frame.columns) > 20
+        def scalar(value):
+            nonlocal clipped
+            if type(value) is str:
+                if len(value) > 256:
+                    clipped = True
+                    return value[:256] + "…"
+                return value
+            if value is None or type(value) is bool:
+                return value
+            if type(value) is int:
+                return value if abs(value) <= 9007199254740991 else str(value)[:256]
+            if type(value) is float:
+                return value if math.isfinite(value) else None
+            if type(value).__module__.startswith("numpy") and type(value).__name__ not in {"ndarray", "object_"}:
+                return scalar(value.item())
+            if type(value) in {datetime.date, datetime.datetime, datetime.time}:
+                return value.isoformat()
+            clipped = True
+            return "[" + type(value).__name__[:80] + "]"
+        rows = [
+            dict(zip(columns, (scalar(value) for value in row)))
+            for row in frame.iloc[:100, :20].itertuples(index=True, name=None)
+        ]
+        result = {"schema": {"fields": [{"name": name} for name in columns]}, "data": rows,
+                  "scientPreview": {"truncated": clipped}}
+        # The fallback text remains available when even a bounded preview is too large.
+        return result if len(json.dumps(result, ensure_ascii=False).encode("utf-8")) <= 512 * 1024 else None
+    except Exception:
+        return None
+
+formatter = JSONFormatter(parent=get_ipython().display_formatter, print_method="_scient_table_preview_")
+formatter.for_type_by_name("pandas.core.frame", "DataFrame", table_preview)
+formatter.for_type_by_name("pandas", "DataFrame", table_preview)
+get_ipython().display_formatter.formatters["application/vnd.dataresource+json"] = formatter
+"""
+
 
 # A single expression keeps inspection out of the user's history and namespace.
 # It summarizes only exact built-in values plus well-known array/table shapes;
@@ -775,6 +833,7 @@ class ScientBridge:
                 sys.executable,
                 "-m",
                 "ipykernel_launcher",
+                "--IPKernelApp.exec_lines=" + json.dumps(["exec(" + repr(PYTHON_RICH_DISPLAY_SETUP) + ", {})"]),
                 "-f",
                 "{connection_file}",
             ],
@@ -843,6 +902,7 @@ class ScientBridge:
         # already depends on matplotlib-inline; importing Matplotlib remains
         # lazy and user code can still choose another backend explicitly.
         kernel_environment["MPLBACKEND"] = "module://matplotlib_inline.backend_inline"
+        kernel_environment.setdefault("PLOTLY_RENDERER", "plotly_mimetype")
         await self._kernel_manager.start_kernel(
             cwd=working_directory,
             env=kernel_environment,

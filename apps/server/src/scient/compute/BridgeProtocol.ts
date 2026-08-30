@@ -182,7 +182,7 @@ export const StartKernelPayload = Schema.Struct({
 export type StartKernelPayload = typeof StartKernelPayload.Type;
 
 export const KernelReadyPayload = Schema.Struct({
-  kernelPid: Schema.Int.check(Schema.isGreaterThan(0)),
+  kernelPid: Schema.NullOr(Schema.Int.check(Schema.isGreaterThan(0))),
   languageId: ComputeLanguageId,
   languageVersion: Label,
   protocolVersion: Schema.Int.check(Schema.isGreaterThanOrEqualTo(1)),
@@ -347,7 +347,7 @@ export type RestartPayload = typeof RestartPayload.Type;
  * the session is actually at.
  */
 export const RestartedPayload = Schema.Struct({
-  kernelPid: Schema.Int.check(Schema.isGreaterThan(0)),
+  kernelPid: Schema.NullOr(Schema.Int.check(Schema.isGreaterThan(0))),
 });
 export type RestartedPayload = typeof RestartedPayload.Type;
 

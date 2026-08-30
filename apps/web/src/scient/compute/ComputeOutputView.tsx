@@ -28,6 +28,8 @@ import {
   type ComputeFigurePresentation,
 } from "./computeFigurePresentation";
 import { computeProjectedStaticImage, computeSystemEventLabel } from "./computeResultPresentation";
+import { computeRichRepresentation } from "./computeRichRepresentation";
+import { ComputeRichOutput } from "./ComputeRichOutput";
 
 type ComputeExecutionSource = ComputeExecutionRecord["request"]["source"];
 
@@ -284,6 +286,9 @@ export function ComputeOutputView(props: {
               </div>
             );
           case "representation": {
+            const rich = computeRichRepresentation(output);
+            if (rich !== null)
+              return <ComputeRichOutput key={outputKey(output, index)} representation={rich} />;
             const image = computeProjectedStaticImage(output);
             if (image === null) {
               return (

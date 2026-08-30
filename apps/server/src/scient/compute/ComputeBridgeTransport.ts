@@ -69,7 +69,7 @@ type RichDisplayPayload = Extract<DisplayPayload, { readonly kind: unknown }>;
  * belongs: a transport that also resolved one could disagree with the plan it
  * was handed.
  */
-export interface JupyterBridgeTransportOptions {
+export interface ComputeBridgeTransportOptions {
   readonly startupTimeoutMs?: number;
   /**
    * How many bytes of undelivered events one session may hold.
@@ -314,9 +314,9 @@ function pendingKey(
   return `${type}:${requestId ?? ""}:${generation}`;
 }
 
-export function makeJupyterBridgeTransport(
+export function makeComputeBridgeTransport(
   processes: DuplexProcessPort,
-  options: JupyterBridgeTransportOptions,
+  options: ComputeBridgeTransportOptions,
 ): ComputeTransport {
   const startupTimeoutMs = options.startupTimeoutMs ?? DEFAULT_STARTUP_TIMEOUT_MS;
   const maxEventQueueBytes = options.maxEventQueueBytes ?? DEFAULT_MAX_EVENT_QUEUE_BYTES;
@@ -797,7 +797,7 @@ export function makeJupyterBridgeTransport(
                 // has already checked advances by exactly one. A copy in the
                 // payload would be a second source of truth that could disagree
                 // with the one the sequence and identity checks ran against.
-                const payload = message.payload as { kernelPid: number };
+                const payload = message.payload as { kernelPid: number | null };
                 const previous = MutableRef.get(runtimeIdentity);
                 if (previous === null) {
                   return yield* transportError(
@@ -1060,7 +1060,7 @@ export function makeJupyterBridgeTransport(
                 yield* remainingStartupMs,
               );
               const payload = ready.payload as {
-                kernelPid: number;
+                kernelPid: number | null;
                 languageId: string;
                 languageVersion: string;
                 protocolVersion: number;

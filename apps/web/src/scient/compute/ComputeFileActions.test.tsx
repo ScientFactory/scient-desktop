@@ -61,7 +61,9 @@ vi.mock("~/components/ui/menu", () => ({
   MenuSeparator: () => null,
 }));
 
-import { PythonFileComputeActions } from "./PythonFileComputeActions";
+import { PYTHON_COMPUTE_SOURCE } from "./computeSourceLanguage";
+
+import { ComputeFileActions } from "./ComputeFileActions";
 
 function runtime(
   source: "managed" | "path",
@@ -104,7 +106,8 @@ function render(candidates = [runtime("managed")]) {
     },
   ];
   renderToStaticMarkup(
-    <PythonFileComputeActions
+    <ComputeFileActions
+      language={PYTHON_COMPUTE_SOURCE}
       environmentId={EnvironmentId.make("remote-server")}
       cwd="/project"
       relativePath="test.py"

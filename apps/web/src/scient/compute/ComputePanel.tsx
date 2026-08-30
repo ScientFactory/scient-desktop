@@ -71,7 +71,7 @@ import { refreshProjectFiles } from "~/components/files/projectFilesQueryState";
 
 import { ComputeOutputView } from "./ComputeOutputView";
 import { ManagedRuntimeCard } from "./ScientificComputingSettings";
-import { defaultComputeRuntime } from "./pythonComputeSurfaceModel";
+import { defaultComputeRuntime } from "./computeFileSurfaceModel";
 import {
   computeExecutionStatusLabel,
   computeSourceFreshnessLabel,
@@ -431,7 +431,7 @@ function ComputeVariablesView(props: {
   if (!props.hasLiveSession) {
     return (
       <div className="flex min-h-40 items-center justify-center p-6 text-center text-xs text-muted-foreground">
-        Run a Python file to start a live session and inspect its variables.
+        Run a source file to start a live session and inspect its variables.
       </div>
     );
   }
@@ -534,6 +534,7 @@ export function ComputePanel(props: {
   readonly cwd: string;
   readonly threadRef: ScopedThreadRef;
   readonly sourcePath?: string;
+  readonly sourceLanguageId?: string;
   readonly sourceRevision?: string;
   readonly sourcePending?: boolean;
   readonly focusSessionId?: string | null;
@@ -598,7 +599,10 @@ export function ComputePanel(props: {
     () =>
       (runtimes.data?.languages ?? []).flatMap((language) =>
         language.runtimes.flatMap((candidate) =>
-          language.enabled && candidate.verification.readiness === "ready"
+          language.enabled &&
+          candidate.verification.readiness === "ready" &&
+          (props.sourceLanguageId === undefined ||
+            language.descriptor.languageId === props.sourceLanguageId)
             ? [
                 {
                   language,
@@ -609,9 +613,15 @@ export function ComputePanel(props: {
             : [],
         ),
       ),
-    [runtimes.data],
+    [runtimes.data, props.sourceLanguageId],
   );
-  const defaultRuntime = defaultComputeRuntime(runtimes.data?.languages ?? []);
+  const defaultRuntime = defaultComputeRuntime(
+    (runtimes.data?.languages ?? []).filter(
+      (language) =>
+        props.sourceLanguageId === undefined ||
+        language.descriptor.languageId === props.sourceLanguageId,
+    ),
+  );
   const selectedRuntime =
     runtimeKey === ""
       ? (readyRuntimes.find((runtime) => runtime.candidate === defaultRuntime) ?? null)
@@ -1105,7 +1115,7 @@ export function ComputePanel(props: {
                   ? "Loading history…"
                   : props.sourcePath
                     ? "Run this file to see its results."
-                    : "Run code from a Python file to begin this session."}
+                    : "Run code from a source file to begin this session."}
               </div>
             ) : (
               <>
@@ -1168,7 +1178,8 @@ export function ComputePanel(props: {
             {runtimes.isPending ? (
               <LoaderCircle className="mx-auto size-5 animate-spin text-muted-foreground" />
             ) : readyRuntimes.length === 0 ? (
-              pythonLanguage?.managedRuntime ? (
+              pythonLanguage?.managedRuntime &&
+              (props.sourceLanguageId === undefined || props.sourceLanguageId === "python") ? (
                 <div className="text-left">
                   <p className="text-center text-sm font-medium">Set up scientific computing</p>
                   <p className="mx-auto mt-1 max-w-lg text-center text-xs leading-relaxed text-muted-foreground">
@@ -1284,8 +1295,8 @@ export function ComputePanel(props: {
             </AlertDialogTitle>
             <AlertDialogDescription>
               {sessionConfirmation === "restart"
-                ? "Running and queued code will be cancelled, and all Python variables will be cleared. Run history and retained results stay available."
-                : "The Python kernel will close and its in-memory variables will be lost. Run history and retained results stay available."}
+                ? "Running and queued code will be cancelled, and all session variables will be cleared. Run history and retained results stay available."
+                : "The runtime will close and its in-memory variables will be lost. Run history and retained results stay available."}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
