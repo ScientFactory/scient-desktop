@@ -38,8 +38,11 @@ such as System, Personal, Project, or App.
 On mobile, these menus are available on the **New task** screen before you start a thread. They
 use the skills and commands from the selected environment and provider.
 
-By default, the `/` menu includes skills. To keep this menu command-only, turn off **Show skills in
-slash menu** in **Settings → General**. Skill results use the `/skill:Skill Name` label and add the
+On web and desktop, new profiles leave **Show skills in slash menu** off. Type `$` to select a skill,
+or turn on this option in **Settings → General** to include skill aliases in `/` as well. Saved
+preferences are preserved. Provider-native slash commands are still shown when skill aliases are off.
+
+When enabled, skill results use the `/skill:Skill Name` label and add the
 same `$name` skill token to your message. The original skill name remains searchable. If the provider
 also reports that skill as a native slash command, Scient hides the duplicate native entry and keeps
 the `/skill:Skill Name` label.

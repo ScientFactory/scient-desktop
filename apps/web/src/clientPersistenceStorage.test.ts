@@ -97,6 +97,8 @@ describe("clientPersistenceStorage", () => {
       "scient-next:client-settings:v1",
       JSON.stringify({
         appearanceContrast: 100,
+        fontSizeInterface: 18,
+        showSkillsInSlashMenu: true,
         sidebarAutoSettleAfterDays: 3,
         sidebarAutoSettleOnMerge: true,
       }),
@@ -106,6 +108,8 @@ describe("clientPersistenceStorage", () => {
     expect(readBrowserClientSettings()).toEqual(
       expect.objectContaining({
         appearanceContrast: 100,
+        fontSizeInterface: 18,
+        showSkillsInSlashMenu: true,
         sidebarAutoSettleAfterDays: 3,
         sidebarAutoSettleOnMerge: true,
       }),
@@ -115,6 +119,8 @@ describe("clientPersistenceStorage", () => {
     expect(readBrowserClientSettings()).toEqual(
       expect.objectContaining({
         appearanceContrast: 120,
+        fontSizeInterface: 17,
+        showSkillsInSlashMenu: false,
         sidebarAutoSettleAfterDays: 7,
         sidebarAutoSettleOnMerge: false,
       }),

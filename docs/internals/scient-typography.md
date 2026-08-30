@@ -1,7 +1,7 @@
 # Scient typography profile
 
 Scient uses T3's existing appearance settings and font application pipeline.
-The product default is intentionally more readable: 18 px interface text,
+The product reading defaults are 17 px interface text,
 16 px prompt text, 15 px code and file-source text, and 14 px terminal text.
 Users can still change every existing appearance preference; persisted choices
 remain authoritative.
