@@ -70,6 +70,7 @@ import {
   codexGeneratedImageArtifactFromRuntimeEvent,
   sanitizeCodexGeneratedImagePayload,
 } from "../codexGeneratedImages.ts";
+import { extractCodexCitationSources, extractCodexTextCitations } from "../codexCitations.ts";
 const isCodexAppServerProcessExitedError = Schema.is(CodexErrors.CodexAppServerProcessExitedError);
 const isCodexAppServerTransportError = Schema.is(CodexErrors.CodexAppServerTransportError);
 const isCodexSessionRuntimeThreadIdMissingError = Schema.is(
@@ -513,6 +514,11 @@ function mapItemLifecycle(
   }
 
   const detail = itemDetail(itemType, item);
+  const citationSources = itemType === "web_search" ? extractCodexCitationSources(item) : [];
+  const textCitations =
+    itemType === "assistant_message" && "text" in item && typeof item.text === "string"
+      ? extractCodexTextCitations(item.text)
+      : [];
   const status =
     lifecycle === "item.started"
       ? "inProgress"
@@ -530,6 +536,8 @@ function mapItemLifecycle(
       ...(status ? { status } : {}),
       ...(itemTitle(itemType, item) ? { title: itemTitle(itemType, item) } : {}),
       ...(detail ? { detail } : {}),
+      ...(citationSources.length > 0 ? { citationSources } : {}),
+      ...(textCitations.length > 0 ? { textCitations } : {}),
       ...(event.payload !== undefined ? { data: event.payload } : {}),
     },
   };
