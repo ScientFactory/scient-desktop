@@ -1,6 +1,6 @@
 // @effect-diagnostics globalTimers:off -- Framework-neutral UI debounce lane; the caller injects all persistence effects.
 // @effect-diagnostics globalConsole:off -- Report host notification defects without importing an Effect runtime into the framework-neutral queue.
-import type { MarkdownSaveIntent } from "./session.ts";
+import type { MarkdownDocumentSession, MarkdownSaveIntent } from "./session.ts";
 
 export interface MarkdownSaveResult {
   readonly revision: string;
@@ -22,6 +22,7 @@ interface MarkdownSaveInFlight {
   readonly id: number;
   readonly intent: MarkdownSaveIntent;
   readonly promise: Promise<void>;
+  readonly settle: () => void;
 }
 
 /**
@@ -49,6 +50,30 @@ export class MarkdownSaveQueue<A extends MarkdownSaveResult = MarkdownSaveResult
 
   get failureBlocked(): boolean {
     return this.blocked;
+  }
+
+  /** Synchronize every draft transition, including undo-to-baseline and conflict edits. */
+  synchronize(session: MarkdownDocumentSession): void {
+    if (this.disposed) return;
+    const needsWrite = session.draftSource !== session.baselineSource;
+    const needsCompensation =
+      this.inFlight !== null && this.inFlight.intent.source !== session.draftSource;
+    this.pendingIntent =
+      (needsWrite || needsCompensation) && this.inFlight?.intent.source !== session.draftSource
+        ? {
+            source: session.draftSource,
+            expectedRevision: session.baselineRevision,
+            editVersion: session.editVersion,
+          }
+        : null;
+    if (session.conflict !== null) this.pause();
+    if (this.pendingIntent === null) {
+      this.clearTimer();
+      if (this.inFlight === null) this.blocked = false;
+    } else if (!this.blocked && this.inFlight === null) {
+      this.schedule(this.options.debounceMs);
+    }
+    this.notifyCallback("onPendingChange", () => this.options.onPendingChange(this.pending));
   }
 
   enqueue(intent: MarkdownSaveIntent): void {
@@ -124,8 +149,12 @@ export class MarkdownSaveQueue<A extends MarkdownSaveResult = MarkdownSaveResult
     if (this.disposed) return false;
     const latestIntent = this.pendingIntent ?? this.inFlight?.intent;
     if (!latestIntent || latestIntent.source !== source) return false;
+    // Observing an undone/compensating draft does not prove a different
+    // in-flight write has finished. It may still publish after this read.
+    if (this.inFlight !== null && this.inFlight.intent.source !== source) return false;
     this.clearTimer();
     this.pendingIntent = null;
+    this.inFlight?.settle();
     this.inFlight = null;
     this.deferredResolution = null;
     this.blocked = false;
@@ -160,40 +189,46 @@ export class MarkdownSaveQueue<A extends MarkdownSaveResult = MarkdownSaveResult
     this.pendingIntent = null;
     const persistenceId = this.nextPersistenceId;
     this.nextPersistenceId += 1;
-    const promise = this.persist(intent, persistenceId).then((succeeded) => {
-      if (this.inFlight?.id !== persistenceId) return;
-      this.inFlight = null;
-      const resolution = this.deferredResolution;
-      this.deferredResolution = null;
-      if (resolution?.action === "discard") {
-        this.pendingIntent = null;
-        this.blocked = false;
-        this.notifyCallback("onPendingChange", () => this.options.onPendingChange(false));
-        return;
-      }
-      if (resolution?.action === "retry") {
-        if (
-          !succeeded &&
-          resolution.expectedRevision !== undefined &&
-          this.pendingIntent !== null
-        ) {
-          this.pendingIntent = {
-            ...this.pendingIntent,
-            expectedRevision: resolution.expectedRevision,
-          };
-        }
-        this.blocked = false;
-      }
-      if (this.blocked) return;
-      if (this.pendingIntent !== null) {
-        this.schedule(
-          resolution?.action === "retry" || this.disposed ? 0 : this.options.debounceMs,
-        );
-      } else {
-        this.notifyCallback("onPendingChange", () => this.options.onPendingChange(false));
-      }
+    let settle!: () => void;
+    const promise = new Promise<void>((resolve) => {
+      settle = resolve;
     });
-    this.inFlight = { id: persistenceId, intent, promise };
+    this.inFlight = { id: persistenceId, intent, promise, settle };
+    void this.persist(intent, persistenceId)
+      .then((succeeded) => {
+        if (this.inFlight?.id !== persistenceId) return;
+        this.inFlight = null;
+        const resolution = this.deferredResolution;
+        this.deferredResolution = null;
+        if (resolution?.action === "discard") {
+          this.pendingIntent = null;
+          this.blocked = false;
+          this.notifyCallback("onPendingChange", () => this.options.onPendingChange(false));
+          return;
+        }
+        if (resolution?.action === "retry") {
+          if (
+            !succeeded &&
+            resolution.expectedRevision !== undefined &&
+            this.pendingIntent !== null
+          ) {
+            this.pendingIntent = {
+              ...this.pendingIntent,
+              expectedRevision: resolution.expectedRevision,
+            };
+          }
+          this.blocked = false;
+        }
+        if (this.blocked) return;
+        if (this.pendingIntent !== null) {
+          this.schedule(
+            resolution?.action === "retry" || this.disposed ? 0 : this.options.debounceMs,
+          );
+        } else {
+          this.notifyCallback("onPendingChange", () => this.options.onPendingChange(false));
+        }
+      })
+      .finally(settle);
   }
 
   private async persist(intent: MarkdownSaveIntent, persistenceId: number): Promise<boolean> {

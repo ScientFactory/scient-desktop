@@ -72,18 +72,18 @@ formatting controls preserves scroll and selection where the surfaces allow.
 
 ### Node behavior
 
-| Node                          | Rendered-editor behavior                                               | Markdown authority                                                        |
-| ----------------------------- | ---------------------------------------------------------------------- | ------------------------------------------------------------------------- |
-| Paragraph and heading         | Direct rich editing with stable typography                             | Preserve original marks and delimiters until edited                       |
-| Bulleted, numbered, task list | Rich list editing; Enter/Tab/Shift-Tab change structure                | Preserve bullet/delimiter style for untouched items                       |
-| Table                         | Editable cells; contextual row, column, alignment, merge/split actions | Patch the table source range; retain untouched alignment and cell content |
-| Link and `[[wiki link]]`      | Underlined label; explicit selection opens editing and completion      | Keep local relative destinations and wiki syntax                          |
-| Code block                    | Syntax-highlighted; embedded CodeMirror activates on selection         | Preserve fence marker, length, language, and metadata when untouched      |
-| Inline/display math           | Typeset while inactive; compact TeX editor when selected               | Keep original delimiters and source until changed                         |
-| Image/figure                  | Rendered with selection, alt text, caption, path, and size controls    | Use portable relative paths and ordinary Markdown where possible          |
-| Citation/footnote             | Rendered label with nested editor or inspector                         | Preserve citation keys, reference definitions, and footnote structure     |
-| Mermaid/Vega/Plotly           | Rendered preview with an in-place source/config editor                 | Retain the last valid render during invalid intermediate input            |
-| Raw/unknown construct         | Sanitized preview when safe plus an in-place source island             | Preserve the complete original source verbatim until explicitly edited    |
+| Node                          | Rendered-editor behavior                                            | Markdown authority                                                      |
+| ----------------------------- | ------------------------------------------------------------------- | ----------------------------------------------------------------------- |
+| Paragraph and heading         | Direct rich editing with stable typography                          | Preserve original marks and delimiters until edited                     |
+| Bulleted, numbered, task list | Rich list editing; Enter/Tab/Shift-Tab change structure             | Preserve bullet/delimiter style for untouched items                     |
+| Table                         | Editable cells; contextual row, column, and alignment actions       | GFM table with one header row; preserve cell content on save and reopen |
+| Link and `[[wiki link]]`      | Underlined label; explicit selection opens editing and completion   | Keep local relative destinations and wiki syntax                        |
+| Code block                    | Syntax-highlighted; embedded CodeMirror activates on selection      | Preserve fence marker, length, language, and metadata when untouched    |
+| Inline/display math           | Typeset while inactive; compact TeX editor when selected            | Keep original delimiters and source until changed                       |
+| Image/figure                  | Rendered with selection, alt text, caption, path, and size controls | Use portable relative paths and ordinary Markdown where possible        |
+| Citation/footnote             | Rendered label with nested editor or inspector                      | Preserve citation keys, reference definitions, and footnote structure   |
+| Mermaid/Vega/Plotly           | Rendered preview with an in-place source/config editor              | Retain the last valid render during invalid intermediate input          |
+| Raw/unknown construct         | Sanitized preview when safe plus an in-place source island          | Preserve the complete original source verbatim until explicitly edited  |
 
 ### File lifecycle
 
@@ -148,7 +148,9 @@ The scientific preview stack is also fully local and ownable:
   visualization specifications without a hosted service.
 - Table editing follows useful structural ideas from Zettlr (GPL, concept reference only), while
   keeping table cells in the selected ProseMirror document and implementing row, column,
-  alignment, merge, and split commands in Scient-owned modules.
+  and alignment commands in Scient-owned modules. Merge/split, arbitrary header-cell toggles,
+  and width resizing are not enabled: GFM cannot represent them. A richer representation must
+  be designed and round-trip qualified before those controls are enabled.
 
 These renderers remain behind Scient widget adapters. Their input text stays in the Markdown
 file, rendering runs locally, invalid intermediate edits retain the last valid visual, and no
@@ -173,10 +175,29 @@ projection, NodeView, and controller adapters. Use `markdown-it` for tokenizatio
 Scient-owned source ledger for bounded source reuse. Use CodeMirror only inside editable code
 blocks, where source editing is the interaction itself.
 
+GFM table cells contain inline content directly. The Scient table-navigation adapter handles
+only cell-edge arrows, since the upstream table handler expects a paragraph inside each cell.
+It reuses ProseMirror's boundary detection, table map, selections, and caret scrolling; movement
+within a cell stays native. Row nodes disallow gap cursors between cells; gap cursors remain
+available outside the table. Arrow navigation must not mutate source, recreate the table, or
+insert toolbar rows. Cursor/selection decorations are positioned outside document flow, and
+wide tables scroll within their existing wrapper. Keep this adapter limited to inline cells;
+paragraph-based cells should use the upstream handler.
+
 One workspace surface owns exactly one editor controller, one document session, and one serial
 save queue. React mounts that controller but does not mirror the document source in component
 state. Compare-and-swap revisions, explicit retry/discard recovery, typed server operations, and
 the asset pipeline remain independent of the editor library.
+
+The persistence coordinator observes every draft transition, not only eligible save intents.
+Undo-to-baseline cancels debounced work; undo or discard during an in-flight write compensates
+against the acknowledged revision. Edits made during conflict recovery remain the current draft.
+An authoritative read can retire a command and release flush waiters even if its response never
+arrives. A late acknowledgement cannot clear a newer observed external conflict.
+
+Controller callbacks forward to current host bindings without remounting the rich editor. The
+file adapter keys controller ownership by environment, workspace root, and relative path. The
+pending-surface adapter reads current departure state when a link or host control invokes it.
 
 All selected packages are MIT-licensed. The rich surface remains isolated behind the Markdown
 file mount; expensive nested source and scientific renderers load only when their surfaces are
@@ -306,7 +327,14 @@ not create save intent.
 Preservation is range-based, not a claim that a semantic editor never serializes:
 
 - Unchanged source-ledger blocks are copied byte-for-byte into the next draft.
-- A bounded inline edit uses the minimal valid source patch when its mapping is safe.
+- A bounded inline edit follows corresponding text nodes, not concatenated cell/list text.
+  A candidate patch must parse to the intended node content and structure; otherwise it uses
+  the changed-block serializer. Document-level reference definitions supply shared parse context.
+  Editing/removing a definition refreshes only its derived consumer blocks, through mapped
+  transactions outside undo history; the source change itself remains undoable. Rebind parsed
+  baselines to the same context so unchanged reference syntax is not rewritten on the next save.
+- Save acknowledgement updates only the persistence baseline. The source ledger stays paired
+  with its parsed document and stable identities, including through repeated structural saves.
 - A structurally changed block is serialized from the edited ProseMirror node; normalization is
   confined to that changed block.
 - Unsupported syntax is retained as an owned raw node and reuses its original source while
@@ -314,6 +342,12 @@ Preservation is range-based, not a claim that a semantic editor never serializes
 - Invalid mappings, including Unicode boundary hazards, fall back to changed-block serialization
   rather than throwing or touching adjacent ranges.
 - External changes are adopted only while clean or surfaced as a revision conflict while dirty.
+
+GFM tables retain exactly one header row and column-level alignment after structural edits.
+Unsupported spans/width transactions are rejected rather than published lossily. Cell breaks use
+the inert `<br>` form without enabling arbitrary HTML; literal text and boundary spaces are
+escaped as needed to survive parsing. Link editing sets/removes a destination explicitly, and
+ordinary URL destinations are decoded once at the filesystem boundary; raw wiki paths are not.
 
 Golden and adversarial tests therefore assert that CRLF/LF, final newline state, Unicode and bidi
 controls, front matter, HTML comments, reference definitions, fence length, list markers,

@@ -155,7 +155,9 @@ describe("ScientProseMirrorSession", () => {
     const session = new ScientProseMirrorSession({
       source: "zero\n",
       revision: "r0",
-      onUserSourceChange: (_source, nextIntent) => intents.push(nextIntent),
+      onUserSourceChange: (_source, nextIntent) => {
+        if (nextIntent) intents.push(nextIntent);
+      },
     });
     session.applyTransaction(session.state.tr.insertText("one ", 1, 1), "user");
     session.applyTransaction(session.state.tr.insertText("two ", 1, 1), "user");
@@ -201,7 +203,9 @@ describe("ScientProseMirrorSession", () => {
       source: "First\n\nSecond\n",
       revision: "r0",
       mode: "write",
-      onUserSourceChange: (_source, intent) => intents.push(intent),
+      onUserSourceChange: (_source, intent) => {
+        if (intent) intents.push(intent);
+      },
     });
     session.applyTransaction(session.state.tr.insertText("One ", 1, 1), "user");
     session.applyTransaction(session.state.tr.insertText("Two ", 1, 1), "user");

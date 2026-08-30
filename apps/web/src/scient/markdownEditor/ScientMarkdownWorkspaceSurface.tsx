@@ -45,23 +45,9 @@ export interface ScientMarkdownWorkspaceSurfaceProps {
  * controls stay collapsed until the reader opens them or starts typing.
  */
 export function ScientMarkdownWorkspaceSurface(props: ScientMarkdownWorkspaceSurfaceProps) {
-  const persistRef = useRef(props.persist);
-  const onPendingChangeRef = useRef(props.onPendingChange);
-  const onSaveConfirmedRef = useRef(props.onSaveConfirmed);
-  const onSaveFailureRef = useRef(props.onSaveFailure);
-  const onExternalConflictRef = useRef(props.onExternalConflict);
-  const onSaveResolutionAppliedRef = useRef(props.onSaveResolutionApplied);
-  const uploadImageRef = useRef(props.uploadImage);
-  const onImageUploadFailureRef = useRef(props.onImageUploadFailure);
   const imageInputRef = useRef<HTMLInputElement>(null);
-  persistRef.current = props.persist;
-  onPendingChangeRef.current = props.onPendingChange;
-  onSaveConfirmedRef.current = props.onSaveConfirmed;
-  onSaveFailureRef.current = props.onSaveFailure;
-  onExternalConflictRef.current = props.onExternalConflict;
-  onSaveResolutionAppliedRef.current = props.onSaveResolutionApplied;
-  uploadImageRef.current = props.uploadImage;
-  onImageUploadFailureRef.current = props.onImageUploadFailure;
+  const bindingsRef = useRef(props);
+  bindingsRef.current = props;
 
   const [chromeExpanded, setChromeExpanded] = useState(false);
   const controllerRef = useRef<ScientMarkdownEditorView | null>(null);
@@ -69,13 +55,20 @@ export function ScientMarkdownWorkspaceSurface(props: ScientMarkdownWorkspaceSur
     () =>
       new MarkdownSaveQueue({
         debounceMs: SAVE_DEBOUNCE_MS,
-        persist: (intent) => persistRef.current(intent),
-        onPendingChange: (pending) => onPendingChangeRef.current(pending),
+        persist: (intent) => bindingsRef.current.persist(intent),
+        onPendingChange: (pending) => bindingsRef.current.onPendingChange(pending),
         onConfirmed: (intent, result) => {
           controllerRef.current?.confirmSave(intent, result.revision);
-          onSaveConfirmedRef.current(intent.source, result.revision);
+          if (controllerRef.current) saveQueue.synchronize(controllerRef.current.session.session);
+          const session = controllerRef.current?.session.session;
+          if (
+            !session ||
+            (session.conflict === null && session.baselineRevision === result.revision)
+          ) {
+            bindingsRef.current.onSaveConfirmed(intent.source, result.revision);
+          }
         },
-        onFailure: (_intent, error) => onSaveFailureRef.current(error),
+        onFailure: (_intent, error) => bindingsRef.current.onSaveFailure(error),
       }),
   );
   const [controller] = useState(
@@ -85,22 +78,33 @@ export function ScientMarkdownWorkspaceSurface(props: ScientMarkdownWorkspaceSur
         revision: props.revision,
         mode: "write",
         ariaLabel: props.ariaLabel,
-        ...(props.onOpenWikiLink ? { onOpenWikiLink: props.onOpenWikiLink } : {}),
-        ...(props.onOpenLink ? { onOpenLink: props.onOpenLink } : {}),
-        ...(props.resolveImageSource ? { resolveImageSource: props.resolveImageSource } : {}),
+        onOpenWikiLink: (target) => bindingsRef.current.onOpenWikiLink?.(target),
+        onOpenLink: (target) => bindingsRef.current.onOpenLink?.(target),
+        ...(props.resolveImageSource
+          ? {
+              resolveImageSource: (...args) =>
+                bindingsRef.current.resolveImageSource?.(...args) ?? null,
+            }
+          : {}),
         ...(props.uploadImage
           ? {
-              uploadImage: (file: File) => uploadImageRef.current!(file),
-              onImageUploadFailure: (error: unknown) => onImageUploadFailureRef.current?.(error),
+              uploadImage: async (file: File) => {
+                const upload = bindingsRef.current.uploadImage;
+                if (!upload) throw new Error("Image upload is not available in this file surface.");
+                return upload(file);
+              },
+              onImageUploadFailure: (error: unknown) =>
+                bindingsRef.current.onImageUploadFailure?.(error),
               selectImage: () => imageInputRef.current?.click(),
             }
           : {}),
-        ...(props.wikiLinkSuggestions ? { wikiLinkSuggestions: props.wikiLinkSuggestions } : {}),
-        ...(props.wikiLinkTargetExists ? { wikiLinkTargetExists: props.wikiLinkTargetExists } : {}),
-        onUserSourceChange: (_source, intent) => {
+        wikiLinkSuggestions: () => bindingsRef.current.wikiLinkSuggestions?.() ?? [],
+        wikiLinkTargetExists: (target) =>
+          bindingsRef.current.wikiLinkTargetExists?.(target) ?? null,
+        onUserSourceChange: () => {
           // First real edit reveals the formatting controls.
           setChromeExpanded(true);
-          saveQueue.enqueue(intent);
+          if (controllerRef.current) saveQueue.synchronize(controllerRef.current.session.session);
         },
       }),
   );
@@ -115,30 +119,35 @@ export function ScientMarkdownWorkspaceSurface(props: ScientMarkdownWorkspaceSur
     if (result === "adopted") {
       // The queued draft is unchanged; rebase its revision so the debounced
       // write does not dead-end on a stale compare-and-swap.
-      if (currentIntent) saveQueue.enqueue(currentIntent);
+      saveQueue.synchronize(controller.session.session);
     } else if (result === "conflict") {
       saveQueue.pause();
-      onExternalConflictRef.current({ source: props.source, revision: props.revision });
+      bindingsRef.current.onExternalConflict({ source: props.source, revision: props.revision });
     } else if (saveQueue.pending && !saveQueue.failureBlocked && currentIntent === null) {
       // The project query is authoritative. If it now contains this draft,
       // publication succeeded even when the renderer never received the
       // command settlement; retire that stale lane instead of trapping the
       // user behind an endless Saving state.
       saveQueue.acknowledgePersisted(props.source);
+    } else if (currentIntent) {
+      saveQueue.synchronize(controller.session.session);
     }
   }, [controller, props.revision, props.source, saveQueue]);
 
   useEffect(() => {
     if (!props.saveResolution) return;
     if (props.saveResolution.action === "discard") {
-      saveQueue.discard();
-      controller.resolveExternalConflict("disk");
+      controller.discardLocalChanges({
+        source: props.source,
+        revision: props.saveResolution.revision,
+      });
     } else {
       controller.resolveExternalConflict("local");
-      saveQueue.retry(props.saveResolution.revision);
     }
-    onSaveResolutionAppliedRef.current?.();
-  }, [controller, props.saveResolution, saveQueue]);
+    saveQueue.synchronize(controller.session.session);
+    saveQueue.retry(props.saveResolution.revision);
+    bindingsRef.current.onSaveResolutionApplied?.();
+  }, [controller, props.saveResolution, props.source, saveQueue]);
 
   useFinalUnmount(() => {
     // Normal surface departures are held by the shared pending-save guard.

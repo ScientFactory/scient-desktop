@@ -44,6 +44,8 @@ export interface MarkdownSourceLedger {
   readonly blocks: ReadonlyArray<MarkdownSourceBlock>;
   readonly lineEnding: "\n" | "\r\n";
   readonly hasFinalLineEnding: boolean;
+  /** Includes definitions nested in lists or blockquotes. */
+  readonly hasReferenceDefinitions: boolean;
 }
 
 export interface MarkdownSourceBlockReplacement {
@@ -89,6 +91,10 @@ interface MdastValueNode {
 }
 
 const LOGICAL_VALUE_NODE_KINDS = new Set(["code", "inlineCode", "text"]);
+
+function hasReferenceDefinition(node: MdastValueNode): boolean {
+  return node.type === "definition" || (node.children?.some(hasReferenceDefinition) ?? false);
+}
 
 function markdownLogicalText(
   node: MdastValueNode,
@@ -241,6 +247,7 @@ export function createMarkdownSourceLedger(source: string): MarkdownSourceLedger
     blocks,
     lineEnding: lineEndingOf(source),
     hasFinalLineEnding: source.endsWith("\n"),
+    hasReferenceDefinitions: hasReferenceDefinition(root),
   };
 }
 

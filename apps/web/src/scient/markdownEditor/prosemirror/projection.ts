@@ -28,6 +28,17 @@ export interface ScientMarkdownProjection {
   readonly ledger: MarkdownSourceLedger;
   readonly baselineDocument: ProseMirrorNode;
   readonly document: ProseMirrorNode;
+  readonly parseEnvironment: MarkdownParseEnvironment;
+}
+
+interface MarkdownParseEnvironment {
+  readonly references?: Readonly<Record<string, { readonly href: string; readonly title: string }>>;
+}
+
+function parseWithContext(source: string, environment: MarkdownParseEnvironment) {
+  // markdown-it collects definitions into its environment while parsing.
+  // Speculative source patches must not mutate the accepted document context.
+  return scientMarkdownParser.parse(source, { references: { ...environment.references } });
 }
 
 export interface ScientMarkdownProjectedSource {
@@ -63,19 +74,28 @@ function footnoteDefinitionBlock(block: MarkdownSourceBlock): ProseMirrorNode | 
   return nodeType.create({ label: match[1], source: block.source, sourceId: block.id });
 }
 
-function parseBlock(block: MarkdownSourceBlock): ProseMirrorNode {
+function parseBlock(
+  block: MarkdownSourceBlock,
+  environment: MarkdownParseEnvironment,
+): ProseMirrorNode {
   if (block.kind === "math") return displayMathBlock(block);
   const footnote = footnoteDefinitionBlock(block);
   if (footnote) return footnote;
   if (!COMMONMARK_BLOCK_KINDS.has(block.kind)) return rawBlock(block);
-  const parsed = scientMarkdownParser.parse(block.source);
+  const parsed = parseWithContext(block.source, environment);
   if (parsed.childCount !== 1) return rawBlock(block);
   return withMarkdownSourceId(parsed.child(0), block.id);
 }
 
 export function createScientMarkdownProjection(source: string): ScientMarkdownProjection {
   const ledger = createMarkdownSourceLedger(source);
-  const children = ledger.blocks.map(parseBlock);
+  const parseEnvironment = {};
+  // References belong to the document, not the paragraph using them. Collect
+  // definitions once; keep individual source slices as the projection owners.
+  if (ledger.hasReferenceDefinitions) {
+    scientMarkdownParser.tokenizer.parse(source, parseEnvironment);
+  }
+  const children = ledger.blocks.map((block) => parseBlock(block, parseEnvironment));
   if (children.length === 0) {
     const paragraph = scientMarkdownSchema.nodes.paragraph?.create();
     if (!paragraph) throw new Error("Scient Markdown schema is missing paragraph.");
@@ -83,7 +103,7 @@ export function createScientMarkdownProjection(source: string): ScientMarkdownPr
   }
   const document = scientMarkdownSchema.topNodeType.createAndFill(null, children);
   if (!document) throw new Error("Unable to create the Scient Markdown document.");
-  return { ledger, baselineDocument: document, document };
+  return { ledger, baselineDocument: document, document, parseEnvironment };
 }
 
 function sourceIdOf(node: ProseMirrorNode): string | null {
@@ -120,7 +140,18 @@ function comparableAttrs(node: ProseMirrorNode): string {
 }
 
 function hasSameProjectedContent(before: ProseMirrorNode, after: ProseMirrorNode): boolean {
-  return before.textContent === after.textContent && textStructure(before) === textStructure(after);
+  if (
+    before.type !== after.type ||
+    comparableAttrs(before) !== comparableAttrs(after) ||
+    before.text !== after.text ||
+    before.childCount !== after.childCount ||
+    JSON.stringify(before.marks) !== JSON.stringify(after.marks)
+  )
+    return false;
+  for (let index = 0; index < before.childCount; index += 1) {
+    if (!hasSameProjectedContent(before.child(index), after.child(index))) return false;
+  }
+  return true;
 }
 
 function textStructure(node: ProseMirrorNode): string {
@@ -173,11 +204,28 @@ function minimallyPatchedTextBlock(
   block: MarkdownSourceBlock,
   baseline: ProseMirrorNode,
   next: ProseMirrorNode,
+  environment: MarkdownParseEnvironment,
 ): string | null {
   if (block.logicalText !== baseline.textContent) return null;
   if (baseline.textContent === next.textContent) return null;
   if (textStructure(baseline) !== textStructure(next)) return null;
-  const difference = textDifference(baseline.textContent, next.textContent);
+  // Concatenated text cannot locate an edit among identical cells/items.
+  // Follow corresponding text nodes before calculating a narrow local diff.
+  let offset = 0;
+  const changes: Array<ReturnType<typeof textDifference>> = [];
+  const visit = (before: ProseMirrorNode, after: ProseMirrorNode): void => {
+    if (before.isText) {
+      if (before.text !== after.text) {
+        const diff = textDifference(before.text!, after.text!);
+        changes.push({ ...diff, start: offset + diff.start, beforeEnd: offset + diff.beforeEnd });
+      }
+      offset += before.text!.length;
+    } else if (before.isLeaf) offset += before.textContent.length;
+    else before.forEach((child, _pos, index) => visit(child, after.child(index)));
+  };
+  visit(baseline, next);
+  if (changes.length !== 1) return null;
+  const difference = changes[0]!;
   const candidates = block.textSpans.filter(
     (candidate) =>
       candidate.direct &&
@@ -196,13 +244,24 @@ function minimallyPatchedTextBlock(
   if (block.source.slice(sourceStart - block.start, sourceEnd - block.start) !== expected) {
     return null;
   }
-  return applyMarkdownSourcePatches(block.source, [
-    {
-      start: sourceStart - block.start,
-      end: sourceEnd - block.start,
-      replacement: difference.replacement,
-    },
-  ]);
+  try {
+    const patched = applyMarkdownSourcePatches(block.source, [
+      {
+        start: sourceStart - block.start,
+        end: sourceEnd - block.start,
+        replacement: difference.replacement,
+      },
+    ]);
+    // A literal keystroke can introduce Markdown syntax. Only reuse a narrow
+    // patch when reopening it means exactly the same thing as the live node.
+    const parsed = parseWithContext(patched, environment);
+    return parsed.childCount === 1 && hasSameProjectedContent(parsed.child(0), next)
+      ? patched
+      : null;
+  } catch {
+    // Unsafe source boundaries (surrogates/CRLF) use the normal serializer.
+    return null;
+  }
 }
 
 function inferredSeparator(
@@ -254,8 +313,9 @@ export function projectScientMarkdownSource(
     const source =
       sourceUnchanged && original
         ? original.source
-        : ((original && baseline ? minimallyPatchedTextBlock(original, baseline, node) : null) ??
-          serializeNode(node));
+        : ((original && baseline
+            ? minimallyPatchedTextBlock(original, baseline, node, projection.parseEnvironment)
+            : null) ?? serializeNode(node));
     const from = output.length;
     output += source;
     blockRanges.push({ from, to: from + source.length });
@@ -281,4 +341,72 @@ export function withProjectedDocument(
   document: ProseMirrorNode,
 ): ScientMarkdownProjection {
   return { ...projection, document };
+}
+
+/** Refresh derived reference marks without replacing the editor or its source identities. */
+export function refreshScientMarkdownReferences(
+  projection: ScientMarkdownProjection,
+  projected: ScientMarkdownProjectedSource,
+) {
+  const document = projection.document;
+  if (
+    !projection.ledger.hasReferenceDefinitions &&
+    !projection.parseEnvironment.references &&
+    !Array.from({ length: document.childCount }, (_, index) => document.child(index)).some(
+      (node) => node.type.name === "raw_block",
+    )
+  )
+    return null;
+  const environment: MarkdownParseEnvironment = {};
+  scientMarkdownParser.tokenizer.parse(projected.source, environment);
+  const before = projection.parseEnvironment.references ?? {};
+  const after = environment.references ?? {};
+  if (
+    Object.keys(before).length === Object.keys(after).length &&
+    Object.entries(before).every(
+      ([key, value]) => value.href === after[key]?.href && value.title === after[key]?.title,
+    )
+  )
+    return null;
+
+  const replacements: Array<{
+    readonly from: number;
+    readonly to: number;
+    readonly node: ProseMirrorNode;
+  }> = [];
+  document.forEach((node, offset, index) => {
+    // Source islands remain editable source, even while temporarily incomplete.
+    if (node.type.name === "raw_block" || node.type.name === "footnote_definition") return;
+    const range = projected.blockRanges[index]!;
+    const source = projected.source.slice(range.from, range.to);
+    const oldParsed = parseWithContext(source, projection.parseEnvironment);
+    const nextParsed = parseWithContext(source, environment);
+    if (
+      oldParsed.childCount !== 1 ||
+      nextParsed.childCount !== 1 ||
+      !hasSameProjectedContent(oldParsed.child(0), node) ||
+      hasSameProjectedContent(nextParsed.child(0), node)
+    )
+      return;
+    const next = nextParsed.child(0);
+    replacements.push({
+      from: offset,
+      to: offset + node.nodeSize,
+      node: next.type.create(
+        { ...next.attrs, sourceId: node.attrs.sourceId, sourceCopyId: node.attrs.sourceCopyId },
+        next.content,
+        next.marks,
+      ),
+    });
+  });
+  // The same unchanged reference source now projects to a different href. Rebind
+  // its baseline too, so a subsequent save still preserves the original syntax.
+  const baselineDocument = projection.baselineDocument.type.create(
+    null,
+    projection.ledger.blocks.map((block) => parseBlock(block, environment)),
+  );
+  return {
+    projection: { ...projection, parseEnvironment: environment, baselineDocument },
+    replacements,
+  };
 }

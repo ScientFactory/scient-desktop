@@ -11,12 +11,14 @@ import {
   type MarkdownDocumentSession,
   type MarkdownSaveIntent,
 } from "@scientfactory/scient-markdown";
+import type { Node as ProseMirrorNode } from "prosemirror-model";
 import type { Transaction } from "prosemirror-state";
 import { EditorState, PluginKey } from "prosemirror-state";
 
 import {
   createScientMarkdownProjection,
   projectScientMarkdownSource,
+  refreshScientMarkdownReferences,
   withProjectedDocument,
   type ScientMarkdownProjection,
 } from "./projection";
@@ -32,7 +34,7 @@ export interface ScientProseMirrorSessionOptions {
   readonly source: string;
   readonly revision: string;
   readonly mode?: MarkdownDocumentMode;
-  readonly onUserSourceChange?: (source: string, intent: MarkdownSaveIntent) => void;
+  readonly onUserSourceChange?: (source: string, intent: MarkdownSaveIntent | null) => void;
 }
 
 export type ScientExternalSourceResult = "adopted" | "conflict" | "unchanged";
@@ -43,6 +45,38 @@ function blockRanges(projection: ScientMarkdownProjection) {
     from: block.start,
     to: block.end,
   }));
+}
+
+function sameTextTree(before: ProseMirrorNode, after: ProseMirrorNode): boolean {
+  if (
+    before.type !== after.type ||
+    before.text !== after.text ||
+    before.childCount !== after.childCount
+  )
+    return false;
+  for (let i = 0; i < before.childCount; i += 1) {
+    if (!sameTextTree(before.child(i), after.child(i))) return false;
+  }
+  return true;
+}
+
+/** Attribute/mark rebinding must not delete text, its selection, or its undo mappings. */
+function rebindNodeMarkup(
+  transaction: Transaction,
+  before: ProseMirrorNode,
+  after: ProseMirrorNode,
+  position: number,
+): void {
+  if (!before.sameMarkup(after)) {
+    if (before.isText) {
+      transaction.removeMark(position, position + before.nodeSize);
+      for (const mark of after.marks)
+        transaction.addMark(position, position + before.nodeSize, mark);
+    } else transaction.setNodeMarkup(position, undefined, after.attrs, after.marks);
+  }
+  before.forEach((child, offset, index) =>
+    rebindNodeMarkup(transaction, child, after.child(index), position + 1 + offset),
+  );
 }
 
 /**
@@ -120,7 +154,7 @@ export class ScientProseMirrorSession {
       plugins: this.editorState.plugins,
     });
     const intent = beginMarkdownSave(nextSession);
-    if (intent !== null) this.options.onUserSourceChange?.(source, intent);
+    this.options.onUserSourceChange?.(source, intent);
     return this.editorState;
   }
 
@@ -128,14 +162,9 @@ export class ScientProseMirrorSession {
     const nextSession = confirmMarkdownSave(this.documentSession, intent, revision);
     if (nextSession === this.documentSession) return;
     this.documentSession = nextSession;
-    const confirmedProjection = createScientMarkdownProjection(intent.source);
-    this.projection = {
-      ...confirmedProjection,
-      document: this.editorState.doc,
-    };
-    if (intent.source === nextSession.draftSource) {
-      this.projectedBlockRanges = blockRanges(confirmedProjection);
-    }
+    // Persistence changes the CAS baseline, not the projection's source
+    // identities. Keep the ledger paired with the document it actually parsed;
+    // this also preserves undo history and newer in-flight edits.
   }
 
   /** A save intent for the current draft against the current baseline revision. */
@@ -157,7 +186,7 @@ export class ScientProseMirrorSession {
     const nextSession = receiveExternalMarkdownSource(this.documentSession, input);
     this.documentSession = nextSession;
     if (nextSession.conflict !== null) return "conflict";
-    if (input.source === previousDraft) return "unchanged";
+    if (nextSession.draftSource === previousDraft) return "unchanged";
 
     this.projection = createScientMarkdownProjection(nextSession.draftSource);
     this.projectedBlockRanges = blockRanges(this.projection);
@@ -184,10 +213,29 @@ export class ScientProseMirrorSession {
     return this.editorState;
   }
 
+  /** Discard is valid even when disk has not changed and no conflict object exists. */
+  discardLocalChanges(input: { readonly source: string; readonly revision: string }): EditorState {
+    this.documentSession = {
+      ...this.documentSession,
+      baselineSource: input.source,
+      baselineRevision: input.revision,
+      draftSource: input.source,
+      editVersion: this.documentSession.editVersion + 1,
+      conflict: null,
+    };
+    this.projection = createScientMarkdownProjection(input.source);
+    this.projectedBlockRanges = blockRanges(this.projection);
+    this.editorState = EditorState.create({
+      doc: this.projection.document,
+      plugins: this.editorState.plugins,
+    });
+    return this.editorState;
+  }
+
   applyTransaction(transaction: Transaction, origin: ScientMarkdownTransactionOrigin): EditorState {
     transaction.setMeta(scientMarkdownTransactionOriginKey, origin);
     const applied = this.editorState.applyTransaction(transaction);
-    const nextState = applied.state;
+    let nextState = applied.state;
     this.editorState = nextState;
     this.projection = withProjectedDocument(this.projection, nextState.doc);
 
@@ -198,18 +246,43 @@ export class ScientProseMirrorSession {
       return nextState;
     }
     const projected = projectScientMarkdownSource(this.projection, nextState.doc);
+    const references = refreshScientMarkdownReferences(this.projection, projected);
+    if (references) {
+      const refresh = nextState.tr.setMeta("addToHistory", false);
+      for (const replacement of references.replacements) {
+        const from = refresh.mapping.map(replacement.from);
+        const before = refresh.doc.nodeAt(from)!;
+        const after = replacement.node;
+        if (sameTextTree(before, after)) rebindNodeMarkup(refresh, before, after, from);
+        else if (before.sameMarkup(after)) {
+          // Removing/adding a definition can reveal/hide reference delimiters.
+          // Replace only the changed inline range, not the containing block.
+          const start = before.content.findDiffStart(after.content);
+          const end = before.content.findDiffEnd(after.content);
+          if (start !== null && end) {
+            const overlap = Math.max(0, start - Math.min(end.a, end.b));
+            refresh.replaceWith(
+              from + 1 + start,
+              from + 1 + end.a + overlap,
+              after.content.cut(start, end.b + overlap),
+            );
+          }
+        } else refresh.replaceWith(from, refresh.mapping.map(replacement.to), after);
+      }
+      if (refresh.docChanged) nextState = nextState.applyTransaction(refresh).state;
+      this.editorState = nextState;
+      this.projection = withProjectedDocument(references.projection, nextState.doc);
+    }
     const source = projected.source;
     this.projectedBlockRanges = projected.blockRanges;
     const nextSession = applyUserMarkdownSource(this.documentSession, source);
     if (nextSession === this.documentSession) return nextState;
     this.documentSession = nextSession;
     const intent = beginMarkdownSave(nextSession);
-    if (intent !== null) {
-      try {
-        this.options.onUserSourceChange?.(source, intent);
-      } catch (error) {
-        console.error("Scient Markdown onUserSourceChange error:", error);
-      }
+    try {
+      this.options.onUserSourceChange?.(source, intent);
+    } catch (error) {
+      console.error("Scient Markdown onUserSourceChange error:", error);
     }
     return nextState;
   }

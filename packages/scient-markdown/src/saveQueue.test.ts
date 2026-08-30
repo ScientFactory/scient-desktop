@@ -62,6 +62,7 @@ describe("MarkdownSaveQueue", () => {
     expect(persist).toHaveBeenCalledOnce();
     queue.enqueue(intent("two", 2));
     expect(queue.acknowledgePersisted("one")).toBe(false);
+    expect(queue.acknowledgePersisted("two")).toBe(false);
     expect(queue.pending).toBe(true);
     resolveFirst!({ revision: "r1" });
     await flushing;
@@ -212,6 +213,8 @@ describe("MarkdownSaveQueue", () => {
 
     // A subsequent edit starts a new serial lane immediately. The retired
     // command's late response cannot confirm or clear that newer edit.
+    // Acknowledgement itself releases waiters; no command settlement is needed.
+    await firstFlush;
     queue.enqueue(intent("two", 2, "r1"));
     const flushing = queue.flush();
     await flushing;

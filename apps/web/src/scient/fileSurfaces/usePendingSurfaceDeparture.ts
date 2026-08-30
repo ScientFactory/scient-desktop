@@ -74,8 +74,11 @@ export function useActivePendingSurfaceDeparture(input: {
   readonly pendingSurfaceIds: ReadonlySet<string>;
 }) {
   const runAfterPendingSave = usePendingSurfaceDeparture(input.pendingSurfaceIds);
+  const inputRef = useRef(input);
+  inputRef.current = input;
   return useCallback(
     (targetSurfaceId: string | null, run: () => void) => {
+      const input = inputRef.current;
       const blockedSurfaceIds =
         targetSurfaceId === null
           ? input.activeSurfaceId !== null && input.pendingSurfaceIds.has(input.activeSurfaceId)
@@ -90,7 +93,7 @@ export function useActivePendingSurfaceDeparture(input: {
             : [];
       return runAfterPendingSave(blockedSurfaceIds, run);
     },
-    [input.activeSurfaceId, input.pendingSurfaceIds, runAfterPendingSave],
+    [runAfterPendingSave],
   );
 }
 

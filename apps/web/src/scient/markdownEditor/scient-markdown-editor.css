@@ -266,6 +266,7 @@
 }
 
 .scient-markdown-document {
+  position: relative;
   box-sizing: border-box;
   width: min(100%, 56rem);
   min-height: 100%;
@@ -278,6 +279,7 @@
   line-height: 1.72;
   outline: none;
   overflow-wrap: anywhere;
+  white-space: pre-wrap;
 }
 
 .scient-markdown-document > :first-child {
@@ -536,6 +538,10 @@
   background: color-mix(in srgb, var(--code-foreground, var(--foreground)) 5%, transparent);
 }
 
+.scient-markdown-document .tableWrapper {
+  overflow-x: auto;
+}
+
 .scient-markdown-document table {
   width: 100%;
   border-collapse: collapse;
@@ -544,6 +550,7 @@
 
 .scient-markdown-document th,
 .scient-markdown-document td {
+  position: relative;
   min-width: 5rem;
   border: 1px solid var(--border);
   padding: 0.45rem 0.6rem;
@@ -929,4 +936,40 @@ textarea.scient-markdown-math-source {
 
 .scient-markdown-document ::selection {
   background: color-mix(in oklab, var(--primary) 22%, transparent);
+}
+
+/* ProseMirror's non-text selection primitives must not occupy document flow.
+   Scope their structural styles here rather than changing other T3 editors. */
+.scient-markdown-document .ProseMirror-gapcursor {
+  display: none;
+  position: absolute;
+  pointer-events: none;
+}
+
+.scient-markdown-document.ProseMirror-focused .ProseMirror-gapcursor {
+  display: block;
+}
+
+.scient-markdown-document .ProseMirror-gapcursor::after {
+  content: "";
+  position: absolute;
+  top: -2px;
+  width: 1.2em;
+  border-top: 1px solid var(--foreground);
+}
+
+.scient-markdown-document.ProseMirror-hideselection {
+  caret-color: transparent;
+}
+
+.scient-markdown-document.ProseMirror-hideselection *::selection {
+  background: transparent;
+}
+
+.scient-markdown-document .selectedCell::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: color-mix(in oklab, var(--primary) 14%, transparent);
+  pointer-events: none;
 }

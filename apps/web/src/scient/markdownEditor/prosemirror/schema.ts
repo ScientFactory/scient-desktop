@@ -275,6 +275,12 @@ nodes = nodes.append(
     },
   }),
 );
+const tableRowSpec = nodes.get("table_row");
+if (!tableRowSpec) throw new Error("Missing ProseMirror node spec 'table_row'.");
+// Inline cells are textblocks, which otherwise makes gapCursor treat the
+// spaces between cells as places to type. A caret belongs inside a cell or
+// outside the table, never directly in a row.
+nodes = nodes.update("table_row", { ...tableRowSpec, allowGapCursor: false });
 for (const name of TOP_LEVEL_SOURCE_NODE_NAMES) {
   const spec = nodes.get(name);
   if (!spec) throw new Error(`Missing ProseMirror node spec '${name}'.`);
@@ -288,9 +294,8 @@ for (const name of TOP_LEVEL_SOURCE_NODE_NAMES) {
   });
 }
 
-// Text direction lives on paragraph/heading blocks. The table cell nodes hold
-// inline content directly and get direction through their paragraph content,
-// so a block-level attribute is enough for body text and table cells alike.
+// Text direction attributes live on paragraph/heading blocks. GFM table cells
+// contain inline content directly; their text direction is resolved by CSS.
 function withTextDirectionAttrs(
   name: "paragraph" | "heading",
   extraAttrs: (element: HTMLElement) => Record<string, unknown>,
@@ -368,6 +373,15 @@ function listIsTight(
 }
 
 const gfmTokenizer = MarkdownIt("commonmark", { html: false }).enable(["strikethrough", "table"]);
+
+// Recognize only this inert Markdown line-break form, not arbitrary HTML.
+gfmTokenizer.inline.ruler.before("html_inline", "scient_hard_break", (state, silent) => {
+  const match = /^<br\s*\/?\s*>/iu.exec(state.src.slice(state.pos));
+  if (!match) return false;
+  if (!silent) state.push("hardbreak", "br", 0);
+  state.pos += match[0].length;
+  return true;
+});
 
 gfmTokenizer.inline.ruler.before("link", "scient_footnote_reference", (state, silent) => {
   const start = state.pos;
@@ -554,11 +568,13 @@ function tableCellMarkdown(cell: ProseMirrorNode): string {
   const paragraph = paragraphType.create(null, cell.content);
   const document = scientMarkdownSchema.topNodeType.createAndFill(null, [paragraph]);
   if (!document) throw new Error("Unable to serialize a Markdown table cell.");
-  return scientMarkdownSerializer
+  return tableCellSerializer
     .serialize(document)
-    .replace(/\r?\n/gu, "<br>")
-    .replace(/(?<!\\)\|/gu, "\\|")
-    .trim();
+    .replace(
+      /(\\*)\|/gu,
+      (_match, escapes: string) => `${escapes}${escapes.length % 2 === 0 ? "\\" : ""}|`,
+    )
+    .replace(/^ +| +$/gu, (spaces) => "&#32;".repeat(spaces.length));
 }
 
 function tableDelimiter(alignment: unknown): string {
@@ -662,6 +678,16 @@ export const scientMarkdownSerializer = new MarkdownSerializer(
       open: "~~",
     },
   },
+  { escapeExtraCharacters: /[<&]/gu },
+);
+
+const tableCellSerializer = new MarkdownSerializer(
+  {
+    ...scientMarkdownSerializer.nodes,
+    hard_break: (state) => state.write("<br>"),
+  },
+  scientMarkdownSerializer.marks,
+  { escapeExtraCharacters: /[<&]/gu },
 );
 
 export function withMarkdownSourceId(node: ProseMirrorNode, sourceId: string): ProseMirrorNode {

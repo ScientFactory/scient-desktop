@@ -55,6 +55,26 @@ describe("rich Markdown list marker styles", () => {
 });
 
 describe("rich Markdown compact-surface styles", () => {
+  it("keeps caret and cell-selection decorations out of table layout", () => {
+    expect(cssSource).toMatch(
+      /\.scient-markdown-document p,\s*\.scient-markdown-document ul,\s*\.scient-markdown-document ol,\s*\.scient-markdown-document blockquote,\s*\.scient-markdown-document pre,\s*\.scient-markdown-document table \{\s*margin-block: 0 1em;/su,
+    );
+    expect(cssSource).toMatch(
+      /\.scient-markdown-document \{[^}]*position: relative[^}]*white-space: pre-wrap/su,
+    );
+    expect(cssSource).toMatch(/\.scient-markdown-document \.tableWrapper \{\s*overflow-x: auto/su);
+    expect(cssSource).toMatch(/\.scient-markdown-document td \{[^}]*position: relative/su);
+    expect(cssSource).toMatch(
+      /\.scient-markdown-document \.ProseMirror-gapcursor \{[^}]*display: none[^}]*position: absolute[^}]*pointer-events: none/su,
+    );
+    expect(cssSource).toMatch(
+      /\.scient-markdown-document\.ProseMirror-focused \.ProseMirror-gapcursor \{\s*display: block/su,
+    );
+    expect(cssSource).toMatch(
+      /\.scient-markdown-document \.selectedCell::after \{[^}]*position: absolute[^}]*pointer-events: none/su,
+    );
+  });
+
   it("contains selection and find controls instead of leaking outside narrow panes", () => {
     expect(cssSource).toMatch(
       /\.scient-markdown-selection-toolbar \{[^}]*max-width: calc\(100vw - 1rem\)[^}]*overflow-x: auto[^}]*scrollbar-width: none/su,

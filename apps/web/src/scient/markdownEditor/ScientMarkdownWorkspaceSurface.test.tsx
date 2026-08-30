@@ -1,6 +1,6 @@
 // @vitest-environment happy-dom
 
-import { act, StrictMode } from "react";
+import { act, StrictMode, useState } from "react";
 import { createRoot } from "react-dom/client";
 import { TextSelection } from "prosemirror-state";
 import { afterEach, describe, expect, it, vi } from "vite-plus/test";
@@ -9,6 +9,7 @@ import { MarkdownSaveQueue } from "@scientfactory/scient-markdown";
 
 import { ScientMarkdownWorkspaceSurface } from "./ScientMarkdownWorkspaceSurface";
 import { ScientMarkdownEditorView } from "./prosemirror/view";
+import { useActivePendingSurfaceDeparture } from "../fileSurfaces/usePendingSurfaceDeparture";
 
 describe("ScientMarkdownWorkspaceSurface", () => {
   const roots: ReturnType<typeof createRoot>[] = [];
@@ -22,6 +23,101 @@ describe("ScientMarkdownWorkspaceSurface", () => {
     document.body.replaceChildren();
     vi.restoreAllMocks();
     vi.unstubAllGlobals();
+  });
+
+  it("uses current host bindings and waits for saving before following a wiki link", async () => {
+    vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+    const mount = vi.spyOn(ScientMarkdownEditorView.prototype, "mount");
+    const opened = vi.fn();
+    const synchronize = vi.spyOn(MarkdownSaveQueue.prototype, "synchronize");
+    let resolveSave!: (value: { revision: string }) => void;
+    const saved = new Promise<{ revision: string }>((resolve) => {
+      resolveSave = resolve;
+    });
+    const persist = vi.fn(() => saved);
+    function Harness({ target }: { target: string }) {
+      const [pending, setPending] = useState(false);
+      const depart = useActivePendingSurfaceDeparture({
+        activeSurfaceId: "notes",
+        pendingSurfaceIds: new Set(pending ? ["notes"] : []),
+      });
+      return (
+        <ScientMarkdownWorkspaceSurface
+          source="Hello [[other]]."
+          revision="r0"
+          ariaLabel="Navigation"
+          persist={persist}
+          onPendingChange={setPending}
+          onSaveConfirmed={() => {}}
+          onSaveFailure={() => {}}
+          onExternalConflict={() => {}}
+          onOpenWikiLink={() => depart("other", () => opened(target))}
+        />
+      );
+    }
+    const host = document.createElement("div");
+    document.body.append(host);
+    const root = createRoot(host);
+    roots.push(root);
+    await act(() => root.render(<Harness target="old" />));
+    const controller = (mount.mock.instances as unknown as ScientMarkdownEditorView[]).find(
+      (item) => item.view?.dom.isConnected,
+    )!;
+    await act(() => {
+      controller.view!.dispatch(controller.view!.state.tr.insertText("!", 2));
+      root.render(<Harness target="current" />);
+    });
+    await act(() =>
+      host
+        .querySelector("[data-scient-markdown-wiki-link]")!
+        .dispatchEvent(new MouseEvent("click", { bubbles: true, ctrlKey: true })),
+    );
+    expect(opened).not.toHaveBeenCalled();
+    expect(controller.view?.dom.isConnected).toBe(true);
+    await act(async () => {
+      const queue = synchronize.mock.instances[0] as MarkdownSaveQueue;
+      const flushed = queue.flush();
+      resolveSave({ revision: "r1" });
+      await flushed;
+    });
+    expect(opened).toHaveBeenCalledExactlyOnceWith("current");
+  });
+
+  it("discards a dirty document when a manual reload reads unchanged disk bytes", async () => {
+    vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+    const mount = vi.spyOn(ScientMarkdownEditorView.prototype, "mount");
+    const persist = vi.fn(async () => ({ revision: "r1" }));
+    const pending = vi.fn();
+    const host = document.createElement("div");
+    document.body.append(host);
+    const root = createRoot(host);
+    roots.push(root);
+    const props = {
+      source: "Original",
+      revision: "r0",
+      ariaLabel: "Discard",
+      persist,
+      onPendingChange: pending,
+      onSaveConfirmed: vi.fn(),
+      onSaveFailure: vi.fn(),
+      onExternalConflict: vi.fn(),
+    };
+    await act(() => root.render(<ScientMarkdownWorkspaceSurface {...props} />));
+    const controller = (mount.mock.instances as unknown as ScientMarkdownEditorView[]).find(
+      (item) => item.view?.dom.isConnected,
+    )!;
+    await act(() => controller.replaceUserSource("Original!"));
+    await act(() =>
+      root.render(
+        <ScientMarkdownWorkspaceSurface
+          {...props}
+          saveResolution={{ action: "discard", revision: "r0" }}
+        />,
+      ),
+    );
+    expect(controller.view!.state.doc.textContent).toBe("Original");
+    expect(pending).toHaveBeenLastCalledWith(false);
+    expect(persist).not.toHaveBeenCalled();
   });
 
   it("mounts one always-editable rich document with no source pane", async () => {

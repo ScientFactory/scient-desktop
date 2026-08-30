@@ -24,7 +24,7 @@ import { uploadMarkdownImage } from "./assets/client";
 import type { MarkdownSaveIntent } from "@scientfactory/scient-markdown";
 import {
   markdownWikiTargetForPath,
-  resolveMarkdownSiblingPath,
+  resolveMarkdownUrlPath,
   resolveWikiLinkPath,
 } from "./workspacePaths";
 import {
@@ -144,12 +144,9 @@ export function ScientMarkdownFileSurface(props: ScientMarkdownFileSurfaceProps)
         return authoredSource;
       }
       if (!httpBaseUrl) return null;
-      const relativeWithSuffix = resolveMarkdownSiblingPath(props.relativePath, authoredSource);
-      if (!relativeWithSuffix) return null;
-      const suffixStart = relativeWithSuffix.search(/[?#]/u);
-      const relativePath =
-        suffixStart < 0 ? relativeWithSuffix : relativeWithSuffix.slice(0, suffixStart);
-      const suffix = suffixStart < 0 ? "" : relativeWithSuffix.slice(suffixStart);
+      const resolved = resolveMarkdownUrlPath(props.relativePath, authoredSource);
+      if (!resolved) return null;
+      const { relativePath, suffix } = resolved;
       const absolutePath = resolvePathLinkTarget(relativePath, props.cwd);
       const result = await createAssetUrl({
         environmentId: props.environmentId,
@@ -205,13 +202,14 @@ export function ScientMarkdownFileSurface(props: ScientMarkdownFileSurfaceProps)
           });
         return;
       }
-      const path = resolveMarkdownSiblingPath(props.relativePath, target);
-      if (path) props.onOpenFile(path.replace(/[?#].*$/u, ""));
+      const path = resolveMarkdownUrlPath(props.relativePath, target);
+      if (path) props.onOpenFile(path.relativePath);
     },
     [props.onOpenFile, props.relativePath],
   );
   return (
     <ScientMarkdownWorkspaceSurface
+      key={JSON.stringify([props.environmentId, props.cwd, props.relativePath])}
       source={props.contents}
       revision={props.revision}
       ariaLabel={`${props.relativePath} Markdown document`}

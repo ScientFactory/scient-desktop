@@ -1,5 +1,5 @@
 import type { MarkdownDocumentMode, MarkdownSaveIntent } from "@scientfactory/scient-markdown";
-import { toggleMark } from "prosemirror-commands";
+import { selectedMarkdownLink } from "./links";
 import { redoDepth, undoDepth } from "prosemirror-history";
 import type { Node as ProseMirrorNode } from "prosemirror-model";
 import { NodeSelection, Selection, TextSelection, type Transaction } from "prosemirror-state";
@@ -19,7 +19,7 @@ import {
   setSelectedTaskState,
   type ScientMarkdownCommand,
 } from "./commands";
-import { scientMarkdownSchema } from "./schema";
+import { scientMarkdownParser, scientMarkdownSchema } from "./schema";
 import {
   addImageUploadPlaceholder,
   imageUploadPlaceholderPosition,
@@ -49,7 +49,7 @@ export interface ScientMarkdownEditorViewOptions {
   readonly revision: string;
   readonly mode?: MarkdownDocumentMode;
   readonly ariaLabel: string;
-  readonly onUserSourceChange?: (source: string, intent: MarkdownSaveIntent) => void;
+  readonly onUserSourceChange?: (source: string, intent: MarkdownSaveIntent | null) => void;
   readonly onOpenLink?: (target: string) => void;
   readonly onOpenWikiLink?: (target: string) => void;
   readonly onSelectionSourceOffsetChange?: (sourceOffset: number) => void;
@@ -293,6 +293,13 @@ export class ScientMarkdownEditorView {
     this.publishSnapshot(false);
   }
 
+  discardLocalChanges(input: { readonly source: string; readonly revision: string }): void {
+    const state = this.session.discardLocalChanges(input);
+    this.editorView?.updateState(state);
+    this.syncViewProps();
+    this.publishSnapshot(false);
+  }
+
   execute(command: ScientMarkdownCommand): boolean {
     const view = this.editorView;
     if (!view || !modeIsEditable(this.mode)) return false;
@@ -318,21 +325,32 @@ export class ScientMarkdownEditorView {
     const view = this.editorView;
     const link = scientMarkdownSchema.marks.link;
     if (!view || !link || !modeIsEditable(this.mode) || href.trim().length === 0) return false;
-    const handled = toggleMark(link, { href: href.trim(), title })(view.state, view.dispatch);
-    if (handled) view.focus();
-    return handled;
+    const destination = scientMarkdownParser.tokenizer.normalizeLink(href.trim());
+    if (!scientMarkdownParser.tokenizer.validateLink(destination)) return false;
+    const current = selectedMarkdownLink(view.state);
+    const range = view.state.selection.empty && current ? current : view.state.selection;
+    const mark = link.create({ href: destination, title });
+    view.dispatch(
+      range.from === range.to
+        ? view.state.tr.addStoredMark(mark)
+        : view.state.tr.addMark(range.from, range.to, mark),
+    );
+    view.focus();
+    return true;
+  }
+
+  currentLink(): ReturnType<typeof selectedMarkdownLink> {
+    return this.editorView ? selectedMarkdownLink(this.editorView.state) : null;
   }
 
   removeLink(): boolean {
     const view = this.editorView;
     const link = scientMarkdownSchema.marks.link;
     if (!view || !link || !modeIsEditable(this.mode)) return false;
-    const transaction = view.state.tr.removeMark(
-      view.state.selection.from,
-      view.state.selection.to,
-      link,
-    );
-    if (!transaction.docChanged) return false;
+    const current = selectedMarkdownLink(view.state);
+    const range = view.state.selection.empty && current ? current : view.state.selection;
+    const transaction = view.state.tr.removeMark(range.from, range.to, link).removeStoredMark(link);
+    if (!transaction.docChanged && !transaction.storedMarksSet) return false;
     view.dispatch(transaction);
     view.focus();
     return true;

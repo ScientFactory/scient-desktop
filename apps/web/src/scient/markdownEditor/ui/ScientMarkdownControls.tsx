@@ -588,7 +588,8 @@ function LinkEditor({
 
   useEffect(() => {
     if (open) {
-      setTimeout(() => inputRef.current?.focus(), 50);
+      const timer = setTimeout(() => inputRef.current?.focus(), 50);
+      return () => clearTimeout(timer);
     }
   }, [open]);
 
@@ -607,7 +608,13 @@ function LinkEditor({
   };
 
   return (
-    <Popover open={open} onOpenChange={setOpen}>
+    <Popover
+      open={open}
+      onOpenChange={(nextOpen) => {
+        if (nextOpen) setHref(controller.currentLink()?.href ?? "");
+        setOpen(nextOpen);
+      }}
+    >
       <Tooltip>
         <TooltipTrigger
           render={
@@ -695,15 +702,15 @@ function TableMenuItems({ controller }: { readonly controller: ScientMarkdownEdi
         <span>Add column after</span>
       </MenuItem>
       <MenuSeparator />
-      <MenuItem onClick={() => execute("toggle-header-cell")}>
+      <MenuItem disabled title="Markdown tables use one header row.">
         <PanelTop />
         <span>Toggle header cell</span>
       </MenuItem>
-      <MenuItem onClick={() => execute("merge-cells")}>
+      <MenuItem disabled title="Merged cells cannot be saved in a Markdown table.">
         <Merge />
         <span>Merge selected cells</span>
       </MenuItem>
-      <MenuItem onClick={() => execute("split-cell")}>
+      <MenuItem disabled title="Merged cells cannot be saved in a Markdown table.">
         <Split />
         <span>Split cell</span>
       </MenuItem>

@@ -33,6 +33,7 @@ class ScientCodeBlockNodeView implements NodeView {
   private node: ProseMirrorNode;
   private destroyed = false;
   private highlightVersion = 0;
+  private selected = false;
 
   constructor(
     node: ProseMirrorNode,
@@ -79,6 +80,7 @@ class ScientCodeBlockNodeView implements NodeView {
   }
 
   selectNode(): void {
+    this.selected = true;
     this.dom.classList.add("is-selected");
     // Plain code in the editor duplicates the highlighted render, so hide it;
     // rich fences (diagrams, plots) stay visible as a live preview.
@@ -88,6 +90,7 @@ class ScientCodeBlockNodeView implements NodeView {
   }
 
   deselectNode(): void {
+    this.selected = false;
     this.dom.classList.remove("is-selected");
     this.rendered.hidden = false;
     this.editorHost.hidden = true;
@@ -120,8 +123,10 @@ class ScientCodeBlockNodeView implements NodeView {
       return;
     }
     const { createScientNestedCodeEditor } = await import("./codeMirrorCodeEditor");
-    if (this.destroyed) return;
-    this.nestedEditor = createScientNestedCodeEditor({
+    if (this.destroyed || !this.selected || !this.view.editable) return;
+    // Concurrent selections can share the same pending module import. Only
+    // one continuation may create the nested editor; never focus after exit.
+    this.nestedEditor ??= createScientNestedCodeEditor({
       parent: this.editorHost,
       code: this.node.textContent,
       language: codeLanguage(this.node),

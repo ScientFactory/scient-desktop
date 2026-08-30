@@ -1,5 +1,25 @@
 import { isScientMarkdownDocumentPath } from "./markdownDocumentPaths";
 
+/** URL destinations are decoded once; wiki targets are already filesystem text. */
+export function resolveMarkdownUrlPath(
+  markdownRelativePath: string,
+  destination: string,
+): {
+  readonly relativePath: string;
+  readonly suffix: string;
+} | null {
+  const suffixStart = destination.search(/[?#]/u);
+  const encoded = suffixStart < 0 ? destination : destination.slice(0, suffixStart);
+  const suffix = suffixStart < 0 ? "" : destination.slice(suffixStart);
+  try {
+    const pathname = decodeURIComponent(encoded);
+    const relativePath = resolveRelativePath(markdownRelativePath, pathname);
+    return relativePath === null ? null : { relativePath, suffix };
+  } catch {
+    return null;
+  }
+}
+
 export function resolveMarkdownSiblingPath(
   markdownRelativePath: string,
   authoredPath: string,
@@ -11,6 +31,19 @@ export function resolveMarkdownSiblingPath(
   const suffixStart = portable.search(/[?#]/u);
   const pathname = suffixStart < 0 ? portable : portable.slice(0, suffixStart);
   const suffix = suffixStart < 0 ? "" : portable.slice(suffixStart);
+  const relativePath = resolveRelativePath(markdownRelativePath, pathname);
+  return relativePath === null ? null : `${relativePath}${suffix}`;
+}
+
+function resolveRelativePath(markdownRelativePath: string, authoredPath: string): string | null {
+  const pathname = authoredPath.replaceAll("\\", "/");
+  if (
+    !pathname ||
+    pathname.startsWith("/") ||
+    pathname.includes("\0") ||
+    /^[a-z][a-z\d+.-]*:/iu.test(pathname)
+  )
+    return null;
   const baseSegments = markdownRelativePath.replaceAll("\\", "/").split("/").slice(0, -1);
   for (const segment of pathname.split("/")) {
     if (segment.length === 0 || segment === ".") continue;
@@ -21,7 +54,7 @@ export function resolveMarkdownSiblingPath(
     }
     baseSegments.push(segment);
   }
-  return baseSegments.length > 0 ? `${baseSegments.join("/")}${suffix}` : null;
+  return baseSegments.length > 0 ? baseSegments.join("/") : null;
 }
 
 export function resolveWikiLinkPath(markdownRelativePath: string, target: string): string | null {

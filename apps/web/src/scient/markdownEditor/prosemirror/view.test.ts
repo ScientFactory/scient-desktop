@@ -28,6 +28,89 @@ describe("ScientMarkdownEditorView", () => {
     return { controller, host, onUserSourceChange, view: controller.mount(host) };
   }
 
+  it.each(["caret", "selection"])("updates and removes an existing link with a %s", (kind) => {
+    const controller = new ScientMarkdownEditorView({
+      source: "[Example](https://old.example)\n",
+      revision: "r0",
+      mode: "write",
+      ariaLabel: "Link",
+    });
+    mounted.push(controller);
+    const host = document.createElement("div");
+    document.body.append(host);
+    const view = controller.mount(host);
+    view.dispatch(
+      view.state.tr.setSelection(
+        TextSelection.create(view.state.doc, kind === "caret" ? 3 : 1, kind === "caret" ? 3 : 8),
+      ),
+    );
+    expect(controller.currentLink()?.href).toBe("https://old.example");
+    expect(controller.setLink("https://new.example")).toBe(true);
+    expect(controller.session.session.draftSource).toBe("[Example](https://new.example)\n");
+    expect(controller.removeLink()).toBe(true);
+    expect(controller.session.session.draftSource).toBe("Example\n");
+  });
+
+  it("creates a link to a filename with spaces that remains a link on reopen", () => {
+    const { controller, view } = mountEditor();
+    controller.setMode("write");
+    view.dispatch(view.state.tr.setSelection(TextSelection.create(view.state.doc, 1, 8)));
+    expect(controller.setLink("Other notes.md")).toBe(true);
+    const reopened = new ScientMarkdownEditorView({
+      source: controller.session.session.draftSource,
+      revision: "r1",
+      ariaLabel: "Reopened",
+    });
+    mounted.push(reopened);
+    expect(reopened.session.state.doc.firstChild?.firstChild?.marks[0]?.attrs.href).toBe(
+      "Other%20notes.md",
+    );
+  });
+
+  it("updates a whole caret link across inline formatting without changing adjacent links", () => {
+    const controller = new ScientMarkdownEditorView({
+      source: "[one **two** three](old.md) [next](next.md)\n",
+      revision: "r0",
+      mode: "write",
+      ariaLabel: "Links",
+    });
+    mounted.push(controller);
+    const host = document.createElement("div");
+    document.body.append(host);
+    const view = controller.mount(host);
+    view.dispatch(view.state.tr.setSelection(TextSelection.create(view.state.doc, 6)));
+    expect(controller.setLink("new.md")).toBe(true);
+    expect(controller.session.session.draftSource).toBe(
+      "[one **two** three](new.md) [next](next.md)\n",
+    );
+    const before = controller.session.session.draftSource;
+    expect(controller.setLink("javascript:alert(1)")).toBe(false);
+    expect(controller.session.session.draftSource).toBe(before);
+  });
+
+  it("updates only the selected portion of a link or mixed link/plain text", () => {
+    const controller = new ScientMarkdownEditorView({
+      source: "[Example](old.md) plain\n",
+      revision: "r0",
+      mode: "write",
+      ariaLabel: "Links",
+    });
+    mounted.push(controller);
+    const host = document.createElement("div");
+    document.body.append(host);
+    const view = controller.mount(host);
+    view.dispatch(view.state.tr.setSelection(TextSelection.create(view.state.doc, 3, 6)));
+    controller.setLink("partial.md");
+    expect(controller.session.session.draftSource).toBe(
+      "[Ex](old.md)[amp](partial.md)[le](old.md) plain\n",
+    );
+    view.dispatch(view.state.tr.setSelection(TextSelection.create(view.state.doc, 6, 14)));
+    controller.setLink("mixed.md");
+    expect(controller.session.session.draftSource).toBe(
+      "[Ex](old.md)[amp](partial.md)[le plain](mixed.md)\n",
+    );
+  });
+
   it("keeps a single text row visible when its direction changes", () => {
     const controller = new ScientMarkdownEditorView({
       source: "Only row.\n",

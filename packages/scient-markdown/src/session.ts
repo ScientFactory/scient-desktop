@@ -83,7 +83,9 @@ export function confirmMarkdownSave(
     baselineSource: intent.source,
     baselineRevision: revision,
     confirmedEditVersion: intent.editVersion,
-    conflict: null,
+    // A later observed external write is not undone by an older command's
+    // acknowledgement. Keep the explicit conflict until the user resolves it.
+    conflict: session.conflict?.externalSource === intent.source ? null : session.conflict,
   };
 }
 

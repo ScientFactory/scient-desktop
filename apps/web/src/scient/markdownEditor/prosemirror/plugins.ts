@@ -20,12 +20,14 @@ import {
 import { keymap } from "prosemirror-keymap";
 import { liftListItem, sinkListItem, splitListItem, wrapInList } from "prosemirror-schema-list";
 import { Plugin, PluginKey, type Command } from "prosemirror-state";
-import { columnResizing, goToNextCell, tableEditing } from "prosemirror-tables";
+import { goToNextCell, tableEditing } from "prosemirror-tables";
 
 import { scientMarkdownSchema } from "./schema";
 import { imageUploadPlugin } from "./imageUploads";
 import { scientMarkdownOutlinePlugin } from "./outline";
 import { scientMarkdownSearchPlugin } from "./search";
+import { inlineTableArrow } from "./tableNavigation";
+import { markdownTablePlugin } from "./tables";
 
 const sourceIdentityPluginKey = new PluginKey("scientMarkdownSourceIdentity");
 
@@ -68,6 +70,14 @@ function buildKeyBindings(): Readonly<Record<string, Command>> {
     return true;
   });
   return {
+    ArrowLeft: inlineTableArrow("left"),
+    ArrowRight: inlineTableArrow("right"),
+    ArrowUp: inlineTableArrow("up"),
+    ArrowDown: inlineTableArrow("down"),
+    "Shift-ArrowLeft": inlineTableArrow("left", true),
+    "Shift-ArrowRight": inlineTableArrow("right", true),
+    "Shift-ArrowUp": inlineTableArrow("up", true),
+    "Shift-ArrowDown": inlineTableArrow("down", true),
     "Shift-Enter": insertHardBreak,
     "Mod-Enter": insertHardBreak,
     "Mod-b": toggleMark(requiredMarkType("strong")),
@@ -128,7 +138,7 @@ export function buildScientMarkdownPlugins(): ReadonlyArray<Plugin> {
     keymap(buildKeyBindings()),
     keymap(baseKeymap),
     history(),
-    columnResizing(),
+    markdownTablePlugin(),
     tableEditing(),
     gapCursor(),
     dropCursor(),

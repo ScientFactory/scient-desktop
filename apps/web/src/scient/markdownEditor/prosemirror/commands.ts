@@ -11,11 +11,8 @@ import {
   deleteColumn,
   deleteRow,
   deleteTable,
-  mergeCells,
   isInTable,
   selectedRect,
-  splitCell,
-  toggleHeaderCell,
 } from "prosemirror-tables";
 
 import { scientMarkdownSchema } from "./schema";
@@ -423,11 +420,11 @@ function commandFor(command: ScientMarkdownCommand): Command {
     case "delete-table":
       return deleteTable;
     case "merge-cells":
-      return mergeCells;
     case "split-cell":
-      return splitCell;
     case "toggle-header-cell":
-      return toggleHeaderCell;
+      // GFM cannot encode spans or arbitrary header cells. Keep the command
+      // boundary honest as well as the menu, including keyboard/API callers.
+      return () => false;
   }
 }
 

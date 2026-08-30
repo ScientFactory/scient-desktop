@@ -257,14 +257,14 @@ describe("Scient Markdown dock command coverage", () => {
     const selectedCell = cellAtSelection();
     expect(selectedCell?.node.type.name).toBe("table_cell");
     runUserCommand(session, "toggle-header-cell");
-    expect(session.state.doc.nodeAt(selectedCell?.position ?? -1)?.type.name).toBe("table_header");
+    expect(session.state.doc.nodeAt(selectedCell?.position ?? -1)?.type.name).toBe("table_cell");
 
     runUserCommand(session, "delete-table");
     expect(session.state.doc.firstChild?.type.name).toBe("paragraph");
     expect(session.session.draftSource).not.toContain("|");
   });
 
-  it("merges and splits selected cells", () => {
+  it("keeps all cells intact when an unpersistable merge or split is requested", () => {
     const { session } = tableSession();
     const headerPositions: number[] = [];
     session.state.doc.descendants((node, position) => {
@@ -283,8 +283,8 @@ describe("Scient Markdown dock command coverage", () => {
     );
     runUserCommand(session, "merge-cells");
     const headerRow = () => session.state.doc.firstChild?.firstChild;
-    expect(headerRow()?.childCount).toBe(2);
-    expect(headerRow()?.firstChild?.attrs.colspan).toBe(2);
+    expect(headerRow()?.childCount).toBe(3);
+    expect(headerRow()?.firstChild?.attrs.colspan).toBe(1);
 
     runUserCommand(session, "split-cell");
     expect(headerRow()?.childCount).toBe(3);
