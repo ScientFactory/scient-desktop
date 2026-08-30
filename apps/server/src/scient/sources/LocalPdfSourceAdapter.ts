@@ -10,12 +10,14 @@ import {
   sourceMetadataDiagnostics,
   type ScientSourceCandidate,
   type ScientSourceCreator,
+  type ScientSourceAttachment,
   type ScientSourceFieldProvenance,
   type ScientSourceIdentifier,
   type ScientSourcePreflightItem,
   type ScientSourceRecord,
   type ScientSourceType,
 } from "@scientfactory/scient-sources";
+import { selectScientSourceMaterial } from "@scientfactory/scient-sources/material-selection";
 import {
   listScientSourceRecords,
   inspectScientSourcePdf,
@@ -702,6 +704,7 @@ async function extractPdfMetadata(input: {
 
 function candidateFromExistingRecord(record: ScientSourceRecord): ScientSourceCandidate {
   const pdfAttachments = record.attachments.filter((attachment) => attachment.kind === "pdf");
+  const materialSelection = selectScientSourceMaterial({ materials: record.attachments });
   return {
     sourceKey: record.sourceId,
     type: record.type,
@@ -724,7 +727,7 @@ function candidateFromExistingRecord(record: ScientSourceRecord): ScientSourceCa
     externalReferences: record.externalReferences,
     fieldProvenance: record.fieldProvenance,
     pdfAvailable: pdfAttachments.length > 0,
-    pdfFileName: pdfAttachments[0]?.fileName ?? null,
+    pdfFileName: materialSelection._tag === "Selected" ? materialSelection.material.fileName : null,
     pdfAttachmentCount: pdfAttachments.length,
   };
 }
@@ -735,14 +738,14 @@ function candidateFromExistingRecord(record: ScientSourceRecord): ScientSourceCa
  */
 export async function refreshExistingSourceCandidate(input: {
   readonly record: ScientSourceRecord;
+  readonly pdfMaterial: ScientSourceAttachment | null;
   readonly pdfPath: string | null;
 }): Promise<ScientSourceCandidate> {
   const current = candidateFromExistingRecord(input.record);
-  const pdfAttachment = input.record.attachments.find((attachment) => attachment.kind === "pdf");
   let candidate = input.pdfPath
     ? await extractPdfMetadata({
         sourceKey: input.record.sourceId,
-        fileName: pdfAttachment?.fileName ?? "source.pdf",
+        fileName: input.pdfMaterial?.fileName ?? "source.pdf",
         pdfPath: input.pdfPath,
       })
     : current;

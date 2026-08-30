@@ -632,6 +632,9 @@ importers:
       '@scientfactory/scient-citations':
         specifier: workspace:*
         version: link:../../packages/scient-citations
+      '@scientfactory/scient-sources':
+        specifier: workspace:*
+        version: link:../../packages/scient-sources
       '@t3tools/client-runtime':
         specifier: workspace:*
         version: link:../../packages/client-runtime

@@ -70,6 +70,8 @@ describe("BrowserPdfRenderer", () => {
       expect(paginationCss).toContain(".box");
       expect(paginationCss).toContain(".card");
       expect(paginationCss).toContain("break-after: avoid-page");
+      expect(paginationCss).toContain(":where(h1, h2, h3, h4, h5, h6)");
+      expect(paginationCss).not.toMatch(/\b(?:caption|figcaption)\b/);
       expect(paginationCss).toContain("orphans: 3");
       expect(paginationCss).toContain("widows: 3");
       expect(paginationCss).not.toMatch(/direction|unicode-bidi|font|display|color|content\s*:/);

@@ -92,13 +92,54 @@ function clampMessage(message: string): string {
     : collapsed;
 }
 
-/** Parses one combined engine transcript into bounded, ordered diagnostics. */
+function isMessageContinuation(rawLine: string): boolean {
+  const line = rawLine.trimStart();
+  // Indentation alone is not sufficient: an engine can indent another
+  // diagnostic or its own progress note, neither of which belongs to this one.
+  if (
+    /^(?:error|warning|note|info):\s/iu.test(line) ||
+    FILE_LINE_ERROR_PATTERN.test(line) ||
+    BARE_ERROR_PATTERN.test(line) ||
+    WARNING_PATTERN.test(line) ||
+    MISSING_FILE_PATTERN.test(line)
+  )
+    return false;
+  return /^\s{2,}\S/u.test(rawLine) || /^l\.\d+\s/u.test(line) || /^\([\w-]+\)\s+\S/u.test(line);
+}
+
+function readMessage(lines: readonly string[], index: number, message: string) {
+  while (index + 1 < lines.length && isMessageContinuation(lines[index + 1] ?? "")) {
+    index += 1;
+    message += ` ${(lines[index] ?? "").trim()}`;
+  }
+  return { message, index };
+}
+
+/** Parses one combined engine transcript, retaining distinct diagnostics in order. */
 export function parseLatexLog(transcript: string): LatexDiagnostic[] {
   const diagnostics: LatexDiagnostic[] = [];
+  const seen = new Set<string>();
+  const addDiagnostic = (diagnostic: LatexDiagnostic) => {
+    const message = diagnostic.message.trim().replace(/\s+/gu, " ");
+    // Compare the complete message before display truncation. Two different
+    // warnings can share the same first 500 characters.
+    const key = JSON.stringify([diagnostic.severity, diagnostic.file, diagnostic.line, message]);
+    if (seen.has(key)) return;
+    if (diagnostics.length === MAX_DIAGNOSTICS) {
+      if (diagnostic.severity === "warning") return;
+      const warningIndex = diagnostics.findLastIndex((entry) => entry.severity === "warning");
+      if (warningIndex === -1) return;
+      diagnostics.splice(warningIndex, 1);
+    }
+    seen.add(key);
+    diagnostics.push({ ...diagnostic, message: clampMessage(message) });
+  };
   const lines = transcript.split(/\r?\n/u);
 
-  for (let index = 0; index < lines.length && diagnostics.length < MAX_DIAGNOSTICS; index += 1) {
-    const rawLine = lines[index] ?? "";
+  // Continue through the bounded engine transcript: repeats must not consume
+  // the budget, and late errors must not be hidden by earlier warnings.
+  for (let index = 0; index < lines.length; index += 1) {
+    const rawLine = (lines[index] ?? "").trimStart();
     // Strip tectonic's label before anything else, so the file capture starts
     // at the path instead of swallowing `error: ` into it.
     const severityPrefix = SEVERITY_PREFIX_PATTERN.exec(rawLine);
@@ -117,59 +158,49 @@ export function parseLatexLog(transcript: string): LatexDiagnostic[] {
       ) {
         continue;
       }
-      // Engines wrap the message across following lines until a blank one;
-      // one continuation line is enough context without swallowing the log.
-      const continuation = (lines[index + 1] ?? "").trim();
-      const message = clampMessage(
-        `${fileLineError[3] ?? ""}${continuation && !continuation.startsWith("!") ? ` ${continuation}` : ""}`,
-      );
-      diagnostics.push({
+      const continued = readMessage(lines, index, fileLineError[3] ?? "");
+      index = continued.index;
+      addDiagnostic({
         severity: labelledSeverity,
         file: normalizeEnginePath(fileLineError[1]),
         line: Number.parseInt(fileLineError[2], 10),
-        message: message || "TeX error",
+        message: continued.message || "TeX error",
       });
       continue;
     }
 
     const bareError = BARE_ERROR_PATTERN.exec(line);
     if (bareError?.[1] !== undefined) {
-      diagnostics.push({
+      addDiagnostic({
         severity: "error",
         file: null,
         line: null,
-        message: clampMessage(bareError[1]),
+        message: bareError[1],
       });
       continue;
     }
 
     const warning = WARNING_PATTERN.exec(line);
     if (warning?.[1] !== undefined) {
-      let message = warning[1];
-      // Multi-line warnings continue on indented lines; join until blank.
-      let lookahead = index + 1;
-      while (lookahead < lines.length && /^\s{2,}\S/u.test(lines[lookahead] ?? "")) {
-        message += ` ${(lines[lookahead] ?? "").trim()}`;
-        lookahead += 1;
-      }
-      index = lookahead - 1;
-      const lineMatch = WARNING_LINE_SUFFIX_PATTERN.exec(message);
-      diagnostics.push({
+      const continued = readMessage(lines, index, warning[1]);
+      index = continued.index;
+      const lineMatch = WARNING_LINE_SUFFIX_PATTERN.exec(continued.message);
+      addDiagnostic({
         severity: "warning",
         file: null,
         line: lineMatch?.[1] !== undefined ? Number.parseInt(lineMatch[1], 10) : null,
-        message: clampMessage(message),
+        message: continued.message,
       });
       continue;
     }
 
     const missingFile = MISSING_FILE_PATTERN.exec(line);
     if (missingFile?.[1] !== undefined && !isGeneratedArtifactPath(missingFile[1])) {
-      diagnostics.push({
+      addDiagnostic({
         severity: "warning",
         file: normalizeEnginePath(missingFile[1]),
         line: null,
-        message: clampMessage(`Missing file: ${missingFile[1]}`),
+        message: `Missing file: ${missingFile[1]}`,
       });
     }
   }

@@ -7,6 +7,7 @@ import * as NodePath from "node:path";
 import { initializeScientProject, readScientProjectIdentity } from "@scientfactory/project-init";
 import type { ScientSourceCandidate } from "@scientfactory/scient-sources";
 import {
+  attachScientSourcePdf,
   importScientSource,
   listScientSourceRecords,
   readScientSourceStagedMaterial,
@@ -748,6 +749,52 @@ describe("ScientSourcesCoordinator", () => {
       changedFields: [],
     });
     expect((await listScientSourceRecords(root))[0]?.revision).toBe(1);
+  });
+
+  it("does not silently choose one of several PDFs for metadata refresh", async () => {
+    const root = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "scient-source-refresh-"));
+    fixtures.push(root);
+    await initializeScientProject({ root });
+    const imported = await importScientSource({
+      root,
+      operationId: NodeCrypto.randomUUID(),
+      candidate,
+    });
+    const record = imported.record;
+    if (!record) throw new Error("Expected an imported record.");
+
+    const firstPdf = NodePath.join(root, "first.pdf");
+    const secondPdf = NodePath.join(root, "second.pdf");
+    await NodeFSP.writeFile(firstPdf, "%PDF-1.3 first material");
+    await NodeFSP.writeFile(secondPdf, "%PDF-1.3 second material");
+    const firstAttachment = await attachScientSourcePdf({
+      root,
+      sourceId: record.sourceId,
+      expectedRevision: record.revision,
+      pdfPath: firstPdf,
+    });
+    const secondAttachment = await attachScientSourcePdf({
+      root,
+      sourceId: record.sourceId,
+      expectedRevision: firstAttachment.record.revision,
+      pdfPath: secondPdf,
+    });
+
+    await expect(
+      refreshScientSourceMetadata({
+        root,
+        sourceId: record.sourceId,
+        expectedRevision: secondAttachment.record.revision,
+      }),
+    ).resolves.toMatchObject({
+      outcome: "unavailable",
+      record: { revision: secondAttachment.record.revision },
+      changedFields: [],
+      message: "This source has several PDFs. Metadata refresh needs an explicit material choice.",
+    });
+    expect((await listScientSourceRecords(root))[0]?.revision).toBe(
+      secondAttachment.record.revision,
+    );
   });
 
   it("removes a source through the environment coordinator", async () => {

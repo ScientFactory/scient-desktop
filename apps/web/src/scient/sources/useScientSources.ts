@@ -1,15 +1,10 @@
 import type {
   EnvironmentId,
   ScientSourceDetailResult,
-  ScientSourceImportOperation,
   ScientSourcesPreflightResult,
-  ScientSourcesOverviewResult,
-  ZoteroConnectionStatus,
-  ZoteroCollection,
   ZoteroImportScope,
-  ZoteroLibraryPage,
 } from "@t3tools/contracts";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useReducer, useRef } from "react";
 
 import { randomUUID } from "../../lib/utils";
 import {
@@ -33,28 +28,23 @@ import {
   uploadLocalSourcePdf,
 } from "./client";
 import { scientSourcesErrorMessage } from "./errorMessage";
-import {
-  completedImportCounts,
-  preflightImportCounts,
-  reviewedImportCounts,
-  type ScientSourcesImportOutcome,
-  type ScientSourcesImportCounts,
-} from "./importOutcome";
+import type { ScientSourcesImportOutcome, ScientSourcesImportCounts } from "./importOutcome";
 import { continueSourceImport, stopSourceImportContinuation } from "./importPipeline";
-
-const message = (error: unknown): string => scientSourcesErrorMessage(error, import.meta.env.DEV);
+import {
+  emptyZoteroPage,
+  importOutcomeFromOperation,
+  initialSourcesWorkflowState,
+  sourcesWorkflowReducer,
+  workflowPreflightImportCounts,
+  workflowReviewedImportCounts,
+} from "./sourcesWorkflow";
 
 export type { ScientSourcesImportOutcome } from "./importOutcome";
-
-type ImportPreparation =
-  | { readonly kind: "local-files"; readonly names: ReadonlyArray<string> }
-  | { readonly kind: "zotero"; readonly count: number };
+export type { ImportPreparation } from "./sourcesWorkflow";
 
 const DEFAULT_ZOTERO_SCOPE: ZoteroImportScope = { kind: "library" };
 
-function emptyZoteroPage(scope: ZoteroImportScope): ZoteroLibraryPage {
-  return { scope, items: [], start: 0, nextStart: 0, total: 0, hasMore: false };
-}
+const message = (error: unknown): string => scientSourcesErrorMessage(error, import.meta.env.DEV);
 
 function singleMatchingSourceId(preflight: ScientSourcesPreflightResult): string | null {
   if (preflight.items.length !== 1) return null;
@@ -62,72 +52,59 @@ function singleMatchingSourceId(preflight: ScientSourcesPreflightResult): string
   return matchingSourceIds.length === 1 ? (matchingSourceIds[0] ?? null) : null;
 }
 
-function singleImportedSourceId(operation: ScientSourceImportOperation): string | null {
-  if (operation.items.length !== 1) return null;
-  const item = operation.items[0];
-  return item?.state === "imported" ? item.sourceId : null;
-}
-
-function importOutcomeFromOperation(input: {
-  readonly operation: ScientSourceImportOperation;
-  readonly priorCounts?: ScientSourcesImportCounts;
-  readonly revealSingleSource: boolean;
-}): ScientSourcesImportOutcome {
-  const counts = completedImportCounts(input.operation, input.priorCounts);
-  return {
-    kind:
-      counts.imported > 0
-        ? "imported"
-        : counts.alreadyPresent > 0 && counts.reviewRequired === 0
-          ? "already-present"
-          : "review-required",
-    operation: input.operation,
-    sourceId: input.revealSingleSource ? singleImportedSourceId(input.operation) : null,
-    existingSourceId: null,
-    counts,
-  };
-}
-
+/**
+ * Transient Sources workflow orchestration.
+ *
+ * The durable server operation remains the only authority for import phase,
+ * item states, retries, and resumability. This hook owns presentation
+ * transitions only. Import, overview, and Zotero browse responses land through
+ * independent request-token lanes so a late or superseded workflow response
+ * cannot overwrite newer state.
+ */
 export function useScientSources(input: {
   readonly environmentId: EnvironmentId;
   readonly root: string;
 }) {
-  const [overview, setOverview] = useState<ScientSourcesOverviewResult | null>(null);
-  const [sourceDetails, setSourceDetails] = useState<
-    Readonly<Record<string, ScientSourceDetailResult>>
-  >({});
-  const [zoteroStatus, setZoteroStatus] = useState<ZoteroConnectionStatus | null>(null);
-  const [library, setLibrary] = useState<ZoteroLibraryPage | null>(null);
-  const [zoteroCollections, setZoteroCollections] = useState<ReadonlyArray<ZoteroCollection>>([]);
-  const [zoteroScope, setZoteroScope] = useState<ZoteroImportScope>(DEFAULT_ZOTERO_SCOPE);
-  const [preflight, setPreflight] = useState<ScientSourcesPreflightResult | null>(null);
-  const [preflightAdapter, setPreflightAdapter] = useState<"zotero" | "local-files" | null>(null);
-  const [operation, setOperation] = useState<ScientSourceImportOperation | null>(null);
-  const [busy, setBusy] = useState(false);
-  const [importPreparation, setImportPreparation] = useState<ImportPreparation | null>(null);
-  const [checkingZotero, setCheckingZotero] = useState(false);
-  const [zoteroCheckFeedback, setZoteroCheckFeedback] = useState<string | null>(null);
-  const [cancelling, setCancelling] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [state, dispatch] = useReducer(sourcesWorkflowReducer, initialSourcesWorkflowState);
   const mounted = useRef(true);
-  const generation = useRef(0);
-  const overviewGeneration = useRef(0);
-  const zoteroSearchGeneration = useRef(0);
   const stagedLocalKeys = useRef<ReadonlyArray<string>>([]);
   const contextKey = `${input.environmentId}\0${input.root}`;
   const contextKeyRef = useRef(contextKey);
   contextKeyRef.current = contextKey;
+  // Request tokens are issued synchronously here rather than derived from
+  // reducer state: dispatch commits on the next render, so a token captured
+  // from render timing would read stale and every guarded response would be
+  // dropped. The reducer validates tokens; these refs are their only issuers.
+  // Three lanes because overview refreshes (live-refresh repeats them during
+  // long imports) and Zotero browsing must never invalidate import progress.
+  const requestRef = useRef(0);
+  const overviewRequestRef = useRef(0);
+  const zoteroRequestRef = useRef(0);
+  const nextRequestToken = useCallback(() => {
+    requestRef.current += 1;
+    return requestRef.current;
+  }, []);
+  const nextOverviewRequestToken = useCallback(() => {
+    overviewRequestRef.current += 1;
+    return overviewRequestRef.current;
+  }, []);
+  const nextZoteroRequestToken = useCallback(() => {
+    zoteroRequestRef.current += 1;
+    return zoteroRequestRef.current;
+  }, []);
   const isCurrentContext = useCallback(
     () => mounted.current && contextKeyRef.current === contextKey,
     [contextKey],
+  );
+  const isCurrentRequest = useCallback(
+    (request: number) => isCurrentContext() && requestRef.current === request,
+    [isCurrentContext],
   );
 
   useEffect(() => {
     mounted.current = true;
     return () => {
       mounted.current = false;
-      generation.current += 1;
-      overviewGeneration.current += 1;
     };
   }, []);
 
@@ -143,85 +120,57 @@ export function useScientSources(input: {
   }, [input.environmentId, input.root]);
 
   const refreshOverview = useCallback(async () => {
-    const request = ++overviewGeneration.current;
+    // The overview lane is independent of imports: live-refresh repeats this
+    // call while a durable import runs, and neither may starve the other.
+    const request = nextOverviewRequestToken();
+    dispatch({ type: "overviewRequestStarted", request });
     const next = await readScientSources(input.environmentId, input.root);
-    if (isCurrentContext() && overviewGeneration.current === request) {
-      setOverview(next);
-      setSourceDetails((current) =>
-        Object.fromEntries(
-          Object.entries(current).filter(([sourceId, detail]) =>
-            next.records.some(
-              (summary) => summary.sourceId === sourceId && summary.revision === detail.revision,
-            ),
-          ),
-        ),
-      );
-      if (next.activeOperation) setOperation(next.activeOperation);
+    if (isCurrentContext() && overviewRequestRef.current === request) {
+      dispatch({ type: "overviewArrived", request, overview: next });
     }
     return next;
-  }, [input.environmentId, input.root, isCurrentContext]);
+  }, [input.environmentId, input.root, isCurrentContext, nextOverviewRequestToken]);
 
   const reloadOverview = useCallback(async () => {
-    setBusy(true);
-    setError(null);
+    dispatch({ type: "busyChanged", busy: true });
+    dispatch({ type: "errorCleared" });
     try {
       return await refreshOverview();
     } catch (cause) {
-      if (isCurrentContext()) setError(message(cause));
+      if (isCurrentContext()) dispatch({ type: "errorArrived", error: message(cause) });
       return null;
     } finally {
-      if (isCurrentContext()) setBusy(false);
+      if (isCurrentContext()) dispatch({ type: "busyChanged", busy: false });
     }
   }, [isCurrentContext, refreshOverview]);
 
   const acceptSourceRecord = useCallback((record: ScientSourceDetailResult) => {
-    setSourceDetails((current) => ({ ...current, [record.sourceId]: record }));
-    setOverview((current) => {
-      if (!current) return current;
-      const recordIndex = current.records.findIndex((entry) => entry.sourceId === record.sourceId);
-      if (recordIndex === -1) return current;
-      const records = [...current.records];
-      records[recordIndex] = {
-        sourceId: record.sourceId,
-        revision: record.revision,
-        type: record.type,
-        title: record.title,
-        creators: record.creators,
-        issuedYear: record.issuedYear,
-        identifiers: record.identifiers,
-        containerTitle: record.containerTitle,
-        url: record.url,
-        externalReferences: record.externalReferences,
-        attachments: record.attachments.map((attachment) => ({
-          attachmentId: attachment.attachmentId,
-          kind: attachment.kind,
-          fileName: attachment.fileName,
-          mediaType: attachment.mediaType,
-        })),
-        importedAt: record.importedAt,
-        ...(record.updatedAt ? { updatedAt: record.updatedAt } : {}),
-      };
-      return { ...current, records };
-    });
+    dispatch({ type: "sourceRecordAccepted", record });
   }, []);
 
   const loadSource = useCallback(
     async (sourceId: string): Promise<ScientSourceDetailResult> => {
-      const cached = sourceDetails[sourceId];
-      const summary = overview?.records.find((record) => record.sourceId === sourceId);
+      const cached = state.sourceDetails[sourceId];
+      const summary = state.overview?.records.find((record) => record.sourceId === sourceId);
       if (cached && summary?.revision === cached.revision) return cached;
       try {
         const detail = await readScientSource(input.environmentId, { root: input.root, sourceId });
         if (isCurrentContext()) {
-          setSourceDetails((current) => ({ ...current, [sourceId]: detail }));
+          dispatch({ type: "sourceDetailArrived", sourceId, detail });
         }
         return detail;
       } catch (cause) {
-        if (isCurrentContext()) setError(message(cause));
+        if (isCurrentContext()) dispatch({ type: "errorArrived", error: message(cause) });
         throw cause;
       }
     },
-    [input.environmentId, input.root, isCurrentContext, overview?.records, sourceDetails],
+    [
+      input.environmentId,
+      input.root,
+      isCurrentContext,
+      state.overview?.records,
+      state.sourceDetails,
+    ],
   );
 
   const refreshSourceMetadata = useCallback(
@@ -241,8 +190,8 @@ export function useScientSources(input: {
 
   const removeSource = useCallback(
     async (sourceId: string, expectedRevision: number) => {
-      setBusy(true);
-      setError(null);
+      dispatch({ type: "busyChanged", busy: true });
+      dispatch({ type: "errorCleared" });
       try {
         const result = await removeScientSource(input.environmentId, {
           root: input.root,
@@ -250,32 +199,20 @@ export function useScientSources(input: {
           expectedRevision,
         });
         if (isCurrentContext() && result.outcome !== "stale") {
-          setSourceDetails((current) => {
-            const { [sourceId]: _removed, ...remaining } = current;
-            return remaining;
-          });
-          setOverview((current) =>
-            current
-              ? {
-                  ...current,
-                  records: current.records.filter((record) => record.sourceId !== sourceId),
-                  recordDiagnostics: current.recordDiagnostics.filter(
-                    (entry) => entry.sourceId !== sourceId,
-                  ),
-                }
-              : current,
-          );
+          dispatch({ type: "sourceRemoved", sourceId });
         }
         if (isCurrentContext()) {
-          await refreshOverview().catch((cause: unknown) => setError(message(cause)));
+          await refreshOverview().catch((cause: unknown) =>
+            dispatch({ type: "errorArrived", error: message(cause) }),
+          );
         }
         return result;
       } catch (cause) {
         const safeMessage = message(cause);
-        if (isCurrentContext()) setError(safeMessage);
+        if (isCurrentContext()) dispatch({ type: "errorArrived", error: safeMessage });
         throw new Error(safeMessage, { cause });
       } finally {
-        if (isCurrentContext()) setBusy(false);
+        if (isCurrentContext()) dispatch({ type: "busyChanged", busy: false });
       }
     },
     [input.environmentId, input.root, isCurrentContext, refreshOverview],
@@ -297,8 +234,8 @@ export function useScientSources(input: {
 
   const approveSource = useCallback(
     async (sourceId: string, expectedRevision: number) => {
-      setBusy(true);
-      setError(null);
+      dispatch({ type: "busyChanged", busy: true });
+      dispatch({ type: "errorCleared" });
       try {
         const result = await approveScientSource(input.environmentId, {
           root: input.root,
@@ -311,79 +248,85 @@ export function useScientSources(input: {
         }
         return result;
       } catch (cause) {
-        if (isCurrentContext()) setError(message(cause));
+        if (isCurrentContext()) dispatch({ type: "errorArrived", error: message(cause) });
         throw cause;
       } finally {
-        if (isCurrentContext()) setBusy(false);
+        if (isCurrentContext()) dispatch({ type: "busyChanged", busy: false });
       }
     },
     [acceptSourceRecord, input.environmentId, input.root, isCurrentContext, refreshOverview],
   );
 
   useEffect(() => {
-    setOverview(null);
-    setSourceDetails({});
-    setLibrary(null);
-    setZoteroCollections([]);
-    setZoteroScope(DEFAULT_ZOTERO_SCOPE);
-    setPreflight(null);
-    setPreflightAdapter(null);
-    setOperation(null);
-    setZoteroStatus(null);
-    setBusy(false);
-    setImportPreparation(null);
-    setCheckingZotero(false);
-    setZoteroCheckFeedback(null);
-    setCancelling(false);
-    setError(null);
-    const request = ++generation.current;
-    void refreshOverview().catch((cause) => {
-      if (isCurrentContext() && generation.current === request) setError(message(cause));
+    // Invalidate all three lanes synchronously and give the reducer those
+    // exact tokens. Reducer-derived increments can drift from these refs on
+    // the first request after a context change because dispatch commits later.
+    dispatch({
+      type: "contextReset",
+      request: nextRequestToken(),
+      overviewRequest: nextOverviewRequestToken(),
+      zoteroRequest: nextZoteroRequestToken(),
     });
-  }, [isCurrentContext, refreshOverview]);
+    void refreshOverview().catch((cause) => {
+      if (isCurrentContext()) dispatch({ type: "errorArrived", error: message(cause) });
+    });
+  }, [
+    input.environmentId,
+    input.root,
+    nextOverviewRequestToken,
+    nextRequestToken,
+    nextZoteroRequestToken,
+    refreshOverview,
+  ]);
 
   const checkZotero = useCallback(
     async (showRetryFeedback: boolean) => {
-      setCheckingZotero(true);
-      setZoteroCheckFeedback(null);
-      setError(null);
+      dispatch({ type: "checkingZoteroChanged", checking: true });
+      dispatch({ type: "errorCleared" });
       try {
         const status = await readZoteroStatus(input.environmentId);
         if (isCurrentContext()) {
-          setZoteroStatus(status);
-          if (showRetryFeedback && status.state !== "ready") {
-            setZoteroCheckFeedback(
-              status.state === "unreachable"
-                ? "Zotero is still unavailable. Make sure it is open on the computer running this project."
-                : status.state === "access-disabled"
-                  ? "Local access is still turned off in Zotero."
-                  : status.state === "incompatible"
-                    ? "This Zotero version is still not compatible with Scient."
-                    : "Zotero responded, but its local API still could not be verified.",
-            );
-          }
+          dispatch({
+            type: "zoteroStatusArrived",
+            status,
+            feedback:
+              showRetryFeedback && status.state !== "ready"
+                ? status.state === "unreachable"
+                  ? "Zotero is still unavailable. Make sure it is open on the computer running this project."
+                  : status.state === "access-disabled"
+                    ? "Local access is still turned off in Zotero."
+                    : status.state === "incompatible"
+                      ? "This Zotero version is still not compatible with Scient."
+                      : "Zotero responded, but its local API still could not be verified."
+                : null,
+          });
         }
         return status;
       } catch (cause) {
         if (isCurrentContext()) {
-          setError(message(cause));
+          dispatch({ type: "errorArrived", error: message(cause) });
           if (showRetryFeedback) {
-            setZoteroCheckFeedback("Scient could not check Zotero. Please try again.");
+            dispatch({
+              type: "zoteroCheckFeedbackChanged",
+              feedback: "Scient could not check Zotero. Please try again.",
+            });
           }
         }
         return null;
       } finally {
-        if (isCurrentContext()) setCheckingZotero(false);
+        if (isCurrentContext()) dispatch({ type: "checkingZoteroChanged", checking: false });
       }
     },
     [input.environmentId, isCurrentContext],
   );
 
   const searchZotero = useCallback(
-    async (query: string, start = 0, scope: ZoteroImportScope = zoteroScope) => {
-      const request = ++zoteroSearchGeneration.current;
-      setBusy(true);
-      setError(null);
+    async (query: string, start = 0, scope: ZoteroImportScope = state.zoteroScope) => {
+      // The Zotero browse lane is independent of imports and overview loads.
+      const request = nextZoteroRequestToken();
+      dispatch({ type: "zoteroRequestStarted", request });
+      dispatch({ type: "busyChanged", busy: true });
+      dispatch({ type: "errorCleared" });
       try {
         const page = await readZoteroLibrary(input.environmentId, {
           scope,
@@ -391,44 +334,38 @@ export function useScientSources(input: {
           start,
           limit: 50,
         });
-        if (isCurrentContext() && zoteroSearchGeneration.current === request) {
-          setLibrary((current) => {
-            if (start === 0 || !current) return page;
-            const items = [...current.items];
-            const seen = new Set(items.map((item) => item.sourceKey));
-            for (const item of page.items) {
-              if (!seen.has(item.sourceKey)) items.push(item);
-            }
-            return { ...page, items, start: 0 };
-          });
+        if (isCurrentContext() && zoteroRequestRef.current === request) {
+          dispatch({ type: "zoteroLibraryArrived", request, page });
         }
       } catch (cause) {
-        if (isCurrentContext() && zoteroSearchGeneration.current === request) {
-          setError(message(cause));
+        if (isCurrentContext() && zoteroRequestRef.current === request) {
+          dispatch({ type: "errorArrived", error: message(cause) });
         }
       } finally {
-        if (isCurrentContext() && zoteroSearchGeneration.current === request) setBusy(false);
+        if (isCurrentContext() && zoteroRequestRef.current === request) {
+          dispatch({ type: "busyChanged", busy: false });
+        }
       }
     },
-    [input.environmentId, isCurrentContext, zoteroScope],
+    [input.environmentId, isCurrentContext, nextZoteroRequestToken, state.zoteroScope],
   );
 
   const openZoteroLibrary = useCallback(
     async (showRetryFeedback = false) => {
       const status = await checkZotero(showRetryFeedback);
-      if (status?.state === "ready") {
-        if (isCurrentContext()) {
-          setZoteroScope(DEFAULT_ZOTERO_SCOPE);
-          setLibrary(emptyZoteroPage(DEFAULT_ZOTERO_SCOPE));
-        }
+      if (status?.state === "ready" && isCurrentContext()) {
+        dispatch({ type: "zoteroScopeChanged", scope: DEFAULT_ZOTERO_SCOPE });
+        dispatch({ type: "zoteroLibrarySeeded", page: emptyZoteroPage(DEFAULT_ZOTERO_SCOPE) });
         try {
           const [collections] = await Promise.all([
             readZoteroCollections(input.environmentId),
             searchZotero("", 0, DEFAULT_ZOTERO_SCOPE),
           ]);
-          if (isCurrentContext()) setZoteroCollections(collections.collections);
+          if (isCurrentContext()) {
+            dispatch({ type: "zoteroCollectionsArrived", collections: collections.collections });
+          }
         } catch (cause) {
-          if (isCurrentContext()) setError(message(cause));
+          if (isCurrentContext()) dispatch({ type: "errorArrived", error: message(cause) });
         }
       }
       return status;
@@ -438,31 +375,35 @@ export function useScientSources(input: {
 
   const selectZoteroScope = useCallback(
     async (scope: ZoteroImportScope) => {
-      setZoteroScope(scope);
-      setLibrary(emptyZoteroPage(scope));
+      dispatch({ type: "zoteroScopeChanged", scope });
+      dispatch({ type: "zoteroLibrarySeeded", page: emptyZoteroPage(scope) });
       await searchZotero("", 0, scope);
     },
     [searchZotero],
   );
 
   const importZoteroScope = useCallback(async (): Promise<ScientSourcesImportOutcome | null> => {
-    const count = library?.total ?? 0;
+    const count = state.library?.total ?? 0;
     if (count === 0) return null;
-    setImportPreparation({ kind: "zotero", count });
-    setOperation(null);
-    setBusy(true);
-    setError(null);
-    const request = ++generation.current;
+    dispatch({ type: "operationCleared" });
+    const request = nextRequestToken();
+    dispatch({ type: "requestStarted", request });
+    dispatch({ type: "importPreparationChanged", preparation: { kind: "zotero", count } });
+    dispatch({ type: "busyChanged", busy: true });
+    dispatch({ type: "errorCleared" });
     try {
       let next = await beginZoteroScopeImport(input.environmentId, {
         root: input.root,
         operationId: randomUUID(),
-        scope: zoteroScope,
+        scope: state.zoteroScope,
       });
-      if (isCurrentContext() && generation.current === request) {
-        setImportPreparation(null);
-        setOperation(next);
-        setLibrary(null);
+      if (isCurrentRequest(request)) {
+        dispatch({
+          type: "operationArrived",
+          request,
+          operation: next,
+          clearLibrary: true,
+        });
       }
       next = await continueSourceImport({
         environmentId: input.environmentId,
@@ -471,30 +412,35 @@ export function useScientSources(input: {
         advance: (operationId) =>
           advanceSourcesImport(input.environmentId, { root: input.root, operationId }),
         onProgress: (value) => {
-          if (isCurrentContext() && generation.current === request) setOperation(value);
+          if (isCurrentRequest(request)) {
+            dispatch({ type: "operationArrived", request, operation: value });
+          }
         },
       });
-      if (isCurrentContext() && generation.current === request) {
-        setOperation(next);
-        await refreshOverview().catch((cause: unknown) => setError(message(cause)));
+      if (isCurrentRequest(request)) {
+        dispatch({ type: "operationArrived", request, operation: next });
+        await refreshOverview().catch((cause: unknown) =>
+          dispatch({ type: "errorArrived", error: message(cause) }),
+        );
       }
       return importOutcomeFromOperation({ operation: next, revealSingleSource: false });
     } catch (cause) {
-      if (isCurrentContext() && generation.current === request) setError(message(cause));
+      if (isCurrentRequest(request)) dispatch({ type: "errorArrived", error: message(cause) });
       return null;
     } finally {
-      if (isCurrentContext() && generation.current === request) {
-        setImportPreparation(null);
-        setBusy(false);
+      if (isCurrentRequest(request)) {
+        dispatch({ type: "importPreparationChanged", preparation: null });
+        dispatch({ type: "busyChanged", busy: false });
       }
     }
   }, [
     input.environmentId,
     input.root,
-    isCurrentContext,
-    library?.total,
+    isCurrentRequest,
+    nextRequestToken,
     refreshOverview,
-    zoteroScope,
+    state.library?.total,
+    state.zoteroScope,
   ]);
 
   const executeImport = useCallback(
@@ -532,15 +478,14 @@ export function useScientSources(input: {
         }
       }
 
-      const reportProgress = (value: ScientSourceImportOperation) => {
-        if (isCurrentContext() && generation.current === options.request) setOperation(value);
-      };
-      if (isCurrentContext() && generation.current === options.request) {
-        setImportPreparation(null);
-        setOperation(next);
-        setPreflight(null);
-        setPreflightAdapter(null);
-        setLibrary(null);
+      if (isCurrentRequest(options.request)) {
+        dispatch({
+          type: "operationArrived",
+          request: options.request,
+          operation: next,
+          clearLibrary: true,
+          clearPreflight: true,
+        });
       }
       next = await continueSourceImport({
         environmentId: input.environmentId,
@@ -548,12 +493,18 @@ export function useScientSources(input: {
         operation: next,
         advance: (operationId) =>
           advanceSourcesImport(input.environmentId, { root: input.root, operationId }),
-        onProgress: reportProgress,
+        onProgress: (value) => {
+          if (isCurrentRequest(options.request)) {
+            dispatch({ type: "operationArrived", request: options.request, operation: value });
+          }
+        },
       });
 
-      if (isCurrentContext() && generation.current === options.request) {
-        setOperation(next);
-        await refreshOverview().catch((cause: unknown) => setError(message(cause)));
+      if (isCurrentRequest(options.request)) {
+        dispatch({ type: "operationArrived", request: options.request, operation: next });
+        await refreshOverview().catch((cause: unknown) =>
+          dispatch({ type: "errorArrived", error: message(cause) }),
+        );
       }
       return importOutcomeFromOperation({
         operation: next,
@@ -561,7 +512,7 @@ export function useScientSources(input: {
         ...(options.priorCounts ? { priorCounts: options.priorCounts } : {}),
       });
     },
-    [input.environmentId, input.root, isCurrentContext, refreshOverview],
+    [input.environmentId, input.root, isCurrentRequest, refreshOverview],
   );
 
   const importPreflight = useCallback(
@@ -572,16 +523,19 @@ export function useScientSources(input: {
       readonly onStarted?: () => void;
     }): Promise<ScientSourcesImportOutcome | null> => {
       const allItemKeys = options.result.items.map((item) => item.candidate.sourceKey);
-      const counts = preflightImportCounts(options.result);
+      const counts = workflowPreflightImportCounts(options.result);
       const needsDuplicateDecision = options.result.items.some(
         (item) => item.duplicate.kind === "possible-metadata-match",
       );
       if (needsDuplicateDecision) {
-        if (isCurrentContext() && generation.current === options.request) {
+        if (isCurrentRequest(options.request)) {
           if (options.adapter === "local-files") stagedLocalKeys.current = allItemKeys;
-          setImportPreparation(null);
-          setPreflight(options.result);
-          setPreflightAdapter(options.adapter);
+          dispatch({
+            type: "preflightArrived",
+            request: options.request,
+            preflight: options.result,
+            adapter: options.adapter,
+          });
         } else if (options.adapter === "local-files") {
           await discardLocalSourcePdfs(input.environmentId, {
             root: input.root,
@@ -607,10 +561,12 @@ export function useScientSources(input: {
             itemKeys: allItemKeys,
           }).catch(() => undefined);
         }
-        if (isCurrentContext() && generation.current === options.request) {
-          setImportPreparation(null);
-          setLibrary(null);
-          await refreshOverview().catch((cause: unknown) => setError(message(cause)));
+        if (isCurrentRequest(options.request)) {
+          dispatch({ type: "importPreparationChanged", preparation: null });
+          dispatch({ type: "zoteroLibraryClosed" });
+          await refreshOverview().catch((cause: unknown) =>
+            dispatch({ type: "errorArrived", error: message(cause) }),
+          );
         }
         return {
           kind: "already-present",
@@ -632,17 +588,21 @@ export function useScientSources(input: {
         ...(options.onStarted ? { onStarted: options.onStarted } : {}),
       });
     },
-    [executeImport, input.environmentId, input.root, isCurrentContext, refreshOverview],
+    [executeImport, input.environmentId, input.root, isCurrentRequest, refreshOverview],
   );
 
   const previewImport = useCallback(
     async (itemKeys: ReadonlyArray<string>): Promise<ScientSourcesImportOutcome | null> => {
       if (itemKeys.length === 0) return null;
-      setOperation(null);
-      setImportPreparation({ kind: "zotero", count: itemKeys.length });
-      setBusy(true);
-      setError(null);
-      const request = ++generation.current;
+      dispatch({ type: "operationCleared" });
+      const request = nextRequestToken();
+      dispatch({ type: "requestStarted", request });
+      dispatch({
+        type: "importPreparationChanged",
+        preparation: { kind: "zotero", count: itemKeys.length },
+      });
+      dispatch({ type: "busyChanged", busy: true });
+      dispatch({ type: "errorCleared" });
       try {
         const result = await preflightZoteroItems(input.environmentId, {
           root: input.root,
@@ -650,16 +610,16 @@ export function useScientSources(input: {
         });
         return await importPreflight({ adapter: "zotero", result, request });
       } catch (cause) {
-        if (isCurrentContext() && generation.current === request) setError(message(cause));
+        if (isCurrentRequest(request)) dispatch({ type: "errorArrived", error: message(cause) });
         return null;
       } finally {
-        if (isCurrentContext() && generation.current === request) {
-          setImportPreparation(null);
-          setBusy(false);
+        if (isCurrentRequest(request)) {
+          dispatch({ type: "importPreparationChanged", preparation: null });
+          dispatch({ type: "busyChanged", busy: false });
         }
       }
     },
-    [importPreflight, input.environmentId, input.root, isCurrentContext],
+    [importPreflight, input.environmentId, input.root, isCurrentRequest, nextRequestToken],
   );
 
   const uploadLocalFiles = useCallback(
@@ -671,22 +631,28 @@ export function useScientSources(input: {
       );
       const invalidFiles = files.filter((file) => !validFiles.includes(file));
       if (validFiles.length === 0) {
-        setError(
-          invalidFiles.length === 1
-            ? `${invalidFiles.at(0)?.name ?? "The selected file"} is not a PDF.`
-            : "Choose at least one PDF file.",
-        );
+        dispatch({
+          type: "errorArrived",
+          error:
+            invalidFiles.length === 1
+              ? `${invalidFiles.at(0)?.name ?? "The selected file"} is not a PDF.`
+              : "Choose at least one PDF file.",
+        });
         return null;
       }
       const invalidFilesMessage =
         invalidFiles.length > 0
           ? `Skipped ${invalidFiles.length} non-PDF file${invalidFiles.length === 1 ? "" : "s"}.`
           : null;
-      setOperation(null);
-      setImportPreparation({ kind: "local-files", names: validFiles.map((file) => file.name) });
-      setBusy(true);
-      setError(invalidFilesMessage);
-      const request = ++generation.current;
+      dispatch({ type: "operationCleared" });
+      const request = nextRequestToken();
+      dispatch({ type: "requestStarted", request });
+      dispatch({
+        type: "importPreparationChanged",
+        preparation: { kind: "local-files", names: validFiles.map((file) => file.name) },
+        error: invalidFilesMessage,
+      });
+      dispatch({ type: "busyChanged", busy: true });
       const items: ScientSourcesPreflightResult["items"][number][] = [];
       const failedFiles: Array<{ readonly name: string; readonly reason: string }> = [];
       let operationStarted = false;
@@ -702,15 +668,16 @@ export function useScientSources(input: {
             failedFiles.push({ name: file.name, reason: message(cause) });
           }
         }
-        if (failedFiles.length > 0 && isCurrentContext() && generation.current === request) {
-          setError(
-            [
+        if (failedFiles.length > 0 && isCurrentRequest(request)) {
+          dispatch({
+            type: "errorArrived",
+            error: [
               invalidFilesMessage,
               `Skipped ${failedFiles.length} PDF${failedFiles.length === 1 ? "" : "s"} that could not be read: ${failedFiles.map((file) => `${file.name} (${file.reason})`).join(", ")}.`,
             ]
               .filter((value): value is string => value !== null)
               .join(" "),
-          );
+          });
         }
         if (items.length === 0) {
           return null;
@@ -733,16 +700,16 @@ export function useScientSources(input: {
             itemKeys: items.map((item) => item.candidate.sourceKey),
           }).catch(() => undefined);
         }
-        if (isCurrentContext() && generation.current === request) setError(message(cause));
+        if (isCurrentRequest(request)) dispatch({ type: "errorArrived", error: message(cause) });
         return null;
       } finally {
-        if (isCurrentContext() && generation.current === request) {
-          setImportPreparation(null);
-          setBusy(false);
+        if (isCurrentRequest(request)) {
+          dispatch({ type: "importPreparationChanged", preparation: null });
+          dispatch({ type: "busyChanged", busy: false });
         }
       }
     },
-    [importPreflight, input.environmentId, input.root, isCurrentContext],
+    [importPreflight, input.environmentId, input.root, isCurrentRequest, nextRequestToken],
   );
 
   const runImport = useCallback(
@@ -750,49 +717,52 @@ export function useScientSources(input: {
       itemKeys: ReadonlyArray<string>,
       possibleMetadataMatchOverrides: ReadonlyArray<string>,
     ): Promise<ScientSourcesImportOutcome | null> => {
-      if (!preflight || !preflightAdapter || itemKeys.length === 0) return null;
-      setBusy(true);
-      setCancelling(false);
-      setError(null);
-      const request = ++generation.current;
+      if (!state.preflight || !state.preflightAdapter || itemKeys.length === 0) return null;
+      dispatch({ type: "busyChanged", busy: true });
+      dispatch({ type: "cancellingChanged", cancelling: false });
+      dispatch({ type: "errorCleared" });
+      const request = nextRequestToken();
+      dispatch({ type: "requestStarted", request });
       try {
         const selectedKeys = new Set(itemKeys);
-        const reviewedCounts = reviewedImportCounts(preflight, selectedKeys);
+        const reviewedCounts = workflowReviewedImportCounts(state.preflight, selectedKeys);
         return await executeImport({
-          adapter: preflightAdapter,
+          adapter: state.preflightAdapter,
           itemKeys,
           possibleMetadataMatchOverrides,
-          ...(preflightAdapter === "local-files"
+          ...(state.preflightAdapter === "local-files"
             ? {
-                allLocalItemKeys: preflight.items.map((item) => item.candidate.sourceKey),
+                allLocalItemKeys: state.preflight.items.map((item) => item.candidate.sourceKey),
               }
             : {}),
           request,
-          revealSingleSource: preflight.items.length === 1,
+          revealSingleSource: state.preflight.items.length === 1,
           priorCounts: reviewedCounts,
         });
       } catch (cause) {
-        if (isCurrentContext() && generation.current === request) setError(message(cause));
+        if (isCurrentRequest(request)) dispatch({ type: "errorArrived", error: message(cause) });
         return null;
       } finally {
-        if (isCurrentContext() && generation.current === request) setBusy(false);
+        if (isCurrentRequest(request)) dispatch({ type: "busyChanged", busy: false });
       }
     },
-    [executeImport, isCurrentContext, preflight, preflightAdapter],
+    [executeImport, isCurrentRequest, nextRequestToken, state.preflight, state.preflightAdapter],
   );
 
   const resumeImport = useCallback(async () => {
+    const operation = state.operation;
     if (
       !operation ||
       operation.state !== "running" ||
       !operation.items.some((item) => item.state === "pending") ||
-      busy
+      state.busy
     )
       return;
-    setBusy(true);
-    setCancelling(false);
-    setError(null);
-    const request = ++generation.current;
+    dispatch({ type: "busyChanged", busy: true });
+    dispatch({ type: "cancellingChanged", cancelling: false });
+    dispatch({ type: "errorCleared" });
+    const request = nextRequestToken();
+    dispatch({ type: "requestStarted", request });
     try {
       const next = await continueSourceImport({
         environmentId: input.environmentId,
@@ -801,107 +771,143 @@ export function useScientSources(input: {
         advance: (operationId) =>
           advanceSourcesImport(input.environmentId, { root: input.root, operationId }),
         onProgress: (value) => {
-          if (isCurrentContext() && generation.current === request) setOperation(value);
+          if (isCurrentRequest(request)) {
+            dispatch({ type: "operationArrived", request, operation: value });
+          }
         },
       });
-      if (isCurrentContext() && generation.current === request) {
-        setOperation(next);
+      if (isCurrentRequest(request)) {
+        dispatch({ type: "operationArrived", request, operation: next });
         await refreshOverview();
       }
     } catch (cause) {
-      if (isCurrentContext() && generation.current === request) setError(message(cause));
+      if (isCurrentRequest(request)) dispatch({ type: "errorArrived", error: message(cause) });
     } finally {
-      if (isCurrentContext() && generation.current === request) setBusy(false);
+      if (isCurrentRequest(request)) dispatch({ type: "busyChanged", busy: false });
     }
-  }, [busy, input.environmentId, input.root, isCurrentContext, operation, refreshOverview]);
+  }, [
+    input.environmentId,
+    input.root,
+    isCurrentRequest,
+    nextRequestToken,
+    refreshOverview,
+    state.busy,
+    state.operation,
+  ]);
 
   useEffect(() => {
+    const operation = state.operation;
     if (
       !operation ||
       operation.state !== "running" ||
       !operation.items.some((item) => item.state === "pending") ||
-      busy ||
-      cancelling
+      state.busy ||
+      state.cancelling
     )
       return;
     void resumeImport();
-  }, [busy, cancelling, operation, resumeImport]);
+  }, [resumeImport, state.busy, state.cancelling, state.operation]);
 
   const cancelImport = useCallback(async () => {
-    if (!operation || operation.state !== "running" || cancelling) return;
+    const operation = state.operation;
+    if (!operation || operation.state !== "running" || state.cancelling) return;
     stopSourceImportContinuation({
       environmentId: input.environmentId,
       projectId: operation.projectId,
       operationId: operation.operationId,
     });
-    generation.current += 1;
-    setCancelling(true);
-    setBusy(true);
-    setError(null);
+    // Supersede every in-flight import request, including the durable
+    // continuation whose progress updates would otherwise keep arriving.
+    const request = nextRequestToken();
+    dispatch({ type: "requestStarted", request });
+    dispatch({ type: "cancellingChanged", cancelling: true });
+    dispatch({ type: "busyChanged", busy: true });
+    dispatch({ type: "errorCleared" });
     try {
       const cancelled = await cancelSourcesImport(input.environmentId, {
         root: input.root,
         operationId: operation.operationId,
       });
       if (isCurrentContext()) {
-        setOperation(cancelled);
-        setLibrary(null);
+        dispatch({ type: "operationArrived", request, operation: cancelled });
+        dispatch({ type: "zoteroLibraryClosed" });
         await refreshOverview();
       }
     } catch (cause) {
-      if (isCurrentContext()) setError(message(cause));
+      if (isCurrentContext()) dispatch({ type: "errorArrived", error: message(cause) });
     } finally {
       if (isCurrentContext()) {
-        setBusy(false);
-        setCancelling(false);
+        dispatch({ type: "busyChanged", busy: false });
+        dispatch({ type: "cancellingChanged", cancelling: false });
       }
     }
-  }, [cancelling, input.environmentId, input.root, isCurrentContext, operation, refreshOverview]);
+  }, [
+    input.environmentId,
+    input.root,
+    isCurrentContext,
+    nextRequestToken,
+    refreshOverview,
+    state.cancelling,
+    state.operation,
+  ]);
 
   const retryFailedImport = useCallback(async () => {
+    const operation = state.operation;
     if (
       !operation ||
       (operation.state !== "running" && operation.state !== "completed") ||
-      busy ||
-      cancelling
+      state.busy ||
+      state.cancelling
     )
       return;
     const itemKeys = operation.items
       .filter((item) => item.state === "failed")
       .map((item) => item.itemKey);
     if (itemKeys.length === 0) return;
-    setBusy(true);
-    setError(null);
+    dispatch({ type: "busyChanged", busy: true });
+    dispatch({ type: "errorCleared" });
+    const request = nextRequestToken();
+    dispatch({ type: "requestStarted", request });
     try {
       const retried = await retrySourcesImport(input.environmentId, {
         root: input.root,
         operationId: operation.operationId,
         itemKeys,
       });
-      if (isCurrentContext()) setOperation(retried);
+      if (isCurrentRequest(request)) {
+        dispatch({ type: "operationArrived", request, operation: retried });
+      }
     } catch (cause) {
-      if (isCurrentContext()) setError(message(cause));
+      if (isCurrentRequest(request)) dispatch({ type: "errorArrived", error: message(cause) });
     } finally {
-      if (isCurrentContext()) setBusy(false);
+      if (isCurrentRequest(request)) dispatch({ type: "busyChanged", busy: false });
     }
-  }, [busy, cancelling, input.environmentId, input.root, isCurrentContext, operation]);
+  }, [
+    input.environmentId,
+    input.root,
+    isCurrentRequest,
+    nextRequestToken,
+    state.busy,
+    state.cancelling,
+    state.operation,
+  ]);
 
   return {
-    busy,
-    checkingZotero,
-    cancelling,
-    error,
-    overview,
-    sourceDetails,
-    zoteroStatus,
-    zoteroCollections,
-    zoteroScope,
-    zoteroCheckFeedback,
-    library,
-    preflight,
-    preflightAdapter,
-    operation,
-    importPreparation,
+    busy: state.busy,
+    checkingZotero: state.checkingZotero,
+    cancelling: state.cancelling,
+    error: state.error,
+    overview: state.overview,
+    sourceDetails: state.sourceDetails,
+    zoteroStatus: state.zoteroStatus,
+    zoteroCollections: state.zoteroCollections,
+    zoteroScope: state.zoteroScope,
+    zoteroCheckFeedback: state.zoteroCheckFeedback,
+    library: state.library,
+    preflight: state.preflight,
+    preflightAdapter: state.preflightAdapter,
+    operation: state.operation,
+    importPreparation: state.importPreparation,
     openZoteroLibrary,
     uploadLocalFiles,
     searchZotero,
@@ -920,22 +926,21 @@ export function useScientSources(input: {
     saveSourceNote,
     approveSource,
     removeSource,
-    clearError: () => setError(null),
-    closeZoteroStatus: () => setZoteroStatus(null),
-    closeLibrary: () => setLibrary(null),
-    clearOperationSummary: () => setOperation(null),
+    clearError: () => dispatch({ type: "errorCleared" }),
+    clearOperationSummary: () => dispatch({ type: "importReviewDismissed" }),
+    closeZoteroStatus: () => dispatch({ type: "zoteroStatusDismissed" }),
+    closeLibrary: () => dispatch({ type: "zoteroLibraryClosed" }),
     resetImport: () => {
-      const current = preflight;
-      const adapter = preflightAdapter;
-      setPreflight(null);
-      setPreflightAdapter(null);
+      const current = state.preflight;
+      const adapter = state.preflightAdapter;
+      dispatch({ type: "importReviewDismissed" });
       if (adapter === "local-files" && current) {
         stagedLocalKeys.current = [];
         void discardLocalSourcePdfs(input.environmentId, {
           root: input.root,
           itemKeys: current.items.map((item) => item.candidate.sourceKey),
         }).catch((cause) => {
-          if (isCurrentContext()) setError(message(cause));
+          if (isCurrentContext()) dispatch({ type: "errorArrived", error: message(cause) });
         });
       }
     },
