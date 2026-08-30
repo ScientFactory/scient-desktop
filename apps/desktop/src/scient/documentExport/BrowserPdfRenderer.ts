@@ -19,12 +19,16 @@ const READABLE_FALLBACK_MARGIN_INCHES = 1 / 6;
 // Apply it only to repeated, explicitly paginated HTML without an authored
 // paper size; ordinary flowing documents and @page-sized documents stay at 1.
 const SCREEN_AUTHORED_PAGE_SCALE = 0.75;
+// Keep headings with what follows, but not captions. A trailing caption's
+// break-after can propagate to its figure/table and bind the whole container
+// to unrelated following content. The container's break-inside keeps its
+// caption with it, regardless of whether the caption is above or below.
 const PAGINATION_CSS = `
   :where(table, thead, tfoot, tr, figure, blockquote, pre, details, .box, .card, [data-scient-pdf-keep-together]) {
     break-inside: avoid-page;
     page-break-inside: avoid;
   }
-  :where(h1, h2, h3, h4, h5, h6, caption, figcaption) {
+  :where(h1, h2, h3, h4, h5, h6) {
     break-after: avoid-page;
     page-break-after: avoid;
   }
