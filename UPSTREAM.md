@@ -22,11 +22,11 @@ revision remains literal ancestry of owned `main`; it is not merely a reviewed
 or observed tip.
 
 The current verified T3 ancestry is recorded in
-[`docs/internals/2026-08-29-upstream-sync-660cddd3bc.md`](docs/internals/2026-08-29-upstream-sync-660cddd3bc.md)
+[`docs/internals/2026-08-31-upstream-sync-7880a6e58.md`](docs/internals/2026-08-31-upstream-sync-7880a6e58.md)
 and in `upstream-state.json`. The latest refresh merged the exact official
-checkpoint `660cddd3bc9801e089afcabba11c62f41aeac5c3` into the refresh
+checkpoint `7880a6e583f8a04db2eaeef2366ce9c81c3f7bec` into the refresh
 branch, preserving the exact range after the previously integrated tip
-`c8aba2587d56edbf3b7872987719a12b42031f48`. The earlier Claude compaction
+`660cddd3bc9801e089afcabba11c62f41aeac5c3`. The earlier Claude compaction
 feature remains literal ancestry but is still reversed by its dedicated,
 documented deferral commit. Later observed T3 tips never move `integrationBase`
 by themselves; it advances only after the exact ancestry and verification gate
@@ -322,13 +322,25 @@ retry and pull-request refresh reliability, mobile theme and Expo maintenance,
 and composer spacing. Fifty-one textual conflicts preserve Scient identity,
 state and migration compatibility, provider lifecycle, account redaction,
 scientific and browser seams, analytics and trust policy, and manual stable
-release authority. T3's generic PDF, ZIP, and file-attachment machinery is
-retained behind an explicit capability, command, and UI compatibility gate
-until every enabled client, including mobile and persisted replay, supports the
-contract. The complete gate found and corrected two semantic auto-merges in
+release authority. At that checkpoint, T3's generic file-attachment machinery
+was held behind a compatibility gate. The owner subsequently clarified that
+this was not an approved product restriction; the following alignment removes
+it with tested consumer handling rather than waiting for identical mobile UI.
+The complete gate found and corrected two semantic auto-merges in
 desktop packaging and theme persistence, reinforcing the maintained alignment
 protocol's requirement to audit overlapping files even when Git reports no
 textual conflict.
+
+The 2026-08-31 sync through `7880a6e58` receives ten official commits covering
+nested Markdown images, video attachments, Grok model switching, preview/PiP
+update efficiency, snooze choices, mobile runtime and tool presentation, and
+dead-code cleanup. Ten textual conflicts retain Scient's rooted assets,
+image actions, BiDi, Skills, and existing security and publication boundaries.
+Desktop/web generic files are accepted without an extension allowlist; mobile
+gets a named file-opening fallback without blocking on a generic picker.
+Integrated inspection caught and fixed draft-thread inline image resolution
+and authored centering. The receipt records the exact remaining queue/editable
+fork limitations and manual/platform verification boundaries.
 
 The earlier 2026-08-12 record through `849bac894` remains preserved as the
 partial checkpoint merged by PR #69. It covers the first 11 commits of this
