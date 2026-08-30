@@ -890,44 +890,62 @@ describe("LatexBuildService", () => {
     }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
   );
 
-  it.live("publishes the produced PDF and keeps warnings from a successful compile", () =>
-    Effect.gen(function* () {
-      const harness = yield* makeHarness({
-        compiles: [{ transcript: WARNING_TRANSCRIPT, exitCode: 0, pdf: minimalPdf("build-a") }],
-      });
-      yield* Effect.gen(function* () {
-        const service = yield* LatexBuildService;
-        const store = yield* GeneratedDocumentStore;
-        const queued = yield* service.requestBuild(harness.buildInput);
-        expect(queued.rootRelativePath).toBe("main.tex");
-        expect(queued.logicalDocumentKey.startsWith("latex:")).toBe(true);
-        expect(queued.toolchain?.kind).toBe("latexmk");
-
-        const finished = yield* awaitTerminal(service, harness.buildInput);
-        expect(finished.failureSummary).toBeNull();
-        expect(finished.state).toBe("succeeded");
-        expect(finished.pendingRerun).toBe(false);
-        expect(finished.descriptor).toMatchObject({
-          _tag: "generated-pdf",
-          bindingStatus: "current",
-          fileName: "main.pdf",
+  it.live(
+    "publishes the produced PDF with distinct warnings from a successful multipass compile",
+    () =>
+      Effect.gen(function* () {
+        const harness = yield* makeHarness({
+          compiles: [
+            {
+              transcript: [
+                WARNING_TRANSCRIPT,
+                "warning: main.tex:92: Underfull A",
+                "warning: main.tex:116: Underfull B",
+                "note: rerunning TeX",
+                WARNING_TRANSCRIPT,
+                "warning: main.tex:92: Underfull A",
+                "warning: main.tex:116: Underfull B",
+              ].join("\n"),
+              exitCode: 0,
+              pdf: minimalPdf("build-a"),
+            },
+          ],
         });
-        expect(finished.diagnostics).toEqual([
-          {
-            severity: "warning",
-            file: null,
-            line: 12,
-            message: "Reference `fig:1' undefined on input line 12.",
-          },
-        ]);
+        yield* Effect.gen(function* () {
+          const service = yield* LatexBuildService;
+          const store = yield* GeneratedDocumentStore;
+          const queued = yield* service.requestBuild(harness.buildInput);
+          expect(queued.rootRelativePath).toBe("main.tex");
+          expect(queued.logicalDocumentKey.startsWith("latex:")).toBe(true);
+          expect(queued.toolchain?.kind).toBe("latexmk");
 
-        const bound = yield* store.getDescriptor(
-          LogicalDocumentKey.make(finished.logicalDocumentKey),
-        );
-        expect(bound).toMatchObject({ bindingStatus: "current", bindingGeneration: 1 });
-        yield* awaitBuildCandidateCleanup(harness.latexDir);
-      }).pipe(Effect.provide(harness.serviceLayer));
-    }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+          const finished = yield* awaitTerminal(service, harness.buildInput);
+          expect(finished.failureSummary).toBeNull();
+          expect(finished.state).toBe("succeeded");
+          expect(finished.pendingRerun).toBe(false);
+          expect(finished.descriptor).toMatchObject({
+            _tag: "generated-pdf",
+            bindingStatus: "current",
+            fileName: "main.pdf",
+          });
+          expect(finished.diagnostics).toEqual([
+            {
+              severity: "warning",
+              file: null,
+              line: 12,
+              message: "Reference `fig:1' undefined on input line 12.",
+            },
+            { severity: "warning", file: "main.tex", line: 92, message: "Underfull A" },
+            { severity: "warning", file: "main.tex", line: 116, message: "Underfull B" },
+          ]);
+
+          const bound = yield* store.getDescriptor(
+            LogicalDocumentKey.make(finished.logicalDocumentKey),
+          );
+          expect(bound).toMatchObject({ bindingStatus: "current", bindingGeneration: 1 });
+          yield* awaitBuildCandidateCleanup(harness.latexDir);
+        }).pipe(Effect.provide(harness.serviceLayer));
+      }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
   );
 
   it.live("compiles a subdirectory root from its own directory and rebases its diagnostics", () =>

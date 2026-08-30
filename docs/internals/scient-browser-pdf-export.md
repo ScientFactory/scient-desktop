@@ -28,6 +28,10 @@ destination picker.
   orphans. Source-authored rules retain precedence. A keep-together element taller than a complete
   page must still fragment rather than overflow or disappear. The stylesheet is removed after every
   successful, failed, or navigation-raced export.
+- Captions stay with their figure or table through that container's keep-together
+  rule. They do not receive the heading-style keep-with-next rule: on a bottom
+  caption, that rule can propagate to the container and unnecessarily push it
+  onto the next page with an unrelated following block.
 - Background graphics, CSS page size, tagged PDF, and document outline generation are enabled;
   headers and footers are disabled. A user-initiated Browser export gets a deterministic
   one-sixth-inch fallback margin (16 CSS px at Chromium's 96 px/in reference ratio) in place of
@@ -134,6 +138,16 @@ Substantive implementation stays in Scient-owned modules. The Browser action reu
 chrome's existing trailing-action slot; it does not add PDF-specific state or props to that component.
 Inherited Browser, server, desktop IPC, and right-panel files contain only the narrow mounts recorded
 in `UPSTREAM.md` and enforced by the browser-export seam audit.
+
+## Pagination regression check
+
+`pnpm --dir apps/desktop test:pdf-pagination` uses the real Electron Chromium
+renderer and the server's existing PDF.js parser. It checks top and bottom figure
+and table captions, authored page breaks, and a table taller than one page under
+both the manual-export and controlled-build margin policies. It requires the
+locked Electron runtime and a graphical session (use `xvfb-run` on Linux).
+This complements the renderer unit tests; it does not establish cross-platform
+release acceptance or replace visual inspection of authored documents.
 
 ## Explicitly deferred
 
