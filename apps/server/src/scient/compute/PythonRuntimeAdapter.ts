@@ -331,9 +331,17 @@ export function discoverCandidates(
   projectRoot: string | null,
   configuredExecutable: string | null,
   platform: string,
+  managedRuntime: { readonly executable: string; readonly selected: boolean } | null = null,
 ): ReadonlyArray<{ readonly executable: string; readonly source: ComputeRuntimeSource }> {
   const candidates: Array<{ executable: string; source: ComputeRuntimeSource }> = [];
   const isWindows = platform.startsWith("win");
+
+  // Selecting Scient-managed Python is an explicit user choice. Keep the
+  // existing configured, project, and PATH runtimes available below it, but
+  // do not let an older saved executable silently become the session default.
+  if (managedRuntime?.selected === true) {
+    candidates.push({ executable: managedRuntime.executable, source: "managed" });
+  }
 
   if (configuredExecutable !== null) {
     candidates.push({ executable: configuredExecutable, source: "configured" });
@@ -354,6 +362,12 @@ export function discoverCandidates(
   } else {
     candidates.push({ executable: "python3", source: "path" });
     candidates.push({ executable: "python", source: "path" });
+  }
+
+  // Keep an installed but unselected managed runtime visible as an option
+  // without changing today's project/PATH precedence.
+  if (managedRuntime !== null && !managedRuntime.selected) {
+    candidates.push({ executable: managedRuntime.executable, source: "managed" });
   }
 
   // Deduplicate by executable, preserving precedence order.  A configured
@@ -394,6 +408,14 @@ function runtimeError(
 export function makePythonRuntimeAdapter(
   spawnProbe: (executable: string) => Effect.Effect<string, ComputeRuntimeError>,
   bridgePath: string,
+  options: {
+    readonly managedRuntime?:
+      | (() => Effect.Effect<
+          { readonly executable: string; readonly selected: boolean } | null,
+          ComputeRuntimeError
+        >)
+      | undefined;
+  } = {},
 ): ComputeLanguageAdapter {
   const probeCache = new Map<
     string,
@@ -439,10 +461,15 @@ export function makePythonRuntimeAdapter(
     Effect.gen(function* () {
       if (request.refresh === true) probeCache.clear();
       const platform = yield* HostProcessPlatform;
+      const managedRuntime =
+        options.managedRuntime === undefined
+          ? null
+          : yield* options.managedRuntime().pipe(Effect.orElseSucceed(() => null));
       const candidates = discoverCandidates(
         request.projectRoot,
         request.configuredExecutable,
         platform,
+        managedRuntime,
       );
 
       const profiles: ComputeRuntimeProfile[] = [];
@@ -457,19 +484,26 @@ export function makePythonRuntimeAdapter(
           ? Option.some(buildProfile(result.probe, candidate.source))
           : Option.none();
         if (Option.isSome(profile)) profiles.push(profile.value);
-        // An interpreter the user named is answered with its own result rather
-        // than quietly replaced by whatever else happens to be installed.
-        if (candidate.source === "configured" && Option.isNone(profile)) {
-          return [
-            {
-              languageId: PYTHON_LANGUAGE_ID,
-              source: "configured",
-              executable: candidate.executable,
-              languageVersion: "unknown",
-              architecture: null,
-              displayName: `Python (configured, not found)`,
-            },
-          ];
+        // The explicitly selected runtime keeps its own failure instead of
+        // silently falling back. A stale configured alternative must not
+        // displace a healthy managed runtime the user selected after it.
+        if (
+          Option.isNone(profile) &&
+          (candidate.source === "configured" ||
+            (candidate.source === "managed" && managedRuntime?.selected === true))
+        ) {
+          const unavailable: ComputeRuntimeProfile = {
+            languageId: PYTHON_LANGUAGE_ID,
+            source: candidate.source,
+            executable: candidate.executable,
+            languageVersion: "unknown",
+            architecture: null,
+            displayName: `Python (${candidate.source}, not found)`,
+          };
+          if (candidate.source === "managed" || managedRuntime?.selected !== true) {
+            return [unavailable];
+          }
+          profiles.push(unavailable);
         }
       }
 

@@ -267,6 +267,30 @@ export function createComputeEnvironmentAtoms<R, E>(
         key: ({ environmentId, input }) => JSON.stringify([environmentId, input.cwd]),
       },
     }),
+    managedRuntime: createEnvironmentRpcQueryAtomFamily(runtime, {
+      label: "environment-data:compute:managed-runtime",
+      tag: WS_METHODS.computeManagedRuntimeStatus,
+      staleTimeMs: 1_000,
+      idleTtlMs: 60_000,
+    }),
+    manageRuntime: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:compute:manage-runtime",
+      tag: WS_METHODS.computeManageRuntime,
+      scheduler: runtimeScheduler,
+      concurrency: {
+        mode: "serial",
+        key: ({ environmentId, input }) => JSON.stringify([environmentId, input.languageId]),
+      },
+    }),
+    cancelManagedRuntime: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:compute:cancel-managed-runtime",
+      tag: WS_METHODS.computeCancelManagedRuntime,
+      scheduler: runtimeScheduler,
+      concurrency: {
+        mode: "singleFlight",
+        key: ({ environmentId, input }) => JSON.stringify([environmentId, input.languageId]),
+      },
+    }),
     sessions: createEnvironmentRpcQueryAtomFamily(runtime, {
       label: "environment-data:compute:sessions",
       tag: WS_METHODS.computeListSessions,

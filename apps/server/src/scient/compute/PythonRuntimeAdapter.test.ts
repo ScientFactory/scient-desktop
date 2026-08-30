@@ -231,6 +231,26 @@ describe("python candidate discovery", () => {
     expect(candidates[0]).toEqual({ executable: "/custom/python", source: "configured" });
   });
 
+  it("places explicitly selected managed Python before an existing configured runtime", () => {
+    const candidates = discoverCandidates("/nonexistent", "/custom/python", "darwin", {
+      executable: "/managed/python",
+      selected: true,
+    });
+    expect(candidates.slice(0, 2)).toEqual([
+      { executable: "/managed/python", source: "managed" },
+      { executable: "/custom/python", source: "configured" },
+    ]);
+  });
+
+  it("keeps an installed but unselected managed runtime behind existing runtimes", () => {
+    const candidates = discoverCandidates("/nonexistent", "/custom/python", "darwin", {
+      executable: "/managed/python",
+      selected: false,
+    });
+    expect(candidates[0]).toEqual({ executable: "/custom/python", source: "configured" });
+    expect(candidates.at(-1)).toEqual({ executable: "/managed/python", source: "managed" });
+  });
+
   it("places project .venv before PATH candidates", () => {
     // This test uses a real directory that may or may not have .venv.
     // The important assertion is ordering when .venv exists.
@@ -358,6 +378,49 @@ describe("python runtime adapter", () => {
       expect(profiles).toHaveLength(1);
       expect(profiles[0]!.source).toBe("configured");
       expect(profiles[0]!.languageVersion).toBe("unknown");
+    }),
+  );
+
+  it.effect("does not let a stale configured path replace selected managed Python", () =>
+    Effect.gen(function* () {
+      const adapter = makePythonRuntimeAdapter(
+        (executable) =>
+          executable === "/managed/python"
+            ? Effect.succeed(JSON.stringify({ ...parseProbeOutput(validProbeOutput), executable }))
+            : fakeFailingProbe(executable),
+        "/app/bridge.py",
+        {
+          managedRuntime: () => Effect.succeed({ executable: "/managed/python", selected: true }),
+        },
+      );
+      const profiles = yield* adapter.discover({
+        projectRoot: null,
+        configuredExecutable: "/removed/python",
+      });
+      expect(profiles[0]).toMatchObject({ source: "managed", executable: "/managed/python" });
+      expect(profiles[1]).toMatchObject({
+        source: "configured",
+        executable: "/removed/python",
+        languageVersion: "unknown",
+      });
+    }),
+  );
+
+  it.effect("reports a missing selected managed runtime without choosing another Python", () =>
+    Effect.gen(function* () {
+      const adapter = makePythonRuntimeAdapter(fakeFailingProbe, "/app/bridge.py", {
+        managedRuntime: () => Effect.succeed({ executable: "/managed/python", selected: true }),
+      });
+      const profiles = yield* adapter.discover({
+        projectRoot: null,
+        configuredExecutable: "/custom/python",
+      });
+      expect(profiles).toHaveLength(1);
+      expect(profiles[0]).toMatchObject({
+        source: "managed",
+        executable: "/managed/python",
+        languageVersion: "unknown",
+      });
     }),
   );
 

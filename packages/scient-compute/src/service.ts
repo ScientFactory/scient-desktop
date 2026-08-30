@@ -40,6 +40,7 @@ export class ComputeOperationError extends Schema.TaggedErrorClass<ComputeOperat
       "subscribe",
       "inspect",
       "verify",
+      "manage",
       "variables",
     ]),
     reason: Schema.Literals([
@@ -85,6 +86,8 @@ export const ComputeStartSessionInput = Schema.Struct({
   label: Label,
   workingDirectory: ShortText,
   configuredExecutable: Schema.NullOr(ShortText),
+  /** An explicit per-session choice, distinct from the environment's default preference. */
+  requestedExecutable: Schema.optional(ShortText),
 });
 export type ComputeStartSessionInput = typeof ComputeStartSessionInput.Type;
 

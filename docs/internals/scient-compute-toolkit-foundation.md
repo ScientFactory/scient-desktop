@@ -1,9 +1,9 @@
 # Scientific Compute Toolkits and Managed Python Foundation
 
-Status: Local implementation candidate; owner review pending
+Status: Installable local vertical-slice candidate; owner and cross-platform review pending
 Owner: Yaacov
 Created: 2026-08-30
-Purpose: Records the smallest shared foundation for reviewed scientific Toolkits and a later Scient-managed Python environment without prematurely selecting a distribution, package resolver, onboarding flow, or agent authority model.
+Purpose: Records the reviewed Toolkit boundary and the first optional Scient-managed Python lifecycle, including what is shared, what remains user-owned, and what still requires qualification.
 Doc type: Implementation note subordinate to `scient-compute-session-foundation.md`
 
 ## Product goal
@@ -22,9 +22,10 @@ who already have a working environment. The product direction is:
 - each additional language or proprietary runtime keeps its own acquisition
   and licensing decisions instead of inheriting Python's mechanism.
 
-This note describes a foundation, not a claim that managed Python installation
-is ready for users. The implementation and this document must be refined when
-qualification evidence disproves a proposed mechanism.
+This note describes an implementation candidate, not a release claim. Every
+decision remains evidence-driven: implementation and qualification may refine
+this document when a mechanism proves unreliable, unnecessarily complex, or
+wrong for a supported platform.
 
 ## Why Toolkits are the product unit
 
@@ -41,15 +42,16 @@ downloaded. Those are separate boundaries:
    requirements.
 2. Runtime inspection assesses those requirements against one exact verified
    interpreter.
-3. A separately reviewed managed-environment lock will eventually select exact
-   artifacts, versions, hashes, and supported platforms.
-4. A server-owned operation will perform an explicitly authorized setup and
-   return progress and a durable receipt.
+3. The reviewed managed-environment lock selects exact package versions and
+   artifacts; a separate checked manifest pins the installer artifact per
+   supported target.
+4. A server-owned operation performs explicitly requested setup and returns
+   bounded progress plus a durable activation record.
 
 Keeping those boundaries separate allows the same Toolkit concept to describe
 an existing `.venv` without pretending Scient installed or owns it.
 
-## Candidate implemented in this worktree
+## Installable vertical slice implemented in this worktree
 
 ### Bounded runtime observations
 
@@ -91,175 +93,242 @@ because the new bounded fields default to empty during decoding.
 
 ### Transactional managed-environment boundary
 
-The candidate adds a Python-specific manager for app-owned environment
-generations under:
+The candidate adds one Python-specific manager per Scient server environment.
+Its app-owned generations live under:
 
 ```text
-<computeDir>/environments/python/<sha256(projectId)>/
+<computeDir>/environments/python/
 ```
 
-The project identifier is hashed so it does not become a filesystem name. A
-fresh setup provisions directly into a new final generation directory. This is
-intentional: Python virtual environments may embed absolute paths and should
-not be built in a temporary location and renamed afterward.
+The environment is shared by projects connected to that server because the
+reviewed default Toolkit is immutable and identical for each project. A fresh
+setup provisions directly into a new final generation directory. This is
+intentional: Python virtual environments embed absolute paths and must not be
+built in a temporary location and renamed afterward.
 
 Activation follows this sequence:
 
 1. Serialize managed-environment mutations in the server process.
 2. Create one fresh, app-owned generation directory.
-3. Ask a future provisioner to populate that exact final path.
+3. Ask the concrete provisioner to populate that exact final path.
 4. Resolve and contain the returned executable canonically, rejecting lexical
    traversal and symlink escapes.
 5. Verify the exact executable and requested Toolkit set.
 6. Atomically replace the small active-state record.
-7. Retain one previous generation and clean only older app-owned generations.
+7. Name one previous generation for rollback and leave any displaced
+   generations in place while this server process may still have sessions
+   using them.
 
 Nothing discovers the candidate before step 6. Provision, verification,
 cancellation, or activation failure removes only the unpublished candidate and
 leaves the previous state untouched. Removal first atomically renames the exact
-app-owned project environment to a sibling tombstone; deletion failure renames
-it back. A tampered state record cannot redirect inspection or cleanup outside
-the managed root.
+app-owned environment to a sibling tombstone; deletion failure renames it back.
+Removal is refused while a live Python session exists. Removal admission shares
+the session-start lock, and new sessions are refused while removal is active.
+Startup reconciliation,
+after prior-process sessions are gone, removes abandoned app-owned generations
+and removal tombstones. A tampered state record cannot redirect inspection or
+cleanup outside the managed root.
 
 `repair` deliberately uses the same fresh-generation transaction as install.
-It never modifies the active environment in place.
+It never modifies the active environment in place. The runtime record stores a
+relative virtual-environment launcher. Canonical paths are checked for
+containment, but Scient invokes the lexical launcher: invoking its resolved
+base-Python symlink directly would bypass the virtual environment and its
+locked packages.
 
-## What this candidate intentionally does not do
+### Concrete distribution and lock
 
-The following would create product or supply-chain commitments that are not
-yet qualified, so they are not hidden inside this foundation:
+The first slice pins:
 
-- select or download a Python distribution;
-- select `uv`, `venv`, Conda, or another resolver/environment mechanism;
-- define an exact cross-platform package lock or artifact checksum manifest;
-- install into a system Python, Homebrew Python, project `.venv`, or any other
-  user-owned environment;
-- change runtime discovery order or silently prefer Scient-managed Python;
-- expose install, repair, update, remove, or progress RPCs;
-- add Settings, onboarding, or first-run installation UI;
-- grant an agent the authority to install software;
-- treat a Skill as installation authority; or
-- generalize Python's acquisition lifecycle into a mandatory mechanism for R,
-  Julia, MATLAB, or proprietary tools.
+- CPython `3.12.13`, installed and owned inside the fresh generation;
+- `uv 0.11.16` as the installer and resolver;
+- a universal `uv.lock` plus its exact `pyproject.toml` checksum; and
+- the direct scientific set `ipykernel 7.3.0`, `jupyter-client 8.10.0`,
+  `matplotlib 3.11.1`, `numpy 2.5.2`, `pandas 3.0.5`, and `scipy 1.18.1`.
 
-Consequently there is no new user-facing installation claim in this candidate.
-Existing compute behavior remains bring-your-own-runtime until the concrete
-provisioner and product flow pass their own gates.
+Scient does not run a remote shell installer. It downloads the pinned uv
+release asset over HTTPS from an explicit host allowlist, checks exact byte
+length and SHA-256, extracts it with entry and expanded-size limits, and checks
+the reported uv version. Target manifests currently cover macOS arm64/x64,
+Linux glibc and musl arm64/x64, and Windows arm64/x64. Listing a target is an
+implementation claim, not cross-platform release evidence; every target still
+needs packaged-app qualification.
 
-## Decisions required before the first installable slice
+Provisioning strips inherited uv, pip, Poetry, pyenv, Conda, and virtualenv
+configuration; uses no project or user config; disables source builds and
+unreviewed package sources; installs into generation-owned Python, environment,
+project, and temporary cache paths; and deletes the cache after a successful or
+failed sync. The copied lock and project files remain with the generation as an
+audit receipt.
 
-### Distribution and environment mechanism
+### Product and service surfaces
 
-Select the smallest supported Python base and environment mechanism using
-evidence from macOS, Windows, Linux, packaged-app behavior, update behavior,
-license terms, artifact size, and failure recovery. The decision must answer:
+The generic compute service exposes an optional managed-runtime capability for
+a language binding. It does not contain a Python branch. Python supplies the
+concrete manager and controller; languages without acquisition support retain
+their existing discovery and execution behavior.
 
-- where the base interpreter comes from;
-- whether each project receives its own environment or a reviewed immutable
-  environment can be shared safely;
-- how architecture and operating-system targets map to artifacts;
-- how exact package versions and transitive dependencies are locked;
-- how downloads and artifacts are authenticated;
-- how setup resumes or cleans up after process or machine interruption; and
-- how a managed environment is updated without invalidating a running session.
+Settings and the no-ready-runtime Compute panel use the same status and action
+contract. Setup is one explicit click, automatically enables Python, and
+selects the verified managed generation for new sessions. Users can switch to
+existing runtimes without reinstalling. Update appears only when the pinned
+Python, provisioner, or Toolkit revision changes; repair, cancellation, and
+private removal remain explicit. Missing managed assets or an unsupported
+platform disable only the assisted path, never existing Python compute.
 
-Do not implement a network downloader before this decision. Download success
-is not compatibility or supply-chain qualification.
+## Intentional boundaries
+
+This slice does not:
+
+- install into or repair a system Python, Homebrew Python, project `.venv`,
+  Conda environment, pyenv installation, or any other user-owned runtime;
+- accept arbitrary package names, indexes, URLs, commands, or target paths;
+- install, update, or switch environments without an explicit user action;
+- add a setup questionnaire or required installation to onboarding;
+- grant agents software-installation authority or treat a Skill as authority;
+- impose Python's acquisition mechanism on R, Julia, MATLAB, or proprietary
+  tools; or
+- claim Windows, Linux, Intel macOS, remote-host, proxy, or packaged-app
+  support before those exact paths are qualified.
+
+Runtime precedence remains explicit: a selected managed generation is
+strongest; otherwise a configured executable leads, followed by project
+`.venv` and PATH runtimes in their existing order. An installed but unselected
+managed generation remains visible last as an option. An explicit per-session
+choice is separate from that default and must resolve to the chosen interpreter,
+not whichever runtime leads discovery. A failed probe of a selected managed
+runtime is reported; an old configured path cannot override a subsequently
+selected healthy managed runtime.
+
+Removing the managed installation currently also removes its saved selection.
+An existing runtime can therefore become the default again after removal. The
+new readiness labels make its scientific-package gaps visible, but whether to
+retain a missing managed selection is still a product decision for the next
+pass; this candidate does not silently change that policy.
+
+## Accepted decisions and evidence-sensitive edges
 
 ### Ownership scope
 
-The current activation manager is project-keyed because compute sessions and
-their provenance are project-centered. Before wiring it to product behavior,
-measure whether independent project environments are worth their disk and
-setup cost. A globally shared immutable generation may be simpler for the
-default Toolkit, while project-specific environments may be necessary for
-reproducibility or conflicting packages. If the evidence favors a different
-ownership scope, change the manager before exposing it rather than preserving
-the current shape for its own sake.
+One shared immutable default environment per server is simpler and avoids
+repeating a large identical setup per project. Exact project reproducibility
+continues to belong to a project-owned environment selected through the
+existing runtime path. If future Toolkits need incompatible dependencies,
+that is evidence for multiple reviewed managed profiles or project-specific
+environments; it is not a reason to expose arbitrary mutation of this default.
 
-In every design, Scient may delete only app-owned generations. Removing a
-Toolkit or managed environment must never remove a system runtime or project
-`.venv`.
+Scient may delete only paths beneath its managed root. The lifecycle never
+owns a discovered external runtime.
 
-### Updates and compatibility
+### Updates and live sessions
 
-Managed Python update state is separate from package readiness and from the
-currently selected execution runtime. An update must:
+Update and repair provision and verify a fresh generation before activation.
+New sessions see the selected active generation; existing sessions retain the
+executable they started with. Displaced generations are not deleted while the
+current server may still host such sessions. Startup reconciliation is their
+safe collection point. Explicit removal is blocked while a live Python session
+exists.
 
-- provision and qualify a new immutable generation;
-- leave running sessions on the generation they started with;
-- activate the new generation only after exact smoke and Toolkit verification;
-- keep a bounded rollback generation; and
-- expose a truthful pending, ready, failed, or rollback state without blocking
-  existing system runtimes.
+The file surface compares the live session executable with the first verified
+runtime selected for a new session. A mismatch offers an explicit switch,
+without blocking a deliberately chosen live runtime or silently replacing its
+interpreter: confirmation stops the old namespace, retains its transcript, and
+the next run starts from the selected runtime. The same surface can force an
+exact project-scoped runtime inspection with probe cache bypass, while its
+ordinary setup/readiness labels route to Scientific Computing for full
+environment management.
 
-Provider-runtime update infrastructure can inform this lifecycle, but should
-not be reused mechanically: Python environments embed paths and have package
-resolution semantics that provider CLI archives do not.
+Base compute readiness is not Toolkit readiness. The file status and Settings
+surface the existing exact-runtime data-and-figures assessment, without
+disabling ordinary Python or trying to infer arbitrary dependencies from source
+imports. Missing packages remain an explicit managed-setup or user-owned
+environment choice.
+
+The active record names one previous generation for rollback. Retaining older
+displaced generations until restart is a deliberate reliability tradeoff:
+updates and repairs are rare, and temporary disk retention is safer than
+breaking an active scientific namespace. If long-lived servers and frequent
+profile changes make this unbounded in practice, add explicit session leases
+rather than guessing that an old generation is unused.
+
+Provider-runtime helpers are reused only for target detection, bounded HTTPS
+download, checksum verification, and safe archive materialization. Python's
+generation assembly, lock, virtual-environment launcher, verification, and
+session lifetime remain compute-owned because their semantics differ from a
+provider CLI archive.
 
 ### User and agent authority
 
-The same setup operation may later be requested from Settings, first use, or
-an agent. Request sources do not change ownership:
+Settings and first use are authorized user surfaces. The server resolves the
+fixed Toolkit, target, artifacts, and paths; the client never submits a package
+or URL. A future agent request must use this same fixed operation envelope and
+must have separately accepted user-visible authority. Arbitrary package
+installation is a different and much broader capability and must not be
+smuggled into the reviewed Toolkit path.
 
-- the server resolves the Toolkit and platform lock;
-- the server owns download, progress, cancellation, verification, activation,
-  rollback, and the receipt;
-- the user can see and stop the operation;
-- an agent receives only an explicit, scoped capability and cannot choose an
-  arbitrary package name, index, URL, command, or target environment; and
-- a Skill may explain when to request a Toolkit, but cannot grant authority or
-  bypass server policy.
+## Implementation sequence and current state
 
-Arbitrary package installation requested by an agent is a different and much
-broader product capability. It should not be smuggled into the reviewed
-Toolkit path.
+Completed in this candidate:
 
-## Suggested implementation sequence
+1. Bounded package observations and exact-runtime Toolkit assessment.
+2. Shared ownership decision, pinned uv target manifest, pinned Python, and
+   exact universal lock.
+3. Transactional provision, cancellation, verification, activation, repair,
+   update detection, selection, private removal, and startup reconciliation.
+4. Optional generic lifecycle RPCs and client state without a Python branch in
+   the shared coordinator.
+5. Compact Settings and first-use Compute surfaces preserving existing-runtime
+   setup.
+6. Exact managed-executable discovery and the unchanged real Jupyter bridge.
 
-1. Review this foundation's contract names, first Toolkit contents, and
-   project-versus-shared ownership assumption.
-2. Qualify and document the distribution, resolver, exact lock, artifact
-   checksums, licenses, platform matrix, and packaged-app behavior.
-3. Implement a concrete provisioner behind the existing final-path interface,
-   including progress, cancellation, bounded resource use, exact verification,
-   crash reconciliation, and fixture cleanup.
-4. Add lifecycle RPCs and preserve separate status for system discovery,
-   managed setup, Toolkit readiness, active sessions, and updates.
-5. Add a compact Settings surface that shows existing runtimes first and
-   offers the Scient-managed path only when useful. Keep install and first use
-   to the minimum explicit clicks; never require onboarding setup.
-6. Select the managed runtime through the existing exact-executable compute
-   boundary, then run the current real-kernel and provenance suite unchanged.
-7. Add first-use assistance and a short onboarding pointer only after Settings
-   is accepted.
-8. Add agent requests only after the operation-envelope authority and receipt
-   model is accepted.
+Deliberately deferred:
 
-The notebook contract proof, notebook authoring, additional renderers, and a
-second-language adapter can continue as independent compute tracks according
-to the accepted ADR gates. Managed Python should improve first-use reliability;
-it must not become a prerequisite that blocks those tracks or replaces users'
-existing runtimes.
+1. Any onboarding pointer, until the ordinary Settings and first-use flow is
+   manually accepted.
+2. Agent requests, until the operation-envelope authority and receipt model is
+   separately accepted.
+3. Additional managed Toolkits or languages, until real product demand proves
+   their dependency and ownership model.
 
-## Qualification required for promotion
+Notebook authoring, additional renderers, and second-language work remain
+independent tracks under the accepted compute ADR. Managed Python improves
+first-use reliability; it is not a prerequisite that blocks those tracks or a
+replacement for users' existing runtimes.
 
-The current candidate requires:
+## Qualification evidence and remaining promotion gates
 
-- schema compatibility tests for older inspection payloads;
-- exact-runtime Toolkit assessment tests;
-- tests proving package metadata is observed without imports or unbounded
-  enumeration;
-- activation tests for success, repair, previous-generation retention, and
-  serialized mutation;
-- failure tests for provision, verification, cancellation, state commit, and
-  removal rollback;
-- containment tests for traversal, canonical path aliases, executable symlink
-  escape, tampered state, and cleanup scope;
-- compute, contract, server, and web typechecks and focused suites; and
-- final diff, formatting, seam, and dependency-boundary review.
+Current local evidence includes:
 
-A later installable slice additionally requires real package resolution,
-offline/interrupted setup, cross-platform, update, rollback, packaged-app,
-manual UX, and full current-main CI evidence. This local candidate alone does
-not satisfy those release gates.
+- schema and typechecking across compute, contracts, client runtime, server,
+  and web boundaries;
+- exact-runtime Toolkit and bounded package-observation tests;
+- manager success, repair-equivalent fresh generations, displaced-generation
+  retention, serialization, failure, cancellation, commit, removal rollback,
+  tamper, path-containment, and reconciliation tests;
+- service tests proving live sessions block removal;
+- UI typechecking and focused presentation tests; and
+- an opt-in macOS arm64 product test that downloaded the pinned uv asset,
+  installed CPython `3.12.13`, synchronized the exact lock, started the real
+  bridge, ran pandas/SciPy/Matplotlib through a real kernel, retained rich
+  output, blocked unsafe removal, and removed the private environment. The
+  observed clean setup-to-removal test completed in about 45 seconds on the
+  qualification host.
+
+Before release promotion, still require:
+
+- review of artifact provenance, package/distribution licenses, notices, and
+  the update process that regenerates every checked hash;
+- exact packaged-app staging and installation evidence;
+- macOS Intel, Windows arm64/x64, Linux glibc/musl arm64/x64, remote-host,
+  proxy/custom-certificate, offline, low-disk, cancellation, interrupted
+  process, and restart qualification;
+- manual Settings and first-use UX acceptance, including update, repair,
+  switching, failure copy, and accessibility;
+- full current-main CI plus final formatting, seam, dependency-boundary, and
+  diff review; and
+- a release decision that records any unsupported target instead of silently
+  advertising it.
+
+This worktree is ready for local owner testing only after those local checks
+finish. It is not, by itself, evidence for cross-platform release readiness.

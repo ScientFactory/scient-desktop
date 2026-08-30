@@ -14,6 +14,15 @@ import {
   resolvePythonRuntimeToolbarState,
 } from "./pythonComputeSurfaceModel";
 
+const pythonRuntime = {
+  languageId: ComputeLanguageId.make("python"),
+  source: "configured",
+  executable: "/opt/python/bin/python",
+  languageVersion: "3.12.13",
+  architecture: "arm64",
+  displayName: "Python 3.12.13 (configured)",
+} as const;
+
 describe("python compute surface model", () => {
   it("normalizes persisted modes and split ratios", () => {
     expect(normalizePythonComputeView("results")).toBe("results");
@@ -48,6 +57,8 @@ describe("python compute surface model", () => {
         liveSession: null,
         runtimeInspectionPending: true,
         readyPythonAvailable: false,
+        preferredPythonExecutable: null,
+        scientificPackagesMissing: false,
       }),
     ).toEqual({ kind: "status", label: "Checking Python…", canRun: false });
     expect(
@@ -55,6 +66,8 @@ describe("python compute surface model", () => {
         liveSession: null,
         runtimeInspectionPending: false,
         readyPythonAvailable: true,
+        preferredPythonExecutable: pythonRuntime.executable,
+        scientificPackagesMissing: false,
       }),
     ).toEqual({ kind: "status", label: "Python ready", canRun: true });
     expect(
@@ -62,6 +75,8 @@ describe("python compute surface model", () => {
         liveSession: null,
         runtimeInspectionPending: false,
         readyPythonAvailable: false,
+        preferredPythonExecutable: null,
+        scientificPackagesMissing: false,
       }),
     ).toEqual({ kind: "setup", label: "Set up Python", canRun: false });
   });
@@ -73,10 +88,13 @@ describe("python compute surface model", () => {
           activity: "busy",
           label: "Python",
           languageId: ComputeLanguageId.make("python"),
+          runtime: pythonRuntime,
           status: "ready",
         },
         runtimeInspectionPending: false,
         readyPythonAvailable: false,
+        preferredPythonExecutable: null,
+        scientificPackagesMissing: false,
       }),
     ).toEqual({ kind: "status", label: "Python running", canRun: true });
     expect(
@@ -85,10 +103,13 @@ describe("python compute surface model", () => {
           activity: "idle",
           label: "R",
           languageId: ComputeLanguageId.make("r"),
+          runtime: null,
           status: "ready",
         },
         runtimeInspectionPending: false,
         readyPythonAvailable: true,
+        preferredPythonExecutable: pythonRuntime.executable,
+        scientificPackagesMissing: false,
       }),
     ).toEqual({ kind: "status", label: "R active", canRun: false });
     expect(
@@ -97,11 +118,73 @@ describe("python compute surface model", () => {
           activity: "idle",
           label: "Python",
           languageId: ComputeLanguageId.make("python"),
+          runtime: pythonRuntime,
           status: "starting",
         },
         runtimeInspectionPending: false,
         readyPythonAvailable: true,
+        preferredPythonExecutable: pythonRuntime.executable,
+        scientificPackagesMissing: false,
       }),
     ).toEqual({ kind: "status", label: "Python starting", canRun: false });
+  });
+
+  it("offers an explicit switch without blocking a deliberately chosen live runtime", () => {
+    expect(
+      resolvePythonRuntimeToolbarState({
+        liveSession: {
+          activity: "idle",
+          label: "Python",
+          languageId: ComputeLanguageId.make("python"),
+          runtime: pythonRuntime,
+          status: "ready",
+        },
+        runtimeInspectionPending: false,
+        readyPythonAvailable: true,
+        preferredPythonExecutable: "/scient/managed/python",
+        scientificPackagesMissing: true,
+      }),
+    ).toEqual({ kind: "switch", label: "Switch Python", canRun: true });
+  });
+
+  it("distinguishes scientific packages from the ability to run ordinary Python", () => {
+    expect(
+      resolvePythonRuntimeToolbarState({
+        liveSession: null,
+        runtimeInspectionPending: false,
+        readyPythonAvailable: true,
+        preferredPythonExecutable: pythonRuntime.executable,
+        scientificPackagesMissing: true,
+      }),
+    ).toEqual({ kind: "status", label: "Python packages missing", canRun: true });
+  });
+
+  it("does not offer a switch from stale inspection data or while work is running", () => {
+    const liveSession = {
+      activity: "idle",
+      label: "Python",
+      languageId: ComputeLanguageId.make("python"),
+      runtime: pythonRuntime,
+      status: "ready",
+    } as const;
+    const input = {
+      liveSession,
+      runtimeInspectionPending: true,
+      readyPythonAvailable: true,
+      preferredPythonExecutable: "/scient/managed/python",
+      scientificPackagesMissing: false,
+    };
+    expect(resolvePythonRuntimeToolbarState(input)).toEqual({
+      kind: "status",
+      label: "Python ready",
+      canRun: true,
+    });
+    expect(
+      resolvePythonRuntimeToolbarState({
+        ...input,
+        runtimeInspectionPending: false,
+        liveSession: { ...liveSession, activity: "busy" },
+      }),
+    ).toEqual({ kind: "status", label: "Python running", canRun: true });
   });
 });

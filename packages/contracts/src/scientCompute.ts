@@ -5,6 +5,8 @@ import {
   ComputeExecutionSource,
   computeOutputByteLength,
   ComputeLanguageId,
+  ComputeManagedRuntimeAction,
+  ComputeManagedRuntimeStatus,
   ComputeOperationError,
   ComputeOutput,
   ComputeProjectId,
@@ -58,6 +60,9 @@ export const ComputeLanguageRuntimeInspection = Schema.Struct({
   descriptor: ComputeLanguageDescriptor,
   enabled: Schema.Boolean,
   configuredExecutable: Schema.NullOr(ComputeExecutable),
+  managedRuntime: Schema.NullOr(ComputeManagedRuntimeStatus).pipe(
+    Schema.withDecodingDefaultKey(Effect.succeed(null)),
+  ),
   toolkits: Schema.Array(ComputeToolkitDescriptor)
     .check(Schema.isMaxLength(64))
     .pipe(Schema.withDecodingDefaultKey(Effect.succeed([]))),
@@ -78,6 +83,7 @@ export class ComputeGatewayError extends Schema.TaggedErrorClass<ComputeGatewayE
     operation: Schema.Literals([
       "inspect",
       "verify",
+      "manage",
       "start",
       "list",
       "get",
@@ -116,6 +122,17 @@ export const ComputeVerifyRuntimeInput = Schema.Struct({
   executable: ComputeExecutable,
 });
 export type ComputeVerifyRuntimeInput = typeof ComputeVerifyRuntimeInput.Type;
+
+export const ComputeManagedRuntimeInput = Schema.Struct({
+  languageId: ComputeLanguageId,
+  action: ComputeManagedRuntimeAction,
+});
+export type ComputeManagedRuntimeInput = typeof ComputeManagedRuntimeInput.Type;
+
+export const ComputeManagedRuntimeStatusInput = Schema.Struct({
+  languageId: ComputeLanguageId,
+});
+export type ComputeManagedRuntimeStatusInput = typeof ComputeManagedRuntimeStatusInput.Type;
 
 export const ComputeStartProjectSessionInput = Schema.Struct({
   cwd: ComputeCwd,
@@ -183,6 +200,8 @@ export {
   ComputeExecutionRecord,
   ComputeExecutionOutputs,
   ComputeLanguageId,
+  ComputeManagedRuntimeAction,
+  ComputeManagedRuntimeStatus,
   ComputeOperationError,
   ComputeOutput,
   ComputeProjectId,

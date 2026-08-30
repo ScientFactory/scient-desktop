@@ -1,5 +1,10 @@
 import type { EditorSelection, FileOptions, SelectedLineRange } from "@pierre/diffs/react";
-import type { ComputeExecutionId, EnvironmentId, ScopedThreadRef } from "@t3tools/contracts";
+import type {
+  ComputeExecutionId,
+  ComputeSessionId,
+  EnvironmentId,
+  ScopedThreadRef,
+} from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
 import { Columns2, Play, Rows2 } from "lucide-react";
 import { useCallback, useMemo, useRef, useState } from "react";
@@ -37,6 +42,9 @@ import {
 } from "./pythonComputeSurfaceModel";
 
 type FilePostRender = NonNullable<FileOptions<unknown>["onPostRender"]>;
+
+const SEGMENT_BUTTON_CLASS =
+  "flex h-5.5 cursor-pointer items-center justify-center rounded-[5px] text-[11px] leading-[18px] text-muted-foreground outline-none transition-colors hover:text-foreground focus-visible:ring-1 focus-visible:ring-ring focus-visible:ring-inset";
 
 interface ScientPythonComputeSurfaceProps {
   readonly environmentId: EnvironmentId;
@@ -108,7 +116,10 @@ export function ScientPythonComputeSurface(props: ScientPythonComputeSurfaceProp
     readonly end: number;
   } | null>(null);
   const [editorSelection, setEditorSelection] = useState<EditorSelection | null>(null);
-  const [focusExecutionId, setFocusExecutionId] = useState<ComputeExecutionId | null>(null);
+  const [focusExecution, setFocusExecution] = useState<{
+    readonly sessionId: ComputeSessionId;
+    readonly executionId: ComputeExecutionId;
+  } | null>(null);
   const actionsRef = useRef<PythonFileComputeActionsHandle>(null);
 
   const activeCellRange = useMemo<SelectedLineRange | null>(() => {
@@ -143,14 +154,14 @@ export function ScientPythonComputeSurface(props: ScientPythonComputeSurfaceProp
     onCommit: commitSplit,
   });
   const handleExecutionSubmitted = useCallback(
-    (executionId: ComputeExecutionId) => {
-      setFocusExecutionId(executionId);
+    (sessionId: ComputeSessionId, executionId: ComputeExecutionId) => {
+      setFocusExecution({ sessionId, executionId });
       selectView("split");
     },
     [selectView],
   );
   const handleFocusConsumed = useCallback((executionId: string) => {
-    setFocusExecutionId((current) => (current === executionId ? null : current));
+    setFocusExecution((current) => (current?.executionId === executionId ? null : current));
   }, []);
 
   const showEditor = view !== "results";
@@ -169,7 +180,8 @@ export function ScientPythonComputeSurface(props: ScientPythonComputeSurfaceProp
               key={candidate}
               type="button"
               className={cn(
-                "cursor-pointer rounded-[5px] px-2 py-0.5 text-[11px] leading-[18px] text-muted-foreground hover:text-foreground",
+                SEGMENT_BUTTON_CLASS,
+                "px-2",
                 view === candidate && "bg-accent text-accent-foreground",
               )}
               aria-pressed={view === candidate}
@@ -189,28 +201,30 @@ export function ScientPythonComputeSurface(props: ScientPythonComputeSurfaceProp
               <button
                 type="button"
                 className={cn(
-                  "flex size-5.5 cursor-pointer items-center justify-center rounded-[5px] text-muted-foreground transition-colors hover:text-foreground",
+                  SEGMENT_BUTTON_CLASS,
+                  "w-5.5",
                   splitLayout === "side-by-side" && "bg-accent text-accent-foreground",
                 )}
                 aria-pressed={splitLayout === "side-by-side"}
                 aria-label="Arrange code and results side by side"
                 onClick={() => selectSplitLayout("side-by-side")}
               >
-                <Columns2 className="size-3.5" />
+                <Columns2 className="size-3" />
               </button>
             </ScientTooltip>
             <ScientTooltip content="Stacked">
               <button
                 type="button"
                 className={cn(
-                  "flex size-5.5 cursor-pointer items-center justify-center rounded-[5px] text-muted-foreground transition-colors hover:text-foreground",
+                  SEGMENT_BUTTON_CLASS,
+                  "w-5.5",
                   splitLayout === "stacked" && "bg-accent text-accent-foreground",
                 )}
                 aria-pressed={splitLayout === "stacked"}
                 aria-label="Stack code above results"
                 onClick={() => selectSplitLayout("stacked")}
               >
-                <Rows2 className="size-3.5" />
+                <Rows2 className="size-3" />
               </button>
             </ScientTooltip>
           </div>
@@ -311,7 +325,8 @@ export function ScientPythonComputeSurface(props: ScientPythonComputeSurfaceProp
               sourcePath={props.relativePath}
               sourceRevision={props.revision}
               sourcePending={props.sourcePending}
-              focusExecutionId={focusExecutionId}
+              focusSessionId={focusExecution?.sessionId ?? null}
+              focusExecutionId={focusExecution?.executionId ?? null}
               onFocusConsumed={handleFocusConsumed}
               embedded
             />

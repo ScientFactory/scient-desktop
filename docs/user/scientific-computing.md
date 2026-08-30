@@ -6,9 +6,16 @@ contracts and settings are language-neutral so later languages can remain indepe
 
 ## Set up a runtime
 
+The quickest path is **Set up Scientific Python** in the Compute panel or **Set up** under
+**Settings → Scientific Computing**. Scient downloads a verified installer and creates one private,
+shared Python environment for that Scient server. It includes a reviewed, locked data-and-figures
+Toolkit with NumPy, pandas, SciPy, Matplotlib, Jupyter Client, and ipykernel. Setup also enables
+Python and selects that exact environment for new sessions.
+
+The managed environment is optional. To use Python you already maintain instead:
+
 1. Open **Settings → Scientific Computing** for the server environment you want to use.
-2. Enable Python. This enables discovery only: Scient does not download Python, install packages,
-   create an environment, accept a license, or change the selected interpreter.
+2. Enable Python.
 3. Leave the executable on **Automatic**, or enter an interpreter path when you want to pin one.
 4. Choose **Refresh** to inspect existing runtimes. A ready Python needs CPython 3.10 or newer,
    `jupyter_client` 8.6 or newer, and `ipykernel` 6.29 or newer. Install missing requirements with
@@ -22,6 +29,25 @@ runtime discovery succeed.
 The settings inventory is environment-wide. When a project is open, its Compute panel also checks
 that project's `.venv`. A configured interpreter that is missing or unusable remains visible as a
 problem; Scient does not silently replace it with another interpreter.
+
+**Use** and **Use existing** change only which runtime new sessions prefer. They do not copy or
+modify packages. **Repair** builds and verifies a fresh managed generation before activating it;
+an existing generation remains available if setup fails. **Update** appears only when Scient ships
+a newer reviewed Python or Toolkit revision. **Remove** deletes only Scient's private environment
+and is refused while a live Python session may still be using it. Project `.venv`, configured,
+system, Homebrew, Conda, pyenv, and other user-owned installations are never repaired or removed.
+
+The Python status in a file header opens **Scientific Computing** whether it says **Set up Python**
+or **Python ready**. Its adjacent refresh action rechecks that exact project and bypasses the short
+runtime-probe cache, so an installation or environment change can be recognized without reloading
+the app. Scient never swaps the interpreter beneath a live session. If the selected Python changes
+while a session is open, the header offers **Switch Python**; confirmation stops the old namespace,
+keeps its run history, and lets the next run start with the newly selected environment.
+
+An existing Python can run ordinary code without every scientific library. If the reviewed
+data-and-figures packages are missing, the header says **Python packages missing** and Settings
+names them. Run remains available for code that does not need those packages; Scient does not
+silently install them into a user-owned environment.
 
 ## Run code and view results
 
@@ -131,7 +157,8 @@ package.
 Scientific code runs with the filesystem and network authority of the selected Scient server
 environment. It is not sandboxed. Only run code you trust, especially when the server is remote.
 
-Python is disabled by default. R, Julia, MATLAB stateful sessions, package management, notebook
-editing, rich executable HTML/widgets, rich variable drill-down/table browsing, and portable
-compute-result promotion remain future work. MATLAB's existing isolated **Run file** workflow is
-separate from a stateful compute session.
+Python is disabled by default until a user enables it or explicitly starts managed setup. R, Julia,
+MATLAB stateful sessions, arbitrary package installation, notebook editing, rich executable
+HTML/widgets, rich variable drill-down/table browsing, and portable compute-result promotion remain
+future work. MATLAB's existing isolated **Run file** workflow is separate from a stateful compute
+session.

@@ -2472,6 +2472,22 @@ const makeWsRpcLayer = (
           observeRpcEffect(WS_METHODS.computeVerifyRuntime, computeGateway.verifyRuntime(input), {
             "rpc.aggregate": "compute",
           }),
+        [WS_METHODS.computeManagedRuntimeStatus]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.computeManagedRuntimeStatus,
+            computeGateway.managedRuntimeStatus(input),
+            { "rpc.aggregate": "compute" },
+          ),
+        [WS_METHODS.computeManageRuntime]: (input) =>
+          observeRpcEffect(WS_METHODS.computeManageRuntime, computeGateway.manageRuntime(input), {
+            "rpc.aggregate": "compute",
+          }),
+        [WS_METHODS.computeCancelManagedRuntime]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.computeCancelManagedRuntime,
+            computeGateway.cancelManagedRuntime(input),
+            { "rpc.aggregate": "compute" },
+          ),
         [WS_METHODS.computeStartSession]: (input) =>
           observeRpcEffect(WS_METHODS.computeStartSession, computeGateway.startSession(input), {
             "rpc.aggregate": "compute",

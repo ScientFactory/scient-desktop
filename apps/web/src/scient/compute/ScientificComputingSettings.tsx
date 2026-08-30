@@ -1,9 +1,13 @@
-import { RefreshCwIcon } from "lucide-react";
-import { useEffect, useState } from "react";
+import { Download, LoaderCircle, RefreshCwIcon, Trash2, Wrench } from "lucide-react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import type {
   ComputeLanguageRuntimeInspection,
+  ComputeManagedRuntimeAction,
+  ComputeManagedRuntimeStatus,
+  EnvironmentId,
   ScientificComputingLanguageSettings,
 } from "@t3tools/contracts";
+import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 
 import { usePrimarySettings, useUpdatePrimarySettings } from "~/hooks/useSettings";
 import { usePrimaryEnvironment } from "~/state/environments";
@@ -11,6 +15,15 @@ import { useEnvironmentQuery } from "~/state/query";
 import { computeEnvironment } from "~/state/compute";
 import { useAtomCommand } from "~/state/use-atom-command";
 import { Button } from "~/components/ui/button";
+import {
+  AlertDialog,
+  AlertDialogClose,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogPopup,
+  AlertDialogTitle,
+} from "~/components/ui/alert-dialog";
 import { Input } from "~/components/ui/input";
 import { Switch } from "~/components/ui/switch";
 import {
@@ -31,6 +44,238 @@ function readinessLabel(language: ComputeLanguageRuntimeInspection, enabled: boo
     : "Runtime requirements are missing";
 }
 
+export function managedRuntimeOperationLabel(status: ComputeManagedRuntimeStatus): string | null {
+  const operation = status.operation;
+  if (operation === null) return null;
+  switch (operation.phase) {
+    case "downloading": {
+      if (operation.downloadedBytes === null || operation.totalBytes === null) {
+        return "Downloading the verified installer…";
+      }
+      const downloaded = Math.max(0.1, operation.downloadedBytes / (1024 * 1024)).toFixed(1);
+      const total = Math.max(0.1, operation.totalBytes / (1024 * 1024)).toFixed(1);
+      return `Downloading the verified installer · ${downloaded} of ${total} MB`;
+    }
+    case "installing-python":
+      return "Installing private Python…";
+    case "installing-packages":
+      return "Installing the locked scientific packages…";
+    case "verifying":
+      return "Verifying Python, Jupyter, data, and figures…";
+    case "removing":
+      return "Removing Scient-managed Python…";
+  }
+}
+
+export function ManagedRuntimeCard(props: {
+  readonly environmentId: EnvironmentId | null;
+  readonly language: ComputeLanguageRuntimeInspection;
+  readonly enabled: boolean;
+  readonly ensureEnabled: () => void;
+  readonly onLifecycleChanged: () => void;
+}) {
+  const manageRuntime = useAtomCommand(computeEnvironment.manageRuntime, { reportFailure: false });
+  const cancelRuntime = useAtomCommand(computeEnvironment.cancelManagedRuntime, {
+    reportFailure: false,
+  });
+  const [localStatus, setLocalStatus] = useState<ComputeManagedRuntimeStatus | null>(null);
+  const [localFailure, setLocalFailure] = useState<string | null>(null);
+  const [removeConfirmation, setRemoveConfirmation] = useState(false);
+  const observedOperationRef = useRef<string | null>(null);
+  const languageId = props.language.descriptor.languageId;
+  const statusAtom = props.environmentId
+    ? computeEnvironment.managedRuntime({
+        environmentId: props.environmentId,
+        input: { languageId },
+      })
+    : null;
+  const queried = useEnvironmentQuery(statusAtom);
+  const status = localStatus ?? queried.data ?? props.language.managedRuntime;
+
+  useEffect(() => {
+    if (queried.data !== undefined) setLocalStatus(queried.data);
+  }, [queried.data]);
+
+  useEffect(() => {
+    setLocalStatus(null);
+    setLocalFailure(null);
+    setRemoveConfirmation(false);
+    observedOperationRef.current = null;
+  }, [props.environmentId, languageId]);
+
+  useEffect(() => {
+    const operationId = status?.operation?.operationId ?? null;
+    if (operationId === null) {
+      if (observedOperationRef.current !== null) {
+        observedOperationRef.current = null;
+        props.onLifecycleChanged();
+      }
+      return;
+    }
+    observedOperationRef.current = operationId;
+    const timer = window.setInterval(() => queried.refresh(), 1_000);
+    return () => window.clearInterval(timer);
+  }, [props.onLifecycleChanged, queried.refresh, status?.operation?.operationId]);
+
+  if (status === null) return null;
+
+  const runAction = async (action: ComputeManagedRuntimeAction) => {
+    if (!props.environmentId) return;
+    if (action === "install" || action === "use-managed") props.ensureEnabled();
+    setLocalFailure(null);
+    const result = await manageRuntime({
+      environmentId: props.environmentId,
+      input: { languageId, action },
+    });
+    if (result._tag === "Failure") {
+      const failure = squashAtomCommandFailure(result);
+      setLocalFailure(
+        failure instanceof Error ? failure.message : "Scient could not manage Scientific Python.",
+      );
+      return;
+    }
+    setLocalStatus(result.value);
+    queried.refresh();
+    if (result.value.operation === null) props.onLifecycleChanged();
+  };
+
+  const cancel = async () => {
+    if (!props.environmentId) return;
+    const result = await cancelRuntime({
+      environmentId: props.environmentId,
+      input: { languageId },
+    });
+    if (result._tag === "Failure") {
+      const failure = squashAtomCommandFailure(result);
+      setLocalFailure(
+        failure instanceof Error ? failure.message : "Scient could not cancel Python setup.",
+      );
+    } else {
+      setLocalStatus(result.value);
+    }
+    queried.refresh();
+  };
+
+  const working = status.operation !== null;
+  const existingRuntimeReady = props.language.runtimes.some(
+    ({ profile, verification }) =>
+      profile.source !== "managed" && verification.readiness === "ready",
+  );
+  const progress = managedRuntimeOperationLabel(status);
+  const failure = localFailure ?? status.failureMessage;
+
+  return (
+    <>
+      <div className="mt-3 rounded-lg border border-border/60 bg-muted/20 p-3">
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+          <div className="min-w-0">
+            <div className="flex items-center gap-2 text-sm font-medium">
+              Scientific Python
+              {status.installed ? (
+                <span className="text-[11px] font-normal text-success">
+                  {status.selection === "managed" && props.enabled ? "In use" : "Ready"}
+                </span>
+              ) : null}
+            </div>
+            <p className="mt-1 max-w-2xl text-xs leading-relaxed text-muted-foreground">
+              A private Python environment with NumPy, pandas, SciPy, Matplotlib, and Jupyter. Your
+              system Python and project environments stay untouched.
+            </p>
+            {progress ? (
+              <p className="mt-2 flex items-center gap-1.5 text-xs text-muted-foreground">
+                <LoaderCircle className="size-3 animate-spin" /> {progress}
+              </p>
+            ) : null}
+            {failure ? <p className="mt-2 text-xs text-destructive">{failure}</p> : null}
+          </div>
+          <div className="flex shrink-0 flex-wrap items-center gap-1.5">
+            {!status.installed ? (
+              <Button
+                size="xs"
+                disabled={working || props.environmentId === null}
+                onClick={() => void runAction("install")}
+              >
+                <Download /> Set up
+              </Button>
+            ) : (
+              <>
+                {status.selection === "managed" && props.enabled && existingRuntimeReady ? (
+                  <Button
+                    size="xs"
+                    variant="outline"
+                    disabled={working}
+                    onClick={() => void runAction("use-existing")}
+                  >
+                    Use existing
+                  </Button>
+                ) : (
+                  <Button
+                    size="xs"
+                    disabled={working}
+                    onClick={() => void runAction("use-managed")}
+                  >
+                    Use
+                  </Button>
+                )}
+                {status.updateAvailable ? (
+                  <Button size="xs" disabled={working} onClick={() => void runAction("update")}>
+                    <Download /> Update
+                  </Button>
+                ) : null}
+                <Button
+                  size="xs"
+                  variant="ghost"
+                  disabled={working}
+                  onClick={() => void runAction("repair")}
+                >
+                  <Wrench /> Repair
+                </Button>
+                <Button
+                  size="xs"
+                  variant="ghost"
+                  disabled={working}
+                  onClick={() => setRemoveConfirmation(true)}
+                  aria-label="Remove Scient-managed Python"
+                >
+                  <Trash2 /> Remove
+                </Button>
+              </>
+            )}
+            {working && status.operation?.action !== "remove" ? (
+              <Button size="xs" variant="ghost" onClick={() => void cancel()}>
+                Cancel
+              </Button>
+            ) : null}
+          </div>
+        </div>
+      </div>
+      <AlertDialog open={removeConfirmation} onOpenChange={setRemoveConfirmation}>
+        <AlertDialogPopup>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Remove Scient-managed Python?</AlertDialogTitle>
+            <AlertDialogDescription>
+              This removes only Scient&apos;s private Scientific Python. System installations and
+              project environments are not changed.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogClose render={<Button variant="outline" />}>Cancel</AlertDialogClose>
+            <Button
+              variant="destructive"
+              onClick={() => {
+                setRemoveConfirmation(false);
+                void runAction("remove");
+              }}
+            >
+              Remove
+            </Button>
+          </AlertDialogFooter>
+        </AlertDialogPopup>
+      </AlertDialog>
+    </>
+  );
+}
+
 export function RuntimeDetails({
   language,
   enabled,
@@ -41,14 +286,14 @@ export function RuntimeDetails({
   if (!enabled || language.runtimes.length === 0) return null;
   return (
     <div className="mt-3 space-y-1 border-t border-border/50 py-2">
-      {language.runtimes.map(({ profile, verification }) => (
+      {language.runtimes.map(({ profile, verification, toolkits }) => (
         <div key={`${profile.source}:${profile.executable}`} className="min-w-0 py-1.5 text-xs">
           <div className="flex min-w-0 items-start justify-between gap-4">
             <div className="min-w-0">
               <div className="truncate font-medium text-foreground/90">{profile.displayName}</div>
               <div className="truncate font-mono text-muted-foreground">{profile.executable}</div>
               <div className="text-muted-foreground">
-                {profile.source}
+                {profile.source === "managed" ? "Scient-managed" : profile.source}
                 {profile.architecture ? ` · ${profile.architecture}` : ""}
               </div>
             </div>
@@ -71,6 +316,15 @@ export function RuntimeDetails({
               {verification.message}
             </p>
           ) : null}
+          {toolkits.map((toolkit) =>
+            toolkit.readiness === "missing-requirement" ? (
+              <p key={toolkit.toolkitId} className="mt-1 text-[11px] text-warning">
+                {language.toolkits.find((descriptor) => descriptor.toolkitId === toolkit.toolkitId)
+                  ?.displayName ?? "Scientific packages"}
+                : missing {toolkit.missingRequirements.join(", ")}
+              </p>
+            ) : null,
+          )}
         </div>
       ))}
     </div>
@@ -83,12 +337,16 @@ function LanguageSettingsRow({
   onChange,
   onRefresh,
   refreshing,
+  environmentId,
+  onLifecycleChanged,
 }: {
   language: ComputeLanguageRuntimeInspection;
   preference: ScientificComputingLanguageSettings;
   onChange: (next: ScientificComputingLanguageSettings) => void;
   onRefresh: () => void;
   refreshing: boolean;
+  environmentId: EnvironmentId | null;
+  onLifecycleChanged: () => void;
 }) {
   const [executable, setExecutable] = useState(preference.executable);
   useEffect(() => setExecutable(preference.executable), [preference.executable]);
@@ -111,6 +369,15 @@ function LanguageSettingsRow({
         />
       }
     >
+      <ManagedRuntimeCard
+        environmentId={environmentId}
+        language={language}
+        enabled={preference.enabled}
+        ensureEnabled={() => {
+          if (!preference.enabled) onChange({ ...preference, enabled: true });
+        }}
+        onLifecycleChanged={onLifecycleChanged}
+      />
       <div className="mt-3 flex flex-col gap-2 border-t border-border/50 py-3 sm:flex-row sm:items-center">
         <Input
           nativeInput
@@ -150,17 +417,22 @@ function LanguageSettingsRow({
 
 export function ScientificComputingSettings() {
   const primaryEnvironment = usePrimaryEnvironment();
+  const environmentId = primaryEnvironment?.environmentId ?? null;
   const preferences = usePrimarySettings((settings) => settings.scientificComputing);
   const updateSettings = useUpdatePrimarySettings();
-  const refreshRuntimes = useAtomCommand(computeEnvironment.refreshRuntimes);
+  const refreshRuntimes = useAtomCommand(computeEnvironment.refreshRuntimes, {
+    reportFailure: false,
+  });
   const [refreshing, setRefreshing] = useState(false);
-  const runtimesAtom = primaryEnvironment
+  const [refreshFailure, setRefreshFailure] = useState<string | null>(null);
+  const runtimesAtom = environmentId
     ? computeEnvironment.runtimes({
-        environmentId: primaryEnvironment.environmentId,
+        environmentId,
         input: { cwd: null, refresh: false },
       })
     : null;
   const runtimes = useEnvironmentQuery(runtimesAtom);
+  const refreshRuntimeInspection = runtimes.refresh;
 
   const updateLanguage = (
     languageId: ComputeLanguageRuntimeInspection["descriptor"]["languageId"],
@@ -174,16 +446,26 @@ export function ScientificComputingSettings() {
     });
   };
 
-  const handleRefresh = async () => {
-    if (!primaryEnvironment) return;
+  const handleRefresh = useCallback(async () => {
+    if (environmentId === null) return;
+    setRefreshFailure(null);
     setRefreshing(true);
-    await refreshRuntimes({
-      environmentId: primaryEnvironment.environmentId,
+    const result = await refreshRuntimes({
+      environmentId,
       input: { cwd: null, refresh: true },
     });
     setRefreshing(false);
-    runtimes.refresh();
-  };
+    if (result._tag === "Failure") {
+      const failure = squashAtomCommandFailure(result);
+      setRefreshFailure(
+        failure instanceof Error ? failure.message : "Scient could not refresh Python.",
+      );
+      return;
+    }
+    setRefreshFailure(null);
+    refreshRuntimeInspection();
+  }, [environmentId, refreshRuntimeInspection, refreshRuntimes]);
+  const refreshInspection = useCallback(() => void handleRefresh(), [handleRefresh]);
 
   return (
     <SettingsPageContainer>
@@ -198,9 +480,9 @@ export function ScientificComputingSettings() {
       >
         <SettingsRow
           {...searchableSetting("scientific-computing")}
-          title="Optional runtimes"
-          description="Choose only the languages you use. Scient discovers existing runtimes; it does not download packages, activate licenses, or change your environment. Executed code has this server environment's filesystem and network access and is not sandboxed."
-          status={runtimes.error}
+          title="Compute environments"
+          description="Use an existing environment or let Scient set up a private Scientific Python. System Python and project environments are never changed. Executed code has this server environment's filesystem and network access and is not sandboxed."
+          status={refreshFailure ?? runtimes.error}
         />
         {(runtimes.data?.languages ?? []).map((language) => {
           const preference = preferences.languages[language.descriptor.languageId] ?? {
@@ -215,6 +497,8 @@ export function ScientificComputingSettings() {
               onChange={(next) => updateLanguage(language.descriptor.languageId, next)}
               onRefresh={() => void handleRefresh()}
               refreshing={runtimes.isPending || refreshing}
+              environmentId={environmentId}
+              onLifecycleChanged={refreshInspection}
             />
           );
         })}

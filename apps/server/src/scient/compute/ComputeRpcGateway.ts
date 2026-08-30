@@ -12,6 +12,8 @@ import {
   type ComputeInspectRuntimesInput,
   type ComputeListProjectExecutionsInput,
   type ComputeListProjectOutputsInput,
+  type ComputeManagedRuntimeInput,
+  type ComputeManagedRuntimeStatusInput,
   type ComputeProjectExecutionCommandInput,
   type ComputeProjectInput,
   type ComputeProjectSessionCommandInput,
@@ -34,6 +36,9 @@ type ComputeGatewayService = Pick<
   | "runtimeDescriptors"
   | "inspectRuntimes"
   | "verifyRuntime"
+  | "managedRuntimeStatus"
+  | "manageRuntime"
+  | "cancelManagedRuntime"
   | "startSession"
   | "listSessions"
   | "getSession"
@@ -179,6 +184,7 @@ export function makeComputeRpcGateway(input: {
       scope: project === null ? ("environment" as const) : ("project" as const),
       languages: inspected.map((language) => ({
         ...language,
+        managedRuntime: language.managedRuntime ?? null,
         enabled: preferences[language.descriptor.languageId]?.enabled ?? false,
         configuredExecutable: preferences[language.descriptor.languageId]?.executable || null,
       })),
@@ -206,6 +212,24 @@ export function makeComputeRpcGateway(input: {
     });
   });
 
+  const managedRuntimeStatus = Effect.fn("ComputeRpcGateway.managedRuntimeStatus")(function* (
+    request: ComputeManagedRuntimeStatusInput,
+  ) {
+    return yield* input.compute.managedRuntimeStatus(request.languageId);
+  });
+
+  const manageRuntime = Effect.fn("ComputeRpcGateway.manageRuntime")(function* (
+    request: ComputeManagedRuntimeInput,
+  ) {
+    return yield* input.compute.manageRuntime(request.languageId, request.action);
+  });
+
+  const cancelManagedRuntime = Effect.fn("ComputeRpcGateway.cancelManagedRuntime")(function* (
+    request: ComputeManagedRuntimeStatusInput,
+  ) {
+    return yield* input.compute.cancelManagedRuntime(request.languageId);
+  });
+
   const startSession = Effect.fn("ComputeRpcGateway.startSession")(function* (
     request: ComputeStartProjectSessionInput,
   ) {
@@ -217,8 +241,8 @@ export function makeComputeRpcGateway(input: {
       languageId: request.languageId,
       label: descriptor.displayName,
       workingDirectory: project.root,
-      configuredExecutable:
-        request.executable ?? (preference.executable.length === 0 ? null : preference.executable),
+      configuredExecutable: preference.executable.length === 0 ? null : preference.executable,
+      ...(request.executable === null ? {} : { requestedExecutable: request.executable }),
     });
   });
 
@@ -346,6 +370,9 @@ export function makeComputeRpcGateway(input: {
   return {
     inspectRuntimes,
     verifyRuntime,
+    managedRuntimeStatus,
+    manageRuntime,
+    cancelManagedRuntime,
     startSession,
     listSessions,
     getSession,

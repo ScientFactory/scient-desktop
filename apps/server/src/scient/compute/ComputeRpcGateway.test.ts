@@ -86,6 +86,15 @@ function record(
 }
 
 function computeStub(overrides: Partial<GatewayCompute> = {}): GatewayCompute {
+  const managedRuntime = {
+    installed: false,
+    selection: "existing" as const,
+    updateAvailable: false,
+    runtimeVersion: null,
+    toolkitRevision: null,
+    operation: null,
+    failureMessage: null,
+  };
   return {
     runtimeDescriptors: [DESCRIPTOR],
     inspectRuntimes: (input) =>
@@ -118,6 +127,9 @@ function computeStub(overrides: Partial<GatewayCompute> = {}): GatewayCompute {
         message: null,
         packages: [],
       }),
+    managedRuntimeStatus: () => Effect.succeed(managedRuntime),
+    manageRuntime: () => Effect.succeed(managedRuntime),
+    cancelManagedRuntime: () => Effect.succeed(managedRuntime),
     startSession: (input) => Effect.succeed(record(input.projectId, input.sessionId)),
     listSessions: () => Effect.succeed([]),
     getSession: () => Effect.succeed(null),
@@ -315,6 +327,17 @@ describe("compute RPC gateway", () => {
         projectId: initialized.identity.projectId,
         workingDirectory: yield* fs.realPath(initialized.root),
         configuredExecutable: "/preferred/python",
+      });
+
+      yield* gateway.startSession({
+        cwd: initialized.root,
+        sessionId: ComputeSessionId.make("explicit-session"),
+        languageId: PYTHON,
+        executable: "/chosen/python",
+      });
+      expect(started).toMatchObject({
+        configuredExecutable: "/preferred/python",
+        requestedExecutable: "/chosen/python",
       });
     }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
   );

@@ -503,12 +503,56 @@ export interface ComputeTransport {
 }
 
 export const ComputeRuntimeSource = Schema.Literals([
+  "managed",
   "configured",
   "project",
   "path",
   "conventional",
 ]);
 export type ComputeRuntimeSource = typeof ComputeRuntimeSource.Type;
+
+export const ComputeManagedRuntimeSelection = Schema.Literals(["managed", "existing"]);
+export type ComputeManagedRuntimeSelection = typeof ComputeManagedRuntimeSelection.Type;
+
+export const ComputeManagedRuntimeAction = Schema.Literals([
+  "install",
+  "update",
+  "repair",
+  "remove",
+  "use-managed",
+  "use-existing",
+]);
+export type ComputeManagedRuntimeAction = typeof ComputeManagedRuntimeAction.Type;
+
+export const ComputeManagedRuntimePhase = Schema.Literals([
+  "downloading",
+  "installing-python",
+  "installing-packages",
+  "verifying",
+  "removing",
+]);
+export type ComputeManagedRuntimePhase = typeof ComputeManagedRuntimePhase.Type;
+
+export const ComputeManagedRuntimeOperation = Schema.Struct({
+  operationId: Schema.NonEmptyString.check(Schema.isMaxLength(128)),
+  action: ComputeManagedRuntimeAction,
+  phase: ComputeManagedRuntimePhase,
+  startedAt: Schema.NonEmptyString.check(Schema.isMaxLength(128)),
+  downloadedBytes: Schema.NullOr(Schema.Int.check(Schema.isGreaterThanOrEqualTo(0))),
+  totalBytes: Schema.NullOr(Schema.Int.check(Schema.isGreaterThan(0))),
+});
+export type ComputeManagedRuntimeOperation = typeof ComputeManagedRuntimeOperation.Type;
+
+export const ComputeManagedRuntimeStatus = Schema.Struct({
+  installed: Schema.Boolean,
+  selection: ComputeManagedRuntimeSelection,
+  updateAvailable: Schema.Boolean,
+  runtimeVersion: Schema.NullOr(Label),
+  toolkitRevision: Schema.NullOr(Label),
+  operation: Schema.NullOr(ComputeManagedRuntimeOperation),
+  failureMessage: Schema.NullOr(Schema.String.check(Schema.isMaxLength(4096))),
+});
+export type ComputeManagedRuntimeStatus = typeof ComputeManagedRuntimeStatus.Type;
 
 export const ComputeRuntimeProfile = Schema.Struct({
   languageId: ComputeLanguageId,

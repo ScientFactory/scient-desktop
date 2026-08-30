@@ -1,6 +1,7 @@
 import {
   ComputeExecutionId,
   ComputeLanguageId,
+  ComputeOperationError,
   ComputeProjectId,
   ComputeSessionId,
   ComputeToolkitId,
@@ -18,6 +19,7 @@ import {
   type ComputeRuntimeIdentity,
   type ComputeRuntimeProfile,
   type ComputeRuntimeReadiness,
+  type ComputeManagedRuntimeStatus,
   type ComputeSessionRecord,
   type ComputeSessionStatus,
   type ComputeStartSessionInput,
@@ -214,13 +216,16 @@ const script = (code: string): SimulatedComputeExecution => {
   }
 };
 
-const adapterFor = (readiness: ComputeRuntimeReadiness): ComputeLanguageAdapter => ({
+const adapterFor = (
+  readiness: ComputeRuntimeReadiness,
+  profiles: ReadonlyArray<ComputeRuntimeProfile> = [PROFILE],
+): ComputeLanguageAdapter => ({
   languageId: PYTHON,
   transportKind: BRIDGE,
-  discover: () => Effect.succeed([PROFILE]),
-  verify: () =>
+  discover: () => Effect.succeed(profiles),
+  verify: (request) =>
     Effect.succeed({
-      profile: PROFILE,
+      profile: request.profile,
       readiness,
       missingRequirements: readiness === "ready" ? [] : ["ipykernel"],
       message: readiness === "ready" ? null : "Install ipykernel to use this interpreter.",
@@ -228,7 +233,7 @@ const adapterFor = (readiness: ComputeRuntimeReadiness): ComputeLanguageAdapter 
     }),
   prepareLaunch: (request) =>
     Effect.succeed({
-      executable: PROFILE.executable,
+      executable: request.profile.executable,
       args: ["-m", "scient_bridge"],
       cwd: request.cwd,
       environment: request.environment,
@@ -265,8 +270,10 @@ interface HarnessOptions {
   readonly capabilities?: ReadonlyArray<ComputeCapability>;
   readonly reportedCapabilities?: ReadonlyArray<ComputeCapability>;
   readonly readiness?: ComputeRuntimeReadiness;
+  readonly runtimeProfiles?: ReadonlyArray<ComputeRuntimeProfile>;
   readonly service?: Partial<ComputeSessionServiceOptions>;
   readonly toolkitSupport?: ComputeRuntimeBinding["toolkitSupport"];
+  readonly managedRuntime?: ComputeRuntimeBinding["managedRuntime"];
 }
 
 /**
@@ -302,9 +309,10 @@ const harness = (options: HarnessOptions = {}) =>
     const serviceLayer = layerWithRuntimes(
       [
         {
-          adapter: adapterFor(options.readiness ?? "ready"),
+          adapter: adapterFor(options.readiness ?? "ready", options.runtimeProfiles),
           transport,
           toolkitSupport: options.toolkitSupport,
+          managedRuntime: options.managedRuntime,
         },
       ],
       { ...DEFAULT_COMPUTE_SESSION_SERVICE_OPTIONS, ...options.service },
@@ -479,9 +487,201 @@ describe("compute runtime inspection", () => {
       );
     }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
   );
+
+  it.effect("does not remove a managed runtime while a live session uses its language", () =>
+    Effect.gen(function* () {
+      let removals = 0;
+      const managedStatus = {
+        installed: true,
+        selection: "managed" as const,
+        updateAvailable: false,
+        runtimeVersion: "Python 3.12.13",
+        toolkitRevision: "test",
+        operation: null,
+        failureMessage: null,
+      };
+      const test = yield* harness({
+        managedRuntime: {
+          isRemoving: () => false,
+          status: () => Effect.succeed(managedStatus),
+          manage: (action) =>
+            Effect.sync(() => {
+              if (action === "remove") removals += 1;
+              return managedStatus;
+            }),
+          cancel: () => Effect.succeed(managedStatus),
+        },
+      });
+
+      yield* test.use(
+        Effect.gen(function* () {
+          const service = yield* ComputeSessionService;
+          yield* start;
+          const blocked = yield* Effect.flip(service.manageRuntime(PYTHON, "remove"));
+          expect(blocked.reason).toBe("operation-failed");
+          expect(blocked.message).toContain("Stop live python sessions");
+          expect(removals).toBe(0);
+
+          yield* service.stopSession({
+            projectId: PROJECT_ID,
+            sessionId: SESSION_ID,
+            expectedGeneration: INITIAL_COMPUTE_SESSION_GENERATION,
+          });
+          yield* service.manageRuntime(PYTHON, "remove");
+          expect(removals).toBe(1);
+        }),
+      );
+    }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+  );
+
+  it.effect("blocks new sessions during removal and permits them after it finishes", () =>
+    Effect.gen(function* () {
+      let managedStatus: ComputeManagedRuntimeStatus = {
+        installed: true,
+        selection: "managed",
+        updateAvailable: false,
+        runtimeVersion: "Python 3.12.13",
+        toolkitRevision: "test",
+        operation: {
+          operationId: "removing-python",
+          action: "remove",
+          phase: "removing",
+          startedAt: OBSERVED_AT,
+          downloadedBytes: null,
+          totalBytes: null,
+        },
+        failureMessage: null,
+      };
+      const test = yield* harness({
+        managedRuntime: {
+          isRemoving: () => managedStatus.operation?.action === "remove",
+          status: () => Effect.sync(() => managedStatus),
+          manage: () => Effect.die("not used"),
+          cancel: () => Effect.die("not used"),
+        },
+      });
+
+      yield* test.use(
+        Effect.gen(function* () {
+          const blocked = yield* Effect.flip(start);
+          expect(blocked.reason).toBe("runtime-unusable");
+          expect(blocked.message).toContain("being removed");
+          expect(test.opened()).toEqual([]);
+
+          managedStatus = {
+            ...managedStatus,
+            installed: false,
+            selection: "existing",
+            operation: null,
+          };
+          expect((yield* start).status).toBe("ready");
+          expect(test.opened()).toEqual([SESSION_ID]);
+        }),
+      );
+    }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+  );
+
+  it.effect("keeps existing runtime discovery available when managed status fails", () =>
+    Effect.gen(function* () {
+      const test = yield* harness({
+        managedRuntime: {
+          isRemoving: () => false,
+          status: () =>
+            Effect.fail(
+              new ComputeOperationError({
+                operation: "manage",
+                reason: "operation-failed",
+                message: "Managed state could not be read.",
+              }),
+            ),
+          manage: () => Effect.die("not used"),
+          cancel: () => Effect.die("not used"),
+        },
+      });
+
+      yield* test.use(
+        Effect.gen(function* () {
+          const service = yield* ComputeSessionService;
+          const inspection = yield* service.inspectRuntimes({
+            projectRoot: null,
+            workingDirectory: process.cwd(),
+            configuredExecutables: {},
+            enabledLanguageIds: new Set([PYTHON]),
+            refresh: false,
+          });
+
+          expect(inspection[0]?.runtimes[0]?.verification.readiness).toBe("ready");
+          expect(inspection[0]?.managedRuntime).toMatchObject({
+            installed: false,
+            failureMessage: "Managed state could not be read.",
+          });
+          expect((yield* start).status).toBe("ready");
+        }),
+      );
+    }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+  );
 });
 
 describe("compute session startup", () => {
+  it.effect("keeps explicit session choices separate from the managed default", () =>
+    Effect.gen(function* () {
+      const managed: ComputeRuntimeProfile = {
+        ...PROFILE,
+        source: "managed",
+        executable: "/scient/managed/python",
+      };
+      const configured: ComputeRuntimeProfile = { ...PROFILE, source: "configured" };
+      const cases = [
+        { requestedExecutable: undefined, expected: managed },
+        { requestedExecutable: configured.executable, expected: configured },
+        { requestedExecutable: "/alias/to/python", expected: configured },
+        { requestedExecutable: managed.executable, expected: managed },
+      ];
+      for (const testCase of cases) {
+        const test = yield* harness({ runtimeProfiles: [managed, configured] });
+        yield* test.use(
+          Effect.gen(function* () {
+            const service = yield* ComputeSessionService;
+            if (testCase.requestedExecutable !== undefined) {
+              const verified = yield* service.verifyRuntime({
+                languageId: PYTHON,
+                executable: testCase.requestedExecutable,
+                workingDirectory: process.cwd(),
+                refresh: true,
+              });
+              expect(verified.profile).toEqual(testCase.expected);
+            }
+            const request = startInput({
+              configuredExecutable: "/environment/default/python",
+              requestedExecutable: testCase.requestedExecutable,
+            });
+            const session = yield* service.startSession(request);
+            expect(session.runtime).toEqual(testCase.expected);
+            expect(yield* service.startSession(request)).toEqual(session);
+            expect(test.opened()).toEqual([SESSION_ID]);
+          }),
+        );
+      }
+    }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+  );
+
+  it.effect("does not substitute another runtime when an explicit choice disappeared", () =>
+    Effect.gen(function* () {
+      const test = yield* harness();
+      yield* test.use(
+        Effect.gen(function* () {
+          const service = yield* ComputeSessionService;
+          const failure = yield* Effect.flip(
+            service.startSession(startInput({ requestedExecutable: "/removed/python" })),
+          );
+          expect(failure.reason).toBe("runtime-missing");
+          expect(failure.message).toContain("Refresh runtimes");
+          expect(test.opened()).toEqual([]);
+        }),
+      );
+    }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+  );
+
   it.effect("starts a session, records it, and reports the runtime it reached", () =>
     Effect.gen(function* () {
       const test = yield* harness();

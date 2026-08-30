@@ -1,30 +1,32 @@
-// @effect-diagnostics nodeBuiltinImport:off -- these tests exercise the private filesystem boundary.
+// @effect-diagnostics nodeBuiltinImport:off -- this test exercises the reviewed Node filesystem boundary.
 import * as NodeFSP from "node:fs/promises";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 
-import { ComputeProjectId, ComputeToolkitId } from "@scientfactory/compute";
+import { ComputeToolkitId } from "@scientfactory/compute";
 import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
-import { it } from "@effect/vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "@effect/vitest";
 import * as Effect from "effect/Effect";
-import { afterEach, beforeEach, describe, expect } from "vite-plus/test";
 
 import {
   ManagedPythonEnvironmentError,
   type ManagedPythonEnvironmentDependencies,
+  type ManagedPythonEnvironmentInstallInput,
   makeManagedPythonEnvironmentManager,
   managedPythonEnvironmentPaths,
 } from "./ManagedPythonEnvironment.ts";
 
-const PROJECT_ID = ComputeProjectId.make("project-1");
 const TOOLKIT_ID = ComputeToolkitId.make("python-data-and-figures");
+const TOOLKIT_REVISION = "test-toolkit-revision";
+const PYTHON_VERSION = "3.12.13";
+const PROVISIONER_VERSION = "uv-test";
 
-describe("managed Python environment", () => {
+describe("ManagedPythonEnvironment", () => {
   let temporaryRoot: string;
   let computeDir: string;
 
   beforeEach(async () => {
-    temporaryRoot = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "scient-managed-python-"));
+    temporaryRoot = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "scient-python-env-"));
     computeDir = NodePath.join(temporaryRoot, "compute");
   });
 
@@ -32,214 +34,169 @@ describe("managed Python environment", () => {
     await NodeFSP.rm(temporaryRoot, { recursive: true, force: true });
   });
 
-  function generationSequence(...values: ReadonlyArray<string>): () => string {
-    const remaining = [...values];
-    return () => {
-      const next = remaining.shift();
-      if (next === undefined) throw new Error("The test exhausted its generation IDs.");
-      return next;
-    };
-  }
-
-  async function materializePython(targetRoot: string): Promise<string> {
-    const executableRelativePath = NodePath.join("bin", "python");
-    const executable = NodePath.join(targetRoot, executableRelativePath);
-    await NodeFSP.mkdir(NodePath.dirname(executable), { recursive: true });
-    await NodeFSP.writeFile(executable, "test python");
-    return executableRelativePath;
-  }
-
-  function dependencies(
-    overrides: Partial<ManagedPythonEnvironmentDependencies> = {},
-  ): ManagedPythonEnvironmentDependencies {
-    return {
-      provision: async ({ targetRoot }) => ({
-        executableRelativePath: await materializePython(targetRoot),
-      }),
-      verify: async () => undefined,
-      now: () => 1_777_777,
-      generationId: generationSequence("first"),
-      ...overrides,
-    };
-  }
-
-  const installInput = (signal: AbortSignal) => ({
-    projectId: PROJECT_ID,
+  const installInput = (
+    overrides: Partial<ManagedPythonEnvironmentInstallInput> = {},
+  ): ManagedPythonEnvironmentInstallInput => ({
     toolkitIds: [TOOLKIT_ID],
-    signal,
+    toolkitRevision: TOOLKIT_REVISION,
+    pythonVersion: PYTHON_VERSION,
+    provisionerVersion: PROVISIONER_VERSION,
+    signal: new AbortController().signal,
+    ...overrides,
   });
 
-  it("derives an opaque app-owned project root", () => {
-    const paths = managedPythonEnvironmentPaths(computeDir, PROJECT_ID);
+  const executableAt = async (targetRoot: string): Promise<string> => {
+    const executable = NodePath.join(targetRoot, "environment", "bin", "python");
+    await NodeFSP.mkdir(NodePath.dirname(executable), { recursive: true });
+    await NodeFSP.writeFile(executable, "python", { mode: 0o700 });
+    return executable;
+  };
 
+  const dependencies = (
+    overrides: Partial<ManagedPythonEnvironmentDependencies> = {},
+  ): ManagedPythonEnvironmentDependencies => ({
+    provision: async ({ targetRoot }) => {
+      await executableAt(targetRoot);
+      return { executableRelativePath: NodePath.join("environment", "bin", "python") };
+    },
+    verify: async () => undefined,
+    ...overrides,
+  });
+
+  const generationDirectory = (id: string): string =>
+    NodePath.join(managedPythonEnvironmentPaths(computeDir).managedRoot, `generation-${id}`);
+
+  it("uses one shared app-owned environment root", () => {
+    const paths = managedPythonEnvironmentPaths(computeDir);
     expect(paths.managedRoot).toBe(NodePath.join(computeDir, "environments", "python"));
-    expect(NodePath.dirname(paths.projectRoot)).toBe(paths.managedRoot);
-    expect(NodePath.basename(paths.projectRoot)).toMatch(/^[a-f0-9]{64}$/u);
-    expect(paths.projectRoot).not.toContain(PROJECT_ID);
+    expect(paths.statePath).toBe(NodePath.join(paths.managedRoot, "active.json"));
   });
 
   it("publishes only a provisioned and verified final-path generation", async () => {
-    const provisionedRoots: string[] = [];
-    const verifiedExecutables: string[] = [];
+    const verify = vi.fn(async () => undefined);
     const manager = makeManagedPythonEnvironmentManager(
       computeDir,
-      dependencies({
-        provision: async ({ targetRoot }) => {
-          provisionedRoots.push(targetRoot);
-          return { executableRelativePath: await materializePython(targetRoot) };
-        },
-        verify: async ({ executable }) => {
-          verifiedExecutables.push(executable);
-        },
-      }),
+      dependencies({ generationId: () => "one", now: () => 42, verify }),
     );
+    const installed = await manager.install(installInput());
 
-    const installed = await manager.install(installInput(new AbortController().signal));
-    const inspected = await manager.inspect(PROJECT_ID);
-    const stateMode = (
-      await NodeFSP.stat(managedPythonEnvironmentPaths(computeDir, PROJECT_ID).statePath)
-    ).mode;
-
-    expect(provisionedRoots).toEqual([installed.record.active.root]);
-    expect(verifiedExecutables).toEqual([installed.executable]);
-    expect(inspected).toEqual(installed);
+    expect(verify).toHaveBeenCalledWith(
+      expect.objectContaining({ executable: installed.executable, toolkitIds: [TOOLKIT_ID] }),
+    );
     expect(installed.record).toMatchObject({
       schemaVersion: 1,
-      projectId: PROJECT_ID,
+      selection: "managed",
       active: {
-        generationId: "first",
-        toolkitIds: [TOOLKIT_ID],
-        activatedAtEpochMs: 1_777_777,
+        generationId: "one",
+        toolkitRevision: TOOLKIT_REVISION,
+        pythonVersion: PYTHON_VERSION,
+        provisionerVersion: PROVISIONER_VERSION,
+        activatedAtEpochMs: 42,
       },
       previous: null,
     });
-    expect(stateMode & 0o777).toBe(0o600);
+    expect(await manager.inspect()).toEqual(installed);
   });
 
   it("snapshots the requested Toolkit set before asynchronous setup begins", async () => {
-    const requested = [TOOLKIT_ID];
-    let provisionedToolkitIds: ReadonlyArray<string> = [];
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const observed: Array<ReadonlyArray<ComputeToolkitId>> = [];
     const manager = makeManagedPythonEnvironmentManager(
       computeDir,
       dependencies({
+        generationId: () => "snapshot",
         provision: async ({ targetRoot, toolkitIds }) => {
-          provisionedToolkitIds = [...toolkitIds];
-          return { executableRelativePath: await materializePython(targetRoot) };
+          await gate;
+          observed.push(toolkitIds);
+          await executableAt(targetRoot);
+          return { executableRelativePath: "environment/bin/python" };
         },
       }),
     );
-
-    const installing = manager.install({
-      projectId: PROJECT_ID,
-      toolkitIds: requested,
-      signal: new AbortController().signal,
-    });
-    requested.length = 0;
-    const installed = await installing;
-
-    expect(provisionedToolkitIds).toEqual([TOOLKIT_ID]);
-    expect(installed.record.active.toolkitIds).toEqual([TOOLKIT_ID]);
+    const mutable = [TOOLKIT_ID];
+    const pending = manager.install(installInput({ toolkitIds: mutable }));
+    mutable.length = 0;
+    release();
+    await pending;
+    expect(observed).toEqual([[TOOLKIT_ID]]);
   });
 
-  it("retains one rollback generation and cleans only older app-owned generations", async () => {
+  it("retains displaced generations until startup reconciliation", async () => {
+    const ids = ["one", "two", "three"];
     const manager = makeManagedPythonEnvironmentManager(
       computeDir,
-      dependencies({ generationId: generationSequence("first", "second", "third") }),
+      dependencies({ generationId: () => ids.shift()! }),
     );
-    const signal = new AbortController().signal;
+    await manager.install(installInput());
+    await manager.install(installInput());
+    const latest = await manager.install(installInput());
 
-    const first = await manager.install(installInput(signal));
-    const second = await manager.repair(installInput(signal));
-    const third = await manager.repair(installInput(signal));
+    expect(latest.record.active.generationId).toBe("three");
+    expect(latest.record.previous?.generationId).toBe("two");
+    // A live session may still be using generation one. Collection waits for
+    // startup reconciliation, when no session from this process survives.
+    await expect(NodeFSP.access(generationDirectory("one"))).resolves.toBeUndefined();
+    await expect(NodeFSP.access(generationDirectory("two"))).resolves.toBeUndefined();
+    await expect(NodeFSP.access(generationDirectory("three"))).resolves.toBeUndefined();
 
-    expect(second.record.previous?.generationId).toBe("first");
-    expect(third.record.previous?.generationId).toBe("second");
-    await expect(NodeFSP.access(first.record.active.root)).rejects.toThrow();
-    await expect(NodeFSP.access(second.record.active.root)).resolves.toBeUndefined();
-    await expect(NodeFSP.access(third.record.active.root)).resolves.toBeUndefined();
+    await manager.reconcile();
+    await expect(NodeFSP.access(generationDirectory("one"))).rejects.toThrow();
   });
 
   it("preserves the active generation when provisioning fails", async () => {
-    let shouldFail = false;
+    let fail = false;
+    const ids = ["good", "failed"];
     const manager = makeManagedPythonEnvironmentManager(
       computeDir,
       dependencies({
-        generationId: generationSequence("first", "failed"),
+        generationId: () => ids.shift()!,
         provision: async ({ targetRoot }) => {
-          if (shouldFail) throw new Error("provision failed");
-          return { executableRelativePath: await materializePython(targetRoot) };
+          if (fail) throw new Error("boom");
+          await executableAt(targetRoot);
+          return { executableRelativePath: "environment/bin/python" };
         },
       }),
     );
-    const signal = new AbortController().signal;
-    const first = await manager.install(installInput(signal));
-    shouldFail = true;
-
-    await expect(manager.repair(installInput(signal))).rejects.toMatchObject({
+    const active = await manager.install(installInput());
+    fail = true;
+    await expect(manager.install(installInput())).rejects.toMatchObject({
       reason: "provision-failed",
     });
-
-    expect((await manager.inspect(PROJECT_ID))?.record.active.generationId).toBe("first");
-    await expect(NodeFSP.access(first.record.active.root)).resolves.toBeUndefined();
-    await expect(
-      NodeFSP.access(
-        NodePath.join(NodePath.dirname(first.record.active.root), "generation-failed"),
-      ),
-    ).rejects.toThrow();
+    expect(await manager.inspect()).toEqual(active);
+    await expect(NodeFSP.access(generationDirectory("failed"))).rejects.toThrow();
   });
 
-  it("preserves the active generation when exact-environment verification fails", async () => {
-    let shouldFail = false;
+  it("preserves active state when verification or activation fails", async () => {
+    let verifyFails = false;
+    let commitFails = false;
+    const ids = ["good", "bad-verify", "bad-commit"];
     const manager = makeManagedPythonEnvironmentManager(
       computeDir,
       dependencies({
-        generationId: generationSequence("first", "failed"),
+        generationId: () => ids.shift()!,
         verify: async () => {
-          if (shouldFail) throw new Error("verification failed");
+          if (verifyFails) throw new Error("verify");
+        },
+        commitState: async (statePath, record) => {
+          if (commitFails) throw new Error("commit");
+          await NodeFSP.writeFile(statePath, JSON.stringify(record));
         },
       }),
     );
-    const signal = new AbortController().signal;
-    await manager.install(installInput(signal));
-    shouldFail = true;
-
-    await expect(manager.repair(installInput(signal))).rejects.toMatchObject({
+    const active = await manager.install(installInput());
+    verifyFails = true;
+    await expect(manager.install(installInput())).rejects.toMatchObject({
       reason: "verification-failed",
     });
-
-    expect((await manager.inspect(PROJECT_ID))?.record.active.generationId).toBe("first");
-  });
-
-  it("preserves the active state when its atomic activation cannot commit", async () => {
-    let shouldFail = false;
-    const commitState: NonNullable<ManagedPythonEnvironmentDependencies["commitState"]> = async (
-      statePath,
-      record,
-    ) => {
-      if (shouldFail) throw new Error("commit failed");
-      await NodeFSP.writeFile(statePath, `${JSON.stringify(record)}\n`, { mode: 0o600 });
-    };
-    const manager = makeManagedPythonEnvironmentManager(
-      computeDir,
-      dependencies({
-        generationId: generationSequence("first", "failed"),
-        commitState,
-      }),
-    );
-    const signal = new AbortController().signal;
-    const first = await manager.install(installInput(signal));
-    shouldFail = true;
-
-    await expect(manager.repair(installInput(signal))).rejects.toMatchObject({
+    verifyFails = false;
+    commitFails = true;
+    await expect(manager.install(installInput())).rejects.toMatchObject({
       reason: "activation-failed",
     });
-
-    expect(await manager.inspect(PROJECT_ID)).toEqual(first);
-    await expect(
-      NodeFSP.access(
-        NodePath.join(NodePath.dirname(first.record.active.root), "generation-failed"),
-      ),
-    ).rejects.toThrow();
+    expect(await manager.inspect()).toEqual(active);
   });
 
   it("cancels before activation and removes the unpublished candidate", async () => {
@@ -247,222 +204,167 @@ describe("managed Python environment", () => {
     const manager = makeManagedPythonEnvironmentManager(
       computeDir,
       dependencies({
-        provision: async ({ targetRoot }) => {
-          const executableRelativePath = await materializePython(targetRoot);
+        generationId: () => "cancelled",
+        provision: async ({ targetRoot, signal }) => {
+          await executableAt(targetRoot);
           controller.abort();
-          return { executableRelativePath };
+          expect(signal.aborted).toBe(true);
+          return { executableRelativePath: "environment/bin/python" };
         },
       }),
     );
-
-    await expect(manager.install(installInput(controller.signal))).rejects.toMatchObject({
-      reason: "cancelled",
-    });
-
-    expect(await manager.inspect(PROJECT_ID)).toBeNull();
-    const entries = await NodeFSP.readdir(
-      managedPythonEnvironmentPaths(computeDir, PROJECT_ID).projectRoot,
-    );
-    expect(entries).toEqual([]);
+    await expect(
+      manager.install(installInput({ signal: controller.signal })),
+    ).rejects.toMatchObject({ reason: "cancelled" });
+    expect(await manager.inspect()).toBeNull();
+    await expect(NodeFSP.access(generationDirectory("cancelled"))).rejects.toThrow();
   });
 
-  it.effect("rejects an executable symlink that escapes the managed generation", () =>
-    Effect.gen(function* () {
-      if ((yield* HostProcessPlatform) === "win32") return;
-      yield* Effect.promise(async () => {
-        const externalExecutable = NodePath.join(temporaryRoot, "external-python");
-        await NodeFSP.writeFile(externalExecutable, "external");
-        let verifyCalls = 0;
-        const manager = makeManagedPythonEnvironmentManager(
-          computeDir,
-          dependencies({
-            provision: async ({ targetRoot }) => {
-              const executableRelativePath = NodePath.join("bin", "python");
-              const executable = NodePath.join(targetRoot, executableRelativePath);
-              await NodeFSP.mkdir(NodePath.dirname(executable), { recursive: true });
-              await NodeFSP.symlink(externalExecutable, executable);
-              return { executableRelativePath };
-            },
-            verify: async () => {
-              verifyCalls += 1;
-            },
-          }),
-        );
-
-        await expect(
-          manager.install(installInput(new AbortController().signal)),
-        ).rejects.toMatchObject({ reason: "verification-failed" });
-
-        expect(verifyCalls).toBe(0);
-        await expect(NodeFSP.readFile(externalExecutable, "utf8")).resolves.toBe("external");
-      });
-    }),
-  );
-
-  it("rejects a provisioner path that lexically escapes its generation", async () => {
-    let verifyCalls = 0;
+  it("rejects a provisioner path that escapes its generation", async () => {
     const manager = makeManagedPythonEnvironmentManager(
       computeDir,
       dependencies({
-        provision: async () => ({ executableRelativePath: "../../external-python" }),
-        verify: async () => {
-          verifyCalls += 1;
-        },
+        generationId: () => "escape",
+        provision: async () => ({ executableRelativePath: "../../python" }),
       }),
     );
-
-    await expect(manager.install(installInput(new AbortController().signal))).rejects.toMatchObject(
-      { reason: "verification-failed" },
-    );
-    expect(verifyCalls).toBe(0);
+    await expect(manager.install(installInput())).rejects.toMatchObject({
+      reason: "verification-failed",
+    });
   });
 
-  it("removes only the app-owned project environment", async () => {
-    const manager = makeManagedPythonEnvironmentManager(computeDir, dependencies());
-    const installed = await manager.install(installInput(new AbortController().signal));
-    const sibling = NodePath.join(
-      managedPythonEnvironmentPaths(computeDir, PROJECT_ID).managedRoot,
-      "unrelated",
+  it("switches between managed and existing environments without reinstalling", async () => {
+    const manager = makeManagedPythonEnvironmentManager(
+      computeDir,
+      dependencies({ generationId: () => "select" }),
     );
+    await manager.install(installInput());
+    expect((await manager.select("existing"))?.record.selection).toBe("existing");
+    expect((await manager.select("managed"))?.record.selection).toBe("managed");
+  });
+
+  it("removes only the app-owned shared environment", async () => {
+    const sibling = NodePath.join(computeDir, "environments", "r");
     await NodeFSP.mkdir(sibling, { recursive: true });
-
-    await expect(manager.remove(PROJECT_ID)).resolves.toBe(true);
-
-    await expect(NodeFSP.access(NodePath.dirname(installed.record.active.root))).rejects.toThrow();
+    const manager = makeManagedPythonEnvironmentManager(
+      computeDir,
+      dependencies({ generationId: () => "remove" }),
+    );
+    await manager.install(installInput());
+    expect(await manager.remove()).toBe(true);
+    expect(await manager.inspect()).toBeNull();
     await expect(NodeFSP.access(sibling)).resolves.toBeUndefined();
-    await expect(manager.remove(PROJECT_ID)).resolves.toBe(false);
   });
 
-  it("rolls back the atomic removal when deleting its tombstone fails", async () => {
+  it("rolls back atomic removal when deleting its tombstone fails", async () => {
     const manager = makeManagedPythonEnvironmentManager(
       computeDir,
       dependencies({
+        generationId: () => "rollback",
         removeTree: async () => {
-          throw new Error("remove failed");
+          throw new Error("busy");
         },
       }),
     );
-    const installed = await manager.install(installInput(new AbortController().signal));
-
-    await expect(manager.remove(PROJECT_ID)).rejects.toMatchObject({
-      reason: "remove-failed",
-      message:
-        "Scient could not remove the managed Python environment; the previous environment was restored.",
-    });
-
-    expect(await manager.inspect(PROJECT_ID)).toEqual(installed);
+    const installed = await manager.install(installInput());
+    await expect(manager.remove()).rejects.toMatchObject({ reason: "remove-failed" });
+    expect(await manager.inspect()).toEqual(installed);
   });
 
-  it("ignores a tampered state that points outside the app-owned project root", async () => {
-    const paths = managedPythonEnvironmentPaths(computeDir, PROJECT_ID);
-    const externalRoot = NodePath.join(temporaryRoot, "generation-external");
-    await NodeFSP.mkdir(NodePath.join(externalRoot, "bin"), { recursive: true });
-    await NodeFSP.writeFile(NodePath.join(externalRoot, "bin", "python"), "external");
-    await NodeFSP.mkdir(paths.projectRoot, { recursive: true });
+  it("does not expose a tampered state or rollback generation", async () => {
+    const manager = makeManagedPythonEnvironmentManager(
+      computeDir,
+      dependencies({ generationId: () => "valid" }),
+    );
+    const installed = await manager.install(installInput());
+    const paths = managedPythonEnvironmentPaths(computeDir);
     await NodeFSP.writeFile(
       paths.statePath,
       JSON.stringify({
-        schemaVersion: 1,
-        projectId: PROJECT_ID,
-        active: {
-          generationId: "external",
-          root: externalRoot,
-          executableRelativePath: "bin/python",
-          toolkitIds: [TOOLKIT_ID],
-          activatedAtEpochMs: 1,
-        },
-        previous: null,
+        ...installed.record,
+        active: { ...installed.record.active, executableRelativePath: "../../python" },
       }),
     );
-    const manager = makeManagedPythonEnvironmentManager(computeDir, dependencies());
+    expect(await manager.inspect()).toBeNull();
 
-    expect(await manager.inspect(PROJECT_ID)).toBeNull();
-    await manager.remove(PROJECT_ID);
-    await expect(
-      NodeFSP.readFile(NodePath.join(externalRoot, "bin", "python"), "utf8"),
-    ).resolves.toBe("external");
-  });
-
-  it("does not expose a tampered previous generation as a rollback candidate", async () => {
-    const manager = makeManagedPythonEnvironmentManager(computeDir, dependencies());
-    const installed = await manager.install(installInput(new AbortController().signal));
-    const paths = managedPythonEnvironmentPaths(computeDir, PROJECT_ID);
     await NodeFSP.writeFile(
       paths.statePath,
       JSON.stringify({
         ...installed.record,
         previous: {
           ...installed.record.active,
-          generationId: "external",
-          root: NodePath.join(temporaryRoot, "generation-external"),
+          generationId: "missing",
         },
       }),
     );
-
-    expect((await manager.inspect(PROJECT_ID))?.record.previous).toBeNull();
+    expect((await manager.inspect())?.record.previous).toBeNull();
   });
 
-  it("serializes mutations so two installs never provision concurrently", async () => {
-    let activeProvisioners = 0;
-    let maximumActiveProvisioners = 0;
-    let provisionCalls = 0;
-    let markFirstEntered!: () => void;
-    let releaseFirst!: () => void;
-    const firstEntered = new Promise<void>((resolve) => {
-      markFirstEntered = resolve;
-    });
-    const firstCanFinish = new Promise<void>((resolve) => {
-      releaseFirst = resolve;
-    });
+  it.effect("rejects a symlinked managed root without touching its target", () =>
+    Effect.gen(function* () {
+      const hostPlatform = yield* HostProcessPlatform;
+      if (hostPlatform === "win32") return;
+      yield* Effect.promise(async () => {
+        const paths = managedPythonEnvironmentPaths(computeDir);
+        const outside = NodePath.join(temporaryRoot, "outside");
+        const sentinel = NodePath.join(outside, "keep.txt");
+        await NodeFSP.mkdir(paths.environmentsRoot, { recursive: true });
+        await NodeFSP.mkdir(outside, { recursive: true });
+        await NodeFSP.writeFile(sentinel, "keep");
+        await NodeFSP.symlink(outside, paths.managedRoot, "dir");
+        const manager = makeManagedPythonEnvironmentManager(computeDir, dependencies());
+
+        await expect(manager.inspect()).rejects.toMatchObject({ reason: "activation-failed" });
+        await expect(manager.install(installInput())).rejects.toMatchObject({
+          reason: "activation-failed",
+        });
+        expect(await NodeFSP.readFile(sentinel, "utf8")).toBe("keep");
+      });
+    }),
+  );
+
+  it("reconciles abandoned generations and removal tombstones", async () => {
+    const paths = managedPythonEnvironmentPaths(computeDir);
+    const abandoned = NodePath.join(paths.managedRoot, "generation-abandoned");
+    const tombstone = NodePath.join(paths.environmentsRoot, "python.removing-abandoned");
+    await NodeFSP.mkdir(abandoned, { recursive: true });
+    await NodeFSP.mkdir(tombstone, { recursive: true });
+    const manager = makeManagedPythonEnvironmentManager(computeDir, dependencies());
+    await manager.reconcile();
+    await expect(NodeFSP.access(abandoned)).rejects.toThrow();
+    await expect(NodeFSP.access(tombstone)).rejects.toThrow();
+  });
+
+  it("serializes mutations so installs never provision concurrently", async () => {
+    let active = 0;
+    let maximum = 0;
+    const ids = ["one", "two"];
     const manager = makeManagedPythonEnvironmentManager(
       computeDir,
       dependencies({
-        generationId: generationSequence("first", "second"),
+        generationId: () => ids.shift()!,
         provision: async ({ targetRoot }) => {
-          provisionCalls += 1;
-          activeProvisioners += 1;
-          maximumActiveProvisioners = Math.max(maximumActiveProvisioners, activeProvisioners);
-          if (provisionCalls === 1) {
-            markFirstEntered();
-            await firstCanFinish;
-          }
-          const executableRelativePath = await materializePython(targetRoot);
-          activeProvisioners -= 1;
-          return { executableRelativePath };
+          active += 1;
+          maximum = Math.max(maximum, active);
+          await executableAt(targetRoot);
+          active -= 1;
+          return { executableRelativePath: "environment/bin/python" };
         },
       }),
     );
-    const signal = new AbortController().signal;
-
-    const first = manager.install(installInput(signal));
-    await firstEntered;
-    const second = manager.repair(installInput(signal));
-    await Promise.resolve();
-    expect(activeProvisioners).toBe(1);
-    releaseFirst();
-    await Promise.all([first, second]);
-
-    expect(maximumActiveProvisioners).toBe(1);
-    expect((await manager.inspect(PROJECT_ID))?.record.active.generationId).toBe("second");
+    await Promise.all([manager.install(installInput()), manager.install(installInput())]);
+    expect(maximum).toBe(1);
   });
 
   it("rejects empty or duplicate Toolkit requests before creating state", async () => {
     const manager = makeManagedPythonEnvironmentManager(computeDir, dependencies());
-    const signal = new AbortController().signal;
-
+    for (const toolkitIds of [[], [TOOLKIT_ID, TOOLKIT_ID]]) {
+      await expect(manager.install(installInput({ toolkitIds }))).rejects.toBeInstanceOf(
+        ManagedPythonEnvironmentError,
+      );
+    }
     await expect(
-      manager.install({ projectId: PROJECT_ID, toolkitIds: [], signal }),
-    ).rejects.toBeInstanceOf(ManagedPythonEnvironmentError);
-    await expect(
-      manager.install({ projectId: PROJECT_ID, toolkitIds: [TOOLKIT_ID, TOOLKIT_ID], signal }),
-    ).rejects.toMatchObject({ reason: "invalid-request" });
-    const cancelled = new AbortController();
-    cancelled.abort();
-    await expect(manager.install(installInput(cancelled.signal))).rejects.toMatchObject({
-      reason: "cancelled",
-    });
-    await expect(
-      NodeFSP.access(managedPythonEnvironmentPaths(computeDir, PROJECT_ID).projectRoot),
+      NodeFSP.access(managedPythonEnvironmentPaths(computeDir).statePath),
     ).rejects.toThrow();
   });
 });

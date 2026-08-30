@@ -274,6 +274,9 @@ import {
   ComputeListProjectExecutionsResult,
   ComputeListProjectOutputsInput,
   ComputeListProjectSessionsResult,
+  ComputeManagedRuntimeInput,
+  ComputeManagedRuntimeStatus,
+  ComputeManagedRuntimeStatusInput,
   ComputeOperationError,
   ComputeProjectExecutionCommandInput,
   ComputeProjectInput,
@@ -327,6 +330,9 @@ export const WS_METHODS = {
   // Scient-owned stateful scientific compute methods
   computeInspectRuntimes: "compute.inspectRuntimes",
   computeVerifyRuntime: "compute.verifyRuntime",
+  computeManagedRuntimeStatus: "compute.managedRuntimeStatus",
+  computeManageRuntime: "compute.manageRuntime",
+  computeCancelManagedRuntime: "compute.cancelManagedRuntime",
   computeStartSession: "compute.startSession",
   computeListSessions: "compute.listSessions",
   computeGetSession: "compute.getSession",
@@ -998,6 +1004,24 @@ export const WsComputeVerifyRuntimeRpc = Rpc.make(WS_METHODS.computeVerifyRuntim
   error: ComputeRpcError,
 });
 
+export const WsComputeManagedRuntimeStatusRpc = Rpc.make(WS_METHODS.computeManagedRuntimeStatus, {
+  payload: ComputeManagedRuntimeStatusInput,
+  success: ComputeManagedRuntimeStatus,
+  error: ComputeRpcError,
+});
+
+export const WsComputeManageRuntimeRpc = Rpc.make(WS_METHODS.computeManageRuntime, {
+  payload: ComputeManagedRuntimeInput,
+  success: ComputeManagedRuntimeStatus,
+  error: ComputeRpcError,
+});
+
+export const WsComputeCancelManagedRuntimeRpc = Rpc.make(WS_METHODS.computeCancelManagedRuntime, {
+  payload: ComputeManagedRuntimeStatusInput,
+  success: ComputeManagedRuntimeStatus,
+  error: ComputeRpcError,
+});
+
 export const WsComputeStartSessionRpc = Rpc.make(WS_METHODS.computeStartSession, {
   payload: ComputeStartProjectSessionInput,
   success: ComputeSessionRecord,
@@ -1541,6 +1565,9 @@ export const WsRpcGroup = RpcGroup.make(
   WsSubscribeAnalysisRunsRpc,
   WsComputeInspectRuntimesRpc,
   WsComputeVerifyRuntimeRpc,
+  WsComputeManagedRuntimeStatusRpc,
+  WsComputeManageRuntimeRpc,
+  WsComputeCancelManagedRuntimeRpc,
   WsComputeStartSessionRpc,
   WsComputeListSessionsRpc,
   WsComputeGetSessionRpc,

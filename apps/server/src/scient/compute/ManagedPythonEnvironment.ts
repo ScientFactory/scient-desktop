@@ -4,24 +4,28 @@ import * as NodeFSP from "node:fs/promises";
 import * as NodePath from "node:path";
 
 import {
-  ComputeProjectId,
   ComputeToolkitId,
   type ComputeToolkitId as ComputeToolkitIdType,
 } from "@scientfactory/compute";
 import * as Schema from "effect/Schema";
 
+export const ManagedPythonSelection = Schema.Literals(["managed", "existing"]);
+export type ManagedPythonSelection = typeof ManagedPythonSelection.Type;
+
 const ManagedPythonGeneration = Schema.Struct({
   generationId: Schema.NonEmptyString.check(Schema.isMaxLength(128)),
-  root: Schema.NonEmptyString.check(Schema.isMaxLength(4096)),
   executableRelativePath: Schema.NonEmptyString.check(Schema.isMaxLength(1024)),
   toolkitIds: Schema.Array(ComputeToolkitId).check(Schema.isMaxLength(64)),
+  toolkitRevision: Schema.NonEmptyString.check(Schema.isMaxLength(256)),
+  pythonVersion: Schema.NonEmptyString.check(Schema.isMaxLength(64)),
+  provisionerVersion: Schema.NonEmptyString.check(Schema.isMaxLength(64)),
   activatedAtEpochMs: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),
 });
 export type ManagedPythonGeneration = typeof ManagedPythonGeneration.Type;
 
 export const ManagedPythonEnvironmentRecord = Schema.Struct({
   schemaVersion: Schema.Literal(1),
-  projectId: ComputeProjectId,
+  selection: ManagedPythonSelection,
   active: ManagedPythonGeneration,
   previous: Schema.NullOr(ManagedPythonGeneration),
 });
@@ -54,24 +58,39 @@ export class ManagedPythonEnvironmentError extends Error {
   }
 }
 
+export type ManagedPythonProvisionPhase =
+  | "downloading"
+  | "installing-python"
+  | "installing-packages"
+  | "verifying";
+
+export interface ManagedPythonProvisionProgress {
+  readonly phase: ManagedPythonProvisionPhase;
+  readonly downloadedBytes: number | null;
+  readonly totalBytes: number | null;
+}
+
 export interface ManagedPythonProvisionInput {
   /** Final, fresh app-owned generation directory. Do not build elsewhere and move a venv. */
   readonly targetRoot: string;
-  readonly projectId: ComputeProjectId;
   readonly toolkitIds: ReadonlyArray<ComputeToolkitIdType>;
+  readonly toolkitRevision: string;
+  readonly pythonVersion: string;
+  readonly provisionerVersion: string;
   readonly signal: AbortSignal;
+  readonly onProgress?: ((progress: ManagedPythonProvisionProgress) => void) | undefined;
 }
 
 export interface ManagedPythonProvisionResult {
-  /** Executable location relative to targetRoot, such as `bin/python`. */
+  /** Executable location relative to targetRoot, such as `environment/bin/python`. */
   readonly executableRelativePath: string;
 }
 
 export interface ManagedPythonVerifyInput {
   readonly executable: string;
-  readonly projectId: ComputeProjectId;
   readonly toolkitIds: ReadonlyArray<ComputeToolkitIdType>;
   readonly signal: AbortSignal;
+  readonly onProgress?: ((progress: ManagedPythonProvisionProgress) => void) | undefined;
 }
 
 export interface ManagedPythonEnvironmentDependencies {
@@ -87,34 +106,30 @@ export interface ManagedPythonEnvironmentDependencies {
 }
 
 export interface ManagedPythonEnvironmentInstallInput {
-  readonly projectId: ComputeProjectId;
   readonly toolkitIds: ReadonlyArray<ComputeToolkitIdType>;
+  readonly toolkitRevision: string;
+  readonly pythonVersion: string;
+  readonly provisionerVersion: string;
   readonly signal: AbortSignal;
+  readonly onProgress?: ((progress: ManagedPythonProvisionProgress) => void) | undefined;
 }
 
 export interface ManagedPythonEnvironmentPaths {
+  readonly environmentsRoot: string;
   readonly managedRoot: string;
-  readonly projectRoot: string;
   readonly statePath: string;
 }
 
 const decodeRecord = Schema.decodeUnknownSync(ManagedPythonEnvironmentRecord);
 const encodeRecord = Schema.encodeSync(Schema.fromJsonString(ManagedPythonEnvironmentRecord));
 
-function projectKey(projectId: ComputeProjectId): string {
-  return NodeCrypto.createHash("sha256").update(projectId).digest("hex");
-}
-
-export function managedPythonEnvironmentPaths(
-  computeDir: string,
-  projectId: ComputeProjectId,
-): ManagedPythonEnvironmentPaths {
-  const managedRoot = NodePath.join(computeDir, "environments", "python");
-  const projectRoot = NodePath.join(managedRoot, projectKey(projectId));
+export function managedPythonEnvironmentPaths(computeDir: string): ManagedPythonEnvironmentPaths {
+  const environmentsRoot = NodePath.join(computeDir, "environments");
+  const managedRoot = NodePath.join(environmentsRoot, "python");
   return {
+    environmentsRoot,
     managedRoot,
-    projectRoot,
-    statePath: NodePath.join(projectRoot, "active.json"),
+    statePath: NodePath.join(managedRoot, "active.json"),
   };
 }
 
@@ -127,10 +142,68 @@ function validGenerationId(value: string): boolean {
   return /^[a-zA-Z0-9][a-zA-Z0-9._-]{0,127}$/u.test(value);
 }
 
+function generationRoot(managedRoot: string, generationId: string): string | null {
+  if (!validGenerationId(generationId)) return null;
+  const candidate = NodePath.join(managedRoot, `generation-${generationId}`);
+  return isContained(managedRoot, candidate) ? candidate : null;
+}
+
 function executablePath(root: string, relativePath: string): string | null {
   if (NodePath.isAbsolute(relativePath) || relativePath.includes("\0")) return null;
   const candidate = NodePath.resolve(root, relativePath);
   return isContained(root, candidate) && candidate !== NodePath.resolve(root) ? candidate : null;
+}
+
+async function managedDirectorySafety(paths: ManagedPythonEnvironmentPaths): Promise<{
+  readonly environmentsPresent: boolean;
+  readonly managedPresent: boolean;
+}> {
+  const inspectDirectory = async (directory: string, label: string): Promise<boolean> => {
+    const stat = await NodeFSP.lstat(directory).catch((cause: NodeJS.ErrnoException) => {
+      if (cause.code === "ENOENT") return null;
+      throw cause;
+    });
+    if (stat === null) return false;
+    if (!stat.isDirectory() || stat.isSymbolicLink()) {
+      throw new ManagedPythonEnvironmentError(
+        "activation-failed",
+        `The ${label} path is not a private app-owned directory.`,
+      );
+    }
+    return true;
+  };
+
+  const environmentsPresent = await inspectDirectory(
+    paths.environmentsRoot,
+    "managed environments",
+  );
+  if (!environmentsPresent) return { environmentsPresent: false, managedPresent: false };
+  const managedPresent = await inspectDirectory(paths.managedRoot, "managed Python");
+  if (!managedPresent) return { environmentsPresent: true, managedPresent: false };
+  const canonicalEnvironments = await NodeFSP.realpath(paths.environmentsRoot);
+  const canonicalManaged = await NodeFSP.realpath(paths.managedRoot);
+  if (
+    canonicalManaged === canonicalEnvironments ||
+    !isContained(canonicalEnvironments, canonicalManaged)
+  ) {
+    throw new ManagedPythonEnvironmentError(
+      "activation-failed",
+      "The managed Python directory escaped the app-owned environments root.",
+    );
+  }
+  return { environmentsPresent: true, managedPresent: true };
+}
+
+async function ensureManagedDirectories(paths: ManagedPythonEnvironmentPaths): Promise<void> {
+  await NodeFSP.mkdir(paths.environmentsRoot, { recursive: true, mode: 0o700 });
+  await NodeFSP.mkdir(paths.managedRoot, { recursive: true, mode: 0o700 });
+  const safety = await managedDirectorySafety(paths);
+  if (!safety.managedPresent) {
+    throw new ManagedPythonEnvironmentError(
+      "activation-failed",
+      "Scient could not prepare its private managed Python directory.",
+    );
+  }
 }
 
 async function defaultCommitState(
@@ -148,24 +221,27 @@ async function defaultCommitState(
 }
 
 async function canonicalGeneration(
-  projectRoot: string,
+  managedRoot: string,
   generation: ManagedPythonGeneration,
 ): Promise<{ readonly generation: ManagedPythonGeneration; readonly executable: string } | null> {
-  if (!isContained(projectRoot, generation.root)) return null;
-  if (!NodePath.basename(generation.root).startsWith("generation-")) return null;
-  const lexicalExecutable = executablePath(generation.root, generation.executableRelativePath);
+  const lexicalRoot = generationRoot(managedRoot, generation.generationId);
+  if (lexicalRoot === null) return null;
+  const lexicalExecutable = executablePath(lexicalRoot, generation.executableRelativePath);
   if (lexicalExecutable === null) return null;
   try {
-    const canonicalProjectRoot = await NodeFSP.realpath(projectRoot);
-    const canonicalRoot = await NodeFSP.realpath(generation.root);
+    const canonicalManagedRoot = await NodeFSP.realpath(managedRoot);
+    const canonicalRoot = await NodeFSP.realpath(lexicalRoot);
     const canonicalExecutable = await NodeFSP.realpath(lexicalExecutable);
     if (
-      !isContained(canonicalProjectRoot, canonicalRoot) ||
+      !isContained(canonicalManagedRoot, canonicalRoot) ||
       !isContained(canonicalRoot, canonicalExecutable)
     ) {
       return null;
     }
-    return { generation, executable: canonicalExecutable };
+    // Keep the lexical virtual-environment launcher. Its symlink may resolve to
+    // the generation's private base Python, but invoking the resolved target
+    // directly would discard the venv and therefore its locked packages.
+    return { generation, executable: lexicalExecutable };
   } catch {
     return null;
   }
@@ -173,12 +249,9 @@ async function canonicalGeneration(
 
 async function readRecord(
   paths: ManagedPythonEnvironmentPaths,
-  projectId: ComputeProjectId,
 ): Promise<ManagedPythonEnvironmentRecord | null> {
   try {
-    const parsed = decodeRecord(JSON.parse(await NodeFSP.readFile(paths.statePath, "utf8")));
-    if (parsed.projectId !== projectId) return null;
-    return parsed;
+    return decodeRecord(JSON.parse(await NodeFSP.readFile(paths.statePath, "utf8")));
   } catch {
     return null;
   }
@@ -186,32 +259,28 @@ async function readRecord(
 
 async function readStatus(
   paths: ManagedPythonEnvironmentPaths,
-  projectId: ComputeProjectId,
 ): Promise<ManagedPythonEnvironmentStatus | null> {
-  const record = await readRecord(paths, projectId);
+  if (!(await managedDirectorySafety(paths)).managedPresent) return null;
+  const record = await readRecord(paths);
   if (record === null) return null;
-  const active = await canonicalGeneration(paths.projectRoot, record.active);
+  const active = await canonicalGeneration(paths.managedRoot, record.active);
   if (active === null) return null;
   const previous =
-    record.previous === null ? null : await canonicalGeneration(paths.projectRoot, record.previous);
+    record.previous === null ? null : await canonicalGeneration(paths.managedRoot, record.previous);
   return {
-    record: {
-      ...record,
-      previous: previous?.generation ?? null,
-    },
+    record: { ...record, previous: previous?.generation ?? null },
     executable: active.executable,
   };
 }
 
 /**
- * Transactional activation boundary for app-owned Python environments.
+ * Transactional activation boundary for one app-owned Scientific Python.
  *
  * The provisioner builds directly in a fresh final generation path because a
- * Python virtual environment may embed absolute paths and cannot safely be
- * built elsewhere and renamed. Nothing discovers that generation until its
- * exact executable passes verification and one atomic state-file replacement
- * names it. A failure or cancellation removes only the unpublished candidate
- * and leaves the previous state untouched.
+ * Python environment may embed absolute paths and cannot safely be assembled
+ * elsewhere and renamed. Discovery only sees a generation after its exact
+ * executable passes verification and one atomic state replacement names it.
+ * Existing project and system environments are never written or removed.
  */
 export function makeManagedPythonEnvironmentManager(
   computeDir: string,
@@ -223,11 +292,8 @@ export function makeManagedPythonEnvironmentManager(
   const removeTree =
     dependencies.removeTree ??
     ((root: string) => NodeFSP.rm(root, { recursive: true, force: true }));
+  const paths = managedPythonEnvironmentPaths(computeDir);
 
-  // Installs are rare and expensive. One manager-wide gate is intentionally
-  // simpler than a keyed lock and prevents cleanup for one request racing an
-  // activation for another. We can split it only if measured contention proves
-  // that necessary.
   let mutationTail: Promise<void> = Promise.resolve();
   const serialize = async <A>(operation: () => Promise<A>): Promise<A> => {
     const previous = mutationTail;
@@ -243,33 +309,54 @@ export function makeManagedPythonEnvironmentManager(
     }
   };
 
-  const inspect = async (
-    projectId: ComputeProjectId,
-  ): Promise<ManagedPythonEnvironmentStatus | null> => {
-    const paths = managedPythonEnvironmentPaths(computeDir, projectId);
-    return await readStatus(paths, projectId);
-  };
+  const inspect = async (): Promise<ManagedPythonEnvironmentStatus | null> =>
+    await readStatus(paths);
 
-  const cleanupSuperseded = async (
-    paths: ManagedPythonEnvironmentPaths,
-    record: ManagedPythonEnvironmentRecord,
-  ): Promise<void> => {
-    const keep = new Set([
-      record.active.root,
-      ...(record.previous === null ? [] : [record.previous.root]),
-    ]);
-    const entries = await NodeFSP.readdir(paths.projectRoot).catch((): string[] => []);
+  const cleanupAbandoned = async (record: ManagedPythonEnvironmentRecord | null): Promise<void> => {
+    const safety = await managedDirectorySafety(paths);
+    if (!safety.environmentsPresent) return;
+    const keep = new Set(
+      record === null
+        ? []
+        : [
+            `generation-${record.active.generationId}`,
+            ...(record.previous === null ? [] : [`generation-${record.previous.generationId}`]),
+          ],
+    );
+    if (safety.managedPresent) {
+      const entries = await NodeFSP.readdir(paths.managedRoot);
+      await Promise.all(
+        entries
+          .filter((entry) => entry.startsWith("generation-") && !keep.has(entry))
+          .map((entry) =>
+            NodeFSP.rm(NodePath.join(paths.managedRoot, entry), {
+              recursive: true,
+              force: true,
+            }).catch(() => undefined),
+          ),
+      );
+    }
+    const environmentEntries = await NodeFSP.readdir(paths.environmentsRoot).catch(
+      (): string[] => [],
+    );
     await Promise.all(
-      entries
-        .filter((entry) => entry.startsWith("generation-"))
-        .map(async (entry) => {
-          const candidate = NodePath.join(paths.projectRoot, entry);
-          if (!keep.has(candidate)) {
-            await NodeFSP.rm(candidate, { recursive: true, force: true }).catch(() => undefined);
-          }
-        }),
+      environmentEntries
+        .filter((entry) => entry.startsWith("python.removing-"))
+        .map((entry) =>
+          NodeFSP.rm(NodePath.join(paths.environmentsRoot, entry), {
+            recursive: true,
+            force: true,
+          }).catch(() => undefined),
+        ),
     );
   };
+
+  const reconcile = () =>
+    serialize(async () => {
+      const current = await readStatus(paths);
+      await cleanupAbandoned(current?.record ?? null);
+      return current;
+    });
 
   const install = (input: ManagedPythonEnvironmentInstallInput) => {
     const toolkitIds = [...input.toolkitIds];
@@ -286,17 +373,27 @@ export function makeManagedPythonEnvironmentManager(
           "Choose at least one distinct Toolkit for the managed Python environment.",
         );
       }
+      if (
+        input.toolkitRevision.trim().length === 0 ||
+        input.pythonVersion.trim().length === 0 ||
+        input.provisionerVersion.trim().length === 0
+      ) {
+        throw new ManagedPythonEnvironmentError(
+          "invalid-request",
+          "Managed Python version metadata must be present before setup starts.",
+        );
+      }
 
-      const paths = managedPythonEnvironmentPaths(computeDir, input.projectId);
-      await NodeFSP.mkdir(paths.projectRoot, { recursive: true, mode: 0o700 });
+      await ensureManagedDirectories(paths);
+      const existing = await readStatus(paths);
       const generationId = nextGenerationId();
-      if (!validGenerationId(generationId)) {
+      const candidateRoot = generationRoot(paths.managedRoot, generationId);
+      if (candidateRoot === null) {
         throw new ManagedPythonEnvironmentError(
           "invalid-request",
           "The managed Python generation identifier was invalid.",
         );
       }
-      const candidateRoot = NodePath.join(paths.projectRoot, `generation-${generationId}`);
       await NodeFSP.mkdir(candidateRoot, { recursive: false, mode: 0o700 }).catch((cause) => {
         throw new ManagedPythonEnvironmentError(
           "provision-failed",
@@ -310,9 +407,12 @@ export function makeManagedPythonEnvironmentManager(
         const provisioned = await dependencies
           .provision({
             targetRoot: candidateRoot,
-            projectId: input.projectId,
             toolkitIds,
+            toolkitRevision: input.toolkitRevision,
+            pythonVersion: input.pythonVersion,
+            provisionerVersion: input.provisionerVersion,
             signal: input.signal,
+            onProgress: input.onProgress,
           })
           .catch((cause) => {
             if (input.signal.aborted) {
@@ -356,15 +456,15 @@ export function makeManagedPythonEnvironmentManager(
             { cause },
           );
         });
-        const canonicalProjectRoot = await NodeFSP.realpath(paths.projectRoot).catch((cause) => {
+        const canonicalManagedRoot = await NodeFSP.realpath(paths.managedRoot).catch((cause) => {
           throw new ManagedPythonEnvironmentError(
             "verification-failed",
-            "The managed Python project directory was not present after provisioning.",
+            "The managed Python directory was not present after provisioning.",
             { cause },
           );
         });
         if (
-          !isContained(canonicalProjectRoot, canonicalRoot) ||
+          !isContained(canonicalManagedRoot, canonicalRoot) ||
           !isContained(canonicalRoot, canonicalExecutable)
         ) {
           throw new ManagedPythonEnvironmentError(
@@ -375,10 +475,10 @@ export function makeManagedPythonEnvironmentManager(
 
         await dependencies
           .verify({
-            executable: canonicalExecutable,
-            projectId: input.projectId,
+            executable: lexicalExecutable,
             toolkitIds,
             signal: input.signal,
+            onProgress: input.onProgress,
           })
           .catch((cause) => {
             if (input.signal.aborted) {
@@ -401,17 +501,18 @@ export function makeManagedPythonEnvironmentManager(
           );
         }
 
-        const existing = await readStatus(paths, input.projectId);
         const active: ManagedPythonGeneration = {
           generationId,
-          root: candidateRoot,
           executableRelativePath: provisioned.executableRelativePath,
           toolkitIds,
+          toolkitRevision: input.toolkitRevision,
+          pythonVersion: input.pythonVersion,
+          provisionerVersion: input.provisionerVersion,
           activatedAtEpochMs: now(),
         };
         const record: ManagedPythonEnvironmentRecord = {
           schemaVersion: 1,
-          projectId: input.projectId,
+          selection: existing?.record.selection ?? "managed",
           active,
           previous: existing?.record.active ?? null,
         };
@@ -423,8 +524,11 @@ export function makeManagedPythonEnvironmentManager(
           );
         });
         committed = true;
-        await cleanupSuperseded(paths, record);
-        return { record, executable: canonicalExecutable } satisfies ManagedPythonEnvironmentStatus;
+        // Do not delete displaced generations while this server may still
+        // have sessions running from them. Startup reconciliation is the safe
+        // collection point because no prior-process compute session survives
+        // it. Failed unpublished candidates are still removed below.
+        return { record, executable: lexicalExecutable } satisfies ManagedPythonEnvironmentStatus;
       } finally {
         if (!committed) {
           await NodeFSP.rm(candidateRoot, { recursive: true, force: true }).catch(() => undefined);
@@ -433,20 +537,38 @@ export function makeManagedPythonEnvironmentManager(
     });
   };
 
-  const remove = (projectId: ComputeProjectId) =>
+  const select = (selection: ManagedPythonSelection) =>
     serialize(async () => {
-      const paths = managedPythonEnvironmentPaths(computeDir, projectId);
-      const present = await NodeFSP.stat(paths.projectRoot).then(
-        () => true,
-        () => false,
-      );
-      if (!present) return false;
+      const current = await readStatus(paths);
+      if (current === null) {
+        if (selection === "existing") return null;
+        throw new ManagedPythonEnvironmentError(
+          "invalid-request",
+          "Set up Scientific Python before selecting it.",
+        );
+      }
+      if (current.record.selection === selection) return current;
+      const record = { ...current.record, selection };
+      await commitState(paths.statePath, record).catch((cause) => {
+        throw new ManagedPythonEnvironmentError(
+          "activation-failed",
+          "Scient could not change the selected Python environment.",
+          { cause },
+        );
+      });
+      return { record, executable: current.executable } satisfies ManagedPythonEnvironmentStatus;
+    });
+
+  const remove = () =>
+    serialize(async () => {
+      const safety = await managedDirectorySafety(paths);
+      if (!safety.managedPresent) return false;
 
       const tombstone = NodePath.join(
-        paths.managedRoot,
-        `${NodePath.basename(paths.projectRoot)}.removing-${NodeCrypto.randomUUID()}`,
+        paths.environmentsRoot,
+        `python.removing-${NodeCrypto.randomUUID()}`,
       );
-      await NodeFSP.rename(paths.projectRoot, tombstone).catch((cause) => {
+      await NodeFSP.rename(paths.managedRoot, tombstone).catch((cause) => {
         throw new ManagedPythonEnvironmentError(
           "remove-failed",
           "Scient could not prepare the managed Python environment for removal.",
@@ -457,7 +579,7 @@ export function makeManagedPythonEnvironmentManager(
         await removeTree(tombstone);
       } catch (cause) {
         try {
-          await NodeFSP.rename(tombstone, paths.projectRoot);
+          await NodeFSP.rename(tombstone, paths.managedRoot);
         } catch (rollbackCause) {
           throw new ManagedPythonEnvironmentError(
             "remove-failed",
@@ -474,5 +596,5 @@ export function makeManagedPythonEnvironmentManager(
       return true;
     });
 
-  return { inspect, install, repair: install, remove } as const;
+  return { inspect, install, repair: install, reconcile, remove, select } as const;
 }

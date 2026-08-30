@@ -32,6 +32,10 @@ const pythonActionsSource = NodeFS.readFileSync(
   NodePath.join(here, "PythonFileComputeActions.tsx"),
   "utf8",
 );
+const pythonSurfaceSource = NodeFS.readFileSync(
+  NodePath.join(here, "ScientPythonComputeSurface.tsx"),
+  "utf8",
+);
 
 describe("compute result surface seam", () => {
   it("keeps editing in the file surface and results focused on outputs", () => {
@@ -55,9 +59,28 @@ describe("compute result surface seam", () => {
 
   it("keeps Python setup contextual to the file toolbar", () => {
     expect(pythonActionsSource).toContain("resolvePythonRuntimeToolbarState");
-    expect(pythonActionsSource).toContain('title="Open Scientific Computing settings"');
+    expect(pythonActionsSource).toContain('"Open Scientific Computing settings"');
+    expect(pythonActionsSource).toContain('aria-label="Refresh Python detection"');
+    expect(pythonActionsSource).toContain('runtimeToolbar.kind === "switch"');
+    expect(pythonActionsSource).toContain("the next run uses the Python selected");
     expect(pythonActionsSource).not.toContain("Settings2");
     expect(panelSource).toContain("!props.embedded && allSessions.length > 0");
+  });
+
+  it("keeps the Python file toolbar usable as its panel narrows", () => {
+    expect(pythonActionsSource).toContain("@container/python-file-actions");
+    expect(pythonActionsSource).toContain("@[9rem]/python-file-actions:block");
+    expect(pythonActionsSource).toContain("@[15rem]/python-file-actions:inline");
+    expect(pythonActionsSource).toContain("aria-label={primary.label}");
+    expect(pythonActionsSource).toContain("Switch Python environment…");
+  });
+
+  it("focuses a new run in the session that actually owns it", () => {
+    expect(pythonActionsSource).toContain(
+      "props.onExecutionSubmitted(session.sessionId, executionId)",
+    );
+    expect(pythonSurfaceSource).toContain("focusSessionId={focusExecution?.sessionId ?? null}");
+    expect(panelSource).toContain("setSelectedSessionId(props.focusSessionId)");
   });
 
   it("follows only current stable figures through passive generic surfaces", () => {

@@ -36,6 +36,8 @@ import {
   type ComputeInterruptOutcome,
   type ComputeLanguageAdapter,
   type ComputeLanguageId,
+  type ComputeManagedRuntimeAction,
+  type ComputeManagedRuntimeStatus,
   type ComputeListExecutionsInput,
   type ComputeListOutputsInput,
   type ComputeListSessionsInput,
@@ -140,6 +142,16 @@ export interface ComputeRuntimeBinding {
         ) => ReadonlyArray<ComputeToolkitAssessment>;
       }
     | undefined;
+  readonly managedRuntime?:
+    | {
+        readonly isRemoving: () => boolean;
+        readonly status: () => Effect.Effect<ComputeManagedRuntimeStatus, ComputeOperationError>;
+        readonly manage: (
+          action: ComputeManagedRuntimeAction,
+        ) => Effect.Effect<ComputeManagedRuntimeStatus, ComputeOperationError>;
+        readonly cancel: () => Effect.Effect<ComputeManagedRuntimeStatus, ComputeOperationError>;
+      }
+    | undefined;
 }
 
 /** Data-only adapter metadata safe to expose through the shared product UI. */
@@ -160,6 +172,7 @@ export interface ComputeRuntimeInspectionRequest {
 
 export interface ComputeRuntimeInspectionResult {
   readonly descriptor: ComputeRuntimeDescriptor;
+  readonly managedRuntime?: ComputeManagedRuntimeStatus | null | undefined;
   readonly toolkits: ReadonlyArray<ComputeToolkitDescriptor>;
   readonly runtimes: ReadonlyArray<{
     readonly profile: ComputeRuntimeProfile;
@@ -311,7 +324,7 @@ interface LiveComputeSession {
   readonly sessionOutputRef: Ref.Ref<{ readonly bytes: number; readonly truncated: boolean }>;
   readonly startRequest: Pick<
     ComputeStartSessionInput,
-    "languageId" | "workingDirectory" | "configuredExecutable"
+    "languageId" | "workingDirectory" | "configuredExecutable" | "requestedExecutable"
   >;
 }
 
@@ -325,6 +338,16 @@ export class ComputeSessionService extends Context.Service<
     readonly verifyRuntime: (
       input: ComputeRuntimeVerificationRequest,
     ) => Effect.Effect<ComputeRuntimeVerification, ComputeOperationError>;
+    readonly managedRuntimeStatus: (
+      languageId: ComputeLanguageId,
+    ) => Effect.Effect<ComputeManagedRuntimeStatus, ComputeOperationError>;
+    readonly manageRuntime: (
+      languageId: ComputeLanguageId,
+      action: ComputeManagedRuntimeAction,
+    ) => Effect.Effect<ComputeManagedRuntimeStatus, ComputeOperationError>;
+    readonly cancelManagedRuntime: (
+      languageId: ComputeLanguageId,
+    ) => Effect.Effect<ComputeManagedRuntimeStatus, ComputeOperationError>;
     readonly startSession: (
       input: ComputeStartSessionInput,
     ) => Effect.Effect<ComputeSessionRecord, ComputeOperationError>;
@@ -449,9 +472,31 @@ const make = Effect.gen(function* () {
       const { environment } = runtimeEnvironment();
       return yield* Effect.forEach(bindings, (binding) =>
         Effect.gen(function* () {
+          const managedRuntime =
+            binding.managedRuntime === undefined
+              ? null
+              : yield* binding.managedRuntime.status().pipe(
+                  Effect.catch((cause) =>
+                    Effect.logWarning("managed compute runtime status unavailable", {
+                      languageId: binding.adapter.languageId,
+                      cause,
+                    }).pipe(
+                      Effect.as({
+                        installed: false,
+                        selection: "existing" as const,
+                        updateAvailable: false,
+                        runtimeVersion: null,
+                        toolkitRevision: null,
+                        operation: null,
+                        failureMessage: shortText(cause.message),
+                      }),
+                    ),
+                  ),
+                );
           if (!input.enabledLanguageIds.has(binding.adapter.languageId)) {
             return {
               descriptor: descriptorFor(binding),
+              managedRuntime,
               toolkits: binding.toolkitSupport?.descriptors ?? [],
               runtimes: [],
             };
@@ -487,12 +532,51 @@ const make = Effect.gen(function* () {
           );
           return {
             descriptor: descriptorFor(binding),
+            managedRuntime,
             toolkits: binding.toolkitSupport?.descriptors ?? [],
             runtimes,
           };
         }),
       );
     });
+
+  const managedController = (
+    languageId: ComputeLanguageId,
+  ): Effect.Effect<NonNullable<ComputeRuntimeBinding["managedRuntime"]>, ComputeOperationError> => {
+    const binding = bindings.find((candidate) => candidate.adapter.languageId === languageId);
+    if (binding?.managedRuntime !== undefined) return Effect.succeed(binding.managedRuntime);
+    return Effect.fail(
+      computeError(
+        "manage",
+        "runtime-missing",
+        `No Scient-managed runtime is available for '${languageId}'.`,
+      ),
+    );
+  };
+
+  const managedRuntimeStatus = (languageId: ComputeLanguageId) =>
+    managedController(languageId).pipe(Effect.flatMap((controller) => controller.status()));
+
+  const manageRuntime = (languageId: ComputeLanguageId, action: ComputeManagedRuntimeAction) =>
+    Effect.gen(function* () {
+      if (action === "remove") {
+        const liveSessions = yield* Ref.get(sessionsRef);
+        if (
+          [...liveSessions.values()].some((session) => session.adapter.languageId === languageId)
+        ) {
+          return yield* computeError(
+            "manage",
+            "operation-failed",
+            `Stop live ${languageId} sessions before removing its Scient-managed runtime.`,
+          );
+        }
+      }
+      const controller = yield* managedController(languageId);
+      return yield* controller.manage(action);
+    }).pipe(startLock.withPermits(1));
+
+  const cancelManagedRuntime = (languageId: ComputeLanguageId) =>
+    managedController(languageId).pipe(Effect.flatMap((controller) => controller.cancel()));
 
   const verifyRuntime = (input: ComputeRuntimeVerificationRequest) =>
     Effect.gen(function* () {
@@ -519,7 +603,9 @@ const make = Effect.gen(function* () {
             computeError("verify", "runtime-unusable", cause.message, cause),
           ),
         );
-      const profile = profiles[0];
+      const profile =
+        profiles.find((candidate) => candidate.executable === input.executable) ??
+        profiles.find((candidate) => candidate.source === "configured");
       if (profile === undefined) {
         return yield* computeError(
           "verify",
@@ -1763,6 +1849,15 @@ const make = Effect.gen(function* () {
           `No compute runtime is registered for '${input.languageId}'.`,
         );
       }
+      // Removal admission shares the start lock. Once admitted, its background
+      // operation must finish before another session can claim this runtime.
+      if (binding.managedRuntime?.isRemoving()) {
+        return yield* computeError(
+          "start",
+          "runtime-unusable",
+          "The Scient-managed runtime is being removed. Wait for removal to finish, then refresh runtimes.",
+        );
+      }
       const projectRoot = yield* Effect.try({
         try: () => validateProjectRoot(input.workingDirectory),
         catch: (cause) =>
@@ -1775,18 +1870,30 @@ const make = Effect.gen(function* () {
       });
       const { environment } = sanitizeComputeEnvironment(definedEnvironment(hostEnvironment));
       const profiles = yield* binding.adapter
-        .discover({ projectRoot, configuredExecutable: input.configuredExecutable })
+        .discover({
+          projectRoot,
+          configuredExecutable: input.requestedExecutable ?? input.configuredExecutable,
+        })
         .pipe(
           Effect.mapError((cause) =>
             computeError("start", "runtime-missing", cause.message, cause),
           ),
         );
-      const candidate = profiles[0];
+      // A default may prefer the managed runtime; a deliberate session choice
+      // must not. The configured profile also covers an alias whose probe
+      // reports a different canonical executable path.
+      const candidate =
+        input.requestedExecutable === undefined
+          ? profiles[0]
+          : (profiles.find((profile) => profile.executable === input.requestedExecutable) ??
+            profiles.find((profile) => profile.source === "configured"));
       if (candidate === undefined) {
         return yield* computeError(
           "start",
           "runtime-missing",
-          `No ${input.languageId} runtime was found for this project.`,
+          input.requestedExecutable === undefined
+            ? `No ${input.languageId} runtime was found for this project.`
+            : "The selected runtime is no longer available. Refresh runtimes and choose it again.",
         );
       }
       const verification = yield* binding.adapter
@@ -1891,6 +1998,7 @@ const make = Effect.gen(function* () {
           languageId: input.languageId,
           workingDirectory: input.workingDirectory,
           configuredExecutable: input.configuredExecutable,
+          requestedExecutable: input.requestedExecutable,
         },
       };
       yield* persistSession("start", record).pipe(
@@ -1933,7 +2041,8 @@ const make = Effect.gen(function* () {
               if (
                 existing.startRequest.languageId !== input.languageId ||
                 existing.startRequest.workingDirectory !== input.workingDirectory ||
-                existing.startRequest.configuredExecutable !== input.configuredExecutable
+                existing.startRequest.configuredExecutable !== input.configuredExecutable ||
+                existing.startRequest.requestedExecutable !== input.requestedExecutable
               ) {
                 return yield* computeError(
                   "start",
@@ -2575,6 +2684,9 @@ const make = Effect.gen(function* () {
     runtimeDescriptors: bindings.map(descriptorFor),
     inspectRuntimes,
     verifyRuntime,
+    managedRuntimeStatus,
+    manageRuntime,
+    cancelManagedRuntime,
     startSession,
     submitExecution,
     cancelExecution,

@@ -31,7 +31,7 @@ export const PYTHON_COMPUTE_SPLIT_KEYBOARD_STEP = 0.02;
 
 type PythonRuntimeToolbarSession = Pick<
   ComputeSessionRecord,
-  "activity" | "label" | "languageId" | "status"
+  "activity" | "label" | "languageId" | "runtime" | "status"
 >;
 
 export type PythonRuntimeToolbarState =
@@ -44,6 +44,11 @@ export type PythonRuntimeToolbarState =
       readonly kind: "status";
       readonly label: string;
       readonly canRun: boolean;
+    }
+  | {
+      readonly kind: "switch";
+      readonly label: "Switch Python";
+      readonly canRun: true;
     };
 
 const PYTHON_COMPUTE_SPLIT_BOUNDS = {
@@ -104,6 +109,8 @@ export function resolvePythonRuntimeToolbarState(input: {
   readonly liveSession: PythonRuntimeToolbarSession | null;
   readonly runtimeInspectionPending: boolean;
   readonly readyPythonAvailable: boolean;
+  readonly preferredPythonExecutable: string | null;
+  readonly scientificPackagesMissing: boolean;
 }): PythonRuntimeToolbarState {
   const session = input.liveSession;
   if (session !== null) {
@@ -113,14 +120,29 @@ export function resolvePythonRuntimeToolbarState(input: {
     if (session.status !== "ready") {
       return { kind: "status", label: `Python ${session.status}`, canRun: false };
     }
+    if (session.activity === "busy") {
+      return { kind: "status", label: "Python running", canRun: true };
+    }
+    if (
+      !input.runtimeInspectionPending &&
+      session.runtime !== null &&
+      input.preferredPythonExecutable !== null &&
+      session.runtime.executable !== input.preferredPythonExecutable
+    ) {
+      return { kind: "switch", label: "Switch Python", canRun: true };
+    }
     return {
       kind: "status",
-      label: session.activity === "busy" ? "Python running" : "Python ready",
+      label: input.scientificPackagesMissing ? "Python packages missing" : "Python ready",
       canRun: true,
     };
   }
   if (input.readyPythonAvailable) {
-    return { kind: "status", label: "Python ready", canRun: true };
+    return {
+      kind: "status",
+      label: input.scientificPackagesMissing ? "Python packages missing" : "Python ready",
+      canRun: true,
+    };
   }
   if (input.runtimeInspectionPending) {
     return { kind: "status", label: "Checking Python…", canRun: false };

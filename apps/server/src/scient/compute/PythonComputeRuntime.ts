@@ -7,7 +7,11 @@ import * as NodeURL from "node:url";
 
 import { ComputeRuntimeError, REQUIRED_COMPUTE_CAPABILITIES } from "@scientfactory/compute";
 import { ExecutionRunId, type ExecutionProcessPort } from "@scientfactory/execution";
-import { HostProcessEnvironment } from "@t3tools/shared/hostProcess";
+import {
+  HostProcessArchitecture,
+  HostProcessEnvironment,
+  HostProcessPlatform,
+} from "@t3tools/shared/hostProcess";
 import * as Duration from "effect/Duration";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
@@ -15,8 +19,10 @@ import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
+import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 
+import { ServerConfig } from "../../config.ts";
 import { ExecutionProcess } from "../execution/LocalExecutionProcess.ts";
 import { DuplexProcess } from "../execution/LocalDuplexProcess.ts";
 import { sanitizeComputeEnvironment } from "./ComputeEnvironmentPolicy.ts";
@@ -27,6 +33,12 @@ import {
   type ComputeRuntimeBinding,
 } from "./ComputeSessionService.ts";
 import { makeJupyterBridgeTransport } from "./JupyterBridgeTransport.ts";
+import { makeManagedPythonEnvironmentManager } from "./ManagedPythonEnvironment.ts";
+import {
+  makeManagedPythonProvisioner,
+  resolveManagedPythonSpecPath,
+} from "./ManagedPythonProvisioner.ts";
+import { makeManagedPythonRuntimeController } from "./ManagedPythonRuntimeController.ts";
 import {
   PROBE_SCRIPT,
   PYTHON_LANGUAGE_ID,
@@ -256,12 +268,15 @@ export const makeSpawnProbe = (
 export const pythonRuntimeBinding: Effect.Effect<
   ComputeRuntimeBinding,
   ComputeRuntimeError,
-  DuplexProcess | ExecutionProcess | FileSystem.FileSystem
+  DuplexProcess | ExecutionProcess | FileSystem.FileSystem | Scope.Scope | ServerConfig
 > = Effect.gen(function* () {
   const bridgePath = yield* resolveBridgePath(moduleDirectory());
   const processes = yield* ExecutionProcess;
   const duplexProcesses = yield* DuplexProcess;
+  const config = yield* ServerConfig;
   const hostEnvironment = yield* HostProcessEnvironment;
+  const hostPlatform = yield* HostProcessPlatform;
+  const hostArchitecture = yield* HostProcessArchitecture;
   const { environment } = sanitizeComputeEnvironment(definedEnvironment(hostEnvironment));
   const spawnProbe = yield* makeSpawnProbe(processes, {
     environment,
@@ -271,8 +286,78 @@ export const pythonRuntimeBinding: Effect.Effect<
     // directory from failing a probe that has nothing to do with it.
     cwd: NodeOS.tmpdir(),
   });
+  const managedSetup = yield* Effect.gen(function* () {
+    const managedPythonSpecPath = yield* Effect.tryPromise({
+      try: () => resolveManagedPythonSpecPath(moduleDirectory()),
+      catch: (cause) => runtimeError("Unable to find the managed Python specification.", cause),
+    });
+    const provisioner = yield* Effect.try({
+      try: () =>
+        makeManagedPythonProvisioner({
+          computeDir: config.computeDir,
+          specDirectory: managedPythonSpecPath,
+          processes,
+          spawnProbe,
+          environment,
+          platform: hostPlatform,
+          arch: hostArchitecture,
+        }),
+      catch: (cause) => runtimeError("Scientific Python is unavailable on this platform.", cause),
+    });
+    const manager = makeManagedPythonEnvironmentManager(config.computeDir, provisioner);
+    yield* Effect.tryPromise({
+      try: () => manager.reconcile(),
+      catch: (cause) => runtimeError("Unable to reconcile Scientific Python.", cause),
+    });
+    return {
+      manager,
+      managedRuntime: makeManagedPythonRuntimeController({
+        manager,
+        toolkitIds: PYTHON_TOOLKIT_CATALOG.map((toolkit) => toolkit.toolkitId),
+      }),
+    };
+  }).pipe(
+    Effect.matchCauseEffect({
+      onFailure: (cause) =>
+        Effect.logWarning(
+          "Scient-managed Python is unavailable; existing Python runtimes remain available",
+          { cause },
+        ).pipe(Effect.as(null)),
+      onSuccess: (setup) => Effect.succeed(setup),
+    }),
+  );
+  if (managedSetup !== null) {
+    yield* Effect.addFinalizer(() => Effect.sync(() => managedSetup.managedRuntime.dispose()));
+  }
+  const adapter = makePythonRuntimeAdapter(
+    spawnProbe,
+    bridgePath,
+    managedSetup === null
+      ? {}
+      : {
+          managedRuntime: () =>
+            Effect.tryPromise({
+              try: () => managedSetup.manager.inspect(),
+              catch: (cause) =>
+                new ComputeRuntimeError({
+                  operation: "discover",
+                  message: "Unable to inspect Scientific Python.",
+                  cause,
+                }),
+            }).pipe(
+              Effect.map((status) =>
+                status === null
+                  ? null
+                  : {
+                      executable: status.executable,
+                      selected: status.record.selection === "managed",
+                    },
+              ),
+            ),
+        },
+  );
   return {
-    adapter: makePythonRuntimeAdapter(spawnProbe, bridgePath),
+    adapter,
     transport: makeJupyterBridgeTransport(duplexProcesses, {}),
     descriptor: {
       languageId: PYTHON_LANGUAGE_ID,
@@ -284,6 +369,7 @@ export const pythonRuntimeBinding: Effect.Effect<
       descriptors: PYTHON_TOOLKIT_CATALOG,
       assess: assessPythonToolkits,
     },
+    ...(managedSetup === null ? {} : { managedRuntime: managedSetup.managedRuntime }),
   };
 });
 

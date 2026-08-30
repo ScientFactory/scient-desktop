@@ -8,6 +8,7 @@ import type {
   ScopedThreadRef,
 } from "@t3tools/contracts";
 import {
+  ComputeLanguageId,
   ComputeSessionId,
   TERMINAL_COMPUTE_EXECUTION_STATUSES,
   TERMINAL_COMPUTE_SESSION_STATUSES,
@@ -52,16 +53,25 @@ import {
   MenuTrigger,
 } from "~/components/ui/menu";
 import { ScrollArea } from "~/components/ui/scroll-area";
+import {
+  Select,
+  SelectItem,
+  SelectPopup,
+  SelectTrigger,
+  SelectValue,
+} from "~/components/ui/select";
 import { stackedThreadToast, toastManager } from "~/components/ui/toast";
 import { cn, randomUUID } from "~/lib/utils";
 import { appAtomRegistry } from "~/rpc/atomRegistry";
 import { computeEnvironment } from "~/state/compute";
 import { useAtomCommand } from "~/state/use-atom-command";
 import { useEnvironmentQuery } from "~/state/query";
+import { useEnvironmentSettings, useUpdateEnvironmentSettings } from "~/hooks/useSettings";
 import { useRightPanelStore } from "~/rightPanelStore";
 import { getProjectEntriesQueryAtom } from "~/components/files/projectFilesQueryState";
 
 import { ComputeOutputView } from "./ComputeOutputView";
+import { ManagedRuntimeCard } from "./ScientificComputingSettings";
 import {
   computeExecutionStatusLabel,
   computeSourceFreshnessLabel,
@@ -76,6 +86,8 @@ interface ReadyRuntime {
   readonly candidate: ComputeLanguageRuntimeInspection["runtimes"][number];
   readonly key: string;
 }
+
+const PYTHON_LANGUAGE_ID = ComputeLanguageId.make("python");
 
 function statusLabel(status: string): string {
   return status.replaceAll("-", " ");
@@ -524,6 +536,7 @@ export function ComputePanel(props: {
   readonly sourcePath?: string;
   readonly sourceRevision?: string;
   readonly sourcePending?: boolean;
+  readonly focusSessionId?: string | null;
   readonly focusExecutionId?: string | null;
   readonly onFocusConsumed?: (executionId: string) => void;
   readonly embedded?: boolean;
@@ -542,6 +555,11 @@ export function ComputePanel(props: {
   const observedTerminalExecutionsRef = useRef<Set<string> | null>(null);
   const newestExecutionRef = useRef<string | null>(null);
   const variableRequestRef = useRef(0);
+  const scientificComputing = useEnvironmentSettings(
+    props.environmentId,
+    (settings) => settings.scientificComputing,
+  );
+  const updateEnvironmentSettings = useUpdateEnvironmentSettings(props.environmentId);
 
   const runtimes = useEnvironmentQuery(
     computeEnvironment.runtimes({
@@ -595,6 +613,24 @@ export function ComputePanel(props: {
   );
   const selectedRuntime =
     readyRuntimes.find((runtime) => runtime.key === runtimeKey) ?? readyRuntimes[0] ?? null;
+  const pythonLanguage =
+    runtimes.data?.languages.find((language) => language.descriptor.languageId === "python") ??
+    null;
+  const pythonPreference = scientificComputing.languages[PYTHON_LANGUAGE_ID] ?? {
+    enabled: false,
+    executable: "",
+  };
+  const ensurePythonEnabled = useCallback(() => {
+    if (pythonPreference.enabled) return;
+    updateEnvironmentSettings({
+      scientificComputing: {
+        schemaVersion: 1,
+        languages: {
+          [PYTHON_LANGUAGE_ID]: { ...pythonPreference, enabled: true },
+        },
+      },
+    });
+  }, [pythonPreference, updateEnvironmentSettings]);
 
   const allSessions = useMemo(() => {
     const byId = new Map<string, ComputeSessionRecord>();
@@ -746,8 +782,9 @@ export function ComputePanel(props: {
   }, [selectedSession, selectedSessionId]);
 
   useEffect(() => {
+    if (props.focusSessionId) setSelectedSessionId(props.focusSessionId);
     if (props.focusExecutionId) setSelectedExecutionId(props.focusExecutionId);
-  }, [props.focusExecutionId]);
+  }, [props.focusExecutionId, props.focusSessionId]);
 
   useEffect(() => {
     variableRequestRef.current += 1;
@@ -1118,60 +1155,100 @@ export function ComputePanel(props: {
           </div>
         </ScrollArea>
       ) : (
-        <div className="flex min-h-0 flex-1 items-center justify-center p-6">
-          <div className="max-w-sm text-center">
+        <div className="flex min-h-0 flex-1 items-start justify-center overflow-y-auto px-4 pb-6 pt-12">
+          <div className="w-full max-w-md text-center">
             {runtimes.isPending ? (
               <LoaderCircle className="mx-auto size-5 animate-spin text-muted-foreground" />
             ) : readyRuntimes.length === 0 ? (
-              <>
-                <CircleAlert className="mx-auto size-5 text-muted-foreground" />
-                <p className="mt-3 text-sm font-medium">No compute runtime is ready</p>
-                <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
-                  Enable a language and choose an existing runtime. Scient will not install packages
-                  or change licenses for you.
-                </p>
-                <Button
-                  className="mt-4"
-                  size="sm"
-                  variant="outline"
-                  render={<Link to="/settings/scientific-computing" />}
-                >
-                  <Settings2 /> Scientific Computing settings
-                </Button>
-              </>
+              pythonLanguage?.managedRuntime ? (
+                <div className="text-left">
+                  <p className="text-center text-sm font-medium">Set up scientific computing</p>
+                  <p className="mx-auto mt-1 max-w-lg text-center text-xs leading-relaxed text-muted-foreground">
+                    Set up a private Scientific Python here, or choose an existing environment in
+                    Settings.
+                  </p>
+                  <ManagedRuntimeCard
+                    environmentId={props.environmentId}
+                    language={pythonLanguage}
+                    enabled={pythonPreference.enabled}
+                    ensureEnabled={ensurePythonEnabled}
+                    onLifecycleChanged={runtimes.refresh}
+                  />
+                  <div className="mt-3 text-center">
+                    <Button
+                      size="xs"
+                      variant="ghost-muted"
+                      render={<Link to="/settings/scientific-computing" />}
+                    >
+                      <Settings2 /> Use an existing environment
+                    </Button>
+                  </div>
+                </div>
+              ) : (
+                <>
+                  <CircleAlert className="mx-auto size-5 text-muted-foreground" />
+                  <p className="mt-3 text-sm font-medium">No compute runtime is ready</p>
+                  <p className="mx-auto mt-1 max-w-sm text-xs leading-relaxed text-muted-foreground">
+                    Enable a language and choose an existing runtime in Scientific Computing
+                    settings.
+                  </p>
+                  <Button
+                    className="mt-4"
+                    size="sm"
+                    variant="outline"
+                    render={<Link to="/settings/scientific-computing" />}
+                  >
+                    <Settings2 /> Scientific Computing settings
+                  </Button>
+                </>
+              )
             ) : (
               <>
                 <p className="text-sm font-medium">Start a scientific session</p>
-                <p className="mt-1 text-xs text-muted-foreground">
-                  One live session is kept for this project. Past sessions remain in history.
+                <p className="mx-auto mt-1 max-w-sm text-xs leading-relaxed text-muted-foreground">
+                  One live session per project. Past runs remain in history.
                 </p>
-                <p className="mt-2 text-[11px] leading-relaxed text-muted-foreground">
-                  Code runs with this server environment&apos;s filesystem and network access. It is
-                  not sandboxed.
+                <p className="mx-auto mt-1 max-w-sm text-[11px] leading-relaxed text-muted-foreground/80">
+                  Code runs unsandboxed with this server&apos;s filesystem and network access.
                 </p>
-                {readyRuntimes.length > 1 ? (
-                  <select
-                    className="mt-4 h-8 max-w-full cursor-pointer rounded-md border border-input bg-background px-2 text-xs"
-                    value={selectedRuntime?.key ?? ""}
-                    onChange={(event) => setRuntimeKey(event.currentTarget.value)}
-                    aria-label="Runtime"
+                <div className="mt-4 flex flex-wrap items-center justify-center gap-2">
+                  {readyRuntimes.length > 1 ? (
+                    <Select
+                      value={selectedRuntime?.key ?? ""}
+                      onValueChange={(value) => setRuntimeKey(value ?? "")}
+                    >
+                      <SelectTrigger
+                        size="xs"
+                        className="w-fit min-w-0 max-w-full gap-1.5"
+                        aria-label="Runtime"
+                      >
+                        <SelectValue className="max-w-56">
+                          {selectedRuntime?.candidate.profile.displayName}
+                        </SelectValue>
+                      </SelectTrigger>
+                      <SelectPopup alignItemWithTrigger={false}>
+                        {readyRuntimes.map((runtime) => (
+                          <SelectItem
+                            key={runtime.key}
+                            value={runtime.key}
+                            hideIndicator
+                            className="text-xs"
+                          >
+                            {runtime.candidate.profile.displayName}
+                          </SelectItem>
+                        ))}
+                      </SelectPopup>
+                    </Select>
+                  ) : null}
+                  <Button
+                    size="xs"
+                    disabled={operation !== null}
+                    onClick={() => void handleStart()}
                   >
-                    {readyRuntimes.map((runtime) => (
-                      <option key={runtime.key} value={runtime.key}>
-                        {runtime.candidate.profile.displayName}
-                      </option>
-                    ))}
-                  </select>
-                ) : null}
-                <Button
-                  className="mt-4"
-                  size="sm"
-                  disabled={operation !== null}
-                  onClick={() => void handleStart()}
-                >
-                  {operation === "start" ? <LoaderCircle className="animate-spin" /> : <Play />}
-                  Start session
-                </Button>
+                    {operation === "start" ? <LoaderCircle className="animate-spin" /> : <Play />}
+                    {operation === "start" ? "Starting…" : "Start session"}
+                  </Button>
+                </div>
               </>
             )}
           </div>
