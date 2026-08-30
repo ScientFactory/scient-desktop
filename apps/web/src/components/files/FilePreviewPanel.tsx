@@ -118,6 +118,8 @@ interface FilePreviewPanelProps {
     request: LatexFilePresentationRequest,
   ) => void;
   onPendingChange: (relativePath: string, pending: boolean) => void;
+  selectedFilePending: boolean;
+  workspaceMutationId: string | null;
 }
 
 const FILE_EXPLORER_STORAGE_KEY = "t3code.fileExplorerOpen";
@@ -258,8 +260,13 @@ function WorkspaceImagePreview(props: {
     setFailedUrl(null);
     assetUrl.refresh();
   }, [assetUrl.refresh, props.refreshKey]);
+  const revisionSuffix =
+    props.refreshKey === 0
+      ? ""
+      : `${assetUrl._tag === "Success" && assetUrl.url.includes("?") ? "&" : "?"}workspace-revision=${props.refreshKey}`;
+  const imageUrl = assetUrl._tag === "Success" ? `${assetUrl.url}${revisionSuffix}` : null;
 
-  if (assetUrl._tag === "Failure" || (assetUrl._tag === "Success" && failedUrl === assetUrl.url)) {
+  if (assetUrl._tag === "Failure" || (imageUrl !== null && failedUrl === imageUrl)) {
     return (
       <div className="flex min-h-0 flex-1 items-center justify-center px-6 text-center text-xs leading-relaxed text-destructive">
         Unable to load workspace image.
@@ -267,13 +274,13 @@ function WorkspaceImagePreview(props: {
     );
   }
 
-  return assetUrl._tag === "Success" ? (
+  return assetUrl._tag === "Success" && imageUrl !== null ? (
     <div className="flex min-h-0 flex-1 items-center justify-center overflow-auto p-4">
       <img
         className="max-h-full max-w-full object-contain"
-        src={assetUrl.url}
+        src={imageUrl}
         alt={props.alt}
-        onError={() => setFailedUrl(assetUrl.url)}
+        onError={() => setFailedUrl(imageUrl)}
       />
     </div>
   ) : (
@@ -1049,6 +1056,8 @@ export default function FilePreviewPanel({
   onOpenFileSource,
   onLatexPresentationRequestHandled,
   onPendingChange,
+  selectedFilePending,
+  workspaceMutationId,
 }: FilePreviewPanelProps) {
   const { resolvedTheme } = useTheme();
   const wordWrap = useClientSettings((settings) => settings.wordWrap);
@@ -1084,7 +1093,8 @@ export default function FilePreviewPanel({
     cwd,
     relativePath,
     loadAsText: shouldLoadFileAsText(relativePath),
-    sourcePending,
+    sourcePending: sourcePending || selectedFilePending,
+    workspaceMutationId,
   });
   const [explorerOpen, setExplorerOpen] = useState(initialExplorerOpen);
   const [pdfExplorerOpen, setPdfExplorerOpen] = useState(false);
@@ -1518,6 +1528,7 @@ export default function FilePreviewPanel({
               selectedPathRevealId={revealRequestId}
               onOpenFile={onOpenFile}
               onOpenFileSource={onOpenFileSource}
+              workspaceMutationId={workspaceMutationId}
               {...(relativePath && !isImage ? { onRefreshSelectedFile: file.refresh } : {})}
             />
           </aside>

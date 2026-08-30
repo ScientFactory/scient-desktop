@@ -7,6 +7,7 @@ import {
   type TurnId,
 } from "@t3tools/contracts";
 import { parseScopedThreadKey } from "@t3tools/client-runtime/environment";
+import type { CodexArtifactTemplate } from "@t3tools/client-runtime/codex-artifact-templates";
 import { commandProgramName } from "@t3tools/client-runtime/work-log/command-label";
 import type { AgentPanelModel } from "@t3tools/client-runtime/state/subagentRuntime";
 import {
@@ -16,6 +17,7 @@ import {
 
 const EMPTY_AGENT_PANEL_MODEL = emptyAgentPanelModel();
 const NOOP_OPEN_AGENTS = () => {};
+const NOOP_USE_ARTIFACT_TEMPLATE = () => {};
 const NOOP_OPEN_ATTACHMENT = (_attachment: ChatFileAttachment) => {};
 import { resolveChatListAnchoredEndSpace } from "@t3tools/shared/chatList";
 import {
@@ -163,6 +165,7 @@ interface TimelineRowSharedState {
   onForkAssistantMessage?: ((messageId: MessageId) => void) | undefined;
   onForkUserMessage?: ((message: ChatMessage) => void) | undefined;
   // SCIENT-FORK:END
+  onUseArtifactTemplate: (template: CodexArtifactTemplate) => void;
   onImageExpand: (preview: ExpandedImagePreview) => void;
   onFileOpen: (attachment: ChatFileAttachment) => void;
   openingVideoAttachmentId: string | null;
@@ -184,7 +187,9 @@ interface TimelineRowActivityState {
 const TimelineRowCtx = createContext<TimelineRowSharedState>(null!);
 const TimelineRowActivityCtx = createContext<TimelineRowActivityState>(null!);
 const TIMELINE_LIST_HEADER = <div className="h-3 sm:h-4" />;
-const TIMELINE_LIST_FADE_HEADER = <div className="h-10 sm:h-12" />;
+const TIMELINE_LIST_FADE_HEADER = (
+  <div className="h-[var(--workspace-titlebar-scroll-fade-height)]" />
+);
 
 // Header row shown when older turns exist beyond the loaded window. Plain
 // button, no spinner animation; the label change is the loading indicator.
@@ -198,7 +203,7 @@ function TimelineLoadEarlierHeader({
   fade: boolean;
 }) {
   return (
-    <div className={fade ? "pt-10 sm:pt-12" : "pt-3 sm:pt-4"}>
+    <div className={fade ? "pt-[var(--workspace-titlebar-scroll-fade-height)]" : "pt-3 sm:pt-4"}>
       <div className="mx-auto w-full max-w-3xl pb-2">
         <button
           type="button"
@@ -248,6 +253,7 @@ interface MessagesTimelineProps {
   onForkAssistantMessage?: (messageId: MessageId) => void;
   onForkUserMessage?: (message: ChatMessage) => void;
   // SCIENT-FORK:END
+  onUseArtifactTemplate?: (template: CodexArtifactTemplate) => void;
   isRevertingCheckpoint: boolean;
   onImageExpand: (preview: ExpandedImagePreview) => void;
   onFileOpen?: (attachment: ChatFileAttachment) => void;
@@ -301,6 +307,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
   onForkAssistantMessage,
   onForkUserMessage,
   // SCIENT-FORK:END
+  onUseArtifactTemplate = NOOP_USE_ARTIFACT_TEMPLATE,
   isRevertingCheckpoint,
   onImageExpand,
   onFileOpen = NOOP_OPEN_ATTACHMENT,
@@ -570,6 +577,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       onForkAssistantMessage,
       onForkUserMessage,
       // SCIENT-FORK:END
+      onUseArtifactTemplate,
       onImageExpand,
       onFileOpen,
       openingVideoAttachmentId,
@@ -592,6 +600,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       onForkAssistantMessage,
       onForkUserMessage,
       // SCIENT-FORK:END
+      onUseArtifactTemplate,
       onImageExpand,
       onFileOpen,
       openingVideoAttachmentId,
@@ -1287,6 +1296,8 @@ function AssistantTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "mess
           directionHint={row.assistantDirectionHint}
           lineBreaks={shouldPreserveAssistantLineBreaks(messageText)}
           skills={ctx.skills}
+          onUseArtifactTemplate={ctx.onUseArtifactTemplate}
+          onImageExpand={ctx.onImageExpand}
         />
         <ScientChatImageGallery
           className={messageText.length > 0 ? "mt-3" : undefined}

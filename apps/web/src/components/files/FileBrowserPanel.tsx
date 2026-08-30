@@ -29,6 +29,7 @@ import { Tooltip, TooltipPopup, TooltipTrigger } from "~/components/ui/tooltip";
 import { useComposerHandleContext } from "~/composerHandleContext";
 import { writeTextToClipboard } from "~/hooks/useCopyToClipboard";
 import { useTheme } from "~/hooks/useTheme";
+import { useWorkspaceMutationRefresh } from "~/hooks/useWorkspaceMutationRefresh";
 import { cn } from "~/lib/utils";
 import { readLocalApi } from "~/localApi";
 import { T3_PIERRE_ICONS } from "~/pierre-icons";
@@ -54,6 +55,7 @@ interface FileBrowserPanelProps {
   onOpenFile: (relativePath: string) => void;
   onOpenFileSource: (relativePath: string) => void;
   onRefreshSelectedFile?: () => void;
+  workspaceMutationId: string | null;
 }
 
 const TREE_UNSAFE_CSS = `
@@ -186,6 +188,7 @@ export default function FileBrowserPanel({
   onOpenFile,
   onOpenFileSource,
   onRefreshSelectedFile,
+  workspaceMutationId,
 }: FileBrowserPanelProps) {
   const { resolvedTheme } = useTheme();
   const composerRef = useComposerHandleContext();
@@ -447,9 +450,17 @@ export default function FileBrowserPanel({
     model.closeSearch();
     setSearchValue("");
   };
-  const handleRefresh = () => {
+  const refreshEntries = useCallback(() => {
     void treeControllerRef.current?.refresh();
     if (isSearching) pathSearch.refresh();
+  }, [isSearching, pathSearch.refresh]);
+  useWorkspaceMutationRefresh({
+    mutationId: workspaceMutationId,
+    refresh: refreshEntries,
+    resourceKey: `files:${environmentId}:${cwd}`,
+  });
+  const handleRefresh = () => {
+    refreshEntries();
     onRefreshSelectedFile?.();
   };
 

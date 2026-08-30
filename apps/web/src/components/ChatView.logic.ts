@@ -15,6 +15,11 @@ import {
 } from "@t3tools/contracts";
 import { projectScriptRuntimeEnv } from "@t3tools/shared/projectScripts";
 import {
+  appendCodexArtifactTemplateUsePrompt,
+  codexArtifactTemplateUsePrompt,
+  type CodexArtifactTemplate,
+} from "@t3tools/client-runtime/codex-artifact-templates";
+import {
   type ChatMessage,
   isImageAttachment,
   type SessionPhase,
@@ -51,6 +56,14 @@ export function resolveForkTargetAfterAttempt<T>(
   return outcome === "accepted" && currentTarget === attemptedTarget ? null : currentTarget;
 }
 
+export function codexArtifactTemplatePromptToAppend(
+  currentDraft: string,
+  template: CodexArtifactTemplate,
+): string | null {
+  return appendCodexArtifactTemplateUsePrompt(currentDraft, template) === currentDraft
+    ? null
+    : codexArtifactTemplateUsePrompt(template);
+}
 export function shoulderTabReserve(overlay: HTMLElement): number {
   if (overlay.querySelector(".chat-composer-tasks-tab")) return 0;
   const tab = overlay.querySelector<HTMLElement>(".chat-composer-shoulder-tab");
