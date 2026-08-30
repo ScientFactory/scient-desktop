@@ -292,6 +292,7 @@ export function ScientInlineWorkspaceImage(props: {
   readonly image: InlineWorkspaceImageDescriptor;
   readonly markdownSource: string;
   readonly threadRef: ScopedThreadRef;
+  readonly srcFragment?: string | undefined;
 }) {
   const resource = useMemo(
     () => inlineWorkspaceImageResource(props.image, props.threadRef),
@@ -307,7 +308,7 @@ export function ScientInlineWorkspaceImage(props: {
   const [expanded, setExpanded] = useState(false);
   const [failedUrl, setFailedUrl] = useState<string | null>(null);
   const [loadedUrl, setLoadedUrl] = useState<string | null>(null);
-  const url = asset._tag === "Success" ? asset.url : null;
+  const url = asset._tag === "Success" ? asset.url + (props.srcFragment ?? "") : null;
   const loadFailed = asset._tag === "Failure" || (url != null && failedUrl === url);
   const loaded = url != null && loadedUrl === url && !loadFailed;
   const revisionKey = `${props.threadRef.environmentId}:${retryKey}`;

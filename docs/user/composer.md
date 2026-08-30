@@ -19,6 +19,30 @@ becomes available after every upload finishes. Failed uploads can be retried or 
 On web and desktop, HEIC and HEIF photos are automatically converted to JPEG when you drag them into
 the composer or paste them into a message.
 
+## Attach files
+
+On web and desktop, attach files with the file picker, drag and drop, or paste.
+There is no document-type allowlist: PDFs, spreadsheets, archives, audio, video,
+code, and files with unfamiliar extensions can all be attached. Images without
+a native image-input path, such as SVG and TIFF, are attached as ordinary files.
+Files must be readable and non-empty, fit the server's displayed size limit,
+and finish uploading before you send.
+
+Attaching a file makes it available to the agent; it does not guarantee that
+every provider can understand every format. Depending on the provider, it
+receives the attachment directly or a server-local path it can read using its
+available tools. Uploaded files are not automatically executed.
+
+Click a video attachment to play it. If its format cannot play in the app, use
+**Download video**. Other files keep their filename and can be downloaded.
+On mobile, files sent from desktop or web appear with an **Open file** action;
+mobile does not yet offer a generic-file upload picker.
+
+Generic files cannot yet be queued. Keep them in the composer and
+send when the current turn finishes, or use the steer shortcut when supported.
+Editing a fork from a sent message with file attachments is not supported yet;
+fork from a completed response to retain the conversation and its files.
+
 On mobile, the model picker shows each OpenCode model's upstream provider, such as Anthropic,
 GitHub Copilot, or OpenCode Zen, beneath its name. Search by that provider name to narrow the list
 when starting a thread or changing an existing thread's model.
@@ -26,8 +50,8 @@ when starting a thread or changing an existing thread's model.
 ## Prompt stash
 
 Use the default shortcut, `Cmd+S` on macOS or `Ctrl+S` on Windows and Linux, to stash the current
-prompt and its images after uploads finish. Restore the entry later from the stash menu. Image
-stashes belong to the environment where the images were uploaded and expire with the server's
+prompt and its attachments after uploads finish. Restore the entry later from the stash menu. Attachment
+stashes belong to the environment where the files were uploaded and expire with the server's
 temporary attachment retention.
 
 ## Commands and skills

@@ -112,7 +112,7 @@ export function inlineWorkspaceImageMarkdownSource(
   src: string,
   title?: string | undefined,
 ): string {
-  const escapedAlt = alt.replaceAll("\\", "\\\\").replaceAll("]", "\\]");
+  const escapedAlt = alt.replaceAll("\\", "\\\\").replaceAll("[", "\\[").replaceAll("]", "\\]");
   const destination = /\s/u.test(src) ? `<${src.replaceAll(">", "%3E")}>` : src;
   const normalizedTitle = title?.replace(/\s+/gu, " ").trim();
   const serializedTitle = normalizedTitle

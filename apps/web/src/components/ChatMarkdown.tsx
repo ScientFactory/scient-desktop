@@ -25,12 +25,16 @@ import {
   squashAtomCommandFailure,
   type AtomCommandResult,
 } from "@t3tools/client-runtime/state/runtime";
-import { classifyMarkdownImageSource } from "@t3tools/client-runtime/markdown-images";
+import {
+  classifyMarkdownImageSource,
+  markdownImageSourceFragment,
+} from "@t3tools/client-runtime/markdown-images";
 import * as Cause from "effect/Cause";
 import { AsyncResult } from "effect/unstable/reactivity";
 import React, {
   Children,
   Suspense,
+  type CSSProperties,
   type ClipboardEvent as ReactClipboardEvent,
   type MouseEvent as ReactMouseEvent,
   isValidElement,
@@ -92,6 +96,7 @@ import { remarkNormalizeListItemIndentation } from "../markdown-list-indentation
 import {
   extractMarkdownLinkHrefs,
   markdownLinkLookupKey,
+  isWindowsDrivePathHref,
   normalizeMarkdownLinkDestination,
   resolveInlineCodeFileLinkMeta,
   resolveMarkdownFileLinkMeta,
@@ -198,6 +203,7 @@ interface ChatMarkdownProps {
   directionHint?: FixedContentDirection | null | undefined;
   /** Parse sanitized raw HTML instead of displaying its source text. */
   parseRawHtml?: boolean;
+  imageBaseDir?: string | undefined;
 }
 
 export function canUseMarkdownFileShellActions(
@@ -281,30 +287,37 @@ export function orderedListGutterStyle(
   return { "--list-gutter": `${markerWidth + 1}ch` };
 }
 
-type MarkdownHtmlAstNode = {
+type MarkdownImageHastNode = {
   type?: string;
+  value?: string;
   tagName?: string;
   properties?: Record<string, unknown>;
-  children?: MarkdownHtmlAstNode[];
+  children?: MarkdownImageHastNode[];
 };
 
-/** Preserve Windows drive paths through the protocol allowlist in rehype-sanitize. */
-function rehypeNormalizeWindowsImageSrc() {
-  return (tree: MarkdownHtmlAstNode) => {
-    const visit = (node: MarkdownHtmlAstNode) => {
+/** Carries authored image source metadata through the sanitizer to the image renderer. */
+function rehypePreserveImageSourceMeta() {
+  return (tree: MarkdownImageHastNode) => {
+    const visit = (node: MarkdownImageHastNode, parent?: MarkdownImageHastNode) => {
       const src = node.properties?.src;
-      if (
-        node.type === "element" &&
-        node.tagName === "img" &&
-        typeof src === "string" &&
-        WINDOWS_DRIVE_PATH_REGEX.test(src)
-      ) {
+      const title = node.properties?.title;
+      if (node.type === "element" && node.tagName === "img") {
         node.properties = {
           ...node.properties,
-          src: `file:///${src.replaceAll("\\", "/")}`,
+          ...(typeof src === "string" && isWindowsDrivePathHref(src) ? { dataLocalSrc: src } : {}),
+          ...(typeof title === "string" ? { dataMarkdownTitle: title } : {}),
+          // Keep Scient's actions for standalone figures, not authored inline layouts.
+          dataScientImageCard:
+            parent?.tagName === "p" &&
+            !parent.properties?.align &&
+            !node.properties?.width &&
+            !node.properties?.height &&
+            parent.children?.every(
+              (child) => child === node || (child.type === "text" && !child.value?.trim()),
+            ),
         };
       }
-      node.children?.forEach(visit);
+      node.children?.forEach((child) => visit(child, node));
     };
 
     visit(tree);
@@ -318,6 +331,12 @@ const CHAT_MARKDOWN_SANITIZE_SCHEMA = {
     "*": (defaultSchema.attributes?.["*"] ?? []).filter((attribute) => attribute !== "title"),
     code: [...(defaultSchema.attributes?.code ?? []), "dataCodeMeta", "dataInlineCode"],
     blockquote: [...(defaultSchema.attributes?.blockquote ?? []), "dataAlert"],
+    img: [
+      ...(defaultSchema.attributes?.img ?? []),
+      "dataLocalSrc",
+      "dataMarkdownTitle",
+      "dataScientImageCard",
+    ],
   },
   protocols: {
     ...defaultSchema.protocols,
@@ -351,7 +370,7 @@ const CHAT_MARKDOWN_REMARK_PLUGINS_WITH_BREAKS = [
 
 const CHAT_MARKDOWN_REHYPE_PLUGINS = [
   rehypeRaw,
-  rehypeNormalizeWindowsImageSrc,
+  rehypePreserveImageSourceMeta,
   [rehypeSanitize, CHAT_MARKDOWN_SANITIZE_SCHEMA],
 ] satisfies NonNullable<ReactMarkdownOptions["rehypePlugins"]>;
 
@@ -1107,21 +1126,56 @@ const MarkdownLinkFavicon = memo(function MarkdownLinkFavicon({ host }: { host: 
   );
 });
 
-const CHAT_MARKDOWN_IMAGE_SIZE_CLASS_NAME =
-  "h-auto w-auto max-h-[30rem] max-w-[min(100%,30rem)] object-contain";
-
-// block! outranks the unlayered `.chat-markdown img { display: inline-block }`
-// rule, keeping workspace images on the same block layout as their placeholder.
-const CHAT_MARKDOWN_WORKSPACE_IMAGE_CLASS_NAME = cn(
-  CHAT_MARKDOWN_IMAGE_SIZE_CLASS_NAME,
-  "my-1 block! rounded-lg border border-border/40",
+const CHAT_MARKDOWN_IMAGE_BOUNDS_CLASS_NAME = "max-h-[30rem] max-w-[min(100%,30rem)]";
+const CHAT_MARKDOWN_IMAGE_SIZE_CLASS_NAME = cn(
+  "h-auto w-auto object-contain",
+  CHAT_MARKDOWN_IMAGE_BOUNDS_CLASS_NAME,
 );
 
-function ChatMarkdownImageFallback(props: { readonly alt: string }) {
+function authoredImageSizeStyle(
+  width: string | number | undefined,
+  height: string | number | undefined,
+): CSSProperties | undefined {
+  const parsedWidth = Number(width);
+  const parsedHeight = Number(height);
+  const hasWidth = Number.isFinite(parsedWidth) && parsedWidth > 0;
+  const hasHeight = Number.isFinite(parsedHeight) && parsedHeight > 0;
+  if (hasWidth && hasHeight) {
+    return {
+      width: parsedWidth,
+      height: "auto",
+      aspectRatio: `${parsedWidth} / ${parsedHeight}`,
+      maxWidth: `min(100%, 30rem, ${(30 * parsedWidth) / parsedHeight}rem)`,
+    };
+  }
+  if (hasWidth) return { maxWidth: `min(100%, 30rem, ${parsedWidth}px)` };
+  if (hasHeight) return { maxHeight: `min(30rem, ${parsedHeight}px)` };
+  return undefined;
+}
+
+const CHAT_MARKDOWN_WORKSPACE_IMAGE_LAYOUT_CLASS_NAME = "inline-block!";
+const CHAT_MARKDOWN_WORKSPACE_IMAGE_CLASS_NAME = cn(
+  CHAT_MARKDOWN_IMAGE_SIZE_CLASS_NAME,
+  CHAT_MARKDOWN_WORKSPACE_IMAGE_LAYOUT_CLASS_NAME,
+  "rounded-lg border border-border/40",
+);
+
+function ChatMarkdownImageFallback(props: {
+  readonly alt: string;
+  readonly copyMarkdown?: string | undefined;
+}) {
   return (
-    <span className="my-1 inline-flex items-center gap-1.5 rounded-md border border-border/40 bg-muted/40 px-2 py-1 text-xs text-muted-foreground">
-      <TriangleAlertIcon aria-hidden className="size-3.5 shrink-0" />
-      {props.alt.length > 0 ? `Image unavailable · ${props.alt}` : "Image unavailable"}
+    <span
+      data-markdown-copy={props.copyMarkdown}
+      className={cn(
+        CHAT_MARKDOWN_WORKSPACE_IMAGE_LAYOUT_CLASS_NAME,
+        "rounded-md border border-border/40 bg-muted/40 px-2 py-1 text-xs text-muted-foreground",
+      )}
+    >
+      <span className="inline-flex items-center gap-1.5">
+        <TriangleAlertIcon aria-hidden className="size-3.5 shrink-0" />
+        {props.alt.length > 0 ? `Image unavailable · ${props.alt}` : "Image unavailable"}
+      </span>
     </span>
   );
 }
@@ -1131,6 +1185,9 @@ const ChatMarkdownWorkspaceImage = memo(function ChatMarkdownWorkspaceImage(prop
   readonly threadRef: ScopedThreadRef;
   readonly path: string;
   readonly alt: string;
+  readonly copyMarkdown: string;
+  readonly srcFragment: string;
+  readonly style?: CSSProperties | undefined;
 }) {
   const assetUrl = useAssetUrlState(props.threadRef.environmentId, {
     _tag: "workspace-file",
@@ -1140,24 +1197,32 @@ const ChatMarkdownWorkspaceImage = memo(function ChatMarkdownWorkspaceImage(prop
   const [failedUrl, setFailedUrl] = useState<string | null>(null);
 
   if (assetUrl._tag === "Failure" || (assetUrl._tag === "Success" && failedUrl === assetUrl.url)) {
-    return <ChatMarkdownImageFallback alt={props.alt} />;
+    return <ChatMarkdownImageFallback alt={props.alt} copyMarkdown={props.copyMarkdown} />;
   }
   if (assetUrl._tag !== "Success") {
     return (
       <span
+        data-markdown-copy={props.copyMarkdown}
         role="status"
         aria-label="Loading image"
-        className="my-1 block aspect-video w-full max-w-[30rem] rounded-lg bg-muted/60"
+        className={cn(
+          CHAT_MARKDOWN_WORKSPACE_IMAGE_LAYOUT_CLASS_NAME,
+          "aspect-video w-64 max-w-full rounded-lg bg-muted/60",
+          CHAT_MARKDOWN_IMAGE_BOUNDS_CLASS_NAME,
+        )}
+        style={props.style}
       />
     );
   }
   return (
     <img
-      src={assetUrl.url}
+      src={assetUrl.url + props.srcFragment}
       alt={props.alt}
+      data-markdown-copy={props.copyMarkdown}
       loading="lazy"
       draggable={false}
       className={CHAT_MARKDOWN_WORKSPACE_IMAGE_CLASS_NAME}
+      style={props.style}
       onError={() => setFailedUrl(assetUrl.url)}
     />
   );
@@ -1693,6 +1758,7 @@ function ChatMarkdown({
   messageId,
   directionHint,
   parseRawHtml = true,
+  imageBaseDir,
 }: ChatMarkdownProps) {
   // Delimiter normalization is length-preserving, so offset-based behavior
   // (task-list toggling, list positions) stays correct on every surface. The
@@ -1826,6 +1892,7 @@ function ChatMarkdown({
     return buildFileLinkParentSuffixByPath(filePaths);
   }, [inlineCodeFileLinkMetaByText, markdownFileLinkMetaByHref]);
   const markdownUrlTransform = useCallback((href: string) => {
+    if (isWindowsDrivePathHref(href)) return href;
     return rewriteMarkdownFileUriHref(href) ?? defaultUrlTransform(href);
   }, []);
   // Re-emit highlighted content as markdown so copying out of the rendered
@@ -2069,20 +2136,35 @@ function ChatMarkdown({
     };
 
     return {
-      img({ node: _node, alt, src, title: _title, ...props }) {
-        const srcString = typeof src === "string" ? normalizeMarkdownLinkDestination(src) : "";
+      img({ node, alt, src, title, ...props }) {
+        const localSrc = node?.properties?.dataLocalSrc;
+        const markdownTitle = node?.properties?.dataMarkdownTitle;
+        const authoredSrc = typeof localSrc === "string" ? localSrc : src;
+        const authoredTitle = typeof markdownTitle === "string" ? markdownTitle : title;
+        const srcString =
+          typeof authoredSrc === "string" ? normalizeMarkdownLinkDestination(authoredSrc) : "";
+        const classifiedSrc =
+          typeof localSrc === "string" ? srcString.replaceAll("\\", "/") : srcString;
         const altText = alt ?? "";
-        const imageSource = classifyMarkdownImageSource(srcString, cwd);
-        const image = resolveInlineWorkspaceImage({ alt, cwd, src });
-        const markdownSource = image
-          ? inlineWorkspaceImageMarkdownSource(alt ?? image.alt, src ?? image.source, _title)
-          : null;
+        const markdownSource = inlineWorkspaceImageMarkdownSource(
+          altText,
+          srcString,
+          authoredTitle,
+        );
+        const style = authoredImageSizeStyle(props.width, props.height);
+        const imageSource = classifyMarkdownImageSource(classifiedSrc, imageBaseDir ?? cwd);
+        const srcFragment = markdownImageSourceFragment(classifiedSrc);
+        const image =
+          node?.properties?.dataScientImageCard && imageSource._tag === "WorkspaceFile"
+            ? resolveInlineWorkspaceImage({ alt, cwd, src: imageSource.path })
+            : null;
         if (image && markdownSource && threadRef && !isStreaming) {
           return (
             <ScientInlineWorkspaceImage
               image={image}
               markdownSource={markdownSource}
               threadRef={threadRef}
+              srcFragment={srcFragment}
             />
           );
         }
@@ -2104,6 +2186,7 @@ function ChatMarkdown({
               decoding="async"
               loading="lazy"
               className={cn(props.className, CHAT_MARKDOWN_IMAGE_SIZE_CLASS_NAME)}
+              style={style}
             />
           );
         }
@@ -2113,10 +2196,13 @@ function ChatMarkdown({
               threadRef={threadRef}
               path={imageSource.path}
               alt={altText}
+              copyMarkdown={markdownSource}
+              srcFragment={srcFragment}
+              style={style}
             />
           );
         }
-        return <ChatMarkdownImageFallback alt={altText} />;
+        return <ChatMarkdownImageFallback alt={altText} copyMarkdown={markdownSource} />;
       },
       p({ node: _node, children, ...props }) {
         return <p {...props}>{renderSkillInlineMarkdownChildren(children, skills)}</p>;
@@ -2395,6 +2481,7 @@ function ChatMarkdown({
     diffThemeName,
     fileLinkParentSuffixByPath,
     inlineCodeFileLinkMetaByText,
+    imageBaseDir,
     isStreaming,
     markdownFileLinkMetaByHref,
     onTaskListChange,
@@ -2435,7 +2522,7 @@ function ChatMarkdown({
         rehypePlugins={[
           // T3 owns HTML security: raw parsing and sanitization follow parseRawHtml.
           // Scient BiDi is independent and always runs after that optional stack.
-          ...(parseRawHtml ? CHAT_MARKDOWN_REHYPE_PLUGINS : []),
+          ...(parseRawHtml ? CHAT_MARKDOWN_REHYPE_PLUGINS : [rehypePreserveImageSourceMeta]),
           [
             rehypeScientBidi,
             {

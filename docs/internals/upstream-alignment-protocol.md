@@ -16,6 +16,9 @@ mobile activation, or a product-policy change.
    that the abstraction reduces risk.
 4. Compatibility is end to end. A shared contract is not safe until every enabled producer and
    consumer—server, web, desktop, mobile, persisted state, and supported older clients—can handle it.
+   This means safe decoding, preservation, and an honest display or fallback, not identical
+   upload controls on every client. Missing mobile UI alone is not a reason to disable a working
+   desktop/web capability.
 5. Capabilities and command boundaries agree. If a feature is not safe, do not advertise it, render
    its entry point, or accept its command. A UI-only hide is not a safety boundary.
 6. Fail closed at authority boundaries. Inherited code never silently enables telemetry, cloud,
@@ -69,6 +72,8 @@ Classify each overlap before resolving it:
 
 - **Upstream-owned mechanics:** adopt the current upstream structure and tests.
 - **Scient-owned policy:** retain the existing Scient decision and its guard.
+  Distinguish an approved product decision from an implementation limitation or an earlier agent's
+  assumption; existing code or a historical receipt alone does not establish user intent.
 - **Composition:** preserve both behaviors at the narrowest stable seam.
 - **Incompatible rollout:** keep the underlying compatible machinery when useful, but gate the
   capability and command path until every required surface is safe.
