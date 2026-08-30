@@ -25,6 +25,7 @@ import {
   type ScientSourceRecord,
   type ZoteroImportScope,
 } from "@scientfactory/scient-sources";
+import { selectScientSourceMaterial } from "@scientfactory/scient-sources/material-selection";
 import {
   cancelSourceImportOperation,
   canonicalizeScientSourceRoot,
@@ -489,7 +490,8 @@ export async function refreshScientSourceMetadata(input: {
     };
   }
 
-  const pdf = record.attachments.find((attachment) => attachment.kind === "pdf") ?? null;
+  const materialSelection = selectScientSourceMaterial({ materials: record.attachments });
+  const pdf = materialSelection._tag === "Selected" ? materialSelection.material : null;
   const hasResolvableIdentifier = record.identifiers.some((identifier) =>
     ["doi", "pmid"].includes(identifier.scheme.trim().toLowerCase()),
   );
@@ -498,12 +500,16 @@ export async function refreshScientSourceMetadata(input: {
       outcome: "unavailable" as const,
       record,
       changedFields: [],
-      message: "Add a PDF, DOI, or PMID before refreshing this source's metadata.",
+      message:
+        materialSelection._tag === "SeveralMaterials"
+          ? "This source has several PDFs. Metadata refresh needs an explicit material choice."
+          : "Add a PDF, DOI, or PMID before refreshing this source's metadata.",
     };
   }
 
   const candidate = await refreshExistingSourceCandidate({
     record,
+    pdfMaterial: pdf,
     pdfPath: pdf ? sourceAttachmentAbsolutePath(root, pdf) : null,
   });
   const latest = await readScientSourceRecord(root, input.sourceId);

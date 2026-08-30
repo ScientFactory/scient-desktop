@@ -9,10 +9,17 @@ export const SCIENT_SOURCE_PDF_MATERIAL_SUPPORT = [
   { kind: "pdf", mediaType: "application/pdf" },
 ] as const satisfies ReadonlyArray<ScientSourceMaterialSupport>;
 
-export type ScientSourceMaterialSelection =
+export type ScientSourceMaterialReference = Pick<
+  ScientSourceAttachment,
+  "attachmentId" | "kind" | "mediaType"
+>;
+
+export type ScientSourceMaterialSelection<
+  Material extends ScientSourceMaterialReference = ScientSourceAttachment,
+> =
   | {
       readonly _tag: "Selected";
-      readonly material: ScientSourceAttachment;
+      readonly material: Material;
       readonly selectedBy: "requested-id" | "single-eligible-material";
     }
   | { readonly _tag: "NoMaterial" }
@@ -22,11 +29,11 @@ export type ScientSourceMaterialSelection =
     }
   | {
       readonly _tag: "UnsupportedMaterial";
-      readonly materials: ReadonlyArray<ScientSourceAttachment>;
+      readonly materials: ReadonlyArray<Material>;
     }
   | {
       readonly _tag: "SeveralMaterials";
-      readonly materials: ReadonlyArray<ScientSourceAttachment>;
+      readonly materials: ReadonlyArray<Material>;
     }
   | {
       readonly _tag: "DuplicateMaterialId";
@@ -34,7 +41,7 @@ export type ScientSourceMaterialSelection =
     };
 
 function supportsMaterial(
-  material: ScientSourceAttachment,
+  material: ScientSourceMaterialReference,
   supportedMaterials: ReadonlyArray<ScientSourceMaterialSupport>,
 ): boolean {
   return supportedMaterials.some(
@@ -42,7 +49,9 @@ function supportsMaterial(
   );
 }
 
-function duplicateMaterialId(materials: ReadonlyArray<ScientSourceAttachment>): string | null {
+function duplicateMaterialId(
+  materials: ReadonlyArray<ScientSourceMaterialReference>,
+): string | null {
   const seen = new Set<string>();
   for (const material of materials) {
     if (seen.has(material.attachmentId)) return material.attachmentId;
@@ -55,11 +64,11 @@ function duplicateMaterialId(materials: ReadonlyArray<ScientSourceAttachment>): 
  * Selects one concrete Source material without assigning meaning to array
  * order. Multiple eligible materials require an explicit stable ID.
  */
-export function selectScientSourceMaterial(input: {
-  readonly materials: ReadonlyArray<ScientSourceAttachment>;
+export function selectScientSourceMaterial<Material extends ScientSourceMaterialReference>(input: {
+  readonly materials: ReadonlyArray<Material>;
   readonly requestedAttachmentId?: string;
   readonly supportedMaterials?: ReadonlyArray<ScientSourceMaterialSupport>;
-}): ScientSourceMaterialSelection {
+}): ScientSourceMaterialSelection<Material> {
   const duplicateId = duplicateMaterialId(input.materials);
   if (duplicateId !== null) {
     return { _tag: "DuplicateMaterialId", attachmentId: duplicateId };

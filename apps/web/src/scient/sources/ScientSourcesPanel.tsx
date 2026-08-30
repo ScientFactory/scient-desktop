@@ -4,6 +4,7 @@ import type {
   ScientSourcesOverviewResult,
   ScientSourcesPreflightResult,
 } from "@t3tools/contracts";
+import { selectScientSourceMaterial } from "@scientfactory/scient-sources/material-selection";
 import {
   AlertCircle,
   ArrowDownUp,
@@ -412,7 +413,8 @@ export function ScientSourcesPanel(props: {
     async (record: SourceRecord, anchorPoint: { readonly x: number; readonly y: number }) => {
       const api = readLocalApi();
       if (!api) return;
-      const pdf = record.attachments.find((attachment) => attachment.kind === "pdf");
+      const materialSelection = selectScientSourceMaterial({ materials: record.attachments });
+      const pdf = materialSelection._tag === "Selected" ? materialSelection.material : null;
       const items: ContextMenuItem<SourceContextAction>[] = [
         { id: "view", label: "View source details" },
         { id: "edit", label: "Edit source details", icon: "pencil" },
@@ -1128,7 +1130,13 @@ export function ScientSourcesPanel(props: {
         <ScrollArea className="min-h-0 flex-1">
           <div className="divide-y divide-border">
             {filteredSourceRecords.map((record) => {
-              const pdf = record.attachments.find((attachment) => attachment.kind === "pdf");
+              const materialSelection = selectScientSourceMaterial({
+                materials: record.attachments,
+              });
+              const pdf = materialSelection._tag === "Selected" ? materialSelection.material : null;
+              const hasPdf =
+                materialSelection._tag === "Selected" ||
+                materialSelection._tag === "SeveralMaterials";
               const metadataDiagnostics = diagnosticsBySourceId.get(record.sourceId);
               return (
                 <div
@@ -1156,7 +1164,7 @@ export function ScientSourcesPanel(props: {
                             <span className="mt-0.5 block text-xs text-muted-foreground">
                               {creatorLabel(record)}
                               {record.issuedYear ? ` · ${record.issuedYear}` : ""}
-                              {pdf ? " · PDF" : " · Metadata only"}
+                              {hasPdf ? " · PDF" : " · Metadata only"}
                               {" · "}
                               <span
                                 className={
@@ -1202,6 +1210,17 @@ export function ScientSourcesPanel(props: {
                                 fileName: pdf.fileName,
                               });
                             }}
+                          >
+                            <FileText />
+                          </Button>
+                        </ScientTooltip>
+                      ) : materialSelection._tag === "SeveralMaterials" ? (
+                        <ScientTooltip content="Choose a PDF in source details">
+                          <Button
+                            variant="ghost"
+                            size="icon-sm"
+                            aria-label={`Choose a PDF to open: ${record.title ?? "Untitled source"}`}
+                            onClick={() => openSourceDetails(record.sourceId)}
                           >
                             <FileText />
                           </Button>

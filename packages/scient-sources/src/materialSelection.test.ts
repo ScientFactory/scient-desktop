@@ -34,6 +34,20 @@ describe("Scient Source material selection", () => {
     });
   });
 
+  it("selects from a redacted material reference without requiring private storage fields", () => {
+    const summary = {
+      attachmentId: "pdf-summary",
+      kind: "pdf",
+      mediaType: "application/pdf",
+      fileName: "summary.pdf",
+    } as const;
+    expect(selectScientSourceMaterial({ materials: [summary] })).toEqual({
+      _tag: "Selected",
+      material: summary,
+      selectedBy: "single-eligible-material",
+    });
+  });
+
   it("requires an explicit stable ID when several eligible materials exist", () => {
     const first = material("pdf-first");
     const second = material("pdf-second");

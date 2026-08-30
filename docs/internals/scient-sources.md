@@ -46,9 +46,13 @@ Concrete material selection is centralized in
 `@scientfactory/scient-sources/material-selection`: one eligible PDF may be
 selected automatically, while several eligible PDFs require an explicit
 stable attachment ID. The details surface presents that choice instead of
-treating `attachments[0]` as architectural meaning. The same provider-neutral
-contract distinguishes absent, unsupported, missing, duplicate-ID, hash, and
-byte-length states for adapters without silently selecting another material.
+treating `attachments[0]` as architectural meaning. List and context-menu PDF
+actions use the same contract: one eligible PDF opens directly, while several
+PDFs route the researcher to the details choice. PDF-based metadata refresh
+also refuses to choose among several materials implicitly; identifier-based
+refresh may still proceed independently. The same provider-neutral contract
+distinguishes absent, unsupported, missing, duplicate-ID, hash, and byte-length
+states for adapters without silently selecting another material.
 Normal local-PDF and Zotero intake use one user action after selection:
 preflight runs as part of the import pipeline, new items are imported
 immediately, and a single completed source opens in the existing details state.
