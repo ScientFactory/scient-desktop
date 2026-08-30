@@ -45,7 +45,7 @@ import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import type * as PlatformError from "effect/PlatformError";
 
-import { toSafeThreadAttachmentSegment } from "../../attachmentStore.ts";
+import { attachmentFileExtension, toSafeThreadAttachmentSegment } from "../../attachmentStore.ts";
 import { checkpointRefForThreadTurn } from "../../checkpointing/Utils.ts";
 import { OrchestrationCommandInvariantError } from "../Errors.ts";
 import { requireThread, requireThreadAbsent } from "../commandInvariants.ts";
@@ -337,7 +337,9 @@ export const forkThread = Effect.fn("scientForkThread")(function* ({
     for (const source of message.attachments ?? []) {
       if (attachmentRemap.has(source.id)) continue;
       const uuid = yield* Crypto.Crypto.pipe(Effect.flatMap((crypto) => crypto.randomUUIDv4));
-      const target = { ...source, id: `${attachmentThreadSegment}-${uuid}` };
+      const extensionSuffix =
+        source.type === "file" ? `-${attachmentFileExtension(source.name).slice(1)}` : "";
+      const target = { ...source, id: `${attachmentThreadSegment}-${uuid}${extensionSuffix}` };
       attachmentRemap.set(source.id, target);
       attachmentCopies.push({ source, target });
     }

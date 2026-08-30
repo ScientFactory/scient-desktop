@@ -2,29 +2,44 @@ import { EnvironmentId, PROVIDER_SEND_TURN_MAX_FILE_BYTES } from "@t3tools/contr
 import { describe, expect, it } from "vite-plus/test";
 
 import type { ComposerFileAttachment, ComposerImageAttachment } from "../../composerDraftStore";
+import { isVideoAttachment, videoMimeType } from "../../types";
 import {
   attachmentsToReleaseOnUploadCapabilityLoss,
   classifyComposerAttachmentFile,
   fileAttachmentCapabilityBlockReason,
   fileAttachmentStagingLimit,
   inferImageMimeTypeFromName,
+  isPreviewableComposerVideo,
   normalizeComposerImageFileMimeType,
   shouldHandleComposerAttachmentPaste,
 } from "./composerAttachmentFiles";
 
 describe("composer attachment files", () => {
+  it.each([
+    ["notes.txt", "text/plain"],
+    ["paper.pdf", "application/pdf"],
+    ["table.xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"],
+    ["archive.zip", "application/zip"],
+    ["clip.mp4", "video/mp4"],
+    ["recording.wav", "audio/wav"],
+    ["script.sh", "application/x-sh"],
+    ["program.exe", "application/octet-stream"],
+    ["page.html", "text/html"],
+    ["unknown.custom", ""],
+    ["README", ""],
+  ])("accepts %s without a file-type allowlist", (name, type) => {
+    expect(classifyComposerAttachmentFile({ name, type })).toBe("file");
+  });
   it("keeps supported images and HEIC photos on the image path", () => {
     expect(classifyComposerAttachmentFile({ name: "photo.png", type: "image/png" })).toBe("image");
     expect(classifyComposerAttachmentFile({ name: "photo.heic", type: "" })).toBe("image");
   });
 
-  it("rejects unsupported image types instead of attaching them as generic files", () => {
+  it("accepts images without a native vision path as generic files", () => {
     expect(classifyComposerAttachmentFile({ name: "diagram.svg", type: "image/svg+xml" })).toBe(
-      "unsupported-image",
+      "file",
     );
-    expect(classifyComposerAttachmentFile({ name: "photo.tiff", type: "image/tiff" })).toBe(
-      "unsupported-image",
-    );
+    expect(classifyComposerAttachmentFile({ name: "photo.tiff", type: "image/tiff" })).toBe("file");
     expect(classifyComposerAttachmentFile({ name: "report.pdf", type: "application/pdf" })).toBe(
       "file",
     );
@@ -41,7 +56,7 @@ describe("composer attachment files", () => {
     ).toBe(false);
   });
 
-  it("claims unsupported image pastes so the composer can report them", () => {
+  it("claims non-native image pastes as files even when a caption is present", () => {
     const images = [
       new File(["svg"], "diagram.svg", { type: "image/svg+xml" }),
       new File(["tiff"], "photo.tiff", { type: "image/tiff" }),
@@ -265,6 +280,48 @@ describe("composer attachment files", () => {
     ]);
 
     expect(released.map((attachment) => attachment.id)).toEqual(["image-1", "file-uploading"]);
+  });
+
+  it("keeps restored videos on the preview path in their upload environment", () => {
+    const environmentId = EnvironmentId.make("environment-1");
+    const video: ComposerFileAttachment = {
+      type: "file",
+      id: "video-1",
+      name: "clip.mp4",
+      mimeType: "video/mp4",
+      sizeBytes: 3,
+      file: null,
+      uploadedAttachmentId: "uploaded-video-1",
+      uploadEnvironmentId: environmentId,
+    };
+
+    expect(isPreviewableComposerVideo(video, environmentId)).toBe(true);
+    expect(isPreviewableComposerVideo(video, EnvironmentId.make("environment-2"))).toBe(false);
+  });
+
+  it("recognizes common video extensions when the browser omits the MIME type", () => {
+    const formats = [
+      ["clip.mp4", "video/mp4"],
+      ["clip.mov", "video/quicktime"],
+      ["clip.webm", "video/webm"],
+      ["clip.m4v", "video/mp4"],
+      ["clip.mkv", "video/x-matroska"],
+      ["clip.avi", "video/x-msvideo"],
+      ["clip.ogv", "video/ogg"],
+    ] as const;
+
+    for (const [name, expectedMimeType] of formats) {
+      expect(
+        isVideoAttachment({
+          type: "file",
+          id: name,
+          name,
+          mimeType: "application/octet-stream",
+          sizeBytes: 1,
+        }),
+      ).toBe(true);
+      expect(videoMimeType({ name, mimeType: "application/octet-stream" })).toBe(expectedMimeType);
+    }
   });
 
   it("claims image pastes even when clipboard text is present", () => {
