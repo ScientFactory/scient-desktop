@@ -96,7 +96,7 @@ describe("inline workspace image resolution", () => {
 
   it("serializes a portable Markdown image when the rendered node has been normalized", () => {
     expect(inlineWorkspaceImageMarkdownSource("Dose [mg]", "figures/dose response.svg")).toBe(
-      "![Dose [mg\\]](<figures/dose response.svg>)",
+      "![Dose \\[mg\\]](<figures/dose response.svg>)",
     );
     expect(
       inlineWorkspaceImageMarkdownSource(
@@ -104,6 +104,6 @@ describe("inline workspace image resolution", () => {
         "figures/dose response.svg",
         'Primary "analysis"',
       ),
-    ).toBe('![Dose [mg\\]](<figures/dose response.svg> "Primary \\"analysis\\"")');
+    ).toBe('![Dose \\[mg\\]](<figures/dose response.svg> "Primary \\"analysis\\"")');
   });
 });

@@ -1,4 +1,4 @@
-/** Scient-owned durable file ownership transfer for retained fork images. */
+/** Scient-owned durable file ownership transfer for retained fork attachments. */
 import { ThreadForkAttachmentCopy, ThreadId } from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";

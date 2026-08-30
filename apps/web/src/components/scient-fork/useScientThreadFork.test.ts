@@ -9,6 +9,7 @@ import {
   moveAcceptedForkComposerDraft,
   prepareForkDraftAttachments,
   stageUserForkDraft,
+  userFacingForkError,
 } from "./useScientThreadFork";
 
 const destinationRef = scopeThreadRef(
@@ -37,6 +38,17 @@ function resetComposerDraftStore() {
 
 describe("user-message fork draft staging", () => {
   beforeEach(resetComposerDraftStore);
+
+  it("explains the file editing limitation without suggesting waiting will fix it", () => {
+    expect(
+      userFacingForkError(
+        new Error("fork draft attachment 'report.pdf' is not a supported image attachment"),
+      ),
+    ).toContain("Fork from a completed response");
+    expect(
+      userFacingForkError(new Error("fork draft attachment 'photo.png' has no authorized URL")),
+    ).toContain("Wait for it to load");
+  });
 
   it("prepares authorized images as persistable draft attachments", async () => {
     const fetchAsset: typeof fetch = async () =>

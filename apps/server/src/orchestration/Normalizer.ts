@@ -19,7 +19,6 @@ import {
 } from "../attachmentStore.ts";
 import { ServerConfig } from "../config.ts";
 import { parseBase64DataUrl } from "../imageMime.ts";
-import { SCIENT_GENERIC_FILE_ATTACHMENTS_ENABLED } from "../scient/upstreamCompatibility.ts";
 import * as WorkspacePaths from "../workspace/WorkspacePaths.ts";
 
 export const canonicalizeClientCommandTimestamps = (
@@ -132,16 +131,6 @@ export const normalizeDispatchCommand = (command: ClientOrchestrationCommand) =>
 
     if (canonicalCommand.type !== "thread.turn.start") {
       return canonicalCommand as OrchestrationCommand;
-    }
-
-    if (
-      !SCIENT_GENERIC_FILE_ATTACHMENTS_ENABLED &&
-      canonicalCommand.message.attachments.some((attachment) => attachment.type === "file")
-    ) {
-      return yield* new OrchestrationDispatchCommandError({
-        message:
-          "Generic file attachments are temporarily unavailable until every Scient client supports them.",
-      });
     }
 
     const claimedAttachmentPaths: string[] = [];

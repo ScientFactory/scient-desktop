@@ -55,7 +55,7 @@ function renderAssistantPipeline(markdown: string): string {
 describe("ChatMarkdown BiDi seam", () => {
   it("keeps T3 HTML plugins behind parseRawHtml and always appends Scient BiDi", () => {
     expect(chatMarkdownSource).toMatch(
-      /\.\.\.\(parseRawHtml \? CHAT_MARKDOWN_REHYPE_PLUGINS : \[\]\),\s*\[\s*rehypeScientBidi,/u,
+      /\.\.\.\(parseRawHtml \? CHAT_MARKDOWN_REHYPE_PLUGINS : \[rehypePreserveImageSourceMeta\]\),\s*\[\s*rehypeScientBidi,/u,
     );
     expect(chatMarkdownSource).not.toMatch(/rehypePlugins=\{\s*parseRawHtml\s*\?/u);
   });

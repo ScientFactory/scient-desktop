@@ -11,10 +11,13 @@ when the message uses ordinary Markdown image syntax:
 ![Residuals by treatment group](results/residuals.svg)
 ```
 
-The path is resolved relative to the current project. PNG, SVG, JPEG, WebP,
-GIF, AVIF, and ICO files use the same image card. While an answer is still
-streaming, the image remains ordinary Markdown and is loaded only after the
-answer settles.
+In chat, the path is resolved relative to the current project. When previewing
+a Markdown file, image paths are relative to that file's folder.
+
+Standalone paragraph images use the same image card for PNG, SVG, JPEG, WebP,
+GIF, AVIF, and ICO files. While an answer is still streaming, these figures
+wait to load until the answer settles. Inline badges and images with authored
+sizes or alignment keep their layout instead of being placed in a card.
 
 The resolved file must remain inside the current workspace. An absolute path,
 an outside-workspace traversal, or a path in another environment is not granted

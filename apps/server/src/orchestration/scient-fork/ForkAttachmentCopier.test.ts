@@ -12,7 +12,7 @@ import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
 import { afterAll } from "vite-plus/test";
 
-import { attachmentRelativePath } from "../../attachmentStore.ts";
+import { attachmentRelativePath, resolveAttachmentPathById } from "../../attachmentStore.ts";
 import { ServerConfig } from "../../config.ts";
 import {
   ScientForkAttachmentCopier,
@@ -40,6 +40,33 @@ function image(id: string): ChatAttachment {
 }
 
 it.layer(layer)("ScientForkAttachmentCopier", (it) => {
+  it.effect("keeps generic fork files downloadable by their rekeyed ids", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const { attachmentsDir } = yield* ServerConfig;
+      const copier = yield* ScientForkAttachmentCopier;
+      const source: ChatAttachment = {
+        type: "file",
+        id: "origin-thread-00000000-0000-4000-8000-000000000009-pdf",
+        name: "report.PDF",
+        mimeType: "application/pdf",
+        sizeBytes: 8,
+      };
+      const target = { ...source, id: "fork-thread-00000000-0000-4000-8000-000000000010-pdf" };
+      const sourcePath = path.join(attachmentsDir, attachmentRelativePath(source)!);
+      yield* fileSystem.makeDirectory(attachmentsDir, { recursive: true });
+      yield* fileSystem.writeFileString(sourcePath, "evidence");
+      yield* copier.copyAll({
+        threadId: ThreadId.make("fork-thread"),
+        copies: [{ source, target }],
+      });
+      yield* fileSystem.remove(sourcePath);
+      const targetPath = resolveAttachmentPathById({ attachmentsDir, attachmentId: target.id });
+      assert.notStrictEqual(targetPath, null);
+      assert.strictEqual(yield* fileSystem.readFileString(targetPath!), "evidence");
+    }),
+  );
   it.effect("copies retained images idempotently into fork-owned files", () =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;

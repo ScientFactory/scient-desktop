@@ -127,7 +127,7 @@ describe("normalizeDispatchCommand attachments", () => {
     }).pipe(Effect.provide(testLayer)),
   );
 
-  it.effect("rejects generic files while cross-client support is gated", () =>
+  it.effect("claims generic files without consuming the retryable pending upload", () =>
     Effect.gen(function* () {
       const config = yield* ServerConfig.ServerConfig;
       const pendingId = `pending-${attachmentUuid}-pdf`;
@@ -138,7 +138,7 @@ describe("normalizeDispatchCommand attachments", () => {
       if (imageCommand.type !== "thread.turn.start") {
         throw new Error("Expected a thread.turn.start command.");
       }
-      const failure = yield* normalizeDispatchCommand({
+      const normalized = yield* normalizeDispatchCommand({
         ...imageCommand,
         message: {
           ...imageCommand.message,
@@ -152,9 +152,22 @@ describe("normalizeDispatchCommand attachments", () => {
             },
           ],
         },
-      }).pipe(Effect.flip);
+      });
 
-      expect(failure.message).toContain("temporarily unavailable");
+      if (normalized.type !== "thread.turn.start") {
+        throw new Error("Expected a thread.turn.start command.");
+      }
+      const attachment = normalized.message.attachments[0]!;
+      expect(attachment).toMatchObject({
+        type: "file",
+        name: "report.pdf",
+        mimeType: "application/pdf",
+        sizeBytes: 6,
+      });
+      expect(attachment.id).toMatch(/^thread-1-/);
+      expect(
+        NodeFS.readFileSync(NodePath.join(config.attachmentsDir, `${attachment.id}.pdf`)),
+      ).toEqual(Buffer.from("report"));
       expect(NodeFS.readFileSync(pendingPath)).toEqual(Buffer.from("report"));
     }).pipe(Effect.provide(testLayer)),
   );
