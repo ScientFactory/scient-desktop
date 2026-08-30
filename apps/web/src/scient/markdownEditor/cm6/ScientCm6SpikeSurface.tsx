@@ -27,21 +27,20 @@ import {
   SquareCode,
   Strikethrough,
   Table as TableIcon,
+  TextInitial,
   TextQuote,
-  Type,
   Undo2,
 } from "lucide-react";
 import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 
 import { MenuItem, MenuSeparator, MenuShortcut } from "~/components/ui/menu";
-import { cn } from "~/lib/utils";
 
 import {
   insertBlockTemplate,
   insertImageTemplate,
   insertLineBreak,
   insertLink,
-  setParagraph,
+  setLineBlockStyle,
   toggleDirection,
   toggleLinePrefix,
   toggleNumberedList,
@@ -77,7 +76,7 @@ const STYLE_ITEMS: ReadonlyArray<{
   readonly icon: React.ReactNode;
   readonly prefix: string | null;
 }> = [
-  { label: "Paragraph", icon: <Type />, prefix: null },
+  { label: "Paragraph", icon: <TextInitial />, prefix: null },
   { label: "Heading 1", icon: <Heading1 />, prefix: "# " },
   { label: "Heading 2", icon: <Heading2 />, prefix: "## " },
   { label: "Heading 3", icon: <Heading3 />, prefix: "### " },
@@ -118,14 +117,17 @@ export function ScientCm6SpikeSurface(props: ScientCm6SpikeSurfaceProps) {
   const onPendingChangeRef = useRef(props.onPendingChange);
   const onSaveConfirmedRef = useRef(props.onSaveConfirmed);
   const onSaveFailureRef = useRef(props.onSaveFailure);
+  const onExternalConflictRef = useRef(props.onExternalConflict);
+  const onSaveResolutionAppliedRef = useRef(props.onSaveResolutionApplied);
   persistRef.current = props.persist;
   onPendingChangeRef.current = props.onPendingChange;
   onSaveConfirmedRef.current = props.onSaveConfirmed;
   onSaveFailureRef.current = props.onSaveFailure;
+  onExternalConflictRef.current = props.onExternalConflict;
+  onSaveResolutionAppliedRef.current = props.onSaveResolutionApplied;
 
   const containerRef = useRef<HTMLDivElement>(null);
   const controllerRef = useRef<ScientCm6EditorView | null>(null);
-  const [conflict, setConflict] = useState(false);
   const [chromeExpanded, setChromeExpanded] = useState(false);
 
   const [saveQueue] = useState(
@@ -186,17 +188,13 @@ export function ScientCm6SpikeSurface(props: ScientCm6SpikeSurfaceProps) {
     });
     if (result === "conflict") {
       saveQueue.pause();
-      setConflict(true);
-      props.onExternalConflict({ source: props.source, revision: props.revision });
-    } else {
-      setConflict(false);
-      if (result === "adopted") {
-        // Same draft, fresher revision: rebase the queued save intent.
-        const rebased = controller.createSaveIntent();
-        if (rebased) saveQueue.enqueue(rebased);
-      }
+      onExternalConflictRef.current({ source: props.source, revision: props.revision });
+    } else if (result === "adopted") {
+      // Same draft, fresher revision: rebase the queued save intent.
+      const rebased = controller.createSaveIntent();
+      if (rebased) saveQueue.enqueue(rebased);
     }
-  }, [controller, props, saveQueue]);
+  }, [controller, props.revision, props.source, saveQueue]);
 
   useEffect(() => {
     if (!props.saveResolution) return;
@@ -207,20 +205,8 @@ export function ScientCm6SpikeSurface(props: ScientCm6SpikeSurfaceProps) {
       controller.resolveExternalConflict("local");
       saveQueue.retry(props.saveResolution.revision);
     }
-    setConflict(false);
-    props.onSaveResolutionApplied?.();
+    onSaveResolutionAppliedRef.current?.();
   }, [controller, props.saveResolution, saveQueue]);
-
-  const startConflictResolution = (action: "discard" | "retry"): void => {
-    if (action === "discard") {
-      saveQueue.discard();
-      controller.resolveExternalConflict("disk");
-    } else {
-      controller.resolveExternalConflict("local");
-      saveQueue.retry();
-    }
-    setConflict(false);
-  };
 
   const run = (action: (view: Cm6View) => boolean): void => {
     const view = controller.view;
@@ -234,11 +220,7 @@ export function ScientCm6SpikeSurface(props: ScientCm6SpikeSurfaceProps) {
       {STYLE_ITEMS.map((entry) => (
         <MenuItem
           key={entry.label}
-          onClick={() =>
-            run((view) =>
-              entry.prefix === null ? setParagraph(view) : toggleLinePrefix(view, entry.prefix),
-            )
-          }
+          onClick={() => run((view) => setLineBlockStyle(view, entry.prefix))}
         >
           {entry.icon}
           <span>{entry.label}</span>
@@ -388,7 +370,11 @@ export function ScientCm6SpikeSurface(props: ScientCm6SpikeSurfaceProps) {
       priority: 50,
       estimatedWidth: 44,
       bar: (
-        <DockMenu label="Paragraph style" icon={<Type className="size-4" />} groupLabel="Style">
+        <DockMenu
+          label="Paragraph style"
+          icon={<TextInitial className="size-4" />}
+          groupLabel="Style"
+        >
           {styleItems}
         </DockMenu>
       ),
@@ -462,30 +448,6 @@ export function ScientCm6SpikeSurface(props: ScientCm6SpikeSurfaceProps) {
       />
       {findSnapshot.findOpen ? (
         <ScientFindBar controller={controller} snapshot={findSnapshot} />
-      ) : null}
-      {conflict ? (
-        <div
-          role="alert"
-          className="flex items-center gap-3 border-b border-border/80 bg-amber-500/15 px-4 py-2 text-sm"
-        >
-          <span>The file changed on disk while you were editing.</span>
-          <button
-            type="button"
-            className="rounded-md px-2 py-0.5 text-xs font-medium hover:bg-accent"
-            onClick={() => startConflictResolution("discard")}
-          >
-            Reload from disk
-          </button>
-          <button
-            type="button"
-            className={cn(
-              "rounded-md px-2 py-0.5 text-xs font-medium text-primary hover:bg-accent",
-            )}
-            onClick={() => startConflictResolution("retry")}
-          >
-            Keep mine
-          </button>
-        </div>
       ) : null}
       <div ref={containerRef} className="min-h-0 flex-1" />
     </div>

@@ -1,8 +1,8 @@
 import { lift, setBlockType, toggleMark, wrapIn } from "prosemirror-commands";
-import type { MarkType, Node as ProseMirrorNode, NodeType } from "prosemirror-model";
+import type { Attrs, MarkType, Node as ProseMirrorNode, NodeType } from "prosemirror-model";
 import { liftListItem, wrapInList } from "prosemirror-schema-list";
 import { redo, undo } from "prosemirror-history";
-import type { Command, EditorState, Transaction } from "prosemirror-state";
+import { Selection, type Command, type EditorState, type Transaction } from "prosemirror-state";
 import {
   addColumnAfter,
   addColumnBefore,
@@ -216,13 +216,89 @@ function removeMarkdownList(): Command {
   };
 }
 
-/** Toggle a blockquote: applying it inside a quote lifts the block out. */
-function toggleMarkdownBlockquote(): Command {
+/**
+ * Run structural commands as one editor transaction. Each command sees the
+ * document and mapped selection produced by the previous command, while the
+ * user still gets one undo step and one selection update.
+ */
+function sequenceMarkdownCommands(commands: readonly Command[]): Command {
   return (state, dispatch) => {
-    if (insideNodeOfType(state, "blockquote")) {
-      return lift(state, dispatch);
+    let currentState = state;
+    const transactions: Transaction[] = [];
+    let handled = false;
+
+    for (const command of commands) {
+      let nextTransaction: Transaction | null = null;
+      const commandHandled = command(currentState, (transaction) => {
+        nextTransaction = transaction;
+      });
+      if (!commandHandled) continue;
+      handled = true;
+      if (nextTransaction === null) continue;
+      transactions.push(nextTransaction);
+      currentState = currentState.apply(nextTransaction);
     }
-    return wrapIn(requiredNodeType("blockquote"))(state, dispatch);
+
+    if (!handled) return false;
+    if (dispatch && transactions.length > 0) {
+      const combined = state.tr;
+      for (const transaction of transactions) {
+        for (const step of transaction.steps) combined.step(step);
+      }
+      combined.setSelection(Selection.fromJSON(combined.doc, currentState.selection.toJSON()));
+      combined.setStoredMarks(currentState.storedMarks);
+      dispatch(combined.scrollIntoView());
+    }
+    return true;
+  };
+}
+
+/** Set all selected text blocks while retaining attributes shared by the new type. */
+function setMarkdownTextBlock(type: NodeType, attrs: Attrs = {}): Command {
+  return (state, dispatch) => {
+    const { from, to } = state.selection;
+    const transaction = state.tr.setBlockType(from, to, type, (node) => {
+      const retained: Record<string, unknown> = {};
+      for (const name of Object.keys(type.spec.attrs ?? {})) {
+        if (Object.hasOwn(node.attrs, name)) retained[name] = node.attrs[name];
+      }
+      return { ...retained, ...attrs };
+    });
+    if (dispatch && transaction.docChanged) dispatch(transaction);
+    // A style setter is still handled when the selected blocks already have
+    // that style; callers should restore focus and let the user keep typing.
+    return true;
+  };
+}
+
+/**
+ * Apply one explicit block style. The Style menu is a radio group, so these
+ * commands set a style rather than toggling it. Paragraphs and headings leave
+ * a surrounding quote before changing type; Quote normalizes the selected
+ * text blocks to paragraphs and wraps them only when needed.
+ */
+function setMarkdownBlockStyle(
+  style: "paragraph" | "blockquote" | { readonly headingLevel: number },
+): Command {
+  return (state, dispatch) => {
+    const inBlockquote = insideNodeOfType(state, "blockquote");
+    const commands: Command[] = [];
+
+    if (style !== "blockquote" && inBlockquote) commands.push(lift);
+
+    if (typeof style === "object") {
+      commands.push(
+        setMarkdownTextBlock(requiredNodeType("heading"), { level: style.headingLevel }),
+      );
+    } else {
+      commands.push(setMarkdownTextBlock(requiredNodeType("paragraph")));
+    }
+
+    if (style === "blockquote" && !inBlockquote) {
+      commands.push(wrapIn(requiredNodeType("blockquote")));
+    }
+
+    return sequenceMarkdownCommands(commands)(state, dispatch);
   };
 }
 
@@ -284,16 +360,14 @@ function commandFor(command: ScientMarkdownCommand): Command {
     case "redo":
       return redo;
     case "paragraph":
-      return setBlockType(requiredNodeType("paragraph"));
+      return setMarkdownBlockStyle("paragraph");
     case "heading-1":
     case "heading-2":
     case "heading-3":
     case "heading-4":
     case "heading-5":
     case "heading-6":
-      return setBlockType(requiredNodeType("heading"), {
-        level: Number(command.at(-1)),
-      });
+      return setMarkdownBlockStyle({ headingLevel: Number(command.at(-1)) });
     case "clear-formatting":
       return clearMarkdownFormatting();
     case "hard-break":
@@ -305,7 +379,7 @@ function commandFor(command: ScientMarkdownCommand): Command {
     case "direction-rtl":
       return setMarkdownTextDirection("rtl");
     case "blockquote":
-      return toggleMarkdownBlockquote();
+      return setMarkdownBlockStyle("blockquote");
     case "bullet-list":
       return toggleMarkdownList("bullet");
     case "task-list":

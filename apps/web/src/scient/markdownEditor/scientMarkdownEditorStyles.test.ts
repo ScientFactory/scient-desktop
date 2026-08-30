@@ -53,3 +53,33 @@ describe("rich Markdown list marker styles", () => {
     expect(getComputedStyle(document.querySelector("#task")!).listStyle).toBe("none");
   });
 });
+
+describe("rich Markdown compact-surface styles", () => {
+  it("contains selection and find controls instead of leaking outside narrow panes", () => {
+    expect(cssSource).toMatch(
+      /\.scient-markdown-selection-toolbar \{[^}]*max-width: calc\(100vw - 1rem\)[^}]*overflow-x: auto[^}]*scrollbar-width: none/su,
+    );
+    expect(cssSource).toMatch(
+      /\.scient-markdown-find-bar \{[^}]*overflow-x: auto[^}]*overflow-y: hidden[^}]*scrollbar-width: none/su,
+    );
+    expect(cssSource).toMatch(/\.scient-markdown-find-bar > div \{[^}]*min-width: max-content/su);
+  });
+
+  it("gives every nested Markdown editor a visible keyboard focus boundary", () => {
+    expect(cssSource).toMatch(
+      /\.scient-markdown-wiki-link-source:focus-visible,[^}]*\.scient-markdown-image-editor input:focus-visible,[^}]*\.scient-markdown-reference-source:focus-visible,[^}]*\.scient-markdown-source-island-editor:focus-visible,[^}]*\.scient-markdown-math-source:focus-visible \{[^}]*outline: 2px solid[^}]*outline-offset: 1px/su,
+    );
+  });
+
+  it("keeps wiki links compact and presents one editing surface when selected", () => {
+    expect(cssSource).toMatch(
+      /\.scient-markdown-wiki-link \{[^}]*background: color-mix\(in oklab, var\(--primary\) 6%, transparent\)[^}]*line-height: 1\.3/su,
+    );
+    expect(cssSource).toMatch(
+      /\.scient-markdown-wiki-link\.is-selected \.scient-markdown-wiki-link-label \{\s*display: none;/su,
+    );
+    expect(cssSource).toMatch(
+      /\.scient-markdown-wiki-link-source \{[^}]*border: 1px solid[^}]*background: var\(--background\)[^}]*box-shadow:/su,
+    );
+  });
+});

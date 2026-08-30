@@ -11,6 +11,7 @@ describe("ScientMarkdownEditorView", () => {
   afterEach(() => {
     mounted.splice(0).forEach((controller) => controller.destroy());
     document.body.replaceChildren();
+    document.documentElement.classList.remove("dark");
   });
 
   function mountEditor() {
@@ -27,12 +28,41 @@ describe("ScientMarkdownEditorView", () => {
     return { controller, host, onUserSourceChange, view: controller.mount(host) };
   }
 
+  it("keeps a single text row visible when its direction changes", () => {
+    const controller = new ScientMarkdownEditorView({
+      source: "Only row.\n",
+      revision: "sha256:before",
+      mode: "write",
+      ariaLabel: "Markdown document",
+      onUserSourceChange: () => undefined,
+    });
+    const host = document.createElement("div");
+    document.body.append(host);
+    mounted.push(controller);
+    const view = controller.mount(host);
+
+    expect(controller.execute("direction-ltr")).toBe(true);
+    expect(view.dom.querySelector("p[dir='ltr']")?.textContent).toBe("Only row.");
+
+    expect(controller.execute("direction-rtl")).toBe(true);
+    expect(view.dom.querySelector("p[dir='rtl']")?.textContent).toBe("Only row.");
+    expect(view.state.doc.textContent).toBe("Only row.");
+  });
+
   it("anchors the selection toolbar only to inline text selections", () => {
     const { controller, view } = mountEditor();
     expect(controller.selectionToolbarAnchor()).toBeNull();
 
     view.dispatch(view.state.tr.setSelection(TextSelection.create(view.state.doc, 2, 5)));
     expect(controller.selectionToolbarAnchor()).not.toBeNull();
+
+    view.dispatch(
+      view.state.tr.setSelection(
+        TextSelection.create(view.state.doc, 2, view.state.doc.content.size),
+      ),
+    );
+    expect(controller.selectionToolbarAnchor()).not.toBeNull();
+    expect(controller.canSetWikiLink()).toBe(false);
 
     const codeController = new ScientMarkdownEditorView({
       source: "```\ncode\n```\n",
@@ -46,6 +76,27 @@ describe("ScientMarkdownEditorView", () => {
     const codeView = codeController.mount(codeHost);
     codeView.dispatch(codeView.state.tr.setSelection(NodeSelection.create(codeView.state.doc, 0)));
     expect(codeController.selectionToolbarAnchor()).toBeNull();
+  });
+
+  it("turns an inline text selection into a labeled wiki link", () => {
+    const controller = new ScientMarkdownEditorView({
+      source: "Selected words.\n",
+      revision: "sha256:before",
+      mode: "write",
+      ariaLabel: "Markdown document",
+      onUserSourceChange: () => undefined,
+    });
+    const host = document.createElement("div");
+    document.body.append(host);
+    mounted.push(controller);
+    const view = controller.mount(host);
+    view.dispatch(view.state.tr.setSelection(TextSelection.create(view.state.doc, 1, 9)));
+
+    expect(controller.setWikiLink(" Methods/Protocol ")).toBe(true);
+    expect(controller.session.session.draftSource).toBe("[[Methods/Protocol|Selected]] words.\n");
+    expect(view.dom.querySelector("[data-scient-markdown-wiki-link]")?.textContent).toContain(
+      "Selected",
+    );
   });
 
   it("keeps one mounted view and document through 100 read/write cycles", () => {
@@ -317,7 +368,8 @@ describe("ScientMarkdownEditorView", () => {
     expect(controller.session.session.draftSource).toContain("[[שיטה]]");
   });
 
-  it("opens wiki links directly in Read and only with a modifier in Write", () => {
+  it("opens wiki links with one click and reserves deliberate selection for editing", async () => {
+    vi.useFakeTimers();
     const onOpenWikiLink = vi.fn();
     const controller = new ScientMarkdownEditorView({
       source: "See [[Methods|protocol]].\n",
@@ -341,27 +393,58 @@ describe("ScientMarkdownEditorView", () => {
     controller.setMode("write");
     link!.dispatchEvent(new MouseEvent("click", { bubbles: true, button: 0 }));
     expect(onOpenWikiLink).toHaveBeenCalledTimes(1);
-    link!.dispatchEvent(new MouseEvent("click", { bubbles: true, button: 0, metaKey: true }));
+    expect(
+      host.querySelector<HTMLInputElement>("[aria-label='Wiki link target and label']")?.hidden,
+    ).toBe(true);
+    await vi.advanceTimersByTimeAsync(220);
     expect(onOpenWikiLink).toHaveBeenCalledTimes(2);
 
-    controller.setMode("read");
     link!.dispatchEvent(new KeyboardEvent("keydown", { bubbles: true, key: "Enter" }));
     expect(onOpenWikiLink).toHaveBeenCalledTimes(3);
 
-    controller.setMode("write");
     let wikiPosition: number | null = null;
     view.state.doc.descendants((node, position) => {
       if (node.type.name === "wiki_link") wikiPosition = position;
     });
-    view.dispatch(view.state.tr.setSelection(NodeSelection.create(view.state.doc, wikiPosition!)));
+    const wikiNode = view.state.doc.nodeAt(wikiPosition!);
+    expect(wikiNode).not.toBeNull();
+    link!.dispatchEvent(new MouseEvent("click", { bubbles: true, button: 0, detail: 1 }));
+    link!.dispatchEvent(new MouseEvent("click", { bubbles: true, button: 0, detail: 2 }));
+    expect(
+      view.someProp("handleDoubleClickOn", (handler) =>
+        handler(
+          view,
+          wikiPosition!,
+          wikiNode!,
+          wikiPosition!,
+          new MouseEvent("dblclick", { bubbles: true, button: 0, detail: 2 }),
+          true,
+        ),
+      ),
+    ).toBe(true);
+    await vi.advanceTimersByTimeAsync(220);
+    expect(onOpenWikiLink).toHaveBeenCalledTimes(3);
     const input = host.querySelector<HTMLInputElement>("[aria-label='Wiki link target and label']");
+    expect(input?.hidden).toBe(false);
+    expect(view.state.selection).toBeInstanceOf(NodeSelection);
+
+    view.dispatch(view.state.tr.setSelection(TextSelection.atEnd(view.state.doc)));
+
+    controller.setMode("read");
+    const currentLink = host.querySelector<HTMLElement>("[data-scient-markdown-wiki-link]");
+    currentLink!.dispatchEvent(new KeyboardEvent("keydown", { bubbles: true, key: "Enter" }));
+    expect(onOpenWikiLink).toHaveBeenCalledTimes(4);
+
+    controller.setMode("write");
+    view.dispatch(view.state.tr.setSelection(NodeSelection.create(view.state.doc, wikiPosition!)));
     expect(
       [...host.querySelectorAll("datalist option")].map((option) => option.getAttribute("value")),
     ).toEqual(["Methods", "Results"]);
     input!.value = "Missing";
     input!.dispatchEvent(new InputEvent("input", { bubbles: true, inputType: "insertText" }));
-    expect(link?.dataset.scientMarkdownWikiTargetState).toBe("missing");
+    expect(currentLink?.dataset.scientMarkdownWikiTargetState).toBe("missing");
     expect(input?.getAttribute("aria-invalid")).toBe("true");
+    vi.useRealTimers();
   });
 
   it("opens safe document links by mode and resolves local heading fragments", () => {
@@ -413,6 +496,29 @@ describe("ScientMarkdownEditorView", () => {
     view.dispatch(view.state.tr.setSelection(NodeSelection.create(view.state.doc, 0)));
     await vi.waitFor(() => {
       expect(view.dom.querySelector(".scient-markdown-code-editor .cm-editor")).not.toBeNull();
+    });
+    await vi.waitFor(() => {
+      const editableCode = view.dom.querySelector<HTMLElement>(
+        ".scient-markdown-code-editor .cm-line",
+      );
+      expect(editableCode?.textContent).toBe("print('result')");
+      expect(editableCode?.querySelector("span")).not.toBeNull();
+    });
+    const lightTokenClass = view.dom.querySelector<HTMLElement>(
+      ".scient-markdown-code-editor .cm-line span",
+    )?.className;
+    const lightEditorClass = view.dom.querySelector<HTMLElement>(
+      ".scient-markdown-code-editor .cm-editor",
+    )?.className;
+    document.documentElement.classList.add("dark");
+    await vi.waitFor(() => {
+      expect(
+        view.dom.querySelector<HTMLElement>(".scient-markdown-code-editor .cm-editor")?.className,
+      ).not.toBe(lightEditorClass);
+      expect(
+        view.dom.querySelector<HTMLElement>(".scient-markdown-code-editor .cm-line span")
+          ?.className,
+      ).not.toBe(lightTokenClass);
     });
     expect(rendered?.hidden).toBe(true);
     expect(onUserSourceChange).not.toHaveBeenCalled();
@@ -794,6 +900,34 @@ describe("ScientMarkdownEditorView", () => {
     caption!.dispatchEvent(new InputEvent("input", { bubbles: true, inputType: "insertText" }));
     expect(controller.session.session.draftSource).toContain('"Updated caption"');
     expect(image?.hidden).toBe(false);
+    expect(resolveImageSource).toHaveBeenCalledOnce();
     expect(onUserSourceChange).toHaveBeenCalledOnce();
+  });
+
+  it("clears stale image state when an unresolved path is removed", async () => {
+    const controller = new ScientMarkdownEditorView({
+      source: "![Missing](figures/missing.png)\n",
+      revision: "sha256:before",
+      mode: "write",
+      ariaLabel: "Markdown document",
+      resolveImageSource: vi.fn(async () => null),
+    });
+    const host = document.createElement("div");
+    document.body.append(host);
+    mounted.push(controller);
+    const view = controller.mount(host);
+    const placeholder = view.dom.querySelector<HTMLElement>(".scient-markdown-image-placeholder");
+
+    await vi.waitFor(() => expect(placeholder?.textContent).toContain("Unable to resolve"));
+    view.dispatch(view.state.tr.setSelection(NodeSelection.create(view.state.doc, 1)));
+    const source = view.dom.querySelector<HTMLInputElement>("[aria-label='Image path']");
+    source!.value = "";
+    source!.dispatchEvent(new InputEvent("input", { bubbles: true, inputType: "deleteContent" }));
+
+    expect(placeholder?.textContent).toBe("Choose an image path");
+    expect(placeholder?.hidden).toBe(false);
+    expect(view.dom.querySelector<HTMLImageElement>(".scient-markdown-image-render")?.hidden).toBe(
+      true,
+    );
   });
 });

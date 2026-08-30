@@ -303,13 +303,55 @@ describe("Scient Markdown dock command coverage", () => {
     expect(session.session.draftSource).toBe("**Some** text.\n");
   });
 
-  it("converts a paragraph to a quote and back", () => {
+  it("sets quote style idempotently and leaves it through Paragraph", () => {
     const session = freshSession("Quoted words.\n");
     select(session, 1);
     runUserCommand(session, "blockquote");
     expect(session.session.draftSource).toBe("> Quoted words.\n");
 
     runUserCommand(session, "blockquote");
+    expect(session.session.draftSource).toBe("> Quoted words.\n");
+
+    runUserCommand(session, "paragraph");
     expect(session.session.draftSource).toBe("Quoted words.\n");
+  });
+
+  it("replaces quote style with a heading as one undoable change", () => {
+    const session = freshSession("> Quoted words.\n");
+    select(session, 2);
+
+    runUserCommand(session, "heading-2");
+    expect(session.session.draftSource).toBe("## Quoted words.\n");
+
+    runUserCommand(session, "undo");
+    expect(session.session.draftSource).toBe("> Quoted words.\n");
+  });
+
+  it("applies a selected style to every text block touched by the selection", () => {
+    const session = freshSession("First block.\n\nSecond block.\n");
+    select(session, 3, session.state.doc.content.size - 2);
+
+    runUserCommand(session, "heading-3");
+    expect(session.session.draftSource).toBe("### First block.\n\n### Second block.\n");
+  });
+
+  it("turns every selected row in one quote back into paragraphs", () => {
+    const session = freshSession("> First block.\n>\n> Second block.\n");
+    select(session, 2, session.state.doc.content.size - 2);
+
+    runUserCommand(session, "paragraph");
+    expect(session.session.draftSource).toBe("First block.\n\nSecond block.\n");
+  });
+
+  it("turns an empty current block into the selected style and keeps typing there", () => {
+    const session = freshSession();
+    select(session, 1);
+
+    runUserCommand(session, "heading-2");
+    expect(session.state.selection.$from.parent.type.name).toBe("heading");
+    expect(session.state.selection.$from.parent.attrs.level).toBe(2);
+
+    session.applyTransaction(session.state.tr.insertText("Ready to write"), "user");
+    expect(session.session.draftSource).toBe("## Ready to write");
   });
 });

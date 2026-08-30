@@ -2,6 +2,7 @@
 
 import { act, StrictMode } from "react";
 import { createRoot } from "react-dom/client";
+import { TextSelection } from "prosemirror-state";
 import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 
 import { MarkdownSaveQueue } from "@scientfactory/scient-markdown";
@@ -92,6 +93,257 @@ describe("ScientMarkdownWorkspaceSurface", () => {
     expect(host.querySelector("[aria-label='Hide formatting tools']")).not.toBeNull();
   });
 
+  it("shows distinct Paragraph and Quote icons in the primary editor controls", async () => {
+    vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+
+    const renderExpandedSurface = async (source: string, ariaLabel: string) => {
+      const host = document.createElement("div");
+      document.body.append(host);
+      const root = createRoot(host);
+      roots.push(root);
+      await act(() =>
+        root.render(
+          <ScientMarkdownWorkspaceSurface
+            source={source}
+            revision="r0"
+            ariaLabel={ariaLabel}
+            persist={vi.fn(async () => ({ revision: "r1" }))}
+            onPendingChange={vi.fn()}
+            onSaveConfirmed={vi.fn()}
+            onSaveFailure={vi.fn()}
+            onExternalConflict={vi.fn()}
+          />,
+        ),
+      );
+      await act(() =>
+        host.querySelector<HTMLButtonElement>("[aria-label='Show formatting tools']")!.click(),
+      );
+      return host;
+    };
+
+    const paragraph = await renderExpandedSurface("Plain text.\n", "Paragraph fixture");
+    const paragraphStyle = paragraph.querySelector("[aria-label='Style: Paragraph']");
+    expect(paragraphStyle?.querySelector(".lucide-text-initial")).not.toBeNull();
+
+    const quote = await renderExpandedSurface("> Quoted text.\n", "Quote fixture");
+    const quoteStyle = quote.querySelector("[aria-label='Style: Quote']");
+    expect(quoteStyle?.querySelector(".lucide-text-quote")).not.toBeNull();
+  });
+
+  it("uses the shared compact popover treatment for link editing", async () => {
+    vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+    const host = document.createElement("div");
+    document.body.append(host);
+    const root = createRoot(host);
+    roots.push(root);
+
+    await act(() =>
+      root.render(
+        <ScientMarkdownWorkspaceSurface
+          source="Link target.\n"
+          revision="r0"
+          ariaLabel="Link fixture"
+          persist={vi.fn(async () => ({ revision: "r1" }))}
+          onPendingChange={vi.fn()}
+          onSaveConfirmed={vi.fn()}
+          onSaveFailure={vi.fn()}
+          onExternalConflict={vi.fn()}
+        />,
+      ),
+    );
+    await act(() =>
+      host.querySelector<HTMLButtonElement>("[aria-label='Show formatting tools']")!.click(),
+    );
+    await act(() =>
+      host.querySelector<HTMLButtonElement>("[aria-label='Add or edit link']")!.click(),
+    );
+
+    const popup = document.body.querySelector<HTMLElement>("[data-slot='popover-popup']");
+    const viewport = popup?.querySelector<HTMLElement>("[data-slot='popover-viewport']");
+    const input = popup?.querySelector<HTMLInputElement>("[aria-label='Link destination']");
+    const cancel = Array.from(popup?.querySelectorAll<HTMLButtonElement>("button") ?? []).find(
+      (button) => button.textContent === "Cancel",
+    );
+    const apply = Array.from(popup?.querySelectorAll<HTMLButtonElement>("button") ?? []).find(
+      (button) => button.textContent === "Apply",
+    );
+
+    expect(popup?.textContent).toContain("Link");
+    expect(popup?.textContent).not.toContain("Insert or Edit Link");
+    expect(popup?.className).toContain("w-72");
+    expect(viewport?.className).toContain("p-2");
+    expect(input?.closest("[data-slot='input-control']")?.getAttribute("data-size")).toBe(
+      "compact",
+    );
+    expect(cancel?.className).toContain("h-7");
+    expect(apply?.className).toContain("h-7");
+  });
+
+  it("offers a stable selection toolbar with searchable recent wiki targets", async () => {
+    vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+    const mount = vi.spyOn(ScientMarkdownEditorView.prototype, "mount");
+    const onWikiLinkSelected = vi.fn();
+    const host = document.createElement("div");
+    document.body.append(host);
+    const root = createRoot(host);
+    roots.push(root);
+
+    await act(() =>
+      root.render(
+        <ScientMarkdownWorkspaceSurface
+          source={"Selected words.\n"}
+          revision="r0"
+          ariaLabel="Wiki link fixture"
+          persist={vi.fn(async () => ({ revision: "r1" }))}
+          onPendingChange={vi.fn()}
+          onSaveConfirmed={vi.fn()}
+          onSaveFailure={vi.fn()}
+          onExternalConflict={vi.fn()}
+          wikiLinkCandidates={[
+            { path: "Methods/Protocol.md", target: "Methods/Protocol" },
+            { path: "Notes/Background.md", target: "Notes/Background" },
+          ]}
+          recentWikiLinkPaths={["Notes/Background.md"]}
+          onWikiLinkSelected={onWikiLinkSelected}
+        />,
+      ),
+    );
+    const controller = (mount.mock.instances as unknown as ScientMarkdownEditorView[]).find(
+      (candidate) => candidate.view?.dom.isConnected,
+    );
+    expect(controller).not.toBeUndefined();
+    await act(() => {
+      const view = controller!.view!;
+      view.dispatch(view.state.tr.setSelection(TextSelection.create(view.state.doc, 1, 9)));
+    });
+
+    const toolbar = document.body.querySelector<HTMLElement>("[aria-label='Text formatting']");
+    expect(toolbar).not.toBeNull();
+    expect(toolbar?.querySelector("[aria-label='Strikethrough']")).toBeNull();
+    expect(
+      toolbar?.querySelector("[aria-label='Link selection to a Markdown file']"),
+    ).not.toBeNull();
+
+    await act(() =>
+      controller!.view!.dom.dispatchEvent(
+        new MouseEvent("pointerdown", { bubbles: true, button: 0 }),
+      ),
+    );
+    expect(document.body.querySelector("[aria-label='Text formatting']")).toBe(toolbar);
+    expect(toolbar?.style.visibility).toBe("hidden");
+    await act(() => window.dispatchEvent(new MouseEvent("pointerup", { button: 0 })));
+    expect(toolbar?.style.visibility).toBe("visible");
+
+    await act(() =>
+      host.querySelector<HTMLButtonElement>("[aria-label='Show formatting tools']")?.click(),
+    );
+    const primaryBold = host.querySelector<HTMLButtonElement>("[aria-label='Bold (Cmd+B)']");
+    await act(() =>
+      primaryBold?.dispatchEvent(new MouseEvent("pointerdown", { bubbles: true, button: 0 })),
+    );
+    expect(toolbar?.style.visibility).toBe("visible");
+    await act(() => window.dispatchEvent(new MouseEvent("pointerup", { button: 0 })));
+
+    await act(() =>
+      toolbar
+        ?.querySelector<HTMLButtonElement>("[aria-label='Link selection to a Markdown file']")
+        ?.click(),
+    );
+    const popup = document.body.querySelector<HTMLElement>("[data-slot='popover-popup']");
+    expect(popup?.textContent).toContain("Recently linked");
+    const options = Array.from(popup?.querySelectorAll<HTMLElement>("[role='option']") ?? []);
+    expect(options[0]?.textContent).toContain("Background");
+    expect(onWikiLinkSelected).not.toHaveBeenCalled();
+
+    const search = popup?.querySelector<HTMLInputElement>("[aria-label='Search Markdown files']");
+    await act(() =>
+      search?.dispatchEvent(
+        new KeyboardEvent("keydown", { key: "ArrowDown", bubbles: true, cancelable: true }),
+      ),
+    );
+    await act(() =>
+      search?.dispatchEvent(
+        new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true }),
+      ),
+    );
+
+    expect(onWikiLinkSelected).toHaveBeenCalledExactlyOnceWith("Methods/Protocol.md");
+    expect(controller!.session.session.draftSource).toBe("[[Methods/Protocol|Selected]] words.\n");
+    expect(document.body.querySelector("[aria-label='Search Markdown files']")).toBeNull();
+  });
+
+  it("uses compact icon controls for common table actions", async () => {
+    vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+    const mount = vi.spyOn(ScientMarkdownEditorView.prototype, "mount");
+    const host = document.createElement("div");
+    document.body.append(host);
+    const root = createRoot(host);
+    roots.push(root);
+
+    await act(() =>
+      root.render(
+        <ScientMarkdownWorkspaceSurface
+          source={"| A | B |\n| --- | --- |\n| 1 | 2 |\n"}
+          revision="r0"
+          ariaLabel="Table fixture"
+          persist={vi.fn(async () => ({ revision: "r1" }))}
+          onPendingChange={vi.fn()}
+          onSaveConfirmed={vi.fn()}
+          onSaveFailure={vi.fn()}
+          onExternalConflict={vi.fn()}
+        />,
+      ),
+    );
+
+    const controller = (mount.mock.instances as unknown as ScientMarkdownEditorView[]).find(
+      (candidate) => candidate.view?.dom.isConnected,
+    );
+    expect(controller).not.toBeUndefined();
+    let cellTextPosition: number | null = null;
+    controller!.view!.state.doc.descendants((node, position) => {
+      if (
+        cellTextPosition === null &&
+        (node.type.spec.tableRole === "cell" || node.type.spec.tableRole === "header_cell")
+      ) {
+        cellTextPosition = position + 1;
+      }
+    });
+    expect(cellTextPosition).not.toBeNull();
+
+    await act(() => {
+      const view = controller!.view!;
+      view.dispatch(
+        view.state.tr.setSelection(TextSelection.create(view.state.doc, cellTextPosition!)),
+      );
+    });
+
+    const toolbar = host.querySelector("[aria-label='Table actions']");
+    const addRow = toolbar?.querySelector("[aria-label='Add row below']");
+    const addColumn = toolbar?.querySelector("[aria-label='Add column after']");
+    expect(addRow?.querySelector(".lucide-between-horizontal-end")).not.toBeNull();
+    expect(addColumn?.querySelector(".lucide-between-vertical-end")).not.toBeNull();
+    expect(toolbar?.textContent).not.toContain("Table:");
+    expect(toolbar?.querySelector("[aria-label='Delete row']")).toBeNull();
+    expect(toolbar?.querySelector("[aria-label='Delete column']")).toBeNull();
+    const moreActions = toolbar?.querySelector<HTMLButtonElement>(
+      "[aria-label='More table actions']",
+    );
+    expect(moreActions).not.toBeNull();
+    await act(() => moreActions!.click());
+    const menuItems = Array.from(
+      document.body.querySelectorAll<HTMLElement>("[data-slot='menu-item']"),
+      (item) => item.textContent?.trim(),
+    );
+    expect(menuItems).toEqual(
+      expect.arrayContaining([
+        "Add row above",
+        "Add row below",
+        "Add column before",
+        "Add column after",
+      ]),
+    );
+  });
+
   it("opens find as a bounded row in document flow instead of a clipped popover", async () => {
     vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
     const host = document.createElement("div");
@@ -132,6 +384,30 @@ describe("ScientMarkdownWorkspaceSurface", () => {
     expect(findBar).not.toBeNull();
     expect(findBar?.parentElement).toBe(richPane);
     expect(host.querySelector(".scient-markdown-find-popover")).toBeNull();
+    const findInput = findBar?.querySelector<HTMLInputElement>("[aria-label='Find text']");
+    const findInputGroup = findInput?.closest<HTMLElement>("[data-slot='input-group']");
+    expect(findInputGroup).not.toBeNull();
+    expect(findInputGroup?.className).toContain("ring-0");
+    expect(
+      findBar?.querySelector("[aria-label='Match case'] svg")?.classList.contains("size-3.5"),
+    ).toBe(true);
+
+    await act(() =>
+      findBar?.querySelector<HTMLButtonElement>("[aria-label='Show replace']")?.click(),
+    );
+    const replacementInput = findBar?.querySelector<HTMLInputElement>(
+      "[aria-label='Replacement text']",
+    );
+    const replacementInputGroup = replacementInput?.closest<HTMLElement>(
+      "[data-slot='input-group']",
+    );
+    expect(replacementInputGroup).not.toBeNull();
+    expect(replacementInputGroup?.className).toContain("ring-0");
+    expect(
+      findBar
+        ?.querySelector("[aria-label='Replace current match (Enter)'] svg")
+        ?.classList.contains("size-3.5"),
+    ).toBe(true);
   });
 
   it("disposes the save lane and its externally owned editor on unmount", async () => {

@@ -2,7 +2,7 @@ import type { MarkdownDocumentMode, MarkdownSaveIntent } from "@scientfactory/sc
 import { toggleMark } from "prosemirror-commands";
 import { redoDepth, undoDepth } from "prosemirror-history";
 import type { Node as ProseMirrorNode } from "prosemirror-model";
-import { Selection, TextSelection, type Transaction } from "prosemirror-state";
+import { NodeSelection, Selection, TextSelection, type Transaction } from "prosemirror-state";
 import { EditorView, type DirectEditorProps } from "prosemirror-view";
 
 import {
@@ -207,6 +207,27 @@ export class ScientMarkdownEditorView {
     }
   }
 
+  containsEditorDomNode(node: globalThis.Node | null): boolean {
+    return node !== null && (this.editorView?.dom.contains(node) ?? false);
+  }
+
+  /** Wiki-link labels must be one source-safe inline text selection. */
+  canSetWikiLink(): boolean {
+    const view = this.editorView;
+    if (!view || !modeIsEditable(this.mode)) return false;
+    const { selection } = view.state;
+    if (
+      selection.empty ||
+      !(selection instanceof TextSelection) ||
+      selection.$from.parent !== selection.$to.parent ||
+      !selection.$from.parent.inlineContent
+    ) {
+      return false;
+    }
+    const label = view.state.doc.textBetween(selection.from, selection.to, " ", " ");
+    return label.length > 0 && label === label.trim() && !label.includes("]]");
+  }
+
   applyTransaction(transaction: Transaction, origin: ScientMarkdownTransactionOrigin): void {
     if (this.editorView === null) throw new Error("Scient Markdown EditorView is not mounted.");
     const wasEmpty = documentIsEmpty(this.editorView.state.doc);
@@ -301,6 +322,32 @@ export class ScientMarkdownEditorView {
     );
     if (!transaction.docChanged) return false;
     view.dispatch(transaction);
+    view.focus();
+    return true;
+  }
+
+  /** Replace one inline text selection with a source-faithful labeled wiki link. */
+  setWikiLink(target: string): boolean {
+    const view = this.editorView;
+    const wikiLink = scientMarkdownSchema.nodes.wiki_link;
+    const normalizedTarget = target.trim();
+    if (
+      !view ||
+      !wikiLink ||
+      !this.canSetWikiLink() ||
+      normalizedTarget.length === 0 ||
+      normalizedTarget.includes("|") ||
+      normalizedTarget.includes("]]")
+    ) {
+      return false;
+    }
+    const { selection } = view.state;
+    const label = view.state.doc.textBetween(selection.from, selection.to, " ", " ");
+    view.dispatch(
+      view.state.tr
+        .replaceSelectionWith(wikiLink.create({ target: normalizedTarget, label }), true)
+        .scrollIntoView(),
+    );
     view.focus();
     return true;
   }
@@ -536,6 +583,20 @@ export class ScientMarkdownEditorView {
           : {}),
       }),
       handleKeyDown: (_view, event) => this.handleEditorKeyDown(event),
+      handleDoubleClickOn: (view, _position, node, nodePosition, event, direct) => {
+        if (
+          !direct ||
+          !modeIsEditable(this.mode) ||
+          node.type !== scientMarkdownSchema.nodes.wiki_link
+        ) {
+          return false;
+        }
+        event.preventDefault();
+        view.dispatch(
+          view.state.tr.setSelection(NodeSelection.create(view.state.doc, nodePosition)),
+        );
+        return true;
+      },
       handlePaste: (_view, event) => this.handleImageTransfer(event.clipboardData),
       handleDrop: (view, event) => {
         const position = view.posAtCoords({ left: event.clientX, top: event.clientY })?.pos;

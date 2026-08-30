@@ -6,6 +6,7 @@ import type { ScientMarkdownImageSourceResolver } from "./nodes";
 import { ScientMarkdownEditorView, type ScientMarkdownUploadedImage } from "./prosemirror/view";
 import { ScientMarkdownControls } from "./ui/ScientMarkdownControls";
 import { useFinalUnmount } from "./useFinalUnmount";
+import type { ScientMarkdownWikiLinkCandidate } from "./wikiLinkPicker";
 
 const SAVE_DEBOUNCE_MS = 500;
 
@@ -28,6 +29,9 @@ export interface ScientMarkdownWorkspaceSurfaceProps {
   readonly onImageUploadFailure?: (error: unknown) => void;
   readonly wikiLinkSuggestions?: () => ReadonlyArray<string>;
   readonly wikiLinkTargetExists?: (target: string) => boolean | null;
+  readonly wikiLinkCandidates?: ReadonlyArray<ScientMarkdownWikiLinkCandidate>;
+  readonly recentWikiLinkPaths?: ReadonlyArray<string>;
+  readonly onWikiLinkSelected?: (path: string) => void;
   readonly saveResolution?: {
     readonly action: "discard" | "retry";
     readonly revision: string;
@@ -166,6 +170,9 @@ export function ScientMarkdownWorkspaceSurface(props: ScientMarkdownWorkspaceSur
           controller={controller}
           expanded={chromeExpanded}
           onExpandedChange={setChromeExpanded}
+          {...(props.wikiLinkCandidates ? { wikiLinkCandidates: props.wikiLinkCandidates } : {})}
+          {...(props.recentWikiLinkPaths ? { recentWikiLinkPaths: props.recentWikiLinkPaths } : {})}
+          {...(props.onWikiLinkSelected ? { onWikiLinkSelected: props.onWikiLinkSelected } : {})}
         />
         <ScientMarkdownDocument
           source={draftSource}

@@ -63,6 +63,42 @@ export function toggleLinePrefix(view: EditorView, prefix: string): boolean {
   return true;
 }
 
+/**
+ * Set a paragraph, heading, or quote style on every line touched by the
+ * selection. Unlike list controls, the Style menu is not a toggle: applying a
+ * style replaces any existing heading/quote marker and keeps the selection or
+ * caret after the resulting marker so typing can continue immediately.
+ */
+export function setLineBlockStyle(view: EditorView, prefix: string | null): boolean {
+  const { state } = view;
+  const changes: Array<{ from: number; to: number; insert: string }> = [];
+  const seenLines = new Set<number>();
+  for (const range of state.selection.ranges) {
+    const first = state.doc.lineAt(range.from).number;
+    const last = state.doc.lineAt(range.to).number;
+    for (let number = first; number <= last; number += 1) {
+      if (seenLines.has(number)) continue;
+      seenLines.add(number);
+      const line = state.doc.line(number);
+      const marker = /^(?:#{1,6}\s+|>\s?)+/u.exec(line.text)?.[0] ?? "";
+      const replacement = prefix ?? "";
+      if (marker === replacement) continue;
+      changes.push({
+        from: line.from,
+        to: line.from + marker.length,
+        insert: replacement,
+      });
+    }
+  }
+  if (changes.length === 0) return false;
+  const changeSet = state.changes(changes.sort((a, b) => a.from - b.from));
+  view.dispatch({
+    changes: changeSet,
+    selection: state.selection.map(changeSet, 1),
+  });
+  return true;
+}
+
 /** Toggle a numbered-list prefix, computing the ordinal per line. */
 export function toggleNumberedList(view: EditorView): boolean {
   const { state } = view;
@@ -159,18 +195,7 @@ export function toggleDirection(view: EditorView, direction: "ltr" | "rtl" | nul
 
 /** Reset the selected lines to plain paragraphs by stripping heading and quote markers. */
 export function setParagraph(view: EditorView): boolean {
-  const { state } = view;
-  const changes: Array<{ from: number; to: number; insert: string }> = [];
-  const first = state.doc.lineAt(state.selection.main.from).number;
-  const last = state.doc.lineAt(state.selection.main.to).number;
-  for (let number = first; number <= last; number += 1) {
-    const line = state.doc.line(number);
-    const match = /^(?:#{1,6}\s+|>\s?)+/u.exec(line.text);
-    if (match) changes.push({ from: line.from, to: line.from + match[0].length, insert: "" });
-  }
-  if (changes.length === 0) return false;
-  view.dispatch({ changes: changes.sort((a, b) => b.from - a.from) });
-  return true;
+  return setLineBlockStyle(view, null);
 }
 
 /** Insert a Markdown hard break (`\` + newline): down one line, not one paragraph. */

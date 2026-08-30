@@ -303,7 +303,7 @@ function withTextDirectionAttrs(
     parseDOM: (spec.parseDOM ?? []).map((rule) => ({
       ...rule,
       getAttrs: (element: HTMLElement) => ({
-        ...(rule.getAttrs?.(element) ?? {}),
+        ...rule.getAttrs?.(element),
         ...extraAttrs(element),
         dir: element.getAttribute("dir") === "rtl" ? "rtl" : null,
       }),
@@ -311,12 +311,29 @@ function withTextDirectionAttrs(
     toDOM: (node) => {
       const dom: DOMOutputSpec = spec.toDOM ? spec.toDOM(node) : [name, 0];
       if (typeof node.attrs.dir !== "string") return dom;
-      const [tag, attrs, ...children] = dom as [string, unknown, ...unknown[]];
+      if (!Array.isArray(dom) || typeof dom[0] !== "string") return dom;
+
+      const [tag, second, ...rest] = dom;
+      const secondIsAttrs =
+        second === null ||
+        (typeof second === "object" &&
+          second !== null &&
+          !Array.isArray(second) &&
+          !("nodeType" in second) &&
+          !("dom" in second));
+      if (secondIsAttrs) {
+        return [tag, { ...second, dir: node.attrs.dir }, ...rest] as DOMOutputSpec;
+      }
+
+      // A node spec such as ["p", 0] has no attributes object; its second
+      // item is the content hole. Insert attributes before it and preserve the
+      // hole so changing direction cannot hide the node's text.
       return [
         tag,
-        { ...(typeof attrs === "object" && attrs !== null ? attrs : {}), dir: node.attrs.dir },
-        ...children,
-      ] as unknown as DOMOutputSpec;
+        { dir: node.attrs.dir },
+        ...(second === undefined ? [] : [second]),
+        ...rest,
+      ] as DOMOutputSpec;
     },
   });
 }

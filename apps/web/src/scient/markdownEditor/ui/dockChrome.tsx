@@ -198,9 +198,10 @@ const EMPTY_GROUP_SET: ReadonlySet<string> = new Set();
  * into the unified "More actions" menu it owns, ahead of any
  * `overflowItems` the surface always keeps there. Pinned groups (core
  * formatting) never collapse; if even they exceed the width the dock falls
- * back to horizontal scrolling. Collapsed, only the right-aligned handle
- * shows. The bar keeps a fixed height in every state so toggling never
- * shifts the document.
+ * back to horizontal scrolling. The expand/collapse handle stays at the
+ * leading edge in both states, separated from expanded controls by the same
+ * divider used between control groups. The bar keeps a fixed height in every
+ * state so toggling never shifts the document.
  */
 export function DockOverflowRow(props: {
   readonly label: string;
@@ -226,7 +227,9 @@ export function DockOverflowRow(props: {
         widthsRef.current.set(id, element.offsetWidth);
       }
     }
-    const reserved = dock.querySelector("[data-dock-reserved]");
+    const reservedWidth = Array.from(
+      dock.querySelectorAll<HTMLElement>("[data-dock-reserved]"),
+    ).reduce((total, element) => total + element.offsetWidth, 0);
     const style = getComputedStyle(dock);
     const available =
       dock.clientWidth -
@@ -234,7 +237,7 @@ export function DockOverflowRow(props: {
       (parseFloat(style.paddingRight) || 0);
     const next = collapseDockGroups({
       availableWidth: available,
-      reservedWidth: reserved instanceof HTMLElement ? reserved.offsetWidth : 0,
+      reservedWidth,
       groups: groupsRef.current.map((group) => ({
         id: group.id,
         priority: group.priority,
@@ -268,11 +271,18 @@ export function DockOverflowRow(props: {
       aria-label={props.label}
       className="scient-markdown-editor-dock flex items-center gap-0.5 border-b border-border/80 bg-background/95 px-2 py-1 backdrop-blur-xs"
     >
-      {!props.expanded ? (
-        <div className="ms-auto flex items-center">
-          <DockCollapseHandle expanded={false} onToggle={() => props.onExpandedChange(true)} />
-        </div>
-      ) : (
+      <div
+        className="flex shrink-0 items-center gap-0.5"
+        data-dock-reserved
+        data-dock-toggle-cluster
+      >
+        <DockCollapseHandle
+          expanded={props.expanded}
+          onToggle={() => props.onExpandedChange(!props.expanded)}
+        />
+        {props.expanded ? <DockDivider /> : null}
+      </div>
+      {props.expanded ? (
         <>
           {visible.map((group) => (
             <span
@@ -309,10 +319,9 @@ export function DockOverflowRow(props: {
                 {props.overflowItems}
               </DockMenu>
             ) : null}
-            <DockCollapseHandle expanded onToggle={() => props.onExpandedChange(false)} />
           </div>
         </>
-      )}
+      ) : null}
     </div>
   );
 }

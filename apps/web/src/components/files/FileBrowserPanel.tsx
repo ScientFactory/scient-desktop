@@ -45,7 +45,7 @@ import { useAtomCommand } from "~/state/use-atom-command";
 
 import { createFileTreeDragMentionController } from "./fileTreeDragMention";
 import { areAllDirectoriesExpanded, setAllDirectoriesExpanded } from "./fileTreeExpansion";
-import { setProjectFileQueryData } from "./projectFilesQueryState";
+import { refreshProjectEntriesQuery, setProjectFileQueryData } from "./projectFilesQueryState";
 
 interface FileBrowserPanelProps {
   environmentId: EnvironmentId;
@@ -468,6 +468,7 @@ export default function FileBrowserPanel({
   };
   const refreshEntries = useCallback(() => {
     void treeControllerRef.current?.refresh();
+    refreshProjectEntriesQuery(environmentId, cwd);
     if (isSearching) pathSearch.refresh();
   }, [isSearching, pathSearch.refresh]);
   useWorkspaceMutationRefresh({

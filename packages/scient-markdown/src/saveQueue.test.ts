@@ -117,6 +117,66 @@ describe("MarkdownSaveQueue", () => {
     expect(pending.at(-1)).toBe(false);
   });
 
+  it("honors discard chosen while a failing write is still in flight", async () => {
+    let rejectWrite: ((error: Error) => void) | null = null;
+    const write = new Promise<{ readonly revision: string }>((_resolve, reject) => {
+      rejectWrite = reject;
+    });
+    const pending: boolean[] = [];
+    const onFailure = vi.fn();
+    const queue = new MarkdownSaveQueue({
+      debounceMs: 0,
+      persist: vi.fn(() => write),
+      onPendingChange: (value) => pending.push(value),
+      onConfirmed: vi.fn(),
+      onFailure,
+    });
+
+    queue.enqueue(intent("local", 1));
+    const flushing = queue.flush();
+    await new Promise<void>((resolve) => queueMicrotask(resolve));
+    queue.discard();
+    rejectWrite!(new Error("revision conflict"));
+    await flushing;
+
+    expect(queue.pending).toBe(false);
+    expect(queue.failureBlocked).toBe(false);
+    expect(onFailure).not.toHaveBeenCalled();
+    expect(pending.at(-1)).toBe(false);
+  });
+
+  it("honors retry chosen while a failing write is still in flight", async () => {
+    let rejectWrite: ((error: Error) => void) | null = null;
+    const first = new Promise<{ readonly revision: string }>((_resolve, reject) => {
+      rejectWrite = reject;
+    });
+    const persist = vi
+      .fn<(value: MarkdownSaveIntent) => Promise<{ readonly revision: string }>>()
+      .mockImplementationOnce(() => first)
+      .mockResolvedValueOnce({ revision: "r-agent-local" });
+    const onFailure = vi.fn();
+    const queue = new MarkdownSaveQueue({
+      debounceMs: 0,
+      persist,
+      onPendingChange: vi.fn(),
+      onConfirmed: vi.fn(),
+      onFailure,
+    });
+
+    queue.enqueue(intent("local", 1));
+    const flushing = queue.flush();
+    await new Promise<void>((resolve) => queueMicrotask(resolve));
+    queue.retry("r-agent");
+    rejectWrite!(new Error("revision conflict"));
+    await flushing;
+
+    expect(persist).toHaveBeenCalledTimes(2);
+    expect(persist.mock.calls[1]?.[0]).toEqual(intent("local", 1, "r-agent"));
+    expect(queue.pending).toBe(false);
+    expect(queue.failureBlocked).toBe(false);
+    expect(onFailure).not.toHaveBeenCalled();
+  });
+
   it("holds a queued write while paused, and a flush still attempts the latest draft", async () => {
     vi.useFakeTimers();
     const persist = vi.fn(async () => ({ revision: "r1" }));

@@ -1,6 +1,6 @@
 // @vitest-environment happy-dom
 
-import { act } from "react";
+import { act, useState } from "react";
 import { createRoot } from "react-dom/client";
 import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 
@@ -32,6 +32,51 @@ describe("DockOverflowRow", () => {
     document.body.replaceChildren();
     vi.restoreAllMocks();
     vi.unstubAllGlobals();
+  });
+
+  it("keeps the formatting handle at the leading edge in both states", async () => {
+    vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+    const host = document.createElement("div");
+    document.body.append(host);
+    const root = createRoot(host);
+    roots.push(root);
+
+    function Harness() {
+      const [expanded, setExpanded] = useState(false);
+      return (
+        <DockOverflowRow
+          label="Document actions"
+          expanded={expanded}
+          onExpandedChange={setExpanded}
+          groups={[
+            {
+              id: "format",
+              priority: 100,
+              estimatedWidth: 40,
+              pinned: true,
+              bar: <button type="button">Bold</button>,
+            },
+          ]}
+        />
+      );
+    }
+
+    await act(() => root.render(<Harness />));
+    const toolbar = host.querySelector<HTMLElement>("[aria-label='Document actions']")!;
+    const leadingCluster = toolbar.querySelector<HTMLElement>("[data-dock-toggle-cluster]")!;
+    expect(toolbar.firstElementChild).toBe(leadingCluster);
+    expect(leadingCluster.querySelector("[aria-label='Show formatting tools']")).not.toBeNull();
+    expect(leadingCluster.querySelector(".scient-markdown-command-divider")).toBeNull();
+
+    await act(() =>
+      leadingCluster
+        .querySelector<HTMLButtonElement>("[aria-label='Show formatting tools']")!
+        .click(),
+    );
+    expect(toolbar.firstElementChild).toBe(leadingCluster);
+    expect(leadingCluster.querySelector("[aria-label='Hide formatting tools']")).not.toBeNull();
+    expect(leadingCluster.querySelector(".scient-markdown-command-divider")).not.toBeNull();
+    expect(toolbar.children[1]?.textContent).toBe("Bold");
   });
 
   it("opens grouped actions after narrow-width overflow without losing menu context", async () => {

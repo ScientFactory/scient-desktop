@@ -16,6 +16,7 @@ class ScientImageNodeView implements NodeView {
   private readonly titleInput = document.createElement("input");
   private node: ProseMirrorNode;
   private resolveVersion = 0;
+  private requestedSource: string | null = null;
   private destroyed = false;
 
   constructor(
@@ -115,12 +116,21 @@ class ScientImageNodeView implements NodeView {
     this.image.title = title;
     this.caption.textContent = title;
     this.caption.hidden = title.length === 0;
-    this.placeholder.hidden = source.length > 0;
-    this.image.hidden = source.length === 0;
     if (source.length === 0) {
+      this.requestedSource = source;
+      this.resolveVersion += 1;
       this.image.removeAttribute("src");
+      this.image.hidden = true;
+      this.placeholder.hidden = false;
+      this.placeholder.textContent = "Choose an image path";
       return;
     }
+    if (source === this.requestedSource) return;
+    this.requestedSource = source;
+    this.image.removeAttribute("src");
+    this.image.hidden = true;
+    this.placeholder.hidden = false;
+    this.placeholder.textContent = `Loading ${source}`;
     const version = ++this.resolveVersion;
     void Promise.resolve(this.resolveSource ? this.resolveSource(source) : source)
       .then((resolved) => {

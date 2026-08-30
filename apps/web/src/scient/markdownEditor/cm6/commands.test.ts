@@ -9,6 +9,7 @@ import {
   insertImageTemplate,
   insertLineBreak,
   insertLink,
+  setLineBlockStyle,
   setParagraph,
   toggleDirection,
   toggleLinePrefix,
@@ -73,6 +74,22 @@ describe("CM6 markdown commands", () => {
     expect(view.state.doc.toString()).toBe("one\ntwo");
 
     expect(setParagraph(view)).toBe(false);
+  });
+
+  it("sets one block style across every selected line instead of toggling markers", () => {
+    const view = makeView("# one\n> two", 2, 11);
+    expect(setLineBlockStyle(view, "## ")).toBe(true);
+    expect(view.state.doc.toString()).toBe("## one\n## two");
+
+    expect(setLineBlockStyle(view, "## ")).toBe(false);
+    expect(view.state.doc.toString()).toBe("## one\n## two");
+  });
+
+  it("places the caret after a style marker on an empty line", () => {
+    const view = makeView("");
+    expect(setLineBlockStyle(view, "> ")).toBe(true);
+    expect(view.state.doc.toString()).toBe("> ");
+    expect(view.state.selection.main.head).toBe(2);
   });
 
   it("wraps the selection in a link with the url selected", () => {

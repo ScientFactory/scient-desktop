@@ -95,7 +95,7 @@ function validRelativeDocumentPath(relativePath: string): boolean {
 }
 
 function validAssetDirectory(directory: string): boolean {
-  return directory !== "." && directory !== ".." && /^[\p{L}\p{N}_.-]{1,128}$/u.test(directory);
+  return /^[\p{L}\p{N}_-][\p{L}\p{N}_.-]{0,127}$/u.test(directory);
 }
 
 function uploadedExtension(fileName: string): string {

@@ -3,13 +3,18 @@ import {
   AlignLeft,
   AlignRight,
   ArrowDown,
+  ArrowDownToLine,
   ArrowLeftToLine,
+  ArrowRightToLine,
   ArrowRightLeft,
   ArrowUp,
   ArrowUpToLine,
+  BetweenHorizontalEnd,
+  BetweenVerticalEnd,
   Bold,
   Brackets,
   Code,
+  Columns3,
   Copy,
   CornerDownLeft,
   Ellipsis,
@@ -43,10 +48,11 @@ import {
   SquareCode,
   Strikethrough,
   Table as TableIcon,
+  TextInitial,
   TextQuote,
   Trash2,
-  Type,
   Undo2,
+  Rows3,
 } from "lucide-react";
 import {
   useEffect,
@@ -71,7 +77,7 @@ import {
   MenuSubPopup,
   MenuSubTrigger,
 } from "~/components/ui/menu";
-import { Popover, PopoverPopup, PopoverTrigger } from "~/components/ui/popover";
+import { Popover, PopoverPopup, PopoverTitle, PopoverTrigger } from "~/components/ui/popover";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "~/components/ui/tooltip";
 import { cn } from "~/lib/utils";
 
@@ -82,6 +88,11 @@ import {
 import type { ScientMarkdownBlockAction } from "../prosemirror/blocks";
 import type { ScientMarkdownEditorSnapshot, ScientMarkdownEditorView } from "../prosemirror/view";
 import {
+  EMPTY_WIKI_LINK_CANDIDATES,
+  EMPTY_WIKI_LINK_RECENT_PATHS,
+  type ScientMarkdownWikiLinkCandidate,
+} from "../wikiLinkPicker";
+import {
   DockButton,
   DockDivider,
   DockMenu,
@@ -91,13 +102,16 @@ import {
   type DockGroup,
 } from "./dockChrome";
 import { ScientFindBar } from "./ScientFindBar";
+import { ScientWikiLinkPicker } from "./ScientWikiLinkPicker";
+
+const ignoreWikiLinkSelection = () => undefined;
 
 /** One icon per command, shared by the dock menus and the slash menu. */
 function commandIcon(command: ScientMarkdownCommand): ReactNode {
   const className = "size-4 text-muted-foreground";
   switch (command) {
     case "paragraph":
-      return <Type className={className} />;
+      return <TextInitial className={className} />;
     case "heading-1":
       return <Heading1 className={className} />;
     case "heading-2":
@@ -227,7 +241,7 @@ function styleTriggerIcon(snapshot: ScientMarkdownEditorSnapshot): ReactNode {
     case "code_block":
       return <SquareCode className="size-4" />;
     default:
-      return <Type className="size-4" />;
+      return <TextInitial className="size-4" />;
   }
 }
 
@@ -610,10 +624,15 @@ function LinkEditor({
         />
         <TooltipPopup side="top">Link (Cmd+K)</TooltipPopup>
       </Tooltip>
-      <PopoverPopup align="center" className="w-80 p-3" side="bottom">
-        <form className="flex flex-col gap-2.5" onSubmit={submit}>
-          <div className="flex items-center justify-between">
-            <span className="text-xs font-semibold text-foreground">Insert or Edit Link</span>
+      <PopoverPopup
+        align="center"
+        className="w-72 max-w-[calc(100vw-1rem)]"
+        side="bottom"
+        viewportClassName="p-2"
+      >
+        <form className="flex flex-col gap-2" onSubmit={submit}>
+          <div className="flex items-center justify-between px-1">
+            <PopoverTitle className="text-xs font-medium">Link</PopoverTitle>
             {active ? (
               <button
                 type="button"
@@ -628,23 +647,17 @@ function LinkEditor({
           <Input
             ref={inputRef}
             aria-label="Link destination"
-            className="h-8 text-xs"
             inputMode="url"
             placeholder="https://... or relative path"
+            size="compact"
             value={href}
             onChange={(event) => setHref(event.target.value)}
           />
-          <div className="flex items-center justify-end gap-2 pt-1">
-            <Button
-              className="h-7 text-xs"
-              size="sm"
-              type="button"
-              variant="ghost"
-              onClick={() => setOpen(false)}
-            >
+          <div className="flex items-center justify-end gap-1">
+            <Button size="xs" type="button" variant="ghost" onClick={() => setOpen(false)}>
               Cancel
             </Button>
-            <Button className="h-7 text-xs" disabled={!href.trim()} size="sm" type="submit">
+            <Button disabled={!href.trim()} size="xs" type="submit">
               Apply
             </Button>
           </div>
@@ -671,9 +684,18 @@ function TableMoreControl({ controller }: { readonly controller: ScientMarkdownE
         <ArrowUpToLine />
         <span>Add row above</span>
       </MenuItem>
+      <MenuItem onClick={() => execute("add-row-after")}>
+        <ArrowDownToLine />
+        <span>Add row below</span>
+      </MenuItem>
+      <MenuSeparator />
       <MenuItem onClick={() => execute("add-column-before")}>
         <ArrowLeftToLine />
         <span>Add column before</span>
+      </MenuItem>
+      <MenuItem onClick={() => execute("add-column-after")}>
+        <ArrowRightToLine />
+        <span>Add column after</span>
       </MenuItem>
       <MenuSeparator />
       <MenuItem onClick={() => execute("toggle-header-cell")}>
@@ -693,6 +715,14 @@ function TableMoreControl({ controller }: { readonly controller: ScientMarkdownE
         <span>Clear column alignment</span>
       </MenuItem>
       <MenuSeparator />
+      <MenuItem variant="destructive" onClick={() => execute("delete-row")}>
+        <Rows3 />
+        <span>Delete row</span>
+      </MenuItem>
+      <MenuItem variant="destructive" onClick={() => execute("delete-column")}>
+        <Columns3 />
+        <span>Delete column</span>
+      </MenuItem>
       <MenuItem variant="destructive" onClick={() => execute("delete-table")}>
         <Trash2 />
         <span>Delete table</span>
@@ -710,37 +740,55 @@ function TableMoreControl({ controller }: { readonly controller: ScientMarkdownE
 function SelectionToolbar({
   controller,
   snapshot,
+  wikiLinkCandidates,
+  recentWikiLinkPaths,
+  onWikiLinkSelected,
 }: {
   readonly controller: ScientMarkdownEditorView;
   readonly snapshot: ScientMarkdownEditorSnapshot;
+  readonly wikiLinkCandidates: ReadonlyArray<ScientMarkdownWikiLinkCandidate>;
+  readonly recentWikiLinkPaths: ReadonlyArray<string>;
+  readonly onWikiLinkSelected: (path: string) => void;
 }) {
   const toolbarRef = useRef<HTMLDivElement>(null);
   const [anchor, setAnchor] = useState<{ left: number; top: number; bottom: number } | null>(null);
   const [place, setPlace] = useState<"above" | "below">("above");
-  const [pointerDown, setPointerDown] = useState(false);
+  const [selectingWithPointer, setSelectingWithPointer] = useState(false);
 
   useEffect(() => {
     const onPointerDown = (event: PointerEvent) => {
       if (event.button !== 0) return;
       if (toolbarRef.current?.contains(event.target as globalThis.Node)) return;
-      setPointerDown(true);
+      if (!controller.containsEditorDomNode(event.target as globalThis.Node)) return;
+      setSelectingWithPointer(true);
     };
-    const onPointerUp = () => setPointerDown(false);
+    const finishPointerSelection = () => setSelectingWithPointer(false);
     window.addEventListener("pointerdown", onPointerDown, true);
-    window.addEventListener("pointerup", onPointerUp, true);
+    window.addEventListener("pointerup", finishPointerSelection, true);
+    window.addEventListener("pointercancel", finishPointerSelection, true);
+    window.addEventListener("blur", finishPointerSelection);
     return () => {
       window.removeEventListener("pointerdown", onPointerDown, true);
-      window.removeEventListener("pointerup", onPointerUp, true);
+      window.removeEventListener("pointerup", finishPointerSelection, true);
+      window.removeEventListener("pointercancel", finishPointerSelection, true);
+      window.removeEventListener("blur", finishPointerSelection);
     };
-  }, []);
+  }, [controller]);
 
   useLayoutEffect(() => {
+    if (selectingWithPointer) return;
     if (!snapshot.editable || snapshot.selectionEmpty) {
       setAnchor(null);
       return;
     }
     setAnchor(controller.selectionToolbarAnchor());
-  }, [controller, snapshot.version, snapshot.editable, snapshot.selectionEmpty]);
+  }, [
+    controller,
+    selectingWithPointer,
+    snapshot.version,
+    snapshot.editable,
+    snapshot.selectionEmpty,
+  ]);
 
   // Keep the toolbar glued to the selection while the document scrolls.
   useEffect(() => {
@@ -770,22 +818,26 @@ function SelectionToolbar({
     }
   });
 
-  if (!snapshot.editable || snapshot.selectionEmpty || pointerDown || anchor === null) {
+  if (!snapshot.editable || anchor === null) {
     return null;
   }
 
   const active = new Set(snapshot.activeMarks);
+  const visible = !snapshot.selectionEmpty && !selectingWithPointer;
   return createPortal(
     <div
       ref={toolbarRef}
       className="scient-markdown-selection-toolbar"
       role="toolbar"
       aria-label="Text formatting"
+      aria-hidden={!visible}
       style={{
         left: anchor.left,
         top: place === "above" ? anchor.top : anchor.bottom,
         transform:
           place === "above" ? "translate(-50%, calc(-100% - 8px))" : "translate(-50%, 8px)",
+        visibility: visible ? "visible" : "hidden",
+        pointerEvents: visible ? "auto" : "none",
       }}
     >
       <CommandButton
@@ -804,19 +856,20 @@ function SelectionToolbar({
       />
       <CommandButton
         controller={controller}
-        command="strike"
-        label="Strikethrough"
-        icon={<Strikethrough className="size-4" />}
-        active={active.has("strike")}
-      />
-      <CommandButton
-        controller={controller}
         command="inline-code"
         label="Inline Code"
         icon={<Code className="size-4" />}
         active={active.has("code")}
       />
       <LinkEditor controller={controller} active={active.has("link")} />
+      {controller.canSetWikiLink() ? (
+        <ScientWikiLinkPicker
+          controller={controller}
+          candidates={wikiLinkCandidates}
+          recentPaths={recentWikiLinkPaths}
+          onLinked={onWikiLinkSelected}
+        />
+      ) : null}
     </div>,
     document.body,
   );
@@ -826,10 +879,16 @@ export function ScientMarkdownControls({
   controller,
   expanded,
   onExpandedChange,
+  wikiLinkCandidates = EMPTY_WIKI_LINK_CANDIDATES,
+  recentWikiLinkPaths = EMPTY_WIKI_LINK_RECENT_PATHS,
+  onWikiLinkSelected = ignoreWikiLinkSelection,
 }: {
   readonly controller: ScientMarkdownEditorView;
   readonly expanded: boolean;
   readonly onExpandedChange: (expanded: boolean) => void;
+  readonly wikiLinkCandidates?: ReadonlyArray<ScientMarkdownWikiLinkCandidate>;
+  readonly recentWikiLinkPaths?: ReadonlyArray<string>;
+  readonly onWikiLinkSelected?: (path: string) => void;
 }) {
   const snapshot = useSyncExternalStore(
     controller.subscribe,
@@ -981,7 +1040,13 @@ export function ScientMarkdownControls({
 
       {snapshot.findOpen ? <ScientFindBar controller={controller} snapshot={snapshot} /> : null}
 
-      <SelectionToolbar controller={controller} snapshot={snapshot} />
+      <SelectionToolbar
+        controller={controller}
+        snapshot={snapshot}
+        wikiLinkCandidates={wikiLinkCandidates}
+        recentWikiLinkPaths={recentWikiLinkPaths}
+        onWikiLinkSelected={onWikiLinkSelected}
+      />
 
       {snapshot.editable && snapshot.inTable ? (
         <div
@@ -989,30 +1054,17 @@ export function ScientMarkdownControls({
           role="toolbar"
           aria-label="Table actions"
         >
-          <span className="text-[11px] font-semibold text-muted-foreground me-1">Table:</span>
           <CommandButton
             controller={controller}
             command="add-row-after"
             label="Add row below"
-            icon={<span className="text-[11px] font-semibold">+ Row</span>}
+            icon={<BetweenHorizontalEnd className="size-4" />}
           />
           <CommandButton
             controller={controller}
             command="add-column-after"
             label="Add column after"
-            icon={<span className="text-[11px] font-semibold">+ Col</span>}
-          />
-          <CommandButton
-            controller={controller}
-            command="delete-row"
-            label="Delete row"
-            icon={<span className="text-[11px] font-semibold text-destructive">− Row</span>}
-          />
-          <CommandButton
-            controller={controller}
-            command="delete-column"
-            label="Delete column"
-            icon={<span className="text-[11px] font-semibold text-destructive">− Col</span>}
+            icon={<BetweenVerticalEnd className="size-4" />}
           />
           <DockDivider />
           <CommandButton

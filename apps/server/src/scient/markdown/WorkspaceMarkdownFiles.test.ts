@@ -112,6 +112,13 @@ it.layer(TestLayer, { excludeTestServices: true })("Markdown workspace image wri
       const unsafeDirectory = yield* uploadWorkspaceMarkdownImage({
         cwd,
         documentRelativePath: "report.md",
+        assetDirectory: ".git",
+        temporaryPath: uploadPath,
+        fileName: "figure.png",
+      }).pipe(Effect.flip);
+      const traversalDirectory = yield* uploadWorkspaceMarkdownImage({
+        cwd,
+        documentRelativePath: "report.md",
         assetDirectory: "..",
         temporaryPath: uploadPath,
         fileName: "figure.png",
@@ -124,6 +131,45 @@ it.layer(TestLayer, { excludeTestServices: true })("Markdown workspace image wri
       expect(unsafeDirectory).toMatchObject({
         _tag: "ScientMarkdownImageInvalidError",
         reason: "invalid_asset_directory",
+      });
+      expect(traversalDirectory).toMatchObject({
+        _tag: "ScientMarkdownImageInvalidError",
+        reason: "invalid_asset_directory",
+      });
+    }),
+  );
+
+  it.effect("rejects empty uploads and document paths outside the Markdown scope", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const cwd = yield* fileSystem.makeTempDirectoryScoped({ prefix: "scient-markdown-doc-" });
+      const uploadDirectory = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "scient-markdown-upload-",
+      });
+      const emptyPath = path.join(uploadDirectory, "empty.png");
+      yield* fileSystem.writeFile(emptyPath, new Uint8Array());
+
+      const empty = yield* uploadWorkspaceMarkdownImage({
+        cwd,
+        documentRelativePath: "report.md",
+        temporaryPath: emptyPath,
+        fileName: "empty.png",
+      }).pipe(Effect.flip);
+      const outsideDocument = yield* uploadWorkspaceMarkdownImage({
+        cwd,
+        documentRelativePath: "../report.md",
+        temporaryPath: emptyPath,
+        fileName: "empty.png",
+      }).pipe(Effect.flip);
+
+      expect(empty).toMatchObject({
+        _tag: "ScientMarkdownImageInvalidError",
+        reason: "empty_file",
+      });
+      expect(outsideDocument).toMatchObject({
+        _tag: "ScientMarkdownImageInvalidError",
+        reason: "invalid_document_path",
       });
     }),
   );

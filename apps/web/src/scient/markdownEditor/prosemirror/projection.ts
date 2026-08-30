@@ -136,16 +136,31 @@ function textStructure(node: ProseMirrorNode): string {
 
 function textDifference(before: string, after: string) {
   let start = 0;
-  while (start < before.length && start < after.length && before[start] === after[start]) {
-    start += 1;
+  while (start < before.length && start < after.length) {
+    const beforePoint = before.codePointAt(start);
+    const afterPoint = after.codePointAt(start);
+    if (beforePoint !== afterPoint) break;
+    start += beforePoint !== undefined && beforePoint > 0xffff ? 2 : 1;
   }
   let beforeEnd = before.length;
   let afterEnd = after.length;
-  while (beforeEnd > start && afterEnd > start && before[beforeEnd - 1] === after[afterEnd - 1]) {
-    beforeEnd -= 1;
-    afterEnd -= 1;
+  while (beforeEnd > start && afterEnd > start) {
+    const previousBefore = previousCodePointStart(before, beforeEnd);
+    const previousAfter = previousCodePointStart(after, afterEnd);
+    if (before.slice(previousBefore, beforeEnd) !== after.slice(previousAfter, afterEnd)) break;
+    beforeEnd = previousBefore;
+    afterEnd = previousAfter;
   }
   return { start, beforeEnd, replacement: after.slice(start, afterEnd) };
+}
+
+function previousCodePointStart(value: string, end: number): number {
+  const last = value.charCodeAt(end - 1);
+  if (last >= 0xdc00 && last <= 0xdfff && end > 1) {
+    const preceding = value.charCodeAt(end - 2);
+    if (preceding >= 0xd800 && preceding <= 0xdbff) return end - 2;
+  }
+  return end - 1;
 }
 
 /**

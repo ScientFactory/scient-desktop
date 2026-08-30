@@ -63,6 +63,19 @@ describe("Scient Markdown file-preview seam", () => {
     expect(panelSource).not.toContain("projects.renameFile");
   });
 
+  it("refreshes both the file tree and Markdown link index after refresh or creation", () => {
+    expect(browserSource).toContain("void treeControllerRef.current?.refresh();");
+    expect(browserSource).toContain("refreshProjectEntriesQuery(environmentId, cwd);");
+    expect(browserSource).toMatch(/onCreated=\{[\s\S]*?handleRefresh\(\);[\s\S]*?onOpenFile/gu);
+  });
+
+  it("routes wiki-link activation through the existing project file opener", () => {
+    expect(surfaceSource).toContain(
+      "const path = resolveWikiLinkPath(props.relativePath, target);",
+    );
+    expect(surfaceSource).toContain("if (path) props.onOpenFile(path);");
+  });
+
   it("uses the current filename itself as the Markdown rename affordance", () => {
     expect(panelSource).toContain("currentFileControl={");
     expect(panelSource).toContain("<ScientMarkdownRenameButton");

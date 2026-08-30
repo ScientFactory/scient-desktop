@@ -10,7 +10,7 @@ import {
 } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 
-import { Input } from "~/components/ui/input";
+import { InputGroup, InputGroupAddon, InputGroupInput } from "~/components/ui/input-group";
 import { cn } from "~/lib/utils";
 
 import { DockButton } from "./dockChrome";
@@ -39,6 +39,10 @@ export interface ScientFindBarController {
   replaceFind(replacement: string, all: boolean): boolean;
   setFindOpen(open: boolean): void;
 }
+
+const findIconClassName = "size-3.5";
+const findInputClassName =
+  "h-7 has-[input:focus-visible]:border-ring has-[input:focus-visible]:ring-0";
 
 /**
  * Compact find & replace strip under the dock. One row while searching;
@@ -98,19 +102,22 @@ export function ScientFindBar({
             label={replaceOpen ? "Hide replace" : "Show replace"}
             icon={
               <ChevronRight
-                className={cn("size-4 transition-transform", replaceOpen && "rotate-90")}
+                className={cn(
+                  findIconClassName,
+                  "transition-transform",
+                  replaceOpen && "rotate-90",
+                )}
               />
             }
             onClick={() => setReplaceOpen((open) => !open)}
           />
         ) : null}
 
-        <div className="relative min-w-36 max-w-64 flex-1">
-          <Input
+        <InputGroup variant="ghost" className={cn("min-w-36 max-w-64 flex-1", findInputClassName)}>
+          <InputGroupInput
             ref={inputRef}
-            size="compact"
+            size="sm"
             aria-label="Find text"
-            className={cn(countLabel !== null && "pe-16")}
             placeholder="Find"
             type="search"
             value={snapshot.findQuery}
@@ -126,52 +133,61 @@ export function ScientFindBar({
             }}
           />
           {countLabel !== null ? (
-            <span
-              aria-live="polite"
-              className={cn(
-                "pointer-events-none absolute end-2 top-1/2 -translate-y-1/2 text-[10px] whitespace-nowrap",
-                noMatches ? "text-destructive" : "font-mono text-muted-foreground",
-              )}
-            >
-              {countLabel}
-            </span>
+            <InputGroupAddon align="inline-end" className="pe-2">
+              <span
+                aria-live="polite"
+                className={cn(
+                  "pointer-events-none text-[10px] whitespace-nowrap",
+                  noMatches ? "text-destructive" : "font-mono text-muted-foreground",
+                )}
+              >
+                {countLabel}
+              </span>
+            </InputGroupAddon>
           ) : null}
-        </div>
+        </InputGroup>
 
         <DockButton
           label="Match case"
-          icon={<CaseSensitive className="size-4" />}
+          icon={<CaseSensitive className={findIconClassName} />}
           active={snapshot.findCaseSensitive}
           onClick={() => configure({ caseSensitive: !snapshot.findCaseSensitive })}
         />
         <DockButton
           label="Match whole word"
-          icon={<WholeWord className="size-4" />}
+          icon={<WholeWord className={findIconClassName} />}
           active={snapshot.findWholeWord}
           onClick={() => configure({ wholeWord: !snapshot.findWholeWord })}
         />
         <DockButton
           label="Previous match (Shift+Enter)"
-          icon={<ChevronUp className="size-4" />}
+          icon={<ChevronUp className={findIconClassName} />}
           disabled={snapshot.findMatchCount === 0}
           onClick={() => controller.navigateFind(-1)}
         />
         <DockButton
           label="Next match (Enter)"
-          icon={<ChevronDown className="size-4" />}
+          icon={<ChevronDown className={findIconClassName} />}
           disabled={snapshot.findMatchCount === 0}
           onClick={() => controller.navigateFind(1)}
         />
         <div className="ms-auto">
-          <DockButton label="Close (Esc)" icon={<X className="size-4" />} onClick={close} />
+          <DockButton
+            label="Close (Esc)"
+            icon={<X className={findIconClassName} />}
+            onClick={close}
+          />
         </div>
       </div>
 
       {snapshot.editable && replaceOpen ? (
         <div className="flex items-center gap-1 ps-8">
-          <div className="min-w-36 max-w-64 flex-1">
-            <Input
-              size="compact"
+          <InputGroup
+            variant="ghost"
+            className={cn("min-w-36 max-w-64 flex-1", findInputClassName)}
+          >
+            <InputGroupInput
+              size="sm"
               aria-label="Replacement text"
               placeholder="Replace"
               type="text"
@@ -187,16 +203,16 @@ export function ScientFindBar({
                 }
               }}
             />
-          </div>
+          </InputGroup>
           <DockButton
             label="Replace current match (Enter)"
-            icon={<Replace className="size-4" />}
+            icon={<Replace className={findIconClassName} />}
             disabled={snapshot.findMatchCount === 0}
             onClick={() => controller.replaceFind(replacement, false)}
           />
           <DockButton
             label="Replace all matches"
-            icon={<ReplaceAll className="size-4" />}
+            icon={<ReplaceAll className={findIconClassName} />}
             disabled={snapshot.findMatchCount === 0}
             onClick={() => controller.replaceFind(replacement, true)}
           />

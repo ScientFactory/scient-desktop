@@ -155,6 +155,26 @@ describe("Scient ProseMirror projection", () => {
     );
   });
 
+  it("patches an emoji replacement without splitting its Unicode surrogate pair", () => {
+    const source = "Mood  😀  remains exact.\n";
+    const state = new ScientProseMirrorSession({ source, revision: "sha256:before" });
+    let emojiPosition: number | null = null;
+    state.state.doc.descendants((node, position) => {
+      if (node.isText && node.text?.includes("😀"))
+        emojiPosition = position + node.text.indexOf("😀");
+    });
+    expect(emojiPosition).not.toBeNull();
+
+    expect(() =>
+      state.applyTransaction(
+        state.state.tr.insertText("😁", emojiPosition!, emojiPosition! + "😀".length),
+        "user",
+      ),
+    ).not.toThrow();
+
+    expect(state.session.draftSource).toBe("Mood  😁  remains exact.\n");
+  });
+
   it("patches a table cell without normalizing the table source", () => {
     const source = "| Name|Value |\n|:--| --:|\n|  A  | **2.4** |\n";
     const state = new ScientProseMirrorSession({ source, revision: "sha256:before" });

@@ -13,6 +13,10 @@ export interface MarkdownSaveQueueOptions<A extends MarkdownSaveResult> {
   readonly onFailure: (intent: MarkdownSaveIntent, error: unknown) => void;
 }
 
+type MarkdownSaveResolution =
+  | { readonly action: "discard" }
+  | { readonly action: "retry"; readonly expectedRevision?: string };
+
 /**
  * Serial revision-aware save lane for one Markdown document. It coalesces
  * rapid edits, rebases a queued newer edit after an in-flight confirmation,
@@ -23,6 +27,7 @@ export class MarkdownSaveQueue<A extends MarkdownSaveResult = MarkdownSaveResult
   private timer: ReturnType<typeof setTimeout> | null = null;
   private pendingIntent: MarkdownSaveIntent | null = null;
   private inFlight: Promise<void> | null = null;
+  private deferredResolution: MarkdownSaveResolution | null = null;
   private blocked = false;
   private disposed = false;
 
@@ -69,7 +74,15 @@ export class MarkdownSaveQueue<A extends MarkdownSaveResult = MarkdownSaveResult
   }
 
   retry(expectedRevision?: string): void {
-    if (this.pendingIntent === null || this.disposed) return;
+    if (this.disposed) return;
+    if (this.inFlight !== null) {
+      this.deferredResolution = {
+        action: "retry",
+        ...(expectedRevision === undefined ? {} : { expectedRevision }),
+      };
+      return;
+    }
+    if (this.pendingIntent === null) return;
     if (expectedRevision !== undefined) {
       this.pendingIntent = { ...this.pendingIntent, expectedRevision };
     }
@@ -86,7 +99,11 @@ export class MarkdownSaveQueue<A extends MarkdownSaveResult = MarkdownSaveResult
     this.clearTimer();
     this.pendingIntent = null;
     this.blocked = false;
-    if (this.inFlight === null) this.options.onPendingChange(false);
+    if (this.inFlight !== null) {
+      this.deferredResolution = { action: "discard" };
+      return;
+    }
+    this.options.onPendingChange(false);
   }
 
   async dispose(options: { readonly flush?: boolean } = {}): Promise<void> {
@@ -114,18 +131,41 @@ export class MarkdownSaveQueue<A extends MarkdownSaveResult = MarkdownSaveResult
     if (this.blocked || this.inFlight !== null || this.pendingIntent === null) return;
     const intent = this.pendingIntent;
     this.pendingIntent = null;
-    this.inFlight = this.persist(intent).finally(() => {
+    this.inFlight = this.persist(intent).then((succeeded) => {
       this.inFlight = null;
+      const resolution = this.deferredResolution;
+      this.deferredResolution = null;
+      if (resolution?.action === "discard") {
+        this.pendingIntent = null;
+        this.blocked = false;
+        this.options.onPendingChange(false);
+        return;
+      }
+      if (resolution?.action === "retry") {
+        if (
+          !succeeded &&
+          resolution.expectedRevision !== undefined &&
+          this.pendingIntent !== null
+        ) {
+          this.pendingIntent = {
+            ...this.pendingIntent,
+            expectedRevision: resolution.expectedRevision,
+          };
+        }
+        this.blocked = false;
+      }
       if (this.blocked) return;
       if (this.pendingIntent !== null) {
-        this.schedule(this.disposed ? 0 : this.options.debounceMs);
+        this.schedule(
+          resolution?.action === "retry" || this.disposed ? 0 : this.options.debounceMs,
+        );
       } else {
         this.options.onPendingChange(false);
       }
     });
   }
 
-  private async persist(intent: MarkdownSaveIntent): Promise<void> {
+  private async persist(intent: MarkdownSaveIntent): Promise<boolean> {
     try {
       const result = await this.options.persist(intent);
       this.options.onConfirmed(intent, result);
@@ -136,12 +176,20 @@ export class MarkdownSaveQueue<A extends MarkdownSaveResult = MarkdownSaveResult
       ) {
         this.pendingIntent = { ...this.pendingIntent, expectedRevision: result.revision };
       }
+      return true;
     } catch (error) {
-      if (this.pendingIntent === null || intent.editVersion >= this.pendingIntent.editVersion) {
+      if (
+        this.deferredResolution?.action !== "discard" &&
+        (this.pendingIntent === null || intent.editVersion >= this.pendingIntent.editVersion)
+      ) {
         this.pendingIntent = intent;
       }
       this.blocked = true;
-      this.options.onFailure(intent, error);
+      // A resolution chosen while this write was running supersedes its
+      // failure. Applying it after settlement avoids reopening a conflict the
+      // user has already resolved or leaving the retry lane paused.
+      if (this.deferredResolution === null) this.options.onFailure(intent, error);
+      return false;
     }
   }
 }

@@ -55,4 +55,78 @@ describe("ScientCm6SpikeSurface", () => {
     expect(dispose).toHaveBeenCalledWith({ flush: true });
     expect(host.querySelector(".cm-editor")).toBeNull();
   });
+
+  it("does not re-run external-source reconciliation for unrelated renders", async () => {
+    vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+    const receiveExternalSource = vi.spyOn(ScientCm6EditorView.prototype, "receiveExternalSource");
+    const host = document.createElement("div");
+    document.body.append(host);
+    const root = createRoot(host);
+    roots.push(root);
+    const shared = {
+      source: "# Results\n",
+      revision: "r0",
+      persist: vi.fn(async () => ({ revision: "r1" })),
+      onPendingChange: vi.fn(),
+      onSaveConfirmed: vi.fn(),
+      onSaveFailure: vi.fn(),
+      onExternalConflict: vi.fn(),
+    };
+
+    await act(() => root.render(<ScientCm6SpikeSurface {...shared} ariaLabel="Results" />));
+    expect(receiveExternalSource).toHaveBeenCalledOnce();
+
+    await act(() =>
+      root.render(
+        <ScientCm6SpikeSurface
+          {...shared}
+          ariaLabel="Renamed results"
+          onExternalConflict={vi.fn()}
+        />,
+      ),
+    );
+
+    expect(receiveExternalSource).toHaveBeenCalledOnce();
+  });
+
+  it("delegates conflict resolution to the file-level owner with its fresh revision", async () => {
+    vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+    const resolveExternalConflict = vi.spyOn(
+      ScientCm6EditorView.prototype,
+      "resolveExternalConflict",
+    );
+    const retry = vi.spyOn(MarkdownSaveQueue.prototype, "retry");
+    const onSaveResolutionApplied = vi.fn();
+    const host = document.createElement("div");
+    document.body.append(host);
+    const root = createRoot(host);
+    roots.push(root);
+    const shared = {
+      source: "# Local draft\n",
+      revision: "r0",
+      ariaLabel: "Results",
+      persist: vi.fn(async () => ({ revision: "r2" })),
+      onPendingChange: vi.fn(),
+      onSaveConfirmed: vi.fn(),
+      onSaveFailure: vi.fn(),
+      onExternalConflict: vi.fn(),
+      onSaveResolutionApplied,
+    };
+
+    await act(() => root.render(<ScientCm6SpikeSurface {...shared} />));
+    await act(() =>
+      root.render(
+        <ScientCm6SpikeSurface
+          {...shared}
+          saveResolution={{ action: "retry", revision: "r-agent" }}
+        />,
+      ),
+    );
+
+    expect(resolveExternalConflict).toHaveBeenCalledExactlyOnceWith("local");
+    expect(retry).toHaveBeenCalledExactlyOnceWith("r-agent");
+    expect(onSaveResolutionApplied).toHaveBeenCalledOnce();
+    expect(host.textContent).not.toContain("Keep mine");
+    expect(host.textContent).not.toContain("Reload from disk");
+  });
 });

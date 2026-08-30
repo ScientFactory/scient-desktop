@@ -1,5 +1,6 @@
 import type { EnvironmentId, ScopedThreadRef } from "@t3tools/contracts";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
+import { useLocalStorage } from "~/hooks/useLocalStorage";
 import { Suspense, lazy, useCallback, useMemo, useRef } from "react";
 
 import { resolveAssetUrl } from "~/assets/assetUrls";
@@ -26,6 +27,13 @@ import {
   resolveMarkdownSiblingPath,
   resolveWikiLinkPath,
 } from "./workspacePaths";
+import {
+  EMPTY_WIKI_LINK_RECENT_PATHS,
+  promoteRecentWikiLinkPath,
+  sanitizeRecentWikiLinkPaths,
+  WikiLinkRecentPaths,
+  wikiLinkRecentsStorageKey,
+} from "./wikiLinkPicker";
 
 export interface ScientMarkdownFileSurfaceProps {
   readonly environmentId: EnvironmentId;
@@ -72,6 +80,31 @@ export function ScientMarkdownFileSurface(props: ScientMarkdownFileSurfaceProps)
     [allMarkdownPaths, props.relativePath],
   );
   const markdownPathSet = useMemo(() => new Set(allMarkdownPaths), [allMarkdownPaths]);
+  const wikiLinkCandidates = useMemo(
+    () =>
+      markdownPaths.flatMap((path) => {
+        const target = markdownWikiTargetForPath(props.relativePath, path);
+        return target === null ? [] : [{ path, target }];
+      }),
+    [markdownPaths, props.relativePath],
+  );
+  const wikiLinkCandidatePathSet = useMemo(
+    () => new Set(wikiLinkCandidates.map((candidate) => candidate.path)),
+    [wikiLinkCandidates],
+  );
+  const wikiLinkStorageKey = wikiLinkRecentsStorageKey(String(props.environmentId), props.cwd);
+  const [storedRecentWikiLinkPaths, setStoredRecentWikiLinkPaths] = useLocalStorage(
+    wikiLinkStorageKey,
+    EMPTY_WIKI_LINK_RECENT_PATHS,
+    WikiLinkRecentPaths,
+  );
+  const recentWikiLinkPaths = useMemo(
+    () =>
+      sanitizeRecentWikiLinkPaths(storedRecentWikiLinkPaths).filter((path) =>
+        wikiLinkCandidatePathSet.has(path),
+      ),
+    [storedRecentWikiLinkPaths, wikiLinkCandidatePathSet],
+  );
   const markdownPathsRef = useRef(markdownPaths);
   const markdownPathSetRef = useRef<ReadonlySet<string>>(markdownPathSet);
   const entriesTruncatedRef = useRef(entriesQuery.data?.truncated ?? true);
@@ -239,6 +272,18 @@ export function ScientMarkdownFileSurface(props: ScientMarkdownFileSurfaceProps)
       }}
       wikiLinkSuggestions={wikiLinkSuggestions}
       wikiLinkTargetExists={wikiLinkTargetExists}
+      wikiLinkCandidates={wikiLinkCandidates}
+      recentWikiLinkPaths={recentWikiLinkPaths}
+      onWikiLinkSelected={(path) => {
+        setStoredRecentWikiLinkPaths((current) =>
+          promoteRecentWikiLinkPath(
+            sanitizeRecentWikiLinkPaths(current).filter((candidatePath) =>
+              wikiLinkCandidatePathSet.has(candidatePath),
+            ),
+            path,
+          ),
+        );
+      }}
       onOpenLink={handleOpenLink}
       resolveImageSource={resolveImageSource}
       uploadImage={uploadImage}

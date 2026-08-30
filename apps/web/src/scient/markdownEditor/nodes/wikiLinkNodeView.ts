@@ -2,6 +2,7 @@ import type { Node as ProseMirrorNode } from "prosemirror-model";
 import type { EditorView, NodeView } from "prosemirror-view";
 
 let nextWikiListId = 1;
+const wikiLinkDoubleClickDelayMs = 220;
 
 class ScientWikiLinkNodeView implements NodeView {
   readonly dom = document.createElement("span");
@@ -9,6 +10,7 @@ class ScientWikiLinkNodeView implements NodeView {
   private readonly sourceEditor = document.createElement("input");
   private readonly suggestions = document.createElement("datalist");
   private node: ProseMirrorNode;
+  private pendingOpen: ReturnType<typeof globalThis.setTimeout> | null = null;
 
   constructor(
     node: ProseMirrorNode,
@@ -35,6 +37,7 @@ class ScientWikiLinkNodeView implements NodeView {
     this.sourceEditor.setAttribute("list", this.suggestions.id);
     this.sourceEditor.addEventListener("input", this.handleInput);
     this.sourceEditor.addEventListener("keydown", this.handleKeyDown);
+    this.dom.addEventListener("mousedown", this.handleMouseDown);
     this.dom.addEventListener("click", this.handleClick);
     this.dom.addEventListener("keydown", this.handleLinkKeyDown);
     this.dom.append(this.sourceEditor, this.suggestions);
@@ -70,8 +73,10 @@ class ScientWikiLinkNodeView implements NodeView {
   }
 
   destroy(): void {
+    this.cancelPendingOpen();
     this.sourceEditor.removeEventListener("input", this.handleInput);
     this.sourceEditor.removeEventListener("keydown", this.handleKeyDown);
+    this.dom.removeEventListener("mousedown", this.handleMouseDown);
     this.dom.removeEventListener("click", this.handleClick);
     this.dom.removeEventListener("keydown", this.handleLinkKeyDown);
   }
@@ -93,17 +98,36 @@ class ScientWikiLinkNodeView implements NodeView {
     );
   };
 
-  private readonly handleClick = (event: MouseEvent) => {
-    if (!this.onOpen || (this.view.editable && !(event.metaKey || event.ctrlKey))) return;
+  private readonly handleMouseDown = (event: MouseEvent) => {
+    if (event.target === this.sourceEditor || event.button !== 0) return;
     event.preventDefault();
-    this.onOpen(String(this.node.attrs.target));
+    event.stopPropagation();
+  };
+
+  private readonly handleClick = (event: MouseEvent) => {
+    if (event.target === this.sourceEditor || event.button !== 0 || !this.onOpen) return;
+    event.preventDefault();
+    event.stopPropagation();
+    if (!this.view.editable || event.metaKey || event.ctrlKey) {
+      this.cancelPendingOpen();
+      this.openTarget();
+      return;
+    }
+    if (event.detail > 1) {
+      this.cancelPendingOpen();
+      return;
+    }
+    this.cancelPendingOpen();
+    this.pendingOpen = globalThis.setTimeout(() => {
+      this.pendingOpen = null;
+      this.openTarget();
+    }, wikiLinkDoubleClickDelayMs);
   };
 
   private readonly handleLinkKeyDown = (event: KeyboardEvent) => {
     if (event.target === this.sourceEditor || event.key !== "Enter" || !this.onOpen) return;
-    if (this.view.editable && !(event.metaKey || event.ctrlKey)) return;
     event.preventDefault();
-    this.onOpen(String(this.node.attrs.target));
+    this.openTarget();
   };
 
   private readonly handleKeyDown = (event: Event) => {
@@ -117,6 +141,16 @@ class ScientWikiLinkNodeView implements NodeView {
     return typeof this.node.attrs.label === "string"
       ? `${target}|${this.node.attrs.label}`
       : target;
+  }
+
+  private openTarget(): void {
+    this.onOpen?.(String(this.node.attrs.target));
+  }
+
+  private cancelPendingOpen(): void {
+    if (this.pendingOpen === null) return;
+    globalThis.clearTimeout(this.pendingOpen);
+    this.pendingOpen = null;
   }
 
   private populateSuggestions(): void {
