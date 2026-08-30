@@ -36,6 +36,10 @@ const pythonSurfaceSource = NodeFS.readFileSync(
   NodePath.join(here, "ScientPythonComputeSurface.tsx"),
   "utf8",
 );
+const settingsSource = NodeFS.readFileSync(
+  NodePath.join(here, "ScientificComputingSettings.tsx"),
+  "utf8",
+);
 
 describe("compute result surface seam", () => {
   it("keeps editing in the file surface and results focused on outputs", () => {
@@ -68,11 +72,26 @@ describe("compute result surface seam", () => {
   });
 
   it("keeps the Python file toolbar usable as its panel narrows", () => {
+    expect(pythonSurfaceSource).toContain("flex-wrap items-center gap-x-2 gap-y-1");
+    expect(pythonSurfaceSource).toContain('className="min-w-22 flex-1"');
     expect(pythonActionsSource).toContain("@container/python-file-actions");
     expect(pythonActionsSource).toContain("@[9rem]/python-file-actions:block");
     expect(pythonActionsSource).toContain("@[15rem]/python-file-actions:inline");
     expect(pythonActionsSource).toContain("aria-label={primary.label}");
     expect(pythonActionsSource).toContain("Switch Python environment…");
+  });
+
+  it("sizes shared setup-card actions by the panel rather than the window", () => {
+    expect(settingsSource).toContain("@container/managed-runtime");
+    expect(settingsSource).toContain("@[32rem]/managed-runtime:flex-row");
+  });
+
+  it("refreshes the current workspace tree after successful or failed executions", () => {
+    expect(panelSource).toContain(
+      "TERMINAL_COMPUTE_EXECUTION_STATUSES.has(execution.result.status)",
+    );
+    expect(panelSource).toContain("refreshProjectFiles(props.environmentId, props.cwd)");
+    expect(panelSource).not.toContain("getProjectEntriesQueryAtom");
   });
 
   it("focuses a new run in the session that actually owns it", () => {

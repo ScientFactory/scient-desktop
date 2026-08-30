@@ -145,8 +145,8 @@ export function ManagedRuntimeCard(props: {
 
   return (
     <>
-      <div className="mt-3 rounded-lg border border-border/60 bg-muted/20 p-3">
-        <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+      <div className="@container/managed-runtime mt-3 rounded-lg border border-border/60 bg-muted/20 p-3">
+        <div className="flex flex-col gap-3 @[32rem]/managed-runtime:flex-row @[32rem]/managed-runtime:items-start @[32rem]/managed-runtime:justify-between">
           <div className="min-w-0">
             <div className="flex items-center gap-2 text-sm font-medium">
               Scientific Python

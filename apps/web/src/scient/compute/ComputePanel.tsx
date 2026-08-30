@@ -62,13 +62,12 @@ import {
 } from "~/components/ui/select";
 import { stackedThreadToast, toastManager } from "~/components/ui/toast";
 import { cn, randomUUID } from "~/lib/utils";
-import { appAtomRegistry } from "~/rpc/atomRegistry";
 import { computeEnvironment } from "~/state/compute";
 import { useAtomCommand } from "~/state/use-atom-command";
 import { useEnvironmentQuery } from "~/state/query";
 import { useEnvironmentSettings, useUpdateEnvironmentSettings } from "~/hooks/useSettings";
 import { useRightPanelStore } from "~/rightPanelStore";
-import { getProjectEntriesQueryAtom } from "~/components/files/projectFilesQueryState";
+import { refreshProjectFiles } from "~/components/files/projectFilesQueryState";
 
 import { ComputeOutputView } from "./ComputeOutputView";
 import { ManagedRuntimeCard } from "./ScientificComputingSettings";
@@ -831,7 +830,7 @@ export function ComputePanel(props: {
     if (observed === null || [...terminalIds].every((id) => observed.has(id))) return;
     sessions.refresh();
     executions.refresh();
-    appAtomRegistry.refresh(getProjectEntriesQueryAtom(props.environmentId, props.cwd));
+    refreshProjectFiles(props.environmentId, props.cwd);
     // Refresh ordinary workspace state once after a newly terminal execution.
   }, [props.cwd, props.environmentId, selectedExecutions]);
 

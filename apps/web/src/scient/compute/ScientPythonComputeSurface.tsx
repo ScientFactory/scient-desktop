@@ -169,7 +169,7 @@ export function ScientPythonComputeSurface(props: ScientPythonComputeSurfaceProp
 
   return (
     <div className="flex min-h-0 flex-1 flex-col overflow-hidden bg-background" dir="ltr">
-      <div className="flex min-h-9 shrink-0 items-center gap-2 border-b border-border/60 bg-muted/20 px-2 py-1">
+      <div className="flex min-h-9 shrink-0 flex-wrap items-center gap-x-2 gap-y-1 border-b border-border/60 bg-muted/20 px-2 py-1">
         <div
           className="flex shrink-0 items-center gap-px rounded-[6px] border border-border p-px"
           role="group"
@@ -229,7 +229,7 @@ export function ScientPythonComputeSurface(props: ScientPythonComputeSurfaceProp
             </ScientTooltip>
           </div>
         ) : null}
-        <div className="min-w-0 flex-1">
+        <div className="min-w-22 flex-1">
           <PythonFileComputeActions
             ref={actionsRef}
             environmentId={props.environmentId}

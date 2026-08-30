@@ -327,6 +327,40 @@ replacement for users' existing runtimes.
 
 ## Qualification evidence and remaining promotion gates
 
+### Local computer-use pass — 2026-08-31
+
+The isolated macOS candidate was exercised through its actual desktop UI. An
+existing managed CPython 3.12.13 ran the prepared NumPy/pandas/SciPy/Matplotlib
+fixture successfully. File, cell, and selected-line execution, state retained
+after a user-code error, queued cancellation, interruption with namespace
+retention, variables, captured PNG/SVG resources, and the shared figure viewer
+were checked. An intentionally unavailable configured path disabled new runs;
+choosing the already installed managed runtime restored readiness without
+restarting Scient. The temporary invalid preference was cleared afterward.
+
+This pass identified and corrected three gaps:
+
+- The file toolbar now wraps at extreme pane widths while preserving minimum
+  action widths and the normal single-row layout.
+- The shared setup card uses its container width, not the window breakpoint,
+  to place actions beside or below its description. Both layout changes were
+  visually checked in the isolated app.
+- Terminal executions refresh the current lazy workspace tree as well as
+  query-backed listings through one environment/project-scoped refresh signal.
+  Successful or failed code may have written files. The signal refreshes loaded
+  branches and active search without resetting tree state, polling, mounting
+  another filesystem watcher, or reloading unsaved editor contents. Subscription
+  isolation/cleanup and the actual lazy-tree controller are covered by tests.
+
+The Mac locked before a final visual retest of the file-refresh correction.
+Installer repair/remove/reinstall were not performed through computer use in
+this pass. A transient file-tree disconnect after development hot reload also
+required Retry; normal reconnect behavior remains an explicit qualification
+check, not a claimed pass. These limits do not invalidate the automated evidence,
+but neither automated tests nor this partial UI pass constitute owner or release
+acceptance. Temporary fixtures and screenshots remain in the separately owned
+QA directory and are not product assets.
+
 Current local evidence includes:
 
 - schema and typechecking across compute, contracts, client runtime, server,

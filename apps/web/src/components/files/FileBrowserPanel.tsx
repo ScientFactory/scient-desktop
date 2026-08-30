@@ -42,6 +42,7 @@ import { useProjectPathSearch } from "~/state/queries";
 import { useAtomCommand } from "~/state/use-atom-command";
 
 import { createFileTreeDragMentionController } from "./fileTreeDragMention";
+import { subscribeProjectFilesRefresh } from "./projectFilesQueryState";
 
 interface FileBrowserPanelProps {
   environmentId: EnvironmentId;
@@ -452,6 +453,15 @@ export default function FileBrowserPanel({
     if (isSearching) pathSearch.refresh();
     onRefreshSelectedFile?.();
   };
+
+  useEffect(
+    () =>
+      subscribeProjectFilesRefresh(environmentId, cwd, () => {
+        void treeControllerRef.current?.refresh();
+        if (isSearching) pathSearch.refresh();
+      }),
+    [environmentId, cwd, isSearching, pathSearch.refresh],
+  );
 
   useEffect(() => {
     if (!selectedPath) {
