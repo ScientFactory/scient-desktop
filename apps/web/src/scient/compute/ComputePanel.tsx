@@ -72,6 +72,7 @@ import { getProjectEntriesQueryAtom } from "~/components/files/projectFilesQuery
 
 import { ComputeOutputView } from "./ComputeOutputView";
 import { ManagedRuntimeCard } from "./ScientificComputingSettings";
+import { defaultComputeRuntime } from "./pythonComputeSurfaceModel";
 import {
   computeExecutionStatusLabel,
   computeSourceFreshnessLabel,
@@ -611,8 +612,11 @@ export function ComputePanel(props: {
       ),
     [runtimes.data],
   );
+  const defaultRuntime = defaultComputeRuntime(runtimes.data?.languages ?? []);
   const selectedRuntime =
-    readyRuntimes.find((runtime) => runtime.key === runtimeKey) ?? readyRuntimes[0] ?? null;
+    runtimeKey === ""
+      ? (readyRuntimes.find((runtime) => runtime.candidate === defaultRuntime) ?? null)
+      : (readyRuntimes.find((runtime) => runtime.key === runtimeKey) ?? null);
   const pythonLanguage =
     runtimes.data?.languages.find((language) => language.descriptor.languageId === "python") ??
     null;
@@ -840,7 +844,7 @@ export function ComputePanel(props: {
         cwd: props.cwd,
         sessionId: ComputeSessionId.make(randomUUID()),
         languageId: selectedRuntime.language.descriptor.languageId,
-        executable: selectedRuntime.candidate.profile.executable,
+        executable: runtimeKey === "" ? null : selectedRuntime.candidate.profile.executable,
       },
     });
     setOperation(null);
@@ -1028,7 +1032,7 @@ export function ComputePanel(props: {
               </MenuPopup>
             </Menu>
           </div>
-        ) : !props.embedded && allSessions.length > 0 && readyRuntimes.length > 0 ? (
+        ) : !props.embedded && allSessions.length > 0 && selectedRuntime !== null ? (
           <Button
             size="xs"
             variant="outline"
@@ -1042,7 +1046,12 @@ export function ComputePanel(props: {
           <Button
             size="xs"
             variant="ghost-muted"
-            render={<Link to="/settings/scientific-computing" />}
+            render={
+              <Link
+                to="/settings/scientific-computing"
+                search={{ environmentId: props.environmentId }}
+              />
+            }
           >
             Set up compute
           </Button>
@@ -1172,13 +1181,17 @@ export function ComputePanel(props: {
                     language={pythonLanguage}
                     enabled={pythonPreference.enabled}
                     ensureEnabled={ensurePythonEnabled}
-                    onLifecycleChanged={runtimes.refresh}
                   />
                   <div className="mt-3 text-center">
                     <Button
                       size="xs"
                       variant="ghost-muted"
-                      render={<Link to="/settings/scientific-computing" />}
+                      render={
+                        <Link
+                          to="/settings/scientific-computing"
+                          search={{ environmentId: props.environmentId }}
+                        />
+                      }
                     >
                       <Settings2 /> Use an existing environment
                     </Button>
@@ -1196,7 +1209,12 @@ export function ComputePanel(props: {
                     className="mt-4"
                     size="sm"
                     variant="outline"
-                    render={<Link to="/settings/scientific-computing" />}
+                    render={
+                      <Link
+                        to="/settings/scientific-computing"
+                        search={{ environmentId: props.environmentId }}
+                      />
+                    }
                   >
                     <Settings2 /> Scientific Computing settings
                   </Button>
@@ -1212,7 +1230,7 @@ export function ComputePanel(props: {
                   Code runs unsandboxed with this server&apos;s filesystem and network access.
                 </p>
                 <div className="mt-4 flex flex-wrap items-center justify-center gap-2">
-                  {readyRuntimes.length > 1 ? (
+                  {readyRuntimes.length > 1 || selectedRuntime === null ? (
                     <Select
                       value={selectedRuntime?.key ?? ""}
                       onValueChange={(value) => setRuntimeKey(value ?? "")}
@@ -1223,7 +1241,7 @@ export function ComputePanel(props: {
                         aria-label="Runtime"
                       >
                         <SelectValue className="max-w-56">
-                          {selectedRuntime?.candidate.profile.displayName}
+                          {selectedRuntime?.candidate.profile.displayName ?? "Choose runtime"}
                         </SelectValue>
                       </SelectTrigger>
                       <SelectPopup alignItemWithTrigger={false}>
@@ -1242,7 +1260,7 @@ export function ComputePanel(props: {
                   ) : null}
                   <Button
                     size="xs"
-                    disabled={operation !== null}
+                    disabled={operation !== null || selectedRuntime === null}
                     onClick={() => void handleStart()}
                   >
                     {operation === "start" ? <LoaderCircle className="animate-spin" /> : <Play />}

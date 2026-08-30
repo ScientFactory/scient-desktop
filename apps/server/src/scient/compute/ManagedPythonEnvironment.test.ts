@@ -271,6 +271,30 @@ describe("ManagedPythonEnvironment", () => {
     expect(await manager.inspect()).toEqual(installed);
   });
 
+  it("keeps a selected missing installation repairable without changing its selection", async () => {
+    let generation = 0;
+    const manager = makeManagedPythonEnvironmentManager(
+      computeDir,
+      dependencies({ generationId: () => `missing-${++generation}` }),
+    );
+    const installed = await manager.install(installInput());
+    await NodeFSP.unlink(installed.executable);
+    expect(await manager.inspect()).toMatchObject({
+      record: { selection: "managed" },
+      executable: installed.executable,
+      available: false,
+    });
+    await manager.reconcile();
+    expect(await manager.inspect()).toMatchObject({
+      available: false,
+      record: { selection: "managed" },
+    });
+    const repaired = await manager.repair(installInput());
+    expect(repaired.available).toBe(true);
+    expect(repaired.executable).not.toBe(installed.executable);
+    expect(repaired.record.selection).toBe("managed");
+  });
+
   it("does not expose a tampered state or rollback generation", async () => {
     const manager = makeManagedPythonEnvironmentManager(
       computeDir,

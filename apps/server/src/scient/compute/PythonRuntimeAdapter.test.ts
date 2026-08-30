@@ -415,12 +415,69 @@ describe("python runtime adapter", () => {
         projectRoot: null,
         configuredExecutable: "/custom/python",
       });
-      expect(profiles).toHaveLength(1);
       expect(profiles[0]).toMatchObject({
         source: "managed",
         executable: "/managed/python",
         languageVersion: "unknown",
       });
+    }),
+  );
+
+  it.effect(
+    "keeps an unavailable managed choice first while allowing an explicit existing choice",
+    () =>
+      Effect.gen(function* () {
+        const probed: string[] = [];
+        const adapter = makePythonRuntimeAdapter(
+          (executable) => {
+            probed.push(executable);
+            return executable === "/custom/python"
+              ? Effect.succeed(
+                  JSON.stringify({ ...parseProbeOutput(validProbeOutput), executable }),
+                )
+              : fakeFailingProbe(executable);
+          },
+          "/app/bridge.py",
+          {
+            managedRuntime: () =>
+              Effect.succeed({ executable: "/managed/python", selected: true, available: false }),
+          },
+        );
+        const profiles = yield* adapter.discover({
+          projectRoot: null,
+          configuredExecutable: "/custom/python",
+          refresh: true,
+        });
+        expect(profiles[0]).toMatchObject({ source: "managed", languageVersion: "unknown" });
+        expect(profiles[1]).toMatchObject({ source: "configured", executable: "/custom/python" });
+        expect(
+          (yield* adapter.verify({ profile: profiles[0]!, cwd: "/project", environment: {} }))
+            .readiness,
+        ).toBe("unusable");
+        expect(probed).not.toContain("/managed/python");
+      }),
+  );
+
+  it.effect("does not silently choose system Python when managed-state inspection fails", () =>
+    Effect.gen(function* () {
+      let probed = false;
+      const failure = new ComputeRuntimeError({
+        operation: "discover",
+        message: "Managed root is unsafe.",
+      });
+      const adapter = makePythonRuntimeAdapter(
+        () => {
+          probed = true;
+          return Effect.succeed(validProbeOutput);
+        },
+        "/app/bridge.py",
+        { managedRuntime: () => Effect.fail(failure) },
+      );
+      const result = yield* Effect.result(
+        adapter.discover({ projectRoot: null, configuredExecutable: null }),
+      );
+      expect(result).toMatchObject({ _tag: "Failure", failure });
+      expect(probed).toBe(false);
     }),
   );
 

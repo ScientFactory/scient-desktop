@@ -9,6 +9,7 @@ import type {
 } from "@t3tools/contracts";
 import { projectComputeOutputs, selectComputeRepresentation } from "@t3tools/contracts";
 import { CircleAlert, Image as ImageIcon, Info, LoaderCircle, RotateCcw } from "lucide-react";
+import { Link } from "@tanstack/react-router";
 
 import { useAssetUrlState } from "~/assets/assetUrls";
 import {
@@ -209,6 +210,21 @@ export function ComputeOutputView(props: {
                     <p className="font-medium text-destructive">
                       {output.diagnostic.errorName}: {output.diagnostic.message}
                     </p>
+                    {output.diagnostic.errorName === "ModuleNotFoundError" ? (
+                      <Button
+                        size="xs"
+                        variant="ghost-muted"
+                        className="mt-1"
+                        render={
+                          <Link
+                            to="/settings/scientific-computing"
+                            search={{ environmentId: props.environmentId }}
+                          />
+                        }
+                      >
+                        Python environments
+                      </Button>
+                    ) : null}
                     <ComputeDiagnosticFrames
                       frames={output.diagnostic.frames}
                       threadRef={props.threadRef}

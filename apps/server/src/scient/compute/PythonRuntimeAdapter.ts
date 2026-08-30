@@ -411,7 +411,11 @@ export function makePythonRuntimeAdapter(
   options: {
     readonly managedRuntime?:
       | (() => Effect.Effect<
-          { readonly executable: string; readonly selected: boolean } | null,
+          {
+            readonly executable: string;
+            readonly selected: boolean;
+            readonly available?: boolean;
+          } | null,
           ComputeRuntimeError
         >)
       | undefined;
@@ -462,9 +466,7 @@ export function makePythonRuntimeAdapter(
       if (request.refresh === true) probeCache.clear();
       const platform = yield* HostProcessPlatform;
       const managedRuntime =
-        options.managedRuntime === undefined
-          ? null
-          : yield* options.managedRuntime().pipe(Effect.orElseSucceed(() => null));
+        options.managedRuntime === undefined ? null : yield* options.managedRuntime();
       const candidates = discoverCandidates(
         request.projectRoot,
         request.configuredExecutable,
@@ -474,10 +476,15 @@ export function makePythonRuntimeAdapter(
 
       const profiles: ComputeRuntimeProfile[] = [];
       for (const candidate of candidates) {
-        const result = yield* Effect.matchEffect(readProbe(candidate.executable), {
-          onFailure: () => Effect.succeed({ success: false as const, probe: null }),
-          onSuccess: (probe) => Effect.succeed({ success: true as const, probe }),
-        });
+        const result = yield* Effect.matchEffect(
+          candidate.source === "managed" && managedRuntime?.available === false
+            ? Effect.fail(runtimeError("discover", "Scient-managed Python needs repair."))
+            : readProbe(candidate.executable),
+          {
+            onFailure: () => Effect.succeed({ success: false as const, probe: null }),
+            onSuccess: (probe) => Effect.succeed({ success: true as const, probe }),
+          },
+        );
         // Malformed probe output is as unusable as a probe that would not run
         // at all: a runtime that cannot describe itself is not one to offer.
         const profile = result.success
@@ -500,7 +507,7 @@ export function makePythonRuntimeAdapter(
             architecture: null,
             displayName: `Python (${candidate.source}, not found)`,
           };
-          if (candidate.source === "managed" || managedRuntime?.selected !== true) {
+          if (managedRuntime?.selected !== true) {
             return [unavailable];
           }
           profiles.push(unavailable);
@@ -512,6 +519,20 @@ export function makePythonRuntimeAdapter(
 
   const verify: ComputeLanguageAdapter["verify"] = (launchRequest) =>
     Effect.gen(function* () {
+      // Discovery's unavailable placeholder must not be probed a second time,
+      // especially when the managed path failed its ownership/containment check.
+      if (launchRequest.profile.languageVersion === "unknown") {
+        return {
+          profile: launchRequest.profile,
+          readiness: "unusable" as const,
+          missingRequirements: [],
+          packages: [],
+          message:
+            launchRequest.profile.source === "managed"
+              ? "Scient-managed Python is unavailable. Repair it in Scientific Computing settings or choose an existing environment."
+              : "The selected Python is unavailable. Refresh detection or choose another environment.",
+        };
+      }
       const parsed = yield* Effect.result(
         readProbe(launchRequest.profile.executable).pipe(
           Effect.mapError((cause) => runtimeError("verify", cause.message, cause)),

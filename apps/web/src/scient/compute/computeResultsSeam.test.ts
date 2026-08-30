@@ -59,7 +59,7 @@ describe("compute result surface seam", () => {
 
   it("keeps Python setup contextual to the file toolbar", () => {
     expect(pythonActionsSource).toContain("resolvePythonRuntimeToolbarState");
-    expect(pythonActionsSource).toContain('"Open Scientific Computing settings"');
+    expect(pythonActionsSource).toContain("Open Scientific Computing settings");
     expect(pythonActionsSource).toContain('aria-label="Refresh Python detection"');
     expect(pythonActionsSource).toContain('runtimeToolbar.kind === "switch"');
     expect(pythonActionsSource).toContain("the next run uses the Python selected");

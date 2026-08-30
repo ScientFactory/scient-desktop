@@ -1,5 +1,5 @@
 import { Download, LoaderCircle, RefreshCwIcon, Trash2, Wrench } from "lucide-react";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import type {
   ComputeLanguageRuntimeInspection,
   ComputeManagedRuntimeAction,
@@ -9,8 +9,8 @@ import type {
 } from "@t3tools/contracts";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 
-import { usePrimarySettings, useUpdatePrimarySettings } from "~/hooks/useSettings";
-import { usePrimaryEnvironment } from "~/state/environments";
+import { useEnvironmentSettings, useUpdateEnvironmentSettings } from "~/hooks/useSettings";
+import { useEnvironment, usePrimaryEnvironmentId } from "~/state/environments";
 import { useEnvironmentQuery } from "~/state/query";
 import { computeEnvironment } from "~/state/compute";
 import { useAtomCommand } from "~/state/use-atom-command";
@@ -72,16 +72,14 @@ export function ManagedRuntimeCard(props: {
   readonly language: ComputeLanguageRuntimeInspection;
   readonly enabled: boolean;
   readonly ensureEnabled: () => void;
-  readonly onLifecycleChanged: () => void;
 }) {
   const manageRuntime = useAtomCommand(computeEnvironment.manageRuntime, { reportFailure: false });
   const cancelRuntime = useAtomCommand(computeEnvironment.cancelManagedRuntime, {
     reportFailure: false,
   });
-  const [localStatus, setLocalStatus] = useState<ComputeManagedRuntimeStatus | null>(null);
+  const [actionPending, setActionPending] = useState(false);
   const [localFailure, setLocalFailure] = useState<string | null>(null);
   const [removeConfirmation, setRemoveConfirmation] = useState(false);
-  const observedOperationRef = useRef<string | null>(null);
   const languageId = props.language.descriptor.languageId;
   const statusAtom = props.environmentId
     ? computeEnvironment.managedRuntime({
@@ -90,43 +88,25 @@ export function ManagedRuntimeCard(props: {
       })
     : null;
   const queried = useEnvironmentQuery(statusAtom);
-  const status = localStatus ?? queried.data ?? props.language.managedRuntime;
+  const status = queried.data ?? props.language.managedRuntime;
 
   useEffect(() => {
-    if (queried.data !== undefined) setLocalStatus(queried.data);
-  }, [queried.data]);
-
-  useEffect(() => {
-    setLocalStatus(null);
     setLocalFailure(null);
     setRemoveConfirmation(false);
-    observedOperationRef.current = null;
   }, [props.environmentId, languageId]);
-
-  useEffect(() => {
-    const operationId = status?.operation?.operationId ?? null;
-    if (operationId === null) {
-      if (observedOperationRef.current !== null) {
-        observedOperationRef.current = null;
-        props.onLifecycleChanged();
-      }
-      return;
-    }
-    observedOperationRef.current = operationId;
-    const timer = window.setInterval(() => queried.refresh(), 1_000);
-    return () => window.clearInterval(timer);
-  }, [props.onLifecycleChanged, queried.refresh, status?.operation?.operationId]);
 
   if (status === null) return null;
 
   const runAction = async (action: ComputeManagedRuntimeAction) => {
-    if (!props.environmentId) return;
+    if (!props.environmentId || actionPending) return;
     if (action === "install" || action === "use-managed") props.ensureEnabled();
     setLocalFailure(null);
+    setActionPending(true);
     const result = await manageRuntime({
       environmentId: props.environmentId,
       input: { languageId, action },
     });
+    setActionPending(false);
     if (result._tag === "Failure") {
       const failure = squashAtomCommandFailure(result);
       setLocalFailure(
@@ -134,9 +114,6 @@ export function ManagedRuntimeCard(props: {
       );
       return;
     }
-    setLocalStatus(result.value);
-    queried.refresh();
-    if (result.value.operation === null) props.onLifecycleChanged();
   };
 
   const cancel = async () => {
@@ -150,19 +127,21 @@ export function ManagedRuntimeCard(props: {
       setLocalFailure(
         failure instanceof Error ? failure.message : "Scient could not cancel Python setup.",
       );
-    } else {
-      setLocalStatus(result.value);
     }
-    queried.refresh();
   };
 
-  const working = status.operation !== null;
+  const working = status.operation !== null || actionPending || queried.isPending;
   const existingRuntimeReady = props.language.runtimes.some(
     ({ profile, verification }) =>
       profile.source !== "managed" && verification.readiness === "ready",
   );
   const progress = managedRuntimeOperationLabel(status);
-  const failure = localFailure ?? status.failureMessage;
+  const failure = localFailure ?? queried.error ?? status.failureMessage;
+  const managedCandidate = props.language.runtimes.find(
+    ({ profile }) => profile.source === "managed",
+  );
+  const needsRepair =
+    managedCandidate !== undefined && managedCandidate.verification.readiness !== "ready";
 
   return (
     <>
@@ -172,8 +151,14 @@ export function ManagedRuntimeCard(props: {
             <div className="flex items-center gap-2 text-sm font-medium">
               Scientific Python
               {status.installed ? (
-                <span className="text-[11px] font-normal text-success">
-                  {status.selection === "managed" && props.enabled ? "In use" : "Ready"}
+                <span
+                  className={`text-[11px] font-normal ${needsRepair ? "text-warning" : "text-success"}`}
+                >
+                  {needsRepair
+                    ? "Needs repair"
+                    : status.selection === "managed" && props.enabled
+                      ? "In use"
+                      : "Installed"}
                 </span>
               ) : null}
             </div>
@@ -208,7 +193,7 @@ export function ManagedRuntimeCard(props: {
                   >
                     Use existing
                   </Button>
-                ) : (
+                ) : status.selection !== "managed" || !props.enabled ? (
                   <Button
                     size="xs"
                     disabled={working}
@@ -216,7 +201,7 @@ export function ManagedRuntimeCard(props: {
                   >
                     Use
                   </Button>
-                )}
+                ) : null}
                 {status.updateAvailable ? (
                   <Button size="xs" disabled={working} onClick={() => void runAction("update")}>
                     <Download /> Update
@@ -241,7 +226,7 @@ export function ManagedRuntimeCard(props: {
                 </Button>
               </>
             )}
-            {working && status.operation?.action !== "remove" ? (
+            {status.operation !== null && status.operation.action !== "remove" ? (
               <Button size="xs" variant="ghost" onClick={() => void cancel()}>
                 Cancel
               </Button>
@@ -338,7 +323,6 @@ function LanguageSettingsRow({
   onRefresh,
   refreshing,
   environmentId,
-  onLifecycleChanged,
 }: {
   language: ComputeLanguageRuntimeInspection;
   preference: ScientificComputingLanguageSettings;
@@ -346,7 +330,6 @@ function LanguageSettingsRow({
   onRefresh: () => void;
   refreshing: boolean;
   environmentId: EnvironmentId | null;
-  onLifecycleChanged: () => void;
 }) {
   const [executable, setExecutable] = useState(preference.executable);
   useEffect(() => setExecutable(preference.executable), [preference.executable]);
@@ -376,7 +359,6 @@ function LanguageSettingsRow({
         ensureEnabled={() => {
           if (!preference.enabled) onChange({ ...preference, enabled: true });
         }}
-        onLifecycleChanged={onLifecycleChanged}
       />
       <div className="mt-3 flex flex-col gap-2 border-t border-border/50 py-3 sm:flex-row sm:items-center">
         <Input
@@ -415,11 +397,44 @@ function LanguageSettingsRow({
   );
 }
 
-export function ScientificComputingSettings() {
-  const primaryEnvironment = usePrimaryEnvironment();
-  const environmentId = primaryEnvironment?.environmentId ?? null;
-  const preferences = usePrimarySettings((settings) => settings.scientificComputing);
-  const updateSettings = useUpdatePrimarySettings();
+export function ScientificComputingSettings(
+  props: { environmentId?: EnvironmentId | undefined } = {},
+) {
+  const primaryId = usePrimaryEnvironmentId();
+  const environmentId = props.environmentId ?? primaryId;
+  const environment = useEnvironment(environmentId);
+  if (environmentId === null || environment === null) {
+    return (
+      <SettingsPageContainer>
+        <SettingsSection title="Scientific Computing">
+          <p className="text-sm text-muted-foreground">
+            This server is unavailable. Reconnect it to manage Python.
+          </p>
+        </SettingsSection>
+      </SettingsPageContainer>
+    );
+  }
+  return (
+    <EnvironmentScientificComputingSettings
+      key={environmentId}
+      environmentId={environmentId}
+      label={environment.label}
+    />
+  );
+}
+
+export function EnvironmentScientificComputingSettings({
+  environmentId,
+  label,
+}: {
+  environmentId: EnvironmentId;
+  label: string;
+}) {
+  const preferences = useEnvironmentSettings(
+    environmentId,
+    (settings) => settings.scientificComputing,
+  );
+  const updateSettings = useUpdateEnvironmentSettings(environmentId);
   const refreshRuntimes = useAtomCommand(computeEnvironment.refreshRuntimes, {
     reportFailure: false,
   });
@@ -432,7 +447,6 @@ export function ScientificComputingSettings() {
       })
     : null;
   const runtimes = useEnvironmentQuery(runtimesAtom);
-  const refreshRuntimeInspection = runtimes.refresh;
 
   const updateLanguage = (
     languageId: ComputeLanguageRuntimeInspection["descriptor"]["languageId"],
@@ -463,20 +477,14 @@ export function ScientificComputingSettings() {
       return;
     }
     setRefreshFailure(null);
-    refreshRuntimeInspection();
-  }, [environmentId, refreshRuntimeInspection, refreshRuntimes]);
-  const refreshInspection = useCallback(() => void handleRefresh(), [handleRefresh]);
+  }, [environmentId, refreshRuntimes]);
 
   return (
     <SettingsPageContainer>
       <SettingsSection
         id="scientific-computing"
         title="Scientific Computing"
-        headerAction={
-          <span className="text-xs text-muted-foreground">
-            {primaryEnvironment?.label ?? "No server selected"}
-          </span>
-        }
+        headerAction={<span className="text-xs text-muted-foreground">{label}</span>}
       >
         <SettingsRow
           {...searchableSetting("scientific-computing")}
@@ -498,7 +506,6 @@ export function ScientificComputingSettings() {
               onRefresh={() => void handleRefresh()}
               refreshing={runtimes.isPending || refreshing}
               environmentId={environmentId}
-              onLifecycleChanged={refreshInspection}
             />
           );
         })}

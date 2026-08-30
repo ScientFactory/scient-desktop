@@ -63,6 +63,7 @@ export function makeManagedPythonRuntimeController(input: {
       const active = current?.record.active ?? null;
       return {
         installed: current !== null,
+        generationId: active?.generationId ?? null,
         selection: current?.record.selection ?? "existing",
         updateAvailable:
           active !== null &&
@@ -82,7 +83,11 @@ export function makeManagedPythonRuntimeController(input: {
                 downloadedBytes: operationSnapshot.downloadedBytes,
                 totalBytes: operationSnapshot.totalBytes,
               },
-        failureMessage,
+        failureMessage:
+          failureMessage ??
+          (current !== null && !current.available
+            ? "Scient-managed Python is unavailable. Repair it or choose an existing environment."
+            : null),
       };
     }
   };

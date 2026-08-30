@@ -183,6 +183,32 @@ describe("ManagedPythonRuntimeController", () => {
     }),
   );
 
+  it.live("keeps a broken selected installation repairable and publishes a new generation", () =>
+    Effect.gen(function* () {
+      const manager = makeManagedPythonEnvironmentManager(computeDir, dependencies());
+      const controller = makeManagedPythonRuntimeController({ manager, toolkitIds: [TOOLKIT_ID] });
+      yield* controller.manage("install");
+      const installed = yield* waitForSettled(controller);
+      const current = yield* Effect.promise(() => manager.inspect());
+      yield* Effect.promise(() => NodeFSP.unlink(current!.executable));
+      expect(yield* controller.status()).toMatchObject({
+        installed: true,
+        selection: "managed",
+        generationId: installed.generationId,
+        failureMessage: expect.stringContaining("Repair"),
+      });
+      yield* controller.manage("repair");
+      const repaired = yield* waitForSettled(controller);
+      expect(repaired.generationId).not.toBe(installed.generationId);
+      expect(repaired).toMatchObject({
+        installed: true,
+        selection: "managed",
+        failureMessage: null,
+      });
+      controller.dispose();
+    }),
+  );
+
   it.live("keeps session admission blocked until private removal settles", () =>
     Effect.gen(function* () {
       let release!: () => void;

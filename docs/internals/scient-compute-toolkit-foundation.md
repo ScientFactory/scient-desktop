@@ -230,8 +230,14 @@ current server may still host such sessions. Startup reconciliation is their
 safe collection point. Explicit removal is blocked while a live Python session
 exists.
 
-The file surface compares the live session executable with the first verified
-runtime selected for a new session. A mismatch offers an explicit switch,
+The file surface compares the live session executable with the default runtime
+selected for a new session, only when that default is verified ready. It never
+skips an unusable selected managed/configured interpreter to choose a different
+ready one. Ordinary Run sends no executable override: the server resolves the
+current selection when admitting the new session. The secondary session picker
+can still request a different verified interpreter explicitly.
+
+A mismatch offers an explicit switch,
 without blocking a deliberately chosen live runtime or silently replacing its
 interpreter: confirmation stops the old namespace, retains its transcript, and
 the next run starts from the selected runtime. The same surface can force an
@@ -239,11 +245,34 @@ exact project-scoped runtime inspection with probe cache bypass, while its
 ordinary setup/readiness labels route to Scientific Computing for full
 environment management.
 
+Managed operation tracking lives in shared environment-scoped client state, not
+in the Settings component. While a compute surface is open, status polls only
+during a known operation. Completion, failure, cancellation, selection changes,
+and settings changes invalidate runtime inspection for that server, including
+project views. Download progress alone does not repeat interpreter probes.
+When all surfaces close, polling stops; reopening fetches current state. The
+optional status `generationId` distinguishes same-version repairs and reinstalls.
+Explicit Refresh also bypasses probe caching and refreshes the managed status.
+
+Settings links retain the originating environment ID. A missing/disconnected
+target never falls back to modifying primary-server settings. Opening Settings
+from ordinary navigation without an explicit target still uses the primary
+environment.
+
+A valid activation receipt whose executable is missing or escapes canonical
+containment remains an installed-but-unavailable managed environment. It keeps
+its selection and Repair/Remove actions; discovery and verification do not
+execute the rejected path. An adapter ownership-inspection failure is an error,
+not permission to silently choose system Python. Intentional successful removal
+clears the receipt and returns selection to existing-runtime discovery.
+
 Base compute readiness is not Toolkit readiness. The file status and Settings
 surface the existing exact-runtime data-and-figures assessment, without
 disabling ordinary Python or trying to infer arbitrary dependencies from source
 imports. Missing packages remain an explicit managed-setup or user-owned
-environment choice.
+environment choice. The file-status tooltip identifies the exact interpreter;
+missing-module errors link to that server's Python settings without installing
+packages or rerunning code automatically.
 
 The active record names one previous generation for rollback. Retaining older
 displaced generations until restart is a deliberate reliability tradeoff:

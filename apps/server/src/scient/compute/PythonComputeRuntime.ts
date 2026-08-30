@@ -351,6 +351,7 @@ export const pythonRuntimeBinding: Effect.Effect<
                   : {
                       executable: status.executable,
                       selected: status.record.selection === "managed",
+                      available: status.available,
                     },
               ),
             ),

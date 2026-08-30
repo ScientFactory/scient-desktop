@@ -34,6 +34,7 @@ export type ManagedPythonEnvironmentRecord = typeof ManagedPythonEnvironmentReco
 export interface ManagedPythonEnvironmentStatus {
   readonly record: ManagedPythonEnvironmentRecord;
   readonly executable: string;
+  readonly available: boolean;
 }
 
 export type ManagedPythonEnvironmentFailureReason =
@@ -263,13 +264,17 @@ async function readStatus(
   if (!(await managedDirectorySafety(paths)).managedPresent) return null;
   const record = await readRecord(paths);
   if (record === null) return null;
+  const root = generationRoot(paths.managedRoot, record.active.generationId);
+  const executable =
+    root === null ? null : executablePath(root, record.active.executableRelativePath);
+  if (executable === null) return null;
   const active = await canonicalGeneration(paths.managedRoot, record.active);
-  if (active === null) return null;
   const previous =
     record.previous === null ? null : await canonicalGeneration(paths.managedRoot, record.previous);
   return {
     record: { ...record, previous: previous?.generation ?? null },
-    executable: active.executable,
+    executable,
+    available: active !== null,
   };
 }
 
@@ -528,7 +533,11 @@ export function makeManagedPythonEnvironmentManager(
         // have sessions running from them. Startup reconciliation is the safe
         // collection point because no prior-process compute session survives
         // it. Failed unpublished candidates are still removed below.
-        return { record, executable: lexicalExecutable } satisfies ManagedPythonEnvironmentStatus;
+        return {
+          record,
+          executable: lexicalExecutable,
+          available: true,
+        } satisfies ManagedPythonEnvironmentStatus;
       } finally {
         if (!committed) {
           await NodeFSP.rm(candidateRoot, { recursive: true, force: true }).catch(() => undefined);
@@ -556,7 +565,7 @@ export function makeManagedPythonEnvironmentManager(
           { cause },
         );
       });
-      return { record, executable: current.executable } satisfies ManagedPythonEnvironmentStatus;
+      return { ...current, record } satisfies ManagedPythonEnvironmentStatus;
     });
 
   const remove = () =>

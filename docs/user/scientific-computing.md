@@ -44,10 +44,22 @@ the app. Scient never swaps the interpreter beneath a live session. If the selec
 while a session is open, the header offers **Switch Python**; confirmation stops the old namespace,
 keeps its run history, and lets the next run start with the newly selected environment.
 
+Setup, repair, removal, and runtime-selection changes update open compute views automatically,
+even if you leave Settings before setup finishes. Use refresh when Python or its packages changed
+outside Scient. Settings opened from a project always manages that project's server.
+
+If a selected managed installation is damaged, Scient keeps it visible for **Repair** rather than
+quietly running your code with a different Python. You can explicitly choose an existing environment
+instead. Removing the managed installation intentionally returns new sessions to existing-runtime
+discovery; it does not remove your other Python installations.
+
 An existing Python can run ordinary code without every scientific library. If the reviewed
 data-and-figures packages are missing, the header says **Python packages missing** and Settings
 names them. Run remains available for code that does not need those packages; Scient does not
 silently install them into a user-owned environment.
+Hover over the file's Python status to see which interpreter it refers to. A missing-module error
+also offers **Python environments**, taking you to the right server's settings. After choosing or
+repairing an environment, rerun the code yourself; Scient never replays a failed run automatically.
 
 ## Run code and view results
 

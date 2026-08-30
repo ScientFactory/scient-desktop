@@ -545,6 +545,7 @@ export type ComputeManagedRuntimeOperation = typeof ComputeManagedRuntimeOperati
 
 export const ComputeManagedRuntimeStatus = Schema.Struct({
   installed: Schema.Boolean,
+  generationId: Schema.optional(Schema.NullOr(Label)),
   selection: ComputeManagedRuntimeSelection,
   updateAvailable: Schema.Boolean,
   runtimeVersion: Schema.NullOr(Label),

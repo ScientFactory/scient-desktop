@@ -1,4 +1,11 @@
-import type { ComputeSessionRecord } from "@t3tools/contracts";
+import type { ComputeSessionRecord, ComputeLanguageRuntimeInspection } from "@t3tools/contracts";
+
+/** Discovery order is the server's preference, not a list to skip until something runs. */
+export function defaultComputeRuntime(languages: ReadonlyArray<ComputeLanguageRuntimeInspection>) {
+  const language = languages.find((candidate) => candidate.enabled);
+  const candidate = language?.runtimes[0];
+  return candidate?.verification.readiness === "ready" ? candidate : null;
+}
 
 import {
   clampScientSplitFraction,

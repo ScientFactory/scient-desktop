@@ -1,4 +1,4 @@
-import { ComputeLanguageId } from "@t3tools/contracts";
+import { ComputeLanguageId, type ComputeLanguageRuntimeInspection } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
@@ -12,6 +12,7 @@ import {
   nudgePythonComputeSplit,
   pythonComputeSplitFromPointer,
   resolvePythonRuntimeToolbarState,
+  defaultComputeRuntime,
 } from "./pythonComputeSurfaceModel";
 
 const pythonRuntime = {
@@ -24,6 +25,43 @@ const pythonRuntime = {
 } as const;
 
 describe("python compute surface model", () => {
+  it("does not skip an unavailable default in favor of an unrelated ready Python", () => {
+    const candidate = (source: "managed" | "path", ready: boolean) => ({
+      profile: { ...pythonRuntime, source, executable: `/${source}/python` },
+      verification: {
+        profile: { ...pythonRuntime, source, executable: `/${source}/python` },
+        readiness: ready ? ("ready" as const) : ("missing-requirement" as const),
+        missingRequirements: ready ? [] : ["ipykernel"],
+        packages: [],
+        message: null,
+      },
+      toolkits: [],
+    });
+    const language: ComputeLanguageRuntimeInspection = {
+      descriptor: {
+        languageId: pythonRuntime.languageId,
+        displayName: "Python",
+        sourceExtensions: [".py"],
+        capabilities: [],
+      },
+      enabled: true,
+      configuredExecutable: null,
+      managedRuntime: null,
+      toolkits: [],
+      runtimes: [candidate("managed", false), candidate("path", true)],
+    };
+    expect(defaultComputeRuntime([language])).toBeNull();
+    expect(
+      defaultComputeRuntime([
+        { ...language, runtimes: [candidate("managed", true), candidate("path", true)] },
+      ])?.profile.source,
+    ).toBe("managed");
+    // Deliberate removal restores existing-runtime precedence.
+    expect(
+      defaultComputeRuntime([{ ...language, runtimes: [candidate("path", true)] }])?.profile.source,
+    ).toBe("path");
+    expect(defaultComputeRuntime([{ ...language, enabled: false }])).toBeNull();
+  });
   it("normalizes persisted modes and split ratios", () => {
     expect(normalizePythonComputeView("results")).toBe("results");
     expect(normalizePythonComputeView("console")).toBe("code");

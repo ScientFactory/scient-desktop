@@ -37,7 +37,10 @@ import {
   type PythonCodeSlice,
   type PythonTextRange,
 } from "./pythonCells";
-import { resolvePythonRuntimeToolbarState } from "./pythonComputeSurfaceModel";
+import {
+  defaultComputeRuntime,
+  resolvePythonRuntimeToolbarState,
+} from "./pythonComputeSurfaceModel";
 
 type PythonRunKind = "selection" | "cell" | "file";
 
@@ -130,9 +133,11 @@ export const PythonFileComputeActions = forwardRef<
   }, [events.data?.sessions, sessions.data]);
   const readyPython = useMemo(
     () =>
-      runtimes.data?.languages
-        .find((language) => language.descriptor.languageId === "python" && language.enabled)
-        ?.runtimes.find((candidate) => candidate.verification.readiness === "ready") ?? null,
+      defaultComputeRuntime(
+        runtimes.data?.languages.filter(
+          (language) => language.descriptor.languageId === "python",
+        ) ?? [],
+      ),
     [runtimes.data],
   );
   const activePython =
@@ -175,16 +180,8 @@ export const PythonFileComputeActions = forwardRef<
       if (!isAtomCommandInterrupted(result)) reportFailure("Unable to refresh Python", result);
       return;
     }
-    refreshRuntimeInspection();
     refreshSessions();
-  }, [
-    props.cwd,
-    props.environmentId,
-    refreshRuntimes,
-    refreshing,
-    refreshRuntimeInspection,
-    refreshSessions,
-  ]);
+  }, [props.cwd, props.environmentId, refreshRuntimes, refreshing, refreshSessions]);
 
   const switchPython = useCallback(async () => {
     if (switchTarget === null || switching) return;
@@ -250,7 +247,8 @@ export const PythonFileComputeActions = forwardRef<
             cwd: props.cwd,
             sessionId: ComputeSessionId.make(randomUUID()),
             languageId: readyPython.profile.languageId,
-            executable: readyPython.profile.executable,
+            // Resolve the current default on the server; a cached toolbar is not a user override.
+            executable: null,
           },
         });
         if (started._tag !== "Success") {
@@ -355,12 +353,13 @@ export const PythonFileComputeActions = forwardRef<
               size="xs"
               variant="ghost-muted"
               className="-ms-1 h-6 min-w-0 max-w-full px-1 text-[11px] font-normal"
-              title={
-                missingScientificPackages.length === 0
-                  ? "Open Scientific Computing settings"
-                  : `Missing scientific packages: ${missingScientificPackages.join(", ")}. Open Scientific Computing settings.`
+              title={`${liveSession?.runtime?.executable ?? readyPython?.profile.executable ?? "Python is unavailable"}. ${missingScientificPackages.length > 0 ? `Missing scientific packages: ${missingScientificPackages.join(", ")}. ` : ""}Open Scientific Computing settings`}
+              render={
+                <Link
+                  to="/settings/scientific-computing"
+                  search={{ environmentId: props.environmentId }}
+                />
               }
-              render={<Link to="/settings/scientific-computing" />}
             >
               <span className="truncate">{runtimeToolbar.label}</span>
             </Button>
