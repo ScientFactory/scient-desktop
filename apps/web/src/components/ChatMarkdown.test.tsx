@@ -104,6 +104,23 @@ describe("ChatMarkdown file option chips", () => {
   });
 });
 
+describe("ChatMarkdown standard web links", () => {
+  it("renders canonical citation Markdown as a clickable link beside RTL text", () => {
+    const html = renderToStaticMarkup(
+      <ChatMarkdown
+        cwd="/tmp/project"
+        text={'לפני [1](<https://example.com/guideline> "Clinical guideline") אחרי'}
+      />,
+    );
+
+    expect(html).toContain('href="https://example.com/guideline"');
+    expect(html).toMatch(/>1<\/span><\/a>/u);
+    expect(html).toContain("לפני");
+    expect(html).toContain("אחרי");
+    expect(html).not.toContain("\uE200cite\uE202");
+  });
+});
+
 describe("shouldUseMarkdownFileBrowserPrimaryAction", () => {
   it("uses the browser whenever the resolved file policy supplies it", () => {
     expect(

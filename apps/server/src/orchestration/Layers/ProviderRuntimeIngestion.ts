@@ -22,6 +22,7 @@ import {
   type OrchestrationThreadActivity,
   type ProviderRuntimeEvent,
   ProviderInstanceId,
+  type RuntimeCitationSource,
   PROVIDER_SEND_TURN_MAX_ATTACHMENTS,
 } from "@t3tools/contracts";
 import * as Cache from "effect/Cache";
@@ -64,6 +65,10 @@ import {
   materializeGeneratedImageAttachment,
 } from "../../generatedImageAttachments.ts";
 import { canReplaceThreadTitle } from "../threadTitles.ts";
+import {
+  canRenderProviderCitationMarkdown,
+  renderProviderCitationMarkdown,
+} from "../providerCitationMarkdown.ts";
 
 const providerTurnKey = (threadId: ThreadId, turnId: TurnId) => `${threadId}:${turnId}`;
 const providerTaskKey = (threadId: ThreadId, taskId: string) => `${threadId}:${taskId}`;
@@ -126,6 +131,8 @@ const TASK_DESCRIPTION_BY_TASK_CACHE_CAPACITY = 10_000;
 const TASK_DESCRIPTION_BY_TASK_TTL = Duration.minutes(120);
 const PENDING_GENERATED_IMAGES_CACHE_CAPACITY = 10_000;
 const PENDING_GENERATED_IMAGES_TTL = Duration.minutes(120);
+const CITATION_SOURCES_BY_TURN_CACHE_CAPACITY = 10_000;
+const CITATION_SOURCES_BY_TURN_TTL = Duration.minutes(120);
 const MAX_BUFFERED_ASSISTANT_CHARS = 24_000;
 const STRICT_PROVIDER_LIFECYCLE_GUARD = process.env.T3CODE_STRICT_PROVIDER_LIFECYCLE_GUARD !== "0";
 const decodeCodexSettingsOption = Schema.decodeUnknownOption(CodexSettings);
@@ -882,6 +889,9 @@ export function runtimeEventToActivities(
             ...(event.payload.status ? { status: event.payload.status } : {}),
             ...(event.payload.detail ? { detail: truncateDetail(event.payload.detail) } : {}),
             ...(event.payload.data !== undefined ? { data: event.payload.data } : {}),
+            ...(event.payload.citationSources !== undefined
+              ? { citationSources: event.payload.citationSources }
+              : {}),
             ...(event.payload.agentId ? { agentId: event.payload.agentId } : {}),
             ...(event.payload.parentToolUseId
               ? { parentToolUseId: event.payload.parentToolUseId }
@@ -991,6 +1001,40 @@ const make = Effect.gen(function* () {
         seenProvenanceKeys: new Set<string>(),
       }),
   });
+
+  const citationSourcesByTurnKey = yield* Cache.make<string, ReadonlyArray<RuntimeCitationSource>>({
+    capacity: CITATION_SOURCES_BY_TURN_CACHE_CAPACITY,
+    timeToLive: CITATION_SOURCES_BY_TURN_TTL,
+    lookup: () => Effect.succeed([]),
+  });
+
+  const rememberCitationSources = (
+    threadId: ThreadId,
+    turnId: TurnId,
+    incoming: ReadonlyArray<RuntimeCitationSource>,
+  ) =>
+    Cache.getOption(citationSourcesByTurnKey, providerTurnKey(threadId, turnId)).pipe(
+      Effect.flatMap((existingOption) => {
+        const byId = new Map(
+          Option.getOrElse(existingOption, (): ReadonlyArray<RuntimeCitationSource> => []).map(
+            (source) => [source.id, source] as const,
+          ),
+        );
+        for (const source of incoming) byId.set(source.id, source);
+        return Cache.set(
+          citationSourcesByTurnKey,
+          providerTurnKey(threadId, turnId),
+          Array.from(byId.values()),
+        );
+      }),
+    );
+
+  const getCitationSources = (threadId: ThreadId, turnId: TurnId) =>
+    Cache.getOption(citationSourcesByTurnKey, providerTurnKey(threadId, turnId)).pipe(
+      Effect.map((sources) =>
+        Option.getOrElse(sources, (): ReadonlyArray<RuntimeCitationSource> => []),
+      ),
+    );
 
   const rememberTaskDescription = (threadId: ThreadId, taskId: string, description: string) =>
     Cache.set(taskDescriptionByTaskKey, providerTaskKey(threadId, taskId), description);
@@ -1451,6 +1495,7 @@ const make = Effect.gen(function* () {
     hasProjectedMessage?: boolean;
     attachments?: ReadonlyArray<ChatAttachment>;
     noticeText?: string;
+    replacementText?: string;
   }) =>
     Effect.gen(function* () {
       const bufferedText = yield* takeBufferedAssistantText(input.messageId);
@@ -1460,20 +1505,22 @@ const make = Effect.gen(function* () {
           : (input.fallbackText?.trim().length ?? 0) > 0
             ? input.fallbackText!
             : "";
-      const text = input.noticeText
-        ? [primaryText, `> Note: ${input.noticeText}`]
-            .filter((part) => part.length > 0)
-            .join("\n\n")
-        : primaryText;
-      const hasRenderableText = hasRenderableAssistantText(text);
+      const appendNotice = (value: string) =>
+        input.noticeText
+          ? [value, `> Note: ${input.noticeText}`].filter((part) => part.length > 0).join("\n\n")
+          : value;
+      const deltaText = input.replacementText === undefined ? appendNotice(primaryText) : "";
+      const completionText =
+        input.replacementText === undefined ? undefined : appendNotice(input.replacementText);
+      const hasRenderableText = hasRenderableAssistantText(completionText ?? deltaText);
 
-      if (hasRenderableText) {
+      if (hasRenderableAssistantText(deltaText)) {
         yield* orchestrationEngine.dispatch({
           type: "thread.message.assistant.delta",
           commandId: yield* providerCommandId(input.event, input.finalDeltaCommandTag),
           threadId: input.threadId,
           messageId: input.messageId,
-          delta: text,
+          delta: deltaText,
           ...(input.turnId ? { turnId: input.turnId } : {}),
           createdAt: input.createdAt,
         });
@@ -1485,6 +1532,7 @@ const make = Effect.gen(function* () {
           commandId: yield* providerCommandId(input.event, input.commandTag),
           threadId: input.threadId,
           messageId: input.messageId,
+          ...(completionText !== undefined ? { text: completionText } : {}),
           ...(input.attachments !== undefined ? { attachments: input.attachments } : {}),
           ...(input.turnId ? { turnId: input.turnId } : {}),
           createdAt: input.createdAt,
@@ -1694,6 +1742,7 @@ const make = Effect.gen(function* () {
       const proposedPlanKeys = Array.from(yield* Cache.keys(bufferedProposedPlanById));
       const taskDescriptionKeys = Array.from(yield* Cache.keys(taskDescriptionByTaskKey));
       const generatedImageKeys = Array.from(yield* Cache.keys(pendingGeneratedImagesByTurnKey));
+      const citationSourceKeys = Array.from(yield* Cache.keys(citationSourcesByTurnKey));
       yield* Effect.forEach(
         turnKeys,
         (key) =>
@@ -1741,6 +1790,12 @@ const make = Effect.gen(function* () {
           key.startsWith(prefix)
             ? Cache.invalidate(pendingGeneratedImagesByTurnKey, key)
             : Effect.void,
+        { concurrency: 1 },
+      ).pipe(Effect.asVoid);
+      yield* Effect.forEach(
+        citationSourceKeys,
+        (key) =>
+          key.startsWith(prefix) ? Cache.invalidate(citationSourcesByTurnKey, key) : Effect.void,
         { concurrency: 1 },
       ).pipe(Effect.asVoid);
     });
@@ -2160,6 +2215,17 @@ const make = Effect.gen(function* () {
         }
       }
 
+      if (
+        event.type === "item.completed" &&
+        event.payload.citationSources !== undefined &&
+        event.payload.citationSources.length > 0
+      ) {
+        const citationTurnId = toTurnId(event.turnId);
+        if (citationTurnId) {
+          yield* rememberCitationSources(thread.id, citationTurnId, event.payload.citationSources);
+        }
+      }
+
       const assistantCompletion =
         event.type === "item.completed" && event.payload.itemType === "assistant_message"
           ? {
@@ -2167,6 +2233,7 @@ const make = Effect.gen(function* () {
                 `assistant:${event.itemId ?? event.turnId ?? event.eventId}`,
               ),
               fallbackText: event.payload.detail,
+              textCitations: event.payload.textCitations,
             }
           : undefined;
       const proposedPlanCompletion =
@@ -2211,6 +2278,21 @@ const make = Effect.gen(function* () {
             : undefined;
         const shouldApplyFallbackCompletionText =
           !existingAssistantMessage || existingAssistantMessage.text.length === 0;
+        const citationSources = turnId ? yield* getCitationSources(thread.id, turnId) : [];
+        const replacementText =
+          assistantCompletion.fallbackText !== undefined &&
+          assistantCompletion.textCitations !== undefined &&
+          assistantCompletion.textCitations.length > 0 &&
+          canRenderProviderCitationMarkdown({
+            citations: assistantCompletion.textCitations,
+            sources: citationSources,
+          })
+            ? renderProviderCitationMarkdown({
+                text: assistantCompletion.fallbackText,
+                citations: assistantCompletion.textCitations,
+                sources: citationSources,
+              })
+            : undefined;
 
         const shouldSkipRedundantCompletion =
           Option.isNone(activeAssistantMessageId) &&
@@ -2247,6 +2329,7 @@ const make = Effect.gen(function* () {
             ...(assistantCompletion.fallbackText !== undefined && shouldApplyFallbackCompletionText
               ? { fallbackText: assistantCompletion.fallbackText }
               : {}),
+            ...(replacementText !== undefined ? { replacementText } : {}),
           });
 
           if (turnId) {
@@ -2310,6 +2393,7 @@ const make = Effect.gen(function* () {
           });
           yield* clearAssistantMessageIdsForTurn(thread.id, turnId);
           yield* clearAssistantSegmentStateForTurn(thread.id, turnId);
+          yield* Cache.invalidate(citationSourcesByTurnKey, providerTurnKey(thread.id, turnId));
 
           yield* finalizeBufferedProposedPlan({
             event,
