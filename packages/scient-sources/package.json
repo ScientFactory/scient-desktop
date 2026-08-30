@@ -8,6 +8,10 @@
       "types": "./src/index.ts",
       "import": "./src/index.ts"
     },
+    "./material-selection": {
+      "types": "./src/materialSelection.ts",
+      "import": "./src/materialSelection.ts"
+    },
     "./store": {
       "types": "./src/store.ts",
       "import": "./src/store.ts"

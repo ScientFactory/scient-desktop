@@ -42,6 +42,13 @@ same Scient-owned panel. A source row opens details even when no attachment is
 present; an explicit PDF action opens a peer source-PDF surface. This keeps
 source identity and bibliographic information separate from document display
 without adding another host navigation concept or environment endpoint.
+Concrete material selection is centralized in
+`@scientfactory/scient-sources/material-selection`: one eligible PDF may be
+selected automatically, while several eligible PDFs require an explicit
+stable attachment ID. The details surface presents that choice instead of
+treating `attachments[0]` as architectural meaning. The same provider-neutral
+contract distinguishes absent, unsupported, missing, duplicate-ID, hash, and
+byte-length states for adapters without silently selecting another material.
 Normal local-PDF and Zotero intake use one user action after selection:
 preflight runs as part of the import pipeline, new items are imported
 immediately, and a single completed source opens in the existing details state.

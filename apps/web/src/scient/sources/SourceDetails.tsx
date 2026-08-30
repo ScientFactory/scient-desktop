@@ -3,10 +3,12 @@ import type {
   ScientSourceNoteUpdateResult,
   ScientSourcesOverviewResult,
 } from "@t3tools/contracts";
+import { selectScientSourceMaterial } from "@scientfactory/scient-sources/material-selection";
 import {
   AlertCircle,
   AlertTriangle,
   Check,
+  ChevronDown,
   ChevronLeft,
   Copy,
   ExternalLink,
@@ -631,7 +633,7 @@ export function SourceDetails(props: {
     record.issuedRaw || record.issuedYear || publication || record.publisher || record.language,
   );
   const externalUrl = safeSourceExternalUrl(record.url);
-  const pdf = record.attachments[0] ?? null;
+  const pdfSelection = selectScientSourceMaterial({ materials: record.attachments });
   const identifiers = [
     ...new Map(
       record.identifiers.map((identifier) => [
@@ -694,21 +696,50 @@ export function SourceDetails(props: {
           <Pencil />
           Edit
         </Button>
-        {pdf ? (
+        {pdfSelection._tag === "Selected" ? (
           <Button
             size="xs"
             variant="ghost"
             onClick={() =>
               props.onOpenPdf({
                 sourceId: record.sourceId,
-                attachmentId: pdf.attachmentId,
-                fileName: pdf.fileName,
+                attachmentId: pdfSelection.material.attachmentId,
+                fileName: pdfSelection.material.fileName,
               })
             }
           >
             <FileText />
             Open PDF
           </Button>
+        ) : pdfSelection._tag === "SeveralMaterials" ? (
+          <Menu>
+            <MenuTrigger
+              render={
+                <Button size="xs" variant="ghost" aria-label="Choose a PDF to open">
+                  <FileText />
+                  Open PDF
+                  <ChevronDown />
+                </Button>
+              }
+            />
+            <MenuPopup align="end" side="bottom" className="max-w-80 min-w-52">
+              {pdfSelection.materials.map((material) => (
+                <MenuItem
+                  key={material.attachmentId}
+                  onClick={() =>
+                    props.onOpenPdf({
+                      sourceId: record.sourceId,
+                      attachmentId: material.attachmentId,
+                      fileName: material.fileName,
+                    })
+                  }
+                >
+                  <FileText />
+                  <span className="truncate">{material.fileName}</span>
+                </MenuItem>
+              ))}
+            </MenuPopup>
+          </Menu>
         ) : null}
         <Menu>
           <ScientTooltip content="More source actions">
