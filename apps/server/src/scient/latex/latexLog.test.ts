@@ -34,6 +34,101 @@ const REFUSED_RERUN_TRANSCRIPT = [
 ].join("\n");
 
 describe("parseLatexLog", () => {
+  it("does not attach the next diagnostic or engine note to a file-line warning", () => {
+    expect(
+      parseLatexLog(
+        [
+          "warning: article.tex:92: Underfull A",
+          "warning: article.tex:116: Underfull B",
+          "note: rerunning TeX",
+          "article.tex:120: Undefined control sequence.",
+          "l.120 \\badcmd",
+          "Output written on article.pdf (1 page).",
+        ].join("\n"),
+      ),
+    ).toEqual([
+      { severity: "warning", file: "article.tex", line: 92, message: "Underfull A" },
+      { severity: "warning", file: "article.tex", line: 116, message: "Underfull B" },
+      {
+        severity: "error",
+        file: "article.tex",
+        line: 120,
+        message: "Undefined control sequence. l.120 \\badcmd",
+      },
+    ]);
+  });
+
+  it("joins wrapped messages without consuming indented diagnostics", () => {
+    expect(
+      parseLatexLog(
+        [
+          "LaTeX Warning: Reference missing",
+          "   on input line 42.",
+          "  warning: article.tex:43: A separate warning",
+          "    with a wrapped explanation.",
+          "  note: running another pass",
+          "Package hyperref Warning: Token not allowed",
+          "(hyperref)                in a PDF string.",
+        ].join("\n"),
+      ),
+    ).toEqual([
+      { severity: "warning", file: null, line: 42, message: "Reference missing on input line 42." },
+      {
+        severity: "warning",
+        file: "article.tex",
+        line: 43,
+        message: "A separate warning with a wrapped explanation.",
+      },
+      {
+        severity: "warning",
+        file: null,
+        line: null,
+        message: "Token not allowed (hyperref) in a PDF string.",
+      },
+    ]);
+  });
+
+  it("deduplicates repeated passes before applying the diagnostic budget", () => {
+    const repeated = "warning: ./article.tex:92: Missing character U+2014\n\n".repeat(205);
+    expect(parseLatexLog(`${repeated}article.tex:99: Real error\n\n`)).toEqual([
+      { severity: "warning", file: "article.tex", line: 92, message: "Missing character U+2014" },
+      { severity: "error", file: "article.tex", line: 99, message: "Real error" },
+    ]);
+  });
+
+  it("retains distinct locations, severities, and full messages when deduplicating", () => {
+    const prefix = "x".repeat(600);
+    const messages = [
+      "warning: ./article.tex:1: Same message",
+      "warning: article.tex:1: Same   message",
+      "warning: article.tex:2: Same message",
+      "error: article.tex:1: Same message",
+      "warning: other.tex:1: Same message",
+      `warning: article.tex:1: ${prefix} A`,
+      `warning: article.tex:1: ${prefix} B`,
+    ];
+    const diagnostics = parseLatexLog(messages.join("\n\n"));
+    expect(diagnostics).toHaveLength(6);
+    expect(diagnostics.every((diagnostic) => diagnostic.message.length <= 500)).toBe(true);
+    // Even when their displayed prefixes match, distinct full messages survive.
+    expect(diagnostics.at(-1)?.message).toBe(diagnostics.at(-2)?.message);
+  });
+
+  it("keeps late errors when distinct warnings already fill the budget", () => {
+    const warnings = Array.from(
+      { length: 205 },
+      (_, index) => `warning: article.tex:${index + 1}: Warning ${index}`,
+    ).join("\n\n");
+    const diagnostics = parseLatexLog(`${warnings}\n\narticle.tex:999: Real error\n`);
+    expect(diagnostics).toHaveLength(200);
+    expect(diagnostics.at(-1)).toEqual({
+      severity: "error",
+      file: "article.tex",
+      line: 999,
+      message: "Real error",
+    });
+  });
+
   it("parses file-line errors with one continuation line", () => {
     const transcript = [
       "This is pdfTeX, Version 3.141592653",
