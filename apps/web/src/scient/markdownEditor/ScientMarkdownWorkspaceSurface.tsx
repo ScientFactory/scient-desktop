@@ -111,14 +111,20 @@ export function ScientMarkdownWorkspaceSurface(props: ScientMarkdownWorkspaceSur
       source: props.source,
       revision: props.revision,
     });
+    const currentIntent = controller.createSaveIntent();
     if (result === "adopted") {
       // The queued draft is unchanged; rebase its revision so the debounced
       // write does not dead-end on a stale compare-and-swap.
-      const rebased = controller.createSaveIntent();
-      if (rebased) saveQueue.enqueue(rebased);
+      if (currentIntent) saveQueue.enqueue(currentIntent);
     } else if (result === "conflict") {
       saveQueue.pause();
       onExternalConflictRef.current({ source: props.source, revision: props.revision });
+    } else if (saveQueue.pending && !saveQueue.failureBlocked && currentIntent === null) {
+      // The project query is authoritative. If it now contains this draft,
+      // publication succeeded even when the renderer never received the
+      // command settlement; retire that stale lane instead of trapping the
+      // user behind an endless Saving state.
+      saveQueue.acknowledgePersisted(props.source);
     }
   }, [controller, props.revision, props.source, saveQueue]);
 

@@ -422,6 +422,7 @@ describe("ScientMarkdownEditorView", () => {
     link!.dispatchEvent(new MouseEvent("click", { bubbles: true, button: 0 }));
     expect(onOpenWikiLink).toHaveBeenCalledExactlyOnceWith("Methods");
     controller.setMode("write");
+    expect(link?.tabIndex).toBe(-1);
     link!.dispatchEvent(new MouseEvent("click", { bubbles: true, button: 0 }));
     expect(onOpenWikiLink).toHaveBeenCalledTimes(1);
     expect(
@@ -498,6 +499,7 @@ describe("ScientMarkdownEditorView", () => {
 
     controller.setMode("read");
     const currentLink = host.querySelector<HTMLElement>("[data-scient-markdown-wiki-link]");
+    expect(currentLink?.tabIndex).toBe(0);
     currentLink!.dispatchEvent(new KeyboardEvent("keydown", { bubbles: true, key: "Enter" }));
     expect(onOpenWikiLink).toHaveBeenCalledTimes(4);
 

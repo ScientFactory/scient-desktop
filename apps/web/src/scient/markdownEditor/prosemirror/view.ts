@@ -134,6 +134,7 @@ export class ScientMarkdownEditorView {
   private mode: MarkdownDocumentMode;
   private readonly listeners = new Set<() => void>();
   private readonly taskCheckboxes = new Set<HTMLInputElement>();
+  private readonly wikiLinks = new Set<HTMLElement>();
   private slashActiveIndex = 0;
   private findOpen = false;
   private findFocusRequest = 0;
@@ -591,6 +592,11 @@ export class ScientMarkdownEditorView {
           checkbox.disabled = !modeIsEditable(this.mode);
           return () => this.taskCheckboxes.delete(checkbox);
         },
+        registerWikiLink: (link) => {
+          this.wikiLinks.add(link);
+          link.tabIndex = modeIsEditable(this.mode) ? -1 : 0;
+          return () => this.wikiLinks.delete(link);
+        },
         ...(this.options.wikiLinkSuggestions
           ? { wikiLinkSuggestions: this.options.wikiLinkSuggestions }
           : {}),
@@ -681,6 +687,11 @@ export class ScientMarkdownEditorView {
     const editable = modeIsEditable(this.mode);
     this.taskCheckboxes.forEach((checkbox) => {
       checkbox.disabled = !editable;
+    });
+    this.wikiLinks.forEach((link) => {
+      // In an editable document, Tab belongs to text/list/table navigation;
+      // readers can still keyboard-activate links in read mode.
+      link.tabIndex = editable ? -1 : 0;
     });
   }
 

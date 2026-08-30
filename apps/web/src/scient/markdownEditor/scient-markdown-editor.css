@@ -26,8 +26,7 @@
   flex-direction: column;
 }
 
-.scient-markdown-editor-dock,
-.scient-markdown-table-toolbar {
+.scient-markdown-editor-dock {
   position: relative;
   z-index: 20;
   display: flex;
@@ -51,12 +50,6 @@
   overflow-x: auto;
   overflow-y: hidden;
   scrollbar-width: none;
-}
-
-.scient-markdown-table-toolbar {
-  min-height: 2.35rem;
-  flex-wrap: wrap;
-  overflow: visible;
 }
 
 /* The selection toolbar is a fixed overlay portaled to the body: selecting
@@ -110,6 +103,19 @@
   background: var(--accent);
   color: var(--accent-foreground);
   font-weight: 600;
+}
+
+/* Keep idle toolbar glyphs a touch quieter than their labels. Hovered and
+   active controls still inherit the full foreground contrast above. */
+.scient-markdown-command-button:not(:hover):not(:focus-visible):not([aria-pressed="true"]) > svg {
+  color: color-mix(in oklab, var(--contrast-muted-foreground) 80%, transparent);
+}
+
+/* Most line icons read more naturally beside the app's quieter chrome at a
+   slightly lighter stroke. Semantic weight stays intact for Bold, Code, and
+   Link, whose glyph shape depends on the original stroke. */
+.scient-markdown-command-button:not([data-preserve-icon-weight="true"]) > svg {
+  stroke-width: 1.75;
 }
 
 .scient-markdown-slash-menu button:hover,

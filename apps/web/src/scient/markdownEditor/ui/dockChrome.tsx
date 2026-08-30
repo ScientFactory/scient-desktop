@@ -40,6 +40,7 @@ export function DockButton(props: {
   readonly onClick: () => void;
   readonly active?: boolean | undefined;
   readonly disabled?: boolean | undefined;
+  readonly preserveIconWeight?: boolean | undefined;
 }) {
   return (
     <Tooltip>
@@ -50,6 +51,7 @@ export function DockButton(props: {
             className={dockButtonClass(props.active)}
             aria-label={props.label}
             {...(props.active === undefined ? {} : { "aria-pressed": props.active })}
+            {...(props.preserveIconWeight ? { "data-preserve-icon-weight": "true" } : {})}
             disabled={props.disabled}
             onMouseDown={(event) => event.preventDefault()}
             onClick={props.onClick}

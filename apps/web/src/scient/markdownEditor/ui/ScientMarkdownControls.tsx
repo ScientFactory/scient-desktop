@@ -166,6 +166,7 @@ function CommandButton(props: {
   readonly label: string;
   readonly icon: ReactNode;
   readonly disabled?: boolean;
+  readonly preserveIconWeight?: boolean;
 }) {
   return (
     <DockButton
@@ -173,6 +174,7 @@ function CommandButton(props: {
       icon={props.icon}
       active={props.active}
       disabled={props.disabled}
+      preserveIconWeight={props.preserveIconWeight}
       onClick={() => props.controller.execute(props.command)}
     />
   );
@@ -615,6 +617,7 @@ function LinkEditor({
                   type="button"
                   className={dockButtonClass(active)}
                   aria-label="Add or edit link"
+                  data-preserve-icon-weight="true"
                 >
                   <Link2 className="size-4" />
                 </button>
@@ -667,19 +670,13 @@ function LinkEditor({
   );
 }
 
-function TableMoreControl({ controller }: { readonly controller: ScientMarkdownEditorView }) {
+function TableMenuItems({ controller }: { readonly controller: ScientMarkdownEditorView }) {
   const execute = (command: ScientMarkdownCommand) => {
     controller.execute(command);
   };
 
   return (
-    <DockMenu
-      label="More table actions"
-      icon={<Ellipsis className="size-4" />}
-      chevron={false}
-      align="end"
-      popupClassName="w-48"
-    >
+    <>
       <MenuItem onClick={() => execute("add-row-before")}>
         <ArrowUpToLine />
         <span>Add row above</span>
@@ -710,6 +707,19 @@ function TableMoreControl({ controller }: { readonly controller: ScientMarkdownE
         <Split />
         <span>Split cell</span>
       </MenuItem>
+      <MenuSeparator />
+      <MenuItem onClick={() => execute("align-column-left")}>
+        <AlignLeft />
+        <span>Align column left</span>
+      </MenuItem>
+      <MenuItem onClick={() => execute("align-column-center")}>
+        <AlignCenter />
+        <span>Align column center</span>
+      </MenuItem>
+      <MenuItem onClick={() => execute("align-column-right")}>
+        <AlignRight />
+        <span>Align column right</span>
+      </MenuItem>
       <MenuItem onClick={() => execute("align-column-default")}>
         <Eraser />
         <span>Clear column alignment</span>
@@ -727,7 +737,63 @@ function TableMoreControl({ controller }: { readonly controller: ScientMarkdownE
         <Trash2 />
         <span>Delete table</span>
       </MenuItem>
-    </DockMenu>
+    </>
+  );
+}
+
+function TableActions({
+  controller,
+  snapshot,
+}: {
+  readonly controller: ScientMarkdownEditorView;
+  readonly snapshot: ScientMarkdownEditorSnapshot;
+}) {
+  return (
+    <span className="flex shrink-0 items-center gap-0.5" role="group" aria-label="Table actions">
+      <CommandButton
+        controller={controller}
+        command="add-row-after"
+        label="Add row below"
+        icon={<BetweenHorizontalEnd className="size-4" />}
+      />
+      <CommandButton
+        controller={controller}
+        command="add-column-after"
+        label="Add column after"
+        icon={<BetweenVerticalEnd className="size-4" />}
+      />
+      <DockDivider />
+      <CommandButton
+        controller={controller}
+        command="align-column-left"
+        label="Align column left"
+        icon={<AlignLeft className="size-4" />}
+        active={snapshot.tableAlignment === "left"}
+      />
+      <CommandButton
+        controller={controller}
+        command="align-column-center"
+        label="Align column center"
+        icon={<AlignCenter className="size-4" />}
+        active={snapshot.tableAlignment === "center"}
+      />
+      <CommandButton
+        controller={controller}
+        command="align-column-right"
+        label="Align column right"
+        icon={<AlignRight className="size-4" />}
+        active={snapshot.tableAlignment === "right"}
+      />
+      <DockMenu
+        label="More table actions"
+        icon={<Ellipsis className="size-4" />}
+        chevron={false}
+        align="end"
+        popupClassName="w-48"
+      >
+        <TableMenuItems controller={controller} />
+      </DockMenu>
+    </span>
   );
 }
 
@@ -845,6 +911,7 @@ function SelectionToolbar({
         command="bold"
         label="Bold (Cmd+B)"
         icon={<Bold className="size-4" strokeWidth={2.5} />}
+        preserveIconWeight
         active={active.has("strong")}
       />
       <CommandButton
@@ -859,6 +926,7 @@ function SelectionToolbar({
         command="inline-code"
         label="Inline Code"
         icon={<Code className="size-4" />}
+        preserveIconWeight
         active={active.has("code")}
       />
       <LinkEditor controller={controller} active={active.has("link")} />
@@ -899,9 +967,17 @@ export function ScientMarkdownControls({
   const slashItems =
     snapshot.slashQuery === null ? [] : filterScientMarkdownSlashCommands(snapshot.slashQuery);
 
+  useEffect(() => {
+    // Entering a table reveals its contextual commands in the existing dock.
+    // A later manual collapse stays respected until the cursor leaves and
+    // re-enters a table; movement within cells never resizes the document.
+    if (snapshot.editable && snapshot.inTable) onExpandedChange(true);
+  }, [onExpandedChange, snapshot.editable, snapshot.inTable]);
+
   // Overflow order: direction goes first, then insert, history (Cmd+Z covers
-  // it), lists, and style. Core inline formatting is pinned and never leaves
-  // the bar; displaced groups surface inside the unified More-actions menu.
+  // it), lists, and style. Contextual table tools outlast those groups; core
+  // inline formatting is pinned. Displaced groups keep every action in the
+  // existing More-actions menu without adding another toolbar row.
   const dockGroups: readonly DockGroup[] = !snapshot.editable
     ? []
     : [
@@ -956,6 +1032,7 @@ export function ScientMarkdownControls({
                 command="bold"
                 label="Bold (Cmd+B)"
                 icon={<Bold className="size-4" strokeWidth={2.5} />}
+                preserveIconWeight
                 active={active.has("strong")}
               />
               <CommandButton
@@ -977,6 +1054,7 @@ export function ScientMarkdownControls({
                 command="inline-code"
                 label="Inline Code (Cmd+E)"
                 icon={<Code className="size-4" />}
+                preserveIconWeight
                 active={active.has("code")}
               />
               <LinkEditor controller={controller} active={active.has("link")} />
@@ -1026,6 +1104,23 @@ export function ScientMarkdownControls({
           overflowLabel: "Text direction",
           overflow: <DirectionMenuItems controller={controller} snapshot={snapshot} />,
         },
+        ...(snapshot.inTable
+          ? [
+              {
+                id: "table",
+                priority: 60,
+                estimatedWidth: 204,
+                bar: (
+                  <>
+                    <DockDivider />
+                    <TableActions controller={controller} snapshot={snapshot} />
+                  </>
+                ),
+                overflowLabel: "Table",
+                overflow: <TableMenuItems controller={controller} />,
+              },
+            ]
+          : []),
       ];
 
   return (
@@ -1047,50 +1142,6 @@ export function ScientMarkdownControls({
         recentWikiLinkPaths={recentWikiLinkPaths}
         onWikiLinkSelected={onWikiLinkSelected}
       />
-
-      {snapshot.editable && snapshot.inTable ? (
-        <div
-          className="scient-markdown-table-toolbar flex items-center gap-1 border-b border-border/80 bg-muted/30 px-2 py-1 text-xs"
-          role="toolbar"
-          aria-label="Table actions"
-        >
-          <CommandButton
-            controller={controller}
-            command="add-row-after"
-            label="Add row below"
-            icon={<BetweenHorizontalEnd className="size-4" />}
-          />
-          <CommandButton
-            controller={controller}
-            command="add-column-after"
-            label="Add column after"
-            icon={<BetweenVerticalEnd className="size-4" />}
-          />
-          <DockDivider />
-          <CommandButton
-            controller={controller}
-            command="align-column-left"
-            label="Align column left"
-            icon={<AlignLeft className="size-4" />}
-            active={snapshot.tableAlignment === "left"}
-          />
-          <CommandButton
-            controller={controller}
-            command="align-column-center"
-            label="Align column center"
-            icon={<AlignCenter className="size-4" />}
-            active={snapshot.tableAlignment === "center"}
-          />
-          <CommandButton
-            controller={controller}
-            command="align-column-right"
-            label="Align column right"
-            icon={<AlignRight className="size-4" />}
-            active={snapshot.tableAlignment === "right"}
-          />
-          <TableMoreControl controller={controller} />
-        </div>
-      ) : null}
 
       {snapshot.editable && snapshot.slashQuery !== null && slashItems.length > 0 ? (
         <div

@@ -13,6 +13,7 @@ export type { ScientMarkdownImageSourceResolver } from "./imageNodeView";
 export interface ScientMarkdownNodeViewOptions {
   readonly onOpenWikiLink?: (target: string) => void;
   readonly registerTaskCheckbox?: (checkbox: HTMLInputElement) => () => void;
+  readonly registerWikiLink?: (link: HTMLElement) => () => void;
   readonly resolveImageSource?: ScientMarkdownImageSourceResolver;
   readonly wikiLinkSuggestions?: () => ReadonlyArray<string>;
   readonly wikiLinkTargetExists?: (target: string) => boolean | null;
@@ -41,6 +42,7 @@ export function buildScientMarkdownNodeViews(
         options.onOpenWikiLink,
         options.wikiLinkSuggestions,
         options.wikiLinkTargetExists,
+        options.registerWikiLink,
       ),
   };
 }

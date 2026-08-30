@@ -28,11 +28,24 @@ describe("dock chrome overflow contract", () => {
     );
   });
 
-  it("renders dock icons in the app's muted control color like every other icon button", () => {
-    // App chrome (components/ui/button.tsx) resolves icon buttons to
-    // text-muted-foreground → --contrast-muted-foreground; the dock must match.
+  it("uses one fixed-height dock instead of adding a contextual table row", () => {
+    expect(cssSource).not.toContain(".scient-markdown-table-toolbar");
+    expect(cssSource).toMatch(
+      /\.scient-markdown-editor-dock \{[^}]*height: 2\.5rem[^}]*flex-wrap: nowrap/su,
+    );
+  });
+
+  it("uses the app control color and subtly softens only idle toolbar glyphs", () => {
+    // Labels retain the normal app-control contrast. The direct SVG glyph gets
+    // a small idle-only reduction without changing hover or active states.
     expect(cssSource).toMatch(
       /\.scient-markdown-command-button,\s*\.scient-markdown-slash-menu button \{[^}]*color: var\(--contrast-muted-foreground\)/su,
+    );
+    expect(cssSource).toMatch(
+      /\.scient-markdown-command-button:not\(:hover\):not\(:focus-visible\):not\(\[aria-pressed="true"\]\) > svg \{[^}]*color: color-mix\(in oklab, var\(--contrast-muted-foreground\) 80%, transparent\)/su,
+    );
+    expect(cssSource).toMatch(
+      /\.scient-markdown-command-button:not\(\[data-preserve-icon-weight="true"\]\) > svg \{[^}]*stroke-width: 1\.75/su,
     );
   });
 });

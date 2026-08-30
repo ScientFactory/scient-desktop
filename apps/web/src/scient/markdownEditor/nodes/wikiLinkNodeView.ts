@@ -14,6 +14,7 @@ class ScientWikiLinkNodeView implements NodeView {
   private pendingOpen: ReturnType<typeof globalThis.setTimeout> | null = null;
   private pointerOrigin: { readonly x: number; readonly y: number } | null = null;
   private pointerDragged = false;
+  private readonly unregisterEditability: (() => void) | undefined;
 
   constructor(
     node: ProseMirrorNode,
@@ -22,11 +23,12 @@ class ScientWikiLinkNodeView implements NodeView {
     private readonly onOpen: ((target: string) => void) | undefined,
     private readonly getSuggestions: (() => ReadonlyArray<string>) | undefined,
     private readonly targetExists: ((target: string) => boolean | null) | undefined,
+    registerWikiLink: ((link: HTMLElement) => () => void) | undefined,
   ) {
     this.node = node;
     this.dom.className = "scient-markdown-wiki-link";
     this.dom.contentEditable = "false";
-    this.dom.tabIndex = 0;
+    this.dom.tabIndex = view.editable ? -1 : 0;
     this.dom.setAttribute("role", "link");
     this.dom.setAttribute("data-scient-markdown-wiki-link", "true");
     this.label.className = "scient-markdown-wiki-link-label";
@@ -44,6 +46,7 @@ class ScientWikiLinkNodeView implements NodeView {
     this.dom.addEventListener("click", this.handleClick);
     this.dom.addEventListener("keydown", this.handleLinkKeyDown);
     this.dom.append(this.sourceEditor, this.suggestions);
+    this.unregisterEditability = registerWikiLink?.(this.dom);
     this.render();
   }
 
@@ -87,6 +90,7 @@ class ScientWikiLinkNodeView implements NodeView {
     this.dom.removeEventListener("mousedown", this.handleMouseDown);
     this.dom.removeEventListener("click", this.handleClick);
     this.dom.removeEventListener("keydown", this.handleLinkKeyDown);
+    this.unregisterEditability?.();
     this.stopTrackingPointer();
   }
 
@@ -218,6 +222,7 @@ class ScientWikiLinkNodeView implements NodeView {
   }
 
   private render(): void {
+    this.dom.tabIndex = this.view.editable ? -1 : 0;
     const target = String(this.node.attrs.target);
     this.label.textContent = String(this.node.attrs.label ?? target);
     this.dom.setAttribute("data-target", target);
@@ -243,6 +248,15 @@ export function createScientWikiLinkNodeView(
   onOpen?: (target: string) => void,
   getSuggestions?: () => ReadonlyArray<string>,
   targetExists?: (target: string) => boolean | null,
+  registerWikiLink?: (link: HTMLElement) => () => void,
 ): NodeView {
-  return new ScientWikiLinkNodeView(node, view, getPos, onOpen, getSuggestions, targetExists);
+  return new ScientWikiLinkNodeView(
+    node,
+    view,
+    getPos,
+    onOpen,
+    getSuggestions,
+    targetExists,
+    registerWikiLink,
+  );
 }

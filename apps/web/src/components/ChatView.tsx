@@ -3945,14 +3945,33 @@ function ChatViewContent(props: ChatViewProps) {
     },
     [activeThreadRef, runAfterPendingFileSave],
   );
-  const openFileSourceSurface = useCallback(
+  const openFileSourceSurfaceNow = useCallback(
     (relativePath: string, line?: number) => {
       if (!activeThreadRef || activeWorkspaceRoot === undefined) return;
+      useRightPanelStore.getState().openFile(activeThreadRef, relativePath, line);
+    },
+    [activeThreadRef, activeWorkspaceRoot],
+  );
+  const openFileSurfaceNow = useScientFileOpening({
+    threadRef: activeThreadRef,
+    workspaceRoot: activeWorkspaceRoot ?? null,
+    openSource: openFileSourceSurfaceNow,
+  });
+  const openFileSourceSurface = useCallback(
+    (relativePath: string, line?: number) => {
       runAfterPendingFileSave(`file:${relativePath}`, () => {
-        useRightPanelStore.getState().openFile(activeThreadRef, relativePath, line);
+        openFileSourceSurfaceNow(relativePath, line);
       });
     },
-    [activeThreadRef, activeWorkspaceRoot, runAfterPendingFileSave],
+    [openFileSourceSurfaceNow, runAfterPendingFileSave],
+  );
+  const openFileSurface = useCallback(
+    (relativePath: string) => {
+      runAfterPendingFileSave(`file:${relativePath}`, () => {
+        openFileSurfaceNow(relativePath);
+      });
+    },
+    [openFileSurfaceNow, runAfterPendingFileSave],
   );
   const handleLatexPresentationRequestHandled = useCallback(
     (relativePath: string, request: LatexFilePresentationRequest) => {
@@ -3963,11 +3982,6 @@ function ChatViewContent(props: ChatViewProps) {
     },
     [activeThreadRef],
   );
-  const openFileSurface = useScientFileOpening({
-    threadRef: activeThreadRef,
-    workspaceRoot: activeWorkspaceRoot ?? null,
-    openSource: openFileSourceSurface,
-  });
   // The thread's own change request, placed against the project it belongs to. Without a
   // project there is nothing to resolve it against, so the caller falls back to the browser.
   const linkedThreadPullRequest = activeThread?.linkedPullRequest ?? null;

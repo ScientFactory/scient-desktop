@@ -77,6 +77,11 @@ describe("Scient Markdown file-preview seam", () => {
     expect(rightPanelTabsSource).not.toMatch(
       /usePendingSurface|pendingSurfaceBlocks|Finishing the file save/gu,
     );
+    expect(chatViewSource).toContain("const openFileSourceSurfaceNow = useCallback(");
+    expect(chatViewSource).toContain("const openFileSurfaceNow = useScientFileOpening({");
+    expect(chatViewSource).toMatch(
+      /const openFileSurface = useCallback\([\s\S]*?runAfterPendingFileSave\(`file:\$\{relativePath\}`,[\s\S]*?openFileSurfaceNow\(relativePath\)/u,
+    );
   });
 
   it("limits workspace lifecycle UI to one owned create and rename mount", () => {

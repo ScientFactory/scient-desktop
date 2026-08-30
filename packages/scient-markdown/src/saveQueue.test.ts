@@ -7,7 +7,10 @@ const intent = (source: string, editVersion: number, expectedRevision = "r0") =>
   ({ source, editVersion, expectedRevision }) satisfies MarkdownSaveIntent;
 
 describe("MarkdownSaveQueue", () => {
-  afterEach(() => vi.useRealTimers());
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.restoreAllMocks();
+  });
 
   it("coalesces rapid edits and persists only the latest intent after debounce", async () => {
     vi.useFakeTimers();
@@ -58,6 +61,8 @@ describe("MarkdownSaveQueue", () => {
     await new Promise<void>((resolve) => queueMicrotask(resolve));
     expect(persist).toHaveBeenCalledOnce();
     queue.enqueue(intent("two", 2));
+    expect(queue.acknowledgePersisted("one")).toBe(false);
+    expect(queue.pending).toBe(true);
     resolveFirst!({ revision: "r1" });
     await flushing;
 
@@ -175,6 +180,119 @@ describe("MarkdownSaveQueue", () => {
     expect(queue.pending).toBe(false);
     expect(queue.failureBlocked).toBe(false);
     expect(onFailure).not.toHaveBeenCalled();
+  });
+
+  it("retires an unsettled command after the authoritative file observes its draft", async () => {
+    let resolveWrite: ((value: { readonly revision: string }) => void) | null = null;
+    const first = new Promise<{ readonly revision: string }>((resolve) => {
+      resolveWrite = resolve;
+    });
+    const persist = vi
+      .fn<(value: MarkdownSaveIntent) => Promise<{ readonly revision: string }>>()
+      .mockImplementationOnce(() => first)
+      .mockResolvedValueOnce({ revision: "r2" });
+    const pending: boolean[] = [];
+    const confirmed = vi.fn();
+    const queue = new MarkdownSaveQueue({
+      debounceMs: 0,
+      persist,
+      onPendingChange: (value) => pending.push(value),
+      onConfirmed: confirmed,
+      onFailure: vi.fn(),
+    });
+
+    queue.enqueue(intent("one", 1));
+    const firstFlush = queue.flush();
+    await new Promise<void>((resolve) => queueMicrotask(resolve));
+    expect(persist).toHaveBeenCalledOnce();
+
+    expect(queue.acknowledgePersisted("one")).toBe(true);
+    expect(queue.pending).toBe(false);
+    expect(pending.at(-1)).toBe(false);
+
+    // A subsequent edit starts a new serial lane immediately. The retired
+    // command's late response cannot confirm or clear that newer edit.
+    queue.enqueue(intent("two", 2, "r1"));
+    const flushing = queue.flush();
+    await flushing;
+    expect(persist).toHaveBeenCalledTimes(2);
+    expect(persist.mock.calls[1]?.[0]).toEqual(intent("two", 2, "r1"));
+    expect(confirmed).toHaveBeenCalledExactlyOnceWith(intent("two", 2, "r1"), {
+      revision: "r2",
+    });
+
+    resolveWrite!({ revision: "late-r1" });
+    await firstFlush;
+    expect(confirmed).toHaveBeenCalledTimes(1);
+    expect(queue.pending).toBe(false);
+  });
+
+  it("ignores a retired command failure while a newer edit is still saving", async () => {
+    let rejectFirst: ((error: Error) => void) | null = null;
+    let resolveSecond: ((value: { readonly revision: string }) => void) | null = null;
+    const first = new Promise<{ readonly revision: string }>((_resolve, reject) => {
+      rejectFirst = reject;
+    });
+    const second = new Promise<{ readonly revision: string }>((resolve) => {
+      resolveSecond = resolve;
+    });
+    const persist = vi
+      .fn<(value: MarkdownSaveIntent) => Promise<{ readonly revision: string }>>()
+      .mockImplementationOnce(() => first)
+      .mockImplementationOnce(() => second);
+    const pending = vi.fn();
+    const onFailure = vi.fn();
+    const queue = new MarkdownSaveQueue({
+      debounceMs: 0,
+      persist,
+      onPendingChange: pending,
+      onConfirmed: vi.fn(),
+      onFailure,
+    });
+
+    queue.enqueue(intent("one", 1));
+    const firstFlush = queue.flush();
+    queue.acknowledgePersisted("one");
+    queue.enqueue(intent("two", 2, "r1"));
+    const secondFlush = queue.flush();
+
+    rejectFirst!(new Error("late transport interruption"));
+    await new Promise<void>((resolve) => queueMicrotask(resolve));
+    expect(onFailure).not.toHaveBeenCalled();
+    expect(queue.pending).toBe(true);
+    expect(queue.failureBlocked).toBe(false);
+    expect(pending).toHaveBeenLastCalledWith(true);
+
+    resolveSecond!({ revision: "r2" });
+    await Promise.all([firstFlush, secondFlush]);
+    expect(persist).toHaveBeenCalledTimes(2);
+    expect(queue.pending).toBe(false);
+    expect(pending).toHaveBeenLastCalledWith(false);
+  });
+
+  it("does not let a host callback exception strand the save lane", async () => {
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const pending: boolean[] = [];
+    const queue = new MarkdownSaveQueue({
+      debounceMs: 0,
+      persist: vi.fn(async () => ({ revision: "r1" })),
+      onPendingChange: (value) => pending.push(value),
+      onConfirmed: () => {
+        throw new Error("host callback failed");
+      },
+      onFailure: vi.fn(),
+    });
+
+    queue.enqueue(intent("saved", 1));
+    await queue.flush();
+
+    expect(queue.pending).toBe(false);
+    expect(queue.failureBlocked).toBe(false);
+    expect(pending.at(-1)).toBe(false);
+    expect(consoleError).toHaveBeenCalledWith(
+      "MarkdownSaveQueue onConfirmed callback failed:",
+      expect.any(Error),
+    );
   });
 
   it("holds a queued write while paused, and a flush still attempts the latest draft", async () => {

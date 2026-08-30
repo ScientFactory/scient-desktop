@@ -1,4 +1,5 @@
 // @effect-diagnostics globalTimers:off -- Framework-neutral UI debounce lane; the caller injects all persistence effects.
+// @effect-diagnostics globalConsole:off -- Report host notification defects without importing an Effect runtime into the framework-neutral queue.
 import type { MarkdownSaveIntent } from "./session.ts";
 
 export interface MarkdownSaveResult {
@@ -17,6 +18,12 @@ type MarkdownSaveResolution =
   | { readonly action: "discard" }
   | { readonly action: "retry"; readonly expectedRevision?: string };
 
+interface MarkdownSaveInFlight {
+  readonly id: number;
+  readonly intent: MarkdownSaveIntent;
+  readonly promise: Promise<void>;
+}
+
 /**
  * Serial revision-aware save lane for one Markdown document. It coalesces
  * rapid edits, rebases a queued newer edit after an in-flight confirmation,
@@ -26,8 +33,9 @@ export class MarkdownSaveQueue<A extends MarkdownSaveResult = MarkdownSaveResult
   private readonly options: MarkdownSaveQueueOptions<A>;
   private timer: ReturnType<typeof setTimeout> | null = null;
   private pendingIntent: MarkdownSaveIntent | null = null;
-  private inFlight: Promise<void> | null = null;
+  private inFlight: MarkdownSaveInFlight | null = null;
   private deferredResolution: MarkdownSaveResolution | null = null;
+  private nextPersistenceId = 1;
   private blocked = false;
   private disposed = false;
 
@@ -53,7 +61,7 @@ export class MarkdownSaveQueue<A extends MarkdownSaveResult = MarkdownSaveResult
       return;
     }
     this.pendingIntent = intent;
-    this.options.onPendingChange(true);
+    this.notifyCallback("onPendingChange", () => this.options.onPendingChange(true));
     if (!this.blocked && this.inFlight === null) this.schedule(this.options.debounceMs);
   }
 
@@ -64,7 +72,7 @@ export class MarkdownSaveQueue<A extends MarkdownSaveResult = MarkdownSaveResult
     this.blocked = false;
     while (this.pendingIntent !== null || this.inFlight !== null) {
       if (this.inFlight !== null) {
-        await this.inFlight;
+        await this.inFlight.promise;
         continue;
       }
       const stalled = this.pendingIntent;
@@ -103,7 +111,26 @@ export class MarkdownSaveQueue<A extends MarkdownSaveResult = MarkdownSaveResult
       this.deferredResolution = { action: "discard" };
       return;
     }
-    this.options.onPendingChange(false);
+    this.notifyCallback("onPendingChange", () => this.options.onPendingChange(false));
+  }
+
+  /**
+   * Retires a save after an authoritative file refresh has already observed
+   * the queue's current draft. This is stronger than a timer: the project
+   * read proves the bytes were published even if the command response was
+   * interrupted or never settled in the renderer.
+   */
+  acknowledgePersisted(source: string): boolean {
+    if (this.disposed) return false;
+    const latestIntent = this.pendingIntent ?? this.inFlight?.intent;
+    if (!latestIntent || latestIntent.source !== source) return false;
+    this.clearTimer();
+    this.pendingIntent = null;
+    this.inFlight = null;
+    this.deferredResolution = null;
+    this.blocked = false;
+    this.notifyCallback("onPendingChange", () => this.options.onPendingChange(false));
+    return true;
   }
 
   async dispose(options: { readonly flush?: boolean } = {}): Promise<void> {
@@ -131,14 +158,17 @@ export class MarkdownSaveQueue<A extends MarkdownSaveResult = MarkdownSaveResult
     if (this.blocked || this.inFlight !== null || this.pendingIntent === null) return;
     const intent = this.pendingIntent;
     this.pendingIntent = null;
-    this.inFlight = this.persist(intent).then((succeeded) => {
+    const persistenceId = this.nextPersistenceId;
+    this.nextPersistenceId += 1;
+    const promise = this.persist(intent, persistenceId).then((succeeded) => {
+      if (this.inFlight?.id !== persistenceId) return;
       this.inFlight = null;
       const resolution = this.deferredResolution;
       this.deferredResolution = null;
       if (resolution?.action === "discard") {
         this.pendingIntent = null;
         this.blocked = false;
-        this.options.onPendingChange(false);
+        this.notifyCallback("onPendingChange", () => this.options.onPendingChange(false));
         return;
       }
       if (resolution?.action === "retry") {
@@ -160,15 +190,20 @@ export class MarkdownSaveQueue<A extends MarkdownSaveResult = MarkdownSaveResult
           resolution?.action === "retry" || this.disposed ? 0 : this.options.debounceMs,
         );
       } else {
-        this.options.onPendingChange(false);
+        this.notifyCallback("onPendingChange", () => this.options.onPendingChange(false));
       }
     });
+    this.inFlight = { id: persistenceId, intent, promise };
   }
 
-  private async persist(intent: MarkdownSaveIntent): Promise<boolean> {
+  private async persist(intent: MarkdownSaveIntent, persistenceId: number): Promise<boolean> {
     try {
       const result = await this.options.persist(intent);
-      this.options.onConfirmed(intent, result);
+      // An authoritative refresh may have retired this command while its
+      // response was still pending. Its late result must not alter a newer
+      // save lane or re-confirm an older revision.
+      if (this.inFlight?.id !== persistenceId) return true;
+      this.notifyCallback("onConfirmed", () => this.options.onConfirmed(intent, result));
       if (
         this.pendingIntent !== null &&
         this.pendingIntent.editVersion > intent.editVersion &&
@@ -178,6 +213,7 @@ export class MarkdownSaveQueue<A extends MarkdownSaveResult = MarkdownSaveResult
       }
       return true;
     } catch (error) {
+      if (this.inFlight?.id !== persistenceId) return false;
       if (
         this.deferredResolution?.action !== "discard" &&
         (this.pendingIntent === null || intent.editVersion >= this.pendingIntent.editVersion)
@@ -188,8 +224,21 @@ export class MarkdownSaveQueue<A extends MarkdownSaveResult = MarkdownSaveResult
       // A resolution chosen while this write was running supersedes its
       // failure. Applying it after settlement avoids reopening a conflict the
       // user has already resolved or leaving the retry lane paused.
-      if (this.deferredResolution === null) this.options.onFailure(intent, error);
+      if (this.deferredResolution === null) {
+        this.notifyCallback("onFailure", () => this.options.onFailure(intent, error));
+      }
       return false;
+    }
+  }
+
+  private notifyCallback(name: string, callback: () => void): void {
+    try {
+      callback();
+    } catch (error) {
+      // Host callbacks are notifications, not persistence. A rendering or
+      // cache callback must never strand the serial lane after a completed
+      // write.
+      console.error(`MarkdownSaveQueue ${name} callback failed:`, error);
     }
   }
 }

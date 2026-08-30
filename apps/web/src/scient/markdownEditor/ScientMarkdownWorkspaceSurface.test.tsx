@@ -90,6 +90,19 @@ describe("ScientMarkdownWorkspaceSurface", () => {
     await act(() => handle!.click());
 
     expect(host.querySelector("[aria-label='Bold (Cmd+B)']")).not.toBeNull();
+    expect(
+      host.querySelector("[aria-label='Bold (Cmd+B)']")?.getAttribute("data-preserve-icon-weight"),
+    ).toBe("true");
+    expect(
+      host
+        .querySelector("[aria-label='Inline Code (Cmd+E)']")
+        ?.getAttribute("data-preserve-icon-weight"),
+    ).toBe("true");
+    expect(
+      host
+        .querySelector("[aria-label='Add or edit link']")
+        ?.getAttribute("data-preserve-icon-weight"),
+    ).toBe("true");
     expect(host.querySelector("[aria-label='Hide formatting tools']")).not.toBeNull();
   });
 
@@ -318,6 +331,8 @@ describe("ScientMarkdownWorkspaceSurface", () => {
     });
 
     const toolbar = host.querySelector("[aria-label='Table actions']");
+    expect(toolbar?.closest("[aria-label='Document actions']")).not.toBeNull();
+    expect(host.querySelector(".scient-markdown-table-toolbar")).toBeNull();
     const addRow = toolbar?.querySelector("[aria-label='Add row below']");
     const addColumn = toolbar?.querySelector("[aria-label='Add column after']");
     expect(addRow?.querySelector(".lucide-between-horizontal-end")).not.toBeNull();
@@ -340,8 +355,75 @@ describe("ScientMarkdownWorkspaceSurface", () => {
         "Add row below",
         "Add column before",
         "Add column after",
+        "Align column left",
+        "Align column center",
+        "Align column right",
       ]),
     );
+  });
+
+  it("keeps one dock and one document while the cursor moves into and out of a table", async () => {
+    vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+    const mount = vi.spyOn(ScientMarkdownEditorView.prototype, "mount");
+    const persist = vi.fn(async () => ({ revision: "r1" }));
+    const host = document.createElement("div");
+    document.body.append(host);
+    const root = createRoot(host);
+    roots.push(root);
+
+    await act(() =>
+      root.render(
+        <ScientMarkdownWorkspaceSurface
+          source={"Before\n\n| A | B |\n| --- | --- |\n| 1 | 2 |\n\nAfter\n"}
+          revision="r0"
+          ariaLabel="Table navigation fixture"
+          persist={persist}
+          onPendingChange={vi.fn()}
+          onSaveConfirmed={vi.fn()}
+          onSaveFailure={vi.fn()}
+          onExternalConflict={vi.fn()}
+        />,
+      ),
+    );
+    const controller = (mount.mock.instances as unknown as ScientMarkdownEditorView[]).find(
+      (candidate) => candidate.view?.dom.isConnected,
+    )!;
+    const view = controller.view!;
+    const dock = host.querySelector(".scient-markdown-editor-dock");
+    const documentShell = host.querySelector(".scient-markdown-document-shell");
+    const table = view.dom.querySelector("table");
+    const cellPositions: number[] = [];
+    view.state.doc.descendants((node, position) => {
+      if (node.type.spec.tableRole === "cell" || node.type.spec.tableRole === "header_cell") {
+        cellPositions.push(position + 2);
+      }
+    });
+    const move = (position: number) =>
+      act(() =>
+        view.dispatch(view.state.tr.setSelection(TextSelection.create(view.state.doc, position))),
+      );
+
+    await move(cellPositions[0]!);
+    expect(
+      host.querySelector("[aria-label='Table actions']")?.closest(".scient-markdown-editor-dock"),
+    ).toBe(dock);
+    await act(() =>
+      host.querySelector<HTMLButtonElement>("[aria-label='Hide formatting tools']")!.click(),
+    );
+    await move(cellPositions[1]!);
+    expect(host.querySelector("[aria-label='Show formatting tools']")).not.toBeNull();
+    expect(host.querySelector("[aria-label='Table actions']")).toBeNull();
+
+    await move(1);
+    await move(cellPositions[2]!);
+    expect(host.querySelector("[aria-label='Table actions']")).not.toBeNull();
+    await move(1);
+    expect(host.querySelector("[aria-label='Table actions']")).toBeNull();
+    expect(host.querySelectorAll(".scient-markdown-editor-dock")).toHaveLength(1);
+    expect(host.querySelector(".scient-markdown-editor-dock")).toBe(dock);
+    expect(host.querySelector(".scient-markdown-document-shell")).toBe(documentShell);
+    expect(view.dom.querySelector("table")).toBe(table);
+    expect(persist).not.toHaveBeenCalled();
   });
 
   it("opens find as a bounded row in document flow instead of a clipped popover", async () => {
@@ -408,6 +490,59 @@ describe("ScientMarkdownWorkspaceSurface", () => {
         ?.querySelector("[aria-label='Replace current match (Enter)'] svg")
         ?.classList.contains("size-3.5"),
     ).toBe(true);
+  });
+
+  it("clears pending when an authoritative refresh observes an unsettled saved draft", async () => {
+    vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+    vi.useFakeTimers();
+    let resolvePersist: ((value: { readonly revision: string }) => void) | null = null;
+    const persisted = new Promise<{ readonly revision: string }>((resolve) => {
+      resolvePersist = resolve;
+    });
+    const persist = vi.fn(() => persisted);
+    const onPendingChange = vi.fn();
+    const onSaveConfirmed = vi.fn();
+    const mount = vi.spyOn(ScientMarkdownEditorView.prototype, "mount");
+    const host = document.createElement("div");
+    document.body.append(host);
+    const root = createRoot(host);
+    roots.push(root);
+
+    const render = (source: string, revision: string) =>
+      root.render(
+        <ScientMarkdownWorkspaceSurface
+          source={source}
+          revision={revision}
+          ariaLabel="Save acknowledgement fixture"
+          persist={persist}
+          onPendingChange={onPendingChange}
+          onSaveConfirmed={onSaveConfirmed}
+          onSaveFailure={vi.fn()}
+          onExternalConflict={vi.fn()}
+        />,
+      );
+
+    await act(() => render("Before\n", "r0"));
+    const controller = (mount.mock.instances as unknown as ScientMarkdownEditorView[]).find(
+      (candidate) => candidate.view?.dom.isConnected,
+    );
+    expect(controller).not.toBeUndefined();
+
+    await act(() => controller!.replaceUserSource("After\n"));
+    expect(onPendingChange).toHaveBeenCalledWith(true);
+    await act(() => vi.advanceTimersByTimeAsync(500));
+    expect(persist).toHaveBeenCalledOnce();
+
+    await act(() => render("After\n", "r1"));
+    expect(onPendingChange).toHaveBeenLastCalledWith(false);
+
+    resolvePersist!({ revision: "late-r1" });
+    await act(async () => {
+      await persisted;
+      await Promise.resolve();
+    });
+    expect(onSaveConfirmed).not.toHaveBeenCalled();
+    vi.useRealTimers();
   });
 
   it("disposes the save lane and its externally owned editor on unmount", async () => {
