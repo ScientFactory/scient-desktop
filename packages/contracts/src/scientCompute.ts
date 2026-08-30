@@ -18,6 +18,8 @@ import {
   ComputeSessionRecord,
   ComputeSessionStreamEvent,
   ComputeTransportKind,
+  ComputeToolkitAssessment,
+  ComputeToolkitDescriptor,
   ComputeVariableSnapshot,
   type ComputeProjectedOutput,
   ComputeExecutionOutputs,
@@ -46,6 +48,9 @@ export type ComputeLanguageDescriptor = typeof ComputeLanguageDescriptor.Type;
 export const ComputeRuntimeCandidate = Schema.Struct({
   profile: ComputeRuntimeProfile,
   verification: ComputeRuntimeVerification,
+  toolkits: Schema.Array(ComputeToolkitAssessment)
+    .check(Schema.isMaxLength(64))
+    .pipe(Schema.withDecodingDefaultKey(Effect.succeed([]))),
 });
 export type ComputeRuntimeCandidate = typeof ComputeRuntimeCandidate.Type;
 
@@ -53,6 +58,9 @@ export const ComputeLanguageRuntimeInspection = Schema.Struct({
   descriptor: ComputeLanguageDescriptor,
   enabled: Schema.Boolean,
   configuredExecutable: Schema.NullOr(ComputeExecutable),
+  toolkits: Schema.Array(ComputeToolkitDescriptor)
+    .check(Schema.isMaxLength(64))
+    .pipe(Schema.withDecodingDefaultKey(Effect.succeed([]))),
   runtimes: Schema.Array(ComputeRuntimeCandidate).check(Schema.isMaxLength(64)),
 });
 export type ComputeLanguageRuntimeInspection = typeof ComputeLanguageRuntimeInspection.Type;
@@ -187,6 +195,8 @@ export {
   ComputeSessionRecord,
   ComputeSessionStreamEvent,
   ComputeTransportKind,
+  ComputeToolkitAssessment,
+  ComputeToolkitDescriptor,
   ComputeVariableSnapshot,
   type ComputeProjectedOutput,
   INITIAL_COMPUTE_SESSION_GENERATION,

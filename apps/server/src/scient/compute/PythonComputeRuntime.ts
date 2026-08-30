@@ -32,6 +32,7 @@ import {
   PYTHON_LANGUAGE_ID,
   makePythonRuntimeAdapter,
 } from "./PythonRuntimeAdapter.ts";
+import { PYTHON_TOOLKIT_CATALOG, assessPythonToolkits } from "./PythonToolkitCatalog.ts";
 
 /**
  * The Python runtime as the running server has it: a real interpreter probe and
@@ -278,6 +279,10 @@ export const pythonRuntimeBinding: Effect.Effect<
       displayName: "Python",
       sourceExtensions: [".py"],
       capabilities: [...REQUIRED_COMPUTE_CAPABILITIES, "variables"],
+    },
+    toolkitSupport: {
+      descriptors: PYTHON_TOOLKIT_CATALOG,
+      assess: assessPythonToolkits,
     },
   };
 });

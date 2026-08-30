@@ -25,7 +25,8 @@ function language(
     },
     enabled: true,
     configuredExecutable: null,
-    runtimes: [{ profile, verification }],
+    toolkits: [],
+    runtimes: [{ profile, verification, toolkits: [] }],
   };
 }
 
@@ -43,6 +44,7 @@ describe("scientific computing runtime details", () => {
           readiness: "missing-requirement",
           missingRequirements: ["jupyter_client", "ipykernel"],
           message,
+          packages: [],
         })}
       />,
     );
@@ -61,6 +63,7 @@ describe("scientific computing runtime details", () => {
           readiness: "ready",
           missingRequirements: [],
           message: null,
+          packages: [],
         })}
       />,
     );

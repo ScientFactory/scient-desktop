@@ -17,6 +17,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Stream from "effect/Stream";
 
 import { extractComputeSourceRange, makeComputeRpcGateway } from "./ComputeRpcGateway.ts";
+import { PYTHON_DATA_AND_FIGURES_TOOLKIT, assessPythonToolkit } from "./PythonToolkitCatalog.ts";
 
 const PYTHON = ComputeLanguageId.make("python");
 const PROFILE = {
@@ -91,6 +92,7 @@ function computeStub(overrides: Partial<GatewayCompute> = {}): GatewayCompute {
       Effect.succeed([
         {
           descriptor: DESCRIPTOR,
+          toolkits: [],
           runtimes: input.enabledLanguageIds.has(PYTHON)
             ? [
                 {
@@ -100,7 +102,9 @@ function computeStub(overrides: Partial<GatewayCompute> = {}): GatewayCompute {
                     readiness: "ready",
                     missingRequirements: [],
                     message: null,
+                    packages: [],
                   },
+                  toolkits: [],
                 },
               ]
             : [],
@@ -112,6 +116,7 @@ function computeStub(overrides: Partial<GatewayCompute> = {}): GatewayCompute {
         readiness: "ready",
         missingRequirements: [],
         message: null,
+        packages: [],
       }),
     startSession: (input) => Effect.succeed(record(input.projectId, input.sessionId)),
     listSessions: () => Effect.succeed([]),
@@ -173,7 +178,7 @@ describe("compute RPC gateway", () => {
       const compute = computeStub({
         inspectRuntimes: (input) => {
           inspectionEnabled = new Set(input.enabledLanguageIds);
-          return Effect.succeed([{ descriptor: DESCRIPTOR, runtimes: [] }]);
+          return Effect.succeed([{ descriptor: DESCRIPTOR, toolkits: [], runtimes: [] }]);
         },
         startSession: (input) => {
           startCalls += 1;
@@ -201,6 +206,75 @@ describe("compute RPC gateway", () => {
       expect(error.reason).toBe("language-disabled");
       expect(startCalls).toBe(0);
       expect(yield* gateway.listSessions({ cwd: initialized.root })).toEqual([retained]);
+    }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+  );
+
+  it.effect("preserves Toolkit readiness from each exact verified runtime", () =>
+    Effect.gen(function* () {
+      const initialized = yield* project;
+      const verification = {
+        profile: PROFILE,
+        readiness: "ready" as const,
+        missingRequirements: [],
+        message: null,
+        packages: [
+          { name: "ipykernel", version: "6.29.5" },
+          { name: "jupyter_client", version: "8.6.3" },
+          { name: "matplotlib", version: "3.9.1" },
+          { name: "numpy", version: "2.0.1" },
+          { name: "pandas", version: "2.2.2" },
+          { name: "scipy", version: null },
+        ],
+      };
+      const compute = computeStub({
+        inspectRuntimes: () =>
+          Effect.succeed([
+            {
+              descriptor: DESCRIPTOR,
+              toolkits: [PYTHON_DATA_AND_FIGURES_TOOLKIT],
+              runtimes: [
+                {
+                  profile: PROFILE,
+                  verification,
+                  toolkits: [assessPythonToolkit(PYTHON_DATA_AND_FIGURES_TOOLKIT, verification)],
+                },
+              ],
+            },
+          ]),
+      });
+      const gateway = makeComputeRpcGateway({
+        compute,
+        serverSettings: {
+          getSettings: Effect.succeed({
+            ...DEFAULT_SERVER_SETTINGS,
+            scientificComputing: {
+              schemaVersion: 1,
+              languages: { python: { enabled: true, executable: "" } },
+            },
+          }),
+        },
+        workspaceFileSystem: workspace(),
+      });
+
+      const inspection = yield* gateway.inspectRuntimes({
+        cwd: initialized.root,
+        refresh: false,
+      });
+
+      expect(inspection.languages[0]?.toolkits).toMatchObject([
+        {
+          toolkitId: "python-data-and-figures",
+          displayName: "Data analysis and figures",
+        },
+      ]);
+      expect(inspection.languages[0]?.runtimes[0]?.toolkits).toMatchObject([
+        {
+          toolkitId: "python-data-and-figures",
+          readiness: "missing-requirement",
+          missingRequirements: ["SciPy"],
+          runtime: { executable: PROFILE.executable },
+        },
+      ]);
     }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
   );
 

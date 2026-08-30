@@ -13,6 +13,7 @@ import {
   ComputeLanguageId,
   ComputeRuntimeError,
   ComputeRuntimeProfile,
+  type ComputeRuntimePackage,
   ComputeRuntimeReadiness,
   ComputeRuntimeSource,
   ComputeRuntimeVerification,
@@ -44,6 +45,20 @@ export const JUPYTER_BRIDGE_TRANSPORT_KIND = ComputeTransportKind.make("jupyter-
 const MIN_PYTHON_VERSION = "3.10";
 const MIN_JUPYTER_CLIENT_VERSION = "8.6";
 const MIN_IPYKERNEL_VERSION = "6.29";
+
+/**
+ * Reviewed packages needed by current compute readiness and the first proposed
+ * data-and-figures Toolkit. The probe stays bounded and does not enumerate an
+ * arbitrary user environment.
+ */
+export const OBSERVED_PYTHON_PACKAGES = [
+  "ipykernel",
+  "jupyter_client",
+  "matplotlib",
+  "numpy",
+  "pandas",
+  "scipy",
+] as const;
 
 // ---------------------------------------------------------------------------
 // Probe schema
@@ -102,7 +117,7 @@ function compareVersions(a: ComparablePythonVersion, b: ComparablePythonVersion)
   return 0;
 }
 
-function meetsMinimum(actual: string, minimum: string): boolean {
+export function meetsPythonMinimumVersion(actual: string, minimum: string): boolean {
   const parsedActual = parseComparableVersion(actual);
   const parsedMinimum = parseComparableVersion(minimum);
   return (
@@ -135,7 +150,7 @@ export const PROBE_SCRIPT = [
   '  "platform": sys.platform,',
   '  "packages": {},',
   "}",
-  'for pkg in ["jupyter_client", "ipykernel", "matplotlib", "numpy", "pandas"]:',
+  `for pkg in ${JSON.stringify(OBSERVED_PYTHON_PACKAGES)}:`,
   "    try:",
   '        r["packages"][pkg] = metadata.version(pkg)',
   "    except metadata.PackageNotFoundError:",
@@ -173,21 +188,21 @@ export function checkReadiness(probe: ProbeResult): {
     };
   }
 
-  if (!meetsMinimum(probe.version, MIN_PYTHON_VERSION)) {
+  if (!meetsPythonMinimumVersion(probe.version, MIN_PYTHON_VERSION)) {
     missing.push(`Python >= ${MIN_PYTHON_VERSION} (found ${probe.version})`);
   }
 
   const jupyterClientVersion = probe.packages["jupyter_client"] ?? null;
   if (jupyterClientVersion === null) {
     missing.push("jupyter_client");
-  } else if (!meetsMinimum(jupyterClientVersion, MIN_JUPYTER_CLIENT_VERSION)) {
+  } else if (!meetsPythonMinimumVersion(jupyterClientVersion, MIN_JUPYTER_CLIENT_VERSION)) {
     missing.push(`jupyter_client >= ${MIN_JUPYTER_CLIENT_VERSION} (found ${jupyterClientVersion})`);
   }
 
   const ipykernelVersion = probe.packages["ipykernel"] ?? null;
   if (ipykernelVersion === null) {
     missing.push("ipykernel");
-  } else if (!meetsMinimum(ipykernelVersion, MIN_IPYKERNEL_VERSION)) {
+  } else if (!meetsPythonMinimumVersion(ipykernelVersion, MIN_IPYKERNEL_VERSION)) {
     missing.push(`ipykernel >= ${MIN_IPYKERNEL_VERSION} (found ${ipykernelVersion})`);
   }
 
@@ -196,6 +211,14 @@ export function checkReadiness(probe: ProbeResult): {
   }
 
   return { readiness: "ready", missing: [] };
+}
+
+/** Stable, sorted package observations safe to expose through runtime inspection. */
+export function observedPackages(probe: ProbeResult): ReadonlyArray<ComputeRuntimePackage> {
+  return OBSERVED_PYTHON_PACKAGES.map((name) => ({
+    name,
+    version: probe.packages[name] ?? null,
+  }));
 }
 
 function verificationMessage(
@@ -466,6 +489,7 @@ export function makePythonRuntimeAdapter(
           readiness: "unusable" as const,
           missingRequirements: [],
           message: `Probe failed: ${parsed.failure.message}`,
+          packages: [],
         } satisfies ComputeRuntimeVerification;
       }
       const probe = parsed.success;
@@ -482,6 +506,7 @@ export function makePythonRuntimeAdapter(
           readiness: "unusable" as const,
           missingRequirements: [],
           message: `Probe executable ${probe.executable} differs from launch executable ${launchRequest.profile.executable}.`,
+          packages: [],
         };
       }
 
@@ -490,6 +515,7 @@ export function makePythonRuntimeAdapter(
         readiness,
         missingRequirements: missing,
         message: verificationMessage(readiness, missing),
+        packages: observedPackages(probe),
       } satisfies ComputeRuntimeVerification;
     });
 

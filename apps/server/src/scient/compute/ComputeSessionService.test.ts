@@ -3,6 +3,7 @@ import {
   ComputeLanguageId,
   ComputeProjectId,
   ComputeSessionId,
+  ComputeToolkitId,
   type ComputeSessionJournalEvent,
   ComputeTransportKind,
   INITIAL_COMPUTE_SESSION_GENERATION,
@@ -37,6 +38,7 @@ import {
   ComputeSessionService,
   DEFAULT_COMPUTE_SESSION_SERVICE_OPTIONS,
   layerWithRuntimes,
+  type ComputeRuntimeBinding,
   type ComputeSessionServiceOptions,
 } from "./ComputeSessionService.ts";
 import * as LocalComputeStore from "./LocalComputeStore.ts";
@@ -222,6 +224,7 @@ const adapterFor = (readiness: ComputeRuntimeReadiness): ComputeLanguageAdapter 
       readiness,
       missingRequirements: readiness === "ready" ? [] : ["ipykernel"],
       message: readiness === "ready" ? null : "Install ipykernel to use this interpreter.",
+      packages: [],
     }),
   prepareLaunch: (request) =>
     Effect.succeed({
@@ -263,6 +266,7 @@ interface HarnessOptions {
   readonly reportedCapabilities?: ReadonlyArray<ComputeCapability>;
   readonly readiness?: ComputeRuntimeReadiness;
   readonly service?: Partial<ComputeSessionServiceOptions>;
+  readonly toolkitSupport?: ComputeRuntimeBinding["toolkitSupport"];
 }
 
 /**
@@ -296,7 +300,13 @@ const harness = (options: HarnessOptions = {}) =>
       },
     };
     const serviceLayer = layerWithRuntimes(
-      [{ adapter: adapterFor(options.readiness ?? "ready"), transport }],
+      [
+        {
+          adapter: adapterFor(options.readiness ?? "ready"),
+          transport,
+          toolkitSupport: options.toolkitSupport,
+        },
+      ],
       { ...DEFAULT_COMPUTE_SESSION_SERVICE_OPTIONS, ...options.service },
     ).pipe(
       // Merged rather than provided, so a test can read the disk the
@@ -419,6 +429,56 @@ const outputsOf = (executionId: ComputeExecutionId | null) =>
 const start = Effect.gen(function* () {
   const service = yield* ComputeSessionService;
   return yield* service.startSession(startInput());
+});
+
+describe("compute runtime inspection", () => {
+  it.effect("keeps Toolkit metadata and assessment on the language binding", () =>
+    Effect.gen(function* () {
+      const toolkitId = ComputeToolkitId.make("test-data-toolkit");
+      const descriptor = {
+        toolkitId,
+        languageId: PYTHON,
+        displayName: "Test data Toolkit",
+        summary: "A test-only capability bundle.",
+        packageRequirements: [],
+      };
+      const test = yield* harness({
+        toolkitSupport: {
+          descriptors: [descriptor],
+          assess: (verification) => [
+            {
+              toolkitId,
+              runtime: verification.profile,
+              readiness: "ready",
+              missingRequirements: [],
+            },
+          ],
+        },
+      });
+
+      yield* test.use(
+        Effect.gen(function* () {
+          const service = yield* ComputeSessionService;
+          const inspection = yield* service.inspectRuntimes({
+            projectRoot: null,
+            workingDirectory: process.cwd(),
+            configuredExecutables: {},
+            enabledLanguageIds: new Set([PYTHON]),
+            refresh: false,
+          });
+
+          expect(inspection[0]?.toolkits).toEqual([descriptor]);
+          expect(inspection[0]?.runtimes[0]?.toolkits).toMatchObject([
+            {
+              toolkitId,
+              readiness: "ready",
+              runtime: { executable: PROFILE.executable },
+            },
+          ]);
+        }),
+      );
+    }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+  );
 });
 
 describe("compute session startup", () => {

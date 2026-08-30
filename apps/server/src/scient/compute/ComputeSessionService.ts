@@ -57,6 +57,8 @@ import {
   type ComputeSubscribeSessionsInput,
   type ComputeTransport,
   type ComputeTransportEvent,
+  type ComputeToolkitAssessment,
+  type ComputeToolkitDescriptor,
   type ComputeVariableSnapshot,
   type ComputeRuntimeProfile,
   type ComputeRuntimeVerification,
@@ -130,6 +132,14 @@ export interface ComputeRuntimeBinding {
   readonly adapter: ComputeLanguageAdapter;
   readonly transport: ComputeTransport;
   readonly descriptor?: ComputeRuntimeDescriptor;
+  readonly toolkitSupport?:
+    | {
+        readonly descriptors: ReadonlyArray<ComputeToolkitDescriptor>;
+        readonly assess: (
+          verification: ComputeRuntimeVerification,
+        ) => ReadonlyArray<ComputeToolkitAssessment>;
+      }
+    | undefined;
 }
 
 /** Data-only adapter metadata safe to expose through the shared product UI. */
@@ -150,9 +160,11 @@ export interface ComputeRuntimeInspectionRequest {
 
 export interface ComputeRuntimeInspectionResult {
   readonly descriptor: ComputeRuntimeDescriptor;
+  readonly toolkits: ReadonlyArray<ComputeToolkitDescriptor>;
   readonly runtimes: ReadonlyArray<{
     readonly profile: ComputeRuntimeProfile;
     readonly verification: ComputeRuntimeVerification;
+    readonly toolkits: ReadonlyArray<ComputeToolkitAssessment>;
   }>;
 }
 
@@ -438,7 +450,11 @@ const make = Effect.gen(function* () {
       return yield* Effect.forEach(bindings, (binding) =>
         Effect.gen(function* () {
           if (!input.enabledLanguageIds.has(binding.adapter.languageId)) {
-            return { descriptor: descriptorFor(binding), runtimes: [] };
+            return {
+              descriptor: descriptorFor(binding),
+              toolkits: binding.toolkitSupport?.descriptors ?? [],
+              runtimes: [],
+            };
           }
           const profiles = yield* binding.adapter
             .discover({
@@ -459,12 +475,21 @@ const make = Effect.gen(function* () {
                   readiness: "unusable" as const,
                   missingRequirements: [],
                   message: shortText(cause.message),
+                  packages: [],
                 }),
               ),
-              Effect.map((verification) => ({ profile, verification })),
+              Effect.map((verification) => ({
+                profile,
+                verification,
+                toolkits: binding.toolkitSupport?.assess(verification) ?? [],
+              })),
             ),
           );
-          return { descriptor: descriptorFor(binding), runtimes };
+          return {
+            descriptor: descriptorFor(binding),
+            toolkits: binding.toolkitSupport?.descriptors ?? [],
+            runtimes,
+          };
         }),
       );
     });

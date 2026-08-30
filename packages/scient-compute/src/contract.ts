@@ -528,12 +528,34 @@ export const ComputeRuntimeReadiness = Schema.Literals([
 ]);
 export type ComputeRuntimeReadiness = typeof ComputeRuntimeReadiness.Type;
 
+/**
+ * One bounded package observation made by a language adapter while it verifies
+ * a runtime. Package names and versions are transient diagnostics: the durable
+ * execution identity remains the environment fingerprint rather than a second
+ * package database in compute history.
+ *
+ * A null version means the adapter deliberately checked for the package and
+ * did not find it. Adapters do not enumerate an entire environment merely to
+ * populate this list; they report only requirements used by reviewed product
+ * capabilities.
+ */
+export const ComputeRuntimePackage = Schema.Struct({
+  name: Slug,
+  version: Schema.NullOr(Label),
+});
+export type ComputeRuntimePackage = typeof ComputeRuntimePackage.Type;
+
 /** Why a runtime cannot be used, in terms a user can act on. */
 export const ComputeRuntimeVerification = Schema.Struct({
   profile: ComputeRuntimeProfile,
   readiness: ComputeRuntimeReadiness,
   missingRequirements: Schema.Array(Label),
   message: Schema.NullOr(ShortText),
+  // Optional on decode so retained fixtures and older attached clients remain
+  // readable while current adapters always return the bounded observations.
+  packages: Schema.Array(ComputeRuntimePackage)
+    .check(Schema.isMaxLength(128))
+    .pipe(Schema.withDecodingDefaultKey(Effect.succeed([]))),
 });
 export type ComputeRuntimeVerification = typeof ComputeRuntimeVerification.Type;
 
