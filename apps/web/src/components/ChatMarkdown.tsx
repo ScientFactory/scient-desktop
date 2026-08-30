@@ -14,6 +14,7 @@ import {
   WrapTextIcon,
 } from "lucide-react";
 import type {
+  AssetResource,
   EnvironmentId,
   MessageId,
   ScopedThreadRef,
@@ -165,6 +166,7 @@ import {
 } from "../scient/images/ScientInlineWorkspaceImage";
 import {
   inlineWorkspaceImageMarkdownSource,
+  inlineWorkspaceImageResource,
   resolveInlineWorkspaceImage,
 } from "../scient/images/inlineWorkspaceImage";
 import {
@@ -1183,17 +1185,13 @@ function ChatMarkdownImageFallback(props: {
 /** Markdown images whose src is a workspace file path load through a signed asset URL. */
 const ChatMarkdownWorkspaceImage = memo(function ChatMarkdownWorkspaceImage(props: {
   readonly threadRef: ScopedThreadRef;
-  readonly path: string;
+  readonly resource: AssetResource;
   readonly alt: string;
   readonly copyMarkdown: string;
   readonly srcFragment: string;
   readonly style?: CSSProperties | undefined;
 }) {
-  const assetUrl = useAssetUrlState(props.threadRef.environmentId, {
-    _tag: "workspace-file",
-    threadId: props.threadRef.threadId,
-    path: props.path,
-  });
+  const assetUrl = useAssetUrlState(props.threadRef.environmentId, props.resource);
   const [failedUrl, setFailedUrl] = useState<string | null>(null);
 
   if (assetUrl._tag === "Failure" || (assetUrl._tag === "Success" && failedUrl === assetUrl.url)) {
@@ -2155,10 +2153,11 @@ function ChatMarkdown({
         const imageSource = classifyMarkdownImageSource(classifiedSrc, imageBaseDir ?? cwd);
         const srcFragment = markdownImageSourceFragment(classifiedSrc);
         const image =
-          node?.properties?.dataScientImageCard && imageSource._tag === "WorkspaceFile"
+          imageSource._tag === "WorkspaceFile"
             ? resolveInlineWorkspaceImage({ alt, cwd, src: imageSource.path })
             : null;
-        if (image && markdownSource && threadRef && !isStreaming) {
+        const useScientImageCard = Boolean(node?.properties?.dataScientImageCard);
+        if (useScientImageCard && image && markdownSource && threadRef && !isStreaming) {
           return (
             <ScientInlineWorkspaceImage
               image={image}
@@ -2168,7 +2167,7 @@ function ChatMarkdown({
             />
           );
         }
-        if (image && markdownSource) {
+        if (useScientImageCard && image && markdownSource) {
           return (
             <ScientPendingWorkspaceImage
               image={image}
@@ -2194,7 +2193,15 @@ function ChatMarkdown({
           return (
             <ChatMarkdownWorkspaceImage
               threadRef={threadRef}
-              path={imageSource.path}
+              resource={
+                image
+                  ? inlineWorkspaceImageResource(image, threadRef)
+                  : {
+                      _tag: "workspace-file",
+                      threadId: threadRef.threadId,
+                      path: imageSource.path,
+                    }
+              }
               alt={altText}
               copyMarkdown={markdownSource}
               srcFragment={srcFragment}

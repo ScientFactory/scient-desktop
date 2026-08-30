@@ -282,6 +282,35 @@ describe("AssetAccess", () => {
     }).pipe(Effect.provide(testLayer)),
   );
 
+  it.effect("resolves a rooted nested image while its draft thread has no server context", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const root = yield* fileSystem.makeTempDirectoryScoped({ prefix: "scient-draft-image-" });
+      const relativePath = "docs/images/diagram.svg";
+      const imagePath = path.join(root, relativePath);
+      yield* fileSystem.makeDirectory(path.dirname(imagePath), { recursive: true });
+      yield* fileSystem.writeFileString(imagePath, '<svg xmlns="http://www.w3.org/2000/svg"/>');
+
+      const result = yield* issueAssetUrl({
+        resource: {
+          _tag: "workspace-file",
+          cwd: root,
+          relativePath,
+          threadId: ThreadId.make("unsent-draft"),
+          path: imagePath,
+        },
+      });
+      const suffix = result.relativeUrl.slice(`${ASSET_ROUTE_PREFIX}/`.length);
+      const separatorIndex = suffix.indexOf("/");
+
+      expect(result.sourcePath).toBe(relativePath);
+      expect(
+        yield* resolveAsset(suffix.slice(0, separatorIndex), suffix.slice(separatorIndex + 1)),
+      ).toMatchObject({ kind: "file", path: yield* fileSystem.realPath(imagePath) });
+    }).pipe(Effect.provide(testLayer)),
+  );
+
   it.effect("rejects malformed and escaping rooted workspace locators", () =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;

@@ -44,6 +44,10 @@
 .chat-markdown [dir="ltr"] {
   direction: ltr;
   unicode-bidi: isolate;
+}
+
+/* Authored layout (for example a centered image paragraph) is not prose direction. */
+.chat-markdown [dir="ltr"]:not([align]) {
   text-align: start;
 }
 

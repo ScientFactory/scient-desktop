@@ -64,14 +64,9 @@ function renderWithoutThread(markdown: string): string {
   return renderToStaticMarkup(<ChatMarkdown cwd={"C:\\Users\\shawn\\project"} text={markdown} />);
 }
 
-function renderFilePreview(cwd: string, relativePath: string): string {
+function renderFilePreview(cwd: string, relativePath: string, text: string): string {
   return renderToStaticMarkup(
-    <FileMarkdownPreview
-      cwd={cwd}
-      relativePath={relativePath}
-      text="![diagram](images/diagram.png)"
-      threadRef={threadRef}
-    />,
+    <FileMarkdownPreview cwd={cwd} relativePath={relativePath} text={text} threadRef={threadRef} />,
   );
 }
 
@@ -118,19 +113,26 @@ describe("ChatMarkdown workspace images", () => {
       "images/diagram.png",
     ],
   ])(
-    "resolves images beside a nested file in %s",
+    "uses rooted asset access for standalone, inline, and centered images beside a file in %s",
     (cwd, relativePath, expectedPath, expectedRelativePath) => {
-      renderFilePreview(cwd, relativePath);
+      for (const markdown of [
+        "![diagram](images/diagram.png)",
+        'Inline <img src="images/diagram.png" width="36" height="24"> badge.',
+        '<p align="center"><img src="images/diagram.png" width="240"></p>',
+      ]) {
+        testState.resources = [];
+        renderFilePreview(cwd, relativePath, markdown);
 
-      expect(testState.resources).toEqual([
-        {
-          _tag: "workspace-file",
-          cwd,
-          relativePath: expectedRelativePath,
-          threadId: threadRef.threadId,
-          path: expectedPath,
-        },
-      ]);
+        expect(testState.resources).toEqual([
+          {
+            _tag: "workspace-file",
+            cwd,
+            relativePath: expectedRelativePath,
+            threadId: threadRef.threadId,
+            path: expectedPath,
+          },
+        ]);
+      }
     },
   );
 
