@@ -443,6 +443,13 @@ hosted-web aliases, or release bot. The owned manual workflow packages the
 exact promoted Scient tree, embeds the owned updater repository, and
 distributes the exact server runtime as a GitHub release asset.
 
+The downloaded-update notification links to the exact version under the shared
+`SCIENT_DESKTOP_RELEASE_REPOSITORY` in `packages/shared/src/scientRelease.ts`.
+It must not combine a Scient version with T3's release repository. The brand
+guard rejects upstream release links on active product surfaces; source
+attribution and donor-only surfaces remain allowed. This presentation seam
+does not change update-feed configuration, download, or installation behavior.
+
 The owned release seam also verifies a complete cross-platform updater asset
 set, manifest sizes and SHA-512 hashes, final native signing evidence, and an
 exact source-commit handoff before publication. Signing credentials are scoped

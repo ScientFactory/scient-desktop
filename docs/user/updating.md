@@ -14,6 +14,10 @@ periodically while the app is open. Updates are deliberate:
 2. When a release is available, choose the control again to download it.
 3. After the download finishes, review the restart confirmation and install it.
 
+The **Read more** link in the download notification opens that version's
+Scient release notes. Reading the notes does not install the update; return to
+Scient and use the update control to restart and install it.
+
 Scient does not install an update silently while work is running. Let active
 agent turns and terminal commands finish before restarting. Threads, settings,
 and project files remain in their existing locations.
