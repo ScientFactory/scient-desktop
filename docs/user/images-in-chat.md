@@ -41,6 +41,16 @@ The image card lets you:
 
 The same file and image actions remain available after you expand the figure.
 
+The compact card fits around the image, with controls at its top-right corner.
+Open **More image actions** to see the image title, file path, and format. The
+controls remain available without hovering, including with a keyboard or touch.
+
+Drag the dotted corner or empty toolbar space to move the controls within the
+image; action buttons keep their normal behavior. Click the corner grip or
+press Home while it is focused to restore the default position. Arrow keys
+also move it (hold Shift for finer movement); Escape cancels an active drag.
+The position belongs only to the current card and is not saved as a setting.
+
 Use SVG for vector plots, diagrams, and publication figures when the producing
 tool supports it. Use PNG for pixel data, screenshots, microscopy, heatmaps,
 and broad compatibility. Alternative text should name what the figure shows;

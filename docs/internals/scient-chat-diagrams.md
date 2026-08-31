@@ -57,6 +57,16 @@ the same SVG/PNG export actions as the compact card. SVG download adds
 standalone namespaces and an appearance background. PNG copy/download
 rasterizes the same SVG at up to 2x, bounded to 8192 px per dimension.
 
+The inline card uses the renderer-independent `VisualCardToolbar` shared with
+workspace images and interactive charts. It removes the full-width header bar
+and reduces stage padding; the controls' default slot stays above the diagram.
+Dragging the dotted corner or empty toolbar space translates only the toolbar
+within the card, leaving action buttons unchanged. The shared
+movement lifecycle is documented in [chat images](scient-chat-images.md).
+An authored fence title stays visible, while the generic label and diagram type
+remain available in the menu. SVG sizing, lazy rendering, export, and the
+expanded dialog retain their existing behavior.
+
 `data-markdown-copy` carries a complete fenced source block, so selection and
 whole-message copy never serialize the generated SVG. Individual source-copy
 uses the untouched diagram text. Fence title metadata becomes the visible

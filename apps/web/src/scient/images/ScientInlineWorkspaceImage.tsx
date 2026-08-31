@@ -25,6 +25,7 @@ import {
 import { Menu, MenuItem, MenuPopup, MenuTrigger } from "~/components/ui/menu";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "~/components/ui/tooltip";
 import { ScientTooltip } from "../presentation/ScientTooltip";
+import { VisualCardDetails, VisualCardToolbar } from "../presentation/VisualCardToolbar";
 import { cn } from "~/lib/utils";
 import { useRightPanelStore } from "~/rightPanelStore";
 
@@ -61,13 +62,13 @@ export function ScientPendingWorkspaceImage(props: {
   return (
     <span
       aria-label={props.image.alt}
-      className="my-3 block overflow-hidden rounded-lg border border-border/70 bg-secondary/30 leading-normal"
+      className="my-3 block max-w-lg rounded-lg border border-border/60 bg-background px-3 py-3 leading-normal"
       data-markdown-copy={props.markdownSource}
       data-scient-inline-workspace-image-pending={props.reason}
       dir="ltr"
       role="figure"
     >
-      <span className="flex min-h-9 select-none items-center gap-2 border-b border-border/60 bg-secondary/60 px-2">
+      <span className="flex items-center gap-2">
         <FileImageIcon className="size-3.5 shrink-0 text-muted-foreground" />
         <span className="min-w-0 flex-1 truncate text-xs font-medium" dir="auto">
           {props.image.alt}
@@ -76,14 +77,14 @@ export function ScientPendingWorkspaceImage(props: {
           {inlineImageFormatLabel(props.image.fileName)}
         </span>
       </span>
-      <span className="flex min-h-28 items-center justify-center px-5 py-8 text-center text-muted-foreground text-sm">
+      <span className="mt-2 block text-muted-foreground text-sm">
         {props.reason === "streaming"
           ? "Image preview will appear when this response finishes."
           : "Image preview is unavailable without an active workspace."}
       </span>
       <ScientTooltip content={props.image.displayPath}>
         <span
-          className="block truncate border-t border-border/50 bg-secondary/40 px-3 py-1.5 font-mono text-[10px] text-muted-foreground"
+          className="mt-1 block truncate font-mono text-[10px] text-muted-foreground"
           dir="auto"
         >
           {props.image.displayPath}
@@ -135,6 +136,7 @@ function InlineImageActionsMenu(props: {
   readonly activeAction: ImageAction;
   readonly background: InlineImageBackground;
   readonly compact?: boolean;
+  readonly image?: InlineWorkspaceImageDescriptor;
   readonly hasImage: boolean;
   readonly onCopyImage: () => void;
   readonly onCopyPath: () => void;
@@ -168,6 +170,12 @@ function InlineImageActionsMenu(props: {
         <TooltipPopup side={compact ? "top" : "bottom"}>More image actions</TooltipPopup>
       </Tooltip>
       <MenuPopup align="end" className="min-w-52">
+        {props.image ? (
+          <VisualCardDetails
+            title={props.image.alt}
+            detail={`${props.image.displayPath} · ${inlineImageFormatLabel(props.image.fileName)}`}
+          />
+        ) : null}
         <MenuItem
           disabled={!props.hasImage || props.activeAction != null}
           onClick={props.onCopyImage}
@@ -430,21 +438,21 @@ export function ScientInlineWorkspaceImage(props: {
   return (
     <span
       aria-label={props.image.alt}
-      className="my-3 block overflow-hidden rounded-lg border border-border/70 bg-secondary/30 leading-normal"
+      className="my-3 block w-fit max-w-full leading-normal"
       data-markdown-copy={props.markdownSource}
       data-scient-inline-workspace-image
       dir="ltr"
       role="figure"
     >
-      <span className="flex min-h-9 select-none items-center gap-2 border-b border-border/60 bg-secondary/60 px-2">
-        <FileImageIcon className="size-3.5 shrink-0 text-muted-foreground" />
-        <span className="min-w-0 flex-1 truncate text-xs font-medium" dir="auto">
-          {props.image.alt}
-        </span>
-        <span className="rounded bg-background/70 px-1.5 py-0.5 text-[10px] text-muted-foreground">
-          {inlineImageFormatLabel(props.image.fileName)}
-        </span>
-        <span className="flex items-center gap-0.5" role="toolbar" aria-label="Image actions">
+      <span
+        data-scient-visual-card
+        className={cn(
+          "relative block min-h-10 min-w-28 max-w-full overflow-hidden rounded-lg",
+          !loaded && "min-h-44 w-80",
+          BACKGROUND_CLASS[background],
+        )}
+      >
+        <VisualCardToolbar className="absolute top-1 right-1 z-10" label="Image actions">
           {loaded ? (
             <ImageActionButton label="Expand image" onClick={() => setExpanded(true)}>
               <ExpandIcon className="size-3" />
@@ -458,6 +466,7 @@ export function ScientInlineWorkspaceImage(props: {
             activeAction={activeAction}
             background={background}
             compact
+            image={props.image}
             hasImage={url != null}
             onCopyImage={handleCopyImage}
             onCopyPath={handleCopyPath}
@@ -465,26 +474,9 @@ export function ScientInlineWorkspaceImage(props: {
             onDownload={handleDownload}
             onRefresh={handleRetry}
           />
-        </span>
-      </span>
-
-      {actionMessage != null && !expanded ? (
-        <span
-          aria-live="polite"
-          className="block border-b border-border/40 bg-background/45 px-3 py-1.5 text-muted-foreground text-xs"
-        >
-          {actionMessage}
-        </span>
-      ) : null}
-
-      <span
-        className={cn(
-          "relative flex min-h-52 items-center justify-center overflow-hidden p-3 sm:p-4",
-          BACKGROUND_CLASS[background],
-        )}
-      >
+        </VisualCardToolbar>
         {loadFailed ? (
-          <span className="flex flex-col items-center gap-3 px-5 py-8 text-center">
+          <span className="flex flex-col items-center gap-3 px-5 pt-12 pb-5 text-center">
             <span className="font-medium text-sm">Unable to display this image</span>
             <span className="max-w-lg text-muted-foreground text-xs" dir="auto">
               The file may be missing, incomplete, or in an image format the browser cannot decode.
@@ -501,12 +493,14 @@ export function ScientInlineWorkspaceImage(props: {
             </span>
           </span>
         ) : url == null ? (
-          <span className="text-muted-foreground text-sm">Loading image…</span>
+          <span className="flex min-h-44 items-center justify-center pt-10 text-muted-foreground text-sm">
+            Loading image…
+          </span>
         ) : (
           <button
             aria-label={`Expand ${props.image.alt}`}
             className={cn(
-              "flex w-full min-w-0 max-h-[32rem] cursor-zoom-in items-center justify-center rounded-sm outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2",
+              "flex max-h-[32rem] max-w-full cursor-zoom-in items-center justify-center rounded-lg outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset",
               loaded ? "opacity-100" : "opacity-0",
             )}
             onClick={() => setExpanded(true)}
@@ -536,14 +530,11 @@ export function ScientInlineWorkspaceImage(props: {
         ) : null}
       </span>
 
-      <ScientTooltip content={props.image.displayPath}>
-        <span
-          className="block truncate border-t border-border/50 bg-secondary/40 px-3 py-1.5 font-mono text-[10px] text-muted-foreground"
-          dir="auto"
-        >
-          {props.image.displayPath}
+      {actionMessage != null && !expanded ? (
+        <span aria-live="polite" className="mt-1 block text-muted-foreground text-xs">
+          {actionMessage}
         </span>
-      </ScientTooltip>
+      ) : null}
 
       {url != null ? (
         <InlineImageDialog
