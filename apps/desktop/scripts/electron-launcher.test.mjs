@@ -1,4 +1,6 @@
 import * as NodePath from "node:path";
+import * as NodeFS from "node:fs";
+import * as NodeOS from "node:os";
 
 import { assert, describe, it } from "vite-plus/test";
 
@@ -12,8 +14,30 @@ import {
   resolveMacLauncherIconPaths,
   resolveMacLauncherPaths,
 } from "./electron-launcher.mjs";
+import { createDuplicateSigningFilter } from "./development-code-signing.mjs";
 
 describe("electron development launcher", () => {
+  it("signs each real target once across framework aliases without skipping distinct code", () => {
+    const root = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "scient-signing-"));
+    try {
+      const version = NodePath.join(root, "A");
+      const current = NodePath.join(root, "Current");
+      NodeFS.mkdirSync(version);
+      NodeFS.writeFileSync(NodePath.join(version, "code"), "fixture");
+      NodeFS.writeFileSync(NodePath.join(version, "other-code"), "fixture");
+      NodeFS.symlinkSync(version, current, "junction");
+      const ignore = createDuplicateSigningFilter();
+      assert.equal(ignore(NodePath.join(current, "code")), false);
+      assert.equal(ignore(NodePath.join(version, "code")), true);
+      assert.equal(ignore(NodePath.join(version, "other-code")), false);
+      assert.equal(ignore(root), false);
+      assert.equal(createDuplicateSigningFilter()(NodePath.join(version, "code")), false);
+      assert.throws(() => ignore(NodePath.join(root, "missing")));
+    } finally {
+      NodeFS.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it("gives the canonical launcher a distinct stable display name", () => {
     assert.equal(resolveDevelopmentAppDisplayName({}, "/repo/scient-desktop"), "Scient (Dev)");
     assert.equal(

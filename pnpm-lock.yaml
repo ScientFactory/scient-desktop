@@ -100,6 +100,7 @@ patchedDependencies:
   effect@4.0.0-beta.103: af36b7948b6f9c56623074662b51dade5699880c1a7c71245de73e13c3185fb6
   expo-audio@57.0.4: fa9a3e0442ed395d4071bb406e08c3a471c9a84700bdfa0b9ad7ff144c96041a
   expo-sharing@57.0.17: 8d2e3b10eb3f52036a9a086800180ec6cebf3b75bccc5b1775117a7244d4ac45
+  pdfjs-dist@6.2.108: 741ffbf0034f86db1db122c3091f2e6e69d55c81a199ae19ccfedebff0aea3f2
   react-native-gesture-handler@2.32.0: 808eb26f9e57cf4945efd3985af4d9c764da6f91f4c9764433cc868602bbf4d3
   react-native-keyboard-controller@1.21.13: 6e4339347bc5bb3c9ea67d85ff5c814058b211c5750f247aba59d07869a2e787
   react-native-nitro-modules@0.35.9: 825622aae63a8fb5b904f3c77908a0e216261d727ea171709f2c0b6088422675
@@ -550,7 +551,7 @@ importers:
         version: 7.3.0
       pdfjs-dist:
         specifier: 6.2.108
-        version: 6.2.108
+        version: 6.2.108(patch_hash=741ffbf0034f86db1db122c3091f2e6e69d55c81a199ae19ccfedebff0aea3f2)
       tldts:
         specifier: 7.4.2
         version: 7.4.2
@@ -731,7 +732,7 @@ importers:
         version: 11.16.1
       pdfjs-dist:
         specifier: 6.2.108
-        version: 6.2.108
+        version: 6.2.108(patch_hash=741ffbf0034f86db1db122c3091f2e6e69d55c81a199ae19ccfedebff0aea3f2)
       plotly.js-strict-dist-min:
         specifier: 3.7.0
         version: 3.7.0
@@ -1188,7 +1189,7 @@ importers:
     dependencies:
       pdfjs-dist:
         specifier: 6.2.108
-        version: 6.2.108
+        version: 6.2.108(patch_hash=741ffbf0034f86db1db122c3091f2e6e69d55c81a199ae19ccfedebff0aea3f2)
     devDependencies:
       '@effect/vitest':
         specifier: 4.0.0-beta.103
@@ -22043,7 +22044,7 @@ snapshots:
 
   pathe@2.0.3: {}
 
-  pdfjs-dist@6.2.108:
+  pdfjs-dist@6.2.108(patch_hash=741ffbf0034f86db1db122c3091f2e6e69d55c81a199ae19ccfedebff0aea3f2):
     optionalDependencies:
       '@napi-rs/canvas': 1.0.3
 

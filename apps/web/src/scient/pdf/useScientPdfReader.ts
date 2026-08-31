@@ -15,6 +15,7 @@ import {
 } from "./pdfResponsiveZoom";
 import { type PdfViewAreaLocation } from "./pdfReaderSessionStore";
 import { createPdfReaderViewportSession } from "./pdfReaderViewportSession";
+import { hasPdfLayout } from "./pdfLayout";
 
 export type PdfReaderPhase = "loading" | "password" | "ready" | "error";
 export type PdfFindPhase = "idle" | "pending" | "found" | "not-found";
@@ -81,7 +82,9 @@ async function detectScannedDocument(
   const pagesToInspect = Math.min(runtime.document.numPages, 3);
   if (pagesToInspect === 0) return null;
   for (let pageNumber = 1; pageNumber <= pagesToInspect; pageNumber += 1) {
+    if (!isCurrent()) return null;
     const page = await runtime.document.getPage(pageNumber);
+    if (!isCurrent()) return null;
     const content = await page.getTextContent().finally(() => page.cleanup());
     if (!isCurrent()) return null;
     if (content.items.some((item) => "str" in item && item.str.trim().length > 0)) return false;
@@ -97,6 +100,8 @@ export function useScientPdfReader(input: {
   readonly viewerElement: HTMLDivElement | null;
 }) {
   const [state, setState] = useState<PdfReaderState>(INITIAL_STATE);
+  const [loadRevision, setLoadRevision] = useState(0);
+  const reopen = useCallback(() => setLoadRevision((revision) => revision + 1), []);
   const runtimeRef = useRef<ScientPdfRuntime | null>(null);
   const responsiveZoomRef = useRef<PdfResponsiveZoomController | null>(null);
   const passwordRef = useRef<PdfPasswordChallenge["submit"] | null>(null);
@@ -142,6 +147,19 @@ export function useScientPdfReader(input: {
     let onPinchWheel: ((event: WheelEvent) => void) | null = null;
     const viewportSession = createPdfReaderViewportSession({ documentKey: input.documentKey });
     const responsiveZoom = createPdfResponsiveZoomController();
+    const handleLoadError = (error: unknown) => {
+      if (!current || (error instanceof Error && error.name === "AbortException")) return;
+      if (isChangedPdfSource(error)) {
+        input.onSourceInvalidated();
+        return;
+      }
+      setState((previous) => ({
+        ...previous,
+        phase: "error",
+        error: pdfErrorMessage(error),
+        passwordReason: null,
+      }));
+    };
     setState(INITIAL_STATE);
     const loadingTask = startPdfDocumentLoad(input.sourceUrl, {
       onPassword: ({ reason, submit }) => {
@@ -166,24 +184,43 @@ export function useScientPdfReader(input: {
     void loadingTask.promise
       .then(async (document) => {
         if (!current) return;
+        let pagesInitialized = false;
+        let initialLayoutRestored = false;
         const runtime = createPdfRuntime({
           container,
           viewerElement,
           document,
           loadingTask,
-          onContainerResize: (viewer) => responsiveZoom.reconcile(viewer, container.clientWidth),
+          onContainerResize: (viewer) => {
+            if (!current) return;
+            if (!initialLayoutRestored) {
+              restoreInitialLayout();
+              return;
+            }
+            responsiveZoom.reconcile(viewer, container.clientWidth);
+          },
           sourceUrl: input.sourceUrl,
         });
         runtimeRef.current = runtime;
         responsiveZoomRef.current = responsiveZoom;
+        // Loading the document and initializing its first page are separate
+        // promises. Surface active initialization failures instead of spinning.
+        void runtime.viewer.pagesPromise?.catch(handleLoadError);
 
-        const onPagesInit = () => {
+        function restoreInitialLayout() {
+          if (!current || !pagesInitialized || initialLayoutRestored) return;
+          if (!hasPdfLayout(container, viewerElement)) return;
+          initialLayoutRestored = true;
           const restoredPage = viewportSession.restore(runtime.viewer, runtime.document.numPages);
           responsiveZoom.capturePreference(runtime.viewer);
           if (restoreFrame !== null) cancelAnimationFrame(restoreFrame);
           restoreFrame = requestAnimationFrame(() => {
             restoreFrame = null;
             if (!current) return;
+            if (!hasPdfLayout(container, viewerElement)) {
+              initialLayoutRestored = false;
+              return;
+            }
             viewportSession.completeRestore();
             runtime.refreshForContainerSize();
           });
@@ -231,14 +268,22 @@ export function useScientPdfReader(input: {
             });
           };
           if (typeof window.requestIdleCallback === "function") {
+            if (searchWarmupHandle !== null) window.cancelIdleCallback(searchWarmupHandle);
             searchWarmupKind = "idle";
             searchWarmupHandle = window.requestIdleCallback(warmSearch, { timeout: 1_500 });
           } else {
+            if (searchWarmupHandle !== null) window.clearTimeout(searchWarmupHandle);
             searchWarmupKind = "timeout";
             searchWarmupHandle = window.setTimeout(warmSearch, 750);
           }
+        }
+        const onPagesInit = () => {
+          if (!current) return;
+          pagesInitialized = true;
+          restoreInitialLayout();
         };
         const onPageChanging = ({ pageNumber }: { pageNumber: number }) => {
+          if (!current) return;
           setState((previous) => ({ ...previous, page: pageNumber }));
           runtime.refreshForContainerSize();
         };
@@ -249,16 +294,19 @@ export function useScientPdfReader(input: {
           scale: number;
           presetValue?: string;
         }) => {
+          if (!current) return;
           if (responsiveZoom.observeScaleChange(runtime.viewer, scale, presetValue)) {
             runtime.cancelContainerSizeRefresh();
           }
           setState((previous) => ({ ...previous, scale }));
         };
         const onRotationChanging = ({ pagesRotation }: { pagesRotation: number }) => {
+          if (!current) return;
           setState((previous) => ({ ...previous, rotation: pagesRotation }));
           runtime.refreshForContainerSize();
         };
         const onUpdateViewArea = ({ location }: { location?: PdfViewAreaLocation }) => {
+          if (!current || !hasPdfLayout(container, viewerElement)) return;
           viewportSession.updateFromViewArea(location, responsiveZoom.persistedScaleValue());
         };
         const onFindCount = ({
@@ -266,7 +314,7 @@ export function useScientPdfReader(input: {
         }: {
           matchesCount?: { current?: number; total?: number };
         }) => {
-          if (activeSearchQueryRef.current.length === 0) return;
+          if (!current || activeSearchQueryRef.current.length === 0) return;
           setState((previous) => ({
             ...previous,
             findCount: {
@@ -284,7 +332,7 @@ export function useScientPdfReader(input: {
           rawQuery?: string;
           state?: number;
         }) => {
-          if (!rawQuery || rawQuery !== activeSearchQueryRef.current) return;
+          if (!current || !rawQuery || rawQuery !== activeSearchQueryRef.current) return;
           setState((previous) => ({
             ...previous,
             findCount: {
@@ -315,6 +363,10 @@ export function useScientPdfReader(input: {
           if (pinchFrame !== null) return;
           pinchFrame = requestAnimationFrame(() => {
             pinchFrame = null;
+            if (!current || !hasPdfLayout(container, viewerElement)) {
+              pendingPinchFactor = 1;
+              return;
+            }
             const currentScale = runtime.viewer.currentScale;
             const targetScale = normalizePdfZoom(currentScale * pendingPinchFactor);
             pendingPinchFactor = 1;
@@ -331,24 +383,13 @@ export function useScientPdfReader(input: {
         container.addEventListener("wheel", onPinchWheel, { passive: false });
 
         const outlineResult = await runtime.document.getOutline().catch(() => null);
+        if (!current) return;
         const outline = (outlineResult ?? []) as PDFOutline;
         if (current) setState((previous) => ({ ...previous, outline }));
         const scanned = await detectScannedDocument(runtime, () => current).catch(() => null);
         if (current) setState((previous) => ({ ...previous, scanned }));
       })
-      .catch((error: unknown) => {
-        if (!current || (error instanceof Error && error.name === "AbortException")) return;
-        if (isChangedPdfSource(error)) {
-          input.onSourceInvalidated();
-          return;
-        }
-        setState((previous) => ({
-          ...previous,
-          phase: "error",
-          error: pdfErrorMessage(error),
-          passwordReason: null,
-        }));
-      });
+      .catch(handleLoadError);
 
     return () => {
       current = false;
@@ -383,6 +424,7 @@ export function useScientPdfReader(input: {
     input.onSourceInvalidated,
     input.sourceUrl,
     input.viewerElement,
+    loadRevision,
   ]);
 
   const submitPassword = useCallback((password: string) => {
@@ -562,6 +604,7 @@ export function useScientPdfReader(input: {
 
   return {
     state,
+    reopen,
     runtimeRef,
     submitPassword,
     goToPage,

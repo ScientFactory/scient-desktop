@@ -2,7 +2,7 @@
 
 Status: Active maintainer runbook
 Owner: ScientFactory
-Last updated: 2026-08-24
+Last updated: 2026-08-31
 Purpose: Defines the one canonical Scient development baseline and the isolated worktree runtimes used to review changes safely.
 
 ## Outcome And Boundary
@@ -175,6 +175,14 @@ which microphone permission can be attached. Set
 required. If no development identity exists, the launcher falls back to ad hoc
 signing and warns that macOS may request microphone permission again after the
 bundle changes.
+
+The development signer deduplicates targets by their canonical filesystem path.
+Electron frameworks expose the same nested files through multiple symlinks;
+`@electron/osx-sign` 1.x follows those aliases and can otherwise attempt to sign
+one resource twice. Every distinct target remains eligible for signing, and
+normal bundle verification remains enabled. This does not change certificates,
+entitlements, release signing, or macOS privacy permissions. The regression test
+is in `apps/desktop/scripts/electron-launcher.test.mjs`.
 
 Grant microphone access to the visible `Scient (Dev) · <label>` entry in
 System Settings when macOS asks. Reloading the renderer cannot repair an

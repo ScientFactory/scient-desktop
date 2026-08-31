@@ -27,7 +27,7 @@ import {
   ZoomIn,
   ZoomOut,
 } from "lucide-react";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import {
   DropdownMenu,
@@ -61,6 +61,12 @@ import "./scientPdfReader.css";
 
 const PDF_SOURCE_SYNC_HINT_DELAY_MS = 300;
 const PDF_SOURCE_SYNC_HINT_VISIBLE_MS = 4_000;
+
+const PdfPassageProbe = import.meta.env.DEV
+  ? lazy(() =>
+      import("./passages/PdfPassageProbe").then((module) => ({ default: module.PdfPassageProbe })),
+    )
+  : null;
 
 let pdfSourceSyncHintLearnedThisSession = false;
 
@@ -211,6 +217,7 @@ function LoadedScientPdfReader(props: {
   const sourceSyncHintHideTimerRef = useRef<number | null>(null);
   const [pageInput, setPageInput] = useState("1");
   const [sourceSyncHintVisible, setSourceSyncHintVisible] = useState(false);
+  const [passageProofOpen, setPassageProofOpen] = useState(false);
   const reader = useScientPdfReader({
     documentKey: props.documentKey,
     onSourceInvalidated: props.refreshSource,
@@ -522,6 +529,12 @@ function LoadedScientPdfReader(props: {
             <DropdownMenuItem onClick={() => setSearchOpen(true)}>
               <Search /> Search PDF
             </DropdownMenuItem>
+            {import.meta.env.DEV ? (
+              <DropdownMenuItem onClick={() => setPassageProofOpen((open) => !open)}>
+                <FileText />{" "}
+                {passageProofOpen ? "Close passage capture proof" : "Passage capture proof"}
+              </DropdownMenuItem>
+            ) : null}
             {hasSourceActions ? <DropdownMenuSeparator /> : null}
             {props.source.capabilities.canSaveCopy ? (
               <DropdownMenuItem disabled={savingCopy} onClick={() => void saveCopy()}>
@@ -545,6 +558,14 @@ function LoadedScientPdfReader(props: {
           </DropdownMenuContent>
         </DropdownMenu>
       </div>
+      {passageProofOpen && PdfPassageProbe ? (
+        <Suspense fallback={null}>
+          <PdfPassageProbe
+            runtime={state.phase === "ready" ? reader.runtimeRef.current : null}
+            reopen={reader.reopen}
+          />
+        </Suspense>
+      ) : null}
       {props.source._tag === "generated-pdf" && props.source.bindingStatus === "stale" ? (
         <div className="scient-pdf-notice" role="status">
           The latest build failed. Showing the last successful PDF.

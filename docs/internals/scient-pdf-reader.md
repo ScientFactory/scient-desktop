@@ -33,6 +33,26 @@ PDF.js `PDFViewer` owns visible-page rendering, text and annotation layers,
 internal destinations, bounded canvases, and cleanup. The reader additionally
 virtualizes thumbnails, loads outlines lazily, preserves fit modes across panel
 resizes, and destroys loading/rendering work on file switches or unmount.
+Teardown detaches the viewer, link service, and find controller from their
+document before destroying its transport. PDF.js `cleanup()` alone does not
+release the viewer's hidden copy helper and document listeners.
+
+The pinned package has a narrow lifecycle patch in
+`patches/pdfjs-dist@6.2.108.patch`, registered through `pnpm-workspace.yaml` and
+the lockfile. PDF.js replaces its loading capabilities on detach; an old failed
+page request must not reject the replacement document's promise. Both viewer
+builds now check the captured attachment's abort signal and document identity
+before startup, eager-page, metadata, or pages-loaded continuations act.
+Optional-content configuration participates in the initial promise group so
+its failure is observed before page views consume it. Current failures remain
+reported; stale work is ignored by ownership, not by matching error text or
+delaying transport destruction. The reader also observes active initialization
+failure and presents its normal loading error instead of remaining on a spinner.
+
+Resize and viewport restoration require connected nodes with usable layout.
+An initially hidden reader retains its pending restore until width/height
+recovery; hidden view events cannot replace its saved reading position. This
+also avoids asking PDF.js to scroll a removed reader during React teardown.
 
 The reader uses PDF.js's legacy/compatibility build at the same pinned version
 as its worker. This keeps Electron compatibility without changing the parsing or
@@ -93,6 +113,89 @@ OCR is likewise out of scope. The reader samples only the opening pages for text
 and describes that limited observation rather than declaring the whole document
 to be scanned.
 
+## Development passage-capture proof
+
+Development builds offer **More PDF actions → Passage capture proof**. This is
+an opt-in maintainer experiment, not saved highlights or a released Sources
+capability. The control and lazy-loaded probe are excluded from production JS.
+It uses the existing reader for both workspace PDFs and exact Source attachments;
+it adds no authority, server operation, provider tool, or project-state namespace.
+
+Select text, choose **Capture selection**, then **Reopen PDF** and **Return to
+passage**. Reopen destroys and reconstructs the PDF runtime while preserving one
+capture in React memory. Return checks the newly loaded material before marking
+the captured character ranges. Closing the proof, unmounting the reader, or
+reloading the app discards the capture; **Clear** also removes it. Existing
+Source notes and ordinary durable reader viewport state are unchanged.
+
+The implementation lives in `apps/web/src/scient/pdf/passages/`:
+
+- `pdfPassageModel.ts` owns the transient descriptor, bounds, and pure exact-match
+  checks. It is **not** a persisted Region schema or an untrusted-input decoder.
+- `pdfPassageCapture.ts` snapshots DOM selection offsets and character-range
+  rectangles, checks them against raw PDF.js extraction, hashes the actual
+  loaded bytes, and paints temporary marks in native PDF coordinates.
+- `PdfPassageProbe.tsx` owns the review controls, stale-operation rejection, and
+  lifecycle cleanup. `useScientPdfReader.ts` owns runtime reconstruction.
+
+Exact means matching PDF SHA-256 and length, PDF.js version, extraction profile,
+page text hash, quote/offset/context, and intrinsic page geometry. The profile
+uses raw text-item strings and explicit end-of-line markers with UTF-16 offsets;
+it does not normalize ligatures, dehyphenate, or invent spaces. DOM/extractor
+disagreement is refused. Repeated quotes are never searched for a substitute.
+Changed material or extractor identity requires review even if words look alike.
+There is no automatic relocation, accepted rebinding, OCR, or durable annotation.
+
+The UI describes an exact result as **same PDF and text location verified**, not
+verified wording. The extracted quote is visible immediately for comparison with
+the page: an unchanged hidden OCR layer can still disagree with visible pixels.
+Neither continuity nor an accurate quotation establishes scientific meaning.
+The current rectangular geometry supports axis-aligned text and quarter turns;
+diagonal text is explicitly refused before collecting misleading bounding boxes.
+Faithful oriented highlights remain a separate geometry acceptance gate, not an
+implemented capability. The trusted in-memory verifier does not authenticate
+arbitrarily edited capture rectangles or guarantee that a scheduled mark painted.
+
+The proof bounds capture to four consecutive rendered pages, 8,000 selected
+UTF-16 units, and 256 non-empty range rectangles, including duplicates. Traversal
+stops above 250,000 text units or 50,000 visited nodes per page; selected text and
+rectangle budgets are enforced during collection, not only afterward. Empty,
+ready, and refused selections are distinct; refused selections explain the limit
+or unsupported geometry without discarding a prior capture.
+
+The proof checks download size before buffering PDFs up to 100 MiB, rechecks the
+actual byte length, honors PDF copy restrictions, and shares one material read
+and hash per runtime (retrying failed reads). Full-file SHA-256 runs in a dedicated
+`pdfPassageHash.worker.ts` worker over the exact byte view; its buffer is
+transferred, not copied again for hashing. The worker terminates on success or
+failure. There is no synchronous full-file fallback. PDF.js still supplies a
+full-byte copy; this is not streaming or an end-to-end zero-copy guarantee.
+Clear, runtime replacement, and unmount ignore late results and clean up marks;
+they do not cancel a bounded hash already in progress.
+
+Run focused tests from `apps/web` with
+`pnpm exec vp test run --project unit src/scient/pdf/passages`. The read-only
+corpus harness can compare the pinned engine with a separately supplied trusted
+PDF.js module without changing app dependencies:
+
+```sh
+node scripts/scient-pdf-passage-corpus.mjs /absolute/reference/pdf.mjs /absolute/fixture.pdf
+```
+
+Run that command from the repository root with Node 24 and installed locked
+dependencies. Each extractor runs in its own process to avoid PDF.js fake-worker
+version collisions. Output contains material hashes, page text hashes, page
+geometry, and cold timings, not document text. Use licensed, non-sensitive
+fixtures; the supplied module is executable code. Matching outputs on a small
+corpus do not certify arbitrary PDFs, OCR quality, or extractor-version stability.
+
+Expand real-corpus coverage and validate selection, geometry, recovery,
+accessibility, and performance before proposing persistent data. Workspace
+authority and durable operations must reuse their separately reviewed foundation;
+this reader proof does not accept those architecture decisions. Update this
+section whenever the proof, extraction profile, limits, or persistence boundary
+changes. Public Help should not advertise this development-only experiment.
+
 ## Upstream maintenance
 
 Keep future reader behavior inside `apps/web/src/scient/pdf`. Changes to inherited
@@ -102,3 +205,10 @@ and should remain independent of PDF UI decisions.
 
 PDF.js is distributed under Apache-2.0. Its bundled support-data license files
 and root license remain in the emitted `pdfjs-assets` tree.
+
+On a PDF.js upgrade, re-evaluate and preferably retire the lifecycle patch if
+the upstream fix covers it; do not carry it blindly. Run
+`pdfViewerLifecycle.test.ts` against the installed viewer (not a mock), plus
+runtime/layout/viewport tests and real rapid-switch/reopen QA. The patch changes
+viewer ownership only, not PDF parsing, extraction identity, the worker, or
+asset authority. Retain the Apache-2.0 notices.

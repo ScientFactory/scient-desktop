@@ -18,6 +18,7 @@ import {
 } from "pdfjs-dist/legacy/web/pdf_viewer.mjs";
 
 import { createPdfResizeSettlement } from "./pdfResizeSettlement";
+import { hasPdfLayout } from "./pdfLayout";
 
 GlobalWorkerOptions.workerSrc = pdfWorkerUrl;
 
@@ -141,7 +142,7 @@ export function createPdfRuntime(input: {
 
   let destroyed = false;
   const resizeSettlement = createPdfResizeSettlement(() => {
-    if (destroyed) return;
+    if (destroyed || !hasPdfLayout(input.container, input.viewerElement)) return;
     if (input.onContainerResize) {
       input.onContainerResize(viewer);
       return;
@@ -156,11 +157,14 @@ export function createPdfRuntime(input: {
   const refreshForContainerSize = () => {
     if (!destroyed) resizeSettlement.schedule();
   };
-  let observedWidth = input.container.getBoundingClientRect().width;
+  let { width: observedWidth, height: observedHeight } = input.container.getBoundingClientRect();
   const resizeObserver = new ResizeObserver(() => {
-    const nextWidth = input.container.getBoundingClientRect().width;
-    if (Math.abs(nextWidth - observedWidth) < 0.5) return;
+    const { width: nextWidth, height: nextHeight } = input.container.getBoundingClientRect();
+    if (Math.abs(nextWidth - observedWidth) < 0.5 && Math.abs(nextHeight - observedHeight) < 0.5) {
+      return;
+    }
     observedWidth = nextWidth;
+    observedHeight = nextHeight;
     refreshForContainerSize();
   });
   resizeObserver.observe(input.container, { box: "border-box" });
@@ -179,7 +183,16 @@ export function createPdfRuntime(input: {
       destroyed = true;
       resizeObserver.disconnect();
       resizeSettlement.cancel();
-      viewer.cleanup();
+      // cleanup() only resets unfinished pages. Detach the document to also
+      // remove PDF.js copy helpers, abort document listeners and destroy editors.
+      // These two upstream declarations omit the null detach value accepted by
+      // their implementations. Keep that compatibility assertion at this seam.
+      (viewer.setDocument as (document: PDFDocumentProxy | null) => void).call(viewer, null);
+      linkService.setDocument(null);
+      (findController.setDocument as (document: PDFDocumentProxy | null) => void).call(
+        findController,
+        null,
+      );
       input.viewerElement.replaceChildren();
       await input.loadingTask.destroy();
     },

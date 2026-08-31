@@ -41,19 +41,19 @@ describe("Scient PDF reader source seam", () => {
 
     expect(source).toContain(
       `const onPageChanging = ({ pageNumber }: { pageNumber: number }) => {
+          if (!current) return;
           setState((previous) => ({ ...previous, page: pageNumber }));
           runtime.refreshForContainerSize();
         };`,
     );
     expect(source).toContain(
       `const onRotationChanging = ({ pagesRotation }: { pagesRotation: number }) => {
+          if (!current) return;
           setState((previous) => ({ ...previous, rotation: pagesRotation }));
           runtime.refreshForContainerSize();
         };`,
     );
-    expect(source).toContain(
-      "onContainerResize: (viewer) => responsiveZoom.reconcile(viewer, container.clientWidth)",
-    );
+    expect(source).toContain("responsiveZoom.reconcile(viewer, container.clientWidth)");
     expect(source).not.toContain("refreshForPageGeometry");
   });
 

@@ -1,0 +1,174 @@
+diff --git a/legacy/web/pdf_viewer.mjs b/legacy/web/pdf_viewer.mjs
+index 028e9224cbddfaa7627debeb265e471eb48a3459..2d6d1a1dde7fcc07de24db37930f075edec0a9f9 100644
+--- a/legacy/web/pdf_viewer.mjs
++++ b/legacy/web/pdf_viewer.mjs
+@@ -13406,6 +13406,9 @@ class PDFViewer {
+       });
+     }
+     this._pagesCapability.promise.then(() => {
++      if (signal.aborted || pdfDocument !== this.pdfDocument) {
++        return;
++      }
+       eventBus.dispatch("pagesloaded", {
+         source: this,
+         pagesCount
+@@ -13429,8 +13432,10 @@ class PDFViewer {
+       eventBus.off("pagerendered", onAfterDraw);
+     };
+     eventBus.on("pagerendered", onAfterDraw, evtOpts);
+-    Promise.all([firstPagePromise, permissionsPromise]).then(([firstPdfPage, permissions]) => {
+-      if (pdfDocument !== this.pdfDocument) {
++    Promise.all([firstPagePromise, permissionsPromise, optionalContentConfigPromise]).then(([firstPdfPage, permissions]) => {
++      // Scient: asynchronous initialization belongs to this document attachment,
++      // never to the replacement capabilities created by _resetView().
++      if (signal.aborted || pdfDocument !== this.pdfDocument) {
+         return;
+       }
+       this._firstPageCapability.resolve(firstPdfPage);
+@@ -13525,7 +13530,7 @@ class PDFViewer {
+         ...internalOpt
+       });
+       this.#onePageRenderedOrForceFetch(signal).then(async () => {
+-        if (pdfDocument !== this.pdfDocument) {
++        if (signal.aborted || pdfDocument !== this.pdfDocument) {
+           return;
+         }
+         this.findController?.setDocument(pdfDocument);
+@@ -13545,7 +13550,13 @@ class PDFViewer {
+           return;
+         }
+         for (let pageNum = 2; pageNum <= pagesCount; ++pageNum) {
++          if (signal.aborted || pdfDocument !== this.pdfDocument) {
++            return;
++          }
+           const promise = pdfDocument.getPage(pageNum).then(pdfPage => {
++            if (signal.aborted || pdfDocument !== this.pdfDocument) {
++              return;
++            }
+             const pageView = this._pages[pageNum - 1];
+             if (!pageView.pdfPage) {
+               pageView.setPdfPage(pdfPage);
+@@ -13554,6 +13565,9 @@ class PDFViewer {
+               this._pagesCapability.resolve();
+             }
+           }, reason => {
++            if (signal.aborted || pdfDocument !== this.pdfDocument) {
++              return;
++            }
+             console.error(`Unable to get page ${pageNum} to initialize viewer`, reason);
+             if (--getPagesLeft === 0) {
+               this._pagesCapability.resolve();
+@@ -13570,17 +13584,25 @@ class PDFViewer {
+       pdfDocument.getMetadata().then(({
+         info
+       }) => {
+-        if (pdfDocument !== this.pdfDocument) {
++        if (signal.aborted || pdfDocument !== this.pdfDocument) {
+           return;
+         }
+         if (info.Language) {
+           viewer.lang = info.Language;
+         }
++      }, reason => {
++        if (signal.aborted || pdfDocument !== this.pdfDocument) {
++          return;
++        }
++        console.error("Unable to get viewer metadata", reason);
+       });
+       if (this.defaultRenderingQueue) {
+         this.update();
+       }
+     }).catch(reason => {
++      if (signal.aborted || pdfDocument !== this.pdfDocument) {
++        return;
++      }
+       console.error("Unable to initialize viewer", reason);
+       this._pagesCapability.reject(reason);
+     });
+diff --git a/web/pdf_viewer.mjs b/web/pdf_viewer.mjs
+index c1717440583a0739debb12695952d9424abcce58..949269431952c5c55085abd06de588672bf7e42e 100644
+--- a/web/pdf_viewer.mjs
++++ b/web/pdf_viewer.mjs
+@@ -8289,6 +8289,9 @@ class PDFViewer {
+       });
+     }
+     this._pagesCapability.promise.then(() => {
++      if (signal.aborted || pdfDocument !== this.pdfDocument) {
++        return;
++      }
+       eventBus.dispatch("pagesloaded", {
+         source: this,
+         pagesCount
+@@ -8312,8 +8315,10 @@ class PDFViewer {
+       eventBus.off("pagerendered", onAfterDraw);
+     };
+     eventBus.on("pagerendered", onAfterDraw, evtOpts);
+-    Promise.all([firstPagePromise, permissionsPromise]).then(([firstPdfPage, permissions]) => {
+-      if (pdfDocument !== this.pdfDocument) {
++    Promise.all([firstPagePromise, permissionsPromise, optionalContentConfigPromise]).then(([firstPdfPage, permissions]) => {
++      // Scient: asynchronous initialization belongs to this document attachment,
++      // never to the replacement capabilities created by _resetView().
++      if (signal.aborted || pdfDocument !== this.pdfDocument) {
+         return;
+       }
+       this._firstPageCapability.resolve(firstPdfPage);
+@@ -8408,7 +8413,7 @@ class PDFViewer {
+         ...internalOpt
+       });
+       this.#onePageRenderedOrForceFetch(signal).then(async () => {
+-        if (pdfDocument !== this.pdfDocument) {
++        if (signal.aborted || pdfDocument !== this.pdfDocument) {
+           return;
+         }
+         this.findController?.setDocument(pdfDocument);
+@@ -8428,7 +8433,13 @@ class PDFViewer {
+           return;
+         }
+         for (let pageNum = 2; pageNum <= pagesCount; ++pageNum) {
++          if (signal.aborted || pdfDocument !== this.pdfDocument) {
++            return;
++          }
+           const promise = pdfDocument.getPage(pageNum).then(pdfPage => {
++            if (signal.aborted || pdfDocument !== this.pdfDocument) {
++              return;
++            }
+             const pageView = this._pages[pageNum - 1];
+             if (!pageView.pdfPage) {
+               pageView.setPdfPage(pdfPage);
+@@ -8437,6 +8448,9 @@ class PDFViewer {
+               this._pagesCapability.resolve();
+             }
+           }, reason => {
++            if (signal.aborted || pdfDocument !== this.pdfDocument) {
++              return;
++            }
+             console.error(`Unable to get page ${pageNum} to initialize viewer`, reason);
+             if (--getPagesLeft === 0) {
+               this._pagesCapability.resolve();
+@@ -8453,17 +8467,25 @@ class PDFViewer {
+       pdfDocument.getMetadata().then(({
+         info
+       }) => {
+-        if (pdfDocument !== this.pdfDocument) {
++        if (signal.aborted || pdfDocument !== this.pdfDocument) {
+           return;
+         }
+         if (info.Language) {
+           viewer.lang = info.Language;
+         }
++      }, reason => {
++        if (signal.aborted || pdfDocument !== this.pdfDocument) {
++          return;
++        }
++        console.error("Unable to get viewer metadata", reason);
+       });
+       if (this.defaultRenderingQueue) {
+         this.update();
+       }
+     }).catch(reason => {
++      if (signal.aborted || pdfDocument !== this.pdfDocument) {
++        return;
++      }
+       console.error("Unable to initialize viewer", reason);
+       this._pagesCapability.reject(reason);
+     });
