@@ -121,7 +121,10 @@ const shouldRetainMissingProviderModels = (provider: ServerProvider): boolean =>
   // the picker. Same state-aware policy as OpenCode below — retain during
   // pending initial probes and failed installed-probe refreshes, replace on
   // successful discovery.
-  if (provider.driver === ProviderDriverKind.make("droid")) {
+  if (
+    provider.driver === ProviderDriverKind.make("droid") ||
+    provider.driver === ProviderDriverKind.make("pi")
+  ) {
     const isPendingInitialProbe =
       provider.enabled && !provider.installed && provider.status === "warning";
     const didInstalledProviderProbeFail = provider.installed && provider.status === "error";
@@ -153,8 +156,9 @@ const shouldRetainMissingProviderModels = (provider: ServerProvider): boolean =>
   );
 };
 
-const shouldRetainMissingOpenCodeMetadata = (provider: ServerProvider): boolean =>
-  provider.driver === ProviderDriverKind.make("opencode") &&
+const shouldRetainMissingDynamicMetadata = (provider: ServerProvider): boolean =>
+  (provider.driver === ProviderDriverKind.make("opencode") ||
+    provider.driver === ProviderDriverKind.make("pi")) &&
   shouldRetainMissingProviderModels(provider);
 
 const mergeProviderModels = (
@@ -174,6 +178,8 @@ const mergeProviderModels = (
 
   const previousBySlug = new Map(previousModels.map((model) => [model.slug, model] as const));
   const mergedModels = nextModels.map((model) => {
+    // A successful Pi inventory explicitly describes the current model's options.
+    if (provider.driver === ProviderDriverKind.make("pi")) return model;
     const previousModel = previousBySlug.get(model.slug);
     if (provider.driver === ProviderDriverKind.make("droid")) {
       // Droid uses the contract's nullable capability shape as an authority
@@ -251,7 +257,7 @@ export const mergeProviderSnapshot = (
       : previousProvider.workspaceSnapshots !== undefined
         ? { workspaceSnapshots: previousProvider.workspaceSnapshots }
         : {}),
-    ...(shouldRetainMissingOpenCodeMetadata(nextProvider)
+    ...(shouldRetainMissingDynamicMetadata(nextProvider)
       ? {
           slashCommands:
             nextProvider.slashCommands.length === 0

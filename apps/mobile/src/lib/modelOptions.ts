@@ -7,6 +7,7 @@ import {
 import type {
   ModelCapabilities,
   ModelSelection,
+  RuntimeMode,
   ServerConfig as T3ServerConfig,
 } from "@t3tools/contracts";
 import {
@@ -16,6 +17,7 @@ import {
 
 export type ModelOption = {
   readonly reasoningGroup?: AntigravityModelGroup;
+  readonly supportedRuntimeModes?: ReadonlyArray<RuntimeMode> | undefined;
   readonly key: string;
   readonly label: string;
   readonly subtitle: string;
@@ -183,6 +185,7 @@ export function buildModelOptions(
         ...(reasoningGroup ? { reasoningGroup } : {}),
         subtitle: model.subProvider ?? "",
         providerKey: provider.instanceId,
+        supportedRuntimeModes: provider.supportedRuntimeModes,
         providerLabel,
         providerDriver: provider.driver,
         isDefault: model.isDefault === true,

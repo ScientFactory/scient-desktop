@@ -50,6 +50,7 @@ const PROVIDER_OPTIONS_UNORDERED: Array<{
 }> = [
   { value: ProviderDriverKind.make("codex"), label: "Codex", available: true },
   { value: ProviderDriverKind.make("claudeAgent"), label: "Claude", available: true },
+  { value: ProviderDriverKind.make("pi"), label: "Pi", available: true, pickerSidebarBadge: "new" },
   {
     value: ProviderDriverKind.make("opencode"),
     label: "OpenCode",
@@ -543,7 +544,10 @@ function parseUserInputQuestions(
           };
         })
         .filter((option): option is UserInputQuestion["options"][number] => option !== null);
-      if (options.length === 0 && question.allowCustomAnswer === false) {
+      if (
+        options.length === 0 &&
+        (question.options.length > 0 || question.allowCustomAnswer === false)
+      ) {
         return null;
       }
       return {

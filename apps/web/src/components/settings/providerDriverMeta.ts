@@ -6,6 +6,7 @@ import {
   DroidSettings,
   GrokSettings,
   OpenCodeSettings,
+  PiSettings,
   compareProviderDriverKinds,
   ProviderDriverKind,
 } from "@t3tools/contracts";
@@ -19,6 +20,7 @@ import {
   type Icon,
   OpenAI,
   OpenCodeIcon,
+  PiIcon,
 } from "../Icons";
 
 type ProviderSettingsSchema = {
@@ -47,6 +49,13 @@ export interface ProviderClientDefinition {
 }
 
 const PROVIDER_CLIENT_DEFINITIONS_UNORDERED: readonly ProviderClientDefinition[] = [
+  {
+    value: ProviderDriverKind.make("pi"),
+    label: "Pi",
+    icon: PiIcon,
+    badgeLabel: "Early Access",
+    settingsSchema: PiSettings,
+  },
   {
     value: ProviderDriverKind.make("codex"),
     label: "Codex",

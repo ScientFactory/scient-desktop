@@ -211,6 +211,7 @@ function AssistedProviderConnectionDialog(props: ProviderConnectionDialogContent
   const isGrok = props.provider.driver === "grok";
   const isDroid = props.provider.driver === "droid";
   const isCursor = props.provider.driver === "cursor";
+  const isPi = props.provider.driver === "pi";
   const assistedDisplayName = props.displayName;
   const runtime = props.provider.connection?.runtime;
   const hasActionableManagedRuntime =
@@ -252,17 +253,19 @@ function AssistedProviderConnectionDialog(props: ProviderConnectionDialogContent
             />
           </DialogTitle>
           <DialogDescription className="sr-only">
-            {isAntigravity
-              ? "Install Antigravity and connect your Google subscription."
-              : isClaude
-                ? "Connect and manage your Claude account."
-                : isGrok
-                  ? "Install Grok and connect your existing subscription."
-                  : isDroid
-                    ? "Install Droid and connect your Factory account."
-                    : isCursor
-                      ? "Connect and manage your Cursor account."
-                      : "Connect and manage your existing ChatGPT subscription."}
+            {isPi
+              ? "Manage Pi's private runtime and model configuration. Pi owns model-specific credentials."
+              : isAntigravity
+                ? "Install Antigravity and connect your Google subscription."
+                : isClaude
+                  ? "Connect and manage your Claude account."
+                  : isGrok
+                    ? "Install Grok and connect your existing subscription."
+                    : isDroid
+                      ? "Install Droid and connect your Factory account."
+                      : isCursor
+                        ? "Connect and manage your Cursor account."
+                        : "Connect and manage your existing ChatGPT subscription."}
           </DialogDescription>
         </DialogHeader>
         <DialogPanel className="space-y-3">

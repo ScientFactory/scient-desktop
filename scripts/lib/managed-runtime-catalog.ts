@@ -14,6 +14,7 @@ import {
   resolveReviewedCursorArtifact,
   resolveReviewedDroidArtifact,
   resolveReviewedGrokArtifact,
+  resolveReviewedPiArtifact,
   type ManagedRuntimeArtifact,
   type ManagedRuntimeProvider,
   type ManagedRuntimeCatalogProvider,
@@ -86,6 +87,7 @@ const policyResolvers: Readonly<Record<ManagedRuntimeProvider, PolicyResolver>> 
   cursor: resolveReviewedCursorArtifact,
   droid: resolveReviewedDroidArtifact,
   grok: resolveReviewedGrokArtifact,
+  pi: resolveReviewedPiArtifact,
 };
 
 export const managedRuntimeProviders: ReadonlyArray<ManagedRuntimeCatalogProvider> = [
@@ -96,6 +98,7 @@ export const managedRuntimeProviders: ReadonlyArray<ManagedRuntimeCatalogProvide
   "cursor",
   "droid",
   "grok",
+  "pi",
 ];
 
 export function isManagedRuntimeProvider(value: string): value is ManagedRuntimeCatalogProvider {
@@ -695,6 +698,43 @@ async function discoverAntigravityAcp(fetch_: Fetch): Promise<ManagedRuntimeCata
   });
 }
 
+async function discoverPi(fetch_: Fetch): Promise<ManagedRuntimeCatalogProviderData> {
+  const release = record(
+    await metadataJson(fetch_, "https://api.github.com/repos/earendil-works/pi/releases/latest"),
+    "Pi stable release",
+  );
+  if (release.prerelease !== false || release.draft !== false)
+    throw new Error("Pi release is not stable.");
+  const version = strictVersion(
+    stringField(release, "tag_name", "Pi release").replace(/^v/u, ""),
+    "Pi release",
+  );
+  if (!Array.isArray(release.assets)) throw new Error("Pi release assets are missing.");
+  const assets = release.assets.map((value) => record(value, "Pi release asset"));
+  const entries = await mapConcurrent(policyEntries("pi"), 4, async ({ key, policy }) => {
+    const asset = assets.find((value) => value.name === policy.artifactName);
+    if (!asset) throw new Error(`Pi release is missing ${policy.artifactName}.`);
+    const url = `https://github.com/earendil-works/pi/releases/download/v${version}/${policy.artifactName}`;
+    if (stringField(asset, "browser_download_url", "Pi release asset") !== url)
+      throw new Error("Pi release asset URL differs from its policy.");
+    const digest = strictDigest(
+      stringField(asset, "digest", "Pi release asset").replace(/^sha256:/u, ""),
+      "sha256",
+      "Pi release asset",
+    );
+    return [
+      key,
+      {
+        artifactName: policy.artifactName,
+        url,
+        checksum: { algorithm: "sha256" as const, digest },
+        size: await artifactSize(fetch_, url),
+      },
+    ] as const;
+  });
+  return candidateProvider({ provider: "pi", version, artifacts: Object.fromEntries(entries) });
+}
+
 const discoverers: Readonly<
   Record<
     ManagedRuntimeCatalogProvider,
@@ -708,6 +748,7 @@ const discoverers: Readonly<
   cursor: discoverCursor,
   droid: discoverDroid,
   grok: discoverGrok,
+  pi: discoverPi,
 };
 
 export async function refreshManagedRuntimeCatalog(
@@ -862,5 +903,18 @@ async function discoverLatestVersion(
       );
     case "grok":
       return parseGrokStableVersion(await metadataText(fetch_, "https://x.ai/cli/stable"));
+    case "pi": {
+      const release = record(
+        await metadataJson(
+          fetch_,
+          "https://api.github.com/repos/earendil-works/pi/releases/latest",
+        ),
+        "Pi stable release",
+      );
+      return strictVersion(
+        stringField(release, "tag_name", "Pi release").replace(/^v/u, ""),
+        "Pi release",
+      );
+    }
   }
 }

@@ -8,6 +8,7 @@ import {
 } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 import { resolveWorkEntryToolPresentation } from "@t3tools/client-runtime/work-log/presentation";
+import { buildPendingUserInputAnswers } from "./pendingUserInput";
 
 import {
   createMessageAttachmentPreviewProjector,
@@ -327,6 +328,54 @@ describe("derivePendingUserInputs", () => {
     ];
 
     expect(derivePendingUserInputs(activities)[0]?.questions).toEqual([question]);
+  });
+
+  it.each(["Synthetic text only", "Submit a complete replacement:\nInitial text"])(
+    "keeps text-only questions answerable and removes them on resolution: %s",
+    (questionText) => {
+      const question = {
+        id: "pi-text-answer",
+        header: "Pi input",
+        question: questionText,
+        options: [],
+        multiSelect: false,
+      };
+      const requested = makeActivity({
+        kind: "user-input.requested",
+        payload: { requestId: "pi-text", questions: [question] },
+      });
+      const pending = derivePendingUserInputs([requested]);
+      expect(pending).toHaveLength(1);
+      expect(pending[0]?.questions).toEqual([question]);
+      const questions = pending[0]!.questions;
+      expect(buildPendingUserInputAnswers(questions, {})).toBeNull();
+      const answers = buildPendingUserInputAnswers(questions, {
+        "pi-text-answer": { customAnswer: "שלום π\nSecond line" },
+      });
+      expect(answers).toEqual({ "pi-text-answer": "שלום π\nSecond line" });
+      const resolved = makeActivity({
+        kind: "user-input.resolved",
+        createdAt: "2026-02-23T00:00:01.000Z",
+        payload: { requestId: "pi-text", answers },
+      });
+      expect(derivePendingUserInputs([requested, resolved])).toEqual([]);
+    },
+  );
+
+  it("does not turn malformed choice options into a text-only question", () => {
+    expect(
+      derivePendingUserInputs([
+        makeActivity({
+          kind: "user-input.requested",
+          payload: {
+            requestId: "bad-options",
+            questions: [
+              { id: "q", header: "Input", question: "Choose", options: [null, { label: 1 }] },
+            ],
+          },
+        }),
+      ]),
+    ).toEqual([]);
   });
 
   it("tracks open structured prompts and removes resolved ones", () => {

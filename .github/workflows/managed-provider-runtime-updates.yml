@@ -9,7 +9,7 @@ on:
         description: Provider to qualify (scheduled runs check all providers)
         type: choice
         default: all
-        options: [all, codex, claudeAgent, antigravity, antigravityAcp, cursor, droid, grok]
+        options: [all, codex, claudeAgent, antigravity, antigravityAcp, cursor, droid, grok, pi]
       qualify_only:
         description: Test the selected branch without publishing (always enforced off main)
         type: boolean
@@ -28,7 +28,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        provider: ${{ fromJSON(inputs.provider && inputs.provider != 'all' && format('["{0}"]', inputs.provider) || '["codex","claudeAgent","antigravity","antigravityAcp","cursor","droid","grok"]') }}
+        provider: ${{ fromJSON(inputs.provider && inputs.provider != 'all' && format('["{0}"]', inputs.provider) || '["codex","claudeAgent","antigravity","antigravityAcp","cursor","droid","grok","pi"]') }}
     uses: ./.github/workflows/managed-provider-runtime-update-provider.yml
     with:
       provider: ${{ matrix.provider }}

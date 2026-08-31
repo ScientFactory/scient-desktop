@@ -36,6 +36,7 @@ const currentCatalog: ManagedRuntimeCatalogData = {
     },
     droid: { contractRevision: 1, channel: "stable", version: "0.208.1", artifacts: {} },
     grok: { contractRevision: 1, channel: "stable", version: "1.0.13", artifacts: {} },
+    pi: { contractRevision: 1, channel: "stable", version: "0.84.4", artifacts: {} },
   },
 };
 
@@ -104,6 +105,8 @@ function stableChannelFetch(codexVersion = "0.150.1") {
     ) {
       return Response.json({ version: "1.0.0" });
     }
+    if (url === "https://api.github.com/repos/earendil-works/pi/releases/latest")
+      return Response.json({ tag_name: "v0.84.4", draft: false, prerelease: false });
     throw new Error(`Unexpected release request: ${url}`);
   };
   return { fetch_, requested };
@@ -162,7 +165,7 @@ describe("managed runtime release discovery", () => {
     const result = await refreshManagedRuntimeCatalog(currentCatalog, fetch_);
     expect(result.changedProviders).toEqual([]);
     expect(result.catalog).toEqual(currentCatalog);
-    expect(requested).toHaveLength(7);
+    expect(requested).toHaveLength(8);
   });
 
   it("discovers one provider without coupling it to another provider channel", async () => {

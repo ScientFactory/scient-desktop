@@ -645,6 +645,29 @@ export const GrokSettings = makeProviderSettingsSchema(
 );
 export type GrokSettings = typeof GrokSettings.Type;
 
+export const PiSettings = makeProviderSettingsSchema(
+  {
+    enabled: Schema.Boolean.pipe(
+      Schema.withDecodingDefault(Effect.succeed(false)),
+      Schema.annotateKey({ providerSettingsForm: { hidden: true } }),
+    ),
+    binaryPath: makeBinaryPathSetting("pi").pipe(
+      Schema.annotateKey({
+        title: "Binary path",
+        description:
+          "Path to the Pi coding agent CLI (0.84.4 or newer). Credentials remain managed by Pi.",
+        providerSettingsForm: { placeholder: "pi", clearWhenEmpty: "omit" },
+      }),
+    ),
+    customModels: Schema.Array(Schema.String).pipe(
+      Schema.withDecodingDefault(Effect.succeed([])),
+      Schema.annotateKey({ providerSettingsForm: { hidden: true } }),
+    ),
+  },
+  { order: ["binaryPath"] },
+);
+export type PiSettings = typeof PiSettings.Type;
+
 export const DroidSettings = makeProviderSettingsSchema(
   {
     // Off by default (like Cursor, Grok, and OpenCode): the binding is not
@@ -1038,6 +1061,7 @@ export const ServerSettings = Schema.Struct({
     grok: GrokSettings.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
     opencode: OpenCodeSettings.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
     droid: DroidSettings.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
+    pi: PiSettings.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
     antigravity: AntigravitySettings.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
   }).pipe(Schema.withDecodingDefault(Effect.succeed({}))),
   // New driver-agnostic instance map. Keyed by `ProviderInstanceId`; values
@@ -1217,6 +1241,11 @@ const DroidSettingsPatch = Schema.Struct({
   customModels: Schema.optionalKey(Schema.Array(Schema.String)),
 });
 
+const PiSettingsPatch = Schema.Struct({
+  enabled: Schema.optionalKey(Schema.Boolean),
+  binaryPath: Schema.optionalKey(TrimmedString),
+  customModels: Schema.optionalKey(Schema.Array(Schema.String)),
+});
 export const ServerSettingsPatch = Schema.Struct({
   // Server settings
   enableLegacyTokenStreaming: Schema.optionalKey(Schema.Boolean),
@@ -1289,6 +1318,7 @@ export const ServerSettingsPatch = Schema.Struct({
       grok: Schema.optionalKey(GrokSettingsPatch),
       opencode: Schema.optionalKey(OpenCodeSettingsPatch),
       droid: Schema.optionalKey(DroidSettingsPatch),
+      pi: Schema.optionalKey(PiSettingsPatch),
       antigravity: Schema.optionalKey(AntigravitySettingsPatch),
     }),
   ),

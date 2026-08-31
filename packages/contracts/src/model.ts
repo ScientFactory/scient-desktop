@@ -149,6 +149,7 @@ const CURSOR_DRIVER_KIND = ProviderDriverKind.make("cursor");
 const GROK_DRIVER_KIND = ProviderDriverKind.make("grok");
 const OPENCODE_DRIVER_KIND = ProviderDriverKind.make("opencode");
 const DROID_DRIVER_KIND = ProviderDriverKind.make("droid");
+const PI_DRIVER_KIND = ProviderDriverKind.make("pi");
 const ANTIGRAVITY_DRIVER_KIND = ProviderDriverKind.make("antigravity");
 
 export const DEFAULT_MODEL = "gpt-5.6-sol";
@@ -241,6 +242,7 @@ export const PROVIDER_DISPLAY_ORDER: ReadonlyArray<ProviderDriverKind> = [
   ANTIGRAVITY_DRIVER_KIND,
   OPENCODE_DRIVER_KIND,
   DROID_DRIVER_KIND,
+  PI_DRIVER_KIND,
   CURSOR_DRIVER_KIND,
   GROK_DRIVER_KIND,
 ];
@@ -267,5 +269,6 @@ export const PROVIDER_DISPLAY_NAMES: Partial<Record<ProviderDriverKind, string>>
   [GROK_DRIVER_KIND]: "Grok",
   [OPENCODE_DRIVER_KIND]: "OpenCode",
   [DROID_DRIVER_KIND]: "Droid",
+  [PI_DRIVER_KIND]: "Pi",
   [ANTIGRAVITY_DRIVER_KIND]: "Antigravity",
 };

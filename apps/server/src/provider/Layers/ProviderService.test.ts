@@ -61,7 +61,10 @@ import {
   ProviderWorkspaceMissingError,
   type ProviderAdapterError,
 } from "../Errors.ts";
-import type { ProviderAdapterShape } from "../Services/ProviderAdapter.ts";
+import type {
+  ProviderAdapterShape,
+  ProviderAdapterSendTurnInput,
+} from "../Services/ProviderAdapter.ts";
 import * as ProviderAdapterRegistry from "../Services/ProviderAdapterRegistry.ts";
 import * as ProviderService from "../Services/ProviderService.ts";
 import * as ProviderSessionDirectory from "../Services/ProviderSessionDirectory.ts";
@@ -170,7 +173,7 @@ function makeFakeCodexAdapter(
 
   const sendTurn = vi.fn(
     (
-      input: ProviderSendTurnInput,
+      input: ProviderAdapterSendTurnInput,
     ): Effect.Effect<ProviderTurnStartResult, ProviderAdapterError> => {
       if (!sessions.has(input.threadId)) {
         return Effect.fail(
@@ -4579,6 +4582,10 @@ describe("agent browser access", () => {
       assert.notInclude(sent[0] ?? "", automatic.releaseKey);
       assert.notInclude(sent[1] ?? "", explicit.releaseKey);
       assert.equal(sent[2], "What changed?");
+      assert.deepEqual(
+        codex.sendTurn.mock.calls.map((call) => call[0].originalInput),
+        ["Is this workspace organized?", "Use $improve carefully.", "What changed?"],
+      );
     }).pipe(Effect.provide(NodeServices.layer)),
   );
 

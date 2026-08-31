@@ -135,6 +135,62 @@ describe("pending user input answers", () => {
     ]);
   });
 
+  it.each(["Synthetic text only", "Submit a complete replacement:\nInitial text"])(
+    "keeps text-only questions answerable and removes them on resolution: %s",
+    (questionText) => {
+      const question = {
+        id: "pi-text-answer",
+        header: "Pi input",
+        question: questionText,
+        options: [],
+        multiSelect: false,
+      };
+      const requested = makeActivity({
+        id: EventId.make("pi-text-requested"),
+        kind: "user-input.requested",
+        summary: "User input requested",
+        createdAt: "2026-08-31T00:00:00.000Z",
+        payload: { requestId: "pi-text", questions: [question] },
+      });
+      const pending = derivePendingUserInputs([requested]);
+      expect(pending).toHaveLength(1);
+      expect(pending[0]?.questions).toEqual([question]);
+      const questions = pending[0]!.questions;
+      expect(buildPendingUserInputAnswers(questions, {})).toBeNull();
+      const answers = buildPendingUserInputAnswers(questions, {
+        "pi-text-answer": { customAnswer: "שלום π\nSecond line" },
+      });
+      expect(answers).toEqual({ "pi-text-answer": "שלום π\nSecond line" });
+      const resolved = makeActivity({
+        id: EventId.make("pi-text-resolved"),
+        kind: "user-input.resolved",
+        summary: "User input submitted",
+        createdAt: "2026-08-31T00:00:01.000Z",
+        payload: { requestId: "pi-text", answers },
+      });
+      expect(derivePendingUserInputs([requested, resolved])).toEqual([]);
+    },
+  );
+
+  it("does not turn malformed choice options into a text-only question", () => {
+    expect(
+      derivePendingUserInputs([
+        makeActivity({
+          id: EventId.make("bad-options"),
+          kind: "user-input.requested",
+          summary: "User input requested",
+          createdAt: "2026-08-31T00:00:00.000Z",
+          payload: {
+            requestId: "bad-options",
+            questions: [
+              { id: "q", header: "Input", question: "Choose", options: [null, { label: 1 }] },
+            ],
+          },
+        }),
+      ]),
+    ).toEqual([]);
+  });
+
   it("replaces single-select options and toggles multi-select options", () => {
     expect(
       togglePendingUserInputOptionSelection(
