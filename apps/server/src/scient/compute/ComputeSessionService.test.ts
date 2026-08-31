@@ -29,6 +29,7 @@ import {
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Scope from "effect/Scope";
@@ -2061,6 +2062,174 @@ describe("compute session reads", () => {
  * than that nothing threw.
  */
 describe("compute session under load", () => {
+  for (const initiallyEmpty of [false, true]) {
+    for (const unrelatedRuns of [0, 12]) {
+      it.effect(
+        `retains a paused ${initiallyEmpty ? "empty" : "populated"} project's completion after ${unrelatedRuns} unrelated floods`,
+        () =>
+          Effect.gen(function* () {
+            const test = yield* harness();
+            yield* test.use(
+              Effect.gen(function* () {
+                const service = yield* ComputeSessionService;
+                if (!initiallyEmpty) yield* start;
+                const events = yield* service.subscribeSessions({ projectId: PROJECT_ID });
+                if (initiallyEmpty) {
+                  yield* start;
+                } else {
+                  const snapshot = yield* events.pipe(Stream.take(1), Stream.runCollect);
+                  expect(snapshot[0]?._tag).toBe("session-snapshot");
+                }
+
+                const executionId = ComputeExecutionId.make("paused-project-completion");
+                yield* submit("print(1)", executionId);
+                yield* waitUntil(executionAt(executionId, "succeeded"));
+
+                if (unrelatedRuns > 0) {
+                  yield* service.startSession(startInput({ projectId: OTHER_PROJECT_ID }));
+                  for (let index = 0; index < unrelatedRuns; index++) {
+                    // Deliberately reuse the session and execution identifiers:
+                    // it is the owner, not these portable IDs, that partitions delivery.
+                    const otherExecutionId =
+                      index === 0 ? executionId : ComputeExecutionId.make(`unrelated-${index}`);
+                    yield* service.submitExecution({
+                      projectId: OTHER_PROJECT_ID,
+                      sessionId: SESSION_ID,
+                      executionId: otherExecutionId,
+                      expectedGeneration: INITIAL_COMPUTE_SESSION_GENERATION,
+                      code: "empty-display-flood",
+                      source: { _tag: "console" },
+                    });
+                    yield* waitUntil(
+                      service
+                        .listExecutions({ projectId: OTHER_PROJECT_ID, sessionId: SESSION_ID })
+                        .pipe(
+                          Effect.map(
+                            (records) =>
+                              records.find(
+                                (record) =>
+                                  record.request.executionId === otherExecutionId &&
+                                  record.result?.status === "succeeded",
+                              ) ?? null,
+                          ),
+                        ),
+                    );
+                  }
+                }
+
+                const observed = yield* TestClock.withLive(
+                  events.pipe(
+                    Stream.takeUntil(
+                      (event) =>
+                        event._tag === "execution-updated" &&
+                        event.execution.request.executionId === executionId &&
+                        event.execution.result?.status === "succeeded",
+                    ),
+                    Stream.runCollect,
+                    Effect.timeout("2 seconds"),
+                  ),
+                );
+                expect(observed.at(-1)).toMatchObject({
+                  _tag: "execution-updated",
+                  projectId: PROJECT_ID,
+                  execution: { result: { status: "succeeded" } },
+                });
+                const deltas = observed.filter((event) => event._tag !== "session-snapshot");
+                expect(deltas.map((event) => event.eventSequence)).toEqual(
+                  Array.from({ length: deltas.length }, (_, index) => index),
+                );
+                expect(yield* executionAt(executionId, "succeeded")).not.toBeNull();
+              }),
+            );
+          }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+      );
+    }
+  }
+
+  for (const initiallyEmpty of [false, true]) {
+    it.effect(
+      `recovers durable results after its own ${initiallyEmpty ? "empty" : "populated"} subscription overflows`,
+      () =>
+        Effect.gen(function* () {
+          const test = yield* harness();
+          yield* test.use(
+            Effect.gen(function* () {
+              const service = yield* ComputeSessionService;
+              if (!initiallyEmpty) yield* start;
+              const subscriptionScope = yield* Scope.make();
+              const events = yield* service
+                .subscribeSessions({ projectId: PROJECT_ID })
+                .pipe(Effect.provideService(Scope.Scope, subscriptionScope));
+              if (initiallyEmpty) yield* start;
+              for (let index = 0; index < 12; index++) {
+                const executionId = ComputeExecutionId.make(`own-overflow-${index}`);
+                yield* submit("empty-display-flood", executionId);
+                yield* waitUntil(executionAt(executionId, "succeeded"));
+              }
+              const lastId = ComputeExecutionId.make("own-overflow-11");
+              const retained = yield* TestClock.withLive(
+                events.pipe(
+                  Stream.takeUntil(
+                    (event) =>
+                      event._tag === "execution-updated" &&
+                      event.execution.request.executionId === lastId &&
+                      event.execution.result?.status === "succeeded",
+                  ),
+                  Stream.runCollect,
+                  Effect.timeout("2 seconds"),
+                ),
+              );
+              const deltas = retained.filter((event) => event._tag !== "session-snapshot");
+              expect(deltas.length).toBeLessThanOrEqual(512);
+              expect(deltas[0]!.eventSequence).toBeGreaterThan(0);
+
+              // The first retained cursor signals a gap even for an initially empty
+              // project. The existing client recovery rereads, it never reruns code.
+              const executions = yield* service.listExecutions({
+                projectId: PROJECT_ID,
+                sessionId: SESSION_ID,
+              });
+              expect(executions).toHaveLength(12);
+              expect(executions.every((record) => record.result?.status === "succeeded")).toBe(
+                true,
+              );
+              expect(
+                (yield* outputsOf(ComputeExecutionId.make("own-overflow-0"))).outputs,
+              ).toHaveLength(50);
+              yield* Scope.close(subscriptionScope, Exit.void);
+
+              const resumed = yield* service.subscribeSessions({ projectId: PROJECT_ID });
+              const nextId = ComputeExecutionId.make("after-recovery");
+              yield* submit("print(1)", nextId);
+              yield* waitUntil(executionAt(nextId, "succeeded"));
+              const recovered = yield* TestClock.withLive(
+                resumed.pipe(
+                  Stream.takeUntil(
+                    (event) =>
+                      event._tag === "execution-updated" &&
+                      event.execution.request.executionId === nextId &&
+                      event.execution.result?.status === "succeeded",
+                  ),
+                  Stream.runCollect,
+                  Effect.timeout("2 seconds"),
+                ),
+              );
+              expect(recovered[0]).toMatchObject({
+                _tag: "session-snapshot",
+                eventSequence: 0,
+                session: { status: "ready" },
+              });
+              const live = recovered.filter((event) => event._tag !== "session-snapshot");
+              expect(live.map((event) => event.eventSequence)).toEqual(
+                Array.from({ length: live.length }, (_, index) => index),
+              );
+              expect(test.submitted()).toHaveLength(13);
+            }),
+          );
+        }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+    );
+  }
+
   it.effect("keeps running while a subscriber never reads a thing", () =>
     Effect.gen(function* () {
       const test = yield* harness();

@@ -1542,6 +1542,17 @@ part of the architecture after its disposable plan is removed:
 - Live subscription events are bounded notifications over canonical durable
   state. A slow subscriber may observe a sequence gap and must reread durable
   state; it cannot apply uncertain deltas or make the kernel wait.
+  `ComputeSessionNotifications` partitions its 512-event sliding buffers by the
+  coordinator's server-side owner key, not by portable session/execution IDs.
+  The current coordinator supplies its project key; workspace-binding integration
+  must supply the resolved binding key at the same four publish/subscribe calls.
+  Channels are released when their last subscriber closes. Each subscription's
+  snapshots and first live delta start at zero, so even an initially empty
+  project detects dropped initial events. Cursors are not durable identities or
+  globally comparable offsets. The existing gap path rereads sessions, executions
+  and outputs, then resubscribes; it never re-executes scientific code. No wire
+  event variant or polling loop is added. A newer client receiving an old server's
+  nonzero first delta conservatively resynchronizes using its stamped snapshots.
 - Storage reclamation remains an unwired primitive until a product retention
   policy is accepted. When invoked, it preserves execution metadata and
   journals what was removed before deleting disposable bytes.

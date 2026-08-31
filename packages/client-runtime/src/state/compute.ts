@@ -258,7 +258,8 @@ export function applyComputeSessionStreamEvent(
   }
 
   if (state.stale) return state;
-  const expected = state.expectedLiveSequence ?? state.snapshotBoundary ?? event.eventSequence;
+  // Empty projects have no snapshot; they still begin at cursor zero.
+  const expected = state.expectedLiveSequence ?? state.snapshotBoundary ?? 0;
   if (event.eventSequence < expected) return state;
   if (event.eventSequence > expected) {
     return {

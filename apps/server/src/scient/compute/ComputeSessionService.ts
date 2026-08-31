@@ -74,7 +74,6 @@ import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
-import * as PubSub from "effect/PubSub";
 import * as Ref from "effect/Ref";
 import * as Scope from "effect/Scope";
 import * as Semaphore from "effect/Semaphore";
@@ -87,6 +86,7 @@ import {
   type ComputeProjectOutputObservation,
 } from "./ComputeProjectOutputObserver.ts";
 import * as LocalComputeStore from "./LocalComputeStore.ts";
+import { makeComputeSessionNotifications } from "./ComputeSessionNotifications.ts";
 import type {
   ResolvedComputeOutputImage,
   ResolvedComputeOutputResource,
@@ -248,12 +248,6 @@ function definedEnvironment(environment: NodeJS.ProcessEnv): Record<string, stri
 
 function codeHash(code: string): string {
   return `sha256:${NodeCrypto.createHash("sha256").update(code, "utf8").digest("hex")}`;
-}
-
-function eventProjectId(event: ComputeSessionStreamEvent): ComputeProjectId {
-  return event._tag === "session-snapshot" || event._tag === "session-updated"
-    ? event.session.projectId
-    : event.projectId;
 }
 
 /** How much of a transcript is already spent, and what it is allowed to spend. */
@@ -426,16 +420,9 @@ const make = Effect.gen(function* () {
   const recoveryLock = yield* Semaphore.make(1);
   const sessionsRef = yield* Ref.make(new Map<string, LiveComputeSession>());
   const recoveredProjectsRef = yield* Ref.make(new Set<string>());
-  const eventSequenceRef = yield* Ref.make(0);
-  // A slow or abandoned client must neither stop a kernel drain nor consume
-  // unbounded server memory. The stream is therefore a bounded notification
-  // channel, while the store remains the transcript authority. Event sequence
-  // gaps tell Phase 4 clients to re-read sessions/executions/output before
-  // continuing; no scientific result depends on retaining a socket backlog.
-  const pubsub = yield* PubSub.sliding<ComputeSessionStreamEvent>(512);
+  const notifications = yield* makeComputeSessionNotifications;
 
   const nowIso = DateTime.now.pipe(Effect.map(DateTime.formatIso));
-  const nextEventSequence = Ref.getAndUpdate(eventSequenceRef, (value) => value + 1);
   const sessionKey = (projectId: ComputeProjectId, sessionId: ComputeSessionId): string =>
     `${projectId}/${sessionId}`;
 
@@ -627,39 +614,34 @@ const make = Effect.gen(function* () {
   // -------------------------------------------------------------------------
 
   const publishSession = (session: ComputeSessionRecord) =>
-    Effect.gen(function* () {
-      const eventSequence = yield* nextEventSequence;
-      yield* PubSub.publish(pubsub, { _tag: "session-updated" as const, eventSequence, session });
-    });
+    notifications.publish(session.projectId, (eventSequence) => ({
+      _tag: "session-updated",
+      eventSequence,
+      session,
+    }));
 
   const publishExecution = (live: LiveComputeSession, execution: ComputeExecutionRecord) =>
-    Effect.gen(function* () {
-      const eventSequence = yield* nextEventSequence;
-      yield* PubSub.publish(pubsub, {
-        _tag: "execution-updated" as const,
-        eventSequence,
-        projectId: live.projectId,
-        sessionId: live.sessionId,
-        execution,
-      });
-    });
+    notifications.publish(live.projectId, (eventSequence) => ({
+      _tag: "execution-updated",
+      eventSequence,
+      projectId: live.projectId,
+      sessionId: live.sessionId,
+      execution,
+    }));
 
   const publishOutputs = (
     live: LiveComputeSession,
     executionId: ComputeExecutionId | null,
     outputs: ReadonlyArray<ComputeOutput>,
   ) =>
-    Effect.gen(function* () {
-      const eventSequence = yield* nextEventSequence;
-      yield* PubSub.publish(pubsub, {
-        _tag: "execution-output" as const,
-        eventSequence,
-        projectId: live.projectId,
-        sessionId: live.sessionId,
-        executionId,
-        outputs,
-      });
-    });
+    notifications.publish(live.projectId, (eventSequence) => ({
+      _tag: "execution-output",
+      eventSequence,
+      projectId: live.projectId,
+      sessionId: live.sessionId,
+      executionId,
+      outputs,
+    }));
 
   const persistenceError = (operation: ComputeOperation, message: string) => (cause: unknown) =>
     computeError(operation, "persistence-failed", message, cause);
@@ -2584,26 +2566,16 @@ const make = Effect.gen(function* () {
   const subscribeSessions = (input: ComputeSubscribeSessionsInput) =>
     Effect.gen(function* () {
       yield* ensureProjectRecovered("subscribe", input.projectId);
-      const subscription = yield* PubSub.subscribe(pubsub);
-      // Snapshots are taken after subscribing and stamped with the sequence the
-      // stream is filtered from, so a client sees every session exactly once and
-      // nothing that happened while it was mounting is lost.
-      const boundarySequence = yield* Ref.get(eventSequenceRef);
+      const changes = yield* notifications.subscribe(input.projectId);
+      // Subscribe before the durable read. Each subscription starts at zero,
+      // including one whose initial project has no sessions to snapshot.
       const sessions = yield* listSessions({ projectId: input.projectId });
       const snapshots = sessions.map((session) => ({
         _tag: "session-snapshot" as const,
-        eventSequence: boundarySequence,
+        eventSequence: 0,
         session,
       }));
-      return Stream.concat(
-        Stream.fromIterable(snapshots),
-        Stream.fromSubscription(subscription).pipe(
-          Stream.filter(
-            (event) =>
-              event.eventSequence >= boundarySequence && eventProjectId(event) === input.projectId,
-          ),
-        ),
-      );
+      return Stream.concat(Stream.fromIterable(snapshots), changes);
     });
 
   // -------------------------------------------------------------------------
