@@ -4,9 +4,7 @@ import { act, useState } from "react";
 import { createRoot } from "react-dom/client";
 import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 
-import { MenuItem } from "~/components/ui/menu";
-
-import { DockOverflowRow } from "./dockChrome";
+import { DockCommandItem as MenuItem, DockMenu, DockOverflowRow } from "./dockChrome";
 
 class TestResizeObserver {
   static callback: ResizeObserverCallback | null = null;
@@ -162,4 +160,40 @@ describe("DockOverflowRow", () => {
       ),
     ).toEqual([]);
   });
+
+  it.each(["click", "Enter"])(
+    "lets the command choose its focus destination after %s activation",
+    async (activation) => {
+      vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+      const host = document.createElement("div");
+      const destination = document.createElement("input");
+      destination.setAttribute("aria-label", "Nested editor or link picker");
+      document.body.append(host, destination);
+      const root = createRoot(host);
+      roots.push(root);
+      const command = vi.fn(() => {
+        destination.focus();
+      });
+      await act(() =>
+        root.render(
+          <DockMenu label="Insert" icon={<span>+</span>}>
+            <MenuItem onClick={command}>Open editor</MenuItem>
+          </DockMenu>,
+        ),
+      );
+      await act(() => host.querySelector<HTMLButtonElement>("button")!.click());
+      const item = document.body.querySelector<HTMLElement>("[role='menuitem']")!;
+      await act(() => {
+        item.focus();
+        if (activation === "click") item.click();
+        else {
+          item.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
+          item.dispatchEvent(new KeyboardEvent("keyup", { key: "Enter", bubbles: true }));
+        }
+      });
+      await vi.waitFor(() => expect(command).toHaveBeenCalledOnce());
+      await vi.waitFor(() => expect(document.body.querySelector("[role='menu']")).toBeNull());
+      expect(document.activeElement).toBe(destination);
+    },
+  );
 });

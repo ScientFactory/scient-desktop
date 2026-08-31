@@ -82,10 +82,6 @@ class ScientCodeBlockNodeView implements NodeView {
   selectNode(): void {
     this.selected = true;
     this.dom.classList.add("is-selected");
-    // Plain code in the editor duplicates the highlighted render, so hide it;
-    // rich fences (diagrams, plots) stay visible as a live preview.
-    this.rendered.hidden = !this.dom.hasAttribute("data-scient-markdown-rich-fence");
-    this.editorHost.hidden = false;
     void this.activateEditor();
   }
 
@@ -118,21 +114,24 @@ class ScientCodeBlockNodeView implements NodeView {
   }
 
   private async activateEditor(): Promise<void> {
-    if (this.nestedEditor) {
-      this.nestedEditor.focus();
-      return;
+    if (!this.nestedEditor) {
+      const { createScientNestedCodeEditor } = await import("./codeMirrorCodeEditor");
+      if (this.destroyed || !this.selected || !this.view.editable) return;
+      // Concurrent selections can share the same pending module import. Only
+      // one continuation may create the nested editor; never focus after exit.
+      this.editorHost.hidden = false;
+      this.nestedEditor ??= createScientNestedCodeEditor({
+        parent: this.editorHost,
+        code: this.node.textContent,
+        language: codeLanguage(this.node),
+        onEscape: () => this.view.focus(),
+        onUserCodeChange: (code) => this.replaceCode(code),
+      });
     }
-    const { createScientNestedCodeEditor } = await import("./codeMirrorCodeEditor");
-    if (this.destroyed || !this.selected || !this.view.editable) return;
-    // Concurrent selections can share the same pending module import. Only
-    // one continuation may create the nested editor; never focus after exit.
-    this.nestedEditor ??= createScientNestedCodeEditor({
-      parent: this.editorHost,
-      code: this.node.textContent,
-      language: codeLanguage(this.node),
-      onEscape: () => this.view.focus(),
-      onUserCodeChange: (code) => this.replaceCode(code),
-    });
+    // Keep the rendered code (and its height) until the lazy editor is ready.
+    // Rich fences stay visible alongside their editable source.
+    this.rendered.hidden = !this.dom.hasAttribute("data-scient-markdown-rich-fence");
+    this.editorHost.hidden = false;
     this.nestedEditor.focus();
   }
 

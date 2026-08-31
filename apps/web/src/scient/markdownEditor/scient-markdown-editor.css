@@ -307,6 +307,11 @@
   unicode-bidi: plaintext;
 }
 
+/* Auto follows the first strong character; an explicit choice must not. */
+.scient-markdown-document :is(p, h1, h2, h3, h4, h5, h6):is([dir="ltr"], [dir="rtl"]) {
+  unicode-bidi: isolate;
+}
+
 .scient-markdown-document :is(code, pre, .scient-markdown-math-render) {
   direction: ltr;
   unicode-bidi: isolate;

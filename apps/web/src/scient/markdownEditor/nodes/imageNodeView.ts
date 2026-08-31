@@ -95,12 +95,18 @@ class ScientImageNodeView implements NodeView {
     if (event instanceof InputEvent && event.isComposing) return;
     const position = this.getPos();
     if (position === undefined) return;
+    const title = this.titleInput.value.trim().length > 0 ? this.titleInput.value : null;
+    const destinationChanged =
+      this.sourceInput.value !== this.node.attrs.src || title !== this.node.attrs.title;
     this.view.dispatch(
       this.view.state.tr.setNodeMarkup(position, undefined, {
         ...this.node.attrs,
+        ...(destinationChanged
+          ? { referenceLabel: null, referenceHref: null, referenceTitle: null }
+          : {}),
         alt: this.altInput.value,
         src: this.sourceInput.value,
-        title: this.titleInput.value.trim().length > 0 ? this.titleInput.value : null,
+        title,
       }),
     );
   };

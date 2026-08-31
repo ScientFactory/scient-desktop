@@ -175,6 +175,12 @@ projection, NodeView, and controller adapters. Use `markdown-it` for tokenizatio
 Scient-owned source ledger for bounded source reuse. Use CodeMirror only inside editable code
 blocks, where source editing is the interaction itself.
 
+Scient dock menus execute editing commands after their close-complete lifecycle. The command
+owns its destination focus (document, nested editor, or picker); Escape keeps normal trigger
+focus. This composition is local to the rich editor, not a change to T3's menu primitives.
+Lazy code editing retains the rendered block until its nested editor is ready, avoiding a
+temporary empty block and layout collapse.
+
 GFM table cells contain inline content directly. The Scient table-navigation adapter handles
 only cell-edge arrows, since the upstream table handler expects a paragraph inside each cell.
 It reuses ProseMirror's boundary detection, table map, selections, and caret scrolling; movement
@@ -333,6 +339,10 @@ Preservation is range-based, not a claim that a semantic editor never serializes
   Editing/removing a definition refreshes only its derived consumer blocks, through mapped
   transactions outside undo history; the source change itself remains undoable. Rebind parsed
   baselines to the same context so unchanged reference syntax is not rewritten on the next save.
+- Reference links and images retain their definition label alongside the resolved destination.
+  Changed-block serialization emits a reference, not a frozen inline URL; changing display text
+  cannot change the definition key. An explicit destination edit detaches that dependency.
+  This provenance is owned by the Scient parser/schema adapter, not the generic T3 renderer.
 - Save acknowledgement updates only the persistence baseline. The source ledger stays paired
   with its parsed document and stable identities, including through repeated structural saves.
 - A structurally changed block is serialized from the edited ProseMirror node; normalization is
@@ -359,6 +369,11 @@ indentation, entity spelling, and whitespace remain unchanged outside the user's
 - Resolve canonical paths and reject symlinked-ancestor escapes.
 - Create and destination rename are exclusive; existing targets are never replaced.
 - Rename requires the expected content revision and reports a conflict if bytes changed.
+- Saves, binary creates, and renames share canonical-path mutation locks. Root and parent
+  symlink aliases must identify the same lock; re-resolve after waiting and reject a changed
+  target. Rename locks both identities in sorted order and rejects same-file aliases before
+  acquiring them. These are in-process operation guarantees, not a cross-process filesystem
+  transaction against arbitrary external writers.
 - Binary writes validate decoded size, content signature, extension compatibility, and supported
   image policy. SVG is sanitized or rejected according to the existing preview policy.
 - Use same-directory temporary files, fsync where supported, atomic rename, and cleanup.

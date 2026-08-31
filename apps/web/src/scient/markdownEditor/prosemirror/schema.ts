@@ -17,6 +17,12 @@ import { Schema } from "prosemirror-model";
 import { tableNodes } from "prosemirror-tables";
 
 import { isPlausibleScientSingleDollarTex } from "~/scient/math/scientSingleDollarMath";
+import {
+  parsedReferenceAttributes,
+  preserveMarkdownReferences,
+  referenceAttributes,
+  retainedReferenceLabel,
+} from "./referenceLinks";
 
 const SOURCE_ID_ATTR = { default: null } as const;
 const SOURCE_COPY_ID_ATTR = { default: null } as const;
@@ -231,6 +237,12 @@ nodes = nodes.addBefore("image", "footnote_reference", footnoteReferenceSpec);
 nodes = nodes.addBefore("image", "display_math", displayMathSpec);
 nodes = nodes.addBefore("image", "footnote_definition", footnoteDefinitionSpec);
 nodes = nodes.addBefore("image", "raw_block", rawBlockSpec);
+const imageSpec = nodes.get("image");
+if (!imageSpec) throw new Error("Missing ProseMirror node spec 'image'.");
+nodes = nodes.update("image", {
+  ...imageSpec,
+  attrs: { ...imageSpec.attrs, ...referenceAttributes },
+});
 const listItemSpec = nodes.get("list_item");
 if (!listItemSpec) throw new Error("Missing ProseMirror node spec 'list_item'.");
 nodes = nodes.update("list_item", {
@@ -310,7 +322,9 @@ function withTextDirectionAttrs(
       getAttrs: (element: HTMLElement) => ({
         ...rule.getAttrs?.(element),
         ...extraAttrs(element),
-        dir: element.getAttribute("dir") === "rtl" ? "rtl" : null,
+        dir: ["ltr", "rtl"].includes(element.getAttribute("dir") ?? "")
+          ? element.getAttribute("dir")
+          : null,
       }),
     })),
     toDOM: (node) => {
@@ -348,9 +362,13 @@ withTextDirectionAttrs("heading", (element) => ({
   level: Number(element.tagName.slice(1)),
 }));
 
+const linkSpec = defaultMarkdownParser.schema.spec.marks.get("link");
+if (!linkSpec) throw new Error("Missing ProseMirror mark spec 'link'.");
 export const scientMarkdownSchema: Schema = new Schema({
   nodes,
-  marks: defaultMarkdownParser.schema.spec.marks.addToEnd("strike", strikeSpec),
+  marks: defaultMarkdownParser.schema.spec.marks
+    .update("link", { ...linkSpec, attrs: { ...linkSpec.attrs, ...referenceAttributes } })
+    .addToEnd("strike", strikeSpec),
 } satisfies SchemaSpec);
 
 function tableAlignment(token: { readonly attrGet: (name: string) => string | null }): {
@@ -373,6 +391,7 @@ function listIsTight(
 }
 
 const gfmTokenizer = MarkdownIt("commonmark", { html: false }).enable(["strikethrough", "table"]);
+preserveMarkdownReferences(gfmTokenizer);
 
 // Recognize only this inert Markdown line-break form, not arbitrary HTML.
 gfmTokenizer.inline.ruler.before("html_inline", "scient_hard_break", (state, silent) => {
@@ -512,6 +531,23 @@ gfmTokenizer.core.ruler.after("scient_task_lists", "scient_direction_divs", (sta
 
 export const scientMarkdownParser = new MarkdownParser(scientMarkdownSchema, gfmTokenizer, {
   ...defaultMarkdownParser.tokens,
+  link: {
+    mark: "link",
+    getAttrs: (token) => ({
+      href: token.attrGet("href"),
+      title: token.attrGet("title") || null,
+      ...parsedReferenceAttributes(token, "href"),
+    }),
+  },
+  image: {
+    node: "image",
+    getAttrs: (token) => ({
+      src: token.attrGet("src"),
+      title: token.attrGet("title") || null,
+      alt: token.children?.[0]?.content || null,
+      ...parsedReferenceAttributes(token, "src"),
+    }),
+  },
   paragraph: {
     block: "paragraph",
     getAttrs: (token) => ({ dir: token.attrGet("data-scient-dir") }),
@@ -626,6 +662,11 @@ function blockWithDirection(
 export const scientMarkdownSerializer = new MarkdownSerializer(
   {
     ...defaultMarkdownSerializer.nodes,
+    image: (state, node, parent, index) => {
+      const label = retainedReferenceLabel(node.attrs, "src");
+      if (label === null) defaultMarkdownSerializer.nodes.image?.(state, node, parent, index);
+      else state.write(`![${state.esc(node.attrs.alt || "")}][${label}]`);
+    },
     paragraph: (state, node, parent, index) => {
       blockWithDirection(state, node, () => {
         defaultMarkdownSerializer.nodes.paragraph?.(state, node, parent, index);
@@ -671,6 +712,24 @@ export const scientMarkdownSerializer = new MarkdownSerializer(
   },
   {
     ...defaultMarkdownSerializer.marks,
+    link: {
+      mixable: true,
+      open: (state, mark, parent, index) => {
+        if (retainedReferenceLabel(mark.attrs, "href") !== null) {
+          return "[";
+        }
+        const open = defaultMarkdownSerializer.marks.link!.open;
+        return typeof open === "string" ? open : open(state, mark, parent, index);
+      },
+      close: (state, mark, parent, index) => {
+        const label = retainedReferenceLabel(mark.attrs, "href");
+        if (label !== null) {
+          return `][${label}]`;
+        }
+        const close = defaultMarkdownSerializer.marks.link!.close;
+        return typeof close === "string" ? close : close(state, mark, parent, index);
+      },
+    },
     strike: {
       close: "~~",
       expelEnclosingWhitespace: true,

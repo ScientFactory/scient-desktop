@@ -68,9 +68,7 @@ import { createPortal } from "react-dom";
 import { Button } from "~/components/ui/button";
 import { Input } from "~/components/ui/input";
 import {
-  MenuItem,
   MenuRadioGroup,
-  MenuRadioItem,
   MenuSeparator,
   MenuShortcut,
   MenuSub,
@@ -96,6 +94,8 @@ import {
   DockButton,
   DockDivider,
   DockMenu,
+  DockCommandItem as MenuItem,
+  DockCommandRadioItem as MenuRadioItem,
   DockOverflowRow,
   MenuRow,
   dockButtonClass,
@@ -255,12 +255,13 @@ function StyleMenuItems({
   readonly snapshot: ScientMarkdownEditorSnapshot;
 }) {
   return (
-    <MenuRadioGroup
-      value={styleMenuValue(snapshot)}
-      onValueChange={(value) => controller.execute(value as ScientMarkdownCommand)}
-    >
+    <MenuRadioGroup value={styleMenuValue(snapshot)}>
       {STYLE_ITEMS.map((item) => (
-        <MenuRadioItem key={item.command} value={item.command}>
+        <MenuRadioItem
+          key={item.command}
+          value={item.command}
+          onClick={() => controller.execute(item.command)}
+        >
           <MenuRow icon={commandIcon(item.command)} label={item.label} />
         </MenuRadioItem>
       ))}
@@ -340,17 +341,18 @@ function ListsMenuItems({
   readonly snapshot: ScientMarkdownEditorSnapshot;
 }) {
   return (
-    <MenuRadioGroup
-      value={listMenuValue(snapshot.listKind)}
-      onValueChange={(value) => controller.execute(value as ScientMarkdownCommand)}
-    >
+    <MenuRadioGroup value={listMenuValue(snapshot.listKind)}>
       {LIST_ITEMS.map((item) => (
-        <MenuRadioItem key={item.command} value={item.command}>
+        <MenuRadioItem
+          key={item.command}
+          value={item.command}
+          onClick={() => controller.execute(item.command)}
+        >
           <MenuRow icon={commandIcon(item.command)} label={item.label} />
         </MenuRadioItem>
       ))}
       <MenuSeparator />
-      <MenuRadioItem value="list-none">
+      <MenuRadioItem value="list-none" onClick={() => controller.execute("list-none")}>
         <MenuRow icon={commandIcon("list-none")} label="No list" />
       </MenuRadioItem>
     </MenuRadioGroup>
@@ -460,12 +462,13 @@ function DirectionMenuItems({
   const value =
     snapshot.textDirection === null ? "direction-auto" : `direction-${snapshot.textDirection}`;
   return (
-    <MenuRadioGroup
-      value={value}
-      onValueChange={(next) => controller.execute(next as ScientMarkdownCommand)}
-    >
+    <MenuRadioGroup value={value}>
       {DIRECTION_ITEMS.map((item) => (
-        <MenuRadioItem key={item.command} value={item.command}>
+        <MenuRadioItem
+          key={item.command}
+          value={item.command}
+          onClick={() => controller.execute(item.command)}
+        >
           <MenuRow icon={commandIcon(item.command)} label={item.label} />
         </MenuRadioItem>
       ))}

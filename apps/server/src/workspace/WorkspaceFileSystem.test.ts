@@ -780,6 +780,101 @@ it.layer(TestLayer, { excludeTestServices: true })("WorkspaceFileSystemLive", (i
   });
 
   describe("renameFile", () => {
+    for (const aliasKind of ["root", "parent"] as const) {
+      it.effect(`serializes saves and renames through a ${aliasKind} alias`, () =>
+        Effect.gen(function* () {
+          if ((yield* HostProcessPlatform) === "win32") return;
+          const api = yield* WorkspaceFileSystem.WorkspaceFileSystem;
+          const fileSystem = yield* FileSystem.FileSystem;
+          const path = yield* Path.Path;
+          const temporaryRoot = yield* makeTempDir;
+          const cwd = yield* fileSystem.realPath(temporaryRoot);
+          const actualRoot = path.join(cwd, "actual");
+          const aliasRoot = path.join(cwd, "alias");
+          yield* fileSystem.makeDirectory(actualRoot);
+          yield* fileSystem.symlink(actualRoot, aliasRoot);
+
+          for (let round = 0; round < 25; round += 1) {
+            const relativePath = `${round}.md`;
+            const destinationRelativePath = `${round}-renamed.md`;
+            const baseline = yield* api.writeFile({
+              cwd: actualRoot,
+              relativePath,
+              contents: "before",
+            });
+            const [edit, rename] = yield* Effect.all(
+              [
+                api
+                  .writeFile({
+                    cwd: actualRoot,
+                    relativePath,
+                    contents: "edited 😀",
+                    expectedRevision: baseline.revision,
+                  })
+                  .pipe(Effect.result),
+                api
+                  .renameFile({
+                    cwd: aliasKind === "root" ? aliasRoot : cwd,
+                    relativePath: aliasKind === "root" ? relativePath : `alias/${relativePath}`,
+                    destinationRelativePath:
+                      aliasKind === "root"
+                        ? destinationRelativePath
+                        : `alias/${destinationRelativePath}`,
+                    expectedRevision: baseline.revision,
+                  })
+                  .pipe(Effect.result),
+              ],
+              { concurrency: 2 },
+            );
+
+            expect([edit, rename].filter((result) => result._tag === "Success")).toHaveLength(1);
+            if (edit._tag === "Success") {
+              const saved = yield* api.readFile({ cwd: actualRoot, relativePath });
+              expect(saved.contents).toBe("edited 😀");
+              expect(saved.revision).toBe(edit.success.revision);
+              expect(yield* fileSystem.exists(path.join(actualRoot, destinationRelativePath))).toBe(
+                false,
+              );
+            } else {
+              expect(rename._tag).toBe("Success");
+              const moved = yield* api.readFile({
+                cwd: actualRoot,
+                relativePath: destinationRelativePath,
+              });
+              expect(moved.contents).toBe("before");
+              expect(moved.revision).toBe(baseline.revision);
+              expect(yield* fileSystem.exists(path.join(actualRoot, relativePath))).toBe(false);
+            }
+          }
+        }),
+      );
+    }
+
+    it.effect("rejects a rename onto the same canonical file through an alias", () =>
+      Effect.gen(function* () {
+        if ((yield* HostProcessPlatform) === "win32") return;
+        const api = yield* WorkspaceFileSystem.WorkspaceFileSystem;
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const cwd = yield* makeTempDir;
+        yield* writeTextFile(cwd, "actual/source.md", "unchanged");
+        yield* fileSystem.symlink(path.join(cwd, "actual"), path.join(cwd, "alias"));
+        const baseline = yield* api.readFile({ cwd, relativePath: "actual/source.md" });
+        const error = yield* api
+          .renameFile({
+            cwd,
+            relativePath: "actual/source.md",
+            destinationRelativePath: "alias/source.md",
+            expectedRevision: baseline.revision,
+          })
+          .pipe(Effect.flip);
+        expect(error).toBeInstanceOf(WorkspaceFileSystem.WorkspaceFileExistsError);
+        expect((yield* api.readFile({ cwd, relativePath: "actual/source.md" })).contents).toBe(
+          "unchanged",
+        );
+      }),
+    );
+
     it.effect("renames only the expected revision and never replaces a destination", () =>
       Effect.gen(function* () {
         const workspaceFileSystem = yield* WorkspaceFileSystem.WorkspaceFileSystem;

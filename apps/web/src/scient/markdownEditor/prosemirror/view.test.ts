@@ -2,10 +2,20 @@
 
 import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 import { NodeSelection, TextSelection } from "prosemirror-state";
+import { DOMParser } from "prosemirror-model";
+import { scientMarkdownSchema } from "./schema";
 
 import { ScientMarkdownEditorView } from "./view";
 
 describe("ScientMarkdownEditorView", () => {
+  it.each(["ltr", "rtl"])("preserves explicit %s direction through DOM parsing", (dir) => {
+    const host = document.createElement("div");
+    host.innerHTML = `<p dir="${dir}">שלום world</p><h2 dir="${dir}">English עברית</h2><p dir="auto">Auto</p>`;
+    const doc = DOMParser.fromSchema(scientMarkdownSchema).parse(host);
+    expect(doc.child(0).attrs.dir).toBe(dir);
+    expect(doc.child(1).attrs.dir).toBe(dir);
+    expect(doc.child(2).attrs.dir).toBeNull();
+  });
   const mounted: ScientMarkdownEditorView[] = [];
 
   afterEach(() => {
@@ -1080,5 +1090,38 @@ describe("ScientMarkdownEditorView", () => {
     expect(view.dom.querySelector<HTMLImageElement>(".scient-markdown-image-render")?.hidden).toBe(
       true,
     );
+  });
+
+  it("keeps an image reference for alt edits but detaches after an explicit path edit", () => {
+    const controller = new ScientMarkdownEditorView({
+      source: "![Plot][figure]\n\n[figure]: old.png\n",
+      revision: "r0",
+      mode: "write",
+      ariaLabel: "Reference image",
+    });
+    mounted.push(controller);
+    const host = document.createElement("div");
+    document.body.append(host);
+    const view = controller.mount(host);
+    view.dispatch(view.state.tr.setSelection(NodeSelection.create(view.state.doc, 1)));
+    const alt = view.dom.querySelector<HTMLInputElement>("[aria-label='Image alternative text']")!;
+    alt.value = "New description";
+    alt.dispatchEvent(new InputEvent("input", { bubbles: true }));
+    expect(controller.session.session.draftSource).toContain("![New description][figure]");
+    const path = view.dom.querySelector<HTMLInputElement>("[aria-label='Image path']")!;
+    for (const value of ["chosen.png", "old.png"]) {
+      path.value = value;
+      path.dispatchEvent(new InputEvent("input", { bubbles: true }));
+      expect(controller.session.session.draftSource).toContain(`![New description](${value})`);
+      expect(view.state.doc.firstChild!.firstChild!.attrs.referenceLabel).toBeNull();
+    }
+    const definitionPos = view.state.doc.firstChild!.nodeSize;
+    view.dispatch(
+      view.state.tr.setNodeMarkup(definitionPos, undefined, {
+        ...view.state.doc.nodeAt(definitionPos)!.attrs,
+        source: "[figure]: new.png",
+      }),
+    );
+    expect(view.state.doc.firstChild!.firstChild!.attrs.src).toBe("old.png");
   });
 });

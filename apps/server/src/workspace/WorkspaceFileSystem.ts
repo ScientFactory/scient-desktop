@@ -572,6 +572,28 @@ export const make = Effect.gen(function* () {
     };
   });
 
+  // Waiting for another mutation must not let a retargeted alias move this
+  // operation to a file whose lock it never acquired.
+  const revalidateWriteTarget = Effect.fn("WorkspaceFileSystem.revalidateWriteTarget")(function* (
+    input: Pick<ProjectWriteFileInput, "cwd" | "relativePath">,
+    lockedPath: string,
+  ) {
+    const resolved = yield* resolveRealWriteTarget(input);
+    if (resolved.realTargetPath !== lockedPath) {
+      return yield* new WorkspaceFileSystemOperationError({
+        workspaceRoot: input.cwd,
+        relativePath: input.relativePath,
+        resolvedPath: resolved.realTargetPath,
+        operationPath: resolved.target.absolutePath,
+        operation: "realpath-target",
+        cause: new Error(
+          "Workspace file target changed while waiting for its mutation lock. Retry the operation.",
+        ),
+      });
+    }
+    return resolved;
+  });
+
   const writeFileBytesExclusively = Effect.fn("WorkspaceFileSystem.writeFileBytesExclusively")(
     function* (input: {
       readonly cwd: string;
@@ -690,14 +712,11 @@ export const make = Effect.gen(function* () {
   const writeFile: WorkspaceFileSystem["Service"]["writeFile"] = Effect.fn(
     "WorkspaceFileSystem.writeFile",
   )(function* (input) {
-    const {
-      exists,
-      target,
-      realTargetPath: writeTargetPath,
-    } = yield* resolveRealWriteTarget(input);
+    const { realTargetPath: writeTargetPath } = yield* resolveRealWriteTarget(input);
     const writeSemaphore = yield* writeSemaphoreFor(writeTargetPath);
     return yield* writeSemaphore.withPermits(1)(
       Effect.gen(function* () {
+        const { exists, target } = yield* revalidateWriteTarget(input, writeTargetPath);
         if (input.createOnly && exists) {
           return yield* new WorkspaceFileExistsError({
             workspaceRoot: input.cwd,
@@ -793,10 +812,11 @@ export const make = Effect.gen(function* () {
   const createBinaryFile: WorkspaceFileSystem["Service"]["createBinaryFile"] = Effect.fn(
     "WorkspaceFileSystem.createBinaryFile",
   )(function* (input) {
-    const { exists, target, realTargetPath } = yield* resolveRealWriteTarget(input);
+    const { realTargetPath } = yield* resolveRealWriteTarget(input);
     const writeSemaphore = yield* writeSemaphoreFor(realTargetPath);
     return yield* writeSemaphore.withPermits(1)(
       Effect.gen(function* () {
+        const { exists, target } = yield* revalidateWriteTarget(input, realTargetPath);
         if (exists) {
           return yield* new WorkspaceFileExistsError({
             workspaceRoot: input.cwd,
@@ -835,24 +855,25 @@ export const make = Effect.gen(function* () {
   const renameFile: WorkspaceFileSystem["Service"]["renameFile"] = Effect.fn(
     "WorkspaceFileSystem.renameFile",
   )(function* (input) {
-    const sourceTarget = yield* workspacePaths.resolveRelativePathWithinRoot({
-      workspaceRoot: input.cwd,
-      relativePath: input.relativePath,
-    });
-    const destinationTarget = yield* workspacePaths.resolveRelativePathWithinRoot({
-      workspaceRoot: input.cwd,
+    const source = yield* resolveRealWriteTarget(input);
+    const destinationInput = {
+      cwd: input.cwd,
       relativePath: input.destinationRelativePath,
-    });
-    if (sourceTarget.relativePath === destinationTarget.relativePath) {
+    };
+    const initialDestination = yield* resolveRealWriteTarget(destinationInput);
+    const sourceTarget = source.target;
+    if (source.realTargetPath === initialDestination.realTargetPath) {
       return yield* new WorkspaceFileExistsError({
         workspaceRoot: input.cwd,
         relativePath: input.destinationRelativePath,
-        resolvedPath: destinationTarget.absolutePath,
+        resolvedPath: initialDestination.realTargetPath,
       });
     }
+    // All mutation methods lock the same canonical identities, even when a
+    // client reaches the file through a workspace-root or parent alias.
     const [firstPath, secondPath] = [
-      sourceTarget.absolutePath,
-      destinationTarget.absolutePath,
+      source.realTargetPath,
+      initialDestination.realTargetPath,
     ].sort();
     const firstSemaphore = yield* writeSemaphoreFor(firstPath!);
     const secondSemaphore = yield* writeSemaphoreFor(secondPath!);
@@ -860,6 +881,11 @@ export const make = Effect.gen(function* () {
     return yield* firstSemaphore.withPermits(1)(
       secondSemaphore.withPermits(1)(
         Effect.gen(function* () {
+          yield* revalidateWriteTarget(input, source.realTargetPath);
+          const destination = yield* revalidateWriteTarget(
+            destinationInput,
+            initialDestination.realTargetPath,
+          );
           const current = yield* readFile({ cwd: input.cwd, relativePath: input.relativePath });
           if (current.truncated || current.revision !== input.expectedRevision) {
             return yield* new WorkspaceFileRevisionConflictError({
@@ -889,10 +915,6 @@ export const make = Effect.gen(function* () {
             });
           }
 
-          const destination = yield* resolveRealWriteTarget({
-            cwd: input.cwd,
-            relativePath: input.destinationRelativePath,
-          });
           if (destination.exists) {
             return yield* new WorkspaceFileExistsError({
               workspaceRoot: input.cwd,
@@ -916,7 +938,7 @@ export const make = Effect.gen(function* () {
               ),
             );
           yield* Effect.tryPromise({
-            try: () => NodeFSP.link(sourceTarget.absolutePath, destination.realTargetPath),
+            try: () => NodeFSP.link(source.realTargetPath, destination.realTargetPath),
             catch: (cause) =>
               isNodeError(cause, "EEXIST")
                 ? new WorkspaceFileExistsError({
@@ -951,7 +973,7 @@ export const make = Effect.gen(function* () {
           yield* Effect.tryPromise({
             try: async () => {
               try {
-                await NodeFSP.unlink(sourceTarget.absolutePath);
+                await NodeFSP.unlink(source.realTargetPath);
               } catch (cause) {
                 await NodeFSP.unlink(destination.realTargetPath).catch(() => undefined);
                 throw cause;

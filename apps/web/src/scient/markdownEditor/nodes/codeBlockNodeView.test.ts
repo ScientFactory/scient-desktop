@@ -35,6 +35,27 @@ describe("nested code editor activation", () => {
     expect(mocks.create).not.toHaveBeenCalled();
     nodeView.destroy!();
   });
+  it("keeps rendered code visible until the lazy editor is ready, then swaps once", async () => {
+    const nodeView = fixture();
+    const dom = nodeView.dom as HTMLElement;
+    const rendered = dom.querySelector<HTMLElement>(".scient-markdown-code-render")!;
+    const editor = dom.querySelector<HTMLElement>(".scient-markdown-code-editor")!;
+    nodeView.selectNode!();
+    expect(rendered.hidden).toBe(false);
+    expect(rendered.textContent).toBe("code");
+    expect(editor.hidden).toBe(true);
+    await vi.dynamicImportSettled();
+    expect(rendered.hidden).toBe(true);
+    expect(editor.hidden).toBe(false);
+    nodeView.deselectNode!();
+    expect(rendered.hidden).toBe(false);
+    expect(editor.hidden).toBe(true);
+    nodeView.selectNode!();
+    expect(rendered.hidden).toBe(true);
+    expect(editor.hidden).toBe(false);
+    expect(mocks.create).toHaveBeenCalledOnce();
+    nodeView.destroy!();
+  });
   it("creates only one editor across overlapping activations", async () => {
     const nodeView = fixture();
     nodeView.selectNode!();

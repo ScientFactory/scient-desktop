@@ -38,6 +38,7 @@ function documentMatches(
   caseSensitive: boolean,
   wholeWord: boolean,
 ): ReadonlyArray<ScientMarkdownSearchMatch> {
+  if (query.length === 0) return [];
   const matches: ScientMarkdownSearchMatch[] = [];
   doc.descendants((node, position) => {
     if (!node.inlineContent) return;

@@ -1,19 +1,24 @@
 import { ChevronDown, ChevronUp, Ellipsis } from "lucide-react";
 import {
   Fragment,
+  createContext,
   useCallback,
+  useContext,
   useEffect,
   useLayoutEffect,
   useRef,
   useState,
   type ReactNode,
+  type ComponentProps,
 } from "react";
 
 import {
   Menu,
   MenuGroup,
   MenuGroupLabel,
+  MenuItem,
   MenuPopup,
+  MenuRadioItem,
   MenuSeparator,
   MenuShortcut,
   MenuTrigger,
@@ -65,6 +70,50 @@ export function DockButton(props: {
   );
 }
 
+const DockCommandContext = createContext<((action: () => void) => void) | null>(null);
+
+// Menu primitives finish focus handling after onClick. Defer editing commands
+// to the menu's close-complete lifecycle, so typing and nested editors receive
+// focus once, after the menu relinquishes it. No timer or global menu override.
+export function DockCommandItem({
+  onClick,
+  ...props
+}: Omit<ComponentProps<typeof MenuItem>, "onClick" | "closeOnClick"> & {
+  readonly onClick?: () => void;
+}) {
+  const queue = useContext(DockCommandContext);
+  return (
+    <MenuItem
+      {...props}
+      closeOnClick
+      onClick={() => {
+        if (!onClick) return;
+        if (queue) queue(onClick);
+        else onClick();
+      }}
+    />
+  );
+}
+
+export function DockCommandRadioItem({
+  onClick,
+  ...props
+}: Omit<ComponentProps<typeof MenuRadioItem>, "onClick" | "closeOnClick"> & {
+  readonly onClick: () => void;
+}) {
+  const queue = useContext(DockCommandContext);
+  return (
+    <MenuRadioItem
+      {...props}
+      closeOnClick
+      onClick={() => {
+        if (queue) queue(onClick);
+        else onClick();
+      }}
+    />
+  );
+}
+
 /** A dock dropdown trigger with a tooltip and consistent popup framing. */
 export function DockMenu(props: {
   readonly label: string;
@@ -76,40 +125,64 @@ export function DockMenu(props: {
   readonly groupLabel?: string;
   readonly children: ReactNode;
 }) {
+  const closedByCommand = useRef(false);
+  const pendingCommand = useRef<(() => void) | null>(null);
+  const queueCommand = useCallback((action: () => void) => {
+    pendingCommand.current = action;
+  }, []);
   return (
-    <Menu>
-      <Tooltip>
-        <TooltipTrigger
-          render={
-            <MenuTrigger
-              render={
-                <button
-                  type="button"
-                  className={dockButtonClass(props.active)}
-                  aria-label={props.label}
-                >
-                  {props.icon}
-                  {(props.chevron ?? true) ? (
-                    <ChevronDown className="size-3 shrink-0 opacity-60" />
-                  ) : null}
-                </button>
-              }
-            />
-          }
-        />
-        <TooltipPopup side="top">{props.label}</TooltipPopup>
-      </Tooltip>
-      <MenuPopup align={props.align ?? "start"} className={cn("w-44 p-1", props.popupClassName)}>
-        {props.groupLabel ? (
-          <MenuGroup>
-            <MenuGroupLabel>{props.groupLabel}</MenuGroupLabel>
-            {props.children}
-          </MenuGroup>
-        ) : (
-          props.children
-        )}
-      </MenuPopup>
-    </Menu>
+    <DockCommandContext value={queueCommand}>
+      <Menu
+        onOpenChange={(open, details) => {
+          if (open) closedByCommand.current = false;
+          else if (details.reason === "item-press") closedByCommand.current = true;
+        }}
+        onOpenChangeComplete={(open) => {
+          if (open) return;
+          const command = pendingCommand.current;
+          pendingCommand.current = null;
+          command?.();
+        }}
+      >
+        <Tooltip>
+          <TooltipTrigger
+            render={
+              <MenuTrigger
+                render={
+                  <button
+                    type="button"
+                    className={dockButtonClass(props.active)}
+                    aria-label={props.label}
+                  >
+                    {props.icon}
+                    {(props.chevron ?? true) ? (
+                      <ChevronDown className="size-3 shrink-0 opacity-60" />
+                    ) : null}
+                  </button>
+                }
+              />
+            }
+          />
+          <TooltipPopup side="top">{props.label}</TooltipPopup>
+        </Tooltip>
+        <MenuPopup
+          align={props.align ?? "start"}
+          className={cn("w-44 p-1", props.popupClassName)}
+          // Commands own focus (editor, nested editor, or a picker). Escape and
+          // other dismissals retain the menu's standard accessible focus return.
+          finalFocus={() => !closedByCommand.current}
+        >
+          {props.groupLabel ? (
+            <MenuGroup>
+              <MenuGroupLabel>{props.groupLabel}</MenuGroupLabel>
+              {props.children}
+            </MenuGroup>
+          ) : (
+            props.children
+          )}
+        </MenuPopup>
+      </Menu>
+    </DockCommandContext>
   );
 }
 

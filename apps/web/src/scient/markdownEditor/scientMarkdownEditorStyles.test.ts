@@ -55,6 +55,24 @@ describe("rich Markdown list marker styles", () => {
 });
 
 describe("rich Markdown compact-surface styles", () => {
+  it("lets explicit direction override first-strong-character auto direction", () => {
+    const style = document.createElement("style");
+    style.textContent = cssSource;
+    document.head.append(style);
+    const host = document.createElement("div");
+    host.className = "scient-markdown-document";
+    host.innerHTML = '<p>שלום world</p><p dir="ltr">שלום world</p><h2 dir="rtl">English עברית</h2>';
+    document.body.append(host);
+    try {
+      expect(getComputedStyle(host.children[0]!).unicodeBidi).toBe("plaintext");
+      expect(getComputedStyle(host.children[1]!).unicodeBidi).toBe("isolate");
+      expect(getComputedStyle(host.children[2]!).unicodeBidi).toBe("isolate");
+      expect(getComputedStyle(host.children[1]!).textAlign).toBe("start");
+    } finally {
+      host.remove();
+      style.remove();
+    }
+  });
   it("keeps caret and cell-selection decorations out of table layout", () => {
     expect(cssSource).toMatch(
       /\.scient-markdown-document p,\s*\.scient-markdown-document ul,\s*\.scient-markdown-document ol,\s*\.scient-markdown-document blockquote,\s*\.scient-markdown-document pre,\s*\.scient-markdown-document table \{\s*margin-block: 0 1em;/su,
