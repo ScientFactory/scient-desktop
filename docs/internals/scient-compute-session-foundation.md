@@ -1100,6 +1100,60 @@ Not:
 
 ---
 
+### 9.7 Current shared-runtime implementation boundary
+
+The local MATLAB integration and bounded table/Plotly candidate (2026-08-31)
+extends the current bindings; it does not replay the older donor's coordinator
+or replace `prepareLaunch` with another lifecycle. This describes implementation,
+not product, packaged-app or cross-platform acceptance.
+
+- One coordinator retains admission, serialized execution, cancellation,
+  generations, persistence and retained output. Bindings own discovery, exact
+  launch identity, diagnostics and capabilities; they do not own a second store
+  or agent authority. The separately owned workspace-binding migration must
+  compose with this boundary explicitly.
+- `ComputeBridgeTransport` is the existing Jupyter bridge transport renamed for
+  its shared role. Its bounded frames, correlation, process supervision and
+  current MIME handling remain intact. The runtime registry acquires Python
+  and MATLAB independently; an incomplete bridge disables only that binding.
+- `ComputeFileActions` and `ScientComputeFileSurface` share compact controls,
+  settings/refresh access, split layout and exact source ranges. Descriptors
+  supply `.py` / `.m`, labels and `# %%` / `%%` markers. Existing Python split/view
+  storage keys remain stable. Switching away from another live language still
+  requires an explicit stop; there is no implicit runtime fallback.
+- Python owns Jupyter and its optional private installation through the
+  [Toolkit lifecycle](scient-compute-toolkit-foundation.md). MATLAB remains
+  user-installed and licensed. Its compatible Python Engine host is transport
+  infrastructure, not a requirement to enable Python Compute or install Jupyter.
+  Scient does not install system packages to repair MATLAB.
+- MATLAB verification records both MATLAB and Engine-host identities; launch
+  rechecks the selected installation and actual Engine root. Its isolated host
+  disables bytecode writes. The adapter owns native startup timeout/cancellation,
+  Engine quit/interruption, controlled temporary scripts and local functions,
+  identity-checked helpers, bounded variables/PNG figures and diagnostics.
+  Stream callbacks apply back-pressure. An uncertain quit cannot start another
+  engine. Runtime PID may be null; the supervised bridge's owned process tree,
+  not a guessed MATLAB PID, is cleanup authority.
+- The released one-shot AnalysisRun remains under **Fresh-process MATLAB runs**,
+  including artifacts and **Save to project**. Live Compute supplements that
+  workflow; retained live results do not imply independent reproducibility.
+
+Qualification includes fake failure/identity/containment tests, bridge protocol
+tests, and opt-in real lifecycle/stress tests. From `apps/server`, select the
+licensed installation explicitly with `SCIENT_TEST_MATLAB=/absolute/path/to/matlab`
+for `MatlabComputeProduct.integration.test.ts`. MATLAB may spawn graphics helpers
+even with `-nodesktop`; reserve the shared Mac before running it. Real Python
+tests similarly require an exact `SCIENT_TEST_PYTHON`; managed installation tests
+require `SCIENT_TEST_MANAGED_PYTHON=1` and use temporary state. macOS/R2026a evidence
+does not qualify other releases, licensing conditions, Windows/Linux, remote
+clients or packaged installations. Temporary QA evidence records the tested
+head and remaining gates; backend success is not visual acceptance.
+In particular, macOS may attribute MATLAB's normal Documents-folder access to
+the owning Scient app. A pending OS consent prompt can block Engine startup;
+do not bypass it with permission resets, alternate process launchers, or a
+different user home. Test the actual app identity and its timeout/cleanup path,
+not only a terminal-launched Engine.
+
 ## 10. Output Model
 
 ### 10.1 Initial output types
@@ -1203,6 +1257,32 @@ content is upgraded to accepted active authority.
 The initial bridge normalizes Jupyter messages correctly even when the client
 does not yet render every representation. Later adapters may produce the same
 neutral representation contracts without using Jupyter.
+
+#### Current bounded table and Plotly presentation
+
+The local 2026-08-31 candidate renders inline
+`application/vnd.dataresource+json` through one scalar, read-only table preview:
+at most 1,000,000 source characters, 100 displayed rows, 24 columns and 512
+characters per displayed cell. Numeric alignment and ordinary React text avoid
+HTML execution. Unsupported or malformed payloads keep the existing fallback.
+Resource-backed JSON is retained but not fetched by this renderer.
+
+Python lazily registers a pandas DataFrame formatter without importing pandas at
+startup, installing packages or adding user globals. It supports pandas 2/3 type
+module names, caps output at 100 rows, 20 data columns plus index, bounded scalar
+cells and 512 KiB serialized data, and marks truncation. Unsupported shapes fall
+back. Kernel restart reapplies the formatter.
+
+`application/vnd.plotly.v1+json` reuses the existing lazy Plotly card and its
+schema limits, graphics quota, theme, export and error handling. Python defaults
+Plotly to its MIME renderer, respecting explicit renderer overrides. This does
+not install Plotly or add it to the locked Toolkit. MATLAB does not acquire a
+Plotly library merely because the renderer is language-neutral.
+
+Both consume the existing display-update/clear projection and retained record;
+neither adds a resource store or authority scheme. PNG/SVG/plain fallback remains
+unchanged. Active HTML, widgets, deep live-data inspection and new agent
+installation authority remain outside this slice.
 
 ### 10.3 Completion correlation
 

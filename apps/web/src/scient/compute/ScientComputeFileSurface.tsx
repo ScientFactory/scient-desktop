@@ -155,9 +155,10 @@ export function ScientComputeFileSurface(props: ScientComputeFileSurfaceProps) {
   const handleExecutionSubmitted = useCallback(
     (sessionId: ComputeSessionId, executionId: ComputeExecutionId) => {
       setFocusExecution({ sessionId, executionId });
-      selectView("split");
+      // Reveal hidden results without overwriting a view chosen while startup was pending.
+      setView((current) => (current === "code" ? "split" : current));
     },
-    [selectView],
+    [],
   );
   const handleFocusConsumed = useCallback((executionId: string) => {
     setFocusExecution((current) => (current?.executionId === executionId ? null : current));

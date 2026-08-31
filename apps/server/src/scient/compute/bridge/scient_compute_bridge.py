@@ -36,7 +36,7 @@ import subprocess
 import sys
 import threading
 import time
-from typing import Any, BinaryIO, Optional, TextIO
+from typing import Any, BinaryIO, Callable, Optional, TextIO
 
 PROTOCOL_VERSION = 1
 FRAME_HEADER = struct.Struct(">I")
@@ -459,9 +459,15 @@ class InboundReader:
     loop is still busy with the previous command.
     """
 
-    def __init__(self, stream: BinaryIO, loop: asyncio.AbstractEventLoop) -> None:
+    def __init__(
+        self,
+        stream: BinaryIO,
+        loop: asyncio.AbstractEventLoop,
+        on_disconnect: Optional[Callable[[], None]] = None,
+    ) -> None:
         self._stream = stream
         self._loop = loop
+        self._on_disconnect = on_disconnect
         self._queue: asyncio.Queue[tuple[str, Any]] = asyncio.Queue(maxsize=1)
         self._taken = threading.Event()
         self._thread = threading.Thread(
@@ -476,6 +482,8 @@ class InboundReader:
         # ``QueueFull``: the thread does not read again until the loop has taken
         # the previous item.
         self._queue.put_nowait(item)
+        if item[0] == "eof" and self._on_disconnect is not None:
+            self._on_disconnect()
 
     def _pump(self) -> None:
         while True:

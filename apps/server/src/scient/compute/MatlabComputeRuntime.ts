@@ -29,7 +29,11 @@ import {
   matlabInstallationRoot,
   type MatlabEngineProbeResult,
 } from "./MatlabRuntimeAdapter.ts";
-import { STAGED_BRIDGE_DIRECTORY, moduleDirectory } from "./PythonComputeRuntime.ts";
+import {
+  BRIDGE_SCRIPT_NAME,
+  STAGED_BRIDGE_DIRECTORY,
+  moduleDirectory,
+} from "./PythonComputeRuntime.ts";
 
 export const MATLAB_BRIDGE_SCRIPT_NAME = "scient_matlab_engine_bridge.py";
 const PROBE_TIMEOUT = Duration.seconds(20);
@@ -95,12 +99,16 @@ export const resolveMatlabBridgePath = (
     const fileSystem = yield* FileSystem.FileSystem;
     const candidates = matlabBridgePathCandidates(directory);
     for (const candidate of candidates) {
-      if (yield* fileSystem.exists(candidate).pipe(Effect.orElseSucceed(() => false))) {
+      const protocolPath = NodePath.join(NodePath.dirname(candidate), BRIDGE_SCRIPT_NAME);
+      if (
+        (yield* fileSystem.exists(candidate).pipe(Effect.orElseSucceed(() => false))) &&
+        (yield* fileSystem.exists(protocolPath).pipe(Effect.orElseSucceed(() => false)))
+      ) {
         return candidate;
       }
     }
     return yield* runtimeError(
-      `Unable to find ${MATLAB_BRIDGE_SCRIPT_NAME}. Looked in: ${candidates.join(", ")}.`,
+      `Unable to find ${MATLAB_BRIDGE_SCRIPT_NAME} with its shared ${BRIDGE_SCRIPT_NAME} sibling. Looked in: ${candidates.join(", ")}.`,
     );
   });
 

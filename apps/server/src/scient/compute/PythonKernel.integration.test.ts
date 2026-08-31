@@ -20,6 +20,7 @@ import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Queue from "effect/Queue";
+import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 
 import { DuplexProcess, layer as duplexProcessLayer } from "../execution/LocalDuplexProcess.ts";
@@ -206,7 +207,15 @@ describe.runIf(Boolean(TEST_PYTHON))("Python kernel integration", () => {
             (item) => item.mediaType === "application/vnd.dataresource+json",
           );
           if (table?.data._tag !== "json") throw new Error("Expected bounded dataframe JSON");
-          const data = JSON.parse(table.data.json);
+          const data = yield* Schema.decodeUnknownEffect(
+            Schema.fromJsonString(
+              Schema.Struct({
+                data: Schema.Array(Schema.Unknown),
+                schema: Schema.Struct({ fields: Schema.Array(Schema.Unknown) }),
+                scientPreview: Schema.Struct({ truncated: Schema.Boolean }),
+              }),
+            ),
+          )(table.data.json);
           expect(data.data).toHaveLength(100);
           expect(data.schema.fields).toHaveLength(21);
           expect(data.scientPreview.truncated).toBe(true);
@@ -408,6 +417,23 @@ describe.runIf(Boolean(TEST_PYTHON))("Python kernel integration", () => {
         expect(
           cleared.some(
             (event) => event._tag === "runtime-error" && event.report.name === "NameError",
+          ),
+        ).toBe(true);
+
+        const tableAfterRestart = yield* execute(
+          harness,
+          "table-after-restart",
+          "import pandas as pd\nfrom IPython.display import display\ndisplay(pd.DataFrame({'answer': [42]}))",
+          nextGeneration,
+        );
+        expect(
+          tableAfterRestart.some(
+            (event) =>
+              event._tag === "output" &&
+              event.output._tag === "display-data" &&
+              event.output.bundle.representations.some(
+                (item) => item.mediaType === "application/vnd.dataresource+json",
+              ),
           ),
         ).toBe(true);
 

@@ -268,6 +268,7 @@ class MatlabEngineBridge:
         self._active_request_id: Optional[str] = None
         self._active_future: Any = None
         self._execution_task: Optional[asyncio.Task[None]] = None
+        self._dispatch_task: Optional[asyncio.Task[None]] = None
         self._monitor_task: Optional[asyncio.Task[None]] = None
         self._transitioning = False
         self._figure_hashes: dict[str, str] = {}
@@ -333,6 +334,9 @@ class MatlabEngineBridge:
     def _request_stop(self) -> None:
         self._running = False
         self._stop.set()
+        task = self._dispatch_task
+        if task is not None and task is not asyncio.current_task():
+            task.cancel()
 
     def forward_stream_from_thread(self, stream: str, value: str, request_id: str) -> None:
         loop = self._loop
@@ -884,7 +888,7 @@ class MatlabEngineBridge:
     async def run(self) -> int:
         self._loop = asyncio.get_running_loop()
         self._install_signal_handlers(self._loop)
-        reader = InboundReader(self._stdin, self._loop)
+        reader = InboundReader(self._stdin, self._loop, self._request_stop)
         reader.start()
         stopped = asyncio.ensure_future(self._stop.wait())
         try:
@@ -905,11 +909,18 @@ class MatlabEngineBridge:
                     await self._flush()
                     break
                 try:
-                    await self._dispatch(value)
+                    self._dispatch_task = asyncio.create_task(self._dispatch(value))
+                    await self._dispatch_task
+                except asyncio.CancelledError:
+                    if self._running:
+                        raise
+                    break
                 except Exception as error:  # noqa: BLE001 - fatal protocol/runtime boundary
                     self._send_fatal(f"MATLAB bridge failed: {error}")
                     await self._flush()
                     break
+                finally:
+                    self._dispatch_task = None
         finally:
             stopped.cancel()
             if self._monitor_task is not None:

@@ -123,6 +123,44 @@ def make_bridge(test_case, engine):
 
 
 class TestMatlabBridge(unittest.IsolatedAsyncioTestCase):
+    async def test_parent_disconnect_and_stop_cancel_pending_startup(self):
+        for reason in ("eof", "signal"):
+            with self.subTest(reason=reason):
+                read_fd, write_fd = os.pipe()
+                reader = os.fdopen(read_fd, "rb", buffering=0)
+                writer = os.fdopen(write_fd, "wb", buffering=0)
+                instance = matlab_bridge.MatlabEngineBridge(
+                    reader, io.BytesIO(), "/matlab/engine", "/matlab"
+                )
+                instance._install_signal_handlers = Mock()
+                entered = asyncio.Event()
+                cancelled = asyncio.Event()
+
+                async def pending_start(_message):
+                    entered.set()
+                    try:
+                        await asyncio.Future()
+                    finally:
+                        cancelled.set()
+
+                instance._dispatch = pending_start
+                run = asyncio.create_task(instance.run())
+                try:
+                    payload = json.dumps({"type": "start-kernel"}).encode()
+                    writer.write(struct.pack(">I", len(payload)) + payload)
+                    await asyncio.wait_for(entered.wait(), timeout=2)
+                    if reason == "eof":
+                        writer.close()
+                    else:
+                        instance._request_stop()
+                    await asyncio.wait_for(run, timeout=2)
+                    self.assertTrue(cancelled.is_set())
+                finally:
+                    writer.close()
+                    reader.close()
+                    if not run.done():
+                        run.cancel()
+
     async def test_failed_start_cancels_the_engine_future(self):
         instance = matlab_bridge.MatlabEngineBridge(io.BytesIO(), io.BytesIO(), "/matlab/engine", "/matlab")
         future = Mock()

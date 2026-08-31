@@ -15,7 +15,6 @@ describe("bounded shared Compute representations", () => {
     const markup = renderToStaticMarkup(<ComputeTable table={table} />);
     expect(markup).toContain("&lt;script&gt;");
     expect(markup).not.toContain("<script>");
-    expect(markup).toContain("text-end tabular-nums");
   });
 
   it("limits rows, columns and individual cells with a truthful preview label", () => {

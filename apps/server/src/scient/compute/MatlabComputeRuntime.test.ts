@@ -19,7 +19,11 @@ import {
   pathIsInside,
   resolveMatlabBridgePath,
 } from "./MatlabComputeRuntime.ts";
-import { STAGED_BRIDGE_DIRECTORY, moduleDirectory } from "./PythonComputeRuntime.ts";
+import {
+  BRIDGE_SCRIPT_NAME,
+  STAGED_BRIDGE_DIRECTORY,
+  moduleDirectory,
+} from "./PythonComputeRuntime.ts";
 
 const fakeHostProcesses = (
   response: (engineDirectory: string) => {
@@ -115,9 +119,22 @@ describe("MATLAB compute bridge location", () => {
       const staged = NodePath.join(directory, STAGED_BRIDGE_DIRECTORY);
       yield* fs.makeDirectory(staged, { recursive: true });
       yield* fs.writeFileString(NodePath.join(staged, MATLAB_BRIDGE_SCRIPT_NAME), "");
+      yield* fs.writeFileString(NodePath.join(staged, BRIDGE_SCRIPT_NAME), "");
       expect(yield* resolveMatlabBridgePath(directory)).toBe(
         NodePath.join(staged, MATLAB_BRIDGE_SCRIPT_NAME),
       );
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("rejects an incomplete packaged bridge before advertising MATLAB", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const directory = yield* fs.makeTempDirectoryScoped({ prefix: "scient-matlab-incomplete-" });
+      const staged = NodePath.join(directory, STAGED_BRIDGE_DIRECTORY);
+      yield* fs.makeDirectory(staged, { recursive: true });
+      yield* fs.writeFileString(NodePath.join(staged, MATLAB_BRIDGE_SCRIPT_NAME), "");
+      const error = yield* Effect.flip(resolveMatlabBridgePath(directory));
+      expect(error.message).toContain("shared scient_compute_bridge.py sibling");
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 });
