@@ -1,8 +1,8 @@
 # T3 alignment through e4f7b14fa
 
-Status: alignment receipt in preparation. Automated code qualification passed;
-integrated desktop review remains pending. This file does not advance the
-verified integration boundary or authorize publication.
+Status: qualified alignment receipt. Automated code qualification and the
+integrated desktop visual review passed. This record advances the verified
+integration boundary; it does not authorize a release or mobile publication.
 
 Role: record the exact donor range, Scient compositions, and verification
 boundary for this alignment. The ongoing procedure remains the
@@ -115,7 +115,7 @@ native build before qualifying those mobile interactions.
 ## Protected boundaries
 
 Scient product identity, storage roots, browser partitions, rooted assets,
-migrations, General Chat, Sources, Skills, voice, analysis, compute, PDF, LaTeX,
+migrations, project ownership, Sources, Skills, voice, analysis, compute, PDF, LaTeX,
 rich Markdown, and content direction remain intact. System-installed and
 Scient-managed provider lifecycles are unchanged; no passive probe starts login.
 
@@ -142,17 +142,37 @@ Local checks use Node 24.19.0 and pnpm 11.10.0.
   per package. Server: 376 files / 4,358 tests (8 files / 40 tests skipped);
   desktop: 70 files / 689 tests (10 skipped). Web and mobile counts match the
   direct suites above. The complete five-target build passed.
-- All ten required GitHub checks passed on `7a201339f`: Check, Documentation,
+- All ten required GitHub checks passed on `7a201339f` and `9f015b49f`: Check, Documentation,
   Verify upstream provenance, Test, all three Test Server shards, Rust, Mobile
   Native Changes, and Release Smoke.
 - Desktop startup smoke passed against the built merge with explicit isolated
   state at `<worktree>/.scient-next/startup-smoke` and the safety envelope on.
   The captured test/Electron/helper processes exited, and no process retained
-  open files under that smoke state. No persistent candidate was started.
-- Integrated desktop QA, hosted before/after evidence, and checks on the final
-  receipt commit remain pending. The shared Mac was locked; no Computer Use,
-  unlock attempt, permission change, or signing bypass was performed. Startup
-  success is not visual acceptance.
+  open files under that smoke state.
+- After the owner unlocked the Mac and explicitly authorized final testing and
+  merge, integrated Computer Use review passed on `9f015b49f` (the source tree
+  of `7a201339f` plus the draft receipt). A synthetic project with three completed
+  fixture threads exercised the actual chat renderer without a provider call:
+  - inline and centered authored image sizes, the standalone image card, RTL,
+    and math rendered correctly;
+  - an inline image expanded above the sidebar, Escape closed it, and Enter
+    reopened it from the retained keyboard focus;
+  - a normalized Codex file citation opened the correct workspace Markdown file;
+  - Use template preserved existing draft text, added the template prompt and
+    skill reference, did not send, and did not duplicate on a repeated click;
+  - an external disk edit automatically refreshed the open file without a
+    manual reload. Unsaved-edit and mutation-fallback behavior are covered by
+    the automated suites above, not claimed as manual checks.
+- Six synthetic visual evidence images were captured outside the repository,
+  including before/after expansion, template insertion, and disk refresh. No
+  PR-only image assets, real conversations, account details, or credentials were
+  committed. The owner reviewed the standalone image-card presentation during
+  this pass; a possible floating-toolbar redesign remains a separate follow-up.
+- The isolated review app used its own bundle ID, service, state under
+  `<worktree>/.scient-next/scient-next-dev`, backend port 15029, and web port 6989. Both listeners, the environment descriptor, web origin, and persistence
+  checks passed. The app was stopped through its managed lifecycle; the service,
+  runner, Electron, backend, and listeners were verified gone. Computer Use was
+  reset and explicitly released to the next reviewer. Other apps were untouched.
 
 Local native static checking could not run SwiftLint, ktlint, or detekt because
 their optional executables are absent. GitHub's native-change detector passes
@@ -162,6 +182,7 @@ runtime result is claimed. Mobile publication stays disabled.
 
 ## Publication boundary
 
-PR #218 is draft until the remaining gates and integrated review are complete.
-This alignment does not publish a release or activate retained mobile features.
-The final verified receipt and machine boundary will be updated before merge.
+The owner explicitly authorized merging PR #218 after testing. The final
+documentation/provenance-only commit must pass required hosted checks before
+the normal history-preserving merge. This alignment does not publish a release,
+activate retained mobile features, or authorize merging any other agent's PR.
