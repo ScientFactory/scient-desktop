@@ -28,6 +28,7 @@ class ScientCodeBlockNodeView implements NodeView {
   private readonly languageLabel = document.createElement("span");
   private readonly rendered = document.createElement("div");
   private readonly editorHost = document.createElement("div");
+  private readonly loadError = document.createElement("div");
   private nestedEditor: ScientNestedCodeEditor | null = null;
   private reactRoot: Root | null = null;
   private node: ProseMirrorNode;
@@ -54,6 +55,17 @@ class ScientCodeBlockNodeView implements NodeView {
     this.editorHost.className = "scient-markdown-code-editor";
     this.editorHost.hidden = true;
     this.dom.append(this.editorHost);
+    this.loadError.className = "scient-markdown-code-load-error";
+    this.loadError.hidden = true;
+    this.loadError.setAttribute("role", "status");
+    this.loadError.append("Code editor could not open. Markdown source is still available.");
+    const retry = document.createElement("button");
+    retry.type = "button";
+    retry.textContent = "Retry";
+    retry.setAttribute("aria-label", "Retry code editor");
+    retry.addEventListener("click", () => void this.activateEditor());
+    this.loadError.append(retry);
+    this.dom.append(this.loadError);
     // Clicking anywhere in the block opens the nested editor; without this a
     // reader has no visible way in, since editing waits for a node selection.
     this.dom.addEventListener("mousedown", (event) => {
@@ -90,6 +102,7 @@ class ScientCodeBlockNodeView implements NodeView {
     this.dom.classList.remove("is-selected");
     this.rendered.hidden = false;
     this.editorHost.hidden = true;
+    this.loadError.hidden = true;
   }
 
   stopEvent(event: Event): boolean {
@@ -114,20 +127,32 @@ class ScientCodeBlockNodeView implements NodeView {
   }
 
   private async activateEditor(): Promise<void> {
+    if (this.destroyed || !this.selected || !this.view.editable) return;
+    this.loadError.hidden = true;
     if (!this.nestedEditor) {
-      const { createScientNestedCodeEditor } = await import("./codeMirrorCodeEditor");
-      if (this.destroyed || !this.selected || !this.view.editable) return;
-      // Concurrent selections can share the same pending module import. Only
-      // one continuation may create the nested editor; never focus after exit.
-      this.editorHost.hidden = false;
-      this.nestedEditor ??= createScientNestedCodeEditor({
-        parent: this.editorHost,
-        code: this.node.textContent,
-        language: codeLanguage(this.node),
-        onEscape: () => this.view.focus(),
-        onUserCodeChange: (code) => this.replaceCode(code),
-      });
+      try {
+        const { createScientNestedCodeEditor } = await import("./codeMirrorCodeEditor");
+        if (this.destroyed || !this.selected || !this.view.editable) return;
+        // Concurrent selections can share the same pending module import. Only
+        // one continuation may create the nested editor; never focus after exit.
+        this.editorHost.hidden = false;
+        this.nestedEditor ??= createScientNestedCodeEditor({
+          parent: this.editorHost,
+          code: this.node.textContent,
+          language: codeLanguage(this.node),
+          onEscape: () => this.view.focus(),
+          onUserCodeChange: (code) => this.replaceCode(code),
+        });
+      } catch {
+        if (this.destroyed || !this.selected || !this.view.editable || this.nestedEditor) return;
+        this.editorHost.replaceChildren();
+        this.editorHost.hidden = true;
+        this.rendered.hidden = false;
+        this.loadError.hidden = false;
+        return;
+      }
     }
+    this.loadError.hidden = true;
     // Keep the rendered code (and its height) until the lazy editor is ready.
     // Rich fences stay visible alongside their editable source.
     this.rendered.hidden = !this.dom.hasAttribute("data-scient-markdown-rich-fence");

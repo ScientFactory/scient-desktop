@@ -226,6 +226,11 @@ eagerly. Once activated, validation follows source/theme changes and retains the
 preview during invalid edits; stale asynchronous results cannot replace newer source. This is
 first-visit deferral, not suspension of previously visited blocks or whole-document virtualization.
 
+If a nested code editor cannot load or initialize, its rendered source stays visible and no
+document edit is dispatched. A local notice offers Retry and points to the existing Markdown
+source mode; failure must not escape as an unhandled rejection. A late failure after leaving the
+block is ignored, and a successful retry removes the notice without creating another editor.
+
 Milkdown, MDXEditor, Vditor, MarkText, Muya, and newer Typora-like projects remain interaction
 and test references, not runtime foundations. Their useful ideas may be reimplemented through
 Scient-owned modules; their serializer behavior is not the file-authority contract.

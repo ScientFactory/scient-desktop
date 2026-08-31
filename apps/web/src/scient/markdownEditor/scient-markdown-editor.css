@@ -486,6 +486,18 @@
   font-size: 0.6875rem;
 }
 
+.scient-markdown-code-load-error {
+  padding: 0 0.8rem 0.75rem;
+  color: var(--muted-foreground);
+  font-size: 0.75rem;
+}
+
+.scient-markdown-code-load-error button {
+  margin-inline-start: 0.5rem;
+  text-decoration: underline;
+  text-underline-offset: 0.15em;
+}
+
 .scient-markdown-code-render {
   overflow-x: auto;
   padding: 0.55rem 0.8rem 0.75rem;
