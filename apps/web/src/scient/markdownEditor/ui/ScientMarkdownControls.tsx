@@ -485,9 +485,9 @@ function DirectionMenu({
 }) {
   return (
     <DockMenu
-      label={`Text direction: ${directionMenuLabel(snapshot.textDirection)}`}
+      label={`${snapshot.inTable ? "Table" : "Text"} direction: ${directionMenuLabel(snapshot.textDirection)}`}
       icon={directionTriggerIcon(snapshot.textDirection)}
-      groupLabel="Text direction"
+      groupLabel={snapshot.inTable ? "Table direction" : "Text direction"}
     >
       <DirectionMenuItems controller={controller} snapshot={snapshot} />
     </DockMenu>
@@ -687,6 +687,11 @@ function TableMenuItems({ controller }: { readonly controller: ScientMarkdownEdi
 
   return (
     <>
+      <MenuItem onClick={() => execute("select-table")}>
+        <TableIcon />
+        <span>Select whole table</span>
+      </MenuItem>
+      <MenuSeparator />
       <MenuItem onClick={() => execute("add-row-before")}>
         <ArrowUpToLine />
         <span>Add row above</span>

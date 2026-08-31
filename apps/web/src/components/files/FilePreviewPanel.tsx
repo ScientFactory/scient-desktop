@@ -31,7 +31,6 @@ import {
 
 import { openFileInPreview, resolveWorkspaceFileLinkOpenTarget } from "~/browser/openFileInPreview";
 import { useAssetUrlState } from "~/assets/assetUrls";
-import ChatMarkdown from "~/components/ChatMarkdown";
 import { OpenInPicker } from "~/components/chat/OpenInPicker";
 import { useRemoteOpenState } from "~/remoteOpen";
 import { useClientSettings } from "~/hooks/useSettings";
@@ -1022,12 +1021,11 @@ function RenderedMarkdownSurface({
 
   return (
     <ScrollArea className="min-h-0 flex-1">
-      <ChatMarkdown
+      <FileMarkdownPreview
         text={contents}
         cwd={cwd}
+        relativePath={relativePath}
         threadRef={threadRef}
-        contentDirection="auto"
-        className="mx-auto max-w-4xl px-6 py-5"
         onTaskListChange={
           truncated || readOnly
             ? undefined

@@ -306,10 +306,10 @@ for (const name of TOP_LEVEL_SOURCE_NODE_NAMES) {
   });
 }
 
-// Text direction attributes live on paragraph/heading blocks. GFM table cells
-// contain inline content directly; their text direction is resolved by CSS.
+// Direction belongs to a block. Tables share the existing wrapper convention;
+// individual GFM cells do not acquire unpersistable direction attributes.
 function withTextDirectionAttrs(
-  name: "paragraph" | "heading",
+  name: "paragraph" | "heading" | "table",
   extraAttrs: (element: HTMLElement) => Record<string, unknown>,
 ): void {
   const spec = nodes.get(name);
@@ -361,6 +361,7 @@ withTextDirectionAttrs("paragraph", () => ({}));
 withTextDirectionAttrs("heading", (element) => ({
   level: Number(element.tagName.slice(1)),
 }));
+withTextDirectionAttrs("table", () => ({}));
 
 const linkSpec = defaultMarkdownParser.schema.spec.marks.get("link");
 if (!linkSpec) throw new Error("Missing ProseMirror mark spec 'link'.");
@@ -521,7 +522,12 @@ gfmTokenizer.core.ruler.after("scient_task_lists", "scient_direction_divs", (sta
         continue;
       }
     }
-    if (pendingDir !== null && (token.type === "paragraph_open" || token.type === "heading_open")) {
+    if (
+      pendingDir !== null &&
+      (token.type === "paragraph_open" ||
+        token.type === "heading_open" ||
+        token.type === "table_open")
+    ) {
       token.attrSet("data-scient-dir", pendingDir);
     }
     kept.push(token);
@@ -559,7 +565,7 @@ export const scientMarkdownParser = new MarkdownParser(scientMarkdownSchema, gfm
       dir: token.attrGet("data-scient-dir"),
     }),
   },
-  table: { block: "table" },
+  table: { block: "table", getAttrs: (token) => ({ dir: token.attrGet("data-scient-dir") }) },
   thead: { ignore: true },
   tbody: { ignore: true },
   tr: { block: "table_row" },
@@ -695,8 +701,11 @@ export const scientMarkdownSerializer = new MarkdownSerializer(
       state.closeBlock(node);
     },
     table: (state, node) => {
-      state.write(tableMarkdown(node));
-      state.closeBlock(node);
+      blockWithDirection(state, node, () => {
+        // Prefix every row with the surrounding list/quote delimiter.
+        state.text(tableMarkdown(node), false);
+        state.closeBlock(node);
+      });
     },
     // These are consumed by the table serializer and cannot be reached as
     // standalone document blocks, but strict mode requires named handlers.

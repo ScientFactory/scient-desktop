@@ -1,7 +1,7 @@
 import { lift, setBlockType, toggleMark, wrapIn } from "prosemirror-commands";
 import type { Attrs, MarkType, Node as ProseMirrorNode, NodeType } from "prosemirror-model";
 import { liftListItem, wrapInList } from "prosemirror-schema-list";
-import { redo, undo } from "prosemirror-history";
+import { closeHistory, redo, undo } from "prosemirror-history";
 import { Selection, type Command, type EditorState, type Transaction } from "prosemirror-state";
 import {
   addColumnAfter,
@@ -16,6 +16,7 @@ import {
 } from "prosemirror-tables";
 
 import { scientMarkdownSchema } from "./schema";
+import { selectMarkdownTable } from "./tables";
 
 export type ScientMarkdownCommand =
   | "add-column-after"
@@ -54,6 +55,7 @@ export type ScientMarkdownCommand =
   | "ordered-list"
   | "paragraph"
   | "redo"
+  | "select-table"
   | "split-cell"
   | "strike"
   | "table"
@@ -319,14 +321,16 @@ function clearMarkdownFormatting(): Command {
   };
 }
 
-/** Set the text direction of every paragraph/heading in the selection (null = auto). */
+/** Set block direction across the selection; a table is one directional block. */
 function setMarkdownTextDirection(direction: "ltr" | "rtl" | null): Command {
   return (state, dispatch) => {
     const { from, to } = state.selection;
     let transaction: Transaction | null = null;
     state.doc.nodesBetween(from, to, (node, pos) => {
       if (
-        (node.type.name === "paragraph" || node.type.name === "heading") &&
+        (node.type.name === "paragraph" ||
+          node.type.name === "heading" ||
+          node.type.name === "table") &&
         node.attrs.dir !== direction
       ) {
         transaction = (transaction ?? state.tr).setNodeMarkup(pos, undefined, {
@@ -356,6 +360,8 @@ function commandFor(command: ScientMarkdownCommand): Command {
       return undo;
     case "redo":
       return redo;
+    case "select-table":
+      return selectMarkdownTable;
     case "paragraph":
       return setMarkdownBlockStyle("paragraph");
     case "heading-1":
@@ -462,7 +468,19 @@ export function runScientMarkdownCommand(
   state: EditorState,
   dispatch?: (transaction: Transaction) => void,
 ): boolean {
-  return commandFor(command)(state, dispatch);
+  return commandFor(command)(
+    state,
+    dispatch &&
+      ((transaction) => {
+        // Explicit document commands are undo steps, even when clicked quickly.
+        // Selection-only commands and undo/redo keep the upstream history policy.
+        dispatch(
+          transaction.docChanged && command !== "undo" && command !== "redo"
+            ? closeHistory(transaction)
+            : transaction,
+        );
+      }),
+  );
 }
 
 export function filterScientMarkdownSlashCommands(

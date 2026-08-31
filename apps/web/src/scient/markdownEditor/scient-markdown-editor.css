@@ -312,6 +312,10 @@
   unicode-bidi: isolate;
 }
 
+.scient-markdown-document table:is([dir="ltr"], [dir="rtl"]) :is(th, td) {
+  unicode-bidi: isolate;
+}
+
 .scient-markdown-document :is(code, pre, .scient-markdown-math-render) {
   direction: ltr;
   unicode-bidi: isolate;
@@ -545,6 +549,42 @@
 
 .scient-markdown-document .tableWrapper {
   overflow-x: auto;
+}
+
+.scient-markdown-table {
+  position: relative;
+}
+
+.scient-markdown-table-select {
+  display: none;
+  position: absolute;
+  top: 0;
+  left: -1.5rem;
+  width: 1.25rem;
+  height: 1.25rem;
+  align-items: center;
+  justify-content: center;
+  border-radius: 0.25rem;
+  color: color-mix(in oklab, var(--muted-foreground) 80%, transparent);
+  cursor: pointer;
+}
+
+.scient-markdown-document.is-write .is-active-table > .scient-markdown-table-select {
+  display: flex;
+}
+
+.scient-markdown-table-select > svg {
+  width: 0.875rem;
+  height: 0.875rem;
+}
+
+.scient-markdown-table-select:hover {
+  background: var(--muted);
+}
+
+.scient-markdown-table-select:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: 1px;
 }
 
 .scient-markdown-document table {

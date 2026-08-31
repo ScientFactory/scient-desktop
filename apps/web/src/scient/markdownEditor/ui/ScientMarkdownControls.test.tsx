@@ -2,6 +2,7 @@
 import { act } from "react";
 import { createRoot } from "react-dom/client";
 import { TextSelection } from "prosemirror-state";
+import { CellSelection } from "prosemirror-tables";
 import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 import { ScientMarkdownEditorView } from "../prosemirror/view";
 import { ScientMarkdownControls } from "./ScientMarkdownControls";
@@ -78,6 +79,35 @@ describe("formatting menu focus", () => {
       expect(view.state.selection.empty).toBe(true);
     },
   );
+  it("selects the whole table through the real menu lifecycle and retains that selection for direction", async () => {
+    const { view, controller, controlsHost } = await fixture(
+      "| A | B |\n| --- | --- |\n| One | Two |\n",
+    );
+    const trigger = controlsHost.querySelector<HTMLButtonElement>(
+      'button[aria-label="More table actions"]',
+    )!;
+    await act(() => trigger.click());
+    const item = Array.from(document.body.querySelectorAll<HTMLElement>('[role="menuitem"]')).find(
+      (node) => node.textContent?.trim() === "Select whole table",
+    )!;
+    expect(item).toBeDefined();
+    await act(() => item.click());
+    await vi.waitFor(() => expect(document.body.querySelector('[role="menu"]')).toBeNull());
+    await vi.waitFor(() => expect(view.hasFocus()).toBe(true));
+    expect(view.state.selection).toBeInstanceOf(CellSelection);
+    expect((view.state.selection as CellSelection).isColSelection()).toBe(true);
+    const direction = controlsHost.querySelector<HTMLButtonElement>(
+      'button[aria-label^="Table direction:"]',
+    )!;
+    await act(() => direction.click());
+    const rtl = Array.from(
+      document.body.querySelectorAll<HTMLElement>('[role="menuitemradio"]'),
+    ).find((node) => node.textContent?.trim() === "Right-to-left")!;
+    await act(() => rtl.click());
+    await vi.waitFor(() => expect(controller.getSnapshot().textDirection).toBe("rtl"));
+    expect(view.state.selection).toBeInstanceOf(CellSelection);
+    expect(controller.session.session.draftSource).toContain('<div dir="rtl">');
+  });
 
   it("keeps normal trigger focus on Escape without running a command", async () => {
     const { controller, controlsHost } = await fixture();

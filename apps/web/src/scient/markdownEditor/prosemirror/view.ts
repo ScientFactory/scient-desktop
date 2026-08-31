@@ -752,7 +752,9 @@ export class ScientMarkdownEditorView {
       }
       if (
         textDirection === null &&
-        (node.type.name === "paragraph" || node.type.name === "heading")
+        (node.type.name === "paragraph" ||
+          node.type.name === "heading" ||
+          node.type.name === "table")
       ) {
         textDirection = node.attrs.dir === "rtl" ? "rtl" : node.attrs.dir === "ltr" ? "ltr" : null;
       }

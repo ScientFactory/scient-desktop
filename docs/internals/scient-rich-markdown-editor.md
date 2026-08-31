@@ -190,6 +190,14 @@ insert toolbar rows. Cursor/selection decorations are positioned outside documen
 wide tables scroll within their existing wrapper. Keep this adapter limited to inline cells;
 paragraph-based cells should use the upstream handler.
 
+The active table has a small, out-of-flow select button only in write mode, plus the same action
+in its command menu. Both create the upstream `CellSelection` spanning every cell: selection
+does not modify source, create an undo step, or start a save. The chrome wraps `TableView` without
+replacing its content or column machinery. Direction belongs to the table as one block (including
+when invoked from a cell) and uses the existing `<div dir="ltr|rtl">` Markdown convention. Auto
+removes that wrapper; no cell-level HTML format or second table model is introduced. Explicit
+document commands begin separate undo steps, even when invoked in quick succession.
+
 One workspace surface owns exactly one editor controller, one document session, and one serial
 save queue. React mounts that controller but does not mirror the document source in component
 state. Compare-and-swap revisions, explicit retry/discard recovery, typed server operations, and
@@ -291,21 +299,27 @@ The static seam test records the UI mounts. The server tests cover containment, 
 revision-aware rename, atomic publication, and image validation. An upstream change that supplies
 equivalent behavior should replace the seam only after those acceptance tests still pass.
 
-#### Current upstream disposition (2026-08-30)
+#### Current main integration (2026-08-31)
 
-Against the official T3 delta from Scient's integrated upstream base `660cddd3b` through
-`upstream/main` at `2daff8c25`, this feature overlaps only two paths:
+The feature was rebased onto freshly fetched owned main `6e608aadf29ad083c46c8552fea6a1ce4b4e7554`,
+which already contains the separately qualified T3 integration through `7880a6e58`. No official
+upstream merge or divergence-policy change was added to this feature branch. The saved pre-rebase
+head is `3fb9c5a2324b2af8871cbc83cab79d2145f68f71`.
 
-- `FilePreviewPanel.tsx`: upstream extracted the ordinary Markdown renderer into
-  `FileMarkdownPreview.tsx`. During the next bounded alignment, keep that extraction and compose
-  the Scient rich-editor branch beside it; do not preserve a second inline copy merely to reduce
-  diff churn.
-- `pnpm-lock.yaml`: regenerate the lockfile after reconciling manifests. It carries no product
-  policy.
+Four paths overlapped main's intervening changes:
 
-There is no current official-upstream overlap in `ChatView.tsx`, `RightPanelTabs.tsx`, the editor
-modules, or the Markdown server modules. This is a point-in-time integration record, not a reason
-to bypass the usual changed-path audit at the next alignment.
+- `FilePreviewPanel.tsx`: compose the rich plain-Markdown mount alongside main's
+  `FileMarkdownPreview` fallback. Preserve its file-relative image resolution, task updates, MDX,
+  and inherited source editor. This was the only textual rebase conflict; the final composition
+  also corrects the older commit's reintroduction of `ChatMarkdown` at that fallback.
+- `ChatView.tsx`: retain main's video-attachment lifecycle alongside Scient's local
+  pending-file-departure adapter. The auto-merge does not change either operation's ownership.
+- `packages/client-runtime/package.json`: retain both main's work-log exports and the Markdown
+  operation exports.
+- `pnpm-lock.yaml`: the composed lockfile passes the pinned frozen install and supply-chain check.
+
+The editor core, Markdown server operations, and inherited `RightPanelTabs` had no intervening
+main overlap. This is an exact integration record, not a reason to skip the next changed-path audit.
 
 ### Document session
 

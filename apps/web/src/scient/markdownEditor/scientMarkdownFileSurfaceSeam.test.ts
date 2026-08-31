@@ -32,6 +32,8 @@ describe("Scient Markdown file-preview seam", () => {
     expect(panelSource).toContain("isScientMarkdownDocumentPath(relativePath)");
     expect(panelSource).toContain("isMarkdownDocument && renderMarkdown");
     expect(panelSource).toContain("RenderedMarkdownSurface");
+    expect(panelSource).toContain("<FileMarkdownPreview");
+    expect(panelSource).not.toContain("<ChatMarkdown");
     expect(panelSource).toContain("shouldUseScientMarkdownEditor({");
     expect(panelSource).toContain("readOnly={file.data.readOnly ?? false}");
     expect(panelSource).toContain("file.data?.readOnly && !(isMarkdownDocument && renderMarkdown)");

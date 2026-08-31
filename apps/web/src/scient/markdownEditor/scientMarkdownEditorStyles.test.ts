@@ -55,6 +55,37 @@ describe("rich Markdown list marker styles", () => {
 });
 
 describe("rich Markdown compact-surface styles", () => {
+  it("shows the table handle only in the active editable table without contributing layout height", () => {
+    const style = document.createElement("style");
+    style.textContent = cssSource;
+    document.head.append(style);
+    const host = document.createElement("div");
+    host.className = "scient-markdown-document is-write";
+    host.innerHTML =
+      '<div class="scient-markdown-table"><button class="scient-markdown-table-select"></button><table dir="rtl"><tbody><tr><td>English</td></tr></tbody></table></div>';
+    document.body.append(host);
+    try {
+      const wrapper = host.firstElementChild!;
+      const button = host.querySelector("button")!;
+      expect(getComputedStyle(button).display).toBe("none");
+      wrapper.classList.add("is-active-table");
+      expect(getComputedStyle(button).display).toBe("flex");
+      expect(getComputedStyle(button).position).toBe("absolute");
+      expect(getComputedStyle(host.querySelector("td")!).unicodeBidi).toBe("isolate");
+      host.classList.remove("is-write");
+      expect(getComputedStyle(button).display).toBe("none");
+      host.querySelector("table")!.removeAttribute("dir");
+      // happy-dom retains descendant computed styles after an ancestor attribute
+      // changes. Recreate that subtree for this selector test; Chromium separately
+      // qualifies the live directed -> auto transition without replacing nodes.
+      const table = host.querySelector("table")!;
+      table.replaceWith(table.cloneNode(true));
+      expect(getComputedStyle(host.querySelector("td")!).unicodeBidi).toBe("plaintext");
+    } finally {
+      host.remove();
+      style.remove();
+    }
+  });
   it("lets explicit direction override first-strong-character auto direction", () => {
     const style = document.createElement("style");
     style.textContent = cssSource;

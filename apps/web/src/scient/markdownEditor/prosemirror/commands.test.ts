@@ -21,6 +21,19 @@ function select(session: ScientProseMirrorSession, from: number, to = from): voi
 }
 
 describe("Scient Markdown commands", () => {
+  it("undoes separate explicit commands individually even without a time gap", () => {
+    const session = new ScientProseMirrorSession({ source: "Text\n", revision: "r0" });
+    select(session, 1);
+    session.applyTransaction(session.state.tr.insertText("New "), "user");
+    runUserCommand(session, "heading-2");
+    runUserCommand(session, "direction-rtl");
+    runUserCommand(session, "undo");
+    expect(session.session.draftSource).toBe("## New Text\n");
+    runUserCommand(session, "undo");
+    expect(session.session.draftSource).toBe("New Text\n");
+    runUserCommand(session, "undo");
+    expect(session.session.draftSource).toBe("Text\n");
+  });
   it("round-trips a right-to-left paragraph through the div convention", () => {
     const source = "Hello  world.\n\nSecond paragraph.\n";
     const session = new ScientProseMirrorSession({ source, revision: "sha256:before" });
