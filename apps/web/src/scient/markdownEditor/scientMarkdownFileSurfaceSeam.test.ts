@@ -94,9 +94,17 @@ describe("Scient Markdown file-preview seam", () => {
     expect(panelSource).toContain("isRichMarkdown && !file.data?.readOnly");
   });
 
-  it("refreshes both the file tree and Markdown link index after refresh or creation", () => {
+  it("refreshes the current workspace tree and link index after refresh, creation, or agent edits", () => {
     expect(browserSource).toContain("void treeControllerRef.current?.refresh();");
     expect(browserSource).toContain("refreshProjectEntriesQuery(environmentId, cwd);");
+    const dependencies = browserSource.match(
+      /const refreshEntries = useCallback\([\s\S]*?\}, \[([^\]]*)\]\);/u,
+    )?.[1];
+    expect(dependencies).toContain("cwd");
+    expect(dependencies).toContain("environmentId");
+    expect(browserSource).toMatch(
+      /useWorkspaceMutationRefresh\(\{[\s\S]*?refresh: refreshEntries/u,
+    );
     expect(browserSource).toMatch(/onCreated=\{[\s\S]*?handleRefresh\(\);[\s\S]*?onOpenFile/gu);
   });
 

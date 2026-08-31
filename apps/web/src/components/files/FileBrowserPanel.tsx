@@ -470,7 +470,7 @@ export default function FileBrowserPanel({
     void treeControllerRef.current?.refresh();
     refreshProjectEntriesQuery(environmentId, cwd);
     if (isSearching) pathSearch.refresh();
-  }, [isSearching, pathSearch.refresh]);
+  }, [cwd, environmentId, isSearching, pathSearch.refresh]);
   useWorkspaceMutationRefresh({
     mutationId: workspaceMutationId,
     refresh: refreshEntries,

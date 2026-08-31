@@ -301,22 +301,30 @@ equivalent behavior should replace the seam only after those acceptance tests st
 
 #### Current main integration (2026-08-31)
 
-The feature was rebased onto freshly fetched owned main `6e608aadf29ad083c46c8552fea6a1ce4b4e7554`,
-which already contains the separately qualified T3 integration through `7880a6e58`. No official
-upstream merge or divergence-policy change was added to this feature branch. The saved pre-rebase
-head is `3fb9c5a2324b2af8871cbc83cab79d2145f68f71`.
+The feature was rebased onto owned main `6e608aadf29ad083c46c8552fea6a1ce4b4e7554`, then onto
+freshly fetched main `3b6cd6fda7169be4001461fc4404a327203eb92d` when PR #218 landed during the
+final checks. Main contains the separately qualified T3 integration through `e4f7b14fa`.
+No official upstream merge or divergence-policy change was added to this feature branch.
+The tested checkpoint before that last rebase is `269a78b6c70873b079a992636bccb712acd527fc`.
 
-Four paths overlapped main's intervening changes:
+The main alignments touch these six shared paths:
 
 - `FilePreviewPanel.tsx`: compose the rich plain-Markdown mount alongside main's
   `FileMarkdownPreview` fallback. Preserve its file-relative image resolution, task updates, MDX,
-  and inherited source editor. This was the only textual rebase conflict; the final composition
-  also corrects the older commit's reintroduction of `ChatMarkdown` at that fallback.
+  and inherited source editor. The earlier rebase corrected a textual conflict and an older
+  commit's reintroduction of `ChatMarkdown` at that fallback. The final composition also retains
+  main's pending-file guard, agent mutation hints, and binary-image cache invalidation.
 - `ChatView.tsx`: retain main's video-attachment lifecycle alongside Scient's local
-  pending-file-departure adapter. The auto-merge does not change either operation's ownership.
-- `packages/client-runtime/package.json`: retain both main's work-log exports and the Markdown
-  operation exports.
-- `pnpm-lock.yaml`: the composed lockfile passes the pinned frozen install and supply-chain check.
+  pending-file-departure adapter, file citations, artifact templates, and mutation hints.
+- `FileBrowserPanel.tsx`: share the tree/link-index refresh between manual refresh, file creation,
+  and main's agent mutation hint. Its callback depends on the current environment and workspace,
+  so a context change cannot refresh an old completion index.
+- `useWorkspaceFileRefresh.ts`: retain main's watcher-primary, mutation-hint fallback alongside
+  the Markdown save-error and conflict callbacks; pending local edits still defer the fallback.
+- `packages/client-runtime/package.json`: retain main's work-log and Codex Markdown exports
+  alongside the Markdown operation exports.
+- `pnpm-lock.yaml`: preserve both directive and frontmatter entries at the only final-rebase
+  textual conflict. The composed lockfile passes the pinned frozen install and supply-chain check.
 
 The editor core, Markdown server operations, and inherited `RightPanelTabs` had no intervening
 main overlap. This is an exact integration record, not a reason to skip the next changed-path audit.
