@@ -13,8 +13,11 @@ keeps it in the composer and shows how many characters need to be removed.
 Shorten the draft or split it into multiple messages, then send again in the
 same thread.
 
-On servers that support direct uploads, images upload as soon as you add them. The send button
-becomes available after every upload finishes. Failed uploads can be retried or removed.
+On web and desktop, attachments upload as soon as you add them. The send button becomes available
+after every upload finishes. Failed uploads can be retried or removed.
+
+On web and desktop, if you reload before a file finishes uploading, the draft keeps the file's name
+and shows **Attach again** next to it. Attach the file again or remove it, then send.
 
 On web and desktop, HEIC and HEIF photos are automatically converted to JPEG when you drag them into
 the composer or paste them into a message.
@@ -28,6 +31,9 @@ a native image-input path, such as SVG and TIFF, are attached as ordinary files.
 Files must be readable and non-empty, fit the server's displayed size limit,
 and finish uploading before you send.
 
+Images can be up to 10 MB. Other files use the server's advertised limit,
+capped at 50 MB. Each message can contain up to eight attachments in total.
+
 Attaching a file makes it available to the agent; it does not guarantee that
 every provider can understand every format. Depending on the provider, it
 receives the attachment directly or a server-local path it can read using its
@@ -35,10 +41,12 @@ available tools. Uploaded files are not automatically executed.
 
 Click a video attachment to play it. If its format cannot play in the app, use
 **Download video**. Other files keep their filename and can be downloaded.
-On mobile, files sent from desktop or web appear with an **Open file** action;
-mobile does not yet offer a generic-file upload picker.
+In the retained mobile client (not yet a public Scient release), the **+** control offers Photos and, when the connected
+server supports file uploads, Files. Files can also arrive through the system
+share sheet. Mobile uploads happen when a message sends; its outbox keeps files
+until delivery. Select a received file to save it or open it in another app.
 
-Generic files cannot yet be queued. Keep them in the composer and
+On desktop and web, generic files cannot yet be queued. Keep them in the composer and
 send when the current turn finishes, or use the steer shortcut when supported.
 Editing a fork from a sent message with file attachments is not supported yet;
 fork from a completed response to retain the conversation and its files.
@@ -55,6 +63,10 @@ stashes belong to the environment where the files were uploaded and expire with 
 temporary attachment retention.
 
 ## Commands and skills
+
+When an agent provides an artifact-template card, **Use template** adds its
+skill prompt to your existing draft. Review or edit it before sending; the
+button does not send a message automatically or grant new permissions.
 
 Type `/` to open the command menu. Type `$` to find and add a skill. Skill rows show their source,
 such as System, Personal, Project, or App.

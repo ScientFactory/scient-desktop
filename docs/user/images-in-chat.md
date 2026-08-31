@@ -25,6 +25,10 @@ workspace-file authority merely because it appears in Markdown. Remote web
 images retain ordinary Markdown image behavior rather than these project-file
 actions.
 
+In an agent's response, select an inline or remote image to open a larger preview. Keyboard
+users can focus the image and press Enter or Space. An image that is itself a
+link keeps opening that link instead.
+
 The image card lets you:
 
 - expand and zoom the figure;

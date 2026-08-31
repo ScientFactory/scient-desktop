@@ -14,6 +14,7 @@ import {
   useProjectFileQuery,
 } from "~/components/files/projectFilesQueryState";
 import { projectEnvironment } from "~/state/projects";
+import { useWorkspaceMutationRefresh } from "~/hooks/useWorkspaceMutationRefresh";
 
 import { hasExternalFileConflict } from "./fileRefreshPolicy";
 
@@ -68,6 +69,7 @@ export function useWorkspaceFileRefresh(input: {
   readonly relativePath: string | null;
   readonly loadAsText: boolean;
   readonly sourcePending: boolean;
+  readonly workspaceMutationId: string | null;
 }) {
   const file = useProjectFileQuery(
     input.environmentId,
@@ -95,6 +97,16 @@ export function useWorkspaceFileRefresh(input: {
     refreshAuthoritativeFile();
     setViewerRefreshKey((current) => current + 1);
   }, [refreshAuthoritativeFile]);
+
+  // The native watcher remains the freshness owner, including non-agent edits
+  // and binary previews. Use T3's mutation hints only when watching is unavailable;
+  // a dirty editor keeps the hint pending until its save/discard has settled.
+  useWorkspaceMutationRefresh({
+    enabled: fileChanges.unavailable && !input.sourcePending,
+    mutationId: input.workspaceMutationId,
+    refresh: refreshViewer,
+    resourceKey: `file:${input.environmentId}:${input.cwd}:${input.relativePath ?? ""}`,
+  });
 
   useEffect(() => {
     if (fileChanges.change === null || lastObservedChangeRef.current === fileChanges.change) {
