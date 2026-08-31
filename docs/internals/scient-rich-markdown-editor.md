@@ -207,7 +207,10 @@ The persistence coordinator observes every draft transition, not only eligible s
 Undo-to-baseline cancels debounced work; undo or discard during an in-flight write compensates
 against the acknowledged revision. Edits made during conflict recovery remain the current draft.
 An authoritative read can retire a command and release flush waiters even if its response never
-arrives. A late acknowledgement cannot clear a newer observed external conflict.
+arrives. A late acknowledgement cannot clear a newer observed external conflict. If the watcher
+observes an in-flight save before its command reply while newer typing is queued, confirming that
+same snapshot must clear both the apparent conflict and its queue pause; newer typing then saves
+against the acknowledged revision.
 
 Controller callbacks forward to current host bindings without remounting the rich editor. The
 file adapter keys controller ownership by environment, workspace root, and relative path. The

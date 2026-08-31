@@ -65,6 +65,10 @@ export function ScientMarkdownWorkspaceSurface(props: ScientMarkdownWorkspaceSur
             !session ||
             (session.conflict === null && session.baselineRevision === result.revision)
           ) {
+            // The watcher can observe this save before its reply while newer
+            // typing is queued. Confirming that snapshot clears the apparent
+            // conflict; release its pause too, but never a newer real conflict.
+            if (session && saveQueue.failureBlocked) saveQueue.retry(result.revision);
             bindingsRef.current.onSaveConfirmed(intent.source, result.revision);
           }
         },

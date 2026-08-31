@@ -83,6 +83,100 @@ describe("ScientMarkdownWorkspaceSurface", () => {
     expect(opened).toHaveBeenCalledExactlyOnceWith("current");
   });
 
+  it.each([false, true])(
+    "reconciles an observed in-flight save without stranding newer typing (external writer: %s)",
+    async (externalWriter) => {
+      vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+      const mount = vi.spyOn(ScientMarkdownEditorView.prototype, "mount");
+      const synchronize = vi.spyOn(MarkdownSaveQueue.prototype, "synchronize");
+      let resolveFirst!: (value: { revision: string }) => void;
+      const first = new Promise<{ revision: string }>((resolve) => {
+        resolveFirst = resolve;
+      });
+      const persist = vi.fn(async () => ({ revision: "r2" })).mockImplementationOnce(() => first);
+      const props = {
+        source: "Original",
+        revision: "r0",
+        ariaLabel: "Watcher acknowledgement race",
+        persist,
+        onPendingChange: vi.fn(),
+        onSaveConfirmed: vi.fn(),
+        onSaveFailure: vi.fn(),
+        onExternalConflict: vi.fn(),
+      };
+      const host = document.createElement("div");
+      document.body.append(host);
+      const root = createRoot(host);
+      roots.push(root);
+      await act(() => root.render(<ScientMarkdownWorkspaceSurface {...props} />));
+      const controller = (mount.mock.instances as unknown as ScientMarkdownEditorView[]).find(
+        (item) => item.view?.dom.isConnected,
+      )!;
+      await act(() => controller.replaceUserSource("First edit"));
+      const queue = synchronize.mock.instances[0] as MarkdownSaveQueue;
+      let flushing!: Promise<void>;
+      await act(() => {
+        flushing = queue.flush();
+        controller.replaceUserSource("Latest edit");
+      });
+      // Disk publication and its watcher can arrive before the command reply.
+      await act(() =>
+        root.render(
+          <ScientMarkdownWorkspaceSurface {...props} source="First edit" revision="r1" />,
+        ),
+      );
+      expect(queue.failureBlocked).toBe(true);
+      expect(props.onExternalConflict).toHaveBeenLastCalledWith({
+        source: "First edit",
+        revision: "r1",
+      });
+      if (externalWriter) {
+        await act(() =>
+          root.render(
+            <ScientMarkdownWorkspaceSurface {...props} source="External edit" revision="r3" />,
+          ),
+        );
+      }
+      await act(async () => {
+        resolveFirst({ revision: "r1" });
+        await flushing;
+      });
+
+      expect(controller.view!.state.doc.textContent).toBe("Latest edit");
+      expect(props.onSaveFailure).not.toHaveBeenCalled();
+      if (externalWriter) {
+        expect(persist).toHaveBeenCalledTimes(1);
+        expect(controller.session.session.conflict?.externalRevision).toBe("r3");
+        expect(queue.failureBlocked).toBe(true);
+        expect(props.onPendingChange).toHaveBeenLastCalledWith(true);
+        expect(props.onSaveConfirmed).not.toHaveBeenCalled();
+        // Explicitly discard only the synthetic draft before unmount cleanup.
+        await act(() =>
+          root.render(
+            <ScientMarkdownWorkspaceSurface
+              {...props}
+              source="External edit"
+              revision="r3"
+              saveResolution={{ action: "discard", revision: "r3" }}
+            />,
+          ),
+        );
+      } else {
+        expect(persist).toHaveBeenCalledTimes(2);
+        expect(persist).toHaveBeenLastCalledWith({
+          source: "Latest edit",
+          expectedRevision: "r1",
+          editVersion: 2,
+        });
+        expect(controller.session.session.conflict).toBeNull();
+        expect(queue.pending).toBe(false);
+        expect(queue.failureBlocked).toBe(false);
+        expect(props.onPendingChange).toHaveBeenLastCalledWith(false);
+        expect(props.onSaveConfirmed).toHaveBeenLastCalledWith("Latest edit", "r2");
+      }
+    },
+  );
+
   it("discards a dirty document when a manual reload reads unchanged disk bytes", async () => {
     vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
     const mount = vi.spyOn(ScientMarkdownEditorView.prototype, "mount");
