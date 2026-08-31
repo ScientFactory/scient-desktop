@@ -296,8 +296,12 @@ These are the intentional overlaps to inspect during every bounded T3 alignment:
 | package manifests and lockfile                                     | The lazy rich bundle still needs local parser/editor dependencies.                          | Keep only runtime dependencies used by the selected product path.                                                                                       |
 
 The static seam test records the UI mounts. The server tests cover containment, exclusive create,
-revision-aware rename, atomic publication, and image validation. An upstream change that supplies
-equivalent behavior should replace the seam only after those acceptance tests still pass.
+revision-aware rename, atomic publication, and image validation. Scient-owned
+`MarkdownTransportServerTests.ts` cases register through the existing `server.test.ts` harness:
+real authenticated WebSocket saves/renames and multipart HTTP uploads must preserve revisions,
+typed failures, exact asset paths, and scope denial without writes. This loopback transport proof
+does not replace remote-client acceptance. An upstream change that supplies equivalent behavior
+should replace the seam only after those acceptance tests still pass.
 
 #### Current main integration (2026-08-31)
 
@@ -306,6 +310,11 @@ freshly fetched main `3b6cd6fda7169be4001461fc4404a327203eb92d` when PR #218 lan
 final checks. Main contains the separately qualified T3 integration through `e4f7b14fa`.
 No official upstream merge or divergence-policy change was added to this feature branch.
 The tested checkpoint before that last rebase is `269a78b6c70873b079a992636bccb712acd527fc`.
+
+The subsequent alignment onto owned main `83ffde24dc63c8d883613718aaec47b2362948e6` preserved
+all 46 feature patches unchanged. That main range has no same-file feature overlaps; its shared
+visual-card and appearance changes retain their existing mounts and are covered by the combined
+Markdown/presentation regression lane. It does not change the editor's document or save model.
 
 The main alignments touch these six shared paths:
 
