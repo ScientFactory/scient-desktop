@@ -22,6 +22,7 @@ describe("ScientMarkdownEditorView", () => {
     mounted.splice(0).forEach((controller) => controller.destroy());
     document.body.replaceChildren();
     document.documentElement.classList.remove("dark");
+    vi.unstubAllGlobals();
   });
 
   function mountEditor() {
@@ -712,6 +713,9 @@ describe("ScientMarkdownEditorView", () => {
   });
 
   it("retains the last valid scientific preview during invalid source edits", async () => {
+    // happy-dom does not calculate intersections. Exercise the supported
+    // no-observer fallback so this mounted fence can validate its live source.
+    vi.stubGlobal("IntersectionObserver", undefined);
     const controller = new ScientMarkdownEditorView({
       source: '```plotly\n{"data":[{"x":[1],"y":[2]}]}\n```\n',
       revision: "sha256:before",

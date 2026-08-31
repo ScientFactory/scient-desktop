@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 
 import { renderMermaidDiagram } from "~/scient/diagrams/mermaidRuntime";
 import { type ScientRichFenceKind, ScientRichFence } from "~/scient/presentation/ScientRichFence";
+import { useNearViewport } from "~/scient/presentation/useNearViewport";
 import { parsePlotlySource } from "~/scient/visualizations/plotlySpec";
 import { parseVegaLiteSource } from "~/scient/visualizations/vegaLiteSpec";
 
@@ -44,6 +45,7 @@ async function validateRichFence(
  * always retain the current source; only the visual projection is retained.
  */
 export function ScientEditableRichFence(props: ScientEditableRichFenceProps) {
+  const { ref, isNearViewport } = useNearViewport();
   const [renderedSource, setRenderedSource] = useState(props.source);
   const [retainedError, setRetainedError] = useState<string | null>(null);
   const [validationState, setValidationState] = useState<"invalid" | "valid" | "validating">(
@@ -53,6 +55,9 @@ export function ScientEditableRichFence(props: ScientEditableRichFenceProps) {
   const validationGenerationRef = useRef(0);
 
   useEffect(() => {
+    // Mermaid validation renders the diagram, so it must not bypass the card's
+    // viewport gate when a document contains many unvisited scientific fences.
+    if (!isNearViewport) return;
     const generation = validationGenerationRef.current + 1;
     validationGenerationRef.current = generation;
     let active = true;
@@ -77,11 +82,12 @@ export function ScientEditableRichFence(props: ScientEditableRichFenceProps) {
     return () => {
       active = false;
     };
-  }, [props.kind, props.source, props.theme]);
+  }, [isNearViewport, props.kind, props.source, props.theme]);
 
   const isRetained = retainedError !== null;
   return (
     <div
+      ref={ref}
       className="scient-markdown-editable-rich-fence"
       data-scient-rich-fence-source-state={isRetained ? "retained" : "current"}
       data-scient-rich-fence-validity={validationState}

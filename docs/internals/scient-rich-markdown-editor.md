@@ -220,6 +220,12 @@ All selected packages are MIT-licensed. The rich surface remains isolated behind
 file mount; expensive nested source and scientific renderers load only when their surfaces are
 needed, so the ordinary chat path does not initialize them.
 
+Scientific-fence validation shares the existing near-viewport activation policy with the
+visual cards: validating Mermaid renders it, so an unvisited fence must not start that work
+eagerly. Once activated, validation follows source/theme changes and retains the last valid
+preview during invalid edits; stale asynchronous results cannot replace newer source. This is
+first-visit deferral, not suspension of previously visited blocks or whole-document virtualization.
+
 Milkdown, MDXEditor, Vditor, MarkText, Muya, and newer Typora-like projects remain interaction
 and test references, not runtime foundations. Their useful ideas may be reimplemented through
 Scient-owned modules; their serializer behavior is not the file-authority contract.
