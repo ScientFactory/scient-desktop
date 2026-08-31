@@ -9,6 +9,46 @@ import type { ScientReleaseNote } from "./model";
  */
 export const SCIENT_RELEASE_NOTES = [
   {
+    version: "0.6.9",
+    publishedAt: "2026-08-31",
+    kicker: "More ways to share, clearer figures, and smoother everyday work.",
+    headline: "Share more files and work with cleaner figures",
+    summary:
+      "Scient 0.6.9 expands file attachments, makes figure controls movable, improves citations and PDF output, and fixes the release-notes link shown during updates.",
+    highlights: [
+      {
+        id: "more-file-attachments",
+        title: "Attach more kinds of files",
+        description:
+          "Share PDFs, spreadsheets, code, archives, and videos directly in conversations. Play supported videos inside Scient. File-size limits and provider capabilities still apply.",
+      },
+      {
+        id: "compact-visual-cards",
+        title: "Cleaner images and charts",
+        description:
+          "Figures have less surrounding clutter, with compact controls you can move out of the way. Available in chat and Markdown previews.",
+      },
+      {
+        id: "clearer-citations-and-sources",
+        title: "Find the right source",
+        description:
+          "Codex citations appear as readable, clickable links. When a source contains multiple PDFs, Scient asks which one you want instead of silently choosing.",
+      },
+      {
+        id: "pdf-and-latex-fixes",
+        title: "Better PDFs and clearer build feedback",
+        description:
+          "Exported PDFs avoid unnecessary page gaps around figures and captions. LaTeX build messages remain distinct, with repeated diagnostics removed and important errors preserved.",
+      },
+      {
+        id: "refresh-and-update-links",
+        title: "Less manual refreshing, fewer broken links",
+        description:
+          "Files and Git changes refresh after agent edits. Update notifications now open the correct Scient release notes instead of a missing page.",
+      },
+    ],
+  },
+  {
     version: "0.6.8",
     publishedAt: "2026-08-29",
     kicker: "Deeper scientific work, safer provider updates, and files that stay current.",
