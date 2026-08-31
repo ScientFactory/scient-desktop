@@ -38,7 +38,7 @@ const clientSettings: ClientSettings = {
   fontSmoothing: true,
   glassOpacity: 80,
   planModeEnabled: false,
-  showSkillsInSlashMenu: false,
+  showSkillsInSlashMenu: true,
   providerModelPreferences: {},
   sidebarAutoSettleAfterDays: 3,
   sidebarAutoSettleOnMerge: true,
@@ -217,6 +217,8 @@ describe("DesktopClientSettings", () => {
         assert.isTrue(Option.isSome(persisted));
         if (Option.isSome(persisted)) {
           assert.equal(persisted.value.appearanceContrast, 120);
+          assert.equal(persisted.value.fontSizeInterface, 17);
+          assert.equal(persisted.value.showSkillsInSlashMenu, false);
           assert.equal(persisted.value.sidebarAutoSettleAfterDays, 7);
           assert.equal(persisted.value.sidebarAutoSettleOnMerge, false);
         }
