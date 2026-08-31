@@ -7,6 +7,10 @@ const visualizationStyles = NodeFS.readFileSync(
   new URL("./scient-visualizations.css", import.meta.url),
   "utf8",
 );
+const chartCardSource = NodeFS.readFileSync(
+  new URL("./PlotlyChartCard.tsx", import.meta.url),
+  "utf8",
+);
 
 describe("Plotly layout CSS", () => {
   it("does not skip layout of Plotly cards before they enter the viewport", () => {
@@ -28,11 +32,11 @@ describe("Plotly layout CSS", () => {
 
   it("keeps the released WebGL stage aligned with the padded inline view", () => {
     expect(visualizationStyles).toMatch(
-      /\.scient-plotly-stage\s*\{[^}]*min-height:\s*calc\(20rem \+ 1\.5rem\)/u,
+      /\.scient-plotly-stage\s*\{[^}]*min-height:\s*calc\(20rem \+ 1rem\)/u,
     );
-    expect(visualizationStyles).toMatch(
-      /@media \(min-width: 40rem\)[\s\S]*?\.scient-plotly-stage\s*\{[^}]*min-height:\s*calc\(20rem \+ 2\.5rem\)/u,
-    );
+    // p-2 contributes 0.5rem on each side at every breakpoint, including
+    // while an offscreen WebGL view is unmounted.
+    expect(chartCardSource).toContain('className="scient-plotly-stage relative p-2"');
   });
 
   it("leaves Plotly graph cursors under Plotly's interaction control", () => {

@@ -122,8 +122,7 @@ describe("inline workspace image presentation", () => {
     expect(markup).not.toContain("/workspace/project/figures/result.svg");
   });
 
-  it("owns compact width and requests actionable image bytes with CORS", () => {
-    expect(imageCardSource).toContain("flex w-full min-w-0 max-h-[32rem] cursor-zoom-in");
+  it("requests actionable image bytes with CORS", () => {
     expect(imageCardSource).toContain('crossOrigin="anonymous"');
   });
 });

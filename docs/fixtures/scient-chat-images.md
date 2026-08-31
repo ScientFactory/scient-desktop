@@ -3,10 +3,20 @@
 Open this file in Scient's Markdown preview and also paste the image sections
 into a project chat. Review both light and dark appearance.
 
-For each working image, confirm the header, format badge, path, background
-cycle, expansion, pinch or Control-scroll zoom, open-file action, copy,
+For each working image, confirm the top-right controls, title/format/path in
+**More image actions**, background cycle, expansion, pinch or Control-scroll zoom, open-file action, copy,
 original download, and refresh. Whole-message copy must preserve Markdown
 rather than an authorized asset URL.
+
+There should be no permanent header or path footer. The loaded surface should
+fit the image, with no stretched image or large added margins. Check narrow
+panels, keyboard focus, and touch: actions must not depend on hovering.
+
+Drag the grip to each edge; it should stay inside the image without opening
+the expanded viewer. Resize the panel after moving the toolbar, then click
+the grip or press Home to restore the exact default position. Check arrow
+keys, Shift for precision, and Escape during dragging. The action buttons
+must still work normally and must not start a drag.
 
 While each image is expanded, repeat open file, copy image, original download,
 copy relative path, background cycling, and refresh from the expanded toolbar.

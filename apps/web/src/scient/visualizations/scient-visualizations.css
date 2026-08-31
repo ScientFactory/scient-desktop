@@ -18,16 +18,10 @@
   min-height: inherit;
 }
 
-/* Match the inline view's 20rem minimum plus responsive stage padding so
+/* Match the inline view's 20rem minimum plus compact stage padding so
    releasing a WebGL slot does not change the card's geometry. */
 .scient-plotly-stage {
-  min-height: calc(20rem + 1.5rem);
-}
-
-@media (min-width: 40rem) {
-  .scient-plotly-stage {
-    min-height: calc(20rem + 2.5rem);
-  }
+  min-height: calc(20rem + 1rem);
 }
 
 /* Fill only the expanded dialog, which has a definite flex height. Inline
