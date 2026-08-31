@@ -336,8 +336,9 @@ export function makeManagedPythonProvisioner(
     environment: Readonly<Record<string, string>>,
     signal: AbortSignal,
     purpose: string,
-  ): Promise<string> =>
-    Effect.runPromise(
+  ): Promise<string> => {
+    signal.throwIfAborted();
+    return Effect.runPromise(
       runOwnedProcess(options.processes, {
         runId: nextRunId(purpose),
         executable,
@@ -347,6 +348,7 @@ export function makeManagedPythonProvisioner(
       }),
       { signal },
     );
+  };
 
   const smokeUv = async (executable: string, signal: AbortSignal): Promise<void> => {
     const output = await run(
@@ -384,6 +386,8 @@ export function makeManagedPythonProvisioner(
         await smokeUv(finalExecutable, signal);
         return finalExecutable;
       } catch {
+        // Cancelling validation does not establish that the cached installer is corrupt.
+        signal.throwIfAborted();
         const corrupt = NodePath.join(
           versionRoot,
           `${targetKey}.invalid-${NodeCrypto.randomUUID()}`,

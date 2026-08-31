@@ -4,27 +4,129 @@ import * as NodeCrypto from "node:crypto";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 
-import type { ManagedRuntimeTarget } from "@scientfactory/provider-runtime";
-import { afterEach, beforeEach, describe, expect, it } from "vite-plus/test";
+import type { ExecutionProcessPort } from "@scientfactory/execution";
+import { downloadManagedRuntime, type ManagedRuntimeTarget } from "@scientfactory/provider-runtime";
+import * as Effect from "effect/Effect";
+import * as Stream from "effect/Stream";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
 import {
   MANAGED_PYTHON_LOCK_SHA256,
   MANAGED_PYTHON_PROJECT_SHA256,
+  MANAGED_PYTHON_UV_VERSION,
+  MANAGED_PYTHON_VERSION,
+  makeManagedPythonProvisioner,
   managedPythonProvisioningEnvironment,
   managedPythonSpecPathCandidates,
   managedPythonUvArtifactForTarget,
   resolveManagedPythonSpecPath,
 } from "./ManagedPythonProvisioner.ts";
 
+vi.mock("@scientfactory/provider-runtime", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@scientfactory/provider-runtime")>()),
+  downloadManagedRuntime: vi.fn(),
+}));
+
 describe("ManagedPythonProvisioner", () => {
   let temporaryRoot: string;
 
   beforeEach(async () => {
     temporaryRoot = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "scient-python-spec-"));
+    vi.mocked(downloadManagedRuntime).mockReset().mockRejectedValue(new Error("Fixture offline"));
   });
 
   afterEach(async () => {
     await NodeFSP.rm(temporaryRoot, { recursive: true, force: true });
+  });
+
+  const cachedInstaller = async (processes: ExecutionProcessPort) => {
+    const computeDir = NodePath.join(temporaryRoot, "compute");
+    const versionRoot = NodePath.join(computeDir, "tooling", "uv", MANAGED_PYTHON_UV_VERSION);
+    const artifact = managedPythonUvArtifactForTarget({ platform: "darwin", arch: "arm64" });
+    const executable = NodePath.join(versionRoot, "darwin-arm64", artifact.executablePath);
+    await NodeFSP.mkdir(NodePath.dirname(executable), { recursive: true });
+    await NodeFSP.writeFile(executable, "cached-installer-fixture");
+    const provisioner = makeManagedPythonProvisioner({
+      computeDir,
+      specDirectory: NodePath.join(import.meta.dirname, "managed-python"),
+      processes,
+      spawnProbe: () => Effect.die("The cancelled setup must not reach a Python probe."),
+      environment: {},
+      platform: "darwin",
+      arch: "arm64",
+    });
+    return {
+      executable,
+      versionRoot,
+      provision: (signal: AbortSignal) =>
+        provisioner.provision({
+          targetRoot: NodePath.join(temporaryRoot, "generation"),
+          toolkitIds: [],
+          toolkitRevision: "fixture",
+          pythonVersion: MANAGED_PYTHON_VERSION,
+          provisionerVersion: "fixture",
+          signal,
+        }),
+    };
+  };
+
+  it("keeps the cached installer when setup is already cancelled", async () => {
+    const start = vi.fn(() => Effect.die("A cancelled setup must not start a process."));
+    const fixture = await cachedInstaller({ start });
+    const controller = new AbortController();
+    controller.abort();
+
+    await expect(fixture.provision(controller.signal)).rejects.toBeDefined();
+    expect(await NodeFSP.readFile(fixture.executable, "utf8")).toBe("cached-installer-fixture");
+    expect(await NodeFSP.readdir(fixture.versionRoot)).toEqual(["darwin-arm64"]);
+    expect(start).not.toHaveBeenCalled();
+    expect(downloadManagedRuntime).not.toHaveBeenCalled();
+  });
+
+  it("cancels an in-flight installer check without discarding its cache or retrying", async () => {
+    const checking = Promise.withResolvers<void>();
+    let cancellations = 0;
+    const fixture = await cachedInstaller({
+      start: () =>
+        Effect.succeed({
+          output: Stream.empty,
+          exitCode: Effect.sync(() => checking.resolve()).pipe(Effect.andThen(Effect.never)),
+          cancel: Effect.sync(() => {
+            cancellations += 1;
+          }),
+        }),
+    });
+    const controller = new AbortController();
+    const outcome = fixture.provision(controller.signal).then(
+      () => "unexpected success",
+      () => "cancelled",
+    );
+    await checking.promise;
+    controller.abort();
+
+    expect(await outcome).toBe("cancelled");
+    expect(cancellations).toBe(1);
+    expect(await NodeFSP.readFile(fixture.executable, "utf8")).toBe("cached-installer-fixture");
+    expect(await NodeFSP.readdir(fixture.versionRoot)).toEqual(["darwin-arm64"]);
+    expect(downloadManagedRuntime).not.toHaveBeenCalled();
+  });
+
+  it("still discards a mismatched installer and cleans staging when replacement is offline", async () => {
+    const fixture = await cachedInstaller({
+      start: () =>
+        Effect.succeed({
+          output: Stream.make({ stream: "stdout" as const, text: "uv 0.0.0" }),
+          exitCode: Effect.succeed(0),
+          cancel: Effect.void,
+        }),
+    });
+
+    await expect(fixture.provision(new AbortController().signal)).rejects.toThrow(
+      "Fixture offline",
+    );
+    await expect(NodeFSP.stat(fixture.executable)).rejects.toMatchObject({ code: "ENOENT" });
+    expect(await NodeFSP.readdir(fixture.versionRoot)).toEqual([]);
+    expect(downloadManagedRuntime).toHaveBeenCalledTimes(1);
   });
 
   it("keeps the checked-in locked specification matched to its activation hashes", async () => {

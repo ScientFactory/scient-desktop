@@ -155,6 +155,11 @@ Linux glibc and musl arm64/x64, and Windows arm64/x64. Listing a target is an
 implementation claim, not cross-platform release evidence; every target still
 needs packaged-app qualification.
 
+Cancelling a check of the cached installer leaves that cache intact and does
+not start a replacement download. A completed check that proves a version
+mismatch still discards the invalid cache; a failed replacement download cleans
+its staging directory. Cancellation is not evidence of corruption.
+
 Provisioning strips inherited uv, pip, Poetry, pyenv, Conda, and virtualenv
 configuration; uses no project or user config; disables source builds and
 unreviewed package sources; installs into generation-owned Python, environment,
@@ -352,9 +357,11 @@ This pass identified and corrected three gaps:
   another filesystem watcher, or reloading unsaved editor contents. Subscription
   isolation/cleanup and the actual lazy-tree controller are covered by tests.
 
-The Mac locked before a final visual retest of the file-refresh correction.
-Installer repair/remove/reinstall were not performed through computer use in
-this pass. A transient file-tree disconnect after development hot reload also
+The first pass paused before a final visual retest of the file-refresh correction.
+The later isolated pass verified automatic file discovery after successful and
+failed execution, including under an active matching search, without manual
+Refresh. Installer repair/remove/reinstall were not performed through computer
+use. A transient file-tree disconnect after development hot reload also
 required Retry; normal reconnect behavior remains an explicit qualification
 check, not a claimed pass. These limits do not invalidate the automated evidence,
 but neither automated tests nor this partial UI pass constitute owner or release
