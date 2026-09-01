@@ -70,6 +70,18 @@ describe("video asset byte ranges", () => {
       expect(image.status).toBe(200);
       expect(image.headers.has("accept-ranges")).toBe(false);
       expect(yield* Effect.promise(() => image.text())).toBe("0123456789");
+
+      const rangedDocument = HttpServerResponse.toWeb(
+        yield* assetFileResponse(
+          { path: file, mimeType: "application/pdf" },
+          "bytes=2-4",
+          undefined,
+          { allowRangesForAnyMimeType: true },
+        ),
+      );
+      expect(rangedDocument.status).toBe(206);
+      expect(rangedDocument.headers.get("content-range")).toBe("bytes 2-4/10");
+      expect(yield* Effect.promise(() => rangedDocument.text())).toBe("234");
     }).pipe(Effect.provide(fileResponseLayer)),
   );
 
