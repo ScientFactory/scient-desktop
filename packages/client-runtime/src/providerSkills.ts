@@ -30,15 +30,31 @@ export function formatProviderSkillDisplayName(
   return titleCaseWords(skill.name);
 }
 
+export function dedupeProviderSkillsByName(
+  skills: ReadonlyArray<ServerProviderSkill>,
+): ServerProviderSkill[] {
+  const seenNames = new Set<string>();
+  return skills.filter((skill) => {
+    const normalizedName = skill.name.trim().toLowerCase();
+    if (seenNames.has(normalizedName)) {
+      return false;
+    }
+    seenNames.add(normalizedName);
+    return true;
+  });
+}
+
 export function getProviderSkillsForSlashMenu(
   skills: ReadonlyArray<ServerProviderSkill>,
   showSkillsInSlashMenu: boolean,
 ): ServerProviderSkill[] {
   return showSkillsInSlashMenu
-    ? skills.filter(
-        (skill) =>
-          skill.enabled &&
-          (isGlobalProviderSkill(skill) || skill.path.startsWith(SCIENT_SKILL_PATH_PREFIX)),
+    ? dedupeProviderSkillsByName(
+        skills.filter(
+          (skill) =>
+            skill.enabled &&
+            (isGlobalProviderSkill(skill) || skill.path.startsWith(SCIENT_SKILL_PATH_PREFIX)),
+        ),
       )
     : [];
 }
