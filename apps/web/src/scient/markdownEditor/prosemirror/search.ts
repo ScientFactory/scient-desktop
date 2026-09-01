@@ -41,6 +41,9 @@ function documentMatches(
   if (query.length === 0) return [];
   const matches: ScientMarkdownSearchMatch[] = [];
   doc.descendants((node, position) => {
+    // Code is edited by a nested CodeMirror surface. ProseMirror cannot paint
+    // or navigate these matches, so counting/replacing them here would lie.
+    if (node.type.name === "code_block") return false;
     if (!node.inlineContent) return;
     const text = node.textBetween(0, node.content.size, "\uFFFC", "\uFFFC");
     for (const match of markdownTextMatches(text, query, caseSensitive, wholeWord)) {

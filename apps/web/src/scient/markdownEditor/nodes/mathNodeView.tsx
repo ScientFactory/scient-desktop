@@ -8,6 +8,8 @@ import {
   ScientInlineMath,
 } from "~/scient/math/ScientMath";
 
+import { leaveAtomEditor } from "../prosemirror/safeSelection";
+
 class ScientMathNodeView implements NodeView {
   readonly dom: HTMLElement;
   private readonly renderHost: HTMLSpanElement;
@@ -112,12 +114,12 @@ class ScientMathNodeView implements NodeView {
     if (!(event instanceof KeyboardEvent)) return;
     if (event.key !== "Escape") return;
     event.preventDefault();
-    this.view.focus();
+    leaveAtomEditor(this.view, this.getPos, this.node);
   };
 
   private render(): void {
     const tex = String(this.node.attrs.tex);
-    this.sourceEditor.value = tex;
+    if (this.sourceEditor !== document.activeElement) this.sourceEditor.value = tex;
     const version = ++this.validationVersion;
     this.currentValidity = null;
     this.dom.setAttribute("data-scient-markdown-math-validity", "pending");

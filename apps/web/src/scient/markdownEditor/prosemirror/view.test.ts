@@ -944,6 +944,36 @@ describe("ScientMarkdownEditorView", () => {
     expect(onUserSourceChange).toHaveBeenCalledOnce();
   });
 
+  it("pins leading front matter while leaving explicit deletion available", () => {
+    const source = "---\ntitle: Safe\n---\n\n# Heading\n\nBody\n";
+    const controller = new ScientMarkdownEditorView({
+      source,
+      revision: "sha256:before",
+      mode: "write",
+      ariaLabel: "Markdown document",
+    });
+    const host = document.createElement("div");
+    document.body.append(host);
+    mounted.push(controller);
+    const view = controller.mount(host);
+
+    expect(view.state.selection.$from.parent.type.name).toBe("heading");
+    expect(controller.getSnapshot().canMoveBlockUp).toBe(false);
+    expect(controller.executeBlock("move-up")).toBe(false);
+    expect(controller.session.session.draftSource).toBe(source);
+
+    view.dispatch(view.state.tr.setSelection(NodeSelection.create(view.state.doc, 0)));
+    expect(controller.getSnapshot()).toMatchObject({
+      canDeleteBlock: true,
+      canDuplicateBlock: false,
+      canMoveBlockDown: false,
+      canMoveBlockUp: false,
+    });
+    expect(controller.executeBlock("duplicate")).toBe(false);
+    expect(controller.executeBlock("move-down")).toBe(false);
+    expect(controller.session.session.draftSource).toBe(source);
+  });
+
   it("deletes the only block into an editable empty paragraph", () => {
     const onUserSourceChange = vi.fn();
     const controller = new ScientMarkdownEditorView({
@@ -990,6 +1020,30 @@ describe("ScientMarkdownEditorView", () => {
     expect(controller.executeSlashCommand("table")).toBe(true);
     expect(view.dom.querySelector("table")).not.toBeNull();
     expect(onUserSourceChange.mock.lastCall?.[0]).toContain("|  |  |  |");
+  });
+
+  it("implements the inline-code and strikethrough shortcuts advertised by the dock", () => {
+    const controller = new ScientMarkdownEditorView({
+      source: "Some text here.\n",
+      revision: "sha256:before",
+      mode: "write",
+      ariaLabel: "Markdown document",
+    });
+    const host = document.createElement("div");
+    document.body.append(host);
+    mounted.push(controller);
+    const view = controller.mount(host);
+    view.dispatch(view.state.tr.setSelection(TextSelection.create(view.state.doc, 6, 10)));
+
+    for (const event of [
+      new KeyboardEvent("keydown", { key: "e", ctrlKey: true }),
+      new KeyboardEvent("keydown", { key: "x", ctrlKey: true, shiftKey: true }),
+    ]) {
+      expect(view.someProp("handleKeyDown", (handler) => handler(view, event))).toBe(true);
+    }
+    const active = new Set(controller.getSnapshot().activeMarks);
+    expect(active).toEqual(new Set(["code", "strike"]));
+    expect(controller.session.session.draftSource).toBe("Some `~~text~~` here.\n");
   });
 
   it("applies GFM alignment to the complete selected table column", () => {

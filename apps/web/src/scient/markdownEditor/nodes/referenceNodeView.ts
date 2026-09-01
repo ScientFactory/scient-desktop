@@ -1,6 +1,8 @@
 import type { Node as ProseMirrorNode } from "prosemirror-model";
 import type { EditorView, NodeView } from "prosemirror-view";
 
+import { leaveAtomEditor } from "../prosemirror/safeSelection";
+
 function sourceValue(node: ProseMirrorNode): string {
   switch (node.type.name) {
     case "citation":
@@ -116,7 +118,7 @@ class ScientReferenceNodeView implements NodeView {
   private readonly handleKeyDown = (event: Event) => {
     if (!(event instanceof KeyboardEvent) || event.key !== "Escape") return;
     event.preventDefault();
-    this.view.focus();
+    leaveAtomEditor(this.view, this.getPos, this.node);
   };
 
   private render(): void {

@@ -7,8 +7,11 @@ import { createScientMarkdownProjection, serializeScientMarkdownProjection } fro
 import { listKindAt, runScientMarkdownCommand, type ScientMarkdownCommand } from "./commands";
 import { ScientProseMirrorSession } from "./session";
 
-function runUserCommand(session: ScientProseMirrorSession, command: ScientMarkdownCommand): void {
-  runScientMarkdownCommand(command, session.state, (transaction: Transaction) => {
+function runUserCommand(
+  session: ScientProseMirrorSession,
+  command: ScientMarkdownCommand,
+): boolean {
+  return runScientMarkdownCommand(command, session.state, (transaction: Transaction) => {
     session.applyTransaction(transaction, "user");
   });
 }
@@ -82,45 +85,66 @@ describe("Scient Markdown commands", () => {
     );
   });
 
-  it("toggles a task list with the checkbox set and untoggles on repeat", () => {
+  it("creates incomplete tasks and uses list-none as the explicit list reset", () => {
     const session = new ScientProseMirrorSession({ source: "Buy milk\n", revision: "sha256:b" });
     select(session, 1);
     runUserCommand(session, "task-list");
 
     const list = session.state.doc.firstChild;
     expect(list?.type.name).toBe("bullet_list");
-    expect(list?.child(0).attrs.taskChecked).toBe(true);
+    expect(list?.child(0).attrs.taskChecked).toBe(false);
     expect(listKindAt(session.state)).toBe("task");
-    expect(session.session.draftSource).toBe("- [x] Buy milk\n");
+    expect(session.session.draftSource).toBe("- [ ] Buy milk\n");
 
     runUserCommand(session, "task-list");
+    expect(session.state.doc.firstChild?.type.name).toBe("bullet_list");
+    expect(session.session.draftSource).toBe("- [ ] Buy milk\n");
+
+    runUserCommand(session, "list-none");
     expect(session.state.doc.firstChild?.type.name).toBe("paragraph");
     expect(listKindAt(session.state)).toBeNull();
     expect(session.session.draftSource).toBe("Buy milk\n");
   });
 
-  it("untoggles a bullet list when the same kind is applied again", () => {
+  it("keeps a selected radio list kind stable until list-none is chosen", () => {
     const source = "- alpha\n- beta\n\nAfter.\n";
     const session = new ScientProseMirrorSession({ source, revision: "sha256:b" });
     select(session, 3);
     expect(listKindAt(session.state)).toBe("bullet");
 
     runUserCommand(session, "bullet-list");
-    expect(listKindAt(session.state)).toBeNull();
-    expect(session.session.draftSource).toBe("alpha\n\n- beta\n\nAfter.\n");
+    expect(listKindAt(session.state)).toBe("bullet");
+    expect(session.session.draftSource).toBe(source);
 
     runUserCommand(session, "list-none");
     expect(session.session.draftSource).toBe("alpha\n\n- beta\n\nAfter.\n");
   });
 
-  it("wraps several selected paragraphs as checked task items", () => {
+  it("wraps several selected paragraphs as incomplete task items", () => {
     const source = "one\n\ntwo\n";
     const session = new ScientProseMirrorSession({ source, revision: "sha256:b" });
     select(session, 1, session.state.doc.content.size - 1);
 
     runUserCommand(session, "task-list");
     expect(listKindAt(session.state)).toBe("task");
-    expect(session.session.draftSource).toBe("- [x] one\n- [x] two\n");
+    expect(session.session.draftSource).toBe("- [ ] one\n- [ ] two\n");
+  });
+
+  it("converts the whole current list kind without nesting or stale task state", () => {
+    const session = new ScientProseMirrorSession({
+      source: "- alpha\n- beta\n",
+      revision: "sha256:b",
+    });
+    select(session, 3);
+
+    expect(runUserCommand(session, "ordered-list")).toBe(true);
+    expect(listKindAt(session.state)).toBe("ordered");
+    expect(session.session.draftSource).toBe("1. alpha\n2. beta\n");
+
+    expect(runUserCommand(session, "task-list")).toBe(true);
+    expect(listKindAt(session.state)).toBe("task");
+    expect(session.session.draftSource).toBe("- [ ] alpha\n- [ ] beta\n");
+    expect(session.state.doc.firstChild?.childCount).toBe(2);
   });
 
   it("inserts a hard break that serializes as a backslash line break", () => {
@@ -205,14 +229,14 @@ describe("Scient Markdown dock command coverage", () => {
     expect(session.session.draftSource).toContain("| --- | --- | --- |");
   });
 
-  it("toggles an ordered list on and off", () => {
+  it("sets an ordered list and removes it through list-none", () => {
     const session = freshSession("Item.\n");
     select(session, 1);
     runUserCommand(session, "ordered-list");
     expect(session.session.draftSource).toBe("1. Item.\n");
     expect(listKindAt(session.state)).toBe("ordered");
 
-    runUserCommand(session, "ordered-list");
+    runUserCommand(session, "list-none");
     expect(session.session.draftSource).toBe("Item.\n");
     expect(listKindAt(session.state)).toBeNull();
   });
@@ -229,6 +253,37 @@ describe("Scient Markdown dock command coverage", () => {
     select(session, cellPosition + 2);
     return { session };
   }
+
+  it("refuses block insertion inside an inline-only GFM table cell", () => {
+    for (const command of ["horizontal-rule", "display-math", "table", "code-block"] as const) {
+      const { session } = tableSession();
+      const before = session.session.draftSource;
+      expect(runUserCommand(session, command)).toBe(false);
+      expect(session.session.draftSource).toBe(before);
+      expect(session.state.doc.firstChild?.type.name).toBe("table");
+    }
+  });
+
+  it("reports block styles as unavailable inside inline-only table cells", () => {
+    for (const command of ["paragraph", "heading-2", "blockquote"] as const) {
+      const { session } = tableSession();
+      const before = session.session.draftSource;
+      expect(runUserCommand(session, command)).toBe(false);
+      expect(session.session.draftSource).toBe(before);
+    }
+  });
+
+  it("uses the document CRLF convention for a newly serialized multi-line list", () => {
+    const session = new ScientProseMirrorSession({
+      source: "one\r\n\r\ntwo\r\n",
+      revision: "sha256:b",
+    });
+    select(session, 1, session.state.doc.content.size - 1);
+
+    expect(runUserCommand(session, "task-list")).toBe(true);
+    expect(session.session.draftSource).toBe("- [ ] one\r\n- [ ] two\r\n");
+    expect(session.session.draftSource.replaceAll("\r\n", "")).not.toContain("\n");
+  });
 
   it("edits table alignment, structure, and headers", () => {
     const { session } = tableSession();

@@ -101,6 +101,10 @@ function requiredMarkType(name: string): MarkType {
 
 function insertNode(node: ProseMirrorNode): Command {
   return (state, dispatch) => {
+    // A block cannot be represented inside an inline-only GFM table cell.
+    // Refuse the command instead of letting replaceSelectionWith split the
+    // table and move the block outside it.
+    if (node.isBlock && isInTable(state)) return false;
     if (dispatch) dispatch(state.tr.replaceSelectionWith(node).scrollIntoView());
     return true;
   };
@@ -149,20 +153,36 @@ function setSelectedTableColumnAlignment(alignment: string | null): Command {
 
 export type ScientMarkdownListKind = "bullet" | "ordered" | "task";
 
-/** The list kind containing the selection, or null when outside any list. */
-export function listKindAt(state: EditorState): ScientMarkdownListKind | null {
-  const { $from } = state.selection;
+interface SelectedList {
+  readonly kind: ScientMarkdownListKind;
+  readonly node: ProseMirrorNode;
+  readonly position: number;
+}
+
+function selectedList(state: EditorState): SelectedList | null {
+  const { $from, $to } = state.selection;
   for (let depth = $from.depth; depth > 0; depth -= 1) {
     const node = $from.node(depth);
-    if (node.type.name === "bullet_list") {
-      const firstItem = node.firstChild;
-      return firstItem?.type.name === "list_item" && firstItem.attrs.taskChecked !== null
-        ? "task"
-        : "bullet";
-    }
-    if (node.type.name === "ordered_list") return "ordered";
+    if (node.type.name !== "bullet_list" && node.type.name !== "ordered_list") continue;
+    if ($to.depth < depth || $to.node(depth) !== node) return null;
+    const firstItem = node.firstChild;
+    return {
+      kind:
+        node.type.name === "ordered_list"
+          ? "ordered"
+          : firstItem?.type.name === "list_item" && firstItem.attrs.taskChecked !== null
+            ? "task"
+            : "bullet",
+      node,
+      position: $from.before(depth),
+    };
   }
   return null;
+}
+
+/** The list kind containing the selection, or null when outside any list. */
+export function listKindAt(state: EditorState): ScientMarkdownListKind | null {
+  return selectedList(state)?.kind ?? null;
 }
 
 function insideNodeOfType(state: EditorState, typeName: string): boolean {
@@ -173,22 +193,62 @@ function insideNodeOfType(state: EditorState, typeName: string): boolean {
   return false;
 }
 
-/** Toggle a list type: applying it inside its own list lifts the items out. */
-function toggleMarkdownList(kind: ScientMarkdownListKind): Command {
+function listAttrs(type: NodeType, source: ProseMirrorNode): Attrs {
+  const attrs: Record<string, unknown> = {};
+  for (const name of Object.keys(type.spec.attrs ?? {})) {
+    if (Object.hasOwn(source.attrs, name)) attrs[name] = source.attrs[name];
+  }
+  if (type.name === "ordered_list") attrs.order = 1;
+  else attrs.bullet = "-";
+  attrs.tight = true;
+  return attrs;
+}
+
+function normalizeDirectListItems(
+  transaction: Transaction,
+  listPosition: number,
+  list: ProseMirrorNode,
+  kind: ScientMarkdownListKind,
+): void {
+  let position = listPosition + 1;
+  list.forEach((item) => {
+    const current = item.attrs.taskChecked;
+    const taskChecked = kind === "task" ? (typeof current === "boolean" ? current : false) : null;
+    if (item.type.name === "list_item" && current !== taskChecked) {
+      transaction.setNodeMarkup(position, undefined, { ...item.attrs, taskChecked });
+    }
+    position += item.nodeSize;
+  });
+}
+
+/** Set the selected list kind; `list-none` is the explicit way to remove it. */
+function setMarkdownList(kind: ScientMarkdownListKind): Command {
   return (state, dispatch) => {
-    if (listKindAt(state) === kind) {
-      return liftListItem(requiredNodeType("list_item"))(state, dispatch);
+    const current = selectedList(state);
+    if (current) {
+      const type = requiredNodeType(kind === "ordered" ? "ordered_list" : "bullet_list");
+      let transaction = state.tr;
+      if (current.node.type !== type) {
+        transaction = transaction.setNodeMarkup(
+          current.position,
+          type,
+          listAttrs(type, current.node),
+        );
+      }
+      normalizeDirectListItems(transaction, current.position, current.node, kind);
+      if (dispatch && transaction.docChanged) dispatch(transaction.scrollIntoView());
+      return true;
     }
     // Match the tight "-" convention of hand-written Markdown lists.
-    const listAttrs = { tight: true, bullet: "-" };
+    const wrapAttrs = { tight: true, bullet: "-" };
     if (kind !== "task") {
       const listType = requiredNodeType(kind === "ordered" ? "ordered_list" : "bullet_list");
-      return wrapInList(listType, listAttrs)(state, dispatch);
+      return wrapInList(listType, wrapAttrs)(state, dispatch);
     }
-    // Task list: wrap in a bullet list and mark the wrapped items checked in
+    // Task list: wrap in a bullet list and mark the wrapped items incomplete in
     // one transaction, so Enter-continuation inherits the checkbox.
     let wrapped: Transaction | null = null;
-    const ok = wrapInList(requiredNodeType("bullet_list"), listAttrs)(state, (transaction) => {
+    const ok = wrapInList(requiredNodeType("bullet_list"), wrapAttrs)(state, (transaction) => {
       wrapped = transaction;
     });
     if (!ok || wrapped === null) return false;
@@ -197,7 +257,7 @@ function toggleMarkdownList(kind: ScientMarkdownListKind): Command {
       const { from, to } = transaction.selection;
       transaction.doc.nodesBetween(from, to, (node, pos) => {
         if (node.type.name === "list_item" && node.attrs.taskChecked === null) {
-          transaction.setNodeMarkup(pos, undefined, { ...node.attrs, taskChecked: true });
+          transaction.setNodeMarkup(pos, undefined, { ...node.attrs, taskChecked: false });
         }
         return true;
       });
@@ -264,6 +324,15 @@ function setMarkdownTextBlock(type: NodeType, attrs: Attrs = {}): Command {
       return { ...retained, ...attrs };
     });
     if (dispatch && transaction.docChanged) dispatch(transaction);
+    if (!transaction.docChanged) {
+      const parent = state.selection.$from.parent;
+      if (
+        parent.type !== type ||
+        Object.entries(attrs).some(([name, value]) => parent.attrs[name] !== value)
+      ) {
+        return false;
+      }
+    }
     // A style setter is still handled when the selected blocks already have
     // that style; callers should restore focus and let the user keep typing.
     return true;
@@ -384,11 +453,11 @@ function commandFor(command: ScientMarkdownCommand): Command {
     case "blockquote":
       return setMarkdownBlockStyle("blockquote");
     case "bullet-list":
-      return toggleMarkdownList("bullet");
+      return setMarkdownList("bullet");
     case "task-list":
-      return toggleMarkdownList("task");
+      return setMarkdownList("task");
     case "ordered-list":
-      return toggleMarkdownList("ordered");
+      return setMarkdownList("ordered");
     case "list-none":
       return removeMarkdownList();
     case "code-block":
@@ -432,35 +501,6 @@ function commandFor(command: ScientMarkdownCommand): Command {
       // boundary honest as well as the menu, including keyboard/API callers.
       return () => false;
   }
-}
-
-function selectedListItem(
-  state: EditorState,
-): { readonly node: ProseMirrorNode; readonly pos: number } | null {
-  const listItem = requiredNodeType("list_item");
-  for (let depth = state.selection.$from.depth; depth > 0; depth -= 1) {
-    const node = state.selection.$from.node(depth);
-    if (node.type === listItem) return { node, pos: state.selection.$from.before(depth) };
-  }
-  return null;
-}
-
-export function setSelectedTaskState(
-  state: EditorState,
-  dispatch: ((transaction: Transaction) => void) | undefined,
-  checked: boolean,
-): boolean {
-  const selected = selectedListItem(state);
-  if (!selected) return false;
-  if (dispatch) {
-    dispatch(
-      state.tr.setNodeMarkup(selected.pos, undefined, {
-        ...selected.node.attrs,
-        taskChecked: checked,
-      }),
-    );
-  }
-  return true;
 }
 
 export function runScientMarkdownCommand(

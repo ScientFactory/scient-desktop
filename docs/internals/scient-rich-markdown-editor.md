@@ -352,6 +352,27 @@ The main alignments touch these six shared paths:
 The editor core, Markdown server operations, and inherited `RightPanelTabs` had no intervening
 main overlap. This is an exact integration record, not a reason to skip the next changed-path audit.
 
+#### Latest owned-main alignment (2026-09-01)
+
+The 51-patch feature branch was subsequently rebased onto freshly fetched owned main
+`06e8489afc9e430da6cf1fd591f7f608a964141d` (PR #223, the current bounded T3 alignment).
+That main commit is an ancestor of the rebased persistence checkpoint
+`ccbb712da0ee17143516cbe27026ac8ee8e99f75`; no merge commit or upstream divergence policy was
+introduced here. The frozen-lockfile install succeeds on the composed tree.
+
+The rebase produced one textual conflict, in `FileBrowserPanel.tsx`. Its resolution retained
+main's directory-expansion state (`areAllDirectoriesExpanded` / `setAllDirectoriesExpanded`) and
+the Scient completion-index refresh (`refreshProjectEntriesQuery` / `setProjectFileQueryData`).
+The latter remains necessary because the inherited tree refresh and wiki-link completion cache
+serve different consumers. No editor-core, source-ledger, save-queue, Markdown transport, or
+`RightPanelTabs` file overlapped the new main range.
+
+A post-rebase changed-path audit again found only the intentional seams listed above. The
+subsequent source-safety review changes are confined to `apps/web/src/scient/markdownEditor/` and
+`packages/scient-markdown/`; they add no inherited T3-file overlap. This is the preferred shape:
+keep source projection, command policy, nested-node behavior, and tests in Scient-owned modules,
+while leaving the host files as lifecycle and transport composition points.
+
 ### Document session
 
 `ScientDocumentSession` owns one immutable baseline and a stream of explicit state transitions:

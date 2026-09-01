@@ -1,11 +1,36 @@
 import { beginMarkdownSave, type MarkdownSaveIntent } from "@scientfactory/scient-markdown";
 import { splitBlock } from "prosemirror-commands";
-import { TextSelection } from "prosemirror-state";
+import { GapCursor } from "prosemirror-gapcursor";
+import { NodeSelection, TextSelection } from "prosemirror-state";
 import { describe, expect, it, vi } from "vite-plus/test";
 
 import { ScientProseMirrorSession } from "./session";
 
 describe("ScientProseMirrorSession", () => {
+  it("starts in the first writable block instead of selecting leading front matter", () => {
+    const source = "---\ntitle: Safe\n---\n\n# Heading\n";
+    const session = new ScientProseMirrorSession({ source, revision: "sha256:before" });
+
+    expect(session.state.selection).toBeInstanceOf(TextSelection);
+    expect(session.state.selection).not.toBeInstanceOf(NodeSelection);
+    expect(session.state.selection.$from.parent.type.name).toBe("heading");
+    session.applyTransaction(
+      session.state.tr.insertText("Updated ", session.state.selection.from),
+      "user",
+    );
+    expect(session.session.draftSource).toBe("---\ntitle: Safe\n---\n\n# Updated Heading\n");
+  });
+
+  it("uses a non-destructive gap when a source island is the whole document", () => {
+    const source = "---\ntitle: Safe\n---\n";
+    const session = new ScientProseMirrorSession({ source, revision: "sha256:before" });
+
+    expect(session.state.selection).toBeInstanceOf(GapCursor);
+    expect(session.state.selection).not.toBeInstanceOf(NodeSelection);
+    expect(session.state.selection.head).toBe(session.state.doc.content.size);
+    expect(session.session.draftSource).toBe(source);
+  });
+
   it("projects a restored draft while retaining the authoritative CAS baseline", () => {
     const session = new ScientProseMirrorSession({
       source: "Local draft\n",

@@ -16,7 +16,6 @@ import { buildScientMarkdownNodeViews, type ScientMarkdownImageSourceResolver } 
 import {
   filterScientMarkdownSlashCommands,
   runScientMarkdownCommand,
-  setSelectedTaskState,
   type ScientMarkdownCommand,
 } from "./commands";
 import { scientMarkdownParser, scientMarkdownSchema } from "./schema";
@@ -312,14 +311,6 @@ export class ScientMarkdownEditorView {
     view.focus();
     if (command === "image" && this.options.selectImage) {
       this.options.selectImage();
-      return true;
-    }
-    if (command === "task-list") {
-      if (!setSelectedTaskState(view.state, view.dispatch, false)) {
-        if (!runScientMarkdownCommand(command, view.state, view.dispatch)) return false;
-        setSelectedTaskState(view.state, view.dispatch, false);
-      }
-      view.focus();
       return true;
     }
     const handled = runScientMarkdownCommand(command, view.state, view.dispatch);

@@ -14,7 +14,7 @@ import {
 } from "@scientfactory/scient-markdown";
 import type { Node as ProseMirrorNode } from "prosemirror-model";
 import type { Transaction } from "prosemirror-state";
-import { EditorState, PluginKey } from "prosemirror-state";
+import { EditorState, NodeSelection, PluginKey, Selection, TextSelection } from "prosemirror-state";
 
 import {
   createScientMarkdownProjection,
@@ -23,6 +23,7 @@ import {
   withProjectedDocument,
   type ScientMarkdownProjection,
 } from "./projection";
+import { selectionOutsideNode } from "./safeSelection";
 import { buildScientMarkdownPlugins } from "./plugins";
 
 export type ScientMarkdownTransactionOrigin = "user" | "external" | "system";
@@ -49,6 +50,99 @@ function blockRanges(projection: ScientMarkdownProjection) {
     from: block.start,
     to: block.end,
   }));
+}
+
+/**
+ * ProseMirror selects a leading atom by default. In write mode, the first
+ * printable key would then replace YAML/front matter, display math, or another
+ * source island. Prefer the first ordinary text block while leaving documents
+ * with no writable text block untouched.
+ */
+function safeInitialSelection(document: ProseMirrorNode): Selection {
+  const selection = Selection.atStart(document);
+  if (!(selection instanceof NodeSelection)) return selection;
+
+  let textPosition: number | null = null;
+  document.descendants((node, position) => {
+    if (textPosition !== null) return false;
+    if (node.isTextblock && node.type.name !== "code_block") {
+      textPosition = position + 1;
+      return false;
+    }
+    return true;
+  });
+  if (textPosition !== null) return TextSelection.create(document, textPosition);
+  return selectionOutsideNode(document, selection.from, selection.node.nodeSize) ?? selection;
+}
+
+function createEditorState(
+  document: ProseMirrorNode,
+  plugins: EditorState["plugins"],
+): EditorState {
+  return EditorState.create({
+    doc: document,
+    plugins,
+    selection: safeInitialSelection(document),
+  });
+}
+
+function footnoteDefinitionLabels(document: ProseMirrorNode): ReadonlyMap<string, string> {
+  const labels = new Map<string, string>();
+  document.forEach((node) => {
+    const sourceId = node.attrs.sourceId;
+    if (
+      node.type.name === "footnote_definition" &&
+      typeof sourceId === "string" &&
+      sourceId.length > 0
+    ) {
+      labels.set(sourceId, String(node.attrs.label));
+    }
+  });
+  return labels;
+}
+
+/** Keep references and their definition rename in the same undoable transaction. */
+function rebindRenamedFootnotes(
+  transaction: Transaction,
+  previousDocument: ProseMirrorNode,
+): Transaction {
+  if (!transaction.docChanged) return transaction;
+  const previousLabels = footnoteDefinitionLabels(previousDocument);
+  if (previousLabels.size === 0) return transaction;
+  const renamedLabels = new Map<string, string>();
+  transaction.doc.forEach((node) => {
+    const sourceId = node.attrs.sourceId;
+    if (
+      node.type.name !== "footnote_definition" ||
+      typeof sourceId !== "string" ||
+      sourceId.length === 0
+    ) {
+      return;
+    }
+    const previous = previousLabels.get(sourceId);
+    const next = String(node.attrs.label);
+    if (previous !== undefined && previous !== next && next.length > 0) {
+      renamedLabels.set(previous, next);
+    }
+  });
+  if (renamedLabels.size === 0) return transaction;
+
+  const references: Array<{ readonly position: number; readonly label: string }> = [];
+  transaction.doc.descendants((node, position) => {
+    if (node.type.name !== "footnote_reference") return true;
+    const label = renamedLabels.get(String(node.attrs.label));
+    if (label !== undefined) references.push({ position, label });
+    return false;
+  });
+  for (const reference of references) {
+    const node = transaction.doc.nodeAt(reference.position);
+    if (!node) continue;
+    transaction.setNodeMarkup(reference.position, undefined, {
+      ...node.attrs,
+      label: reference.label,
+    });
+  }
+  return transaction;
 }
 
 function sameTextTree(before: ProseMirrorNode, after: ProseMirrorNode): boolean {
@@ -102,10 +196,9 @@ export class ScientProseMirrorSession {
       draftSource: options.source,
       ...(options.mode === undefined ? {} : { mode: options.mode }),
     });
-    this.editorState = EditorState.create({
-      doc: this.projection.document,
-      plugins: [...buildScientMarkdownPlugins()],
-    });
+    this.editorState = createEditorState(this.projection.document, [
+      ...buildScientMarkdownPlugins(),
+    ]);
   }
 
   get state(): EditorState {
@@ -154,10 +247,7 @@ export class ScientProseMirrorSession {
     this.documentSession = nextSession;
     this.projection = createScientMarkdownProjection(source);
     this.projectedBlockRanges = blockRanges(this.projection);
-    this.editorState = EditorState.create({
-      doc: this.projection.document,
-      plugins: this.editorState.plugins,
-    });
+    this.editorState = createEditorState(this.projection.document, this.editorState.plugins);
     const intent = beginMarkdownSave(nextSession);
     this.options.onUserSourceChange?.(source, intent);
     return this.editorState;
@@ -195,10 +285,7 @@ export class ScientProseMirrorSession {
 
     this.projection = createScientMarkdownProjection(nextSession.draftSource);
     this.projectedBlockRanges = blockRanges(this.projection);
-    this.editorState = EditorState.create({
-      doc: this.projection.document,
-      plugins: this.editorState.plugins,
-    });
+    this.editorState = createEditorState(this.projection.document, this.editorState.plugins);
     return "adopted";
   }
 
@@ -211,10 +298,7 @@ export class ScientProseMirrorSession {
     if (resolution === "local") return this.editorState;
     this.projection = createScientMarkdownProjection(this.documentSession.draftSource);
     this.projectedBlockRanges = blockRanges(this.projection);
-    this.editorState = EditorState.create({
-      doc: this.projection.document,
-      plugins: this.editorState.plugins,
-    });
+    this.editorState = createEditorState(this.projection.document, this.editorState.plugins);
     return this.editorState;
   }
 
@@ -236,14 +320,12 @@ export class ScientProseMirrorSession {
     };
     this.projection = createScientMarkdownProjection(input.source);
     this.projectedBlockRanges = blockRanges(this.projection);
-    this.editorState = EditorState.create({
-      doc: this.projection.document,
-      plugins: this.editorState.plugins,
-    });
+    this.editorState = createEditorState(this.projection.document, this.editorState.plugins);
     return this.editorState;
   }
 
   applyTransaction(transaction: Transaction, origin: ScientMarkdownTransactionOrigin): EditorState {
+    if (origin === "user") transaction = rebindRenamedFootnotes(transaction, this.editorState.doc);
     transaction.setMeta(scientMarkdownTransactionOriginKey, origin);
     const applied = this.editorState.applyTransaction(transaction);
     let nextState = applied.state;

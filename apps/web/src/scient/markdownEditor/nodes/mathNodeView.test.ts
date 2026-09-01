@@ -1,7 +1,7 @@
 // @vitest-environment happy-dom
 
 import type { Node as ProseMirrorNode } from "prosemirror-model";
-import type { EditorView } from "prosemirror-view";
+import { DecorationSet, type EditorView } from "prosemirror-view";
 import { describe, expect, it, vi } from "vite-plus/test";
 
 vi.mock("~/scient/math/ScientMath", () => ({
@@ -28,6 +28,31 @@ describe("Scient math node view", () => {
     await vi.waitFor(() => {
       expect(nodeView.dom.getAttribute("data-scient-markdown-math-validity")).toBe("invalid");
     });
+
+    nodeView.destroy?.();
+    document.body.replaceChildren();
+  });
+
+  it("does not overwrite a focused source field during an external render", () => {
+    const type = { name: "display_math" };
+    const node = { attrs: { tex: "x^2" }, type } as unknown as ProseMirrorNode;
+    const view = { dispatch: vi.fn(), focus: vi.fn() } as unknown as EditorView;
+    const nodeView = createScientMathNodeView(node, view, () => 0);
+    document.body.append(nodeView.dom);
+    const sourceEditor = nodeView.dom.querySelector("textarea");
+    expect(sourceEditor).not.toBeNull();
+    sourceEditor!.hidden = false;
+    sourceEditor!.focus();
+    sourceEditor!.value = "composing value";
+
+    expect(
+      nodeView.update?.(
+        { attrs: { tex: "external value" }, type } as unknown as ProseMirrorNode,
+        [],
+        DecorationSet.empty,
+      ),
+    ).toBe(true);
+    expect(sourceEditor!.value).toBe("composing value");
 
     nodeView.destroy?.();
     document.body.replaceChildren();

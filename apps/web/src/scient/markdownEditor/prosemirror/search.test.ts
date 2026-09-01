@@ -41,4 +41,21 @@ describe("Markdown search work", () => {
     expect(scientMarkdownSearchState(state).matches).toEqual([]);
     editedTraverse.mockRestore();
   });
+
+  it("does not count hidden nested-code matches as rich-document matches", () => {
+    const doc = scientMarkdownParser.parse("```ts\nconst target = true;\n```\n\nVisible target.\n");
+    let state = EditorState.create({ doc, plugins: [scientMarkdownSearchPlugin()] });
+    state = state.apply(
+      configureScientMarkdownSearch(state.tr, {
+        query: "target",
+        caseSensitive: false,
+        wholeWord: true,
+      }),
+    );
+
+    expect(scientMarkdownSearchState(state).matches).toHaveLength(1);
+    const [match] = scientMarkdownSearchState(state).matches;
+    expect(match && state.doc.textBetween(match.from, match.to)).toBe("target");
+    expect(match?.from).toBeGreaterThan(state.doc.firstChild?.nodeSize ?? 0);
+  });
 });

@@ -18,6 +18,13 @@ export interface ScientMarkdownBlockContext {
   readonly toIndex: number;
 }
 
+function isLeadingFrontMatter(node: ProseMirrorNode | null | undefined): boolean {
+  return (
+    node?.type.name === "raw_block" &&
+    (node.attrs.sourceKind === "yaml" || node.attrs.sourceKind === "toml")
+  );
+}
+
 export function selectedTopLevelBlock(state: EditorState): ScientMarkdownBlockContext | null {
   if (state.doc.childCount === 0) return null;
   const index = Math.min(state.selection.$from.index(0), state.doc.childCount - 1);
@@ -34,11 +41,13 @@ export function selectedTopLevelBlock(state: EditorState): ScientMarkdownBlockCo
     nodes.push(node);
     to += node.nodeSize;
   }
+  const frontMatterPinned = isLeadingFrontMatter(state.doc.firstChild);
+  const includesFrontMatter = frontMatterPinned && index === 0;
   return {
     canDelete: true,
-    canDuplicate: true,
-    canMoveDown: toIndex < state.doc.childCount - 1,
-    canMoveUp: index > 0,
+    canDuplicate: !includesFrontMatter,
+    canMoveDown: !includesFrontMatter && toIndex < state.doc.childCount - 1,
+    canMoveUp: index > 0 && !(frontMatterPinned && index === 1),
     from,
     index,
     nodes,
@@ -101,6 +110,7 @@ export function runScientMarkdownBlockAction(
       break;
     }
     case "duplicate": {
+      if (!context.canDuplicate) return false;
       selectionPosition = context.to;
       transaction = transaction.insert(
         context.to,

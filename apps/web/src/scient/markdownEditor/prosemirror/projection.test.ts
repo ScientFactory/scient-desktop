@@ -155,6 +155,59 @@ describe("Scient ProseMirror projection", () => {
     );
   });
 
+  it("patches a hard-wrapped paragraph without reflowing its source lines", () => {
+    const source = "Sentence one\nsentence two stays wrapped.\n\nAfter.\n";
+    const state = new ScientProseMirrorSession({ source, revision: "sha256:before" });
+    let position: number | null = null;
+    state.state.doc.descendants((node, nodePosition) => {
+      if (node.isText && node.text?.includes("two")) {
+        position = nodePosition + node.text.indexOf("two");
+      }
+    });
+    expect(position).not.toBeNull();
+
+    state.applyTransaction(state.state.tr.insertText("three", position!, position! + 3), "user");
+
+    expect(state.session.draftSource).toBe(
+      "Sentence one\nsentence three stays wrapped.\n\nAfter.\n",
+    );
+  });
+
+  it("patches CRLF hard wraps without reflowing or mixing line endings", () => {
+    const source = "Sentence one\r\nsentence two stays wrapped.\r\n\r\nAfter.\r\n";
+    const state = new ScientProseMirrorSession({ source, revision: "sha256:before" });
+    let position: number | null = null;
+    state.state.doc.descendants((node, nodePosition) => {
+      if (node.isText && node.text?.includes("two")) {
+        position = nodePosition + node.text.indexOf("two");
+      }
+    });
+    expect(position).not.toBeNull();
+
+    state.applyTransaction(state.state.tr.insertText("three", position!, position! + 3), "user");
+
+    expect(state.session.draftSource).toBe(
+      "Sentence one\r\nsentence three stays wrapped.\r\n\r\nAfter.\r\n",
+    );
+    expect(state.session.draftSource.replaceAll("\r\n", "")).not.toContain("\n");
+  });
+
+  it("preserves surrounding source syntax when editing beside a wiki link", () => {
+    const source = "Before [[notes|label]] and __bold__ remains.\n";
+    const state = new ScientProseMirrorSession({ source, revision: "sha256:before" });
+    let position: number | null = null;
+    state.state.doc.descendants((node, nodePosition) => {
+      if (node.isText && node.text?.includes("remains")) {
+        position = nodePosition + node.text.indexOf("remains");
+      }
+    });
+    expect(position).not.toBeNull();
+
+    state.applyTransaction(state.state.tr.insertText("stays", position!, position! + 7), "user");
+
+    expect(state.session.draftSource).toBe("Before [[notes|label]] and __bold__ stays.\n");
+  });
+
   it("patches an emoji replacement without splitting its Unicode surrogate pair", () => {
     const source = "Mood  😀  remains exact.\n";
     const state = new ScientProseMirrorSession({ source, revision: "sha256:before" });
@@ -282,6 +335,50 @@ describe("Scient ProseMirror projection", () => {
     );
     expect(state.session.draftSource).toContain("Evidence [@smith2020, p. 4] and note[^lab].");
     expect(state.session.draftSource.endsWith("\n\n[^lab]: Collected **twice**.\n")).toBe(true);
+  });
+
+  it("keeps footnote references bound when their definition label is renamed", () => {
+    const state = new ScientProseMirrorSession({
+      source: "Evidence[^lab].\n\n[^lab]: Collected twice.\n",
+      revision: "sha256:before",
+    });
+    let definitionPosition: number | null = null;
+    state.state.doc.descendants((node, position) => {
+      if (node.type.name === "footnote_definition") definitionPosition = position;
+    });
+    expect(definitionPosition).not.toBeNull();
+    const definition = state.state.doc.nodeAt(definitionPosition!);
+    state.applyTransaction(
+      state.state.tr.setNodeMarkup(definitionPosition!, undefined, {
+        ...definition?.attrs,
+        label: "method",
+        source: "[^method]: Collected twice.",
+      }),
+      "user",
+    );
+
+    expect(state.session.draftSource).toBe("Evidence[^method].\n\n[^method]: Collected twice.\n");
+    const labels: string[] = [];
+    state.state.doc.descendants((node) => {
+      if (node.type.name === "footnote_reference") labels.push(String(node.attrs.label));
+    });
+    expect(labels).toEqual(["method"]);
+  });
+
+  it("parses citation-like text inside Markdown links as a link, not a citation", () => {
+    const projection = createScientMarkdownProjection("[see @smith](notes.md)\n");
+    let citationCount = 0;
+    let linkedText = false;
+    projection.document.descendants((node) => {
+      if (node.type.name === "citation") citationCount += 1;
+      if (node.isText && node.text === "see @smith") {
+        linkedText = node.marks.some(
+          (mark) => mark.type.name === "link" && mark.attrs.href === "notes.md",
+        );
+      }
+    });
+    expect(citationCount).toBe(0);
+    expect(linkedText).toBe(true);
   });
 
   it("preserves CRLF fences and raw blocks around a mixed-direction edit", () => {

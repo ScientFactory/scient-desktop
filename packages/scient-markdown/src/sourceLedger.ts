@@ -107,18 +107,45 @@ function markdownLogicalText(
   const textSpans: MarkdownSourceTextSpan[] = [];
   const visit = (current: MdastValueNode): void => {
     if (LOGICAL_VALUE_NODE_KINDS.has(current.type) && typeof current.value === "string") {
+      const value = current.type === "text" ? current.value.replace(/\r\n/gu, "\n") : current.value;
       const textStart = logicalText.length;
-      logicalText += current.value;
+      logicalText += value;
       const textEnd = logicalText.length;
       const sourceStart = current.position?.start?.offset;
       const sourceEnd = current.position?.end?.offset;
       if (typeof sourceStart === "number" && typeof sourceEnd === "number") {
+        const sourceValue = source.slice(sourceStart, sourceEnd);
+        if (
+          current.type === "text" &&
+          sourceValue !== value &&
+          sourceValue.replace(/\r\n/gu, "\n") === value
+        ) {
+          // mdast normalizes CRLF to LF inside text values. Keep the visible
+          // offsets aligned while exposing each ordinary text run as a direct
+          // source span; the newline itself remains intentionally non-direct.
+          let sourceOffset = 0;
+          let logicalOffset = textStart;
+          for (const part of sourceValue.split(/(\r\n)/gu)) {
+            if (part.length === 0) continue;
+            const normalized = part === "\r\n" ? "\n" : part;
+            textSpans.push({
+              textStart: logicalOffset,
+              textEnd: logicalOffset + normalized.length,
+              sourceStart: sourceStart + sourceOffset,
+              sourceEnd: sourceStart + sourceOffset + part.length,
+              direct: part !== "\r\n",
+            });
+            logicalOffset += normalized.length;
+            sourceOffset += part.length;
+          }
+          return;
+        }
         textSpans.push({
           textStart,
           textEnd,
           sourceStart,
           sourceEnd,
-          direct: current.type === "text" && source.slice(sourceStart, sourceEnd) === current.value,
+          direct: current.type === "text" && sourceValue === value,
         });
       }
       return;

@@ -425,6 +425,9 @@ gfmTokenizer.inline.ruler.before("link", "scient_citation", (state, silent) => {
   if (state.src[start] !== "[") return false;
   const end = state.src.indexOf("]", start + 1);
   if (end < 0) return false;
+  // Let ordinary inline/reference links containing citation-like text reach
+  // Markdown's link tokenizer instead of consuming only their label.
+  if (state.src[end + 1] === "(" || state.src[end + 1] === "[") return false;
   const source = state.src.slice(start + 1, end).trim();
   if (!/(?:^|[;\s])-?@[\p{L}\p{N}_:.#-]+/u.test(source)) return false;
   if (!silent) {

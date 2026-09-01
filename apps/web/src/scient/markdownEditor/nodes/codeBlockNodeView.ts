@@ -8,6 +8,7 @@ import { resolveDiffThemeName } from "~/lib/diffRendering";
 import { getSyntaxHighlighterPromise } from "~/lib/syntaxHighlighting";
 import { resolveScientRichFenceKind } from "~/scient/presentation/ScientRichFence";
 
+import { leaveAtomEditor } from "../prosemirror/safeSelection";
 import type { ScientNestedCodeEditor } from "./codeMirrorCodeEditor";
 import { ScientEditableRichFence } from "./ScientEditableRichFence";
 
@@ -140,7 +141,7 @@ class ScientCodeBlockNodeView implements NodeView {
           parent: this.editorHost,
           code: this.node.textContent,
           language: codeLanguage(this.node),
-          onEscape: () => this.view.focus(),
+          onEscape: () => leaveAtomEditor(this.view, this.getPos, this.node),
           onUserCodeChange: (code) => this.replaceCode(code),
         });
       } catch {

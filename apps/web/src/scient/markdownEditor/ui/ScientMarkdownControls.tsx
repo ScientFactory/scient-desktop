@@ -635,7 +635,7 @@ function LinkEditor({
             />
           }
         />
-        <TooltipPopup side="top">Link (Cmd+K)</TooltipPopup>
+        <TooltipPopup side="top">Link</TooltipPopup>
       </Tooltip>
       <PopoverPopup
         align="center"

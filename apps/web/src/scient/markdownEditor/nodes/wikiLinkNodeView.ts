@@ -1,6 +1,7 @@
 import type { Node as ProseMirrorNode } from "prosemirror-model";
-import { Selection } from "prosemirror-state";
 import type { EditorView, NodeView } from "prosemirror-view";
+
+import { leaveAtomEditor } from "../prosemirror/safeSelection";
 
 let nextWikiListId = 1;
 const wikiLinkDoubleClickDelayMs = 220;
@@ -177,15 +178,7 @@ class ScientWikiLinkNodeView implements NodeView {
   private closeEditor(event: KeyboardEvent): void {
     event.preventDefault();
     event.stopPropagation();
-    const position = this.getPos();
-    if (position !== undefined) {
-      this.view.dispatch(
-        this.view.state.tr.setSelection(
-          Selection.near(this.view.state.doc.resolve(position + this.node.nodeSize)),
-        ),
-      );
-    }
-    this.view.focus();
+    leaveAtomEditor(this.view, this.getPos, this.node);
   }
 
   private sourceValue(): string {

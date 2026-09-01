@@ -125,11 +125,11 @@ function topLevelNodesBySourceId(document: ProseMirrorNode): ReadonlyMap<string,
   return nodes;
 }
 
-function serializeNode(node: ProseMirrorNode): string {
+function serializeNode(node: ProseMirrorNode, lineEnding: "\n" | "\r\n"): string {
   if (node.type.name === "raw_block") return String(node.attrs.source);
   const document = scientMarkdownSchema.topNodeType.createAndFill(null, [node]);
   if (!document) throw new Error(`Unable to serialize Markdown node '${node.type.name}'.`);
-  return scientMarkdownSerializer.serialize(document);
+  return scientMarkdownSerializer.serialize(document).replace(/\r\n?|\n/gu, lineEnding);
 }
 
 function comparableAttrs(node: ProseMirrorNode): string {
@@ -206,18 +206,37 @@ function minimallyPatchedTextBlock(
   next: ProseMirrorNode,
   environment: MarkdownParseEnvironment,
 ): string | null {
-  if (block.logicalText !== baseline.textContent) return null;
+  // CommonMark soft line breaks become one space in the rich document. Their
+  // UTF-16 width remains one, so edits around them can still map to the exact
+  // source span without reflowing a hard-wrapped paragraph. Inline atoms such
+  // as wiki links can deliberately expose different display text; those use
+  // the conservative unique-span fallback below.
+  const logicalOffsetsAligned = block.logicalText.replace(/\n/gu, " ") === baseline.textContent;
   if (baseline.textContent === next.textContent) return null;
   if (textStructure(baseline) !== textStructure(next)) return null;
   // Concatenated text cannot locate an edit among identical cells/items.
   // Follow corresponding text nodes before calculating a narrow local diff.
   let offset = 0;
-  const changes: Array<ReturnType<typeof textDifference>> = [];
+  const changes: Array<{
+    readonly beforeText: string;
+    readonly globalBeforeEnd: number;
+    readonly globalStart: number;
+    readonly localBeforeEnd: number;
+    readonly localStart: number;
+    readonly replacement: string;
+  }> = [];
   const visit = (before: ProseMirrorNode, after: ProseMirrorNode): void => {
     if (before.isText) {
       if (before.text !== after.text) {
         const diff = textDifference(before.text!, after.text!);
-        changes.push({ ...diff, start: offset + diff.start, beforeEnd: offset + diff.beforeEnd });
+        changes.push({
+          beforeText: before.text!,
+          globalBeforeEnd: offset + diff.beforeEnd,
+          globalStart: offset + diff.start,
+          localBeforeEnd: diff.beforeEnd,
+          localStart: diff.start,
+          replacement: diff.replacement,
+        });
       }
       offset += before.text!.length;
     } else if (before.isLeaf) offset += before.textContent.length;
@@ -226,21 +245,48 @@ function minimallyPatchedTextBlock(
   visit(baseline, next);
   if (changes.length !== 1) return null;
   const difference = changes[0]!;
-  const candidates = block.textSpans.filter(
-    (candidate) =>
-      candidate.direct &&
-      difference.start >= candidate.textStart &&
-      difference.beforeEnd <= candidate.textEnd,
-  );
-  // At a boundary between two logical text spans, ProseMirror positions the
-  // caret inside the following text node. Prefer that span so an insertion at
-  // the start of a nested list item is not appended to the preceding item.
-  const span =
-    candidates.find((candidate) => candidate.textStart === difference.start) ?? candidates[0];
-  if (!span) return null;
-  const sourceStart = span.sourceStart + difference.start - span.textStart;
-  const sourceEnd = span.sourceStart + difference.beforeEnd - span.textStart;
-  const expected = baseline.textContent.slice(difference.start, difference.beforeEnd);
+  let sourceStart: number;
+  let sourceEnd: number;
+  if (logicalOffsetsAligned) {
+    const candidates = block.textSpans.filter(
+      (candidate) =>
+        candidate.direct &&
+        difference.globalStart >= candidate.textStart &&
+        difference.globalBeforeEnd <= candidate.textEnd,
+    );
+    // At a boundary between two logical text spans, ProseMirror positions the
+    // caret inside the following text node. Prefer that span so an insertion at
+    // the start of a nested list item is not appended to the preceding item.
+    const span =
+      candidates.find((candidate) => candidate.textStart === difference.globalStart) ??
+      candidates[0];
+    if (!span) return null;
+    sourceStart = span.sourceStart + difference.globalStart - span.textStart;
+    sourceEnd = span.sourceStart + difference.globalBeforeEnd - span.textStart;
+  } else {
+    // mdast treats Scient inline atoms as ordinary source text while the rich
+    // tree exposes their display label. Patch beside them only when the entire
+    // changed text node occurs once in an exact source span. Repeated text is
+    // ambiguous and deliberately falls back to block serialization.
+    if (difference.beforeText.length === 0) return null;
+    const matches: number[] = [];
+    for (const span of block.textSpans) {
+      if (!span.direct) continue;
+      const spanSource = block.source.slice(
+        span.sourceStart - block.start,
+        span.sourceEnd - block.start,
+      );
+      let match = spanSource.indexOf(difference.beforeText);
+      while (match >= 0) {
+        matches.push(span.sourceStart + match);
+        match = spanSource.indexOf(difference.beforeText, match + 1);
+      }
+    }
+    if (matches.length !== 1) return null;
+    sourceStart = matches[0]! + difference.localStart;
+    sourceEnd = matches[0]! + difference.localBeforeEnd;
+  }
+  const expected = difference.beforeText.slice(difference.localStart, difference.localBeforeEnd);
   if (block.source.slice(sourceStart - block.start, sourceEnd - block.start) !== expected) {
     return null;
   }
@@ -315,7 +361,7 @@ export function projectScientMarkdownSource(
         ? original.source
         : ((original && baseline
             ? minimallyPatchedTextBlock(original, baseline, node, projection.parseEnvironment)
-            : null) ?? serializeNode(node));
+            : null) ?? serializeNode(node, projection.ledger.lineEnding));
     const from = output.length;
     output += source;
     blockRanges.push({ from, to: from + source.length });

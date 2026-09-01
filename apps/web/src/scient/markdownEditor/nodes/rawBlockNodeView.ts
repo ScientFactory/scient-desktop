@@ -1,6 +1,8 @@
 import type { Node as ProseMirrorNode } from "prosemirror-model";
 import type { EditorView, NodeView } from "prosemirror-view";
 
+import { leaveAtomEditor } from "../prosemirror/safeSelection";
+
 class ScientRawBlockNodeView implements NodeView {
   readonly dom = document.createElement("div");
   private readonly kind = document.createElement("span");
@@ -77,7 +79,7 @@ class ScientRawBlockNodeView implements NodeView {
   private readonly handleKeyDown = (event: Event) => {
     if (!(event instanceof KeyboardEvent) || event.key !== "Escape") return;
     event.preventDefault();
-    this.view.focus();
+    leaveAtomEditor(this.view, this.getPos, this.node);
   };
 
   private render(): void {

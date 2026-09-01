@@ -129,6 +129,24 @@ describe("createMarkdownSourceLedger", () => {
     expect(block.textSpans.some((span) => !span.direct)).toBe(true);
   });
 
+  it("keeps CRLF hard-wrap offsets aligned around directly patchable text", () => {
+    const source = "first line\r\nsecond line\r\n";
+    const block = createMarkdownSourceLedger(source).blocks[0]!;
+
+    expect(block.logicalText).toBe("first line\nsecond line");
+    expect(
+      block.textSpans.map((span) => ({
+        direct: span.direct,
+        logical: block.logicalText.slice(span.textStart, span.textEnd),
+        source: source.slice(span.sourceStart, span.sourceEnd),
+      })),
+    ).toEqual([
+      { direct: true, logical: "first line", source: "first line" },
+      { direct: false, logical: "\n", source: "\r\n" },
+      { direct: true, logical: "second line", source: "second line" },
+    ]);
+  });
+
   it("preserves every outside byte when replacing one block", () => {
     const source = "# Title\n\nParagraph with  two spaces.\n\n- one\n  - two\n";
     const ledger = createMarkdownSourceLedger(source);
