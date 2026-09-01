@@ -230,6 +230,7 @@ interface ChatMarkdownProps {
   onUseArtifactTemplate?: ((template: CodexArtifactTemplate) => void) | undefined;
   imageBaseDir?: string | undefined;
   onImageExpand?: ((preview: ExpandedImagePreview) => void) | undefined;
+  extraRemarkPlugins?: NonNullable<ReactMarkdownOptions["remarkPlugins"]>;
 }
 
 export function canUseMarkdownFileShellActions(
@@ -257,6 +258,7 @@ export function shouldUseMarkdownFileBrowserPrimaryAction(input: {
 }
 
 const EMPTY_MARKDOWN_SKILLS: ReadonlyArray<Pick<ServerProviderSkill, "name" | "displayName">> = [];
+const EMPTY_REMARK_PLUGINS: NonNullable<ReactMarkdownOptions["remarkPlugins"]> = [];
 
 const ARTIFACT_TEMPLATE_ICON_BY_KIND = {
   document: FileTextIcon,
@@ -416,6 +418,7 @@ const CHAT_MARKDOWN_SANITIZE_SCHEMA = {
     code: [...(defaultSchema.attributes?.code ?? []), "dataCodeMeta", "dataInlineCode"],
     blockquote: [...(defaultSchema.attributes?.blockquote ?? []), "dataAlert"],
     div: [...(defaultSchema.attributes?.div ?? []), ...CODEX_ARTIFACT_TEMPLATE_HAST_PROPERTIES],
+    a: [...(defaultSchema.attributes?.a ?? []), "dataPullRequestAutolink"],
     img: [
       ...(defaultSchema.attributes?.img ?? []),
       "dataLocalSrc",
@@ -729,7 +732,6 @@ function MarkdownTable({ children, dir, ...props }: React.ComponentProps<"table"
       <ScrollArea
         chainVerticalScroll
         scrollFade
-        hideScrollbars
         className="w-full max-w-full rounded-none"
         dir={tableDirection}
       >
@@ -1292,17 +1294,17 @@ function ChatMarkdownImageFallback(props: {
   );
 }
 
-/** Markdown images whose src is a workspace file path load through a signed asset URL. */
-const ChatMarkdownWorkspaceImage = memo(function ChatMarkdownWorkspaceImage(props: {
-  readonly threadRef: ScopedThreadRef;
-  readonly resource: AssetResource;
+/** Environment-hosted images load through a signed asset URL. */
+export const ChatMarkdownAssetImage = memo(function ChatMarkdownAssetImage(props: {
+  readonly environmentId: EnvironmentId;
+  readonly resource: Extract<AssetResource, { readonly _tag: "attachment" | "workspace-file" }>;
   readonly alt: string;
-  readonly copyMarkdown: string;
-  readonly srcFragment: string;
+  readonly copyMarkdown?: string;
+  readonly srcFragment?: string;
   readonly style?: CSSProperties | undefined;
   readonly onImageExpand?: ((preview: ExpandedImagePreview) => void) | undefined;
 }) {
-  const assetUrl = useAssetUrlState(props.threadRef.environmentId, props.resource);
+  const assetUrl = useAssetUrlState(props.environmentId, props.resource);
   const [failedUrl, setFailedUrl] = useState<string | null>(null);
 
   if (assetUrl._tag === "Failure" || (assetUrl._tag === "Success" && failedUrl === assetUrl.url)) {
@@ -1323,7 +1325,7 @@ const ChatMarkdownWorkspaceImage = memo(function ChatMarkdownWorkspaceImage(prop
       />
     );
   }
-  const src = assetUrl.url + props.srcFragment;
+  const src = assetUrl.url + (props.srcFragment ?? "");
   return (
     <img
       src={src}
@@ -1875,16 +1877,21 @@ function ChatMarkdown({
   onUseArtifactTemplate,
   imageBaseDir,
   onImageExpand,
+  extraRemarkPlugins = EMPTY_REMARK_PLUGINS,
 }: ChatMarkdownProps) {
   // Delimiter normalization is length-preserving, so offset-based behavior
   // (task-list toggling, list positions) stays correct on every surface. The
   // original text rides along so the refinement plugin can recover each
   // backslash pair's inline-versus-display intent after normalization.
   const text = useScientMathMarkdownText(textProp);
-  const remarkPlugins = useScientMathRemarkPlugins(
-    lineBreaks ? CHAT_MARKDOWN_REMARK_PLUGINS_WITH_BREAKS : CHAT_MARKDOWN_REMARK_PLUGINS,
-    textProp,
+  const baseRemarkPlugins = useMemo(
+    () => [
+      ...(lineBreaks ? CHAT_MARKDOWN_REMARK_PLUGINS_WITH_BREAKS : CHAT_MARKDOWN_REMARK_PLUGINS),
+      ...extraRemarkPlugins,
+    ],
+    [extraRemarkPlugins, lineBreaks],
   );
+  const remarkPlugins = useScientMathRemarkPlugins(baseRemarkPlugins, textProp);
   const scopedContentDirection = useContentDirection();
   const effectiveContentDirection = contentDirection ?? scopedContentDirection;
   const streamingDirectionRef = useRef<{
@@ -2315,8 +2322,8 @@ function ChatMarkdown({
         }
         if (imageSource._tag === "WorkspaceFile" && threadRef) {
           return (
-            <ChatMarkdownWorkspaceImage
-              threadRef={threadRef}
+            <ChatMarkdownAssetImage
+              environmentId={threadRef.environmentId}
               resource={
                 image
                   ? inlineWorkspaceImageResource(image, threadRef)
@@ -2424,6 +2431,16 @@ function ChatMarkdown({
           : null;
         if (!fileLinkMeta) {
           const faviconHost = resolveExternalWebLinkHost(href);
+          const pullRequestAutolink = String(
+            (props as Record<string, unknown>)["data-pull-request-autolink"] ?? "",
+          );
+          const pullRequestCopy =
+            pullRequestAutolink === "commit"
+              ? /\/commit\/([0-9a-f]{40})$/iu.exec(href ?? "")?.[1]
+              : pullRequestAutolink === "reference"
+                ? plainHastText(node)
+                : undefined;
+          const isPullRequestAutolink = pullRequestCopy !== undefined;
           const isSameDocumentLink = href?.startsWith("#") ?? false;
           const onClick = props.onClick;
           const canOpenInPreview = Boolean(threadRef) && isPreviewSupportedInRuntime();
@@ -2431,6 +2448,8 @@ function ChatMarkdown({
           const link = (
             <a
               {...props}
+              className={cn(props.className, pullRequestAutolink === "commit" && "font-mono")}
+              data-markdown-copy={pullRequestCopy}
               href={href}
               target={isSameDocumentLink ? undefined : "_blank"}
               rel={isSameDocumentLink ? undefined : "noopener noreferrer"}
@@ -2502,7 +2521,7 @@ function ChatMarkdown({
                 });
               }}
             >
-              {faviconHost && hastHasText(node) ? (
+              {faviconHost && hastHasText(node) && !isPullRequestAutolink ? (
                 <MarkdownExternalLinkContent host={faviconHost} plainText={plainHastText(node)}>
                   {linkChildren}
                 </MarkdownExternalLinkContent>

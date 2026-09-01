@@ -7,10 +7,10 @@ import type {
   ProjectDirectoryEntry,
   ProjectDirectoryView,
 } from "@t3tools/contracts";
-import { FileTree, useFileTree, useFileTreeSearch } from "@pierre/trees/react";
+import { FileTree, useFileTree, useFileTreeSearch, useFileTreeSelector } from "@pierre/trees/react";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import { serializeComposerFileLink } from "@t3tools/shared/composerTrigger";
-import { MoreHorizontal, RotateCw } from "lucide-react";
+import { ChevronsDownUpIcon, ChevronsUpDownIcon, MoreHorizontal, RotateCw } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { Button } from "~/components/ui/button";
@@ -43,6 +43,7 @@ import { useProjectPathSearch } from "~/state/queries";
 import { useAtomCommand } from "~/state/use-atom-command";
 
 import { createFileTreeDragMentionController } from "./fileTreeDragMention";
+import { areAllDirectoriesExpanded, setAllDirectoriesExpanded } from "./fileTreeExpansion";
 
 interface FileBrowserPanelProps {
   environmentId: EnvironmentId;
@@ -226,6 +227,13 @@ export default function FileBrowserPanel({
       ),
     [treeSnapshot.entries],
   );
+  const loadedDirectoryPaths = useMemo(
+    () =>
+      [...treeSnapshot.entries.values()]
+        .filter((entry) => entry.kind === "directory")
+        .map((entry) => `${entry.relativePath}/`),
+    [treeSnapshot.entries],
+  );
   const entryKindsRef = useRef<ReadonlyMap<string, ProjectDirectoryEntry["kind"]>>(entryKinds);
   entryKindsRef.current = entryKinds;
   const treeEntriesRef = useRef(treeSnapshot.entries);
@@ -375,6 +383,12 @@ export default function FileBrowserPanel({
     unsafeCSS: TREE_UNSAFE_CSS,
   });
   const treeSearch = useFileTreeSearch(model);
+  const allLoadedDirectoriesExpanded = useFileTreeSelector(model, (currentModel) =>
+    areAllDirectoriesExpanded(currentModel, loadedDirectoryPaths),
+  );
+  const toggleLoadedDirectories = () => {
+    setAllDirectoriesExpanded(model, loadedDirectoryPaths, !allLoadedDirectoriesExpanded);
+  };
   const loadDirectory = useCallback(
     async (relativeDirectory: string, view: ProjectDirectoryView) => {
       const result = await runListDirectory({
@@ -587,6 +601,34 @@ export default function FileBrowserPanel({
           onValueChange={handleSearchValueChange}
           onClose={handleSearchClose}
         />
+        {loadedDirectoryPaths.length > 0 ? (
+          <Tooltip>
+            <TooltipTrigger
+              render={
+                <Button
+                  type="button"
+                  size="icon-xs"
+                  variant="ghost"
+                  aria-label={
+                    allLoadedDirectoriesExpanded
+                      ? "Collapse loaded folders"
+                      : "Expand loaded folders"
+                  }
+                  onClick={toggleLoadedDirectories}
+                />
+              }
+            >
+              {allLoadedDirectoriesExpanded ? (
+                <ChevronsDownUpIcon className="size-3.5" />
+              ) : (
+                <ChevronsUpDownIcon className="size-3.5" />
+              )}
+            </TooltipTrigger>
+            <TooltipPopup>
+              {allLoadedDirectoriesExpanded ? "Collapse loaded folders" : "Expand loaded folders"}
+            </TooltipPopup>
+          </Tooltip>
+        ) : null}
         <WorkspaceFilesMenu
           view={directoryView}
           onViewChange={(nextView) => {

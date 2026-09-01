@@ -16,11 +16,16 @@ same thread.
 On web and desktop, attachments upload as soon as you add them. The send button becomes available
 after every upload finishes. Failed uploads can be retried or removed.
 
+In the retained mobile client, an empty composer shows an interrupt button while the agent is
+working. Adding text or an attachment replaces it with the send button in both compact and expanded
+composers.
+
 On web and desktop, if you reload before a file finishes uploading, the draft keeps the file's name
 and shows **Attach again** next to it. Attach the file again or remove it, then send.
 
 On web and desktop, HEIC and HEIF photos are automatically converted to JPEG when you drag them into
-the composer or paste them into a message.
+the composer or paste them into a message. On iOS, selecting them from **Photo Library** does the
+same. The 10 MB image limit applies to the converted photo.
 
 ## Attach files
 
@@ -41,10 +46,18 @@ available tools. Uploaded files are not automatically executed.
 
 Click a video attachment to play it. If its format cannot play in the app, use
 **Download video**. Other files keep their filename and can be downloaded.
-In the retained mobile client (not yet a public Scient release), the **+** control offers Photos and, when the connected
-server supports file uploads, Files. Files can also arrive through the system
-share sheet. Mobile uploads happen when a message sends; its outbox keeps files
-until delivery. Select a received file to save it or open it in another app.
+
+In the retained mobile client (not yet a public Scient release), tap **+** for **Photo Library**
+or, when the connected server supports file uploads, **Choose Files**. Photos, videos, and files can
+also arrive through the system share sheet. Mobile keeps a local draft copy, allows previewing and
+queueing while offline, resumes uploads after reconnecting, and preserves drafts and queued messages
+across app restarts. Signing out keeps them on the device until the same account signs in again.
+
+Tap an image or PDF before or after sending to open it. On iOS, the native viewer supports image
+zoom, sharing, and PDF page navigation and search. On Android, images use the image viewer and PDFs
+open through the system chooser. Videos open in a full-screen player with native controls on mobile;
+supported iOS videos stream from their environment as they play. Unsupported formats can still be
+saved or shared to another app.
 
 On desktop and web, generic files cannot yet be queued. Keep them in the composer and
 send when the current turn finishes, or use the steer shortcut when supported.
@@ -55,12 +68,35 @@ On mobile, the model picker shows each OpenCode model's upstream provider, such 
 GitHub Copilot, or OpenCode Zen, beneath its name. Search by that provider name to narrow the list
 when starting a thread or changing an existing thread's model.
 
+## Notices above the composer
+
+On web and desktop, loading and syncing statuses use the available banner width. Task progress
+appears above the composer, while the timeline's working indicator shows only elapsed time.
+
+When several notices are active, the additional notices peek above the attached banner. Hover over
+the peek, or focus **Show other notices** and press `Enter` or `Space`, to reveal them. Press
+`Escape` to close the stack. On a touchscreen, tap the peek.
+
 ## Prompt stash
 
 Use the default shortcut, `Cmd+S` on macOS or `Ctrl+S` on Windows and Linux, to stash the current
-prompt and its attachments after uploads finish. Restore the entry later from the stash menu. Attachment
-stashes belong to the environment where the files were uploaded and expire with the server's
-temporary attachment retention.
+prompt and its attachments after uploads finish. Restore the entry later from the stash menu. A
+stash containing files belongs to the environment where those files were uploaded. The server keeps
+stashed files for 24 hours; after that, restore the prompt and use **Attach again** or remove the
+expired file before sending.
+
+## Voice input on iPhone
+
+In the retained mobile client, supported iPhones with iOS 26 or later can record a message from the
+composer. Tap the microphone, speak, then tap the checkmark to transcribe on the device. The draft
+stays visible in an expanded composer; a collapsed composer becomes a compact recording strip. The
+result is inserted where recording began so it can be reviewed and edited before sending.
+
+The first use may download Apple's speech model and require a network connection. Later
+transcription works offline for that language. Recordings are limited to five minutes. Canceling,
+leaving the screen, or an audio interruption preserves the existing draft and attachments while
+discarding the new recording. Scient deletes the local audio after transcription or cancellation
+and sends only the normal message text.
 
 ## Commands and skills
 
