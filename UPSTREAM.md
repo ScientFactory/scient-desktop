@@ -22,15 +22,17 @@ revision remains literal ancestry of owned `main`; it is not merely a reviewed
 or observed tip.
 
 The current proposed T3 ancestry is recorded in
-[`docs/internals/2026-09-01-upstream-sync-0947c30e6.md`](docs/internals/2026-09-01-upstream-sync-0947c30e6.md)
+[`docs/internals/2026-09-02-upstream-sync-590a579f2.md`](docs/internals/2026-09-02-upstream-sync-590a579f2.md)
 and in `upstream-state.json`. The latest refresh merges the exact official
-checkpoint `0947c30e6946b2ad6d6cd518fd44292e75e834e8` into its draft alignment
+checkpoint `590a579f2e9292ce314c69e459e19620004578fe` into its draft alignment
 branch, preserving the exact range after the previously integrated tip
-`e4f7b14fab0850bff134a3f6bfaf5b71cc8ac9fc`. The release-scoped Claude
-compaction deferral is retired by a focused follow-up adapted to the current
-composer architecture. Later observed T3 tips never move `integrationBase` by
-themselves; it advances only after exact ancestry, verification, review, and
-merge into owned `main`.
+`0947c30e6946b2ad6d6cd518fd44292e75e834e8`. The composition receives
+server-owned thread settlement, bounded activity and usage processing, remote
+Claude model discovery, preview and recording repairs, and focused desktop,
+web, and mobile interaction improvements while retaining Scient's product,
+provider, state, and publication boundaries. Later observed T3 tips never move
+`integrationBase` by themselves; it advances only after exact ancestry,
+verification, review, and merge into owned `main`.
 
 ## Receiving T3 updates
 
