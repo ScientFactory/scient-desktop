@@ -155,11 +155,16 @@ export type DefaultThemePreference = typeof DefaultThemePreference.Type;
 /**
  * Defaults for the in-app preview browser, applied whenever a tab is opened
  * without an explicit viewport/zoom/appearance — by the user opening a browser
- * tab, or by an agent calling `preview_open` with no size. Client-local
- * because the Chromium guest they configure is desktop-local.
+ * tab, or by an agent calling `preview_open` with no size. Recording quality is
+ * client-local for the same reason: the Chromium guest being captured belongs
+ * to the desktop app.
  */
 export const DEFAULT_BROWSER_VIEWPORT: PreviewViewportSetting = FILL_PREVIEW_VIEWPORT;
 export const DEFAULT_BROWSER_AUTO_SHOW_FLOATING_PREVIEW = true;
+export const BROWSER_RECORDING_FRAME_RATES = [30, 60] as const;
+export const BrowserRecordingFrameRate = Schema.Literals(BROWSER_RECORDING_FRAME_RATES);
+export type BrowserRecordingFrameRate = typeof BrowserRecordingFrameRate.Type;
+export const DEFAULT_BROWSER_RECORDING_FRAME_RATE: BrowserRecordingFrameRate = 30;
 
 export const ClientSettingsSchema = Schema.Struct({
   appearanceContrast: AppearanceContrast.pipe(
@@ -173,6 +178,9 @@ export const ClientSettingsSchema = Schema.Struct({
   ),
   browserDefaultAppearance: PreviewAppearancePreference.pipe(
     Schema.withDecodingDefault(Effect.succeed(DEFAULT_PREVIEW_APPEARANCE)),
+  ),
+  browserRecordingFrameRate: BrowserRecordingFrameRate.pipe(
+    Schema.withDecodingDefault(Effect.succeed(DEFAULT_BROWSER_RECORDING_FRAME_RATE)),
   ),
   /**
    * Whether an agent opening a preview pops the floating mini player into
@@ -404,6 +412,11 @@ export const CodexSettings = makeProviderSettingsSchema(
 );
 export type CodexSettings = typeof CodexSettings.Type;
 
+// Empty, or an integer from 100,000 to 1,000,000. Shared by the full
+// Claude settings schema and its patch so an out-of-range value fails at
+// the update that introduced it.
+const CLAUDE_AUTO_COMPACT_WINDOW_PATTERN = /^(?:|[1-9]\d{5}|1000000)$/;
+
 export const ClaudeSettings = makeProviderSettingsSchema(
   {
     enabled: Schema.Boolean.pipe(
@@ -441,9 +454,23 @@ export const ClaudeSettings = makeProviderSettingsSchema(
         },
       }),
     ),
+    autoCompactWindow: TrimmedString.check(
+      Schema.isPattern(CLAUDE_AUTO_COMPACT_WINDOW_PATTERN),
+    ).pipe(
+      Schema.withDecodingDefault(Effect.succeed("")),
+      Schema.annotateKey({
+        title: "Auto-compact after",
+        description:
+          "Compact after 100,000 to 1,000,000 tokens. Leave empty to use Claude's default.",
+        providerSettingsForm: {
+          placeholder: "e.g. 300000",
+          clearWhenEmpty: "omit",
+        },
+      }),
+    ),
   },
   {
-    order: ["binaryPath", "homePath", "launchArgs"],
+    order: ["binaryPath", "homePath", "autoCompactWindow", "launchArgs"],
   },
 );
 export type ClaudeSettings = typeof ClaudeSettings.Type;
@@ -921,6 +948,11 @@ const ClaudeSettingsPatch = Schema.Struct({
   homePath: Schema.optionalKey(TrimmedString),
   customModels: Schema.optionalKey(Schema.Array(Schema.String)),
   launchArgs: Schema.optionalKey(TrimmedString),
+  // Validated at the patch boundary so a typo fails the one update with a
+  // schema error instead of a generic whole-settings failure.
+  autoCompactWindow: Schema.optionalKey(
+    TrimmedString.check(Schema.isPattern(CLAUDE_AUTO_COMPACT_WINDOW_PATTERN)),
+  ),
 });
 
 const CursorSettingsPatch = Schema.Struct({
@@ -1028,6 +1060,7 @@ export const ClientSettingsPatch = Schema.Struct({
   browserDefaultViewport: Schema.optionalKey(PreviewViewportSetting),
   browserDefaultZoomFactor: Schema.optionalKey(PreviewZoomFactor),
   browserDefaultAppearance: Schema.optionalKey(PreviewAppearancePreference),
+  browserRecordingFrameRate: Schema.optionalKey(BrowserRecordingFrameRate),
   browserAutoShowFloatingPreview: Schema.optionalKey(Schema.Boolean),
   confirmQuit: Schema.optionalKey(Schema.Boolean),
   confirmThreadArchive: Schema.optionalKey(Schema.Boolean),

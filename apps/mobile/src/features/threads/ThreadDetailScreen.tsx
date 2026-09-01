@@ -124,7 +124,7 @@ export interface ThreadDetailScreenProps {
   readonly onHeaderMaterialVisibilityChange?: (visible: boolean) => void;
   readonly onOpenConnectionEditor: () => void;
   readonly onChangeDraftMessage: (value: string) => void;
-  readonly onPickDraftImages: () => Promise<void>;
+  readonly onPickDraftMedia: () => Promise<void>;
   readonly onPickDraftFiles: () => Promise<void>;
   readonly onNativePasteImages: (uris: ReadonlyArray<string>) => Promise<void>;
   readonly onRemoveDraftImage: (imageId: string) => void;
@@ -275,6 +275,14 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
   const selectedThreadKeyRef = useRef(selectedThreadKey);
   const lastScrolledSubmittedMessageIdRef = useRef<MessageId | null>(null);
   const [composerExpanded, setComposerExpanded] = useState(false);
+  const [composerFocused, setComposerFocused] = useState(false);
+  const handleComposerFocusChange = useCallback(
+    (focused: boolean) => {
+      setComposerFocused(focused);
+      handleOwnedInputFocusChange(focused);
+    },
+    [handleOwnedInputFocusChange],
+  );
   const [anchorMessageId, setAnchorMessageId] = useState<MessageId | null>(null);
   const [submittedMessageId, setSubmittedMessageId] = useState<MessageId | null>(null);
   const [endFollowEnabled, setEndFollowEnabled] = useState(true);
@@ -285,7 +293,10 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
   // animation, so the composer would ride down flush to the screen edge and
   // then snap up into the inset. On iOS blur precedes the hide, so the
   // focus-keyed inset is already in place while the composer rides down.
-  const composerBottomInset = (Platform.OS === "android" ? isKeyboardVisible : composerExpanded)
+  // Dictation keeps that focus while the composer switches to its compact pill.
+  const composerBottomInset = (
+    Platform.OS === "android" ? isKeyboardVisible : composerExpanded || composerFocused
+  )
     ? 0
     : Math.max(insets.bottom, 12);
   const contentPresentationKind = props.contentPresentation.kind;
@@ -532,7 +543,9 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
 
   useLayoutEffect(() => {
     selectedThreadKeyRef.current = selectedThreadKey;
-  }, [selectedThreadKey]);
+    // A replaced or unmounted native editor may not emit a blur event.
+    setComposerFocused(false);
+  }, [selectedThreadKey, showContent]);
 
   useEffect(() => {
     setAnchorMessageId(null);
@@ -823,7 +836,7 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
                   projectCwd={props.projectWorkspaceRoot}
                   bottomInset={composerBottomInset}
                   onChangeDraftMessage={props.onChangeDraftMessage}
-                  onPickDraftImages={props.onPickDraftImages}
+                  onPickDraftMedia={props.onPickDraftMedia}
                   onPickDraftFiles={props.onPickDraftFiles}
                   onNativePasteImages={props.onNativePasteImages}
                   onRemoveDraftImage={props.onRemoveDraftImage}
@@ -834,7 +847,7 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
                   onUpdateRuntimeMode={props.onUpdateThreadRuntimeMode}
                   onUpdateInteractionMode={props.onUpdateThreadInteractionMode}
                   onExpandedChange={setComposerExpanded}
-                  onEditorFocusChange={handleOwnedInputFocusChange}
+                  onEditorFocusChange={handleComposerFocusChange}
                 />
               </View>
             </View>

@@ -27,9 +27,10 @@ Repeating either search shortcut closes it; opening the other replaces the curre
 editor's **Inspect** mode selects one visible element and reveals its color token, then disarms. Use
 **Cancel** or `Escape` to leave Inspect and clear its spotlight.
 
-The command palette searches active thread titles, projects, branches, user messages, and final agent
-responses across connected environments. Message search begins after two characters and keeps the
-matching thread's project, branch, and machine context visible.
+The command palette searches settings, active thread titles, projects, branches, user messages, and
+final agent responses across connected environments. A setting result opens its exact control or
+section. Message search begins after two characters and keeps the matching thread's project, branch,
+and machine context visible.
 
 ## Edit the JSON directly
 

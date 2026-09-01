@@ -619,6 +619,12 @@ export function buildClaudeCapabilitiesProbeQueryOptions(input: {
       // Connected claude.ai MCP servers are discovered outside filesystem
       // config; disable them independently for this health check.
       ENABLE_CLAUDEAI_MCP_SERVERS: "false",
+      // This is a noninteractive health check, so IDE discovery cannot add any
+      // useful capability data. Skipping it also avoids Claude spawning a
+      // Windows `tasklist | findstr` process tree on every periodic refresh.
+      FORCE_CODE_TERMINAL: undefined,
+      CLAUDE_CODE_AUTO_CONNECT_IDE: "0",
+      CLAUDE_CODE_IDE_SKIP_AUTO_INSTALL: "1",
     },
     ...(input.cwd ? { cwd: input.cwd } : {}),
     stderr: () => {},
@@ -1001,7 +1007,13 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
     : undefined;
   const discoveredSkills = yield* discoverClaudeSkills(claudeSettings, cwd, resolvedEnvironment);
   const skills = mergeClaudeReportedSkills(discoveredSkills, capabilities?.skills ?? []);
-  const slashCommands = capabilities?.slashCommands ?? [];
+  const slashCommands = [
+    {
+      name: "compact",
+      description: "Summarize the conversation and reduce context usage",
+    },
+    ...(capabilities?.slashCommands ?? []),
+  ];
   const dedupedSlashCommands = dedupeSlashCommands(slashCommands);
 
   if (!capabilities) {
