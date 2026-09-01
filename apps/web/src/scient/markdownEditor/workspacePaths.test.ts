@@ -9,6 +9,7 @@ import {
 
 describe("Markdown workspace paths", () => {
   it.each([
+    ["./figure.png", "notes/figure.png", ""],
     ["Other%20notes.md", "notes/Other notes.md", ""],
     ["%D7%A9%D7%9C%D7%95%D7%9D.md#heading", "notes/שלום.md", "#heading"],
     ["100%25.md", "notes/100%.md", ""],

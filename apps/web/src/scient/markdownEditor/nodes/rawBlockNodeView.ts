@@ -42,12 +42,14 @@ class ScientRawBlockNodeView implements NodeView {
 
   selectNode(): void {
     this.dom.classList.add("is-selected");
+    this.preview.hidden = true;
     this.sourceEditor.hidden = false;
     this.sourceEditor.value = String(this.node.attrs.source);
   }
 
   deselectNode(): void {
     this.dom.classList.remove("is-selected");
+    this.preview.hidden = false;
     this.sourceEditor.hidden = true;
   }
 

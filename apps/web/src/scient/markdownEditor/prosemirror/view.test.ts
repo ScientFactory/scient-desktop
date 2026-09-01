@@ -39,6 +39,38 @@ describe("ScientMarkdownEditorView", () => {
     return { controller, host, onUserSourceChange, view: controller.mount(host) };
   }
 
+  it("edits front matter through one source surface without changing adjacent Markdown", () => {
+    const controller = new ScientMarkdownEditorView({
+      source: "---\ntitle: Before\n---\n\nBody\n",
+      revision: "r0",
+      mode: "write",
+      ariaLabel: "Front matter",
+    });
+    mounted.push(controller);
+    const host = document.createElement("div");
+    document.body.append(host);
+    const view = controller.mount(host);
+    view.dispatch(view.state.tr.setSelection(NodeSelection.create(view.state.doc, 0)));
+
+    const preview = view.dom.querySelector<HTMLElement>(".scient-markdown-source-island-preview")!;
+    const editor = view.dom.querySelector<HTMLTextAreaElement>(
+      ".scient-markdown-source-island-editor",
+    )!;
+    expect(preview.hidden).toBe(true);
+    expect(editor.hidden).toBe(false);
+
+    editor.value = "---\ntitle: After\n---";
+    editor.dispatchEvent(new InputEvent("input", { bubbles: true, inputType: "insertText" }));
+
+    expect(controller.session.session.draftSource).toBe("---\ntitle: After\n---\n\nBody\n");
+    expect(preview.textContent).toBe("---\ntitle: After\n---");
+    expect(preview.hidden).toBe(true);
+
+    view.dispatch(view.state.tr.setSelection(TextSelection.create(view.state.doc, 2)));
+    expect(preview.hidden).toBe(false);
+    expect(editor.hidden).toBe(true);
+  });
+
   it.each(["caret", "selection"])("updates and removes an existing link with a %s", (kind) => {
     const controller = new ScientMarkdownEditorView({
       source: "[Example](https://old.example)\n",
@@ -1121,6 +1153,32 @@ describe("ScientMarkdownEditorView", () => {
     expect(image?.hidden).toBe(false);
     expect(resolveImageSource).toHaveBeenCalledOnce();
     expect(onUserSourceChange).toHaveBeenCalledOnce();
+  });
+
+  it("resolves repeated references to one workspace image independently", async () => {
+    const resolveImageSource = vi.fn(async () => "https://asset.test/shared.png");
+    const controller = new ScientMarkdownEditorView({
+      source: "![First](./shared.png)\n\n![Second](./shared.png)\n",
+      revision: "r0",
+      mode: "write",
+      ariaLabel: "Repeated images",
+      resolveImageSource,
+    });
+    mounted.push(controller);
+    const host = document.createElement("div");
+    document.body.append(host);
+    const view = controller.mount(host);
+
+    await vi.waitFor(() => {
+      const images = [
+        ...view.dom.querySelectorAll<HTMLImageElement>(".scient-markdown-image-render"),
+      ];
+      expect(images).toHaveLength(2);
+      expect(images.every((image) => image.src === "https://asset.test/shared.png")).toBe(true);
+    });
+    expect(resolveImageSource).toHaveBeenCalledTimes(2);
+    expect(resolveImageSource).toHaveBeenNthCalledWith(1, "./shared.png");
+    expect(resolveImageSource).toHaveBeenNthCalledWith(2, "./shared.png");
   });
 
   it("clears stale image state when an unresolved path is removed", async () => {
