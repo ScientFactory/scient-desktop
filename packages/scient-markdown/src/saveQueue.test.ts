@@ -61,8 +61,7 @@ describe("MarkdownSaveQueue", () => {
     await new Promise<void>((resolve) => queueMicrotask(resolve));
     expect(persist).toHaveBeenCalledOnce();
     queue.enqueue(intent("two", 2));
-    expect(queue.acknowledgePersisted("one")).toBe(false);
-    expect(queue.acknowledgePersisted("two")).toBe(false);
+    expect(queue.acknowledgePublished("two", "r0")).toBeNull();
     expect(queue.pending).toBe(true);
     resolveFirst!({ revision: "r1" });
     await flushing;
@@ -93,7 +92,8 @@ describe("MarkdownSaveQueue", () => {
     expect(onFailure).toHaveBeenCalledWith(intent("local", 1), failure);
     expect(persist).toHaveBeenCalledOnce();
 
-    queue.retry("r-agent");
+    queue.enqueue(intent("local", 1, "r-agent"));
+    queue.resume();
     await queue.flush();
     expect(persist).toHaveBeenCalledTimes(2);
     expect(persist.mock.calls[1]?.[0]).toEqual(intent("local", 1, "r-agent"));
@@ -172,7 +172,8 @@ describe("MarkdownSaveQueue", () => {
     queue.enqueue(intent("local", 1));
     const flushing = queue.flush();
     await new Promise<void>((resolve) => queueMicrotask(resolve));
-    queue.retry("r-agent");
+    queue.enqueue(intent("local", 1, "r-agent"));
+    queue.resume();
     rejectWrite!(new Error("revision conflict"));
     await flushing;
 
@@ -207,7 +208,7 @@ describe("MarkdownSaveQueue", () => {
     await new Promise<void>((resolve) => queueMicrotask(resolve));
     expect(persist).toHaveBeenCalledOnce();
 
-    expect(queue.acknowledgePersisted("one")).toBe(true);
+    expect(queue.acknowledgePublished("one", "r0")).toEqual(intent("one", 1));
     expect(queue.pending).toBe(false);
     expect(pending.at(-1)).toBe(false);
 
@@ -255,7 +256,7 @@ describe("MarkdownSaveQueue", () => {
 
     queue.enqueue(intent("one", 1));
     const firstFlush = queue.flush();
-    queue.acknowledgePersisted("one");
+    expect(queue.acknowledgePublished("one", "r0")).toEqual(intent("one", 1));
     queue.enqueue(intent("two", 2, "r1"));
     const secondFlush = queue.flush();
 
@@ -271,6 +272,50 @@ describe("MarkdownSaveQueue", () => {
     expect(persist).toHaveBeenCalledTimes(2);
     expect(queue.pending).toBe(false);
     expect(pending).toHaveBeenLastCalledWith(false);
+  });
+
+  it("retires an observed in-flight publication while preserving a newer draft", async () => {
+    let resolveFirst: ((value: { readonly revision: string }) => void) | null = null;
+    const first = new Promise<{ readonly revision: string }>((resolve) => {
+      resolveFirst = resolve;
+    });
+    const persist = vi
+      .fn<(value: MarkdownSaveIntent) => Promise<{ readonly revision: string }>>()
+      .mockImplementationOnce(() => first)
+      .mockResolvedValueOnce({ revision: "r2" });
+    const confirmed = vi.fn();
+    const queue = new MarkdownSaveQueue({
+      debounceMs: 0,
+      persist,
+      onPendingChange: vi.fn(),
+      onConfirmed: confirmed,
+      onFailure: vi.fn(),
+    });
+
+    queue.enqueue(intent("first", 1));
+    const firstFlush = queue.flush();
+    await new Promise<void>((resolve) => queueMicrotask(resolve));
+    queue.enqueue(intent("latest", 2));
+
+    expect(queue.acknowledgePublished("first", "stale-revision")).toBeNull();
+    expect(queue.acknowledgePublished("latest", "r0")).toBeNull();
+    expect(queue.acknowledgePublished("first", "r0")).toEqual(intent("first", 1));
+
+    // The session owner rebases the preserved draft onto the observed
+    // publication synchronously, before the released flush continuation can
+    // issue the next compare-and-swap.
+    queue.enqueue(intent("latest", 2, "r1"));
+    await firstFlush;
+
+    expect(persist).toHaveBeenCalledTimes(2);
+    expect(persist).toHaveBeenLastCalledWith(intent("latest", 2, "r1"));
+    expect(confirmed).toHaveBeenCalledExactlyOnceWith(intent("latest", 2, "r1"), {
+      revision: "r2",
+    });
+
+    resolveFirst!({ revision: "late-r1" });
+    await first;
+    expect(confirmed).toHaveBeenCalledTimes(1);
   });
 
   it("does not let a host callback exception strand the save lane", async () => {

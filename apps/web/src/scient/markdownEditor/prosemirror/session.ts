@@ -4,6 +4,7 @@ import {
   confirmMarkdownSave,
   createMarkdownDocumentSession,
   receiveExternalMarkdownSource,
+  rebaseLocalMarkdownDraft,
   resolveMarkdownConflictWithDisk,
   resolveMarkdownConflictWithLocal,
   setMarkdownDocumentMode,
@@ -31,8 +32,11 @@ export const scientMarkdownTransactionOriginKey = new PluginKey<ScientMarkdownTr
 );
 
 export interface ScientProseMirrorSessionOptions {
+  /** Current local document bytes, including a restored optimistic draft. */
   readonly source: string;
+  /** Disk revision paired with `authoritativeSource` (or `source` by default). */
   readonly revision: string;
+  readonly authoritativeSource?: string;
   readonly mode?: MarkdownDocumentMode;
   readonly onUserSourceChange?: (source: string, intent: MarkdownSaveIntent | null) => void;
 }
@@ -93,8 +97,9 @@ export class ScientProseMirrorSession {
     this.projection = createScientMarkdownProjection(options.source);
     this.projectedBlockRanges = blockRanges(this.projection);
     this.documentSession = createMarkdownDocumentSession({
-      source: options.source,
+      source: options.authoritativeSource ?? options.source,
       revision: options.revision,
+      draftSource: options.source,
       ...(options.mode === undefined ? {} : { mode: options.mode }),
     });
     this.editorState = EditorState.create({
@@ -210,6 +215,12 @@ export class ScientProseMirrorSession {
       doc: this.projection.document,
       plugins: this.editorState.plugins,
     });
+    return this.editorState;
+  }
+
+  /** Keep the current document while adopting a host-provided disk snapshot as its CAS baseline. */
+  rebaseLocalChanges(input: { readonly source: string; readonly revision: string }): EditorState {
+    this.documentSession = rebaseLocalMarkdownDraft(this.documentSession, input);
     return this.editorState;
   }
 

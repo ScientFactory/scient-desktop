@@ -43,7 +43,10 @@ describe("Scient Markdown file-preview seam", () => {
     expect(panelSource).not.toMatch(/ProseMirror|CodeMirror|MarkdownSaveQueue|MarkdownParser/gu);
     expect(surfaceSource).toContain("projectEnvironment.writeFile");
     expect(surfaceSource).toContain("expectedRevision: intent.expectedRevision");
+    expect(surfaceSource).toContain("setProjectFileQueryData(props.environmentId");
     expect(surfaceSource).toContain("confirmProjectFileQueryData(");
+    expect(panelSource).toContain("authoritativeSnapshot={markdownAuthoritativeSnapshot}");
+    expect(surfaceSource).toContain("authoritativeSnapshot={props.authoritativeSnapshot}");
     expect(surfaceSource.match(/onOpenLink=\{handleOpenLink\}/gu)).toHaveLength(1);
   });
 

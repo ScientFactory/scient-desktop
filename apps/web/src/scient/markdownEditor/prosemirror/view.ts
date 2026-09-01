@@ -47,6 +47,7 @@ export interface ScientMarkdownUploadedImage {
 export interface ScientMarkdownEditorViewOptions {
   readonly source: string;
   readonly revision: string;
+  readonly authoritativeSource?: string;
   readonly mode?: MarkdownDocumentMode;
   readonly ariaLabel: string;
   readonly onUserSourceChange?: (source: string, intent: MarkdownSaveIntent | null) => void;
@@ -291,6 +292,11 @@ export class ScientMarkdownEditorView {
     this.editorView?.updateState(state);
     this.syncViewProps();
     this.publishSnapshot(false);
+  }
+
+  /** Adopt a complete disk snapshot as the CAS baseline without replacing the local document. */
+  rebaseLocalChanges(input: { readonly source: string; readonly revision: string }): void {
+    this.session.rebaseLocalChanges(input);
   }
 
   discardLocalChanges(input: { readonly source: string; readonly revision: string }): void {

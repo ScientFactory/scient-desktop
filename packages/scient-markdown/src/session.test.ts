@@ -6,12 +6,34 @@ import {
   confirmMarkdownSave,
   createMarkdownDocumentSession,
   receiveExternalMarkdownSource,
+  rebaseLocalMarkdownDraft,
   resolveMarkdownConflictWithDisk,
   resolveMarkdownConflictWithLocal,
   setMarkdownDocumentMode,
 } from "./session.ts";
 
 describe("Markdown document session", () => {
+  it("restores a local draft without mislabeling it as the disk baseline", () => {
+    const session = createMarkdownDocumentSession({
+      source: "Disk",
+      revision: "r1",
+      draftSource: "Local draft",
+    });
+
+    expect(session).toMatchObject({
+      baselineSource: "Disk",
+      baselineRevision: "r1",
+      draftSource: "Local draft",
+      editVersion: 1,
+      confirmedEditVersion: 0,
+    });
+    expect(beginMarkdownSave(session)).toEqual({
+      source: "Local draft",
+      expectedRevision: "r1",
+      editVersion: 1,
+    });
+  });
+
   it("changes rich-document editability without creating a save intent", () => {
     const source = "- one\n  - two\n";
     let session = createMarkdownDocumentSession({ source, revision: "sha256:before" });
@@ -81,6 +103,25 @@ describe("Markdown document session", () => {
     expect(beginMarkdownSave(keepLocal)).toEqual({
       source: "local three",
       expectedRevision: "r3",
+      editVersion: 1,
+    });
+  });
+
+  it("rebases a local draft onto a complete host snapshot before a session conflict arrives", () => {
+    const initial = createMarkdownDocumentSession({ source: "disk zero", revision: "r0" });
+    const dirty = applyUserMarkdownSource(initial, "local one");
+    const rebased = rebaseLocalMarkdownDraft(dirty, {
+      source: "agent one",
+      revision: "r1",
+    });
+
+    expect(rebased.draftSource).toBe("local one");
+    expect(rebased.baselineSource).toBe("agent one");
+    expect(rebased.baselineRevision).toBe("r1");
+    expect(rebased.conflict).toBeNull();
+    expect(beginMarkdownSave(rebased)).toEqual({
+      source: "local one",
+      expectedRevision: "r1",
       editVersion: 1,
     });
   });

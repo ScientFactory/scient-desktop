@@ -47,6 +47,7 @@ describe("Scient Markdown save feedback", () => {
           relativePath: "notes/results.md",
           message: "Disk is full.",
         }}
+        saveRetryReady
         hasFallbackData
         onCancel={vi.fn()}
         onReload={onReload}
@@ -64,5 +65,75 @@ describe("Scient Markdown save feedback", () => {
     expect(onRetrySave).toHaveBeenCalledOnce();
     act(() => buttons.find((button) => button.textContent === "Reload…")?.click());
     expect(onReload).toHaveBeenCalledOnce();
+  });
+
+  it("holds conflict actions until the matching disk bytes are loaded", () => {
+    const onRequestOverwrite = vi.fn();
+    const onResolve = vi.fn();
+    const host = mount(
+      <ScientFileFreshnessNotices
+        relativePath="notes/results.md"
+        notice={{
+          kind: "external-change",
+          relativePath: "notes/results.md",
+          contents: null,
+          revision: "r2",
+        }}
+        readError={null}
+        saveError={null}
+        saveRetryReady={false}
+        hasFallbackData
+        onCancel={vi.fn()}
+        onReload={vi.fn()}
+        onRequestOverwrite={onRequestOverwrite}
+        onRetrySave={vi.fn()}
+        onResolve={onResolve}
+      />,
+    );
+
+    const buttons = [...host.querySelectorAll("button")];
+    const useMine = buttons.find((button) => button.textContent === "Use my edits");
+    const reload = buttons.find((button) => button.textContent === "Reload from disk");
+    expect(useMine?.disabled).toBe(true);
+    expect(reload?.disabled).toBe(true);
+    act(() => useMine?.click());
+    act(() => reload?.click());
+    expect(onRequestOverwrite).not.toHaveBeenCalled();
+    expect(onResolve).not.toHaveBeenCalled();
+  });
+
+  it("enables conflict recovery only with one complete disk snapshot", () => {
+    const onRequestOverwrite = vi.fn();
+    const onResolve = vi.fn();
+    const host = mount(
+      <ScientFileFreshnessNotices
+        relativePath="notes/results.md"
+        notice={{
+          kind: "external-change",
+          relativePath: "notes/results.md",
+          contents: "External contents",
+          revision: "r2",
+        }}
+        readError={null}
+        saveError={null}
+        saveRetryReady
+        hasFallbackData
+        onCancel={vi.fn()}
+        onReload={vi.fn()}
+        onRequestOverwrite={onRequestOverwrite}
+        onRetrySave={vi.fn()}
+        onResolve={onResolve}
+      />,
+    );
+
+    const buttons = [...host.querySelectorAll("button")];
+    const useMine = buttons.find((button) => button.textContent === "Use my edits");
+    const reload = buttons.find((button) => button.textContent === "Reload from disk");
+    expect(useMine?.disabled).toBe(false);
+    expect(reload?.disabled).toBe(false);
+    act(() => useMine?.click());
+    act(() => reload?.click());
+    expect(onRequestOverwrite).toHaveBeenCalledOnce();
+    expect(onResolve).toHaveBeenCalledExactlyOnceWith("discard");
   });
 });

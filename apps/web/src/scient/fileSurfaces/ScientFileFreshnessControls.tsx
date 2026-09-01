@@ -49,6 +49,7 @@ export function ScientFileFreshnessNotices(props: {
   readonly notice: FileReloadNotice | null;
   readonly readError: string | null;
   readonly saveError: FileSaveErrorNotice | null;
+  readonly saveRetryReady: boolean;
   readonly hasFallbackData: boolean;
   readonly onCancel: () => void;
   readonly onReload: () => void;
@@ -59,6 +60,7 @@ export function ScientFileFreshnessNotices(props: {
   const visibleNotice = props.notice?.relativePath === props.relativePath ? props.notice : null;
   const visibleSaveError =
     props.saveError?.relativePath === props.relativePath ? props.saveError : null;
+  const resolutionReady = visibleNotice?.contents !== null;
 
   return (
     <>
@@ -76,7 +78,12 @@ export function ScientFileFreshnessNotices(props: {
                 : "This file changed on disk while you had unsaved edits. Your local buffer was kept and was not allowed to overwrite the newer file."}
           </div>
           {visibleNotice.kind === "external-change" ? (
-            <Button size="xs" variant="ghost" onClick={props.onRequestOverwrite}>
+            <Button
+              size="xs"
+              variant="ghost"
+              disabled={!resolutionReady}
+              onClick={props.onRequestOverwrite}
+            >
               Use my edits
             </Button>
           ) : (
@@ -87,6 +94,7 @@ export function ScientFileFreshnessNotices(props: {
           <Button
             size="xs"
             variant={visibleNotice.kind === "confirm-overwrite" ? "destructive" : "outline"}
+            disabled={!resolutionReady}
             onClick={() =>
               props.onResolve(visibleNotice.kind === "confirm-overwrite" ? "retry" : "discard")
             }
@@ -107,7 +115,12 @@ export function ScientFileFreshnessNotices(props: {
           <Button size="xs" variant="ghost" onClick={props.onReload}>
             Reload…
           </Button>
-          <Button size="xs" variant="outline" onClick={props.onRetrySave}>
+          <Button
+            size="xs"
+            variant="outline"
+            disabled={!props.saveRetryReady}
+            onClick={props.onRetrySave}
+          >
             Retry save
           </Button>
         </div>

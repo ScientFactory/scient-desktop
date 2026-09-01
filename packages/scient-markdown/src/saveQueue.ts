@@ -14,9 +14,7 @@ export interface MarkdownSaveQueueOptions<A extends MarkdownSaveResult> {
   readonly onFailure: (intent: MarkdownSaveIntent, error: unknown) => void;
 }
 
-type MarkdownSaveResolution =
-  | { readonly action: "discard" }
-  | { readonly action: "retry"; readonly expectedRevision?: string };
+type MarkdownSaveResolution = { readonly action: "discard" } | { readonly action: "resume" };
 
 interface MarkdownSaveInFlight {
   readonly id: number;
@@ -106,19 +104,14 @@ export class MarkdownSaveQueue<A extends MarkdownSaveResult = MarkdownSaveResult
     }
   }
 
-  retry(expectedRevision?: string): void {
+  /** Resume a blocked lane after its owning session has supplied a rebased intent. */
+  resume(): void {
     if (this.disposed) return;
     if (this.inFlight !== null) {
-      this.deferredResolution = {
-        action: "retry",
-        ...(expectedRevision === undefined ? {} : { expectedRevision }),
-      };
+      this.deferredResolution = { action: "resume" };
       return;
     }
     if (this.pendingIntent === null) return;
-    if (expectedRevision !== undefined) {
-      this.pendingIntent = { ...this.pendingIntent, expectedRevision };
-    }
     this.blocked = false;
     if (this.inFlight === null) this.schedule(0);
   }
@@ -140,26 +133,33 @@ export class MarkdownSaveQueue<A extends MarkdownSaveResult = MarkdownSaveResult
   }
 
   /**
-   * Retires a save after an authoritative file refresh has already observed
-   * the queue's current draft. This is stronger than a timer: the project
-   * read proves the bytes were published even if the command response was
-   * interrupted or never settled in the renderer.
+   * Retires a known save intent after an authoritative file refresh observes
+   * its bytes. This is stronger than a timer: the project read proves those
+   * bytes were published even if the command response was interrupted or
+   * never settled in the renderer.
    */
-  acknowledgePersisted(source: string): boolean {
-    if (this.disposed) return false;
-    const latestIntent = this.pendingIntent ?? this.inFlight?.intent;
-    if (!latestIntent || latestIntent.source !== source) return false;
-    // Observing an undone/compensating draft does not prove a different
-    // in-flight write has finished. It may still publish after this read.
-    if (this.inFlight !== null && this.inFlight.intent.source !== source) return false;
+  acknowledgePublished(source: string, expectedRevision: string): MarkdownSaveIntent | null {
+    if (this.disposed || this.deferredResolution !== null) return null;
+    const intent = this.inFlight?.intent ?? this.pendingIntent;
+    if (
+      intent === null ||
+      intent.source !== source ||
+      intent.expectedRevision !== expectedRevision
+    ) {
+      return null;
+    }
+    // Never retire a compensating draft merely because it matches the old
+    // disk bytes while a different write can still publish afterward.
+    if (this.inFlight !== null) {
+      this.inFlight.settle();
+      this.inFlight = null;
+    } else {
+      this.pendingIntent = null;
+    }
     this.clearTimer();
-    this.pendingIntent = null;
-    this.inFlight?.settle();
-    this.inFlight = null;
-    this.deferredResolution = null;
     this.blocked = false;
-    this.notifyCallback("onPendingChange", () => this.options.onPendingChange(false));
-    return true;
+    this.notifyCallback("onPendingChange", () => this.options.onPendingChange(this.pending));
+    return intent;
   }
 
   async dispose(options: { readonly flush?: boolean } = {}): Promise<void> {
@@ -195,7 +195,7 @@ export class MarkdownSaveQueue<A extends MarkdownSaveResult = MarkdownSaveResult
     });
     this.inFlight = { id: persistenceId, intent, promise, settle };
     void this.persist(intent, persistenceId)
-      .then((succeeded) => {
+      .then(() => {
         if (this.inFlight?.id !== persistenceId) return;
         this.inFlight = null;
         const resolution = this.deferredResolution;
@@ -206,23 +206,13 @@ export class MarkdownSaveQueue<A extends MarkdownSaveResult = MarkdownSaveResult
           this.notifyCallback("onPendingChange", () => this.options.onPendingChange(false));
           return;
         }
-        if (resolution?.action === "retry") {
-          if (
-            !succeeded &&
-            resolution.expectedRevision !== undefined &&
-            this.pendingIntent !== null
-          ) {
-            this.pendingIntent = {
-              ...this.pendingIntent,
-              expectedRevision: resolution.expectedRevision,
-            };
-          }
+        if (resolution?.action === "resume") {
           this.blocked = false;
         }
         if (this.blocked) return;
         if (this.pendingIntent !== null) {
           this.schedule(
-            resolution?.action === "retry" || this.disposed ? 0 : this.options.debounceMs,
+            resolution?.action === "resume" || this.disposed ? 0 : this.options.debounceMs,
           );
         } else {
           this.notifyCallback("onPendingChange", () => this.options.onPendingChange(false));
@@ -231,13 +221,13 @@ export class MarkdownSaveQueue<A extends MarkdownSaveResult = MarkdownSaveResult
       .finally(settle);
   }
 
-  private async persist(intent: MarkdownSaveIntent, persistenceId: number): Promise<boolean> {
+  private async persist(intent: MarkdownSaveIntent, persistenceId: number): Promise<void> {
     try {
       const result = await this.options.persist(intent);
       // An authoritative refresh may have retired this command while its
       // response was still pending. Its late result must not alter a newer
       // save lane or re-confirm an older revision.
-      if (this.inFlight?.id !== persistenceId) return true;
+      if (this.inFlight?.id !== persistenceId) return;
       this.notifyCallback("onConfirmed", () => this.options.onConfirmed(intent, result));
       if (
         this.pendingIntent !== null &&
@@ -246,12 +236,11 @@ export class MarkdownSaveQueue<A extends MarkdownSaveResult = MarkdownSaveResult
       ) {
         this.pendingIntent = { ...this.pendingIntent, expectedRevision: result.revision };
       }
-      return true;
     } catch (error) {
-      if (this.inFlight?.id !== persistenceId) return false;
+      if (this.inFlight?.id !== persistenceId) return;
       if (
         this.deferredResolution?.action !== "discard" &&
-        (this.pendingIntent === null || intent.editVersion >= this.pendingIntent.editVersion)
+        (this.pendingIntent === null || intent.editVersion > this.pendingIntent.editVersion)
       ) {
         this.pendingIntent = intent;
       }
@@ -262,7 +251,6 @@ export class MarkdownSaveQueue<A extends MarkdownSaveResult = MarkdownSaveResult
       if (this.deferredResolution === null) {
         this.notifyCallback("onFailure", () => this.options.onFailure(intent, error));
       }
-      return false;
     }
   }
 

@@ -13,9 +13,14 @@ const SAVE_DEBOUNCE_MS = 500;
 export interface ScientMarkdownWorkspaceSurfaceProps {
   readonly source: string;
   readonly revision: string;
+  readonly authoritativeSnapshot: {
+    readonly source: string;
+    readonly revision: string;
+  } | null;
   readonly ariaLabel: string;
   readonly persist: (intent: MarkdownSaveIntent) => Promise<{ readonly revision: string }>;
   readonly onPendingChange: (pending: boolean) => void;
+  readonly onDraftSourceChange: (source: string) => void;
   readonly onSaveConfirmed: (source: string, revision: string) => void;
   readonly onSaveFailure: (error: unknown) => void;
   readonly onExternalConflict: (input: {
@@ -34,6 +39,7 @@ export interface ScientMarkdownWorkspaceSurfaceProps {
   readonly onWikiLinkSelected?: (path: string) => void;
   readonly saveResolution?: {
     readonly action: "discard" | "retry";
+    readonly contents: string;
     readonly revision: string;
   } | null;
   readonly onSaveResolutionApplied?: () => void;
@@ -68,7 +74,7 @@ export function ScientMarkdownWorkspaceSurface(props: ScientMarkdownWorkspaceSur
             // The watcher can observe this save before its reply while newer
             // typing is queued. Confirming that snapshot clears the apparent
             // conflict; release its pause too, but never a newer real conflict.
-            if (session && saveQueue.failureBlocked) saveQueue.retry(result.revision);
+            if (session && saveQueue.failureBlocked) saveQueue.resume();
             bindingsRef.current.onSaveConfirmed(intent.source, result.revision);
           }
         },
@@ -79,7 +85,8 @@ export function ScientMarkdownWorkspaceSurface(props: ScientMarkdownWorkspaceSur
     () =>
       new ScientMarkdownEditorView({
         source: props.source,
-        revision: props.revision,
+        revision: props.authoritativeSnapshot?.revision ?? props.revision,
+        authoritativeSource: props.authoritativeSnapshot?.source ?? props.source,
         mode: "write",
         ariaLabel: props.ariaLabel,
         onOpenWikiLink: (target) => bindingsRef.current.onOpenWikiLink?.(target),
@@ -105,9 +112,10 @@ export function ScientMarkdownWorkspaceSurface(props: ScientMarkdownWorkspaceSur
         wikiLinkSuggestions: () => bindingsRef.current.wikiLinkSuggestions?.() ?? [],
         wikiLinkTargetExists: (target) =>
           bindingsRef.current.wikiLinkTargetExists?.(target) ?? null,
-        onUserSourceChange: () => {
+        onUserSourceChange: (source) => {
           // First real edit reveals the formatting controls.
           setChromeExpanded(true);
+          bindingsRef.current.onDraftSourceChange(source);
           if (controllerRef.current) saveQueue.synchronize(controllerRef.current.session.session);
         },
       }),
@@ -115,9 +123,24 @@ export function ScientMarkdownWorkspaceSurface(props: ScientMarkdownWorkspaceSur
   controllerRef.current = controller;
 
   useEffect(() => {
+    const authoritative = props.authoritativeSnapshot;
+    if (authoritative === null) return;
+    const publishedIntent = saveQueue.acknowledgePublished(
+      authoritative.source,
+      controller.session.session.baselineRevision,
+    );
+    if (publishedIntent !== null) {
+      controller.confirmSave(publishedIntent, authoritative.revision);
+      saveQueue.synchronize(controller.session.session);
+      const session = controller.session.session;
+      if (session.conflict === null && session.baselineRevision === authoritative.revision) {
+        bindingsRef.current.onSaveConfirmed(authoritative.source, authoritative.revision);
+      }
+      return;
+    }
     const result = controller.receiveExternalSource({
-      source: props.source,
-      revision: props.revision,
+      source: authoritative.source,
+      revision: authoritative.revision,
     });
     const currentIntent = controller.createSaveIntent();
     if (result === "adopted") {
@@ -126,32 +149,38 @@ export function ScientMarkdownWorkspaceSurface(props: ScientMarkdownWorkspaceSur
       saveQueue.synchronize(controller.session.session);
     } else if (result === "conflict") {
       saveQueue.pause();
-      bindingsRef.current.onExternalConflict({ source: props.source, revision: props.revision });
-    } else if (saveQueue.pending && !saveQueue.failureBlocked && currentIntent === null) {
-      // The project query is authoritative. If it now contains this draft,
-      // publication succeeded even when the renderer never received the
-      // command settlement; retire that stale lane instead of trapping the
-      // user behind an endless Saving state.
-      saveQueue.acknowledgePersisted(props.source);
+      bindingsRef.current.onExternalConflict(authoritative);
     } else if (currentIntent) {
       saveQueue.synchronize(controller.session.session);
     }
-  }, [controller, props.revision, props.source, saveQueue]);
+  }, [
+    controller,
+    props.authoritativeSnapshot?.revision,
+    props.authoritativeSnapshot?.source,
+    saveQueue,
+  ]);
 
   useEffect(() => {
     if (!props.saveResolution) return;
+    const authoritative = {
+      source: props.saveResolution.contents,
+      revision: props.saveResolution.revision,
+    };
     if (props.saveResolution.action === "discard") {
-      controller.discardLocalChanges({
-        source: props.source,
-        revision: props.saveResolution.revision,
-      });
+      controller.discardLocalChanges(authoritative);
     } else {
-      controller.resolveExternalConflict("local");
+      controller.rebaseLocalChanges(authoritative);
     }
     saveQueue.synchronize(controller.session.session);
-    saveQueue.retry(props.saveResolution.revision);
+    const alreadyPersisted =
+      props.saveResolution.action === "retry" &&
+      controller.session.session.draftSource === authoritative.source;
+    saveQueue.resume();
+    if (alreadyPersisted) {
+      bindingsRef.current.onSaveConfirmed(authoritative.source, authoritative.revision);
+    }
     bindingsRef.current.onSaveResolutionApplied?.();
-  }, [controller, props.saveResolution, props.source, saveQueue]);
+  }, [controller, props.saveResolution, saveQueue]);
 
   useFinalUnmount(() => {
     // Normal surface departures are held by the shared pending-save guard.

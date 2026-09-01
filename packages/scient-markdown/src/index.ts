@@ -14,6 +14,7 @@ export {
   confirmMarkdownSave,
   createMarkdownDocumentSession,
   receiveExternalMarkdownSource,
+  rebaseLocalMarkdownDraft,
   resolveMarkdownConflictWithDisk,
   resolveMarkdownConflictWithLocal,
   setMarkdownDocumentMode,

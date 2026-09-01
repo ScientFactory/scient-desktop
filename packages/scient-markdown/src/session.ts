@@ -24,14 +24,17 @@ export interface MarkdownSaveIntent {
 export function createMarkdownDocumentSession(input: {
   readonly source: string;
   readonly revision: string;
+  readonly draftSource?: string;
   readonly mode?: MarkdownDocumentMode;
 }): MarkdownDocumentSession {
+  const draftSource = input.draftSource ?? input.source;
+  const editVersion = draftSource === input.source ? 0 : 1;
   return {
     mode: input.mode ?? "read",
     baselineSource: input.source,
     baselineRevision: input.revision,
-    draftSource: input.source,
-    editVersion: 0,
+    draftSource,
+    editVersion,
     confirmedEditVersion: 0,
     conflict: null,
   };
@@ -133,10 +136,26 @@ export function resolveMarkdownConflictWithLocal(
   session: MarkdownDocumentSession,
 ): MarkdownDocumentSession {
   if (session.conflict === null) return session;
+  return rebaseLocalMarkdownDraft(session, {
+    source: session.conflict.externalSource,
+    revision: session.conflict.externalRevision,
+  });
+}
+
+/**
+ * Keep the current local draft while adopting one complete authoritative disk
+ * snapshot as its compare-and-swap baseline. This is also valid when the host
+ * learned about the snapshot from a rejected write before the session's
+ * external-source effect observed it.
+ */
+export function rebaseLocalMarkdownDraft(
+  session: MarkdownDocumentSession,
+  input: { readonly source: string; readonly revision: string },
+): MarkdownDocumentSession {
   return {
     ...session,
-    baselineSource: session.conflict.externalSource,
-    baselineRevision: session.conflict.externalRevision,
+    baselineSource: input.source,
+    baselineRevision: input.revision,
     conflict: null,
   };
 }

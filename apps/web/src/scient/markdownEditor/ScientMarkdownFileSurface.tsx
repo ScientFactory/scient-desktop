@@ -7,6 +7,7 @@ import { resolveAssetUrl } from "~/assets/assetUrls";
 import {
   confirmProjectFileQueryData,
   refreshProjectEntriesQuery,
+  setProjectFileQueryData,
   useProjectEntriesQuery,
 } from "~/components/files/projectFilesQueryState";
 import { toastManager } from "~/components/ui/toast";
@@ -42,6 +43,10 @@ export interface ScientMarkdownFileSurfaceProps {
   readonly threadRef: ScopedThreadRef;
   readonly contents: string;
   readonly revision: string;
+  readonly authoritativeSnapshot: {
+    readonly source: string;
+    readonly revision: string;
+  } | null;
   readonly onOpenFile: (relativePath: string) => void;
   readonly onPendingChange: (relativePath: string, pending: boolean) => void;
   readonly onSaveConfirmed: (relativePath: string, contents: string, revision: string) => void;
@@ -52,6 +57,7 @@ export interface ScientMarkdownFileSurfaceProps {
   }) => void;
   readonly saveResolution?: {
     readonly action: "discard" | "retry";
+    readonly contents: string;
     readonly revision: string;
   } | null;
   readonly onSaveResolutionApplied?: () => void;
@@ -212,9 +218,13 @@ export function ScientMarkdownFileSurface(props: ScientMarkdownFileSurfaceProps)
       key={JSON.stringify([props.environmentId, props.cwd, props.relativePath])}
       source={props.contents}
       revision={props.revision}
+      authoritativeSnapshot={props.authoritativeSnapshot}
       ariaLabel={`${props.relativePath} Markdown document`}
       persist={persist}
       onPendingChange={(pending) => props.onPendingChange(props.relativePath, pending)}
+      onDraftSourceChange={(source) =>
+        setProjectFileQueryData(props.environmentId, props.cwd, props.relativePath, source)
+      }
       onSaveConfirmed={(source, revision) => {
         confirmProjectFileQueryData(
           props.environmentId,

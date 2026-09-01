@@ -6,6 +6,21 @@ import { describe, expect, it, vi } from "vite-plus/test";
 import { ScientProseMirrorSession } from "./session";
 
 describe("ScientProseMirrorSession", () => {
+  it("projects a restored draft while retaining the authoritative CAS baseline", () => {
+    const session = new ScientProseMirrorSession({
+      source: "Local draft\n",
+      authoritativeSource: "Disk\n",
+      revision: "sha256:disk",
+    });
+
+    expect(session.state.doc.textContent).toBe("Local draft");
+    expect(session.createSaveIntent()).toEqual({
+      source: "Local draft\n",
+      expectedRevision: "sha256:disk",
+      editVersion: 1,
+    });
+  });
+
   it("does not parse, serialize, transact, or request a save during 100 editability cycles", () => {
     const onUserSourceChange = vi.fn();
     const session = new ScientProseMirrorSession({

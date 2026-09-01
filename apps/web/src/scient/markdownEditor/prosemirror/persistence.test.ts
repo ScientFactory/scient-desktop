@@ -46,7 +46,7 @@ describe("Markdown draft and persistence coherence", () => {
     expect(h.queue.pending).toBe(true);
     h.session.resolveExternalConflict("local");
     h.queue.synchronize(h.session.session);
-    h.queue.retry("r2");
+    h.queue.resume();
     await h.queue.flush();
     expect(persist.mock.calls[1]?.[0]).toMatchObject({
       source: "Mine with more edits",
@@ -94,7 +94,7 @@ describe("Markdown draft and persistence coherence", () => {
     else {
       h.session.discardLocalChanges({ source: "Original", revision: "r0" });
       h.queue.synchronize(h.session.session);
-      h.queue.retry("r0");
+      h.queue.resume();
     }
     resolveFirst({ revision: "r1" });
     await flushed;
@@ -115,7 +115,7 @@ describe("Markdown draft and persistence coherence", () => {
     h.edit("Original!new");
     h.session.resolveExternalConflict("local");
     h.queue.synchronize(h.session.session);
-    h.queue.retry("r-agent");
+    h.queue.resume();
     await h.queue.flush();
     expect(h.persist).toHaveBeenCalledExactlyOnceWith({
       source: "Original!new",

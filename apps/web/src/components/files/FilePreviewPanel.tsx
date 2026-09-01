@@ -78,6 +78,7 @@ import {
   useWorkspaceFileRefresh,
 } from "~/scient/fileSurfaces/useWorkspaceFileRefresh";
 import { usePendingSurfaceDeparture } from "~/scient/fileSurfaces/usePendingSurfaceDeparture";
+import { authoritativeFileSnapshotForEditor } from "~/scient/fileSurfaces/fileRefreshPolicy";
 
 import FileBrowserPanel from "./FileBrowserPanel";
 import { FileMarkdownPreview } from "./FileMarkdownPreview";
@@ -1095,31 +1096,8 @@ export default function FilePreviewPanel({
   const isPdf = previewKind === "pdf";
   const [pendingPaths, setPendingPaths] = useState<ReadonlySet<string>>(() => new Set());
   const sourcePending = relativePath !== null && pendingPaths.has(relativePath);
+  const effectiveSourcePending = sourcePending || selectedFilePending;
   const runAfterPendingSave = usePendingSurfaceDeparture(pendingPaths);
-  const {
-    automaticRefreshUnavailable,
-    cancelReloadNotice,
-    file,
-    handleExternalConflict,
-    handleSaveConfirmed,
-    handleSaveFailure,
-    handleSaveResolutionApplied,
-    reloadNotice,
-    requestManualReload,
-    requestOverwrite,
-    requestRetrySave,
-    resolveReloadNotice,
-    saveError,
-    saveResolution,
-    viewerRefreshKey,
-  } = useWorkspaceFileRefresh({
-    environmentId,
-    cwd,
-    relativePath,
-    loadAsText: shouldLoadFileAsText(relativePath),
-    sourcePending: sourcePending || selectedFilePending,
-    workspaceMutationId,
-  });
   const [explorerOpen, setExplorerOpen] = useState(initialExplorerOpen);
   const [pdfExplorerOpen, setPdfExplorerOpen] = useState(false);
   const effectiveExplorerOpen = isPdf ? pdfExplorerOpen : explorerOpen;
@@ -1141,6 +1119,47 @@ export default function FilePreviewPanel({
     renderMarkdownPreferred &&
     (revealLine === null ||
       (handledReveal?.path === relativePath && handledReveal.requestId === revealRequestId));
+  const {
+    automaticRefreshUnavailable,
+    cancelReloadNotice,
+    file,
+    handleExternalConflict,
+    handleSaveConfirmed,
+    handleSaveFailure,
+    handleSaveResolutionApplied,
+    reloadNotice,
+    requestManualReload,
+    requestOverwrite,
+    requestRetrySave,
+    resolveReloadNotice,
+    saveError,
+    saveResolution,
+    saveRetryReady,
+    viewerRefreshKey,
+  } = useWorkspaceFileRefresh({
+    environmentId,
+    cwd,
+    relativePath,
+    loadAsText: shouldLoadFileAsText(relativePath),
+    sourcePending: effectiveSourcePending,
+    surfaceOwnsConflictDetection: isRichMarkdown && renderMarkdown,
+    workspaceMutationId,
+  });
+  // A confirmed optimistic value can briefly be newer than the last completed
+  // read. Do not feed that stale read back into a clean rich session while the
+  // confirmation refresh catches up.
+  const markdownAuthoritativeFile = authoritativeFileSnapshotForEditor({
+    authoritative: file.authoritativeData,
+    optimistic: file.data,
+    pending: effectiveSourcePending,
+  });
+  const markdownAuthoritativeSnapshot =
+    markdownAuthoritativeFile === null
+      ? null
+      : {
+          source: markdownAuthoritativeFile.contents,
+          revision: markdownAuthoritativeFile.revision,
+        };
   const markdownSaveStatus: ScientMarkdownSaveStatusKind =
     file.data === null
       ? "loading"
@@ -1150,7 +1169,7 @@ export default function FilePreviewPanel({
           ? "unsaved"
           : saveError?.relativePath === relativePath
             ? "failed"
-            : sourcePending
+            : effectiveSourcePending
               ? "saving"
               : "saved";
   const handleRenderMarkdownChange = useCallback(
@@ -1392,6 +1411,7 @@ export default function FilePreviewPanel({
         notice={reloadNotice}
         readError={file.error}
         saveError={saveError}
+        saveRetryReady={saveRetryReady}
         hasFallbackData={file.data !== null}
         onCancel={cancelReloadNotice}
         onReload={requestManualReload}
@@ -1514,7 +1534,7 @@ export default function FilePreviewPanel({
                   revealRequestId={revealRequestId}
                   wordWrap={wordWrap}
                   sourcePending={
-                    sourcePending ||
+                    effectiveSourcePending ||
                     (file.authoritativeData !== null &&
                       file.data.contents !== file.authoritativeData.contents)
                   }
@@ -1547,13 +1567,14 @@ export default function FilePreviewPanel({
                   threadRef={threadRef}
                   contents={file.data.contents}
                   revision={file.data.revision}
+                  authoritativeSnapshot={markdownAuthoritativeSnapshot}
                   onOpenFile={onOpenFile}
                   onPendingChange={handlePendingChange}
                   onSaveFailure={handleSaveFailure}
                   onSaveConfirmed={handleSaveConfirmed}
                   onSaveResolutionApplied={handleSaveResolutionApplied}
-                  onExternalConflict={({ revision }) =>
-                    handleExternalConflict(relativePath, revision)
+                  onExternalConflict={({ source, revision }) =>
+                    handleExternalConflict(relativePath, source, revision)
                   }
                   saveResolution={
                     saveResolution?.relativePath === relativePath ? saveResolution : null

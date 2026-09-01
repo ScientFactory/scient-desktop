@@ -7,9 +7,38 @@ import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 
 import { MarkdownSaveQueue } from "@scientfactory/scient-markdown";
 
-import { ScientMarkdownWorkspaceSurface } from "./ScientMarkdownWorkspaceSurface";
+import {
+  ScientMarkdownWorkspaceSurface as ProductionScientMarkdownWorkspaceSurface,
+  type ScientMarkdownWorkspaceSurfaceProps,
+} from "./ScientMarkdownWorkspaceSurface";
 import { ScientMarkdownEditorView } from "./prosemirror/view";
 import { useActivePendingSurfaceDeparture } from "../fileSurfaces/usePendingSurfaceDeparture";
+
+type TestSurfaceProps = Omit<
+  ScientMarkdownWorkspaceSurfaceProps,
+  "authoritativeSnapshot" | "onDraftSourceChange"
+> &
+  Partial<
+    Pick<ScientMarkdownWorkspaceSurfaceProps, "authoritativeSnapshot" | "onDraftSourceChange">
+  >;
+
+const ignoreDraftSourceChange = () => undefined;
+
+function ScientMarkdownWorkspaceSurface({
+  authoritativeSnapshot,
+  onDraftSourceChange = ignoreDraftSourceChange,
+  ...props
+}: TestSurfaceProps) {
+  return (
+    <ProductionScientMarkdownWorkspaceSurface
+      {...props}
+      authoritativeSnapshot={
+        authoritativeSnapshot ?? { source: props.source, revision: props.revision }
+      }
+      onDraftSourceChange={onDraftSourceChange}
+    />
+  );
+}
 
 describe("ScientMarkdownWorkspaceSurface", () => {
   const roots: ReturnType<typeof createRoot>[] = [];
@@ -83,99 +112,146 @@ describe("ScientMarkdownWorkspaceSurface", () => {
     expect(opened).toHaveBeenCalledExactlyOnceWith("current");
   });
 
-  it.each([false, true])(
-    "reconciles an observed in-flight save without stranding newer typing (external writer: %s)",
-    async (externalWriter) => {
-      vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
-      const mount = vi.spyOn(ScientMarkdownEditorView.prototype, "mount");
-      const synchronize = vi.spyOn(MarkdownSaveQueue.prototype, "synchronize");
-      let resolveFirst!: (value: { revision: string }) => void;
-      const first = new Promise<{ revision: string }>((resolve) => {
-        resolveFirst = resolve;
-      });
-      const persist = vi.fn(async () => ({ revision: "r2" })).mockImplementationOnce(() => first);
-      const props = {
-        source: "Original",
-        revision: "r0",
-        ariaLabel: "Watcher acknowledgement race",
-        persist,
-        onPendingChange: vi.fn(),
-        onSaveConfirmed: vi.fn(),
-        onSaveFailure: vi.fn(),
-        onExternalConflict: vi.fn(),
-      };
-      const host = document.createElement("div");
-      document.body.append(host);
-      const root = createRoot(host);
-      roots.push(root);
-      await act(() => root.render(<ScientMarkdownWorkspaceSurface {...props} />));
-      const controller = (mount.mock.instances as unknown as ScientMarkdownEditorView[]).find(
-        (item) => item.view?.dom.isConnected,
-      )!;
-      await act(() => controller.replaceUserSource("First edit"));
-      const queue = synchronize.mock.instances[0] as MarkdownSaveQueue;
-      let flushing!: Promise<void>;
-      await act(() => {
-        flushing = queue.flush();
-        controller.replaceUserSource("Latest edit");
-      });
-      // Disk publication and its watcher can arrive before the command reply.
-      await act(() =>
-        root.render(
-          <ScientMarkdownWorkspaceSurface {...props} source="First edit" revision="r1" />,
-        ),
-      );
-      expect(queue.failureBlocked).toBe(true);
-      expect(props.onExternalConflict).toHaveBeenLastCalledWith({
-        source: "First edit",
-        revision: "r1",
-      });
-      if (externalWriter) {
-        await act(() =>
-          root.render(
-            <ScientMarkdownWorkspaceSurface {...props} source="External edit" revision="r3" />,
-          ),
-        );
-      }
-      await act(async () => {
-        resolveFirst({ revision: "r1" });
-        await flushing;
-      });
+  it("treats an observed in-flight publication as its own save and continues newer typing", async () => {
+    vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+    const mount = vi.spyOn(ScientMarkdownEditorView.prototype, "mount");
+    const synchronize = vi.spyOn(MarkdownSaveQueue.prototype, "synchronize");
+    let resolveFirst!: (value: { revision: string }) => void;
+    const first = new Promise<{ revision: string }>((resolve) => {
+      resolveFirst = resolve;
+    });
+    const persist = vi.fn(async () => ({ revision: "r2" })).mockImplementationOnce(() => first);
+    const props = {
+      source: "Original",
+      revision: "r0",
+      ariaLabel: "Watcher acknowledgement race",
+      persist,
+      onPendingChange: vi.fn(),
+      onSaveConfirmed: vi.fn(),
+      onSaveFailure: vi.fn(),
+      onExternalConflict: vi.fn(),
+    };
+    const host = document.createElement("div");
+    document.body.append(host);
+    const root = createRoot(host);
+    roots.push(root);
+    await act(() => root.render(<ScientMarkdownWorkspaceSurface {...props} />));
+    const controller = (mount.mock.instances as unknown as ScientMarkdownEditorView[]).find(
+      (item) => item.view?.dom.isConnected,
+    )!;
+    await act(() => controller.replaceUserSource("First edit"));
+    const queue = synchronize.mock.instances[0] as MarkdownSaveQueue;
+    let flushing!: Promise<void>;
+    await act(() => {
+      flushing = queue.flush();
+      controller.replaceUserSource("Latest edit");
+    });
 
-      expect(controller.view!.state.doc.textContent).toBe("Latest edit");
-      expect(props.onSaveFailure).not.toHaveBeenCalled();
-      if (externalWriter) {
-        expect(persist).toHaveBeenCalledTimes(1);
-        expect(controller.session.session.conflict?.externalRevision).toBe("r3");
-        expect(queue.failureBlocked).toBe(true);
-        expect(props.onPendingChange).toHaveBeenLastCalledWith(true);
-        expect(props.onSaveConfirmed).not.toHaveBeenCalled();
-        // Explicitly discard only the synthetic draft before unmount cleanup.
-        await act(() =>
-          root.render(
-            <ScientMarkdownWorkspaceSurface
-              {...props}
-              source="External edit"
-              revision="r3"
-              saveResolution={{ action: "discard", revision: "r3" }}
-            />,
-          ),
-        );
-      } else {
-        expect(persist).toHaveBeenCalledTimes(2);
-        expect(persist).toHaveBeenLastCalledWith({
-          source: "Latest edit",
-          expectedRevision: "r1",
-          editVersion: 2,
-        });
-        expect(controller.session.session.conflict).toBeNull();
-        expect(queue.pending).toBe(false);
-        expect(queue.failureBlocked).toBe(false);
-        expect(props.onPendingChange).toHaveBeenLastCalledWith(false);
-        expect(props.onSaveConfirmed).toHaveBeenLastCalledWith("Latest edit", "r2");
-      }
-    },
-  );
+    // The watcher observes the first published draft while the command reply
+    // is unsettled and a newer keystroke is already queued.
+    await act(() =>
+      root.render(<ScientMarkdownWorkspaceSurface {...props} source="First edit" revision="r1" />),
+    );
+    await act(() => flushing);
+
+    expect(props.onExternalConflict).not.toHaveBeenCalled();
+    expect(props.onSaveFailure).not.toHaveBeenCalled();
+    expect(persist).toHaveBeenCalledTimes(2);
+    expect(persist).toHaveBeenLastCalledWith({
+      source: "Latest edit",
+      expectedRevision: "r1",
+      editVersion: 2,
+    });
+    expect(controller.view!.state.doc.textContent).toBe("Latest edit");
+    expect(controller.session.session).toMatchObject({
+      baselineSource: "Latest edit",
+      baselineRevision: "r2",
+      draftSource: "Latest edit",
+      conflict: null,
+    });
+    expect(queue.pending).toBe(false);
+    expect(queue.failureBlocked).toBe(false);
+    expect(props.onPendingChange).toHaveBeenLastCalledWith(false);
+    expect(props.onSaveConfirmed.mock.calls).toEqual([
+      ["First edit", "r1"],
+      ["Latest edit", "r2"],
+    ]);
+
+    // The retired command can still settle, but its stale response has no
+    // authority to re-confirm or overwrite the newer save.
+    resolveFirst({ revision: "late-r1" });
+    await first;
+    await Promise.resolve();
+    expect(props.onSaveConfirmed).toHaveBeenCalledTimes(2);
+  });
+
+  it("still pauses for genuinely different disk bytes during an in-flight save", async () => {
+    vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+    const mount = vi.spyOn(ScientMarkdownEditorView.prototype, "mount");
+    const synchronize = vi.spyOn(MarkdownSaveQueue.prototype, "synchronize");
+    let resolveFirst!: (value: { revision: string }) => void;
+    const first = new Promise<{ revision: string }>((resolve) => {
+      resolveFirst = resolve;
+    });
+    const persist = vi.fn(() => first);
+    const props = {
+      source: "Original",
+      revision: "r0",
+      ariaLabel: "External writer race",
+      persist,
+      onPendingChange: vi.fn(),
+      onSaveConfirmed: vi.fn(),
+      onSaveFailure: vi.fn(),
+      onExternalConflict: vi.fn(),
+    };
+    const host = document.createElement("div");
+    document.body.append(host);
+    const root = createRoot(host);
+    roots.push(root);
+    await act(() => root.render(<ScientMarkdownWorkspaceSurface {...props} />));
+    const controller = (mount.mock.instances as unknown as ScientMarkdownEditorView[]).find(
+      (item) => item.view?.dom.isConnected,
+    )!;
+    await act(() => controller.replaceUserSource("My draft"));
+    const queue = synchronize.mock.instances[0] as MarkdownSaveQueue;
+    const flushing = queue.flush();
+    await new Promise<void>((resolve) => queueMicrotask(resolve));
+
+    await act(() =>
+      root.render(
+        <ScientMarkdownWorkspaceSurface {...props} source="External edit" revision="r1" />,
+      ),
+    );
+
+    expect(props.onExternalConflict).toHaveBeenLastCalledWith({
+      source: "External edit",
+      revision: "r1",
+    });
+    expect(controller.session.session.conflict?.externalRevision).toBe("r1");
+    expect(queue.failureBlocked).toBe(true);
+    expect(queue.pending).toBe(true);
+
+    await act(async () => {
+      resolveFirst({ revision: "writer-r2" });
+      await flushing;
+    });
+    expect(persist).toHaveBeenCalledOnce();
+    expect(props.onSaveConfirmed).not.toHaveBeenCalled();
+    expect(props.onSaveFailure).not.toHaveBeenCalled();
+
+    // Resolve only the synthetic conflict so final cleanup cannot publish the
+    // abandoned test draft.
+    await act(() =>
+      root.render(
+        <ScientMarkdownWorkspaceSurface
+          {...props}
+          source="External edit"
+          revision="r1"
+          saveResolution={{ action: "discard", contents: "External edit", revision: "r1" }}
+        />,
+      ),
+    );
+  });
 
   it("discards a dirty document when a manual reload reads unchanged disk bytes", async () => {
     vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
@@ -205,13 +281,77 @@ describe("ScientMarkdownWorkspaceSurface", () => {
       root.render(
         <ScientMarkdownWorkspaceSurface
           {...props}
-          saveResolution={{ action: "discard", revision: "r0" }}
+          saveResolution={{ action: "discard", contents: "Original", revision: "r0" }}
         />,
       ),
     );
     expect(controller.view!.state.doc.textContent).toBe("Original");
     expect(pending).toHaveBeenLastCalledWith(false);
     expect(persist).not.toHaveBeenCalled();
+  });
+
+  it("rebases a retry from one complete host snapshot before writing again", async () => {
+    vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+    const persist = vi
+      .fn()
+      .mockRejectedValueOnce(new Error("revision conflict"))
+      .mockResolvedValueOnce({ revision: "r2" });
+    const onSaveConfirmed = vi.fn();
+    const onSaveResolutionApplied = vi.fn();
+    const mount = vi.spyOn(ScientMarkdownEditorView.prototype, "mount");
+    const synchronize = vi.spyOn(MarkdownSaveQueue.prototype, "synchronize");
+    const host = document.createElement("div");
+    document.body.append(host);
+    const root = createRoot(host);
+    roots.push(root);
+    const baseProps = {
+      source: "Original",
+      revision: "r0",
+      authoritativeSnapshot: { source: "Original", revision: "r0" },
+      ariaLabel: "Retry snapshot fixture",
+      persist,
+      onPendingChange: vi.fn(),
+      onDraftSourceChange: vi.fn(),
+      onSaveConfirmed,
+      onSaveFailure: vi.fn(),
+      onExternalConflict: vi.fn(),
+      onSaveResolutionApplied,
+    } satisfies ScientMarkdownWorkspaceSurfaceProps;
+
+    await act(() => root.render(<ScientMarkdownWorkspaceSurface {...baseProps} />));
+    const controller = (mount.mock.instances as unknown as ScientMarkdownEditorView[]).find(
+      (candidate) => candidate.view?.dom.isConnected,
+    )!;
+    await act(() => controller.replaceUserSource("My draft"));
+    const queue = synchronize.mock.instances[0] as MarkdownSaveQueue;
+    await act(() => queue.flush());
+
+    expect(queue.failureBlocked).toBe(true);
+    await act(() =>
+      root.render(
+        <ScientMarkdownWorkspaceSurface
+          {...baseProps}
+          authoritativeSnapshot={null}
+          saveResolution={{ action: "retry", contents: "External", revision: "r1" }}
+        />,
+      ),
+    );
+    await act(() => queue.flush());
+
+    expect(persist).toHaveBeenCalledTimes(2);
+    expect(persist).toHaveBeenLastCalledWith({
+      source: "My draft",
+      expectedRevision: "r1",
+      editVersion: 1,
+    });
+    expect(controller.session.session).toMatchObject({
+      baselineSource: "My draft",
+      baselineRevision: "r2",
+      draftSource: "My draft",
+      conflict: null,
+    });
+    expect(onSaveConfirmed).toHaveBeenLastCalledWith("My draft", "r2");
+    expect(onSaveResolutionApplied).toHaveBeenCalledOnce();
   });
 
   it("mounts one always-editable rich document with no source pane", async () => {
@@ -725,14 +865,68 @@ describe("ScientMarkdownWorkspaceSurface", () => {
 
     await act(() => render("After\n", "r1"));
     expect(onPendingChange).toHaveBeenLastCalledWith(false);
+    expect(onSaveConfirmed).toHaveBeenCalledExactlyOnceWith("After\n", "r1");
 
     resolvePersist!({ revision: "late-r1" });
     await act(async () => {
       await persisted;
       await Promise.resolve();
     });
-    expect(onSaveConfirmed).not.toHaveBeenCalled();
+    expect(onSaveConfirmed).toHaveBeenCalledTimes(1);
     vi.useRealTimers();
+  });
+
+  it("accepts authoritative disk proof after a write command reports failure", async () => {
+    vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+    const persist = vi
+      .fn()
+      .mockRejectedValueOnce(new Error("transport interrupted"))
+      .mockResolvedValue({ revision: "unexpected-r2" });
+    const onPendingChange = vi.fn();
+    const onSaveConfirmed = vi.fn();
+    const onSaveFailure = vi.fn();
+    const mount = vi.spyOn(ScientMarkdownEditorView.prototype, "mount");
+    const synchronize = vi.spyOn(MarkdownSaveQueue.prototype, "synchronize");
+    const acknowledgePublished = vi.spyOn(MarkdownSaveQueue.prototype, "acknowledgePublished");
+    const host = document.createElement("div");
+    document.body.append(host);
+    const root = createRoot(host);
+    roots.push(root);
+    const props = {
+      source: "Before\n",
+      revision: "r0",
+      ariaLabel: "Failed command acknowledgement fixture",
+      persist,
+      onPendingChange,
+      onSaveConfirmed,
+      onSaveFailure,
+      onExternalConflict: vi.fn(),
+    };
+
+    await act(() => root.render(<ScientMarkdownWorkspaceSurface {...props} />));
+    const controller = (mount.mock.instances as unknown as ScientMarkdownEditorView[]).find(
+      (candidate) => candidate.view?.dom.isConnected,
+    )!;
+    await act(() => controller.replaceUserSource("After\n"));
+    const queue = synchronize.mock.instances[0] as MarkdownSaveQueue;
+    await act(() => queue.flush());
+    expect(queue.failureBlocked).toBe(true);
+    expect(onSaveFailure).toHaveBeenCalledOnce();
+    expect(controller.session.session).toMatchObject({
+      baselineSource: "Before\n",
+      baselineRevision: "r0",
+      draftSource: "After\n",
+    });
+
+    await act(() =>
+      root.render(<ScientMarkdownWorkspaceSurface {...props} source={"After\n"} revision="r1" />),
+    );
+
+    expect(acknowledgePublished).toHaveBeenCalledWith("After\n", "r0");
+    expect(queue.failureBlocked).toBe(false);
+    expect(queue.pending).toBe(false);
+    expect(onPendingChange).toHaveBeenLastCalledWith(false);
+    expect(onSaveConfirmed).toHaveBeenCalledExactlyOnceWith("After\n", "r1");
   });
 
   it("disposes the save lane and its externally owned editor on unmount", async () => {
