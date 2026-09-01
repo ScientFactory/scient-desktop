@@ -16,6 +16,7 @@ import {
 
 const decodeClientSettings = Schema.decodeUnknownSync(ClientSettingsSchema);
 const decodeClientSettingsPatch = Schema.decodeUnknownSync(ClientSettingsPatch);
+const encodeClientSettings = Schema.encodeSync(ClientSettingsSchema);
 const decodeServerSettings = Schema.decodeUnknownSync(ServerSettings);
 const decodeServerSettingsPatch = Schema.decodeUnknownSync(ServerSettingsPatch);
 const encodeServerSettings = Schema.encodeSync(ServerSettings);
@@ -125,6 +126,31 @@ describe("ClientSettings voice language", () => {
   });
 });
 
+describe("ClientSettings quit confirmation", () => {
+  it("defaults to hold", () => {
+    expect(decodeClientSettings({}).confirmQuit).toBe("hold");
+  });
+
+  it.each(["direct", "hold", "double-click"] as const)("accepts the %s mode", (mode) => {
+    expect(decodeClientSettings({ confirmQuit: mode }).confirmQuit).toBe(mode);
+    expect(decodeClientSettingsPatch({ confirmQuit: mode }).confirmQuit).toBe(mode);
+  });
+
+  it.each([
+    [true, "hold"],
+    [false, "direct"],
+  ] as const)("migrates the legacy %s value to %s", (legacyValue, mode) => {
+    const settings = decodeClientSettings({ confirmQuit: legacyValue });
+
+    expect(settings.confirmQuit).toBe(mode);
+    expect(encodeClientSettings(settings).confirmQuit).toBe(mode);
+  });
+
+  it("rejects legacy booleans at the patch boundary", () => {
+    expect(() => decodeClientSettingsPatch({ confirmQuit: true })).toThrow();
+  });
+});
+
 describe("ClientSettings browser recording frame rate", () => {
   it("defaults to 30 fps", () => {
     expect(decodeClientSettings({}).browserRecordingFrameRate).toBe(30);
@@ -217,11 +243,8 @@ describe("ClientSettings content direction", () => {
 });
 
 describe("ClientSettings sidebar", () => {
-  it("defaults to the current sidebar with merge settling off and a seven-day threshold", () => {
-    const settings = decodeClientSettings({});
-    expect(settings.legacySidebarEnabled).toBe(false);
-    expect(settings.sidebarAutoSettleAfterDays).toBe(7);
-    expect(settings.sidebarAutoSettleOnMerge).toBe(false);
+  it("defaults to the current sidebar", () => {
+    expect(decodeClientSettings({}).legacySidebarEnabled).toBe(false);
   });
 
   it("drops the retired sidebar v2 beta keys, resetting everyone to the default", () => {
@@ -246,34 +269,33 @@ describe("ClientSettings sidebar", () => {
     expect(decodeClientSettingsPatch({ confirmThreadUnpin: true }).confirmThreadUnpin).toBe(true);
     expect(() => decodeClientSettingsPatch({ confirmThreadUnpin: "yes" })).toThrow();
   });
+});
 
-  it("allows auto-settle by inactivity to be disabled", () => {
-    expect(
-      decodeClientSettings({ sidebarAutoSettleAfterDays: null }).sidebarAutoSettleAfterDays,
-    ).toBeNull();
+describe("ServerSettings thread settlement", () => {
+  it("keeps Scient's conservative automatic settlement defaults", () => {
+    const settings = decodeServerSettings({});
+    expect(settings.sidebarAutoSettleAfterDays).toBe(7);
+    expect(settings.sidebarAutoSettleOnMerge).toBe(false);
   });
 
-  it("preserves the previous inactivity threshold when it was explicitly persisted", () => {
-    expect(decodeClientSettings({ sidebarAutoSettleAfterDays: 3 }).sidebarAutoSettleAfterDays).toBe(
-      3,
-    );
+  it("allows both automatic rules to be disabled", () => {
     expect(
-      decodeClientSettingsPatch({ sidebarAutoSettleAfterDays: 3 }).sidebarAutoSettleAfterDays,
-    ).toBe(3);
-  });
-
-  it.each([true, false])("preserves an explicit auto-settle-on-merge choice: %s", (value) => {
-    expect(decodeClientSettings({ sidebarAutoSettleOnMerge: value }).sidebarAutoSettleOnMerge).toBe(
-      value,
-    );
+      decodeServerSettings({
+        sidebarAutoSettleAfterDays: null,
+        sidebarAutoSettleOnMerge: false,
+      }),
+    ).toMatchObject({ sidebarAutoSettleAfterDays: null, sidebarAutoSettleOnMerge: false });
     expect(
-      decodeClientSettingsPatch({ sidebarAutoSettleOnMerge: value }).sidebarAutoSettleOnMerge,
-    ).toBe(value);
+      decodeServerSettingsPatch({
+        sidebarAutoSettleAfterDays: null,
+        sidebarAutoSettleOnMerge: false,
+      }),
+    ).toMatchObject({ sidebarAutoSettleAfterDays: null, sidebarAutoSettleOnMerge: false });
   });
 
   it.each([-1, 0, 91])("rejects an auto-settle threshold outside 1..90: %s", (value) => {
-    expect(() => decodeClientSettings({ sidebarAutoSettleAfterDays: value })).toThrow();
-    expect(() => decodeClientSettingsPatch({ sidebarAutoSettleAfterDays: value })).toThrow();
+    expect(() => decodeServerSettings({ sidebarAutoSettleAfterDays: value })).toThrow();
+    expect(() => decodeServerSettingsPatch({ sidebarAutoSettleAfterDays: value })).toThrow();
   });
 });
 
