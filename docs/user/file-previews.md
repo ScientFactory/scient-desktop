@@ -47,6 +47,9 @@ retry or manual refresh. If automatic updates pause, that action is highlighted
 and its tooltip explains that reloading will retry them. A failed read keeps the
 last available preview visible while reporting the problem.
 
+The Files tree, Git status, and working diff also refresh after the agent
+finishes a file-changing tool or command. Unsaved source edits remain protected.
+
 Current limitation: automatic refresh follows the exact known path. If the file
 is renamed or moved, reopen it from its new location; Scient does not yet
 relocate an already open file automatically.

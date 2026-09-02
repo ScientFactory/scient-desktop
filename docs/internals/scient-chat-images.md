@@ -35,6 +35,33 @@ relative-path copy, background inspection, and refresh available in both
 compact and expanded views; the expanded header also retains source-file
 opening.
 
+The loaded inline card fits its image within the existing height/width bounds,
+without a permanent title bar, path footer, or stage padding. Its always-visible
+top-right toolbar overlays the static image; title, path, and format remain in
+the action menu. Small images retain only a minimum control-sized surface.
+Loading, streaming, failure, and action feedback keep explicit local states.
+
+`scient/presentation/VisualCardToolbar.tsx` shares the compact toolbar,
+menu details, and toolbar-local movement with Mermaid, Plotly, and Vega-Lite.
+The four-dot grip is positioned outside the action row's hit areas,
+without a separate flex column. `visualCardToolbarDrag.ts` starts movement from
+the grip or non-interactive toolbar space, excluding controls and their nested
+icons, including disabled buttons. Pointer capture and keyboard movement stay
+on the grip; translations are constrained to `data-scient-visual-card` and
+listeners are cleaned up on unmount. Clicking the grip or Home resets; an empty
+space click does not. Escape/pointer cancellation restores the
+pre-drag position, and positions are not persisted. Drag updates are batched
+to one pending animation frame without rerendering the figure. A resize
+observer exists only after a toolbar moves and disconnects on reset/unmount;
+it keeps controls reachable after card/toolbar resizing. There are no global
+movement listeners or continuous animation loops.
+
+The shared layer owns no renderer or asset loading. Interactive cards reserve
+their original toolbar slot above the content; the default position covers no
+authored title, legend, or bound input. Users may move it over the figure when
+desired without changing the figure layout. Expanded viewers, attachment
+galleries, inline/authored-size images, and Compute output cards are unchanged.
+
 The card downloads the original bytes. Clipboard copy uses PNG because it is
 the reliable Chromium clipboard interchange format; non-PNG inputs are
 rasterized on demand with bounded dimensions and pixels. SVG remains vector for

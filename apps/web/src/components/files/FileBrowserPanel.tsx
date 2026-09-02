@@ -7,10 +7,10 @@ import type {
   ProjectDirectoryEntry,
   ProjectDirectoryView,
 } from "@t3tools/contracts";
-import { FileTree, useFileTree, useFileTreeSearch } from "@pierre/trees/react";
+import { FileTree, useFileTree, useFileTreeSearch, useFileTreeSelector } from "@pierre/trees/react";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import { serializeComposerFileLink } from "@t3tools/shared/composerTrigger";
-import { MoreHorizontal, RotateCw } from "lucide-react";
+import { ChevronsDownUpIcon, ChevronsUpDownIcon, MoreHorizontal, RotateCw } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { Button } from "~/components/ui/button";
@@ -29,6 +29,7 @@ import { Tooltip, TooltipPopup, TooltipTrigger } from "~/components/ui/tooltip";
 import { useComposerHandleContext } from "~/composerHandleContext";
 import { writeTextToClipboard } from "~/hooks/useCopyToClipboard";
 import { useTheme } from "~/hooks/useTheme";
+import { useWorkspaceMutationRefresh } from "~/hooks/useWorkspaceMutationRefresh";
 import { cn } from "~/lib/utils";
 import { readLocalApi } from "~/localApi";
 import { T3_PIERRE_ICONS } from "~/pierre-icons";
@@ -42,6 +43,7 @@ import { useProjectPathSearch } from "~/state/queries";
 import { useAtomCommand } from "~/state/use-atom-command";
 
 import { createFileTreeDragMentionController } from "./fileTreeDragMention";
+import { areAllDirectoriesExpanded, setAllDirectoriesExpanded } from "./fileTreeExpansion";
 import { subscribeProjectFilesRefresh } from "./projectFilesQueryState";
 
 interface FileBrowserPanelProps {
@@ -55,6 +57,7 @@ interface FileBrowserPanelProps {
   onOpenFile: (relativePath: string) => void;
   onOpenFileSource: (relativePath: string) => void;
   onRefreshSelectedFile?: () => void;
+  workspaceMutationId: string | null;
 }
 
 const TREE_UNSAFE_CSS = `
@@ -187,6 +190,7 @@ export default function FileBrowserPanel({
   onOpenFile,
   onOpenFileSource,
   onRefreshSelectedFile,
+  workspaceMutationId,
 }: FileBrowserPanelProps) {
   const { resolvedTheme } = useTheme();
   const composerRef = useComposerHandleContext();
@@ -222,6 +226,13 @@ export default function FileBrowserPanel({
           (entry) => [entry.relativePath, entry.kind] as const,
         ),
       ),
+    [treeSnapshot.entries],
+  );
+  const loadedDirectoryPaths = useMemo(
+    () =>
+      [...treeSnapshot.entries.values()]
+        .filter((entry) => entry.kind === "directory")
+        .map((entry) => `${entry.relativePath}/`),
     [treeSnapshot.entries],
   );
   const entryKindsRef = useRef<ReadonlyMap<string, ProjectDirectoryEntry["kind"]>>(entryKinds);
@@ -373,6 +384,12 @@ export default function FileBrowserPanel({
     unsafeCSS: TREE_UNSAFE_CSS,
   });
   const treeSearch = useFileTreeSearch(model);
+  const allLoadedDirectoriesExpanded = useFileTreeSelector(model, (currentModel) =>
+    areAllDirectoriesExpanded(currentModel, loadedDirectoryPaths),
+  );
+  const toggleLoadedDirectories = () => {
+    setAllDirectoriesExpanded(model, loadedDirectoryPaths, !allLoadedDirectoriesExpanded);
+  };
   const loadDirectory = useCallback(
     async (relativeDirectory: string, view: ProjectDirectoryView) => {
       const result = await runListDirectory({
@@ -448,19 +465,23 @@ export default function FileBrowserPanel({
     model.closeSearch();
     setSearchValue("");
   };
-  const handleRefresh = () => {
+  const refreshEntries = useCallback(() => {
     void treeControllerRef.current?.refresh();
     if (isSearching) pathSearch.refresh();
+  }, [isSearching, pathSearch.refresh]);
+  useWorkspaceMutationRefresh({
+    mutationId: workspaceMutationId,
+    refresh: refreshEntries,
+    resourceKey: `files:${environmentId}:${cwd}`,
+  });
+  const handleRefresh = () => {
+    refreshEntries();
     onRefreshSelectedFile?.();
   };
 
   useEffect(
-    () =>
-      subscribeProjectFilesRefresh(environmentId, cwd, () => {
-        void treeControllerRef.current?.refresh();
-        if (isSearching) pathSearch.refresh();
-      }),
-    [environmentId, cwd, isSearching, pathSearch.refresh],
+    () => subscribeProjectFilesRefresh(environmentId, cwd, refreshEntries),
+    [environmentId, cwd, refreshEntries],
   );
 
   useEffect(() => {
@@ -586,6 +607,34 @@ export default function FileBrowserPanel({
           onValueChange={handleSearchValueChange}
           onClose={handleSearchClose}
         />
+        {loadedDirectoryPaths.length > 0 ? (
+          <Tooltip>
+            <TooltipTrigger
+              render={
+                <Button
+                  type="button"
+                  size="icon-xs"
+                  variant="ghost"
+                  aria-label={
+                    allLoadedDirectoriesExpanded
+                      ? "Collapse loaded folders"
+                      : "Expand loaded folders"
+                  }
+                  onClick={toggleLoadedDirectories}
+                />
+              }
+            >
+              {allLoadedDirectoriesExpanded ? (
+                <ChevronsDownUpIcon className="size-3.5" />
+              ) : (
+                <ChevronsUpDownIcon className="size-3.5" />
+              )}
+            </TooltipTrigger>
+            <TooltipPopup>
+              {allLoadedDirectoriesExpanded ? "Collapse loaded folders" : "Expand loaded folders"}
+            </TooltipPopup>
+          </Tooltip>
+        ) : null}
         <WorkspaceFilesMenu
           view={directoryView}
           onViewChange={(nextView) => {

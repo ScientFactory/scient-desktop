@@ -5,6 +5,7 @@ import { ProviderDriverKind, ProviderInstanceId } from "./providerInstance.ts";
 import {
   ClientSettingsSchema,
   ClientSettingsPatch,
+  ClaudeSettings,
   DEFAULT_CLIENT_SETTINGS,
   DEFAULT_SERVER_SETTINGS,
   defaultEnabledForDriver,
@@ -15,18 +16,72 @@ import {
 
 const decodeClientSettings = Schema.decodeUnknownSync(ClientSettingsSchema);
 const decodeClientSettingsPatch = Schema.decodeUnknownSync(ClientSettingsPatch);
+const encodeClientSettings = Schema.encodeSync(ClientSettingsSchema);
 const decodeServerSettings = Schema.decodeUnknownSync(ServerSettings);
 const decodeServerSettingsPatch = Schema.decodeUnknownSync(ServerSettingsPatch);
 const encodeServerSettings = Schema.encodeSync(ServerSettings);
+const decodeClaudeSettings = Schema.decodeUnknownSync(ClaudeSettings);
+
+describe("ClaudeSettings auto-compaction", () => {
+  it("uses Claude's default threshold when no override is configured", () => {
+    expect(decodeClaudeSettings({}).autoCompactWindow).toBe("");
+  });
+
+  it.each(["100000", "300000", "1000000"])(
+    "accepts a supported auto-compaction threshold: %s",
+    (value) => {
+      expect(decodeClaudeSettings({ autoCompactWindow: value }).autoCompactWindow).toBe(value);
+    },
+  );
+
+  it.each(["99999", "1000001", "300k", "invalid"])(
+    "rejects an unsupported auto-compaction threshold: %s",
+    (value) => {
+      expect(() => decodeClaudeSettings({ autoCompactWindow: value })).toThrow();
+    },
+  );
+
+  it("rejects an unsupported threshold at the settings patch boundary", () => {
+    expect(() =>
+      decodeServerSettingsPatch({ providers: { claudeAgent: { autoCompactWindow: "300k" } } }),
+    ).toThrow();
+    expect(
+      decodeServerSettingsPatch({ providers: { claudeAgent: { autoCompactWindow: "300000" } } }),
+    ).toBeDefined();
+  });
+});
 
 describe("ClientSettings typography defaults", () => {
   it("uses the Scient comfortable-reading profile", () => {
     expect(DEFAULT_CLIENT_SETTINGS).toMatchObject({
-      fontSizeInterface: 18,
+      fontSizeInterface: 17,
       fontSizePrompt: 16,
       fontSizeCode: 15,
       fontSizeTerminal: 14,
     });
+  });
+
+  it("preserves an explicitly chosen interface size", () => {
+    expect(decodeClientSettings({ fontSizeInterface: 18 }).fontSizeInterface).toBe(18);
+    expect(decodeClientSettingsPatch({ fontSizeInterface: 18 }).fontSizeInterface).toBe(18);
+    expect(decodeClientSettingsPatch({})).not.toHaveProperty("fontSizeInterface");
+  });
+});
+
+describe("ClientSettings slash-menu skills", () => {
+  it("defaults skill aliases off without removing the preference", () => {
+    expect(DEFAULT_CLIENT_SETTINGS.showSkillsInSlashMenu).toBe(false);
+    expect(decodeClientSettings({}).showSkillsInSlashMenu).toBe(false);
+    expect(decodeClientSettingsPatch({})).not.toHaveProperty("showSkillsInSlashMenu");
+  });
+
+  it.each([true, false])("preserves the explicit preference %s", (showSkillsInSlashMenu) => {
+    expect(decodeClientSettings({ showSkillsInSlashMenu }).showSkillsInSlashMenu).toBe(
+      showSkillsInSlashMenu,
+    );
+    expect(decodeClientSettingsPatch({ showSkillsInSlashMenu }).showSkillsInSlashMenu).toBe(
+      showSkillsInSlashMenu,
+    );
   });
 });
 
@@ -68,6 +123,51 @@ describe("ClientSettings voice language", () => {
   it("rejects unsupported language values", () => {
     expect(() => decodeClientSettings({ voiceLanguagePreference: "xx" })).toThrow();
     expect(() => decodeClientSettingsPatch({ voiceLanguagePreference: "xx" })).toThrow();
+  });
+});
+
+describe("ClientSettings quit confirmation", () => {
+  it("defaults to hold", () => {
+    expect(decodeClientSettings({}).confirmQuit).toBe("hold");
+  });
+
+  it.each(["direct", "hold", "double-click"] as const)("accepts the %s mode", (mode) => {
+    expect(decodeClientSettings({ confirmQuit: mode }).confirmQuit).toBe(mode);
+    expect(decodeClientSettingsPatch({ confirmQuit: mode }).confirmQuit).toBe(mode);
+  });
+
+  it.each([
+    [true, "hold"],
+    [false, "direct"],
+  ] as const)("migrates the legacy %s value to %s", (legacyValue, mode) => {
+    const settings = decodeClientSettings({ confirmQuit: legacyValue });
+
+    expect(settings.confirmQuit).toBe(mode);
+    expect(encodeClientSettings(settings).confirmQuit).toBe(mode);
+  });
+
+  it("rejects legacy booleans at the patch boundary", () => {
+    expect(() => decodeClientSettingsPatch({ confirmQuit: true })).toThrow();
+  });
+});
+
+describe("ClientSettings browser recording frame rate", () => {
+  it("defaults to 30 fps", () => {
+    expect(decodeClientSettings({}).browserRecordingFrameRate).toBe(30);
+  });
+
+  it.each([30, 60])("accepts a supported frame rate: %s", (frameRate) => {
+    expect(
+      decodeClientSettings({ browserRecordingFrameRate: frameRate }).browserRecordingFrameRate,
+    ).toBe(frameRate);
+    expect(
+      decodeClientSettingsPatch({ browserRecordingFrameRate: frameRate }).browserRecordingFrameRate,
+    ).toBe(frameRate);
+  });
+
+  it.each([24, 59, 120])("rejects an unsupported frame rate: %s", (frameRate) => {
+    expect(() => decodeClientSettings({ browserRecordingFrameRate: frameRate })).toThrow();
+    expect(() => decodeClientSettingsPatch({ browserRecordingFrameRate: frameRate })).toThrow();
   });
 });
 
@@ -143,11 +243,8 @@ describe("ClientSettings content direction", () => {
 });
 
 describe("ClientSettings sidebar", () => {
-  it("defaults to the current sidebar with merge settling off and a seven-day threshold", () => {
-    const settings = decodeClientSettings({});
-    expect(settings.legacySidebarEnabled).toBe(false);
-    expect(settings.sidebarAutoSettleAfterDays).toBe(7);
-    expect(settings.sidebarAutoSettleOnMerge).toBe(false);
+  it("defaults to the current sidebar", () => {
+    expect(decodeClientSettings({}).legacySidebarEnabled).toBe(false);
   });
 
   it("drops the retired sidebar v2 beta keys, resetting everyone to the default", () => {
@@ -172,34 +269,33 @@ describe("ClientSettings sidebar", () => {
     expect(decodeClientSettingsPatch({ confirmThreadUnpin: true }).confirmThreadUnpin).toBe(true);
     expect(() => decodeClientSettingsPatch({ confirmThreadUnpin: "yes" })).toThrow();
   });
+});
 
-  it("allows auto-settle by inactivity to be disabled", () => {
-    expect(
-      decodeClientSettings({ sidebarAutoSettleAfterDays: null }).sidebarAutoSettleAfterDays,
-    ).toBeNull();
+describe("ServerSettings thread settlement", () => {
+  it("keeps Scient's conservative automatic settlement defaults", () => {
+    const settings = decodeServerSettings({});
+    expect(settings.sidebarAutoSettleAfterDays).toBe(7);
+    expect(settings.sidebarAutoSettleOnMerge).toBe(false);
   });
 
-  it("preserves the previous inactivity threshold when it was explicitly persisted", () => {
-    expect(decodeClientSettings({ sidebarAutoSettleAfterDays: 3 }).sidebarAutoSettleAfterDays).toBe(
-      3,
-    );
+  it("allows both automatic rules to be disabled", () => {
     expect(
-      decodeClientSettingsPatch({ sidebarAutoSettleAfterDays: 3 }).sidebarAutoSettleAfterDays,
-    ).toBe(3);
-  });
-
-  it.each([true, false])("preserves an explicit auto-settle-on-merge choice: %s", (value) => {
-    expect(decodeClientSettings({ sidebarAutoSettleOnMerge: value }).sidebarAutoSettleOnMerge).toBe(
-      value,
-    );
+      decodeServerSettings({
+        sidebarAutoSettleAfterDays: null,
+        sidebarAutoSettleOnMerge: false,
+      }),
+    ).toMatchObject({ sidebarAutoSettleAfterDays: null, sidebarAutoSettleOnMerge: false });
     expect(
-      decodeClientSettingsPatch({ sidebarAutoSettleOnMerge: value }).sidebarAutoSettleOnMerge,
-    ).toBe(value);
+      decodeServerSettingsPatch({
+        sidebarAutoSettleAfterDays: null,
+        sidebarAutoSettleOnMerge: false,
+      }),
+    ).toMatchObject({ sidebarAutoSettleAfterDays: null, sidebarAutoSettleOnMerge: false });
   });
 
   it.each([-1, 0, 91])("rejects an auto-settle threshold outside 1..90: %s", (value) => {
-    expect(() => decodeClientSettings({ sidebarAutoSettleAfterDays: value })).toThrow();
-    expect(() => decodeClientSettingsPatch({ sidebarAutoSettleAfterDays: value })).toThrow();
+    expect(() => decodeServerSettings({ sidebarAutoSettleAfterDays: value })).toThrow();
+    expect(() => decodeServerSettingsPatch({ sidebarAutoSettleAfterDays: value })).toThrow();
   });
 });
 

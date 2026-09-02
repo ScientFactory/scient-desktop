@@ -97,6 +97,8 @@ describe("clientPersistenceStorage", () => {
       "scient-next:client-settings:v1",
       JSON.stringify({
         appearanceContrast: 100,
+        fontSizeInterface: 18,
+        showSkillsInSlashMenu: true,
         sidebarAutoSettleAfterDays: 3,
         sidebarAutoSettleOnMerge: true,
       }),
@@ -106,17 +108,19 @@ describe("clientPersistenceStorage", () => {
     expect(readBrowserClientSettings()).toEqual(
       expect.objectContaining({
         appearanceContrast: 100,
-        sidebarAutoSettleAfterDays: 3,
-        sidebarAutoSettleOnMerge: true,
+        fontSizeInterface: 18,
+        showSkillsInSlashMenu: true,
       }),
     );
+    expect(readBrowserClientSettings()).not.toHaveProperty("sidebarAutoSettleAfterDays");
+    expect(readBrowserClientSettings()).not.toHaveProperty("sidebarAutoSettleOnMerge");
 
     testWindow.localStorage.setItem("scient-next:client-settings:v1", "{}");
     expect(readBrowserClientSettings()).toEqual(
       expect.objectContaining({
         appearanceContrast: 120,
-        sidebarAutoSettleAfterDays: 7,
-        sidebarAutoSettleOnMerge: false,
+        fontSizeInterface: 17,
+        showSkillsInSlashMenu: false,
       }),
     );
   });

@@ -25,7 +25,7 @@ const PRODUCT_SURFACE_FILES = new Set([
 const EXCLUDED_ROOTS = ["apps/mobile/", "apps/marketing/"] as const;
 const SOURCE_EXTENSIONS = new Set([".html", ".js", ".jsx", ".mjs", ".ts", ".tsx"]);
 const FORBIDDEN_PUBLIC_BRANDS =
-  /\bT3 Code\b|\bT3 Tools\b|\bT3Wordmark\b|aria-label=["']T3["']|ScientFactory\/scient-desktop-next/i;
+  /\bT3 Code\b|\bT3 Tools\b|\bT3Wordmark\b|aria-label=["']T3["']|ScientFactory\/scient-desktop-next|github\.com\/(?:pingdotgg\/t3code|t3dotgg\/t3-code)\/releases\b/i;
 
 const REQUIRED_SCIENT_ANCHORS = new Map<string, readonly string[]>([
   ["apps/desktop/package.json", ['"productName": "Scient"']],

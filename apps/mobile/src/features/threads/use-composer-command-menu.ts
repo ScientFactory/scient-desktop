@@ -9,16 +9,25 @@ import {
   normalizeSearchQuery,
   scoreQueryMatch,
 } from "@t3tools/shared/searchRanking";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import {
+  dedupeProviderSkillsByName,
+  getProviderSkillsForSlashMenu,
+} from "@t3tools/client-runtime/providerSkills";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import type { ComposerEditorSelection } from "../../components/ComposerEditor";
 import { useComposerPathSearch } from "../../state/use-composer-path-search";
 import type { ComposerCommandItem } from "./ComposerCommandPopover";
 import { matchesSlashSkillQuery } from "./composerSlashSkillSearch";
 
+export function composerSelectionAtEnd(draftMessage: string): ComposerEditorSelection {
+  return { start: draftMessage.length, end: draftMessage.length };
+}
+
 /** Shared autocomplete for thread composers and unsent new-task drafts. */
 export function useComposerCommandMenu({
   draftMessage,
+  ownerKey,
   environmentId,
   projectCwd,
   selectedProviderStatus,
@@ -28,6 +37,7 @@ export function useComposerCommandMenu({
   onUpdateInteractionMode,
 }: {
   readonly draftMessage: string;
+  readonly ownerKey: string | null;
   readonly environmentId: EnvironmentId | null;
   readonly projectCwd: string | null;
   readonly selectedProviderStatus: ServerProvider | null;
@@ -36,10 +46,8 @@ export function useComposerCommandMenu({
   readonly onChangeDraftMessage: (value: string) => void;
   readonly onUpdateInteractionMode?: (mode: ProviderInteractionMode) => void;
 }) {
-  const [selection, setSelection] = useState(() => ({
-    start: draftMessage.length,
-    end: draftMessage.length,
-  }));
+  const [selection, setSelection] = useState(() => composerSelectionAtEnd(draftMessage));
+  const previousOwnerKeyRef = useRef(ownerKey);
   const onSelectionChange = useCallback((nextSelection: ComposerEditorSelection) => {
     setSelection(nextSelection);
   }, []);
@@ -54,6 +62,11 @@ export function useComposerCommandMenu({
       return { start, end: selectionEnd };
     });
   }, [draftMessage.length]);
+  useEffect(() => {
+    if (previousOwnerKeyRef.current === ownerKey) return;
+    previousOwnerKeyRef.current = ownerKey;
+    setSelection(composerSelectionAtEnd(draftMessage));
+  }, [draftMessage, ownerKey]);
 
   const trigger = useMemo(() => {
     if (!enabled || selection.start !== selection.end) {
@@ -121,7 +134,7 @@ export function useComposerCommandMenu({
         });
       }
 
-      const skillItems = (selectedProviderStatus?.skills ?? [])
+      const skillItems = getProviderSkillsForSlashMenu(selectedProviderStatus?.skills ?? [], true)
         .filter((skill) => matchesSlashSkillQuery(skill, q))
         .map((skill) => ({
           id: `skill:${skill.name}`,
@@ -135,7 +148,9 @@ export function useComposerCommandMenu({
     }
 
     if (trigger.kind === "skill") {
-      const enabledSkills = (selectedProviderStatus?.skills ?? []).filter((skill) => skill.enabled);
+      const enabledSkills = dedupeProviderSkillsByName(
+        (selectedProviderStatus?.skills ?? []).filter((skill) => skill.enabled),
+      );
       const normalizedQuery = normalizeSearchQuery(trigger.query, {
         trimLeadingPattern: /^\$+/,
       });

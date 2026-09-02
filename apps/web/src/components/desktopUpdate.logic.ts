@@ -1,9 +1,10 @@
 import type { DesktopUpdateActionResult, DesktopUpdateState } from "@t3tools/contracts";
+import { SCIENT_DESKTOP_RELEASE_REPOSITORY } from "@t3tools/shared/scientRelease";
 import { isWindowsPlatform } from "~/lib/utils";
 
 export type DesktopUpdateButtonAction = "download" | "install" | "none";
 
-const DESKTOP_RELEASE_TAG_URL = "https://github.com/pingdotgg/t3code/releases/tag";
+const DESKTOP_RELEASE_TAG_URL = `https://github.com/${SCIENT_DESKTOP_RELEASE_REPOSITORY}/releases/tag`;
 
 /**
  * The main process fills `downloadedVersion` from the updater's `update-downloaded`

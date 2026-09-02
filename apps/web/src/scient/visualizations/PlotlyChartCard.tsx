@@ -1,6 +1,5 @@
 import {
   CheckIcon,
-  ChartScatterIcon,
   Code2Icon,
   CopyIcon,
   DownloadIcon,
@@ -17,6 +16,7 @@ import { useCallback, useEffect, useId, useMemo, useRef, useState, type ReactNod
 import { Button } from "~/components/ui/button";
 import { Menu, MenuItem, MenuPopup, MenuTrigger } from "~/components/ui/menu";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "~/components/ui/tooltip";
+import { VisualCardDetails, VisualCardToolbar } from "../presentation/VisualCardToolbar";
 
 import { PlotlyChartDialog } from "./PlotlyChartDialog";
 import { PlotlyInteractionToolbar } from "./PlotlyInteractionToolbar";
@@ -262,8 +262,9 @@ export function PlotlyChartCard({
       ref={viewport.ref}
       aria-describedby={description == null ? undefined : descriptionId}
       aria-label={displayTitle}
-      className="scient-plotly-card my-3 overflow-hidden rounded-lg border border-border/70 bg-secondary/30 leading-normal"
+      className="scient-plotly-card my-3 overflow-hidden rounded-lg bg-background leading-normal"
       data-markdown-copy={markdownCopy}
+      data-scient-visual-card
       dir="ltr"
       role="figure"
     >
@@ -272,24 +273,30 @@ export function PlotlyChartCard({
           {description}
         </span>
       )}
-      <div className="flex min-h-9 select-none items-center gap-2 border-b border-border/60 bg-secondary/60 px-2">
-        <ChartScatterIcon className="size-3.5 shrink-0 text-muted-foreground" />
-        <span className="min-w-0 flex-1 truncate text-xs font-medium" dir="auto">
-          {displayTitle}
-        </span>
-        {parsed?.hasWebGl ? (
-          <span className="hidden rounded bg-background/70 px-1.5 py-0.5 text-[10px] text-muted-foreground sm:inline">
-            WebGL
+      <div className="flex flex-wrap items-center justify-end gap-2 px-2 pt-2">
+        {title ? (
+          <span className="min-w-0 flex-1 basis-40 wrap-anywhere text-xs font-medium" dir="auto">
+            {title}
           </span>
         ) : null}
         {(parsed?.externalResources.length ?? 0) > 0 ||
         parsed?.hasGeoTopology ||
         parsed?.hasMapTiles ? (
-          <span className="hidden rounded bg-background/70 px-1.5 py-0.5 text-[10px] text-muted-foreground sm:inline">
+          <span className="rounded bg-background/70 px-1.5 py-0.5 text-[10px] text-muted-foreground">
             Network content
           </span>
         ) : null}
-        <span className="flex items-center gap-0.5" role="toolbar" aria-label="Plotly actions">
+        {parsed != null && visibleStatus.kind !== "error" ? (
+          <PlotlyInteractionToolbar
+            compact
+            controller={ready ? controllerRef.current : null}
+            disabled={!ready || activeAction != null}
+            hasCartesian={parsed.hasCartesian}
+            onError={showPersistentMessage}
+            scrollZoom={false}
+          />
+        ) : null}
+        <VisualCardToolbar label="Plotly actions">
           {ready ? (
             <ChartActionButton
               disabled={activeAction != null}
@@ -333,6 +340,10 @@ export function PlotlyChartCard({
               <TooltipPopup side="top">More Plotly actions</TooltipPopup>
             </Tooltip>
             <MenuPopup align="end" className="min-w-56">
+              <VisualCardDetails
+                title={displayTitle}
+                detail={parsed?.hasWebGl ? "WebGL" : undefined}
+              />
               <MenuItem onClick={() => setSourceVisible((visible) => !visible)}>
                 <Code2Icon />
                 {sourceVisible ? "Hide source" : "Show source"}
@@ -385,7 +396,7 @@ export function PlotlyChartCard({
               </MenuItem>
             </MenuPopup>
           </Menu>
-        </span>
+        </VisualCardToolbar>
       </div>
 
       {actionMessage != null ? (
@@ -395,16 +406,6 @@ export function PlotlyChartCard({
         >
           {actionMessage}
         </div>
-      ) : null}
-
-      {parsed != null && visibleStatus.kind !== "error" ? (
-        <PlotlyInteractionToolbar
-          controller={ready ? controllerRef.current : null}
-          disabled={!ready || activeAction != null}
-          hasCartesian={parsed.hasCartesian}
-          onError={showPersistentMessage}
-          scrollZoom={false}
-        />
       ) : null}
 
       {visibleStatus.kind === "error" ? (
@@ -431,7 +432,7 @@ export function PlotlyChartCard({
           </pre>
         </div>
       ) : (
-        <div className="scient-plotly-stage relative bg-background/45 p-3 sm:p-5">
+        <div className="scient-plotly-stage relative p-2">
           {waitingForSlot ? (
             <div className="absolute inset-0 flex items-center justify-center text-muted-foreground text-sm">
               Waiting for graphics resources…

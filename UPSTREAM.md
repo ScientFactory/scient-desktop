@@ -21,16 +21,18 @@ official `main` only after its untouched baseline passed. That historical
 revision remains literal ancestry of owned `main`; it is not merely a reviewed
 or observed tip.
 
-The current verified T3 ancestry is recorded in
-[`docs/internals/2026-08-31-upstream-sync-7880a6e58.md`](docs/internals/2026-08-31-upstream-sync-7880a6e58.md)
-and in `upstream-state.json`. The latest refresh merged the exact official
-checkpoint `7880a6e583f8a04db2eaeef2366ce9c81c3f7bec` into the refresh
+The current proposed T3 ancestry is recorded in
+[`docs/internals/2026-09-02-upstream-sync-590a579f2.md`](docs/internals/2026-09-02-upstream-sync-590a579f2.md)
+and in `upstream-state.json`. The latest refresh merges the exact official
+checkpoint `590a579f2e9292ce314c69e459e19620004578fe` into its draft alignment
 branch, preserving the exact range after the previously integrated tip
-`660cddd3bc9801e089afcabba11c62f41aeac5c3`. The earlier Claude compaction
-feature remains literal ancestry but is still reversed by its dedicated,
-documented deferral commit. Later observed T3 tips never move `integrationBase`
-by themselves; it advances only after the exact ancestry and verification gate
-are complete.
+`0947c30e6946b2ad6d6cd518fd44292e75e834e8`. The composition receives
+server-owned thread settlement, bounded activity and usage processing, remote
+Claude model discovery, preview and recording repairs, and focused desktop,
+web, and mobile interaction improvements while retaining Scient's product,
+provider, state, and publication boundaries. Later observed T3 tips never move
+`integrationBase` by themselves; it advances only after exact ancestry,
+verification, review, and merge into owned `main`.
 
 ## Receiving T3 updates
 
@@ -298,9 +300,9 @@ reveal, and Claude compaction. Nine textual conflicts preserve Scient's service
 identity, provider lifecycle, effective skills, rich Markdown and scientific
 surfaces, queue and reconnection behavior, reading defaults, and release
 authority. Scient extends the upgrade-recovery policy to its opt-in Droid
-provider. Claude compaction is deliberately reversed in one traceable commit
-until after the next release; the exact record explains how to reconsider it
-without rewriting upstream ancestry.
+provider. Claude compaction was deliberately reversed in one traceable commit
+until after the next release; the proposed 2026-09-01 alignment retires that
+completed deferral without rewriting upstream ancestry.
 
 The 2026-08-28 sync through `c8aba2587d` receives 25 official commits covering
 provider model classification, Grok skills, reasoning, plans, usage and turn
@@ -341,6 +343,28 @@ gets a named file-opening fallback without blocking on a generic picker.
 Integrated inspection caught and fixed draft-thread inline image resolution
 and authored centering. The receipt records the exact remaining queue/editable
 fork limitations and manual/platform verification boundaries.
+
+The additional 2026-08-31 sync through `e4f7b14fa` receives ten official commits
+covering native mobile file picking/sharing and durable outbox ownership,
+Codex file citations and template cards, inline image expansion, live workspace
+panel refresh, repository-aware Git text, corrected Claude cache pricing, and
+Windows PATH/setup handling. Ten textual conflicts preserve Scient image
+layout and actions, rooted file access, Skills, and native watcher ownership.
+Integrated desktop review verified image expansion and keyboard recovery,
+append-only template actions, file citation opening, and automatic disk refresh.
+Mobile publication remains disabled; native mobile and Windows runtime
+qualification are not claimed by this desktop alignment.
+
+The proposed 2026-09-01 sync through `0947c30e6` receives 43 official commits
+covering unified composer/activity presentation, mobile voice/video/file
+handling, native attachment viewers, richer image and GitHub-link rendering,
+Settings and pull-request refinements, Electron/browser improvements, remote
+cookie isolation, and server reliability and memory work. Twenty-nine textual
+conflict/resolution paths preserve Scient voice, Skills, queue/steer, forks,
+generic files, rich Markdown, rooted assets, provider lifecycle, identity, and
+publication boundaries. A focused follow-up retires the completed release-only
+Claude compaction deferral; another corrects an invalid compiled CSS fallback.
+The exact receipt records the passed local gates and bounded desktop review.
 
 The earlier 2026-08-12 record through `849bac894` remains preserved as the
 partial checkpoint merged by PR #69. It covers the first 11 commits of this
@@ -431,6 +455,13 @@ does not enable T3's tag/nightly workflow, npm publication, relay deployment,
 hosted-web aliases, or release bot. The owned manual workflow packages the
 exact promoted Scient tree, embeds the owned updater repository, and
 distributes the exact server runtime as a GitHub release asset.
+
+The downloaded-update notification links to the exact version under the shared
+`SCIENT_DESKTOP_RELEASE_REPOSITORY` in `packages/shared/src/scientRelease.ts`.
+It must not combine a Scient version with T3's release repository. The brand
+guard rejects upstream release links on active product surfaces; source
+attribution and donor-only surfaces remain allowed. This presentation seam
+does not change update-feed configuration, download, or installation behavior.
 
 The owned release seam also verifies a complete cross-platform updater asset
 set, manifest sizes and SHA-512 hashes, final native signing evidence, and an

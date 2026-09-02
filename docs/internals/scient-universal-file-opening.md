@@ -130,7 +130,12 @@ The inherited editor/save lifecycle, Browser manager, and attachment/image paths
 are unchanged. The workspace viewer consumes the same native watcher stream
 through one Scient-owned hook, preserving optimistic edits and revision-conflict
 handling while exposing watcher failure and restart at its existing reload
-control. Static seam tests guard the file-opening boundary, while focused
+control. T3's workspace-mutation hook is a fallback inside that same owner when
+the watcher is unavailable; it waits for pending source edits to settle and
+invalidates binary previews as well as text. It does not create a second active
+refresh loop beside a working watcher. The lazy Files tree, Git status, and
+working diff consume the upstream mutation hint directly.
+Static seam tests guard the file-opening boundary, while focused
 component tests pin the additive breadcrumb, freshness, and clipboard behavior.
 If T3 later provides an extensible file-presentation registry, Scient should
 adapt these owned presenters to it and retire the host seams.

@@ -88,7 +88,7 @@ export function resolveInlineWorkspaceImage(input: {
 export function inlineWorkspaceImageResource(
   image: InlineWorkspaceImageDescriptor,
   threadRef: ScopedThreadRef,
-): AssetResource {
+): Extract<AssetResource, { readonly _tag: "workspace-file" }> {
   return {
     _tag: "workspace-file",
     cwd: image.workspaceRoot,

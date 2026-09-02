@@ -130,12 +130,28 @@ still recompiling theme-dependent presentation. State is not transferred when
 the authored chart or an explicit incoming state changes.
 
 Plotly keeps direct manipulation, hover, legends, animation controls, and 3D
-orbit inside the figure. A fixed horizontal Scient interaction row replaces
+orbit inside the figure. A compact Scient interaction group replaces
 the native modebar: Cartesian figures expose zoom, pan, box selection, lasso
 selection, and reset through the view controller, while other trace families
 show the universally valid reset action. This keeps the controls stable across
 mounts without pretending that two-dimensional drag modes apply to every
 Plotly subplot type.
+
+Inline cards share the renderer-independent `VisualCardToolbar` with workspace
+images and Mermaid. The unbordered control row defaults to wrapping above the
+plot instead of overlaying data, legends, or Vega bindings. Each group's dotted
+corner or empty space can move it within the card without changing the plot
+layout or state; action buttons are not drag surfaces. The
+shared movement lifecycle is documented in [chat images](scient-chat-images.md).
+Explicit fence titles and network
+disclosures remain visible; generic labels and WebGL metadata are available
+in the action menu. Warnings and requested source inspection keep their own
+conditional areas. Expanded viewers and their controls are unchanged.
+
+Stage padding is reduced without changing renderer sizing policies. Plotly's
+offscreen placeholder still matches the graph minimum height plus stage
+padding, so releasing a WebGL slot does not collapse the card. Toolbar movement
+introduces no renderer observer, continuous render loop, or runtime dependency.
 
 Tooltips use Vega's formatter and viewport-aware mark positioning, but a
 Scient-owned adapter suppresses redundant DOM measurement while pointer events

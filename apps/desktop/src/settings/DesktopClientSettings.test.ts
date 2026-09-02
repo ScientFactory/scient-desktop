@@ -17,8 +17,9 @@ const clientSettings: ClientSettings = {
   browserDefaultViewport: { _tag: "preset", width: 1024, height: 600, presetId: "nest-hub" },
   browserDefaultZoomFactor: 1.25,
   browserDefaultAppearance: "dark",
+  browserRecordingFrameRate: 60,
   browserAutoShowFloatingPreview: false,
-  confirmQuit: true,
+  confirmQuit: "double-click",
   confirmThreadArchive: true,
   confirmThreadDelete: false,
   contentDirection: "auto",
@@ -38,10 +39,8 @@ const clientSettings: ClientSettings = {
   fontSmoothing: true,
   glassOpacity: 80,
   planModeEnabled: false,
-  showSkillsInSlashMenu: false,
+  showSkillsInSlashMenu: true,
   providerModelPreferences: {},
-  sidebarAutoSettleAfterDays: 3,
-  sidebarAutoSettleOnMerge: true,
   sidebarProjectGroupingMode: "repository_path",
   sidebarProjectGroupingOverrides: {
     "environment-1:/tmp/project-a": "separate",
@@ -217,8 +216,8 @@ describe("DesktopClientSettings", () => {
         assert.isTrue(Option.isSome(persisted));
         if (Option.isSome(persisted)) {
           assert.equal(persisted.value.appearanceContrast, 120);
-          assert.equal(persisted.value.sidebarAutoSettleAfterDays, 7);
-          assert.equal(persisted.value.sidebarAutoSettleOnMerge, false);
+          assert.equal(persisted.value.fontSizeInterface, 17);
+          assert.equal(persisted.value.showSkillsInSlashMenu, false);
         }
       }),
     ),

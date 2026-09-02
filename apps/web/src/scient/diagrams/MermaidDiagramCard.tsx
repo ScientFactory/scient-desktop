@@ -8,7 +8,6 @@ import {
   FileImageIcon,
   ImageIcon,
   RefreshCwIcon,
-  WorkflowIcon,
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 
@@ -29,6 +28,7 @@ import {
   type RenderedMermaidDiagram,
 } from "./mermaidRuntime";
 import { useNearViewport } from "../presentation/useNearViewport";
+import { VisualCardDetails, VisualCardToolbar } from "../presentation/VisualCardToolbar";
 
 import "./scient-diagrams.css";
 
@@ -223,22 +223,19 @@ export function MermaidDiagramCard({
     <div
       ref={ref}
       aria-label={displayTitle}
-      className="scient-mermaid-card my-3 overflow-hidden rounded-lg border border-border/70 bg-secondary/30 leading-normal"
+      className="scient-mermaid-card my-3 overflow-hidden rounded-lg bg-background leading-normal"
       data-markdown-copy={markdownCopy}
+      data-scient-visual-card
       dir="ltr"
       role="figure"
     >
-      <div className="flex min-h-9 select-none items-center gap-2 border-b border-border/60 bg-secondary/60 px-2">
-        <WorkflowIcon className="size-3.5 shrink-0 text-muted-foreground" />
-        <span className="min-w-0 flex-1 truncate text-xs font-medium" dir="auto">
-          {displayTitle}
-        </span>
-        {readyResult != null ? (
-          <span className="hidden rounded bg-background/70 px-1.5 py-0.5 text-[10px] text-muted-foreground sm:inline">
-            {readyResult.diagramType}
+      <div className="flex flex-wrap items-center justify-end gap-2 px-2 pt-2">
+        {title ? (
+          <span className="min-w-0 flex-1 basis-40 wrap-anywhere text-xs font-medium" dir="auto">
+            {title}
           </span>
         ) : null}
-        <span className="flex items-center gap-0.5" role="toolbar" aria-label="Diagram actions">
+        <VisualCardToolbar label="Diagram actions">
           {readyResult != null ? (
             <DiagramActionButton
               disabled={activeAction != null}
@@ -281,6 +278,7 @@ export function MermaidDiagramCard({
               <TooltipPopup side="top">More diagram actions</TooltipPopup>
             </Tooltip>
             <MenuPopup align="end" className="min-w-44">
+              <VisualCardDetails title={displayTitle} detail={readyResult?.diagramType} />
               <MenuItem onClick={() => setSourceVisible((visible) => !visible)}>
                 <Code2Icon />
                 {sourceVisible ? "Hide source" : "Show source"}
@@ -308,7 +306,7 @@ export function MermaidDiagramCard({
               </MenuItem>
             </MenuPopup>
           </Menu>
-        </span>
+        </VisualCardToolbar>
       </div>
 
       {actionMessage != null && !expanded ? (
@@ -347,7 +345,7 @@ export function MermaidDiagramCard({
           </pre>
         </div>
       ) : diagramState.status === "ready" ? (
-        <div className="scient-mermaid-inline overflow-auto bg-background/45 p-4 sm:p-6">
+        <div className="scient-mermaid-inline overflow-auto p-2">
           <div
             // Mermaid's strict renderer sanitizes generated SVG. We deliberately
             // do not call bindFunctions, so diagram-authored click handlers do not run.

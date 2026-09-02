@@ -1,5 +1,4 @@
 import {
-  BarChart3Icon,
   CheckIcon,
   Code2Icon,
   CopyIcon,
@@ -19,6 +18,7 @@ import { Button } from "~/components/ui/button";
 import { Menu, MenuItem, MenuPopup, MenuTrigger } from "~/components/ui/menu";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "~/components/ui/tooltip";
 import { ScientTooltip } from "../presentation/ScientTooltip";
+import { VisualCardDetails, VisualCardToolbar } from "../presentation/VisualCardToolbar";
 
 import { useNearViewport } from "../presentation/useNearViewport";
 import { VegaLiteChartDialog } from "./VegaLiteChartDialog";
@@ -230,16 +230,18 @@ export function VegaLiteChartCard({
     <div
       ref={viewportRef}
       aria-label={displayTitle}
-      className="scient-vega-lite-card my-3 overflow-hidden rounded-lg border border-border/70 bg-secondary/30 leading-normal"
+      className="scient-vega-lite-card my-3 overflow-hidden rounded-lg bg-background leading-normal"
       data-markdown-copy={markdownCopy}
+      data-scient-visual-card
       dir="ltr"
       role="figure"
     >
-      <div className="flex min-h-9 select-none items-center gap-2 border-b border-border/60 bg-secondary/60 px-2">
-        <BarChart3Icon className="size-3.5 shrink-0 text-muted-foreground" />
-        <span className="min-w-0 flex-1 truncate text-xs font-medium" dir="auto">
-          {displayTitle}
-        </span>
+      <div className="flex flex-wrap items-center justify-end gap-2 px-2 pt-2">
+        {title ? (
+          <span className="min-w-0 flex-1 basis-40 wrap-anywhere text-xs font-medium" dir="auto">
+            {title}
+          </span>
+        ) : null}
         {hasNetworkResources ? (
           <ScientTooltip content={NETWORK_DATA_DESCRIPTION}>
             <span
@@ -250,7 +252,7 @@ export function VegaLiteChartCard({
             </span>
           </ScientTooltip>
         ) : null}
-        <span className="flex items-center gap-0.5" role="toolbar" aria-label="Chart actions">
+        <VisualCardToolbar label="Chart actions">
           {ready ? (
             <ChartActionButton
               disabled={activeAction != null}
@@ -293,6 +295,7 @@ export function VegaLiteChartCard({
               <TooltipPopup side="top">More chart actions</TooltipPopup>
             </Tooltip>
             <MenuPopup align="end" className="min-w-48">
+              <VisualCardDetails title={displayTitle} />
               <MenuItem onClick={() => setSourceVisible((visible) => !visible)}>
                 <Code2Icon />
                 {sourceVisible ? "Hide source" : "Show source"}
@@ -359,7 +362,7 @@ export function VegaLiteChartCard({
               </MenuItem>
             </MenuPopup>
           </Menu>
-        </span>
+        </VisualCardToolbar>
       </div>
 
       {actionMessage != null ? (
@@ -394,7 +397,7 @@ export function VegaLiteChartCard({
           </pre>
         </div>
       ) : (
-        <div className="relative min-h-52 overflow-auto bg-background/45 p-4 sm:p-6">
+        <div className="relative min-h-52 overflow-auto p-2">
           {visibleStatus.kind !== "ready" ? (
             <div className="absolute inset-0 flex items-center justify-center text-muted-foreground text-sm">
               {visibleStatus.kind === "idle"

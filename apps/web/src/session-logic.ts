@@ -2,6 +2,7 @@ import * as Option from "effect/Option";
 import * as Arr from "effect/Array";
 import * as Schema from "effect/Schema";
 import { isBackgroundTaskActivity } from "@t3tools/client-runtime/state/subagentRuntime";
+import { isWorktreeSetupActivity } from "@t3tools/client-runtime/work-log/presentation";
 import {
   ApprovalRequestId,
   compareProviderDriverKinds,
@@ -732,7 +733,7 @@ export function deriveActivePlanState(
 export interface TurnPlanEntry {
   /** Stable per-turn row id (plans rewrite constantly; the row must not churn). */
   id: string;
-  /** Anchor timestamp: the turn's FIRST plan activity, so the chip renders where planning began. */
+  /** Anchor timestamp: the turn's first plan activity, so the chip renders where planning began. */
   createdAt: string;
   turnId: TurnId | null;
   plan: ActivePlanState;
@@ -740,8 +741,7 @@ export interface TurnPlanEntry {
 
 /**
  * One inline plan chip per turn that produced plan/todo steps: the latest
- * snapshot for the turn, anchored at the first snapshot's timestamp. Turn-less
- * plan activities collapse into a single chip keyed by thread order.
+ * snapshot for the turn, anchored at the first snapshot's timestamp.
  */
 export function deriveTurnPlans(
   activities: ReadonlyArray<OrchestrationThreadActivity>,
@@ -752,14 +752,10 @@ export function deriveTurnPlans(
     { activities: OrchestrationThreadActivity[]; entry: TurnPlanEntry }
   >();
   for (const activity of ordered) {
-    if (activity.kind !== "turn.plan.updated") {
-      continue;
-    }
+    if (activity.kind !== "turn.plan.updated") continue;
     const plan = planStateFromActivity(activity);
     const key = activity.turnId ?? "no-turn";
     if (!plan) {
-      // A later snapshot with no steps clears the turn's plan; keeping the
-      // stale entry would freeze the chip on a withdrawn plan.
       byTurn.delete(key);
       continue;
     }
@@ -888,6 +884,7 @@ export function deriveWorkLogEntries(
   const ordered = [...activities].toSorted(compareActivitiesByOrder);
   const entries: DerivedWorkLogEntry[] = [];
   for (const activity of ordered) {
+    if (activity.tone !== "error" && isWorktreeSetupActivity(activity.kind)) continue;
     if (activity.kind === "tool.started") continue;
     // Agent task.started rows are CTA seeds: they carry the true spawn turn,
     // which is the batch key (completions of background subagents arrive
@@ -897,6 +894,7 @@ export function deriveWorkLogEntries(
     if (activity.kind === "task.updated") continue;
     if (activity.kind === "tool.progress") continue;
     if (activity.kind === "context-window.updated") continue;
+    if (activity.kind === "turn.plan.updated") continue;
     if (activity.summary === "Checkpoint captured") continue;
     if (isNoContentRuntimeWarning(activity)) continue;
     if (isPlanBoundaryToolActivity(activity)) continue;

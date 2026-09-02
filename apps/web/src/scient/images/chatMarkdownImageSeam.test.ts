@@ -28,7 +28,7 @@ describe("ChatMarkdown workspace-image seam", () => {
     expect(chatMarkdownSource).toContain(
       "classifyMarkdownImageSource(classifiedSrc, imageBaseDir ?? cwd)",
     );
-    expect(chatMarkdownSource).toContain("<ChatMarkdownWorkspaceImage");
+    expect(chatMarkdownSource).toContain("<ChatMarkdownAssetImage");
     expect(chatMarkdownSource).toContain("<ChatMarkdownImageFallback");
   });
 

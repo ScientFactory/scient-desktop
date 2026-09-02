@@ -25,6 +25,10 @@ workspace-file authority merely because it appears in Markdown. Remote web
 images retain ordinary Markdown image behavior rather than these project-file
 actions.
 
+In an agent's response, select an inline or remote image to open a larger preview. Keyboard
+users can focus the image and press Enter or Space. An image that is itself a
+link keeps opening that link instead.
+
 The image card lets you:
 
 - expand and zoom the figure;
@@ -36,6 +40,16 @@ The image card lets you:
 - switch among automatic, light, and dark inspection backgrounds.
 
 The same file and image actions remain available after you expand the figure.
+
+The compact card fits around the image, with controls at its top-right corner.
+Open **More image actions** to see the image title, file path, and format. The
+controls remain available without hovering, including with a keyboard or touch.
+
+Drag the dotted corner or empty toolbar space to move the controls within the
+image; action buttons keep their normal behavior. Click the corner grip or
+press Home while it is focused to restore the default position. Arrow keys
+also move it (hold Shift for finer movement); Escape cancels an active drag.
+The position belongs only to the current card and is not saved as a setting.
 
 Use SVG for vector plots, diagrams, and publication figures when the producing
 tool supports it. Use PNG for pixel data, screenshots, microscopy, heatmaps,

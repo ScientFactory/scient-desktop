@@ -43,12 +43,12 @@ function downloadedState(overrides: Partial<DesktopUpdateState> = {}): DesktopUp
     enabled: true,
     status: "downloaded",
     channel: "latest",
-    currentVersion: "0.0.29",
+    currentVersion: "0.6.7",
     hostArch: "arm64",
     appArch: "arm64",
     runningUnderArm64Translation: false,
-    availableVersion: "0.0.30",
-    downloadedVersion: "0.0.30",
+    availableVersion: "0.6.8",
+    downloadedVersion: "0.6.8",
     releaseNotes: [],
     downloadPercent: 100,
     checkedAt: null,
@@ -64,15 +64,18 @@ describe("showDesktopUpdateDownloadedToast", () => {
     testState.addToast.mockReset();
   });
 
-  it("opens the downloaded version's release notes", async () => {
+  it("opens the downloaded Scient release even when a newer version is available", async () => {
     const openExternal = vi.fn().mockResolvedValue(true);
 
-    showDesktopUpdateDownloadedToast({ openExternal }, downloadedState());
+    showDesktopUpdateDownloadedToast(
+      { openExternal },
+      downloadedState({ availableVersion: "0.6.9" }),
+    );
     const link = findReleaseNotesLink(getDescription());
     link?.props.onClick?.();
     await vi.waitFor(() => {
       expect(openExternal).toHaveBeenCalledWith(
-        "https://github.com/pingdotgg/t3code/releases/tag/v0.0.30",
+        "https://github.com/ScientFactory/scient-desktop/releases/tag/v0.6.8",
       );
     });
     expect(testState.addToast).toHaveBeenCalledTimes(1);
@@ -90,7 +93,7 @@ describe("showDesktopUpdateDownloadedToast", () => {
 
     await vi.waitFor(() => {
       expect(openExternal).toHaveBeenCalledWith(
-        "https://github.com/pingdotgg/t3code/releases/tag/v0.0.30",
+        "https://github.com/ScientFactory/scient-desktop/releases/tag/v0.6.8",
       );
     });
   });

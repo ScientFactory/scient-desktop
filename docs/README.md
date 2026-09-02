@@ -63,6 +63,7 @@ policy in [CONTRIBUTING.md](../CONTRIBUTING.md); agent rules in [AGENTS.md](../A
 - [Glossary](./internals/glossary.md)
 - [Scripts](./internals/scripts.md)
 - [Connection runtime](./internals/connection-runtime.md)
+- [Voice input](./internals/voice-input.md)
 - [Providers](./internals/providers.md)
 - [Provider lifecycle architecture](./internals/provider-lifecycle.md)
 - [Provider lifecycle capability audit](./internals/provider-lifecycle-capability-audit.md)

@@ -10,11 +10,13 @@ import { useEffect, useState } from "react";
 
 import { Button } from "~/components/ui/button";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "~/components/ui/tooltip";
+import { VisualCardToolbar } from "../presentation/VisualCardToolbar";
 
 import type { PlotlyInteractionMode } from "./plotlyRuntime";
 import type { PlotlyViewController } from "./PlotlyView";
 
 interface PlotlyInteractionToolbarProps {
+  readonly compact?: boolean;
   readonly controller: PlotlyViewController | null;
   readonly disabled: boolean;
   readonly hasCartesian: boolean;
@@ -71,6 +73,7 @@ function ToolButton({
 }
 
 export function PlotlyInteractionToolbar({
+  compact = false,
   controller,
   disabled,
   hasCartesian,
@@ -124,6 +127,29 @@ export function PlotlyInteractionToolbar({
     );
   };
 
+  const controls = (
+    <>
+      {hasCartesian
+        ? CARTESIAN_TOOLS.map((tool) => (
+            <ToolButton
+              active={activeMode === tool.mode}
+              disabled={unavailable}
+              icon={tool.icon}
+              key={tool.mode}
+              label={tool.label}
+              onClick={() => setMode(tool.mode)}
+            />
+          ))
+        : null}
+      {hasCartesian ? <span aria-hidden="true" className="mx-0.5 h-4 w-px bg-border" /> : null}
+      <ToolButton disabled={unavailable} icon={RotateCcwIcon} label="Reset view" onClick={reset} />
+    </>
+  );
+
+  if (compact) {
+    return <VisualCardToolbar label="Plotly interaction tools">{controls}</VisualCardToolbar>;
+  }
+
   return (
     <div
       aria-label="Plotly interaction tools"
@@ -137,25 +163,7 @@ export function PlotlyInteractionToolbar({
         {scrollZoom ? "Scroll or pinch to zoom" : "Use the tools to zoom or pan"}
       </span>
       <span className="ml-auto inline-flex items-center gap-0.5 rounded-md border border-border/60 bg-secondary/45 p-0.5">
-        {hasCartesian
-          ? CARTESIAN_TOOLS.map((tool) => (
-              <ToolButton
-                active={activeMode === tool.mode}
-                disabled={unavailable}
-                icon={tool.icon}
-                key={tool.mode}
-                label={tool.label}
-                onClick={() => setMode(tool.mode)}
-              />
-            ))
-          : null}
-        {hasCartesian ? <span aria-hidden="true" className="mx-0.5 h-4 w-px bg-border" /> : null}
-        <ToolButton
-          disabled={unavailable}
-          icon={RotateCcwIcon}
-          label="Reset view"
-          onClick={reset}
-        />
+        {controls}
       </span>
     </div>
   );

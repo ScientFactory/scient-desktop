@@ -28,8 +28,7 @@ import * as HttpApiBuilder from "effect/unstable/httpapi/HttpApiBuilder";
 import { OtlpTracer } from "effect/unstable/observability";
 
 import * as ServerConfig from "./config.ts";
-import { ASSET_ROUTE_PREFIX, resolveAsset } from "./assets/AssetAccess.ts";
-import { parseSingleByteRange } from "./assets/byteRange.ts";
+import { ASSET_ROUTE_PREFIX, resolveAsset, type ResolvedAsset } from "./assets/AssetAccess.ts";
 import {
   ATTACHMENT_UPLOAD_ROUTE_PREFIX,
   storeAttachmentUpload,
@@ -122,6 +121,83 @@ export function assetResponseHeaders(
       : {}),
   };
 }
+
+/** A single byte range for native video readers; unsupported range syntax uses the full file. */
+function assetByteRange(header: string, size: bigint) {
+  const match = /^bytes=(\d*)-(\d*)$/i.exec(header.trim());
+  if (!match || (!match[1] && !match[2])) return null;
+  const first = match[1] ? BigInt(match[1]) : null;
+  const last = match[2] ? BigInt(match[2]) : null;
+  if (first !== null && last !== null && last < first) return null;
+  if (size === 0n || (first !== null && first >= size) || (first === null && last === 0n)) {
+    return { _tag: "Unsatisfiable" as const };
+  }
+  const start = first ?? (last! >= size ? 0n : size - last!);
+  const end = first === null || last === null || last >= size ? size - 1n : last;
+  return {
+    _tag: "Range" as const,
+    offset: start,
+    bytesToRead: end - start + 1n,
+    contentRange: `bytes ${start}-${end}/${size}`,
+  };
+}
+
+export const assetFileResponse = Effect.fn("assetFileResponse")(function* (
+  asset: Omit<ResolvedAsset, "kind">,
+  rangeHeader?: string,
+  ifRangeHeader?: string,
+  options?: { readonly allowRangesForAnyMimeType?: boolean },
+) {
+  const fs = yield* FileSystem.FileSystem;
+  const info = yield* fs.stat(asset.path).pipe(Effect.orElseSucceed(() => null));
+  if (!info || info.type !== "File") {
+    return HttpServerResponse.text("Not Found", { status: 404 });
+  }
+
+  const fileMtimeMs = Option.match(info.mtime, {
+    onNone: () => null,
+    onSome: (mtime) => mtime.getTime(),
+  });
+  if (
+    asset.revision &&
+    (asset.revision.size !== Number(info.size) ||
+      (asset.revision.mtimeMs !== null && asset.revision.mtimeMs !== fileMtimeMs))
+  ) {
+    return HttpServerResponse.text("Asset changed", { status: 409 });
+  }
+
+  const etag = `W/"${info.size}-${fileMtimeMs ?? 0}"`;
+  const headers: Record<string, string> = {
+    "Access-Control-Expose-Headers": "Accept-Ranges, Content-Length, Content-Range, ETag",
+    "Content-Type": asset.mimeType ?? Mime.getType(asset.path) ?? "application/octet-stream",
+    ETag: etag,
+    ...assetResponseHeaders(asset.path, asset),
+  };
+  const supportsRanges =
+    options?.allowRangesForAnyMimeType === true ||
+    headers["Content-Type"]?.toLowerCase().startsWith("video/");
+  if (supportsRanges) {
+    headers["Accept-Ranges"] = "bytes";
+    if (rangeHeader && (ifRangeHeader === undefined || ifRangeHeader === etag)) {
+      const range = assetByteRange(rangeHeader, info.size);
+      if (range?._tag === "Unsatisfiable") {
+        return HttpServerResponse.empty({
+          status: 416,
+          headers: { ...headers, "Content-Range": `bytes */${info.size}` },
+        });
+      }
+      if (range?._tag === "Range") {
+        return yield* HttpServerResponse.file(asset.path, {
+          status: 206,
+          offset: range.offset,
+          bytesToRead: range.bytesToRead,
+          headers: { ...headers, "Content-Range": range.contentRange },
+        });
+      }
+    }
+  }
+  return yield* HttpServerResponse.file(asset.path, { status: 200, headers });
+});
 
 export const httpCompressionLayer = HttpRouter.middleware(HttpMiddleware.compression(), {
   global: true,
@@ -291,70 +367,12 @@ export const assetRouteHandler = Effect.gen(function* () {
   if (!asset) {
     return HttpServerResponse.text("Not Found", { status: 404 });
   }
-
-  const fileSystem = yield* FileSystem.FileSystem;
-  const info = yield* fileSystem.stat(asset.path).pipe(Effect.orElseSucceed(() => null));
-  if (!info || info.type !== "File") {
-    return HttpServerResponse.text("Not Found", { status: 404 });
-  }
-
-  const fileSize = Number(info.size);
-  const fileMtimeMs = Option.match(info.mtime, {
-    onNone: () => null,
-    onSome: (mtime) => mtime.getTime(),
-  });
-  const revision = "revision" in asset ? asset.revision : undefined;
-  if (
-    revision &&
-    (revision.size !== fileSize || (revision.mtimeMs !== null && revision.mtimeMs !== fileMtimeMs))
-  ) {
-    return HttpServerResponse.text("Asset changed", { status: 409 });
-  }
-  const etag = `W/"${fileSize}-${fileMtimeMs ?? 0}"`;
-  const headers = {
-    "Accept-Ranges": "bytes",
-    "Access-Control-Expose-Headers": "Accept-Ranges, Content-Length, Content-Range, ETag",
-    "Content-Type": Mime.getType(asset.path) ?? "application/octet-stream",
-    ETag: etag,
-    ...assetResponseHeaders(asset.path, {
-      ...(asset.cacheControl !== undefined ? { cacheControl: asset.cacheControl } : {}),
-      ...("download" in asset && asset.download ? { download: true } : {}),
-      ...("fileName" in asset && asset.fileName !== undefined ? { fileName: asset.fileName } : {}),
-      ...("mimeType" in asset && asset.mimeType !== undefined ? { mimeType: asset.mimeType } : {}),
-    }),
-  };
-  const rangeHeader = request.headers["range"];
-  const parsedRange =
-    rangeHeader === undefined || !Number.isSafeInteger(fileSize)
-      ? "unsupported"
-      : parseSingleByteRange(rangeHeader, fileSize);
-
-  if (parsedRange === "unsatisfiable") {
-    return HttpServerResponse.empty({
-      status: 416,
-      headers: {
-        ...headers,
-        "Content-Range": `bytes */${fileSize}`,
-      },
-    });
-  }
-
-  return yield* HttpServerResponse.file(asset.path, {
-    status: parsedRange === "unsupported" ? 200 : 206,
-    headers:
-      parsedRange === "unsupported"
-        ? headers
-        : {
-            ...headers,
-            "Content-Range": `bytes ${parsedRange.start}-${parsedRange.end}/${fileSize}`,
-          },
-    ...(parsedRange === "unsupported"
-      ? {}
-      : {
-          offset: parsedRange.start,
-          bytesToRead: parsedRange.end - parsedRange.start + 1,
-        }),
-  }).pipe(
+  return yield* assetFileResponse(
+    asset,
+    request.method === "GET" ? request.headers.range : undefined,
+    request.headers["if-range"],
+    { allowRangesForAnyMimeType: true },
+  ).pipe(
     Effect.orElseSucceed(() => HttpServerResponse.text("Internal Server Error", { status: 500 })),
   );
 });

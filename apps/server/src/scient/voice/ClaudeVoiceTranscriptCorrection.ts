@@ -7,11 +7,13 @@ import * as ChildProcessSpawner from "effect/unstable/process/ChildProcessSpawne
 
 import { makeClaudeEnvironment } from "../../provider/Drivers/ClaudeHome.ts";
 import {
-  getClaudeModelCapabilities,
-  normalizeClaudeCliEffort,
-  resolveClaudeApiModelId,
-  resolveClaudeEffort,
-} from "../../provider/Layers/ClaudeProvider.ts";
+  BUNDLED_CLAUDE_MODEL_CATALOG,
+  type ClaudeModelCatalog,
+  normalizeClaudeCatalogEffort,
+  resolveClaudeCatalogApiModelId,
+  resolveClaudeCatalogEffort,
+  scopeClaudeModelCatalog,
+} from "../../provider/ClaudeModelCatalog.ts";
 import { toJsonSchemaObject } from "../../textGeneration/TextGenerationUtils.ts";
 import type { ProviderVoiceTranscriptCorrection } from "../../provider/ProviderDriver.ts";
 import {
@@ -55,6 +57,7 @@ export function buildClaudeVoiceTranscriptCorrectionArgs(input: {
 export function makeClaudeVoiceTranscriptCorrection(
   settings: ClaudeSettings,
   environment: NodeJS.ProcessEnv = process.env,
+  modelCatalog: Effect.Effect<ClaudeModelCatalog> = Effect.succeed(BUNDLED_CLAUDE_MODEL_CATALOG),
 ): Effect.Effect<
   ProviderVoiceTranscriptCorrection,
   never,
@@ -64,6 +67,9 @@ export function makeClaudeVoiceTranscriptCorrection(
     const fileSystem = yield* FileSystem.FileSystem;
     const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
     const providerEnvironment = yield* makeClaudeEnvironment(settings, environment);
+    const scopedModelCatalog = modelCatalog.pipe(
+      Effect.map((catalog) => scopeClaudeModelCatalog(catalog, settings.customModels)),
+    );
 
     const correct: ProviderVoiceTranscriptCorrection["correct"] = (input) =>
       Effect.scoped(
@@ -71,9 +77,11 @@ export function makeClaudeVoiceTranscriptCorrection(
           const tempDirectory = yield* fileSystem.makeTempDirectoryScoped({
             prefix: "scient-voice-claude-",
           });
-          const model = resolveClaudeApiModelId(input.modelSelection);
-          const effort = normalizeClaudeCliEffort(
-            resolveClaudeEffort(getClaudeModelCapabilities(input.modelSelection.model), "low"),
+          const catalog = yield* scopedModelCatalog;
+          const model = resolveClaudeCatalogApiModelId(catalog, input.modelSelection);
+          const effort = normalizeClaudeCatalogEffort(
+            catalog,
+            resolveClaudeCatalogEffort(catalog, input.modelSelection.model, "low"),
             input.modelSelection.model,
           );
           const stdout = yield* runVoiceTranscriptCorrectionProcess({
