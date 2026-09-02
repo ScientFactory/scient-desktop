@@ -74,7 +74,7 @@
     },
     {
       "path": "apps/web/src/components/ChatView.tsx",
-      "anchor": "openFile(activeThreadRef, relativePath, line)",
+      "anchor": "const openFileSourceSurface = useCallback(",
       "purpose": "Open a diagnostic or inverse-SyncTeX source at its reported line through the inherited right-panel store."
     },
     {
