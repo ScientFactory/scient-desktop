@@ -1944,7 +1944,7 @@ describe("ScientMarkdownEditorView", () => {
     expect(view.state.doc.firstChild!.firstChild!.attrs.src).toBe("old.png");
   });
 
-  it("opens a numbered footnote marker directly in its compact definition editor", async () => {
+  it("navigates from a numbered marker without focusing the directly editable definition", () => {
     const source = "Note[^lab].\n\n[^lab]: Collected twice.\n";
     const onUserSourceChange = vi.fn();
     const controller = new ScientMarkdownEditorView({
@@ -1969,9 +1969,17 @@ describe("ScientMarkdownEditorView", () => {
 
     expect(marker.textContent).toBe("1");
     expect(reference.querySelector("input, textarea")).toBeNull();
-    expect(editor.hidden).toBe(true);
+    expect(editor.hidden).toBe(false);
+    expect(editor.value).toBe("Collected twice.");
     marker.click();
-    await Promise.resolve();
+    expect(view.state.selection).not.toBeInstanceOf(NodeSelection);
+    expect(document.activeElement).toBe(definition);
+    expect(editor.hidden).toBe(false);
+    expect(onUserSourceChange).not.toHaveBeenCalled();
+
+    const mouseDown = new MouseEvent("mousedown", { bubbles: true, button: 0 });
+    editor.dispatchEvent(mouseDown);
+    expect(mouseDown.defaultPrevented).toBe(false);
     expect(view.state.selection).toBeInstanceOf(NodeSelection);
     expect(document.activeElement).toBe(editor);
     expect(editor.hidden).toBe(false);
@@ -1979,11 +1987,13 @@ describe("ScientMarkdownEditorView", () => {
     expect(onUserSourceChange).not.toHaveBeenCalled();
 
     controller.setMode("read");
-    expect(editor.hidden).toBe(true);
+    expect(editor.hidden).toBe(false);
     expect(editor.readOnly).toBe(true);
+    expect(editor.tabIndex).toBe(-1);
     controller.setMode("write");
     expect(editor.hidden).toBe(false);
     expect(editor.readOnly).toBe(false);
+    expect(editor.tabIndex).toBe(0);
 
     editor.value = "Collected again.\nWith details.";
     editor.dispatchEvent(new InputEvent("input", { bubbles: true, inputType: "insertText" }));
@@ -1994,7 +2004,7 @@ describe("ScientMarkdownEditorView", () => {
 
     editor.dispatchEvent(new KeyboardEvent("keydown", { bubbles: true, key: "Escape" }));
     expect(view.state.selection).not.toBeInstanceOf(NodeSelection);
-    expect(editor.hidden).toBe(true);
+    expect(editor.hidden).toBe(false);
 
     controller.setMode("read");
     editor.value = "ignored";
@@ -2037,13 +2047,9 @@ describe("ScientMarkdownEditorView", () => {
       );
 
     expect(openMenu(first)).toBe(false);
-    await vi.waitFor(() =>
-      expect(document.activeElement).toBe(
-        view.dom.querySelector<HTMLTextAreaElement>(
-          ".scient-markdown-footnote-definition textarea",
-        ),
-      ),
-    );
+    const definition = view.dom.querySelector<HTMLElement>(".scient-markdown-footnote-definition")!;
+    await vi.waitFor(() => expect(document.activeElement).toBe(definition));
+    expect(definition.querySelector<HTMLTextAreaElement>("textarea")?.hidden).toBe(false);
     expect(showFootnoteContextMenu).toHaveBeenLastCalledWith({
       canCopy: true,
       editable: true,

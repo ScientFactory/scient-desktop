@@ -799,11 +799,6 @@ sup.scient-markdown-reference {
   font-size: 0.82rem;
 }
 
-.scient-markdown-footnote-definition.is-selected {
-  border-inline-start-color: color-mix(in oklab, var(--muted-foreground) 45%, var(--border));
-  background: color-mix(in oklab, var(--muted) 22%, transparent);
-}
-
 .scient-markdown-footnote-definition .scient-markdown-reference-label {
   font-variant-numeric: tabular-nums;
   font-weight: 500;
@@ -812,7 +807,6 @@ sup.scient-markdown-reference {
 .scient-markdown-footnote-body {
   min-width: 0;
   color: var(--foreground);
-  white-space: pre-wrap;
 }
 
 .scient-markdown-footnote-backlinks {
@@ -821,6 +815,7 @@ sup.scient-markdown-reference {
 }
 
 .scient-markdown-footnote-backlink {
+  position: relative;
   appearance: none;
   border: 0;
   border-radius: 0.2rem;
@@ -829,6 +824,36 @@ sup.scient-markdown-reference {
   color: var(--muted-foreground);
   font: inherit;
   cursor: pointer;
+}
+
+.scient-markdown-footnote-backlink-tooltip {
+  position: absolute;
+  z-index: 20;
+  inset-block-end: calc(100% + 0.35rem);
+  inset-inline-start: 50%;
+  transform: translateX(-50%) translateY(0.15rem);
+  border: 1px solid color-mix(in oklab, var(--border) 82%, transparent);
+  border-radius: 0.3rem;
+  background: var(--popover);
+  padding: 0.25rem 0.4rem;
+  color: var(--popover-foreground);
+  box-shadow: 0 0.25rem 0.75rem color-mix(in oklab, black 16%, transparent);
+  font-family: var(--font-sans);
+  font-size: 0.7rem;
+  font-weight: 400;
+  line-height: 1;
+  white-space: nowrap;
+  pointer-events: none;
+  opacity: 0;
+  transition:
+    opacity 120ms ease,
+    transform 120ms ease;
+}
+
+.scient-markdown-footnote-backlink:is(:hover, :focus-visible)
+  .scient-markdown-footnote-backlink-tooltip {
+  transform: translateX(-50%) translateY(0);
+  opacity: 1;
 }
 
 .scient-markdown-footnote-backlink:hover {
@@ -842,13 +867,21 @@ sup.scient-markdown-reference {
 }
 
 .scient-markdown-footnote-definition textarea.scient-markdown-reference-source {
-  grid-column: 1 / -1;
+  grid-column: 2;
   field-sizing: content;
+  appearance: none;
   width: 100%;
-  min-height: 2rem;
+  min-height: 1lh;
   max-height: 14rem;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+  padding: 0;
+  font: inherit;
+  line-height: inherit;
   overflow-y: auto;
-  resize: vertical;
+  resize: none;
 }
 
 .scient-markdown-editable-rich-fence {

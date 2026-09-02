@@ -69,6 +69,7 @@ function footnoteFixture(input: {
   const nodeView = createScientReferenceNodeView(node, view, () => position, register);
   document.body.append(nodeView.dom);
   return {
+    destination,
     definitionPosition,
     destinationEditor,
     dispatch,
@@ -82,8 +83,8 @@ function footnoteFixture(input: {
 describe("Scient reference node view", () => {
   afterEach(() => document.body.replaceChildren());
 
-  it("renders a numbered marker and navigates directly to its definition", async () => {
-    const { definitionPosition, destinationEditor, nodeView, state } = footnoteFixture({});
+  it("navigates a numbered marker without selecting or opening its definition", () => {
+    const { destination, dispatch, nodeView, state } = footnoteFixture({});
     const marker = nodeView.dom.querySelector<HTMLButtonElement>("button")!;
 
     expect(nodeView.dom.dataset.scientMarkdownReference).toBe("footnote_reference");
@@ -92,10 +93,9 @@ describe("Scient reference node view", () => {
     expect(nodeView.dom.querySelector("input, textarea")).toBeNull();
 
     marker.click();
-    await Promise.resolve();
-    expect(state().selection).toBeInstanceOf(NodeSelection);
-    expect(state().selection.from).toBe(definitionPosition);
-    expect(document.activeElement).toBe(destinationEditor);
+    expect(state().selection).toBeInstanceOf(TextSelection);
+    expect(dispatch).not.toHaveBeenCalled();
+    expect(document.activeElement).toBe(destination);
 
     nodeView.destroy?.();
   });
@@ -114,17 +114,26 @@ describe("Scient reference node view", () => {
     nodeView.destroy?.();
   });
 
-  it("shows the definition body and edits only its text while preserving the stable label", () => {
+  it("directly edits the visible definition body while preserving the stable label", () => {
     const { nodeView, state, definitionPosition } = footnoteFixture({ viewDefinition: true });
-    const body = nodeView.dom.querySelector<HTMLElement>(".scient-markdown-footnote-body")!;
     const editor = nodeView.dom.querySelector<HTMLTextAreaElement>("textarea")!;
 
     expect(nodeView.dom.querySelector(".scient-markdown-reference-label")?.textContent).toBe("1.");
-    expect(body.textContent).toBe("First line\nsecond line");
-    expect(editor.hidden).toBe(true);
+    expect(nodeView.dom.querySelector(".scient-markdown-footnote-body")).toBe(editor);
+    expect(nodeView.dom.querySelectorAll(".scient-markdown-footnote-body")).toHaveLength(1);
+    expect(editor.hidden).toBe(false);
+    expect(editor.value).toBe("First line\nsecond line");
+    expect(editor.tabIndex).toBe(0);
     nodeView.selectNode?.();
     expect(editor.hidden).toBe(false);
     expect(editor.value).toBe("First line\nsecond line");
+
+    const mouseDown = new MouseEvent("mousedown", { bubbles: true, button: 0 });
+    editor.dispatchEvent(mouseDown);
+    expect(mouseDown.defaultPrevented).toBe(false);
+    expect(state().selection).toBeInstanceOf(NodeSelection);
+    expect(state().selection.from).toBe(definitionPosition);
+    expect(document.activeElement).toBe(editor);
 
     editor.value = "Updated\ncontinued";
     editor.dispatchEvent(new InputEvent("input", { bubbles: true, inputType: "insertText" }));
@@ -132,6 +141,8 @@ describe("Scient reference node view", () => {
       label: "multiline",
       source: "[^multiline]: Updated\n    continued",
     });
+    nodeView.deselectNode?.();
+    expect(editor.hidden).toBe(false);
 
     nodeView.destroy?.();
   });
@@ -147,6 +158,11 @@ describe("Scient reference node view", () => {
 
     expect(backlinks).toHaveLength(2);
     expect(backlinks[1]?.getAttribute("aria-label")).toBe("Return to footnote 1 reference 2");
+    const tooltip = backlinks[1]?.querySelector<HTMLElement>(
+      ".scient-markdown-footnote-backlink-tooltip",
+    );
+    expect(tooltip?.textContent).toBe("Back to text");
+    expect(tooltip?.getAttribute("aria-hidden")).toBe("true");
     backlinks[1]?.click();
     expect(state().selection).toBeInstanceOf(NodeSelection);
     expect(state().selection.from).toBe(repeatedReferencePosition);
@@ -177,12 +193,15 @@ describe("Scient reference node view", () => {
     nodeView.destroy?.();
   });
 
-  it("does not reveal or mutate definition source in read mode", () => {
+  it("keeps definition text visible but does not mutate it in read mode", () => {
     const { dispatch, nodeView } = footnoteFixture({ editable: false, viewDefinition: true });
     const editor = nodeView.dom.querySelector<HTMLTextAreaElement>("textarea")!;
 
+    expect(editor.hidden).toBe(false);
+    expect(editor.readOnly).toBe(true);
+    expect(editor.tabIndex).toBe(-1);
     nodeView.selectNode?.();
-    expect(editor.hidden).toBe(true);
+    expect(editor.hidden).toBe(false);
     editor.value = "Changed";
     editor.dispatchEvent(new InputEvent("input", { bubbles: true, inputType: "insertText" }));
     expect(dispatch).not.toHaveBeenCalled();

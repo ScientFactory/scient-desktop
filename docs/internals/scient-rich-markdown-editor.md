@@ -125,7 +125,7 @@ not alter Markdown source unless the user performs an editing command.
 | Inline/display math           | Typeset while inactive; compact TeX editor when selected                     | Preserve `$…$`, `$$…$$`, `\(…\)`, or `\[…\]` when edited                |
 | Image/figure                  | Rendered with selection, alt text, caption, path, and size controls          | Use portable relative paths and ordinary Markdown where possible        |
 | Citation                      | Rendered source label; selection reveals its compact source editor           | Preserve citation keys and source syntax                                |
-| Footnote                      | Numbered marker navigates to a visible definition with return backlinks      | Keep generated labels internal and preserve repeated-reference binding  |
+| Footnote                      | Numbered marker navigates to one directly editable definition with backlinks | Keep generated labels internal and preserve repeated-reference binding  |
 | Mermaid/Vega/Plotly           | Preview-identical interactive card; explicit menu action opens source        | Retain the last valid render during invalid intermediate input          |
 | Reference definition          | Hidden while reading; compact exact-source disclosure while authoring        | Preserve the complete definition verbatim until explicitly edited       |
 | Other raw/unknown construct   | One persistent in-place source field; no separate preview/editor             | Preserve the complete original source verbatim until explicitly edited  |
@@ -141,8 +141,11 @@ context menu, so those entry points cannot drift into separate editing behavior.
 Footnotes are one paired document feature rather than an ordinary hyperlink or an editable label.
 The Insert menu and `/footnote` command create a collision-free reference plus its definition in
 one undo step, then focus the definition body. Reader-facing numbers follow first reference order;
-repeated labels share a number and receive individual return backlinks. Clicking a marker goes to
-the definition without an intermediate selection outline. Its native context menu is limited to
+repeated labels share a number and receive individual return backlinks. The definition body is its
+only text surface and edits directly in place without a second box. Clicking a marker scrolls to
+and focuses the definition without moving the caret into that field; clicking the body edits it.
+Return backlinks expose a visible **Back to text** tooltip. The marker's
+native context menu is limited to
 footnote navigation, copying the internal fragment, removing that occurrence, and deleting the
 definition only with its final reference. Missing definitions remain visibly non-dead and removable.
 

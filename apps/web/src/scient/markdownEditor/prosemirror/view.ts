@@ -1037,7 +1037,7 @@ export class ScientMarkdownEditorView {
 
     if (action === "go-to-footnote") {
       if (entry.definitionPosition !== null) {
-        this.navigateToFootnoteNode(entry.definitionPosition, true);
+        this.focusFootnoteDom(entry.definitionPosition, false);
       }
       return;
     }
@@ -1382,27 +1382,6 @@ export class ScientMarkdownEditorView {
       return;
     }
     this.focusFootnoteDom(selection.from, true);
-  }
-
-  private navigateToFootnoteNode(position: number, focusDefinitionEditor: boolean): boolean {
-    const view = this.editorView;
-    const node = view?.state.doc.nodeAt(position);
-    if (
-      !view ||
-      (node?.type !== scientMarkdownSchema.nodes.footnote_definition &&
-        node?.type !== scientMarkdownSchema.nodes.footnote_reference)
-    ) {
-      return false;
-    }
-    view.dispatch(
-      view.state.tr
-        .setSelection(NodeSelection.create(view.state.doc, position))
-        .setMeta(scientMarkdownTransactionOriginKey, "system")
-        .setMeta("addToHistory", false)
-        .scrollIntoView(),
-    );
-    this.focusFootnoteDom(position, focusDefinitionEditor);
-    return true;
   }
 
   private focusFootnoteDom(position: number, focusDefinitionEditor: boolean): void {

@@ -323,7 +323,7 @@ describe("rich Markdown compact-surface styles", () => {
     );
   });
 
-  it("uses quiet numbered footnote navigation without a nested marker editor", () => {
+  it("uses quiet numbered footnote navigation with one borderless definition field", () => {
     expect(cssSource).toMatch(
       /\.scient-markdown-reference\[data-scient-markdown-reference="footnote_reference"\] \{[^}]*display: inline;[^}]*background: transparent;[^}]*padding: 0;[^}]*cursor: pointer/su,
     );
@@ -337,7 +337,14 @@ describe("rich Markdown compact-surface styles", () => {
       /\.scient-markdown-reference\.is-missing \.scient-markdown-footnote-marker \{[^}]*color: var\(--muted-foreground\);[^}]*text-decoration-style: dotted/su,
     );
     expect(cssSource).toMatch(
-      /\.scient-markdown-footnote-definition textarea\.scient-markdown-reference-source \{[^}]*field-sizing: content;[^}]*min-height: 2rem;[^}]*max-height: 14rem;[^}]*overflow-y: auto;[^}]*resize: vertical/su,
+      /\.scient-markdown-footnote-definition textarea\.scient-markdown-reference-source \{[^}]*grid-column: 2;[^}]*field-sizing: content;[^}]*appearance: none;[^}]*min-height: 1lh;[^}]*max-height: 14rem;[^}]*border: 0;[^}]*background: transparent;[^}]*box-shadow: none;[^}]*padding: 0;[^}]*font: inherit;[^}]*overflow-y: auto;[^}]*resize: none/su,
+    );
+    expect(cssSource).not.toContain(".scient-markdown-footnote-definition.is-selected");
+    expect(cssSource).toMatch(
+      /\.scient-markdown-footnote-backlink-tooltip \{[^}]*pointer-events: none;[^}]*opacity: 0/su,
+    );
+    expect(cssSource).toMatch(
+      /\.scient-markdown-footnote-backlink:is\(:hover, :focus-visible\)[^}]*\.scient-markdown-footnote-backlink-tooltip \{[^}]*opacity: 1/su,
     );
     expect(cssSource).toMatch(
       /footnote_reference[^}]*\.ProseMirror-selectednode,[^}]*footnote_reference[^}]*\.is-selected,[^}]*footnote-definition\.ProseMirror-selectednode \{\s*outline: none/su,

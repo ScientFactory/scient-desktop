@@ -41,7 +41,6 @@ function footnoteSource(label: string, body: string): string {
 class ScientReferenceNodeView implements NodeView {
   readonly dom: HTMLElement;
   private readonly label = document.createElement("span");
-  private readonly bodyPreview: HTMLSpanElement | null;
   private readonly marker: HTMLButtonElement | null;
   private readonly sourceEditor: HTMLInputElement | HTMLTextAreaElement | null;
   private readonly unregisterFootnote: (() => void) | null;
@@ -66,7 +65,6 @@ class ScientReferenceNodeView implements NodeView {
     if (definition) this.dom.tabIndex = -1;
 
     if (reference) {
-      this.bodyPreview = null;
       this.marker = document.createElement("button");
       this.marker.type = "button";
       this.marker.className = "scient-markdown-footnote-marker";
@@ -78,15 +76,17 @@ class ScientReferenceNodeView implements NodeView {
       this.marker = null;
       this.label.className = "scient-markdown-reference-label";
       this.dom.append(this.label);
-      this.bodyPreview = definition ? document.createElement("span") : null;
-      if (this.bodyPreview) {
-        this.bodyPreview.className = "scient-markdown-footnote-body";
-        this.dom.append(this.bodyPreview);
-      }
       this.sourceEditor = document.createElement(definition ? "textarea" : "input");
       this.sourceEditor.className = "scient-markdown-reference-source";
+      if (definition) {
+        this.sourceEditor.classList.add("scient-markdown-footnote-body");
+        this.sourceEditor.hidden = false;
+        this.sourceEditor.tabIndex = view.editable ? 0 : -1;
+        (this.sourceEditor as HTMLTextAreaElement).rows = 1;
+      } else {
+        this.sourceEditor.hidden = true;
+      }
       this.sourceEditor.dir = "auto";
-      this.sourceEditor.hidden = true;
       this.sourceEditor.readOnly = !view.editable;
       this.sourceEditor.setAttribute(
         "aria-label",
@@ -123,14 +123,14 @@ class ScientReferenceNodeView implements NodeView {
   selectNode(): void {
     this.dom.classList.add("is-selected");
     if (!this.sourceEditor || !this.view.editable) return;
-    this.sourceEditor.hidden = false;
+    if (this.node.type.name === "citation") this.sourceEditor.hidden = false;
     this.sourceEditor.readOnly = false;
     this.sourceEditor.value = sourceValue(this.node);
   }
 
   deselectNode(): void {
     this.dom.classList.remove("is-selected");
-    if (this.sourceEditor) this.sourceEditor.hidden = true;
+    if (this.sourceEditor && this.node.type.name === "citation") this.sourceEditor.hidden = true;
   }
 
   stopEvent(event: Event): boolean {
@@ -158,6 +158,11 @@ class ScientReferenceNodeView implements NodeView {
   private setEditable(editable: boolean): void {
     if (!this.sourceEditor) return;
     this.sourceEditor.readOnly = !editable;
+    if (this.node.type.name === "footnote_definition") {
+      this.sourceEditor.hidden = false;
+      this.sourceEditor.tabIndex = editable ? 0 : -1;
+      return;
+    }
     this.sourceEditor.hidden = !editable || !this.dom.classList.contains("is-selected");
   }
 
@@ -166,7 +171,7 @@ class ScientReferenceNodeView implements NodeView {
     event.preventDefault();
     const entry = this.presentation.get(String(this.node.attrs.label));
     if (entry?.definitionPosition === null || entry?.definitionPosition === undefined) return;
-    this.navigateTo(entry.definitionPosition, true);
+    this.navigateToDefinition(entry.definitionPosition);
   };
 
   private readonly handleEditorMouseDown = (event: Event) => {
@@ -245,8 +250,6 @@ class ScientReferenceNodeView implements NodeView {
 
     this.dom.id = scientMarkdownFootnoteDefinitionId(label);
     this.label.textContent = number === null || number === undefined ? "•" : `${number}.`;
-    if (this.bodyPreview)
-      this.bodyPreview.textContent = footnoteBody(String(this.node.attrs.source));
     this.renderBacklinks(entry?.referencePositions ?? [], label, number);
     if (this.sourceEditor && this.sourceEditor !== document.activeElement) {
       this.sourceEditor.value = sourceValue(this.node);
@@ -267,19 +270,31 @@ class ScientReferenceNodeView implements NodeView {
       backlink.type = "button";
       backlink.className = "scient-markdown-footnote-backlink";
       backlink.textContent = "↩";
+      const tooltip = document.createElement("span");
+      tooltip.className = "scient-markdown-footnote-backlink-tooltip";
+      tooltip.textContent = "Back to text";
+      tooltip.setAttribute("aria-hidden", "true");
+      backlink.append(tooltip);
       backlink.setAttribute(
         "aria-label",
         `Return to footnote ${number ?? ""} reference ${index + 1}`.replace("  ", " "),
       );
       backlink.setAttribute("aria-controls", scientMarkdownFootnoteReferenceId(label, index + 1));
       backlink.addEventListener("mousedown", (event) => event.preventDefault());
-      backlink.addEventListener("click", () => this.navigateTo(position, false));
+      backlink.addEventListener("click", () => this.navigateToReference(position));
       backlinks.append(backlink);
     });
-    (this.bodyPreview ?? this.label).after(backlinks);
+    (this.sourceEditor ?? this.label).after(backlinks);
   }
 
-  private navigateTo(position: number, focusEditor: boolean): void {
+  private navigateToDefinition(position: number): void {
+    const dom = this.view.nodeDOM(position);
+    if (!(dom instanceof HTMLElement)) return;
+    dom.scrollIntoView?.({ block: "center" });
+    dom.focus({ preventScroll: true });
+  }
+
+  private navigateToReference(position: number): void {
     const node = this.view.state.doc.nodeAt(position);
     if (!node) return;
     this.view.dispatch(
@@ -292,15 +307,8 @@ class ScientReferenceNodeView implements NodeView {
       const dom = this.view.nodeDOM(position);
       if (!(dom instanceof HTMLElement)) return;
       dom.scrollIntoView?.({ block: "center" });
-      const editor = dom.querySelector<HTMLTextAreaElement>(".scient-markdown-reference-source");
       const marker = dom.querySelector<HTMLButtonElement>(".scient-markdown-footnote-marker");
-      const target = focusEditor && this.view.editable && editor ? editor : (marker ?? dom);
-      if (target instanceof HTMLTextAreaElement) {
-        target.focus({ preventScroll: true });
-        target.setSelectionRange(target.value.length, target.value.length);
-      } else {
-        target?.focus({ preventScroll: true });
-      }
+      (marker ?? dom).focus({ preventScroll: true });
     });
   }
 }
