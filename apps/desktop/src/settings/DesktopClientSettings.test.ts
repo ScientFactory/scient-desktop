@@ -19,7 +19,7 @@ const clientSettings: ClientSettings = {
   browserDefaultAppearance: "dark",
   browserRecordingFrameRate: 60,
   browserAutoShowFloatingPreview: false,
-  confirmQuit: true,
+  confirmQuit: "double-click",
   confirmThreadArchive: true,
   confirmThreadDelete: false,
   contentDirection: "auto",
@@ -41,8 +41,6 @@ const clientSettings: ClientSettings = {
   planModeEnabled: false,
   showSkillsInSlashMenu: true,
   providerModelPreferences: {},
-  sidebarAutoSettleAfterDays: 3,
-  sidebarAutoSettleOnMerge: true,
   sidebarProjectGroupingMode: "repository_path",
   sidebarProjectGroupingOverrides: {
     "environment-1:/tmp/project-a": "separate",
@@ -220,8 +218,6 @@ describe("DesktopClientSettings", () => {
           assert.equal(persisted.value.appearanceContrast, 120);
           assert.equal(persisted.value.fontSizeInterface, 17);
           assert.equal(persisted.value.showSkillsInSlashMenu, false);
-          assert.equal(persisted.value.sidebarAutoSettleAfterDays, 7);
-          assert.equal(persisted.value.sidebarAutoSettleOnMerge, false);
         }
       }),
     ),

@@ -12,6 +12,7 @@ import { ScientForkReactor } from "../Services/ScientForkReactor.ts";
 import { ProviderCommandReactor } from "../Services/ProviderCommandReactor.ts";
 import { ProviderRuntimeIngestionService } from "../Services/ProviderRuntimeIngestion.ts";
 import { ThreadDeletionReactor } from "../Services/ThreadDeletionReactor.ts";
+import * as ThreadSettlementReactor from "../ThreadSettlementReactor.ts";
 import * as AgentAwarenessRelay from "../../relay/AgentAwarenessRelay.ts";
 
 export const makeOrchestrationReactor = Effect.gen(function* () {
@@ -22,6 +23,7 @@ export const makeOrchestrationReactor = Effect.gen(function* () {
   const scientForkReactor = yield* ScientForkReactor;
   // SCIENT-FORK:END
   const threadDeletionReactor = yield* ThreadDeletionReactor;
+  const threadSettlementReactor = yield* ThreadSettlementReactor.ThreadSettlementReactor;
   const agentAwarenessRelay = yield* AgentAwarenessRelay.AgentAwarenessRelay;
 
   const start: OrchestrationReactorShape["start"] = Effect.fn("start")(function* () {
@@ -32,6 +34,7 @@ export const makeOrchestrationReactor = Effect.gen(function* () {
     yield* scientForkReactor.start();
     // SCIENT-FORK:END
     yield* threadDeletionReactor.start();
+    yield* threadSettlementReactor.start();
     yield* agentAwarenessRelay.start();
   });
 

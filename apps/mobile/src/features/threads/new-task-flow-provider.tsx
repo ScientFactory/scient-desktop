@@ -469,7 +469,7 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
         option.selection.instanceId === selectedModel.instanceId &&
         option.selection.model === selectedModel.model,
     ) ?? null;
-  const selectedProviderStatus = useMemo(
+  const selectedProviderStatusFromServer = useMemo(
     () =>
       selectedEnvironmentServerConfig?.providers.find(
         (provider) => provider.instanceId === selectedModel?.instanceId,
@@ -484,17 +484,19 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
         })
       : null,
   ).data;
-  const selectedProviderSkills = useMemo(
-    () =>
-      selectedProviderStatus
-        ? mergeEffectiveProviderSkills({
-            provider: selectedProviderStatus.driver,
-            providerSkills: selectedProviderStatus.skills,
-            inventory: scientSkills,
-          })
-        : [],
-    [scientSkills, selectedProviderStatus],
-  );
+  const selectedProviderStatus = useMemo(() => {
+    if (!selectedProviderStatusFromServer) {
+      return null;
+    }
+    return {
+      ...selectedProviderStatusFromServer,
+      skills: mergeEffectiveProviderSkills({
+        provider: selectedProviderStatusFromServer.driver,
+        providerSkills: selectedProviderStatusFromServer.skills,
+        inventory: scientSkills,
+      }),
+    };
+  }, [scientSkills, selectedProviderStatusFromServer]);
   const setSelectedModelKey = useCallback(
     // Options ride along in the same write: a follow-up setSelectedModelOptions
     // call would rebuild the selection from the stale pre-switch model.
