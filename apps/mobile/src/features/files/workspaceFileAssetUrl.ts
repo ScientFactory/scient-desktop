@@ -1,10 +1,10 @@
-import type { EnvironmentId, ThreadId } from "@t3tools/contracts";
+import type { AssetResource, EnvironmentId, ThreadId } from "@t3tools/contracts";
 import { useMemo } from "react";
 
-import { useAssetUrl } from "../../state/assets";
-import { resolveWorkspaceFilePath } from "./filePath";
+import { useAssetUrlState, useRefreshAssetUrl } from "../../state/assets";
+import { isAbsolutePath, isVideoPreviewFile, resolveWorkspaceFilePath } from "./filePath";
 
-export function useWorkspaceFileAssetUrl(props: {
+export function useWorkspaceFileAssetUrlState(props: {
   readonly cwd: string | null;
   readonly environmentId: EnvironmentId | null;
   readonly relativePath: string | null;
@@ -18,17 +18,32 @@ export function useWorkspaceFileAssetUrl(props: {
     [props.cwd, props.relativePath],
   );
 
-  return useAssetUrl(
-    props.environmentId,
-    props.cwd !== null && props.relativePath !== null
-      ? {
-          _tag: "workspace-file",
-          cwd: props.cwd,
-          relativePath: props.relativePath,
-          ...(absolutePath !== null && props.threadId !== null
-            ? { threadId: props.threadId, path: absolutePath }
-            : {}),
-        }
-      : null,
-  );
+  // Videos stream from an exact-file URL, and so does anything outside the
+  // workspace, where no workspace-scoped URL can exist.
+  const relativePath = props.relativePath;
+  const resource = useMemo<AssetResource | null>(() => {
+    if (props.cwd === null || relativePath === null) return null;
+    if (
+      absolutePath !== null &&
+      props.threadId !== null &&
+      (isVideoPreviewFile(absolutePath) || isAbsolutePath(relativePath))
+    ) {
+      return {
+        _tag: "media-file",
+        threadId: props.threadId,
+        path: absolutePath,
+      };
+    }
+    return {
+      _tag: "workspace-file",
+      cwd: props.cwd,
+      relativePath,
+      ...(absolutePath !== null && props.threadId !== null
+        ? { threadId: props.threadId, path: absolutePath }
+        : {}),
+    };
+  }, [absolutePath, props.cwd, props.threadId, relativePath]);
+  const state = useAssetUrlState(props.environmentId, resource);
+  const refresh = useRefreshAssetUrl(props.environmentId, resource);
+  return { ...state, resource, refresh };
 }

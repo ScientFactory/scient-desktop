@@ -16,6 +16,7 @@ export const makeProviderRegistryMock = (
   refreshInstanceAfterAccountChange: () => Effect.succeed(providers),
   reloadInstance: () => Effect.succeed(providers),
   reloadInstanceStrict: () => Effect.succeed(providers),
+  refreshWorkspaceSnapshot: () => Effect.succeed(providers),
   getProviderMaintenanceCapabilitiesForInstance: (_instanceId, provider) =>
     Effect.succeed(makeManualOnlyProviderMaintenanceCapabilities({ provider, packageName: null })),
   getProviderConnectionActionsForInstance: () => Effect.succeed(undefined),

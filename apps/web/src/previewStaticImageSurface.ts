@@ -59,6 +59,8 @@ export function previewStaticImageRevisionKey(image: PreviewStaticImageSurfaceDe
       ]);
     case "environment-file":
       return JSON.stringify([resource._tag, resource.path, resource.access]);
+    case "media-file":
+      return JSON.stringify([resource._tag, resource.threadId, resource.path]);
   }
 }
 

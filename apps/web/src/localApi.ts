@@ -3,7 +3,6 @@ import type { ConfirmDialogOptions, ContextMenuItem, LocalApi } from "@t3tools/c
 import { requestConfirmDialog } from "./confirmDialog";
 import { dismissContextMenu, showContextMenuFallback } from "./contextMenuFallback";
 import { readBrowserClientSettings, writeBrowserClientSettings } from "./clientPersistenceStorage";
-import { resetRequestLatencyStateForTests } from "./rpc/requestLatencyState";
 import { saveAssetCopyInBrowser } from "./scient/documentArtifacts/browserAssetCopy";
 
 let cachedApi: LocalApi | undefined;
@@ -96,11 +95,4 @@ export function ensureLocalApi(): LocalApi {
     throw new Error("Local API not found");
   }
   return api;
-}
-
-export async function __resetLocalApiForTests() {
-  cachedApi = undefined;
-  const { __resetClientSettingsPersistenceForTests } = await import("./hooks/useSettings");
-  __resetClientSettingsPersistenceForTests();
-  resetRequestLatencyStateForTests();
 }

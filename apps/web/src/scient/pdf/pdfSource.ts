@@ -121,6 +121,14 @@ export function workspacePdfSourceForPreview(input: {
   const relativeSourcePath = input.relativePath.split(/[?#]/, 1)[0] ?? input.relativePath;
   const fileName = relativeSourcePath.split(/[\\/]/).at(-1) ?? relativeSourcePath;
 
+  if (workspacePdfRelativePath(input.workspaceRoot, sourcePath) === null) {
+    return environmentPdfSource({
+      environmentId: input.environmentId,
+      canonicalPath: sourcePath,
+      fileName,
+    });
+  }
+
   return workspacePdfSource({
     environmentId: input.environmentId,
     fileName,

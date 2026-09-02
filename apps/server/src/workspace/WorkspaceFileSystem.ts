@@ -3,7 +3,9 @@
  * WorkspaceFileSystem - Effect service contract for workspace file mutations.
  *
  * Owns workspace-root-relative file read/write operations and their associated
- * safety checks and cache invalidation hooks.
+ * safety checks and cache invalidation hooks. Reads also accept absolute host
+ * paths so clients can show files an agent left outside the workspace; writes
+ * never leave the root.
  *
  * @module WorkspaceFileSystem
  */
@@ -165,7 +167,10 @@ export interface WorkspaceCreateBinaryFileInput {
 export class WorkspaceFileSystem extends Context.Service<
   WorkspaceFileSystem,
   {
-    /** Read a UTF-8 text file relative to the workspace root. */
+    /**
+     * Read a UTF-8 text file relative to the workspace root, or any host file by
+     * absolute path.
+     */
     readonly readFile: (
       input: ProjectReadFileInput,
     ) => Effect.Effect<
@@ -241,9 +246,31 @@ export const make = Effect.gen(function* () {
   const revisionForContents = (contents: string): string =>
     revisionForBytes(new TextEncoder().encode(contents));
 
-  const resolveRealFileTarget = Effect.fn("WorkspaceFileSystem.resolveRealFileTarget")(function* (
+  /**
+   * Resolves the file a read targets. Workspace-relative paths must stay inside the
+   * root, symlinks included. An absolute path reads a host file in place, such as a
+   * report an agent wrote to a temp directory; it gets no root check.
+   */
+  const resolveReadTarget = Effect.fn("WorkspaceFileSystem.resolveReadTarget")(function* (
     input: ProjectReadFileInput,
   ) {
+    const requestedPath = input.relativePath.trim();
+    if (path.isAbsolute(requestedPath)) {
+      const realTargetPath = yield* Effect.tryPromise({
+        try: () => NodeFSP.realpath(requestedPath),
+        catch: (cause) =>
+          new WorkspaceFileSystemOperationError({
+            workspaceRoot: input.cwd,
+            relativePath: input.relativePath,
+            resolvedPath: requestedPath,
+            operationPath: requestedPath,
+            operation: "realpath-target",
+            cause,
+          }),
+      });
+      return { relativePath: requestedPath, realTargetPath, readOnly: true };
+    }
+
     const target = yield* workspacePaths.resolveRelativePathWithinRoot({
       workspaceRoot: input.cwd,
       relativePath: input.relativePath,
@@ -285,21 +312,31 @@ export const make = Effect.gen(function* () {
         resolvedPath: realTargetPath,
       });
     }
-    return { target, realWorkspaceRoot, realTargetPath };
+    const canonicalRelativePath = path
+      .relative(realWorkspaceRoot, realTargetPath)
+      .replaceAll("\\", "/");
+    return {
+      relativePath: target.relativePath,
+      realTargetPath,
+      readOnly: canonicalRelativePath !== target.relativePath,
+    };
   });
 
   const readFile: WorkspaceFileSystem["Service"]["readFile"] = Effect.fn(
     "WorkspaceFileSystem.readFile",
   )(function* (input) {
-    const { target, realWorkspaceRoot, realTargetPath } = yield* resolveRealFileTarget(input);
-    const canonicalRelativePath = path
-      .relative(realWorkspaceRoot, realTargetPath)
-      .replaceAll("\\", "/");
-    const traversesSymlink = canonicalRelativePath !== target.relativePath;
+    const target = yield* resolveReadTarget(input);
+    const realTargetPath = target.realTargetPath;
 
     return yield* Effect.acquireUseRelease(
       Effect.tryPromise({
-        try: () => NodeFSP.open(realTargetPath, "r"),
+        // Non-blocking so a FIFO cannot hang the open; the stat below rejects
+        // it. Regular files ignore the flag. Windows lacks it.
+        try: () =>
+          NodeFSP.open(
+            realTargetPath,
+            NodeFS.constants.O_RDONLY | (NodeFS.constants.O_NONBLOCK ?? 0),
+          ),
         catch: (cause) =>
           new WorkspaceFileSystemOperationError({
             workspaceRoot: input.cwd,
@@ -361,7 +398,7 @@ export const make = Effect.gen(function* () {
             byteLength: stat.size,
             truncated: stat.size > PROJECT_READ_FILE_MAX_BYTES,
             revision: revisionForBytes(fileBytes),
-            ...(traversesSymlink ? { readOnly: true } : {}),
+            ...(target.readOnly ? { readOnly: true } : {}),
           };
         }),
       (handle) =>

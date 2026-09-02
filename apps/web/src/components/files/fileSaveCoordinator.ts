@@ -36,6 +36,7 @@ export class FileSaveCoordinator<A = unknown, E = unknown> {
   }
 
   change(contents: string): void {
+    if (this.disposed) return;
     this.latestContents = contents;
     this.latestRevision += 1;
     this.lastChangeAt = Date.now();

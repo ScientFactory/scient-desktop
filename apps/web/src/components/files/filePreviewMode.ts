@@ -1,16 +1,18 @@
 import {
   isWorkspaceImagePreviewPath,
   isWorkspacePdfPreviewPath,
+  isWorkspaceVideoPreviewPath,
 } from "@t3tools/shared/filePreview";
 
 export const isMarkdownPreviewFile = (path: string): boolean => /\.(?:md|mdx)$/i.test(path);
 
 export const isLatexPreviewFile = (path: string): boolean => /\.(?:tex|latex|ltx)$/i.test(path);
 
-export type FilePreviewKind = "empty" | "image" | "pdf" | "text";
+export type FilePreviewKind = "empty" | "image" | "pdf" | "text" | "video";
 
 export function resolveFilePreviewKind(path: string | null): FilePreviewKind {
   if (path === null) return "empty";
+  if (isWorkspaceVideoPreviewPath(path)) return "video";
   if (isWorkspaceImagePreviewPath(path)) return "image";
   if (isWorkspacePdfPreviewPath(path)) return "pdf";
   return "text";

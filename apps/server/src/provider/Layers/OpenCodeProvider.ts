@@ -31,9 +31,10 @@ const OPENCODE_PRESENTATION = {
   displayName: "OpenCode",
   showInteractionModeToggle: false,
 } as const;
+const OPENCODE_VERSION_PROBE_TIMEOUT = "4 seconds";
 
 class OpenCodeProbeError extends Data.TaggedError("OpenCodeProbeError")<{
-  readonly cause: unknown;
+  readonly cause?: unknown;
   readonly detail: string;
 }> {}
 
@@ -272,12 +273,12 @@ function isSkillInsideWorkspace(cwd: string, candidate: string): boolean {
   );
 }
 
-function flattenOpenCodeSkills(
-  input: OpenCodeInventory,
+export function openCodeSkillsToServerProviderSkills(
+  input: OpenCodeInventory["skills"] | undefined,
   cwd: string,
 ): ReadonlyArray<ServerProviderSkill> {
   const skills: ServerProviderSkill[] = [];
-  for (const skill of input.skills ?? []) {
+  for (const skill of input ?? []) {
     const name = trimOptional(skill.name);
     const path = trimOptional(skill.location);
     if (!name || !path) {
@@ -415,6 +416,15 @@ export const checkOpenCodeProviderStatus = Effect.fn("checkOpenCodeProviderStatu
           Effect.mapError(
             (cause) => new OpenCodeProbeError({ cause, detail: openCodeRuntimeErrorDetail(cause) }),
           ),
+          Effect.timeoutOrElse({
+            duration: OPENCODE_VERSION_PROBE_TIMEOUT,
+            orElse: () =>
+              Effect.fail(
+                new OpenCodeProbeError({
+                  detail: `OpenCode CLI version probe timed out after ${OPENCODE_VERSION_PROBE_TIMEOUT}.`,
+                }),
+              ),
+          }),
         ),
     );
     if (versionExit._tag === "Failure") {
@@ -491,7 +501,7 @@ export const checkOpenCodeProviderStatus = Effect.fn("checkOpenCodeProviderStatu
     customModels,
     DEFAULT_OPENCODE_MODEL_CAPABILITIES,
   );
-  const skills = flattenOpenCodeSkills(inventoryExit.value.inventory, cwd);
+  const skills = openCodeSkillsToServerProviderSkills(inventoryExit.value.inventory.skills, cwd);
   const connectedCount = inventoryExit.value.inventory.providerList.connected.length;
   return buildServerProvider({
     presentation: OPENCODE_PRESENTATION,

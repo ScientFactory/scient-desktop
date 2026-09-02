@@ -195,6 +195,7 @@ function makeRegistry(
       refreshInstanceAfterAccountChange: () => Ref.get(providersRef),
       reloadInstance: () => Ref.get(providersRef),
       reloadInstanceStrict: () => Ref.get(providersRef),
+      refreshWorkspaceSnapshot: () => Ref.get(providersRef),
       getProviderMaintenanceCapabilitiesForInstance: (_instanceId, provider) =>
         Effect.succeed(lifecycleFor(provider)),
       getProviderConnectionActionsForInstance: () => Effect.succeed(undefined),
