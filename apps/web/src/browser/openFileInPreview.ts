@@ -14,6 +14,7 @@ import {
   type AtomCommandResult,
   mapAtomCommandResult,
 } from "@t3tools/client-runtime/state/runtime";
+import { mediaFileReference } from "@t3tools/client-runtime/media-reference";
 import * as Cause from "effect/Cause";
 import * as Data from "effect/Data";
 import { AsyncResult } from "effect/unstable/reactivity";
@@ -90,6 +91,10 @@ export async function openUrlInPreview<E>(input: {
   });
 }
 
+/**
+ * Opens a browser document in the integrated browser. Inside the workspace the
+ * page may load sibling assets; a file outside it is served on its own.
+ */
 export async function openFileInPreview<AssetError, PreviewError>(input: {
   readonly threadRef: ScopedThreadRef;
   readonly workspaceRoot: string;
@@ -111,11 +116,22 @@ export async function openFileInPreview<AssetError, PreviewError>(input: {
       ),
     );
   }
+  const fileReference = mediaFileReference(input.filePath, input.workspaceRoot);
+  const workspaceRelativePath = fileReference.relativePath;
+  const resource: AssetResource =
+    workspaceRelativePath === undefined
+      ? {
+          _tag: "media-file",
+          threadId: input.threadRef.threadId,
+          path: input.filePath,
+        }
+      : workspaceFilePreviewAssetResource({
+          ...input,
+          relativePath: workspaceRelativePath,
+        });
   const assetResult = await input.createAssetUrl({
     environmentId: input.threadRef.environmentId,
-    input: {
-      resource: workspaceFilePreviewAssetResource(input),
-    },
+    input: { resource },
   });
   if (assetResult._tag === "Failure") {
     return AsyncResult.failure(assetResult.cause);
@@ -131,7 +147,9 @@ export async function openFileInPreview<AssetError, PreviewError>(input: {
     url: assetUrl,
     openPreview: input.openPreview,
     onOpened: (snapshot) => {
-      if (!isTrackableWorkspaceHtml(input.relativePath)) return;
+      if (workspaceRelativePath === undefined || !isTrackableWorkspaceHtml(workspaceRelativePath)) {
+        return;
+      }
       useHtmlPdfSourceStore.getState().bind({
         threadRef: input.threadRef,
         tabId: snapshot.tabId,
@@ -140,7 +158,7 @@ export async function openFileInPreview<AssetError, PreviewError>(input: {
           _tag: "workspace-html",
           environmentId: input.threadRef.environmentId,
           workspaceRoot: input.workspaceRoot,
-          relativePath: input.relativePath,
+          relativePath: workspaceRelativePath,
           absolutePath: assetResult.value.sourcePath ?? input.filePath,
         },
       });

@@ -25,7 +25,7 @@ import {
 import { offerServiceDuringOnboarding, recoverServiceOnboardingOffer } from "./service.ts";
 
 const unreachableBootService = BootService.BootService.of({
-  install: Effect.die("D4 service guard was bypassed"),
+  install: () => Effect.die("D4 service guard was bypassed"),
   uninstall: Effect.die("D4 service guard was bypassed"),
   status: Effect.die("D4 service guard was bypassed"),
 });

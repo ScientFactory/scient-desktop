@@ -32,6 +32,7 @@ import type {
   ProviderDriverKind,
   ProviderInstanceEnvironment,
   ProviderInstanceId,
+  ServerProvider,
   VoiceTranscriptionLanguage,
   VoiceTranscriptCorrectionError,
 } from "@t3tools/contracts";
@@ -87,6 +88,7 @@ export interface ProviderInstance {
   readonly accentColor?: string | undefined;
   readonly enabled: boolean;
   readonly snapshot: ServerProviderShape;
+  readonly snapshotForCwd?: (cwd: string) => Effect.Effect<ServerProvider, ProviderDriverError>;
   readonly adapter: ProviderAdapterShape<ProviderAdapterError>;
   readonly textGeneration: TextGeneration.TextGeneration["Service"];
   /** Optional provider capability; unsupported drivers leave it absent. */

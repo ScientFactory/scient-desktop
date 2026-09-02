@@ -37,6 +37,12 @@ If a connected environment uses a different server version, Scient shows the
 version warning above the composer and in **Settings → Connections**. Hiding
 the composer warning does not change either runtime.
 
+**Settings → General → Continue threads after server updates** is off by
+default. When enabled, an update resumes supported provider threads after the
+replacement server is ready. Providers with native promptless continuation use
+it; other providers receive a short instruction to continue where they left
+off. Terminal commands and other running work may still be interrupted.
+
 The action depends on how that environment started:
 
 | Action                     | Meaning                                                                                                           |
@@ -44,6 +50,10 @@ The action depends on how that environment started:
 | **Update the desktop app** | Update Scient on the machine that owns the bundled local server.                                                  |
 | **Update server**          | Prepare and trial an exact replacement for a supported background service, then reconnect only after it is ready. |
 | **Copy update command**    | Copy the exact Scient release-asset command for a manually managed server and run it on that server machine.      |
+
+For a server owned by a current Scient desktop app, **Update server** can close
+and relaunch that desktop app on its machine. If installation fails, the app
+stays open and reconnects to its existing server.
 
 Run the copied update command exactly as Scient provides it. Changing its
 package, version, or release URL can install a server that does not match the
@@ -66,6 +76,16 @@ request is accepted. A failure remains visible for review and retry.
 An older service installation may require one local repair or update first.
 Use the exact command supplied by Scient or the procedure
 in [Run Scient in the background](./background-service.md).
+
+## Nightly desktop release notes
+
+The desktop app shows a compact release-notes preview when a nightly update is available. Changes
+appear newest first within each release. Each release links to its exact page on GitHub, even when
+all changes fit in the preview.
+
+The preview shows up to eight changes from each of six releases. When it leaves out changes or older
+releases, it shows the exact number and links to the rest. Contributor credits do not count as
+changes.
 
 ## Troubleshooting
 

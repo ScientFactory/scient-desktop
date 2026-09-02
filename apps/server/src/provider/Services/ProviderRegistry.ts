@@ -65,6 +65,11 @@ export interface ProviderRegistryShape {
     instanceId: ProviderInstanceId,
   ) => Effect.Effect<ReadonlyArray<ServerProvider>>;
 
+  readonly refreshWorkspaceSnapshot: (input: {
+    readonly instanceId: ProviderInstanceId;
+    readonly cwd: string;
+  }) => Effect.Effect<ReadonlyArray<ServerProvider>>;
+
   /**
    * Refresh one instance without substituting cached state when its live probe
    * fails. Lifecycle operations use this when fresh state decides whether an

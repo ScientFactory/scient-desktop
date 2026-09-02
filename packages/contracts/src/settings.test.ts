@@ -271,6 +271,18 @@ describe("ClientSettings sidebar", () => {
   });
 });
 
+describe("ClientSettings context window meter", () => {
+  it("defaults off and preserves an explicit legacy opt-in", () => {
+    expect(decodeClientSettings({}).contextWindowMeterEnabled).toBe(false);
+    expect(
+      decodeClientSettings({ contextWindowMeterEnabled: true }).contextWindowMeterEnabled,
+    ).toBe(true);
+    expect(
+      decodeClientSettingsPatch({ contextWindowMeterEnabled: true }).contextWindowMeterEnabled,
+    ).toBe(true);
+  });
+});
+
 describe("ServerSettings thread settlement", () => {
   it("keeps Scient's conservative automatic settlement defaults", () => {
     const settings = decodeServerSettings({});

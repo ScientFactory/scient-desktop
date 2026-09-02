@@ -1,6 +1,7 @@
 import type {
   ProviderDriverKind,
   ScientSkillInventory,
+  ServerProvider,
   ServerProviderSkill,
   ServerProviderSlashCommand,
 } from "@t3tools/contracts";
@@ -44,6 +45,19 @@ export function dedupeProviderSkillsByName(
   });
 }
 
+/**
+ * Whether a composer pick can start this skill. A skill switched off in the
+ * provider's settings will not run, and one the provider reserves for the
+ * agent (Claude Code's `user-invocable: false`) rejects a user invocation.
+ * Everything else, including skills the agent may not start on its own, is
+ * fair game: the server dispatches the pick in the provider's native form.
+ */
+export function isProviderSkillUserInvocable(
+  skill: Pick<ServerProviderSkill, "enabled" | "userInvocable">,
+): boolean {
+  return skill.enabled && skill.userInvocable !== false;
+}
+
 export function getProviderSkillsForSlashMenu(
   skills: ReadonlyArray<ServerProviderSkill>,
   showSkillsInSlashMenu: boolean,
@@ -52,7 +66,7 @@ export function getProviderSkillsForSlashMenu(
     ? dedupeProviderSkillsByName(
         skills.filter(
           (skill) =>
-            skill.enabled &&
+            isProviderSkillUserInvocable(skill) &&
             (isGlobalProviderSkill(skill) || skill.path.startsWith(SCIENT_SKILL_PATH_PREFIX)),
         ),
       )
@@ -148,4 +162,26 @@ export function mergeEffectiveProviderSkills(input: {
   return scientSkills.length === 0
     ? visibleProviderSkills
     : [...visibleProviderSkills, ...scientSkills];
+}
+
+function resolveProviderWorkspaceSnapshot(
+  provider: ServerProvider,
+  cwd: string | null | undefined,
+) {
+  if (!cwd) return undefined;
+  return provider.workspaceSnapshots?.find((snapshot) => snapshot.cwd === cwd);
+}
+
+export function resolveProviderSkillsForCwd(
+  provider: ServerProvider,
+  cwd: string | null | undefined,
+): ServerProvider["skills"] {
+  return resolveProviderWorkspaceSnapshot(provider, cwd)?.skills ?? provider.skills;
+}
+
+export function resolveProviderSlashCommandsForCwd(
+  provider: ServerProvider,
+  cwd: string | null | undefined,
+): ServerProvider["slashCommands"] {
+  return resolveProviderWorkspaceSnapshot(provider, cwd)?.slashCommands ?? provider.slashCommands;
 }

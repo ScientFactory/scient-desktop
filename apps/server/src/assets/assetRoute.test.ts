@@ -156,7 +156,9 @@ describe("asset route", () => {
       const html = yield* runRequest(asset.relativeUrl);
       expect(html.status).toBe(200);
       expect(html.headers.get("content-type")).toContain("text/html");
-      expect(html.headers.get("content-security-policy")).toBeNull();
+      expect(html.headers.get("content-security-policy")).toBe(
+        "sandbox allow-scripts allow-forms allow-popups allow-modals",
+      );
       expect(html.headers.get("cache-control")).toBe("no-store");
 
       const script = yield* runRequest(`${ASSET_ROUTE_PREFIX}/${token}/assets/app.js`);
