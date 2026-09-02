@@ -1,4 +1,11 @@
-import { lift, setBlockType, toggleMark, wrapIn } from "prosemirror-commands";
+import {
+  chainCommands,
+  exitCode,
+  lift,
+  setBlockType,
+  toggleMark,
+  wrapIn,
+} from "prosemirror-commands";
 import type { Attrs, MarkType, Node as ProseMirrorNode, NodeType } from "prosemirror-model";
 import { liftListItem, wrapInList } from "prosemirror-schema-list";
 import { closeHistory, redo, undo } from "prosemirror-history";
@@ -158,6 +165,11 @@ function insertFootnote(): Command {
     return true;
   };
 }
+
+const insertMarkdownHardBreak = chainCommands(
+  exitCode,
+  insertNode(requiredNodeType("hard_break").create()),
+);
 
 function validTableInsertDimension(value: number): boolean {
   return (
@@ -513,7 +525,7 @@ function commandFor(command: ScientMarkdownCommand): Command {
     case "clear-formatting":
       return clearMarkdownFormatting();
     case "hard-break":
-      return insertNode(requiredNodeType("hard_break").create());
+      return insertMarkdownHardBreak;
     case "direction-auto":
       return setMarkdownTextDirection(null);
     case "direction-ltr":

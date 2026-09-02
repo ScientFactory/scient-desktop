@@ -5,6 +5,7 @@ import { TextSelection } from "prosemirror-state";
 import { CellSelection } from "prosemirror-tables";
 import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 import { ScientMarkdownEditorView } from "../prosemirror/view";
+import { scientMarkdownShortcut } from "../shortcuts";
 import { ScientMarkdownControls } from "./ScientMarkdownControls";
 
 describe("formatting menu focus", () => {
@@ -83,6 +84,148 @@ describe("formatting menu focus", () => {
     expect(controlsHost.querySelectorAll('button[aria-label="Add or edit link"]')).toHaveLength(1);
   });
 
+  it.each(["caret", "selection"] as const)(
+    "opens exactly one link editor from the %s shortcut and restores editor focus",
+    async (kind) => {
+      const { view } = await fixture("Link these words.\n");
+      if (kind === "selection") {
+        await act(() => {
+          view.dispatch(view.state.tr.setSelection(TextSelection.create(view.state.doc, 1, 5)));
+        });
+      }
+
+      const event = new KeyboardEvent("keydown", {
+        key: "k",
+        code: "KeyK",
+        bubbles: true,
+        cancelable: true,
+        ctrlKey: true,
+      });
+      await act(() => view.dom.dispatchEvent(event));
+      expect(event.defaultPrevented).toBe(true);
+      const input = await vi.waitFor(() => {
+        const inputs = document.body.querySelectorAll<HTMLInputElement>(
+          'input[aria-label="Link destination"]',
+        );
+        expect(inputs).toHaveLength(1);
+        return inputs[0]!;
+      });
+      expect(document.activeElement).toBe(input);
+
+      const cancel = Array.from(
+        document.body.querySelectorAll<HTMLButtonElement>("[data-slot='popover-popup'] button"),
+      ).find((button) => button.textContent === "Cancel")!;
+      await act(() => cancel.click());
+      await vi.waitFor(() => {
+        expect(document.body.querySelector('input[aria-label="Link destination"]')).toBeNull();
+        expect(view.hasFocus()).toBe(true);
+      });
+    },
+  );
+
+  it("uses one stable link popup while switching between detached triggers", async () => {
+    const { view, controlsHost } = await fixture("Link these words.\n");
+    await act(() => {
+      view.dispatch(view.state.tr.setSelection(TextSelection.create(view.state.doc, 1, 5)));
+    });
+    const triggers = await vi.waitFor(() => {
+      const buttons = Array.from(
+        document.body.querySelectorAll<HTMLButtonElement>('button[aria-label="Add or edit link"]'),
+      );
+      expect(buttons).toHaveLength(2);
+      return buttons;
+    });
+    const dockTrigger = triggers.find((trigger) => controlsHost.contains(trigger))!;
+    const selectionTrigger = triggers.find((trigger) => !controlsHost.contains(trigger))!;
+
+    await act(() => selectionTrigger.click());
+    await vi.waitFor(() => {
+      expect(document.body.querySelectorAll('[data-slot="popover-popup"]')).toHaveLength(1);
+      expect(document.body.querySelectorAll('input[aria-label="Link destination"]')).toHaveLength(
+        1,
+      );
+    });
+
+    await act(() => dockTrigger.click());
+    await vi.waitFor(() => {
+      expect(document.body.querySelectorAll('[data-slot="popover-popup"]')).toHaveLength(1);
+      expect(document.body.querySelectorAll('input[aria-label="Link destination"]')).toHaveLength(
+        1,
+      );
+    });
+  });
+
+  it("preserves outside focus when an outside interaction dismisses the link popup", async () => {
+    const { controlsHost } = await fixture();
+    const outsideInput = document.createElement("input");
+    outsideInput.setAttribute("aria-label", "Outside input");
+    document.body.append(outsideInput);
+    const trigger = controlsHost.querySelector<HTMLButtonElement>(
+      'button[aria-label="Add or edit link"]',
+    )!;
+
+    await act(() => trigger.click());
+    await vi.waitFor(() =>
+      expect(document.body.querySelector('input[aria-label="Link destination"]')).not.toBeNull(),
+    );
+    await act(() => {
+      outsideInput.dispatchEvent(
+        new PointerEvent("pointerdown", { bubbles: true, cancelable: true }),
+      );
+      outsideInput.focus();
+      outsideInput.dispatchEvent(new PointerEvent("pointerup", { bubbles: true }));
+      outsideInput.click();
+    });
+    await vi.waitFor(() =>
+      expect(document.body.querySelector('input[aria-label="Link destination"]')).toBeNull(),
+    );
+    expect(document.activeElement).toBe(outsideInput);
+  });
+
+  it("restores the correct focus target after Escape", async () => {
+    const { view, controlsHost } = await fixture();
+
+    const shortcutEvent = new KeyboardEvent("keydown", {
+      key: "k",
+      code: "KeyK",
+      bubbles: true,
+      cancelable: true,
+      ctrlKey: true,
+    });
+    await act(() => view.dom.dispatchEvent(shortcutEvent));
+    const shortcutInput = await vi.waitFor(() => {
+      const input = document.body.querySelector<HTMLInputElement>(
+        'input[aria-label="Link destination"]',
+      );
+      expect(input).not.toBeNull();
+      return input!;
+    });
+    await act(() => {
+      shortcutInput.dispatchEvent(
+        new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }),
+      );
+    });
+    await vi.waitFor(() => expect(view.hasFocus()).toBe(true));
+
+    const trigger = controlsHost.querySelector<HTMLButtonElement>(
+      'button[aria-label="Add or edit link"]',
+    )!;
+    await act(() => trigger.click());
+    const triggerInput = await vi.waitFor(() => {
+      const input = document.body.querySelector<HTMLInputElement>(
+        'input[aria-label="Link destination"]',
+      );
+      expect(input).not.toBeNull();
+      return input!;
+    });
+    await act(() => {
+      triggerInput.dispatchEvent(
+        new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }),
+      );
+    });
+    await vi.waitFor(() => expect(document.activeElement).toBe(trigger));
+  });
+
   it.each([
     ["Style:", "Heading 2", "heading-2", "A paragraph\n"],
     ["List:", "Numbered list", "ordered-list", "A paragraph\n"],
@@ -103,7 +246,7 @@ describe("formatting menu focus", () => {
       });
       const item = Array.from(
         document.body.querySelectorAll<HTMLElement>("[role='menuitemradio']"),
-      ).find((node) => node.textContent?.trim() === label);
+      ).find((node) => node.textContent?.trim().startsWith(label));
       expect(item).toBeDefined();
       await act(() => {
         item!.focus();
@@ -196,6 +339,30 @@ describe("formatting menu focus", () => {
     )!;
     await vi.waitFor(() => expect(document.activeElement).toBe(editor));
     expect(editor.hidden).toBe(false);
+  });
+
+  it("shows understated LTR shortcut hints without changing action names", async () => {
+    const { controlsHost } = await fixture();
+    const bold = controlsHost.querySelector<HTMLButtonElement>("[aria-label='Bold']")!;
+    expect(bold.textContent).toBe("");
+    expect(bold.getAttribute("aria-keyshortcuts")).toBe(
+      scientMarkdownShortcut("bold").ariaKeyShortcuts,
+    );
+
+    await act(() =>
+      controlsHost.querySelector<HTMLButtonElement>("button[aria-label^='Style:']")!.click(),
+    );
+    const heading = Array.from(
+      document.body.querySelectorAll<HTMLElement>("[role='menuitemradio']"),
+    ).find((item) => item.textContent?.startsWith("Heading 2"))!;
+    const hint = heading.querySelector<HTMLElement>("[data-slot='menu-shortcut']")!;
+    const shortcut = scientMarkdownShortcut("heading2");
+    expect(heading.getAttribute("aria-keyshortcuts")).toBe(shortcut.ariaKeyShortcuts);
+    expect(hint.textContent).toBe(shortcut.display);
+    expect(hint.dir).toBe("ltr");
+    expect(hint.getAttribute("aria-hidden")).toBe("true");
+    expect(hint.className).not.toContain("border");
+    expect(hint.className).not.toContain("bg-");
   });
 
   it("closes nested outline actions and focuses the chosen heading", async () => {

@@ -4,7 +4,14 @@ import { act, useState } from "react";
 import { createRoot } from "react-dom/client";
 import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 
-import { DockCommandItem as MenuItem, DockMenu, DockOverflowRow } from "./dockChrome";
+import { scientMarkdownShortcut } from "../shortcuts";
+import {
+  DockButton,
+  DockCommandItem as MenuItem,
+  DockMenu,
+  DockOverflowRow,
+  DockTooltipContent,
+} from "./dockChrome";
 
 class TestResizeObserver {
   static callback: ResizeObserverCallback | null = null;
@@ -286,4 +293,40 @@ describe("DockOverflowRow", () => {
       expect(document.activeElement).toBe(destination);
     },
   );
+
+  it("keeps shortcut presentation outside an icon-only button", async () => {
+    vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+    const host = document.createElement("div");
+    document.body.append(host);
+    const root = createRoot(host);
+    roots.push(root);
+    const shortcut = scientMarkdownShortcut("bold");
+
+    await act(() =>
+      root.render(
+        <>
+          <DockButton
+            label="Bold"
+            icon={<span aria-hidden="true" />}
+            onClick={() => undefined}
+            shortcut={shortcut}
+          />
+          <div data-tooltip-fixture="">
+            <DockTooltipContent label="Bold" shortcut={shortcut} />
+          </div>
+        </>,
+      ),
+    );
+
+    const button = host.querySelector<HTMLButtonElement>("button[aria-label='Bold']")!;
+    expect(button.textContent).toBe("");
+    expect(button.getAttribute("aria-keyshortcuts")).toBe(shortcut.ariaKeyShortcuts);
+    const hint = host.querySelector<HTMLElement>("[data-tooltip-fixture] kbd")!;
+    expect(hint.textContent).toBe(shortcut.display);
+    expect(hint.dir).toBe("ltr");
+    expect(hint.getAttribute("aria-hidden")).toBe("true");
+    expect(hint.className).toContain("text-secondary-label");
+    expect(hint.className).not.toContain("border");
+    expect(hint.className).not.toContain("bg-");
+  });
 });

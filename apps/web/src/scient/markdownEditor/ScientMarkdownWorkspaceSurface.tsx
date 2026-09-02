@@ -12,14 +12,34 @@ import {
 } from "./linkContextMenu";
 import type { ScientMarkdownLinkOpenHandler } from "./linkOpen";
 import type { ScientMarkdownImageSourceResolver } from "./nodes";
+import type { ScientMarkdownBlockAction } from "./prosemirror/blocks";
 import { ScientMarkdownEditorView, type ScientMarkdownUploadedImage } from "./prosemirror/view";
 import { showScientRichFenceContextMenu } from "./richFenceContextMenu";
+import {
+  SCIENT_MARKDOWN_COMMAND_SHORTCUTS,
+  matchesScientMarkdownShortcut,
+  type ScientMarkdownShortcutId,
+} from "./shortcuts";
 import { showScientMarkdownTableContextMenu } from "./tableContextMenu";
 import { ScientMarkdownControls } from "./ui/ScientMarkdownControls";
 import { useFinalUnmount } from "./useFinalUnmount";
 import type { ScientMarkdownWikiLinkCandidate } from "./wikiLinkPicker";
 
 const SAVE_DEBOUNCE_MS = 500;
+
+const CHROME_BLOCK_SHORTCUTS = [
+  ["moveBlockUp", "move-up"],
+  ["moveBlockDown", "move-down"],
+  ["duplicateBlock", "duplicate"],
+] as const satisfies ReadonlyArray<readonly [ScientMarkdownShortcutId, ScientMarkdownBlockAction]>;
+
+function targetOwnsTextEditing(target: EventTarget | null): boolean {
+  return (
+    target instanceof Element &&
+    target.closest("input, textarea, select, [contenteditable]:not([contenteditable='false'])") !==
+      null
+  );
+}
 
 export interface ScientMarkdownWorkspaceSurfaceProps {
   readonly source: string;
@@ -267,7 +287,59 @@ export function ScientMarkdownWorkspaceSurface(props: ScientMarkdownWorkspaceSur
   });
 
   return (
-    <div className="scient-markdown-workspace">
+    <div
+      className="scient-markdown-workspace"
+      data-keybinding-capture=""
+      onKeyDown={(event) => {
+        if (event.defaultPrevented || event.nativeEvent.isComposing) return;
+        if (matchesScientMarkdownShortcut(event, "find")) {
+          // Find spans the rendered document even when a nested math/code
+          // source field or a portaled control currently owns text focus.
+          event.preventDefault();
+          event.stopPropagation();
+          const returnFocus =
+            event.target instanceof HTMLElement &&
+            event.target !== controller.view?.dom &&
+            targetOwnsTextEditing(event.target)
+              ? event.target
+              : null;
+          controller.requestFind(returnFocus);
+          return;
+        }
+        if (matchesScientMarkdownShortcut(event, "link")) {
+          event.preventDefault();
+          event.stopPropagation();
+          // Nested source fields own text editing and must not mutate the
+          // outer document, but the app palette must not claim their Mod-K.
+          if (!targetOwnsTextEditing(event.target)) controller.requestLinkEdit();
+          return;
+        }
+        // ProseMirror and nested source/input editors own their direct text
+        // commands. This fallback is only for non-text Markdown chrome whose
+        // focus would otherwise strand document shortcuts on a button/menu.
+        if (targetOwnsTextEditing(event.target)) return;
+        if (matchesScientMarkdownShortcut(event, "selectAll")) {
+          event.preventDefault();
+          event.stopPropagation();
+          controller.selectAll();
+          return;
+        }
+        for (const [shortcutId, command] of SCIENT_MARKDOWN_COMMAND_SHORTCUTS) {
+          if (!matchesScientMarkdownShortcut(event, shortcutId)) continue;
+          event.preventDefault();
+          event.stopPropagation();
+          controller.execute(command);
+          return;
+        }
+        for (const [shortcutId, action] of CHROME_BLOCK_SHORTCUTS) {
+          if (!matchesScientMarkdownShortcut(event, shortcutId)) continue;
+          event.preventDefault();
+          event.stopPropagation();
+          controller.executeBlock(action);
+          return;
+        }
+      }}
+    >
       {props.uploadImage ? (
         <input
           ref={imageInputRef}

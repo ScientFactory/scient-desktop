@@ -26,6 +26,8 @@ import {
 import { Tooltip, TooltipPopup, TooltipTrigger } from "~/components/ui/tooltip";
 import { cn } from "~/lib/utils";
 
+import type { ScientMarkdownShortcutPresentation } from "../shortcuts";
+
 /**
  * Layout of a dock control. Hover, focus, pressed, and disabled visuals are
  * owned by the `.scient-markdown-command-button` stylesheet rules so every
@@ -38,6 +40,26 @@ export function dockButtonClass(active?: boolean): string {
   );
 }
 
+export function DockTooltipContent(props: {
+  readonly label: string;
+  readonly shortcut?: ScientMarkdownShortcutPresentation | undefined;
+}) {
+  return (
+    <span className="flex items-center gap-3 whitespace-nowrap">
+      <span>{props.label}</span>
+      {props.shortcut ? (
+        <kbd
+          aria-hidden="true"
+          className="shrink-0 font-medium font-sans text-[11px] text-secondary-label tracking-widest"
+          dir="ltr"
+        >
+          {props.shortcut.display}
+        </kbd>
+      ) : null}
+    </span>
+  );
+}
+
 /** An icon-only dock command button with a tooltip. */
 export function DockButton(props: {
   readonly label: string;
@@ -46,6 +68,7 @@ export function DockButton(props: {
   readonly active?: boolean | undefined;
   readonly disabled?: boolean | undefined;
   readonly preserveIconWeight?: boolean | undefined;
+  readonly shortcut?: ScientMarkdownShortcutPresentation | undefined;
 }) {
   return (
     <Tooltip>
@@ -55,6 +78,7 @@ export function DockButton(props: {
             type="button"
             className={dockButtonClass(props.active)}
             aria-label={props.label}
+            aria-keyshortcuts={props.disabled ? undefined : props.shortcut?.ariaKeyShortcuts}
             {...(props.active === undefined ? {} : { "aria-pressed": props.active })}
             {...(props.preserveIconWeight ? { "data-preserve-icon-weight": "true" } : {})}
             disabled={props.disabled}
@@ -65,7 +89,9 @@ export function DockButton(props: {
           </button>
         }
       />
-      <TooltipPopup side="top">{props.label}</TooltipPopup>
+      <TooltipPopup side="top">
+        <DockTooltipContent label={props.label} shortcut={props.shortcut} />
+      </TooltipPopup>
     </Tooltip>
   );
 }
@@ -168,6 +194,7 @@ export function DockMenu(props: {
         <MenuPopup
           align={props.align ?? "start"}
           className={cn("w-44 p-1", props.popupClassName)}
+          data-keybinding-capture=""
           // Commands own focus (editor, nested editor, or a picker). Escape and
           // other dismissals retain the menu's standard accessible focus return.
           finalFocus={() => !closedByCommand.current}
@@ -194,13 +221,17 @@ export function DockMenu(props: {
 export function MenuRow(props: {
   readonly icon?: ReactNode;
   readonly label: string;
-  readonly shortcut?: string;
+  readonly shortcut?: ScientMarkdownShortcutPresentation | undefined;
 }) {
   return (
     <span className="flex w-full items-center gap-2">
       {props.icon}
       {props.label}
-      {props.shortcut ? <MenuShortcut>{props.shortcut}</MenuShortcut> : null}
+      {props.shortcut ? (
+        <MenuShortcut aria-hidden="true" dir="ltr">
+          {props.shortcut.display}
+        </MenuShortcut>
+      ) : null}
     </span>
   );
 }

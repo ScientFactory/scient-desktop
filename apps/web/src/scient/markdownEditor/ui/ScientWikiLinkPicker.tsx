@@ -196,6 +196,7 @@ export function ScientWikiLinkPicker(props: ScientWikiLinkPickerProps) {
       <PopoverPopup
         align="center"
         className="w-80 max-w-[calc(100vw-1rem)]"
+        data-keybinding-capture=""
         side="bottom"
         viewportClassName="p-2"
       >

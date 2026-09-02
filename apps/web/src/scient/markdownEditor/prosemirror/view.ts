@@ -3,6 +3,7 @@ import { markdownLinkAtPosition, selectedMarkdownLink } from "./links";
 import { closeHistory, redoDepth, undoDepth } from "prosemirror-history";
 import type { Node as ProseMirrorNode } from "prosemirror-model";
 import {
+  AllSelection,
   NodeSelection,
   Selection,
   TextSelection,
@@ -74,6 +75,7 @@ import type {
   ScientMarkdownFootnoteContextMenuHandler,
   ScientMarkdownFootnoteContextMenuRequest,
 } from "../footnoteContextMenu";
+import { matchesScientMarkdownShortcut } from "../shortcuts";
 
 export interface ScientMarkdownUploadedImage {
   readonly src: string;
@@ -292,6 +294,7 @@ export class ScientMarkdownEditorView {
   private slashActiveIndex = 0;
   private findOpen = false;
   private findFocusRequest = 0;
+  private findReturnFocus: HTMLElement | null = null;
   private imageUploadSequence = 0;
   private linkEditRequest = 0;
   private wikiLinkEditRequest = 0;
@@ -365,6 +368,29 @@ export class ScientMarkdownEditorView {
     if (this.editorView && modeIsEditable(this.mode)) {
       this.editorView.focus();
     }
+  }
+
+  selectAll(): boolean {
+    const view = this.editorView;
+    if (!view || !modeIsEditable(this.mode)) return false;
+    if (!(view.state.selection instanceof AllSelection)) {
+      view.dispatch(
+        view.state.tr
+          .setSelection(new AllSelection(view.state.doc))
+          .setMeta(scientMarkdownTransactionOriginKey, "system")
+          .setMeta("addToHistory", false),
+      );
+    }
+    view.focus();
+    return true;
+  }
+
+  requestLinkEdit(): boolean {
+    const selection = this.editorView?.state.selection;
+    if (!modeIsEditable(this.mode) || !(selection instanceof TextSelection)) return false;
+    this.linkEditRequest += 1;
+    this.publishSnapshot(false);
+    return true;
   }
 
   refreshExternalPresentation(change: ScientMarkdownExternalPresentationChange): void {
@@ -640,10 +666,22 @@ export class ScientMarkdownEditorView {
     this.publishSnapshot();
   }
 
-  requestFind(): void {
+  requestFind(returnFocus: HTMLElement | null = null): void {
+    if (!this.findOpen) this.findReturnFocus = returnFocus?.isConnected ? returnFocus : null;
     this.findOpen = true;
     this.findFocusRequest += 1;
     this.publishSnapshot();
+  }
+
+  closeFind(): void {
+    this.setFindOpen(false);
+    const returnFocus = this.findReturnFocus;
+    this.findReturnFocus = null;
+    if (returnFocus?.isConnected) {
+      returnFocus.focus();
+    } else {
+      this.editorView?.focus();
+    }
   }
 
   configureFind(input: {
@@ -1548,41 +1586,34 @@ export class ScientMarkdownEditorView {
 
   private handleEditorKeyDown(event: KeyboardEvent): boolean {
     if (event.isComposing) return false;
-    if ((event.metaKey || event.ctrlKey) && event.key.toLocaleLowerCase() === "f") {
+    if (matchesScientMarkdownShortcut(event, "find")) {
       event.preventDefault();
       this.requestFind();
       return true;
     }
-    if (event.altKey && event.shiftKey && event.key === "ArrowDown") {
+    if (matchesScientMarkdownShortcut(event, "link")) {
+      if (!this.requestLinkEdit()) return false;
+      event.preventDefault();
+      return true;
+    }
+    if (matchesScientMarkdownShortcut(event, "duplicateBlock")) {
       const handled = this.executeBlock("duplicate");
       if (handled) event.preventDefault();
       return handled;
     }
-    if (
-      event.altKey &&
-      !event.shiftKey &&
-      !event.metaKey &&
-      !event.ctrlKey &&
-      event.key === "ArrowUp"
-    ) {
+    if (matchesScientMarkdownShortcut(event, "moveBlockUp")) {
       const handled = this.executeBlock("move-up");
       if (handled) event.preventDefault();
       return handled;
     }
-    if (
-      event.altKey &&
-      !event.shiftKey &&
-      !event.metaKey &&
-      !event.ctrlKey &&
-      event.key === "ArrowDown"
-    ) {
+    if (matchesScientMarkdownShortcut(event, "moveBlockDown")) {
       const handled = this.executeBlock("move-down");
       if (handled) event.preventDefault();
       return handled;
     }
     if (event.key === "Escape" && this.findOpen) {
       event.preventDefault();
-      this.setFindOpen(false);
+      this.closeFind();
       return true;
     }
     return this.handleSlashKeyDown(event);

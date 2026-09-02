@@ -1,7 +1,7 @@
 // @vitest-environment happy-dom
 
 import { afterEach, describe, expect, it, vi } from "vite-plus/test";
-import { NodeSelection, TextSelection } from "prosemirror-state";
+import { AllSelection, NodeSelection, TextSelection } from "prosemirror-state";
 import { DOMParser } from "prosemirror-model";
 import { scientMarkdownSchema } from "./schema";
 
@@ -1192,7 +1192,7 @@ describe("ScientMarkdownEditorView", () => {
 
     const shortcut = new KeyboardEvent("keydown", {
       key: "f",
-      metaKey: true,
+      ctrlKey: true,
       cancelable: true,
     });
     const handled = view.someProp("handleKeyDown", (handler) => handler(view, shortcut));
@@ -1439,6 +1439,307 @@ describe("ScientMarkdownEditorView", () => {
     const active = new Set(controller.getSnapshot().activeMarks);
     expect(active).toEqual(new Set(["code", "strike"]));
     expect(controller.session.session.draftSource).toBe("Some `~~text~~` here.\n");
+  });
+
+  it.each([
+    ["bold", "b", false, "strong"],
+    ["italic", "i", false, "em"],
+    ["inline code", "e", false, "code"],
+    ["strikethrough", "x", true, "strike"],
+  ] as const)(
+    "toggles %s from a real DOM shortcut as one undoable command",
+    (_name, key, shiftKey, mark) => {
+      const controller = new ScientMarkdownEditorView({
+        source: "Text\n",
+        revision: "sha256:before",
+        mode: "write",
+        ariaLabel: "Mark shortcut",
+      });
+      const host = document.createElement("div");
+      document.body.append(host);
+      mounted.push(controller);
+      const view = controller.mount(host);
+      view.dispatch(view.state.tr.setSelection(TextSelection.create(view.state.doc, 1, 5)));
+      const press = () => {
+        const event = new KeyboardEvent("keydown", {
+          key,
+          bubbles: true,
+          cancelable: true,
+          ctrlKey: true,
+          shiftKey,
+        });
+        view.dom.dispatchEvent(event);
+        expect(event.defaultPrevented).toBe(true);
+      };
+
+      press();
+      expect(controller.getSnapshot().activeMarks).toContain(mark);
+      const undo = new KeyboardEvent("keydown", {
+        key: "z",
+        bubbles: true,
+        cancelable: true,
+        ctrlKey: true,
+      });
+      view.dom.dispatchEvent(undo);
+      expect(undo.defaultPrevented).toBe(true);
+      expect(controller.session.session.draftSource).toBe("Text\n");
+    },
+  );
+
+  it("routes real DOM selection, formatting, and history shortcuts exactly once", () => {
+    const onUserSourceChange = vi.fn();
+    const controller = new ScientMarkdownEditorView({
+      source: "Some text here.\n\nSecond paragraph.\n",
+      revision: "sha256:before",
+      mode: "write",
+      ariaLabel: "Shortcut document",
+      onUserSourceChange,
+    });
+    const host = document.createElement("div");
+    document.body.append(host);
+    mounted.push(controller);
+    const view = controller.mount(host);
+    const dispatchShortcut = (key: string, init: KeyboardEventInit = {}) => {
+      const event = new KeyboardEvent("keydown", {
+        key,
+        bubbles: true,
+        cancelable: true,
+        ctrlKey: true,
+        ...init,
+      });
+      view.dom.dispatchEvent(event);
+      return event;
+    };
+
+    const selectAll = dispatchShortcut("a");
+    expect(selectAll.defaultPrevented).toBe(true);
+    expect(view.state.selection).toBeInstanceOf(AllSelection);
+    expect(onUserSourceChange).not.toHaveBeenCalled();
+
+    view.dispatch(view.state.tr.setSelection(TextSelection.create(view.state.doc, 6, 10)));
+    const bold = dispatchShortcut("b");
+    expect(bold.defaultPrevented).toBe(true);
+    expect(controller.session.session.draftSource).toBe(
+      "Some **text** here.\n\nSecond paragraph.\n",
+    );
+    expect(onUserSourceChange).toHaveBeenCalledTimes(1);
+
+    const undo = dispatchShortcut("z");
+    expect(undo.defaultPrevented).toBe(true);
+    expect(controller.session.session.draftSource).toBe("Some text here.\n\nSecond paragraph.\n");
+    expect(onUserSourceChange).toHaveBeenCalledTimes(2);
+
+    const redo = dispatchShortcut("z", { shiftKey: true });
+    expect(redo.defaultPrevented).toBe(true);
+    expect(controller.session.session.draftSource).toBe(
+      "Some **text** here.\n\nSecond paragraph.\n",
+    );
+    expect(onUserSourceChange).toHaveBeenCalledTimes(3);
+
+    dispatchShortcut("z");
+    const alternateRedo = dispatchShortcut("y");
+    expect(alternateRedo.defaultPrevented).toBe(true);
+    expect(controller.session.session.draftSource).toBe(
+      "Some **text** here.\n\nSecond paragraph.\n",
+    );
+    expect(onUserSourceChange).toHaveBeenCalledTimes(5);
+  });
+
+  it("routes familiar style, list, and clear-formatting keys through toolbar commands", () => {
+    const controller = new ScientMarkdownEditorView({
+      source: "Text\n",
+      revision: "sha256:before",
+      mode: "write",
+      ariaLabel: "Structural shortcuts",
+    });
+    const host = document.createElement("div");
+    document.body.append(host);
+    mounted.push(controller);
+    const view = controller.mount(host);
+    const dispatchShortcut = (key: string, init: KeyboardEventInit = {}) => {
+      const event = new KeyboardEvent("keydown", {
+        key,
+        bubbles: true,
+        cancelable: true,
+        ctrlKey: true,
+        ...init,
+      });
+      view.dom.dispatchEvent(event);
+      expect(event.defaultPrevented, `${key} must be editor-owned`).toBe(true);
+    };
+
+    dispatchShortcut("2", { altKey: true });
+    expect(view.state.doc.firstChild?.type.name).toBe("heading");
+    expect(view.state.doc.firstChild?.attrs.level).toBe(2);
+
+    dispatchShortcut("0", { altKey: true });
+    expect(view.state.doc.firstChild?.type.name).toBe("paragraph");
+
+    dispatchShortcut("7", { shiftKey: true });
+    expect(view.state.doc.firstChild?.type.name).toBe("ordered_list");
+
+    controller.replaceUserSource("Text\n");
+    view.dispatch(view.state.tr.setSelection(TextSelection.create(view.state.doc, 1, 5)));
+    expect(controller.execute("bold")).toBe(true);
+    dispatchShortcut("\\");
+    expect(controller.session.session.draftSource).toBe("Text\n");
+
+    view.dispatch(view.state.tr.setSelection(TextSelection.create(view.state.doc, 1, 5)));
+    const hebrewLayoutBold = new KeyboardEvent("keydown", {
+      key: "נ",
+      code: "KeyB",
+      bubbles: true,
+      cancelable: true,
+      ctrlKey: true,
+    });
+    Object.defineProperty(hebrewLayoutBold, "keyCode", { value: 66 });
+    view.dom.dispatchEvent(hebrewLayoutBold);
+    expect(hebrewLayoutBold.defaultPrevented).toBe(true);
+    expect(controller.session.session.draftSource).toBe("**Text**\n");
+  });
+
+  it("covers every advertised heading, list, hard-break, and block-action chord", () => {
+    const controller = new ScientMarkdownEditorView({
+      source: "First\n\nSecond\n",
+      revision: "sha256:before",
+      mode: "write",
+      ariaLabel: "Command shortcut matrix",
+    });
+    const host = document.createElement("div");
+    document.body.append(host);
+    mounted.push(controller);
+    const view = controller.mount(host);
+    const press = (key: string, init: KeyboardEventInit = {}) => {
+      const event = new KeyboardEvent("keydown", {
+        key,
+        bubbles: true,
+        cancelable: true,
+        ctrlKey: true,
+        ...init,
+      });
+      view.dom.dispatchEvent(event);
+      expect(event.defaultPrevented, `${JSON.stringify({ key, ...init })} must be handled`).toBe(
+        true,
+      );
+    };
+
+    for (let level = 1; level <= 6; level += 1) {
+      controller.replaceUserSource("Text\n");
+      press(String(level), { altKey: true });
+      expect(view.state.doc.firstChild?.type.name).toBe("heading");
+      expect(view.state.doc.firstChild?.attrs.level).toBe(level);
+    }
+
+    for (const [key, nodeName, task] of [
+      ["7", "ordered_list", false],
+      ["8", "bullet_list", false],
+      ["9", "bullet_list", true],
+    ] as const) {
+      controller.replaceUserSource("Text\n");
+      press(key, { shiftKey: true });
+      expect(view.state.doc.firstChild?.type.name).toBe(nodeName);
+      expect(view.state.doc.firstChild?.firstChild?.attrs.taskChecked === false).toBe(task);
+    }
+
+    controller.replaceUserSource("Text\n");
+    view.dispatch(view.state.tr.setSelection(TextSelection.create(view.state.doc, 3)));
+    press("Enter", { ctrlKey: false, shiftKey: true });
+    expect(controller.session.session.draftSource).toBe("Te\\\nxt\n");
+
+    controller.replaceUserSource("First\n\nSecond\n");
+    view.dispatch(view.state.tr.setSelection(TextSelection.create(view.state.doc, 9)));
+    press("ArrowUp", { altKey: true, ctrlKey: false });
+    expect(controller.session.session.draftSource).toBe("Second\n\nFirst\n");
+    press("ArrowDown", { altKey: true, ctrlKey: false });
+    expect(controller.session.session.draftSource).toBe("First\n\nSecond\n");
+    press("ArrowDown", { altKey: true, ctrlKey: false, shiftKey: true });
+    expect(controller.session.session.draftSource).toBe("First\n\nSecond\n\nSecond\n");
+  });
+
+  it("uses identical code-block exit semantics for hard-break commands and shortcuts", () => {
+    const source = "```ts\nconst value = 1;\n```\n";
+    const run = (shortcut: boolean) => {
+      const controller = new ScientMarkdownEditorView({
+        source,
+        revision: "sha256:before",
+        mode: "write",
+        ariaLabel: shortcut ? "Shortcut hard break" : "Command hard break",
+      });
+      const host = document.createElement("div");
+      document.body.append(host);
+      mounted.push(controller);
+      const view = controller.mount(host);
+      view.dispatch(view.state.tr.setSelection(TextSelection.create(view.state.doc, 2)));
+
+      if (shortcut) {
+        const event = new KeyboardEvent("keydown", {
+          key: "Enter",
+          bubbles: true,
+          cancelable: true,
+          shiftKey: true,
+        });
+        view.dom.dispatchEvent(event);
+        expect(event.defaultPrevented).toBe(true);
+      } else {
+        expect(controller.execute("hard-break")).toBe(true);
+      }
+
+      expect(view.state.doc.firstChild?.type.name).toBe("code_block");
+      expect(view.state.doc.firstChild?.textContent).toBe("const value = 1;");
+      expect(view.state.doc.lastChild?.type.name).toBe("paragraph");
+      const result = controller.session.session.draftSource;
+      expect(controller.execute("undo")).toBe(true);
+      expect(controller.session.session.draftSource).toBe(source);
+      return result;
+    };
+
+    expect(run(true)).toBe(run(false));
+  });
+
+  it("leaves native clipboard shortcuts native and matches editor UI keys exactly", () => {
+    const onUserSourceChange = vi.fn();
+    const controller = new ScientMarkdownEditorView({
+      source: "Clipboard text.\n",
+      revision: "sha256:before",
+      mode: "write",
+      ariaLabel: "Clipboard shortcuts",
+      onUserSourceChange,
+    });
+    const host = document.createElement("div");
+    document.body.append(host);
+    mounted.push(controller);
+    const view = controller.mount(host);
+    view.dispatch(view.state.tr.setSelection(TextSelection.create(view.state.doc, 1, 10)));
+
+    for (const [key, shiftKey] of [
+      ["c", false],
+      ["x", false],
+      ["v", false],
+      ["v", true],
+    ] as const) {
+      const event = new KeyboardEvent("keydown", {
+        key,
+        bubbles: true,
+        cancelable: true,
+        ctrlKey: true,
+        shiftKey,
+      });
+      view.dom.dispatchEvent(event);
+      expect(event.defaultPrevented, `${key} must remain native`).toBe(false);
+    }
+    expect(controller.session.session.draftSource).toBe("Clipboard text.\n");
+    expect(onUserSourceChange).not.toHaveBeenCalled();
+
+    const shiftedFind = new KeyboardEvent("keydown", {
+      key: "f",
+      bubbles: true,
+      cancelable: true,
+      ctrlKey: true,
+      shiftKey: true,
+    });
+    view.dom.dispatchEvent(shiftedFind);
+    expect(shiftedFind.defaultPrevented).toBe(false);
+    expect(controller.getSnapshot().findOpen).toBe(false);
   });
 
   it("applies GFM alignment to the complete selected table column", () => {

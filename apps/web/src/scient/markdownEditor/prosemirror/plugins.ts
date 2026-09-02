@@ -2,15 +2,13 @@ import {
   baseKeymap,
   chainCommands,
   createParagraphNear,
-  exitCode,
   liftEmptyBlock,
   newlineInCode,
   splitBlock,
-  toggleMark,
 } from "prosemirror-commands";
 import { dropCursor } from "prosemirror-dropcursor";
 import { gapCursor } from "prosemirror-gapcursor";
-import { history, redo, undo } from "prosemirror-history";
+import { history } from "prosemirror-history";
 import {
   inputRules,
   textblockTypeInputRule,
@@ -23,23 +21,23 @@ import { Plugin, PluginKey, type Command } from "prosemirror-state";
 import { goToNextCell, tableEditing } from "prosemirror-tables";
 
 import { scientMarkdownDirectionPresentationPlugin } from "./directionPresentation";
+import { runScientMarkdownCommand } from "./commands";
 import { scientMarkdownSchema } from "./schema";
 import { imageUploadPlugin } from "./imageUploads";
 import { scientMarkdownOutlinePlugin } from "./outline";
 import { scientMarkdownSearchPlugin } from "./search";
 import { inlineTableArrow } from "./tableNavigation";
 import { markdownTablePlugin } from "./tables";
+import {
+  SCIENT_MARKDOWN_COMMAND_SHORTCUTS,
+  scientMarkdownKeymapNames,
+  type ScientMarkdownShortcutId,
+} from "../shortcuts";
 
 const sourceIdentityPluginKey = new PluginKey("scientMarkdownSourceIdentity");
 
 function requiredNodeType(name: string) {
   const type = scientMarkdownSchema.nodes[name];
-  if (!type) throw new Error(`Scient Markdown schema is missing '${name}'.`);
-  return type;
-}
-
-function requiredMarkType(name: string) {
-  const type = scientMarkdownSchema.marks[name];
   if (!type) throw new Error(`Scient Markdown schema is missing '${name}'.`);
   return type;
 }
@@ -63,14 +61,7 @@ function buildInputRules(): ReadonlyArray<InputRule> {
 
 function buildKeyBindings(): Readonly<Record<string, Command>> {
   const listItem = requiredNodeType("list_item");
-  const hardBreak = requiredNodeType("hard_break");
-  // Shift-Enter moves down one line (a Markdown hard break, `\` in the
-  // file); plain Enter moves down one paragraph (a blank line in the file).
-  const insertHardBreak: Command = chainCommands(exitCode, (state, dispatch) => {
-    if (dispatch) dispatch(state.tr.replaceSelectionWith(hardBreak.create()).scrollIntoView());
-    return true;
-  });
-  return {
+  const bindings: Record<string, Command> = {
     ArrowLeft: inlineTableArrow("left"),
     ArrowRight: inlineTableArrow("right"),
     ArrowUp: inlineTableArrow("up"),
@@ -79,15 +70,6 @@ function buildKeyBindings(): Readonly<Record<string, Command>> {
     "Shift-ArrowRight": inlineTableArrow("right", true),
     "Shift-ArrowUp": inlineTableArrow("up", true),
     "Shift-ArrowDown": inlineTableArrow("down", true),
-    "Shift-Enter": insertHardBreak,
-    "Mod-Enter": insertHardBreak,
-    "Mod-b": toggleMark(requiredMarkType("strong")),
-    "Mod-e": toggleMark(requiredMarkType("code")),
-    "Mod-i": toggleMark(requiredMarkType("em")),
-    "Shift-Mod-x": toggleMark(requiredMarkType("strike")),
-    "Mod-y": redo,
-    "Mod-z": undo,
-    "Shift-Mod-z": redo,
     Enter: chainCommands(
       splitListItem(listItem),
       newlineInCode,
@@ -98,6 +80,14 @@ function buildKeyBindings(): Readonly<Record<string, Command>> {
     Tab: chainCommands(goToNextCell(1), sinkListItem(listItem)),
     "Shift-Tab": chainCommands(goToNextCell(-1), liftListItem(listItem)),
   };
+
+  const bind = (id: ScientMarkdownShortcutId, command: Command) => {
+    for (const key of scientMarkdownKeymapNames(id)) bindings[key] = command;
+  };
+  for (const [id, command] of SCIENT_MARKDOWN_COMMAND_SHORTCUTS) {
+    bind(id, (state, dispatch) => runScientMarkdownCommand(command, state, dispatch));
+  }
+  return bindings;
 }
 
 function sourceIdentityPlugin(): Plugin {

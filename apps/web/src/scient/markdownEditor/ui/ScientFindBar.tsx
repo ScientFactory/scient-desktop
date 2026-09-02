@@ -13,6 +13,7 @@ import { useEffect, useRef, useState } from "react";
 import { InputGroup, InputGroupAddon, InputGroupInput } from "~/components/ui/input-group";
 import { cn } from "~/lib/utils";
 
+import { scientMarkdownShortcut } from "../shortcuts";
 import { DockButton } from "./dockChrome";
 
 /** The find-state slice a surface must publish for the shared find bar. */
@@ -37,6 +38,7 @@ export interface ScientFindBarController {
   }): void;
   navigateFind(direction: -1 | 1): void;
   replaceFind(replacement: string, all: boolean): boolean;
+  closeFind(): void;
   setFindOpen(open: boolean): void;
 }
 
@@ -78,8 +80,7 @@ export function ScientFindBar({
   };
 
   const close = () => {
-    controller.setFindOpen(false);
-    controller.view?.focus();
+    controller.closeFind();
   };
 
   const noMatches = snapshot.findQuery !== "" && snapshot.findMatchCount === 0;
@@ -95,6 +96,12 @@ export function ScientFindBar({
       className="scient-markdown-find-bar flex flex-col gap-1 border-b border-border/80 bg-background/95 px-2 py-1 backdrop-blur-xs"
       role="search"
       aria-label="Find and replace"
+      onKeyDown={(event) => {
+        if (!event.defaultPrevented && !event.nativeEvent.isComposing && event.key === "Escape") {
+          event.preventDefault();
+          close();
+        }
+      }}
     >
       <div className="flex items-center gap-1">
         {snapshot.editable ? (
@@ -123,6 +130,7 @@ export function ScientFindBar({
             value={snapshot.findQuery}
             onChange={(event) => configure({ query: event.target.value })}
             onKeyDown={(event) => {
+              if (event.nativeEvent.isComposing) return;
               if (event.key === "Enter") {
                 event.preventDefault();
                 controller.navigateFind(event.shiftKey ? -1 : 1);
@@ -160,21 +168,24 @@ export function ScientFindBar({
           onClick={() => configure({ wholeWord: !snapshot.findWholeWord })}
         />
         <DockButton
-          label="Previous match (Shift+Enter)"
+          label="Previous match"
           icon={<ChevronUp className={findIconClassName} />}
           disabled={snapshot.findMatchCount === 0}
+          shortcut={scientMarkdownShortcut("findPrevious")}
           onClick={() => controller.navigateFind(-1)}
         />
         <DockButton
-          label="Next match (Enter)"
+          label="Next match"
           icon={<ChevronDown className={findIconClassName} />}
           disabled={snapshot.findMatchCount === 0}
+          shortcut={scientMarkdownShortcut("findNext")}
           onClick={() => controller.navigateFind(1)}
         />
         <div className="ms-auto">
           <DockButton
-            label="Close (Esc)"
+            label="Close"
             icon={<X className={findIconClassName} />}
+            shortcut={scientMarkdownShortcut("close")}
             onClick={close}
           />
         </div>
@@ -194,6 +205,7 @@ export function ScientFindBar({
               value={replacement}
               onChange={(event) => setReplacement(event.target.value)}
               onKeyDown={(event) => {
+                if (event.nativeEvent.isComposing) return;
                 if (event.key === "Enter") {
                   event.preventDefault();
                   controller.replaceFind(replacement, false);
@@ -205,9 +217,10 @@ export function ScientFindBar({
             />
           </InputGroup>
           <DockButton
-            label="Replace current match (Enter)"
+            label="Replace current match"
             icon={<Replace className={findIconClassName} />}
             disabled={snapshot.findMatchCount === 0}
+            shortcut={scientMarkdownShortcut("replaceCurrent")}
             onClick={() => controller.replaceFind(replacement, false)}
           />
           <DockButton

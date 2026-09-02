@@ -56,6 +56,7 @@ import {
 } from "lucide-react";
 import {
   useEffect,
+  useId,
   useLayoutEffect,
   useRef,
   useState,
@@ -76,7 +77,13 @@ import {
   MenuSubPopup,
   MenuSubTrigger,
 } from "~/components/ui/menu";
-import { Popover, PopoverPopup, PopoverTitle, PopoverTrigger } from "~/components/ui/popover";
+import {
+  Popover,
+  PopoverCreateHandle,
+  PopoverPopup,
+  PopoverTitle,
+  PopoverTrigger,
+} from "~/components/ui/popover";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "~/components/ui/tooltip";
 import { cn } from "~/lib/utils";
 
@@ -90,6 +97,11 @@ import {
 import type { ScientMarkdownBlockAction } from "../prosemirror/blocks";
 import type { ScientMarkdownEditorSnapshot, ScientMarkdownEditorView } from "../prosemirror/view";
 import {
+  scientMarkdownShortcut,
+  type ScientMarkdownShortcutId,
+  type ScientMarkdownShortcutPresentation,
+} from "../shortcuts";
+import {
   EMPTY_WIKI_LINK_CANDIDATES,
   EMPTY_WIKI_LINK_RECENT_PATHS,
   type ScientMarkdownWikiLinkCandidate,
@@ -98,6 +110,7 @@ import {
   DockButton,
   DockDivider,
   DockMenu,
+  DockTooltipContent,
   DockCommandItem as MenuItem,
   DockCommandRadioItem as MenuRadioItem,
   DockOverflowRow,
@@ -109,6 +122,9 @@ import { ScientFindBar } from "./ScientFindBar";
 import { ScientWikiLinkPicker } from "./ScientWikiLinkPicker";
 
 const ignoreWikiLinkSelection = () => undefined;
+
+const createLinkEditorHandle = () => PopoverCreateHandle();
+type LinkEditorHandle = ReturnType<typeof createLinkEditorHandle>;
 
 /** One icon per command, shared by the dock menus and the slash menu. */
 function commandIcon(command: ScientMarkdownCommand): ReactNode {
@@ -173,6 +189,7 @@ function CommandButton(props: {
   readonly icon: ReactNode;
   readonly disabled?: boolean;
   readonly preserveIconWeight?: boolean;
+  readonly shortcut?: ScientMarkdownShortcutId;
 }) {
   return (
     <DockButton
@@ -181,6 +198,7 @@ function CommandButton(props: {
       active={props.active}
       disabled={props.disabled}
       preserveIconWeight={props.preserveIconWeight}
+      shortcut={props.shortcut ? scientMarkdownShortcut(props.shortcut) : undefined}
       onClick={() => props.controller.execute(props.command)}
     />
   );
@@ -189,14 +207,15 @@ function CommandButton(props: {
 const STYLE_ITEMS: ReadonlyArray<{
   readonly command: ScientMarkdownCommand;
   readonly label: string;
+  readonly shortcut?: ScientMarkdownShortcutId;
 }> = [
-  { command: "paragraph", label: "Paragraph" },
-  { command: "heading-1", label: "Heading 1" },
-  { command: "heading-2", label: "Heading 2" },
-  { command: "heading-3", label: "Heading 3" },
-  { command: "heading-4", label: "Heading 4" },
-  { command: "heading-5", label: "Heading 5" },
-  { command: "heading-6", label: "Heading 6" },
+  { command: "paragraph", label: "Paragraph", shortcut: "paragraph" },
+  { command: "heading-1", label: "Heading 1", shortcut: "heading1" },
+  { command: "heading-2", label: "Heading 2", shortcut: "heading2" },
+  { command: "heading-3", label: "Heading 3", shortcut: "heading3" },
+  { command: "heading-4", label: "Heading 4", shortcut: "heading4" },
+  { command: "heading-5", label: "Heading 5", shortcut: "heading5" },
+  { command: "heading-6", label: "Heading 6", shortcut: "heading6" },
   { command: "blockquote", label: "Quote" },
 ];
 
@@ -262,15 +281,19 @@ function StyleMenuItems({
 }) {
   return (
     <MenuRadioGroup value={styleMenuValue(snapshot)}>
-      {STYLE_ITEMS.map((item) => (
-        <MenuRadioItem
-          key={item.command}
-          value={item.command}
-          onClick={() => controller.execute(item.command)}
-        >
-          <MenuRow icon={commandIcon(item.command)} label={item.label} />
-        </MenuRadioItem>
-      ))}
+      {STYLE_ITEMS.map((item) => {
+        const shortcut = item.shortcut ? scientMarkdownShortcut(item.shortcut) : undefined;
+        return (
+          <MenuRadioItem
+            key={item.command}
+            value={item.command}
+            aria-keyshortcuts={shortcut?.ariaKeyShortcuts}
+            onClick={() => controller.execute(item.command)}
+          >
+            <MenuRow icon={commandIcon(item.command)} label={item.label} shortcut={shortcut} />
+          </MenuRadioItem>
+        );
+      })}
     </MenuRadioGroup>
   );
 }
@@ -287,6 +310,7 @@ function StyleMenu({
       label={`Style: ${styleMenuLabel(snapshot)}`}
       icon={styleTriggerIcon(snapshot)}
       groupLabel="Style"
+      popupClassName="w-52"
     >
       <StyleMenuItems controller={controller} snapshot={snapshot} />
     </DockMenu>
@@ -333,10 +357,11 @@ function listTriggerIcon(kind: ScientMarkdownEditorSnapshot["listKind"]): ReactN
 const LIST_ITEMS: ReadonlyArray<{
   readonly command: ScientMarkdownCommand;
   readonly label: string;
+  readonly shortcut: ScientMarkdownShortcutId;
 }> = [
-  { command: "bullet-list", label: "Bullet list" },
-  { command: "ordered-list", label: "Numbered list" },
-  { command: "task-list", label: "Task list" },
+  { command: "bullet-list", label: "Bullet list", shortcut: "bulletList" },
+  { command: "ordered-list", label: "Numbered list", shortcut: "orderedList" },
+  { command: "task-list", label: "Task list", shortcut: "taskList" },
 ];
 
 function ListsMenuItems({
@@ -348,15 +373,19 @@ function ListsMenuItems({
 }) {
   return (
     <MenuRadioGroup value={listMenuValue(snapshot.listKind)}>
-      {LIST_ITEMS.map((item) => (
-        <MenuRadioItem
-          key={item.command}
-          value={item.command}
-          onClick={() => controller.execute(item.command)}
-        >
-          <MenuRow icon={commandIcon(item.command)} label={item.label} />
-        </MenuRadioItem>
-      ))}
+      {LIST_ITEMS.map((item) => {
+        const shortcut = scientMarkdownShortcut(item.shortcut);
+        return (
+          <MenuRadioItem
+            key={item.command}
+            value={item.command}
+            aria-keyshortcuts={shortcut.ariaKeyShortcuts}
+            onClick={() => controller.execute(item.command)}
+          >
+            <MenuRow icon={commandIcon(item.command)} label={item.label} shortcut={shortcut} />
+          </MenuRadioItem>
+        );
+      })}
       <MenuSeparator />
       <MenuRadioItem value="list-none" onClick={() => controller.execute("list-none")}>
         <MenuRow icon={commandIcon("list-none")} label="No list" />
@@ -377,6 +406,7 @@ function ListsMenu({
       label={`List: ${listMenuLabel(snapshot.listKind)}`}
       icon={listTriggerIcon(snapshot.listKind)}
       groupLabel="Lists"
+      popupClassName="w-52"
     >
       <ListsMenuItems controller={controller} snapshot={snapshot} />
     </DockMenu>
@@ -773,6 +803,7 @@ function TableSizeMenu({ controller }: { readonly controller: ScientMarkdownEdit
         collisionAvoidance={
           placement.locked ? LOCKED_TABLE_SIZE_PICKER_COLLISION_AVOIDANCE : undefined
         }
+        data-keybinding-capture=""
         side={placement.locked && placement.side ? placement.side : "inline-end"}
       >
         <div
@@ -870,6 +901,7 @@ function TableSizeMenu({ controller }: { readonly controller: ScientMarkdownEdit
 }
 
 function InsertBlockMenuItems({ controller }: { readonly controller: ScientMarkdownEditorView }) {
+  const hardBreakShortcut = scientMarkdownShortcut("hardBreak");
   return (
     <>
       <TableSizeMenu controller={controller} />
@@ -880,10 +912,15 @@ function InsertBlockMenuItems({ controller }: { readonly controller: ScientMarkd
         </MenuItem>
       ))}
       <MenuSeparator />
-      <MenuItem onClick={() => controller.execute("hard-break")}>
+      <MenuItem
+        aria-keyshortcuts={hardBreakShortcut.ariaKeyShortcuts}
+        onClick={() => controller.execute("hard-break")}
+      >
         {commandIcon("hard-break")}
         <span>Line break</span>
-        <MenuShortcut>⇧↩</MenuShortcut>
+        <MenuShortcut aria-hidden="true" dir="ltr">
+          {hardBreakShortcut.display}
+        </MenuShortcut>
       </MenuItem>
     </>
   );
@@ -990,6 +1027,11 @@ function BlockActionsMenuItems({
   readonly controller: ScientMarkdownEditorView;
   readonly snapshot: ScientMarkdownEditorSnapshot;
 }) {
+  const findShortcut = scientMarkdownShortcut("find");
+  const clearFormattingShortcut = scientMarkdownShortcut("clearFormatting");
+  const moveUpShortcut = scientMarkdownShortcut("moveBlockUp");
+  const moveDownShortcut = scientMarkdownShortcut("moveBlockDown");
+  const duplicateShortcut = scientMarkdownShortcut("duplicateBlock");
   const blockAction = (action: ScientMarkdownBlockAction) => () => {
     controller.executeBlock(action);
   };
@@ -1007,7 +1049,7 @@ function BlockActionsMenuItems({
             <ListTree />
             <span>Document outline</span>
           </MenuSubTrigger>
-          <MenuSubPopup className="w-60 p-1">
+          <MenuSubPopup className="w-60 p-1" data-keybinding-capture="">
             {snapshot.outlineItems.map((item, index) => (
               <MenuItem
                 key={`${item.position}-${item.level}-${item.text}`}
@@ -1025,32 +1067,67 @@ function BlockActionsMenuItems({
           </MenuSubPopup>
         </MenuSub>
       )}
-      <MenuItem onClick={() => controller.setFindOpen(!snapshot.findOpen)}>
+      <MenuItem
+        aria-keyshortcuts={findShortcut.ariaKeyShortcuts}
+        onClick={() => controller.setFindOpen(!snapshot.findOpen)}
+      >
         <Search />
         <span>Find & Replace</span>
-        <MenuShortcut>⌘F</MenuShortcut>
+        <MenuShortcut aria-hidden="true" dir="ltr">
+          {findShortcut.display}
+        </MenuShortcut>
       </MenuItem>
       {snapshot.editable ? (
         <>
-          <MenuItem onClick={() => controller.execute("clear-formatting")}>
+          <MenuItem
+            aria-keyshortcuts={clearFormattingShortcut.ariaKeyShortcuts}
+            onClick={() => controller.execute("clear-formatting")}
+          >
             <RemoveFormatting />
             <span>Clear formatting</span>
+            <MenuShortcut aria-hidden="true" dir="ltr">
+              {clearFormattingShortcut.display}
+            </MenuShortcut>
           </MenuItem>
           <MenuSeparator />
-          <MenuItem disabled={!snapshot.canMoveBlockUp} onClick={blockAction("move-up")}>
+          <MenuItem
+            aria-keyshortcuts={
+              snapshot.canMoveBlockUp ? moveUpShortcut.ariaKeyShortcuts : undefined
+            }
+            disabled={!snapshot.canMoveBlockUp}
+            onClick={blockAction("move-up")}
+          >
             <ArrowUp />
             <span>Move block up</span>
-            <MenuShortcut>⌥↑</MenuShortcut>
+            <MenuShortcut aria-hidden="true" dir="ltr">
+              {moveUpShortcut.display}
+            </MenuShortcut>
           </MenuItem>
-          <MenuItem disabled={!snapshot.canMoveBlockDown} onClick={blockAction("move-down")}>
+          <MenuItem
+            aria-keyshortcuts={
+              snapshot.canMoveBlockDown ? moveDownShortcut.ariaKeyShortcuts : undefined
+            }
+            disabled={!snapshot.canMoveBlockDown}
+            onClick={blockAction("move-down")}
+          >
             <ArrowDown />
             <span>Move block down</span>
-            <MenuShortcut>⌥↓</MenuShortcut>
+            <MenuShortcut aria-hidden="true" dir="ltr">
+              {moveDownShortcut.display}
+            </MenuShortcut>
           </MenuItem>
-          <MenuItem disabled={!snapshot.canDuplicateBlock} onClick={blockAction("duplicate")}>
+          <MenuItem
+            aria-keyshortcuts={
+              snapshot.canDuplicateBlock ? duplicateShortcut.ariaKeyShortcuts : undefined
+            }
+            disabled={!snapshot.canDuplicateBlock}
+            onClick={blockAction("duplicate")}
+          >
             <Copy />
             <span>Duplicate block</span>
-            <MenuShortcut>⇧⌥↓</MenuShortcut>
+            <MenuShortcut aria-hidden="true" dir="ltr">
+              {duplicateShortcut.display}
+            </MenuShortcut>
           </MenuItem>
           <MenuItem
             disabled={!snapshot.canDeleteBlock}
@@ -1066,82 +1143,122 @@ function BlockActionsMenuItems({
   );
 }
 
-function LinkEditor({
+function LinkEditorTrigger({
   controller,
   active,
+  handle,
   openRequest = 0,
+  shortcut,
+  triggerId,
 }: {
   readonly controller: ScientMarkdownEditorView;
   readonly active?: boolean;
+  readonly handle: LinkEditorHandle;
   readonly openRequest?: number;
+  readonly shortcut: ScientMarkdownShortcutPresentation;
+  readonly triggerId: string;
 }) {
-  const [open, setOpen] = useState(false);
-  const [href, setHref] = useState("");
-  const inputRef = useRef<HTMLInputElement>(null);
-
-  useEffect(() => {
-    if (open) {
-      const timer = setTimeout(() => inputRef.current?.focus(), 50);
-      return () => clearTimeout(timer);
-    }
-  }, [open]);
-
   useEffect(() => {
     if (openRequest === 0) return;
-    const current = controller.currentLink();
-    if (current) {
-      setHref(current.href);
-      setOpen(true);
-    }
+    handle.open(triggerId);
     controller.acknowledgeLinkEditRequest(openRequest);
-  }, [controller, openRequest]);
+  }, [controller, handle, openRequest, triggerId]);
+
+  return (
+    <Tooltip>
+      <TooltipTrigger
+        render={
+          <PopoverTrigger
+            handle={handle}
+            id={triggerId}
+            render={
+              <button
+                type="button"
+                className={dockButtonClass(active)}
+                aria-label="Add or edit link"
+                aria-keyshortcuts={shortcut.ariaKeyShortcuts}
+                data-preserve-icon-weight="true"
+              >
+                <Link2 className="size-4" />
+              </button>
+            }
+          />
+        }
+      />
+      <TooltipPopup side="top">
+        <DockTooltipContent label="Link" shortcut={shortcut} />
+      </TooltipPopup>
+    </Tooltip>
+  );
+}
+
+function LinkEditorPopup({
+  active,
+  controller,
+  handle,
+}: {
+  readonly active: boolean;
+  readonly controller: ScientMarkdownEditorView;
+  readonly handle: LinkEditorHandle;
+}) {
+  const [href, setHref] = useState("");
+  const inputRef = useRef<HTMLInputElement>(null);
+  const openedFromEditorRef = useRef(false);
+  const returnFocusRef = useRef<HTMLElement | true | false>(false);
+
+  const closeToEditor = () => {
+    controller.focus();
+    returnFocusRef.current = false;
+    handle.close();
+  };
 
   const submit = (event: FormEvent) => {
     event.preventDefault();
     if (controller.setLink(href)) {
       setHref("");
-      setOpen(false);
+      closeToEditor();
     }
   };
 
   const remove = () => {
     controller.removeLink();
     setHref("");
-    setOpen(false);
+    closeToEditor();
   };
 
   return (
     <Popover
-      open={open}
-      onOpenChange={(nextOpen) => {
-        if (nextOpen) setHref(controller.currentLink()?.href ?? "");
-        setOpen(nextOpen);
+      handle={handle}
+      onOpenChange={(nextOpen, details) => {
+        if (nextOpen) {
+          openedFromEditorRef.current = details.reason === "imperative-action";
+          returnFocusRef.current = false;
+          setHref(controller.currentLink()?.href ?? "");
+          return;
+        }
+        if (details.reason === "outside-press" || details.reason === "focus-out") {
+          returnFocusRef.current = false;
+        } else if (details.reason === "escape-key") {
+          returnFocusRef.current = openedFromEditorRef.current
+            ? (controller.view?.dom ?? false)
+            : true;
+        } else if (details.reason === "trigger-press") {
+          returnFocusRef.current = true;
+        }
       }}
     >
-      <Tooltip>
-        <TooltipTrigger
-          render={
-            <PopoverTrigger
-              render={
-                <button
-                  type="button"
-                  className={dockButtonClass(active)}
-                  aria-label="Add or edit link"
-                  data-preserve-icon-weight="true"
-                >
-                  <Link2 className="size-4" />
-                </button>
-              }
-            />
-          }
-        />
-        <TooltipPopup side="top">Link</TooltipPopup>
-      </Tooltip>
       <PopoverPopup
         align="center"
         className="w-72 max-w-[calc(100vw-1rem)]"
         side="bottom"
         viewportClassName="p-2"
+        data-keybinding-capture=""
+        initialFocus={inputRef}
+        finalFocus={() => {
+          const target = returnFocusRef.current;
+          returnFocusRef.current = false;
+          return target;
+        }}
       >
         <form className="flex flex-col gap-2" onSubmit={submit}>
           <div className="flex items-center justify-between px-1">
@@ -1167,7 +1284,7 @@ function LinkEditor({
             onChange={(event) => setHref(event.target.value)}
           />
           <div className="flex items-center justify-end gap-1">
-            <Button size="xs" type="button" variant="ghost" onClick={() => setOpen(false)}>
+            <Button size="xs" type="button" variant="ghost" onClick={closeToEditor}>
               Cancel
             </Button>
             <Button disabled={!href.trim()} size="xs" type="submit">
@@ -1311,13 +1428,19 @@ function TableActions({
  */
 function SelectionToolbar({
   controller,
+  linkEditorHandle,
+  linkEditorTriggerId,
   snapshot,
+  linkOpenRequest,
   wikiLinkCandidates,
   recentWikiLinkPaths,
   onWikiLinkSelected,
 }: {
   readonly controller: ScientMarkdownEditorView;
+  readonly linkEditorHandle: LinkEditorHandle;
+  readonly linkEditorTriggerId: string;
   readonly snapshot: ScientMarkdownEditorSnapshot;
+  readonly linkOpenRequest: number;
   readonly wikiLinkCandidates: ReadonlyArray<ScientMarkdownWikiLinkCandidate>;
   readonly recentWikiLinkPaths: ReadonlyArray<string>;
   readonly onWikiLinkSelected: (path: string) => void;
@@ -1400,6 +1523,7 @@ function SelectionToolbar({
     <div
       ref={toolbarRef}
       className="scient-markdown-selection-toolbar"
+      data-keybinding-capture=""
       role="toolbar"
       aria-label="Text formatting"
       aria-hidden={!visible}
@@ -1415,30 +1539,36 @@ function SelectionToolbar({
       <CommandButton
         controller={controller}
         command="bold"
-        label="Bold (Cmd+B)"
+        label="Bold"
         icon={<Bold className="size-4" strokeWidth={2.5} />}
         preserveIconWeight
+        shortcut="bold"
         active={active.has("strong")}
       />
       <CommandButton
         controller={controller}
         command="italic"
-        label="Italic (Cmd+I)"
+        label="Italic"
         icon={<Italic className="size-4" />}
         active={active.has("em")}
+        shortcut="italic"
       />
       <CommandButton
         controller={controller}
         command="inline-code"
-        label="Inline Code"
+        label="Inline code"
         icon={<Code className="size-4" />}
         preserveIconWeight
         active={active.has("code")}
+        shortcut="inlineCode"
       />
-      <LinkEditor
+      <LinkEditorTrigger
         controller={controller}
         active={active.has("link")}
-        openRequest={snapshot.linkEditRequest}
+        handle={linkEditorHandle}
+        openRequest={linkOpenRequest}
+        shortcut={scientMarkdownShortcut("link")}
+        triggerId={linkEditorTriggerId}
       />
       <ScientWikiLinkPicker
         controller={controller}
@@ -1475,6 +1605,11 @@ export function ScientMarkdownControls({
     controller.getSnapshot,
   );
   const active = new Set(snapshot.activeMarks);
+  const undoShortcut = scientMarkdownShortcut("undo");
+  const redoShortcut = scientMarkdownShortcut("redo");
+  const [linkEditorHandle] = useState(createLinkEditorHandle);
+  const dockLinkEditorTriggerId = `scient-markdown-link-dock-${useId()}`;
+  const selectionLinkEditorTriggerId = `scient-markdown-link-selection-${useId()}`;
   const slashItems =
     snapshot.slashQuery === null ? [] : filterScientMarkdownSlashCommands(snapshot.slashQuery);
 
@@ -1485,7 +1620,13 @@ export function ScientMarkdownControls({
     if (snapshot.editable && snapshot.inTable) onExpandedChange(true);
   }, [onExpandedChange, snapshot.editable, snapshot.inTable]);
 
-  // Overflow order: direction goes first, then insert, history (Cmd+Z covers
+  useEffect(() => {
+    if (snapshot.linkEditRequest !== 0 && snapshot.selectionEmpty) {
+      onExpandedChange(true);
+    }
+  }, [onExpandedChange, snapshot.linkEditRequest, snapshot.selectionEmpty]);
+
+  // Overflow order: direction goes first, then insert, history (undo covers
   // it), lists, and style. Contextual table tools outlast those groups; core
   // inline formatting is pinned. Displaced groups keep every action in the
   // existing More-actions menu without adding another toolbar row.
@@ -1501,16 +1642,18 @@ export function ScientMarkdownControls({
               <CommandButton
                 controller={controller}
                 command="undo"
-                label="Undo (Cmd+Z)"
+                label="Undo"
                 icon={<Undo2 className="size-4" />}
                 disabled={!snapshot.canUndo}
+                shortcut="undo"
               />
               <CommandButton
                 controller={controller}
                 command="redo"
-                label="Redo (Cmd+Shift+Z)"
+                label="Redo"
                 icon={<Redo2 className="size-4" />}
                 disabled={!snapshot.canRedo}
+                shortcut="redo"
               />
               <DockDivider />
             </>
@@ -1518,15 +1661,27 @@ export function ScientMarkdownControls({
           overflowLabel: "History",
           overflow: (
             <>
-              <MenuItem disabled={!snapshot.canUndo} onClick={() => controller.execute("undo")}>
+              <MenuItem
+                aria-keyshortcuts={snapshot.canUndo ? undoShortcut.ariaKeyShortcuts : undefined}
+                disabled={!snapshot.canUndo}
+                onClick={() => controller.execute("undo")}
+              >
                 <Undo2 />
                 <span>Undo</span>
-                <MenuShortcut>⌘Z</MenuShortcut>
+                <MenuShortcut aria-hidden="true" dir="ltr">
+                  {undoShortcut.display}
+                </MenuShortcut>
               </MenuItem>
-              <MenuItem disabled={!snapshot.canRedo} onClick={() => controller.execute("redo")}>
+              <MenuItem
+                aria-keyshortcuts={snapshot.canRedo ? redoShortcut.ariaKeyShortcuts : undefined}
+                disabled={!snapshot.canRedo}
+                onClick={() => controller.execute("redo")}
+              >
                 <Redo2 />
                 <span>Redo</span>
-                <MenuShortcut>⇧⌘Z</MenuShortcut>
+                <MenuShortcut aria-hidden="true" dir="ltr">
+                  {redoShortcut.display}
+                </MenuShortcut>
               </MenuItem>
             </>
           ),
@@ -1541,34 +1696,45 @@ export function ScientMarkdownControls({
               <CommandButton
                 controller={controller}
                 command="bold"
-                label="Bold (Cmd+B)"
+                label="Bold"
                 icon={<Bold className="size-4" strokeWidth={2.5} />}
                 preserveIconWeight
                 active={active.has("strong")}
+                shortcut="bold"
               />
               <CommandButton
                 controller={controller}
                 command="italic"
-                label="Italic (Cmd+I)"
+                label="Italic"
                 icon={<Italic className="size-4" />}
                 active={active.has("em")}
+                shortcut="italic"
               />
               <CommandButton
                 controller={controller}
                 command="strike"
-                label="Strikethrough (Cmd+Shift+X)"
+                label="Strikethrough"
                 icon={<Strikethrough className="size-4" />}
                 active={active.has("strike")}
+                shortcut="strike"
               />
               <CommandButton
                 controller={controller}
                 command="inline-code"
-                label="Inline Code (Cmd+E)"
+                label="Inline code"
                 icon={<Code className="size-4" />}
                 preserveIconWeight
                 active={active.has("code")}
+                shortcut="inlineCode"
               />
-              <LinkEditor controller={controller} active={active.has("link")} />
+              <LinkEditorTrigger
+                controller={controller}
+                active={active.has("link")}
+                handle={linkEditorHandle}
+                openRequest={snapshot.selectionEmpty ? snapshot.linkEditRequest : 0}
+                shortcut={scientMarkdownShortcut("link")}
+                triggerId={dockLinkEditorTriggerId}
+              />
               <DockDivider />
             </>
           ),
@@ -1649,10 +1815,19 @@ export function ScientMarkdownControls({
 
       <SelectionToolbar
         controller={controller}
+        linkEditorHandle={linkEditorHandle}
+        linkEditorTriggerId={selectionLinkEditorTriggerId}
         snapshot={snapshot}
+        linkOpenRequest={snapshot.selectionEmpty ? 0 : snapshot.linkEditRequest}
         wikiLinkCandidates={wikiLinkCandidates}
         recentWikiLinkPaths={recentWikiLinkPaths}
         onWikiLinkSelected={onWikiLinkSelected}
+      />
+
+      <LinkEditorPopup
+        active={active.has("link")}
+        controller={controller}
+        handle={linkEditorHandle}
       />
 
       {snapshot.editable && snapshot.slashQuery !== null && slashItems.length > 0 ? (

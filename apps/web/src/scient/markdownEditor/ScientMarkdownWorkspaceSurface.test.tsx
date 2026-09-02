@@ -2,7 +2,7 @@
 
 import { act, StrictMode, useState } from "react";
 import { createRoot } from "react-dom/client";
-import { TextSelection } from "prosemirror-state";
+import { AllSelection, NodeSelection, TextSelection } from "prosemirror-state";
 import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 
 import { MarkdownSaveQueue } from "@scientfactory/scient-markdown";
@@ -12,6 +12,7 @@ import {
   type ScientMarkdownWorkspaceSurfaceProps,
 } from "./ScientMarkdownWorkspaceSurface";
 import { ScientMarkdownEditorView } from "./prosemirror/view";
+import { scientMarkdownShortcut } from "./shortcuts";
 import { useActivePendingSurfaceDeparture } from "../fileSurfaces/usePendingSurfaceDeparture";
 
 type TestSurfaceProps = Omit<
@@ -237,6 +238,103 @@ describe("ScientMarkdownWorkspaceSurface", () => {
     expect(props.onSaveConfirmed).toHaveBeenCalledTimes(2);
   });
 
+  it("serializes rapid real shortcuts without losing CRLF or Unicode content", async () => {
+    vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+    vi.useFakeTimers();
+    const source = "שלום 🌍\r\n";
+    let resolveFirst!: (value: { readonly revision: string }) => void;
+    const firstPersist = new Promise<{ readonly revision: string }>((resolve) => {
+      resolveFirst = resolve;
+    });
+    const persist = vi
+      .fn()
+      .mockImplementationOnce(() => firstPersist)
+      .mockResolvedValueOnce({ revision: "r2" });
+    const onPendingChange = vi.fn();
+    const mount = vi.spyOn(ScientMarkdownEditorView.prototype, "mount");
+    const synchronize = vi.spyOn(MarkdownSaveQueue.prototype, "synchronize");
+    const host = document.createElement("div");
+    document.body.append(host);
+    const root = createRoot(host);
+    roots.push(root);
+
+    try {
+      await act(() =>
+        root.render(
+          <ScientMarkdownWorkspaceSurface
+            source={source}
+            revision="r0"
+            ariaLabel="Shortcut save stress"
+            persist={persist}
+            onPendingChange={onPendingChange}
+            onSaveConfirmed={vi.fn()}
+            onSaveFailure={vi.fn()}
+            onExternalConflict={vi.fn()}
+          />,
+        ),
+      );
+      const controller = (mount.mock.instances as unknown as ScientMarkdownEditorView[]).find(
+        (candidate) => candidate.view?.dom.isConnected,
+      )!;
+      const view = controller.view!;
+      const shortcut = (key: string, code: string, shiftKey = false) => {
+        const event = new KeyboardEvent("keydown", {
+          key,
+          code,
+          bubbles: true,
+          cancelable: true,
+          ctrlKey: true,
+          shiftKey,
+        });
+        view.dom.dispatchEvent(event);
+        expect(event.defaultPrevented, `${code} must be owned by the editor`).toBe(true);
+      };
+      view.dispatch(view.state.tr.setSelection(TextSelection.create(view.state.doc, 1, 8)));
+
+      await act(() => {
+        shortcut("b", "KeyB");
+        shortcut("i", "KeyI");
+        shortcut("z", "KeyZ");
+        expect(controller.session.session.draftSource).toBe("**שלום 🌍**\r\n");
+        shortcut("z", "KeyZ");
+      });
+      expect(controller.session.session.draftSource).toBe(source);
+      await act(() => vi.advanceTimersByTimeAsync(500));
+      expect(persist).not.toHaveBeenCalled();
+      expect(onPendingChange).toHaveBeenLastCalledWith(false);
+
+      await act(() => shortcut("b", "KeyB"));
+      const queue = synchronize.mock.instances[0] as MarkdownSaveQueue;
+      await act(() => vi.advanceTimersByTimeAsync(500));
+      expect(persist).toHaveBeenCalledExactlyOnceWith({
+        source: "**שלום 🌍**\r\n",
+        expectedRevision: "r0",
+        editVersion: 5,
+      });
+
+      await act(() => shortcut("i", "KeyI"));
+      expect(persist).toHaveBeenCalledTimes(1);
+      await act(async () => {
+        const flushed = queue.flush();
+        resolveFirst({ revision: "r1" });
+        await flushed;
+      });
+
+      expect(persist).toHaveBeenCalledTimes(2);
+      expect(persist).toHaveBeenLastCalledWith({
+        source: "***שלום 🌍***\r\n",
+        expectedRevision: "r1",
+        editVersion: 6,
+      });
+      expect(controller.session.session.draftSource).toBe("***שלום 🌍***\r\n");
+      expect(controller.session.session.draftSource).not.toMatch(/(^|[^\r])\n/);
+      expect(queue.pending).toBe(false);
+      expect(onPendingChange).toHaveBeenLastCalledWith(false);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("still pauses for genuinely different disk bytes during an in-flight save", async () => {
     vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
     const mount = vi.spyOn(ScientMarkdownEditorView.prototype, "mount");
@@ -438,7 +536,7 @@ describe("ScientMarkdownWorkspaceSurface", () => {
     // The dock is always present but starts collapsed: only the handle shows.
     expect(host.querySelector("[aria-label='Document actions']")).not.toBeNull();
     expect(host.querySelector("[aria-label='Show formatting tools']")).not.toBeNull();
-    expect(host.querySelector("[aria-label='Bold (Cmd+B)']")).toBeNull();
+    expect(host.querySelector("[aria-label='Bold']")).toBeNull();
     expect(persist).not.toHaveBeenCalled();
   });
 
@@ -467,18 +565,21 @@ describe("ScientMarkdownWorkspaceSurface", () => {
     expect(host.querySelector(".ProseMirror")).not.toBeNull();
     const handle = host.querySelector<HTMLButtonElement>("[aria-label='Show formatting tools']");
     expect(handle).not.toBeNull();
-    expect(host.querySelector("[aria-label='Bold (Cmd+B)']")).toBeNull();
+    expect(host.querySelector("[aria-label='Bold']")).toBeNull();
 
     await act(() => handle!.click());
 
-    expect(host.querySelector("[aria-label='Bold (Cmd+B)']")).not.toBeNull();
+    const bold = host.querySelector<HTMLButtonElement>("[aria-label='Bold']");
+    expect(bold).not.toBeNull();
+    expect(bold?.getAttribute("aria-keyshortcuts")).toBe(
+      scientMarkdownShortcut("bold").ariaKeyShortcuts,
+    );
+    expect(bold?.textContent).toBe("");
     expect(
-      host.querySelector("[aria-label='Bold (Cmd+B)']")?.getAttribute("data-preserve-icon-weight"),
+      host.querySelector("[aria-label='Bold']")?.getAttribute("data-preserve-icon-weight"),
     ).toBe("true");
     expect(
-      host
-        .querySelector("[aria-label='Inline Code (Cmd+E)']")
-        ?.getAttribute("data-preserve-icon-weight"),
+      host.querySelector("[aria-label='Inline code']")?.getAttribute("data-preserve-icon-weight"),
     ).toBe("true");
     expect(
       host
@@ -661,7 +762,7 @@ describe("ScientMarkdownWorkspaceSurface", () => {
     await act(() =>
       host.querySelector<HTMLButtonElement>("[aria-label='Show formatting tools']")?.click(),
     );
-    const primaryBold = host.querySelector<HTMLButtonElement>("[aria-label='Bold (Cmd+B)']");
+    const primaryBold = host.querySelector<HTMLButtonElement>("[aria-label='Bold']");
     await act(() =>
       primaryBold?.dispatchEvent(new MouseEvent("pointerdown", { bubbles: true, button: 0 })),
     );
@@ -1034,7 +1135,7 @@ describe("ScientMarkdownWorkspaceSurface", () => {
       editor!.dispatchEvent(
         new KeyboardEvent("keydown", {
           key: "f",
-          metaKey: true,
+          ctrlKey: true,
           bubbles: true,
           cancelable: true,
         }),
@@ -1067,9 +1168,20 @@ describe("ScientMarkdownWorkspaceSurface", () => {
     expect(replacementInputGroup?.className).toContain("ring-0");
     expect(
       findBar
-        ?.querySelector("[aria-label='Replace current match (Enter)'] svg")
+        ?.querySelector("[aria-label='Replace current match'] svg")
         ?.classList.contains("size-3.5"),
     ).toBe(true);
+
+    const matchCase = findBar?.querySelector<HTMLButtonElement>("[aria-label='Match case']");
+    if (!matchCase) throw new Error("Expected the Match case control to be mounted.");
+    await act(() => {
+      matchCase.focus();
+      matchCase.dispatchEvent(
+        new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }),
+      );
+    });
+    expect(host.querySelector(".scient-markdown-find-bar")).toBeNull();
+    expect(document.activeElement).toBe(editor);
   });
 
   it("clears pending when an authoritative refresh observes an unsettled saved draft", async () => {
@@ -1297,5 +1409,317 @@ describe("ScientMarkdownWorkspaceSurface", () => {
       expect(destroy).toHaveBeenCalledTimes(12);
     });
     expect(host.querySelector(".ProseMirror")).toBeNull();
+  });
+
+  it("owns editor shortcuts without leaking them to app shortcuts or nested source fields", async () => {
+    vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+    const mount = vi.spyOn(ScientMarkdownEditorView.prototype, "mount");
+    const host = document.createElement("div");
+    const outside = document.createElement("button");
+    document.body.append(host, outside);
+    const root = createRoot(host);
+    roots.push(root);
+    const sidebarToggle = vi.fn();
+    const commandPaletteToggle = vi.fn();
+    const onSidebarShortcut = (event: KeyboardEvent) => {
+      if (!event.ctrlKey || event.key.toLocaleLowerCase() !== "b") return;
+      if (
+        event.target instanceof HTMLElement &&
+        event.target.closest("[data-keybinding-capture]")
+      ) {
+        return;
+      }
+      sidebarToggle();
+    };
+    const onPaletteShortcut = (event: KeyboardEvent) => {
+      if (event.defaultPrevented) return;
+      if (event.ctrlKey && event.key.toLocaleLowerCase() === "k") commandPaletteToggle();
+    };
+    window.addEventListener("keydown", onSidebarShortcut, true);
+    window.addEventListener("keydown", onPaletteShortcut);
+
+    try {
+      await act(() =>
+        root.render(
+          <ScientMarkdownWorkspaceSurface
+            source={"Text\n\n$$\nx + y\n$$\n\n```ts\nconst value = 1;\n```\n"}
+            revision="r0"
+            ariaLabel="Shortcut scope"
+            persist={vi.fn(async () => ({ revision: "r1" }))}
+            onPendingChange={vi.fn()}
+            onSaveConfirmed={vi.fn()}
+            onSaveFailure={vi.fn()}
+            onExternalConflict={vi.fn()}
+          />,
+        ),
+      );
+      const controller = (mount.mock.instances as unknown as ScientMarkdownEditorView[]).find(
+        (candidate) => candidate.view?.dom.isConnected,
+      )!;
+      const view = controller.view!;
+      view.dispatch(view.state.tr.setSelection(TextSelection.create(view.state.doc, 1, 5)));
+
+      const chrome = host.querySelector<HTMLButtonElement>("[aria-label='Show formatting tools']")!;
+      chrome.focus();
+      const chromeShortcut = (key: string, code: string) => {
+        const event = new KeyboardEvent("keydown", {
+          key,
+          code,
+          bubbles: true,
+          cancelable: true,
+          ctrlKey: true,
+        });
+        chrome.dispatchEvent(event);
+        expect(event.defaultPrevented, `${code} must be delegated from editor chrome`).toBe(true);
+      };
+      await act(() => chromeShortcut("a", "KeyA"));
+      expect(view.state.selection).toBeInstanceOf(AllSelection);
+      view.dispatch(view.state.tr.setSelection(TextSelection.create(view.state.doc, 1, 5)));
+      await act(() => chromeShortcut("b", "KeyB"));
+      expect(controller.session.session.draftSource).toContain("**Text**");
+      await act(() => chromeShortcut("z", "KeyZ"));
+      expect(controller.session.session.draftSource).not.toContain("**Text**");
+      await act(() => chromeShortcut("y", "KeyY"));
+      expect(controller.session.session.draftSource).toContain("**Text**");
+      await act(() => chromeShortcut("z", "KeyZ"));
+      expect(controller.session.session.draftSource).not.toContain("**Text**");
+      expect(sidebarToggle).not.toHaveBeenCalled();
+
+      view.dispatch(view.state.tr.setSelection(TextSelection.create(view.state.doc, 1, 5)));
+      chrome.focus();
+      await act(() => chromeShortcut("k", "KeyK"));
+      const chromeLinkInput = await vi.waitFor(() => {
+        const inputs = document.body.querySelectorAll<HTMLInputElement>(
+          'input[aria-label="Link destination"]',
+        );
+        expect(inputs).toHaveLength(1);
+        return inputs[0]!;
+      });
+      expect(document.activeElement).toBe(chromeLinkInput);
+      expect(commandPaletteToggle).not.toHaveBeenCalled();
+      const chromeLinkCancel = Array.from(
+        document.body.querySelectorAll<HTMLButtonElement>("[data-slot='popover-popup'] button"),
+      ).find((button) => button.textContent === "Cancel")!;
+      await act(() => chromeLinkCancel.click());
+      await vi.waitFor(() => expect(document.activeElement).toBe(view.dom));
+
+      await act(() => {
+        view.dom.dispatchEvent(
+          new KeyboardEvent("keydown", {
+            key: "b",
+            code: "KeyB",
+            bubbles: true,
+            cancelable: true,
+            ctrlKey: true,
+          }),
+        );
+      });
+      expect(sidebarToggle).not.toHaveBeenCalled();
+      expect(controller.session.session.draftSource).toContain("**Text**");
+
+      await act(() => {
+        view.dom.dispatchEvent(
+          new KeyboardEvent("keydown", {
+            key: "k",
+            code: "KeyK",
+            bubbles: true,
+            cancelable: true,
+            ctrlKey: true,
+          }),
+        );
+      });
+      const linkInput = await vi.waitFor(() => {
+        const inputs = document.body.querySelectorAll<HTMLInputElement>(
+          'input[aria-label="Link destination"]',
+        );
+        expect(inputs).toHaveLength(1);
+        return inputs[0]!;
+      });
+      expect(document.activeElement).toBe(linkInput);
+      expect(commandPaletteToggle).not.toHaveBeenCalled();
+
+      const nestedLinkShortcut = new KeyboardEvent("keydown", {
+        key: "k",
+        code: "KeyK",
+        bubbles: true,
+        cancelable: true,
+        ctrlKey: true,
+      });
+      await act(() => linkInput.dispatchEvent(nestedLinkShortcut));
+      expect(nestedLinkShortcut.defaultPrevented).toBe(true);
+      expect(commandPaletteToggle).not.toHaveBeenCalled();
+      expect(document.body.querySelectorAll('input[aria-label="Link destination"]')).toHaveLength(
+        1,
+      );
+
+      const cancel = Array.from(
+        document.body.querySelectorAll<HTMLButtonElement>("[data-slot='popover-popup'] button"),
+      ).find((button) => button.textContent === "Cancel")!;
+      await act(() => cancel.click());
+      await vi.waitFor(() => expect(document.activeElement).toBe(view.dom));
+
+      view.dispatch(view.state.tr.setSelection(TextSelection.create(view.state.doc, 3)));
+      await act(() => {
+        view.dom.dispatchEvent(
+          new KeyboardEvent("keydown", {
+            key: "k",
+            code: "KeyK",
+            bubbles: true,
+            cancelable: true,
+            ctrlKey: true,
+          }),
+        );
+      });
+      const caretLinkInput = await vi.waitFor(() => {
+        expect(host.querySelector("[aria-label='Hide formatting tools']")).not.toBeNull();
+        const inputs = document.body.querySelectorAll<HTMLInputElement>(
+          'input[aria-label="Link destination"]',
+        );
+        expect(inputs).toHaveLength(1);
+        return inputs[0]!;
+      });
+      expect(document.activeElement).toBe(caretLinkInput);
+      const caretCancel = Array.from(
+        document.body.querySelectorAll<HTMLButtonElement>("[data-slot='popover-popup'] button"),
+      ).find((button) => button.textContent === "Cancel")!;
+      await act(() => caretCancel.click());
+      await vi.waitFor(() => expect(document.activeElement).toBe(view.dom));
+      expect(commandPaletteToggle).not.toHaveBeenCalled();
+
+      let mathPosition = -1;
+      view.state.doc.descendants((node, position) => {
+        if (node.type.name === "display_math") mathPosition = position;
+      });
+      view.dispatch(view.state.tr.setSelection(NodeSelection.create(view.state.doc, mathPosition)));
+      const mathInput = view.dom.querySelector<HTMLTextAreaElement>(
+        ".scient-markdown-math-source",
+      )!;
+      mathInput.focus();
+      const sourceBeforeNestedKeys = controller.session.session.draftSource;
+      for (const key of ["a", "z", "c", "x", "v", "b"] as const) {
+        const event = new KeyboardEvent("keydown", {
+          key,
+          code: `Key${key.toUpperCase()}`,
+          bubbles: true,
+          cancelable: true,
+          ctrlKey: true,
+        });
+        await act(() => mathInput.dispatchEvent(event));
+        expect(event.defaultPrevented, `${key} must remain native to the math input`).toBe(false);
+      }
+      expect(sidebarToggle).not.toHaveBeenCalled();
+      expect(controller.session.session.draftSource).toBe(sourceBeforeNestedKeys);
+
+      const nestedMathLink = new KeyboardEvent("keydown", {
+        key: "k",
+        code: "KeyK",
+        bubbles: true,
+        cancelable: true,
+        ctrlKey: true,
+      });
+      await act(() => mathInput.dispatchEvent(nestedMathLink));
+      expect(nestedMathLink.defaultPrevented).toBe(true);
+      expect(commandPaletteToggle).not.toHaveBeenCalled();
+      expect(controller.getSnapshot().linkEditRequest).toBe(0);
+
+      const nestedMathFind = new KeyboardEvent("keydown", {
+        key: "f",
+        code: "KeyF",
+        bubbles: true,
+        cancelable: true,
+        ctrlKey: true,
+      });
+      await act(() => mathInput.dispatchEvent(nestedMathFind));
+      expect(nestedMathFind.defaultPrevented).toBe(true);
+      const nestedMathFindInput = await vi.waitFor(() => {
+        const input = host.querySelector<HTMLInputElement>("[aria-label='Find text']");
+        expect(document.activeElement).toBe(input);
+        return input!;
+      });
+      await act(() =>
+        nestedMathFindInput.dispatchEvent(
+          new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }),
+        ),
+      );
+      await vi.waitFor(() => expect(document.activeElement).toBe(mathInput));
+
+      let codePosition = -1;
+      view.state.doc.descendants((node, position) => {
+        if (node.type.name === "code_block") codePosition = position;
+      });
+      await act(() => {
+        view.dispatch(
+          view.state.tr.setSelection(NodeSelection.create(view.state.doc, codePosition)),
+        );
+      });
+      const codeEditor = await vi.waitFor(() => {
+        const editor = view.dom.querySelector<HTMLElement>(
+          ".scient-markdown-code-editor .cm-content",
+        );
+        expect(editor).not.toBeNull();
+        return editor!;
+      });
+      codeEditor.focus();
+      const sourceBeforeCodeKeys = controller.session.session.draftSource;
+      for (const key of ["a", "z", "c", "x", "v", "b"] as const) {
+        await act(() =>
+          codeEditor.dispatchEvent(
+            new KeyboardEvent("keydown", {
+              key,
+              code: `Key${key.toUpperCase()}`,
+              bubbles: true,
+              cancelable: true,
+              ctrlKey: true,
+            }),
+          ),
+        );
+      }
+      expect(sidebarToggle).not.toHaveBeenCalled();
+      expect(controller.session.session.draftSource).toBe(sourceBeforeCodeKeys);
+      const nestedCodeLink = new KeyboardEvent("keydown", {
+        key: "k",
+        code: "KeyK",
+        bubbles: true,
+        cancelable: true,
+        ctrlKey: true,
+      });
+      await act(() => codeEditor.dispatchEvent(nestedCodeLink));
+      expect(nestedCodeLink.defaultPrevented).toBe(true);
+      expect(commandPaletteToggle).not.toHaveBeenCalled();
+      expect(controller.getSnapshot().linkEditRequest).toBe(0);
+
+      const nestedCodeFind = new KeyboardEvent("keydown", {
+        key: "f",
+        code: "KeyF",
+        bubbles: true,
+        cancelable: true,
+        ctrlKey: true,
+      });
+      await act(() => codeEditor.dispatchEvent(nestedCodeFind));
+      expect(nestedCodeFind.defaultPrevented).toBe(true);
+      const nestedCodeFindInput = await vi.waitFor(() => {
+        const input = host.querySelector<HTMLInputElement>("[aria-label='Find text']");
+        expect(document.activeElement).toBe(input);
+        return input!;
+      });
+      await act(() =>
+        nestedCodeFindInput.dispatchEvent(
+          new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }),
+        ),
+      );
+      await vi.waitFor(() => expect(document.activeElement).toBe(codeEditor));
+
+      outside.dispatchEvent(
+        new KeyboardEvent("keydown", { key: "b", bubbles: true, ctrlKey: true }),
+      );
+      outside.dispatchEvent(
+        new KeyboardEvent("keydown", { key: "k", bubbles: true, ctrlKey: true }),
+      );
+      expect(sidebarToggle).toHaveBeenCalledOnce();
+      expect(commandPaletteToggle).toHaveBeenCalledOnce();
+    } finally {
+      window.removeEventListener("keydown", onSidebarShortcut, true);
+      window.removeEventListener("keydown", onPaletteShortcut);
+    }
   });
 });
