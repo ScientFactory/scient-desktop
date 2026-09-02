@@ -27,9 +27,10 @@ function useWorkspaceFileChanges(
   environmentId: EnvironmentId,
   cwd: string,
   relativePath: string | null,
+  enabled: boolean,
 ) {
   const atom =
-    relativePath === null
+    relativePath === null || !enabled
       ? EMPTY_FILE_CHANGES_ATOM
       : projectEnvironment.fileChanges({
           environmentId,
@@ -40,7 +41,7 @@ function useWorkspaceFileChanges(
   return {
     change: Option.getOrNull(AsyncResult.value(result)),
     refresh,
-    unavailable: relativePath !== null && result._tag === "Failure",
+    unavailable: enabled && relativePath !== null && result._tag === "Failure",
   };
 }
 
@@ -70,6 +71,7 @@ export function useWorkspaceFileRefresh(input: {
   readonly loadAsText: boolean;
   readonly sourcePending: boolean;
   readonly workspaceMutationId: string | null;
+  readonly watchChanges?: boolean;
 }) {
   const file = useProjectFileQuery(
     input.environmentId,
@@ -77,7 +79,12 @@ export function useWorkspaceFileRefresh(input: {
     input.relativePath,
     input.loadAsText,
   );
-  const fileChanges = useWorkspaceFileChanges(input.environmentId, input.cwd, input.relativePath);
+  const fileChanges = useWorkspaceFileChanges(
+    input.environmentId,
+    input.cwd,
+    input.relativePath,
+    input.watchChanges !== false,
+  );
   const [reloadNotice, setReloadNotice] = useState<FileReloadNotice | null>(null);
   const [saveResolution, setSaveResolution] = useState<FileSaveResolution | null>(null);
   const [viewerRefreshKey, setViewerRefreshKey] = useState(0);

@@ -147,6 +147,7 @@ function makeHarness(
       getProviders: Ref.get(providersRef),
       refresh: () => Ref.get(providersRef),
       refreshInstance: () => Ref.get(providersRef),
+      refreshWorkspaceSnapshot: () => Ref.get(providersRef),
       refreshInstanceStrict: () => Ref.get(providersRef),
       refreshInstanceAfterAccountChange: () => Ref.get(providersRef),
       reloadInstance: () => reloadInstance.pipe(Effect.catch(() => Ref.get(providersRef))),

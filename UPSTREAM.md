@@ -22,17 +22,18 @@ revision remains literal ancestry of owned `main`; it is not merely a reviewed
 or observed tip.
 
 The current proposed T3 ancestry is recorded in
-[`docs/internals/2026-09-02-upstream-sync-590a579f2.md`](docs/internals/2026-09-02-upstream-sync-590a579f2.md)
+[`docs/internals/2026-09-02-upstream-sync-70cd258d8.md`](docs/internals/2026-09-02-upstream-sync-70cd258d8.md)
 and in `upstream-state.json`. The latest refresh merges the exact official
-checkpoint `590a579f2e9292ce314c69e459e19620004578fe` into its draft alignment
+checkpoint `70cd258d8aac43ea57494527b00bf36de3efa6c0` into its draft alignment
 branch, preserving the exact range after the previously integrated tip
-`0947c30e6946b2ad6d6cd518fd44292e75e834e8`. The composition receives
-server-owned thread settlement, bounded activity and usage processing, remote
-Claude model discovery, preview and recording repairs, and focused desktop,
-web, and mobile interaction improvements while retaining Scient's product,
-provider, state, and publication boundaries. Later observed T3 tips never move
-`integrationBase` by themselves; it advances only after exact ancestry,
-verification, review, and merge into owned `main`.
+`590a579f2e9292ce314c69e459e19620004578fe`. The composition receives
+cross-client media and document previews, inline assistant citations, bounded
+streaming and provider work, shared settings, remote desktop update handoff,
+and focused desktop, web, mobile, pull-request, and chat reliability work while
+retaining Scient's product, provider, state, attachment, and publication
+boundaries. Later observed T3 tips never move `integrationBase` by themselves;
+it advances only after exact ancestry, verification, review, and merge into
+owned `main`.
 
 ## Receiving T3 updates
 
@@ -365,6 +366,24 @@ generic files, rich Markdown, rooted assets, provider lifecycle, identity, and
 publication boundaries. A focused follow-up retires the completed release-only
 Claude compaction deferral; another corrects an invalid compiled CSS fallback.
 The exact receipt records the passed local gates and bounded desktop review.
+
+The 2026-09-02 sync through `590a579f2` receives server-owned thread
+settlement, bounded activity and usage processing, remote Claude model
+discovery, preview and recording repairs, and focused desktop, web, and mobile
+interaction improvements. Its exact receipt records the composition of
+Scient's project, provider, state, and publication boundaries.
+
+The proposed 2026-09-02 sync through `70cd258d8` receives 66 more official
+commits covering host media and document preview, generic attachment
+reliability, assistant citations, incremental projection and replay work,
+provider and model correctness, shared cross-environment settings, remote
+desktop update handoff, desktop activation, and broad chat, pull-request,
+Files, mobile, and terminal polish. Eighty-three textual conflict paths keep
+Scient's managed-provider lifecycle, rooted and host-file authority, lazy Files
+tree, scientific surfaces, identity, storage roots, trust list, and manual
+release workflow while adopting the compatible host mechanics. The exact
+receipt documents the complete qualification and remaining platform/live-flow
+non-claims.
 
 The earlier 2026-08-12 record through `849bac894` remains preserved as the
 partial checkpoint merged by PR #69. It covers the first 11 commits of this

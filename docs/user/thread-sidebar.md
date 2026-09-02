@@ -16,7 +16,7 @@ confirmation applies to the sidebar controls, thread menus, and the `mod+shift+p
 Pinned threads still move to **Settled** when they become inactive. They also move when their pull
 request merges if **Auto-settle merged threads** is enabled.
 
-Each environment owns its automatic settlement settings. The server checks them even when no web,
+Each server owns its automatic settlement settings and checks them even when no web,
 desktop, or mobile client is connected. By default, Scient settles threads after seven days without
 activity; settling when a pull request merges is available but off by default. An eligible idle
 thread also settles when its pull request closes. An open pull request blocks inactivity settlement.
@@ -24,9 +24,14 @@ Active work, pending input, and live background work keep the thread active. Sci
 closed or merged pull request only when its timestamp is not older than the user's latest activity.
 If that timestamp is not available, the inactivity rule still applies. A manual un-settle also keeps
 the thread active.
-Change these rules in **Settings > General** for the environment. A settings change affects future
-settlement and does not reopen a settled thread. Settings saved by older clients on one device no
-longer control this behavior.
+Change these rules in **Settings → General**. The change is written to every environment you are
+connected to at that moment. An environment that is offline keeps its old value. When a connected
+environment holds a different value, **Settings > General** shows a warning that names it. Choose
+**Apply to all** to write your current values to every connected environment. The same applies to
+the new-thread workspace mode and the source control writing style.
+
+A settings change affects future settlement and does not reopen a settled thread. Settings saved
+by older clients on one device no longer control this behavior.
 
 When you un-settle a thread, it returns to the top of the active list so you can find it right
 away. Its timestamps do not change. Other threads keep their positions.

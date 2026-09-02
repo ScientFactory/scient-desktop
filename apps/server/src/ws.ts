@@ -54,7 +54,7 @@ import {
   ProviderUploadFeedbackError,
   RelayClientInstallFailedError,
   type RelayClientInstallProgressEvent,
-  type ServerSelfUpdateError,
+  ServerSelfUpdateError,
   type ServerSelfUpdateProgressEvent,
   type ServerProvider,
   ScientSkillManagementError,
@@ -169,7 +169,6 @@ import * as SourceControlProviderRegistry from "./sourceControl/SourceControlPro
 import * as GitVcsDriver from "./vcs/GitVcsDriver.ts";
 import * as VcsDriverRegistry from "./vcs/VcsDriverRegistry.ts";
 import * as VcsProjectConfig from "./vcs/VcsProjectConfig.ts";
-import * as VcsProcess from "./vcs/VcsProcess.ts";
 import * as PairingGrantStore from "./auth/PairingGrantStore.ts";
 import * as SessionStore from "./auth/SessionStore.ts";
 import { failEnvironmentAuthInvalid, failEnvironmentInternal } from "./auth/http.ts";
@@ -462,6 +461,10 @@ const SHELL_RESUME_MAX_GAP = 1_000;
 // hundreds of thousands of events behind have OOM-killed servers on large
 // databases. Past this gap the client is reset with a fresh thread snapshot.
 const THREAD_RESUME_MAX_GAP = 1_000;
+// Row count alone does not bound replay memory: a few events with large tool
+// payloads can decode to gigabytes. Before replaying, sum the serialized
+// payload bytes of the range in SQL and reset with a snapshot past this budget.
+const ORCHESTRATION_REPLAY_PAYLOAD_BUDGET_BYTES = 8 * 1024 * 1024;
 
 function toAuthAccessStreamEvent(
   change: PairingGrantStore.BootstrapCredentialChange | SessionStore.SessionCredentialChange,
@@ -639,7 +642,7 @@ const makeWsRpcLayer = (
       const providerMaintenanceRunner = yield* ProviderMaintenanceRunner.ProviderMaintenanceRunner;
       const providerConnectionManager = yield* ProviderConnectionManager.ProviderConnectionManager;
       const providerRuntimeManager = yield* ProviderRuntimeManager.ProviderRuntimeManager;
-      const serverSelfUpdate = yield* ServerSelfUpdate.ServerSelfUpdate;
+      const serverUpdate = yield* ServerSelfUpdate.ServerSelfUpdate;
       const config = yield* ServerConfig.ServerConfig;
       const lifecycleEvents = yield* ServerLifecycleEvents.ServerLifecycleEvents;
       const serverSettings = yield* ServerSettings.ServerSettingsService;
@@ -714,6 +717,42 @@ const makeWsRpcLayer = (
       );
       const providerSkillManagement =
         ProviderSkillManagement.makeProviderSkillManagement(providerRegistry);
+      const canReplayPersistedRange = Effect.fnUntraced(function* (
+        afterSequence: number,
+        headSequence: number,
+        maxGap: number,
+      ) {
+        const replayGap = headSequence - afterSequence;
+        if (replayGap < 0 || replayGap > maxGap) {
+          return false;
+        }
+        const stats = yield* projectionSnapshotQuery
+          .getEventReplayStats({
+            fromSequenceExclusive: afterSequence,
+            toSequenceInclusive: headSequence,
+          })
+          .pipe(
+            Effect.mapError(
+              (cause) =>
+                new OrchestrationGetSnapshotError({
+                  message: "Failed to measure orchestration replay range",
+                  cause,
+                }),
+            ),
+          );
+        if (stats.payloadBytes > ORCHESTRATION_REPLAY_PAYLOAD_BUDGET_BYTES) {
+          yield* Effect.logDebug("orchestration replay replaced by snapshot", {
+            afterSequence,
+            headSequence,
+            replayGap,
+            eventCount: stats.eventCount,
+            payloadBytes: stats.payloadBytes,
+            payloadBudgetBytes: ORCHESTRATION_REPLAY_PAYLOAD_BUDGET_BYTES,
+          });
+          return false;
+        }
+        return true;
+      });
       const projectSetupScriptRunner = yield* ProjectSetupScriptRunner.ProjectSetupScriptRunner;
       const serverEnvironment = yield* ServerEnvironment.ServerEnvironment;
       const generatedDocuments = yield* GeneratedDocumentStore.GeneratedDocumentStore;
@@ -1261,9 +1300,8 @@ const makeWsRpcLayer = (
 
             if (bootstrap?.prepareWorktree) {
               let worktreeBaseRef = bootstrap.prepareWorktree.baseBranch;
-              // "Start from origin" is a stored default; repos without an
-              // origin remote fall back to the local base branch instead of
-              // failing the whole bootstrap on `git fetch origin`.
+              // "Start from origin" is a stored default; repos without the
+              // requested remote branch fall back to the local base branch.
               const startFromOrigin =
                 bootstrap.prepareWorktree.startFromOrigin === true &&
                 (yield* gitWorkflow.remoteExists({
@@ -1275,12 +1313,19 @@ const makeWsRpcLayer = (
                   cwd: bootstrap.prepareWorktree.projectCwd,
                   remoteName: "origin",
                 });
-                const resolvedRemoteBase = yield* gitWorkflow.resolveRemoteTrackingCommit({
+                const remoteBaseExists = yield* gitWorkflow.remoteBranchExists({
                   cwd: bootstrap.prepareWorktree.projectCwd,
                   refName: bootstrap.prepareWorktree.baseBranch,
-                  fallbackRemoteName: "origin",
+                  remoteName: "origin",
                 });
-                worktreeBaseRef = resolvedRemoteBase.commitSha;
+                if (remoteBaseExists) {
+                  const resolvedRemoteBase = yield* gitWorkflow.resolveRemoteTrackingCommit({
+                    cwd: bootstrap.prepareWorktree.projectCwd,
+                    refName: bootstrap.prepareWorktree.baseBranch,
+                    fallbackRemoteName: "origin",
+                  });
+                  worktreeBaseRef = resolvedRemoteBase.commitSha;
+                }
               }
               const worktree = yield* gitWorkflow.createWorktree({
                 cwd: bootstrap.prepareWorktree.projectCwd,
@@ -1638,7 +1683,13 @@ const makeWsRpcLayer = (
                 // is also invalid, so reset it with a snapshot. Send the snapshot
                 // followed by the buffered live tail, exactly as the
                 // no-afterSequence path does.
-                if (replayGap < 0 || replayGap > SHELL_RESUME_MAX_GAP) {
+                if (
+                  !(yield* canReplayPersistedRange(
+                    afterSequence,
+                    headSequence,
+                    SHELL_RESUME_MAX_GAP,
+                  ))
+                ) {
                   const snapshot = yield* loadSnapshot;
                   return Stream.concat(
                     Stream.make({ kind: "snapshot" as const, snapshot }),
@@ -1740,7 +1791,9 @@ const makeWsRpcLayer = (
                 const afterSequence = input.afterSequence;
                 const headSequence = yield* orchestrationEngine.latestSequence;
                 const replayGap = headSequence - afterSequence;
-                if (replayGap >= 0 && replayGap <= THREAD_RESUME_MAX_GAP) {
+                if (
+                  yield* canReplayPersistedRange(afterSequence, headSequence, THREAD_RESUME_MAX_GAP)
+                ) {
                   const catchUpStream = orchestrationEngine
                     .readEvents(afterSequence, replayGap)
                     .pipe(
@@ -1833,9 +1886,14 @@ const makeWsRpcLayer = (
         [WS_METHODS.serverRefreshProviders]: (input) =>
           observeRpcEffect(
             WS_METHODS.serverRefreshProviders,
-            (input.instanceId !== undefined
-              ? providerRegistry.refreshInstance(input.instanceId)
-              : providerRegistry.refresh()
+            (input.cwd !== undefined && input.instanceId !== undefined
+              ? providerRegistry.refreshWorkspaceSnapshot({
+                  instanceId: input.instanceId,
+                  cwd: input.cwd,
+                })
+              : input.instanceId !== undefined
+                ? providerRegistry.refreshInstance(input.instanceId)
+                : providerRegistry.refresh()
             ).pipe(Effect.map((providers) => ({ providers }))),
             { "rpc.aggregate": "server" },
           ),
@@ -1916,14 +1974,14 @@ const makeWsRpcLayer = (
             { "rpc.aggregate": "server" },
           ),
         [WS_METHODS.serverUpdateServer]: (input) =>
-          observeRpcEffect(WS_METHODS.serverUpdateServer, serverSelfUpdate.update(input), {
+          observeRpcEffect(WS_METHODS.serverUpdateServer, serverUpdate.update(input), {
             "rpc.aggregate": "server",
           }),
         [WS_METHODS.serverUpdateServerWithProgress]: (input) =>
           observeRpcStream(
             WS_METHODS.serverUpdateServerWithProgress,
             Stream.callback<ServerSelfUpdateProgressEvent, ServerSelfUpdateError>((queue) =>
-              serverSelfUpdate
+              serverUpdate
                 .update(input, (stage) =>
                   Queue.offer(queue, {
                     type: "progress",
@@ -1944,6 +2002,12 @@ const makeWsRpcLayer = (
                   Effect.forkScoped,
                 ),
             ),
+            { "rpc.aggregate": "server" },
+          ),
+        [WS_METHODS.serverCommitDesktopUpdate]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.serverCommitDesktopUpdate,
+            serverUpdate.commitDesktopUpdate(input.requestId),
             { "rpc.aggregate": "server" },
           ),
         [WS_METHODS.serverUpsertKeybinding]: (rule) =>
@@ -2139,6 +2203,10 @@ const makeWsRpcLayer = (
           }),
         [WS_METHODS.pullRequestsListStats]: (input) =>
           observeRpcEffect(WS_METHODS.pullRequestsListStats, pullRequests.listStats(input), {
+            "rpc.aggregate": "pull-requests",
+          }),
+        [WS_METHODS.pullRequestsSummary]: (input) =>
+          observeRpcEffect(WS_METHODS.pullRequestsSummary, pullRequests.summary(input), {
             "rpc.aggregate": "pull-requests",
           }),
         [WS_METHODS.pullRequestsDetail]: (input) =>
@@ -2635,6 +2703,9 @@ const makeWsRpcLayer = (
               if (input.resource._tag === "environment-file") {
                 return yield* issueAssetUrl({ resource: input.resource });
               }
+              if (input.resource._tag === "media-file") {
+                return yield* issueAssetUrl({ resource: input.resource });
+              }
               if (input.resource._tag === "project-favicon") {
                 const project = yield* projectionSnapshotQuery
                   .getActiveProjectByWorkspaceRoot(input.resource.cwd)
@@ -3122,7 +3193,32 @@ export const websocketRpcRouteLayer = Layer.unwrap(
     const providerLifecycleCoordinator =
       yield* ProviderLifecycleCoordinator.ProviderLifecycleCoordinator;
     const providerRuntimeManager = yield* ProviderRuntimeManager.ProviderRuntimeManager;
-    const serverSelfUpdate = yield* ServerSelfUpdate.ServerSelfUpdate;
+    const baseServerSelfUpdate = yield* ServerSelfUpdate.ServerSelfUpdate;
+    const config = yield* ServerConfig.ServerConfig;
+    const startup = yield* ServerRuntimeStartup.ServerRuntimeStartup;
+    const serverSelfUpdate = yield* ServerSelfUpdate.withRunningThreadContinuation({
+      mode: config.mode,
+      selfUpdate: baseServerSelfUpdate,
+      prepare: startup.markRunningProviderSessionsForContinuation.pipe(
+        Effect.mapError(
+          (cause) =>
+            new ServerSelfUpdateError({
+              reason: "Could not prepare running threads to continue after the update.",
+              cause,
+            }),
+        ),
+      ),
+      clear: (threadIds) =>
+        startup.clearProviderSessionContinuationMarkers(threadIds).pipe(
+          Effect.mapError(
+            (cause) =>
+              new ServerSelfUpdateError({
+                reason: "Could not clear thread continuation markers after the update failed.",
+                cause,
+              }),
+          ),
+        ),
+    });
     const pullRequests = yield* PullRequestService.PullRequestService;
     const analysis = yield* AnalysisService.AnalysisService;
     const compute = yield* ComputeSessionService.ComputeSessionService;
@@ -3206,7 +3302,6 @@ export const websocketRpcRouteLayer = Layer.unwrap(
                       ),
                     ),
                   ),
-                  Layer.provide(VcsProcess.layer),
                 ),
               ),
             ),

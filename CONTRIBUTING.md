@@ -22,6 +22,11 @@ transcripts, and handoffs out of the repository. In the pull request, state one
 of `Documentation impact: None — reason`, `Updated — paths`, or `Dependent PR —
 repository and link`.
 
+## Developer Setup
+
+See the [maintainer scripts guide](docs/internals/scripts.md#first-checkout) for the initial checkout,
+development commands, tests, and platform-specific desktop packaging prerequisites.
+
 ## Read This First
 
 We are not actively accepting contributions right now.

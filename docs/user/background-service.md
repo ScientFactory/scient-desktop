@@ -61,6 +61,11 @@ before it replaces the active server. It then:
 4. starts the target and waits until it is ready; and
 5. keeps the target or restores the previous working version and state.
 
+Install and update refuse to replace a newer service with an older one. If you
+deliberately need to downgrade, use the exact older Scient release archive and
+add `--allow-downgrade` to its `service update` command. Do not use this flag for
+an ordinary repair or version-skew warning.
+
 If the installed service is too old to perform this safely, the update is
 blocked before it changes project state. Run the exact local `service update`
 command once to repair the service, then retry from Scient.

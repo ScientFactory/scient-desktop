@@ -116,6 +116,7 @@ function makeGitWorkflowFake(
       ),
     fetchRemote: () => Effect.die("unused in ScientForkReactor test"),
     remoteExists: () => Effect.die("unused in ScientForkReactor test"),
+    remoteBranchExists: () => Effect.die("unused in ScientForkReactor test"),
     resolveRemoteTrackingCommit: () => Effect.die("unused in ScientForkReactor test"),
     removeWorktree: () => Effect.die("unused in ScientForkReactor test"),
     pruneWorktrees: () => Effect.die("unused in ScientForkReactor test"),

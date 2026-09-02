@@ -31,6 +31,12 @@ Run the x64 installer. If Windows displays a SmartScreen warning, verify that
 you downloaded the installer from the official Scient page before deciding
 whether to continue.
 
+When Scient runs a project through Windows Subsystem for Linux, it keeps a
+Linux-local copy of the matching server runtime. The first launch after an app
+update can take longer while that copy is prepared. Later launches reuse it,
+keep one previous working runtime for rollback, and repair the cache
+automatically if the selected copy can no longer start.
+
 ### Linux
 
 Download the x64 AppImage, make it executable if your file manager did not do

@@ -40,7 +40,13 @@ export interface LatexFilePresentationRequest {
   readonly mode: "split";
 }
 
+export interface HtmlFilePresentationRequest {
+  readonly id: number;
+  readonly mode: "source";
+}
+
 export interface OpenFileOptions {
+  readonly htmlPreviewMode?: HtmlFilePresentationRequest["mode"];
   readonly latexPreviewMode?: LatexFilePresentationRequest["mode"];
 }
 
@@ -60,9 +66,11 @@ export type RightPanelSurface =
   | {
       id: `file:${string}`;
       kind: "file";
+      /** Workspace-relative, or absolute for a host file outside the workspace. */
       relativePath: string;
       revealLine: number | null;
       revealRequestId: number;
+      htmlPresentationRequest?: HtmlFilePresentationRequest;
       latexPresentationRequest?: LatexFilePresentationRequest;
     }
   | {
@@ -121,6 +129,11 @@ interface RightPanelStoreState {
     options?: OpenFileOptions,
   ) => void;
   consumeLatexPresentationRequest: (
+    ref: ScopedThreadRef,
+    relativePath: string,
+    requestId: number,
+  ) => void;
+  consumeHtmlPresentationRequest: (
     ref: ScopedThreadRef,
     relativePath: string,
     requestId: number,
@@ -200,6 +213,14 @@ const fileSurface = (
   relativePath,
   revealLine,
   revealRequestId,
+  ...(options?.htmlPreviewMode === undefined
+    ? {}
+    : {
+        htmlPresentationRequest: {
+          id: revealRequestId,
+          mode: options.htmlPreviewMode,
+        },
+      }),
   ...(options?.latexPreviewMode === undefined
     ? {}
     : {
@@ -322,6 +343,7 @@ export function migratePersistedRightPanelState(persistedState: unknown): {
                     if ((surface as { kind?: string }).kind === "plan") return [];
                     if (surface.kind === "file") {
                       const {
+                        htmlPresentationRequest: _transientHtmlPresentationRequest,
                         latexPresentationRequest: _transientLatexPresentationRequest,
                         ...persistentSurface
                       } = surface;
@@ -568,6 +590,28 @@ export const useRightPanelStore = create<RightPanelStoreState>()(
               changed = true;
               const {
                 latexPresentationRequest: _consumedLatexPresentationRequest,
+                ...remainingSurface
+              } = surface;
+              return remainingSurface;
+            });
+            return changed ? { ...current, surfaces } : current;
+          }),
+        })),
+      consumeHtmlPresentationRequest: (ref, relativePath, requestId) =>
+        set((state) => ({
+          byThreadKey: updateThread(state.byThreadKey, scopedThreadKey(ref), (current) => {
+            let changed = false;
+            const surfaces = current.surfaces.map((surface): RightPanelSurface => {
+              if (
+                surface.kind !== "file" ||
+                surface.relativePath !== relativePath ||
+                surface.htmlPresentationRequest?.id !== requestId
+              ) {
+                return surface;
+              }
+              changed = true;
+              const {
+                htmlPresentationRequest: _consumedHtmlPresentationRequest,
                 ...remainingSurface
               } = surface;
               return remainingSurface;
@@ -836,6 +880,7 @@ export const useRightPanelStore = create<RightPanelStoreState>()(
                 surfaces: threadState.surfaces.map((surface): RightPanelSurface => {
                   if (surface.kind !== "file") return surface;
                   const {
+                    htmlPresentationRequest: _transientHtmlPresentationRequest,
                     latexPresentationRequest: _transientLatexPresentationRequest,
                     ...persistentSurface
                   } = surface;

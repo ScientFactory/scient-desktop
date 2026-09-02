@@ -84,6 +84,8 @@ describe("PDF file routing", () => {
   it("keeps binary-image and text routing distinct", () => {
     expect(resolveFilePreviewKind("figure.png")).toBe("image");
     expect(shouldLoadFileAsText("figure.png")).toBe(false);
+    expect(resolveFilePreviewKind("clip.mp4")).toBe("video");
+    expect(shouldLoadFileAsText("clip.mp4")).toBe(false);
     expect(resolveFilePreviewKind("notes.md")).toBe("text");
     expect(shouldLoadFileAsText("notes.md")).toBe(true);
   });
