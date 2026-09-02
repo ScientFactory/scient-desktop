@@ -54,11 +54,12 @@ that environment; it does not install or remove provider software on the device 
 | Remove   | Deletes only Scient's private runtime.                                   | System/custom installations and provider credentials.                           |
 | Sign out | Asks the provider to revoke the account session and verifies the result. | Every provider runtime.                                                         |
 
-When provider update checks are enabled, Scient refreshes its qualified stable-release catalog in
-the background and when you open an Install or Update plan. It never installs a provider update by
-itself. You still confirm the exact release, and the local computer independently verifies and tests
-it before activation. Repair keeps a separate meaning: it restores the exact active managed release
-instead of silently updating it.
+When provider update checks are enabled, Scient checks its qualified stable-release catalog when the
+app starts, periodically while it remains open, and when you open an Install or Update plan. A newly
+qualified release can appear as **Update** without restarting Scient. Scient never installs a provider
+update by itself: you still confirm the exact release, and the local computer independently verifies
+and tests it before activation. Repair keeps a separate meaning: it restores the exact active managed
+release instead of silently updating it.
 
 Removing a runtime does not sign out. Signing out does not uninstall anything. Disabling a provider
 also preserves both its runtime and its credentials.

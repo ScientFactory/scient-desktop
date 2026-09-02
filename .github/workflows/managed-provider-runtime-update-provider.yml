@@ -1,0 +1,238 @@
+name: Qualify and publish one managed provider runtime
+
+on:
+  workflow_call:
+    inputs:
+      provider:
+        description: Managed provider key to discover and qualify
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+env:
+  CATALOG_BRANCH: automation/managed-runtime-catalog-v1
+  CATALOG_PATH: apps/server/src/scient/providerLifecycle/managed-runtime-catalog.json
+
+jobs:
+  discover:
+    name: Discover ${{ inputs.provider }} stable release
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    outputs:
+      changed: ${{ steps.catalog.outputs.changed }}
+      source_sha: ${{ steps.source.outputs.sha }}
+    steps:
+      - name: Checkout exact current main
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: main
+          fetch-depth: 0
+          sparse-checkout: |
+            /*
+            !/.repos/
+          sparse-checkout-cone-mode: false
+
+      - id: source
+        name: Record immutable source
+        shell: bash
+        run: echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
+      - name: Setup Vite+
+        uses: voidzero-dev/setup-vp@250f29ce396baf5e8f24498e17c0dfdebabc26eb # v1
+        with:
+          node-version-file: package.json
+          cache: true
+          run-install: |
+            args:
+              - --filter=@t3tools/scripts...
+
+      - name: Read the latest published catalog
+        shell: bash
+        run: |
+          set -euo pipefail
+          current="$RUNNER_TEMP/current-managed-runtime-catalog.json"
+          if git ls-remote --exit-code --heads origin "refs/heads/$CATALOG_BRANCH" >/dev/null 2>&1; then
+            git fetch --no-tags origin \
+              "refs/heads/$CATALOG_BRANCH:refs/remotes/origin/$CATALOG_BRANCH"
+            git show "refs/remotes/origin/$CATALOG_BRANCH:$CATALOG_PATH" > "$current"
+          else
+            cp "$CATALOG_PATH" "$current"
+          fi
+
+      - id: catalog
+        name: Build one provider candidate from its official stable channel
+        run: >-
+          node scripts/update-managed-runtime-catalog.ts
+          --provider "${{ inputs.provider }}"
+          --input "$RUNNER_TEMP/current-managed-runtime-catalog.json"
+          --output "$RUNNER_TEMP/managed-runtime-catalog.json"
+
+      - name: Upload immutable candidate
+        if: steps.catalog.outputs.changed == 'true'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: managed-runtime-catalog-${{ inputs.provider }}
+          path: ${{ runner.temp }}/managed-runtime-catalog.json
+          if-no-files-found: error
+          retention-days: 1
+
+  qualify:
+    name: Qualify ${{ inputs.provider }} / ${{ matrix.runner }}
+    needs: discover
+    if: needs.discover.outputs.changed == 'true'
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        runner:
+          - macos-26
+          - macos-15-intel
+          - ubuntu-24.04
+          - windows-2025
+    steps:
+      - name: Checkout immutable discovery source
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ needs.discover.outputs.source_sha }}
+          sparse-checkout: |
+            /*
+            !/.repos/
+          sparse-checkout-cone-mode: false
+
+      - name: Setup Vite+
+        uses: voidzero-dev/setup-vp@250f29ce396baf5e8f24498e17c0dfdebabc26eb # v1
+        with:
+          node-version-file: package.json
+          cache: true
+          run-install: |
+            args:
+              - --filter=@t3tools/scripts...
+
+      - name: Download immutable candidate
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          name: managed-runtime-catalog-${{ inputs.provider }}
+          path: ${{ runner.temp }}/managed-runtime-catalog-candidate
+
+      - name: Exercise download, verification, smoke, activation, and removal
+        run: >-
+          node scripts/qualify-managed-runtime-catalog.ts
+          --provider "${{ inputs.provider }}"
+          --catalog "${{ runner.temp }}/managed-runtime-catalog-candidate/managed-runtime-catalog.json"
+
+  publish:
+    name: Publish qualified ${{ inputs.provider }} release
+    needs: [discover, qualify]
+    if: needs.discover.outputs.changed == 'true' && needs.qualify.result == 'success'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    concurrency:
+      group: managed-provider-runtime-catalog-publication
+      cancel-in-progress: false
+    steps:
+      - id: app-token
+        name: Mint least-privilege release app token
+        uses: actions/create-github-app-token@fee1f7d63c2ff003460e3d139729b119787bc349 # v2
+        with:
+          app-id: ${{ secrets.RELEASE_APP_ID }}
+          private-key: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
+          permission-contents: write
+
+      - name: Checkout immutable discovery source
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ needs.discover.outputs.source_sha }}
+          fetch-depth: 0
+          token: ${{ steps.app-token.outputs.token }}
+          sparse-checkout: |
+            /*
+            !/.repos/
+          sparse-checkout-cone-mode: false
+
+      - name: Setup Vite+
+        uses: voidzero-dev/setup-vp@250f29ce396baf5e8f24498e17c0dfdebabc26eb # v1
+        with:
+          node-version-file: package.json
+          cache: true
+          run-install: |
+            args:
+              - --filter=@t3tools/scripts...
+
+      - name: Download qualified candidate
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          name: managed-runtime-catalog-${{ inputs.provider }}
+          path: ${{ runner.temp }}/managed-runtime-catalog-candidate
+
+      - name: Merge and publish the qualified provider
+        shell: bash
+        env:
+          PROVIDER: ${{ inputs.provider }}
+          SOURCE_SHA: ${{ needs.discover.outputs.source_sha }}
+          APP_SLUG: ${{ steps.app-token.outputs.app-slug }}
+        run: |
+          set -euo pipefail
+          candidate="$RUNNER_TEMP/managed-runtime-catalog-candidate/managed-runtime-catalog.json"
+          current="$RUNNER_TEMP/current-managed-runtime-catalog.json"
+          promoted="$RUNNER_TEMP/promoted-managed-runtime-catalog.json"
+          branch_exists=false
+
+          git fetch --no-tags origin "refs/heads/main:refs/remotes/origin/main"
+          if ! git merge-base --is-ancestor "$SOURCE_SHA" refs/remotes/origin/main; then
+            echo "Discovery source $SOURCE_SHA is no longer an ancestor of main; retry safely." >&2
+            exit 1
+          fi
+          if ! git diff --quiet "$SOURCE_SHA" refs/remotes/origin/main -- \
+            .github/workflows/managed-provider-runtime-update-provider.yml \
+            apps/server/src/scient/providerLifecycle/ManagedRuntimeCatalog.ts \
+            packages/scient-provider-runtime \
+            scripts/lib/managed-runtime-catalog.ts \
+            scripts/promote-managed-runtime-catalog.ts \
+            scripts/qualify-managed-runtime-catalog.ts \
+            scripts/update-managed-runtime-catalog.ts; then
+            echo "Managed-runtime policy or qualification changed during this run; retry from current main." >&2
+            exit 1
+          fi
+
+          if git ls-remote --exit-code --heads origin "refs/heads/$CATALOG_BRANCH" >/dev/null 2>&1; then
+            branch_exists=true
+            git fetch --no-tags origin \
+              "refs/heads/$CATALOG_BRANCH:refs/remotes/origin/$CATALOG_BRANCH"
+            git show "refs/remotes/origin/$CATALOG_BRANCH:$CATALOG_PATH" > "$current"
+          else
+            cp "$CATALOG_PATH" "$current"
+          fi
+
+          node scripts/promote-managed-runtime-catalog.ts \
+            --provider "$PROVIDER" \
+            --current "$current" \
+            --candidate "$candidate" \
+            --output "$promoted"
+
+          if [[ "$branch_exists" == true ]]; then
+            git switch -C "$CATALOG_BRANCH" "refs/remotes/origin/$CATALOG_BRANCH"
+          else
+            git switch -c "$CATALOG_BRANCH"
+          fi
+          cp "$promoted" "$CATALOG_PATH"
+          if git diff --quiet -- "$CATALOG_PATH"; then
+            echo "$PROVIDER is already present in the published catalog."
+            exit 0
+          fi
+
+          user_id="$(gh api "/users/${APP_SLUG}[bot]" --jq .id)"
+          git config user.name "${APP_SLUG}[bot]"
+          git config user.email "${user_id}+${APP_SLUG}[bot]@users.noreply.github.com"
+          git add "$CATALOG_PATH"
+          git commit \
+            -m "chore(provider-runtime): publish qualified $PROVIDER release" \
+            -m "Qualified from main@$SOURCE_SHA on all four native runner families."
+          git push origin "HEAD:refs/heads/$CATALOG_BRANCH"
+
+          remote_sha="$(git ls-remote --heads origin "refs/heads/$CATALOG_BRANCH" | awk '{print $1}')"
+          test "$remote_sha" = "$(git rev-parse HEAD)"
+          echo "Published $PROVIDER from $SOURCE_SHA to $CATALOG_BRANCH." >> "$GITHUB_STEP_SUMMARY"

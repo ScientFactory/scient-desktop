@@ -636,11 +636,20 @@ export const ProviderRegistryLive = Layer.effect(
       function* (input: {
         readonly instanceId: ProviderInstanceId;
         readonly runtime: ProviderRuntimeSummary | null;
+        readonly preserveOperation?: boolean;
       }) {
         yield* Ref.update(managedRuntimeStatesRef, (previous) => {
           const next = new Map(previous);
           if (input.runtime === null) next.delete(input.instanceId);
-          else next.set(input.instanceId, input.runtime);
+          else {
+            const current = previous.get(input.instanceId);
+            next.set(
+              input.instanceId,
+              input.preserveOperation && current?.operation
+                ? { ...input.runtime, operation: current.operation }
+                : input.runtime,
+            );
+          }
           return next;
         });
         const existingProviders = yield* Ref.get(providersRef);

@@ -15,13 +15,22 @@ import {
 } from "@scientfactory/provider-runtime";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
+import * as PubSub from "effect/PubSub";
 import * as Schema from "effect/Schema";
+import * as Scope from "effect/Scope";
 import * as Semaphore from "effect/Semaphore";
-import { HttpClient, HttpClientResponse, HttpIncomingMessage } from "effect/unstable/http";
+import * as Stream from "effect/Stream";
+import {
+  HttpClient,
+  HttpClientRequest,
+  HttpClientResponse,
+  HttpIncomingMessage,
+} from "effect/unstable/http";
 
 import { writeFileStringAtomically } from "../../atomicWrite.ts";
 import { ServerConfig } from "../../config.ts";
@@ -30,10 +39,11 @@ import { isManagedRuntimeUpdate } from "./managedRuntimeVersion.ts";
 import bundledCatalogJson from "./managed-runtime-catalog.json" with { type: "json" };
 
 export const MANAGED_RUNTIME_CATALOG_URL =
-  "https://raw.githubusercontent.com/ScientFactory/scient-desktop/main/apps/server/src/scient/providerLifecycle/managed-runtime-catalog.json";
+  "https://raw.githubusercontent.com/ScientFactory/scient-desktop/automation/managed-runtime-catalog-v1/apps/server/src/scient/providerLifecycle/managed-runtime-catalog.json";
 
 const CATALOG_TTL_MS = 60 * 60 * 1_000;
 const CATALOG_RETRY_MS = 5 * 60 * 1_000;
+const CATALOG_POLL_INTERVAL_MS = CATALOG_RETRY_MS;
 const FETCH_TIMEOUT_MS = 10_000;
 const MAX_CATALOG_BYTES = 2 * 1_024 * 1_024;
 
@@ -68,6 +78,7 @@ export type ManagedRuntimeCatalogData = typeof ManagedRuntimeCatalogDataSchema.T
 
 const CatalogCacheSchema = Schema.Struct({
   fetchedAtMs: Schema.Number,
+  etag: Schema.optional(Schema.String),
   catalog: ManagedRuntimeCatalogDataSchema,
 });
 
@@ -130,11 +141,84 @@ export function mergeManagedRuntimeCatalogs(
   return { schemaVersion: 1, providers };
 }
 
-/** A successful authoritative fetch may withdraw a cached release, but never undercut this app's bundle. */
+function normalizedProviderRelease(release: ManagedRuntimeCatalogData["providers"][string]) {
+  if (!release) return null;
+  return {
+    contractRevision: release.contractRevision,
+    channel: release.channel,
+    version: release.version,
+    artifacts: Object.fromEntries(
+      Object.entries(release.artifacts)
+        .sort(([left], [right]) => left.localeCompare(right))
+        .map(([target, artifact]) => [
+          target,
+          {
+            artifactName: artifact.artifactName,
+            url: artifact.url,
+            checksum: {
+              algorithm: artifact.checksum.algorithm,
+              digest: artifact.checksum.digest,
+            },
+            size: artifact.size,
+          },
+        ]),
+    ),
+  };
+}
+
+function isSameProviderRelease(
+  left: ManagedRuntimeCatalogData["providers"][string],
+  right: ManagedRuntimeCatalogData["providers"][string],
+): boolean {
+  return (
+    JSON.stringify(normalizedProviderRelease(left)) ===
+    JSON.stringify(normalizedProviderRelease(right))
+  );
+}
+
+/**
+ * Apply an authoritative fetch against both the app floor and current LKG.
+ * Explicit version withdrawals are allowed down to the bundled floor, while
+ * missing entries, incomparable versions, and same-version repacks retain the
+ * current known-good release.
+ */
 export function resolveFetchedManagedRuntimeCatalog(
   fetched: ManagedRuntimeCatalogData,
+  current: ManagedRuntimeCatalogData = BUNDLED_MANAGED_RUNTIME_CATALOG,
 ): ManagedRuntimeCatalogData {
-  return mergeManagedRuntimeCatalogs(BUNDLED_MANAGED_RUNTIME_CATALOG, fetched);
+  const providers = { ...current.providers };
+  for (const provider of managedProviders) {
+    const bundled = BUNDLED_MANAGED_RUNTIME_CATALOG.providers[provider];
+    const existing = current.providers[provider] ?? bundled;
+    const candidate = fetched.providers[provider];
+    if (
+      !bundled ||
+      !existing ||
+      !candidate ||
+      candidate.channel !== "stable" ||
+      candidate.contractRevision !== bundled.contractRevision
+    ) {
+      continue;
+    }
+
+    const floorComparison = compareManagedRuntimeVersions({
+      provider,
+      current: bundled.version,
+      candidate: candidate.version,
+    });
+    if (floorComparison === "older" || floorComparison === "unknown") continue;
+    if (floorComparison === "equal" && !isSameProviderRelease(candidate, bundled)) continue;
+
+    const currentComparison = compareManagedRuntimeVersions({
+      provider,
+      current: existing.version,
+      candidate: candidate.version,
+    });
+    if (currentComparison === "unknown") continue;
+    if (currentComparison === "equal" && !isSameProviderRelease(candidate, existing)) continue;
+    providers[provider] = candidate;
+  }
+  return { schemaVersion: 1, providers };
 }
 
 function decodeBoundedCatalogJson(raw: string) {
@@ -242,14 +326,23 @@ export interface ManagedRuntimeCatalogService {
   readonly current: Effect.Effect<ManagedRuntimeCatalogData>;
   /** TTL-gated remote refresh; always falls back to the last good catalog. */
   readonly refresh: Effect.Effect<ManagedRuntimeCatalogData>;
-  /** Starts a process-owned refresh without tying it to a provider request. */
-  readonly refreshInBackground: Effect.Effect<void>;
+  /** Acquire a process-scoped stream of authoritative catalog changes. */
+  readonly subscribeChanges: Effect.Effect<
+    Stream.Stream<ManagedRuntimeCatalogChange>,
+    never,
+    Scope.Scope
+  >;
+}
+
+export interface ManagedRuntimeCatalogChange {
+  readonly catalog: ManagedRuntimeCatalogData;
+  readonly changedProviders: ReadonlyArray<ManagedRuntimeProvider>;
 }
 
 const bundledOnlyService: ManagedRuntimeCatalogService = {
   current: Effect.succeed(BUNDLED_MANAGED_RUNTIME_CATALOG),
   refresh: Effect.succeed(BUNDLED_MANAGED_RUNTIME_CATALOG),
-  refreshInBackground: Effect.void,
+  subscribeChanges: Effect.succeed(Stream.empty),
 };
 
 /** Bundled-only by default; the production server explicitly provides `layer`. */
@@ -260,84 +353,142 @@ export class ManagedRuntimeCatalog extends Context.Reference<ManagedRuntimeCatal
 
 export const layerTest = Layer.succeed(ManagedRuntimeCatalog, bundledOnlyService);
 
-export const make = Effect.gen(function* () {
-  const fileSystem = yield* FileSystem.FileSystem;
-  const path = yield* Path.Path;
-  const config = yield* ServerConfig;
-  const settingsService = yield* ServerSettings.ServerSettingsService;
-  const httpClient = yield* HttpClient.HttpClient;
-  const serviceScope = yield* Effect.scope;
+export const makeWithOptions = (options?: { readonly startBackgroundRefresh?: boolean }) =>
+  Effect.gen(function* () {
+    const fileSystem = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const config = yield* ServerConfig;
+    const settingsService = yield* ServerSettings.ServerSettingsService;
+    const httpClient = yield* HttpClient.HttpClient;
+    const serviceScope = yield* Effect.scope;
 
-  const cachePath = path.join(config.stateDir, "managed-runtime-catalog-cache.json");
-  let catalog = BUNDLED_MANAGED_RUNTIME_CATALOG;
-  let fetchedAtMs: number | null = null;
-  let lastAttemptMs: number | null = null;
-  const refreshSemaphore = yield* Semaphore.make(1);
+    const cachePath = path.join(config.stateDir, "managed-runtime-catalog-cache.json");
+    let catalog = BUNDLED_MANAGED_RUNTIME_CATALOG;
+    let fetchedAtMs: number | null = null;
+    let lastAttemptMs: number | null = null;
+    let etag: string | null = null;
+    const refreshSemaphore = yield* Semaphore.make(1);
+    const changesPubSub = yield* Effect.acquireRelease(
+      PubSub.sliding<ManagedRuntimeCatalogChange>(managedProviders.length),
+      PubSub.shutdown,
+    );
 
-  const ensureDiskCacheLoaded = yield* Effect.cached(
-    Effect.gen(function* () {
-      const cached = yield* fileSystem.readFileString(cachePath).pipe(
-        Effect.flatMap(decodeBoundedCatalogCacheJson),
+    const ensureDiskCacheLoaded = yield* Effect.cached(
+      Effect.gen(function* () {
+        const cached = yield* fileSystem.readFileString(cachePath).pipe(
+          Effect.flatMap(decodeBoundedCatalogCacheJson),
+          Effect.catchCause(() => Effect.succeed(null)),
+        );
+        if (cached === null) return;
+        catalog = mergeManagedRuntimeCatalogs(catalog, cached.catalog);
+        etag = cached.etag?.trim() || null;
+        // Revalidate once per process. This prevents a recent but older cache
+        // from delaying a newly bundled catalog or another provider's update.
+        fetchedAtMs = null;
+      }),
+    );
+
+    const persistCache = (now: number) =>
+      encodeCatalogCacheJson({
+        fetchedAtMs: now,
+        ...(etag === null ? {} : { etag }),
+        catalog,
+      }).pipe(
+        Effect.flatMap((contents) =>
+          writeFileStringAtomically({ filePath: cachePath, contents, mode: 0o600 }),
+        ),
+        Effect.provideService(FileSystem.FileSystem, fileSystem),
+        Effect.provideService(Path.Path, path),
+        Effect.catchCause(() => Effect.void),
+      );
+
+    const refresh = Effect.fn("ManagedRuntimeCatalog.refresh")(function* () {
+      yield* ensureDiskCacheLoaded;
+      const now = yield* Clock.currentTimeMillis;
+      const isWithin = (sinceMs: number | null, windowMs: number) =>
+        sinceMs !== null && now >= sinceMs && now - sinceMs < windowMs;
+      if (isWithin(fetchedAtMs, CATALOG_TTL_MS)) return catalog;
+      if (isWithin(lastAttemptMs, CATALOG_RETRY_MS)) return catalog;
+
+      const settings = yield* settingsService.getSettings.pipe(
         Effect.catchCause(() => Effect.succeed(null)),
       );
-      if (cached === null) return;
-      catalog = mergeManagedRuntimeCatalogs(catalog, cached.catalog);
-      // Revalidate once per process. This prevents a recent but older cache
-      // from delaying a newly bundled catalog or another provider's update.
-      fetchedAtMs = null;
-    }),
-  );
+      if (settings !== null && !settings.enableProviderUpdateChecks) return catalog;
 
-  const refresh = Effect.fn("ManagedRuntimeCatalog.refresh")(function* () {
-    yield* ensureDiskCacheLoaded;
-    const now = yield* Clock.currentTimeMillis;
-    const isWithin = (sinceMs: number | null, windowMs: number) =>
-      sinceMs !== null && now >= sinceMs && now - sinceMs < windowMs;
-    if (isWithin(fetchedAtMs, CATALOG_TTL_MS)) return catalog;
-    if (isWithin(lastAttemptMs, CATALOG_RETRY_MS)) return catalog;
+      lastAttemptMs = now;
+      const request = HttpClientRequest.get(MANAGED_RUNTIME_CATALOG_URL).pipe(
+        etag === null ? (request_) => request_ : HttpClientRequest.setHeader("if-none-match", etag),
+      );
+      const response = yield* httpClient.execute(request).pipe(
+        Effect.timeout(FETCH_TIMEOUT_MS),
+        Effect.catchCause(() => Effect.succeed(null)),
+      );
+      if (response === null) return catalog;
+      if (response.status === 304) {
+        fetchedAtMs = now;
+        yield* persistCache(now);
+        return catalog;
+      }
 
-    const settings = yield* settingsService.getSettings.pipe(
-      Effect.catchCause(() => Effect.succeed(null)),
-    );
-    if (settings !== null && !settings.enableProviderUpdateChecks) return catalog;
-
-    lastAttemptMs = now;
-    const fetched = yield* httpClient.get(MANAGED_RUNTIME_CATALOG_URL).pipe(
-      Effect.flatMap(HttpClientResponse.filterStatusOk),
-      Effect.flatMap((response) =>
-        response.text.pipe(
-          Effect.provideService(
-            HttpIncomingMessage.MaxBodySize,
-            FileSystem.Size(MAX_CATALOG_BYTES),
+      const fetched = yield* Effect.succeed(response).pipe(
+        Effect.flatMap(HttpClientResponse.filterStatusOk),
+        Effect.flatMap((response) =>
+          response.text.pipe(
+            Effect.provideService(
+              HttpIncomingMessage.MaxBodySize,
+              FileSystem.Size(MAX_CATALOG_BYTES),
+            ),
           ),
         ),
-      ),
-      Effect.flatMap(decodeBoundedCatalogJson),
-      Effect.timeout(FETCH_TIMEOUT_MS),
-      Effect.catchCause(() => Effect.succeed(null)),
-    );
-    if (fetched === null) return catalog;
+        Effect.flatMap(decodeBoundedCatalogJson),
+        Effect.catchCause(() => Effect.succeed(null)),
+      );
+      if (fetched === null) return catalog;
 
-    catalog = resolveFetchedManagedRuntimeCatalog(fetched);
-    fetchedAtMs = now;
-    yield* encodeCatalogCacheJson({ fetchedAtMs: now, catalog }).pipe(
-      Effect.flatMap((contents) =>
-        writeFileStringAtomically({ filePath: cachePath, contents, mode: 0o600 }),
-      ),
-      Effect.provideService(FileSystem.FileSystem, fileSystem),
-      Effect.provideService(Path.Path, path),
-      Effect.catchCause(() => Effect.void),
-    );
-    return catalog;
+      const previous = catalog;
+      const next = resolveFetchedManagedRuntimeCatalog(fetched, catalog);
+      const changedProviders = managedProviders.filter(
+        (provider) => previous.providers[provider]?.version !== next.providers[provider]?.version,
+      );
+      catalog = next;
+      etag = response.headers.etag?.trim() || null;
+      fetchedAtMs = now;
+      yield* persistCache(now);
+      if (changedProviders.length > 0) {
+        yield* PubSub.publish(changesPubSub, { catalog, changedProviders });
+      }
+      return catalog;
+    });
+
+    const guardedRefresh = refreshSemaphore.withPermits(1)(refresh());
+    if (options?.startBackgroundRefresh !== false) {
+      // Acquire the settings subscription before starting either fiber so an
+      // enable transition cannot fall into a startup gap.
+      const settingsChanges = yield* settingsService.subscribeChanges;
+      yield* Effect.forkIn(
+        guardedRefresh.pipe(
+          Effect.andThen(Effect.sleep(Duration.millis(CATALOG_POLL_INTERVAL_MS))),
+          Effect.forever,
+        ),
+        serviceScope,
+      );
+      yield* Effect.forkIn(
+        settingsChanges.pipe(
+          Stream.runForEach((settings) =>
+            settings.enableProviderUpdateChecks ? guardedRefresh.pipe(Effect.asVoid) : Effect.void,
+          ),
+        ),
+        serviceScope,
+      );
+    }
+    return ManagedRuntimeCatalog.of({
+      current: ensureDiskCacheLoaded.pipe(Effect.map(() => catalog)),
+      refresh: guardedRefresh,
+      subscribeChanges: PubSub.subscribe(changesPubSub).pipe(Effect.map(Stream.fromSubscription)),
+    });
   });
 
-  const guardedRefresh = refreshSemaphore.withPermits(1)(refresh());
-  return ManagedRuntimeCatalog.of({
-    current: ensureDiskCacheLoaded.pipe(Effect.map(() => catalog)),
-    refresh: guardedRefresh,
-    refreshInBackground: Effect.forkIn(guardedRefresh, serviceScope).pipe(Effect.asVoid),
-  });
-});
+export const make = makeWithOptions();
 
 export const layer = Layer.effect(ManagedRuntimeCatalog, make);
 
