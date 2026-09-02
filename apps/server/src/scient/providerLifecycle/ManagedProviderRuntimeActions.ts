@@ -207,7 +207,6 @@ export const makeManagedProviderRuntimeResolution = Effect.fn(
     targetLabel,
   } = input;
   const catalogService = yield* ManagedRuntimeCatalog;
-  yield* catalogService.refreshInBackground;
   const resolveCandidate = (refresh: boolean) =>
     (refresh ? catalogService.refresh : catalogService.current).pipe(
       Effect.map((catalog) =>

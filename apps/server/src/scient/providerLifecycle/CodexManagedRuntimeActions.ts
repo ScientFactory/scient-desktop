@@ -308,7 +308,6 @@ export const makeCodexManagedRuntimeResolution = Effect.fn("CodexManagedRuntime.
     const target = detectTargetSafely({ platform, arch });
     const bundledArtifact = target ? resolveReviewedCodexArtifact(target) : undefined;
     const catalogService = yield* ManagedRuntimeCatalog;
-    yield* catalogService.refreshInBackground;
     const resolveCandidate = (refresh: boolean) =>
       (refresh ? catalogService.refresh : catalogService.current).pipe(
         Effect.map((catalog) => resolveCodexCatalogCandidate({ bundledArtifact, catalog })),

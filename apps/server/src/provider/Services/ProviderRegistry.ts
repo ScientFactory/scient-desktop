@@ -176,6 +176,8 @@ export interface ProviderRegistryShape {
   readonly setProviderManagedRuntimeSummary: (input: {
     readonly instanceId: ProviderInstanceId;
     readonly runtime: ProviderRuntimeSummary | null;
+    /** Catalog refreshes update durable availability without erasing a concurrent operation. */
+    readonly preserveOperation?: boolean;
   }) => Effect.Effect<ReadonlyArray<ServerProvider>>;
 
   /**

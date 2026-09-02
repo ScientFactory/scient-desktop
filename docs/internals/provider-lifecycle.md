@@ -162,10 +162,18 @@ corresponding real-app and platform scenarios are recorded.
 ### Release catalog and promotion
 
 The app ships both provider packaging policy and a last-known-good release catalog. A process-scoped
-catalog service may fetch a newer catalog from `main` when provider update checks are enabled. Status
-and provider discovery remain non-blocking: they use the current memory or disk value and start a
-bounded background refresh. Opening an Install or Update confirmation is the one user action that may
-wait for the TTL-gated refresh so the plan shows the release it will actually install.
+catalog service may fetch a newer qualified catalog from the generated
+`automation/managed-runtime-catalog-v1` branch when provider update checks are enabled. It starts an
+immediate non-blocking refresh, revalidates successful results at most hourly using HTTP ETags, and
+retries a failed fetch after five minutes. Re-enabling update checks also triggers a refresh. Memory
+and an atomic disk cache keep provider status available while offline. Opening an Install or Update
+confirmation is the one user action that may wait for the same TTL-gated refresh so the plan shows the
+release it will actually install.
+
+When a qualified provider entry changes, Scient recomputes only that provider's volatile managed
+runtime summary. It does not reload the provider, interrupt sessions, change authentication, select a
+runtime, or start an update. This makes the existing **Update** action visible without requiring an app
+restart while preserving any concurrent user-started runtime operation.
 
 The remote catalog can change only immutable release facts: version, artifact name, URL, digest, and
 size. It cannot add a provider or target, widen an allowed host, escape a provider-owned URL path
@@ -176,14 +184,22 @@ closed. A newer app-bundled catalog also outranks an older disk cache. An author
 may withdraw a previously cached candidate down to this app's bundled floor; it never downgrades an
 already active runtime.
 
-The scheduled promotion workflow checks official stable channels every four hours. A changed provider
-is promoted only after every app-approved target has complete immutable metadata and the candidate has
+The scheduled promotion workflow checks each official stable channel independently every two hours.
+A provider failure cannot block discovery or promotion for another provider. A changed provider is
+promoted only after every app-approved target has complete immutable metadata and the candidate has
 passed native download, checksum, package, smoke, activation, and removal qualification on the hosted
-macOS Apple-silicon, macOS Intel, Linux x64, and Windows x64 runners. The release-app then opens one
-catalog-only PR and enables auto-merge behind the repository's required checks. Normal stable updates
-therefore do not wait for a Scient desktop release or manual approval. Discovery ambiguity, failed
-qualification, unsupported targets, and required-check failures stop promotion and preserve the
-current catalog.
+macOS Apple-silicon, macOS Intel, Linux x64, and Windows x64 runners. Qualified providers publish one
+at a time to the generated catalog branch through a least-privilege release app and a normal
+fast-forward push. Publication re-reads the latest catalog and merges only the provider that just
+passed, so concurrent successful runs cannot overwrite one another.
+
+The generated branch is a data-publication surface: routine automation changes only the catalog
+file, and publication is intentionally independent of unrelated monorepo checks. No force-push,
+catalog pull request, or Scient desktop release is required for an ordinary provider release.
+Discovery ambiguity, incomplete metadata, failed qualification, publication races, downgrades, and
+same-version repacks fail closed and preserve the last published catalog. The operational owner and
+recovery procedure are documented in the
+[managed provider runtime update runbook](../operations/managed-provider-runtime-updates.md).
 
 Promotion never installs anything on a user's computer. It only makes the existing **Update** action
 available. The user still reviews the exact plan and starts the mutation; the previous runtime remains

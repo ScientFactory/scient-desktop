@@ -290,6 +290,37 @@ describe("ProviderRegistry transient lifecycle overlays", () => {
       ),
   );
 
+  it.effect("preserves a concurrent runtime operation during catalog reconciliation", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const { registry } = yield* makeHarness();
+        yield* registry.setProviderManagedRuntimeSummary({
+          instanceId: INSTANCE_ID,
+          runtime: managedRuntime,
+        });
+        const reconciled = yield* registry.setProviderManagedRuntimeSummary({
+          instanceId: INSTANCE_ID,
+          runtime: {
+            ...managedRuntime,
+            actions: ["update", "repair", "remove"],
+            operation: null,
+          },
+          preserveOperation: true,
+        });
+
+        assert.deepStrictEqual(
+          reconciled[0]?.connection?.runtime?.operation,
+          managedRuntimeOperation,
+        );
+        assert.deepStrictEqual(reconciled[0]?.connection?.runtime?.actions, [
+          "update",
+          "repair",
+          "remove",
+        ]);
+      }),
+    ),
+  );
+
   it.effect("prunes overlays when an instance disappears before the same id is rebuilt", () =>
     Effect.scoped(
       Effect.gen(function* () {
