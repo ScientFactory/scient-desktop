@@ -1,10 +1,18 @@
 import { describe, expect, it } from "vite-plus/test";
 import type { Transaction } from "prosemirror-state";
-import { TextSelection } from "prosemirror-state";
+import { NodeSelection, TextSelection } from "prosemirror-state";
 import { CellSelection } from "prosemirror-tables";
 
 import { createScientMarkdownProjection, serializeScientMarkdownProjection } from "./projection";
-import { listKindAt, runScientMarkdownCommand, type ScientMarkdownCommand } from "./commands";
+import {
+  filterScientMarkdownSlashCommands,
+  listKindAt,
+  MAX_SCIENT_MARKDOWN_TABLE_INSERT_DIMENSION,
+  runScientMarkdownCommand,
+  runScientMarkdownTableInsert,
+  type ScientMarkdownCommand,
+  type ScientMarkdownTableDimensions,
+} from "./commands";
 import { ScientProseMirrorSession } from "./session";
 
 function runUserCommand(
@@ -12,6 +20,15 @@ function runUserCommand(
   command: ScientMarkdownCommand,
 ): boolean {
   return runScientMarkdownCommand(command, session.state, (transaction: Transaction) => {
+    session.applyTransaction(transaction, "user");
+  });
+}
+
+function runUserTableInsert(
+  session: ScientProseMirrorSession,
+  dimensions: ScientMarkdownTableDimensions,
+): boolean {
+  return runScientMarkdownTableInsert(dimensions, session.state, (transaction: Transaction) => {
     session.applyTransaction(transaction, "user");
   });
 }
@@ -24,6 +41,14 @@ function select(session: ScientProseMirrorSession, from: number, to = from): voi
 }
 
 describe("Scient Markdown commands", () => {
+  it("exposes footnote insertion through the slash-command vocabulary", () => {
+    expect(filterScientMarkdownSlashCommands("foot")).toContainEqual({
+      command: "footnote",
+      label: "Footnote",
+      keywords: "note reference source",
+    });
+  });
+
   it("undoes separate explicit commands individually even without a time gap", () => {
     const session = new ScientProseMirrorSession({ source: "Text\n", revision: "r0" });
     select(session, 1);
@@ -169,6 +194,22 @@ describe("Scient Markdown commands", () => {
     expect(session.session.draftSource).toBe("Bold words and struck text.\n");
   });
 
+  it("inserts one paired footnote after selected text as a single undo step", () => {
+    const session = new ScientProseMirrorSession({
+      source: "Keep these words.\n",
+      revision: "sha256:b",
+    });
+    select(session, 6, 11);
+
+    expect(runUserCommand(session, "footnote")).toBe(true);
+    expect(session.session.draftSource).toBe("Keep these[^note-1] words.\n\n[^note-1]: \n");
+    expect(session.state.selection).toBeInstanceOf(NodeSelection);
+    expect((session.state.selection as NodeSelection).node.type.name).toBe("footnote_definition");
+
+    runUserCommand(session, "undo");
+    expect(session.session.draftSource).toBe("Keep these words.\n");
+  });
+
   it("supports heading levels up to six", () => {
     const session = new ScientProseMirrorSession({
       source: "Deep  heading.\n",
@@ -208,6 +249,7 @@ describe("Scient Markdown dock command coverage", () => {
       ["image", "!["],
       ["wiki-link", "[[Untitled]]"],
       ["display-math", "$$"],
+      ["footnote", "[^note-1]"],
       ["code-block", "```"],
     ];
     for (const [command, marker] of cases) {
@@ -227,6 +269,54 @@ describe("Scient Markdown dock command coverage", () => {
     expect(table?.childCount).toBe(3);
     expect(table?.firstChild?.childCount).toBe(3);
     expect(session.session.draftSource).toContain("| --- | --- | --- |");
+  });
+
+  it.each([
+    { columns: 1, rows: 1 },
+    { columns: 2, rows: 5 },
+    {
+      columns: MAX_SCIENT_MARKDOWN_TABLE_INSERT_DIMENSION,
+      rows: MAX_SCIENT_MARKDOWN_TABLE_INSERT_DIMENSION,
+    },
+  ] satisfies ReadonlyArray<ScientMarkdownTableDimensions>)(
+    "inserts and round-trips a $columns×$rows table as one undo step",
+    (dimensions) => {
+      const session = freshSession();
+      select(session, 1);
+
+      expect(runUserTableInsert(session, dimensions)).toBe(true);
+      const table = session.state.doc.firstChild;
+      expect(table?.type.name).toBe("table");
+      expect(table?.childCount).toBe(dimensions.rows);
+      for (let row = 0; row < dimensions.rows; row += 1) {
+        expect(table?.child(row).childCount).toBe(dimensions.columns);
+        expect(table?.child(row).firstChild?.type.name).toBe(
+          row === 0 ? "table_header" : "table_cell",
+        );
+      }
+      const source = session.session.draftSource;
+      const reparsed = createScientMarkdownProjection(source);
+      expect(serializeScientMarkdownProjection(reparsed, reparsed.document)).toBe(source);
+
+      runUserCommand(session, "undo");
+      expect(session.state.doc.firstChild?.type.name).toBe("paragraph");
+      expect(session.state.doc.firstChild?.content.size).toBe(0);
+    },
+  );
+
+  it("rejects invalid visual table dimensions without changing the document", () => {
+    const invalidDimensions = [
+      { columns: 0, rows: 3 },
+      { columns: 3, rows: 0 },
+      { columns: 1.5, rows: 3 },
+      { columns: 3, rows: MAX_SCIENT_MARKDOWN_TABLE_INSERT_DIMENSION + 1 },
+    ] satisfies ReadonlyArray<ScientMarkdownTableDimensions>;
+    for (const dimensions of invalidDimensions) {
+      const session = freshSession("Keep me.\n");
+      select(session, 1);
+      expect(runUserTableInsert(session, dimensions)).toBe(false);
+      expect(session.session.draftSource).toBe("Keep me.\n");
+    }
   });
 
   it("sets an ordered list and removes it through list-none", () => {
@@ -262,6 +352,10 @@ describe("Scient Markdown dock command coverage", () => {
       expect(session.session.draftSource).toBe(before);
       expect(session.state.doc.firstChild?.type.name).toBe("table");
     }
+    const { session } = tableSession();
+    const before = session.session.draftSource;
+    expect(runUserTableInsert(session, { columns: 2, rows: 4 })).toBe(false);
+    expect(session.session.draftSource).toBe(before);
   });
 
   it("reports block styles as unavailable inside inline-only table cells", () => {

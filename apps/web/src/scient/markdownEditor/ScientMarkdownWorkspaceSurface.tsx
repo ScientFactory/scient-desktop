@@ -1,9 +1,20 @@
 import { MarkdownSaveQueue, type MarkdownSaveIntent } from "@scientfactory/scient-markdown";
 import { useEffect, useRef, useState } from "react";
 
+import { readLocalApi } from "~/localApi";
+
 import { ScientMarkdownDocument } from "./ScientMarkdownDocument";
+import { showScientMarkdownFootnoteContextMenu } from "./footnoteContextMenu";
+import {
+  showScientMarkdownLinkContextMenu,
+  type ScientMarkdownLinkCopyRequest,
+  type ScientMarkdownLinkKind,
+} from "./linkContextMenu";
+import type { ScientMarkdownLinkOpenHandler } from "./linkOpen";
 import type { ScientMarkdownImageSourceResolver } from "./nodes";
 import { ScientMarkdownEditorView, type ScientMarkdownUploadedImage } from "./prosemirror/view";
+import { showScientRichFenceContextMenu } from "./richFenceContextMenu";
+import { showScientMarkdownTableContextMenu } from "./tableContextMenu";
 import { ScientMarkdownControls } from "./ui/ScientMarkdownControls";
 import { useFinalUnmount } from "./useFinalUnmount";
 import type { ScientMarkdownWikiLinkCandidate } from "./wikiLinkPicker";
@@ -18,6 +29,9 @@ export interface ScientMarkdownWorkspaceSurfaceProps {
     readonly revision: string;
   } | null;
   readonly ariaLabel: string;
+  readonly resolvedTheme?: "light" | "dark";
+  /** Resource availability key; changes invalidate missing asset/link presentation. */
+  readonly workspaceResourceIndexKey?: string;
   readonly persist: (intent: MarkdownSaveIntent) => Promise<{ readonly revision: string }>;
   readonly onPendingChange: (pending: boolean) => void;
   readonly onDraftSourceChange: (source: string) => void;
@@ -27,12 +41,14 @@ export interface ScientMarkdownWorkspaceSurfaceProps {
     readonly source: string;
     readonly revision: string;
   }) => void;
-  readonly onOpenWikiLink?: (target: string) => void;
-  readonly onOpenLink?: (target: string) => void;
+  readonly onLocalHeadingOpened?: () => void;
+  readonly onOpenWikiLink?: ScientMarkdownLinkOpenHandler;
+  readonly onOpenLink?: ScientMarkdownLinkOpenHandler;
+  readonly resolveLinkFullPath?: (kind: ScientMarkdownLinkKind, target: string) => string | null;
+  readonly onCopyLink?: (request: ScientMarkdownLinkCopyRequest, anchor: HTMLElement) => void;
   readonly resolveImageSource?: ScientMarkdownImageSourceResolver;
   readonly uploadImage?: (file: File) => Promise<ScientMarkdownUploadedImage>;
   readonly onImageUploadFailure?: (error: unknown) => void;
-  readonly wikiLinkSuggestions?: () => ReadonlyArray<string>;
   readonly wikiLinkTargetExists?: (target: string) => boolean | null;
   readonly wikiLinkCandidates?: ReadonlyArray<ScientMarkdownWikiLinkCandidate>;
   readonly recentWikiLinkPaths?: ReadonlyArray<string>;
@@ -54,6 +70,8 @@ export function ScientMarkdownWorkspaceSurface(props: ScientMarkdownWorkspaceSur
   const imageInputRef = useRef<HTMLInputElement>(null);
   const bindingsRef = useRef(props);
   bindingsRef.current = props;
+  const previousThemeRef = useRef(props.resolvedTheme);
+  const previousWorkspaceResourceIndexKeyRef = useRef(props.workspaceResourceIndexKey);
 
   const [chromeExpanded, setChromeExpanded] = useState(false);
   const controllerRef = useRef<ScientMarkdownEditorView | null>(null);
@@ -89,8 +107,24 @@ export function ScientMarkdownWorkspaceSurface(props: ScientMarkdownWorkspaceSur
         authoritativeSource: props.authoritativeSnapshot?.source ?? props.source,
         mode: "write",
         ariaLabel: props.ariaLabel,
-        onOpenWikiLink: (target) => bindingsRef.current.onOpenWikiLink?.(target),
-        onOpenLink: (target) => bindingsRef.current.onOpenLink?.(target),
+        resolveTheme: () =>
+          bindingsRef.current.resolvedTheme ??
+          (document.documentElement.classList.contains("dark") ? "dark" : "light"),
+        onLocalHeadingOpened: () => bindingsRef.current.onLocalHeadingOpened?.(),
+        onOpenWikiLink: (target, anchor) => bindingsRef.current.onOpenWikiLink?.(target, anchor),
+        onOpenLink: (target, anchor) => bindingsRef.current.onOpenLink?.(target, anchor),
+        ...(props.resolveLinkFullPath
+          ? {
+              resolveLinkFullPath: (kind: ScientMarkdownLinkKind, target: string) =>
+                bindingsRef.current.resolveLinkFullPath?.(kind, target) ?? null,
+            }
+          : {}),
+        ...(props.onCopyLink
+          ? {
+              onCopyLink: (request: ScientMarkdownLinkCopyRequest, anchor: HTMLElement) =>
+                bindingsRef.current.onCopyLink?.(request, anchor),
+            }
+          : {}),
         ...(props.resolveImageSource
           ? {
               resolveImageSource: (...args) =>
@@ -109,9 +143,36 @@ export function ScientMarkdownWorkspaceSurface(props: ScientMarkdownWorkspaceSur
               selectImage: () => imageInputRef.current?.click(),
             }
           : {}),
-        wikiLinkSuggestions: () => bindingsRef.current.wikiLinkSuggestions?.() ?? [],
         wikiLinkTargetExists: (target) =>
           bindingsRef.current.wikiLinkTargetExists?.(target) ?? null,
+        showLinkContextMenu: async (request) => {
+          const api = readLocalApi();
+          if (!api) return null;
+          return showScientMarkdownLinkContextMenu(request, (items, position) =>
+            api.contextMenu.show(items, position),
+          );
+        },
+        showFootnoteContextMenu: async (request) => {
+          const api = readLocalApi();
+          if (!api) return null;
+          return showScientMarkdownFootnoteContextMenu(request, (items, position) =>
+            api.contextMenu.show(items, position),
+          );
+        },
+        showRichFenceContextMenu: async (position) => {
+          const api = readLocalApi();
+          if (!api) return null;
+          return showScientRichFenceContextMenu(position, (items, menuPosition) =>
+            api.contextMenu.show(items, menuPosition),
+          );
+        },
+        showTableContextMenu: async (position) => {
+          const api = readLocalApi();
+          if (!api) return null;
+          return showScientMarkdownTableContextMenu(position, (items, menuPosition) =>
+            api.contextMenu.show(items, menuPosition),
+          );
+        },
         onUserSourceChange: (source) => {
           // First real edit reveals the formatting controls.
           setChromeExpanded(true);
@@ -121,6 +182,20 @@ export function ScientMarkdownWorkspaceSurface(props: ScientMarkdownWorkspaceSur
       }),
   );
   controllerRef.current = controller;
+
+  useEffect(() => {
+    if (previousThemeRef.current !== props.resolvedTheme) {
+      previousThemeRef.current = props.resolvedTheme;
+      controller.refreshExternalPresentation("appearance");
+    }
+  }, [controller, props.resolvedTheme]);
+
+  useEffect(() => {
+    if (previousWorkspaceResourceIndexKeyRef.current !== props.workspaceResourceIndexKey) {
+      previousWorkspaceResourceIndexKeyRef.current = props.workspaceResourceIndexKey;
+      controller.refreshExternalPresentation("workspace");
+    }
+  }, [controller, props.workspaceResourceIndexKey]);
 
   useEffect(() => {
     const authoritative = props.authoritativeSnapshot;

@@ -5,6 +5,7 @@ import {
   promoteRecentWikiLinkPath,
   sanitizeRecentWikiLinkPaths,
   wikiLinkRecentsStorageKey,
+  wikiLinkTargetForSelection,
   type ScientMarkdownWikiLinkCandidate,
   WIKI_LINK_RECENT_LIMIT,
 } from "./wikiLinkPicker";
@@ -55,6 +56,19 @@ describe("wiki link picker", () => {
         recentPaths: [],
       }).results,
     ).toHaveLength(1);
+  });
+
+  it("preserves a heading fragment only when reselecting the same file", () => {
+    expect(wikiLinkTargetForSelection("Methods/Protocol", "Methods/Protocol#setup")).toBe(
+      "Methods/Protocol#setup",
+    );
+    expect(wikiLinkTargetForSelection("Notes/Background", "Methods/Protocol#setup")).toBe(
+      "Notes/Background",
+    );
+    expect(wikiLinkTargetForSelection("Methods/Protocol", "Methods/Protocol")).toBe(
+      "Methods/Protocol",
+    );
+    expect(wikiLinkTargetForSelection("Methods/Protocol", null)).toBe("Methods/Protocol");
   });
 
   it("shows available recents separately and filters stale paths", () => {

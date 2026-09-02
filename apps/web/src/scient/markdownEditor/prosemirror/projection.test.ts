@@ -458,6 +458,133 @@ describe("Scient ProseMirror projection", () => {
     );
   });
 
+  it("shares backslash-delimited math with the preview while preserving authored source", () => {
+    const source = [
+      "Inline \\(x + 1\\), display \\[E = mc^2\\], and `\\(literal\\)`.",
+      "",
+      "\\[",
+      "\\int_0^1 x \\, dx",
+      "\\]",
+      "",
+      '<span title="\\(literal\\)">raw</span>',
+      "",
+    ].join("\n");
+    const state = new ScientProseMirrorSession({ source, revision: "sha256:before" });
+    const inlineMath: Array<{
+      display: boolean;
+      delimiter: string;
+      position: number;
+      tex: string;
+    }> = [];
+    let displayPosition: number | null = null;
+    state.state.doc.descendants((node, position) => {
+      if (node.type.name === "inline_math") {
+        inlineMath.push({
+          display: node.attrs.display === true,
+          delimiter: String(node.attrs.delimiter),
+          position,
+          tex: String(node.attrs.tex),
+        });
+      }
+      if (node.type.name === "display_math") displayPosition = position;
+    });
+
+    expect(inlineMath.map(({ position: _position, ...math }) => math)).toEqual([
+      { delimiter: "\\(", display: false, tex: "x + 1" },
+      { delimiter: "\\[", display: true, tex: "E = mc^2" },
+    ]);
+    expect(displayPosition).not.toBeNull();
+    expect(state.state.doc.nodeAt(displayPosition!)?.attrs).toMatchObject({
+      delimiter: "\\[",
+      tex: "\\int_0^1 x \\, dx",
+    });
+    expect(state.session.draftSource).toBe(source);
+
+    state.applyTransaction(
+      state.state.tr.setNodeMarkup(inlineMath[0]!.position, undefined, {
+        ...state.state.doc.nodeAt(inlineMath[0]!.position)?.attrs,
+        tex: "x + 2",
+      }),
+      "user",
+    );
+    state.applyTransaction(
+      state.state.tr.setNodeMarkup(displayPosition!, undefined, {
+        ...state.state.doc.nodeAt(displayPosition!)?.attrs,
+        tex: "\\int_0^2 x \\, dx",
+      }),
+      "user",
+    );
+
+    expect(state.session.draftSource).toContain("Inline \\(x + 2\\), display \\[E = mc^2\\]");
+    expect(state.session.draftSource).toContain("\\[\n\\int_0^2 x \\, dx\n\\]");
+    expect(state.session.draftSource).toContain("`\\(literal\\)`");
+    expect(state.session.draftSource).toContain('<span title="\\(literal\\)">raw</span>');
+    const reopened = new ScientProseMirrorSession({
+      source: state.session.draftSource,
+      revision: "sha256:reopened",
+    });
+    expect(reopened.state.doc.eq(state.state.doc)).toBe(true);
+  });
+
+  it("keeps serializer-escaped literal brackets distinct from TeX delimiters", () => {
+    const state = new ScientProseMirrorSession({
+      source: "| Value |\n| --- |\n| original |\n",
+      revision: "sha256:before",
+    });
+    let textPosition: number | null = null;
+    state.state.doc.descendants((node, position) => {
+      if (node.text === "original") textPosition = position;
+    });
+    expect(textPosition).not.toBeNull();
+
+    state.applyTransaction(
+      state.state.tr.insertText("[x] [0,1] [x](file.md) ", textPosition!),
+      "user",
+    );
+
+    expect(state.session.draftSource).toContain(
+      "&#91;x&#93; &#91;0,1&#93; &#91;x&#93;(file.md) original",
+    );
+    const reopened = new ScientProseMirrorSession({
+      source: state.session.draftSource,
+      revision: "sha256:reopened",
+    });
+    expect(reopened.state.doc.eq(state.state.doc)).toBe(true);
+    const mathNodes: string[] = [];
+    reopened.state.doc.descendants((node) => {
+      if (node.type.name === "inline_math" || node.type.name === "display_math") {
+        mathNodes.push(node.type.name);
+      }
+    });
+    expect(mathNodes).toEqual([]);
+  });
+
+  it("matches the preview's GFM bare-link recognition without rewriting untouched URLs", () => {
+    const source =
+      "Read https://example.com and www.example.org, email team@example.org, and keep file.md plain.\n";
+    const state = new ScientProseMirrorSession({ source, revision: "sha256:before" });
+    const links: string[] = [];
+    state.state.doc.descendants((node) => {
+      for (const mark of node.marks) {
+        if (mark.type.name === "link") links.push(String(mark.attrs.href));
+      }
+    });
+
+    expect(links).toEqual([
+      "https://example.com",
+      "http://www.example.org",
+      "mailto:team@example.org",
+    ]);
+    expect(state.session.draftSource).toBe(source);
+    state.applyTransaction(state.state.tr.insertText("Now: ", 1), "user");
+    expect(state.session.draftSource).toBe(`Now: ${source}`);
+    const reopened = new ScientProseMirrorSession({
+      source: state.session.draftSource,
+      revision: "sha256:reopened",
+    });
+    expect(reopened.state.doc.eq(state.state.doc)).toBe(true);
+  });
+
   it("keeps the projection immutable when replacing only the current document", () => {
     const projection = createScientMarkdownProjection("One\n");
     const next = withProjectedDocument(projection, projection.document);

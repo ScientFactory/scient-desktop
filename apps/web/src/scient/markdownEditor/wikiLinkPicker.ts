@@ -78,6 +78,23 @@ export function wikiLinkCandidateName(candidate: ScientMarkdownWikiLinkCandidate
     .replace(/\.(?:md|markdown)$/iu, "");
 }
 
+/**
+ * Keep an authored heading fragment when the editor reselects the same file.
+ * Choosing another file deliberately drops it because that heading is not
+ * known to exist in the new target.
+ */
+export function wikiLinkTargetForSelection(
+  candidateTarget: string,
+  editingTarget: string | null,
+): string {
+  if (editingTarget === null) return candidateTarget;
+  const headingStart = editingTarget.indexOf("#");
+  if (headingStart <= 0 || editingTarget.slice(0, headingStart) !== candidateTarget) {
+    return candidateTarget;
+  }
+  return editingTarget;
+}
+
 function candidateSearchScore(
   candidate: ScientMarkdownWikiLinkCandidate,
   query: string,

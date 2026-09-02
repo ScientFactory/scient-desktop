@@ -1,6 +1,5 @@
 import {
   CheckIcon,
-  Code2Icon,
   CopyIcon,
   DownloadIcon,
   EllipsisIcon,
@@ -14,6 +13,11 @@ import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } fro
 import { Button } from "~/components/ui/button";
 import { Menu, MenuItem, MenuPopup, MenuTrigger } from "~/components/ui/menu";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "~/components/ui/tooltip";
+import {
+  RichFenceSourceMenuItem,
+  type ScientRichFenceAuthoringActions,
+  useRichFenceContextMenu,
+} from "../presentation/RichFenceSourceActions";
 
 import {
   copyMermaidPng,
@@ -33,6 +37,7 @@ import { VisualCardDetails, VisualCardToolbar } from "../presentation/VisualCard
 import "./scient-diagrams.css";
 
 interface MermaidDiagramCardProps {
+  readonly authoringActions?: ScientRichFenceAuthoringActions | undefined;
   readonly source: string;
   readonly language: string;
   readonly fenceMeta?: string | undefined;
@@ -87,6 +92,7 @@ function DiagramActionButton({
 }
 
 export function MermaidDiagramCard({
+  authoringActions,
   fenceMeta,
   language,
   source,
@@ -178,6 +184,11 @@ export function MermaidDiagramCard({
     );
   }, [activeAction, showPersistentMessage, showTransientMessage, source]);
 
+  const handleContextMenu = useRichFenceContextMenu(authoringActions, handleCopySource);
+  const handleToggleSource = useCallback(() => {
+    setSourceVisible((visible) => !visible);
+  }, []);
+
   const readyResult = diagramState.status === "ready" ? diagramState.result : null;
 
   const handleCopyPng = useCallback(() => {
@@ -227,6 +238,7 @@ export function MermaidDiagramCard({
       data-markdown-copy={markdownCopy}
       data-scient-visual-card
       dir="ltr"
+      onContextMenu={handleContextMenu}
       role="figure"
     >
       <div className="flex flex-wrap items-center justify-end gap-2 px-2 pt-2">
@@ -279,10 +291,11 @@ export function MermaidDiagramCard({
             </Tooltip>
             <MenuPopup align="end" className="min-w-44">
               <VisualCardDetails title={displayTitle} detail={readyResult?.diagramType} />
-              <MenuItem onClick={() => setSourceVisible((visible) => !visible)}>
-                <Code2Icon />
-                {sourceVisible ? "Hide source" : "Show source"}
-              </MenuItem>
+              <RichFenceSourceMenuItem
+                authoringActions={authoringActions}
+                onToggleSource={handleToggleSource}
+                sourceVisible={sourceVisible}
+              />
               <MenuItem
                 disabled={readyResult == null || activeAction != null}
                 onClick={handleDownloadSvg}

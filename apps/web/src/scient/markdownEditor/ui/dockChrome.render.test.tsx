@@ -77,6 +77,56 @@ describe("DockOverflowRow", () => {
     expect(toolbar.children[1]?.textContent).toBe("Bold");
   });
 
+  it("does not remeasure layout when only command state rerenders", async () => {
+    vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+    vi.stubGlobal("ResizeObserver", TestResizeObserver);
+    vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockImplementation(
+      function (this: HTMLElement) {
+        return this.getAttribute("role") === "toolbar" ? 500 : 0;
+      },
+    );
+    const offsetWidth = vi.spyOn(HTMLElement.prototype, "offsetWidth", "get").mockReturnValue(60);
+    const host = document.createElement("div");
+    document.body.append(host);
+    const root = createRoot(host);
+    roots.push(root);
+
+    const renderRow = async (pressed: boolean, groupId = "format") => {
+      await act(() =>
+        root.render(
+          <DockOverflowRow
+            label="Document actions"
+            expanded
+            onExpandedChange={vi.fn()}
+            groups={[
+              {
+                id: groupId,
+                priority: 100,
+                estimatedWidth: 60,
+                pinned: true,
+                bar: (
+                  <button type="button" aria-pressed={pressed}>
+                    Bold
+                  </button>
+                ),
+              },
+            ]}
+          />,
+        ),
+      );
+    };
+
+    await renderRow(false);
+    const initialMeasurements = offsetWidth.mock.calls.length;
+    expect(initialMeasurements).toBeGreaterThan(0);
+
+    await renderRow(true);
+    expect(offsetWidth).toHaveBeenCalledTimes(initialMeasurements);
+
+    await renderRow(true, "style");
+    expect(offsetWidth.mock.calls.length).toBeGreaterThan(initialMeasurements);
+  });
+
   it("opens grouped actions after narrow-width overflow without losing menu context", async () => {
     vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
     vi.stubGlobal("ResizeObserver", TestResizeObserver);
@@ -159,6 +209,46 @@ describe("DockOverflowRow", () => {
         node.textContent?.trim(),
       ),
     ).toEqual([]);
+  });
+
+  it("keeps one complete contextual group in the unified menu while its compact controls fit", async () => {
+    vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+    const host = document.createElement("div");
+    document.body.append(host);
+    const root = createRoot(host);
+    roots.push(root);
+    const tableAction = vi.fn();
+
+    await act(() =>
+      root.render(
+        <DockOverflowRow
+          label="Document actions"
+          expanded
+          onExpandedChange={vi.fn()}
+          groups={[
+            {
+              id: "table",
+              priority: 60,
+              estimatedWidth: 80,
+              alwaysInOverflow: true,
+              bar: <button type="button">Add row</button>,
+              overflowLabel: "Table",
+              overflow: <MenuItem onClick={tableAction}>Select whole table</MenuItem>,
+            },
+          ]}
+        />,
+      ),
+    );
+
+    expect(host.querySelectorAll("[aria-label='More actions']")).toHaveLength(1);
+    expect(host.querySelector("[aria-label='More table actions']")).toBeNull();
+    await act(() => host.querySelector<HTMLButtonElement>("[aria-label='More actions']")!.click());
+    expect(document.body.querySelector("[data-slot='menu-label']")?.textContent).toBe("Table");
+    const item = Array.from(
+      document.body.querySelectorAll<HTMLElement>("[data-slot='menu-item']"),
+    ).find((candidate) => candidate.textContent === "Select whole table");
+    await act(() => item!.click());
+    expect(tableAction).toHaveBeenCalledOnce();
   });
 
   it.each(["click", "Enter"])(

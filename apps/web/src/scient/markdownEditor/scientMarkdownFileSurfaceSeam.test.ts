@@ -11,6 +11,10 @@ const surfaceSource = NodeFS.readFileSync(
   new URL("./ScientMarkdownFileSurface.tsx", import.meta.url),
   "utf8",
 );
+const workspaceSource = NodeFS.readFileSync(
+  new URL("./ScientMarkdownWorkspaceSurface.tsx", import.meta.url),
+  "utf8",
+);
 const browserSource = NodeFS.readFileSync(
   new URL("../../components/files/FileBrowserPanel.tsx", import.meta.url),
   "utf8",
@@ -89,6 +93,13 @@ describe("Scient Markdown file-preview seam", () => {
     );
   });
 
+  it("routes table context actions through the owned editor and app menu", () => {
+    expect(workspaceSource).toContain('from "./tableContextMenu";');
+    expect(workspaceSource).toContain("showTableContextMenu: async (position) => {");
+    expect(workspaceSource).toContain("showScientMarkdownTableContextMenu(position");
+    expect(workspaceSource).toContain("api.contextMenu.show(items, menuPosition)");
+  });
+
   it("limits workspace lifecycle UI to one owned create and rename mount", () => {
     expect(browserSource.match(/<ScientMarkdownCreateButton\b/gu)).toHaveLength(1);
     expect(panelSource.match(/<ScientMarkdownRenameButton\b/gu)).toHaveLength(1);
@@ -111,16 +122,27 @@ describe("Scient Markdown file-preview seam", () => {
     expect(browserSource).toMatch(/onCreated=\{[\s\S]*?handleRefresh\(\);[\s\S]*?onOpenFile/gu);
   });
 
-  it("routes wiki-link activation through the existing project file opener", () => {
+  it("verifies internal links before routing them through the existing project file opener", () => {
     expect(surfaceSource).toContain(
       "const path = resolveWikiLinkPath(props.relativePath, target);",
     );
-    expect(surfaceSource).toContain("if (path) props.onOpenFile(path);");
+    expect(surfaceSource).toContain("projectEnvironment.listDirectory");
+    expect(surfaceSource).toContain('view: "with-internals"');
+    expect(surfaceSource).toContain("props.onOpenFile(relativePath);");
+    expect(surfaceSource).toContain("onOpenWikiLink={handleOpenWikiLink}");
   });
 
   it("uses the current filename itself as the Markdown rename affordance", () => {
     expect(panelSource).toContain("currentFileControl={");
     expect(panelSource).toContain("<ScientMarkdownRenameButton");
     expect(panelSource).toContain('label={relativePath.slice(relativePath.lastIndexOf("/") + 1)}');
+  });
+
+  it("keeps the inline filename and formatting rows on the same rhythm as the tab row", () => {
+    expect(panelSource).toContain("const usesScientMarkdownEditor =");
+    expect(panelSource).toContain("in-data-[preview-panel-mode=inline]:mb-2");
+    expect(panelSource).toMatch(
+      /usesScientMarkdownEditor\s*\?\s*"in-data-\[preview-panel-mode=inline\]:mb-2"\s*:\s*"in-data-\[preview-panel-mode=inline\]:mb-3"/u,
+    );
   });
 });

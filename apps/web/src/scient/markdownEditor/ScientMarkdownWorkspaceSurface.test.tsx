@@ -54,6 +54,58 @@ describe("ScientMarkdownWorkspaceSurface", () => {
     vi.unstubAllGlobals();
   });
 
+  it("invalidates only the external presentation domain that changed", async () => {
+    vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+    const refresh = vi.spyOn(ScientMarkdownEditorView.prototype, "refreshExternalPresentation");
+    const host = document.createElement("div");
+    document.body.append(host);
+    const root = createRoot(host);
+    roots.push(root);
+    const common = {
+      source: "See [[Notes]].\n",
+      revision: "r0",
+      ariaLabel: "Presentation invalidation",
+      persist: vi.fn(async () => ({ revision: "r1" })),
+      onPendingChange: vi.fn(),
+      onSaveConfirmed: vi.fn(),
+      onSaveFailure: vi.fn(),
+      onExternalConflict: vi.fn(),
+    };
+
+    await act(() =>
+      root.render(
+        <ScientMarkdownWorkspaceSurface
+          {...common}
+          resolvedTheme="light"
+          workspaceResourceIndexKey="index-a"
+        />,
+      ),
+    );
+    expect(refresh).not.toHaveBeenCalled();
+
+    await act(() =>
+      root.render(
+        <ScientMarkdownWorkspaceSurface
+          {...common}
+          resolvedTheme="dark"
+          workspaceResourceIndexKey="index-a"
+        />,
+      ),
+    );
+    expect(refresh).toHaveBeenCalledExactlyOnceWith("appearance");
+
+    await act(() =>
+      root.render(
+        <ScientMarkdownWorkspaceSurface
+          {...common}
+          resolvedTheme="dark"
+          workspaceResourceIndexKey="index-b"
+        />,
+      ),
+    );
+    expect(refresh).toHaveBeenNthCalledWith(2, "workspace");
+  });
+
   it("uses current host bindings and waits for saving before following a wiki link", async () => {
     vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
     const mount = vi.spyOn(ScientMarkdownEditorView.prototype, "mount");
@@ -526,6 +578,8 @@ describe("ScientMarkdownWorkspaceSurface", () => {
     vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
     const mount = vi.spyOn(ScientMarkdownEditorView.prototype, "mount");
     const onWikiLinkSelected = vi.fn();
+    const source = "לפני האפשרויות אחרי.\n";
+    const selectedText = " האפשרויות ";
     const host = document.createElement("div");
     document.body.append(host);
     const root = createRoot(host);
@@ -534,7 +588,7 @@ describe("ScientMarkdownWorkspaceSurface", () => {
     await act(() =>
       root.render(
         <ScientMarkdownWorkspaceSurface
-          source={"Selected words.\n"}
+          source={source}
           revision="r0"
           ariaLabel="Wiki link fixture"
           persist={vi.fn(async () => ({ revision: "r1" }))}
@@ -555,17 +609,44 @@ describe("ScientMarkdownWorkspaceSurface", () => {
       (candidate) => candidate.view?.dom.isConnected,
     );
     expect(controller).not.toBeUndefined();
+    const view = controller!.view!;
+    const selectionFrom = 1 + source.indexOf(selectedText);
     await act(() => {
-      const view = controller!.view!;
-      view.dispatch(view.state.tr.setSelection(TextSelection.create(view.state.doc, 1, 9)));
+      view.dispatch(
+        view.state.tr.setSelection(
+          TextSelection.create(view.state.doc, selectionFrom, selectionFrom + selectedText.length),
+        ),
+      );
     });
 
     const toolbar = document.body.querySelector<HTMLElement>("[aria-label='Text formatting']");
     expect(toolbar).not.toBeNull();
     expect(toolbar?.querySelector("[aria-label='Strikethrough']")).toBeNull();
-    expect(
-      toolbar?.querySelector("[aria-label='Link selection to a Markdown file']"),
-    ).not.toBeNull();
+    const wikiLinkButton = toolbar?.querySelector<HTMLButtonElement>(
+      "[aria-label='Link selection to a Markdown file']",
+    );
+    expect(wikiLinkButton?.disabled).toBe(false);
+
+    await act(() => {
+      view.dispatch(
+        view.state.tr.setSelection(
+          TextSelection.create(view.state.doc, 1, view.state.doc.content.size),
+        ),
+      );
+    });
+    expect(toolbar?.querySelector("[aria-label='Link selection to a Markdown file']")).toBe(
+      wikiLinkButton,
+    );
+    expect(wikiLinkButton?.disabled).toBe(true);
+
+    await act(() => {
+      view.dispatch(
+        view.state.tr.setSelection(
+          TextSelection.create(view.state.doc, selectionFrom, selectionFrom + selectedText.length),
+        ),
+      );
+    });
+    expect(wikiLinkButton?.disabled).toBe(false);
 
     await act(() =>
       controller!.view!.dom.dispatchEvent(
@@ -598,7 +679,27 @@ describe("ScientMarkdownWorkspaceSurface", () => {
     expect(options[0]?.textContent).toContain("Background");
     expect(onWikiLinkSelected).not.toHaveBeenCalled();
 
-    const search = popup?.querySelector<HTMLInputElement>("[aria-label='Search Markdown files']");
+    await act(() => {
+      view.dispatch(
+        view.state.tr.setSelection(
+          TextSelection.create(view.state.doc, 1, view.state.doc.content.size),
+        ),
+      );
+    });
+    expect(document.body.querySelector("[aria-label='Search Markdown files']")).toBeNull();
+    expect(wikiLinkButton?.disabled).toBe(true);
+
+    await act(() => {
+      view.dispatch(
+        view.state.tr.setSelection(
+          TextSelection.create(view.state.doc, selectionFrom, selectionFrom + selectedText.length),
+        ),
+      );
+    });
+    await act(() => wikiLinkButton?.click());
+    const search = document.body.querySelector<HTMLInputElement>(
+      "[aria-label='Search Markdown files']",
+    );
     await act(() =>
       search?.dispatchEvent(
         new KeyboardEvent("keydown", { key: "ArrowDown", bubbles: true, cancelable: true }),
@@ -611,8 +712,157 @@ describe("ScientMarkdownWorkspaceSurface", () => {
     );
 
     expect(onWikiLinkSelected).toHaveBeenCalledExactlyOnceWith("Methods/Protocol.md");
-    expect(controller!.session.session.draftSource).toBe("[[Methods/Protocol|Selected]] words.\n");
+    expect(controller!.session.session.draftSource).toBe(
+      "לפני [[Methods/Protocol|האפשרויות]] אחרי.\n",
+    );
     expect(document.body.querySelector("[aria-label='Search Markdown files']")).toBeNull();
+  });
+
+  it("edits an existing wiki link through the shared picker and commits only a chosen target", async () => {
+    vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+    const mount = vi.spyOn(ScientMarkdownEditorView.prototype, "mount");
+    const onDraftSourceChange = vi.fn();
+    const onWikiLinkSelected = vi.fn();
+    const host = document.createElement("div");
+    document.body.append(host);
+    const root = createRoot(host);
+    roots.push(root);
+
+    await act(() =>
+      root.render(
+        <ScientMarkdownWorkspaceSurface
+          source={"See [[Methods/Protocol#setup|protocol]] and text.\n"}
+          revision="r0"
+          ariaLabel="Existing wiki link fixture"
+          persist={vi.fn(async () => ({ revision: "r1" }))}
+          onPendingChange={vi.fn()}
+          onDraftSourceChange={onDraftSourceChange}
+          onSaveConfirmed={vi.fn()}
+          onSaveFailure={vi.fn()}
+          onExternalConflict={vi.fn()}
+          wikiLinkCandidates={[
+            { path: "Methods/Protocol.md", target: "Methods/Protocol" },
+            { path: "Notes/Background.md", target: "Notes/Background" },
+          ]}
+          onWikiLinkSelected={onWikiLinkSelected}
+        />,
+      ),
+    );
+    const controller = (mount.mock.instances as unknown as ScientMarkdownEditorView[]).find(
+      (candidate) => candidate.view?.dom.isConnected,
+    )!;
+    const view = controller.view!;
+    let wikiPosition = -1;
+    let wikiNode = view.state.doc;
+    view.state.doc.descendants((node, position) => {
+      if (node.type.name !== "wiki_link") return;
+      wikiPosition = position;
+      wikiNode = node;
+    });
+
+    await act(() => {
+      expect(
+        view.someProp("handleDoubleClickOn", (handler) =>
+          handler(
+            view,
+            wikiPosition,
+            wikiNode,
+            wikiPosition,
+            new MouseEvent("dblclick", { bubbles: true, button: 0, detail: 2 }),
+            true,
+          ),
+        ),
+      ).toBe(true);
+    });
+    await act(() => new Promise((resolve) => window.setTimeout(resolve, 0)));
+
+    const popup = document.body.querySelector<HTMLElement>("[data-slot='popover-popup']");
+    const search = popup?.querySelector<HTMLInputElement>("[aria-label='Search Markdown files']");
+    expect(popup?.textContent).toContain("Edit wiki link");
+    expect(search?.value).toBe("Protocol");
+    expect(search?.selectionStart).toBe(0);
+    expect(search?.selectionEnd).toBe("Protocol".length);
+    expect(view.dom.querySelector("input")).toBeNull();
+    expect(onDraftSourceChange).not.toHaveBeenCalled();
+
+    const protocol = Array.from(
+      popup?.querySelectorAll<HTMLButtonElement>("[role='option']") ?? [],
+    ).find((option) => option.textContent?.includes("Methods/Protocol.md"));
+    await act(() => protocol?.click());
+    expect(controller.session.session.draftSource).toBe(
+      "See [[Methods/Protocol#setup|protocol]] and text.\n",
+    );
+    expect(onDraftSourceChange).not.toHaveBeenCalled();
+    expect(onWikiLinkSelected).toHaveBeenCalledExactlyOnceWith("Methods/Protocol.md");
+
+    await act(() => {
+      expect(
+        view.someProp("handleDoubleClickOn", (handler) =>
+          handler(
+            view,
+            wikiPosition,
+            wikiNode,
+            wikiPosition,
+            new MouseEvent("dblclick", { bubbles: true, button: 0, detail: 2 }),
+            true,
+          ),
+        ),
+      ).toBe(true);
+    });
+    await act(() => new Promise((resolve) => window.setTimeout(resolve, 0)));
+    const reopenedPopup = document.body.querySelector<HTMLElement>("[data-slot='popover-popup']");
+    const reopenedSearch = reopenedPopup?.querySelector<HTMLInputElement>(
+      "[aria-label='Search Markdown files']",
+    );
+
+    await act(() => {
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set?.call(
+        reopenedSearch,
+        "Background",
+      );
+      reopenedSearch?.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    expect(reopenedPopup?.textContent).toContain("Notes/Background.md");
+    expect(controller.session.session.draftSource).toBe(
+      "See [[Methods/Protocol#setup|protocol]] and text.\n",
+    );
+    expect(onDraftSourceChange).not.toHaveBeenCalled();
+
+    const background = Array.from(
+      reopenedPopup?.querySelectorAll<HTMLButtonElement>("[role='option']") ?? [],
+    ).find((option) => option.textContent?.includes("Notes/Background.md"));
+    await act(() => background?.click());
+    expect(controller.session.session.draftSource).toBe(
+      "See [[Notes/Background|protocol]] and text.\n",
+    );
+    expect(onDraftSourceChange).toHaveBeenCalledOnce();
+    expect(onWikiLinkSelected).toHaveBeenNthCalledWith(2, "Notes/Background.md");
+    expect(document.body.querySelector("[aria-label='Search Markdown files']")).toBeNull();
+
+    wikiPosition = -1;
+    view.state.doc.descendants((node, position) => {
+      if (node.type.name !== "wiki_link") return;
+      wikiPosition = position;
+      wikiNode = node;
+    });
+    await act(() => {
+      view.someProp("handleDoubleClickOn", (handler) =>
+        handler(
+          view,
+          wikiPosition,
+          wikiNode,
+          wikiPosition,
+          new MouseEvent("dblclick", { bubbles: true, button: 0, detail: 2 }),
+          true,
+        ),
+      );
+    });
+    const remove = Array.from(document.body.querySelectorAll<HTMLButtonElement>("button")).find(
+      (button) => button.textContent?.includes("Remove link"),
+    );
+    await act(() => remove?.click());
+    expect(controller.session.session.draftSource).toBe("See protocol and text.\n");
+    expect(onDraftSourceChange).toHaveBeenCalledTimes(2);
   });
 
   it("uses compact icon controls for common table actions", async () => {
@@ -670,9 +920,9 @@ describe("ScientMarkdownWorkspaceSurface", () => {
     expect(toolbar?.textContent).not.toContain("Table:");
     expect(toolbar?.querySelector("[aria-label='Delete row']")).toBeNull();
     expect(toolbar?.querySelector("[aria-label='Delete column']")).toBeNull();
-    const moreActions = toolbar?.querySelector<HTMLButtonElement>(
-      "[aria-label='More table actions']",
-    );
+    expect(toolbar?.querySelector("[aria-label='More table actions']")).toBeNull();
+    expect(host.querySelectorAll("[aria-label='More actions']")).toHaveLength(1);
+    const moreActions = host.querySelector<HTMLButtonElement>("[aria-label='More actions']");
     expect(moreActions).not.toBeNull();
     await act(() => moreActions!.click());
     const menuItems = Array.from(

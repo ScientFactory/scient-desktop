@@ -213,11 +213,12 @@ export function DockDivider() {
 /**
  * One collapsible section of a dock. `bar` renders in the dock row while the
  * group fits; `overflow` renders inside the unified overflow menu once the
- * group no longer fits. Lower `priority` collapses sooner; `pinned` groups
- * never collapse. `estimatedWidth` is only used until the group has been
- * measured on screen, so bias it low: an over-optimistic estimate is
- * corrected after one measured paint, while an over-pessimistic one would
- * keep the group hidden without ever being re-measured.
+ * group no longer fits. `alwaysInOverflow` also exposes that complete menu
+ * while the compact bar controls remain visible. Lower `priority` collapses
+ * sooner; `pinned` groups never collapse. `estimatedWidth` is only used until
+ * the group has been measured on screen, so bias it low: an over-optimistic
+ * estimate is corrected after one measured paint, while an over-pessimistic
+ * one would keep the group hidden without ever being re-measured.
  */
 export interface DockGroup {
   readonly id: string;
@@ -225,6 +226,7 @@ export interface DockGroup {
   readonly estimatedWidth: number;
   readonly pinned?: boolean | undefined;
   readonly bar: ReactNode;
+  readonly alwaysInOverflow?: boolean;
   readonly overflowLabel?: string;
   readonly overflow?: ReactNode;
 }
@@ -291,6 +293,19 @@ export function DockOverflowRow(props: {
   const groupsRef = useRef(props.groups);
   groupsRef.current = props.groups;
   const [hiddenIds, setHiddenIds] = useState<ReadonlySet<string>>(EMPTY_GROUP_SET);
+  const layoutKey = props.groups
+    .map(
+      (group) =>
+        `${group.id}:${group.priority}:${group.pinned === true ? "pinned" : "flow"}:${group.estimatedWidth}`,
+    )
+    .join("|");
+  const visible = props.groups.filter((group) => !hiddenIds.has(group.id));
+  const overflowGroups = props.groups.filter(
+    (group) =>
+      group.overflow !== undefined && (group.alwaysInOverflow === true || hiddenIds.has(group.id)),
+  );
+  const visibleLayoutKey = visible.map((group) => group.id).join("|");
+  const showOverflowMenu = props.overflowItems !== undefined || overflowGroups.length > 0;
 
   const recompute = useCallback(() => {
     const dock = dockRef.current;
@@ -325,19 +340,18 @@ export function DockOverflowRow(props: {
 
   useLayoutEffect(() => {
     recompute();
-  });
+  }, [layoutKey, props.expanded, recompute, showOverflowMenu, visibleLayoutKey]);
 
   useEffect(() => {
     const dock = dockRef.current;
     if (!dock || typeof ResizeObserver === "undefined") return;
     const observer = new ResizeObserver(recompute);
     observer.observe(dock);
+    dock
+      .querySelectorAll<HTMLElement>("[data-dock-group], [data-dock-reserved]")
+      .forEach((element) => observer.observe(element));
     return () => observer.disconnect();
-  }, [recompute]);
-
-  const hidden = props.groups.filter((group) => hiddenIds.has(group.id));
-  const visible = props.groups.filter((group) => !hiddenIds.has(group.id));
-  const showOverflowMenu = props.overflowItems !== undefined || hidden.length > 0;
+  }, [layoutKey, props.expanded, recompute, showOverflowMenu, visibleLayoutKey]);
 
   return (
     <div
@@ -377,7 +391,7 @@ export function DockOverflowRow(props: {
                 align="end"
                 popupClassName="w-56"
               >
-                {hidden.map((group, index) => (
+                {overflowGroups.map((group, index) => (
                   <Fragment key={group.id}>
                     {index > 0 ? <MenuSeparator /> : null}
                     {group.overflowLabel ? (
@@ -390,7 +404,9 @@ export function DockOverflowRow(props: {
                     )}
                   </Fragment>
                 ))}
-                {hidden.length > 0 && props.overflowItems !== undefined ? <MenuSeparator /> : null}
+                {overflowGroups.length > 0 && props.overflowItems !== undefined ? (
+                  <MenuSeparator />
+                ) : null}
                 {props.overflowItems}
               </DockMenu>
             ) : null}

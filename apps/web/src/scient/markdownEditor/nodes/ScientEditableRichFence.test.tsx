@@ -9,8 +9,19 @@ import { ScientEditableRichFence } from "./ScientEditableRichFence";
 
 vi.mock("~/scient/diagrams/mermaidRuntime", () => ({ renderMermaidDiagram: vi.fn() }));
 vi.mock("~/scient/presentation/ScientRichFence", () => ({
-  ScientRichFence: ({ source }: { readonly source: string }) => (
-    <pre data-rendered-source>{source}</pre>
+  ScientRichFence: ({
+    authoringActions,
+    source,
+  }: {
+    readonly authoringActions: { readonly onEditSource: () => void };
+    readonly source: string;
+  }) => (
+    <div>
+      <pre data-rendered-source>{source}</pre>
+      <button data-edit-source onClick={authoringActions.onEditSource} type="button">
+        Edit source
+      </button>
+    </div>
   ),
 }));
 
@@ -52,10 +63,13 @@ async function fixture(source = "graph LR\n A --> B") {
     mounted = false;
   };
   cleanups.push(unmount);
+  const onEditSource = vi.fn();
+  const authoringActions = { onEditSource };
   const render = async (nextSource: string, theme: "light" | "dark" = "light") => {
     await act(() =>
       root.render(
         <ScientEditableRichFence
+          authoringActions={authoringActions}
           kind="mermaid"
           language="mermaid"
           source={nextSource}
@@ -68,6 +82,7 @@ async function fixture(source = "graph LR\n A --> B") {
   await render(source);
   return {
     host,
+    onEditSource,
     render,
     unmount,
     enter: () => act(() => observers[0]!.enter()),
@@ -102,6 +117,15 @@ describe("scientific fence validation lifecycle", () => {
     expect(fence.validity()).toBe("valid");
     expect(fence.preview()).toBe("graph RL\n B --> C");
     expect(observers[0]?.disconnect).toHaveBeenCalled();
+  });
+
+  it("passes the editor-owned source action through the shared visual renderer", async () => {
+    const fence = await fixture();
+    const edit = fence.host.querySelector<HTMLButtonElement>("[data-edit-source]")!;
+
+    edit.click();
+
+    expect(fence.onEditSource).toHaveBeenCalledOnce();
   });
 
   it("keeps the last valid preview while invalid source is edited and recovers", async () => {

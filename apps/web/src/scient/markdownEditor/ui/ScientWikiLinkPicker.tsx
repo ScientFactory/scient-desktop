@@ -1,6 +1,7 @@
-import { Brackets, FileText, Search } from "lucide-react";
+import { Brackets, FileText, Search, Unlink } from "lucide-react";
 import { useEffect, useId, useMemo, useRef, useState } from "react";
 
+import { Button } from "~/components/ui/button";
 import { Input } from "~/components/ui/input";
 import { Popover, PopoverPopup, PopoverTitle, PopoverTrigger } from "~/components/ui/popover";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "~/components/ui/tooltip";
@@ -11,14 +12,29 @@ import {
   buildWikiLinkPickerSections,
   type ScientMarkdownWikiLinkCandidate,
   wikiLinkCandidateName,
+  wikiLinkTargetForSelection,
 } from "../wikiLinkPicker";
 import { dockButtonClass } from "./dockChrome";
 
 interface ScientWikiLinkPickerProps {
   readonly candidates: ReadonlyArray<ScientMarkdownWikiLinkCandidate>;
   readonly controller: ScientMarkdownEditorView;
+  readonly disabled: boolean;
   readonly onLinked: (path: string) => void;
+  readonly openRequest: number;
   readonly recentPaths: ReadonlyArray<string>;
+  readonly selectedTarget: string | null;
+}
+
+function editQueryForTarget(
+  target: string,
+  candidates: ReadonlyArray<ScientMarkdownWikiLinkCandidate>,
+): string {
+  const withoutHeading = target.split("#", 1)[0]?.trim() ?? "";
+  const candidate = candidates.find(
+    (item) => item.target === target || item.target === withoutHeading,
+  );
+  return candidate ? wikiLinkCandidateName(candidate) : withoutHeading;
 }
 
 function WikiLinkOption(props: {
@@ -60,6 +76,7 @@ export function ScientWikiLinkPicker(props: ScientWikiLinkPickerProps) {
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
   const [activeIndex, setActiveIndex] = useState(0);
+  const [editingTarget, setEditingTarget] = useState<string | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const listId = useId();
   const sections = useMemo(
@@ -79,21 +96,61 @@ export function ScientWikiLinkPicker(props: ScientWikiLinkPickerProps) {
 
   useEffect(() => {
     if (!open) return;
-    const timeout = window.setTimeout(() => inputRef.current?.focus(), 0);
+    const timeout = window.setTimeout(() => {
+      inputRef.current?.focus();
+      if (editingTarget !== null) inputRef.current?.select();
+    }, 0);
     return () => window.clearTimeout(timeout);
-  }, [open]);
+  }, [editingTarget, open]);
+
+  useEffect(() => {
+    if (props.openRequest === 0) return;
+    if (!props.disabled && props.selectedTarget !== null) {
+      setEditingTarget(props.selectedTarget);
+      setQuery(editQueryForTarget(props.selectedTarget, props.candidates));
+      setActiveIndex(0);
+      setOpen(true);
+    }
+    props.controller.acknowledgeWikiLinkEditRequest(props.openRequest);
+  }, [props.candidates, props.controller, props.disabled, props.openRequest, props.selectedTarget]);
+
+  useEffect(() => {
+    if (!props.disabled || !open) return;
+    setOpen(false);
+    setQuery("");
+    setActiveIndex(0);
+    setEditingTarget(null);
+  }, [open, props.disabled]);
 
   const changeOpen = (nextOpen: boolean) => {
+    if (nextOpen && props.disabled) return;
+    if (nextOpen) {
+      setEditingTarget(props.selectedTarget);
+      setQuery(
+        props.selectedTarget === null
+          ? ""
+          : editQueryForTarget(props.selectedTarget, props.candidates),
+      );
+      setActiveIndex(0);
+    }
     setOpen(nextOpen);
     if (!nextOpen) {
       setQuery("");
       setActiveIndex(0);
+      setEditingTarget(null);
     }
   };
 
   const choose = (candidate: ScientMarkdownWikiLinkCandidate) => {
-    if (!props.controller.setWikiLink(candidate.target)) return;
+    if (props.disabled) return;
+    const target = wikiLinkTargetForSelection(candidate.target, editingTarget);
+    if (target !== editingTarget && !props.controller.setWikiLink(target)) return;
     props.onLinked(candidate.path);
+    changeOpen(false);
+  };
+
+  const remove = () => {
+    if (editingTarget === null || !props.controller.removeWikiLink()) return;
     changeOpen(false);
   };
 
@@ -126,6 +183,7 @@ export function ScientWikiLinkPicker(props: ScientWikiLinkPickerProps) {
                   type="button"
                   className={dockButtonClass(false)}
                   aria-label="Link selection to a Markdown file"
+                  disabled={props.disabled}
                 >
                   <Brackets className="size-4" />
                 </button>
@@ -143,7 +201,9 @@ export function ScientWikiLinkPicker(props: ScientWikiLinkPickerProps) {
       >
         <div className="flex flex-col gap-2">
           <div className="flex items-center justify-between px-1">
-            <PopoverTitle className="text-xs font-medium">Link to Markdown</PopoverTitle>
+            <PopoverTitle className="text-xs font-medium">
+              {editingTarget === null ? "Link to Markdown" : "Edit wiki link"}
+            </PopoverTitle>
             <span className="text-[10px] text-muted-foreground">Enter to select</span>
           </div>
           <div className="relative">
@@ -232,6 +292,21 @@ export function ScientWikiLinkPicker(props: ScientWikiLinkPickerProps) {
               </>
             )}
           </div>
+          {editingTarget !== null ? (
+            <div className="border-t border-border pt-1">
+              <Button
+                className="text-muted-foreground hover:text-destructive"
+                size="xs"
+                type="button"
+                variant="ghost"
+                onMouseDown={(event) => event.preventDefault()}
+                onClick={remove}
+              >
+                <Unlink className="size-3.5" />
+                Remove link
+              </Button>
+            </div>
+          ) : null}
         </div>
       </PopoverPopup>
     </Popover>

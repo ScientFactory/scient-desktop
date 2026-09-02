@@ -1172,6 +1172,15 @@ export default function FilePreviewPanel({
             : effectiveSourcePending
               ? "saving"
               : "saved";
+  const usesScientMarkdownEditor =
+    relativePath !== null &&
+    file.data !== null &&
+    shouldUseScientMarkdownEditor({
+      path: relativePath,
+      readOnly: file.data.readOnly ?? false,
+      renderMarkdown,
+      truncated: file.data.truncated,
+    });
   const handleRenderMarkdownChange = useCallback(
     (pressed: boolean) => {
       const apply = () => {
@@ -1280,7 +1289,12 @@ export default function FilePreviewPanel({
     <div className="flex min-h-0 flex-1 flex-col overflow-hidden bg-background">
       {relativePath ? (
         <div
-          className="flex h-10 min-h-10 shrink-0 items-center gap-2 border-b border-border/60 bg-background px-3 in-data-[preview-panel-mode=inline]:mb-3 in-data-[preview-panel-mode=inline]:h-7 in-data-[preview-panel-mode=inline]:min-h-7 in-data-[preview-panel-mode=inline]:border-b-transparent"
+          className={cn(
+            "flex h-10 min-h-10 shrink-0 items-center gap-2 border-b border-border/60 bg-background px-3 in-data-[preview-panel-mode=inline]:h-7 in-data-[preview-panel-mode=inline]:min-h-7 in-data-[preview-panel-mode=inline]:border-b-transparent",
+            usesScientMarkdownEditor
+              ? "in-data-[preview-panel-mode=inline]:mb-2"
+              : "in-data-[preview-panel-mode=inline]:mb-3",
+          )}
           data-surface-subheader
         >
           <ScrollArea
@@ -1546,12 +1560,7 @@ export default function FilePreviewPanel({
                   saveResolution={saveResolution}
                 />
               </Suspense>
-            ) : shouldUseScientMarkdownEditor({
-                path: relativePath,
-                readOnly: file.data.readOnly ?? false,
-                renderMarkdown,
-                truncated: file.data.truncated,
-              }) ? (
+            ) : usesScientMarkdownEditor ? (
               <Suspense
                 fallback={
                   <div className="flex min-h-0 flex-1 items-center justify-center text-muted-foreground">
@@ -1567,6 +1576,7 @@ export default function FilePreviewPanel({
                   threadRef={threadRef}
                   contents={file.data.contents}
                   revision={file.data.revision}
+                  resolvedTheme={resolvedTheme}
                   authoritativeSnapshot={markdownAuthoritativeSnapshot}
                   onOpenFile={onOpenFile}
                   onPendingChange={handlePendingChange}

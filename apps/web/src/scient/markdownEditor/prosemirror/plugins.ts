@@ -22,6 +22,7 @@ import { liftListItem, sinkListItem, splitListItem, wrapInList } from "prosemirr
 import { Plugin, PluginKey, type Command } from "prosemirror-state";
 import { goToNextCell, tableEditing } from "prosemirror-tables";
 
+import { scientMarkdownDirectionPresentationPlugin } from "./directionPresentation";
 import { scientMarkdownSchema } from "./schema";
 import { imageUploadPlugin } from "./imageUploads";
 import { scientMarkdownOutlinePlugin } from "./outline";
@@ -133,6 +134,7 @@ function sourceIdentityPlugin(): Plugin {
 export function buildScientMarkdownPlugins(): ReadonlyArray<Plugin> {
   return [
     sourceIdentityPlugin(),
+    scientMarkdownDirectionPresentationPlugin(),
     imageUploadPlugin(),
     scientMarkdownSearchPlugin(),
     scientMarkdownOutlinePlugin(),

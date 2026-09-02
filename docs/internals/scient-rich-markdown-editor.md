@@ -65,25 +65,91 @@ formatting controls preserves scroll and selection where the surfaces allow.
 - The editing controls provide text formatting, lists, headings, links, and an overflow home for
   block insertion and less common actions. Find and replace moves to the editor's native search
   panel now; a redesigned Scient search surface is a follow-up, not part of this control row.
-- In Rendered, ordinary Markdown links use Command/Ctrl-click so text remains easy to edit. Wiki
-  links open with primary click, remain drag-selectable, and expose their editor only after an
-  explicit node selection or double-click.
+- Table insertion opens the existing nested-menu surface with a compact 8-by-8 visual size picker.
+  Pointer hover and two-dimensional keyboard focus preview the selected rectangle without touching
+  the document. Approaching an edge expands that axis progressively, up to 15-by-15. The card grows
+  normally toward its initially chosen side, which is locked for that open session. When that side's
+  available inline space is exhausted, the card stays still and only the grid scrolls horizontally,
+  automatically revealing each new column. Rows always expand the card and never enter a vertical
+  picker scroller. A popup initially placed to the left mirrors its trigger-facing origin and
+  physical arrow movement. Pointer movement may continue selection for two-and-a-half cell pitches
+  beyond the bottom or horizontal growth edge, so a fast pointer can reveal crossed rows or columns
+  without waiting for every new cell to mount. This continuation is movement-driven and bounded:
+  it stops immediately when the pointer stops or leaves that narrow region. Activation inserts the
+  chosen size as one normal editor transaction. The ordinary `table` and slash commands retain the
+  stable 3-by-3 default.
+- In Rendered, ordinary and wiki links open with primary click after the pointer interaction is
+  known not to be a drag or double-click; Command/Ctrl-click opens immediately. Both remain
+  drag-selectable. Right-click/two-finger click selects the exact link and opens the app context
+  menu. **Copy link** preserves the authored destination; resolvable workspace links also expose
+  **Copy full path** without performing navigation. The edit action reuses the ordinary-link
+  editor or searchable wiki-link picker. Wiki links also expose that picker after an exact
+  selection or double-click.
+- An active editable table keeps one quiet, out-of-flow corner handle. Primary click selects the
+  complete table. Right-click/two-finger click on that handle, or on an unselected table cell,
+  opens the app table menu and reuses the existing row, column, alignment, direction, selection,
+  and deletion commands. Link menus take precedence inside cells, while selected prose retains
+  the platform text menu. Opening or cancelling the table menu cannot alter source or save state.
+- Internal-link activation verifies the exact workspace entry through the existing server-owned
+  directory operation before changing the active file. Missing files, malformed paths, failed
+  checks, and missing same-document headings keep the current document open and show compact
+  feedback anchored to the activated link; direct file-opening failures retain their normal file
+  surface. External links keep the established shell-opening path.
+- Mermaid, Vega-Lite, and Plotly cards own their normal hover, pointer, wheel, drag, and
+  double-click behavior in both the preview and rendered editor. Source editing is an explicit
+  authoring action in the card's More menu or native right-click/two-finger menu; it never follows
+  from ordinary chart interaction.
 - Escape moves outward through nested editors and popovers in a predictable order.
+
+The persistent rendered editor owns a scoped presentation layer that tracks the established
+`FileMarkdownPreview` measure, inset, type scale, rhythm, contrast, links, quotes, code, images,
+and table separators. It does not mount `ChatMarkdown`, swap DOM trees, or import the global
+`.chat-markdown` class: selection, caret geometry, editable tables, exact-source islands, and
+source-preserving transactions remain editor-owned. Narrow parity tests read both presentations
+so an upstream preview change becomes an explicit review instead of silent visual drift.
+
+Editing-specific exceptions are intentional and bounded: authored spaces remain caret-visible;
+tables stay fully editable instead of gaining the preview's collapsed-cell truncation; and
+selection, source, and formatting controls appear only while interacting. These exceptions may
+not alter Markdown source unless the user performs an editing command.
 
 ### Node behavior
 
-| Node                          | Rendered-editor behavior                                            | Markdown authority                                                      |
-| ----------------------------- | ------------------------------------------------------------------- | ----------------------------------------------------------------------- |
-| Paragraph and heading         | Direct rich editing with stable typography                          | Preserve original marks and delimiters until edited                     |
-| Bulleted, numbered, task list | Rich list editing; Enter/Tab/Shift-Tab change structure             | Preserve bullet/delimiter style for untouched items                     |
-| Table                         | Editable cells; contextual row, column, and alignment actions       | GFM table with one header row; preserve cell content on save and reopen |
-| Link and `[[wiki link]]`      | Underlined label; explicit selection opens editing and completion   | Keep local relative destinations and wiki syntax                        |
-| Code block                    | Syntax-highlighted; embedded CodeMirror activates on selection      | Preserve fence marker, length, language, and metadata when untouched    |
-| Inline/display math           | Typeset while inactive; compact TeX editor when selected            | Keep original delimiters and source until changed                       |
-| Image/figure                  | Rendered with selection, alt text, caption, path, and size controls | Use portable relative paths and ordinary Markdown where possible        |
-| Citation/footnote             | Rendered label with nested editor or inspector                      | Preserve citation keys, reference definitions, and footnote structure   |
-| Mermaid/Vega/Plotly           | Rendered preview with an in-place source/config editor              | Retain the last valid render during invalid intermediate input          |
-| Raw/unknown construct         | Sanitized preview when safe plus an in-place source island          | Preserve the complete original source verbatim until explicitly edited  |
+| Node                          | Rendered-editor behavior                                                     | Markdown authority                                                      |
+| ----------------------------- | ---------------------------------------------------------------------------- | ----------------------------------------------------------------------- |
+| Paragraph and heading         | Direct rich editing with stable typography                                   | Preserve original marks and delimiters until edited                     |
+| Bulleted, numbered, task list | Rich list editing; Enter/Tab/Shift-Tab change structure                      | Preserve bullet/delimiter style for untouched items                     |
+| Table                         | Editable cells; contextual row, column, and alignment actions                | GFM table with one header row; preserve cell content on save and reopen |
+| Link and `[[wiki link]]`      | Underlined label; click follows, while drag/double-click selects for editing | Keep explicit, reference, GFM-autolink, relative, and wiki syntax       |
+| Code block                    | Syntax-highlighted; embedded CodeMirror activates on selection               | Preserve fence marker, length, language, and metadata when untouched    |
+| Inline/display math           | Typeset while inactive; compact TeX editor when selected                     | Preserve `$…$`, `$$…$$`, `\(…\)`, or `\[…\]` when edited                |
+| Image/figure                  | Rendered with selection, alt text, caption, path, and size controls          | Use portable relative paths and ordinary Markdown where possible        |
+| Citation                      | Rendered source label; selection reveals its compact source editor           | Preserve citation keys and source syntax                                |
+| Footnote                      | Numbered marker navigates to a visible definition with return backlinks      | Keep generated labels internal and preserve repeated-reference binding  |
+| Mermaid/Vega/Plotly           | Preview-identical interactive card; explicit menu action opens source        | Retain the last valid render during invalid intermediate input          |
+| Reference definition          | Hidden while reading; compact exact-source disclosure while authoring        | Preserve the complete definition verbatim until explicitly edited       |
+| Other raw/unknown construct   | One persistent in-place source field; no separate preview/editor             | Preserve the complete original source verbatim until explicitly edited  |
+
+Recognized scientific fences remain `code_block` nodes for source fidelity, selection, and nested
+CodeMirror editing. Their NodeView is presentation-neutral while inactive: the same shared
+Mermaid/Vega-Lite/Plotly renderer used by the established preview owns spacing, typography, and
+visual chrome and receives the pointer events inside the rendered card. Only an explicit **Edit
+source** action selects the node and opens the nested code surface; the rendered visual remains
+mounted alongside it. The same editor-owned command backs both the More-menu item and the native
+context menu, so those entry points cannot drift into separate editing behavior.
+
+Footnotes are one paired document feature rather than an ordinary hyperlink or an editable label.
+The Insert menu and `/footnote` command create a collision-free reference plus its definition in
+one undo step, then focus the definition body. Reader-facing numbers follow first reference order;
+repeated labels share a number and receive individual return backlinks. Clicking a marker goes to
+the definition without an intermediate selection outline. Its native context menu is limited to
+footnote navigation, copying the internal fragment, removing that occurrence, and deleting the
+definition only with its final reference. Missing definitions remain visibly non-dead and removable.
+
+Top-level link definitions remain raw source-ledger nodes because their exact spelling is part of
+the document authority. They are omitted from read presentation, as in the established Markdown
+preview, and appear as compact collapsed rows in the authoring surface. Expanding a row edits the
+same exact source field; there is no copied form model or definition reserialization layer.
 
 ### File lifecycle
 
@@ -191,12 +257,22 @@ wide tables scroll within their existing wrapper. Keep this adapter limited to i
 paragraph-based cells should use the upstream handler.
 
 The active table has a small, out-of-flow select button only in write mode, plus the same action
-in its command menu. Both create the upstream `CellSelection` spanning every cell: selection
+in the dock's unified **More actions** menu. The dock keeps only the common add-row, add-column,
+and alignment controls visible; it does not add a second table-specific ellipsis. Both table
+selection actions create the upstream `CellSelection` spanning every cell: selection
 does not modify source, create an undo step, or start a save. The chrome wraps `TableView` without
-replacing its content or column machinery. Direction belongs to the table as one block (including
+replacing its content or column machinery. The handle and unselected table cells also open one
+native context menu whose items call these same commands; the menu is not another table model or
+save path. Direction belongs to the table as one block (including
 when invoked from a cell) and uses the existing `<div dir="ltr|rtl">` Markdown convention. Auto
-removes that wrapper; no cell-level HTML format or second table model is introduced. Explicit
-document commands begin separate undo steps, even when invoked in quick succession.
+removes that wrapper and derives column order from the dominant strong script across the complete
+table, not only its header. An explicit table direction overrides that structural inference, while
+each cell derives text flow from its own dominant strong script and falls back to the automatic
+table direction only when tied or neutral. A manual table direction therefore changes column order
+without changing cell punctuation flow. GFM left, center, and right column alignment remains
+physical and does not flip with cell direction. Cell direction is decoration only: no cell-level
+HTML format or second table model is introduced. Explicit document commands begin separate undo
+steps, even when invoked in quick succession.
 
 One workspace surface owns exactly one editor controller, one document session, and one serial
 save queue. React mounts that controller but does not mirror the document source in component
@@ -215,6 +291,15 @@ against the acknowledged revision.
 Controller callbacks forward to current host bindings without remounting the rich editor. The
 file adapter keys controller ownership by environment, workspace root, and relative path. The
 pending-surface adapter reads current departure state when a link or host control invokes it.
+
+NodeViews that depend on state outside the document register with one controller-owned
+presentation channel. Workspace-index changes retry unresolved images and refresh wiki-target
+status; appearance changes refresh rendered code. Neither path creates a transaction or save.
+
+Document direction is also presentation state. The controller derives stable block directions
+from visible prose while technical nodes remain LTR. In an RTL prose block, only standalone
+right-flow arrow glyphs are mirrored with decorations; code, math, links, source bytes, copied
+text, undo history, and save state remain unchanged.
 
 All selected packages are MIT-licensed. The rich surface remains isolated behind the Markdown
 file mount; expensive nested source and scientific renderers load only when their surfaces are

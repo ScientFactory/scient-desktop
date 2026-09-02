@@ -8,8 +8,8 @@ function isWordCharacter(value: string | undefined): boolean {
 }
 
 /**
- * Literal (never regex) case/whole-word aware matching shared by the
- * ProseMirror and CodeMirror surfaces, so find behaves identically in both.
+ * Literal (never regex) case/whole-word aware matching for the rich Markdown
+ * document search surface.
  */
 export function markdownTextMatches(
   text: string,

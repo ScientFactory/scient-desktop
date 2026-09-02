@@ -1956,8 +1956,8 @@ code {
   background: transparent !important;
 }
 
-/* Diagnostics-style tables: row separators only, uppercase headers, and a
-   scroll-fade container for horizontal overflow. The root chat-markdown
+/* Diagnostics-style tables: interrupted row separators only, uppercase
+   headers, and a scroll-fade container for horizontal overflow. The root chat-markdown
    wrapping rules (overflow-wrap: anywhere) would let columns shrink to single
    characters and defeat the overflow — restore word-boundary wrapping so the
    min column width is the longest word. */
@@ -1976,15 +1976,23 @@ code {
   text-align: left;
 }
 
+.chat-markdown thead th,
+.chat-markdown tbody td {
+  border-bottom: 1px solid transparent;
+  background-image: linear-gradient(
+    to right,
+    color-mix(in srgb, var(--contrast-border) 60%, transparent),
+    color-mix(in srgb, var(--contrast-border) 60%, transparent)
+  );
+  background-position: center bottom;
+  background-repeat: no-repeat;
+  background-size: calc(100% - 1rem) 1px;
+}
+
 .chat-markdown thead th {
-  border-bottom: 1px solid color-mix(in srgb, var(--contrast-border) 60%, transparent);
   padding-block: 0.55rem;
   font-weight: 600;
   white-space: nowrap;
-}
-
-.chat-markdown tbody td {
-  border-bottom: 1px solid color-mix(in srgb, var(--contrast-border) 60%, transparent);
 }
 
 /* Collapsed (default): single-line cells truncate so arbitrary chat content

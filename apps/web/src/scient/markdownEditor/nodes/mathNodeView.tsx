@@ -1,5 +1,6 @@
 import { createRoot, type Root } from "react-dom/client";
 import type { Node as ProseMirrorNode } from "prosemirror-model";
+import { NodeSelection } from "prosemirror-state";
 import type { EditorView, NodeView } from "prosemirror-view";
 
 import {
@@ -29,8 +30,10 @@ class ScientMathNodeView implements NodeView {
     private readonly getPos: () => number | undefined,
   ) {
     this.node = node;
-    const display = node.type.name === "display_math";
-    this.dom = document.createElement(display ? "div" : "span");
+    const display = this.isDisplay(node);
+    // An authored \\[...\\] pair can be display-styled inside prose. Keep its
+    // NodeView DOM inline-valid; only a top-level display_math node owns a div.
+    this.dom = document.createElement(node.type.name === "display_math" ? "div" : "span");
     this.dom.className = display
       ? "scient-markdown-math is-display"
       : "scient-markdown-math is-inline";
@@ -39,11 +42,13 @@ class ScientMathNodeView implements NodeView {
 
     this.renderHost = document.createElement("span");
     this.renderHost.className = "scient-markdown-math-render";
+    this.renderHost.addEventListener("click", this.handleRenderClick);
     this.dom.append(this.renderHost);
     this.sourceEditor = document.createElement(display ? "textarea" : "input");
     this.sourceEditor.className = "scient-markdown-math-source";
     this.sourceEditor.dir = "ltr";
     this.sourceEditor.hidden = true;
+    if (this.sourceEditor instanceof HTMLTextAreaElement) this.sourceEditor.rows = 1;
     this.sourceEditor.setAttribute(
       "aria-label",
       display ? "Display math source" : "Inline math source",
@@ -62,7 +67,9 @@ class ScientMathNodeView implements NodeView {
   }
 
   update(node: ProseMirrorNode): boolean {
-    if (node.type !== this.node.type) return false;
+    if (node.type !== this.node.type || this.isDisplay(node) !== this.isDisplay(this.node)) {
+      return false;
+    }
     this.node = node;
     if (this.sourceEditor !== document.activeElement) {
       this.sourceEditor.value = String(node.attrs.tex);
@@ -73,8 +80,7 @@ class ScientMathNodeView implements NodeView {
 
   selectNode(): void {
     this.dom.classList.add("is-selected");
-    this.sourceEditor.hidden = false;
-    this.sourceEditor.value = String(this.node.attrs.tex);
+    if (this.view.editable) this.showSourceEditor();
   }
 
   deselectNode(): void {
@@ -93,6 +99,7 @@ class ScientMathNodeView implements NodeView {
   destroy(): void {
     this.destroyed = true;
     this.validationVersion += 1;
+    this.renderHost.removeEventListener("click", this.handleRenderClick);
     this.sourceEditor.removeEventListener("input", this.handleInput);
     this.sourceEditor.removeEventListener("keydown", this.handleKeyDown);
     this.reactRoot.unmount();
@@ -108,6 +115,24 @@ class ScientMathNodeView implements NodeView {
         tex: this.sourceEditor.value,
       }),
     );
+  };
+
+  private readonly handleRenderClick = (event: Event) => {
+    if (!(event instanceof MouseEvent) || event.button !== 0 || !this.view.editable) return;
+    const position = this.getPos();
+    if (position === undefined) return;
+    const selection = this.view.state.selection;
+    if (!(selection instanceof NodeSelection) || selection.from !== position) {
+      this.view.dispatch(
+        this.view.state.tr
+          .setSelection(NodeSelection.create(this.view.state.doc, position))
+          .setMeta("addToHistory", false),
+      );
+    }
+    this.showSourceEditor();
+    this.sourceEditor.focus();
+    const caret = this.sourceEditor.value.length;
+    this.sourceEditor.setSelectionRange(caret, caret);
   };
 
   private readonly handleKeyDown = (event: Event) => {
@@ -127,7 +152,7 @@ class ScientMathNodeView implements NodeView {
       this.lastValidTex ?? tex,
       this.lastValidTex !== null && this.lastValidTex !== tex,
     );
-    const display = this.node.type.name === "display_math";
+    const display = this.isDisplay(this.node);
     void getScientKatexRuntimePromise()
       .then(({ renderScientTexToHtml }) => renderScientTexToHtml(tex, display))
       .then((html) => {
@@ -151,6 +176,11 @@ class ScientMathNodeView implements NodeView {
       .catch(() => this.settleInvalid(version, tex));
   }
 
+  private showSourceEditor(): void {
+    this.sourceEditor.hidden = false;
+    this.sourceEditor.value = String(this.node.attrs.tex);
+  }
+
   private settleInvalid(version: number, tex: string): void {
     if (this.destroyed || version !== this.validationVersion) return;
     this.currentValidity = false;
@@ -166,12 +196,12 @@ class ScientMathNodeView implements NodeView {
       retained ? "retained" : "current",
     );
     this.reactRoot.render(
-      this.node.type.name === "display_math" ? (
-        <ScientDisplayMath tex={tex} />
-      ) : (
-        <ScientInlineMath tex={tex} />
-      ),
+      this.isDisplay(this.node) ? <ScientDisplayMath tex={tex} /> : <ScientInlineMath tex={tex} />,
     );
+  }
+
+  private isDisplay(node: ProseMirrorNode): boolean {
+    return node.type.name === "display_math" || node.attrs.display === true;
   }
 }
 

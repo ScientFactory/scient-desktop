@@ -6,7 +6,7 @@ import { CellSelection } from "prosemirror-tables";
 
 import { scientMarkdownSchema } from "./schema";
 import { createScientMarkdownProjection } from "./projection";
-import { ScientMarkdownEditorView } from "./view";
+import { ScientMarkdownEditorView, type ScientMarkdownEditorViewOptions } from "./view";
 
 const TABLE = "| Name | Value |\n| --- | ---: |\n| שלום | 42 |\n| World | 7 |";
 const SOURCE = `Before.\n\n${TABLE}\n\nAfter.\n`;
@@ -17,7 +17,12 @@ afterEach(() => {
   document.body.replaceChildren();
 });
 
-function mount(source = SOURCE) {
+function mount(
+  source = SOURCE,
+  options: Partial<
+    Pick<ScientMarkdownEditorViewOptions, "showLinkContextMenu" | "showTableContextMenu">
+  > = {},
+) {
   const onUserSourceChange = vi.fn();
   const controller = new ScientMarkdownEditorView({
     source,
@@ -25,6 +30,7 @@ function mount(source = SOURCE) {
     mode: "write",
     ariaLabel: "Tables",
     onUserSourceChange,
+    ...options,
   });
   controllers.push(controller);
   const host = document.body.appendChild(document.createElement("div"));
@@ -69,6 +75,7 @@ describe("whole Markdown table selection", () => {
     const originalTableDOM = active.querySelector("table");
     const button = active.querySelector<HTMLButtonElement>("button")!;
     expect(button.getAttribute("aria-label")).toBe("Select whole table");
+    expect(button.querySelector("svg")?.getAttribute("stroke-width")).toBe("1.5");
     button.click();
     expect(view.state.selection).toBeInstanceOf(CellSelection);
     const selection = view.state.selection as CellSelection;
@@ -110,6 +117,127 @@ describe("whole Markdown table selection", () => {
     expect(controller.session.session.draftSource.endsWith("\n\nAfter.\n")).toBe(true);
     controller.execute("undo");
     expect(controller.session.session.draftSource).toBe(SOURCE);
+  });
+
+  it("runs the existing table command against the right-clicked cell", async () => {
+    const showTableContextMenu = vi.fn(async () => "delete-row" as const);
+    const { controller, host, view, cells, select, onUserSourceChange } = mount(SOURCE, {
+      showTableContextMenu,
+    });
+    select(cells[0]! + 1);
+    const target = host.querySelectorAll<HTMLTableCellElement>("tbody td")[2]!;
+    const event = new MouseEvent("contextmenu", {
+      bubbles: true,
+      cancelable: true,
+      clientX: 38,
+      clientY: 52,
+    });
+
+    target.dispatchEvent(event);
+
+    expect(event.defaultPrevented).toBe(true);
+    expect(showTableContextMenu).toHaveBeenCalledExactlyOnceWith({ x: 38, y: 52 });
+    await vi.waitFor(() => expect(controller.session.session.draftSource).not.toContain("World"));
+    expect(controller.session.session.draftSource).toContain("שלום");
+    expect(onUserSourceChange).toHaveBeenCalledOnce();
+    expect(view.hasFocus()).toBe(true);
+  });
+
+  it("opens the handle menu without selecting or mutating the table", async () => {
+    const showTableContextMenu = vi.fn(async () => null);
+    const { controller, host, view, cells, select, onUserSourceChange } = mount(SOURCE, {
+      showTableContextMenu,
+    });
+    select(cells[2]! + 1);
+    const beforeSelection = view.state.selection;
+    const button = host.querySelector<HTMLButtonElement>(".scient-markdown-table-select")!;
+    const primaryMouseDown = new MouseEvent("mousedown", { bubbles: true, cancelable: true });
+    button.dispatchEvent(primaryMouseDown);
+    expect(primaryMouseDown.defaultPrevented).toBe(true);
+    const secondaryMouseDown = new MouseEvent("mousedown", {
+      bubbles: true,
+      button: 2,
+      cancelable: true,
+    });
+    button.dispatchEvent(secondaryMouseDown);
+    expect(secondaryMouseDown.defaultPrevented).toBe(false);
+    const event = new MouseEvent("contextmenu", {
+      bubbles: true,
+      cancelable: true,
+      clientX: 11,
+      clientY: 19,
+    });
+
+    button.dispatchEvent(event);
+
+    expect(event.defaultPrevented).toBe(true);
+    expect(showTableContextMenu).toHaveBeenCalledExactlyOnceWith({ x: 11, y: 19 });
+    await vi.waitFor(() => expect(showTableContextMenu).toHaveBeenCalledOnce());
+    expect(view.state.selection.eq(beforeSelection)).toBe(true);
+    expect(controller.session.session.draftSource).toBe(SOURCE);
+    expect(onUserSourceChange).not.toHaveBeenCalled();
+  });
+
+  it("preserves native text actions and gives links precedence inside cells", async () => {
+    const showTableContextMenu = vi.fn(async () => null);
+    const showLinkContextMenu = vi.fn(async () => null);
+    const source = "| Link |\n| --- |\n| [[Notes]] and words |\n";
+    const { host, view, cells } = mount(source, {
+      showLinkContextMenu,
+      showTableContextMenu,
+    });
+    view.dispatch(
+      view.state.tr.setSelection(
+        TextSelection.create(view.state.doc, cells[1]! + 1, cells[1]! + 3),
+      ),
+    );
+    const cell = host.querySelector<HTMLTableCellElement>("tbody td")!;
+    const textEvent = new MouseEvent("contextmenu", { bubbles: true, cancelable: true });
+    cell.dispatchEvent(textEvent);
+    expect(textEvent.defaultPrevented).toBe(false);
+    expect(showTableContextMenu).not.toHaveBeenCalled();
+
+    const link = host.querySelector<HTMLElement>("[data-scient-markdown-wiki-link]")!;
+    link.dispatchEvent(
+      new MouseEvent("contextmenu", {
+        bubbles: true,
+        cancelable: true,
+        clientX: 24,
+        clientY: 31,
+      }),
+    );
+    await vi.waitFor(() => expect(showLinkContextMenu).toHaveBeenCalledOnce());
+    expect(showTableContextMenu).not.toHaveBeenCalled();
+  });
+
+  it("ignores a delayed table action after the selection leaves its context", async () => {
+    let resolveMenu!: (action: "delete-row") => void;
+    const showTableContextMenu = vi.fn(
+      () =>
+        new Promise<"delete-row">((resolve) => {
+          resolveMenu = resolve;
+        }),
+    );
+    const { controller, host, view, onUserSourceChange } = mount(SOURCE, {
+      showTableContextMenu,
+    });
+    const target = host.querySelector<HTMLTableCellElement>("tbody td")!;
+    target.dispatchEvent(
+      new MouseEvent("contextmenu", {
+        bubbles: true,
+        cancelable: true,
+        clientX: 17,
+        clientY: 29,
+      }),
+    );
+    expect(showTableContextMenu).toHaveBeenCalledOnce();
+
+    view.dispatch(view.state.tr.setSelection(TextSelection.create(view.state.doc, 1)));
+    resolveMenu("delete-row");
+    await Promise.resolve();
+
+    expect(controller.session.session.draftSource).toBe(SOURCE);
+    expect(onUserSourceChange).not.toHaveBeenCalled();
   });
 
   it.each(["ltr", "rtl"] as const)(

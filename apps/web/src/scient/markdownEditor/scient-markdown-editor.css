@@ -16,16 +16,15 @@
 
 .scient-markdown-rich-pane {
   display: flex;
+  position: relative;
   min-width: 0;
   min-height: 0;
   flex: 1 1 0;
-}
-
-.scient-markdown-rich-pane {
-  position: relative;
   flex-direction: column;
 }
 
+/* Fixed height in both collapsed and expanded states so toggling the chrome
+   never shifts the document; overflow scrolls sideways instead of wrapping. */
 .scient-markdown-editor-dock {
   position: relative;
   z-index: 20;
@@ -38,14 +37,9 @@
   border-block-end: 1px solid var(--border);
   border-radius: 0;
   background: var(--background);
-  padding: 0.35rem 0.65rem;
+  padding: 0.25rem 0.65rem;
   box-shadow: none;
-}
-
-/* Fixed height in both collapsed and expanded states so toggling the chrome
-   never shifts the document; overflow scrolls sideways instead of wrapping. */
-.scient-markdown-editor-dock {
-  height: 2.5rem;
+  height: 2.25rem;
   flex-wrap: nowrap;
   overflow-x: auto;
   overflow-y: hidden;
@@ -74,6 +68,34 @@
   display: none;
 }
 
+/* The table-size card grows with its grid until the current side runs out of
+   room. Only its horizontal overflow scrolls, using deliberately quieter
+   chrome than the application-wide scrollbar. */
+.scient-markdown-table-size-viewport {
+  scrollbar-color: color-mix(in oklab, var(--contrast-muted-foreground) 18%, transparent)
+    transparent;
+  scrollbar-width: thin;
+}
+
+.scient-markdown-table-size-viewport::-webkit-scrollbar {
+  width: 0;
+  height: 2px;
+}
+
+.scient-markdown-table-size-viewport::-webkit-scrollbar-track,
+.scient-markdown-table-size-viewport::-webkit-scrollbar-corner {
+  background: transparent;
+}
+
+.scient-markdown-table-size-viewport::-webkit-scrollbar-thumb {
+  border-radius: 999px;
+  background: color-mix(in oklab, var(--contrast-muted-foreground) 18%, transparent);
+}
+
+.scient-markdown-table-size-viewport::-webkit-scrollbar-thumb:hover {
+  background: color-mix(in oklab, var(--contrast-muted-foreground) 28%, transparent);
+}
+
 .scient-markdown-command-button,
 .scient-markdown-slash-menu button {
   display: inline-flex;
@@ -90,6 +112,13 @@
   font-size: 0.75rem;
   line-height: 1;
   cursor: pointer;
+}
+
+/* Keep the established button targets while making the primary toolbar glyphs
+   one pixel quieter. Menu chevrons retain their intentionally smaller size. */
+.scient-markdown-command-button > svg:first-child {
+  width: 0.9375rem;
+  height: 0.9375rem;
 }
 
 .scient-markdown-command-button:hover,
@@ -158,99 +187,6 @@
   padding-inline: 0.55rem;
 }
 
-.scient-markdown-link-actions {
-  display: flex;
-  justify-content: flex-end;
-  gap: 0.25rem;
-}
-
-.scient-markdown-outline-popover {
-  position: absolute;
-  z-index: 30;
-  inset-block-start: calc(100% + 0.4rem);
-  inset-inline-start: 0;
-  display: flex;
-  width: min(19rem, calc(100vw - 2rem));
-  max-height: min(28rem, 65vh);
-  flex-direction: column;
-  gap: 0.35rem;
-  overflow-y: auto;
-  border: 1px solid var(--border);
-  border-radius: 0.55rem;
-  background: var(--popover);
-  padding: 0.55rem;
-  color: var(--popover-foreground);
-  box-shadow: 0 0.6rem 2rem color-mix(in oklab, black 16%, transparent);
-}
-
-.scient-markdown-outline-popover > strong {
-  padding-inline: 0.35rem;
-  font-size: 0.72rem;
-  font-weight: 600;
-}
-
-.scient-markdown-outline-popover > p {
-  margin: 0;
-  padding: 0.5rem 0.35rem;
-  color: var(--muted-foreground);
-  font-size: 0.75rem;
-}
-
-.scient-markdown-outline-popover ol {
-  display: flex;
-  flex-direction: column;
-  gap: 0.05rem;
-  margin: 0;
-  padding: 0;
-  list-style: none;
-}
-
-.scient-markdown-outline-popover button {
-  width: 100%;
-  overflow: hidden;
-  border-radius: 0.35rem;
-  padding-block: 0.35rem;
-  padding-inline-end: 0.45rem;
-  color: var(--muted-foreground);
-  font-size: 0.75rem;
-  text-align: start;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.scient-markdown-outline-popover button:hover,
-.scient-markdown-outline-popover button:focus-visible,
-.scient-markdown-outline-popover button[aria-current="location"] {
-  background: var(--accent);
-  color: var(--foreground);
-  outline: none;
-}
-
-.scient-markdown-outline-popover button.is-level-1 {
-  padding-inline-start: 0.4rem;
-  font-weight: 600;
-}
-
-.scient-markdown-outline-popover button.is-level-2 {
-  padding-inline-start: 1rem;
-}
-
-.scient-markdown-outline-popover button.is-level-3 {
-  padding-inline-start: 1.6rem;
-}
-
-.scient-markdown-outline-popover button.is-level-4 {
-  padding-inline-start: 2.2rem;
-}
-
-.scient-markdown-outline-popover button.is-level-5 {
-  padding-inline-start: 2.8rem;
-}
-
-.scient-markdown-outline-popover button.is-level-6 {
-  padding-inline-start: 3.4rem;
-}
-
 .scient-markdown-slash-menu {
   inset-block-start: 3rem;
   inset-inline-start: max(1rem, calc((100% - 56rem) / 2 + 1.5rem));
@@ -273,12 +209,13 @@
   flex: 1;
   margin-inline: auto;
   padding: 1.25rem 1.5rem 5rem;
-  color: var(--foreground);
+  color: color-mix(in oklab, var(--foreground) 80%, transparent);
   font-family: var(--font-sans);
-  font-size: 0.9375rem;
-  line-height: 1.72;
+  font-size: 0.875rem;
+  line-height: 1.625;
   outline: none;
   overflow-wrap: anywhere;
+  word-break: break-word;
   white-space: pre-wrap;
 }
 
@@ -304,11 +241,12 @@
 
 .scient-markdown-document :is(p, h1, h2, h3, h4, h5, h6, li, blockquote, td, th, figcaption) {
   text-align: start;
-  unicode-bidi: plaintext;
+  unicode-bidi: isolate;
 }
 
-/* Auto follows the first strong character; an explicit choice must not. */
-.scient-markdown-document :is(p, h1, h2, h3, h4, h5, h6):is([dir="ltr"], [dir="rtl"]) {
+/* Resolved automatic direction and explicit choices are both semantic and stable. */
+.scient-markdown-document
+  :is(p, h1, h2, h3, h4, h5, h6, blockquote, td, th):is([dir="ltr"], [dir="rtl"]) {
   unicode-bidi: isolate;
 }
 
@@ -325,30 +263,55 @@
   unicode-bidi: isolate;
 }
 
+/* The source glyph remains in the document and clipboard; presentation alone
+   mirrors obvious prose-flow arrows in an RTL block. */
+.scient-markdown-rtl-flow-arrow {
+  display: inline-block;
+  transform: scaleX(-1);
+  transform-origin: center;
+}
+
+.scient-markdown-rtl-flow-arrow.is-weighted {
+  -webkit-text-stroke: 0.015em currentColor;
+  paint-order: stroke fill;
+}
+
+.scient-markdown-rtl-flow-arrow.is-long {
+  transform: translateY(-0.05em) scaleX(-1);
+}
+
 .scient-markdown-document h1,
 .scient-markdown-document h2,
 .scient-markdown-document h3,
 .scient-markdown-document h4,
 .scient-markdown-document h5,
 .scient-markdown-document h6 {
-  margin-block: 1.5em 0.55em;
-  font-weight: 650;
-  line-height: 1.24;
-  text-wrap: balance;
+  margin-block: 1.25rem 0.5rem;
+  color: var(--contrast-foreground);
+  font-weight: 600;
+  line-height: 1.3;
 }
 
 .scient-markdown-document h1 {
-  font-size: 1.75rem;
-  letter-spacing: -0.025em;
+  font-size: 1.25rem;
 }
 
 .scient-markdown-document h2 {
-  font-size: 1.4rem;
-  letter-spacing: -0.018em;
+  font-size: 1.125rem;
 }
 
 .scient-markdown-document h3 {
-  font-size: 1.15rem;
+  font-size: 1rem;
+}
+
+.scient-markdown-document h4,
+.scient-markdown-document h5,
+.scient-markdown-document h6 {
+  font-size: 0.875rem;
+}
+
+.scient-markdown-document h6 {
+  color: var(--contrast-muted-foreground);
 }
 
 .scient-markdown-document p,
@@ -357,12 +320,12 @@
 .scient-markdown-document blockquote,
 .scient-markdown-document pre,
 .scient-markdown-document table {
-  margin-block: 0 1em;
+  margin-block: 0.65rem;
 }
 
 .scient-markdown-document ul,
 .scient-markdown-document ol {
-  padding-inline-start: 1.6em;
+  padding-inline-start: 1.25rem;
 }
 
 .scient-markdown-document ul {
@@ -390,20 +353,29 @@
 }
 
 .scient-markdown-document li > ul,
-.scient-markdown-document li > ol {
+.scient-markdown-document li > ol,
+.scient-markdown-task-content > ul,
+.scient-markdown-task-content > ol {
   margin-block: 0.2em;
+}
+
+.scient-markdown-document li + li {
+  margin-block-start: 0.25rem;
 }
 
 .scient-markdown-document li[data-task-checked] {
   display: flex;
   align-items: flex-start;
-  gap: 0.55rem;
   list-style: none;
 }
 
 .scient-markdown-task-content {
   min-width: 0;
   flex: 1;
+}
+
+.scient-markdown-task-content > :first-child {
+  margin-block-start: 0;
 }
 
 .scient-markdown-task-content > :last-child {
@@ -414,7 +386,9 @@
   width: 0.95rem;
   height: 0.95rem;
   flex: 0 0 auto;
-  margin-block-start: 0.37em;
+  margin-block-start: calc((1.625em - 0.95rem) / 2);
+  margin-inline-start: -1.25rem;
+  margin-inline-end: 0.3rem;
   accent-color: var(--primary);
 }
 
@@ -425,25 +399,28 @@
 }
 
 .scient-markdown-document blockquote {
-  padding-inline-start: 1em;
-  border-inline-start: 2px solid var(--border);
-  color: var(--muted-foreground);
+  padding-inline-start: 0.8rem;
+  border-inline-start: 2px solid var(--contrast-border);
+  color: var(--contrast-muted-foreground);
 }
 
-.scient-markdown-document code {
-  border-radius: 0.25rem;
+.scient-markdown-document :not(pre) > code {
+  border: 1px solid var(--contrast-border);
+  border-radius: 0.375rem;
   background: var(--muted);
-  padding: 0.08em 0.28em;
+  padding: 0.1rem 0.35rem;
+  color: var(--contrast-foreground);
   font-family: var(--font-mono);
-  font-size: 0.88em;
+  font-size: 0.75rem;
 }
 
 .scient-markdown-document pre {
-  overflow: auto;
-  border: 1px solid var(--border);
-  border-radius: 0.5rem;
+  max-width: 100%;
+  overflow-x: auto;
+  border: 1px solid var(--contrast-border);
+  border-radius: 0.75rem;
   background: var(--muted);
-  padding: 0.85rem 1rem;
+  padding: 0.8rem 0.9rem;
 }
 
 .scient-markdown-document pre code {
@@ -451,10 +428,10 @@
   padding: 0;
 }
 
-/* Mirrors the chat renderer's code block chrome so code reads the same
-   everywhere: themed code surface, language label at the inline start. */
+/* Mirrors the chat renderer's ordinary code block chrome so code reads the
+   same everywhere: themed code surface, language label at the inline start. */
 .scient-markdown-code-block {
-  margin-block: 0 1rem;
+  margin-block: 0.65rem;
   overflow: hidden;
   border: 1px solid var(--contrast-border, var(--border));
   border-radius: var(--radius);
@@ -536,6 +513,62 @@
   display: none;
 }
 
+/* Mermaid, Vega-Lite, and Plotly remain code_block nodes so selection and
+   source projection stay editor-owned, but their shared renderer owns the
+   inactive presentation. Keep this NodeView host neutral instead of wrapping
+   the established visual in ordinary code-block chrome. */
+.scient-markdown-code-block[data-scient-markdown-rich-fence] {
+  margin-block: 0.75rem;
+  overflow: visible;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: inherit;
+}
+
+.scient-markdown-code-block[data-scient-markdown-rich-fence] > .scient-markdown-code-header {
+  display: none;
+}
+
+.scient-markdown-code-block[data-scient-markdown-rich-fence] > .scient-markdown-code-render {
+  overflow: visible;
+  padding: 0;
+  font-family: inherit;
+  font-size: inherit;
+  line-height: inherit;
+  white-space: normal;
+  overflow-wrap: normal;
+  scrollbar-width: auto;
+}
+
+.scient-markdown-code-block[data-scient-markdown-rich-fence]
+  > .scient-markdown-code-render:empty::before {
+  content: none;
+}
+
+.scient-markdown-code-block[data-scient-markdown-rich-fence]
+  > .scient-markdown-code-render
+  > .scient-markdown-editable-rich-fence
+  > [data-scient-visual-card] {
+  margin-block: 0;
+}
+
+/* Once source editing is requested, only the nested editor becomes a code
+   surface. The rendered visual remains mounted and visually unchanged. */
+.scient-markdown-code-block[data-scient-markdown-rich-fence] > .scient-markdown-code-editor {
+  margin-block-start: 0.65rem;
+  overflow: hidden;
+  border: 1px solid var(--contrast-border, var(--border));
+  border-radius: var(--radius);
+  background: var(--code-background, var(--secondary));
+  color: var(--code-foreground, var(--foreground));
+}
+
+.scient-markdown-code-block[data-scient-markdown-rich-fence]
+  > .scient-markdown-code-editor:focus-within {
+  border-color: color-mix(in oklab, var(--primary) 45%, var(--border));
+}
+
 .scient-markdown-code-editor .cm-editor {
   max-height: 24rem;
   background: transparent;
@@ -577,7 +610,7 @@
   align-items: center;
   justify-content: center;
   border-radius: 0.25rem;
-  color: color-mix(in oklab, var(--muted-foreground) 80%, transparent);
+  color: color-mix(in oklab, var(--muted-foreground) 70%, transparent);
   cursor: pointer;
 }
 
@@ -586,12 +619,13 @@
 }
 
 .scient-markdown-table-select > svg {
-  width: 0.875rem;
-  height: 0.875rem;
+  width: 0.75rem;
+  height: 0.75rem;
 }
 
 .scient-markdown-table-select:hover {
-  background: var(--muted);
+  background: color-mix(in oklab, var(--muted) 70%, transparent);
+  color: var(--muted-foreground);
 }
 
 .scient-markdown-table-select:focus-visible {
@@ -601,7 +635,11 @@
 
 .scient-markdown-document table {
   width: 100%;
+  min-width: max-content;
   border-collapse: collapse;
+  overflow-wrap: normal;
+  word-break: normal;
+  font-size: 0.75rem;
   font-variant-numeric: tabular-nums;
 }
 
@@ -609,15 +647,43 @@
 .scient-markdown-document td {
   position: relative;
   min-width: 5rem;
-  border: 1px solid var(--border);
-  padding: 0.45rem 0.6rem;
+  border-block-end: 1px solid transparent;
+  background-image: linear-gradient(
+    to right,
+    color-mix(in srgb, var(--contrast-border) 60%, transparent),
+    color-mix(in srgb, var(--contrast-border) 60%, transparent)
+  );
+  background-position: center bottom;
+  background-repeat: no-repeat;
+  background-size: calc(100% - 1rem) 1px;
+  padding: 0.45rem 0.75rem;
   text-align: start;
   vertical-align: top;
 }
 
 .scient-markdown-document th {
-  background: color-mix(in oklab, var(--muted) 70%, transparent);
+  padding-block: 0.55rem;
   font-weight: 600;
+  white-space: nowrap;
+}
+
+.scient-markdown-document.is-read a,
+.scient-markdown-document.is-write a {
+  color: var(--info-foreground);
+  cursor: pointer;
+  text-decoration: none;
+}
+
+.scient-markdown-document a:hover,
+.scient-markdown-document a:focus-visible {
+  background-image: radial-gradient(circle, currentcolor 0.75px, transparent 1px);
+  background-position: left bottom;
+  background-repeat: repeat-x;
+  background-size: 4px 2px;
+}
+
+.scient-markdown-document [data-alignment="left"] {
+  text-align: left;
 }
 
 .scient-markdown-document [data-alignment="center"] {
@@ -625,7 +691,7 @@
 }
 
 .scient-markdown-document [data-alignment="right"] {
-  text-align: end;
+  text-align: right;
 }
 
 .scient-markdown-document [data-scient-markdown-raw] {
@@ -666,10 +732,47 @@ sup.scient-markdown-reference {
   font-size: 0.72em;
 }
 
-.scient-markdown-reference.is-selected,
-.scient-markdown-footnote-definition.is-selected {
+.scient-markdown-reference[data-scient-markdown-reference="footnote_reference"] {
+  display: inline;
+  border-radius: 0.2rem;
+  background: transparent;
+  padding: 0;
+  color: var(--primary);
+  cursor: pointer;
+}
+
+.scient-markdown-reference[data-scient-markdown-reference="citation"].is-selected {
   outline: 2px solid color-mix(in oklab, var(--primary) 45%, transparent);
   outline-offset: 2px;
+}
+
+.scient-markdown-footnote-marker {
+  appearance: none;
+  border: 0;
+  border-radius: 0.2rem;
+  background: transparent;
+  padding: 0 0.08em;
+  color: inherit;
+  font: inherit;
+  line-height: 1;
+  text-decoration: underline;
+  text-decoration-color: color-mix(in oklab, currentColor 45%, transparent);
+  text-underline-offset: 0.12em;
+  cursor: pointer;
+}
+
+.scient-markdown-footnote-marker:hover {
+  background: color-mix(in oklab, var(--muted) 62%, transparent);
+}
+
+.scient-markdown-footnote-marker:focus-visible {
+  outline: 1px solid color-mix(in oklab, var(--muted-foreground) 55%, transparent);
+  outline-offset: 1px;
+}
+
+.scient-markdown-reference.is-missing .scient-markdown-footnote-marker {
+  color: var(--muted-foreground);
+  text-decoration-style: dotted;
 }
 
 .scient-markdown-reference-source {
@@ -685,9 +788,10 @@ sup.scient-markdown-reference {
 }
 
 .scient-markdown-footnote-definition {
-  display: flex;
-  flex-direction: column;
-  gap: 0.45rem;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: baseline;
+  gap: 0.25rem 0.45rem;
   margin-block: 0 0.75rem;
   border-inline-start: 2px solid var(--border);
   padding-inline-start: 0.75rem;
@@ -695,8 +799,55 @@ sup.scient-markdown-reference {
   font-size: 0.82rem;
 }
 
+.scient-markdown-footnote-definition.is-selected {
+  border-inline-start-color: color-mix(in oklab, var(--muted-foreground) 45%, var(--border));
+  background: color-mix(in oklab, var(--muted) 22%, transparent);
+}
+
+.scient-markdown-footnote-definition .scient-markdown-reference-label {
+  font-variant-numeric: tabular-nums;
+  font-weight: 500;
+}
+
+.scient-markdown-footnote-body {
+  min-width: 0;
+  color: var(--foreground);
+  white-space: pre-wrap;
+}
+
+.scient-markdown-footnote-backlinks {
+  display: inline-flex;
+  gap: 0.2rem;
+}
+
+.scient-markdown-footnote-backlink {
+  appearance: none;
+  border: 0;
+  border-radius: 0.2rem;
+  background: transparent;
+  padding: 0 0.12rem;
+  color: var(--muted-foreground);
+  font: inherit;
+  cursor: pointer;
+}
+
+.scient-markdown-footnote-backlink:hover {
+  background: color-mix(in oklab, var(--muted) 62%, transparent);
+  color: var(--foreground);
+}
+
+.scient-markdown-footnote-backlink:focus-visible {
+  outline: 1px solid color-mix(in oklab, var(--muted-foreground) 55%, transparent);
+  outline-offset: 1px;
+}
+
 .scient-markdown-footnote-definition textarea.scient-markdown-reference-source {
-  min-height: 5rem;
+  grid-column: 1 / -1;
+  field-sizing: content;
+  width: 100%;
+  min-height: 2rem;
+  max-height: 14rem;
+  overflow-y: auto;
   resize: vertical;
 }
 
@@ -764,31 +915,9 @@ sup.scient-markdown-reference {
   min-width: max-content;
 }
 
-.scient-markdown-wiki-link.is-selected {
-  cursor: text;
-}
-
-.scient-markdown-wiki-link.is-selected .scient-markdown-wiki-link-label {
-  display: none;
-}
-
 .scient-markdown-wiki-link.is-missing .scient-markdown-wiki-link-label {
   text-decoration: underline wavy color-mix(in oklab, var(--warning) 75%, currentColor);
   text-underline-offset: 0.2em;
-}
-
-.scient-markdown-wiki-link-source {
-  width: min(16rem, calc(100vw - 3rem));
-  min-width: 9rem;
-  border: 1px solid color-mix(in oklab, var(--primary) 32%, var(--border));
-  border-radius: 0.4rem;
-  background: var(--background);
-  padding: 0.2rem 0.45rem;
-  color: var(--foreground);
-  font: inherit;
-  line-height: 1.3;
-  outline: none;
-  box-shadow: 0 2px 8px color-mix(in oklab, var(--foreground) 7%, transparent);
 }
 
 .scient-markdown-image {
@@ -809,7 +938,7 @@ sup.scient-markdown-reference {
 .scient-markdown-image-render {
   display: block;
   max-width: 100%;
-  max-height: min(34rem, 70vh);
+  max-height: min(30rem, 70vh);
   border-radius: 0.4rem;
   object-fit: contain;
 }
@@ -874,6 +1003,46 @@ sup.scient-markdown-reference {
   padding: 0.65rem 0.75rem;
 }
 
+.scient-markdown-source-island[data-scient-markdown-source-kind="yaml"] {
+  background: color-mix(in oklab, var(--muted) 62%, transparent);
+}
+
+/* Link definitions are invisible in an ordinary preview. In the authoring
+   surface they remain compact, directly editable exact-source rows. */
+.scient-markdown-source-island[data-scient-markdown-source-kind="definition"] {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: start;
+  gap: 0.55rem;
+  margin-block: 0;
+  border: 0;
+  border-block-start: 1px solid var(--border);
+  border-radius: 0;
+  background: transparent;
+  padding: 0.35rem 0.5rem;
+}
+
+.scient-markdown-document.is-read
+  .scient-markdown-source-island[data-scient-markdown-source-kind="definition"] {
+  display: none;
+}
+
+.scient-markdown-source-island[data-scient-markdown-source-kind="definition"]
+  .scient-markdown-source-island-kind {
+  padding-block: 0.2rem;
+  font-weight: 500;
+  letter-spacing: 0;
+  text-transform: none;
+  white-space: nowrap;
+}
+
+.scient-markdown-source-island[data-scient-markdown-source-kind="definition"]
+  .scient-markdown-source-island-editor {
+  min-height: 1.75rem;
+  max-height: 10rem;
+  padding: 0.15rem 0.25rem;
+}
+
 .scient-markdown-source-island-kind {
   color: var(--muted-foreground);
   font-size: 0.6875rem;
@@ -882,28 +1051,33 @@ sup.scient-markdown-reference {
   text-transform: uppercase;
 }
 
-.scient-markdown-source-island-preview {
-  max-height: 14rem;
-  margin: 0 !important;
-  border: 0 !important;
-  background: transparent !important;
-  padding: 0 !important;
-  color: var(--muted-foreground);
-  white-space: pre-wrap;
-}
-
 .scient-markdown-source-island-editor {
-  min-height: 6rem;
-  resize: vertical;
-  border: 1px solid var(--border);
-  border-radius: 0.35rem;
-  background: var(--background);
-  padding: 0.55rem 0.65rem;
-  color: var(--foreground);
+  field-sizing: content;
+  width: 100%;
+  min-height: 3.5rem;
+  max-height: 14rem;
+  resize: none;
+  overflow: auto;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  padding: 0;
+  color: var(--muted-foreground);
   font-family: var(--font-mono);
   font-size: 0.8rem;
   line-height: 1.55;
   outline: none;
+}
+
+.scient-markdown-document.is-write .scient-markdown-source-island-editor:not([readonly]) {
+  resize: vertical;
+  color: var(--foreground);
+}
+
+.scient-markdown-document.is-write
+  .scient-markdown-source-island[data-scient-markdown-source-kind="definition"]
+  .scient-markdown-source-island-editor:not([readonly]) {
+  resize: none;
 }
 
 .scient-markdown-math {
@@ -927,9 +1101,13 @@ sup.scient-markdown-reference {
   padding-block: 0.5rem;
 }
 
-.scient-markdown-math.is-selected {
-  outline: 2px solid color-mix(in oklab, var(--primary) 45%, transparent);
-  outline-offset: 2px;
+.scient-markdown-math-render {
+  border-radius: 0.3rem;
+}
+
+.scient-markdown-document.is-write .scient-markdown-math-render:hover {
+  background: color-mix(in oklab, var(--muted) 55%, transparent);
+  box-shadow: 0 0 0 0.2rem color-mix(in oklab, var(--muted) 55%, transparent);
 }
 
 .scient-markdown-math-retained {
@@ -958,17 +1136,27 @@ sup.scient-markdown-reference {
 }
 
 textarea.scient-markdown-math-source {
-  min-height: 4.5rem;
+  field-sizing: content;
+  min-height: 2rem;
+  max-height: 14rem;
+  overflow-y: auto;
   resize: vertical;
 }
 
-.scient-markdown-wiki-link-source:focus-visible,
 .scient-markdown-image-editor input:focus-visible,
-.scient-markdown-reference-source:focus-visible,
-.scient-markdown-source-island-editor:focus-visible,
-.scient-markdown-math-source:focus-visible {
+.scient-markdown-reference-source:focus-visible {
   outline: 2px solid color-mix(in oklab, var(--primary) 55%, transparent);
   outline-offset: 1px;
+}
+
+.scient-markdown-math-source:focus-visible {
+  border-color: color-mix(in oklab, var(--muted-foreground) 45%, var(--border));
+  outline: none;
+}
+
+.scient-markdown-footnote-definition .scient-markdown-reference-source:focus-visible {
+  border-color: color-mix(in oklab, var(--muted-foreground) 45%, var(--border));
+  outline: none;
 }
 
 .scient-markdown-document.is-write {
@@ -984,10 +1172,26 @@ textarea.scient-markdown-math-source {
   outline-offset: 2px;
 }
 
-/* A code block being edited signals selection with its border, not an
-   outline ring, so the editor inside reads as one quiet surface. */
-.scient-markdown-document .scient-markdown-code-block.ProseMirror-selectednode {
+.scient-markdown-document .scient-markdown-math.ProseMirror-selectednode {
   outline: none;
+}
+
+.scient-markdown-document
+  .scient-markdown-reference[data-scient-markdown-reference="footnote_reference"].ProseMirror-selectednode,
+.scient-markdown-reference[data-scient-markdown-reference="footnote_reference"].is-selected,
+.scient-markdown-document .scient-markdown-footnote-definition.ProseMirror-selectednode {
+  outline: none;
+}
+
+/* Code and exact-source blocks signal editing with their existing border, not
+   a second outline, so viewing and editing remain one quiet surface. */
+.scient-markdown-document .scient-markdown-code-block.ProseMirror-selectednode,
+.scient-markdown-document .scient-markdown-source-island.ProseMirror-selectednode {
+  outline: none;
+  border-color: color-mix(in oklab, var(--primary) 45%, var(--border));
+}
+
+.scient-markdown-document .scient-markdown-source-island:focus-within {
   border-color: color-mix(in oklab, var(--primary) 45%, var(--border));
 }
 

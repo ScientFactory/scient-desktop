@@ -1,6 +1,8 @@
 import type { Node as ProseMirrorNode } from "prosemirror-model";
 import type { EditorView, NodeView } from "prosemirror-view";
 
+import type { ScientMarkdownExternalPresentationRegistrar } from "./externalPresentation";
+
 export type ScientMarkdownImageSourceResolver = (
   source: string,
 ) => string | null | Promise<string | null>;
@@ -18,12 +20,14 @@ class ScientImageNodeView implements NodeView {
   private resolveVersion = 0;
   private requestedSource: string | null = null;
   private destroyed = false;
+  private readonly unregisterExternalPresentation: (() => void) | undefined;
 
   constructor(
     node: ProseMirrorNode,
     private readonly view: EditorView,
     private readonly getPos: () => number | undefined,
     private readonly resolveSource: ScientMarkdownImageSourceResolver | undefined,
+    registerExternalPresentation?: ScientMarkdownExternalPresentationRegistrar,
   ) {
     this.node = node;
     this.dom.className = "scient-markdown-image";
@@ -55,6 +59,17 @@ class ScientImageNodeView implements NodeView {
     this.titleInput.addEventListener("input", this.handleInput);
     this.editor.append(this.sourceInput, this.altInput, this.titleInput);
     this.dom.append(this.editor);
+    this.unregisterExternalPresentation = registerExternalPresentation?.((change) => {
+      if (
+        change !== "workspace" ||
+        !this.image.hidden ||
+        String(this.node.attrs.src).length === 0
+      ) {
+        return;
+      }
+      this.requestedSource = null;
+      this.render();
+    });
     this.render();
   }
 
@@ -86,6 +101,7 @@ class ScientImageNodeView implements NodeView {
   destroy(): void {
     this.destroyed = true;
     this.resolveVersion += 1;
+    this.unregisterExternalPresentation?.();
     this.sourceInput.removeEventListener("input", this.handleInput);
     this.altInput.removeEventListener("input", this.handleInput);
     this.titleInput.removeEventListener("input", this.handleInput);
@@ -167,6 +183,7 @@ export function createScientImageNodeView(
   view: EditorView,
   getPos: () => number | undefined,
   resolveSource?: ScientMarkdownImageSourceResolver,
+  registerExternalPresentation?: ScientMarkdownExternalPresentationRegistrar,
 ): NodeView {
-  return new ScientImageNodeView(node, view, getPos, resolveSource);
+  return new ScientImageNodeView(node, view, getPos, resolveSource, registerExternalPresentation);
 }

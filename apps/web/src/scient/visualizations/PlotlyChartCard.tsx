@@ -1,6 +1,5 @@
 import {
   CheckIcon,
-  Code2Icon,
   CopyIcon,
   DownloadIcon,
   EllipsisIcon,
@@ -16,6 +15,11 @@ import { useCallback, useEffect, useId, useMemo, useRef, useState, type ReactNod
 import { Button } from "~/components/ui/button";
 import { Menu, MenuItem, MenuPopup, MenuTrigger } from "~/components/ui/menu";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "~/components/ui/tooltip";
+import {
+  RichFenceSourceMenuItem,
+  type ScientRichFenceAuthoringActions,
+  useRichFenceContextMenu,
+} from "../presentation/RichFenceSourceActions";
 import { VisualCardDetails, VisualCardToolbar } from "../presentation/VisualCardToolbar";
 
 import { PlotlyChartDialog } from "./PlotlyChartDialog";
@@ -40,6 +44,7 @@ import { usePlotlyViewportActivity } from "./usePlotlyViewportActivity";
 import "./scient-visualizations.css";
 
 interface PlotlyChartCardProps {
+  readonly authoringActions?: ScientRichFenceAuthoringActions | undefined;
   readonly fenceMeta?: string | undefined;
   readonly language: string;
   readonly source: string;
@@ -116,6 +121,7 @@ function ChartActionButton({
 }
 
 export function PlotlyChartCard({
+  authoringActions,
   fenceMeta,
   language,
   source,
@@ -227,6 +233,11 @@ export function PlotlyChartCard({
     );
   }, [activeAction, showPersistentMessage, showTransientMessage, source]);
 
+  const handleContextMenu = useRichFenceContextMenu(authoringActions, handleCopySource);
+  const handleToggleSource = useCallback(() => {
+    setSourceVisible((visible) => !visible);
+  }, []);
+
   const handleExpand = useCallback(() => {
     captureState();
     setExpanded(true);
@@ -266,6 +277,7 @@ export function PlotlyChartCard({
       data-markdown-copy={markdownCopy}
       data-scient-visual-card
       dir="ltr"
+      onContextMenu={handleContextMenu}
       role="figure"
     >
       {description == null ? null : (
@@ -344,10 +356,11 @@ export function PlotlyChartCard({
                 title={displayTitle}
                 detail={parsed?.hasWebGl ? "WebGL" : undefined}
               />
-              <MenuItem onClick={() => setSourceVisible((visible) => !visible)}>
-                <Code2Icon />
-                {sourceVisible ? "Hide source" : "Show source"}
-              </MenuItem>
+              <RichFenceSourceMenuItem
+                authoringActions={authoringActions}
+                onToggleSource={handleToggleSource}
+                sourceVisible={sourceVisible}
+              />
               <MenuItem onClick={() => downloadPlotlySource(source, fileTitle)}>
                 <FileBracesIcon />
                 Download Plotly JSON

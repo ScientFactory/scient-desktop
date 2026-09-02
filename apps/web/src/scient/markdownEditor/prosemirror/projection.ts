@@ -6,6 +6,7 @@ import {
 } from "@scientfactory/scient-markdown";
 import type { Node as ProseMirrorNode } from "prosemirror-model";
 
+import { findScientBackslashMathSpans } from "~/scient/math/scientMathText";
 import {
   scientMarkdownParser,
   scientMarkdownSchema,
@@ -66,6 +67,19 @@ function displayMathBlock(block: MarkdownSourceBlock): ProseMirrorNode {
   return nodeType.create({ tex, delimiter: "$$", sourceId: block.id });
 }
 
+function backslashDisplayMathBlock(block: MarkdownSourceBlock): ProseMirrorNode | null {
+  const trimmed = block.source.trim();
+  const spans = findScientBackslashMathSpans(trimmed);
+  const span = spans.length === 1 ? spans[0] : undefined;
+  if (!span || span.delimiter !== "\\[" || span.start !== 0 || span.end !== trimmed.length) {
+    return null;
+  }
+  const nodeType = scientMarkdownSchema.nodes.display_math;
+  if (!nodeType) throw new Error("Scient Markdown schema is missing display_math.");
+  const tex = span.content.replace(/^\r?\n|\r?\n$/gu, "");
+  return nodeType.create({ tex, delimiter: "\\[", sourceId: block.id });
+}
+
 function footnoteDefinitionBlock(block: MarkdownSourceBlock): ProseMirrorNode | null {
   const match = /^\[\^([^\]\r\n]+)\]:/u.exec(block.source);
   if (!match?.[1]) return null;
@@ -79,6 +93,8 @@ function parseBlock(
   environment: MarkdownParseEnvironment,
 ): ProseMirrorNode {
   if (block.kind === "math") return displayMathBlock(block);
+  const backslashDisplayMath = backslashDisplayMathBlock(block);
+  if (backslashDisplayMath) return backslashDisplayMath;
   const footnote = footnoteDefinitionBlock(block);
   if (footnote) return footnote;
   if (!COMMONMARK_BLOCK_KINDS.has(block.kind)) return rawBlock(block);

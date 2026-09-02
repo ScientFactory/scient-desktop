@@ -4,7 +4,7 @@ import {
   defaultMarkdownSerializer,
   MarkdownParser,
   MarkdownSerializer,
-  type MarkdownSerializerState,
+  MarkdownSerializerState,
 } from "prosemirror-markdown";
 import type {
   DOMOutputSpec,
@@ -16,6 +16,10 @@ import type {
 import { Schema } from "prosemirror-model";
 import { tableNodes } from "prosemirror-tables";
 
+import {
+  findScientBackslashMathSpans,
+  type ScientBackslashMathSpan,
+} from "~/scient/math/scientMathText";
 import { isPlausibleScientSingleDollarTex } from "~/scient/math/scientSingleDollarMath";
 import {
   parsedReferenceAttributes,
@@ -40,8 +44,48 @@ const TOP_LEVEL_SOURCE_NODE_NAMES = [
   "raw_block",
 ] as const;
 
+type InternalMarkdownSerializerState = MarkdownSerializerState & { out: string };
+type InternalMarkdownSerializerStateConstructor = new (
+  nodes: MarkdownSerializer["nodes"],
+  marks: MarkdownSerializer["marks"],
+  options: MarkdownSerializer["options"] & { readonly tightLists?: boolean },
+) => InternalMarkdownSerializerState;
+
+// prosemirror-markdown deliberately omits this internal constructor and its
+// output field from the public declaration, although MarkdownSerializer uses
+// both at runtime. Keep the compatibility cast in this one owned adapter.
+const InternalMarkdownSerializerState =
+  MarkdownSerializerState as unknown as InternalMarkdownSerializerStateConstructor;
+
+class ScientMarkdownSerializer extends MarkdownSerializer {
+  override serialize(
+    content: ProseMirrorNode,
+    options: { readonly tightLists?: boolean } = {},
+  ): string {
+    const state = new InternalMarkdownSerializerState(this.nodes, this.marks, {
+      ...this.options,
+      ...options,
+    });
+    const escapeMarkdown = state.esc.bind(state);
+    // CommonMark escapes literal square brackets as `\[` and `\]`, which is
+    // byte-for-byte indistinguishable from authored TeX display delimiters.
+    // Numeric entities are portable Markdown and are used only for escaped
+    // ordinary text. Math serializers bypass esc(), preserving their syntax.
+    state.esc = (text, startOfLine = false) =>
+      escapeMarkdown(text, startOfLine)
+        .replace(/(?<!\\)\\\[/gu, "&#91;")
+        .replace(/(?<!\\)\\\]/gu, "&#93;");
+    state.renderContent(content);
+    return state.out;
+  }
+}
+
 const inlineMathSpec: NodeSpec = {
-  attrs: { tex: { default: "" }, delimiter: { default: "$" } },
+  attrs: {
+    tex: { default: "" },
+    delimiter: { default: "$" },
+    display: { default: false },
+  },
   group: "inline",
   inline: true,
   atom: true,
@@ -49,17 +93,32 @@ const inlineMathSpec: NodeSpec = {
   parseDOM: [
     {
       tag: "span[data-scient-markdown-inline-math]",
-      getAttrs: (element) => ({ tex: element.getAttribute("data-tex") ?? "" }),
+      getAttrs: (element) => ({
+        tex: element.getAttribute("data-tex") ?? "",
+        delimiter: element.getAttribute("data-delimiter") ?? "$",
+        display: element.getAttribute("data-display") === "true",
+      }),
     },
   ],
-  toDOM: (node) => [
-    "span",
-    {
-      "data-scient-markdown-inline-math": "true",
-      "data-tex": String(node.attrs.tex),
-    },
-    `$${String(node.attrs.tex)}$`,
-  ],
+  toDOM: (node) => {
+    const delimiter = String(node.attrs.delimiter);
+    const source =
+      delimiter === "\\("
+        ? `\\(${String(node.attrs.tex)}\\)`
+        : delimiter === "\\["
+          ? `\\[${String(node.attrs.tex)}\\]`
+          : `$${String(node.attrs.tex)}$`;
+    return [
+      "span",
+      {
+        "data-delimiter": delimiter,
+        "data-display": String(node.attrs.display === true),
+        "data-scient-markdown-inline-math": "true",
+        "data-tex": String(node.attrs.tex),
+      },
+      source,
+    ];
+  },
 };
 
 const wikiLinkSpec: NodeSpec = {
@@ -183,17 +242,28 @@ const displayMathSpec: NodeSpec = {
   parseDOM: [
     {
       tag: "div[data-scient-markdown-display-math]",
-      getAttrs: (element) => ({ tex: element.getAttribute("data-tex") ?? "" }),
+      getAttrs: (element) => ({
+        tex: element.getAttribute("data-tex") ?? "",
+        delimiter: element.getAttribute("data-delimiter") ?? "$$",
+      }),
     },
   ],
-  toDOM: (node) => [
-    "div",
-    {
-      "data-scient-markdown-display-math": "true",
-      "data-tex": String(node.attrs.tex),
-    },
-    `$$\n${String(node.attrs.tex)}\n$$`,
-  ],
+  toDOM: (node) => {
+    const delimiter = String(node.attrs.delimiter);
+    const source =
+      delimiter === "\\["
+        ? `\\[\n${String(node.attrs.tex)}\n\\]`
+        : `$$\n${String(node.attrs.tex)}\n$$`;
+    return [
+      "div",
+      {
+        "data-scient-markdown-display-math": "true",
+        "data-delimiter": delimiter,
+        "data-tex": String(node.attrs.tex),
+      },
+      source,
+    ];
+  },
 };
 
 const rawBlockSpec: NodeSpec = {
@@ -391,8 +461,41 @@ function listIsTight(
   return false;
 }
 
-const gfmTokenizer = MarkdownIt("commonmark", { html: false }).enable(["strikethrough", "table"]);
+const gfmTokenizer = MarkdownIt("commonmark", { html: false, linkify: true }).enable([
+  "linkify",
+  "strikethrough",
+  "table",
+]);
+// GFM autolinks protocol URLs, email addresses, and `www.` links, but does not
+// treat every domain-like filename (for example `file.md`) as a link. Keep the
+// editor on that narrower contract so saving literal Markdown cannot acquire an
+// unrelated link mark when the document is reopened.
+gfmTokenizer.linkify.set({ fuzzyLink: false }).add("www.", {
+  validate(text, position, linkify) {
+    const httpPrefix = "http://www.";
+    const matchedLength = linkify.testSchemaAt(
+      `${httpPrefix}${text.slice(position)}`,
+      "http:",
+      "http:".length,
+    );
+    return matchedLength > 0 ? matchedLength - "//www.".length : 0;
+  },
+  normalize(match) {
+    match.url = `http://${match.url}`;
+  },
+});
 preserveMarkdownReferences(gfmTokenizer);
+
+const backslashMathSpanCache = new WeakMap<object, ReadonlyMap<number, ScientBackslashMathSpan>>();
+
+function backslashMathSpanAt(state: { readonly pos: number; readonly src: string }) {
+  let spans = backslashMathSpanCache.get(state);
+  if (!spans) {
+    spans = new Map(findScientBackslashMathSpans(state.src).map((span) => [span.start, span]));
+    backslashMathSpanCache.set(state, spans);
+  }
+  return spans.get(state.pos);
+}
 
 // Recognize only this inert Markdown line-break form, not arbitrary HTML.
 gfmTokenizer.inline.ruler.before("html_inline", "scient_hard_break", (state, silent) => {
@@ -400,6 +503,21 @@ gfmTokenizer.inline.ruler.before("html_inline", "scient_hard_break", (state, sil
   if (!match) return false;
   if (!silent) state.push("hardbreak", "br", 0);
   state.pos += match[0].length;
+  return true;
+});
+
+// TeX-style delimiters are source syntax, not preprocessing. Recognizing them
+// here keeps the file bytes and ProseMirror positions aligned while sharing the
+// same code/HTML exclusions as the established Markdown preview.
+gfmTokenizer.inline.ruler.before("escape", "scient_backslash_math", (state, silent) => {
+  const span = backslashMathSpanAt(state);
+  if (!span) return false;
+  if (!silent) {
+    const token = state.push("scient_inline_math", "math", 0);
+    token.content = span.content;
+    token.meta = { delimiter: span.delimiter, display: span.delimiter === "\\[" };
+  }
+  state.pos = span.end;
   return true;
 });
 
@@ -591,7 +709,11 @@ export const scientMarkdownParser = new MarkdownParser(scientMarkdownSchema, gfm
   s: { mark: "strike" },
   scient_inline_math: {
     node: "inline_math",
-    getAttrs: (token) => ({ tex: token.content, delimiter: "$" }),
+    getAttrs: (token) => ({
+      tex: token.content,
+      delimiter: token.meta?.delimiter ?? "$",
+      display: token.meta?.display === true,
+    }),
   },
   scient_wiki_link: {
     node: "wiki_link",
@@ -668,7 +790,7 @@ function blockWithDirection(
   state.closeBlock(node);
 }
 
-export const scientMarkdownSerializer = new MarkdownSerializer(
+export const scientMarkdownSerializer = new ScientMarkdownSerializer(
   {
     ...defaultMarkdownSerializer.nodes,
     image: (state, node, parent, index) => {
@@ -698,9 +820,19 @@ export const scientMarkdownSerializer = new MarkdownSerializer(
       state.write(String(node.attrs.source));
       state.closeBlock(node);
     },
-    inline_math: (state, node) => state.text(`$${String(node.attrs.tex)}$`, false),
+    inline_math: (state, node) => {
+      const delimiter = String(node.attrs.delimiter);
+      if (delimiter === "\\(") state.text(`\\(${String(node.attrs.tex)}\\)`, false);
+      else if (delimiter === "\\[") state.text(`\\[${String(node.attrs.tex)}\\]`, false);
+      else state.text(`$${String(node.attrs.tex)}$`, false);
+    },
     display_math: (state, node) => {
-      state.write(`$$\n${String(node.attrs.tex)}\n$$`);
+      const delimiter = String(node.attrs.delimiter);
+      state.write(
+        delimiter === "\\["
+          ? `\\[\n${String(node.attrs.tex)}\n\\]`
+          : `$$\n${String(node.attrs.tex)}\n$$`,
+      );
       state.closeBlock(node);
     },
     table: (state, node) => {
@@ -752,7 +884,7 @@ export const scientMarkdownSerializer = new MarkdownSerializer(
   { escapeExtraCharacters: /[<&]/gu },
 );
 
-const tableCellSerializer = new MarkdownSerializer(
+const tableCellSerializer = new ScientMarkdownSerializer(
   {
     ...scientMarkdownSerializer.nodes,
     hard_break: (state) => state.write("<br>"),

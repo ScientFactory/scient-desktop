@@ -35,14 +35,16 @@ function markdownTableView(node: ProseMirrorNode, view: EditorView): NodeView {
         viewBox: "0 0 24 24",
         fill: "none",
         stroke: "currentColor",
-        "stroke-width": 1.75,
+        "stroke-width": 1.5,
         "aria-hidden": "true",
       },
       ["rect", { x: 3, y: 3, width: 18, height: 18, rx: 2 }],
       ["path", { d: "M3 9h18M9 3v18" }],
     ]).dom,
   );
-  button.addEventListener("mousedown", (event) => event.preventDefault());
+  button.addEventListener("mousedown", (event) => {
+    if (event.button === 0) event.preventDefault();
+  });
   button.addEventListener("click", () => {
     if (!view.editable || !dom.classList.contains("is-active-table")) return;
     selectMarkdownTable(view.state, view.dispatch);
@@ -63,7 +65,10 @@ function markdownTableView(node: ProseMirrorNode, view: EditorView): NodeView {
       syncDirection(current);
       return true;
     },
-    stopEvent: (event) => event.target instanceof globalThis.Node && button.contains(event.target),
+    stopEvent: (event) =>
+      event.type !== "contextmenu" &&
+      event.target instanceof globalThis.Node &&
+      button.contains(event.target),
     ignoreMutation: (record) => button.contains(record.target) || tableView.ignoreMutation(record),
   };
 }

@@ -93,21 +93,32 @@ describe("Markdown edit/save/reopen semantics", () => {
     expectRoundTrip(session);
   });
 
-  it.each(["x|", "*a*", "[x](file.md)", "\\|", "<br>", "😀", "`x`", "&#124;", "  "])(
-    "keeps inserted text literal: %s",
-    (text) => {
-      const session = new ScientProseMirrorSession({
-        source: "| A | B |\n| --- | --- |\n| left | right |\n",
-        revision: "r0",
-      });
-      let pos = 0;
-      session.state.doc.descendants((node, position) => {
-        if (node.text === "left") pos = position;
-      });
-      session.applyTransaction(session.state.tr.insertText(text, pos), "user");
-      expectRoundTrip(session);
-    },
-  );
+  it.each([
+    "x|",
+    "*a*",
+    "[x]",
+    "[0,1]",
+    "[^1]",
+    "[x](file.md)",
+    "[x][ref]",
+    "\\|",
+    "<br>",
+    "😀",
+    "`x`",
+    "&#124;",
+    "  ",
+  ])("keeps inserted text literal: %s", (text) => {
+    const session = new ScientProseMirrorSession({
+      source: "| A | B |\n| --- | --- |\n| left | right |\n",
+      revision: "r0",
+    });
+    let pos = 0;
+    session.state.doc.descendants((node, position) => {
+      if (node.text === "left") pos = position;
+    });
+    session.applyTransaction(session.state.tr.insertText(text, pos), "user");
+    expectRoundTrip(session);
+  });
 
   it("keeps trailing cell spaces after serialization", () => {
     const session = new ScientProseMirrorSession({
@@ -309,22 +320,26 @@ describe("Markdown edit/save/reopen semantics", () => {
     expectRoundTrip(session);
   });
 
-  it.each(["`a\\|b`", "[[file\\|label]]", "$a\\|b$", "[file](a%7Cb.md)"])(
-    "keeps inline syntax in a serialized table: %s",
-    (inline) => {
-      const session = new ScientProseMirrorSession({
-        source: `| A | B |\n| --- | --- |\n| lead ${inline} | right |\n`,
-        revision: "r0",
-      });
-      let pos = 0;
-      session.state.doc.descendants((node, position) => {
-        if (node.text?.startsWith("lead ")) pos = position;
-      });
-      session.applyTransaction(
-        session.state.tr.addMark(pos, pos + 4, scientMarkdownSchema.marks.strong!.create()),
-        "user",
-      );
-      expectRoundTrip(session);
-    },
-  );
+  it.each([
+    "`a\\|b`",
+    "[[file\\|label]]",
+    "$a\\|b$",
+    "\\(a\\|b\\)",
+    "\\[a\\|b\\]",
+    "[file](a%7Cb.md)",
+  ])("keeps inline syntax in a serialized table: %s", (inline) => {
+    const session = new ScientProseMirrorSession({
+      source: `| A | B |\n| --- | --- |\n| lead ${inline} | right |\n`,
+      revision: "r0",
+    });
+    let pos = 0;
+    session.state.doc.descendants((node, position) => {
+      if (node.text?.startsWith("lead ")) pos = position;
+    });
+    session.applyTransaction(
+      session.state.tr.addMark(pos, pos + 4, scientMarkdownSchema.marks.strong!.create()),
+      "user",
+    );
+    expectRoundTrip(session);
+  });
 });

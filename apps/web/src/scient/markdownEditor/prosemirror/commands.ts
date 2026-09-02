@@ -2,7 +2,14 @@ import { lift, setBlockType, toggleMark, wrapIn } from "prosemirror-commands";
 import type { Attrs, MarkType, Node as ProseMirrorNode, NodeType } from "prosemirror-model";
 import { liftListItem, wrapInList } from "prosemirror-schema-list";
 import { closeHistory, redo, undo } from "prosemirror-history";
-import { Selection, type Command, type EditorState, type Transaction } from "prosemirror-state";
+import {
+  NodeSelection,
+  Selection,
+  TextSelection,
+  type Command,
+  type EditorState,
+  type Transaction,
+} from "prosemirror-state";
 import {
   addColumnAfter,
   addColumnBefore,
@@ -17,6 +24,7 @@ import {
 
 import { scientMarkdownSchema } from "./schema";
 import { selectMarkdownTable } from "./tables";
+import { nextScientMarkdownFootnoteLabel } from "../footnotes";
 
 export type ScientMarkdownCommand =
   | "add-column-after"
@@ -38,6 +46,7 @@ export type ScientMarkdownCommand =
   | "direction-ltr"
   | "direction-rtl"
   | "display-math"
+  | "footnote"
   | "clear-formatting"
   | "hard-break"
   | "heading-1"
@@ -70,6 +79,18 @@ export interface ScientSlashCommandItem {
   readonly label: string;
 }
 
+export interface ScientMarkdownTableDimensions {
+  readonly columns: number;
+  readonly rows: number;
+}
+
+export const DEFAULT_SCIENT_MARKDOWN_TABLE_DIMENSIONS = {
+  columns: 3,
+  rows: 3,
+} as const satisfies ScientMarkdownTableDimensions;
+
+export const MAX_SCIENT_MARKDOWN_TABLE_INSERT_DIMENSION = 15;
+
 export const SCIENT_MARKDOWN_SLASH_COMMANDS: ReadonlyArray<ScientSlashCommandItem> = [
   { command: "paragraph", label: "Text", keywords: "paragraph body" },
   { command: "heading-1", label: "Heading 1", keywords: "title h1" },
@@ -81,6 +102,7 @@ export const SCIENT_MARKDOWN_SLASH_COMMANDS: ReadonlyArray<ScientSlashCommandIte
   { command: "blockquote", label: "Quote", keywords: "blockquote citation" },
   { command: "code-block", label: "Code block", keywords: "fence programming" },
   { command: "display-math", label: "Equation", keywords: "math tex latex formula" },
+  { command: "footnote", label: "Footnote", keywords: "note reference source" },
   { command: "table", label: "Table", keywords: "grid cells data" },
   { command: "image", label: "Image", keywords: "figure photo asset media" },
   { command: "wiki-link", label: "Wiki link", keywords: "note internal link" },
@@ -110,17 +132,65 @@ function insertNode(node: ProseMirrorNode): Command {
   };
 }
 
-function createTable(): ProseMirrorNode {
+function insertFootnote(): Command {
+  return (state, dispatch) => {
+    const { selection } = state;
+    if (!selection.$to.parent.inlineContent) return false;
+
+    const label = nextScientMarkdownFootnoteLabel(state.doc);
+    const reference = requiredNodeType("footnote_reference").create({ label });
+    const definition = requiredNodeType("footnote_definition").create({
+      label,
+      source: `[^${label}]: `,
+    });
+    if (!reference || !definition) return false;
+
+    if (dispatch) {
+      let transaction = state.tr.setSelection(TextSelection.create(state.doc, selection.to));
+      transaction = transaction.replaceSelectionWith(reference);
+      const definitionPosition = transaction.doc.content.size;
+      transaction = transaction
+        .insert(definitionPosition, definition)
+        .setSelection(NodeSelection.create(transaction.doc, definitionPosition))
+        .scrollIntoView();
+      dispatch(transaction);
+    }
+    return true;
+  };
+}
+
+function validTableInsertDimension(value: number): boolean {
+  return (
+    Number.isInteger(value) && value >= 1 && value <= MAX_SCIENT_MARKDOWN_TABLE_INSERT_DIMENSION
+  );
+}
+
+function createTable(dimensions: ScientMarkdownTableDimensions): ProseMirrorNode | null {
+  if (
+    !validTableInsertDimension(dimensions.rows) ||
+    !validTableInsertDimension(dimensions.columns)
+  ) {
+    return null;
+  }
   const rowType = requiredNodeType("table_row");
   const headerType = requiredNodeType("table_header");
   const cellType = requiredNodeType("table_cell");
-  const rows = Array.from({ length: 3 }, (_row, rowIndex) =>
+  const rows = Array.from({ length: dimensions.rows }, (_row, rowIndex) =>
     rowType.create(
       null,
-      Array.from({ length: 3 }, () => (rowIndex === 0 ? headerType : cellType).create(null)),
+      Array.from({ length: dimensions.columns }, () =>
+        (rowIndex === 0 ? headerType : cellType).create(null),
+      ),
     ),
   );
   return requiredNodeType("table").create(null, rows);
+}
+
+function insertTable(dimensions: ScientMarkdownTableDimensions): Command {
+  return (state, dispatch) => {
+    const table = createTable(dimensions);
+    return table ? insertNode(table)(state, dispatch) : false;
+  };
 }
 
 function setSelectedTableColumnAlignment(alignment: string | null): Command {
@@ -468,10 +538,12 @@ function commandFor(command: ScientMarkdownCommand): Command {
       return insertNode(requiredNodeType("image").create({ alt: "", src: "", title: null }));
     case "display-math":
       return insertNode(requiredNodeType("display_math").create({ tex: "", delimiter: "$$" }));
+    case "footnote":
+      return insertFootnote();
     case "wiki-link":
       return insertNode(requiredNodeType("wiki_link").create({ target: "Untitled", label: null }));
     case "table":
-      return insertNode(createTable());
+      return insertTable(DEFAULT_SCIENT_MARKDOWN_TABLE_DIMENSIONS);
     case "align-column-default":
       return setSelectedTableColumnAlignment(null);
     case "align-column-left":
@@ -503,24 +575,43 @@ function commandFor(command: ScientMarkdownCommand): Command {
   }
 }
 
+function runExplicitScientMarkdownCommand(
+  command: Command,
+  state: EditorState,
+  dispatch?: (transaction: Transaction) => void,
+  separateHistory = true,
+): boolean {
+  return command(
+    state,
+    dispatch &&
+      ((transaction) => {
+        dispatch(
+          transaction.docChanged && separateHistory ? closeHistory(transaction) : transaction,
+        );
+      }),
+  );
+}
+
 export function runScientMarkdownCommand(
   command: ScientMarkdownCommand,
   state: EditorState,
   dispatch?: (transaction: Transaction) => void,
 ): boolean {
-  return commandFor(command)(
+  return runExplicitScientMarkdownCommand(
+    commandFor(command),
     state,
-    dispatch &&
-      ((transaction) => {
-        // Explicit document commands are undo steps, even when clicked quickly.
-        // Selection-only commands and undo/redo keep the upstream history policy.
-        dispatch(
-          transaction.docChanged && command !== "undo" && command !== "redo"
-            ? closeHistory(transaction)
-            : transaction,
-        );
-      }),
+    dispatch,
+    command !== "undo" && command !== "redo",
   );
+}
+
+/** Insert one bounded GFM table through the same transaction/history path as dock commands. */
+export function runScientMarkdownTableInsert(
+  dimensions: ScientMarkdownTableDimensions,
+  state: EditorState,
+  dispatch?: (transaction: Transaction) => void,
+): boolean {
+  return runExplicitScientMarkdownCommand(insertTable(dimensions), state, dispatch);
 }
 
 export function filterScientMarkdownSlashCommands(

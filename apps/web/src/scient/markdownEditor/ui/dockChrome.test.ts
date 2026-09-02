@@ -31,7 +31,7 @@ describe("dock chrome overflow contract", () => {
   it("uses one fixed-height dock instead of adding a contextual table row", () => {
     expect(cssSource).not.toContain(".scient-markdown-table-toolbar");
     expect(cssSource).toMatch(
-      /\.scient-markdown-editor-dock \{[^}]*height: 2\.5rem[^}]*flex-wrap: nowrap/su,
+      /\.scient-markdown-editor-dock \{[^}]*padding: 0\.25rem 0\.65rem[^}]*height: 2\.25rem[^}]*flex-wrap: nowrap/su,
     );
   });
 
@@ -47,6 +47,16 @@ describe("dock chrome overflow contract", () => {
     expect(cssSource).toMatch(
       /\.scient-markdown-command-button:not\(\[data-preserve-icon-weight="true"\]\) > svg \{[^}]*stroke-width: 1\.75/su,
     );
+  });
+
+  it("slightly reduces primary glyphs without shrinking their button targets or menu chevrons", () => {
+    expect(cssSource).toMatch(
+      /\.scient-markdown-command-button,\s*\.scient-markdown-slash-menu button \{[^}]*min-width: 1\.65rem[^}]*min-height: 1\.65rem/su,
+    );
+    expect(cssSource).toMatch(
+      /\.scient-markdown-command-button > svg:first-child \{\s*width: 0\.9375rem;\s*height: 0\.9375rem;/su,
+    );
+    expect(cssSource).not.toMatch(/\.scient-markdown-command-button > svg \{/su);
   });
 });
 

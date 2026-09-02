@@ -1,14 +1,17 @@
 import { describe, expect, it } from "vite-plus/test";
 
 import {
+  findRtlFlowArrowSpans,
+  normalizeRtlFlowArrows,
   resolveAggregateDirection,
+  resolveDominantDirection,
   resolveFenceDirection,
   resolveMarkdownDirectionHint,
   resolveMarkdownDirection,
-  normalizeRtlFlowArrows,
   resolvePlainTextBoxDirection,
   resolveProseBlockDirection,
   resolveStreamingMarkdownDirection,
+  resolveTableCellDirection,
 } from "./contentDirection";
 
 describe("message and block direction", () => {
@@ -51,6 +54,21 @@ describe("message and block direction", () => {
   it("makes English-only groups LTR and leaves empty groups at their fallback", () => {
     expect(resolveAggregateDirection("Standard deviation\nConfidence interval", "rtl")).toBe("ltr");
     expect(resolveAggregateDirection("123 — —", "rtl")).toBe("rtl");
+  });
+
+  it("uses the dominant language for tables and the surrounding direction only for ties", () => {
+    expect(resolveDominantDirection("English details שלום", "rtl")).toBe("ltr");
+    expect(resolveDominantDirection("English שלום עולם נוסף", "ltr")).toBe("rtl");
+    expect(resolveDominantDirection("ab אב", "ltr")).toBe("ltr");
+    expect(resolveDominantDirection("ab אב", "rtl")).toBe("rtl");
+  });
+
+  it("resolves each table cell independently and uses automatic table flow only for ties", () => {
+    expect(resolveTableCellDirection("English בתוך עברית נוספת", "ltr")).toBe("rtl");
+    expect(resolveTableCellDirection("English sentence with עברית", "rtl")).toBe("ltr");
+    expect(resolveTableCellDirection("العربية فقط", "ltr")).toBe("rtl");
+    expect(resolveTableCellDirection("123 — —", "ltr")).toBe("ltr");
+    expect(resolveTableCellDirection("123 — —", "rtl")).toBe("rtl");
   });
 
   it("honors an explicit direction instead of inferring it", () => {
@@ -107,6 +125,10 @@ describe("message and block direction", () => {
     expect(normalizeRtlFlowArrows("שלב ראשון → x→y")).toBe("שלב ראשון ← x→y");
     expect(normalizeRtlFlowArrows("עברית: H2O → CO2")).toBe("עברית: H2O → CO2");
     expect(normalizeRtlFlowArrows("עברית: $A → B$")).toBe("עברית: $A → B$");
+    expect(findRtlFlowArrowSpans("שלב ראשון → שלב שני ⟶ שלב שלישי")).toEqual([
+      { end: 11, replacement: "←", start: 10 },
+      { end: 21, replacement: "⟵", start: 20 },
+    ]);
   });
 });
 
