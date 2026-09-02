@@ -44,7 +44,7 @@ import { DIFF_SURFACE_THEME_UNSAFE_CSS, resolveDiffThemeName } from "~/lib/diffR
 import { PREFERRED_HIGHLIGHTER } from "~/lib/syntaxHighlighting";
 import { cn } from "~/lib/utils";
 import { isPreviewSupportedInRuntime } from "~/previewStateStore";
-import type { LatexFilePresentationRequest } from "~/rightPanelStore";
+import type { HtmlFilePresentationRequest, LatexFilePresentationRequest } from "~/rightPanelStore";
 import { isAbsolutePath, resolvePathLinkTarget } from "~/terminal-links";
 import { ScrollArea } from "~/components/ui/scroll-area";
 import { Toggle } from "~/components/ui/toggle";
@@ -60,6 +60,7 @@ import { useAtomCommand } from "~/state/use-atom-command";
 import { useAtomQueryRunner } from "~/state/use-atom-query-runner";
 import {
   SCIENT_DEFAULT_RENDER_MARKDOWN,
+  resolveHtmlRenderedState,
   resolveInitialFileExplorerOpen,
 } from "~/scient/fileOpening/fileOpeningPolicy";
 import { scientificSourceLanguageOverride } from "~/scient/analysis/sourceLanguage";
@@ -116,9 +117,14 @@ interface FilePreviewPanelProps {
   availableEditors: ReadonlyArray<EditorId>;
   revealLine: number | null;
   revealRequestId: number;
+  htmlPresentationRequest: HtmlFilePresentationRequest | null;
   latexPresentationRequest: LatexFilePresentationRequest | null;
   onOpenFile: (relativePath: string) => void;
   onOpenFileSource: (relativePath: string, line?: number) => void;
+  onHtmlPresentationRequestHandled: (
+    relativePath: string,
+    request: HtmlFilePresentationRequest,
+  ) => void;
   onLatexPresentationRequestHandled: (
     relativePath: string,
     request: LatexFilePresentationRequest,
@@ -1233,9 +1239,11 @@ export default function FilePreviewPanel({
   availableEditors,
   revealLine,
   revealRequestId,
+  htmlPresentationRequest,
   latexPresentationRequest,
   onOpenFile,
   onOpenFileSource,
+  onHtmlPresentationRequestHandled,
   onLatexPresentationRequestHandled,
   onPendingChange,
   selectedFilePending,
@@ -1311,7 +1319,12 @@ export default function FilePreviewPanel({
     revealLine === null ||
     (handledReveal?.path === relativePath && handledReveal.requestId === revealRequestId);
   const renderMarkdown = isMarkdown && renderMarkdownPreferred && revealHandled;
-  const renderBrowserFile = isHtml && renderBrowserFilePreferred && revealHandled;
+  const requestedHtmlMode =
+    htmlPresentationRequest?.id === revealRequestId ? htmlPresentationRequest.mode : null;
+  const renderBrowserFile =
+    isHtml &&
+    resolveHtmlRenderedState(renderBrowserFilePreferred, requestedHtmlMode) &&
+    revealHandled;
   const canToggleRendered = isMarkdown || isHtml;
   const rendered = isMarkdown ? renderMarkdown : isHtml ? renderBrowserFile : false;
   const setRenderedPreferred = isMarkdown
@@ -1453,6 +1466,9 @@ export default function FilePreviewPanel({
                     className="shrink-0"
                     pressed={rendered}
                     onPressedChange={(pressed) => {
+                      if (isHtml && relativePath !== null && htmlPresentationRequest !== null) {
+                        onHtmlPresentationRequestHandled(relativePath, htmlPresentationRequest);
+                      }
                       setRenderedPreferred(pressed);
                       setHandledReveal(
                         pressed && relativePath !== null

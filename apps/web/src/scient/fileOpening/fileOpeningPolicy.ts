@@ -5,6 +5,14 @@ export function resolveInitialFileExplorerOpen(savedPreference: boolean | null):
   return savedPreference ?? SCIENT_DEFAULT_FILE_EXPLORER_OPEN;
 }
 
+export function resolveHtmlRenderedState(
+  preferred: boolean,
+  requestedMode: "source" | null,
+): boolean {
+  if (requestedMode === "source") return false;
+  return preferred;
+}
+
 /**
  * Files Scient opens in the integrated browser when the runtime supports it.
  * Source remains available from the file tree's context menu.

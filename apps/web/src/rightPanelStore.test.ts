@@ -161,6 +161,7 @@ describe("rightPanelStore", () => {
                 id: "file:src/index.ts",
                 kind: "file",
                 relativePath: "src/index.ts",
+                htmlPresentationRequest: { id: 8, mode: "source" },
                 latexPresentationRequest: { id: 9, mode: "split" },
               },
             ],
@@ -618,6 +619,58 @@ describe("rightPanelStore", () => {
         },
       ],
     });
+  });
+
+  it("keeps an explicit HTML source request on its file tab until it is handled", () => {
+    useRightPanelStore
+      .getState()
+      .openFile(refA, "report.html", undefined, { htmlPreviewMode: "source" });
+
+    expect(selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, refA)).toEqual({
+      isOpen: true,
+      activeSurfaceId: "file:report.html",
+      surfaces: [
+        {
+          id: "file:report.html",
+          kind: "file",
+          relativePath: "report.html",
+          revealLine: null,
+          revealRequestId: 1,
+          htmlPresentationRequest: { id: 1, mode: "source" },
+        },
+      ],
+    });
+
+    useRightPanelStore.getState().consumeHtmlPresentationRequest(refA, "report.html", 1);
+
+    expect(
+      selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, refA).surfaces,
+    ).toEqual([
+      {
+        id: "file:report.html",
+        kind: "file",
+        relativePath: "report.html",
+        revealLine: null,
+        revealRequestId: 1,
+      },
+    ]);
+
+    useRightPanelStore
+      .getState()
+      .openFile(refA, "report.html", undefined, { htmlPreviewMode: "source" });
+    useRightPanelStore.getState().openFile(refA, "report.html");
+
+    expect(
+      selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, refA).surfaces,
+    ).toEqual([
+      {
+        id: "file:report.html",
+        kind: "file",
+        relativePath: "report.html",
+        revealLine: null,
+        revealRequestId: 3,
+      },
+    ]);
   });
 
   it("removes persisted file surfaces when their workspace no longer exists", () => {

@@ -157,6 +157,7 @@ import {
   selectActiveRightPanel,
   selectActiveRightPanelSurface,
   selectThreadRightPanelState,
+  type HtmlFilePresentationRequest,
   type LatexFilePresentationRequest,
   type RightPanelSurface,
   updatePullRequestTabStatus,
@@ -209,6 +210,7 @@ import {
   WifiOffIcon,
 } from "lucide-react";
 import { cn, randomHex } from "~/lib/utils";
+import { shouldOpenInBrowserByDefault } from "~/scient/fileOpening/fileOpeningPolicy";
 import { useScientFileOpening } from "~/scient/fileOpening/useScientFileOpening";
 import {
   scientComputeSurface,
@@ -3924,9 +3926,25 @@ function ChatViewContent(props: ChatViewProps) {
   const openFileSourceSurface = useCallback(
     (relativePath: string, line?: number) => {
       if (!activeThreadRef || activeWorkspaceRoot === undefined) return;
-      useRightPanelStore.getState().openFile(activeThreadRef, relativePath, line);
+      useRightPanelStore
+        .getState()
+        .openFile(
+          activeThreadRef,
+          relativePath,
+          line,
+          shouldOpenInBrowserByDefault(relativePath) ? { htmlPreviewMode: "source" } : undefined,
+        );
     },
     [activeThreadRef, activeWorkspaceRoot],
+  );
+  const handleHtmlPresentationRequestHandled = useCallback(
+    (relativePath: string, request: HtmlFilePresentationRequest) => {
+      if (!activeThreadRef) return;
+      useRightPanelStore
+        .getState()
+        .consumeHtmlPresentationRequest(activeThreadRef, relativePath, request.id);
+    },
+    [activeThreadRef],
   );
   const handleLatexPresentationRequestHandled = useCallback(
     (relativePath: string, request: LatexFilePresentationRequest) => {
@@ -7869,9 +7887,11 @@ function ChatViewContent(props: ChatViewProps) {
           }
           revealLine={activeFileSurface?.revealLine ?? null}
           revealRequestId={activeFileSurface?.revealRequestId ?? 0}
+          htmlPresentationRequest={activeFileSurface?.htmlPresentationRequest ?? null}
           latexPresentationRequest={activeFileSurface?.latexPresentationRequest ?? null}
           onOpenFile={openFileSurface}
           onOpenFileSource={openFileSourceSurface}
+          onHtmlPresentationRequestHandled={handleHtmlPresentationRequestHandled}
           onLatexPresentationRequestHandled={handleLatexPresentationRequestHandled}
           onPendingChange={handleFilePendingChange}
           selectedFilePending={

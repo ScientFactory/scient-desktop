@@ -83,6 +83,12 @@ export function makeDesktopContentSecurityPolicy(input: DesktopProtocolRegistrat
   // connections by the network schemes the client supports instead of by host.
   const connectSources = ["'self'", "http:", "https:", "ws:", "wss:"];
 
+  // File previews use signed asset URLs issued by the selected environment.
+  // Environment origins are not known at protocol-registration time, just like
+  // connection origins above. HTML remains isolated by the iframe sandbox and
+  // the asset response's own CSP; this directive only permits that frame to load.
+  const frameSources = ["'self'", "http:", "https:", "https://challenges.cloudflare.com"];
+
   return [
     "default-src 'self'",
     `script-src ${scriptSources.join(" ")}`,
@@ -92,7 +98,7 @@ export function makeDesktopContentSecurityPolicy(input: DesktopProtocolRegistrat
     "style-src 'self' 'unsafe-inline'",
     `font-src 'self' ${input.scheme}: data:`,
     "worker-src 'self' blob:",
-    "frame-src 'self' https://challenges.cloudflare.com",
+    `frame-src ${frameSources.join(" ")}`,
     "form-action 'self'",
   ].join("; ");
 }
