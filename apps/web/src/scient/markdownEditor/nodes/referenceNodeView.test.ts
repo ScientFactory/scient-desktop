@@ -170,7 +170,7 @@ describe("Scient reference node view", () => {
     nodeView.destroy?.();
   });
 
-  it("keeps the existing reveal-on-selection behavior for citations", () => {
+  it("keeps one citation field directly editable without a reveal transition", () => {
     const citation = scientMarkdownSchema.nodes.citation!.create({ source: "@synthetic2026" });
     const paragraph = scientMarkdownSchema.nodes.paragraph!.create(null, citation);
     const doc = scientMarkdownSchema.nodes.doc!.create(null, paragraph);
@@ -183,12 +183,22 @@ describe("Scient reference node view", () => {
     document.body.append(nodeView.dom);
     const editor = nodeView.dom.querySelector<HTMLInputElement>("input")!;
 
-    expect(editor.hidden).toBe(true);
+    expect(nodeView.dom.querySelectorAll("input")).toHaveLength(1);
+    expect(nodeView.dom.querySelector(".scient-markdown-reference-label")?.textContent).toBe(
+      "[@synthetic2026]",
+    );
+    expect(editor.hidden).toBe(false);
+    expect(editor.value).toBe("@synthetic2026");
     nodeView.selectNode?.();
     expect(editor.hidden).toBe(false);
     expect(editor.value).toBe("@synthetic2026");
     nodeView.deselectNode?.();
-    expect(editor.hidden).toBe(true);
+    expect(editor.hidden).toBe(false);
+
+    editor.dispatchEvent(
+      new MouseEvent("mousedown", { bubbles: true, button: 0, cancelable: true }),
+    );
+    expect(editor).toBe(document.activeElement);
 
     nodeView.destroy?.();
   });

@@ -7,13 +7,7 @@ import {
 } from "@codemirror/language";
 import { languages } from "@codemirror/language-data";
 import { Annotation, Compartment, EditorState, Transaction } from "@codemirror/state";
-import {
-  drawSelection,
-  EditorView,
-  highlightActiveLine,
-  highlightSpecialChars,
-  keymap,
-} from "@codemirror/view";
+import { drawSelection, EditorView, highlightSpecialChars, keymap } from "@codemirror/view";
 import { tags } from "@lezer/highlight";
 import pierreDark from "@pierre/theme/pierre-dark";
 import pierreLight from "@pierre/theme/pierre-light";
@@ -107,6 +101,7 @@ function editorThemeFor(root: HTMLElement) {
 
 export interface ScientNestedCodeEditor {
   readonly focus: () => void;
+  readonly focusAt: (coordinates: { readonly x: number; readonly y: number }) => void;
   readonly replaceExternalCode: (code: string) => void;
   readonly destroy: () => void;
 }
@@ -135,7 +130,6 @@ export function createScientNestedCodeEditor(input: {
         highlightSpecialChars(),
         history(),
         drawSelection(),
-        highlightActiveLine(),
         bracketMatching(),
         syntaxHighlighting(lightHighlightStyle),
         syntaxHighlighting(darkHighlightStyle),
@@ -194,6 +188,13 @@ export function createScientNestedCodeEditor(input: {
   }
   return {
     focus: () => view.focus(),
+    focusAt: (coordinates) => {
+      const position = view.posAtCoords(coordinates);
+      if (position !== null) {
+        view.dispatch({ selection: { anchor: position }, scrollIntoView: true });
+      }
+      view.focus();
+    },
     replaceExternalCode: (code) => {
       if (code === view.state.doc.toString()) return;
       view.dispatch({

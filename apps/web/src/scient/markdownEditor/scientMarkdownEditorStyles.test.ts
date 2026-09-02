@@ -118,7 +118,7 @@ describe("rich Markdown preview presentation parity", () => {
     );
     expect(cssSource).toMatch(/> \[data-scient-visual-card\] \{\s*margin-block: 0;/su);
     expect(cssSource).toMatch(
-      /\.scient-markdown-code-block\[data-scient-markdown-rich-fence\] > \.scient-markdown-code-editor \{[^}]*border: 1px solid[^}]*background: var\(--code-background/su,
+      /\.scient-markdown-code-block\[data-scient-markdown-rich-fence\] > \.scient-markdown-code-editor \{[^}]*border: 1px solid[^}]*background: var\([^}]*--markdown-code-surface-background/su,
     );
   });
 });
@@ -350,6 +350,29 @@ describe("rich Markdown compact-surface styles", () => {
       /footnote_reference[^}]*\.ProseMirror-selectednode,[^}]*footnote_reference[^}]*\.is-selected,[^}]*footnote-definition\.ProseMirror-selectednode \{\s*outline: none/su,
     );
     expect(cssSource).not.toMatch(/footnote_reference[^}]*\.scient-markdown-reference-source/su);
+  });
+
+  it("presents citations as one unboxed direct-edit field", () => {
+    expect(cssSource).toMatch(
+      /\.scient-markdown-reference\[data-scient-markdown-reference="citation"\] \{[^}]*gap: 0;[^}]*background: transparent;[^}]*padding: 0;[^}]*color: inherit/su,
+    );
+    expect(cssSource).toMatch(
+      /\.scient-markdown-document\.is-write[^}]*citation[^}]*::before \{\s*content: "\[";/su,
+    );
+    expect(cssSource).toMatch(
+      /\.scient-markdown-reference\[data-scient-markdown-reference="citation"\][^}]*\.scient-markdown-reference-source \{[^}]*field-sizing: content;[^}]*border: 0;[^}]*background: transparent;[^}]*padding: 0;[^}]*font: inherit/su,
+    );
+    expect(cssSource).toMatch(
+      /\.scient-markdown-reference\[data-scient-markdown-reference="citation"\]\.is-selected \{\s*outline: none;/su,
+    );
+  });
+
+  it("keeps ordinary code geometry stable and removes active-row chrome", () => {
+    expect(cssSource).toMatch(
+      /\.scient-markdown-code-editor \.cm-content,[^}]*\.scient-markdown-code-editor \.cm-line \{\s*padding: 0;/su,
+    );
+    expect(cssSource).not.toContain(".scient-markdown-code-editor .cm-activeLine");
+    expect(cssSource).not.toMatch(/\.scient-markdown-code-editor \.cm-editor \{[^}]*max-height:/su);
   });
 
   it("uses one persistent borderless field for raw YAML and HTML source", () => {

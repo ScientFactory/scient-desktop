@@ -21,6 +21,18 @@ import type {
 } from "./externalPresentation";
 import { ScientEditableRichFence } from "./ScientEditableRichFence";
 
+type ScientCodeEditorModule = typeof import("./codeMirrorCodeEditor");
+
+let codeEditorModulePromise: Promise<ScientCodeEditorModule> | null = null;
+
+function loadCodeEditorModule(): Promise<ScientCodeEditorModule> {
+  codeEditorModulePromise ??= import("./codeMirrorCodeEditor").catch((error: unknown) => {
+    codeEditorModulePromise = null;
+    throw error;
+  });
+  return codeEditorModulePromise;
+}
+
 function codeLanguage(node: ProseMirrorNode): string {
   return String(node.attrs.params).trim().split(/\s+/u)[0] || "text";
 }
@@ -49,6 +61,7 @@ class ScientCodeBlockNodeView implements NodeView {
   private destroyed = false;
   private highlightVersion = 0;
   private selected = false;
+  private pendingPointerCoordinates: { x: number; y: number } | null = null;
   private readonly authoringActions: ScientRichFenceAuthoringActions;
   private readonly unregisterExternalPresentation: (() => void) | undefined;
 
@@ -92,6 +105,7 @@ class ScientCodeBlockNodeView implements NodeView {
     // Ordinary code keeps direct block activation. Rich cards own every event
     // inside their rendered surface and expose source editing explicitly.
     this.dom.addEventListener("mousedown", this.handleMouseDown);
+    this.dom.addEventListener("pointerenter", this.handlePointerEnter);
     this.unregisterExternalPresentation = registerExternalPresentation?.((change) => {
       if (change === "appearance") this.render();
     });
@@ -114,6 +128,7 @@ class ScientCodeBlockNodeView implements NodeView {
 
   deselectNode(): void {
     this.selected = false;
+    this.pendingPointerCoordinates = null;
     this.dom.classList.remove("is-selected");
     this.rendered.hidden = false;
     this.editorHost.hidden = true;
@@ -142,6 +157,7 @@ class ScientCodeBlockNodeView implements NodeView {
     this.reactRoot = null;
     this.unregisterExternalPresentation?.();
     this.dom.removeEventListener("mousedown", this.handleMouseDown);
+    this.dom.removeEventListener("pointerenter", this.handlePointerEnter);
   }
 
   private isRichFenceRenderedTarget(target: EventTarget | null): boolean {
@@ -163,10 +179,18 @@ class ScientCodeBlockNodeView implements NodeView {
     if (!this.view.editable) return;
     const position = this.getPos();
     if (position === undefined) return;
+    this.pendingPointerCoordinates = { x: event.clientX, y: event.clientY };
     event.preventDefault();
     this.view.dispatch(
       this.view.state.tr.setSelection(NodeSelection.create(this.view.state.doc, position)),
     );
+  };
+
+  private readonly handlePointerEnter = () => {
+    if (!this.view.editable || this.isRichFence()) return;
+    // Warm the shared editor module before the first click without creating a
+    // CodeMirror instance for every code block in a long document.
+    void loadCodeEditorModule().catch(() => undefined);
   };
 
   private readonly requestSourceEdit = () => {
@@ -189,7 +213,7 @@ class ScientCodeBlockNodeView implements NodeView {
     this.loadError.hidden = true;
     if (!this.nestedEditor) {
       try {
-        const { createScientNestedCodeEditor } = await import("./codeMirrorCodeEditor");
+        const { createScientNestedCodeEditor } = await loadCodeEditorModule();
         if (this.destroyed || !this.selected || !this.view.editable) return;
         // Concurrent selections can share the same pending module import. Only
         // one continuation may create the nested editor; never focus after exit.
@@ -203,6 +227,7 @@ class ScientCodeBlockNodeView implements NodeView {
         });
       } catch {
         if (this.destroyed || !this.selected || !this.view.editable || this.nestedEditor) return;
+        this.pendingPointerCoordinates = null;
         this.editorHost.replaceChildren();
         this.editorHost.hidden = true;
         this.rendered.hidden = false;
@@ -215,7 +240,13 @@ class ScientCodeBlockNodeView implements NodeView {
     // Rich fences stay visible alongside their editable source.
     this.rendered.hidden = !this.dom.hasAttribute("data-scient-markdown-rich-fence");
     this.editorHost.hidden = false;
-    this.nestedEditor.focus();
+    const pointerCoordinates = this.pendingPointerCoordinates;
+    this.pendingPointerCoordinates = null;
+    if (pointerCoordinates && !this.isRichFence()) {
+      this.nestedEditor.focusAt(pointerCoordinates);
+    } else {
+      this.nestedEditor.focus();
+    }
   }
 
   private replaceCode(code: string): void {

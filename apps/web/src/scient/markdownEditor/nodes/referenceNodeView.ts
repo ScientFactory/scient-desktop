@@ -84,7 +84,12 @@ class ScientReferenceNodeView implements NodeView {
         this.sourceEditor.tabIndex = view.editable ? 0 : -1;
         (this.sourceEditor as HTMLTextAreaElement).rows = 1;
       } else {
-        this.sourceEditor.hidden = true;
+        // Citations are source-equivalent inline text. Keep their one authoring
+        // control present in write mode instead of revealing a second box only
+        // after the surrounding atom has been selected.
+        this.sourceEditor.hidden = false;
+        this.sourceEditor.tabIndex = -1;
+        this.sourceEditor.spellcheck = false;
       }
       this.sourceEditor.dir = "auto";
       this.sourceEditor.readOnly = !view.editable;
@@ -123,14 +128,12 @@ class ScientReferenceNodeView implements NodeView {
   selectNode(): void {
     this.dom.classList.add("is-selected");
     if (!this.sourceEditor || !this.view.editable) return;
-    if (this.node.type.name === "citation") this.sourceEditor.hidden = false;
     this.sourceEditor.readOnly = false;
     this.sourceEditor.value = sourceValue(this.node);
   }
 
   deselectNode(): void {
     this.dom.classList.remove("is-selected");
-    if (this.sourceEditor && this.node.type.name === "citation") this.sourceEditor.hidden = true;
   }
 
   stopEvent(event: Event): boolean {
@@ -163,7 +166,7 @@ class ScientReferenceNodeView implements NodeView {
       this.sourceEditor.tabIndex = editable ? 0 : -1;
       return;
     }
-    this.sourceEditor.hidden = !editable || !this.dom.classList.contains("is-selected");
+    this.sourceEditor.hidden = false;
   }
 
   private readonly handleMarkerClick = (event: MouseEvent) => {
@@ -176,6 +179,7 @@ class ScientReferenceNodeView implements NodeView {
 
   private readonly handleEditorMouseDown = (event: Event) => {
     if (!(event instanceof MouseEvent) || event.button !== 0 || !this.view.editable) return;
+    if (this.sourceEditor) this.sourceEditor.readOnly = false;
     const position = this.getPos();
     if (position === undefined) return;
     const selection = this.view.state.selection;
@@ -200,6 +204,9 @@ class ScientReferenceNodeView implements NodeView {
     const position = this.getPos();
     if (position === undefined) return;
     const value = this.sourceEditor.value;
+    if (this.sourceEditor instanceof HTMLInputElement) {
+      this.sourceEditor.size = Math.max(1, value.length);
+    }
     const attrs =
       this.node.type.name === "citation"
         ? { ...this.node.attrs, source: value }
@@ -218,9 +225,13 @@ class ScientReferenceNodeView implements NodeView {
 
   private render(): void {
     if (this.node.type.name === "citation") {
-      this.label.textContent = `[${String(this.node.attrs.source)}]`;
+      const source = String(this.node.attrs.source);
+      this.label.textContent = `[${source}]`;
       if (this.sourceEditor && this.sourceEditor !== document.activeElement) {
-        this.sourceEditor.value = sourceValue(this.node);
+        this.sourceEditor.value = source;
+        if (this.sourceEditor instanceof HTMLInputElement) {
+          this.sourceEditor.size = Math.max(1, source.length);
+        }
       }
       return;
     }

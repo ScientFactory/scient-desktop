@@ -44,6 +44,7 @@ describe("nested code editor activation", () => {
   beforeEach(() => {
     mocks.create.mockImplementation(() => ({
       focus: vi.fn(),
+      focusAt: vi.fn(),
       destroy: vi.fn(),
       replaceExternalCode: vi.fn(),
     }));
@@ -244,12 +245,25 @@ describe("nested code editor activation", () => {
     nodeView.destroy!();
   });
 
-  it("retains primary-click source activation for an ordinary code block", () => {
+  it("opens ordinary code at the exact first-click coordinates", async () => {
+    const editor = {
+      focus: vi.fn(),
+      focusAt: vi.fn(),
+      destroy: vi.fn(),
+      replaceExternalCode: vi.fn(),
+    };
+    mocks.create.mockReturnValue(editor);
     const { nodeView, state } = fixture();
     const rendered = (nodeView.dom as HTMLElement).querySelector<HTMLElement>(
       ".scient-markdown-code-render",
     )!;
-    const event = new MouseEvent("mousedown", { bubbles: true, button: 0, cancelable: true });
+    const event = new MouseEvent("mousedown", {
+      bubbles: true,
+      button: 0,
+      cancelable: true,
+      clientX: 32,
+      clientY: 48,
+    });
 
     rendered.dispatchEvent(event);
 
@@ -257,6 +271,15 @@ describe("nested code editor activation", () => {
     expect(state().selection).toBeInstanceOf(NodeSelection);
     expect(state().selection.from).toBe(0);
     expect(mocks.dispatch).toHaveBeenCalledOnce();
+    // The real ProseMirror view invokes selectNode after applying the
+    // NodeSelection; this lightweight fixture applies state only.
+    nodeView.selectNode!();
+    await vi.dynamicImportSettled();
+    expect(editor.focusAt).toHaveBeenCalledExactlyOnceWith({
+      x: 32,
+      y: 48,
+    });
+    expect(editor.focus).not.toHaveBeenCalled();
     nodeView.destroy!();
   });
 
