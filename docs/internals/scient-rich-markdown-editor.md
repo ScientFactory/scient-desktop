@@ -101,7 +101,10 @@ formatting controls preserves scroll and selection where the surfaces allow.
   from ordinary chart interaction.
 - Escape moves outward through nested editors and popovers in a predictable order. Enter on a
   keyboard-selected citation, math, footnote definition, or raw source island moves the caret into
-  its field, so every source-like atom is reachable without a pointer.
+  its field, so every source-like atom is reachable without a pointer. One-line citation and math
+  fields leave through their physical arrow boundaries (mirrored for RTL citation text), Enter, or
+  Escape; Backspace removes an already-empty inline atom. IME composition publishes one source
+  transaction only after composition ends.
 - A click on rendered code opens the nested editor with the caret at the clicked position. The
   rendered code and the editor share one text geometry (font, line height, wrapping, tab width);
   a click on the block header opens the editor without moving its caret.
@@ -445,7 +448,7 @@ The main alignments touch these six shared paths:
 The editor core, Markdown server operations, and inherited `RightPanelTabs` had no intervening
 main overlap. This is an exact integration record, not a reason to skip the next changed-path audit.
 
-#### Latest owned-main alignment (2026-09-01)
+#### Previous owned-main alignment (2026-09-01)
 
 The 51-patch feature branch was subsequently rebased onto freshly fetched owned main
 `06e8489afc9e430da6cf1fd591f7f608a964141d` (PR #223, the current bounded T3 alignment).
@@ -465,6 +468,27 @@ subsequent source-safety review changes are confined to `apps/web/src/scient/mar
 `packages/scient-markdown/`; they add no inherited T3-file overlap. This is the preferred shape:
 keep source projection, command policy, nested-node behavior, and tests in Scient-owned modules,
 while leaving the host files as lifecycle and transport composition points.
+
+#### Latest owned-main alignment (2026-09-03)
+
+After the source-editing review, the clean feature branch merged freshly fetched owned main
+`cb735ab0acf3c713ca3d2eeba0a68a0b63e468a1` as merge
+`cec1b3856f86741c5f89215a921dce08c8d98937`. The owned-main commit adds the managed-runtime
+catalog reconciler and publication workflow; it does not alter the Markdown editor, source ledger,
+save coordinator, or Markdown transport.
+
+Git auto-merged two paths that the feature branch had changed. In `apps/server/src/server.ts`, the
+result retains both the existing `scientMarkdownHttpApiLayer` and main's
+`ManagedRuntimeCatalogReconciler.layer`. In `docs/README.md`, the provider-runtime operations entry
+and the rich Markdown architecture entry are both present. No conflict resolution or product-policy
+adaptation was required. The official `upstream` remote was refreshed separately and remains
+fetch-only with push URL `DISABLED`; no unreviewed official T3 commit was merged into this feature
+branch.
+
+The exact merged tree passed the frozen-lockfile install and supply-chain check, repository format
+and lint gates, repository-wide typecheck and tests, production build, desktop smoke test, Scient
+brand check, and strict Markdown performance qualification. These automated results do not replace
+the owner's pending visual and interaction acceptance in the development app.
 
 ### Document session
 
