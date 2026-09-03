@@ -139,6 +139,7 @@ import { forkParked, ServerActivation } from "./serverActivation.ts";
 import * as ProviderConnectionManager from "./scient/providerLifecycle/ProviderConnectionManager.ts";
 import * as ProviderLifecycleCoordinator from "./scient/providerLifecycle/ProviderLifecycleCoordinator.ts";
 import * as ProviderRuntimeManager from "./scient/providerLifecycle/ProviderRuntimeManager.ts";
+import * as ManagedRuntimeCatalogReconciler from "./scient/providerLifecycle/ManagedRuntimeCatalogReconciler.ts";
 import * as GeneratedDocumentStore from "./scient/documentArtifacts/GeneratedDocumentStore.ts";
 import * as AnalysisService from "./scient/analysis/AnalysisService.ts";
 import * as LocalAnalysisStore from "./scient/analysis/LocalAnalysisStore.ts";
@@ -484,6 +485,9 @@ const RuntimeCoreDependenciesLive = ReactorLayerLive.pipe(
   Layer.provideMerge(
     Layer.mergeAll(ProviderEventLoggers.layer, ModelManifest.layer, ManagedRuntimeCatalog.layer),
   ),
+  // Catalog publication is independent from provider construction. Project
+  // newly qualified actions onto existing canonical snapshots without
+  // reloading providers, touching sessions, or mutating any runtime.
   // `OpenCodeDriver.create()` yields `OpenCodeRuntime`; previously the old
   // `ProviderRegistryLive` pulled `OpenCodeRuntimeLive` in for itself, but
   // the rewritten registry reads snapshots off the instance registry and
@@ -585,9 +589,11 @@ export const makeRoutesLayer = Layer.mergeAll(
   McpHttpServer.layer.pipe(Layer.provide(McpSessionRegistry.layer)),
 ).pipe(
   Layer.provide(
-    Layer.mergeAll(ProviderConnectionManager.layer, ProviderRuntimeManager.layer).pipe(
-      Layer.provideMerge(ProviderLifecycleCoordinator.layer),
-    ),
+    Layer.mergeAll(
+      ProviderConnectionManager.layer,
+      ProviderRuntimeManager.layer,
+      ManagedRuntimeCatalogReconciler.layer,
+    ).pipe(Layer.provideMerge(ProviderLifecycleCoordinator.layer)),
   ),
   // Both transports consume the same service instance, so caches single-flight across clients
   // and mutations observed on WebSocket invalidate patches subsequently read over HTTP.

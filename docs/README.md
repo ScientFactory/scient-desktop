@@ -130,6 +130,7 @@ Follow their linked successors for current behavior.
 
 - [Scient local dev app](./operations/local-dev-app.md)
 - [Release](./operations/release.md)
+- [Managed provider runtime updates](./operations/managed-provider-runtime-updates.md)
 - [Observability](./operations/observability.md)
 - [Relay observability](./operations/relay-observability.md)
 - [Mobile app store screenshots](./operations/mobile-app-store-screenshots.md)

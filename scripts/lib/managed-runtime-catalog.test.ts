@@ -1,13 +1,16 @@
 import { describe, expect, it } from "vite-plus/test";
 
 import {
+  mergeQualifiedManagedRuntimeProvider,
   parseCursorInstallerVersion,
   parseDroidRssVersion,
   parseGrokStableVersion,
-  qualificationMatrix,
   refreshManagedRuntimeCatalog,
+  refreshManagedRuntimeProvider,
+  validateManagedRuntimeCatalog,
   type ManagedRuntimeCatalogData,
 } from "./managed-runtime-catalog.ts";
+import bundledCatalogJson from "../../apps/server/src/scient/providerLifecycle/managed-runtime-catalog.json" with { type: "json" };
 
 const currentCatalog: ManagedRuntimeCatalogData = {
   schemaVersion: 1,
@@ -25,6 +28,12 @@ const currentCatalog: ManagedRuntimeCatalogData = {
     grok: { contractRevision: 1, channel: "stable", version: "1.0.13", artifacts: {} },
   },
 };
+
+function nextPatch(version: string): string {
+  const match = /^(.*\.)([0-9]+)$/u.exec(version);
+  if (!match) throw new Error(`Test version '${version}' has no numeric patch component.`);
+  return `${match[1]}${Number(match[2]) + 1}`;
+}
 
 function stableChannelFetch(codexVersion = "0.150.1") {
   const requested: string[] = [];
@@ -55,6 +64,26 @@ function stableChannelFetch(codexVersion = "0.150.1") {
 }
 
 describe("managed runtime release discovery", () => {
+  it("validates the generated catalog against every app-owned provider target", () => {
+    const catalog = validateManagedRuntimeCatalog(bundledCatalogJson);
+    expect(catalog.providers.codex?.version).toBe(bundledCatalogJson.providers.codex.version);
+    expect(() =>
+      validateManagedRuntimeCatalog({
+        ...bundledCatalogJson,
+        providers: {
+          ...bundledCatalogJson.providers,
+          codex: {
+            ...bundledCatalogJson.providers.codex,
+            artifacts: {
+              ...bundledCatalogJson.providers.codex.artifacts,
+              "plan9-mips": bundledCatalogJson.providers.codex.artifacts["darwin-arm64"],
+            },
+          },
+        },
+      }),
+    ).toThrow(/unapproved targets/u);
+  });
+
   it("extracts one unambiguous Cursor CLI release", () => {
     expect(
       parseCursorInstallerVersion(
@@ -82,22 +111,83 @@ describe("managed runtime release discovery", () => {
     expect(() => parseGrokStableVersion("latest")).toThrow(/invalid/u);
   });
 
-  it("qualifies every changed provider on the four native runner families", () => {
-    expect(qualificationMatrix(["codex", "grok"])).toHaveLength(8);
-    expect(qualificationMatrix(["codex"])).toEqual([
-      { provider: "codex", runner: "macos-26" },
-      { provider: "codex", runner: "macos-15-intel" },
-      { provider: "codex", runner: "ubuntu-24.04" },
-      { provider: "codex", runner: "windows-2025" },
-    ]);
-  });
-
   it("checks only stable pointers when every provider is current", async () => {
     const { fetch_, requested } = stableChannelFetch();
     const result = await refreshManagedRuntimeCatalog(currentCatalog, fetch_);
     expect(result.changedProviders).toEqual([]);
     expect(result.catalog).toEqual(currentCatalog);
     expect(requested).toHaveLength(6);
+  });
+
+  it("discovers one provider without coupling it to another provider channel", async () => {
+    const { fetch_, requested } = stableChannelFetch();
+    const result = await refreshManagedRuntimeProvider(currentCatalog, "codex", fetch_);
+    expect(result.changedProviders).toEqual([]);
+    expect(requested).toEqual(["https://releases.openai.com/codex/channels/latest"]);
+  });
+
+  it("merges only the qualified provider into the latest published catalog", () => {
+    const catalog = validateManagedRuntimeCatalog(bundledCatalogJson);
+    const codexVersion = nextPatch(catalog.providers.codex!.version);
+    const claudeVersion = nextPatch(catalog.providers.claudeAgent!.version);
+    const droidVersion = nextPatch(catalog.providers.droid!.version);
+    const candidate: ManagedRuntimeCatalogData = {
+      ...catalog,
+      providers: {
+        ...catalog.providers,
+        codex: {
+          ...catalog.providers.codex!,
+          version: codexVersion,
+        },
+        claudeAgent: {
+          ...catalog.providers.claudeAgent!,
+          version: claudeVersion,
+        },
+      },
+    };
+    const latest: ManagedRuntimeCatalogData = {
+      ...catalog,
+      providers: {
+        ...catalog.providers,
+        droid: {
+          ...catalog.providers.droid!,
+          version: droidVersion,
+        },
+      },
+    };
+    const promoted = mergeQualifiedManagedRuntimeProvider({
+      current: latest,
+      candidate,
+      provider: "codex",
+    });
+    expect(promoted.providers.codex?.version).toBe(codexVersion);
+    expect(promoted.providers.droid?.version).toBe(droidVersion);
+    expect(promoted.providers.claudeAgent?.version).toBe(latest.providers.claudeAgent?.version);
+  });
+
+  it("rejects same-version metadata replacement during publication", () => {
+    const catalog = validateManagedRuntimeCatalog(bundledCatalogJson);
+    const codex = catalog.providers.codex!;
+    const darwin = codex.artifacts["darwin-arm64"]!;
+    const candidate: ManagedRuntimeCatalogData = {
+      ...catalog,
+      providers: {
+        ...catalog.providers,
+        codex: {
+          ...codex,
+          artifacts: {
+            ...codex.artifacts,
+            "darwin-arm64": {
+              ...darwin,
+              checksum: { ...darwin.checksum, digest: "a".repeat(64) },
+            },
+          },
+        },
+      },
+    };
+    expect(() =>
+      mergeQualifiedManagedRuntimeProvider({ current: catalog, candidate, provider: "codex" }),
+    ).toThrow(/same-version catalog repack/u);
   });
 
   it("fails closed when an official stable pointer moves backwards", async () => {

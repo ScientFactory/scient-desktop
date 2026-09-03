@@ -240,18 +240,22 @@ These are common guarantees, not requirements for every provider to display the 
 **Code-confirmed:** every assisted managed provider now resolves immutable release facts through one
 process-scoped catalog while retaining its own app-compiled host, URL path family, target, archive,
 package, executable, smoke-test, environment, and support policy. Routine provider status uses
-memory/disk state and a background refresh; opening Install or Update may wait for the bounded refresh.
-Update is advertised only when the provider-specific strict comparator proves the catalog release is
-newer than the active managed version. Downgrades, same-version repacks, missing targets, contract
-drift, and malformed catalogs do not displace the last known good entry.
+memory/disk state and a non-blocking refresh; opening Install or Update may wait for the bounded
+refresh. A newly published entry recomputes only the affected managed-runtime summary, so Update can
+appear without an app restart and without reloading the provider or touching sessions. Update is
+advertised only when the provider-specific strict comparator proves the catalog release is newer than
+the active managed version. Downgrades, same-version repacks, missing targets, contract drift, and
+malformed catalogs do not displace the last known good entry.
 
 **Automation design (code-confirmed; hosted qualification pending):** the scheduled workflow discovers
-official stable releases, obtains or computes exact digests and sizes for every app-approved target,
-and runs the shared install boundary on native macOS Apple-silicon, macOS Intel, Linux x64, and Windows
-x64 runners. A least-privilege release app creates a catalog-only PR and requests auto-merge only after
-those jobs pass. Repository required checks remain the final gate. Users receive an Update action after
-catalog promotion; Scient does not install the release until the user confirms it and the local machine
-independently verifies, tests, and atomically activates it.
+each official stable release independently, obtains or computes exact digests and sizes for every
+app-approved target, and runs the shared install boundary on native macOS Apple-silicon, macOS Intel,
+Linux x64, and Windows x64 runners. Each qualified provider is serialized through a least-privilege
+release app into a generated catalog branch using a normal fast-forward push. Publication re-reads the
+latest catalog and changes only that provider, so one broken channel or unrelated repository check
+cannot block another provider and concurrent runs cannot discard one another. Users receive an Update
+action after catalog promotion; Scient does not install the release until the user confirms it and the
+local machine independently verifies, tests, and atomically activates it.
 
 **Provider-specific evidence sources:** Codex uses OpenAI's stable channel and published digests;
 Claude uses Anthropic's stable pointer and platform manifest; Antigravity uses Google's platform

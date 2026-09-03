@@ -74,7 +74,7 @@ const policyResolvers: Readonly<Record<ManagedRuntimeProvider, PolicyResolver>> 
   grok: resolveReviewedGrokArtifact,
 };
 
-const providerOrder: ReadonlyArray<ManagedRuntimeProvider> = [
+export const managedRuntimeProviders: ReadonlyArray<ManagedRuntimeProvider> = [
   "codex",
   "claudeAgent",
   "antigravity",
@@ -82,6 +82,10 @@ const providerOrder: ReadonlyArray<ManagedRuntimeProvider> = [
   "droid",
   "grok",
 ];
+
+export function isManagedRuntimeProvider(value: string): value is ManagedRuntimeProvider {
+  return managedRuntimeProviders.some((provider) => provider === value);
+}
 
 function policyEntries(provider: ManagedRuntimeProvider) {
   const resolve = policyResolvers[provider];
@@ -243,6 +247,75 @@ function candidateProvider(input: {
     version: input.version,
     artifacts: input.artifacts,
   };
+}
+
+/**
+ * Decode and re-apply the app-owned provider policy to an untrusted catalog.
+ * Automation reads the generated branch through Git, so it must not trust a
+ * TypeScript cast to establish that every provider and approved target is
+ * complete or still obeys the runtime policy shipped on `main`.
+ */
+export function validateManagedRuntimeCatalog(input: unknown): ManagedRuntimeCatalogData {
+  const root = record(input, "Managed runtime catalog");
+  if (root.schemaVersion !== 1) {
+    throw new Error("Managed runtime catalog schema is unsupported.");
+  }
+  const rawProviders = record(root.providers, "Managed runtime catalog providers");
+  const unexpected = Object.keys(rawProviders).filter(
+    (provider) => !isManagedRuntimeProvider(provider),
+  );
+  if (unexpected.length > 0) {
+    throw new Error(
+      `Managed runtime catalog contains unknown providers: ${unexpected.join(", ")}.`,
+    );
+  }
+
+  const providers: Partial<Record<ManagedRuntimeProvider, ManagedRuntimeCatalogProviderData>> = {};
+  for (const provider of managedRuntimeProviders) {
+    const rawRelease = record(rawProviders[provider], `Managed runtime catalog ${provider}`);
+    if (rawRelease.contractRevision !== CONTRACT_REVISION) {
+      throw new Error(`${provider} has an unsupported managed runtime contract revision.`);
+    }
+    if (rawRelease.channel !== "stable") {
+      throw new Error(`${provider} is not pinned to its stable release channel.`);
+    }
+    const version = strictVersion(
+      stringField(rawRelease, "version", `${provider} catalog release`),
+      `${provider} catalog release`,
+    );
+    const rawArtifacts = record(rawRelease.artifacts, `${provider} catalog artifacts`);
+    const expectedTargets = new Set(policyEntries(provider).map(({ key }) => key));
+    const unexpectedTargets = Object.keys(rawArtifacts).filter((key) => !expectedTargets.has(key));
+    if (unexpectedTargets.length > 0) {
+      throw new Error(`${provider} contains unapproved targets: ${unexpectedTargets.join(", ")}.`);
+    }
+
+    const artifacts: Record<string, ManagedRuntimeCatalogArtifactData> = {};
+    for (const { key } of policyEntries(provider)) {
+      const rawArtifact = record(rawArtifacts[key], `${provider} ${key} artifact`);
+      const rawChecksum = record(rawArtifact.checksum, `${provider} ${key} checksum`);
+      const algorithm = stringField(rawChecksum, "algorithm", `${provider} ${key} checksum`);
+      if (algorithm !== "sha256" && algorithm !== "sha512") {
+        throw new Error(`${provider} ${key} uses an unsupported checksum algorithm.`);
+      }
+      artifacts[key] = {
+        artifactName: stringField(rawArtifact, "artifactName", `${provider} ${key} artifact`),
+        url: stringField(rawArtifact, "url", `${provider} ${key} artifact`),
+        checksum: {
+          algorithm,
+          digest: strictDigest(
+            stringField(rawChecksum, "digest", `${provider} ${key} checksum`),
+            algorithm,
+            `${provider} ${key}`,
+          ),
+        },
+        size: strictSize(Number(rawArtifact.size), `${provider} ${key}`),
+      };
+    }
+    providers[provider] = candidateProvider({ provider, version, artifacts });
+  }
+
+  return { schemaVersion: 1, providers };
 }
 
 function releaseChanged(
@@ -521,27 +594,85 @@ export async function refreshManagedRuntimeCatalog(
 ): Promise<ManagedRuntimeCatalogRefreshResult> {
   if (current.schemaVersion !== 1)
     throw new Error("Managed runtime catalog schema is unsupported.");
-  const providers = { ...current.providers };
+  let catalog = current;
   const changedProviders: ManagedRuntimeProvider[] = [];
-  for (const provider of providerOrder) {
-    const existing = current.providers[provider];
-    if (!existing) throw new Error(`Managed runtime catalog is missing ${provider}.`);
-    report(`Checking ${provider} stable channel.`);
-    const latestVersion = await discoverLatestVersion(provider, fetch_);
-    if (!releaseChanged(provider, existing, latestVersion)) {
-      report(`${provider} is already current at ${latestVersion}.`);
-      continue;
-    }
-    report(`Qualifying ${provider} ${latestVersion} release metadata.`);
-    const candidate = await discoverers[provider](fetch_);
-    if (candidate.version !== latestVersion) {
-      throw new Error(`${provider} stable release changed during discovery.`);
-    }
-    providers[provider] = candidate;
-    changedProviders.push(provider);
-    report(`${provider} ${latestVersion} candidate metadata is complete.`);
+  for (const provider of managedRuntimeProviders) {
+    const result = await refreshManagedRuntimeProvider(catalog, provider, fetch_, report);
+    catalog = result.catalog;
+    changedProviders.push(...result.changedProviders);
   }
-  return { catalog: { schemaVersion: 1, providers }, changedProviders };
+  return { catalog, changedProviders };
+}
+
+/** Discover one provider independently so a broken channel cannot block the other providers. */
+export async function refreshManagedRuntimeProvider(
+  current: ManagedRuntimeCatalogData,
+  provider: ManagedRuntimeProvider,
+  fetch_: Fetch = fetch,
+  report: (message: string) => void = () => undefined,
+): Promise<ManagedRuntimeCatalogRefreshResult> {
+  if (current.schemaVersion !== 1) {
+    throw new Error("Managed runtime catalog schema is unsupported.");
+  }
+  const existing = current.providers[provider];
+  if (!existing) throw new Error(`Managed runtime catalog is missing ${provider}.`);
+  report(`Checking ${provider} stable channel.`);
+  const latestVersion = await discoverLatestVersion(provider, fetch_);
+  if (!releaseChanged(provider, existing, latestVersion)) {
+    report(`${provider} is already current at ${latestVersion}.`);
+    return { catalog: current, changedProviders: [] };
+  }
+  report(`Collecting ${provider} ${latestVersion} release metadata.`);
+  const candidate = await discoverers[provider](fetch_);
+  if (candidate.version !== latestVersion) {
+    throw new Error(`${provider} stable release changed during discovery.`);
+  }
+  report(`${provider} ${latestVersion} candidate metadata is complete.`);
+  return {
+    catalog: {
+      schemaVersion: 1,
+      providers: { ...current.providers, [provider]: candidate },
+    },
+    changedProviders: [provider],
+  };
+}
+
+/**
+ * Apply only one already-qualified provider to the latest generated catalog.
+ * This is what lets independently qualified providers publish serially
+ * without overwriting one another with an older candidate snapshot.
+ */
+export function mergeQualifiedManagedRuntimeProvider(input: {
+  readonly current: ManagedRuntimeCatalogData;
+  readonly candidate: ManagedRuntimeCatalogData;
+  readonly provider: ManagedRuntimeProvider;
+}): ManagedRuntimeCatalogData {
+  const currentRelease = input.current.providers[input.provider];
+  const candidateRelease = input.candidate.providers[input.provider];
+  if (!currentRelease || !candidateRelease) {
+    throw new Error(`Managed runtime catalog is missing ${input.provider}.`);
+  }
+  if (currentRelease.version === candidateRelease.version) {
+    if (JSON.stringify(currentRelease) !== JSON.stringify(candidateRelease)) {
+      throw new Error(`${input.provider} attempted a same-version catalog repack.`);
+    }
+    return input.current;
+  }
+  if (
+    !isManagedRuntimeUpdate({
+      provider: input.provider,
+      current: currentRelease.version,
+      candidate: candidateRelease.version,
+    })
+  ) {
+    throw new Error(
+      `${input.provider} candidate ${candidateRelease.version} is not newer than ${currentRelease.version}.`,
+    );
+  }
+  return {
+    schemaVersion: 1,
+    providers: { ...input.current.providers, [input.provider]: candidateRelease },
+  };
 }
 
 async function discoverLatestVersion(
@@ -586,11 +717,4 @@ async function discoverLatestVersion(
     case "grok":
       return parseGrokStableVersion(await metadataText(fetch_, "https://x.ai/cli/stable"));
   }
-}
-
-export function qualificationMatrix(
-  providers: ReadonlyArray<ManagedRuntimeProvider>,
-): ReadonlyArray<{ readonly provider: ManagedRuntimeProvider; readonly runner: string }> {
-  const runners = ["macos-26", "macos-15-intel", "ubuntu-24.04", "windows-2025"];
-  return providers.flatMap((provider) => runners.map((runner) => ({ provider, runner })));
 }
