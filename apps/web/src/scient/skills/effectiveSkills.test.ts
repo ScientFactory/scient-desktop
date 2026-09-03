@@ -71,4 +71,21 @@ describe("effective provider skill inventory", () => {
       }).some((skill) => skill.name === projectSkill.name),
     ).toBe(false);
   });
+
+  it("keeps provider-native project skills for an explicitly resolved workspace", () => {
+    const projectSkill = {
+      name: "test-t3-app",
+      path: "/workspace/.agents/skills/test-t3-app/SKILL.md",
+      scope: "project",
+      enabled: true,
+    };
+    expect(
+      mergeEffectiveProviderSkills({
+        provider: ProviderDriverKind.make("codex"),
+        providerSkills: [projectSkill],
+        inventory,
+        includeContextualProviderSkills: true,
+      }),
+    ).toContain(projectSkill);
+  });
 });

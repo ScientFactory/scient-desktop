@@ -42,14 +42,14 @@ describe("ProviderInstanceCard tabs", () => {
   it("opens shipped providers on Models by default", () => {
     const markup = renderEditor("claudeAgent", true);
 
-    expect(markup).toMatch(/aria-pressed="true"[^>]*>Models<\/button>/);
+    expect(markup).toMatch(/aria-pressed="true"[^>]*>Models/);
     expect(markup).toMatch(/aria-pressed="false"[^>]*>Configuration<\/button>/);
   });
 
   it("keeps unknown providers on their available Configuration tab", () => {
     const markup = renderEditor("custom-provider", false);
 
-    expect(markup).not.toContain(">Models</button>");
+    expect(markup).not.toContain(">Models");
     expect(markup).toMatch(/aria-pressed="true"[^>]*>Configuration<\/button>/);
   });
 });

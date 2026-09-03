@@ -89,6 +89,49 @@ describe("buildCursorAcpSpawnInput", () => {
       env: { SCIENT_MANAGED_CURSOR_RUNTIME: "1" },
     });
   });
+
+  it("forces approval in full-access mode", () => {
+    expect(buildCursorAcpSpawnInput(undefined, "/tmp/project", undefined, "full-access")).toEqual({
+      command: "cursor-agent",
+      args: ["--force", "acp"],
+      cwd: "/tmp/project",
+    });
+  });
+
+  it("uses Cursor auto-review in auto mode", () => {
+    expect(buildCursorAcpSpawnInput(undefined, "/tmp/project", undefined, "auto")).toEqual({
+      command: "cursor-agent",
+      args: ["--auto-review", "acp"],
+      cwd: "/tmp/project",
+    });
+  });
+
+  it.each(["approval-required", "auto-accept-edits"] as const)(
+    "does not relax approval in %s mode",
+    (runtimeMode) => {
+      expect(buildCursorAcpSpawnInput(undefined, "/tmp/project", undefined, runtimeMode)).toEqual({
+        command: "cursor-agent",
+        args: ["acp"],
+        cwd: "/tmp/project",
+      });
+    },
+  );
+
+  it("combines managed-runtime and permission arguments", () => {
+    expect(
+      buildCursorAcpSpawnInput(
+        { binaryPath: "/private/cursor-agent", apiEndpoint: "" },
+        "/tmp/project",
+        { SCIENT_MANAGED_CURSOR_RUNTIME: "1" },
+        "full-access",
+      ),
+    ).toEqual({
+      command: "/private/cursor-agent",
+      args: ["--disable-auto-update", "--force", "acp"],
+      cwd: "/tmp/project",
+      env: { SCIENT_MANAGED_CURSOR_RUNTIME: "1" },
+    });
+  });
 });
 
 describe("applyCursorAcpModelSelection", () => {

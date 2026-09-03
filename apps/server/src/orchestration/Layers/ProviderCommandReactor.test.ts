@@ -3497,6 +3497,7 @@ describe("ProviderCommandReactor", () => {
         commandId: CommandId.make("cmd-auto-settle-with-session"),
         threadId: ThreadId.make("thread-1"),
         snapshotSequence: beforeSettlement.snapshotSequence,
+        settledAt: now,
       });
 
       yield* Deferred.await(sessionStopped);

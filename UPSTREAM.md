@@ -22,18 +22,18 @@ revision remains literal ancestry of owned `main`; it is not merely a reviewed
 or observed tip.
 
 The current proposed T3 ancestry is recorded in
-[`docs/internals/2026-09-02-upstream-sync-70cd258d8.md`](docs/internals/2026-09-02-upstream-sync-70cd258d8.md)
+[`docs/internals/2026-09-03-upstream-sync-5b8445b7a.md`](docs/internals/2026-09-03-upstream-sync-5b8445b7a.md)
 and in `upstream-state.json`. The latest refresh merges the exact official
-checkpoint `70cd258d8aac43ea57494527b00bf36de3efa6c0` into its draft alignment
+checkpoint `5b8445b7a777ab1070aa97b062b1618971073a96` into its alignment
 branch, preserving the exact range after the previously integrated tip
-`590a579f2e9292ce314c69e459e19620004578fe`. The composition receives
-cross-client media and document previews, inline assistant citations, bounded
-streaming and provider work, shared settings, remote desktop update handoff,
-and focused desktop, web, mobile, pull-request, and chat reliability work while
-retaining Scient's product, provider, state, attachment, and publication
-boundaries. Later observed T3 tips never move `integrationBase` by themselves;
-it advances only after exact ancestry, verification, review, and merge into
-owned `main`.
+`70cd258d8aac43ea57494527b00bf36de3efa6c0`. The composition receives the
+provider editor and model-list redesign, browser profiles and link routing,
+project icons and clean-default-branch pulls, unified file/media previews,
+pull-request and environment improvements, and the resting composer while
+retaining Scient's product, assisted-provider, projectless, state, attachment,
+browser, and publication boundaries. Later observed T3 tips never move
+`integrationBase` by themselves; it advances only after exact ancestry,
+verification, review, and merge into owned `main`.
 
 ## Receiving T3 updates
 

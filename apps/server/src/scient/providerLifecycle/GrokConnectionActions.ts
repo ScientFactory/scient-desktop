@@ -326,19 +326,14 @@ export const makeGrokConnectionActions = Effect.fn("GrokConnectionActions.make")
       }).pipe(
         Effect.provideService(Crypto.Crypto, crypto),
         Effect.mapError((cause) => actionError("Grok could not start its local agent.", cause)),
-        Effect.map(
-          (acp): GrokAcpConnection => ({
-            initialize: () =>
-              mapFailure(acp.initialize(), "Grok could not initialize its local agent."),
-            authenticate: (payload) =>
-              mapFailure(
-                acp.authenticate(payload),
-                "Grok could not start its secure sign-in flow.",
-              ),
-            request: (method, payload) =>
-              mapFailure(acp.request(method, payload), "Grok did not complete the account action."),
-          }),
-        ),
+        Effect.map((acp): GrokAcpConnection => ({
+          initialize: () =>
+            mapFailure(acp.initialize(), "Grok could not initialize its local agent."),
+          authenticate: (payload) =>
+            mapFailure(acp.authenticate(payload), "Grok could not start its secure sign-in flow."),
+          request: (method, payload) =>
+            mapFailure(acp.request(method, payload), "Grok did not complete the account action."),
+        })),
       ),
   };
   return yield* makeGrokConnectionActionsFromRuntime(runtime);
