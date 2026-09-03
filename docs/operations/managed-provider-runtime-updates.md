@@ -129,7 +129,9 @@ gh workflow run managed-provider-runtime-updates.yml \
 Cursor's complete 2026.09.02 Unix packages expand to 511–570 MiB, so its
 app-owned tar budget is 768 MiB. Windows retains its 384 MiB ZIP budget; both
 remain capped at 768 entries. Do not remove bundled executables to fit an older
-budget or increase the shared defaults. Native probes must finish closing
+budget or increase the shared defaults. The extractor permits an explicitly
+reviewed budget up to 768 MiB independently of its unchanged 512 MiB download
+ceiling and default expansion budget. Native probes must finish closing
 before activation or failure cleanup moves the payload.
 
 The v0.6.9 production app still reads the catalog from `main` and has the older

@@ -17,6 +17,9 @@ import type {
 
 const MAX_REDIRECTS = 5;
 const MAX_DOWNLOAD_BYTES = 512 * 1024 * 1024;
+// Compressed downloads and expanded payloads have independent budgets.
+// Providers must explicitly opt in above the unchanged default below.
+const MAX_EXPANDED_BYTES = 768 * 1024 * 1024;
 const DEFAULT_EXTRACTION_LIMITS: ManagedRuntimeExtractionLimits = {
   maxExpandedBytes: 512 * 1024 * 1024,
   maxEntries: 32,
@@ -192,7 +195,7 @@ function validatedExtractionLimits(
     resolved.maxEntries < 1 ||
     !Number.isSafeInteger(resolved.maxExpandedBytes) ||
     resolved.maxExpandedBytes < 1 ||
-    resolved.maxExpandedBytes > MAX_DOWNLOAD_BYTES
+    resolved.maxExpandedBytes > MAX_EXPANDED_BYTES
   ) {
     throw new ManagedRuntimeFileError(
       "Managed runtime catalog contains invalid extraction limits.",
