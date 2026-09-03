@@ -91,6 +91,8 @@ jobs:
 
       - name: Setup Vite+
         uses: voidzero-dev/setup-vp@250f29ce396baf5e8f24498e17c0dfdebabc26eb # v1
+        env:
+          pnpm_config_cache_dir: ${{ runner.temp }}/pnpm-metadata
         with:
           node-version-file: package.json
           cache: true
@@ -99,6 +101,14 @@ jobs:
               - --filter=@t3tools/shared...
               - --filter=@t3tools/scripts...
               - --filter=@t3tools/web...
+
+      # Share only the verification results, not the large registry metadata cache.
+      - name: Upload dependency verification
+        continue-on-error: true
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: release-dependency-verification
+          path: ${{ runner.temp }}/pnpm-metadata/lockfile-verified.jsonl
 
       - name: Verify exact source and approved release notes
         shell: bash
@@ -346,7 +356,18 @@ jobs:
           path: ${{ steps.package_cache_path.outputs.path }}
           key: windows-release-packages-v1-${{ matrix.arch }}-${{ hashFiles('pnpm-lock.yaml') }}
 
+      # pnpm validates the lockfile and policy before reusing this result. A missing
+      # artifact leaves the cache empty, so installation performs the checks again.
+      - name: Download dependency verification
+        continue-on-error: true
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          name: release-dependency-verification
+          path: ${{ runner.temp }}/pnpm-metadata
+
       - name: Install desktop dependencies
+        env:
+          pnpm_config_cache_dir: ${{ runner.temp }}/pnpm-metadata
         run: vp install --filter=@t3tools/desktop... --filter=t3... --filter=@t3tools/scripts...
 
       - name: Cache resource monitor
@@ -462,6 +483,7 @@ jobs:
       - name: Build desktop artifact
         shell: bash
         env:
+          pnpm_config_cache_dir: ${{ runner.temp }}/pnpm-metadata
           RELEASE_VERSION: ${{ needs.preflight.outputs.version }}
           RELEASE_PLATFORM: ${{ matrix.platform }}
           RELEASE_TARGET: ${{ matrix.target }}

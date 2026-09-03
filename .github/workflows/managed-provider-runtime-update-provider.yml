@@ -87,11 +87,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        runner:
-          - macos-26
-          - macos-15-intel
-          - ubuntu-24.04
-          - windows-2025
+        runner: ${{ fromJSON(inputs.provider == 'antigravityAcp' && '["macos-26","ubuntu-24.04","ubuntu-24.04-arm","windows-2025","windows-11-arm"]' || '["macos-26","macos-15-intel","ubuntu-24.04","windows-2025"]') }}
     steps:
       - name: Checkout immutable discovery source
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
@@ -118,9 +114,20 @@ jobs:
           path: ${{ runner.temp }}/managed-runtime-catalog-candidate
 
       - name: Exercise download, verification, smoke, activation, and removal
+        if: inputs.provider != 'antigravityAcp'
         run: >-
           node scripts/qualify-managed-runtime-catalog.ts
           --provider "${{ inputs.provider }}"
+          --catalog "${{ runner.temp }}/managed-runtime-catalog-candidate/managed-runtime-catalog.json"
+
+      - name: Install official ACP qualification dependencies
+        if: inputs.provider == 'antigravityAcp'
+        run: pnpm install --frozen-lockfile --filter=t3...
+
+      - name: Qualify the official ACP executable and harness through the app installer
+        if: inputs.provider == 'antigravityAcp'
+        run: >-
+          node apps/server/scripts/qualify-antigravity-acp-catalog.ts
           --catalog "${{ runner.temp }}/managed-runtime-catalog-candidate/managed-runtime-catalog.json"
 
   publish:
@@ -174,6 +181,7 @@ jobs:
           PROVIDER: ${{ inputs.provider }}
           SOURCE_SHA: ${{ needs.discover.outputs.source_sha }}
           APP_SLUG: ${{ steps.app-token.outputs.app-slug }}
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
         run: |
           set -euo pipefail
           candidate="$RUNNER_TEMP/managed-runtime-catalog-candidate/managed-runtime-catalog.json"
@@ -189,8 +197,19 @@ jobs:
           if ! git diff --quiet "$SOURCE_SHA" refs/remotes/origin/main -- \
             .github/workflows/managed-provider-runtime-update-provider.yml \
             apps/server/src/scient/providerLifecycle/ManagedRuntimeCatalog.ts \
+            apps/server/src/provider/AntigravityInstallation.ts \
+            apps/server/src/provider/antigravityRelease.ts \
+            apps/server/src/provider/antigravityAuthSupport.ts \
+            apps/server/src/provider/acp \
+            apps/server/scripts/qualify-antigravity-acp-catalog.ts \
+            apps/server/src/scient/providerLifecycle/antigravityAcpCatalog.ts \
+            apps/server/package.json \
+            packages/effect-acp \
             packages/scient-provider-runtime \
+            pnpm-lock.yaml \
+            scripts/package.json \
             scripts/lib/managed-runtime-catalog.ts \
+            scripts/lib/antigravity-acp-artifact.ts \
             scripts/promote-managed-runtime-catalog.ts \
             scripts/qualify-managed-runtime-catalog.ts \
             scripts/update-managed-runtime-catalog.ts; then

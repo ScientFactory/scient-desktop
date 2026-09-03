@@ -56,6 +56,153 @@ list instead of persisting `error` over a working install. The built-in `grok-bu
 CLI's product name, not an ACP model id. `applyGrokAcpModelSelection` treats it as "keep the
 session's current model" and never sends it in `session/set_model`.
 
+## Antigravity ownership and protocol
+
+[`AntigravityDriver`][antigravity] uses Google's official ACP executable. The instance config
+selects the ACP auth method: `oauth-personal` (default), `oauth-business`, `gemini-api-key`, or
+`agent-platform`. The two OAuth methods share the loopback sign-in flow below. The API key
+methods pass the configured key to the agent as `GEMINI_API_KEY` or `GOOGLE_API_KEY` and never
+open a browser. A GCP project and location are written to the profile's `settings.json` on each
+launch. The driver never reuses CLI credentials or ambient `GOOGLE_*` variables and never falls
+back to another method. Antigravity is disabled by default and supports multiple provider
+instances. The open driver and instance identifiers require no database migration.
+
+### Runtime installation
+
+[`AntigravityInstallation`][antigravity-installation] belongs to the environment, outside
+WebSocket and provider-instance scopes. Instances share an explicit download operation and the
+completed runtime. Client disconnects and instance rebuilds do not cancel installation.
+
+The fixed [release table][antigravity-release] supplies the bundled floor. Scient's qualified
+catalog may advance immutable release facts under the separate `antigravityAcp` key; the app
+still owns the allowed targets, Google URL family, exact executable pair, and launch policy.
+The catalog's semver is distinct from the agent's native build version. Downloads stream to disk.
+Lazy `yauzl` entry streams extract only that pair, with member names, types, duplicates, and
+sizes checked. Validation runs ACP `initialize` in a temporary profile without authentication
+or a session. Progress updates are bounded, not sent for every network chunk.
+
+Complete releases live in immutable version directories under the T3 home
+`tools/antigravity-acp/<platform>-<arch>/versions`. An atomic `active.json` change selects the
+release for new processes. Each process holds a version lease until it exits. Updates do not
+replace running executables. Removal refuses active leases or explicit binary paths that still
+reference the managed files. Failure or cancellation removes owned partial files, not the
+previous release or account data.
+
+Repair validates a complete replacement before swapping a damaged generation, refuses active
+leases, and restores the previous directory if publication fails. A registry-only revision of
+the same verified archive updates its receipt without replacing or downloading the binaries.
+
+Resolution order is explicit `binaryPath`, active managed release, then the instance's `PATH`.
+An invalid explicit path fails without fallback. Manual installations are never changed by the
+installer. Every launch pins `ANTIGRAVITY_HARNESS_PATH` to the selected executable's sibling.
+
+### Google profiles and sign-in
+
+Each instance owns a stable profile at
+`<stateDir>/providers/antigravity/<sha256(instanceId)>`.
+[`antigravityAuthSupport.ts`][antigravity-auth-support] sets `GEMINI_HOME` to this directory and
+`AGY_ACP_FORCE_FILE_STORAGE=1` after merging instance environment variables. File storage avoids
+the official macOS keychain entry being shared across instances. Profile directories use mode
+`0700` on POSIX. This is file storage, not an encrypted keychain. Windows uses the host profile's
+filesystem permissions.
+
+The launch environment removes API-key and cloud-billing variables, disables inherited
+environment extension, sets `PYTHONUNBUFFERED=1`, and controls `BROWSER`. A tested Node or
+Electron-as-Node helper prevents the official agent from opening a browser on the environment.
+The same launch factory serves setup, health checks, chat, and text generation.
+
+The official agent prints one non-JSON OAuth line on stdout. Only the exact known prefix is
+filtered before ACP decoding. Fragmented lines are joined and bounded. Other malformed
+protocol output remains fatal. Authorization URLs are validated before use. Native stderr is
+drained without logging because it can contain OAuth data. Normal work rejects an interactive
+login request with a sign-in-required error instead of waiting for consent.
+
+[`AntigravityAuth`][antigravity-auth] owns each sign-in process and deadline in the instance
+scope. Only the initiating T3 auth session receives its URL and flow ID or can complete or
+cancel it. Other clients receive busy state without those values. Subscriptions follow
+controller replacement when settings rebuild an instance.
+
+Scient's compact setup delegates to that same controller through `AntigravityLifecycleBridge`.
+The bridge owns one private controller session for the shared lifecycle supervisor; existing
+authorized lifecycle clients can complete or cancel its current operation. It is not a second
+authentication engine. The direct upstream setup RPC keeps its initiating-client ownership.
+
+For remote completion, the client sends the full return URL through the typed setup RPC.
+The server validates the pending loopback origin, port, root path, and single matching state
+before forwarding once to the owned listener. It does not probe the listener or follow
+redirects. Google's process owns PKCE, token exchange, refresh, and storage. Callback HTTP
+success is not authentication success. The controller waits for authenticated session setup
+and catalog discovery. Cancellation closes the process instead of sending a synthetic denial.
+
+Auth RPCs `provider.auth.start`, `complete`, `cancel`, `logout`, and `subscribe` require
+`orchestration:operate`. Install `start`, `cancel`, and `remove` use that scope too.
+`provider.install.subscribe` and public provider snapshots require `orchestration:read`.
+[`providerSetup.ts`][provider-setup] defines the operation IDs, states, and safe errors.
+
+Sign-out closes process admission for the instance, stops provider bindings through
+[`ProviderAuthService`][provider-auth-service], then stops owned startup and helper processes.
+A fresh official process calls `initialize` and native `logout` without authenticating.
+Only then does the provider clear auth, models, commands, skills, and workspace metadata.
+Thread history and native session files remain. Settings sign-out and a text-only `/logout`
+use this same path. The command is handled before model prompting or title generation.
+Disabling an instance closes its processes but keeps credentials. Account replacement is
+explicit sign-out followed by sign-in.
+
+### Sessions, models, and client capabilities
+
+[`AntigravityAdapter`][antigravity-adapter] owns one ACP process per active thread. It uses
+native `session/resume` without transcript replay and reapplies the persisted model and
+permission mode after new or resumed setup. An unavailable explicit model fails instead of
+accepting the native default. Steering cancels the previous prompt, waits for its result and
+event drain, then sends the replacement. Native background commands use T3's existing
+background-task state.
+
+The permission mapping is `approval-required` and `auto` to `default`, `auto-accept-edits` to
+`auto_edit`, and `full-access` to `yolo`. Native requests still need replies in `yolo`.
+`interaction_` requests are user questions, not approvals. T3 keeps opaque option IDs in
+`UserInputQuestion.options[].value` and sets `allowCustomAnswer=false`. Both clients preserve
+these values. Ordinary approval replies use only offered option IDs, including `allow_always`
+only when present. Existing providers keep their prior behavior when the optional fields are
+absent.
+
+`showInteractionModeToggle=false` keeps native `/plan` separate from T3 Plan mode.
+`supportsConversationRollback=false` hides unsupported client actions and makes checkpoint
+revert fail before filesystem changes. Checkpoint capture and diffs remain supported.
+
+Automatic status refreshes, reconnects, and workspace checks do not open catalog sessions.
+Health probes use `initialize` only. Disabled instances do not run background probes.
+An explicit `serverRefreshProviders` request with `refreshModels: true` calls the driver's
+optional `refreshModels` operation. Antigravity opens a short-lived catalog session under the
+instance's process admission guard, uses saved credentials, publishes models and commands,
+then closes the process. An interactive login request fails with sign-in required. Web's
+**Refresh provider status** and mobile's **Refresh models** actions request this operation.
+Account access starts unknown and becomes authenticated after successful session setup,
+including an explicit model refresh.
+The [provider snapshot][antigravity-provider] takes models and commands from setup and native
+updates. It preserves returned Gemini model IDs, labels, order, and thinking-level choices.
+The registry treats a successful empty catalog as authoritative and clears cached metadata
+after sign-out. It must not retain a previous account's models. Cached models do not prove
+current access. The auth response does not supply an email, plan tier, or reliable quota.
+
+Some upstream failures arrive as assistant text followed by `end_turn`. Preserve that message
+without treating model-written text as a structured error or successful task completion.
+
+### Text generation
+
+[`AntigravityTextGeneration`][antigravity-text] implements titles, branch names, commit text,
+and PR text through the same instance and Google sign-in. Each helper uses a temporary empty
+workspace, no injected MCP servers, native `default` mode, and explicit denial of tools and
+questions. Output is bounded, parsed against the existing schemas, and sanitized. Cancellation,
+timeout, and sign-out close the process. Cleanup removes only that helper's verified temporary
+native session files.
+
+The official agent has no verified hard no-tools setting. Global hooks and MCP configuration
+can run before a prompt. Helpers check the profile's `config/hooks.json` and
+`config/mcp_config.json` before launch and reject nonempty, malformed, or oversized
+configuration. `supportsTextGeneration=false` keeps such an instance out of system-model
+pickers. Empty managed profiles are supported. Do not describe prompt-time denial as a native
+sandbox.
+
 ## OpenCode server ownership and catalog
 
 Each OpenCode provider instance owns one lazy local server for catalog discovery and text-generation
@@ -135,23 +282,20 @@ folds configuration notifications into cached session state and handles Droid's 
 notification behavior. `packages/effect-acp` decodes missing or null configuration inventories
 tolerantly without weakening non-array validation or editing generated schemas.
 
-### Antigravity driver
+### Legacy Antigravity compatibility
 
-Antigravity is a native integration, not an ACP compatibility bridge. Its provider-specific runtime
-is intentionally separate from the assisted lifecycle machinery:
+The official ACP path above is the default on supported hosts. Scient's previous `agy`
+stream-json transport remains only for version-2 continuation cursors, explicit legacy executable
+paths (`agy`, `agy.exe`, or the old managed `antigravity` binary), and the unsupported-ACP Intel Mac
+default. `AntigravityCompatibilityAdapter` creates the legacy adapter lazily for old conversations;
+version-1 ACP cursors stay ACP. It never replays or converts one protocol's cursor into the other.
 
-- [`AgySession.ts`][agy-session] starts one official `agy` process per Scient thread using the
-  documented `stream-json` transport. It keeps the process warm across turns, emits typed init,
-  delta, tool, result, usage, and conversation-ID events, and resumes from the last completed
-  conversation after interruption.
-- [`AntigravityAdapter.ts`][antigravity-adapter] maps those events into the provider contract, owns
-  process and session scopes, stages attachments privately, and rejects unsupported approvals,
-  model switching, and rollback rather than presenting unavailable controls.
-- [`AntigravityTextGeneration.ts`][antigravity-text] uses the native structured-output path with a
-  JSON schema and validates `structured_output`; it does not scrape JSON from prose.
+`LegacyAntigravityDriver` and [`AgySession.ts`][agy-session] preserve the existing subscription,
+credential-store, attachment, and managed-runtime behavior for that path. The `antigravity` catalog
+entry stays separate from `antigravityAcp`. Neither authentication nor installation migrates old
+credentials. New ACP text and voice helpers share T3's structured-generation implementation.
 
-Antigravity's Google account flow, managed runtime, and capability-specific lifecycle behavior are
-documented in [Provider lifecycle architecture](./provider-lifecycle.md).
+The [provider lifecycle architecture](./provider-lifecycle.md) owns the shared management contract.
 
 ## Scient-assisted provider lifecycle
 
@@ -206,22 +350,24 @@ repository change Scient's model policy outside Scient's review and release boun
 
 ## Attachment access
 
-The server stores uploaded attachments outside the project workspace. Image attachments remain the
-only generic composer attachment currently advertised by Scient. Each provider receives images in
-its native supported form and applies its own filesystem and approval policy.
+The server stores uploaded attachments outside the project workspace. Scient's composer accepts
+images and generic files, while each provider decides whether to receive a native content block or
+a safe path reference according to its real capabilities.
 
-The inherited T3 contracts and adapters can also represent generic files. That path is deliberately
-gated by `SCIENT_GENERIC_FILE_ATTACHMENTS_ENABLED` in the server and web compatibility modules until
-desktop, web, mobile, and supported older clients can all preserve, send, queue, and replay the same
-events safely. The server capability response omits file support and the command normalizer rejects
-file-bearing turns while the gate is closed. Do not enable only the picker: old image-only clients
-cannot decode persisted file-bearing events, which can prevent projection bootstrap for the whole
-environment.
+- Codex, Claude, Cursor, and Grok send images as native image inputs and skip generic files. For
+  these providers, generic files reach the agent only as file paths in the turn text.
+- OpenCode sends PNG/JPEG/GIF/WebP images, text files, and PDFs up to 20 MB as native file parts
+  with their real mime type. Everything else (ZIP and other binaries, image formats model APIs
+  reject, oversized files) falls back to the file path in the turn text, like the other providers.
+- Antigravity sends BMP/JPEG/PNG/WebP images and common audio formats as native blocks, UTF-8 text
+  as embedded resources, and PDFs as local resource links. Text is limited to 1 MiB per file,
+  images to 10 MiB each, and all attachments to 50 MiB per turn. Unsupported or oversized inputs
+  fail explicitly instead of being dropped. Its ACP file-service requests are confined to the
+  workspace and attachments directory.
 
-When the cross-client gate is eventually qualified, provider behavior remains capability-specific:
-OpenCode can ingest supported text, PDF, and image parts natively, while other providers may receive
-only a path in the prompt. The server must never copy a file into the project or bypass a provider's
-approval rules merely to make the shared UI uniform.
+The server must never copy a file into the project or bypass a provider's approval rules merely to
+make the shared UI uniform. A provider that cannot ingest a format natively receives a path only
+when its adapter explicitly supports that fallback.
 
 ## How provider work is requested
 
@@ -265,12 +411,19 @@ when a request opens (approval) or user input is requested, via
 [cursor]: ../../apps/server/src/provider/Drivers/CursorDriver.ts
 [grok]: ../../apps/server/src/provider/Drivers/GrokDriver.ts
 [opencode]: ../../apps/server/src/provider/Drivers/OpenCodeDriver.ts
+[antigravity]: ../../apps/server/src/provider/Drivers/AntigravityDriver.ts
+[antigravity-adapter]: ../../apps/server/src/provider/Layers/AntigravityAdapter.ts
+[antigravity-provider]: ../../apps/server/src/provider/Layers/AntigravityProvider.ts
+[antigravity-installation]: ../../apps/server/src/provider/AntigravityInstallation.ts
+[antigravity-release]: ../../apps/server/src/provider/antigravityRelease.ts
+[antigravity-auth]: ../../apps/server/src/provider/AntigravityAuth.ts
+[antigravity-auth-support]: ../../apps/server/src/provider/antigravityAuthSupport.ts
+[antigravity-text]: ../../apps/server/src/textGeneration/AntigravityTextGeneration.ts
+[provider-auth-service]: ../../apps/server/src/provider/Layers/ProviderAuthService.ts
+[provider-setup]: ../../packages/contracts/src/providerSetup.ts
 [opencode-server-owner]: ../../apps/server/src/provider/OpenCodeServerOwner.ts
 [droid]: ../../apps/server/src/provider/Drivers/DroidDriver.ts
-[antigravity]: ../../apps/server/src/provider/Drivers/AntigravityDriver.ts
 [agy-session]: ../../apps/server/src/provider/antigravity/AgySession.ts
-[antigravity-adapter]: ../../apps/server/src/provider/Layers/AntigravityAdapter.ts
-[antigravity-text]: ../../apps/server/src/textGeneration/AntigravityTextGeneration.ts
 [adapter]: ../../apps/server/src/provider/Services/ProviderAdapter.ts
 [awareness]: ../../apps/server/src/provider/ScientAwareness.ts
 [instances]: ../../apps/server/src/provider/Services/ProviderInstanceRegistry.ts

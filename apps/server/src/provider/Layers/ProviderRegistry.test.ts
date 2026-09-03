@@ -36,6 +36,7 @@ import { applyServerSettingsPatch } from "@t3tools/shared/serverSettings";
 import { checkCodexProviderStatus, type CodexAppServerProviderSnapshot } from "./CodexProvider.ts";
 import { checkClaudeProviderStatus } from "./ClaudeProvider.ts";
 import * as BackgroundPolicy from "../../background/BackgroundPolicy.ts";
+import { AntigravityInstallation } from "../AntigravityInstallation.ts";
 import * as ModelManifest from "../ModelManifest.ts";
 import * as OpenCodeRuntime from "../opencodeRuntime.ts";
 import * as ProviderEventLoggers from "./ProviderEventLoggers.ts";
@@ -1087,6 +1088,119 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
         const afterFailure = mergeProviderSnapshot(afterRemoval, failedProvider);
 
         assert.deepStrictEqual(afterFailure.models, [authoritativeProvider.models[0]!]);
+      });
+
+      describe("Antigravity model inventories", () => {
+        const previousProvider = {
+          instanceId: ProviderInstanceId.make("antigravity-personal"),
+          driver: ProviderDriverKind.make("antigravity"),
+          status: "ready",
+          enabled: true,
+          installed: true,
+          auth: { status: "authenticated" },
+          checkedAt: "2026-09-02T00:00:00.000Z",
+          version: "0.1.3",
+          models: [
+            {
+              slug: "gemini-3.1-pro-high",
+              name: "Gemini 3.1 Pro High",
+              isCustom: false,
+              capabilities: null,
+            },
+            {
+              slug: "gemini-3-flash",
+              name: "Gemini 3 Flash",
+              isCustom: false,
+              capabilities: null,
+            },
+          ],
+          slashCommands: [],
+          skills: [],
+        } as const satisfies ServerProvider;
+
+        it("removes unavailable models after a successful refresh", () => {
+          for (const status of ["ready", "warning"] as const) {
+            const refreshedProvider = {
+              ...previousProvider,
+              status,
+              checkedAt: "2026-09-02T00:01:00.000Z",
+              models: [previousProvider.models[1]],
+            } satisfies ServerProvider;
+            const afterRefresh = mergeProviderSnapshot(previousProvider, refreshedProvider);
+
+            assert.deepStrictEqual(afterRefresh.models, refreshedProvider.models);
+
+            const afterFailure = mergeProviderSnapshot(afterRefresh, {
+              ...refreshedProvider,
+              status: "error",
+              auth: { status: "unknown" },
+              models: [],
+            });
+            assert.deepStrictEqual(afterFailure.models, refreshedProvider.models);
+          }
+        });
+
+        it("keeps cached models during health checks and temporary failures", () => {
+          for (const installed of [false, true]) {
+            const pendingProvider = {
+              ...previousProvider,
+              status: "warning",
+              installed,
+              auth: { status: "unknown" },
+              checkedAt: "2026-09-02T00:01:00.000Z",
+              version: installed ? previousProvider.version : null,
+              models: [],
+            } satisfies ServerProvider;
+
+            assert.deepStrictEqual(
+              mergeProviderSnapshot(previousProvider, pendingProvider).models,
+              previousProvider.models,
+            );
+          }
+
+          for (const authStatus of ["unknown", "authenticated"] as const) {
+            const failedProvider = {
+              ...previousProvider,
+              status: "error",
+              auth: { status: authStatus },
+              checkedAt: "2026-09-02T00:02:00.000Z",
+              models: [],
+            } satisfies ServerProvider;
+
+            assert.deepStrictEqual(
+              mergeProviderSnapshot(previousProvider, failedProvider).models,
+              previousProvider.models,
+            );
+          }
+        });
+
+        it("clears models after sign-out, disable, uninstall, or an empty successful refresh", () => {
+          const emptyProvider = {
+            ...previousProvider,
+            checkedAt: "2026-09-02T00:01:00.000Z",
+            models: [],
+          } satisfies ServerProvider;
+          const clearedProviders = [
+            { ...emptyProvider, status: "warning", auth: { status: "unauthenticated" } },
+            { ...emptyProvider, status: "error", auth: { status: "unauthenticated" } },
+            { ...emptyProvider, status: "disabled", enabled: false },
+            { ...emptyProvider, status: "error", enabled: false },
+            { ...emptyProvider, status: "error", installed: false, auth: { status: "unknown" } },
+            emptyProvider,
+          ] satisfies ReadonlyArray<ServerProvider>;
+
+          for (const provider of clearedProviders) {
+            const afterRemoval = mergeProviderSnapshot(previousProvider, provider);
+            assert.deepStrictEqual(afterRemoval.models, []);
+
+            const afterFailure = mergeProviderSnapshot(afterRemoval, {
+              ...emptyProvider,
+              status: "error",
+              auth: { status: "unknown" },
+            });
+            assert.deepStrictEqual(afterFailure.models, []);
+          }
+        });
       });
 
       it("fills missing capabilities from the previous provider snapshot", () => {
@@ -2261,6 +2375,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
           yield* Effect.addFinalizer(() => Scope.close(scope, Exit.void));
           const providerRegistryLayer = ProviderRegistryLive.pipe(
             Layer.provideMerge(ProviderInstanceRegistryHydrationLive),
+            Layer.provideMerge(AntigravityInstallation.layer),
             Layer.provideMerge(
               Layer.succeed(ServerSettingsModule.ServerSettingsService, serverSettings),
             ),
@@ -2326,13 +2441,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
         }),
       );
 
-      // Guards the second half of the reported bug: changing
-      // `providers.codex.binaryPath` in settings must tear down the live
-      // instance and rebuild it so a fresh probe runs with the new binary.
-      // This test drives the real settings stream → registry reconcile →
-      // aggregator sync pipeline and asserts that `getProviders` reflects
-      // the new background probe's outcome.
-      //
+      // A binary path change must rebuild Codex and publish its new probe result.
       it.effect("re-probes when settings change the codex binaryPath", () =>
         Effect.gen(function* () {
           const firstMissing = `t3code_codex_first_`;
@@ -2358,6 +2467,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
           yield* Effect.addFinalizer(() => Scope.close(scope, Exit.void));
           const providerRegistryLayer = ProviderRegistryLive.pipe(
             Layer.provideMerge(ProviderInstanceRegistryHydrationLive),
+            Layer.provideMerge(AntigravityInstallation.layer),
             Layer.provideMerge(
               Layer.succeed(ServerSettingsModule.ServerSettingsService, serverSettings),
             ),
@@ -2463,6 +2573,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
           yield* Effect.addFinalizer(() => Scope.close(scope, Exit.void));
           const providerRegistryLayer = ProviderRegistryLive.pipe(
             Layer.provideMerge(ProviderInstanceRegistryHydrationLive),
+            Layer.provideMerge(AntigravityInstallation.layer),
             Layer.provideMerge(
               Layer.succeed(ServerSettingsModule.ServerSettingsService, serverSettings),
             ),
@@ -2523,6 +2634,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
             yield* Effect.addFinalizer(() => Scope.close(scope, Exit.void));
             const providerRegistryLayer = ProviderRegistryLive.pipe(
               Layer.provideMerge(ProviderInstanceRegistryHydrationLive),
+              Layer.provideMerge(AntigravityInstallation.layer),
               Layer.provideMerge(
                 Layer.succeed(ServerSettingsModule.ServerSettingsService, serverSettings),
               ),

@@ -22,6 +22,7 @@ jobs:
           - codex
           - claudeAgent
           - antigravity
+          - antigravityAcp
           - cursor
           - droid
           - grok

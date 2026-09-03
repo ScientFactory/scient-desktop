@@ -1,9 +1,10 @@
-import { EnvironmentHttpApi } from "@t3tools/contracts";
+import { EnvironmentHttpApi, ProviderDriverKind } from "@t3tools/contracts";
 import * as Duration from "effect/Duration";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Schedule from "effect/Schedule";
+import * as Stream from "effect/Stream";
 import { FetchHttpClient, HttpRouter, HttpServer } from "effect/unstable/http";
 import * as HttpApiBuilder from "effect/unstable/httpapi/HttpApiBuilder";
 
@@ -36,6 +37,10 @@ import * as ModelManifest from "./provider/ModelManifest.ts";
 import * as ProviderEventLoggers from "./provider/Layers/ProviderEventLoggers.ts";
 import * as ManagedRuntimeCatalog from "./scient/providerLifecycle/ManagedRuntimeCatalog.ts";
 import { ProviderServiceLive } from "./provider/Layers/ProviderService.ts";
+import { ProviderAuthServiceLive } from "./provider/Layers/ProviderAuthService.ts";
+import { AntigravityInstallation } from "./provider/AntigravityInstallation.ts";
+import { ProviderInstanceRegistry } from "./provider/Services/ProviderInstanceRegistry.ts";
+import { ProviderRegistry } from "./provider/Services/ProviderRegistry.ts";
 import { ProviderSessionReaperLive } from "./provider/Layers/ProviderSessionReaper.ts";
 import * as OpenCodeRuntime from "./provider/opencodeRuntime.ts";
 import * as CheckpointDiffQuery from "./checkpointing/CheckpointDiffQuery.ts";
@@ -458,7 +463,36 @@ const ProviderRuntimeLayerLive = ProviderSessionReaperLive.pipe(
   Layer.provideMerge(OrchestrationLayerLive),
 );
 
+const AntigravityInstallationRefreshLive = Layer.effectDiscard(
+  Effect.gen(function* () {
+    const installation = yield* AntigravityInstallation;
+    const instances = yield* ProviderInstanceRegistry;
+    const providers = yield* ProviderRegistry;
+    yield* installation.changes.pipe(
+      Stream.map((state) => state.installedVersion),
+      Stream.changes,
+      Stream.drop(1),
+      Stream.runForEach(() =>
+        instances.listInstances.pipe(
+          Effect.flatMap((entries) =>
+            Effect.forEach(
+              entries.filter(
+                (instance) => instance.driverKind === ProviderDriverKind.make("antigravity"),
+              ),
+              (instance) => providers.refreshInstance(instance.instanceId),
+              { discard: true },
+            ),
+          ),
+        ),
+      ),
+      Effect.forkScoped,
+    );
+  }),
+);
+
 const RuntimeCoreDependenciesLive = ReactorLayerLive.pipe(
+  Layer.provideMerge(AntigravityInstallationRefreshLive),
+  Layer.provideMerge(ProviderAuthServiceLive),
   // Core Services
   Layer.provideMerge(Layer.mergeAll(ServerSettingsLayerLive, PtyAdapterLive)),
   Layer.provideMerge(CheckpointingLayerLive),
@@ -480,6 +514,8 @@ const RuntimeCoreDependenciesLive = ReactorLayerLive.pipe(
   // `providerInstances` hydration merges `settings.providers.<kind>`
   // with explicit `providerInstances` entries on boot.
   Layer.provideMerge(ProviderInstanceRegistryHydrationLive.pipe(Layer.provide(PtyAdapterLive))),
+).pipe(
+  Layer.provideMerge(AntigravityInstallation.layer),
   // Shared native/canonical NDJSON writers used by both the per-instance
   // drivers (native stream, written from inside each `<X>Adapter`) and
   // `ProviderService` (canonical stream, written after event normalization).

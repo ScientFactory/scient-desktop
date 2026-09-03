@@ -12,14 +12,20 @@ export const startReviewedAntigravityRuntimeAction = startReviewedProviderRuntim
 
 export async function startAntigravitySignIn(
   controller: ProviderLifecycleController,
+  provider?: ServerProvider,
 ): Promise<ServerProvider> {
-  return controller.startConnection("antigravity_google");
+  return controller.startConnection(
+    provider?.connection?.methods.includes("antigravity_credentials")
+      ? "antigravity_credentials"
+      : "antigravity_google",
+  );
 }
 
 export async function startAntigravitySignInAndOpenAuthorizationPage(
   controller: ProviderLifecycleController,
+  currentProvider?: ServerProvider,
 ): Promise<ServerProvider> {
-  const provider = await startAntigravitySignIn(controller);
+  const provider = await startAntigravitySignIn(controller, currentProvider);
   const operation = provider.connection?.operation;
   if (operation?.authorizationUrl && operation.authorizationUrlKind === "primary") {
     await controller.openAuthorizationPage(operation.authorizationUrl);

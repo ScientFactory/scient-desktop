@@ -225,7 +225,23 @@ describe("ProviderRuntimeSection", () => {
     expect(markup).not.toContain("Review Antigravity setup");
   });
 
-  it("keeps the managed install review flat in the Antigravity dialog", async () => {
+  it.each([
+    { version: "1.1.17", label: "v1.1.17" },
+    { version: "agy_acp_server_20260818_01_RC01", label: "2026-08-18 RC01" },
+  ])("keeps the managed install review readable for $version", async ({ version, label }) => {
+    commands.plan.mockResolvedValue({
+      _tag: "Success",
+      value: {
+        instanceId,
+        action: "install",
+        target: "darwin-arm64",
+        version,
+        downloadBytes: 42,
+        sourceLabel: "Official Google Antigravity CLI release",
+        catalogRevision: "reviewed:1",
+        message: "Install the reviewed Antigravity release.",
+      },
+    });
     hooks.beginRender();
     ProviderRuntimeSection({
       compact: true,
@@ -249,7 +265,8 @@ describe("ProviderRuntimeSection", () => {
     );
 
     expect(markup).toContain("Install Antigravity");
-    expect(markup).toContain("Version 1.1.17 · macOS · Apple silicon · about 1 MB");
+    expect(markup).toContain(`${label} · macOS · Apple silicon · about 1 MB`);
+    expect(markup).not.toContain("agy_acp_server_");
     expect(markup).not.toContain("Official Google release");
     expect(markup).toContain(">Install<");
     expect(markup).not.toContain("download, verify, stage, test, and activate");
@@ -889,71 +906,77 @@ describe("ProviderRuntimeSection", () => {
       }),
     );
 
-    expect(markup).toContain("Antigravity 1.1.17");
+    expect(markup).toContain("Managed by Scient");
     expect(markup).not.toContain("Repaired successfully");
     expect(markup).not.toContain("repaired and verified successfully");
   });
 
-  it("keeps healthy managed runtime maintenance clear and preserves its actions", () => {
-    const managedProvider: ServerProvider = {
-      ...provider,
-      installed: true,
-      version: "1.1.17",
-      status: "ready",
-      auth: { status: "authenticated", required: true, label: "Google account" },
-      connection: {
-        methods: ["antigravity_google"],
-        canDisconnect: true,
-        operation: null,
-        runtime: {
-          source: "scient_managed",
-          supportTier: "fully_assisted",
-          target: "darwin-arm64",
-          actions: ["update", "repair", "remove"],
-          managedVersion: "1.1.17",
-          previousManagedVersion: null,
+  it.each(["1.1.17", "agy_acp_server_20260818_01_RC01"])(
+    "keeps managed maintenance clear for %s",
+    (version) => {
+      const managedProvider: ServerProvider = {
+        ...provider,
+        installed: true,
+        version,
+        status: "ready",
+        auth: { status: "authenticated", required: true, label: "Google account" },
+        connection: {
+          methods: ["antigravity_google"],
+          canDisconnect: true,
           operation: null,
-          message: "The provider runtime is installed and verified.",
-          diagnostics: {
-            executable: "/Applications/Scient.app/Contents/Resources/antigravity",
-            version: "1.1.17",
-            homePath: "/Users/server/.gemini",
-            backend: "macOS native",
+          runtime: {
+            source: "scient_managed",
+            supportTier: "fully_assisted",
+            target: "darwin-arm64",
+            actions: ["update", "repair", "remove"],
+            managedVersion: version,
+            previousManagedVersion: null,
+            operation: null,
+            message: "The provider runtime is installed and verified.",
+            diagnostics: {
+              executable: "/Applications/Scient.app/Contents/Resources/antigravity",
+              version,
+              homePath: "/Users/server/.gemini",
+              backend: "macOS native",
+            },
           },
         },
-      },
-    };
+      };
 
-    hooks.beginRender();
-    const markup = renderToStaticMarkup(
-      ProviderRuntimeSection({
-        compact: true,
-        environmentId,
-        provider: managedProvider,
-        displayName: "Antigravity",
-      }),
-    );
+      hooks.beginRender();
+      const markup = renderToStaticMarkup(
+        ProviderRuntimeSection({
+          compact: true,
+          environmentId,
+          provider: managedProvider,
+          displayName: "Antigravity",
+        }),
+      );
 
-    expect(markup).toContain("Managed by Scient");
-    expect(markup).toContain("Antigravity 1.1.17");
-    const updateIndex = markup.indexOf(">Update<");
-    const updateStart = markup.lastIndexOf("<button", updateIndex);
-    const updateMarkup = markup.slice(updateStart, updateIndex);
-    expect(updateMarkup).toContain("lucide-refresh-cw");
-    expect(updateMarkup).toContain("text-primary");
-    expect(updateMarkup).not.toContain("lucide-wrench");
-    const diagnosticsIndex = markup.indexOf("Runtime diagnostics");
-    expect(markup.indexOf(">Repair<")).toBeLessThan(diagnosticsIndex);
-    expect(markup.indexOf(">Remove<")).toBeLessThan(diagnosticsIndex);
-    expect(diagnosticsIndex).toBeLessThan(updateIndex);
-    expect(markup).toContain("flex items-center justify-between gap-3 pt-1");
-    expect(markup).toContain(">Repair<");
-    expect(markup).toContain(">Remove<");
-    expect(markup).not.toContain("installed and verified");
-    expect(markup).not.toContain("Private version");
-    expect(markup).not.toContain("rounded-lg border p-3");
-    expect(markup).not.toContain("border-input");
-  });
+      expect(markup).toContain("Managed by Scient");
+      const [summaryMarkup, diagnosticsMarkup] = markup.split("<details");
+      expect(summaryMarkup).not.toContain(version);
+      expect(summaryMarkup).not.toContain("2026-08-18");
+      expect(diagnosticsMarkup).toContain(version);
+      const updateIndex = markup.indexOf(">Update<");
+      const updateStart = markup.lastIndexOf("<button", updateIndex);
+      const updateMarkup = markup.slice(updateStart, updateIndex);
+      expect(updateMarkup).toContain("lucide-refresh-cw");
+      expect(updateMarkup).toContain("text-primary");
+      expect(updateMarkup).not.toContain("lucide-wrench");
+      const diagnosticsIndex = markup.indexOf("Runtime diagnostics");
+      expect(markup.indexOf(">Repair<")).toBeLessThan(diagnosticsIndex);
+      expect(markup.indexOf(">Remove<")).toBeLessThan(diagnosticsIndex);
+      expect(diagnosticsIndex).toBeLessThan(updateIndex);
+      expect(markup).toContain("flex items-center justify-between gap-3 pt-1");
+      expect(markup).toContain(">Repair<");
+      expect(markup).toContain(">Remove<");
+      expect(markup).not.toContain("installed and verified");
+      expect(markup).not.toContain("Private version");
+      expect(markup).not.toContain("rounded-lg border p-3");
+      expect(markup).not.toContain("border-input");
+    },
+  );
 
   it("never hides a terminal runtime failure behind the installed version", () => {
     const failedProvider: ServerProvider = {
@@ -994,7 +1017,7 @@ describe("ProviderRuntimeSection", () => {
     );
 
     expect(markup).toContain("Verification failed after repair");
-    expect(markup).toContain("Antigravity 1.1.17");
+    expect(markup).not.toContain("Antigravity 1.1.17");
   });
 
   it("returns to the current runtime state after setup is cancelled", () => {

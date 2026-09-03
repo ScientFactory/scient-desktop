@@ -81,6 +81,7 @@ function operation(input: {
   readonly authorizationUrl?: string;
   readonly authorizationUrlKind?: ProviderConnectionOperation["authorizationUrlKind"];
   readonly acceptsAuthorizationCode?: boolean;
+  readonly authorizationResponseKind?: ProviderConnectionOperation["authorizationResponseKind"];
   readonly userCode?: string;
 }): ProviderConnectionOperation {
   return {
@@ -92,6 +93,9 @@ function operation(input: {
     message: input.message,
     ...(input.authorizationUrl ? { authorizationUrl: input.authorizationUrl } : {}),
     ...(input.authorizationUrlKind ? { authorizationUrlKind: input.authorizationUrlKind } : {}),
+    ...(input.authorizationResponseKind
+      ? { authorizationResponseKind: input.authorizationResponseKind }
+      : {}),
     ...(input.acceptsAuthorizationCode !== undefined
       ? { acceptsAuthorizationCode: input.acceptsAuthorizationCode }
       : {}),
@@ -429,6 +433,9 @@ export const make = Effect.fn("ProviderConnectionManager.make")(function* () {
                   }
                 : {}),
               acceptsAuthorizationCode: attempt.submitAuthorizationCode !== undefined,
+              ...(attempt.authorizationResponseKind
+                ? { authorizationResponseKind: attempt.authorizationResponseKind }
+                : {}),
               ...(attempt.userCode ? { userCode: attempt.userCode } : {}),
             }),
           });

@@ -61,4 +61,9 @@ Windows uses Azure Trusted Signing unless an unsigned installer is explicitly ap
 candidate. Non-publishing rehearsals may be unsigned, but they never create or overwrite a tag or
 release.
 
+Preflight shares pnpm's lockfile verification results with the desktop build jobs through a small
+artifact. This avoids repeating dependency checks, especially on Windows, without transferring the
+large registry metadata cache. pnpm checks the current lockfile and policy before it reuses a result.
+If the artifact is unavailable, installation runs the checks again.
+
 See [Release Checklist](../operations/release.md) for the full release/signing setup checklist.

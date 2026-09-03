@@ -25,6 +25,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { serverEnvironment } from "../../state/server";
 import { useAtomCommand } from "../../state/use-atom-command";
+import { getProviderVersionLabel } from "../../components/settings/providerStatus";
 import { Button } from "../../components/ui/button";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../../components/ui/tooltip";
 import {
@@ -502,6 +503,7 @@ export function ProviderRuntimeSection(props: {
 
   if (plan) {
     const downloadSize = formatDownloadSize(plan.downloadBytes);
+    const versionLabel = getProviderVersionLabel(plan.version);
     const isRemovePlan = plan.action === "remove";
     const isCompactInstallPlan = props.compact && plan.action === "install";
     const isSystemManagedInstallPlan = isCompactInstallPlan && runtime.source === "system";
@@ -529,9 +531,9 @@ export function ProviderRuntimeSection(props: {
               {isRemovePlan
                 ? `Only Scient’s managed copy will be removed. Your account and other ${props.displayName} installations stay unchanged.`
                 : isSystemManagedInstallPlan
-                  ? `${plan.version ? `Version ${plan.version}` : props.displayName} · ${platformLabel(plan.target)}${downloadSize ? ` · about ${downloadSize}` : ""}. Accounts using the default installation will use Scient’s private copy; system and custom installations stay unchanged.`
+                  ? `${versionLabel ?? props.displayName} · ${platformLabel(plan.target)}${downloadSize ? ` · about ${downloadSize}` : ""}. Accounts using the default installation will use Scient’s private copy; system and custom installations stay unchanged.`
                   : isCompactInstallPlan
-                    ? `${plan.version ? `Version ${plan.version}` : props.displayName} · ${platformLabel(plan.target)}${downloadSize ? ` · about ${downloadSize}` : ""}`
+                    ? `${versionLabel ?? props.displayName} · ${platformLabel(plan.target)}${downloadSize ? ` · about ${downloadSize}` : ""}`
                     : plan.message}
             </p>
           </div>
@@ -544,7 +546,7 @@ export function ProviderRuntimeSection(props: {
               {plan.version ? (
                 <>
                   <dt className="text-muted-foreground">Version</dt>
-                  <dd className="text-right text-foreground">{plan.version}</dd>
+                  <dd className="text-right text-foreground">{versionLabel}</dd>
                 </>
               ) : null}
               {downloadSize ? (
@@ -632,6 +634,7 @@ export function ProviderRuntimeSection(props: {
       <CheckCircle2Icon className="mt-0.5 size-5 shrink-0 text-success" aria-hidden />
     );
   const presentsCompactUpdateSeparately = props.compact && runtime.actions.includes("update");
+  const summaryVersion = props.provider.driver === "antigravity" ? null : runtime.managedVersion;
   const trailingActions: ReadonlyArray<ProviderManagedRuntimeAction> =
     presentsCompactUpdateSeparately
       ? runtime.actions.filter((action) => action !== "update")
@@ -650,18 +653,18 @@ export function ProviderRuntimeSection(props: {
           {statusIcon}
           <div className="min-w-0 flex-1">
             <p className="text-sm font-medium text-foreground">{runtimeSourceLabel(runtime)}</p>
-            {props.compact && runtime.managedVersion ? (
+            {props.compact && summaryVersion ? (
               <p className="mt-0.5 text-xs text-muted-foreground">
-                {props.displayName} {runtime.managedVersion}
+                {props.displayName} {summaryVersion}
               </p>
             ) : statusMessage ? (
               <p className="mt-0.5 text-xs leading-relaxed text-muted-foreground">
                 {statusMessage}
               </p>
             ) : null}
-            {!props.compact && runtime.managedVersion ? (
+            {!props.compact && summaryVersion ? (
               <p className="mt-0.5 text-xs text-muted-foreground">
-                {props.displayName} {runtime.managedVersion}
+                {props.displayName} {summaryVersion}
               </p>
             ) : null}
           </div>
