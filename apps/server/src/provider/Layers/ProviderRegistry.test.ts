@@ -2413,7 +2413,6 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
                 codex: { enabled: true, binaryPath: secondMissing },
               },
             });
-
             // Wait for the observable event this regression cares about:
             // both the runtime-health check and provider-status probe have
             // finished spawning the new executable. A bounded live-clock

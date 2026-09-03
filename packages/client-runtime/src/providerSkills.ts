@@ -136,9 +136,12 @@ export function mergeEffectiveProviderSkills(input: {
   readonly provider: ProviderDriverKind;
   readonly providerSkills: ReadonlyArray<ServerProviderSkill>;
   readonly inventory: ScientSkillInventory | null;
+  readonly includeContextualProviderSkills?: boolean;
 }): ReadonlyArray<ServerProviderSkill> {
   const { inventory, provider, providerSkills } = input;
-  const visibleProviderSkills = providerSkills.filter(isGlobalProviderSkill);
+  const visibleProviderSkills = input.includeContextualProviderSkills
+    ? providerSkills
+    : providerSkills.filter(isGlobalProviderSkill);
   if (!inventory?.supportedProviders.includes(provider)) return visibleProviderSkills;
 
   // Provider-native behavior remains authoritative. A Scient skill with the
@@ -148,16 +151,14 @@ export function mergeEffectiveProviderSkills(input: {
   );
   const scientSkills = inventory.skills
     .filter((skill) => skill.active && !occupiedNames.has(skill.name.trim().toLowerCase()))
-    .map(
-      (skill): ServerProviderSkill => ({
-        name: skill.name,
-        description: skill.description,
-        shortDescription: skill.description,
-        path: `${SCIENT_SKILL_PATH_PREFIX}${encodeURIComponent(skill.releaseKey)}`,
-        scope: skill.scope === "project" ? "project" : "personal",
-        enabled: true,
-      }),
-    )
+    .map((skill): ServerProviderSkill => ({
+      name: skill.name,
+      description: skill.description,
+      shortDescription: skill.description,
+      path: `${SCIENT_SKILL_PATH_PREFIX}${encodeURIComponent(skill.releaseKey)}`,
+      scope: skill.scope === "project" ? "project" : "personal",
+      enabled: true,
+    }))
     .sort((left, right) => left.name.localeCompare(right.name));
   return scientSkills.length === 0
     ? visibleProviderSkills

@@ -6,6 +6,7 @@ import {
 } from "@t3tools/client-runtime/codex-artifact-templates";
 import type { EnvironmentThreadStatus } from "@t3tools/client-runtime/state/threads";
 import { useKeyboardChatComposerInset, useKeyboardScrollToEnd } from "@legendapp/list/keyboard";
+import { resolveProviderSkillsForCwd } from "@t3tools/client-runtime/providerSkills";
 import type { LegendListRef } from "@legendapp/list/react-native";
 import { HeaderHeightContext } from "@react-navigation/elements";
 import type {
@@ -534,11 +535,15 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
       selectedProviderStatus
         ? mergeEffectiveProviderSkills({
             provider: selectedProviderStatus.driver,
-            providerSkills: selectedProviderStatus.skills,
+            providerSkills: resolveProviderSkillsForCwd(
+              selectedProviderStatus,
+              props.threadCwd ?? props.projectWorkspaceRoot,
+            ),
             inventory: scientSkills,
+            includeContextualProviderSkills: true,
           })
         : [],
-    [scientSkills, selectedProviderStatus],
+    [props.projectWorkspaceRoot, props.threadCwd, scientSkills, selectedProviderStatus],
   );
 
   useLayoutEffect(() => {
@@ -833,7 +838,7 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
                   serverConfig={props.serverConfig}
                   queueCount={props.selectedThreadQueueCount}
                   environmentId={props.environmentId}
-                  projectCwd={props.projectWorkspaceRoot}
+                  projectCwd={props.threadCwd ?? props.projectWorkspaceRoot}
                   bottomInset={composerBottomInset}
                   onChangeDraftMessage={props.onChangeDraftMessage}
                   onPickDraftMedia={props.onPickDraftMedia}

@@ -45,7 +45,8 @@ receives the attachment directly or a server-local path it can read using its
 available tools. Uploaded files are not automatically executed.
 
 Click a video attachment to play it. If its format cannot play in the app, use
-**Download video**. Other files keep their filename and can be downloaded.
+**Download video**. Sent PDF and HTML attachments open in the file viewer;
+other files keep their filename and can be downloaded.
 
 In the retained mobile client (not yet a public Scient release), tap **+** for **Photo Library**
 or, when the connected server supports file uploads, **Choose Files**. Photos, videos, and files can
@@ -110,20 +111,21 @@ open a media preview.
 Videos opened from the file explorer or a file-viewer tab also play inside Scient. They
 stream from the environment as needed, rather than downloading the entire video before playback.
 Paths in inline code, such as `/tmp/recording.mp4`, work the same way. Image embeds stay inline;
-video embeds show a player with controls and an option to expand. Visible video previews load
+video embeds show a player with the browser's controls, full screen included. Visible video previews load
 an initial frame when supported, but stay paused until you press Play. Video file references use
 a filmstrip icon.
 
 On web and desktop, hover over a preview to see its full file path or original URL. Right-click
-to copy that reference, save an image, or copy an image to the clipboard. Use the video player's
-built-in controls to download videos. If the player cannot decode a video, its error message
+to copy that reference, save the image or video, or copy an image to the clipboard. The video
+player's built-in controls can download a video too. If the player cannot decode a video, its error message
 offers a link to open the source in the browser. Workspace media also offers **Copy relative
 path** and **Open in file viewer**. These actions are available in expanded previews too.
 
-On mobile, touch and hold an inline image or use a preview's **Media actions** menu to see its
-source, copy the path or URL, or choose **Save or share**. Workspace media can open in the file
-viewer from the same menu. Saving downloads a copy only when you request it; it does not change
-how the video buffers during playback.
+On mobile, touch and hold an inline image or a video thumbnail to see its source,
+copy the path or URL, or choose **Save or share**. Workspace files can open in the file viewer
+from the same menu. Saving downloads a copy only when you request it; it does not change how
+the video buffers during playback. On iOS, touch and hold a file reference in a message to
+copy its full or relative path or open it in the file viewer.
 
 Use Markdown image syntax to embed either kind of media:
 
@@ -148,10 +150,10 @@ are not supported; use the Markdown embed syntax above.
 
 When an agent links to a file it wrote outside the workspace, such as a Markdown report in
 `/tmp`, select the link to open it in the file viewer. The viewer shows the file read-only, with
-rendered Markdown available as usual; it cannot edit files outside the workspace. HTML and PDF
-files outside the workspace open the same way as ones inside it. Because such a file is served on
-its own, an HTML page outside the workspace cannot load scripts, styles, or images from files beside
-it.
+rendered Markdown available as usual; it cannot edit files outside the workspace. The workspace
+file tree stays hidden because it does not describe the open file. HTML and PDF files outside the
+workspace open the same way as ones inside it. Because such a file is served on its own, an HTML
+page outside the workspace cannot load scripts, styles, or images from files beside it.
 
 ## HTML and PDF files in the file viewer
 

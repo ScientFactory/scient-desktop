@@ -68,25 +68,21 @@ export function mapForkBoundaries(
     const nativeRows = rows.filter((row) => !copiedTurnIds.has(row.turnId));
     return [
       emptyBoundary,
-      ...copiedBoundaries.map(
-        (boundary): OrchestrationForkBoundary => ({
-          ...boundary,
-          conversationTurnCount: 0,
-          checkpointTurnCount: null,
-          checkpointStatus: null,
-        }),
-      ),
-      ...nativeRows.map(
-        (row, index): OrchestrationForkBoundary => ({
-          turnId: row.turnId,
-          conversationTurnCount: index + 1,
-          userMessageId: row.userMessageId,
-          assistantMessageId: row.assistantMessageId,
-          completedAt: row.completedAt,
-          checkpointTurnCount: row.checkpointTurnCount,
-          checkpointStatus: row.checkpointStatus,
-        }),
-      ),
+      ...copiedBoundaries.map((boundary): OrchestrationForkBoundary => ({
+        ...boundary,
+        conversationTurnCount: 0,
+        checkpointTurnCount: null,
+        checkpointStatus: null,
+      })),
+      ...nativeRows.map((row, index): OrchestrationForkBoundary => ({
+        turnId: row.turnId,
+        conversationTurnCount: index + 1,
+        userMessageId: row.userMessageId,
+        assistantMessageId: row.assistantMessageId,
+        completedAt: row.completedAt,
+        checkpointTurnCount: row.checkpointTurnCount,
+        checkpointStatus: row.checkpointStatus,
+      })),
     ];
   }
 

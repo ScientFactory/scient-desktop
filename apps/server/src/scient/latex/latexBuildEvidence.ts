@@ -145,8 +145,9 @@ const UNREADABLE: ReadOutcome<never> = { _tag: "unreadable" };
  * lock, a permission, a device that went away — is `unreadable`, because the
  * one thing this call has established is that it does not know.
  */
-const classifyError = (error: { readonly reason: { readonly _tag: string } }): ReadOutcome<never> =>
-  error.reason._tag === "NotFound" ? ABSENT : UNREADABLE;
+const classifyError = (error: {
+  readonly reason: { readonly _tag: string };
+}): ReadOutcome<never> => (error.reason._tag === "NotFound" ? ABSENT : UNREADABLE);
 
 const statOf = (absolutePath: string) =>
   Effect.gen(function* () {

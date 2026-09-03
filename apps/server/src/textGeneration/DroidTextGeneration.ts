@@ -53,15 +53,14 @@ const applyDroidTextGenerationSelection = (input: {
     requestedModel: input.requestedModel,
     requestedEffort: input.requestedEffort,
   }).pipe(
-    Effect.mapError(
-      (cause): TextGenerationError =>
-        isTextGenerationError(cause)
-          ? cause
-          : new TextGenerationError({
-              operation: input.operation,
-              detail: "Failed to apply Droid ACP model selection for text generation.",
-              cause,
-            }),
+    Effect.mapError((cause): TextGenerationError =>
+      isTextGenerationError(cause)
+        ? cause
+        : new TextGenerationError({
+            operation: input.operation,
+            detail: "Failed to apply Droid ACP model selection for text generation.",
+            cause,
+          }),
     ),
   );
 

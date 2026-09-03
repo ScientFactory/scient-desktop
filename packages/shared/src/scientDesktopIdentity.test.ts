@@ -16,6 +16,10 @@ describe("Scient desktop identity", () => {
     assert.equal(SCIENT_DESKTOP_IDENTITY.serviceLaunchdLabel, "com.scientfactory.scient.service");
     assert.equal(SCIENT_DESKTOP_IDENTITY.previewPartitionPrefix, "persist:scient-next-preview-");
     assert.equal(
+      SCIENT_DESKTOP_IDENTITY.previewEphemeralPartitionPrefix,
+      "scient-next-preview-ephemeral-",
+    );
+    assert.equal(
       SCIENT_DESKTOP_IDENTITY.clientSettingsStorageKey,
       "scient-next:client-settings:v1",
     );
