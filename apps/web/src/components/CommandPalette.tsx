@@ -36,6 +36,7 @@ import {
   type SourceControlProviderKind,
   type SourceControlRepositoryInfo,
   PRIMARY_LOCAL_ENVIRONMENT_ID,
+  resolveEnvironmentMachineKind,
 } from "@t3tools/contracts";
 import { useLocation, useNavigate, useParams, useRouter } from "@tanstack/react-router";
 import * as Option from "effect/Option";
@@ -48,7 +49,6 @@ import {
   LinkIcon,
   MessageSquareIcon,
   PaletteIcon,
-  ServerIcon,
   SettingsIcon,
   SquarePenIcon,
   TextSearchIcon,
@@ -164,6 +164,7 @@ import { CommandPaletteContent } from "./CommandPaletteContent";
 import { CommandPaletteResults } from "./CommandPaletteResults";
 import { ScientProjectInitializationDialog } from "./ScientProjectInitializationDialog";
 import { AzureDevOpsIcon, BitbucketIcon, GitHubIcon, GitLabIcon } from "./Icons";
+import { EnvironmentMachineIcon } from "./EnvironmentMachineIcon";
 import { ProjectFavicon } from "./ProjectFavicon";
 import { ProjectFolderDropTarget } from "./ProjectFolderDropTarget";
 import { ProjectFilePicker } from "./files/ProjectFilePicker";
@@ -790,6 +791,7 @@ function OpenCommandPaletteDialog(props: {
                 : isLocal
                   ? `${environment.label} (Local)`
                   : environment.label,
+              machine: resolveEnvironmentMachineKind(environment.serverConfig),
             },
           ] as const;
         }),
@@ -1173,12 +1175,17 @@ function OpenCommandPaletteDialog(props: {
         const location = projectEnvironmentLocationById.get(project.environmentId) ?? {
           kind: "remote",
           label: "Remote",
+          machine: "server" as const,
         };
         return (
           <span className="flex min-w-0 items-center gap-1">
             <span className="inline-flex min-w-0 items-center gap-1">
               {location.kind === "remote" ? (
-                <ServerIcon aria-hidden className={COMMAND_PALETTE_META_ICON_CLASS} />
+                <EnvironmentMachineIcon
+                  aria-hidden
+                  kind={location.machine}
+                  className={COMMAND_PALETTE_META_ICON_CLASS}
+                />
               ) : null}
               <span className="truncate">{location.label}</span>
             </span>
