@@ -119,6 +119,61 @@ describe("AntigravityInlineSetup", () => {
     expect(markup).not.toContain("Sign in with Google");
   });
 
+  it("offers explicit ACP sign-in when initialize has deliberately not checked the account", () => {
+    const markup = render(
+      provider({
+        auth: { status: "unknown" },
+        setup: { canAuthenticate: true, canInstall: true },
+      }),
+    );
+    expect(markup).toContain("Sign in with Google");
+    expect(markup).not.toContain("Couldn’t verify your Google account");
+  });
+
+  it("offers Connect for configured credentials without inventing a browser flow", () => {
+    const markup = render(
+      provider({
+        auth: { status: "unknown" },
+        setup: { canAuthenticate: true, canInstall: true },
+        message: "Enter a Gemini API key in the Antigravity provider settings.",
+        connection: { methods: ["antigravity_credentials"], canDisconnect: false, operation: null },
+      }),
+    );
+    expect(markup).toContain("Connection required");
+    expect(markup).toContain("Connect</button>");
+    expect(markup).toContain("Enter a Gemini API key");
+    expect(markup).not.toContain("Sign in with Google");
+    expect(markup).not.toContain("Gemini subscription");
+  });
+
+  it("keeps the ACP remote callback fallback collapsed and never asks for a Google code", () => {
+    const markup = render(
+      provider({
+        setup: { canAuthenticate: true, canInstall: true },
+        connection: {
+          methods: ["antigravity_google"],
+          canDisconnect: false,
+          operation: {
+            operationId: "acp-sign-in",
+            method: "antigravity_google",
+            status: "waiting_for_browser",
+            startedAt: "2026-09-03T00:00:00Z",
+            finishedAt: null,
+            message: "Finish sign-in.",
+            authorizationUrl: "https://accounts.google.com/",
+            authorizationUrlKind: "primary",
+            acceptsAuthorizationCode: true,
+            authorizationResponseKind: "callback_url",
+          },
+        },
+      }),
+    );
+    expect(markup).toContain("Signing in on another computer?");
+    expect(markup).toContain('aria-expanded="false"');
+    expect(markup).not.toContain("Paste the code Google shows");
+    expect(markup).not.toContain("one-time authorization code");
+  });
+
   it("renders in-flight connection view when signing in", () => {
     const markup = render(
       provider({

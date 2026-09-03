@@ -15,6 +15,7 @@ export const ProviderConnectionMethod = Schema.Literals([
   "claude_subscription",
   "claude_console",
   "antigravity_google",
+  "antigravity_credentials",
   "grok_account",
   "grok_device_code",
   "droid_device_pairing",
@@ -54,6 +55,8 @@ export const ProviderConnectionOperation = Schema.Struct({
   authorizationUrlKind: Schema.optionalKey(ProviderAuthorizationUrlKind),
   /** True only while the live provider process can accept a pasted one-time code. */
   acceptsAuthorizationCode: Schema.optionalKey(Schema.Boolean),
+  /** The provider may require a complete OAuth redirect URL instead of a code. */
+  authorizationResponseKind: Schema.optionalKey(Schema.Literals(["code", "callback_url"])),
   userCode: Schema.optionalKey(
     TrimmedNonEmptyString.check(Schema.isMaxLength(64), Schema.isPattern(/^[A-Za-z0-9-]+$/)),
   ),
@@ -171,7 +174,7 @@ export const ProviderConnectionSubmitAuthorizationCodeInput = Schema.Struct({
   instanceId: ProviderInstanceId,
   operationId: TrimmedNonEmptyString,
   authorizationCode: TrimmedNonEmptyString.check(
-    Schema.isMaxLength(8_192),
+    Schema.isMaxLength(16_384),
     authorizationCodeHasNoControlCharacters,
   ),
 });

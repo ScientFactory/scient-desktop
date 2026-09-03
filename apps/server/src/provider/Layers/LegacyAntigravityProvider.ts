@@ -47,6 +47,11 @@ import {
   type ProviderMaintenanceCapabilities,
 } from "../providerMaintenance.ts";
 
+type LegacyAntigravitySettings = Pick<
+  AntigravitySettings,
+  "enabled" | "binaryPath" | "customModels"
+>;
+
 const ANTIGRAVITY_PRESENTATION = {
   displayName: "Antigravity",
   badgeLabel: "Early Access",
@@ -92,7 +97,7 @@ function normalizeModelSlugs(values: ReadonlyArray<string>): ReadonlyArray<strin
  * `agy --version` probe shape (bare version string, exit 0).
  */
 export function buildInitialAntigravityProviderSnapshot(
-  antigravitySettings: AntigravitySettings,
+  antigravitySettings: LegacyAntigravitySettings,
 ): Effect.Effect<ServerProviderDraft> {
   return Effect.gen(function* () {
     const checkedAt = yield* Effect.map(DateTime.now, DateTime.formatIso);
@@ -309,7 +314,7 @@ export function isAgyApiKeyModeConfigurationError(output: string): boolean {
  * text-generation turns use the separate persistent stream-json transport.
  */
 const runAgyCommand = (
-  antigravitySettings: AntigravitySettings,
+  antigravitySettings: LegacyAntigravitySettings,
   args: ReadonlyArray<string>,
   environment: NodeJS.ProcessEnv,
 ) =>
@@ -361,7 +366,7 @@ function buildAntigravityCliCommandMissingMessage(binaryPath: string): string {
 
 export const checkAntigravityProviderStatus = Effect.fn("checkAntigravityProviderStatus")(
   function* (
-    antigravitySettings: AntigravitySettings,
+    antigravitySettings: LegacyAntigravitySettings,
     environment: NodeJS.ProcessEnv = process.env,
   ): Effect.fn.Return<
     ServerProviderDraft,

@@ -5,6 +5,7 @@ import {
   CopyIcon,
   DownloadIcon,
   ExternalLinkIcon,
+  LogInIcon,
   LoaderIcon,
   RefreshCwIcon,
   ShieldCheckIcon,
@@ -40,7 +41,10 @@ import {
   PRIMARY_GHOST_ACTION_CLASS,
 } from "./providerConnectionActionStyles";
 import { ProviderAccountManagementLink } from "./ProviderAccountManagementLink";
-import { ProviderAuthorizationCodeForm } from "./ProviderAuthorizationCodeForm";
+import {
+  ProviderAuthorizationCodeDisclosure,
+  ProviderAuthorizationCodeForm,
+} from "./ProviderAuthorizationCodeForm";
 import type { ProviderLifecycleController } from "./useProviderLifecycleController";
 
 type PendingAction =
@@ -92,15 +96,20 @@ export function AntigravityInlineSetup(props: {
   const [localError, setLocalError] = useState<string | null>(null);
   const [copiedInstallCommand, setCopiedInstallCommand] = useState(false);
   const [authorizationCode, setAuthorizationCode] = useState("");
+  const [authorizationResponseExpanded, setAuthorizationResponseExpanded] = useState(false);
 
   useEffect(() => {
     setPendingAction(null);
     setLocalError(null);
     setCopiedInstallCommand(false);
     setAuthorizationCode("");
+    setAuthorizationResponseExpanded(false);
   }, [props.provider.instanceId]);
 
   const runtime = props.provider.connection?.runtime;
+  const usesCredentials =
+    props.provider.connection?.methods.includes("antigravity_credentials") ?? false;
+  const canStartUncheckedAuth = props.provider.setup?.canAuthenticate === true;
   const runtimeOperation = runtime?.operation ?? null;
   const activeRuntimeOperation = isActiveProviderRuntimeOperation(runtimeOperation)
     ? runtimeOperation
@@ -112,6 +121,7 @@ export function AntigravityInlineSetup(props: {
 
   useEffect(() => {
     setAuthorizationCode("");
+    setAuthorizationResponseExpanded(false);
   }, [activeConnectionOperation?.operationId]);
 
   const isAuthenticated = props.provider.auth.status === "authenticated";
@@ -180,7 +190,7 @@ export function AntigravityInlineSetup(props: {
       setLocalError(
         providerLifecycleFailureMessage(
           error,
-          "Scient could not return the authorization code to Antigravity.",
+          "Scient could not return the sign-in response to Antigravity.",
         ),
       );
     } finally {
@@ -306,15 +316,19 @@ export function AntigravityInlineSetup(props: {
       <StatusFrame
         accountAction={props.accountAction}
         body={
-          <>
-            Your{" "}
-            <ProviderAccountManagementLink provider="antigravity">
-              Google account
-            </ProviderAccountManagementLink>{" "}
-            remains connected.
-          </>
+          usesCredentials ? (
+            "Your configured credentials are unchanged."
+          ) : (
+            <>
+              Your{" "}
+              <ProviderAccountManagementLink provider="antigravity">
+                Google account
+              </ProviderAccountManagementLink>{" "}
+              remains connected.
+            </>
+          )
         }
-        title="Google account connected"
+        title={usesCredentials ? "Antigravity credentials configured" : "Google account connected"}
       />
     ) : null;
   }
@@ -379,7 +393,7 @@ export function AntigravityInlineSetup(props: {
   }
 
   if (!isAuthenticated && (activeConnectionOperation || pendingAction === "sign-in")) {
-    const verifying = activeConnectionOperation?.status === "verifying";
+    const verifying = activeConnectionOperation?.status === "verifying" || usesCredentials;
     const waitingForAuthorizationCode =
       (activeConnectionOperation?.acceptsAuthorizationCode === true ||
         (activeConnectionOperation?.acceptsAuthorizationCode === undefined &&
@@ -402,11 +416,28 @@ export function AntigravityInlineSetup(props: {
           }
           title={
             <AntigravityLoadingTitle>
-              {verifying ? "Checking your Google account" : "Finish signing in"}
+              {verifying
+                ? usesCredentials
+                  ? "Checking credentials"
+                  : "Checking your Google account"
+                : "Finish signing in"}
             </AntigravityLoadingTitle>
           }
         />
-        {waitingForAuthorizationCode ? (
+        {waitingForAuthorizationCode &&
+        activeConnectionOperation?.authorizationResponseKind === "callback_url" ? (
+          <ProviderAuthorizationCodeDisclosure
+            authorizationCode={authorizationCode}
+            disabled={pendingAction === "submit-code"}
+            expanded={authorizationResponseExpanded}
+            onAuthorizationCodeChange={setAuthorizationCode}
+            onExpandedChange={setAuthorizationResponseExpanded}
+            onSubmit={() => void submitCode()}
+            providerName={props.displayName}
+            responseKind="callback_url"
+            submitting={pendingAction === "submit-code"}
+          />
+        ) : waitingForAuthorizationCode ? (
           <div className="w-full space-y-2">
             <p className="text-muted-foreground text-xs">
               Paste the code Google shows after sign in.
@@ -421,7 +452,7 @@ export function AntigravityInlineSetup(props: {
             />
           </div>
         ) : null}
-        {!verifying ? (
+        {activeConnectionOperation ? (
           <AssistedSetupActions>
             {activeConnectionOperation?.authorizationUrl ? (
               <Button
@@ -458,7 +489,7 @@ export function AntigravityInlineSetup(props: {
     );
   }
 
-  if (props.provider.auth.status === "unknown") {
+  if (props.provider.auth.status === "unknown" && !canStartUncheckedAuth) {
     return (
       <StatusFrame
         body={
@@ -474,13 +505,16 @@ export function AntigravityInlineSetup(props: {
   if (!isAuthenticated) {
     const signInError =
       localError ?? (connectionOperation?.status === "failed" ? connectionOperation.message : null);
-    const configurationWarning = props.provider.message?.includes("Gemini API-key mode")
-      ? props.provider.message
-      : null;
+    const configurationWarning =
+      usesCredentials || props.provider.message?.includes("Gemini API-key mode")
+        ? props.provider.message
+        : null;
     const signInGuidance =
       signInError ??
       configurationWarning ??
-      "Sign in with your existing Gemini subscription. Scient never sees your password.";
+      (usesCredentials
+        ? "Connect with the credentials in the provider settings."
+        : "Sign in with your existing Gemini subscription. Scient never sees your password.");
     return (
       <SetupFrame>
         <AssistedSetupStatus
@@ -496,21 +530,30 @@ export function AntigravityInlineSetup(props: {
             )
           }
           role={signInError ? "alert" : undefined}
-          title={signInError ? "Google sign-in didn’t finish" : "Sign in required"}
+          title={
+            signInError
+              ? usesCredentials
+                ? "Connection didn’t finish"
+                : "Google sign-in didn’t finish"
+              : usesCredentials
+                ? "Connection required"
+                : "Sign in required"
+          }
         />
         <AssistedSetupActions>
           <Button
             className={PRIMARY_GHOST_ACTION_CLASS}
             onClick={() =>
               void run("sign-in", () =>
-                startAntigravitySignInAndOpenAuthorizationPage(props.controller),
+                startAntigravitySignInAndOpenAuthorizationPage(props.controller, props.provider),
               )
             }
             size="sm"
             type="button"
             variant="ghost"
           >
-            <ExternalLinkIcon aria-hidden /> {signInError ? "Try again" : "Sign in with Google"}
+            {usesCredentials ? <LogInIcon aria-hidden /> : <ExternalLinkIcon aria-hidden />}{" "}
+            {signInError ? "Try again" : usesCredentials ? "Connect" : "Sign in with Google"}
           </Button>
         </AssistedSetupActions>
       </SetupFrame>
@@ -523,7 +566,7 @@ export function AntigravityInlineSetup(props: {
         accountAction={props.accountAction}
         body={
           props.provider.message ??
-          "Your Google account is connected, but Antigravity did not report an available model."
+          "Antigravity is connected, but did not report an available model."
         }
         title="Antigravity needs attention"
         warning
@@ -573,11 +616,17 @@ export function AntigravityInlineSetup(props: {
       accountAction={props.accountAction}
       body={
         <>
-          Your{" "}
-          <ProviderAccountManagementLink provider="antigravity">
-            Google account
-          </ProviderAccountManagementLink>{" "}
-          is connected
+          {usesCredentials ? (
+            `Connected with ${props.provider.auth.label ?? "your configured credentials"}`
+          ) : (
+            <>
+              Your{" "}
+              <ProviderAccountManagementLink provider="antigravity">
+                Google account
+              </ProviderAccountManagementLink>{" "}
+              is connected
+            </>
+          )}
           {props.provider.version ? ` with CLI ${props.provider.version}` : ""}.
           {defaultModel ? ` Default model: ${defaultModel.name}.` : ""}
         </>

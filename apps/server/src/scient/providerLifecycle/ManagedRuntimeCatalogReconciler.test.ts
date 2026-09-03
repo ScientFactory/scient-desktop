@@ -49,6 +49,29 @@ const provider: ServerProvider = {
 };
 
 describe("ManagedRuntimeCatalogReconciler", () => {
+  it.effect(
+    "refreshes Antigravity when its separate ACP catalog changes without probing other providers",
+    () =>
+      Effect.gen(function* () {
+        const instanceId = ProviderInstanceId.make("antigravity");
+        const antigravity = {
+          ...provider,
+          instanceId,
+          driver: ProviderDriverKind.make("antigravity"),
+        };
+        const calls = yield* Ref.make<ReadonlyArray<ProviderInstanceId>>([]);
+        const registry = ProviderRegistry.of({
+          ...makeProviderRegistryMock([provider, antigravity]),
+          getProviderManagedRuntimeActionsForInstance: (id) =>
+            Ref.update(calls, (current) => [...current, id]).pipe(Effect.as(undefined)),
+        });
+        yield* reconcileManagedRuntimeProviders(["antigravityAcp"]).pipe(
+          Effect.provideService(ProviderRegistry, registry),
+        );
+        assert.deepStrictEqual(yield* Ref.get(calls), [instanceId]);
+      }),
+  );
+
   it.effect("publishes a newly available managed update without reloading the provider", () =>
     Effect.gen(function* () {
       const publications = yield* Ref.make<

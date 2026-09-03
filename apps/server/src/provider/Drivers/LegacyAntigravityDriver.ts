@@ -1,5 +1,5 @@
 /**
- * AntigravityDriver — `ProviderDriver` for the Antigravity (`agy`) runtime.
+ * LegacyAntigravityDriver — compatibility `ProviderDriver` for `agy --stream-json`.
  *
  * Antigravity uses the CLI's native persistent stream-json interface.
  *
@@ -77,7 +77,7 @@ const UPDATE = makeStaticProviderMaintenanceResolver(
   }),
 );
 
-export type AntigravityDriverEnv =
+export type LegacyAntigravityDriverEnv =
   | BackgroundPolicy.BackgroundPolicy
   | ChildProcessSpawner.ChildProcessSpawner
   | Crypto.Crypto
@@ -116,7 +116,7 @@ const withInstanceIdentity =
     },
   });
 
-export const AntigravityDriver: ProviderDriver<AntigravitySettings, AntigravityDriverEnv> = {
+export const LegacyAntigravityDriver = {
   driverKind: DRIVER_KIND,
   metadata: {
     displayName: "Antigravity",
@@ -262,4 +262,4 @@ export const AntigravityDriver: ProviderDriver<AntigravitySettings, AntigravityD
         managedRuntimeActions: managedRuntime.actions,
       } satisfies ProviderInstance;
     }),
-};
+} satisfies ProviderDriver<AntigravitySettings, LegacyAntigravityDriverEnv>;

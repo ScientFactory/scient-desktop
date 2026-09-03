@@ -145,7 +145,9 @@ function SupportedAssistedProviderSetupHost(props: AssistedProviderSetupHostProp
         variant="ghost-muted"
       >
         {disconnecting ? <LoaderIcon className="animate-spin" /> : <LogOutIcon />}
-        Sign out
+        {props.provider.connection.methods.includes("antigravity_credentials")
+          ? "Disconnect"
+          : "Sign out"}
       </Button>
     ) : undefined;
 

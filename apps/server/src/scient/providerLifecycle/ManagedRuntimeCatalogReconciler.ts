@@ -1,4 +1,7 @@
-import type { ManagedRuntimeProvider } from "@scientfactory/provider-runtime";
+import type {
+  ManagedRuntimeProvider,
+  ManagedRuntimeCatalogProvider,
+} from "@scientfactory/provider-runtime";
 import type { ProviderDriverKind } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
@@ -8,10 +11,11 @@ import * as Stream from "effect/Stream";
 import { ProviderRegistry } from "../../provider/Services/ProviderRegistry.ts";
 import { ManagedRuntimeCatalog } from "./ManagedRuntimeCatalog.ts";
 
-const allManagedProviders: ReadonlyArray<ManagedRuntimeProvider> = [
+const allManagedProviders: ReadonlyArray<ManagedRuntimeCatalogProvider> = [
   "codex",
   "claudeAgent",
   "antigravity",
+  "antigravityAcp",
   "cursor",
   "droid",
   "grok",
@@ -46,14 +50,18 @@ export function catalogProviderForDriver(
  */
 export const reconcileManagedRuntimeProviders = Effect.fn(
   "ManagedRuntimeCatalogReconciler.reconcile",
-)(function* (changedProviders: ReadonlyArray<ManagedRuntimeProvider>) {
+)(function* (changedProviders: ReadonlyArray<ManagedRuntimeCatalogProvider>) {
   const providerRegistry = yield* ProviderRegistry;
   const changed = new Set(changedProviders);
   const providers = yield* providerRegistry.getProviders;
   yield* Effect.forEach(
     providers.filter((provider) => {
       const catalogProvider = catalogProviderForDriver(provider.driver);
-      return catalogProvider !== undefined && changed.has(catalogProvider);
+      return (
+        catalogProvider !== undefined &&
+        (changed.has(catalogProvider) ||
+          (provider.driver === "antigravity" && changed.has("antigravityAcp")))
+      );
     }),
     (provider) =>
       Effect.gen(function* () {

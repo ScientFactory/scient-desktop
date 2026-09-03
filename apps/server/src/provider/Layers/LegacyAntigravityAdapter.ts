@@ -937,6 +937,7 @@ export function makeAntigravityAdapter(
       readThread,
       rollbackThread,
       stopAll,
+      subscribeEvents: PubSub.subscribe(runtimeEvents).pipe(Effect.map(Stream.fromSubscription)),
       streamEvents: Stream.fromPubSub(runtimeEvents),
     } satisfies AntigravityAdapterShape;
   });

@@ -24,8 +24,8 @@ widen an allowed host or path family, or increase a support tier.
 
 `managed-provider-runtime-updates.yml` runs every two hours and may also be
 started manually. It invokes `managed-provider-runtime-update-provider.yml`
-once for each of Codex, Claude, Antigravity, Cursor, Droid, and Grok. The six
-runs are intentionally independent:
+once for each of Codex, Claude, legacy Antigravity, official Antigravity ACP, Cursor, Droid, and
+Grok. The seven release-family runs are intentionally independent:
 
 1. Read the latest generated catalog, or the bundled catalog before the branch
    exists.
@@ -36,6 +36,10 @@ runs are intentionally independent:
    macOS Intel, Linux x64, and Windows x64 runners. Each runner downloads,
    verifies, materializes, checks package contents, smoke-tests, activates, and
    removes its native artifact in a temporary private root.
+   Official Antigravity ACP uses T3's paired-executable installer instead of the generic
+   runtime engine. Its five runners cover Apple-silicon macOS, Linux x64/ARM64, and Windows
+   x64/ARM64; no ACP artifact exists for Intel macOS. Its qualification initializes the
+   actual agent without authentication, then checks activation and removal.
 5. Serialize publication, re-read the latest generated catalog, validate both
    inputs against policy on the immutable discovery commit, and merge only the
    provider that passed.
@@ -88,8 +92,8 @@ runs again, previously published releases may remain unavailable to fresh apps.
 
 ## Operating and recovery
 
-- Open **Actions > Promote managed provider runtime updates** to inspect the six
-  provider results or start a manual run.
+- Open **Actions > Promote managed provider runtime updates** to inspect the seven
+  release-family results or start a manual run.
 - Open the failed provider's reusable-workflow run to identify whether stable
   discovery, metadata collection, a native runner, or publication failed.
 - A transient provider or runner failure needs no rollback; retry that workflow
@@ -128,5 +132,12 @@ node scripts/promote-managed-runtime-catalog.ts \
   --output /tmp/managed-runtime-promoted.json
 ```
 
+For official ACP, discover with `--provider antigravityAcp`, then qualify with:
+
+```sh
+node apps/server/scripts/qualify-antigravity-acp-catalog.ts \
+  --catalog /tmp/managed-runtime-candidate.json
+```
+
 This proves discovery, current-host qualification, and merge behavior. It does
-not replace the four hosted native runner families, and it does not publish.
+not replace the provider's complete hosted runner matrix, and it does not publish.

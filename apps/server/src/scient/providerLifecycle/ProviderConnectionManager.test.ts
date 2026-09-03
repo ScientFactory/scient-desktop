@@ -358,77 +358,84 @@ describe("ProviderConnectionManager", () => {
     }),
   );
 
-  it.effect("forwards an optional authorization code only to the matching live attempt", () =>
-    Effect.gen(function* () {
-      const completed = yield* Deferred.make<void, ProviderConnectionActionError>();
-      const submittedCode = yield* Ref.make<string | null>(null);
-      const actions: ProviderConnectionActions = {
-        methods: ["claude_subscription"],
-        start: () =>
-          Effect.succeed({
-            authorizationUrl: "https://claude.ai/oauth/authorize",
-            authorizationUrlKind: "manual_fallback",
-            initialStatus: "waiting_for_browser",
-            submitAuthorizationCode: (code) => Ref.set(submittedCode, code),
-            waitForCompletion: Deferred.await(completed),
-            cancel: Effect.void,
-          }),
-        disconnect: Effect.void,
-      };
-      const { manager } = yield* makeHarness({
-        actions,
-        provider: {
-          ...disconnectedProvider,
-          driver: ProviderDriverKind.make("claudeAgent"),
-          connection: {
-            methods: ["claude_subscription"],
-            canDisconnect: false,
-            operation: null,
+  it.effect.each(["code", "callback_url"] as const)(
+    "forwards an optional %s only to the matching live attempt",
+    (authorizationResponseKind) =>
+      Effect.gen(function* () {
+        const completed = yield* Deferred.make<void, ProviderConnectionActionError>();
+        const submittedCode = yield* Ref.make<string | null>(null);
+        const actions: ProviderConnectionActions = {
+          methods: ["claude_subscription"],
+          start: () =>
+            Effect.succeed({
+              authorizationUrl: "https://claude.ai/oauth/authorize",
+              authorizationUrlKind: "manual_fallback",
+              initialStatus: "waiting_for_browser",
+              authorizationResponseKind,
+              submitAuthorizationCode: (code) => Ref.set(submittedCode, code),
+              waitForCompletion: Deferred.await(completed),
+              cancel: Effect.void,
+            }),
+          disconnect: Effect.void,
+        };
+        const { manager } = yield* makeHarness({
+          actions,
+          provider: {
+            ...disconnectedProvider,
+            driver: ProviderDriverKind.make("claudeAgent"),
+            connection: {
+              methods: ["claude_subscription"],
+              canDisconnect: false,
+              operation: null,
+            },
           },
-        },
-      });
-      const started = yield* manager.start({
-        instanceId: CODEX_INSTANCE,
-        method: "claude_subscription",
-      });
-      const operationId = started.providers[0]?.connection?.operation?.operationId;
-      assert.ok(operationId);
-      assert.strictEqual(
-        started.providers[0]?.connection?.operation?.authorizationUrlKind,
-        "manual_fallback",
-      );
-      assert.strictEqual(
-        started.providers[0]?.connection?.operation?.acceptsAuthorizationCode,
-        true,
-      );
-
-      const wrongOperation = yield* manager
-        .submitAuthorizationCode({
+        });
+        const started = yield* manager.start({
           instanceId: CODEX_INSTANCE,
-          operationId: "not-current",
-          authorizationCode: "must-not-be-forwarded",
-        })
-        .pipe(Effect.flip);
-      assert.strictEqual(wrongOperation.reason, "operation_not_found");
-      assert.strictEqual(yield* Ref.get(submittedCode), null);
+          method: "claude_subscription",
+        });
+        const operationId = started.providers[0]?.connection?.operation?.operationId;
+        assert.ok(operationId);
+        assert.strictEqual(
+          started.providers[0]?.connection?.operation?.authorizationUrlKind,
+          "manual_fallback",
+        );
+        assert.strictEqual(
+          started.providers[0]?.connection?.operation?.acceptsAuthorizationCode,
+          true,
+        );
+        assert.strictEqual(
+          started.providers[0]?.connection?.operation?.authorizationResponseKind,
+          authorizationResponseKind,
+        );
 
-      const submitted = yield* manager.submitAuthorizationCode({
-        instanceId: CODEX_INSTANCE,
-        operationId,
-        authorizationCode: "one-time-code",
-      });
-      assert.strictEqual(yield* Ref.get(submittedCode), "one-time-code");
-      assert.strictEqual(submitted.providers[0]?.connection?.operation?.status, "verifying");
+        const wrongOperation = yield* manager
+          .submitAuthorizationCode({
+            instanceId: CODEX_INSTANCE,
+            operationId: "not-current",
+            authorizationCode: "must-not-be-forwarded",
+          })
+          .pipe(Effect.flip);
+        assert.strictEqual(wrongOperation.reason, "operation_not_found");
+        assert.strictEqual(yield* Ref.get(submittedCode), null);
 
-      yield* manager.submitAuthorizationCode({
-        instanceId: CODEX_INSTANCE,
-        operationId,
-        authorizationCode: "second-code",
-      });
-      assert.strictEqual(yield* Ref.get(submittedCode), "second-code");
+        const submitted = yield* manager.submitAuthorizationCode({
+          instanceId: CODEX_INSTANCE,
+          operationId,
+          authorizationCode: "one-time-code",
+        });
+        assert.strictEqual(yield* Ref.get(submittedCode), "one-time-code");
+        assert.strictEqual(submitted.providers[0]?.connection?.operation?.status, "verifying");
 
-      yield* Deferred.succeed(completed, undefined);
-    }),
+        yield* manager.submitAuthorizationCode({
+          instanceId: CODEX_INSTANCE,
+          operationId,
+          authorizationCode: "second-code",
+        });
+        assert.strictEqual(yield* Ref.get(submittedCode), "second-code");
+
+        yield* Deferred.succeed(completed, undefined);
+      }),
   );
 
   it.effect("allows the user to retry when forwarding the authorization code fails", () =>
