@@ -284,61 +284,61 @@
     "droid": {
       "contractRevision": 1,
       "channel": "stable",
-      "version": "0.208.1",
+      "version": "0.209.0",
       "artifacts": {
         "darwin-arm64": {
           "artifactName": "droid",
-          "url": "https://downloads.factory.ai/factory-cli/releases/0.208.1/darwin/arm64/droid",
+          "url": "https://downloads.factory.ai/factory-cli/releases/0.209.0/darwin/arm64/droid",
           "checksum": {
             "algorithm": "sha256",
-            "digest": "2397c2bfcb6ad7deb098cdbfe5ba6d3098f55e97c46232dfae9ab96630a2675b"
+            "digest": "73945d3090be4b32370de902b5ac8b7f70f8693fb8412ddcfb5e9f51bb585e2b"
           },
-          "size": 263755952
+          "size": 264399920
         },
         "darwin-x64": {
           "artifactName": "droid",
-          "url": "https://downloads.factory.ai/factory-cli/releases/0.208.1/darwin/x64-baseline/droid",
+          "url": "https://downloads.factory.ai/factory-cli/releases/0.209.0/darwin/x64-baseline/droid",
           "checksum": {
             "algorithm": "sha256",
-            "digest": "a7072a1b67fff91ee76023e2ee1504c03b45db4e225b440645f50cfdf048427c"
+            "digest": "603d8548082885b988d9aab7e5bd6979a1635b1fed9185d8f9c40dbc06e95708"
           },
-          "size": 278215200
+          "size": 278892192
         },
         "linux-arm64-glibc": {
           "artifactName": "droid",
-          "url": "https://downloads.factory.ai/factory-cli/releases/0.208.1/linux/arm64/droid",
+          "url": "https://downloads.factory.ai/factory-cli/releases/0.209.0/linux/arm64/droid",
           "checksum": {
             "algorithm": "sha256",
-            "digest": "4e1e6d1d699651c7ddb5dad43dc4ef5aef0151b142f7a409fc2a5faadf70a1ba"
+            "digest": "12575349464ae946cfcbf44f124fc1b0d584ae1dec8ed9b3bfb44b5276495af8"
           },
-          "size": 299804816
+          "size": 300460176
         },
         "linux-x64-glibc": {
           "artifactName": "droid",
-          "url": "https://downloads.factory.ai/factory-cli/releases/0.208.1/linux/x64-baseline/droid",
+          "url": "https://downloads.factory.ai/factory-cli/releases/0.209.0/linux/x64-baseline/droid",
           "checksum": {
             "algorithm": "sha256",
-            "digest": "9ef3ca6165e6ed6700e6069e59a69ff0ca4ecd4a6f89969c3d89b1014494933c"
+            "digest": "1f497b85fc62961bf8fc86f88dffe50abc67d724b767070624c6d2aadb3491e5"
           },
-          "size": 302598272
+          "size": 303261824
         },
         "win32-arm64": {
           "artifactName": "droid.exe",
-          "url": "https://downloads.factory.ai/factory-cli/releases/0.208.1/windows/arm64/droid.exe",
+          "url": "https://downloads.factory.ai/factory-cli/releases/0.209.0/windows/arm64/droid.exe",
           "checksum": {
             "algorithm": "sha256",
-            "digest": "37f456321ead1694aab31a109c4db11bb78079c15c466a34f2b415eec239d373"
+            "digest": "e09b26af6622e1c30c749a1eec66401dec70a936d06f896755a1ae25f5b7ec40"
           },
-          "size": 157973728
+          "size": 158129376
         },
         "win32-x64": {
           "artifactName": "droid.exe",
-          "url": "https://downloads.factory.ai/factory-cli/releases/0.208.1/windows/x64-baseline/droid.exe",
+          "url": "https://downloads.factory.ai/factory-cli/releases/0.209.0/windows/x64-baseline/droid.exe",
           "checksum": {
             "algorithm": "sha256",
-            "digest": "528145f77ed56328c12916a6e6fb012c864450d5592a914e1a637de477874bad"
+            "digest": "3d5f77759a99ed1327a9d606465bcc121c6e686f56db736d7c7862b33fcbbaa1"
           },
-          "size": 300130016
+          "size": 300768992
         }
       }
     },
