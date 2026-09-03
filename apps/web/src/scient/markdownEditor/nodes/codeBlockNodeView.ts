@@ -123,7 +123,12 @@ class ScientCodeBlockNodeView implements NodeView {
   selectNode(): void {
     this.selected = true;
     this.dom.classList.add("is-selected");
-    if (!this.isRichFence()) void this.activateEditor();
+    if (!this.isRichFence()) {
+      // Invalidate an in-flight syntax render before the surface swaps to
+      // CodeMirror, which owns highlighting for the active editor.
+      this.highlightVersion += 1;
+      void this.activateEditor();
+    }
   }
 
   deselectNode(): void {
@@ -133,6 +138,7 @@ class ScientCodeBlockNodeView implements NodeView {
     this.rendered.hidden = false;
     this.editorHost.hidden = true;
     this.loadError.hidden = true;
+    if (!this.isRichFence()) this.render();
   }
 
   stopEvent(event: Event): boolean {
@@ -179,12 +185,35 @@ class ScientCodeBlockNodeView implements NodeView {
     if (!this.view.editable) return;
     const position = this.getPos();
     if (position === undefined) return;
-    this.pendingPointerCoordinates = { x: event.clientX, y: event.clientY };
     event.preventDefault();
+    if (this.isRichFence()) {
+      // A rich card only becomes the selection; its source editor opens below
+      // the card through the explicit action, never from a bare click.
+      if (!this.selected) this.selectSelf(position);
+      return;
+    }
+    // Only a click on the rendered code carries a caret target. Header clicks
+    // open (or refocus) the editor without moving its caret.
+    this.pendingPointerCoordinates = this.rendered.contains(event.target)
+      ? { x: event.clientX, y: event.clientY }
+      : null;
+    if (this.selected) {
+      // Already the node selection (for example after a failed editor load), so
+      // the view will not call selectNode again; activate from the click itself.
+      void this.activateEditor();
+      return;
+    }
+    this.selectSelf(position);
+    // The view runs selectNode synchronously inside dispatch. If it did not, the
+    // click opened nothing and must not steer a later activation.
+    if (!this.selected) this.pendingPointerCoordinates = null;
+  };
+
+  private selectSelf(position: number): void {
     this.view.dispatch(
       this.view.state.tr.setSelection(NodeSelection.create(this.view.state.doc, position)),
     );
-  };
+  }
 
   private readonly handlePointerEnter = () => {
     if (!this.view.editable || this.isRichFence()) return;
@@ -242,7 +271,7 @@ class ScientCodeBlockNodeView implements NodeView {
     this.editorHost.hidden = false;
     const pointerCoordinates = this.pendingPointerCoordinates;
     this.pendingPointerCoordinates = null;
-    if (pointerCoordinates && !this.isRichFence()) {
+    if (pointerCoordinates) {
       this.nestedEditor.focusAt(pointerCoordinates);
     } else {
       this.nestedEditor.focus();
@@ -296,6 +325,7 @@ class ScientCodeBlockNodeView implements NodeView {
     }
     this.rendered.textContent = code;
     const version = ++this.highlightVersion;
+    if (this.selected) return;
     const theme = this.resolveTheme();
     void getSyntaxHighlighterPromise(language)
       .then((highlighter) => {

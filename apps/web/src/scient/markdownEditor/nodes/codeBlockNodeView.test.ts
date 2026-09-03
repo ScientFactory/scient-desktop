@@ -1,6 +1,6 @@
 // @vitest-environment happy-dom
-import { EditorState, NodeSelection, type Transaction } from "prosemirror-state";
-import type { EditorView } from "prosemirror-view";
+import { EditorState, NodeSelection, type Selection, type Transaction } from "prosemirror-state";
+import { DecorationSet, type EditorView, type NodeView } from "prosemirror-view";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 import { scientMarkdownSchema } from "../prosemirror/schema";
 import { createScientCodeBlockNodeView } from "./codeBlockNodeView";
@@ -10,6 +10,14 @@ import type {
   ScientMarkdownExternalPresentationRegistrar,
   ScientMarkdownThemeResolver,
 } from "./externalPresentation";
+
+const syntaxMocks = vi.hoisted(() => ({
+  codeToHtml: vi.fn(
+    (_code: string, options: { readonly theme: string }) =>
+      `<span data-code-theme="${options.theme}">code</span>`,
+  ),
+  getSyntaxHighlighterPromise: vi.fn(),
+}));
 
 const mocks = {
   create: vi.mocked(createScientNestedCodeEditor),
@@ -34,14 +42,16 @@ vi.mock("./ScientEditableRichFence", async () => {
   };
 });
 vi.mock("~/lib/syntaxHighlighting", () => ({
-  getSyntaxHighlighterPromise: async () => ({
-    codeToHtml: (_code: string, options: { readonly theme: string }) =>
-      `<span data-code-theme="${options.theme}">code</span>`,
-  }),
+  getSyntaxHighlighterPromise: syntaxMocks.getSyntaxHighlighterPromise,
 }));
 
 describe("nested code editor activation", () => {
   beforeEach(() => {
+    syntaxMocks.codeToHtml.mockClear();
+    syntaxMocks.getSyntaxHighlighterPromise.mockReset();
+    syntaxMocks.getSyntaxHighlighterPromise.mockImplementation(async () => ({
+      codeToHtml: syntaxMocks.codeToHtml,
+    }));
     mocks.create.mockImplementation(() => ({
       focus: vi.fn(),
       focusAt: vi.fn(),
@@ -65,6 +75,9 @@ describe("nested code editor activation", () => {
     );
     const doc = scientMarkdownSchema.topNodeType.create(null, [node]);
     let state = EditorState.create({ doc });
+    let nodeView: NodeView | undefined;
+    const selectsBlock = (selection: Selection) =>
+      selection instanceof NodeSelection && selection.from === 0;
     const view = {
       editable: true,
       focus: vi.fn(),
@@ -73,10 +86,16 @@ describe("nested code editor activation", () => {
       },
       dispatch: (transaction: Transaction) => {
         mocks.dispatch(transaction);
+        const wasSelected = selectsBlock(state.selection);
         state = state.apply(transaction);
+        // The real view calls selectNode/deselectNode synchronously while it
+        // applies a selection change; the node view relies on that ordering.
+        const isSelected = selectsBlock(state.selection);
+        if (isSelected && !wasSelected) nodeView?.selectNode?.();
+        if (!isSelected && wasSelected) nodeView?.deselectNode?.();
       },
     } as unknown as EditorView;
-    const nodeView = createScientCodeBlockNodeView(
+    nodeView = createScientCodeBlockNodeView(
       node,
       view,
       () => 0,
@@ -165,6 +184,32 @@ describe("nested code editor activation", () => {
 
     nodeView.destroy!();
     expect(unregister).toHaveBeenCalledOnce();
+  });
+
+  it("defers syntax highlighting while CodeMirror owns the selected code", async () => {
+    const { nodeView } = fixture();
+    await vi.waitFor(() => expect(syntaxMocks.codeToHtml).toHaveBeenCalledOnce());
+    syntaxMocks.codeToHtml.mockClear();
+    syntaxMocks.getSyntaxHighlighterPromise.mockClear();
+
+    nodeView.selectNode?.();
+    const updatedNode = scientMarkdownSchema.nodes.code_block!.create(
+      { params: "text" },
+      scientMarkdownSchema.text("latest code"),
+    );
+    expect(nodeView.update?.(updatedNode, [], DecorationSet.empty)).toBe(true);
+    await Promise.resolve();
+    expect(syntaxMocks.getSyntaxHighlighterPromise).not.toHaveBeenCalled();
+    expect(syntaxMocks.codeToHtml).not.toHaveBeenCalled();
+
+    nodeView.deselectNode?.();
+    await vi.waitFor(() =>
+      expect(syntaxMocks.codeToHtml).toHaveBeenCalledWith(
+        "latest code",
+        expect.objectContaining({ lang: "text" }),
+      ),
+    );
+    nodeView.destroy?.();
   });
 
   it("keeps code readable after activation fails and retries without changing the source", async () => {
@@ -271,9 +316,6 @@ describe("nested code editor activation", () => {
     expect(state().selection).toBeInstanceOf(NodeSelection);
     expect(state().selection.from).toBe(0);
     expect(mocks.dispatch).toHaveBeenCalledOnce();
-    // The real ProseMirror view invokes selectNode after applying the
-    // NodeSelection; this lightweight fixture applies state only.
-    nodeView.selectNode!();
     await vi.dynamicImportSettled();
     expect(editor.focusAt).toHaveBeenCalledExactlyOnceWith({
       x: 32,
@@ -281,6 +323,76 @@ describe("nested code editor activation", () => {
     });
     expect(editor.focus).not.toHaveBeenCalled();
     nodeView.destroy!();
+  });
+
+  it("opens from a header click without steering the caret", async () => {
+    const editor = {
+      focus: vi.fn(),
+      focusAt: vi.fn(),
+      destroy: vi.fn(),
+      replaceExternalCode: vi.fn(),
+    };
+    mocks.create.mockReturnValue(editor);
+    const { nodeView, state } = fixture();
+    const header = (nodeView.dom as HTMLElement).querySelector<HTMLElement>(
+      ".scient-markdown-code-header",
+    )!;
+
+    header.dispatchEvent(
+      new MouseEvent("mousedown", { bubbles: true, button: 0, cancelable: true, clientX: 8 }),
+    );
+    expect(state().selection).toBeInstanceOf(NodeSelection);
+    await vi.dynamicImportSettled();
+    expect(editor.focus).toHaveBeenCalledOnce();
+    expect(editor.focusAt).not.toHaveBeenCalled();
+
+    // The editor is open and focused; a header click must not move its caret.
+    header.dispatchEvent(
+      new MouseEvent("mousedown", { bubbles: true, button: 0, cancelable: true, clientX: 8 }),
+    );
+    await vi.dynamicImportSettled();
+    expect(mocks.dispatch).toHaveBeenCalledOnce();
+    expect(editor.focusAt).not.toHaveBeenCalled();
+    expect(editor.focus).toHaveBeenCalledTimes(2);
+    nodeView.destroy!();
+  });
+
+  it("retries a failed editor from a click on the still-selected code", async () => {
+    const { nodeView } = fixture();
+    const dom = nodeView.dom as HTMLElement;
+    const rendered = dom.querySelector<HTMLElement>(".scient-markdown-code-render")!;
+    mocks.create.mockImplementationOnce(() => {
+      throw new Error("Editor initialization failed");
+    });
+    try {
+      nodeView.selectNode!();
+      await vi.dynamicImportSettled();
+      expect(dom.querySelector<HTMLElement>(".scient-markdown-code-load-error")?.hidden).toBe(
+        false,
+      );
+
+      rendered.dispatchEvent(
+        new MouseEvent("mousedown", {
+          bubbles: true,
+          button: 0,
+          cancelable: true,
+          clientX: 20,
+          clientY: 30,
+        }),
+      );
+      // Already the selection: nothing to dispatch, so the click itself must retry.
+      expect(mocks.dispatch).not.toHaveBeenCalled();
+      await vi.dynamicImportSettled();
+      expect(mocks.create).toHaveBeenCalledTimes(2);
+      expect(mocks.create.mock.results[1]?.value.focusAt).toHaveBeenCalledExactlyOnceWith({
+        x: 20,
+        y: 30,
+      });
+      expect(dom.querySelector<HTMLElement>(".scient-markdown-code-load-error")?.hidden).toBe(true);
+      expect(dom.querySelector<HTMLElement>(".scient-markdown-code-editor")?.hidden).toBe(false);
+    } finally {
+      nodeView.destroy!();
+    }
   });
 
   it("opens rich-fence source only through its explicit authoring action", async () => {

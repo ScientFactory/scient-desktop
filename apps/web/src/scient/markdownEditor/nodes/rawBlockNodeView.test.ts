@@ -58,6 +58,7 @@ describe("raw Markdown source islands", () => {
     expect(editor.hidden).toBe(false);
     expect(editor.value).toBe(source);
     expect(editor.dir).toBe("ltr");
+    expect(editor.dataset.scientMarkdownAtomEditor).toBe("true");
     expect(editor.getAttribute("aria-label")).toBe(
       sourceKind === "html" ? "HTML source" : "YAML source",
     );
@@ -109,11 +110,12 @@ describe("raw Markdown source islands", () => {
     expect(dispatch).not.toHaveBeenCalled();
     expect(state().doc.firstChild?.attrs.source).toBe("---\ntitle: Before\n---");
 
-    editor.dispatchEvent(
-      new InputEvent("input", { bubbles: true, data: "ם", inputType: "insertText" }),
-    );
+    editor.dispatchEvent(new CompositionEvent("compositionend", { bubbles: true, data: "ם" }));
     expect(dispatch).toHaveBeenCalledOnce();
     expect(state().doc.firstChild?.attrs.source).toBe("---\ntitle: שלום\n---");
+
+    editor.dispatchEvent(new InputEvent("input", { bubbles: true, inputType: "insertText" }));
+    expect(dispatch).toHaveBeenCalledOnce();
 
     nodeView.destroy?.();
   });

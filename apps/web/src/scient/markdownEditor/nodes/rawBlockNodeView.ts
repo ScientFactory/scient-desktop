@@ -45,10 +45,12 @@ class ScientRawBlockNodeView implements NodeView {
     this.sourceEditor.rows = 3;
     this.sourceEditor.spellcheck = false;
     this.sourceEditor.tabIndex = -1;
+    this.sourceEditor.dataset.scientMarkdownAtomEditor = "true";
     this.sourceEditor.readOnly = !this.view.editable;
     this.sourceEditor.setAttribute("aria-label", "Markdown source block");
     this.sourceEditor.addEventListener("mousedown", this.handleMouseDown);
     this.sourceEditor.addEventListener("input", this.handleInput);
+    this.sourceEditor.addEventListener("compositionend", this.handleInput);
     this.sourceEditor.addEventListener("keydown", this.handleKeyDown);
     this.dom.append(this.sourceEditor);
     this.unregisterSourceEditor = registerSourceEditor?.(this.sourceEditor);
@@ -82,6 +84,7 @@ class ScientRawBlockNodeView implements NodeView {
     this.unregisterSourceEditor?.();
     this.sourceEditor.removeEventListener("mousedown", this.handleMouseDown);
     this.sourceEditor.removeEventListener("input", this.handleInput);
+    this.sourceEditor.removeEventListener("compositionend", this.handleInput);
     this.sourceEditor.removeEventListener("keydown", this.handleKeyDown);
   }
 
@@ -108,9 +111,17 @@ class ScientRawBlockNodeView implements NodeView {
     }
     const position = this.getPos();
     if (position === undefined) return;
+    const currentNode = this.view.state.doc.nodeAt(position);
+    if (
+      !currentNode ||
+      currentNode.type !== this.node.type ||
+      this.sourceEditor.value === String(currentNode.attrs.source)
+    ) {
+      return;
+    }
     this.view.dispatch(
       this.view.state.tr.setNodeMarkup(position, undefined, {
-        ...this.node.attrs,
+        ...currentNode.attrs,
         source: this.sourceEditor.value,
       }),
     );

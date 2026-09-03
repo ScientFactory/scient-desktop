@@ -1696,6 +1696,56 @@ describe("ScientMarkdownEditorView", () => {
     expect(run(true)).toBe(run(false));
   });
 
+  it("moves the caret into a keyboard-selected citation on Enter and back out on Escape", () => {
+    const source = "Evidence [@smith2020] here.\n";
+    const controller = new ScientMarkdownEditorView({
+      source,
+      revision: "sha256:before",
+      mode: "write",
+      ariaLabel: "Citation keyboard entry",
+    });
+    const host = document.createElement("div");
+    document.body.append(host);
+    mounted.push(controller);
+    const view = controller.mount(host);
+    let citationPosition = -1;
+    view.state.doc.descendants((node, position) => {
+      if (node.type.name === "citation") citationPosition = position;
+    });
+    view.dispatch(
+      view.state.tr.setSelection(NodeSelection.create(view.state.doc, citationPosition)),
+    );
+    const field = view.dom.querySelector<HTMLInputElement>(
+      '[data-scient-markdown-reference="citation"] input',
+    )!;
+    expect(document.activeElement).not.toBe(field);
+
+    const enter = new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true });
+    view.dom.dispatchEvent(enter);
+    expect(enter.defaultPrevented).toBe(true);
+    expect(document.activeElement).toBe(field);
+    expect(field.selectionStart).toBe(field.value.length);
+    expect(controller.session.session.draftSource).toBe(source);
+
+    field.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+    expect(view.state.selection).toBeInstanceOf(TextSelection);
+    expect(view.state.selection.from).toBe(citationPosition + 1);
+    expect(controller.session.session.draftSource).toBe(source);
+
+    controller.setMode("read");
+    view.dispatch(
+      view.state.tr.setSelection(NodeSelection.create(view.state.doc, citationPosition)),
+    );
+    const readEnter = new KeyboardEvent("keydown", {
+      key: "Enter",
+      bubbles: true,
+      cancelable: true,
+    });
+    view.dom.dispatchEvent(readEnter);
+    expect(readEnter.defaultPrevented).toBe(false);
+    expect(document.activeElement).not.toBe(field);
+  });
+
   it("leaves native clipboard shortcuts native and matches editor UI keys exactly", () => {
     const onUserSourceChange = vi.fn();
     const controller = new ScientMarkdownEditorView({

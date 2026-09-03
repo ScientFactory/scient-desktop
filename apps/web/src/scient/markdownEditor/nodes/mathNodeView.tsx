@@ -9,7 +9,7 @@ import {
   ScientInlineMath,
 } from "~/scient/math/ScientMath";
 
-import { leaveAtomEditor } from "../prosemirror/safeSelection";
+import { handleInlineAtomEditorKeyDown, leaveAtomEditor } from "../prosemirror/safeSelection";
 
 class ScientMathNodeView implements NodeView {
   readonly dom: HTMLElement;
@@ -47,6 +47,7 @@ class ScientMathNodeView implements NodeView {
     this.sourceEditor = document.createElement(display ? "textarea" : "input");
     this.sourceEditor.className = "scient-markdown-math-source";
     this.sourceEditor.dir = "ltr";
+    this.sourceEditor.dataset.scientMarkdownAtomEditor = "true";
     this.sourceEditor.hidden = true;
     if (this.sourceEditor instanceof HTMLTextAreaElement) this.sourceEditor.rows = 1;
     this.sourceEditor.setAttribute(
@@ -54,6 +55,7 @@ class ScientMathNodeView implements NodeView {
       display ? "Display math source" : "Inline math source",
     );
     this.sourceEditor.addEventListener("input", this.handleInput);
+    this.sourceEditor.addEventListener("compositionend", this.handleInput);
     this.sourceEditor.addEventListener("keydown", this.handleKeyDown);
     this.dom.append(this.sourceEditor);
     this.retainedNotice = document.createElement("span");
@@ -101,6 +103,7 @@ class ScientMathNodeView implements NodeView {
     this.validationVersion += 1;
     this.renderHost.removeEventListener("click", this.handleRenderClick);
     this.sourceEditor.removeEventListener("input", this.handleInput);
+    this.sourceEditor.removeEventListener("compositionend", this.handleInput);
     this.sourceEditor.removeEventListener("keydown", this.handleKeyDown);
     this.reactRoot.unmount();
   }
@@ -109,9 +112,17 @@ class ScientMathNodeView implements NodeView {
     if (event instanceof InputEvent && event.isComposing) return;
     const position = this.getPos();
     if (position === undefined) return;
+    const currentNode = this.view.state.doc.nodeAt(position);
+    if (
+      !currentNode ||
+      currentNode.type !== this.node.type ||
+      this.sourceEditor.value === String(currentNode.attrs.tex)
+    ) {
+      return;
+    }
     this.view.dispatch(
       this.view.state.tr.setNodeMarkup(position, undefined, {
-        ...this.node.attrs,
+        ...currentNode.attrs,
         tex: this.sourceEditor.value,
       }),
     );
@@ -137,6 +148,20 @@ class ScientMathNodeView implements NodeView {
 
   private readonly handleKeyDown = (event: Event) => {
     if (!(event instanceof KeyboardEvent)) return;
+    if (
+      !this.isDisplay(this.node) &&
+      this.sourceEditor instanceof HTMLInputElement &&
+      handleInlineAtomEditorKeyDown({
+        direction: "ltr",
+        editor: this.sourceEditor,
+        event,
+        getPos: this.getPos,
+        node: this.node,
+        view: this.view,
+      })
+    ) {
+      return;
+    }
     if (event.key !== "Escape") return;
     event.preventDefault();
     leaveAtomEditor(this.view, this.getPos, this.node);

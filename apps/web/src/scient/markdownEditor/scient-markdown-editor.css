@@ -435,7 +435,7 @@
   overflow: hidden;
   border: 1px solid var(--contrast-border, var(--border));
   border-radius: var(--radius);
-  background: var(--markdown-code-surface-background, var(--code-background, var(--secondary)));
+  background: var(--code-background, var(--secondary));
   color: var(--code-foreground, var(--foreground));
 }
 
@@ -475,12 +475,16 @@
   text-underline-offset: 0.15em;
 }
 
+/* The rendered code and the nested CodeMirror editor must lay out identically:
+   the first click maps its coordinates onto the editor after the swap. Tab
+   width follows CodeMirror's default (4); the browser default is 8. */
 .scient-markdown-code-render {
   overflow-x: auto;
   padding: 0.55rem 0.8rem 0.75rem;
   font-family: var(--font-mono);
   font-size: 0.8rem;
   line-height: 1.55;
+  tab-size: 4;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
   scrollbar-width: thin;
@@ -560,7 +564,7 @@
   overflow: hidden;
   border: 1px solid var(--contrast-border, var(--border));
   border-radius: var(--radius);
-  background: var(--markdown-code-surface-background, var(--code-background, var(--secondary)));
+  background: var(--code-background, var(--secondary));
   color: var(--code-foreground, var(--foreground));
 }
 
@@ -741,16 +745,24 @@ sup.scient-markdown-reference {
   cursor: pointer;
 }
 
-.scient-markdown-reference[data-scient-markdown-reference="citation"].is-selected {
-  outline: none;
-}
-
 .scient-markdown-reference[data-scient-markdown-reference="citation"] {
   gap: 0;
   border-radius: 0;
   background: transparent;
   padding: 0;
   color: inherit;
+}
+
+/* A citation selected from the keyboard reads as selected text; once its field
+   has the caret, the caret is the only indicator, like any other prose. */
+.scient-markdown-reference[data-scient-markdown-reference="citation"].is-selected {
+  outline: none;
+}
+
+.scient-markdown-reference[data-scient-markdown-reference="citation"].is-selected:not(
+  :focus-within
+) {
+  background: color-mix(in oklab, var(--primary) 22%, transparent);
 }
 
 .scient-markdown-document.is-write

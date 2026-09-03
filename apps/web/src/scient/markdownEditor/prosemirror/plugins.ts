@@ -16,7 +16,7 @@ import {
   type InputRule,
 } from "prosemirror-inputrules";
 import { keymap } from "prosemirror-keymap";
-import { liftListItem, sinkListItem, splitListItem, wrapInList } from "prosemirror-schema-list";
+import { liftListItem, sinkListItem, splitListItem } from "prosemirror-schema-list";
 import { Plugin, PluginKey, type Command } from "prosemirror-state";
 import { goToNextCell, tableEditing } from "prosemirror-tables";
 
@@ -138,11 +138,3 @@ export function buildScientMarkdownPlugins(): ReadonlyArray<Plugin> {
     dropCursor(),
   ];
 }
-
-export const scientMarkdownCommands = {
-  liftListItem: liftListItem(requiredNodeType("list_item")),
-  sinkListItem: sinkListItem(requiredNodeType("list_item")),
-  splitListItem: splitListItem(requiredNodeType("list_item")),
-  wrapBulletList: wrapInList(requiredNodeType("bullet_list")),
-  wrapOrderedList: wrapInList(requiredNodeType("ordered_list")),
-} as const;

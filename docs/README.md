@@ -95,6 +95,7 @@ policy in [CONTRIBUTING.md](../CONTRIBUTING.md); agent rules in [AGENTS.md](../A
 - [Scient content direction](./internals/scient-content-direction.md)
 - [Scient typography profile](./internals/scient-typography.md)
 - [Scient math rendering](./internals/scient-math.md)
+- [Scient rich Markdown editor](./internals/scient-rich-markdown-editor.md)
 - [Scient rich chat diagrams](./internals/scient-chat-diagrams.md)
 - [Scient inline workspace images](./internals/scient-chat-images.md)
 - [Scient rich chat visualizations](./internals/scient-chat-visualizations.md)

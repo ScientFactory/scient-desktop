@@ -99,7 +99,12 @@ formatting controls preserves scroll and selection where the surfaces allow.
   double-click behavior in both the preview and rendered editor. Source editing is an explicit
   authoring action in the card's More menu or native right-click/two-finger menu; it never follows
   from ordinary chart interaction.
-- Escape moves outward through nested editors and popovers in a predictable order.
+- Escape moves outward through nested editors and popovers in a predictable order. Enter on a
+  keyboard-selected citation, math, footnote definition, or raw source island moves the caret into
+  its field, so every source-like atom is reachable without a pointer.
+- A click on rendered code opens the nested editor with the caret at the clicked position. The
+  rendered code and the editor share one text geometry (font, line height, wrapping, tab width);
+  a click on the block header opens the editor without moving its caret.
 
 The persistent rendered editor owns a scoped presentation layer that tracks the established
 `FileMarkdownPreview` measure, inset, type scale, rhythm, contrast, links, quotes, code, images,
@@ -124,7 +129,7 @@ not alter Markdown source unless the user performs an editing command.
 | Code block                    | Syntax-highlighted; embedded CodeMirror activates on selection               | Preserve fence marker, length, language, and metadata when untouched    |
 | Inline/display math           | Typeset while inactive; compact TeX editor when selected                     | Preserve `$…$`, `$$…$$`, `\(…\)`, or `\[…\]` when edited                |
 | Image/figure                  | Rendered with selection, alt text, caption, path, and size controls          | Use portable relative paths and ordinary Markdown where possible        |
-| Citation                      | Rendered source label; selection reveals its compact source editor           | Preserve citation keys and source syntax                                |
+| Citation                      | Bracketed label while reading; one always-present inline field while writing | Preserve citation keys and source syntax                                |
 | Footnote                      | Numbered marker navigates to one directly editable definition with backlinks | Keep generated labels internal and preserve repeated-reference binding  |
 | Mermaid/Vega/Plotly           | Preview-identical interactive card; explicit menu action opens source        | Retain the last valid render during invalid intermediate input          |
 | Reference definition          | Hidden while reading; compact exact-source disclosure while authoring        | Preserve the complete definition verbatim until explicitly edited       |

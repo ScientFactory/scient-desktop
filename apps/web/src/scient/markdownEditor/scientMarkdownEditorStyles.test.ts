@@ -118,8 +118,19 @@ describe("rich Markdown preview presentation parity", () => {
     );
     expect(cssSource).toMatch(/> \[data-scient-visual-card\] \{\s*margin-block: 0;/su);
     expect(cssSource).toMatch(
-      /\.scient-markdown-code-block\[data-scient-markdown-rich-fence\] > \.scient-markdown-code-editor \{[^}]*border: 1px solid[^}]*background: var\([^}]*--markdown-code-surface-background/su,
+      /\.scient-markdown-code-block\[data-scient-markdown-rich-fence\] > \.scient-markdown-code-editor \{[^}]*border: 1px solid[^}]*background: var\(--code-background/su,
     );
+  });
+
+  it("uses the established preview code token without overriding chat presentation", () => {
+    expect(cssSource).toMatch(
+      /\.scient-markdown-code-block \{[^}]*background: var\(--code-background/su,
+    );
+    expect(previewCssSource).toMatch(
+      /html\[data-theme-id\] \.chat-markdown \.chat-markdown-codeblock \{[^}]*background-color: var\(--code-background\)/su,
+    );
+    expect(previewCssSource).not.toContain("--scient-code-surface-background");
+    expect(previewCssSource).not.toContain("--markdown-code-surface-background");
   });
 });
 

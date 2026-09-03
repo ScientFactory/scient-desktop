@@ -1,7 +1,7 @@
 // @vitest-environment happy-dom
 
 import { DOMSerializer, type Node as ProseMirrorNode } from "prosemirror-model";
-import { EditorState, NodeSelection } from "prosemirror-state";
+import { EditorState, NodeSelection, TextSelection, type Transaction } from "prosemirror-state";
 import { DecorationSet, type EditorView } from "prosemirror-view";
 import { describe, expect, it, vi } from "vite-plus/test";
 
@@ -13,6 +13,35 @@ vi.mock("~/scient/math/ScientMath", () => ({
 
 import { createScientMathNodeView } from "./mathNodeView";
 import { scientMarkdownSchema } from "../prosemirror/schema";
+
+function inlineMathFixture(tex = "x^2") {
+  const node = scientMarkdownSchema.nodes.inline_math!.create({
+    delimiter: "$",
+    display: false,
+    tex,
+  });
+  const before = scientMarkdownSchema.text("Before ");
+  const after = scientMarkdownSchema.text(" after");
+  const paragraph = scientMarkdownSchema.nodes.paragraph!.create(null, [before, node, after]);
+  const doc = scientMarkdownSchema.nodes.doc!.create(null, paragraph);
+  const position = 1 + before.nodeSize;
+  let state = EditorState.create({ doc, selection: TextSelection.create(doc, 1) });
+  const dispatch = vi.fn((transaction: Transaction) => {
+    state = state.apply(transaction);
+  });
+  const view = {
+    editable: true,
+    get state() {
+      return state;
+    },
+    dispatch,
+    focus: vi.fn(),
+  } as unknown as EditorView;
+  const nodeView = createScientMathNodeView(node, view, () => position);
+  document.body.append(nodeView.dom);
+  const editor = nodeView.dom.querySelector<HTMLInputElement>("input")!;
+  return { dispatch, editor, nodeView, position, state: () => state };
+}
 
 describe("Scient math node view", () => {
   it("settles a rejected runtime load as invalid instead of remaining pending", async () => {
@@ -155,6 +184,9 @@ describe("Scient math node view", () => {
     expect(nodeView.dom.querySelector("textarea")?.getAttribute("aria-label")).toBe(
       "Display math source",
     );
+    expect(
+      nodeView.dom.querySelector("textarea")?.getAttribute("data-scient-markdown-atom-editor"),
+    ).toBe("true");
 
     nodeView.destroy?.();
     document.body.replaceChildren();
@@ -169,5 +201,55 @@ describe("Scient math node view", () => {
 
     expect(dom.textContent).toBe("\\[\nE = mc^2\n\\]");
     expect((dom as HTMLElement).dataset.delimiter).toBe("\\[");
+  });
+
+  it("commits inline math IME text once when composition ends", () => {
+    const { dispatch, editor, nodeView, position, state } = inlineMathFixture();
+    editor.value = "שלום";
+
+    editor.dispatchEvent(
+      new InputEvent("input", {
+        bubbles: true,
+        data: "ם",
+        inputType: "insertText",
+        isComposing: true,
+      }),
+    );
+    expect(dispatch).not.toHaveBeenCalled();
+
+    editor.dispatchEvent(new CompositionEvent("compositionend", { bubbles: true, data: "ם" }));
+    expect(dispatch).toHaveBeenCalledOnce();
+    expect(state().doc.nodeAt(position)?.attrs.tex).toBe("שלום");
+
+    editor.dispatchEvent(new InputEvent("input", { bubbles: true, inputType: "insertText" }));
+    expect(dispatch).toHaveBeenCalledOnce();
+    nodeView.destroy?.();
+  });
+
+  it("leaves inline math through the physical LTR arrow boundaries", () => {
+    const { editor, nodeView, position, state } = inlineMathFixture();
+    expect(editor.dataset.scientMarkdownAtomEditor).toBe("true");
+
+    editor.setSelectionRange(0, 0);
+    const left = new KeyboardEvent("keydown", {
+      bubbles: true,
+      cancelable: true,
+      key: "ArrowLeft",
+    });
+    editor.dispatchEvent(left);
+    expect(left.defaultPrevented).toBe(true);
+    expect(state().selection.head).toBe(position);
+
+    nodeView.selectNode?.();
+    editor.setSelectionRange(editor.value.length, editor.value.length);
+    const right = new KeyboardEvent("keydown", {
+      bubbles: true,
+      cancelable: true,
+      key: "ArrowRight",
+    });
+    editor.dispatchEvent(right);
+    expect(right.defaultPrevented).toBe(true);
+    expect(state().selection.head).toBe(position + 1);
+    nodeView.destroy?.();
   });
 });

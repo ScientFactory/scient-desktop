@@ -2,12 +2,14 @@ import type { Node as ProseMirrorNode } from "prosemirror-model";
 import { NodeSelection } from "prosemirror-state";
 import type { EditorView, NodeView } from "prosemirror-view";
 
+import { countStrongScripts, resolveStrongScriptDirection } from "~/scient/bidi/contentDirection";
+
 import {
   scientMarkdownFootnoteDefinitionId,
   scientMarkdownFootnoteReferenceId,
   type ScientMarkdownFootnotePresentation,
 } from "../footnotes";
-import { leaveAtomEditor } from "../prosemirror/safeSelection";
+import { handleInlineAtomEditorKeyDown, leaveAtomEditor } from "../prosemirror/safeSelection";
 
 export interface ScientMarkdownFootnoteNodeViewRegistration {
   readonly element: HTMLElement;
@@ -80,25 +82,25 @@ class ScientReferenceNodeView implements NodeView {
       this.sourceEditor.className = "scient-markdown-reference-source";
       if (definition) {
         this.sourceEditor.classList.add("scient-markdown-footnote-body");
-        this.sourceEditor.hidden = false;
         this.sourceEditor.tabIndex = view.editable ? 0 : -1;
+        this.sourceEditor.readOnly = !view.editable;
         (this.sourceEditor as HTMLTextAreaElement).rows = 1;
       } else {
-        // Citations are source-equivalent inline text. Keep their one authoring
-        // control present in write mode instead of revealing a second box only
-        // after the surrounding atom has been selected.
-        this.sourceEditor.hidden = false;
+        // Citations are source-equivalent inline text: their one authoring
+        // control is always present in write mode and hidden by the read-mode
+        // stylesheet, so mode changes need no per-view readOnly bookkeeping.
         this.sourceEditor.tabIndex = -1;
         this.sourceEditor.spellcheck = false;
       }
       this.sourceEditor.dir = "auto";
-      this.sourceEditor.readOnly = !view.editable;
+      this.sourceEditor.dataset.scientMarkdownAtomEditor = "true";
       this.sourceEditor.setAttribute(
         "aria-label",
         definition ? "Footnote text" : "Citation source",
       );
       this.sourceEditor.addEventListener("mousedown", this.handleEditorMouseDown);
       this.sourceEditor.addEventListener("input", this.handleInput);
+      this.sourceEditor.addEventListener("compositionend", this.handleInput);
       this.sourceEditor.addEventListener("keydown", this.handleKeyDown);
       this.dom.append(this.sourceEditor);
     }
@@ -128,7 +130,6 @@ class ScientReferenceNodeView implements NodeView {
   selectNode(): void {
     this.dom.classList.add("is-selected");
     if (!this.sourceEditor || !this.view.editable) return;
-    this.sourceEditor.readOnly = false;
     this.sourceEditor.value = sourceValue(this.node);
   }
 
@@ -149,6 +150,7 @@ class ScientReferenceNodeView implements NodeView {
     this.marker?.removeEventListener("click", this.handleMarkerClick);
     this.sourceEditor?.removeEventListener("mousedown", this.handleEditorMouseDown);
     this.sourceEditor?.removeEventListener("input", this.handleInput);
+    this.sourceEditor?.removeEventListener("compositionend", this.handleInput);
     this.sourceEditor?.removeEventListener("keydown", this.handleKeyDown);
     this.unregisterFootnote?.();
   }
@@ -158,15 +160,11 @@ class ScientReferenceNodeView implements NodeView {
     event.preventDefault();
   };
 
+  /** Only footnote definitions register for mode changes; see the constructor. */
   private setEditable(editable: boolean): void {
     if (!this.sourceEditor) return;
     this.sourceEditor.readOnly = !editable;
-    if (this.node.type.name === "footnote_definition") {
-      this.sourceEditor.hidden = false;
-      this.sourceEditor.tabIndex = editable ? 0 : -1;
-      return;
-    }
-    this.sourceEditor.hidden = false;
+    this.sourceEditor.tabIndex = editable ? 0 : -1;
   }
 
   private readonly handleMarkerClick = (event: MouseEvent) => {
@@ -179,7 +177,6 @@ class ScientReferenceNodeView implements NodeView {
 
   private readonly handleEditorMouseDown = (event: Event) => {
     if (!(event instanceof MouseEvent) || event.button !== 0 || !this.view.editable) return;
-    if (this.sourceEditor) this.sourceEditor.readOnly = false;
     const position = this.getPos();
     if (position === undefined) return;
     const selection = this.view.state.selection;
@@ -204,24 +201,54 @@ class ScientReferenceNodeView implements NodeView {
     const position = this.getPos();
     if (position === undefined) return;
     const value = this.sourceEditor.value;
-    if (this.sourceEditor instanceof HTMLInputElement) {
-      this.sourceEditor.size = Math.max(1, value.length);
+    this.fitCitationField(value);
+    const currentNode = this.view.state.doc.nodeAt(position);
+    if (!currentNode || currentNode.type !== this.node.type || value === sourceValue(currentNode)) {
+      return;
     }
     const attrs =
-      this.node.type.name === "citation"
-        ? { ...this.node.attrs, source: value }
+      currentNode.type.name === "citation"
+        ? { ...currentNode.attrs, source: value }
         : {
-            ...this.node.attrs,
-            source: footnoteSource(String(this.node.attrs.label), value),
+            ...currentNode.attrs,
+            source: footnoteSource(String(currentNode.attrs.label), value),
           };
     this.view.dispatch(this.view.state.tr.setNodeMarkup(position, undefined, attrs));
   };
 
   private readonly handleKeyDown = (event: Event) => {
-    if (!(event instanceof KeyboardEvent) || event.key !== "Escape") return;
+    if (!(event instanceof KeyboardEvent)) return;
+    if (this.node.type.name === "citation" && this.sourceEditor instanceof HTMLInputElement) {
+      const direction =
+        resolveStrongScriptDirection(countStrongScripts(this.sourceEditor.value)) ??
+        (getComputedStyle(this.sourceEditor).direction === "rtl" ? "rtl" : "ltr");
+      if (
+        handleInlineAtomEditorKeyDown({
+          direction,
+          editor: this.sourceEditor,
+          event,
+          getPos: this.getPos,
+          node: this.node,
+          view: this.view,
+        })
+      ) {
+        return;
+      }
+    }
+    if (event.key !== "Escape") return;
     event.preventDefault();
     leaveAtomEditor(this.view, this.getPos, this.node);
   };
+
+  /**
+   * The stylesheet sizes the citation field to its content with
+   * `field-sizing`; `size` carries the same width on engines without it.
+   */
+  private fitCitationField(value: string): void {
+    if (this.sourceEditor instanceof HTMLInputElement) {
+      this.sourceEditor.size = Math.max(1, value.length);
+    }
+  }
 
   private render(): void {
     if (this.node.type.name === "citation") {
@@ -229,9 +256,7 @@ class ScientReferenceNodeView implements NodeView {
       this.label.textContent = `[${source}]`;
       if (this.sourceEditor && this.sourceEditor !== document.activeElement) {
         this.sourceEditor.value = source;
-        if (this.sourceEditor instanceof HTMLInputElement) {
-          this.sourceEditor.size = Math.max(1, source.length);
-        }
+        this.fitCitationField(source);
       }
       return;
     }

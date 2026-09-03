@@ -13,6 +13,20 @@ Both projects are licensed under the MIT License.
 - <https://github.com/ProseMirror/prosemirror-view/blob/master/LICENSE>
 - <https://github.com/markdown-it/markdown-it/blob/master/LICENSE>
 
+## mdast and micromark Markdown utilities
+
+Scient's exact-source Markdown ledger uses unmodified, locally bundled
+`mdast-util-from-markdown`, `mdast-util-frontmatter`, `mdast-util-gfm`,
+`mdast-util-math`, `micromark-extension-frontmatter`,
+`micromark-extension-gfm`, and `micromark-extension-math` packages. These
+packages are Copyright (c) Titus Wormer and contributors and are licensed
+under the MIT License.
+
+- <https://github.com/syntax-tree/mdast-util-from-markdown/blob/main/license>
+- <https://github.com/micromark/micromark-extension-frontmatter/blob/main/license>
+- <https://github.com/micromark/micromark-extension-gfm/blob/main/license>
+- <https://github.com/micromark/micromark-extension-math/blob/main/license>
+
 ## CodeMirror
 
 Scient's editable Markdown code blocks use unmodified, locally bundled

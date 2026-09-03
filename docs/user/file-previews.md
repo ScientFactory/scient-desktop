@@ -54,11 +54,13 @@ Current limitation: automatic refresh follows the exact known path. If the file
 is renamed or moved, reopen it from its new location; Scient does not yet
 relocate an already open file automatically.
 
-- Markdown files open as rendered documents. Use the source/preview control in
-  the file header to switch modes; Scient remembers that preference. A link to
-  a specific Markdown line opens source so the requested line can be shown.
-  Relative image paths resolve from the Markdown file's folder, including
-  nested folders; inline sizes and alignment are preserved.
+- Markdown files open as rendered documents. Writable project Markdown is
+  directly editable in that rendered surface; formatting controls appear
+  without replacing it with a second preview. Use the source/rendered control
+  in the file header when exact Markdown text is needed; Scient remembers that
+  preference. A link to a specific Markdown line opens source so the requested
+  line can be shown. Relative image paths resolve from the Markdown file's
+  folder, including nested folders; inline sizes and alignment are preserved.
 - Text files larger than the preview limit open read-only. In rendered
   Markdown, task checkboxes are also non-interactive so a partial preview can
   never replace the complete file.

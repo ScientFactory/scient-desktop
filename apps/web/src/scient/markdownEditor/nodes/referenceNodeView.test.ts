@@ -80,6 +80,34 @@ function footnoteFixture(input: {
   };
 }
 
+function citationFixture(source = "@synthetic2026") {
+  const citation = scientMarkdownSchema.nodes.citation!.create({ source });
+  const before = scientMarkdownSchema.text("Before ");
+  const after = scientMarkdownSchema.text(" after");
+  const paragraph = scientMarkdownSchema.nodes.paragraph!.create(null, [before, citation, after]);
+  const doc = scientMarkdownSchema.nodes.doc!.create(null, paragraph);
+  const position = 1 + before.nodeSize;
+  let state = EditorState.create({
+    doc,
+    selection: TextSelection.create(doc, 1),
+  });
+  const dispatch = vi.fn((transaction: Transaction) => {
+    state = state.apply(transaction);
+  });
+  const view = {
+    editable: true,
+    get state() {
+      return state;
+    },
+    dispatch,
+    focus: vi.fn(),
+  } as unknown as EditorView;
+  const nodeView = createScientReferenceNodeView(citation, view, () => position);
+  document.body.append(nodeView.dom);
+  const editor = nodeView.dom.querySelector<HTMLInputElement>("input")!;
+  return { dispatch, editor, nodeView, position, state: () => state };
+}
+
 describe("Scient reference node view", () => {
   afterEach(() => document.body.replaceChildren());
 
@@ -189,6 +217,7 @@ describe("Scient reference node view", () => {
     );
     expect(editor.hidden).toBe(false);
     expect(editor.value).toBe("@synthetic2026");
+    expect(editor.dataset.scientMarkdownAtomEditor).toBe("true");
     nodeView.selectNode?.();
     expect(editor.hidden).toBe(false);
     expect(editor.value).toBe("@synthetic2026");
@@ -200,6 +229,80 @@ describe("Scient reference node view", () => {
     );
     expect(editor).toBe(document.activeElement);
 
+    nodeView.destroy?.();
+  });
+
+  it("commits citation IME text once when composition ends", () => {
+    const { dispatch, editor, nodeView, position, state } = citationFixture();
+    editor.value = "@מקור";
+
+    editor.dispatchEvent(
+      new InputEvent("input", {
+        bubbles: true,
+        data: "ר",
+        inputType: "insertText",
+        isComposing: true,
+      }),
+    );
+    expect(dispatch).not.toHaveBeenCalled();
+
+    editor.dispatchEvent(new CompositionEvent("compositionend", { bubbles: true, data: "ר" }));
+    expect(dispatch).toHaveBeenCalledOnce();
+    expect(state().doc.nodeAt(position)?.attrs.source).toBe("@מקור");
+
+    // Browsers may emit a final ordinary input after compositionend. It must
+    // not create a duplicate transaction, history item, or save request.
+    editor.dispatchEvent(new InputEvent("input", { bubbles: true, inputType: "insertText" }));
+    expect(dispatch).toHaveBeenCalledOnce();
+
+    nodeView.destroy?.();
+  });
+
+  it("uses physical RTL arrows to leave the citation on the matching side", () => {
+    const { editor, nodeView, position, state } = citationFixture("@מקור");
+
+    editor.setSelectionRange(editor.value.length, editor.value.length);
+    const left = new KeyboardEvent("keydown", {
+      bubbles: true,
+      cancelable: true,
+      key: "ArrowLeft",
+    });
+    editor.dispatchEvent(left);
+    expect(left.defaultPrevented).toBe(true);
+    expect(state().selection.head).toBe(position + 1);
+
+    editor.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, button: 0 }));
+    editor.setSelectionRange(0, 0);
+    const right = new KeyboardEvent("keydown", {
+      bubbles: true,
+      cancelable: true,
+      key: "ArrowRight",
+    });
+    editor.dispatchEvent(right);
+    expect(right.defaultPrevented).toBe(true);
+    expect(state().selection.head).toBe(position);
+
+    nodeView.destroy?.();
+  });
+
+  it("deletes an empty inline citation with Backspace", () => {
+    const { editor, nodeView, state } = citationFixture("");
+    editor.setSelectionRange(0, 0);
+    const backspace = new KeyboardEvent("keydown", {
+      bubbles: true,
+      cancelable: true,
+      key: "Backspace",
+    });
+
+    editor.dispatchEvent(backspace);
+
+    expect(backspace.defaultPrevented).toBe(true);
+    expect(state().doc.textContent).toBe("Before  after");
+    let hasCitation = false;
+    state().doc.descendants((node) => {
+      if (node.type.name === "citation") hasCitation = true;
+    });
+    expect(hasCitation).toBe(false);
     nodeView.destroy?.();
   });
 

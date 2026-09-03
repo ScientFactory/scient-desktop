@@ -1595,7 +1595,38 @@ export class ScientMarkdownEditorView {
       this.closeFind();
       return true;
     }
+    if (event.key === "Enter" && !event.shiftKey && this.focusSelectedSourceField()) {
+      event.preventDefault();
+      return true;
+    }
     return this.handleSlashKeyDown(event);
+  }
+
+  /**
+   * Enter on a selected source-like atom (citation, math, raw source island,
+   * footnote definition) moves the caret into its one editable field, the
+   * keyboard counterpart of clicking it. Escape in that field leaves again.
+   * Code blocks focus their nested editor on selection and never reach here.
+   */
+  private focusSelectedSourceField(): boolean {
+    const view = this.editorView;
+    if (!view || !modeIsEditable(this.mode)) return false;
+    const { selection } = view.state;
+    if (!(selection instanceof NodeSelection) || !selection.node.isAtom) return false;
+    const dom = view.nodeDOM(selection.from);
+    if (!(dom instanceof HTMLElement)) return false;
+    // Source fields opt into this keyboard contract explicitly. Nested inputs
+    // such as image controls and task checkboxes own different interactions.
+    const field = Array.from(dom.children).find(
+      (child): child is HTMLInputElement | HTMLTextAreaElement =>
+        child.getAttribute("data-scient-markdown-atom-editor") === "true" &&
+        (child instanceof HTMLTextAreaElement ||
+          (child instanceof HTMLInputElement && child.type === "text")),
+    );
+    if (!field || field.hidden || field.readOnly) return false;
+    field.focus({ preventScroll: true });
+    field.setSelectionRange(field.value.length, field.value.length);
+    return true;
   }
 
   executeSlashCommand(command: ScientMarkdownCommand): boolean {
