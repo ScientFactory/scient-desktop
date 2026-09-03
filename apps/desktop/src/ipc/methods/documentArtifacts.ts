@@ -15,7 +15,6 @@ export const saveAssetCopy = DesktopIpc.makeIpcMethod({
 const SavedAssetPath = Schema.String.check(
   Schema.isMinLength(1),
   Schema.isMaxLength(4_096),
-  // eslint-disable-next-line no-control-regex -- Native filesystem paths must reject NUL explicitly.
   Schema.isPattern(/^[^\0]+$/u),
 );
 

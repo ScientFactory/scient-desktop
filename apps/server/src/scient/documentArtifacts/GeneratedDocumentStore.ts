@@ -54,7 +54,6 @@ const StoredGeneratedDocumentRevision = Schema.Struct({
   fileName: Schema.String.check(
     Schema.isMinLength(1),
     Schema.isMaxLength(255),
-    // eslint-disable-next-line no-control-regex -- Persisted filenames must reject NUL explicitly.
     Schema.isPattern(/^[^/\\\0]+\.pdf$/iu),
   ),
   pageCount: Schema.Int.check(Schema.isGreaterThanOrEqualTo(1)),
@@ -315,7 +314,6 @@ function pdfFileName(title: string): string {
   const normalized = title
     .trim()
     .replace(/\.pdf$/iu, "")
-    // eslint-disable-next-line no-control-regex -- Filesystem-safe output names replace NUL explicitly.
     .replace(/[\\/:*?"<>|\0]/gu, "-")
     .replace(/\s+/gu, " ")
     .slice(0, 240)

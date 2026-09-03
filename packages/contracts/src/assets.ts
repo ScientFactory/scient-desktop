@@ -15,6 +15,7 @@ import {
   PROVIDER_SEND_TURN_SUPPORTED_IMAGE_MIME_TYPES,
   ProjectFaviconPath,
 } from "./orchestration.ts";
+import { ToolActivityNativeAppReference } from "./providerRuntime.ts";
 
 const WORKSPACE_ASSET_PATH_MAX_LENGTH = 1_024;
 const ENVIRONMENT_ASSET_PATH_MAX_LENGTH = 4_096;
@@ -68,6 +69,9 @@ export const AssetResource = Schema.Union([
         an octet-stream download without a filename. */
     fileName: Schema.optionalKey(TrimmedNonEmptyString.check(Schema.isMaxLength(255))),
     mimeType: Schema.optionalKey(TrimmedNonEmptyString.check(Schema.isMaxLength(100))),
+    /** Generic attachments download by default. Document viewers opt into an
+        inline response after deciding the file type is safe to preview. */
+    disposition: Schema.optionalKey(Schema.Literals(["inline", "attachment"])),
   }),
   Schema.TaggedStruct("project-favicon", {
     cwd: TrimmedNonEmptyString.check(Schema.isMaxLength(WORKSPACE_ASSET_PATH_MAX_LENGTH)),
@@ -92,6 +96,9 @@ export const AssetResource = Schema.Union([
   Schema.TaggedStruct("environment-file", {
     path: EnvironmentFilePath,
     access: Schema.Literals(["exact", "html-document"]),
+  }),
+  Schema.TaggedStruct("native-app-icon", {
+    app: ToolActivityNativeAppReference,
   }),
 ]);
 export type AssetResource = typeof AssetResource.Type;

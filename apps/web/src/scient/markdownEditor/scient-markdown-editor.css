@@ -759,8 +759,8 @@ sup.scient-markdown-reference {
 }
 
 .scient-markdown-reference[data-scient-markdown-reference="citation"].is-selected:not(
-  :focus-within
-) {
+    :focus-within
+  ) {
   background: color-mix(in oklab, var(--primary) 22%, transparent);
 }
 

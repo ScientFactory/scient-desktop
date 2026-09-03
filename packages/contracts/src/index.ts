@@ -45,6 +45,7 @@ export * from "./scientMarkdown.ts";
 // SCIENT-FORK:START — Scient thread queue contracts (new file, no upstream edits).
 export * from "./scientThreadQueue.ts";
 // SCIENT-FORK:END
+export * from "./browserProfile.ts";
 export * from "./preview.ts";
 export * from "./previewAutomation.ts";
 export * from "./resourceTelemetry.ts";

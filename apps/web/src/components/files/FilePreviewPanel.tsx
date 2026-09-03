@@ -1,8 +1,9 @@
-import {
-  type EditorId,
-  type EnvironmentId,
-  type ResolvedKeybindingsConfig,
-  type ScopedThreadRef,
+import type {
+  ChatFileAttachment,
+  EditorId,
+  EnvironmentId,
+  ResolvedKeybindingsConfig,
+  ScopedThreadRef,
 } from "@t3tools/contracts";
 import {
   VirtualizedFile,
@@ -34,6 +35,7 @@ import {
 import { isBrowserPreviewFile, openFileInPreview } from "~/browser/openFileInPreview";
 import { useAssetUrlRefresh, useAssetUrlState } from "~/assets/assetUrls";
 import { OpenInPicker } from "~/components/chat/OpenInPicker";
+import { PierreEntryIcon } from "~/components/chat/PierreEntryIcon";
 import { MediaVideoPlayer } from "~/components/media/MediaVideoPlayer";
 import { MediaActions, type MediaActionSource } from "~/components/media/MediaActions";
 import { useRemoteOpenState } from "~/remoteOpen";
@@ -109,6 +111,7 @@ import {
   resolveMarkdownTaskPreviewUpdate,
   resolveFilePreviewKind,
   shouldLoadFileAsText,
+  shouldShowFileExplorer,
 } from "./filePreviewMode";
 import { FileSaveCoordinator } from "./fileSaveCoordinator";
 import {
@@ -124,6 +127,7 @@ interface FilePreviewPanelProps {
   cwd: string;
   projectName: string;
   relativePath: string | null;
+  attachment?: ChatFileAttachment;
   threadRef: ScopedThreadRef;
   composerDraftTarget: ScopedThreadRef | DraftId;
   keybindings: ResolvedKeybindingsConfig;
@@ -337,6 +341,70 @@ function WorkspaceImagePreview(props: {
   );
 }
 
+const isPdfPreviewFile = (path: string): boolean => /\.pdf$/i.test(path.split(/[?#]/, 1)[0] ?? "");
+
+function BrowserDocumentFrame(props: {
+  readonly src: string;
+  readonly title: string;
+  readonly pdf: boolean;
+}) {
+  const className = "min-h-0 flex-1 border-0 bg-white";
+  // The built-in PDF viewer needs an unsandboxed frame; a PDF runs no scripts.
+  return props.pdf ? (
+    // oxlint-disable-next-line react/iframe-missing-sandbox
+    <iframe key={props.src} src={props.src} title={props.title} className={className} />
+  ) : (
+    <iframe
+      key={props.src}
+      src={props.src}
+      title={props.title}
+      className={className}
+      sandbox="allow-scripts allow-forms allow-popups allow-modals"
+    />
+  );
+}
+
+function AttachmentBrowserPreview(props: {
+  readonly environmentId: EnvironmentId;
+  readonly attachment: ChatFileAttachment;
+}) {
+  const resource = useMemo(
+    () => ({
+      _tag: "attachment" as const,
+      attachmentId: props.attachment.id,
+      fileName: props.attachment.name,
+      mimeType: props.attachment.mimeType,
+      disposition: "inline" as const,
+    }),
+    [props.attachment.id, props.attachment.mimeType, props.attachment.name],
+  );
+  const assetUrl = useAssetUrlState(props.environmentId, resource);
+
+  if (assetUrl._tag === "Failure") {
+    return (
+      <div className="flex min-h-0 flex-1 items-center justify-center px-6 text-center text-xs leading-relaxed text-destructive">
+        Unable to load attachment preview.
+      </div>
+    );
+  }
+  if (assetUrl._tag !== "Success") {
+    return (
+      <div className="flex min-h-0 flex-1 items-center justify-center text-muted-foreground">
+        <LoaderCircle className="size-5 animate-spin" />
+      </div>
+    );
+  }
+  return (
+    <BrowserDocumentFrame
+      src={assetUrl.url}
+      title={props.attachment.name}
+      pdf={
+        isPdfPreviewFile(props.attachment.name) ||
+        props.attachment.mimeType.split(";", 1)[0]?.trim().toLowerCase() === "application/pdf"
+      }
+    />
+  );
+}
 /**
  * Renders an HTML or PDF file in place from its signed asset URL. HTML runs in
  * a sandboxed frame with an opaque origin, so a page cannot reach the app's
@@ -404,15 +472,11 @@ function WorkspaceBrowserPreview(props: {
       </div>
     );
   }
-  const src = `${assetUrl.url}${revisionSuffix}`;
-  const className = "min-h-0 flex-1 border-0 bg-white";
   return (
-    <iframe
-      key={src}
-      src={src}
+    <BrowserDocumentFrame
+      src={`${assetUrl.url}${revisionSuffix}`}
       title={props.title}
-      className={className}
-      sandbox="allow-scripts allow-forms allow-popups allow-modals"
+      pdf={isPdfPreviewFile(props.absolutePath)}
     />
   );
 }
@@ -1252,6 +1316,7 @@ export default function FilePreviewPanel({
   cwd,
   projectName,
   relativePath,
+  attachment,
   threadRef,
   composerDraftTarget,
   keybindings,
@@ -1285,7 +1350,10 @@ export default function FilePreviewPanel({
   const isMedia = isImage || isVideo;
   const isPdf = previewKind === "pdf";
   const isHtml = relativePath !== null && !isPdf && isBrowserPreviewFile(relativePath);
-  const isHostFile = relativePath !== null && isAbsolutePath(relativePath);
+  // Attachments and absolute host paths are preview-only and never enter the
+  // workspace editor or explorer.
+  const isHostFile =
+    attachment !== undefined || (relativePath !== null && isAbsolutePath(relativePath));
   const [pendingPaths, setPendingPaths] = useState<ReadonlySet<string>>(() => new Set());
   const sourcePending = relativePath !== null && pendingPaths.has(relativePath);
   const effectiveSourcePending = sourcePending || selectedFilePending;
@@ -1293,6 +1361,13 @@ export default function FilePreviewPanel({
   const [explorerOpen, setExplorerOpen] = useState(initialExplorerOpen);
   const [pdfExplorerOpen, setPdfExplorerOpen] = useState(false);
   const effectiveExplorerOpen = isPdf ? pdfExplorerOpen : explorerOpen;
+  const showExplorer = shouldShowFileExplorer({
+    relativePath,
+    explorerOpen: effectiveExplorerOpen,
+    attachmentOpen: attachment !== undefined,
+  });
+  // Reading markdown rendered is a preference, not a property of one file. Keeping
+  // it on the panel meant a thread switch dropped it and forced source back.
   const [renderMarkdownPreferred, setRenderMarkdownPreferred] = useLocalStorage(
     RENDER_MARKDOWN_STORAGE_KEY,
     SCIENT_DEFAULT_RENDER_MARKDOWN,
@@ -1323,6 +1398,7 @@ export default function FilePreviewPanel({
     revealHandled;
   const canToggleRendered = isMarkdownDocument || isHtml;
   const rendered = isMarkdownDocument ? renderMarkdown : isHtml ? renderBrowserFile : false;
+  const canToggleRenderedForSurface = attachment === undefined && canToggleRendered;
   const {
     automaticRefreshUnavailable,
     cancelReloadNotice,
@@ -1344,11 +1420,11 @@ export default function FilePreviewPanel({
     environmentId,
     cwd,
     relativePath,
-    loadAsText: shouldLoadFileAsText(relativePath),
+    loadAsText: attachment === undefined && shouldLoadFileAsText(relativePath),
     sourcePending: effectiveSourcePending,
     surfaceOwnsConflictDetection: isRichMarkdown && renderMarkdown,
     workspaceMutationId,
-    watchChanges: !isHostFile,
+    watchChanges: attachment === undefined && !isHostFile,
   });
   // A confirmed optimistic value can briefly be newer than the last completed
   // read. Do not feed that stale read back into a clean rich session while the
@@ -1433,8 +1509,13 @@ export default function FilePreviewPanel({
     ],
   );
   const canOpenInBrowser =
-    relativePath !== null && isPreviewSupportedInRuntime() && isBrowserPreviewFile(relativePath);
-  const absolutePath = relativePath ? resolvePathLinkTarget(relativePath, cwd) : null;
+    relativePath !== null &&
+    attachment === undefined &&
+    !isVideo &&
+    isPreviewSupportedInRuntime() &&
+    isBrowserPreviewFile(relativePath);
+  const absolutePath =
+    relativePath && attachment === undefined ? resolvePathLinkTarget(relativePath, cwd) : null;
   const pdfSource = useMemo(
     () =>
       workspacePdfSourceForPreview({
@@ -1528,60 +1609,74 @@ export default function FilePreviewPanel({
           )}
           data-surface-subheader
         >
-          <ScrollArea
-            ref={breadcrumbRef}
-            hideScrollbars
-            scrollFade
-            className="min-w-0 flex-1 rounded-none"
-            data-file-breadcrumbs
-          >
-            {isHostFile ? (
-              <FileBreadcrumbs
-                cwd={cwd}
-                environmentId={environmentId}
-                onOpenFile={onOpenFile}
-                projectName={projectName}
-                relativePath={relativePath}
-                workspaceMutationId={workspaceMutationId}
+          {attachment ? (
+            <div className="flex min-w-0 flex-1 items-center gap-1.5 text-xs">
+              <PierreEntryIcon
+                pathValue={attachment.name}
+                kind="file"
+                theme={resolvedTheme}
+                className="size-3.5"
               />
-            ) : (
-              <FileBreadcrumbNavigator
-                environmentId={environmentId}
-                cwd={cwd}
-                projectName={projectName}
-                relativePath={relativePath}
-                onOpenFile={onOpenFile}
-                currentFileControl={
-                  isRichMarkdown && !file.data?.readOnly ? (
-                    <ScientMarkdownRenameButton
-                      environmentId={environmentId}
-                      cwd={cwd}
-                      relativePath={relativePath}
-                      revision={file.data?.revision ?? "unavailable"}
-                      disabled={
-                        sourcePending || file.data === null || (file.data?.truncated ?? false)
-                      }
-                      label={relativePath.slice(relativePath.lastIndexOf("/") + 1)}
-                      onRenamed={(destinationRelativePath, revision) => {
-                        if (file.data) {
-                          setProjectFileQueryData(
-                            environmentId,
-                            cwd,
-                            destinationRelativePath,
-                            file.data.contents,
-                            revision,
-                          );
+              <span className="truncate font-medium">{attachment.name}</span>
+            </div>
+          ) : (
+            <ScrollArea
+              ref={breadcrumbRef}
+              hideScrollbars
+              scrollFade
+              className="min-w-0 flex-1 rounded-none"
+              data-file-breadcrumbs
+            >
+              {isHostFile ? (
+                <FileBreadcrumbs
+                  cwd={cwd}
+                  environmentId={environmentId}
+                  onOpenFile={onOpenFile}
+                  projectName={projectName}
+                  relativePath={relativePath}
+                  workspaceMutationId={workspaceMutationId}
+                />
+              ) : (
+                <FileBreadcrumbNavigator
+                  environmentId={environmentId}
+                  cwd={cwd}
+                  projectName={projectName}
+                  relativePath={relativePath}
+                  onOpenFile={onOpenFile}
+                  currentFileControl={
+                    isRichMarkdown && !file.data?.readOnly ? (
+                      <ScientMarkdownRenameButton
+                        environmentId={environmentId}
+                        cwd={cwd}
+                        relativePath={relativePath}
+                        revision={file.data?.revision ?? "unavailable"}
+                        disabled={
+                          effectiveSourcePending ||
+                          file.data === null ||
+                          (file.data?.truncated ?? false)
                         }
-                        clearProjectFileQueryData(environmentId, cwd, relativePath);
-                        refreshProjectEntriesQuery(environmentId, cwd);
-                        onOpenFile(destinationRelativePath);
-                      }}
-                    />
-                  ) : undefined
-                }
-              />
-            )}
-          </ScrollArea>
+                        label={relativePath.slice(relativePath.lastIndexOf("/") + 1)}
+                        onRenamed={(destinationRelativePath, revision) => {
+                          if (file.data) {
+                            setProjectFileQueryData(
+                              environmentId,
+                              cwd,
+                              destinationRelativePath,
+                              file.data.contents,
+                              revision,
+                            );
+                          }
+                          clearProjectFileQueryData(environmentId, cwd, relativePath);
+                          refreshProjectEntriesQuery(environmentId, cwd);
+                          onOpenFile(destinationRelativePath);
+                        }}
+                      />
+                    ) : undefined
+                  }
+                />
+              )}
+            </ScrollArea>
+          )}
           {absolutePath &&
           (environmentId === primaryEnvironmentId || remoteOpenState.mode !== "local-exec") ? (
             <OpenInPicker
@@ -1596,7 +1691,7 @@ export default function FilePreviewPanel({
           {isRichMarkdown && !file.data?.readOnly ? (
             <ScientMarkdownSaveStatus status={markdownSaveStatus} />
           ) : null}
-          {canToggleRendered ? (
+          {canToggleRenderedForSurface ? (
             <Tooltip>
               <TooltipTrigger
                 render={
@@ -1634,30 +1729,34 @@ export default function FilePreviewPanel({
               <TooltipPopup>Open file in preview browser</TooltipPopup>
             </Tooltip>
           ) : null}
-          <ScientFileReloadButton
-            automaticRefreshUnavailable={automaticRefreshUnavailable}
-            isPending={file.isPending}
-            onReload={requestManualReload}
-          />
-          <Tooltip>
-            <TooltipTrigger
-              render={
-                <Toggle
-                  className="shrink-0"
-                  pressed={effectiveExplorerOpen}
-                  onPressedChange={toggleExplorer}
-                  aria-label={effectiveExplorerOpen ? "Hide file explorer" : "Show file explorer"}
-                  variant="ghost"
-                  size="sm"
-                >
-                  <FolderTree className="size-3.5" />
-                </Toggle>
-              }
+          {attachment === undefined ? (
+            <ScientFileReloadButton
+              automaticRefreshUnavailable={automaticRefreshUnavailable}
+              isPending={file.isPending}
+              onReload={requestManualReload}
             />
-            <TooltipPopup>
-              {effectiveExplorerOpen ? "Hide file explorer" : "Show file explorer"}
-            </TooltipPopup>
-          </Tooltip>
+          ) : null}
+          {!isHostFile ? (
+            <Tooltip>
+              <TooltipTrigger
+                render={
+                  <Toggle
+                    className="shrink-0"
+                    pressed={effectiveExplorerOpen}
+                    onPressedChange={toggleExplorer}
+                    aria-label={effectiveExplorerOpen ? "Hide file explorer" : "Show file explorer"}
+                    variant="ghost"
+                    size="sm"
+                  >
+                    <FolderTree className="size-3.5" />
+                  </Toggle>
+                }
+              />
+              <TooltipPopup>
+                {effectiveExplorerOpen ? "Hide file explorer" : "Show file explorer"}
+              </TooltipPopup>
+            </Tooltip>
+          ) : null}
         </div>
       ) : null}
       <ScientFileFreshnessNotices
@@ -1691,7 +1790,9 @@ export default function FilePreviewPanel({
             relativePath ? "flex" : "hidden",
           )}
         >
-          {relativePath && isVideo && absolutePath ? (
+          {relativePath && attachment ? (
+            <AttachmentBrowserPreview environmentId={environmentId} attachment={attachment} />
+          ) : relativePath && isVideo && absolutePath ? (
             <WorkspaceVideoPreview
               key={`${environmentId}:${threadRef.threadId}:${absolutePath}`}
               environmentId={environmentId}
@@ -1933,7 +2034,7 @@ export default function FilePreviewPanel({
             truncated={file.data?.truncated ?? false}
           />
         </div>
-        {effectiveExplorerOpen || relativePath === null ? (
+        {showExplorer ? (
           <aside
             className={cn(
               "flex min-h-0 shrink-0 bg-background",

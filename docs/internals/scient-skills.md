@@ -144,8 +144,7 @@ the same name.
 lists them in manifest presentation order. The user can make each one available
 personally. An active skill can be set to **Agent may use** or **Only with
 $name**. Changes are persisted in app-private state and take effect on the next
-turn. The composer exposes the same active inventory through its existing `$`
-and optional `/` skill menus. Loading a skill appears as a concise work-log
+turn. The composer exposes the same active inventory through its existing `$`and optional`/` skill menus. Loading a skill appears as a concise work-log
 event.
 
 The built-in shipping policy is:

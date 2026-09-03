@@ -2290,6 +2290,16 @@ const makeWsRpcLayer = (
             pullRequests.requestReviewers(input),
             { "rpc.aggregate": "pull-requests" },
           ),
+        [WS_METHODS.pullRequestsLabelCandidates]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.pullRequestsLabelCandidates,
+            pullRequests.labelCandidates(input),
+            { "rpc.aggregate": "pull-requests" },
+          ),
+        [WS_METHODS.pullRequestsSetLabels]: (input) =>
+          observeRpcEffect(WS_METHODS.pullRequestsSetLabels, pullRequests.setLabels(input), {
+            "rpc.aggregate": "pull-requests",
+          }),
         [WS_METHODS.sourceControlLookupRepository]: (input) =>
           observeRpcEffect(
             WS_METHODS.sourceControlLookupRepository,
@@ -2717,7 +2727,10 @@ const makeWsRpcLayer = (
                   generatedDocumentExpiresAtEpochMs: retained.expiresAtEpochMs,
                 });
               }
-              if (input.resource._tag === "attachment") {
+              if (
+                input.resource._tag === "attachment" ||
+                input.resource._tag === "native-app-icon"
+              ) {
                 return yield* issueAssetUrl({ resource: input.resource });
               }
               if (input.resource._tag === "environment-file") {

@@ -70,14 +70,12 @@ export function collectExternalSkillProviders(
     if (!provider.enabled || !provider.installed || !isProviderAvailable(provider)) return [];
     const skills = provider.skills
       .filter((skill) => isGlobalProviderSkill(skill) && !skill.path.startsWith("scient://skills/"))
-      .map(
-        (skill): ExternalSkillItem => ({
-          skill,
-          displayName: formatProviderSkillDisplayName(skill),
-          description: compactExternalSkillDescription(skill.shortDescription ?? skill.description),
-          source: resolveProviderSkillSourceKind(skill),
-        }),
-      )
+      .map((skill): ExternalSkillItem => ({
+        skill,
+        displayName: formatProviderSkillDisplayName(skill),
+        description: compactExternalSkillDescription(skill.shortDescription ?? skill.description),
+        source: resolveProviderSkillSourceKind(skill),
+      }))
       .toSorted((left, right) => left.displayName.localeCompare(right.displayName));
     return [{ provider, skills }];
   });

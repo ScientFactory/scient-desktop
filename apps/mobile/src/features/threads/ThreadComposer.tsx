@@ -8,7 +8,10 @@ import type {
   RuntimeMode,
   ServerConfig as T3ServerConfig,
 } from "@t3tools/contracts";
-import { mergeEffectiveProviderSkills } from "@t3tools/client-runtime/providerSkills";
+import {
+  mergeEffectiveProviderSkills,
+  resolveProviderSkillsForCwd,
+} from "@t3tools/client-runtime/providerSkills";
 import { StackActions, useFocusEffect, useNavigation } from "@react-navigation/native";
 import type { ReactNode } from "react";
 import {
@@ -364,18 +367,31 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
       selectedProviderStatus
         ? mergeEffectiveProviderSkills({
             provider: selectedProviderStatus.driver,
-            providerSkills: selectedProviderStatus.skills,
+            providerSkills: resolveProviderSkillsForCwd(selectedProviderStatus, props.projectCwd),
             inventory: scientSkills,
+            includeContextualProviderSkills: true,
           })
         : [],
-    [scientSkills, selectedProviderStatus],
+    [props.projectCwd, scientSkills, selectedProviderStatus],
   );
   const effectiveSelectedProviderStatus = useMemo(
     () =>
       selectedProviderStatus
-        ? { ...selectedProviderStatus, skills: effectiveProviderSkills }
+        ? {
+            ...selectedProviderStatus,
+            skills: effectiveProviderSkills,
+            ...(selectedProviderStatus.workspaceSnapshots
+              ? {
+                  workspaceSnapshots: selectedProviderStatus.workspaceSnapshots.map((snapshot) =>
+                    snapshot.cwd === props.projectCwd
+                      ? { ...snapshot, skills: effectiveProviderSkills }
+                      : snapshot,
+                  ),
+                }
+              : {}),
+          }
         : null,
-    [effectiveProviderSkills, selectedProviderStatus],
+    [effectiveProviderSkills, props.projectCwd, selectedProviderStatus],
   );
   const composerOwnerKey = scopedThreadKey(props.environmentId, props.selectedThread.id);
 
@@ -682,7 +698,7 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
                 multiline
                 value={props.draftMessage}
                 readOnly={voiceInput.freezesEditor}
-                skills={effectiveProviderSkills}
+                skills={composerMenu.skills}
                 selection={composerMenu.selection}
                 onChangeText={props.onChangeDraftMessage}
                 onSelectionChange={composerMenu.onSelectionChange}

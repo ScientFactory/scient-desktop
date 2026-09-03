@@ -1,5 +1,5 @@
 import { useAtomRefresh, useAtomValue } from "@effect/atom-react";
-import { resolveAssetUrl } from "@t3tools/client-runtime/state/assets";
+import { EMPTY_ASSET_URL_ATOM, resolveAssetUrl } from "@t3tools/client-runtime/state/assets";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import type { AssetResource, EnvironmentId } from "@t3tools/contracts";
 import { AsyncResult } from "effect/unstable/reactivity";
@@ -23,14 +23,14 @@ export type AssetUrlState =
     };
 
 export function useAssetUrlState(
-  environmentId: EnvironmentId,
-  resource: AssetResource,
+  environmentId: EnvironmentId | null,
+  resource: AssetResource | null,
 ): AssetUrlState {
   const preparedConnection = usePreparedConnection(environmentId);
-  const assetAtom = assetEnvironment.createUrl({
-    environmentId,
-    input: { resource },
-  });
+  const assetAtom =
+    environmentId === null || resource === null
+      ? EMPTY_ASSET_URL_ATOM
+      : assetEnvironment.createUrl({ environmentId, input: { resource } });
   const result = useAtomValue(assetAtom);
   const refresh = useAtomRefresh(assetAtom);
   if (result._tag === "Failure") {
@@ -51,24 +51,24 @@ export function useAssetUrlState(
       };
 }
 
-export function useAssetUrl(environmentId: EnvironmentId, resource: AssetResource): string | null {
+export function useAssetUrl(
+  environmentId: EnvironmentId | null,
+  resource: AssetResource | null,
+): string | null {
   const result = useAssetUrlState(environmentId, resource);
-  if (result._tag !== "Success") {
-    return null;
-  }
-  return result.url;
+  return result._tag === "Success" ? result.url : null;
 }
 
-/** Re-mints an exact-file capability after a file change or an explicit retry. */
 export function useAssetUrlRefresh(
-  environmentId: EnvironmentId,
-  resource: AssetResource,
+  environmentId: EnvironmentId | null,
+  resource: AssetResource | null,
 ): () => Promise<void> {
   const refresh = useAtomQueryRunner(assetEnvironment.createUrl, {
     reportFailure: false,
     refresh: true,
   });
   return useCallback(async () => {
+    if (environmentId === null || resource === null) return;
     const result = await refresh({ environmentId, input: { resource } });
     if (result._tag === "Failure") throw squashAtomCommandFailure(result);
   }, [environmentId, resource, refresh]);
