@@ -13,7 +13,11 @@ import {
 import type { ScientMarkdownLinkOpenHandler } from "./linkOpen";
 import type { ScientMarkdownImageSourceResolver } from "./nodes";
 import type { ScientMarkdownBlockAction } from "./prosemirror/blocks";
-import { ScientMarkdownEditorView, type ScientMarkdownUploadedImage } from "./prosemirror/view";
+import {
+  ScientMarkdownEditorView,
+  type ScientMarkdownUploadedImage,
+  type ScientMarkdownEditorViewOptions,
+} from "./prosemirror/view";
 import { showScientRichFenceContextMenu } from "./richFenceContextMenu";
 import {
   SCIENT_MARKDOWN_COMMAND_SHORTCUTS,
@@ -67,6 +71,8 @@ export interface ScientMarkdownWorkspaceSurfaceProps {
   readonly resolveLinkFullPath?: (kind: ScientMarkdownLinkKind, target: string) => string | null;
   readonly onCopyLink?: (request: ScientMarkdownLinkCopyRequest, anchor: HTMLElement) => void;
   readonly resolveImageSource?: ScientMarkdownImageSourceResolver;
+  readonly imageOptions?: ScientMarkdownEditorViewOptions["imageOptions"];
+  readonly onOpenSourceLine?: (line: number) => void;
   readonly uploadImage?: (file: File) => Promise<ScientMarkdownUploadedImage>;
   readonly onImageUploadFailure?: (error: unknown) => void;
   readonly wikiLinkTargetExists?: (target: string) => boolean | null;
@@ -151,6 +157,20 @@ export function ScientMarkdownWorkspaceSurface(props: ScientMarkdownWorkspaceSur
                 bindingsRef.current.resolveImageSource?.(...args) ?? null,
             }
           : {}),
+        ...(props.onOpenSourceLine
+          ? { onOpenSourceLine: (line: number) => bindingsRef.current.onOpenSourceLine?.(line) }
+          : {}),
+        imageOptions: {
+          resolveImageActions: (source) =>
+            bindingsRef.current.imageOptions?.resolveImageActions?.(source) ?? [],
+          showImageContextMenu: async (items, position) => {
+            const show = bindingsRef.current.imageOptions?.showImageContextMenu;
+            if (show) return show(items, position);
+            const api = readLocalApi();
+            return api ? api.contextMenu.show([...items], position) : null;
+          },
+          onImageError: (error) => bindingsRef.current.imageOptions?.onImageError?.(error),
+        },
         ...(props.uploadImage
           ? {
               uploadImage: async (file: File) => {

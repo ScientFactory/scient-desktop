@@ -3,7 +3,6 @@ import {
   mediaReferenceFileName,
   type MediaReference,
 } from "@t3tools/client-runtime/media-reference";
-import { resolveAssetUrl } from "@t3tools/client-runtime/state/assets";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import type { AssetResource, ContextMenuItem, EnvironmentId } from "@t3tools/contracts";
 import { useCallback, useRef, useState, type ReactElement } from "react";
@@ -16,6 +15,7 @@ import { useAtomQueryRunner } from "../../state/use-atom-query-runner";
 import { stackedThreadToast, toastManager } from "../ui/toast";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { downloadMedia, readMediaPng } from "./mediaContent";
+import { resolveMediaActionUrl, type MediaActionLocation } from "./mediaActionUrl";
 
 export interface MediaActionSource {
   readonly kind: "image" | "video";
@@ -33,25 +33,27 @@ function mediaFileName(source: MediaActionSource): string {
 }
 
 /** Explicit byte operations get fresh capabilities without replacing a player's active source. */
-export function useMediaActions(source: MediaActionSource) {
+export function useMediaActionUrl() {
   const createAssetUrl = useAtomQueryRunner(assetEnvironment.createUrl, {
     reportFailure: false,
     refresh: true,
   });
-  const actionUrl = useCallback(async () => {
-    if (!source.asset) {
-      if (!source.src) throw new Error("This media is unavailable. Try reopening the preview.");
-      return source.src;
-    }
-    const { environmentId, resource } = source.asset;
-    const connection = readPreparedConnection(environmentId);
-    if (!connection) throw new Error("Reconnect to this environment and try again.");
-    const result = await createAssetUrl({ environmentId, input: { resource } });
-    if (result._tag === "Failure") throw squashAtomCommandFailure(result);
-    const url = resolveAssetUrl(connection.httpBaseUrl, result.value.relativeUrl);
-    if (!url) throw new Error("The environment returned an invalid media URL.");
-    return url;
-  }, [source, createAssetUrl]);
+  return useCallback(
+    (source: MediaActionLocation) =>
+      resolveMediaActionUrl(source, async ({ environmentId, resource }) => {
+        const connection = readPreparedConnection(environmentId);
+        if (!connection) throw new Error("Reconnect to this environment and try again.");
+        const result = await createAssetUrl({ environmentId, input: { resource } });
+        if (result._tag === "Failure") throw squashAtomCommandFailure(result);
+        return { httpBaseUrl: connection.httpBaseUrl, relativeUrl: result.value.relativeUrl };
+      }),
+    [createAssetUrl],
+  );
+}
+
+export function useMediaActions(source: MediaActionSource) {
+  const resolveActionUrl = useMediaActionUrl();
+  const actionUrl = useCallback(() => resolveActionUrl(source), [resolveActionUrl, source]);
   const save = useCallback(async () => {
     await downloadMedia(await actionUrl(), mediaFileName(source));
   }, [actionUrl, source]);

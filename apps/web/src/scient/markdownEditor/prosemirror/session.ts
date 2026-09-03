@@ -25,6 +25,8 @@ import {
 } from "./projection";
 import { selectionOutsideNode } from "./safeSelection";
 import { buildScientMarkdownPlugins } from "./plugins";
+import { findScientMarkdownReferenceDefinition } from "./referenceLinks";
+import { scientMarkdownParser } from "./schema";
 
 export type ScientMarkdownTransactionOrigin = "user" | "external" | "system";
 
@@ -170,7 +172,17 @@ function rebindNodeMarkup(
       transaction.removeMark(position, position + before.nodeSize);
       for (const mark of after.marks)
         transaction.addMark(position, position + before.nodeSize, mark);
-    } else transaction.setNodeMarkup(position, undefined, after.attrs, after.marks);
+    } else {
+      for (const [name, value] of Object.entries(after.attrs)) {
+        if (before.attrs[name] !== value) transaction.setNodeAttribute(position, name, value);
+      }
+      for (const mark of before.marks) {
+        if (!mark.isInSet(after.marks)) transaction.removeNodeMark(position, mark);
+      }
+      for (const mark of after.marks) {
+        if (!mark.isInSet(before.marks)) transaction.addNodeMark(position, mark);
+      }
+    }
   }
   before.forEach((child, offset, index) =>
     rebindNodeMarkup(transaction, child, after.child(index), position + 1 + offset),
@@ -209,6 +221,14 @@ export class ScientProseMirrorSession {
     return this.documentSession;
   }
 
+  referenceDefinitionForLabel(label: string) {
+    return findScientMarkdownReferenceDefinition(
+      scientMarkdownParser.tokenizer,
+      this.documentSession.draftSource,
+      label,
+    );
+  }
+
   sourceOffsetForDocumentPosition(position: number): number | null {
     let matchedIndex = -1;
     this.editorState.doc.forEach((node, offset, index) => {
@@ -223,7 +243,9 @@ export class ScientProseMirrorSession {
     if (this.projectedBlockRanges.length === 0) return null;
     const clamped = Math.min(Math.max(0, sourceOffset), this.documentSession.draftSource.length);
     let matchedIndex = this.projectedBlockRanges.findIndex(
-      (range) => clamped >= range.from && clamped <= range.to,
+      // Ledger ranges include trailing trivia up to the next block's start.
+      // That shared boundary belongs to the next block; EOF falls back below.
+      (range) => clamped >= range.from && clamped < range.to,
     );
     if (matchedIndex < 0) {
       matchedIndex = this.projectedBlockRanges.findIndex((range) => clamped < range.from);

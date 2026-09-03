@@ -197,6 +197,7 @@ import {
   ScientInlineWorkspaceImage,
   ScientPendingWorkspaceImage,
 } from "../scient/images/ScientInlineWorkspaceImage";
+import { ScientDirectImageFigure } from "../scient/images/ScientDirectImageFigure";
 import {
   inlineWorkspaceImageMarkdownSource,
   inlineWorkspaceImageResource,
@@ -243,6 +244,8 @@ interface ChatMarkdownProps {
   /** Directory that anchors relative links and images; defaults to `cwd`. Set
       to the file's own directory when rendering a markdown file. */
   imageBaseDir?: string | undefined;
+  /** File previews share the rich editor's standalone title-as-caption presentation. */
+  imageCaptions?: boolean | undefined;
   onImageExpand?: ((preview: ExpandedImagePreview) => void) | undefined;
   extraRemarkPlugins?: NonNullable<ReactMarkdownOptions["remarkPlugins"]>;
 }
@@ -401,7 +404,11 @@ type MarkdownImageHastNode = {
 /** Carries authored image source metadata through the sanitizer to the image renderer. */
 function rehypePreserveImageSourceMeta() {
   return (tree: MarkdownImageHastNode) => {
-    const visit = (node: MarkdownImageHastNode, parent?: MarkdownImageHastNode) => {
+    const visit = (
+      node: MarkdownImageHastNode,
+      parent?: MarkdownImageHastNode,
+      inTableCell = false,
+    ) => {
       const src = node.properties?.src;
       const title = node.properties?.title;
       if (node.type === "element" && node.tagName === "img") {
@@ -411,6 +418,7 @@ function rehypePreserveImageSourceMeta() {
           ...(typeof title === "string" ? { dataMarkdownTitle: title } : {}),
           // Keep Scient's actions for standalone figures, not authored inline layouts.
           dataScientImageCard:
+            !inTableCell &&
             parent?.tagName === "p" &&
             !parent.properties?.align &&
             !node.properties?.width &&
@@ -420,7 +428,9 @@ function rehypePreserveImageSourceMeta() {
             ),
         };
       }
-      node.children?.forEach((child) => visit(child, node));
+      node.children?.forEach((child) =>
+        visit(child, node, inTableCell || node.tagName === "td" || node.tagName === "th"),
+      );
     };
 
     visit(tree);
@@ -2049,6 +2059,7 @@ function ChatMarkdown({
   parseRawHtml = true,
   onUseArtifactTemplate,
   imageBaseDir,
+  imageCaptions = false,
   onImageExpand,
   extraRemarkPlugins = EMPTY_REMARK_PLUGINS,
 }: ChatMarkdownProps) {
@@ -2539,6 +2550,10 @@ function ChatMarkdown({
               markdownSource={markdownSource}
               threadRef={threadRef}
               srcFragment={srcFragment}
+              filePresentation={imageCaptions}
+              caption={imageCaptions ? authoredTitle : undefined}
+              authoredAlt={altText}
+              authoredSource={srcString}
             />
           );
         }
@@ -2572,6 +2587,17 @@ function ChatMarkdown({
                 style={style}
                 onImageExpand={imageExpand}
                 actionsSource={actionsSource}
+              />
+            );
+          }
+          if (imageCaptions && useScientImageCard) {
+            return (
+              <ScientDirectImageFigure
+                src={mediaSrc}
+                authoredSource={srcString}
+                alt={altText}
+                caption={authoredTitle}
+                markdownSource={markdownSource}
               />
             );
           }
@@ -2986,6 +3012,7 @@ function ChatMarkdown({
     fileLinkParentSuffixByPath,
     inlineCodeFileLinkMetaByText,
     imageBaseDir,
+    imageCaptions,
     isStreaming,
     linkTargetPreference,
     markdownFileLinkMetaByHref,

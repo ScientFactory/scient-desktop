@@ -8,6 +8,25 @@ export const referenceAttributes = {
   referenceTitle: { default: null },
 } as const;
 
+export interface ScientMarkdownReferenceDefinitionLocation {
+  /** UTF-16 offset of the definition's opening bracket in the current source. */
+  readonly sourceOffset: number;
+  /** One-based source line, including any list or quote prefix. */
+  readonly line: number;
+}
+
+const referenceLocationRequestKey = Symbol("scientMarkdownReferenceLocation");
+
+interface ReferenceLocationRequest {
+  readonly label: string;
+  location: { readonly line: number; readonly column: number } | null;
+}
+
+interface ReferenceLocationEnvironment {
+  readonly references?: Readonly<Record<string, unknown>>;
+  readonly [referenceLocationRequestKey]?: ReferenceLocationRequest;
+}
+
 // Preserve the dependency, not just its resolved URL. Otherwise rewriting a
 // block (formatting, a wiki-label edit, etc.) silently detaches reference links.
 export function preserveMarkdownReferences(tokenizer: MarkdownIt): void {
@@ -43,6 +62,59 @@ export function preserveMarkdownReferences(tokenizer: MarkdownIt): void {
       return true;
     });
   }
+
+  const blocks = MarkdownIt("commonmark").block.ruler;
+  blocks.enableOnly(["reference"]);
+  const referenceRule = blocks.getRules("")[0];
+  if (!referenceRule) throw new Error("Missing Markdown block rule 'reference'.");
+  tokenizer.block.ruler.at("reference", (state, startLine, endLine, silent) => {
+    const environment = state.env as ReferenceLocationEnvironment;
+    const request = environment[referenceLocationRequestKey];
+    if (
+      silent ||
+      !request ||
+      request.location ||
+      Object.hasOwn(environment.references ?? {}, request.label)
+    ) {
+      return referenceRule(state, startLine, endLine, silent);
+    }
+    // Capture the location before the stock rule advances state.line. Nested
+    // quotes/lists adjust bMarks and tShift while retaining full-source offsets.
+    const position = state.bMarks[startLine]! + state.tShift[startLine]!;
+    const matched = referenceRule(state, startLine, endLine, silent);
+    if (matched && Object.hasOwn(environment.references ?? {}, request.label)) {
+      request.location = {
+        line: startLine + 1,
+        column: position - (state.src.lastIndexOf("\n", position - 1) + 1),
+      };
+    }
+    return matched;
+  });
+}
+
+/** Locate the definition the parser actually uses, without rewriting its source. */
+export function findScientMarkdownReferenceDefinition(
+  tokenizer: MarkdownIt,
+  source: string,
+  label: string,
+): ScientMarkdownReferenceDefinitionLocation | null {
+  const request: ReferenceLocationRequest = {
+    label: tokenizer.utils.normalizeReference(label),
+    location: null,
+  };
+  tokenizer.parse(source, { [referenceLocationRequestKey]: request });
+  const location = request.location;
+  if (!location) return null;
+  // markdown-it normalizes CRLF/CR before tokenization. Resolve the recorded
+  // line and column against the original bytes supplied by the session.
+  let line = 1;
+  let lineStart = 0;
+  for (const ending of source.matchAll(/\r\n?|\n/gu)) {
+    if (line === location.line) break;
+    lineStart = ending.index + ending[0].length;
+    line += 1;
+  }
+  return { sourceOffset: lineStart + location.column, line: location.line };
 }
 
 export function parsedReferenceAttributes(token: Token, destination: "href" | "src") {

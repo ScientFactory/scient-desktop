@@ -19,10 +19,14 @@ import { useEnvironmentHttpBaseUrl } from "~/state/environments";
 import { projectEnvironment } from "~/state/projects";
 import { useAtomCommand } from "~/state/use-atom-command";
 import { useAtomQueryRunner } from "~/state/use-atom-query-runner";
+import { useMediaActionUrl } from "~/components/media/MediaActions";
+import { copyStaticImage, downloadStaticImage } from "~/components/preview/staticImageActions";
+import type { ScientImageAction } from "~/scient/images/ScientImageControls";
 
 import { ScientMarkdownWorkspaceSurface } from "./ScientMarkdownWorkspaceSurface";
 import type { ScientMarkdownLinkCopyRequest, ScientMarkdownLinkKind } from "./linkContextMenu";
 import { isScientMarkdownDocumentPath } from "./markdownDocumentPaths";
+import { resolveMarkdownImageSource } from "./markdownImageSource";
 import { uploadMarkdownImage } from "./assets/client";
 import type { MarkdownSaveIntent } from "@scientfactory/scient-markdown";
 import {
@@ -66,6 +70,7 @@ export interface ScientMarkdownFileSurfaceProps {
     readonly revision: string;
   } | null;
   readonly onOpenFile: (relativePath: string) => void;
+  readonly onOpenFileSource?: (relativePath: string, line?: number) => void;
   readonly onPendingChange: (relativePath: string, pending: boolean) => void;
   readonly onSaveConfirmed: (relativePath: string, contents: string, revision: string) => void;
   readonly onSaveFailure: (relativePath: string, error: unknown) => void;
@@ -82,12 +87,18 @@ export interface ScientMarkdownFileSurfaceProps {
 }
 
 export function ScientMarkdownFileSurface(props: ScientMarkdownFileSurfaceProps) {
+  const onOpenFile = props.onOpenFile;
   const writeFile = useAtomCommand(projectEnvironment.writeFile, { reportFailure: false });
   const listDirectory = useAtomCommand(projectEnvironment.listDirectory, {
     reportDefect: false,
     reportFailure: false,
   });
-  const createAssetUrl = useAtomQueryRunner(assetEnvironment.createUrl, { reportFailure: false });
+  const createAssetUrl = useAtomQueryRunner(assetEnvironment.createUrl, {
+    reportFailure: false,
+    // New sources and explicit viewing/refresh requests renew expired display access.
+    refresh: true,
+  });
+  const resolveImageActionUrl = useMediaActionUrl();
   const httpBaseUrl = useEnvironmentHttpBaseUrl(props.environmentId);
   const entriesQuery = useProjectEntriesQuery(props.environmentId, props.cwd);
   const workspaceResourceIndexKey = useMemo(
@@ -203,29 +214,21 @@ export function ScientMarkdownFileSurface(props: ScientMarkdownFileSurfaceProps)
   );
   const resolveImageSource = useCallback(
     async (authoredSource: string): Promise<string | null> => {
-      if (/^https:\/\//iu.test(authoredSource) || authoredSource.startsWith("data:image/")) {
-        return authoredSource;
-      }
+      const source = resolveMarkdownImageSource(authoredSource, {
+        cwd: props.cwd,
+        documentPath: props.relativePath,
+        threadRef: props.threadRef,
+      });
+      if (!source) return null;
+      if (source.kind === "direct") return source.url;
       if (!httpBaseUrl) return null;
-      const resolved = resolveMarkdownUrlPath(props.relativePath, authoredSource);
-      if (!resolved) return null;
-      const { relativePath, suffix } = resolved;
-      const absolutePath = resolvePathLinkTarget(relativePath, props.cwd);
       const result = await createAssetUrl({
         environmentId: props.environmentId,
-        input: {
-          resource: {
-            _tag: "workspace-file",
-            cwd: props.cwd,
-            relativePath,
-            threadId: props.threadRef.threadId,
-            path: absolutePath,
-          },
-        },
+        input: { resource: source.resource },
       });
       if (result._tag === "Failure") return null;
       const url = resolveAssetUrl(httpBaseUrl, result.value.relativeUrl);
-      return url === null ? null : `${url}${suffix}`;
+      return url === null ? null : `${url}${source.suffix}`;
     },
     [
       createAssetUrl,
@@ -233,7 +236,7 @@ export function ScientMarkdownFileSurface(props: ScientMarkdownFileSurfaceProps)
       props.cwd,
       props.environmentId,
       props.relativePath,
-      props.threadRef.threadId,
+      props.threadRef,
     ],
   );
   const uploadImage = useCallback(
@@ -274,7 +277,7 @@ export function ScientMarkdownFileSurface(props: ScientMarkdownFileSurfaceProps)
         (candidate) => candidate.name === name && candidate.relativePath === relativePath,
       );
       if (entry && entry.kind !== "directory") {
-        props.onOpenFile(relativePath);
+        onOpenFile(relativePath);
         return;
       }
       showLinkFeedback(
@@ -282,14 +285,7 @@ export function ScientMarkdownFileSurface(props: ScientMarkdownFileSurfaceProps)
         result.value.complete ? "Linked file isn't available." : "Couldn't check this link.",
       );
     },
-    [
-      beginLinkOpen,
-      listDirectory,
-      props.cwd,
-      props.environmentId,
-      props.onOpenFile,
-      showLinkFeedback,
-    ],
+    [beginLinkOpen, listDirectory, props.cwd, props.environmentId, onOpenFile, showLinkFeedback],
   );
   const handleOpenLink = useCallback(
     (target: string, anchor: HTMLElement) => {
@@ -365,6 +361,106 @@ export function ScientMarkdownFileSurface(props: ScientMarkdownFileSurfaceProps)
     },
     [beginLinkOpen, showLinkFeedback],
   );
+  const imageOptions = useMemo(
+    () => ({
+      resolveImageActions: (authoredSource: string): readonly ScientImageAction[] => {
+        const source = resolveMarkdownImageSource(authoredSource, {
+          cwd: props.cwd,
+          documentPath: props.relativePath,
+          threadRef: props.threadRef,
+        });
+        const copyText = async (value: string) => {
+          if (!(await writeTextToClipboard(value, "image source"))) {
+            throw new Error("The image source could not be copied.");
+          }
+        };
+        const actions: ScientImageAction[] = [
+          { id: "copy-source", label: "Copy image source", run: () => copyText(authoredSource) },
+        ];
+        if (!source) return actions;
+        const location =
+          source.kind === "direct"
+            ? { src: source.url }
+            : {
+                src: null,
+                asset: { environmentId: props.environmentId, resource: source.resource },
+              };
+        actions.unshift(
+          {
+            id: "copy-image",
+            label: "Copy image",
+            run: () => copyStaticImage(resolveImageActionUrl(location)),
+          },
+          {
+            id: "download",
+            label: "Download original",
+            run: async () =>
+              downloadStaticImage(await resolveImageActionUrl(location), source.fileName),
+          },
+        );
+        if (source.kind === "workspace") {
+          actions.push(
+            {
+              id: "copy-relative-path",
+              label: "Copy relative path",
+              run: () => copyText(source.relativePath),
+            },
+            {
+              id: "copy-full-path",
+              label: "Copy full path",
+              run: () => copyText(source.absolutePath),
+            },
+            {
+              id: "open-file",
+              label: "Open image file",
+              closeViewer: true,
+              run: async () => {
+                const request = beginLinkOpen();
+                // Resolve availability before switching files, matching ordinary workspace links.
+                const { directory, name } = workspacePathParent(source.relativePath);
+                const result = await listDirectory({
+                  environmentId: props.environmentId,
+                  input: { cwd: props.cwd, relativeDirectory: directory, view: "with-internals" },
+                });
+                if (!mountedRef.current || request !== linkOpenRequestRef.current) return;
+                if (result._tag === "Failure") throw squashAtomCommandFailure(result);
+                if (
+                  !result.value.entries.some(
+                    (entry) =>
+                      entry.name === name &&
+                      entry.relativePath === source.relativePath &&
+                      entry.kind !== "directory",
+                  )
+                ) {
+                  throw new Error("The image file is no longer available.");
+                }
+                onOpenFile(source.relativePath);
+              },
+            },
+          );
+        }
+        return actions;
+      },
+      onImageError: (error: unknown) => {
+        toastManager.add({
+          type: "error",
+          title: "Image action failed",
+          description:
+            error instanceof Error ? error.message : "The image action could not finish.",
+        });
+      },
+    }),
+    [
+      props.cwd,
+      props.relativePath,
+      props.threadRef,
+      props.environmentId,
+      onOpenFile,
+      resolveImageActionUrl,
+      listDirectory,
+      beginLinkOpen,
+    ],
+  );
   return (
     <ScientMarkdownWorkspaceSurface
       key={JSON.stringify([props.environmentId, props.cwd, props.relativePath])}
@@ -412,6 +508,10 @@ export function ScientMarkdownFileSurface(props: ScientMarkdownFileSurfaceProps)
       }}
       onOpenLink={handleOpenLink}
       resolveImageSource={resolveImageSource}
+      imageOptions={imageOptions}
+      {...(props.onOpenFileSource
+        ? { onOpenSourceLine: (line: number) => props.onOpenFileSource?.(props.relativePath, line) }
+        : {})}
       uploadImage={uploadImage}
       onImageUploadFailure={(error) => {
         toastManager.add({

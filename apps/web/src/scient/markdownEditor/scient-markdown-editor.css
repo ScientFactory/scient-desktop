@@ -1007,18 +1007,25 @@ sup.scient-markdown-reference {
 }
 
 .scient-markdown-image {
+  position: relative;
   display: inline-flex;
   max-width: 100%;
-  flex-direction: column;
-  gap: 0.45rem;
-  margin-block: 0.4rem;
-  border-radius: 0.45rem;
   vertical-align: middle;
 }
 
+.scient-markdown-image[data-standalone="true"] {
+  flex-direction: column;
+  gap: 0.45rem;
+  margin-block: 0.4rem;
+}
+
 .scient-markdown-image.is-selected {
-  outline: 2px solid color-mix(in oklab, var(--primary) 45%, transparent);
-  outline-offset: 3px;
+  outline: 1px solid color-mix(in oklab, var(--primary) 45%, transparent);
+  outline-offset: 2px;
+}
+
+.scient-markdown-image.is-selected:has(.scient-markdown-image-caption:focus) {
+  outline: none;
 }
 
 .scient-markdown-image-render {
@@ -1030,52 +1037,53 @@ sup.scient-markdown-reference {
 }
 
 .scient-markdown-image-caption {
+  field-sizing: content;
+  width: 0;
+  min-width: 100%;
+  min-height: 1.45em;
+  overflow: hidden;
+  resize: none;
+  border: 0;
+  background: transparent;
+  padding: 0;
   color: var(--muted-foreground);
   font-size: 0.75rem;
   line-height: 1.45;
   text-align: center;
   unicode-bidi: plaintext;
+  outline: none;
 }
 
-.scient-markdown-image-caption[hidden] {
+.scient-markdown-image-caption[hidden],
+.scient-markdown-image-render[hidden],
+.scient-markdown-image-placeholder[hidden] {
   display: none;
 }
 
 .scient-markdown-image-placeholder {
   display: inline-flex;
-  min-width: 12rem;
-  min-height: 5rem;
   align-items: center;
   justify-content: center;
-  border: 1px dashed var(--border);
-  border-radius: 0.4rem;
-  background: var(--muted);
-  padding: 0.75rem;
   color: var(--muted-foreground);
   font-size: 0.75rem;
 }
 
-.scient-markdown-image-editor {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(9rem, 1fr));
-  gap: 0.4rem;
+.scient-markdown-image[data-standalone="true"] .scient-markdown-image-placeholder {
+  min-height: 5rem;
+  border: 1px dashed var(--border);
+  border-radius: 0.4rem;
+  background: var(--muted);
+  padding: 0.75rem;
 }
 
-@media (max-width: 48rem) {
-  .scient-markdown-image-editor {
-    grid-template-columns: 1fr;
-  }
+.scient-markdown-image-chrome {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
 }
 
-.scient-markdown-image-editor input {
-  min-width: 0;
-  border: 1px solid var(--border);
-  border-radius: 0.35rem;
-  background: var(--background);
-  padding: 0.4rem 0.5rem;
-  color: var(--foreground);
-  font-size: 0.75rem;
-  outline: none;
+.scient-markdown-image-chrome > * {
+  pointer-events: auto;
 }
 
 .scient-markdown-source-island {
@@ -1250,7 +1258,7 @@ textarea.scient-markdown-math-source {
   resize: vertical;
 }
 
-.scient-markdown-image-editor input:focus-visible,
+.scient-markdown-image-caption:focus-visible,
 .scient-markdown-reference-source:focus-visible {
   outline: 2px solid color-mix(in oklab, var(--primary) 55%, transparent);
   outline-offset: 1px;

@@ -168,6 +168,41 @@ the document authority. They are omitted from read presentation, as in the estab
 preview, and appear as compact collapsed rows in the authoring surface. Expanding a row edits the
 same exact source field; there is no copied form model or definition reserialization layer.
 
+### Image authoring
+
+Image NodeViews keep selection, explicit details drafts, live caption input, and
+asset loading independent. Selecting an image does not open metadata or write
+source. A pane-constrained details panel applies changed attributes together as
+one history transaction; cancellation is presentation-only. Captions use the
+existing optional Markdown title and publish completed input through attribute
+transactions, so the normal save, conflict, and departure machinery owns them.
+The mounted native caption field retains its caret, composition, and native undo;
+document-level undo of attribute input is per transaction. A native undo publishes
+its resulting input normally, so a later document undo can reverse it. Clearing a focused
+caption retains the field until exit. An empty caption never deletes the image.
+
+Standalone figures reuse shared Scient viewing controls and the existing viewer.
+Inline, linked, and table images retain compact layout; linked-image activation
+retains ordinary link navigation. File-preview captions are opt-in and do not
+change ordinary chat images. Viewing actions and load/retry state never create
+save intent. Byte actions obtain fresh rooted capabilities while preserving the
+native PNG clipboard and original-byte download behavior.
+Loaded inline pixels survive capability renewal; expanded viewing obtains its
+own fresh URL and keeps load failures and retries local to the viewer.
+
+Reference alt text is occurrence-local. Shared source/title changes navigate to
+the actual parser-owned definition or require explicit independence. Definition
+navigation follows normalized labels and first-definition precedence, including
+nested definitions; nested owners use the inherited source-line reveal and
+pending-save guard. Reference refresh uses attribute/node-mark updates so derived
+consumer changes preserve selection. Complete alt semantics survive changed-block
+serialization, while unchanged source-ledger ranges remain byte-for-byte intact.
+
+Replacement retains the old image until validated upload completes and rechecks
+the live NodeView, editor mode, operation generation, and exact immutable target
+at its mapped position. Deletion, source adoption, or target edits cancel stale
+completions; document removal never deletes an asset or shared definition.
+
 ### File lifecycle
 
 - Create `.md` or `.markdown` from the Files panel with collision-safe naming.
@@ -541,7 +576,9 @@ Preservation is range-based, not a claim that a semantic editor never serializes
   baselines to the same context so unchanged reference syntax is not rewritten on the next save.
 - Reference links and images retain their definition label alongside the resolved destination.
   Changed-block serialization emits a reference, not a frozen inline URL; changing display text
-  cannot change the definition key. An explicit destination edit detaches that dependency.
+  cannot change the definition key. Image source/title editing requires an explicit
+  **Make independent** choice or navigation to the shared definition; alt stays local.
+  Link destination edits retain their existing explicit detachment behavior.
   This provenance is owned by the Scient parser/schema adapter, not the generic T3 renderer.
 - Save acknowledgement updates only the persistence baseline. The source ledger stays paired
   with its parsed document and stable identities, including through repeated structural saves.

@@ -11,7 +11,11 @@ import type {
   ScientMarkdownExternalPresentationRegistrar,
   ScientMarkdownThemeResolver,
 } from "./externalPresentation";
-import { createScientImageNodeView, type ScientMarkdownImageSourceResolver } from "./imageNodeView";
+import {
+  createScientImageNodeView,
+  type ScientMarkdownImageSourceResolver,
+  type ScientMarkdownImageNodeViewOptions,
+} from "./imageNodeView";
 import { createScientMathNodeView } from "./mathNodeView";
 import {
   createScientRawBlockNodeView,
@@ -42,6 +46,7 @@ export interface ScientMarkdownNodeViewOptions {
   readonly registerTaskCheckbox?: (checkbox: HTMLInputElement) => () => void;
   readonly registerWikiLink?: (link: HTMLElement, getPos: () => number | undefined) => () => void;
   readonly resolveImageSource?: ScientMarkdownImageSourceResolver;
+  readonly imageOptions?: ScientMarkdownImageNodeViewOptions;
   readonly resolveTheme?: ScientMarkdownThemeResolver;
   readonly showRichFenceContextMenu?: ScientRichFenceContextMenuHandler;
   readonly wikiLinkTargetExists?: (target: string) => boolean | null;
@@ -70,6 +75,7 @@ export function buildScientMarkdownNodeViews(
         getPos,
         options.resolveImageSource,
         options.registerExternalPresentation,
+        options.imageOptions,
       ),
     inline_math: createScientMathNodeView,
     footnote_definition: (node, view, getPos) =>

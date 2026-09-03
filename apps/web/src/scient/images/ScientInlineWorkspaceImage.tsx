@@ -14,6 +14,7 @@ import type { ScopedThreadRef } from "@t3tools/contracts";
 
 import { useAssetUrlState } from "~/assets/assetUrls";
 import { PreviewImageSurface } from "~/components/preview/PreviewImageSurface";
+import { useMediaActionUrl } from "~/components/media/MediaActions";
 import { Button } from "~/components/ui/button";
 import {
   Dialog,
@@ -28,6 +29,14 @@ import { ScientTooltip } from "../presentation/ScientTooltip";
 import { VisualCardDetails, VisualCardToolbar } from "../presentation/VisualCardToolbar";
 import { cn } from "~/lib/utils";
 import { useRightPanelStore } from "~/rightPanelStore";
+import { readLocalApi } from "~/localApi";
+import {
+  SCIENT_IMAGE_CAPTION_CLASS_NAME,
+  ScientImageControls,
+  type ScientImageControlsHandle,
+  type ScientImageAction,
+  type ScientImageContextMenuHandler,
+} from "./ScientImageControls";
 
 import { copyStaticImage, downloadStaticImage } from "../artifacts/staticImageActions";
 import {
@@ -301,13 +310,34 @@ export function ScientInlineWorkspaceImage(props: {
   readonly markdownSource: string;
   readonly threadRef: ScopedThreadRef;
   readonly srcFragment?: string | undefined;
+  readonly filePresentation?: boolean | undefined;
+  readonly caption?: string | undefined;
+  readonly authoredAlt?: string | undefined;
+  readonly authoredSource?: string | undefined;
 }) {
+  const resolveActionUrl = useMediaActionUrl();
+  const controlsRef = useRef<ScientImageControlsHandle>(null);
+  const [controlsAnchor, setControlsAnchor] = useState<HTMLSpanElement | null>(null);
+  const [retainedDisplay, setRetainedDisplay] = useState<{
+    readonly identity: string;
+    readonly url: string;
+  } | null>(null);
+  const [displayAttempt, setDisplayAttempt] = useState(0);
+  const displayIdentity = JSON.stringify([
+    props.threadRef.environmentId,
+    props.threadRef.threadId,
+    props.image.workspaceRoot,
+    props.image.relativePath,
+    props.srcFragment ?? "",
+  ]);
   const resource = useMemo(
     () => inlineWorkspaceImageResource(props.image, props.threadRef),
     [props.image, props.threadRef],
   );
   const asset = useAssetUrlState(props.threadRef.environmentId, resource);
-  const retryKey = `${props.image.workspaceRoot}\u0000${props.image.relativePath}`;
+  const retryKey = props.filePresentation
+    ? displayIdentity
+    : `${props.image.workspaceRoot}\u0000${props.image.relativePath}`;
   const autoRetriedRef = useRef<string | null>(null);
   const messageTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [activeAction, setActiveAction] = useState<ImageAction>(null);
@@ -316,9 +346,16 @@ export function ScientInlineWorkspaceImage(props: {
   const [expanded, setExpanded] = useState(false);
   const [failedUrl, setFailedUrl] = useState<string | null>(null);
   const [loadedUrl, setLoadedUrl] = useState<string | null>(null);
-  const url = asset._tag === "Success" ? asset.url + (props.srcFragment ?? "") : null;
-  const loadFailed = asset._tag === "Failure" || (url != null && failedUrl === url);
-  const loaded = url != null && loadedUrl === url && !loadFailed;
+  const retained =
+    props.filePresentation && retainedDisplay?.identity === displayIdentity
+      ? retainedDisplay
+      : null;
+  const url =
+    retained?.url ?? (asset._tag === "Success" ? asset.url + (props.srcFragment ?? "") : null);
+  const loadFailed =
+    (asset._tag === "Failure" && retained === null) || (url != null && failedUrl === url);
+  const loaded =
+    url != null && (props.filePresentation ? retained !== null : loadedUrl === url) && !loadFailed;
   const revisionKey = `${props.threadRef.environmentId}:${retryKey}`;
 
   useEffect(
@@ -352,23 +389,27 @@ export function ScientInlineWorkspaceImage(props: {
 
   const handleImageError = useCallback(() => {
     if (url == null) return;
+    setRetainedDisplay(null);
     setLoadedUrl(null);
     if (autoRetriedRef.current !== retryKey) {
       autoRetriedRef.current = retryKey;
+      if (props.filePresentation) setDisplayAttempt((attempt) => attempt + 1);
       asset.refresh();
       return;
     }
     setFailedUrl(url);
     setExpanded(false);
-  }, [asset, retryKey, url]);
+  }, [asset, props.filePresentation, retryKey, url]);
 
   const handleRetry = useCallback(() => {
+    setRetainedDisplay(null);
+    if (props.filePresentation) setDisplayAttempt((attempt) => attempt + 1);
     autoRetriedRef.current = null;
     setFailedUrl(null);
     setLoadedUrl(null);
     setActionMessage(null);
     asset.refresh();
-  }, [asset]);
+  }, [asset, props.filePresentation]);
 
   const runAction = useCallback(
     (
@@ -415,21 +456,97 @@ export function ScientInlineWorkspaceImage(props: {
     if (url == null) return;
     runAction(
       "copy-image",
-      () => copyStaticImage(url),
+      () =>
+        copyStaticImage(
+          resolveActionUrl({
+            src: url,
+            asset: { environmentId: props.threadRef.environmentId, resource },
+          }),
+        ),
       "Image copied",
       "Unable to copy the image.",
     );
-  }, [runAction, url]);
+  }, [props.threadRef.environmentId, resource, resolveActionUrl, runAction, url]);
 
   const handleDownload = useCallback(() => {
     if (url == null) return;
     runAction(
       "download",
-      () => downloadStaticImage(url, props.image.fileName),
+      async () =>
+        downloadStaticImage(
+          await resolveActionUrl({
+            src: url,
+            asset: { environmentId: props.threadRef.environmentId, resource },
+          }),
+          props.image.fileName,
+        ),
       null,
       "Unable to download the image.",
     );
-  }, [props.image.fileName, runAction, url]);
+  }, [
+    props.image.fileName,
+    props.threadRef.environmentId,
+    resource,
+    resolveActionUrl,
+    runAction,
+    url,
+  ]);
+
+  const fileActions = useMemo<readonly ScientImageAction[]>(() => {
+    const location = {
+      src: url,
+      asset: { environmentId: props.threadRef.environmentId, resource },
+    };
+    return [
+      { id: "open-file", label: "Open image file", closeViewer: true, run: handleOpenFile },
+      {
+        id: "copy-image",
+        label: "Copy image",
+        run: () => copyStaticImage(resolveActionUrl(location)),
+      },
+      {
+        id: "download-image",
+        label: "Download original",
+        run: async () =>
+          downloadStaticImage(await resolveActionUrl(location), props.image.fileName),
+      },
+      {
+        id: "copy-source",
+        label: "Copy image source",
+        run: () => navigator.clipboard.writeText(props.authoredSource ?? props.image.source),
+      },
+      {
+        id: "copy-full-path",
+        label: "Copy full path",
+        run: () => navigator.clipboard.writeText(props.image.absolutePath),
+      },
+      {
+        id: "copy-relative-path",
+        label: "Copy relative path",
+        run: () => navigator.clipboard.writeText(props.image.relativePath),
+      },
+    ];
+  }, [
+    handleOpenFile,
+    props.authoredSource,
+    props.image,
+    props.threadRef.environmentId,
+    resource,
+    resolveActionUrl,
+    url,
+  ]);
+  const showContextMenu = useCallback<ScientImageContextMenuHandler>(
+    async (items, position) =>
+      (await readLocalApi()?.contextMenu.show([...items], position)) ?? null,
+    [],
+  );
+  const resolveViewerSource = useCallback(async () => {
+    const fresh = await resolveActionUrl({
+      src: url,
+      asset: { environmentId: props.threadRef.environmentId, resource },
+    });
+    return fresh + (props.srcFragment ?? "");
+  }, [props.srcFragment, props.threadRef.environmentId, resource, resolveActionUrl, url]);
 
   const handleCycleBackground = useCallback(() => {
     setBackground((current) => nextInlineImageBackground(current));
@@ -445,36 +562,61 @@ export function ScientInlineWorkspaceImage(props: {
       role="figure"
     >
       <span
+        ref={setControlsAnchor}
         data-scient-visual-card
         className={cn(
-          "relative block min-h-10 min-w-28 max-w-full overflow-hidden rounded-lg",
+          props.filePresentation
+            ? "relative block max-w-full rounded-lg"
+            : "relative block min-h-10 min-w-28 max-w-full overflow-hidden rounded-lg",
           !loaded && "min-h-44 w-80",
           BACKGROUND_CLASS[background],
         )}
       >
-        <VisualCardToolbar className="absolute top-1 right-1 z-10" label="Image actions">
-          {loaded ? (
-            <ImageActionButton label="Expand image" onClick={() => setExpanded(true)}>
-              <ExpandIcon className="size-3" />
-            </ImageActionButton>
-          ) : null}
-          <ImageActionButton label="Open image file" onClick={handleOpenFile}>
-            <FolderOpenIcon className="size-3" />
-          </ImageActionButton>
-          <InlineImageActionsMenu
-            actionMessage={actionMessage}
-            activeAction={activeAction}
-            background={background}
-            compact
-            image={props.image}
-            hasImage={url != null}
-            onCopyImage={handleCopyImage}
-            onCopyPath={handleCopyPath}
-            onCycleBackground={handleCycleBackground}
-            onDownload={handleDownload}
-            onRefresh={handleRetry}
+        {props.filePresentation ? (
+          <ScientImageControls
+            ref={controlsRef}
+            imageURL={url}
+            sourceIdentity={displayIdentity}
+            resolveViewerSource={resolveViewerSource}
+            alt={props.authoredAlt ?? props.image.alt}
+            displayName={props.image.alt}
+            loaded={loaded}
+            standalone
+            selected={false}
+            authoring={false}
+            anchor={controlsAnchor}
+            actions={fileActions}
+            primaryAction={fileActions[0]}
+            onRetry={handleRetry}
+            showContextMenu={showContextMenu}
+            onBackgroundChange={setBackground}
+            revisionKey={revisionKey}
           />
-        </VisualCardToolbar>
+        ) : (
+          <VisualCardToolbar className="absolute top-1 right-1 z-10" label="Image actions">
+            {loaded ? (
+              <ImageActionButton label="Expand image" onClick={() => setExpanded(true)}>
+                <ExpandIcon className="size-3" />
+              </ImageActionButton>
+            ) : null}
+            <ImageActionButton label="Open image file" onClick={handleOpenFile}>
+              <FolderOpenIcon className="size-3" />
+            </ImageActionButton>
+            <InlineImageActionsMenu
+              actionMessage={actionMessage}
+              activeAction={activeAction}
+              background={background}
+              compact
+              image={props.image}
+              hasImage={url != null}
+              onCopyImage={handleCopyImage}
+              onCopyPath={handleCopyPath}
+              onCycleBackground={handleCycleBackground}
+              onDownload={handleDownload}
+              onRefresh={handleRetry}
+            />
+          </VisualCardToolbar>
+        )}
         {loadFailed ? (
           <span className="flex flex-col items-center gap-3 px-5 pt-12 pb-5 text-center">
             <span className="font-medium text-sm">Unable to display this image</span>
@@ -503,11 +645,14 @@ export function ScientInlineWorkspaceImage(props: {
               "flex max-h-[32rem] max-w-full cursor-zoom-in items-center justify-center rounded-lg outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset",
               loaded ? "opacity-100" : "opacity-0",
             )}
-            onClick={() => setExpanded(true)}
+            onClick={() =>
+              props.filePresentation ? controlsRef.current?.expand() : setExpanded(true)
+            }
             type="button"
           >
             <img
-              alt={props.image.alt}
+              key={props.filePresentation ? `${displayIdentity}:${displayAttempt}` : undefined}
+              alt={props.authoredAlt ?? props.image.alt}
               className="block max-h-[32rem] max-w-full object-contain"
               crossOrigin="anonymous"
               decoding="async"
@@ -518,6 +663,7 @@ export function ScientInlineWorkspaceImage(props: {
                 autoRetriedRef.current = null;
                 setFailedUrl(null);
                 setLoadedUrl(url);
+                if (props.filePresentation) setRetainedDisplay({ identity: displayIdentity, url });
               }}
               src={url}
             />
@@ -530,13 +676,19 @@ export function ScientInlineWorkspaceImage(props: {
         ) : null}
       </span>
 
+      {props.filePresentation && props.caption ? (
+        <span className={cn(SCIENT_IMAGE_CAPTION_CLASS_NAME, "mt-2")} dir="auto">
+          {props.caption}
+        </span>
+      ) : null}
+
       {actionMessage != null && !expanded ? (
         <span aria-live="polite" className="mt-1 block text-muted-foreground text-xs">
           {actionMessage}
         </span>
       ) : null}
 
-      {url != null ? (
+      {url != null && !props.filePresentation ? (
         <InlineImageDialog
           actionMessage={actionMessage}
           activeAction={activeAction}

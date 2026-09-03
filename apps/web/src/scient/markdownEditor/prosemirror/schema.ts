@@ -1,4 +1,5 @@
 import MarkdownIt from "markdown-it";
+import type Token from "markdown-it/lib/token.mjs";
 import {
   defaultMarkdownParser,
   defaultMarkdownSerializer,
@@ -656,6 +657,21 @@ gfmTokenizer.core.ruler.after("scient_task_lists", "scient_direction_divs", (sta
   state.tokens = kept;
 });
 
+function imageAlternativeText(tokens: ReadonlyArray<Token>): string {
+  return tokens
+    .map((token) => {
+      if (token.children) return imageAlternativeText(token.children);
+      if (token.type === "softbreak" || token.type === "hardbreak") return "\n";
+      if (token.type === "scient_wiki_link") return token.meta.label ?? token.meta.target;
+      if (token.type === "scient_footnote_reference") return `[^${token.meta.label}]`;
+      if (token.type === "scient_citation") return `[${token.meta.source}]`;
+      // Formatting delimiters have empty content. Text, escapes, entities,
+      // inline code and math each contribute their complete readable content.
+      return token.content;
+    })
+    .join("");
+}
+
 export const scientMarkdownParser = new MarkdownParser(scientMarkdownSchema, gfmTokenizer, {
   ...defaultMarkdownParser.tokens,
   link: {
@@ -671,7 +687,7 @@ export const scientMarkdownParser = new MarkdownParser(scientMarkdownSchema, gfm
     getAttrs: (token) => ({
       src: token.attrGet("src"),
       title: token.attrGet("title") || null,
-      alt: token.children?.[0]?.content || null,
+      alt: imageAlternativeText(token.children ?? []) || null,
       ...parsedReferenceAttributes(token, "src"),
     }),
   },

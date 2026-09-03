@@ -61,6 +61,18 @@ relocate an already open file automatically.
   preference. A link to a specific Markdown line opens source so the requested
   line can be shown. Relative image paths resolve from the Markdown file's
   folder, including nested folders; inline sizes and alignment are preserved.
+- Standalone Markdown images expose floating viewing controls. Use **Edit
+  details** for the image source and alternative text; **Apply** saves one
+  change and **Cancel** leaves the document unchanged. Captions edit directly
+  in their visible line and save as you type. Enter or Escape leaves the caption;
+  Undo remains available. Missing captions stay absent until **Add caption**.
+  Inline images and linked badges keep their compact presentation and link behavior.
+- Reference-style images share their source and title with a Markdown definition.
+  **Edit shared reference** opens that definition; **Make independent** explicitly
+  separates this occurrence. Alternative text remains local to the image.
+  **Replace image** keeps the original until upload succeeds, and **Remove from
+  document** never deletes the file. Copy, expand, background, and retry actions
+  do not edit Markdown.
 - Text files larger than the preview limit open read-only. In rendered
   Markdown, task checkboxes are also non-interactive so a partial preview can
   never replace the complete file.

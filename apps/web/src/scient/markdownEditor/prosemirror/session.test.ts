@@ -237,6 +237,21 @@ describe("ScientProseMirrorSession", () => {
     expect(session.state.doc.nodeAt(mappedDocumentPosition!)?.textContent).toBe("Second");
   });
 
+  it.each([false, true])("maps an exact block start to its owner (preceding edit: %s)", (edit) => {
+    const session = new ScientProseMirrorSession({
+      source: "![Plot][figure]\n\n[figure]: plot.png\n",
+      revision: "r0",
+    });
+    if (edit) session.applyTransaction(session.state.tr.insertText("Before ", 1), "user");
+    const definitionPosition = session.state.doc.firstChild!.nodeSize;
+    expect(
+      session.documentPositionForSourceOffset(session.session.draftSource.indexOf("[figure]:")),
+    ).toBe(definitionPosition);
+    expect(session.documentPositionForSourceOffset(session.session.draftSource.length)).toBe(
+      definitionPosition,
+    );
+  });
+
   it("keeps current block ranges when an older save is confirmed", () => {
     const intents: MarkdownSaveIntent[] = [];
     const session = new ScientProseMirrorSession({

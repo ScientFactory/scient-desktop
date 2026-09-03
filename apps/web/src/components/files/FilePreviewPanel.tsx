@@ -1960,6 +1960,9 @@ export default function FilePreviewPanel({
                   resolvedTheme={resolvedTheme}
                   authoritativeSnapshot={markdownAuthoritativeSnapshot}
                   onOpenFile={onOpenFile}
+                  onOpenFileSource={(path, line) =>
+                    runAfterPendingSave([relativePath], () => onOpenFileSource(path, line))
+                  }
                   onPendingChange={handlePendingChange}
                   onSaveFailure={handleSaveFailure}
                   onSaveConfirmed={handleSaveConfirmed}

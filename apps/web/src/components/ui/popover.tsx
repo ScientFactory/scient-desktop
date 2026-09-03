@@ -26,6 +26,7 @@ function PopoverPopup({
   alignOffset = 0,
   tooltipStyle = false,
   anchor,
+  collisionBoundary,
   ...props
 }: PopoverPrimitive.Popup.Props & {
   viewportClassName?: string;
@@ -35,6 +36,7 @@ function PopoverPopup({
   alignOffset?: PopoverPrimitive.Positioner.Props["alignOffset"];
   tooltipStyle?: boolean;
   anchor?: PopoverPrimitive.Positioner.Props["anchor"];
+  collisionBoundary?: PopoverPrimitive.Positioner.Props["collisionBoundary"];
 }) {
   return (
     <PopoverPrimitive.Portal>
@@ -42,6 +44,7 @@ function PopoverPopup({
         align={align}
         alignOffset={alignOffset}
         anchor={anchor}
+        collisionBoundary={collisionBoundary}
         className="z-[130] h-(--positioner-height) w-(--positioner-width) max-w-(--available-width) transition-transform data-instant:transition-none"
         data-slot="popover-positioner"
         side={side}

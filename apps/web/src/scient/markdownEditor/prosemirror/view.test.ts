@@ -4,6 +4,8 @@ import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 import { AllSelection, NodeSelection, TextSelection } from "prosemirror-state";
 import { DOMParser } from "prosemirror-model";
 import { EditorView as CodeMirrorEditorView } from "@codemirror/view";
+import { act } from "react";
+import type { EditorView } from "prosemirror-view";
 import { scientMarkdownSchema } from "./schema";
 
 import { ScientMarkdownEditorView } from "./view";
@@ -19,8 +21,9 @@ describe("ScientMarkdownEditorView", () => {
   });
   const mounted: ScientMarkdownEditorView[] = [];
 
-  afterEach(() => {
-    mounted.splice(0).forEach((controller) => controller.destroy());
+  afterEach(async () => {
+    vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+    await act(() => mounted.splice(0).forEach((controller) => controller.destroy()));
     document.body.replaceChildren();
     document.documentElement.classList.remove("dark");
     vi.unstubAllGlobals();
@@ -39,6 +42,42 @@ describe("ScientMarkdownEditorView", () => {
     document.body.append(host);
     mounted.push(controller);
     return { controller, host, onUserSourceChange, view: controller.mount(host) };
+  }
+
+  async function openImageDetails(view: EditorView, position = 1): Promise<HTMLInputElement> {
+    vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+    await act(() => {
+      view.dispatch(view.state.tr.setSelection(NodeSelection.create(view.state.doc, position)));
+      view.dom.dispatchEvent(
+        new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true }),
+      );
+    });
+    const source = document.querySelector<HTMLInputElement>("[aria-label='Image source']");
+    expect(source).not.toBeNull();
+    return source!;
+  }
+
+  async function changeImageDetail(input: HTMLInputElement, value: string): Promise<void> {
+    await act(() => {
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(input, value);
+      input.dispatchEvent(new InputEvent("input", { bubbles: true, inputType: "insertText" }));
+    });
+  }
+
+  async function applyImageDetails(input: HTMLInputElement): Promise<void> {
+    await act(() => {
+      input
+        .closest("form")!
+        .dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
+    });
+  }
+
+  function completeImageLoad(image: HTMLImageElement): void {
+    Object.defineProperties(image, {
+      complete: { configurable: true, value: true },
+      naturalWidth: { configurable: true, value: 100 },
+    });
+    image.dispatchEvent(new Event("load"));
   }
 
   it("edits front matter through one persistent source surface without changing adjacent Markdown", () => {
@@ -1200,6 +1239,71 @@ describe("ScientMarkdownEditorView", () => {
     expect(onImageUploadFailure).not.toHaveBeenCalled();
   });
 
+  it("drops a pending image insertion when the editor becomes read-only", async () => {
+    let resolveUpload!: (value: { readonly src: string; readonly alt: string }) => void;
+    const uploadPromise = new Promise<{ readonly src: string; readonly alt: string }>((resolve) => {
+      resolveUpload = resolve;
+    });
+    const source = "Before image.\n";
+    const onUserSourceChange = vi.fn();
+    const controller = new ScientMarkdownEditorView({
+      source,
+      revision: "r0",
+      mode: "write",
+      ariaLabel: "Pending image upload",
+      uploadImage: () => uploadPromise,
+      onUserSourceChange,
+    });
+    const host = document.createElement("div");
+    document.body.append(host);
+    mounted.push(controller);
+    const view = controller.mount(host);
+    expect(controller.uploadImageFile(new File(["image"], "plot.png", { type: "image/png" }))).toBe(
+      true,
+    );
+    expect(view.dom.querySelector("[data-scient-markdown-image-upload]")).not.toBeNull();
+
+    controller.setMode("read");
+    resolveUpload({ src: "assets/plot.png", alt: "Plot" });
+    await uploadPromise;
+    expect(view.dom.querySelector("[data-scient-markdown-image-upload]")).toBeNull();
+    expect(view.dom.querySelector("[data-scient-markdown-image]")).toBeNull();
+    expect(controller.session.session.draftSource).toBe(source);
+    expect(onUserSourceChange).not.toHaveBeenCalled();
+    controller.setMode("write");
+    expect(controller.session.session.draftSource).toBe(source);
+  });
+
+  it("does not insert a pending upload into an adopted replacement document", async () => {
+    let resolveUpload!: (value: { readonly src: string; readonly alt: string }) => void;
+    const uploadPromise = new Promise<{ readonly src: string; readonly alt: string }>((resolve) => {
+      resolveUpload = resolve;
+    });
+    const onUserSourceChange = vi.fn();
+    const controller = new ScientMarkdownEditorView({
+      source: "Original document.\n",
+      revision: "r0",
+      mode: "write",
+      ariaLabel: "Pending image upload",
+      uploadImage: () => uploadPromise,
+      onUserSourceChange,
+    });
+    const host = document.createElement("div");
+    document.body.append(host);
+    mounted.push(controller);
+    const view = controller.mount(host);
+    controller.uploadImageFile(new File(["image"], "plot.png", { type: "image/png" }));
+    const source = "Replacement document.\n";
+    expect(controller.receiveExternalSource({ source, revision: "r1" })).toBe("adopted");
+
+    resolveUpload({ src: "assets/plot.png", alt: "Plot" });
+    await uploadPromise;
+    expect(view.dom.querySelector("[data-scient-markdown-image-upload]")).toBeNull();
+    expect(view.dom.querySelector("[data-scient-markdown-image]")).toBeNull();
+    expect(controller.session.session.draftSource).toBe(source);
+    expect(onUserSourceChange).not.toHaveBeenCalled();
+  });
+
   it("finds rich text across formatting boundaries without producing a save", () => {
     const onUserSourceChange = vi.fn();
     const controller = new ScientMarkdownEditorView({
@@ -1852,7 +1956,7 @@ describe("ScientMarkdownEditorView", () => {
     expect(onUserSourceChange).toHaveBeenCalledOnce();
   });
 
-  it("keeps a workspace image rendered while its portable source fields are edited", async () => {
+  it("edits the visible image caption repeatedly without hiding it or reloading the image", async () => {
     const onUserSourceChange = vi.fn();
     const resolveImageSource = vi.fn(async (source: string) => `https://asset.test/${source}`);
     const controller = new ScientMarkdownEditorView({
@@ -1870,26 +1974,148 @@ describe("ScientMarkdownEditorView", () => {
     const image = view.dom.querySelector<HTMLImageElement>(".scient-markdown-image-render");
 
     await vi.waitFor(() => expect(image?.src).toContain("figures/cell.png"));
+    completeImageLoad(image!);
     expect(image?.alt).toBe("Microscopy image");
-    expect(view.dom.querySelector(".scient-markdown-image-caption")?.textContent).toBe(
-      "Cell culture",
-    );
+    const caption = view.dom.querySelector<HTMLTextAreaElement>("[aria-label='Image caption']")!;
+    expect(caption.value).toBe("Cell culture");
     expect(resolveImageSource).toHaveBeenCalledWith("figures/cell.png");
     view.dispatch(view.state.tr.setSelection(NodeSelection.create(view.state.doc, 1)));
-    expect(view.dom.querySelector<HTMLInputElement>("[aria-label='Image path']")?.value).toBe(
-      "figures/cell.png",
-    );
+    expect(document.querySelector("[aria-label='Image source']")).toBeNull();
     expect(image?.hidden).toBe(false);
-    const caption = view.dom.querySelector<HTMLInputElement>(
-      "[aria-label='Image title or caption']",
-    );
-    expect(caption?.value).toBe("Cell culture");
-    caption!.value = "Updated caption";
-    caption!.dispatchEvent(new InputEvent("input", { bubbles: true, inputType: "insertText" }));
-    expect(controller.session.session.draftSource).toContain('"Updated caption"');
+    caption.focus();
+    for (const value of ["Updated caption", "Updated caption again"]) {
+      caption.value = value;
+      caption.dispatchEvent(new InputEvent("input", { bubbles: true, inputType: "insertText" }));
+      expect(controller.session.session.draftSource).toContain(`"${value}"`);
+      expect(view.dom.querySelector("[aria-label='Image caption']")).toBe(caption);
+      expect(caption.hidden).toBe(false);
+      expect(document.activeElement).toBe(caption);
+    }
     expect(image?.hidden).toBe(false);
     expect(resolveImageSource).toHaveBeenCalledOnce();
-    expect(onUserSourceChange).toHaveBeenCalledOnce();
+    expect(onUserSourceChange).toHaveBeenCalledTimes(2);
+  });
+
+  it("uses real image viewing controls without creating Markdown edits or saves", async () => {
+    vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+    const source = '![Plot](plot.png "Caption")\n';
+    const onUserSourceChange = vi.fn();
+    const resolveImageSource = vi
+      .fn()
+      .mockResolvedValueOnce("https://assets.test/plot-inline.png")
+      .mockResolvedValueOnce("https://assets.test/plot-viewer.png")
+      .mockResolvedValueOnce("https://assets.test/plot-viewer-refreshed.png");
+    const controller = new ScientMarkdownEditorView({
+      source,
+      revision: "r0",
+      mode: "write",
+      ariaLabel: "Image viewing actions",
+      onUserSourceChange,
+      resolveImageSource,
+    });
+    const host = document.createElement("div");
+    document.body.append(host);
+    mounted.push(controller);
+    let view!: EditorView;
+    await act(() => {
+      view = controller.mount(host);
+    });
+    const image = view.dom.querySelector<HTMLImageElement>(".scient-markdown-image-render")!;
+    await act(() => completeImageLoad(image));
+    await act(() => {
+      image.dispatchEvent(
+        new MouseEvent("mousedown", { button: 0, bubbles: true, cancelable: true }),
+      );
+    });
+    expect(view.state.selection).toBeInstanceOf(NodeSelection);
+    const toolbar = view.dom.querySelector<HTMLElement>(
+      "[role='group'][aria-label='Image actions']",
+    )!;
+    const card = toolbar.closest<HTMLElement>("[data-scient-visual-card]")!;
+    expect(card).not.toBeNull();
+    // Happy DOM does not implement the CSS translate property yet.
+    let translation = "";
+    Object.defineProperty(toolbar.style, "translate", {
+      get: () => translation,
+      set: (value: string) => {
+        translation = value;
+      },
+    });
+    const removeProperty = toolbar.style.removeProperty.bind(toolbar.style);
+    vi.spyOn(toolbar.style, "removeProperty").mockImplementation((property) => {
+      if (property === "translate") translation = "";
+      return removeProperty(property);
+    });
+    vi.spyOn(card, "getBoundingClientRect").mockReturnValue(new DOMRect(100, 100, 400, 300));
+    vi.spyOn(toolbar, "getBoundingClientRect").mockImplementation(() => {
+      const [x = 0, y = 0] = toolbar.style.translate
+        .split(" ")
+        .map((value) => parseFloat(value) || 0);
+      return new DOMRect(104 + x, 104 + y, 100, 32);
+    });
+    const moveHandle = toolbar.querySelector<HTMLButtonElement>(
+      "button[aria-label='Move image actions']",
+    )!;
+    for (const [key, shiftKey, translation] of [
+      ["ArrowRight", false, "10px 0px"],
+      ["ArrowDown", true, "10px 1px"],
+      ["Home", false, ""],
+    ] as const) {
+      const event = new KeyboardEvent("keydown", {
+        key,
+        shiftKey,
+        bubbles: true,
+        cancelable: true,
+      });
+      await act(() => {
+        moveHandle.dispatchEvent(event);
+      });
+      expect(event.defaultPrevented).toBe(true);
+      expect(toolbar.style.translate).toBe(translation);
+      expect(view.state.selection).toBeInstanceOf(NodeSelection);
+    }
+    const more = view.dom.querySelector<HTMLButtonElement>(
+      "button[aria-label='More image actions']",
+    )!;
+    await act(() => more.click());
+    const background = [...document.querySelectorAll<HTMLElement>("[role='menuitem']")].find(
+      (item) => item.textContent === "Background: automatic",
+    )!;
+    expect(background).toBeDefined();
+    await act(() => background.click());
+    expect(image.style.backgroundColor).toBe("white");
+
+    await act(() => {
+      view.dom.querySelector<HTMLButtonElement>("button[aria-label='Expand image']")!.click();
+    });
+    const dialog = document.querySelector<HTMLElement>("[role='dialog']")!;
+    expect(dialog).not.toBeNull();
+    expect(dialog.querySelector<HTMLImageElement>("[data-preview-image-surface] img")!.src).toBe(
+      "https://assets.test/plot-viewer.png",
+    );
+    expect(image.src).toBe("https://assets.test/plot-inline.png");
+    await act(() =>
+      dialog.querySelector<HTMLButtonElement>("button[aria-label='More image actions']")!.click(),
+    );
+    const refresh = [...document.querySelectorAll<HTMLElement>("[role='menuitem']")].find(
+      (item) => item.textContent === "Refresh image",
+    )!;
+    await act(() => refresh.click());
+    expect(resolveImageSource).toHaveBeenCalledTimes(3);
+    expect(
+      document.querySelector<HTMLImageElement>("[role='dialog'] [data-preview-image-surface] img")!
+        .src,
+    ).toBe("https://assets.test/plot-viewer-refreshed.png");
+    expect(image.src).toBe("https://assets.test/plot-inline.png");
+    await act(() =>
+      document
+        .querySelector<HTMLButtonElement>("[role='dialog'] button[aria-label='Close']")!
+        .click(),
+    );
+    expect(document.querySelector("[role='dialog'][data-open]")).toBeNull();
+    expect(controller.session.session.draftSource).toBe(source);
+    expect(onUserSourceChange).not.toHaveBeenCalled();
+    expect(controller.execute("undo")).toBe(false);
   });
 
   it("resolves repeated references to one workspace image independently", async () => {
@@ -1941,13 +2167,14 @@ describe("ScientMarkdownEditorView", () => {
     const placeholder = view.dom.querySelector<HTMLElement>(".scient-markdown-image-placeholder")!;
     const wikiLink = view.dom.querySelector<HTMLElement>("[data-scient-markdown-wiki-link]")!;
 
-    await vi.waitFor(() => expect(placeholder.textContent).toContain("Unable to resolve"));
+    await vi.waitFor(() => expect(placeholder.textContent).toBe("Image unavailable"));
     expect(wikiLink.dataset.scientMarkdownWikiTargetState).toBe("missing");
 
     resourcesAvailable = true;
     controller.refreshExternalPresentation("workspace");
 
     await vi.waitFor(() => expect(image.src).toBe("https://asset.test/created.png"));
+    completeImageLoad(image);
     expect(image.hidden).toBe(false);
     expect(wikiLink.dataset.scientMarkdownWikiTargetState).toBe("present");
     expect(resolveImageSource).toHaveBeenCalledTimes(2);
@@ -1971,20 +2198,19 @@ describe("ScientMarkdownEditorView", () => {
     const view = controller.mount(host);
     const placeholder = view.dom.querySelector<HTMLElement>(".scient-markdown-image-placeholder");
 
-    await vi.waitFor(() => expect(placeholder?.textContent).toContain("Unable to resolve"));
-    view.dispatch(view.state.tr.setSelection(NodeSelection.create(view.state.doc, 1)));
-    const source = view.dom.querySelector<HTMLInputElement>("[aria-label='Image path']");
-    source!.value = "";
-    source!.dispatchEvent(new InputEvent("input", { bubbles: true, inputType: "deleteContent" }));
+    await vi.waitFor(() => expect(placeholder?.textContent).toBe("Image unavailable"));
+    const source = await openImageDetails(view);
+    await changeImageDetail(source, "");
+    await applyImageDetails(source);
 
-    expect(placeholder?.textContent).toBe("Choose an image path");
+    expect(placeholder?.textContent).toBe("Choose an image source");
     expect(placeholder?.hidden).toBe(false);
     expect(view.dom.querySelector<HTMLImageElement>(".scient-markdown-image-render")?.hidden).toBe(
       true,
     );
   });
 
-  it("keeps an image reference for alt edits but detaches after an explicit path edit", () => {
+  it("keeps alt edits local and detaches an image only after Make independent and Apply", async () => {
     const controller = new ScientMarkdownEditorView({
       source: "![Plot][figure]\n\n[figure]: old.png\n",
       revision: "r0",
@@ -1995,15 +2221,25 @@ describe("ScientMarkdownEditorView", () => {
     const host = document.createElement("div");
     document.body.append(host);
     const view = controller.mount(host);
-    view.dispatch(view.state.tr.setSelection(NodeSelection.create(view.state.doc, 1)));
-    const alt = view.dom.querySelector<HTMLInputElement>("[aria-label='Image alternative text']")!;
-    alt.value = "New description";
-    alt.dispatchEvent(new InputEvent("input", { bubbles: true }));
+    const source = await openImageDetails(view);
+    expect(source.readOnly).toBe(true);
+    const alt = document.querySelector<HTMLInputElement>("[aria-label='Image alt text']")!;
+    await changeImageDetail(alt, "New description");
+    expect(controller.session.session.draftSource).toContain("![Plot][figure]");
+    await applyImageDetails(source);
     expect(controller.session.session.draftSource).toContain("![New description][figure]");
-    const path = view.dom.querySelector<HTMLInputElement>("[aria-label='Image path']")!;
     for (const value of ["chosen.png", "old.png"]) {
-      path.value = value;
-      path.dispatchEvent(new InputEvent("input", { bubbles: true }));
+      const path = await openImageDetails(view);
+      if (value === "chosen.png") {
+        const independent = [...document.querySelectorAll<HTMLButtonElement>("button")].find(
+          (button) => button.textContent === "Make independent",
+        )!;
+        await act(() => independent.click());
+        expect(path.readOnly).toBe(false);
+        expect(view.state.doc.firstChild!.firstChild!.attrs.referenceLabel).toBe("figure");
+      }
+      await changeImageDetail(path, value);
+      await applyImageDetails(path);
       expect(controller.session.session.draftSource).toContain(`![New description](${value})`);
       expect(view.state.doc.firstChild!.firstChild!.attrs.referenceLabel).toBeNull();
     }
@@ -2015,6 +2251,134 @@ describe("ScientMarkdownEditorView", () => {
       }),
     );
     expect(view.state.doc.firstChild!.firstChild!.attrs.src).toBe("old.png");
+  });
+
+  it("opens image details with Enter and cancels a draft without saving", async () => {
+    const source = "![Plot](plot.png)\n";
+    const onUserSourceChange = vi.fn();
+    const controller = new ScientMarkdownEditorView({
+      source,
+      revision: "r0",
+      mode: "write",
+      ariaLabel: "Keyboard image details",
+      onUserSourceChange,
+    });
+    const host = document.createElement("div");
+    document.body.append(host);
+    mounted.push(controller);
+    const view = controller.mount(host);
+    view.dispatch(view.state.tr.setSelection(NodeSelection.create(view.state.doc, 1)));
+    expect(document.querySelector("[aria-label='Image source']")).toBeNull();
+
+    const input = await openImageDetails(view);
+    expect(document.activeElement).toBe(input);
+    await changeImageDetail(input, "different.png");
+    expect(controller.session.session.draftSource).toBe(source);
+    expect(onUserSourceChange).not.toHaveBeenCalled();
+    const cancel = [...input.closest("form")!.querySelectorAll<HTMLButtonElement>("button")].find(
+      (button) => button.textContent === "Cancel",
+    )!;
+    await act(() => cancel.click());
+    expect(document.querySelector("[aria-label='Image source']")).toBeNull();
+    expect(controller.session.session.draftSource).toBe(source);
+    expect(onUserSourceChange).not.toHaveBeenCalled();
+  });
+
+  it("invalidates open image details when a source reload reuses an equal image", async () => {
+    const source = '![Plot](plot.png "Caption")\n\nOriginal text.\n';
+    const onUserSourceChange = vi.fn();
+    const controller = new ScientMarkdownEditorView({
+      source,
+      revision: "r0",
+      mode: "write",
+      ariaLabel: "Reload image target",
+      onUserSourceChange,
+    });
+    const host = document.createElement("div");
+    document.body.append(host);
+    mounted.push(controller);
+    const view = controller.mount(host);
+    const image = view.dom.querySelector("[data-scient-markdown-image]")!;
+    const caption = view.dom.querySelector<HTMLTextAreaElement>("[aria-label='Image caption']")!;
+    const input = await openImageDetails(view);
+    await changeImageDetail(input, "stale-draft.png");
+    const form = input.closest("form")!;
+    const replacement = source.replace("Original text.", "Externally changed text.");
+
+    await act(() => {
+      expect(controller.receiveExternalSource({ source: replacement, revision: "r1" })).toBe(
+        "adopted",
+      );
+    });
+    expect(view.dom.querySelector("[data-scient-markdown-image]")).toBe(image);
+    expect(document.querySelector("[aria-label='Image source']")).toBeNull();
+    expect(caption.hidden).toBe(false);
+    expect(caption.value).toBe("Caption");
+    await act(() => {
+      form.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
+    });
+    expect(controller.session.session.draftSource).toBe(replacement);
+    expect(onUserSourceChange).not.toHaveBeenCalled();
+  });
+
+  it("focuses the active image reference definition without saving the document", () => {
+    const source = '![Plot][figure]\n\n[figure]: plot.png "Caption"\n\n[FIGURE]: ignored.png\n';
+    const onUserSourceChange = vi.fn();
+    const onOpenSourceLine = vi.fn();
+    const controller = new ScientMarkdownEditorView({
+      source,
+      revision: "r0",
+      mode: "write",
+      ariaLabel: "Image reference definition",
+      onUserSourceChange,
+      onOpenSourceLine,
+    });
+    const host = document.createElement("div");
+    document.body.append(host);
+    mounted.push(controller);
+    const view = controller.mount(host);
+    const definition = view.dom.querySelector<HTMLTextAreaElement>(
+      ".scient-markdown-source-island-editor",
+    )!;
+
+    expect(controller.editImageReference("FIGURE")).toBe(true);
+    expect(document.activeElement).toBe(definition);
+    expect(definition.value).toBe('[figure]: plot.png "Caption"');
+    expect(definition.selectionStart).toBe(0);
+    expect(definition.selectionEnd).toBe(0);
+    expect(onOpenSourceLine).not.toHaveBeenCalled();
+    expect(onUserSourceChange).not.toHaveBeenCalled();
+    expect(controller.session.session.draftSource).toBe(source);
+  });
+
+  it("reveals a nested winning image definition in source without changing the rich document", () => {
+    const source =
+      "![Plot][figure]\n\n> Intro\n>\n> [figure]: winning.png\n\n[FIGURE]: ignored.png\n";
+    const onUserSourceChange = vi.fn();
+    const onOpenSourceLine = vi.fn();
+    const controller = new ScientMarkdownEditorView({
+      source,
+      revision: "r0",
+      mode: "write",
+      ariaLabel: "Nested image reference definition",
+      onUserSourceChange,
+      onOpenSourceLine,
+    });
+    const host = document.createElement("div");
+    document.body.append(host);
+    mounted.push(controller);
+    const view = controller.mount(host);
+    const selection = view.state.selection;
+
+    expect(controller.editImageReference("figure")).toBe(true);
+    expect(onOpenSourceLine).toHaveBeenCalledExactlyOnceWith(5);
+    expect(view.state.selection.eq(selection)).toBe(true);
+    expect(onUserSourceChange).not.toHaveBeenCalled();
+    expect(controller.session.session.draftSource).toBe(source);
+    expect(controller.editImageReference("missing")).toBe(false);
+    controller.setMode("read");
+    expect(controller.editImageReference("figure")).toBe(false);
+    expect(onOpenSourceLine).toHaveBeenCalledOnce();
   });
 
   it("navigates from a numbered marker without focusing the directly editable definition", () => {

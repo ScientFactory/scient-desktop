@@ -116,10 +116,23 @@ export function downloadBlob(blob: Blob, fileName: string): void {
   }
 }
 
-export async function copyStaticImage(url: string): Promise<void> {
-  const source = await fetchImageBlob(url);
-  const png = source.type.toLowerCase() === "image/png" ? source : await imageBlobToPng(source);
-  await copyPngBlobToClipboard(png);
+export async function copyStaticImage(url: string | Promise<string>): Promise<void> {
+  const png = Promise.resolve(url)
+    .then(fetchImageBlob)
+    .then((source) =>
+      source.type.toLowerCase() === "image/png" ? source : imageBlobToPng(source),
+    );
+  // Constructors and host clipboard implementations can throw before consuming this promise.
+  void png.catch(() => undefined);
+  if (typeof window !== "undefined" && window.desktopBridge?.copyPngToClipboard != null) {
+    await copyPngBlobToClipboard(await png);
+    return;
+  }
+  if (typeof ClipboardItem === "undefined" || navigator.clipboard?.write == null) {
+    throw new Error("Copy image is unavailable in this environment.");
+  }
+  // Begin the clipboard request in the user gesture, before access/fetch/decode awaits.
+  await Promise.all([navigator.clipboard.write([new ClipboardItem({ "image/png": png })]), png]);
 }
 
 export async function downloadStaticImage(url: string, fileName: string): Promise<void> {

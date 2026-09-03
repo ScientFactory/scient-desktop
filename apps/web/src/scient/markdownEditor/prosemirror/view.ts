@@ -31,6 +31,10 @@ import {
   type ScientMarkdownTheme,
 } from "../nodes";
 import type { ScientNestedCodeEditor } from "../nodes/codeMirrorCodeEditor";
+import type {
+  ScientMarkdownImageNodeViewOptions,
+  ScientMarkdownImageNodeViewRegistration,
+} from "../nodes/imageNodeView";
 import {
   filterScientMarkdownSlashCommands,
   runScientMarkdownCommand,
@@ -104,6 +108,11 @@ export interface ScientMarkdownEditorViewOptions {
   readonly showTableContextMenu?: ScientMarkdownTableContextMenuHandler;
   readonly onSelectionSourceOffsetChange?: (sourceOffset: number) => void;
   readonly resolveImageSource?: ScientMarkdownImageSourceResolver;
+  readonly imageOptions?: Omit<
+    ScientMarkdownImageNodeViewOptions,
+    "registerImage" | "uploadImage" | "editImageReference" | "onOpenImageLink"
+  >;
+  readonly onOpenSourceLine?: (line: number) => void;
   readonly resolveTheme?: () => ScientMarkdownTheme;
   readonly uploadImage?: (file: File) => Promise<ScientMarkdownUploadedImage>;
   readonly onImageUploadFailure?: (error: unknown) => void;
@@ -284,6 +293,7 @@ export class ScientMarkdownEditorView {
   private readonly rawSourceEditors = new Set<HTMLTextAreaElement>();
   private readonly taskCheckboxes = new Set<HTMLInputElement>();
   private readonly wikiLinks = new Map<HTMLElement, () => number | undefined>();
+  private readonly imageNodeViews = new Map<HTMLElement, ScientMarkdownImageNodeViewRegistration>();
   private readonly footnoteNodeViews = new Map<
     HTMLElement,
     ScientMarkdownFootnoteNodeViewRegistration
@@ -412,6 +422,7 @@ export class ScientMarkdownEditorView {
     const wasEmpty = documentIsEmpty(this.editorView.state.doc);
     const state = this.session.applyTransaction(transaction, origin);
     this.editorView.updateState(state);
+    if (transaction.docChanged) this.refreshImageContexts();
     this.refreshFootnoteNodeViews();
     if (wasEmpty !== documentIsEmpty(state.doc)) {
       this.syncViewProps();
@@ -422,8 +433,10 @@ export class ScientMarkdownEditorView {
 
   replaceUserSource(source: string): void {
     const wasEmpty = this.editorView ? documentIsEmpty(this.editorView.state.doc) : true;
+    this.invalidateImageEditing();
     const state = this.session.replaceUserSource(source);
     this.editorView?.updateState(state);
+    this.refreshImageContexts();
     this.refreshFootnoteNodeViews();
     if (wasEmpty !== documentIsEmpty(state.doc)) {
       this.syncViewProps();
@@ -447,7 +460,9 @@ export class ScientMarkdownEditorView {
   }): ScientExternalSourceResult {
     const result = this.session.receiveExternalSource(input);
     if (result === "adopted") {
+      this.invalidateImageEditing();
       this.editorView?.updateState(this.session.state);
+      this.refreshImageContexts();
       this.refreshFootnoteNodeViews();
       this.syncViewProps();
       this.slashActiveIndex = 0;
@@ -457,8 +472,10 @@ export class ScientMarkdownEditorView {
   }
 
   resolveExternalConflict(resolution: ScientExternalConflictResolution): void {
+    if (resolution === "disk") this.invalidateImageEditing();
     const state = this.session.resolveExternalConflict(resolution);
     this.editorView?.updateState(state);
+    this.refreshImageContexts();
     this.refreshFootnoteNodeViews();
     this.syncViewProps();
     this.publishSnapshot(false);
@@ -470,8 +487,10 @@ export class ScientMarkdownEditorView {
   }
 
   discardLocalChanges(input: { readonly source: string; readonly revision: string }): void {
+    this.invalidateImageEditing();
     const state = this.session.discardLocalChanges(input);
     this.editorView?.updateState(state);
+    this.refreshImageContexts();
     this.refreshFootnoteNodeViews();
     this.syncViewProps();
     this.publishSnapshot(false);
@@ -661,6 +680,46 @@ export class ScientMarkdownEditorView {
     return true;
   }
 
+  editImageReference(label: string): boolean {
+    const view = this.editorView;
+    if (!view || !modeIsEditable(this.mode)) return false;
+    const definition = this.session.referenceDefinitionForLabel(label);
+    if (!definition) return false;
+    const position = this.session.documentPositionForSourceOffset(definition.sourceOffset);
+    const node = position === null ? null : view.state.doc.nodeAt(position);
+    if (
+      position !== null &&
+      node?.type.name === "raw_block" &&
+      node.attrs.sourceKind === "definition"
+    ) {
+      view.dispatch(
+        view.state.tr
+          .setSelection(NodeSelection.create(view.state.doc, position))
+          .setMeta(scientMarkdownTransactionOriginKey, "system")
+          .setMeta("addToHistory", false),
+      );
+      const dom = view.nodeDOM(position);
+      const field =
+        dom instanceof HTMLElement
+          ? dom.querySelector<HTMLTextAreaElement>(".scient-markdown-source-island-editor")
+          : null;
+      if (field && dom instanceof HTMLElement) {
+        const offset = Math.max(
+          0,
+          definition.sourceOffset -
+            (this.session.sourceOffsetForDocumentPosition(position + 1) ?? definition.sourceOffset),
+        );
+        dom.scrollIntoView?.({ block: "center" });
+        field.focus({ preventScroll: true });
+        field.setSelectionRange(offset, offset);
+        return true;
+      }
+    }
+    if (!this.options.onOpenSourceLine) return false;
+    this.options.onOpenSourceLine(definition.line);
+    return true;
+  }
+
   setFindOpen(open: boolean): void {
     if (this.findOpen === open) return;
     this.findOpen = open;
@@ -775,9 +834,17 @@ export class ScientMarkdownEditorView {
     void this.options.uploadImage(file).then(
       (uploaded) => {
         const currentView = this.editorView;
-        if (!currentView) return;
+        if (!currentView || currentView !== view) return;
         const currentPosition = imageUploadPlaceholderPosition(currentView.state, id);
         if (currentPosition === null) return;
+        if (!modeIsEditable(this.mode)) {
+          currentView.dispatch(
+            removeImageUploadPlaceholder(currentView.state.tr, id)
+              .setMeta(scientMarkdownTransactionOriginKey, "system")
+              .setMeta("addToHistory", false),
+          );
+          return;
+        }
         const image = scientMarkdownSchema.nodes.image?.create({
           src: uploaded.src,
           alt: uploaded.alt,
@@ -818,6 +885,7 @@ export class ScientMarkdownEditorView {
     this.codeEditors.clear();
     this.footnoteNodeViews.clear();
     this.rawSourceEditors.clear();
+    this.imageNodeViews.clear();
     this.listeners.clear();
   }
 
@@ -839,6 +907,27 @@ export class ScientMarkdownEditorView {
         this.applyTransaction(transaction, origin);
       },
       nodeViews: buildScientMarkdownNodeViews({
+        imageOptions: {
+          ...this.options.imageOptions,
+          ...(this.options.uploadImage ? { uploadImage: this.options.uploadImage } : {}),
+          onOpenImageLink: (target, anchor) => {
+            this.openLinkTarget(target, anchor);
+          },
+          editImageReference: (label) => {
+            if (!this.editImageReference(label)) {
+              this.options.imageOptions?.onImageError?.(
+                new Error("The image reference is no longer available."),
+              );
+            }
+          },
+          registerImage: (registration) => {
+            this.imageNodeViews.set(registration.element, registration);
+            registration.setEditable(modeIsEditable(this.mode));
+            return () => {
+              this.imageNodeViews.delete(registration.element);
+            };
+          },
+        },
         ...(this.options.onOpenWikiLink ? { onOpenWikiLink: this.options.onOpenWikiLink } : {}),
         ...(this.options.resolveImageSource
           ? { resolveImageSource: this.options.resolveImageSource }
@@ -921,6 +1010,7 @@ export class ScientMarkdownEditorView {
       handleDOMEvents: {
         click: (_view, event) => this.handleLinkClick(event),
         contextmenu: (_view, event) =>
+          this.handleImageContextMenu(event) ||
           this.handleFootnoteContextMenu(event) ||
           this.handleLinkContextMenu(event) ||
           this.handleTableContextMenu(event),
@@ -938,6 +1028,30 @@ export class ScientMarkdownEditorView {
     if (files.length === 0) return false;
     files.forEach((file) => this.uploadImageFile(file, position));
     return true;
+  }
+
+  private selectedImageView(): ScientMarkdownImageNodeViewRegistration | undefined {
+    const selection = this.editorView?.state.selection;
+    if (!(selection instanceof NodeSelection) || selection.node.type.name !== "image") return;
+    return [...this.imageNodeViews.values()].find((image) => image.getPos() === selection.from);
+  }
+
+  private handleImageContextMenu(event: MouseEvent): boolean {
+    const target = event.target;
+    if (target instanceof Element) {
+      if (target.closest("input, textarea")) return false;
+      const element = target.closest<HTMLElement>("[data-scient-markdown-image]");
+      if (element) return this.imageNodeViews.get(element)?.showContextMenu(event) ?? false;
+    }
+    return false;
+  }
+
+  private refreshImageContexts(): void {
+    this.imageNodeViews.forEach((image) => image.refreshContext());
+  }
+
+  private invalidateImageEditing(): void {
+    this.imageNodeViews.forEach((image) => image.invalidateEditing());
   }
 
   private handleLinkClick(event: MouseEvent): boolean {
@@ -1431,6 +1545,7 @@ export class ScientMarkdownEditorView {
       link.tabIndex = editable ? -1 : 0;
     });
     this.footnoteNodeViews.forEach((registration) => registration.setEditable(editable));
+    this.imageNodeViews.forEach((registration) => registration.setEditable(editable));
   }
 
   private syncViewProps(): void {
@@ -1581,6 +1696,13 @@ export class ScientMarkdownEditorView {
 
   private handleEditorKeyDown(event: KeyboardEvent): boolean {
     if (event.isComposing) return false;
+    if (event.key === "ContextMenu" || (event.shiftKey && event.key === "F10")) {
+      const image = this.selectedImageView();
+      if (image?.showContextMenu(new MouseEvent("contextmenu"))) {
+        event.preventDefault();
+        return true;
+      }
+    }
     if (matchesScientMarkdownShortcut(event, "find")) {
       event.preventDefault();
       this.requestFind();
@@ -1631,6 +1753,11 @@ export class ScientMarkdownEditorView {
     if (!(selection instanceof NodeSelection) || !selection.node.isAtom) return false;
     const dom = view.nodeDOM(selection.from);
     if (!(dom instanceof HTMLElement)) return false;
+    const image = this.imageNodeViews.get(dom);
+    if (image) {
+      image.editDetails();
+      return true;
+    }
     // Source fields opt into this keyboard contract explicitly. Nested inputs
     // such as image controls and task checkboxes own different interactions.
     const field = Array.from(dom.children).find(
