@@ -130,6 +130,11 @@ reused. The associated tests begin from the immediately preceding composed
 migration. macOS skill tests compare canonical real paths so `/var` and
 `/private/var` do not create a false failure.
 
+Upstream's lint-rule audit also made 12 Scient `no-control-regex` suppression
+comments obsolete. Only the unused comments were removed; the NUL-rejecting
+schemas and filename sanitization remain unchanged and covered by their
+existing contract suites.
+
 Scient keeps its owned contributor trust list, product identity, state roots,
 manual release workflow, updater feed policy, signing, notarization, and
 publication boundaries. Donor nightly tags, hosted services, relay behavior,

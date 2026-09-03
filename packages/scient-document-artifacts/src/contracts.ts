@@ -19,7 +19,6 @@ export type ArtifactRevisionId = typeof ArtifactRevisionId.Type;
 export const LogicalDocumentKey = Schema.String.check(
   Schema.isMinLength(1),
   Schema.isMaxLength(1_024),
-  // eslint-disable-next-line no-control-regex -- Serializable logical keys must reject NUL explicitly.
   Schema.isPattern(/^[^\0]+$/u),
 ).pipe(Schema.brand("LogicalDocumentKey"));
 export type LogicalDocumentKey = typeof LogicalDocumentKey.Type;
@@ -157,7 +156,6 @@ const PdfSourceBase = {
   fileName: Schema.String.check(
     Schema.isMinLength(1),
     Schema.isMaxLength(255),
-    // eslint-disable-next-line no-control-regex -- Cross-process filenames must reject NUL explicitly.
     Schema.isPattern(/^[^/\\\0]+\.pdf$/iu),
   ),
   capabilities: PdfSourceCapabilities,
@@ -215,7 +213,6 @@ export const AssetCopyRequest = Schema.Struct({
   suggestedFileName: Schema.String.check(
     Schema.isMinLength(1),
     Schema.isMaxLength(255),
-    // eslint-disable-next-line no-control-regex -- Cross-process filenames must reject NUL explicitly.
     Schema.isPattern(/^[^/\\\0]+$/u),
   ),
 });
