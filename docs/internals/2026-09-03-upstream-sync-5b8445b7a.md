@@ -135,13 +135,13 @@ comments obsolete. Only the unused comments were removed; the NUL-rejecting
 schemas and filename sanitization remain unchanged and covered by their
 existing contract suites.
 
-The Vite+ `0.3.0` upgrade exposed resource contention in Scient's larger CI
-suite: on two independent hosted runners, the desktop and web Vitest worker
-pools remained active together until the unchanged 20-minute ceiling, while
-every suite that completed was green. The exact command passed locally with
-cache disabled. The Test job now gives the desktop, mobile, and web suites the
-hosted runner one at a time and keeps the other 22 package suites bounded at
-four-way parallelism. No test is skipped and the timeout is not inflated.
+The Vite+ `0.3.0` upgrade exposed a latent desktop-test fixture error on two
+independent hosted runners. The helper's “non-development” mode disabled the
+Vite URL but still constructed an unpackaged development environment, so the
+one-mebibyte bounded-output fixture was mirrored to captured stdout and Vitest
+`4.1.11` stalled. The fixture now makes packaged state the inverse of its
+development flag, matching its existing name and callers. Production logging,
+the one-mebibyte bound, the Test job topology, and its timeout are unchanged.
 
 Scient keeps its owned contributor trust list, product identity, state roots,
 manual release workflow, updater feed policy, signing, notarization, and

@@ -60,10 +60,11 @@ jobs:
       - name: Verify preload bundle output
         run: node apps/desktop/scripts/verify-preload-bundle.mjs
 
-  # Everything except `t3` (apps/server). Desktop, mobile, and web each own a
-  # Vitest worker pool, so they run one at a time instead of oversubscribing the
-  # lower-core hosted runner. The remaining package suites have smaller worker
-  # footprints and retain bounded parallel execution.
+  # Everything except `t3` (apps/server). `--parallel` drops the package
+  # dependency ordering that `vp run` applies by default: these `test` tasks
+  # declare no `dependsOn` and resolve workspace deps from source, so ordering
+  # only bought us idle runners between dependency layers. The concurrency
+  # limit stays at the default 4 so peak load per runner is unchanged.
   test:
     name: Test
     runs-on: ubuntu-24.04
@@ -91,22 +92,12 @@ jobs:
       - name: Ensure Electron runtime is installed
         run: vp run --filter @t3tools/desktop ensure:electron
 
-      - name: Test application suites
+      - name: Test
         run: |
-          set -euo pipefail
-          for package in @t3tools/desktop @t3tools/mobile @t3tools/web; do
-            vp run --filter "$package" --verbose --log grouped test \
-              2>&1 | tee -a "${{ runner.temp }}/workspace-tests.log"
-          done
-
-      - name: Test package suites
-        run: |
-          set -euo pipefail
+          set -o pipefail
           vp run --parallel --concurrency-limit 4 --verbose --log grouped \
-            --filter '!t3' --filter '!@t3tools/monorepo' \
-            --filter '!@t3tools/desktop' --filter '!@t3tools/mobile' \
-            --filter '!@t3tools/web' test \
-            2>&1 | tee -a "${{ runner.temp }}/workspace-tests.log"
+            --filter '!t3' --filter '!@t3tools/monorepo' test \
+            2>&1 | tee "${{ runner.temp }}/workspace-tests.log"
 
   # apps/server sets `fileParallelism: false`, so its 239 files run strictly
   # one at a time. Sharding spreads them over separate runners instead of
