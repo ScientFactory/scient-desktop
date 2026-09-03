@@ -3,7 +3,10 @@ import type { NodeViewConstructor } from "prosemirror-view";
 import type { ScientRichFenceContextMenuHandler } from "~/scient/presentation/RichFenceSourceActions";
 
 import type { ScientMarkdownLinkOpenHandler } from "../linkOpen";
-import { createScientCodeBlockNodeView } from "./codeBlockNodeView";
+import {
+  createScientCodeBlockNodeView,
+  type ScientMarkdownCodeEditorRegistrar,
+} from "./codeBlockNodeView";
 import type {
   ScientMarkdownExternalPresentationRegistrar,
   ScientMarkdownThemeResolver,
@@ -32,6 +35,7 @@ export type {
 
 export interface ScientMarkdownNodeViewOptions {
   readonly onOpenWikiLink?: ScientMarkdownLinkOpenHandler;
+  readonly registerCodeEditor?: ScientMarkdownCodeEditorRegistrar;
   readonly registerExternalPresentation?: ScientMarkdownExternalPresentationRegistrar;
   readonly registerFootnote?: ScientMarkdownFootnoteNodeViewRegistrar;
   readonly registerRawSourceEditor?: ScientMarkdownRawSourceEditorRegistrar;
@@ -55,6 +59,7 @@ export function buildScientMarkdownNodeViews(
         options.resolveTheme,
         options.registerExternalPresentation,
         options.showRichFenceContextMenu,
+        options.registerCodeEditor,
       ),
     citation: (node, view, getPos) => createScientReferenceNodeView(node, view, getPos),
     display_math: createScientMathNodeView,
@@ -74,7 +79,13 @@ export function buildScientMarkdownNodeViews(
     list_item: (node, view, getPos) =>
       createScientTaskListItemNodeView(node, view, getPos, options.registerTaskCheckbox),
     raw_block: (node, view, getPos) =>
-      createScientRawBlockNodeView(node, view, getPos, options.registerRawSourceEditor),
+      createScientRawBlockNodeView(
+        node,
+        view,
+        getPos,
+        options.registerRawSourceEditor,
+        options.registerCodeEditor,
+      ),
     wiki_link: (node, view, getPos) =>
       createScientWikiLinkNodeView(
         node,

@@ -78,8 +78,70 @@ describe("safe atom selections", () => {
     expect(after?.head).toBe(position + atom.nodeSize);
   });
 
-  it("mirrors physical arrow exits for RTL inline fields", () => {
-    const markdownDocument = createScientMarkdownProjection("Before [@מקור] after.\n").document;
+  it.each([
+    ["ltr", "ltr", "ArrowLeft", "start", "before"],
+    ["ltr", "ltr", "ArrowRight", "end", "after"],
+    ["rtl", "ltr", "ArrowLeft", "end", "before"],
+    ["rtl", "ltr", "ArrowRight", "start", "after"],
+    ["ltr", "rtl", "ArrowLeft", "start", "after"],
+    ["ltr", "rtl", "ArrowRight", "end", "before"],
+    ["rtl", "rtl", "ArrowLeft", "end", "after"],
+    ["rtl", "rtl", "ArrowRight", "start", "before"],
+  ] as const)(
+    "moves a %s field in %s prose through its physical %s boundary",
+    (fieldDirection, surroundingDirection, key, boundary, expectedSide) => {
+      const markdownDocument = createScientMarkdownProjection("Before [@source] after.\n").document;
+      let position = -1;
+      let atom = markdownDocument;
+      markdownDocument.descendants((node, nodePosition) => {
+        if (node.type.name !== "citation") return;
+        position = nodePosition;
+        atom = node;
+      });
+      let state = EditorState.create({
+        doc: markdownDocument,
+        selection: NodeSelection.create(markdownDocument, position),
+      });
+      const view = {
+        get state() {
+          return state;
+        },
+        dispatch(transaction: Transaction) {
+          state = state.apply(transaction);
+        },
+        focus: vi.fn(),
+      } as Pick<EditorView, "dispatch" | "focus" | "state"> as EditorView;
+      const editor = globalThis.document.createElement("input");
+      editor.value = fieldDirection === "rtl" ? "@מקור" : "@source";
+      const caret = boundary === "start" ? 0 : editor.value.length;
+      editor.setSelectionRange(caret, caret);
+      const event = new KeyboardEvent("keydown", { key, cancelable: true });
+
+      expect(
+        handleInlineAtomEditorKeyDown({
+          editor,
+          event,
+          fieldDirection,
+          getPos: () => position,
+          node: atom,
+          surroundingDirection,
+          view,
+        }),
+      ).toBe(true);
+      expect(event.defaultPrevented).toBe(true);
+      expect(state.selection.head).toBe(
+        expectedSide === "before" ? position : position + atom.nodeSize,
+      );
+    },
+  );
+
+  it.each([
+    ["Shift+ArrowLeft", { key: "ArrowLeft", shiftKey: true }],
+    ["Alt+ArrowRight", { altKey: true, key: "ArrowRight" }],
+    ["Meta+Enter", { key: "Enter", metaKey: true }],
+    ["Control+Backspace", { ctrlKey: true, key: "Backspace" }],
+  ] as const)("leaves %s to the nested field", (_label, eventInit) => {
+    const markdownDocument = createScientMarkdownProjection("Before [@source] after.\n").document;
     let position = -1;
     let atom = markdownDocument;
     markdownDocument.descendants((node, nodePosition) => {
@@ -101,41 +163,24 @@ describe("safe atom selections", () => {
       focus: vi.fn(),
     } as Pick<EditorView, "dispatch" | "focus" | "state"> as EditorView;
     const editor = globalThis.document.createElement("input");
-    editor.value = "@מקור";
-    editor.setSelectionRange(editor.value.length, editor.value.length);
-    const left = new KeyboardEvent("keydown", { key: "ArrowLeft", cancelable: true });
+    editor.value = eventInit.key === "Backspace" ? "" : "@source";
+    const caret = eventInit.key === "ArrowRight" ? editor.value.length : 0;
+    editor.setSelectionRange(caret, caret);
+    const event = new KeyboardEvent("keydown", { ...eventInit, cancelable: true });
 
     expect(
       handleInlineAtomEditorKeyDown({
-        direction: "rtl",
         editor,
-        event: left,
+        event,
+        fieldDirection: "ltr",
         getPos: () => position,
         node: atom,
+        surroundingDirection: "ltr",
         view,
       }),
-    ).toBe(true);
-    expect(left.defaultPrevented).toBe(true);
-    expect(state.selection.head).toBe(position + atom.nodeSize);
-
-    state = state.apply(
-      state.tr
-        .setSelection(NodeSelection.create(state.doc, position))
-        .setMeta("addToHistory", false),
-    );
-    editor.setSelectionRange(0, 0);
-    const right = new KeyboardEvent("keydown", { key: "ArrowRight", cancelable: true });
-    expect(
-      handleInlineAtomEditorKeyDown({
-        direction: "rtl",
-        editor,
-        event: right,
-        getPos: () => position,
-        node: atom,
-        view,
-      }),
-    ).toBe(true);
-    expect(right.defaultPrevented).toBe(true);
-    expect(state.selection.head).toBe(position);
+    ).toBe(false);
+    expect(event.defaultPrevented).toBe(false);
+    expect(state.selection).toBeInstanceOf(NodeSelection);
+    expect(state.selection.from).toBe(position);
   });
 });

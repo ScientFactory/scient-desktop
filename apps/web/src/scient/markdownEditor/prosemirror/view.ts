@@ -30,6 +30,7 @@ import {
   type ScientMarkdownImageSourceResolver,
   type ScientMarkdownTheme,
 } from "../nodes";
+import type { ScientNestedCodeEditor } from "../nodes/codeMirrorCodeEditor";
 import {
   filterScientMarkdownSlashCommands,
   runScientMarkdownCommand,
@@ -279,6 +280,7 @@ export class ScientMarkdownEditorView {
   private editorView: EditorView | null = null;
   private mode: MarkdownDocumentMode;
   private readonly listeners = new Set<() => void>();
+  private readonly codeEditors = new Set<ScientNestedCodeEditor>();
   private readonly rawSourceEditors = new Set<HTMLTextAreaElement>();
   private readonly taskCheckboxes = new Set<HTMLInputElement>();
   private readonly wikiLinks = new Map<HTMLElement, () => number | undefined>();
@@ -394,6 +396,9 @@ export class ScientMarkdownEditorView {
   }
 
   refreshExternalPresentation(change: ScientMarkdownExternalPresentationChange): void {
+    if (change === "appearance") {
+      this.codeEditors.forEach((editor) => editor.refreshAppearance());
+    }
     this.externalPresentationRefreshers.forEach((refresh) => refresh(change));
   }
 
@@ -810,6 +815,7 @@ export class ScientMarkdownEditorView {
     this.editorView?.destroy();
     this.editorView = null;
     this.externalPresentationRefreshers.clear();
+    this.codeEditors.clear();
     this.footnoteNodeViews.clear();
     this.rawSourceEditors.clear();
     this.listeners.clear();
@@ -845,6 +851,13 @@ export class ScientMarkdownEditorView {
           this.externalPresentationRefreshers.add(refresh);
           return () => {
             this.externalPresentationRefreshers.delete(refresh);
+          };
+        },
+        registerCodeEditor: (editor) => {
+          this.codeEditors.add(editor);
+          editor.setEditable(modeIsEditable(this.mode));
+          return () => {
+            this.codeEditors.delete(editor);
           };
         },
         registerFootnote: (registration) => {
@@ -1403,6 +1416,9 @@ export class ScientMarkdownEditorView {
 
   private syncNodeViewEditability(): void {
     const editable = modeIsEditable(this.mode);
+    this.codeEditors.forEach((editor) => {
+      editor.setEditable(editable);
+    });
     this.rawSourceEditors.forEach((editor) => {
       editor.readOnly = !editable;
     });
@@ -1618,14 +1634,22 @@ export class ScientMarkdownEditorView {
     // Source fields opt into this keyboard contract explicitly. Nested inputs
     // such as image controls and task checkboxes own different interactions.
     const field = Array.from(dom.children).find(
-      (child): child is HTMLInputElement | HTMLTextAreaElement =>
-        child.getAttribute("data-scient-markdown-atom-editor") === "true" &&
-        (child instanceof HTMLTextAreaElement ||
-          (child instanceof HTMLInputElement && child.type === "text")),
+      (child): child is HTMLElement =>
+        child instanceof HTMLElement &&
+        child.getAttribute("data-scient-markdown-atom-editor") === "true",
     );
-    if (!field || field.hidden || field.readOnly) return false;
+    if (!field || field.hidden) return false;
+    if (field instanceof HTMLInputElement || field instanceof HTMLTextAreaElement) {
+      if (field.readOnly || (field instanceof HTMLInputElement && field.type !== "text")) {
+        return false;
+      }
+      field.focus({ preventScroll: true });
+      field.setSelectionRange(field.value.length, field.value.length);
+      return true;
+    }
+    // Persistent raw-source CodeMirror hosts redirect this focus to their
+    // nested content without exposing CodeMirror internals to the controller.
     field.focus({ preventScroll: true });
-    field.setSelectionRange(field.value.length, field.value.length);
     return true;
   }
 

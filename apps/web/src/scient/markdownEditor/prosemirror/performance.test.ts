@@ -33,6 +33,7 @@ describe("Scient Markdown performance qualification", () => {
   afterEach(() => {
     controllers.splice(0).forEach((controller) => controller.destroy());
     document.body.replaceChildren();
+    document.documentElement.classList.remove("dark");
   });
 
   it("keeps a 100 KiB source-preserving document responsive", () => {
@@ -108,5 +109,52 @@ describe("Scient Markdown performance qualification", () => {
       }),
     );
     expect(typingP95Ms).toBeLessThan(strictQualification ? 32 : 128);
+  });
+
+  it("keeps a code-dense document on persistent surfaces across presentation changes", () => {
+    const source = Array.from(
+      { length: 64 },
+      (_, index) => `\`\`\`typescript\nconst value${index}: number = ${index};\n\`\`\`\n`,
+    ).join("\n");
+    const controller = new ScientMarkdownEditorView({
+      source,
+      revision: "sha256:code-dense-performance",
+      mode: "write",
+      ariaLabel: "Code-dense performance qualification document",
+    });
+    const host = document.createElement("div");
+    document.body.append(host);
+    controllers.push(controller);
+    const mountStart = performance.now();
+    const view = controller.mount(host);
+    const mountMs = performance.now() - mountStart;
+    const editors = Array.from(view.dom.querySelectorAll<HTMLElement>(".cm-editor"));
+
+    expect(editors).toHaveLength(64);
+    expect(mountMs).toBeLessThan(3_000);
+
+    controller.setMode("read");
+    expect(
+      Array.from(view.dom.querySelectorAll<HTMLElement>(".cm-content")).every(
+        (content) => content.getAttribute("contenteditable") === "false",
+      ),
+    ).toBe(true);
+    controller.setMode("write");
+    document.documentElement.classList.add("dark");
+    controller.refreshExternalPresentation("appearance");
+
+    const editorsAfterPresentationChanges = Array.from(
+      view.dom.querySelectorAll<HTMLElement>(".cm-editor"),
+    );
+    expect(editorsAfterPresentationChanges).toHaveLength(editors.length);
+    editorsAfterPresentationChanges.forEach((editor, index) => {
+      expect(editor).toBe(editors[index]);
+    });
+    expect(
+      Array.from(view.dom.querySelectorAll<HTMLElement>(".cm-content")).every(
+        (content) => content.getAttribute("contenteditable") === "true",
+      ),
+    ).toBe(true);
+    expect(controller.session.session.draftSource).toBe(source);
   });
 });

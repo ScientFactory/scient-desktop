@@ -1104,6 +1104,14 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
   --sidebar-stage-fade: var(--sidebar);
   --code-background: color-mix(in srgb, var(--card) 90%, var(--background));
   --code-foreground: var(--foreground);
+  /* Markdown code is a quiet, persistent card in both the shared preview and
+     the rich editor. Derive it from the upstream code palette without changing
+     unrelated diff, terminal, or file-preview surfaces. */
+  --markdown-code-block-background: color-mix(
+    in srgb,
+    var(--code-background) 95%,
+    var(--code-foreground) 5%
+  );
   --terminal-background: var(--background);
   --terminal-foreground: var(--foreground);
   --terminal-cursor: rgb(38 56 78);
@@ -1390,7 +1398,7 @@ html[data-theme-id] [data-chat-header] [data-slot="separator"] {
    default look keeps its secondary/input tints; themed palettes tint those
    surfaces with the accent, which fights syntax highlighting. */
 html[data-theme-id] .chat-markdown .chat-markdown-codeblock {
-  background-color: var(--code-background);
+  background-color: var(--markdown-code-block-background);
   border-color: var(--contrast-border);
   color: var(--code-foreground);
 }
@@ -1944,6 +1952,10 @@ code {
 .chat-markdown .chat-markdown-codeblock-header,
 .chat-markdown .chat-markdown-chrome-action {
   color: color-mix(in srgb, var(--contrast-foreground) 72%, transparent);
+}
+
+.chat-markdown .chat-markdown-codeblock {
+  background-color: var(--markdown-code-block-background);
 }
 
 .chat-markdown .chat-markdown-chrome-action:hover {

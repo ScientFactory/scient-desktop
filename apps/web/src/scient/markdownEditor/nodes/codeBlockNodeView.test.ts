@@ -2,8 +2,12 @@
 import { EditorState, NodeSelection, type Selection, type Transaction } from "prosemirror-state";
 import { DecorationSet, type EditorView, type NodeView } from "prosemirror-view";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
+
 import { scientMarkdownSchema } from "../prosemirror/schema";
-import { createScientCodeBlockNodeView } from "./codeBlockNodeView";
+import {
+  createScientCodeBlockNodeView,
+  type ScientMarkdownCodeEditorRegistrar,
+} from "./codeBlockNodeView";
 import { createScientNestedCodeEditor } from "./codeMirrorCodeEditor";
 import type {
   ScientMarkdownExternalPresentationRefresh,
@@ -11,20 +15,11 @@ import type {
   ScientMarkdownThemeResolver,
 } from "./externalPresentation";
 
-const syntaxMocks = vi.hoisted(() => ({
-  codeToHtml: vi.fn(
-    (_code: string, options: { readonly theme: string }) =>
-      `<span data-code-theme="${options.theme}">code</span>`,
-  ),
-  getSyntaxHighlighterPromise: vi.fn(),
-}));
-
 const mocks = {
   create: vi.mocked(createScientNestedCodeEditor),
   dispatch: vi.fn(),
 };
-// Manual factory mocks can resolve to actual exports during concurrent dynamic
-// imports. Autospy keeps both activation continuations on the same controlled factory.
+
 vi.mock("./codeMirrorCodeEditor", { spy: true });
 vi.mock("./ScientEditableRichFence", async () => {
   const { createElement } = await import("react");
@@ -41,36 +36,41 @@ vi.mock("./ScientEditableRichFence", async () => {
       ),
   };
 });
-vi.mock("~/lib/syntaxHighlighting", () => ({
-  getSyntaxHighlighterPromise: syntaxMocks.getSyntaxHighlighterPromise,
-}));
 
-describe("nested code editor activation", () => {
+describe("persistent nested code editor", () => {
   beforeEach(() => {
-    syntaxMocks.codeToHtml.mockClear();
-    syntaxMocks.getSyntaxHighlighterPromise.mockReset();
-    syntaxMocks.getSyntaxHighlighterPromise.mockImplementation(async () => ({
-      codeToHtml: syntaxMocks.codeToHtml,
-    }));
-    mocks.create.mockImplementation(() => ({
-      focus: vi.fn(),
-      focusAt: vi.fn(),
-      destroy: vi.fn(),
-      replaceExternalCode: vi.fn(),
-    }));
+    mocks.create.mockReset();
+    mocks.create.mockImplementation((input) => {
+      const content = document.createElement("div");
+      content.className = "cm-content";
+      input.parent.append(content);
+      return {
+        destroy: vi.fn(),
+        focus: vi.fn(),
+        refreshAppearance: vi.fn(),
+        replaceExternalCode: vi.fn(),
+        setEditable: vi.fn(),
+      };
+    });
   });
+
   afterEach(() => {
     mocks.create.mockReset();
     mocks.dispatch.mockClear();
     document.body.replaceChildren();
   });
+
   function fixture(
-    resolveTheme?: ScientMarkdownThemeResolver,
-    registerExternalPresentation?: ScientMarkdownExternalPresentationRegistrar,
-    params = "text",
+    input: {
+      readonly editable?: boolean;
+      readonly params?: string;
+      readonly registerCodeEditor?: ScientMarkdownCodeEditorRegistrar;
+      readonly registerExternalPresentation?: ScientMarkdownExternalPresentationRegistrar;
+      readonly resolveTheme?: ScientMarkdownThemeResolver;
+    } = {},
   ) {
     const node = scientMarkdownSchema.nodes.code_block!.create(
-      { params },
+      { params: input.params ?? "text" },
       scientMarkdownSchema.text("code"),
     );
     const doc = scientMarkdownSchema.topNodeType.create(null, [node]);
@@ -79,7 +79,7 @@ describe("nested code editor activation", () => {
     const selectsBlock = (selection: Selection) =>
       selection instanceof NodeSelection && selection.from === 0;
     const view = {
-      editable: true,
+      editable: input.editable ?? true,
       focus: vi.fn(),
       get state() {
         return state;
@@ -88,8 +88,6 @@ describe("nested code editor activation", () => {
         mocks.dispatch(transaction);
         const wasSelected = selectsBlock(state.selection);
         state = state.apply(transaction);
-        // The real view calls selectNode/deselectNode synchronously while it
-        // applies a selection change; the node view relies on that ordering.
         const isSelected = selectsBlock(state.selection);
         if (isSelected && !wasSelected) nodeView?.selectNode?.();
         if (!isSelected && wasSelected) nodeView?.deselectNode?.();
@@ -99,176 +97,145 @@ describe("nested code editor activation", () => {
       node,
       view,
       () => 0,
-      resolveTheme,
-      registerExternalPresentation,
+      input.resolveTheme,
+      input.registerExternalPresentation,
+      undefined,
+      input.registerCodeEditor,
     );
     document.body.append(nodeView.dom!);
-    return { nodeView, state: () => state };
+    return { nodeView, state: () => state, view };
   }
-  it("does not activate or steal focus after deselection during the lazy import", async () => {
-    const { nodeView } = fixture();
-    nodeView.selectNode!();
-    nodeView.deselectNode!();
-    await vi.dynamicImportSettled();
-    expect(mocks.create).not.toHaveBeenCalled();
-    nodeView.destroy!();
-  });
-  it("keeps rendered code visible until the lazy editor is ready, then swaps once", async () => {
+
+  it("uses the same ordinary-code surface before, during, and after selection", () => {
     const { nodeView } = fixture();
     const dom = nodeView.dom as HTMLElement;
     const rendered = dom.querySelector<HTMLElement>(".scient-markdown-code-render")!;
-    const editor = dom.querySelector<HTMLElement>(".scient-markdown-code-editor")!;
-    nodeView.selectNode!();
-    expect(rendered.hidden).toBe(false);
-    expect(rendered.textContent).toBe("code");
-    expect(editor.hidden).toBe(true);
-    await vi.dynamicImportSettled();
-    expect(rendered.hidden).toBe(true);
-    expect(editor.hidden).toBe(false);
-    nodeView.deselectNode!();
-    expect(rendered.hidden).toBe(false);
-    expect(editor.hidden).toBe(true);
-    nodeView.selectNode!();
-    expect(rendered.hidden).toBe(true);
-    expect(editor.hidden).toBe(false);
+    const editorHost = dom.querySelector<HTMLElement>(".scient-markdown-code-editor")!;
+    const editorContent = editorHost.querySelector(".cm-content");
+
     expect(mocks.create).toHaveBeenCalledOnce();
-    nodeView.destroy!();
-  });
-  it("creates only one editor across overlapping activations", async () => {
-    const { nodeView } = fixture();
-    nodeView.selectNode!();
-    nodeView.deselectNode!();
-    nodeView.selectNode!();
-    await vi.dynamicImportSettled();
-    expect(mocks.create).toHaveBeenCalledOnce();
-    nodeView.destroy!();
-    expect(mocks.create.mock.results[0]?.value.destroy).toHaveBeenCalledOnce();
-  });
-  it("does not create an editor after destruction", async () => {
-    const { nodeView } = fixture();
-    nodeView.selectNode!();
-    nodeView.destroy!();
-    await vi.dynamicImportSettled();
-    expect(mocks.create).not.toHaveBeenCalled();
-  });
-
-  it("refreshes syntax appearance through the shared presentation channel", async () => {
-    let theme: "light" | "dark" = "light";
-    let refresh: ScientMarkdownExternalPresentationRefresh | undefined;
-    const unregister = vi.fn();
-    const { nodeView } = fixture(
-      () => theme,
-      (registeredRefresh) => {
-        refresh = registeredRefresh;
-        return unregister;
-      },
-    );
-    const rendered = (nodeView.dom as HTMLElement).querySelector<HTMLElement>(
-      ".scient-markdown-code-render",
-    )!;
-
-    await vi.waitFor(() => expect(rendered.querySelector("[data-code-theme]")).not.toBeNull());
-    const lightTheme = rendered.querySelector("[data-code-theme]")?.getAttribute("data-code-theme");
-    refresh?.("workspace");
-    expect(rendered.querySelector("[data-code-theme]")?.getAttribute("data-code-theme")).toBe(
-      lightTheme,
-    );
-
-    theme = "dark";
-    refresh?.("appearance");
-    await vi.waitFor(() =>
-      expect(rendered.querySelector("[data-code-theme]")?.getAttribute("data-code-theme")).not.toBe(
-        lightTheme,
-      ),
-    );
-
-    nodeView.destroy!();
-    expect(unregister).toHaveBeenCalledOnce();
-  });
-
-  it("defers syntax highlighting while CodeMirror owns the selected code", async () => {
-    const { nodeView } = fixture();
-    await vi.waitFor(() => expect(syntaxMocks.codeToHtml).toHaveBeenCalledOnce());
-    syntaxMocks.codeToHtml.mockClear();
-    syntaxMocks.getSyntaxHighlighterPromise.mockClear();
+    expect(dom.dir).toBe("ltr");
+    expect(rendered.hidden).toBe(true);
+    expect(editorHost.hidden).toBe(false);
+    expect(editorContent).not.toBeNull();
 
     nodeView.selectNode?.();
-    const updatedNode = scientMarkdownSchema.nodes.code_block!.create(
-      { params: "text" },
-      scientMarkdownSchema.text("latest code"),
-    );
-    expect(nodeView.update?.(updatedNode, [], DecorationSet.empty)).toBe(true);
-    await Promise.resolve();
-    expect(syntaxMocks.getSyntaxHighlighterPromise).not.toHaveBeenCalled();
-    expect(syntaxMocks.codeToHtml).not.toHaveBeenCalled();
-
     nodeView.deselectNode?.();
-    await vi.waitFor(() =>
-      expect(syntaxMocks.codeToHtml).toHaveBeenCalledWith(
-        "latest code",
-        expect.objectContaining({ lang: "text" }),
-      ),
-    );
+    nodeView.selectNode?.();
+
+    expect(mocks.create).toHaveBeenCalledOnce();
+    expect(rendered.hidden).toBe(true);
+    expect(editorHost.hidden).toBe(false);
+    expect(editorHost.querySelector(".cm-content")).toBe(editorContent);
     nodeView.destroy?.();
   });
 
-  it("keeps code readable after activation fails and retries without changing the source", async () => {
+  it("registers one persistent editor for mode ownership and unregisters it on destroy", () => {
+    const unregister = vi.fn();
+    const register = vi.fn(() => unregister);
+    const { nodeView } = fixture({ registerCodeEditor: register });
+    const editor = mocks.create.mock.results[0]!.value;
+
+    expect(register).toHaveBeenCalledExactlyOnceWith(editor);
+    nodeView.destroy?.();
+    expect(unregister).toHaveBeenCalledOnce();
+    expect(editor.destroy).toHaveBeenCalledOnce();
+  });
+
+  it("updates code and language without replacing the persistent editor", () => {
+    const { nodeView } = fixture({ params: "javascript" });
+    const editor = mocks.create.mock.results[0]!.value;
+    const editorHost = (nodeView.dom as HTMLElement).querySelector<HTMLElement>(
+      ".scient-markdown-code-editor",
+    )!;
+    const editorContent = editorHost.querySelector(".cm-content");
+    const updatedNode = scientMarkdownSchema.nodes.code_block!.create(
+      { params: "typescript strict" },
+      scientMarkdownSchema.text("const ready: boolean = true;"),
+    );
+
+    expect(nodeView.update?.(updatedNode, [], DecorationSet.empty)).toBe(true);
+
+    expect(editor.replaceExternalCode).toHaveBeenLastCalledWith(
+      "const ready: boolean = true;",
+      "typescript",
+    );
+    expect(mocks.create).toHaveBeenCalledOnce();
+    expect(editorHost.querySelector(".cm-content")).toBe(editorContent);
+    nodeView.destroy?.();
+  });
+
+  it("keeps plain code readable after initialization fails and retries in place", () => {
+    const editor = {
+      destroy: vi.fn(),
+      focus: vi.fn(),
+      refreshAppearance: vi.fn(),
+      replaceExternalCode: vi.fn(),
+      setEditable: vi.fn(),
+    };
+    mocks.create.mockImplementationOnce(() => {
+      throw new Error("Editor initialization failed");
+    });
+    mocks.create.mockImplementationOnce((input) => {
+      const content = document.createElement("div");
+      content.className = "cm-content";
+      input.parent.append(content);
+      return editor;
+    });
     const { nodeView } = fixture();
     const dom = nodeView.dom as HTMLElement;
     const rendered = dom.querySelector<HTMLElement>(".scient-markdown-code-render")!;
-    const editor = dom.querySelector<HTMLElement>(".scient-markdown-code-editor")!;
-    mocks.create.mockImplementationOnce(() => {
-      editor.append(document.createElement("span"));
-      throw new Error("Editor initialization failed");
-    });
-    try {
-      nodeView.selectNode!();
-      await vi.dynamicImportSettled();
-      const notice = dom.querySelector<HTMLElement>(".scient-markdown-code-load-error")!;
-      expect(notice?.hidden).toBe(false);
-      expect(notice.textContent).toContain("Markdown source");
-      expect(rendered.hidden).toBe(false);
-      expect(rendered.textContent).toBe("code");
-      expect(editor.hidden).toBe(true);
-      expect(editor.childElementCount).toBe(0);
-      expect(mocks.dispatch).not.toHaveBeenCalled();
+    const editorHost = dom.querySelector<HTMLElement>(".scient-markdown-code-editor")!;
+    const notice = dom.querySelector<HTMLElement>(".scient-markdown-code-load-error")!;
 
-      const retry = notice.querySelector<HTMLButtonElement>("button")!;
-      retry.click();
-      await vi.dynamicImportSettled();
-      expect(mocks.create).toHaveBeenCalledTimes(2);
-      expect(mocks.create.mock.results[1]?.value.focus).toHaveBeenCalledOnce();
-      expect(notice.hidden).toBe(true);
-      expect(rendered.hidden).toBe(true);
-      expect(editor.hidden).toBe(false);
-      expect(mocks.dispatch).not.toHaveBeenCalled();
-    } finally {
-      nodeView.destroy!();
-    }
+    expect(notice.hidden).toBe(false);
+    expect(rendered.hidden).toBe(false);
+    expect(rendered.textContent).toBe("code");
+    expect(editorHost.hidden).toBe(true);
+
+    notice.querySelector<HTMLButtonElement>("button")!.click();
+
+    expect(mocks.create).toHaveBeenCalledTimes(2);
+    expect(notice.hidden).toBe(true);
+    expect(rendered.hidden).toBe(true);
+    expect(editorHost.hidden).toBe(false);
+    expect(editor.focus).toHaveBeenCalledOnce();
+    expect(mocks.dispatch).not.toHaveBeenCalled();
+    nodeView.destroy?.();
   });
 
-  it("clears a failed overlapping attempt when another activation succeeds", async () => {
-    const { nodeView } = fixture();
-    const dom = nodeView.dom as HTMLElement;
-    mocks.create.mockImplementationOnce(() => {
-      throw new Error("First activation failed");
+  it("refreshes only a rich visual through the shared appearance channel", async () => {
+    let theme: "light" | "dark" = "light";
+    let refresh: ScientMarkdownExternalPresentationRefresh | undefined;
+    const resolveTheme = vi.fn(() => theme);
+    const unregister = vi.fn();
+    const { nodeView } = fixture({
+      params: "plotly",
+      resolveTheme,
+      registerExternalPresentation: (registeredRefresh) => {
+        refresh = registeredRefresh;
+        return unregister;
+      },
     });
-    try {
-      nodeView.selectNode!();
-      nodeView.selectNode!();
-      await vi.dynamicImportSettled();
-      expect(mocks.create).toHaveBeenCalledTimes(2);
-      expect(mocks.create.mock.results[1]?.value.focus).toHaveBeenCalledOnce();
-      expect(dom.querySelector<HTMLElement>(".scient-markdown-code-load-error")?.hidden).toBe(true);
-      expect(dom.querySelector<HTMLElement>(".scient-markdown-code-editor")?.hidden).toBe(false);
-      expect(mocks.dispatch).not.toHaveBeenCalled();
-    } finally {
-      nodeView.destroy!();
-    }
+
+    await vi.waitFor(() =>
+      expect((nodeView.dom as HTMLElement).querySelector("[data-edit-rich-source]")).not.toBeNull(),
+    );
+    expect(resolveTheme).toHaveBeenCalledOnce();
+    expect(mocks.create).not.toHaveBeenCalled();
+
+    refresh?.("workspace");
+    expect(resolveTheme).toHaveBeenCalledOnce();
+    theme = "dark";
+    refresh?.("appearance");
+    expect(resolveTheme).toHaveBeenCalledTimes(2);
+
+    nodeView.destroy?.();
+    expect(unregister).toHaveBeenCalledOnce();
   });
 
   it("lets a rich visual own pointer, wheel, and double-click interaction", () => {
-    const { nodeView, state } = fixture(undefined, undefined, "plotly");
+    const { nodeView, state } = fixture({ params: "plotly" });
     const rendered = (nodeView.dom as HTMLElement).querySelector<HTMLElement>(
       ".scient-markdown-code-render",
     )!;
@@ -287,21 +254,15 @@ describe("nested code editor activation", () => {
 
     expect(state().selection.eq(originalSelection)).toBe(true);
     expect(mocks.dispatch).not.toHaveBeenCalled();
-    nodeView.destroy!();
+    nodeView.destroy?.();
   });
 
-  it("opens ordinary code at the exact first-click coordinates", async () => {
-    const editor = {
-      focus: vi.fn(),
-      focusAt: vi.fn(),
-      destroy: vi.fn(),
-      replaceExternalCode: vi.fn(),
-    };
-    mocks.create.mockReturnValue(editor);
+  it("lets CodeMirror place the first-click caret without a swap or scroll request", () => {
     const { nodeView, state } = fixture();
-    const rendered = (nodeView.dom as HTMLElement).querySelector<HTMLElement>(
-      ".scient-markdown-code-render",
-    )!;
+    const dom = nodeView.dom as HTMLElement;
+    const editorHost = dom.querySelector<HTMLElement>(".scient-markdown-code-editor")!;
+    const editorContent = editorHost.querySelector<HTMLElement>(".cm-content")!;
+    const editor = mocks.create.mock.results[0]!.value;
     const event = new MouseEvent("mousedown", {
       bubbles: true,
       button: 0,
@@ -310,93 +271,91 @@ describe("nested code editor activation", () => {
       clientY: 48,
     });
 
-    rendered.dispatchEvent(event);
+    editorContent.dispatchEvent(event);
 
-    expect(event.defaultPrevented).toBe(true);
+    expect(event.defaultPrevented).toBe(false);
     expect(state().selection).toBeInstanceOf(NodeSelection);
     expect(state().selection.from).toBe(0);
     expect(mocks.dispatch).toHaveBeenCalledOnce();
-    await vi.dynamicImportSettled();
-    expect(editor.focusAt).toHaveBeenCalledExactlyOnceWith({
-      x: 32,
-      y: 48,
-    });
     expect(editor.focus).not.toHaveBeenCalled();
-    nodeView.destroy!();
+    expect(editorHost.hidden).toBe(false);
+    expect(dom.querySelector<HTMLElement>(".scient-markdown-code-render")?.hidden).toBe(true);
+    nodeView.destroy?.();
   });
 
-  it("opens from a header click without steering the caret", async () => {
-    const editor = {
-      focus: vi.fn(),
-      focusAt: vi.fn(),
-      destroy: vi.fn(),
-      replaceExternalCode: vi.fn(),
-    };
-    mocks.create.mockReturnValue(editor);
+  it("focuses the existing editor from the header without replacing it", () => {
     const { nodeView, state } = fixture();
-    const header = (nodeView.dom as HTMLElement).querySelector<HTMLElement>(
-      ".scient-markdown-code-header",
-    )!;
+    const dom = nodeView.dom as HTMLElement;
+    const header = dom.querySelector<HTMLElement>(".scient-markdown-code-header")!;
+    const editorHost = dom.querySelector<HTMLElement>(".scient-markdown-code-editor")!;
+    const editorContent = editorHost.querySelector(".cm-content");
+    const editor = mocks.create.mock.results[0]!.value;
 
     header.dispatchEvent(
-      new MouseEvent("mousedown", { bubbles: true, button: 0, cancelable: true, clientX: 8 }),
+      new MouseEvent("mousedown", { bubbles: true, button: 0, cancelable: true }),
     );
     expect(state().selection).toBeInstanceOf(NodeSelection);
-    await vi.dynamicImportSettled();
     expect(editor.focus).toHaveBeenCalledOnce();
-    expect(editor.focusAt).not.toHaveBeenCalled();
 
-    // The editor is open and focused; a header click must not move its caret.
     header.dispatchEvent(
-      new MouseEvent("mousedown", { bubbles: true, button: 0, cancelable: true, clientX: 8 }),
+      new MouseEvent("mousedown", { bubbles: true, button: 0, cancelable: true }),
     );
-    await vi.dynamicImportSettled();
     expect(mocks.dispatch).toHaveBeenCalledOnce();
-    expect(editor.focusAt).not.toHaveBeenCalled();
     expect(editor.focus).toHaveBeenCalledTimes(2);
-    nodeView.destroy!();
+    expect(editorHost.querySelector(".cm-content")).toBe(editorContent);
+    expect(mocks.create).toHaveBeenCalledOnce();
+    nodeView.destroy?.();
   });
 
-  it("retries a failed editor from a click on the still-selected code", async () => {
-    const { nodeView } = fixture();
+  it("keeps ordinary code visible but non-activating in read mode", () => {
+    const { nodeView } = fixture({ editable: false });
     const dom = nodeView.dom as HTMLElement;
-    const rendered = dom.querySelector<HTMLElement>(".scient-markdown-code-render")!;
+    const header = dom.querySelector<HTMLElement>(".scient-markdown-code-header")!;
+    const editorHost = dom.querySelector<HTMLElement>(".scient-markdown-code-editor")!;
+    const editor = mocks.create.mock.results[0]!.value;
+
+    header.dispatchEvent(
+      new MouseEvent("mousedown", { bubbles: true, button: 0, cancelable: true }),
+    );
+
+    expect(editorHost.hidden).toBe(false);
+    expect(editor.focus).not.toHaveBeenCalled();
+    expect(mocks.dispatch).not.toHaveBeenCalled();
+    nodeView.destroy?.();
+  });
+
+  it("recovers a failed ordinary editor as read-only without selecting or focusing it", () => {
+    const editor = {
+      destroy: vi.fn(),
+      focus: vi.fn(),
+      refreshAppearance: vi.fn(),
+      replaceExternalCode: vi.fn(),
+      setEditable: vi.fn(),
+    };
     mocks.create.mockImplementationOnce(() => {
       throw new Error("Editor initialization failed");
     });
-    try {
-      nodeView.selectNode!();
-      await vi.dynamicImportSettled();
-      expect(dom.querySelector<HTMLElement>(".scient-markdown-code-load-error")?.hidden).toBe(
-        false,
-      );
+    mocks.create.mockImplementationOnce((input) => {
+      input.parent.append(document.createElement("div"));
+      return editor;
+    });
+    const { nodeView } = fixture({ editable: false });
+    const dom = nodeView.dom as HTMLElement;
+    const notice = dom.querySelector<HTMLElement>(".scient-markdown-code-load-error")!;
 
-      rendered.dispatchEvent(
-        new MouseEvent("mousedown", {
-          bubbles: true,
-          button: 0,
-          cancelable: true,
-          clientX: 20,
-          clientY: 30,
-        }),
-      );
-      // Already the selection: nothing to dispatch, so the click itself must retry.
-      expect(mocks.dispatch).not.toHaveBeenCalled();
-      await vi.dynamicImportSettled();
-      expect(mocks.create).toHaveBeenCalledTimes(2);
-      expect(mocks.create.mock.results[1]?.value.focusAt).toHaveBeenCalledExactlyOnceWith({
-        x: 20,
-        y: 30,
-      });
-      expect(dom.querySelector<HTMLElement>(".scient-markdown-code-load-error")?.hidden).toBe(true);
-      expect(dom.querySelector<HTMLElement>(".scient-markdown-code-editor")?.hidden).toBe(false);
-    } finally {
-      nodeView.destroy!();
-    }
+    notice.querySelector<HTMLButtonElement>("button")!.click();
+
+    expect(mocks.create).toHaveBeenCalledTimes(2);
+    expect(notice.hidden).toBe(true);
+    expect(dom.querySelector<HTMLElement>(".scient-markdown-code-render")?.hidden).toBe(true);
+    expect(dom.querySelector<HTMLElement>(".scient-markdown-code-editor")?.hidden).toBe(false);
+    expect(editor.focus).not.toHaveBeenCalled();
+    expect(mocks.dispatch).not.toHaveBeenCalled();
+    nodeView.destroy?.();
   });
 
   it("opens rich-fence source only through its explicit authoring action", async () => {
-    const { nodeView, state } = fixture(undefined, undefined, "mermaid");
+    const { nodeView, state } = fixture({ params: "mermaid" });
     const dom = nodeView.dom as HTMLElement;
     const edit = await vi.waitFor(() => {
       const button = dom.querySelector<HTMLButtonElement>("[data-edit-rich-source]");
@@ -404,24 +363,25 @@ describe("nested code editor activation", () => {
       return button!;
     });
 
-    nodeView.selectNode!();
-    await vi.dynamicImportSettled();
+    nodeView.selectNode?.();
     expect(mocks.create).not.toHaveBeenCalled();
 
     edit.click();
     expect(state().selection).toBeInstanceOf(NodeSelection);
     expect(state().selection.from).toBe(0);
-    expect(mocks.dispatch).toHaveBeenCalledOnce();
-    expect(mocks.dispatch.mock.calls[0]?.[0].getMeta("addToHistory")).toBe(false);
-
-    await vi.dynamicImportSettled();
     expect(mocks.create).toHaveBeenCalledOnce();
     expect(dom.querySelector<HTMLElement>(".scient-markdown-code-render")?.hidden).toBe(false);
     expect(dom.querySelector<HTMLElement>(".scient-markdown-code-editor")?.hidden).toBe(false);
 
+    const editorContent = dom.querySelector(".scient-markdown-code-editor .cm-content");
+    nodeView.deselectNode?.();
+    expect(dom.querySelector<HTMLElement>(".scient-markdown-code-render")?.hidden).toBe(false);
+    expect(dom.querySelector<HTMLElement>(".scient-markdown-code-editor")?.hidden).toBe(true);
+
+    nodeView.selectNode?.();
     edit.click();
-    await vi.dynamicImportSettled();
     expect(mocks.create).toHaveBeenCalledOnce();
-    nodeView.destroy!();
+    expect(dom.querySelector(".scient-markdown-code-editor .cm-content")).toBe(editorContent);
+    nodeView.destroy?.();
   });
 });

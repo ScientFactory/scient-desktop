@@ -4,8 +4,6 @@ import type { EditorView, NodeView } from "prosemirror-view";
 import { createElement } from "react";
 import { createRoot, type Root } from "react-dom/client";
 
-import { resolveDiffThemeName } from "~/lib/diffRendering";
-import { getSyntaxHighlighterPromise } from "~/lib/syntaxHighlighting";
 import type {
   ScientRichFenceAuthoringActions,
   ScientRichFenceContextMenuHandler,
@@ -13,7 +11,11 @@ import type {
 import { resolveScientRichFenceKind } from "~/scient/presentation/ScientRichFence";
 
 import { leaveAtomEditor } from "../prosemirror/safeSelection";
-import type { ScientNestedCodeEditor } from "./codeMirrorCodeEditor";
+import {
+  createScientNestedCodeEditor,
+  type ScientNestedCodeEditor,
+  type ScientNestedCodeEditorRegistrar,
+} from "./codeMirrorCodeEditor";
 import type {
   ScientMarkdownExternalPresentationRegistrar,
   ScientMarkdownTheme,
@@ -21,17 +23,7 @@ import type {
 } from "./externalPresentation";
 import { ScientEditableRichFence } from "./ScientEditableRichFence";
 
-type ScientCodeEditorModule = typeof import("./codeMirrorCodeEditor");
-
-let codeEditorModulePromise: Promise<ScientCodeEditorModule> | null = null;
-
-function loadCodeEditorModule(): Promise<ScientCodeEditorModule> {
-  codeEditorModulePromise ??= import("./codeMirrorCodeEditor").catch((error: unknown) => {
-    codeEditorModulePromise = null;
-    throw error;
-  });
-  return codeEditorModulePromise;
-}
+export type ScientMarkdownCodeEditorRegistrar = ScientNestedCodeEditorRegistrar;
 
 function codeLanguage(node: ProseMirrorNode): string {
   return String(node.attrs.params).trim().split(/\s+/u)[0] || "text";
@@ -55,13 +47,15 @@ class ScientCodeBlockNodeView implements NodeView {
   private readonly rendered = document.createElement("div");
   private readonly editorHost = document.createElement("div");
   private readonly loadError = document.createElement("div");
+  private readonly retryButton = document.createElement("button");
   private nestedEditor: ScientNestedCodeEditor | null = null;
+  private unregisterCodeEditor: (() => void) | undefined;
   private reactRoot: Root | null = null;
   private node: ProseMirrorNode;
   private destroyed = false;
-  private highlightVersion = 0;
   private selected = false;
-  private pendingPointerCoordinates: { x: number; y: number } | null = null;
+  private selectingFromEditorPointer = false;
+  private richSourceOpen = false;
   private readonly authoringActions: ScientRichFenceAuthoringActions;
   private readonly unregisterExternalPresentation: (() => void) | undefined;
 
@@ -72,6 +66,7 @@ class ScientCodeBlockNodeView implements NodeView {
     private readonly resolveTheme: ScientMarkdownThemeResolver = documentTheme,
     registerExternalPresentation?: ScientMarkdownExternalPresentationRegistrar,
     showRichFenceContextMenu?: ScientRichFenceContextMenuHandler,
+    private readonly registerCodeEditor?: ScientMarkdownCodeEditorRegistrar,
   ) {
     this.node = node;
     this.authoringActions = {
@@ -80,6 +75,7 @@ class ScientCodeBlockNodeView implements NodeView {
     };
     this.dom.className = "scient-markdown-code-block";
     this.dom.contentEditable = "false";
+    this.dom.dir = "ltr";
     this.dom.setAttribute("data-scient-markdown-code-block", "true");
     const header = document.createElement("div");
     header.className = "scient-markdown-code-header";
@@ -95,19 +91,17 @@ class ScientCodeBlockNodeView implements NodeView {
     this.loadError.hidden = true;
     this.loadError.setAttribute("role", "status");
     this.loadError.append("Code editor could not open. Markdown source is still available.");
-    const retry = document.createElement("button");
-    retry.type = "button";
-    retry.textContent = "Retry";
-    retry.setAttribute("aria-label", "Retry code editor");
-    retry.addEventListener("click", () => void this.activateEditor());
-    this.loadError.append(retry);
+    this.retryButton.type = "button";
+    this.retryButton.textContent = "Retry";
+    this.retryButton.setAttribute("aria-label", "Retry code editor");
+    this.retryButton.addEventListener("click", this.retryEditor);
+    this.loadError.append(this.retryButton);
     this.dom.append(this.loadError);
-    // Ordinary code keeps direct block activation. Rich cards own every event
-    // inside their rendered surface and expose source editing explicitly.
+    // Ordinary code is always one CodeMirror surface. Rich cards own every
+    // event in their rendered surface and expose source editing explicitly.
     this.dom.addEventListener("mousedown", this.handleMouseDown);
-    this.dom.addEventListener("pointerenter", this.handlePointerEnter);
     this.unregisterExternalPresentation = registerExternalPresentation?.((change) => {
-      if (change === "appearance") this.render();
+      if (change === "appearance" && this.isRichFence()) this.render();
     });
     this.render();
   }
@@ -115,30 +109,23 @@ class ScientCodeBlockNodeView implements NodeView {
   update(node: ProseMirrorNode): boolean {
     if (node.type !== this.node.type) return false;
     this.node = node;
-    this.nestedEditor?.replaceExternalCode(node.textContent);
     this.render();
     return true;
   }
 
   selectNode(): void {
     this.selected = true;
-    this.dom.classList.add("is-selected");
-    if (!this.isRichFence()) {
-      // Invalidate an in-flight syntax render before the surface swaps to
-      // CodeMirror, which owns highlighting for the active editor.
-      this.highlightVersion += 1;
-      void this.activateEditor();
+    if (!this.isRichFence() && this.view.editable) {
+      this.activateEditor(!this.selectingFromEditorPointer);
     }
   }
 
   deselectNode(): void {
     this.selected = false;
-    this.pendingPointerCoordinates = null;
-    this.dom.classList.remove("is-selected");
-    this.rendered.hidden = false;
+    if (!this.isRichFence()) return;
+    this.richSourceOpen = false;
     this.editorHost.hidden = true;
     this.loadError.hidden = true;
-    if (!this.isRichFence()) this.render();
   }
 
   stopEvent(event: Event): boolean {
@@ -156,14 +143,15 @@ class ScientCodeBlockNodeView implements NodeView {
 
   destroy(): void {
     this.destroyed = true;
-    this.highlightVersion += 1;
+    this.unregisterCodeEditor?.();
+    this.unregisterCodeEditor = undefined;
     this.nestedEditor?.destroy();
     this.nestedEditor = null;
     this.reactRoot?.unmount();
     this.reactRoot = null;
     this.unregisterExternalPresentation?.();
+    this.retryButton.removeEventListener("click", this.retryEditor);
     this.dom.removeEventListener("mousedown", this.handleMouseDown);
-    this.dom.removeEventListener("pointerenter", this.handlePointerEnter);
   }
 
   private isRichFenceRenderedTarget(target: EventTarget | null): boolean {
@@ -178,9 +166,21 @@ class ScientCodeBlockNodeView implements NodeView {
 
   private readonly handleMouseDown = (event: MouseEvent) => {
     if (event.button !== 0 || !(event.target instanceof Element)) return;
-    if (this.editorHost.contains(event.target) || this.isRichFenceRenderedTarget(event.target)) {
+    if (this.editorHost.contains(event.target)) {
+      if (this.isRichFence() || !this.view.editable || this.selected) return;
+      const position = this.getPos();
+      if (position !== undefined) {
+        this.selectingFromEditorPointer = true;
+        try {
+          this.selectSelf(position);
+        } finally {
+          this.selectingFromEditorPointer = false;
+        }
+      }
+      // Keep the native CodeMirror pointer event. It owns exact caret placement.
       return;
     }
+    if (this.isRichFenceRenderedTarget(event.target)) return;
     if (event.target.closest("button, a, input, select, textarea, [role='button']")) return;
     if (!this.view.editable) return;
     const position = this.getPos();
@@ -192,21 +192,8 @@ class ScientCodeBlockNodeView implements NodeView {
       if (!this.selected) this.selectSelf(position);
       return;
     }
-    // Only a click on the rendered code carries a caret target. Header clicks
-    // open (or refocus) the editor without moving its caret.
-    this.pendingPointerCoordinates = this.rendered.contains(event.target)
-      ? { x: event.clientX, y: event.clientY }
-      : null;
-    if (this.selected) {
-      // Already the node selection (for example after a failed editor load), so
-      // the view will not call selectNode again; activate from the click itself.
-      void this.activateEditor();
-      return;
-    }
-    this.selectSelf(position);
-    // The view runs selectNode synchronously inside dispatch. If it did not, the
-    // click opened nothing and must not steer a later activation.
-    if (!this.selected) this.pendingPointerCoordinates = null;
+    if (!this.selected) this.selectSelf(position);
+    else this.activateEditor(true);
   };
 
   private selectSelf(position: number): void {
@@ -214,13 +201,6 @@ class ScientCodeBlockNodeView implements NodeView {
       this.view.state.tr.setSelection(NodeSelection.create(this.view.state.doc, position)),
     );
   }
-
-  private readonly handlePointerEnter = () => {
-    if (!this.view.editable || this.isRichFence()) return;
-    // Warm the shared editor module before the first click without creating a
-    // CodeMirror instance for every code block in a long document.
-    void loadCodeEditorModule().catch(() => undefined);
-  };
 
   private readonly requestSourceEdit = () => {
     if (this.destroyed || !this.view.editable) return;
@@ -234,48 +214,62 @@ class ScientCodeBlockNodeView implements NodeView {
           .setMeta("addToHistory", false),
       );
     }
-    void this.activateEditor();
+    this.richSourceOpen = true;
+    this.activateEditor(true);
   };
 
-  private async activateEditor(): Promise<void> {
-    if (this.destroyed || !this.selected || !this.view.editable) return;
-    this.loadError.hidden = true;
-    if (!this.nestedEditor) {
+  private readonly retryEditor = () => {
+    if (this.destroyed) return;
+    if (this.isRichFence()) {
+      if (!this.view.editable || !this.selected) return;
+      this.richSourceOpen = true;
+    }
+    this.activateEditor(this.view.editable);
+  };
+
+  private ensureEditor(): ScientNestedCodeEditor | null {
+    if (this.nestedEditor) return this.nestedEditor;
+    this.editorHost.replaceChildren();
+    try {
+      const editor = createScientNestedCodeEditor({
+        parent: this.editorHost,
+        code: this.node.textContent,
+        editable: this.view.editable,
+        language: codeLanguage(this.node),
+        onEscape: () => leaveAtomEditor(this.view, this.getPos, this.node),
+        onUserCodeChange: (code) => this.replaceCode(code),
+      });
+      let unregister: (() => void) | undefined;
       try {
-        const { createScientNestedCodeEditor } = await loadCodeEditorModule();
-        if (this.destroyed || !this.selected || !this.view.editable) return;
-        // Concurrent selections can share the same pending module import. Only
-        // one continuation may create the nested editor; never focus after exit.
-        this.editorHost.hidden = false;
-        this.nestedEditor ??= createScientNestedCodeEditor({
-          parent: this.editorHost,
-          code: this.node.textContent,
-          language: codeLanguage(this.node),
-          onEscape: () => leaveAtomEditor(this.view, this.getPos, this.node),
-          onUserCodeChange: (code) => this.replaceCode(code),
-        });
-      } catch {
-        if (this.destroyed || !this.selected || !this.view.editable || this.nestedEditor) return;
-        this.pendingPointerCoordinates = null;
-        this.editorHost.replaceChildren();
-        this.editorHost.hidden = true;
-        this.rendered.hidden = false;
-        this.loadError.hidden = false;
-        return;
+        unregister = this.registerCodeEditor?.(editor);
+      } catch (error) {
+        editor.destroy();
+        throw error;
       }
+      this.nestedEditor = editor;
+      this.unregisterCodeEditor = unregister;
+      return editor;
+    } catch {
+      this.editorHost.replaceChildren();
+      return null;
     }
+  }
+
+  private activateEditor(focus: boolean): void {
+    if (this.destroyed) return;
+    if (this.isRichFence() && (!this.selected || !this.richSourceOpen)) return;
+    const editor = this.ensureEditor();
+    if (!editor) {
+      this.editorHost.hidden = true;
+      this.rendered.hidden = false;
+      this.loadError.hidden = false;
+      return;
+    }
+    editor.replaceExternalCode(this.node.textContent, codeLanguage(this.node));
     this.loadError.hidden = true;
-    // Keep the rendered code (and its height) until the lazy editor is ready.
-    // Rich fences stay visible alongside their editable source.
-    this.rendered.hidden = !this.dom.hasAttribute("data-scient-markdown-rich-fence");
+    this.rendered.hidden = !this.isRichFence();
     this.editorHost.hidden = false;
-    const pointerCoordinates = this.pendingPointerCoordinates;
-    this.pendingPointerCoordinates = null;
-    if (pointerCoordinates) {
-      this.nestedEditor.focusAt(pointerCoordinates);
-    } else {
-      this.nestedEditor.focus();
-    }
+    if (focus && this.view.editable) editor.focus();
   }
 
   private replaceCode(code: string): void {
@@ -300,8 +294,8 @@ class ScientCodeBlockNodeView implements NodeView {
       "is-empty",
       code.length === 0 && language === "text" && richKind === null,
     );
+    this.nestedEditor?.replaceExternalCode(code, language);
     if (richKind) {
-      this.highlightVersion += 1;
       this.reactRoot ??= createRoot(this.rendered);
       const theme = this.resolveTheme();
       this.reactRoot.render(
@@ -316,32 +310,30 @@ class ScientCodeBlockNodeView implements NodeView {
         }),
       );
       this.dom.setAttribute("data-scient-markdown-rich-fence", richKind);
+      this.rendered.hidden = false;
+      if (this.richSourceOpen) this.activateEditor(false);
+      else this.editorHost.hidden = true;
       return;
     }
+
     this.dom.removeAttribute("data-scient-markdown-rich-fence");
+    this.richSourceOpen = false;
     if (this.reactRoot) {
       this.reactRoot.unmount();
       this.reactRoot = null;
     }
     this.rendered.textContent = code;
-    const version = ++this.highlightVersion;
-    if (this.selected) return;
-    const theme = this.resolveTheme();
-    void getSyntaxHighlighterPromise(language)
-      .then((highlighter) => {
-        if (this.destroyed || version !== this.highlightVersion) return;
-        try {
-          this.rendered.innerHTML = highlighter.codeToHtml(code, {
-            lang: language,
-            theme: resolveDiffThemeName(theme),
-          });
-        } catch {
-          this.rendered.textContent = code;
-        }
-      })
-      .catch(() => {
-        if (!this.destroyed && version === this.highlightVersion) this.rendered.textContent = code;
-      });
+    const editor = this.ensureEditor();
+    if (editor) {
+      editor.replaceExternalCode(code, language);
+      this.rendered.hidden = true;
+      this.editorHost.hidden = false;
+      this.loadError.hidden = true;
+    } else {
+      this.rendered.hidden = false;
+      this.editorHost.hidden = true;
+      this.loadError.hidden = false;
+    }
   }
 }
 
@@ -352,6 +344,7 @@ export function createScientCodeBlockNodeView(
   resolveTheme?: ScientMarkdownThemeResolver,
   registerExternalPresentation?: ScientMarkdownExternalPresentationRegistrar,
   showRichFenceContextMenu?: ScientRichFenceContextMenuHandler,
+  registerCodeEditor?: ScientMarkdownCodeEditorRegistrar,
 ): NodeView {
   return new ScientCodeBlockNodeView(
     node,
@@ -360,5 +353,6 @@ export function createScientCodeBlockNodeView(
     resolveTheme,
     registerExternalPresentation,
     showRichFenceContextMenu,
+    registerCodeEditor,
   );
 }

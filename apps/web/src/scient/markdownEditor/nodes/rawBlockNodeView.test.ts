@@ -1,19 +1,28 @@
 // @vitest-environment happy-dom
 import { EditorState, NodeSelection, TextSelection, type Transaction } from "prosemirror-state";
 import type { EditorView } from "prosemirror-view";
-import { afterEach, describe, expect, it, vi } from "vite-plus/test";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
 import { scientMarkdownSchema } from "../prosemirror/schema";
 import {
   createScientRawBlockNodeView,
   type ScientMarkdownRawSourceEditorRegistrar,
 } from "./rawBlockNodeView";
+import {
+  createScientNestedCodeEditor,
+  type ScientNestedCodeEditorRegistrar,
+} from "./codeMirrorCodeEditor";
+
+vi.mock("./codeMirrorCodeEditor", { spy: true });
+
+const createCodeEditor = vi.mocked(createScientNestedCodeEditor);
 
 function fixture(
   sourceKind: string,
   source: string,
   registerSourceEditor?: ScientMarkdownRawSourceEditorRegistrar,
   editable = true,
+  registerCodeEditor?: ScientNestedCodeEditorRegistrar,
 ) {
   const node = scientMarkdownSchema.nodes.raw_block!.create({ source, sourceKind });
   const paragraph = scientMarkdownSchema.nodes.paragraph!.create(
@@ -36,112 +45,154 @@ function fixture(
     dispatch,
     focus: vi.fn(),
   } as unknown as EditorView;
-  const nodeView = createScientRawBlockNodeView(node, view, () => 0, registerSourceEditor);
+  const nodeView = createScientRawBlockNodeView(
+    node,
+    view,
+    () => 0,
+    registerSourceEditor,
+    registerCodeEditor,
+  );
   document.body.append(nodeView.dom);
   return { dispatch, nodeView, state: () => state };
 }
 
 describe("raw Markdown source islands", () => {
-  afterEach(() => document.body.replaceChildren());
+  beforeEach(() => {
+    createCodeEditor.mockReset();
+    createCodeEditor.mockImplementation((input) => {
+      const content = document.createElement("div");
+      content.className = "cm-content";
+      content.setAttribute("aria-label", input.ariaLabel ?? "Source");
+      input.parent.append(content);
+      return {
+        destroy: vi.fn(),
+        focus: vi.fn(),
+        refreshAppearance: vi.fn(),
+        replaceExternalCode: vi.fn(),
+        setEditable: vi.fn(),
+      };
+    });
+  });
+
+  afterEach(() => {
+    createCodeEditor.mockReset();
+    document.body.replaceChildren();
+  });
 
   it.each([
     ["yaml", "---\ntitle: Native Markdown acceptance\n---"],
     ["html", "<!-- Keep this exact comment. -->"],
-  ])("keeps one persistent %s source field while selection changes", (sourceKind, source) => {
+  ])("keeps one persistent %s source editor while selection changes", (sourceKind, source) => {
     const { nodeView } = fixture(sourceKind, source);
-    const editor = nodeView.dom.querySelector<HTMLTextAreaElement>(
-      ".scient-markdown-source-island-editor",
+    const editor = nodeView.dom.querySelector<HTMLElement>(
+      ".scient-markdown-source-island-code-editor",
     )!;
 
     expect(nodeView.dom.querySelector(".scient-markdown-source-island-preview")).toBeNull();
-    expect(nodeView.dom.querySelectorAll("textarea")).toHaveLength(1);
+    expect(nodeView.dom.querySelector("textarea")).toBeNull();
+    expect(createCodeEditor).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({
+        ariaLabel: sourceKind === "html" ? "HTML source" : "YAML source",
+        code: source,
+        editable: true,
+        language: sourceKind,
+      }),
+    );
     expect(editor.hidden).toBe(false);
-    expect(editor.value).toBe(source);
-    expect(editor.dir).toBe("ltr");
     expect(editor.dataset.scientMarkdownAtomEditor).toBe("true");
-    expect(editor.getAttribute("aria-label")).toBe(
+    expect(editor.tabIndex).toBe(-1);
+    expect(nodeView.dom.dir).toBe("ltr");
+    expect(editor.querySelector(".cm-content")?.getAttribute("aria-label")).toBe(
       sourceKind === "html" ? "HTML source" : "YAML source",
     );
     expect(nodeView.dom.dataset.scientMarkdownSourceKind).toBe(sourceKind);
 
     nodeView.selectNode?.();
-    expect(nodeView.dom.querySelector("textarea")).toBe(editor);
+    expect(nodeView.dom.querySelector(".scient-markdown-source-island-code-editor")).toBe(editor);
     expect(editor.hidden).toBe(false);
 
     nodeView.deselectNode?.();
-    expect(nodeView.dom.querySelector("textarea")).toBe(editor);
+    expect(nodeView.dom.querySelector(".scient-markdown-source-island-code-editor")).toBe(editor);
     expect(editor.hidden).toBe(false);
+    expect(createCodeEditor).toHaveBeenCalledOnce();
+
+    editor.focus();
+    expect(createCodeEditor.mock.results[0]!.value.focus).toHaveBeenCalledOnce();
 
     nodeView.destroy?.();
   });
 
-  it("selects the atom and edits its exact source in the same field", () => {
+  it("selects the atom and edits its exact source in the same nested editor", () => {
     const source = "---\ntitle: Before\n---";
     const { dispatch, nodeView, state } = fixture("yaml", source);
-    const editor = nodeView.dom.querySelector<HTMLTextAreaElement>("textarea")!;
+    const editor = nodeView.dom.querySelector<HTMLElement>(
+      ".scient-markdown-source-island-code-editor .cm-content",
+    )!;
 
     editor.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, button: 0 }));
     expect(state().selection).toBeInstanceOf(NodeSelection);
     expect(state().selection.from).toBe(0);
     expect(dispatch).toHaveBeenCalledOnce();
 
-    editor.value = "---\ntitle: After\n---";
-    editor.dispatchEvent(new InputEvent("input", { bubbles: true, inputType: "insertText" }));
+    createCodeEditor.mock.calls[0]![0].onUserCodeChange("---\ntitle: After\n---");
     expect(state().doc.firstChild?.attrs.source).toBe("---\ntitle: After\n---");
-    expect(nodeView.dom.querySelector("textarea")).toBe(editor);
+    expect(
+      nodeView.dom.querySelector(".scient-markdown-source-island-code-editor .cm-content"),
+    ).toBe(editor);
     expect(dispatch).toHaveBeenCalledTimes(2);
 
     nodeView.destroy?.();
   });
 
-  it("waits for IME composition to finish before projecting source", () => {
+  it("projects one nested-editor change and ignores the same source afterward", () => {
     const { dispatch, nodeView, state } = fixture("yaml", "---\ntitle: Before\n---");
-    const editor = nodeView.dom.querySelector<HTMLTextAreaElement>("textarea")!;
-    editor.value = "---\ntitle: שלום\n---";
+    const changeSource = createCodeEditor.mock.calls[0]![0].onUserCodeChange;
 
-    editor.dispatchEvent(
-      new InputEvent("input", {
-        bubbles: true,
-        data: "ם",
-        inputType: "insertText",
-        isComposing: true,
-      }),
-    );
-    expect(dispatch).not.toHaveBeenCalled();
-    expect(state().doc.firstChild?.attrs.source).toBe("---\ntitle: Before\n---");
-
-    editor.dispatchEvent(new CompositionEvent("compositionend", { bubbles: true, data: "ם" }));
+    changeSource("---\ntitle: שלום\n---");
     expect(dispatch).toHaveBeenCalledOnce();
     expect(state().doc.firstChild?.attrs.source).toBe("---\ntitle: שלום\n---");
-
-    editor.dispatchEvent(new InputEvent("input", { bubbles: true, inputType: "insertText" }));
+    changeSource("---\ntitle: שלום\n---");
     expect(dispatch).toHaveBeenCalledOnce();
 
     nodeView.destroy?.();
   });
 
-  it("does not project input while the persistent field is read-only", () => {
-    const { dispatch, nodeView, state } = fixture("html", "<!-- Before -->");
-    const editor = nodeView.dom.querySelector<HTMLTextAreaElement>("textarea")!;
-    editor.readOnly = true;
-    editor.value = "<!-- After -->";
-
-    editor.dispatchEvent(new InputEvent("input", { bubbles: true, inputType: "insertText" }));
+  it("does not project nested-editor input from a read-only view", () => {
+    const { dispatch, nodeView, state } = fixture("html", "<!-- Before -->", undefined, false);
+    expect(createCodeEditor.mock.calls[0]![0].editable).toBe(false);
+    createCodeEditor.mock.calls[0]![0].onUserCodeChange("<!-- After -->");
     expect(dispatch).not.toHaveBeenCalled();
     expect(state().doc.firstChild?.attrs.source).toBe("<!-- Before -->");
 
     nodeView.destroy?.();
   });
 
-  it("registers one source field for mode changes and unregisters it on destroy", () => {
+  it("registers one nested editor for mode and appearance changes", () => {
     const unregister = vi.fn();
     const register = vi.fn(() => unregister);
-    const { nodeView } = fixture("html", "<!-- exact -->", register);
-    const editor = nodeView.dom.querySelector<HTMLTextAreaElement>("textarea")!;
+    const { nodeView } = fixture("html", "<!-- exact -->", undefined, true, register);
+    const editor = createCodeEditor.mock.results[0]!.value;
 
     expect(register).toHaveBeenCalledExactlyOnceWith(editor);
     nodeView.destroy?.();
     expect(unregister).toHaveBeenCalledOnce();
+  });
+
+  it("falls back to one exact-source textarea if the nested editor cannot mount", () => {
+    createCodeEditor.mockImplementationOnce(() => {
+      throw new Error("CodeMirror unavailable");
+    });
+    const { dispatch, nodeView, state } = fixture("html", "<!-- Before -->");
+    const editor = nodeView.dom.querySelector<HTMLTextAreaElement>("textarea")!;
+
+    expect(editor.value).toBe("<!-- Before -->");
+    expect(editor.getAttribute("aria-label")).toBe("HTML source");
+    editor.value = "<!-- After -->";
+    editor.dispatchEvent(new InputEvent("input", { bubbles: true, inputType: "insertText" }));
+    expect(state().doc.firstChild?.attrs.source).toBe("<!-- After -->");
+    expect(dispatch).toHaveBeenCalledOnce();
+
+    nodeView.destroy?.();
   });
 
   it("directly edits a compact reference definition in its only source field", () => {

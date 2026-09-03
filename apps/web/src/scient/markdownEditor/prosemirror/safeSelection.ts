@@ -20,6 +20,16 @@ export function selectionOutsideNode(
 }
 
 export type AtomBoundarySide = "after" | "before";
+export type PhysicalTextDirection = "ltr" | "rtl";
+
+/** Read the direction that the browser actually uses to lay out an element. */
+export function computedTextDirection(
+  element: HTMLElement,
+  fallback: PhysicalTextDirection,
+): PhysicalTextDirection {
+  const direction = getComputedStyle(element).direction;
+  return direction === "ltr" || direction === "rtl" ? direction : fallback;
+}
 
 /** Find a writable selection on one requested side of an atom. */
 export function selectionBesideNode(
@@ -57,7 +67,7 @@ export function leaveAtomEditor(
   return true;
 }
 
-/** Move the outer editor caret to one physical side of an inline atom. */
+/** Move the outer editor caret to one requested document side of an inline atom. */
 export function moveSelectionBesideAtom(
   view: EditorView,
   getPos: () => number | undefined,
@@ -90,21 +100,32 @@ export function deleteAtomFromEditor(
 
 /**
  * Handle the native-looking exit keys shared by one-line atom fields.
- * Physical arrows mirror in RTL while logical before/after document positions
- * remain stable.
+ * The field direction locates its physical edge; the surrounding direction
+ * maps that edge to the atom's logical before/after document position.
  */
 export function handleInlineAtomEditorKeyDown(input: {
-  readonly direction: "ltr" | "rtl";
   readonly editor: HTMLInputElement;
   readonly event: KeyboardEvent;
+  readonly fieldDirection: PhysicalTextDirection;
   readonly getPos: () => number | undefined;
   readonly node: ProseMirrorNode;
+  readonly surroundingDirection: PhysicalTextDirection;
   readonly view: EditorView;
 }): boolean {
-  const { direction, editor, event, getPos, node, view } = input;
+  const { editor, event, fieldDirection, getPos, node, surroundingDirection, view } = input;
   if (event.isComposing) return false;
 
-  if (event.key === "Escape" || event.key === "Enter") {
+  if (event.key === "Escape") {
+    if (!leaveAtomEditor(view, getPos, node)) return false;
+    event.preventDefault();
+    return true;
+  }
+
+  // Modified keys retain their native field or application semantics. In
+  // particular, Shift+Arrow must not collapse into an ordinary atom exit.
+  if (event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) return false;
+
+  if (event.key === "Enter") {
     if (!leaveAtomEditor(view, getPos, node)) return false;
     event.preventDefault();
     return true;
@@ -118,18 +139,15 @@ export function handleInlineAtomEditorKeyDown(input: {
   }
   if (selectionStart !== selectionEnd) return false;
 
-  const side =
-    event.key === "ArrowLeft"
-      ? direction === "rtl"
-        ? "after"
-        : "before"
-      : event.key === "ArrowRight"
-        ? direction === "rtl"
-          ? "before"
-          : "after"
-        : null;
-  if (side === null) return false;
-  const atBoundary = side === "before" ? selectionStart === 0 : selectionEnd === value.length;
+  const physicalSide =
+    event.key === "ArrowLeft" ? "left" : event.key === "ArrowRight" ? "right" : null;
+  if (physicalSide === null) return false;
+  const atBoundary =
+    (fieldDirection === "ltr") === (physicalSide === "left")
+      ? selectionStart === 0
+      : selectionEnd === value.length;
+  const side: AtomBoundarySide =
+    (surroundingDirection === "ltr") === (physicalSide === "left") ? "before" : "after";
   if (!atBoundary || !moveSelectionBesideAtom(view, getPos, node, side)) return false;
   event.preventDefault();
   return true;

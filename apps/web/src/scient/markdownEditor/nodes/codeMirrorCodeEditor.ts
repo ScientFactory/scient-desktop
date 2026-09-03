@@ -101,27 +101,35 @@ function editorThemeFor(root: HTMLElement) {
 
 export interface ScientNestedCodeEditor {
   readonly focus: () => void;
-  readonly focusAt: (coordinates: { readonly x: number; readonly y: number }) => void;
-  readonly replaceExternalCode: (code: string) => void;
+  readonly refreshAppearance: () => void;
+  readonly replaceExternalCode: (code: string, language?: string) => void;
+  readonly setEditable: (editable: boolean) => void;
   readonly destroy: () => void;
 }
 
+export type ScientNestedCodeEditorRegistrar = (editor: ScientNestedCodeEditor) => () => void;
+
 export function createScientNestedCodeEditor(input: {
+  readonly ariaLabel?: string;
   readonly parent: HTMLElement;
   readonly code: string;
+  readonly editable: boolean;
   readonly language: string;
   readonly onUserCodeChange: (code: string) => void;
   readonly onEscape: () => void;
 }): ScientNestedCodeEditor {
   const languageCompartment = new Compartment();
   const appearanceCompartment = new Compartment();
-  const languageDescription = LanguageDescription.matchLanguageName(
-    languages,
-    input.language,
-    true,
-  );
+  const editableCompartment = new Compartment();
+  const accessibilityCompartment = new Compartment();
   const documentRoot = input.parent.ownerDocument.documentElement;
   let destroyed = false;
+  let isDark = documentRoot.classList.contains("dark");
+  let editable = input.editable;
+  let language = "";
+  let languageVersion = 0;
+  const accessibilityLabel = (nextLanguage: string): string =>
+    input.ariaLabel ?? `${nextLanguage || "Plain text"} code block`;
   const view = new EditorView({
     parent: input.parent,
     state: EditorState.create({
@@ -135,11 +143,17 @@ export function createScientNestedCodeEditor(input: {
         syntaxHighlighting(darkHighlightStyle),
         appearanceCompartment.of(editorThemeFor(documentRoot)),
         languageCompartment.of([]),
+        editableCompartment.of([
+          EditorState.readOnly.of(!editable),
+          EditorView.editable.of(editable),
+        ]),
         EditorView.lineWrapping,
-        EditorView.contentAttributes.of({
-          "aria-label": `${input.language || "Plain text"} code block`,
-          "aria-multiline": "true",
-        }),
+        accessibilityCompartment.of(
+          EditorView.contentAttributes.of({
+            "aria-label": accessibilityLabel(input.language),
+            "aria-multiline": "true",
+          }),
+        ),
         keymap.of([
           {
             key: "Escape",
@@ -166,45 +180,69 @@ export function createScientNestedCodeEditor(input: {
       ],
     }),
   });
-  let isDark = documentRoot.classList.contains("dark");
-  const MutationObserverConstructor = input.parent.ownerDocument.defaultView?.MutationObserver;
-  const appearanceObserver = MutationObserverConstructor
-    ? new MutationObserverConstructor(() => {
-        const nextIsDark = documentRoot.classList.contains("dark");
-        if (destroyed || nextIsDark === isDark) return;
-        isDark = nextIsDark;
-        view.dispatch({ effects: appearanceCompartment.reconfigure(editorThemeFor(documentRoot)) });
-      })
-    : null;
-  appearanceObserver?.observe(documentRoot, { attributes: true, attributeFilter: ["class"] });
-  if (languageDescription) {
-    void languageDescription
+  const configureLanguage = (nextLanguage: string): void => {
+    if (destroyed || nextLanguage === language) return;
+    language = nextLanguage;
+    const version = ++languageVersion;
+    view.dispatch({
+      effects: accessibilityCompartment.reconfigure(
+        EditorView.contentAttributes.of({
+          "aria-label": accessibilityLabel(language),
+          "aria-multiline": "true",
+        }),
+      ),
+    });
+    const description = LanguageDescription.matchLanguageName(languages, language, true);
+    if (!description) {
+      view.dispatch({ effects: languageCompartment.reconfigure([]) });
+      return;
+    }
+    void description
       .load()
       .then((languageSupport) => {
-        if (destroyed) return;
+        if (destroyed || version !== languageVersion) return;
         view.dispatch({ effects: languageCompartment.reconfigure(languageSupport) });
       })
-      .catch(() => undefined);
-  }
+      .catch(() => {
+        if (!destroyed && version === languageVersion) {
+          view.dispatch({ effects: languageCompartment.reconfigure([]) });
+        }
+      });
+  };
+
+  // The first language starts as an empty compartment so the editor can mount
+  // synchronously; its parser loads without delaying or replacing the surface.
+  configureLanguage(input.language);
+
   return {
     focus: () => view.focus(),
-    focusAt: (coordinates) => {
-      const position = view.posAtCoords(coordinates);
-      if (position !== null) {
-        view.dispatch({ selection: { anchor: position }, scrollIntoView: true });
-      }
-      view.focus();
+    refreshAppearance: () => {
+      const nextIsDark = documentRoot.classList.contains("dark");
+      if (destroyed || nextIsDark === isDark) return;
+      isDark = nextIsDark;
+      view.dispatch({ effects: appearanceCompartment.reconfigure(editorThemeFor(documentRoot)) });
     },
-    replaceExternalCode: (code) => {
+    replaceExternalCode: (code, nextLanguage = language) => {
+      configureLanguage(nextLanguage);
       if (code === view.state.doc.toString()) return;
       view.dispatch({
         changes: { from: 0, to: view.state.doc.length, insert: code },
         annotations: [externalCodeAnnotation.of(true), Transaction.addToHistory.of(false)],
       });
     },
+    setEditable: (nextEditable) => {
+      if (destroyed || nextEditable === editable) return;
+      editable = nextEditable;
+      view.dispatch({
+        effects: editableCompartment.reconfigure([
+          EditorState.readOnly.of(!editable),
+          EditorView.editable.of(editable),
+        ]),
+      });
+    },
     destroy: () => {
       destroyed = true;
-      appearanceObserver?.disconnect();
+      languageVersion += 1;
       view.destroy();
     },
   };

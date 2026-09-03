@@ -9,7 +9,11 @@ import {
   ScientInlineMath,
 } from "~/scient/math/ScientMath";
 
-import { handleInlineAtomEditorKeyDown, leaveAtomEditor } from "../prosemirror/safeSelection";
+import {
+  computedTextDirection,
+  handleInlineAtomEditorKeyDown,
+  leaveAtomEditor,
+} from "../prosemirror/safeSelection";
 
 class ScientMathNodeView implements NodeView {
   readonly dom: HTMLElement;
@@ -152,11 +156,12 @@ class ScientMathNodeView implements NodeView {
       !this.isDisplay(this.node) &&
       this.sourceEditor instanceof HTMLInputElement &&
       handleInlineAtomEditorKeyDown({
-        direction: "ltr",
         editor: this.sourceEditor,
         event,
+        fieldDirection: computedTextDirection(this.sourceEditor, "ltr"),
         getPos: this.getPos,
         node: this.node,
+        surroundingDirection: computedTextDirection(this.dom, "ltr"),
         view: this.view,
       })
     ) {

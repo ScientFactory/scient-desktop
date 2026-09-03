@@ -3,6 +3,7 @@
 import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 import { AllSelection, NodeSelection, TextSelection } from "prosemirror-state";
 import { DOMParser } from "prosemirror-model";
+import { EditorView as CodeMirrorEditorView } from "@codemirror/view";
 import { scientMarkdownSchema } from "./schema";
 
 import { ScientMarkdownEditorView } from "./view";
@@ -53,27 +54,39 @@ describe("ScientMarkdownEditorView", () => {
     const view = controller.mount(host);
     view.dispatch(view.state.tr.setSelection(NodeSelection.create(view.state.doc, 0)));
 
-    const editor = view.dom.querySelector<HTMLTextAreaElement>(
-      ".scient-markdown-source-island-editor",
+    const editorHost = view.dom.querySelector<HTMLElement>(
+      ".scient-markdown-source-island-code-editor",
     )!;
+    const editor = CodeMirrorEditorView.findFromDOM(editorHost)!;
+    const editorContent = editorHost.querySelector<HTMLElement>(".cm-content")!;
     expect(view.dom.querySelector(".scient-markdown-source-island-preview")).toBeNull();
-    expect(editor.hidden).toBe(false);
-    expect(editor.readOnly).toBe(false);
+    expect(editorHost.hidden).toBe(false);
+    expect(editorContent.getAttribute("contenteditable")).toBe("true");
 
-    editor.value = "---\ntitle: After\n---";
-    editor.dispatchEvent(new InputEvent("input", { bubbles: true, inputType: "insertText" }));
+    const enter = new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true });
+    view.dom.dispatchEvent(enter);
+    expect(enter.defaultPrevented).toBe(true);
+    expect(document.activeElement).toBe(editorContent);
+
+    editor.dispatch({
+      changes: {
+        from: 0,
+        to: editor.state.doc.length,
+        insert: "---\ntitle: After\n---",
+      },
+    });
 
     expect(controller.session.session.draftSource).toBe("---\ntitle: After\n---\n\nBody\n");
-    expect(editor.value).toBe("---\ntitle: After\n---");
+    expect(editor.state.doc.toString()).toBe("---\ntitle: After\n---");
 
     view.dispatch(view.state.tr.setSelection(TextSelection.create(view.state.doc, 2)));
-    expect(view.dom.querySelector(".scient-markdown-source-island-editor")).toBe(editor);
-    expect(editor.hidden).toBe(false);
+    expect(view.dom.querySelector(".scient-markdown-source-island-code-editor")).toBe(editorHost);
+    expect(editorHost.hidden).toBe(false);
 
     controller.setMode("read");
-    expect(editor.readOnly).toBe(true);
+    expect(editorContent.getAttribute("contenteditable")).toBe("false");
     controller.setMode("write");
-    expect(editor.readOnly).toBe(false);
+    expect(editorContent.getAttribute("contenteditable")).toBe("true");
   });
 
   it.each(["caret", "selection"])("updates and removes an existing link with a %s", (kind) => {
@@ -719,9 +732,9 @@ describe("ScientMarkdownEditorView", () => {
       "protocol",
     );
     expect(
-      view.dom.querySelector<HTMLTextAreaElement>(
-        "[data-scient-markdown-source-island] .scient-markdown-source-island-editor",
-      )?.value,
+      view.dom.querySelector(
+        "[data-scient-markdown-source-island] .scient-markdown-source-island-code-editor .cm-line",
+      )?.textContent,
     ).toContain("raw");
 
     controller.setMode("write");
@@ -1010,7 +1023,7 @@ describe("ScientMarkdownEditorView", () => {
     expect(controller.session.session.draftSource).toBe(sourceBefore);
   });
 
-  it("hides the duplicate render while a plain code block is being edited", async () => {
+  it("keeps one plain-code surface across selection, appearance, and mode changes", async () => {
     const onUserSourceChange = vi.fn();
     const controller = new ScientMarkdownEditorView({
       source: "```python linenos\nprint('result')\n```\n",
@@ -1024,12 +1037,15 @@ describe("ScientMarkdownEditorView", () => {
     mounted.push(controller);
     const view = controller.mount(host);
     const rendered = view.dom.querySelector<HTMLElement>(".scient-markdown-code-render");
+    const editor = view.dom.querySelector<HTMLElement>(".scient-markdown-code-editor .cm-editor");
+    const content = view.dom.querySelector<HTMLElement>(".scient-markdown-code-editor .cm-content");
 
     expect(rendered?.textContent).toContain("print('result')");
+    expect(rendered?.hidden).toBe(true);
+    expect(editor).not.toBeNull();
+    expect(content?.getAttribute("contenteditable")).toBe("true");
     view.dispatch(view.state.tr.setSelection(NodeSelection.create(view.state.doc, 0)));
-    await vi.waitFor(() => {
-      expect(view.dom.querySelector(".scient-markdown-code-editor .cm-editor")).not.toBeNull();
-    });
+    expect(view.dom.querySelector(".scient-markdown-code-editor .cm-editor")).toBe(editor);
     await vi.waitFor(() => {
       const editableCode = view.dom.querySelector<HTMLElement>(
         ".scient-markdown-code-editor .cm-line",
@@ -1044,6 +1060,7 @@ describe("ScientMarkdownEditorView", () => {
       ".scient-markdown-code-editor .cm-editor",
     )?.className;
     document.documentElement.classList.add("dark");
+    controller.refreshExternalPresentation("appearance");
     await vi.waitFor(() => {
       expect(
         view.dom.querySelector<HTMLElement>(".scient-markdown-code-editor .cm-editor")?.className,
@@ -1054,6 +1071,12 @@ describe("ScientMarkdownEditorView", () => {
       ).not.toBe(lightTokenClass);
     });
     expect(rendered?.hidden).toBe(true);
+    controller.setMode("read");
+    expect(view.dom.querySelector(".scient-markdown-code-editor .cm-editor")).toBe(editor);
+    expect(content?.getAttribute("contenteditable")).toBe("false");
+    controller.setMode("write");
+    expect(view.dom.querySelector(".scient-markdown-code-editor .cm-editor")).toBe(editor);
+    expect(content?.getAttribute("contenteditable")).toBe("true");
     expect(onUserSourceChange).not.toHaveBeenCalled();
   });
 

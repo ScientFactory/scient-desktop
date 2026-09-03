@@ -258,8 +258,10 @@ describe("Scient reference node view", () => {
     nodeView.destroy?.();
   });
 
-  it("uses physical RTL arrows to leave the citation on the matching side", () => {
+  it("keeps physical arrow continuity for an RTL citation in LTR prose", () => {
     const { editor, nodeView, position, state } = citationFixture("@מקור");
+    nodeView.dom.style.direction = "ltr";
+    editor.style.direction = "rtl";
 
     editor.setSelectionRange(editor.value.length, editor.value.length);
     const left = new KeyboardEvent("keydown", {
@@ -269,7 +271,7 @@ describe("Scient reference node view", () => {
     });
     editor.dispatchEvent(left);
     expect(left.defaultPrevented).toBe(true);
-    expect(state().selection.head).toBe(position + 1);
+    expect(state().selection.head).toBe(position);
 
     editor.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, button: 0 }));
     editor.setSelectionRange(0, 0);
@@ -280,6 +282,54 @@ describe("Scient reference node view", () => {
     });
     editor.dispatchEvent(right);
     expect(right.defaultPrevented).toBe(true);
+    expect(state().selection.head).toBe(position + 1);
+
+    nodeView.destroy?.();
+  });
+
+  it("keeps physical arrow continuity for an LTR citation in RTL prose", () => {
+    const { editor, nodeView, position, state } = citationFixture("@smith2020");
+    nodeView.dom.style.direction = "rtl";
+    editor.style.direction = "ltr";
+
+    editor.setSelectionRange(0, 0);
+    const left = new KeyboardEvent("keydown", {
+      bubbles: true,
+      cancelable: true,
+      key: "ArrowLeft",
+    });
+    editor.dispatchEvent(left);
+    expect(left.defaultPrevented).toBe(true);
+    expect(state().selection.head).toBe(position + 1);
+
+    editor.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, button: 0 }));
+    editor.setSelectionRange(editor.value.length, editor.value.length);
+    const right = new KeyboardEvent("keydown", {
+      bubbles: true,
+      cancelable: true,
+      key: "ArrowRight",
+    });
+    editor.dispatchEvent(right);
+    expect(right.defaultPrevented).toBe(true);
+    expect(state().selection.head).toBe(position);
+
+    nodeView.destroy?.();
+  });
+
+  it("uses the browser-resolved citation direction for mixed-script text", () => {
+    const { editor, nodeView, position, state } = citationFixture("@aאבגדה");
+    nodeView.dom.style.direction = "ltr";
+    editor.style.direction = "ltr";
+
+    editor.setSelectionRange(0, 0);
+    const left = new KeyboardEvent("keydown", {
+      bubbles: true,
+      cancelable: true,
+      key: "ArrowLeft",
+    });
+    editor.dispatchEvent(left);
+
+    expect(left.defaultPrevented).toBe(true);
     expect(state().selection.head).toBe(position);
 
     nodeView.destroy?.();

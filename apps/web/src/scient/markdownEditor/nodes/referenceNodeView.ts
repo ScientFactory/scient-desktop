@@ -2,14 +2,16 @@ import type { Node as ProseMirrorNode } from "prosemirror-model";
 import { NodeSelection } from "prosemirror-state";
 import type { EditorView, NodeView } from "prosemirror-view";
 
-import { countStrongScripts, resolveStrongScriptDirection } from "~/scient/bidi/contentDirection";
-
 import {
   scientMarkdownFootnoteDefinitionId,
   scientMarkdownFootnoteReferenceId,
   type ScientMarkdownFootnotePresentation,
 } from "../footnotes";
-import { handleInlineAtomEditorKeyDown, leaveAtomEditor } from "../prosemirror/safeSelection";
+import {
+  computedTextDirection,
+  handleInlineAtomEditorKeyDown,
+  leaveAtomEditor,
+} from "../prosemirror/safeSelection";
 
 export interface ScientMarkdownFootnoteNodeViewRegistration {
   readonly element: HTMLElement;
@@ -219,16 +221,15 @@ class ScientReferenceNodeView implements NodeView {
   private readonly handleKeyDown = (event: Event) => {
     if (!(event instanceof KeyboardEvent)) return;
     if (this.node.type.name === "citation" && this.sourceEditor instanceof HTMLInputElement) {
-      const direction =
-        resolveStrongScriptDirection(countStrongScripts(this.sourceEditor.value)) ??
-        (getComputedStyle(this.sourceEditor).direction === "rtl" ? "rtl" : "ltr");
+      const surroundingDirection = computedTextDirection(this.dom, "ltr");
       if (
         handleInlineAtomEditorKeyDown({
-          direction,
           editor: this.sourceEditor,
           event,
+          fieldDirection: computedTextDirection(this.sourceEditor, surroundingDirection),
           getPos: this.getPos,
           node: this.node,
+          surroundingDirection,
           view: this.view,
         })
       ) {

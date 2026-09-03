@@ -226,7 +226,7 @@ describe("Scient math node view", () => {
     nodeView.destroy?.();
   });
 
-  it("leaves inline math through the physical LTR arrow boundaries", () => {
+  it("leaves inline math through matching physical boundaries in LTR prose", () => {
     const { editor, nodeView, position, state } = inlineMathFixture();
     expect(editor.dataset.scientMarkdownAtomEditor).toBe("true");
 
@@ -251,5 +251,35 @@ describe("Scient math node view", () => {
     expect(right.defaultPrevented).toBe(true);
     expect(state().selection.head).toBe(position + 1);
     nodeView.destroy?.();
+  });
+
+  it("keeps physical arrow continuity for inline math in RTL prose", () => {
+    const { editor, nodeView, position, state } = inlineMathFixture();
+    nodeView.dom.style.direction = "rtl";
+    editor.style.direction = "ltr";
+
+    editor.setSelectionRange(0, 0);
+    const left = new KeyboardEvent("keydown", {
+      bubbles: true,
+      cancelable: true,
+      key: "ArrowLeft",
+    });
+    editor.dispatchEvent(left);
+    expect(left.defaultPrevented).toBe(true);
+    expect(state().selection.head).toBe(position + 1);
+
+    nodeView.selectNode?.();
+    editor.setSelectionRange(editor.value.length, editor.value.length);
+    const right = new KeyboardEvent("keydown", {
+      bubbles: true,
+      cancelable: true,
+      key: "ArrowRight",
+    });
+    editor.dispatchEvent(right);
+    expect(right.defaultPrevented).toBe(true);
+    expect(state().selection.head).toBe(position);
+
+    nodeView.destroy?.();
+    document.body.replaceChildren();
   });
 });

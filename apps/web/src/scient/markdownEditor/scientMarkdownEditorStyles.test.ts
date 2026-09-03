@@ -118,19 +118,32 @@ describe("rich Markdown preview presentation parity", () => {
     );
     expect(cssSource).toMatch(/> \[data-scient-visual-card\] \{\s*margin-block: 0;/su);
     expect(cssSource).toMatch(
-      /\.scient-markdown-code-block\[data-scient-markdown-rich-fence\] > \.scient-markdown-code-editor \{[^}]*border: 1px solid[^}]*background: var\(--code-background/su,
+      /\.scient-markdown-code-block\[data-scient-markdown-rich-fence\] > \.scient-markdown-code-editor \{[^}]*border: 1px solid[^}]*--markdown-code-block-background/su,
     );
   });
 
-  it("uses the established preview code token without overriding chat presentation", () => {
+  it("shares one deliberate quiet code-card surface with the established preview", () => {
     expect(cssSource).toMatch(
-      /\.scient-markdown-code-block \{[^}]*background: var\(--code-background/su,
+      /\.scient-markdown-code-block \{[^}]*background: var\([^}]*--markdown-code-block-background/su,
     );
     expect(previewCssSource).toMatch(
-      /html\[data-theme-id\] \.chat-markdown \.chat-markdown-codeblock \{[^}]*background-color: var\(--code-background\)/su,
+      /--markdown-code-block-background:\s*color-mix\([^;]+var\(--code-background\) 95%[^;]+var\(--code-foreground\) 5%/su,
     );
-    expect(previewCssSource).not.toContain("--scient-code-surface-background");
-    expect(previewCssSource).not.toContain("--markdown-code-surface-background");
+    expect(previewCssSource).toMatch(
+      /html\[data-theme-id\] \.chat-markdown \.chat-markdown-codeblock \{[^}]*background-color: var\(--markdown-code-block-background\)/su,
+    );
+    expect(previewCssSource).toMatch(
+      /\.chat-markdown \.chat-markdown-codeblock \{[^}]*background-color: var\(--markdown-code-block-background\)/su,
+    );
+    expect(cssSource).toMatch(
+      /\.scient-markdown-code-render \{[^}]*padding: 0\.55rem 0\.8rem 0\.75rem[^}]*font-size: 0\.8rem[^}]*line-height: 1\.55/su,
+    );
+    expect(cssSource).toMatch(
+      /\.scient-markdown-code-editor \.cm-editor \{[^}]*background: transparent[^}]*font-size: 0\.8rem/su,
+    );
+    expect(cssSource).toMatch(
+      /\.scient-markdown-code-editor \.cm-scroller \{[^}]*padding: 0\.55rem 0\.8rem 0\.75rem[^}]*line-height: 1\.55/su,
+    );
   });
 });
 
@@ -386,13 +399,14 @@ describe("rich Markdown compact-surface styles", () => {
     expect(cssSource).not.toMatch(/\.scient-markdown-code-editor \.cm-editor \{[^}]*max-height:/su);
   });
 
-  it("uses one persistent borderless field for raw YAML and HTML source", () => {
+  it("uses the persistent code surface for multiline raw YAML and HTML source", () => {
     expect(cssSource).not.toContain(".scient-markdown-source-island-preview");
     expect(cssSource).toMatch(
-      /\.scient-markdown-source-island-editor \{[^}]*field-sizing: content[^}]*border: 0[^}]*background: transparent/su,
+      /\.scient-markdown-source-island \{[^}]*border: 1px solid var\(--contrast-border, var\(--border\)\)[^}]*background: var\(--markdown-code-block-background/su,
     );
+    expect(cssSource).toMatch(/\.scient-markdown-source-island-code-editor \{[^}]*min-width: 0/su);
     expect(cssSource).toMatch(
-      /\.scient-markdown-source-island\[data-scient-markdown-source-kind="yaml"\] \{[^}]*background: color-mix\(in oklab, var\(--muted\) 62%, transparent\)/su,
+      /\.scient-markdown-source-island\[data-scient-markdown-source-kind="yaml"\] \{[^}]*background: color-mix\([^}]*--markdown-code-block-background[^}]*88%[^}]*var\(--muted\)/su,
     );
   });
 
