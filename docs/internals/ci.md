@@ -25,11 +25,11 @@ gates on pull requests and pushes to `main`:
   builds the desktop pipeline (`vp run build:desktop`) and verifies the preload bundle exists,
   imports only modules that Electron's sandbox can load, and still exports callable expected APIs.
   The verifier first parses imports, then executes the trusted artifact with controlled bridge stubs.
-- **Test**: `vp run --parallel --concurrency-limit 4 --filter '!t3' --filter '!@t3tools/monorepo'
-test` across every workspace package except the server app and the monorepo root, dropping the
-  dependency-ordering wait that only bought idle runner time. The 20-minute job ceiling is wider
-  than upstream's 10 because Scient's suite is roughly three times larger on a runner with half
-  the vCPUs.
+- **Test**: the desktop, mobile, and web suites run sequentially because each creates its own Vitest
+  worker pool; co-scheduling those pools can starve the lower-core hosted runner. The remaining
+  package suites run with `vp run --parallel --concurrency-limit 4`, excluding the server app and
+  monorepo root. No suite is omitted. The 20-minute job ceiling is wider than upstream's 10 because
+  Scient's suite is roughly three times larger on a runner with half the vCPUs.
 - **Test Server**: three shards of `vp run --filter t3 test --shard N/3`. The server sets
   `fileParallelism: false`, so its test files run strictly serially and sharding spreads them over
   separate runners instead of workers: no two server test files ever share a machine, and no
