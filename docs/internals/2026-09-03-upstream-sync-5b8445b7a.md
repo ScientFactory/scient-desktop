@@ -19,7 +19,7 @@ remains [upstream-state.json](../../upstream-state.json).
 - Frozen target: `5b8445b7a777ab1070aa97b062b1618971073a96`.
 - Range: 72 commits; 469 donor-touched paths; 153 paths overlapping Scient
   work; 55 textual conflict resolutions across three merge checkpoints.
-- The nearest donor tag is `v0.0.39-nightly.20260903.1265`.
+- The exact donor tag is `v0.0.39-nightly.20260903.1267`.
 - Branch: `codex/t3-sync-854541a0-20260903`.
 - History-preserving merge checkpoints:
   - `1bc372d207b7cc5d4ed43cc26fa2900eefe4e2a6` through `854541a04`;
