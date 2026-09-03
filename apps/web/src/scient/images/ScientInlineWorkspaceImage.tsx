@@ -554,7 +554,11 @@ export function ScientInlineWorkspaceImage(props: {
 
   return (
     <span
-      aria-label={props.image.alt}
+      aria-label={
+        props.filePresentation
+          ? (props.authoredAlt ?? props.image.alt) || undefined
+          : props.image.alt
+      }
       className="my-3 block w-fit max-w-full leading-normal"
       data-markdown-copy={props.markdownSource}
       data-scient-inline-workspace-image

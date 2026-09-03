@@ -36,6 +36,48 @@ afterEach(async () => {
 });
 
 describe("workspace file image display lifetime", () => {
+  it("keeps decorative file images unnamed while retaining useful action names and chat labels", async () => {
+    const host = document.createElement("div");
+    document.body.append(host);
+    const root = createRoot(host);
+    cleanups.push(async () => {
+      await act(() => root.unmount());
+    });
+    const image = {
+      absolutePath: "/workspace/decoration.png",
+      alt: "decoration.png",
+      displayPath: "decoration.png",
+      fileName: "decoration.png",
+      relativePath: "decoration.png",
+      source: "decoration.png",
+      workspaceRoot: "/workspace",
+    };
+    const render = async (filePresentation: boolean) =>
+      act(() =>
+        root.render(
+          <ScientInlineWorkspaceImage
+            image={image}
+            threadRef={{
+              environmentId: EnvironmentId.make("environment-a"),
+              threadId: ThreadId.make("thread-a"),
+            }}
+            markdownSource="![](decoration.png)"
+            authoredAlt=""
+            filePresentation={filePresentation}
+          />,
+        ),
+      );
+    await render(true);
+    expect(host.querySelector('[role="figure"]')?.hasAttribute("aria-label")).toBe(false);
+    expect(host.querySelector<HTMLImageElement>("img")?.alt).toBe("");
+    expect(host.querySelector('button[aria-label="More image actions"]')).not.toBeNull();
+    expect(host.querySelector('button[aria-label="Expand decoration.png"]')).not.toBeNull();
+    await render(false);
+    expect(host.querySelector('[role="figure"]')?.getAttribute("aria-label")).toBe(
+      "decoration.png",
+    );
+  });
+
   it("retains loaded pixels through capability refresh/failure and resets only on retry or source identity", async () => {
     const host = document.createElement("div");
     document.body.append(host);
