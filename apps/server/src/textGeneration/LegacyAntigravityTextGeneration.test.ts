@@ -15,7 +15,7 @@ import { expect } from "vite-plus/test";
 
 import * as ServerConfig from "../config.ts";
 import * as TextGeneration from "./TextGeneration.ts";
-import { makeAntigravityTextGeneration } from "./AntigravityTextGeneration.ts";
+import { makeAntigravityTextGeneration } from "./LegacyAntigravityTextGeneration.ts";
 
 const decodeSettings = Schema.decodeSync(AntigravitySettings);
 const encodeUnknownJson = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));

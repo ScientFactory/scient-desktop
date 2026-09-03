@@ -20,7 +20,7 @@ import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 
-import { makeAntigravityAdapter } from "./AntigravityAdapter.ts";
+import { makeAntigravityAdapter } from "./LegacyAntigravityAdapter.ts";
 
 const decodeSettings = Schema.decodeSync(AntigravitySettings);
 const __dirname = NodePath.dirname(NodeURL.fileURLToPath(import.meta.url));

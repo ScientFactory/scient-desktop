@@ -14,7 +14,7 @@ import {
   groupAntigravityModels,
   isAgyApiKeyModeConfigurationError,
   parseAgyModelsOutput,
-} from "./AntigravityProvider.ts";
+} from "./LegacyAntigravityProvider.ts";
 
 /** Deterministic Crypto for tests that never reach random UUID generation. */
 const CryptoLayer = Layer.succeed(

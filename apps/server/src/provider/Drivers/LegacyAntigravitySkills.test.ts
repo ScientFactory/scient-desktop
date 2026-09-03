@@ -4,7 +4,7 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 
-import { discoverAntigravitySkills } from "./AntigravitySkills.ts";
+import { discoverAntigravitySkills } from "./LegacyAntigravitySkills.ts";
 
 const writeSkill = Effect.fn(function* (
   skillsDirectory: string,
