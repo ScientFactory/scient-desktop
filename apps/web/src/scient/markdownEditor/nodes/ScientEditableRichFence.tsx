@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 import { renderMermaidDiagram } from "~/scient/diagrams/mermaidRuntime";
 import type { ScientRichFenceAuthoringActions } from "~/scient/presentation/RichFenceSourceActions";
@@ -15,6 +15,16 @@ interface ScientEditableRichFenceProps {
   readonly source: string;
   readonly theme: "light" | "dark";
   readonly title: string | null;
+}
+
+const MERMAID_VALIDATION_DEBOUNCE_MS = 180;
+
+interface RichFenceValidationRequest {
+  readonly generation: number;
+  readonly kind: ScientRichFenceKind;
+  readonly notBefore: number;
+  readonly source: string;
+  readonly theme: "light" | "dark";
 }
 
 function richFenceErrorMessage(cause: unknown): string {
@@ -55,36 +65,120 @@ export function ScientEditableRichFence(props: ScientEditableRichFenceProps) {
   );
   const hasValidSourceRef = useRef(false);
   const validationGenerationRef = useRef(0);
+  const validationRunningRef = useRef<RichFenceValidationRequest | null>(null);
+  const pendingValidationRef = useRef<RichFenceValidationRequest | null>(null);
+  const validationTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const isNearViewportRef = useRef(isNearViewport);
+  const mountedRef = useRef(true);
+  const hasStartedValidationRef = useRef(false);
+  const previousInputRef = useRef<{
+    readonly isNearViewport: boolean;
+    readonly kind: ScientRichFenceKind;
+    readonly theme: "light" | "dark";
+  } | null>(null);
+  const runPendingValidationRef = useRef<() => void>(() => undefined);
+  const schedulePendingValidationRef = useRef<() => void>(() => undefined);
 
   useEffect(() => {
-    // Mermaid validation renders the diagram, so it must not bypass the card's
-    // viewport gate when a document contains many unvisited scientific fences.
-    if (!isNearViewport) return;
-    const generation = validationGenerationRef.current + 1;
-    validationGenerationRef.current = generation;
-    let active = true;
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+      pendingValidationRef.current = null;
+      if (validationTimerRef.current != null) clearTimeout(validationTimerRef.current);
+      validationTimerRef.current = null;
+    };
+  }, []);
+
+  const schedulePendingValidation = useCallback(() => {
+    if (validationTimerRef.current != null) {
+      clearTimeout(validationTimerRef.current);
+      validationTimerRef.current = null;
+    }
+    if (!mountedRef.current || !isNearViewportRef.current || validationRunningRef.current != null) {
+      return;
+    }
+    const pending = pendingValidationRef.current;
+    if (!pending) return;
+    const delay = Math.max(0, pending.notBefore - Date.now());
+    if (delay === 0) {
+      runPendingValidationRef.current();
+      return;
+    }
+    validationTimerRef.current = setTimeout(() => {
+      validationTimerRef.current = null;
+      runPendingValidationRef.current();
+    }, delay);
+  }, []);
+
+  const runPendingValidation = useCallback(() => {
+    if (!mountedRef.current || !isNearViewportRef.current || validationRunningRef.current != null) {
+      return;
+    }
+    const request = pendingValidationRef.current;
+    if (!request) return;
+    if (request.notBefore > Date.now()) {
+      schedulePendingValidationRef.current();
+      return;
+    }
+    pendingValidationRef.current = null;
+    validationRunningRef.current = request;
+    hasStartedValidationRef.current = true;
     setValidationState("validating");
 
-    void validateRichFence(props.kind, props.source, props.theme).then(
-      () => {
-        if (!active || validationGenerationRef.current !== generation) return;
-        hasValidSourceRef.current = true;
-        setRenderedSource(props.source);
-        setRetainedError(null);
-        setValidationState("valid");
-      },
-      (cause: unknown) => {
-        if (!active || validationGenerationRef.current !== generation) return;
-        if (!hasValidSourceRef.current) setRenderedSource(props.source);
-        setRetainedError(hasValidSourceRef.current ? richFenceErrorMessage(cause) : null);
-        setValidationState("invalid");
-      },
-    );
-
-    return () => {
-      active = false;
+    const finish = (succeeded: boolean, cause?: unknown) => {
+      validationRunningRef.current = null;
+      if (!mountedRef.current) return;
+      if (validationGenerationRef.current === request.generation) {
+        if (succeeded) {
+          hasValidSourceRef.current = true;
+          setRenderedSource(request.source);
+          setRetainedError(null);
+          setValidationState("valid");
+        } else {
+          if (!hasValidSourceRef.current) setRenderedSource(request.source);
+          setRetainedError(hasValidSourceRef.current ? richFenceErrorMessage(cause) : null);
+          setValidationState("invalid");
+        }
+      }
+      schedulePendingValidationRef.current();
     };
-  }, [isNearViewport, props.kind, props.source, props.theme]);
+
+    void validateRichFence(request.kind, request.source, request.theme).then(
+      () => finish(true),
+      (cause: unknown) => finish(false, cause),
+    );
+  }, []);
+
+  runPendingValidationRef.current = runPendingValidation;
+  schedulePendingValidationRef.current = schedulePendingValidation;
+
+  useEffect(() => {
+    isNearViewportRef.current = isNearViewport;
+    const previous = previousInputRef.current;
+    const enteredViewport = isNearViewport && previous?.isNearViewport === false;
+    const presentationChanged =
+      previous != null && (previous.kind !== props.kind || previous.theme !== props.theme);
+    previousInputRef.current = {
+      isNearViewport,
+      kind: props.kind,
+      theme: props.theme,
+    };
+    const generation = validationGenerationRef.current + 1;
+    validationGenerationRef.current = generation;
+    const shouldDebounce =
+      props.kind === "mermaid" &&
+      hasStartedValidationRef.current &&
+      !enteredViewport &&
+      !presentationChanged;
+    pendingValidationRef.current = {
+      generation,
+      kind: props.kind,
+      notBefore: Date.now() + (shouldDebounce ? MERMAID_VALIDATION_DEBOUNCE_MS : 0),
+      source: props.source,
+      theme: props.theme,
+    };
+    schedulePendingValidation();
+  }, [isNearViewport, props.kind, props.source, props.theme, schedulePendingValidation]);
 
   const isRetained = retainedError !== null;
   return (

@@ -102,12 +102,18 @@ formatting controls preserves scroll and selection where the surfaces allow.
 - Escape moves outward through nested editors and popovers in a predictable order. Enter on a
   keyboard-selected citation, math, footnote definition, or raw source island moves the caret into
   its field, so every source-like atom is reachable without a pointer. One-line citation and math
-  fields leave through their physical arrow boundaries (mirrored for RTL citation text), Enter, or
-  Escape; Backspace removes an already-empty inline atom. IME composition publishes one source
-  transaction only after composition ends.
-- A click on rendered code opens the nested editor with the caret at the clicked position. The
-  rendered code and the editor share one text geometry (font, line height, wrapping, tab width);
-  a click on the block header opens the editor without moving its caret.
+  fields leave through their physical arrow boundaries, Enter, or Escape. Field and surrounding
+  prose directions are resolved independently, so mixed RTL/LTR atoms retain physical continuity;
+  Backspace removes an already-empty inline atom. IME composition publishes one source transaction
+  only after composition ends.
+- An ordinary code block is one persistent CodeMirror surface in both read and write modes. A
+  click selects that block while CodeMirror performs native caret placement in the already-mounted
+  surface; selection never replaces the DOM, changes the block geometry, or requests a scroll.
+  Multiline literal HTML, YAML, TOML, and unknown raw blocks reuse that source surface with an
+  explicit source label; they preserve exact text and never execute HTML. Reference definitions
+  remain compact one-line fields because they are not code blocks.
+  Mermaid, Vega-Lite, and Plotly keep their shared rendered visual and open a separate source
+  surface only through their explicit authoring action.
 
 The persistent rendered editor owns a scoped presentation layer that tracks the established
 `FileMarkdownPreview` measure, inset, type scale, rhythm, contrast, links, quotes, code, images,
@@ -129,14 +135,14 @@ not alter Markdown source unless the user performs an editing command.
 | Bulleted, numbered, task list | Rich list editing; Enter/Tab/Shift-Tab change structure                      | Preserve bullet/delimiter style for untouched items                     |
 | Table                         | Editable cells; contextual row, column, and alignment actions                | GFM table with one header row; preserve cell content on save and reopen |
 | Link and `[[wiki link]]`      | Underlined label; click follows, while drag/double-click selects for editing | Keep explicit, reference, GFM-autolink, relative, and wiki syntax       |
-| Code block                    | Syntax-highlighted; embedded CodeMirror activates on selection               | Preserve fence marker, length, language, and metadata when untouched    |
+| Code block                    | One persistent syntax-highlighted CodeMirror surface; write mode enables it  | Preserve fence marker, length, language, and metadata when untouched    |
 | Inline/display math           | Typeset while inactive; compact TeX editor when selected                     | Preserve `$…$`, `$$…$$`, `\(…\)`, or `\[…\]` when edited                |
 | Image/figure                  | Rendered with selection, alt text, caption, path, and size controls          | Use portable relative paths and ordinary Markdown where possible        |
 | Citation                      | Bracketed label while reading; one always-present inline field while writing | Preserve citation keys and source syntax                                |
 | Footnote                      | Numbered marker navigates to one directly editable definition with backlinks | Keep generated labels internal and preserve repeated-reference binding  |
 | Mermaid/Vega/Plotly           | Preview-identical interactive card; explicit menu action opens source        | Retain the last valid render during invalid intermediate input          |
 | Reference definition          | Hidden while reading; compact exact-source disclosure while authoring        | Preserve the complete definition verbatim until explicitly edited       |
-| Other raw/unknown construct   | One persistent in-place source field; no separate preview/editor             | Preserve the complete original source verbatim until explicitly edited  |
+| Other raw/unknown construct   | Persistent labeled CodeMirror source; no duplicate preview or HTML execution | Preserve the complete original source verbatim until explicitly edited  |
 
 Recognized scientific fences remain `code_block` nodes for source fidelity, selection, and nested
 CodeMirror editing. Their NodeView is presentation-neutral while inactive: the same shared
@@ -249,14 +255,18 @@ that switch, a tab departure, or route navigation can unmount the editor.
 
 Use ProseMirror as the rich document and transaction layer, behind Scient-owned schema,
 projection, NodeView, and controller adapters. Use `markdown-it` for tokenization and a
-Scient-owned source ledger for bounded source reuse. Use CodeMirror only inside editable code
-blocks, where source editing is the interaction itself.
+Scient-owned source ledger for bounded source reuse. Use one persistent CodeMirror surface inside
+each ordinary code block and multiline raw source island, read-only in document read mode and
+editable in write mode; it remains a nested source editor and never becomes a second Markdown
+authority.
 
 Scient dock menus execute editing commands after their close-complete lifecycle. The command
 owns its destination focus (document, nested editor, or picker); Escape keeps normal trigger
 focus. This composition is local to the rich editor, not a change to T3's menu primitives.
-Lazy code editing retains the rendered block until its nested editor is ready, avoiding a
-temporary empty block and layout collapse.
+Ordinary code mounts its nested editor synchronously and keeps that same surface for viewing,
+selection, and editing, eliminating activation-time replacement and layout movement. Rich visual
+fences remain lazy because their rendered chart or diagram is the primary interaction surface;
+their source editor is created only after the explicit edit command.
 
 GFM table cells contain inline content directly. The Scient table-navigation adapter handles
 only cell-edge arrows, since the upstream table handler expects a paragraph inside each cell.
@@ -305,7 +315,9 @@ pending-surface adapter reads current departure state when a link or host contro
 
 NodeViews that depend on state outside the document register with one controller-owned
 presentation channel. Workspace-index changes retry unresolved images and refresh wiki-target
-status; appearance changes refresh rendered code. Neither path creates a transaction or save.
+status; appearance changes refresh shared rich-fence visuals and reconfigure persistent nested code
+editors through the same controller event. Neither path creates a transaction or save, and the
+number of code blocks does not multiply document-level theme observers.
 
 Document direction is also presentation state. The controller derives stable block directions
 from visible prose while technical nodes remain LTR. In an RTL prose block, only standalone
@@ -318,14 +330,19 @@ needed, so the ordinary chat path does not initialize them.
 
 Scientific-fence validation shares the existing near-viewport activation policy with the
 visual cards: validating Mermaid renders it, so an unvisited fence must not start that work
-eagerly. Once activated, validation follows source/theme changes and retains the last valid
-preview during invalid edits; stale asynchronous results cannot replace newer source. This is
-first-visit deferral, not suspension of previously visited blocks or whole-document virtualization.
+eagerly. The first viewport activation and later theme changes are immediate.
+Mermaid source edits wait for a short quiet window, with at most one active render and one newest
+pending candidate; obsolete intermediate keystrokes never enter Mermaid's global render queue.
+Validation retains the last valid preview during invalid edits, and stale asynchronous results
+cannot replace newer source or publish an obsolete error. Plotly and Vega-Lite validation remains
+immediate. This is first-visit deferral, not suspension of previously visited blocks or
+whole-document virtualization.
 
-If a nested code editor cannot load or initialize, its rendered source stays visible and no
+If an ordinary nested code editor cannot initialize, its rendered source stays visible and no
 document edit is dispatched. A local notice offers Retry and points to the existing Markdown
-source mode; failure must not escape as an unhandled rejection. A late failure after leaving the
-block is ignored, and a successful retry removes the notice without creating another editor.
+source mode. A raw source island falls back to its exact-source textarea instead. Failure must not
+escape as an unhandled rejection; a successful ordinary-code retry removes the notice without
+creating another editor.
 
 Milkdown, MDXEditor, Vditor, MarkText, Muya, and newer Typora-like projects remain interaction
 and test references, not runtime foundations. Their useful ideas may be reimplemented through

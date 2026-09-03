@@ -91,8 +91,13 @@ async function fixture(source = "graph LR\n A --> B") {
   };
 }
 
+async function finishMermaidDebounce(): Promise<void> {
+  await act(() => vi.advanceTimersByTimeAsync(180));
+}
+
 describe("scientific fence validation lifecycle", () => {
   beforeEach(() => {
+    vi.useFakeTimers();
     vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
     vi.stubGlobal("IntersectionObserver", TestIntersectionObserver);
     observers.length = 0;
@@ -103,6 +108,7 @@ describe("scientific fence validation lifecycle", () => {
     for (const cleanup of cleanups.splice(0)) await cleanup();
     document.body.replaceChildren();
     vi.unstubAllGlobals();
+    vi.useRealTimers();
   });
 
   it("defers off-screen validation and starts with the latest source and theme", async () => {
@@ -135,6 +141,8 @@ describe("scientific fence validation lifecycle", () => {
 
     validate.mockRejectedValueOnce(new Error("Incomplete diagram"));
     await fence.render("graph LR\n A -->");
+    expect(fence.validity()).toBe("valid");
+    await finishMermaidDebounce();
     expect(fence.validity()).toBe("invalid");
     expect(fence.preview()).toBe(source);
     expect(fence.host.querySelector('[role="status"]')?.textContent).toContain(
@@ -142,6 +150,7 @@ describe("scientific fence validation lifecycle", () => {
     );
 
     await fence.render("graph LR\n A --> C");
+    await finishMermaidDebounce();
     expect(fence.validity()).toBe("valid");
     expect(fence.preview()).toBe("graph LR\n A --> C");
     expect(fence.host.querySelector('[role="status"]')).toBeNull();
@@ -160,6 +169,7 @@ describe("scientific fence validation lifecycle", () => {
       if (outcome === "success") stale.resolve(renderedDiagram);
       else stale.reject(new Error("Old source error"));
     });
+    await finishMermaidDebounce();
     expect(fence.preview()).toBe(latest);
     expect(fence.validity()).toBe("valid");
     expect(fence.host.querySelector('[role="status"]')).toBeNull();
@@ -173,6 +183,49 @@ describe("scientific fence validation lifecycle", () => {
     expect(fence.preview()).toBe("invalid latest source");
     expect(fence.validity()).toBe("invalid");
     expect(fence.host.querySelector('[role="status"]')).toBeNull();
+  });
+
+  it("coalesces rapid Mermaid edits into the newest settled source", async () => {
+    const fence = await fixture();
+    await fence.enter();
+    expect(validate).toHaveBeenCalledOnce();
+
+    await fence.render("graph LR\n A --> C");
+    await fence.render("graph LR\n A --> D");
+    await act(() => vi.advanceTimersByTimeAsync(179));
+    expect(validate).toHaveBeenCalledOnce();
+
+    await act(() => vi.advanceTimersByTimeAsync(1));
+    expect(validate).toHaveBeenCalledTimes(2);
+    expect(validate).toHaveBeenLastCalledWith("graph LR\n A --> D", "light");
+    expect(fence.preview()).toBe("graph LR\n A --> D");
+  });
+
+  it("allows one active Mermaid render and replaces its pending work with the latest edit", async () => {
+    const active = deferredRender();
+    validate.mockReturnValueOnce(active.promise);
+    const fence = await fixture();
+    await fence.enter();
+
+    await fence.render("graph LR\n A --> C");
+    await fence.render("graph LR\n A --> D");
+    await act(() => vi.advanceTimersByTimeAsync(500));
+    expect(validate).toHaveBeenCalledOnce();
+
+    await act(() => active.resolve(renderedDiagram));
+    expect(validate).toHaveBeenCalledTimes(2);
+    expect(validate).toHaveBeenLastCalledWith("graph LR\n A --> D", "light");
+    expect(fence.preview()).toBe("graph LR\n A --> D");
+  });
+
+  it("does not debounce a theme refresh", async () => {
+    const fence = await fixture();
+    await fence.enter();
+
+    await fence.render("graph LR\n A --> B", "dark");
+
+    expect(validate).toHaveBeenCalledTimes(2);
+    expect(validate).toHaveBeenLastCalledWith("graph LR\n A --> B", "dark");
   });
 
   it("disconnects an unvisited fence without starting a render", async () => {
