@@ -4,12 +4,22 @@ on:
   schedule:
     - cron: "17 */2 * * *"
   workflow_dispatch:
+    inputs:
+      provider:
+        description: Provider to qualify (scheduled runs check all providers)
+        type: choice
+        default: all
+        options: [all, codex, claudeAgent, antigravity, cursor, droid, grok]
+      qualify_only:
+        description: Test the selected branch without publishing (always enforced off main)
+        type: boolean
+        default: false
 
 permissions:
   contents: read
 
 concurrency:
-  group: managed-provider-runtime-update-scan
+  group: managed-provider-runtime-update-scan-${{ github.ref }}
   cancel-in-progress: false
 
 jobs:
@@ -18,14 +28,9 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        provider:
-          - codex
-          - claudeAgent
-          - antigravity
-          - cursor
-          - droid
-          - grok
+        provider: ${{ fromJSON(inputs.provider && inputs.provider != 'all' && format('["{0}"]', inputs.provider) || '["codex","claudeAgent","antigravity","cursor","droid","grok"]') }}
     uses: ./.github/workflows/managed-provider-runtime-update-provider.yml
     with:
       provider: ${{ matrix.provider }}
+      publish: ${{ github.ref == 'refs/heads/main' && !inputs.qualify_only }}
     secrets: inherit

@@ -7,6 +7,10 @@ on:
         description: Managed provider key to discover and qualify
         required: true
         type: string
+      publish:
+        description: Publish from main; otherwise qualify the caller's exact commit only
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -24,10 +28,10 @@ jobs:
       changed: ${{ steps.catalog.outputs.changed }}
       source_sha: ${{ steps.source.outputs.sha }}
     steps:
-      - name: Checkout exact current main
+      - name: Checkout qualification source
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
-          ref: main
+          ref: ${{ inputs.publish && github.ref == 'refs/heads/main' && 'main' || github.sha }}
           fetch-depth: 0
           sparse-checkout: |
             /*
@@ -70,7 +74,7 @@ jobs:
           --output "$RUNNER_TEMP/managed-runtime-catalog.json"
 
       - name: Upload immutable candidate
-        if: steps.catalog.outputs.changed == 'true'
+        if: steps.catalog.outputs.changed == 'true' || !inputs.publish
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: managed-runtime-catalog-${{ inputs.provider }}
@@ -81,7 +85,7 @@ jobs:
   qualify:
     name: Qualify ${{ inputs.provider }} / ${{ matrix.runner }}
     needs: discover
-    if: needs.discover.outputs.changed == 'true'
+    if: needs.discover.outputs.changed == 'true' || !inputs.publish
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 30
     strategy:
@@ -118,15 +122,24 @@ jobs:
           path: ${{ runner.temp }}/managed-runtime-catalog-candidate
 
       - name: Exercise download, verification, smoke, activation, and removal
-        run: >-
-          node scripts/qualify-managed-runtime-catalog.ts
-          --provider "${{ inputs.provider }}"
-          --catalog "${{ runner.temp }}/managed-runtime-catalog-candidate/managed-runtime-catalog.json"
+        shell: bash
+        env:
+          PROVIDER: ${{ inputs.provider }}
+          QUALIFY_ONLY: ${{ !inputs.publish }}
+          QUALIFICATION_RUNS: ${{ !inputs.publish && runner.os == 'Windows' && '5' || '1' }}
+        run: |
+          set -euo pipefail
+          args=(--provider "$PROVIDER" --catalog "$RUNNER_TEMP/managed-runtime-catalog-candidate/managed-runtime-catalog.json")
+          if [[ "$QUALIFY_ONLY" == true ]]; then args+=(--repair); fi
+          for ((attempt = 1; attempt <= QUALIFICATION_RUNS; attempt++)); do
+            echo "Qualification $attempt/$QUALIFICATION_RUNS"
+            node scripts/qualify-managed-runtime-catalog.ts "${args[@]}"
+          done
 
   publish:
     name: Publish qualified ${{ inputs.provider }} release
     needs: [discover, qualify]
-    if: needs.discover.outputs.changed == 'true' && needs.qualify.result == 'success'
+    if: inputs.publish && github.ref == 'refs/heads/main' && needs.discover.outputs.changed == 'true' && needs.qualify.result == 'success'
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     concurrency:
