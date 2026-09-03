@@ -113,6 +113,31 @@ runs again, previously published releases may remain unavailable to fresh apps.
 
 ## Local qualification
 
+Before merging runtime-policy changes, run **Promote managed provider runtime
+updates** on the feature branch, choose the affected `provider`, and enable
+`qualify_only`. Branch runs always prohibit publication, even if that checkbox
+is left off. They qualify the caller's immutable commit, never current `main`,
+and do not mint a publication token. Qualification-only runs include repair and
+repeat the Windows install/repair/remove cycle five times; every attempt must
+pass (these are not retries that hide a failure).
+
+```sh
+gh workflow run managed-provider-runtime-updates.yml \
+  --ref <feature-branch> -f provider=cursor -F qualify_only=true
+```
+
+Cursor's complete 2026.09.02 Unix packages expand to 511–570 MiB, so its
+app-owned tar budget is 768 MiB. Windows retains its 384 MiB ZIP budget; both
+remain capped at 768 entries. Do not remove bundled executables to fit an older
+budget or increase the shared defaults. Native probes must finish closing
+before activation or failure cleanup moves the payload.
+
+The v0.6.9 production app still reads the catalog from `main` and has the older
+Cursor extraction budget. Keep that legacy Cursor entry unchanged until a
+separately reviewed compatibility transition; qualify newer Cursor packages on
+the generated branch for builds containing the new reader and budget. A release
+snapshot into `main` must not advertise an incompatible package to older apps.
+
 Use temporary files; do not edit the bundled catalog merely to test discovery:
 
 ```sh
