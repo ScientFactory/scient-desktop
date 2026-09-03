@@ -285,7 +285,7 @@ describe("AntigravityInlineSetup", () => {
     expect(markup).not.toContain("Paste authorization code");
   });
 
-  it("renders connected and ready view with default model and CLI version", () => {
+  it("keeps runtime and model details out of the connected account message", () => {
     const markup = render(
       provider({
         status: "ready",
@@ -295,7 +295,7 @@ describe("AntigravityInlineSetup", () => {
           canDisconnect: true,
           operation: null,
         },
-        version: "1.1.17",
+        version: "agy_acp_server_20260818_01_RC01",
         models: [
           {
             slug: "gemini-3.7-flash",
@@ -315,11 +315,13 @@ describe("AntigravityInlineSetup", () => {
     );
 
     expect(markup).toContain("Antigravity is ready");
-    expect(markup).toContain("1.1.17");
+    expect(markup).not.toContain("agy_acp_server_");
+    expect(markup).not.toContain("with CLI");
     expect(markup.replace(/<[^>]+>/g, "")).toContain("Google account is connected");
     expect(markup).toContain('href="https://one.google.com/settings"');
     expect(markup).toContain('aria-label="Google account settings (opens in browser)"');
-    expect(markup).toContain("Default model: Gemini 3.7 Flash");
+    expect(markup).not.toContain("Default model");
+    expect(markup).not.toContain("Gemini 3.7 Flash");
     expect(markup).not.toContain(">Sign out<");
   });
 

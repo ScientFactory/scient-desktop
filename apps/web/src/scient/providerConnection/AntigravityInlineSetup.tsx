@@ -133,8 +133,6 @@ export function AntigravityInlineSetup(props: {
     !props.managedRuntimePresentedExternally && needsManagedRuntimeRecovery(props.provider);
   const updateState = props.provider.updateState;
   const updateRunning = updateState?.status === "queued" || updateState?.status === "running";
-  const defaultModel =
-    props.provider.models.find((model) => model.isDefault) ?? props.provider.models[0];
   const removedSuccessfully =
     runtimeOperation?.status === "succeeded" && runtimeOperation.action === "remove";
 
@@ -617,18 +615,16 @@ export function AntigravityInlineSetup(props: {
       body={
         <>
           {usesCredentials ? (
-            `Connected with ${props.provider.auth.label ?? "your configured credentials"}`
+            `Connected with ${props.provider.auth.label ?? "your configured credentials"}.`
           ) : (
             <>
               Your{" "}
               <ProviderAccountManagementLink provider="antigravity">
                 Google account
               </ProviderAccountManagementLink>{" "}
-              is connected
+              is connected.
             </>
           )}
-          {props.provider.version ? ` with CLI ${props.provider.version}` : ""}.
-          {defaultModel ? ` Default model: ${defaultModel.name}.` : ""}
         </>
       }
       title="Antigravity is ready"

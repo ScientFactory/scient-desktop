@@ -3,6 +3,7 @@ import { expect, it } from "@effect/vitest";
 import {
   AntigravitySettings,
   ApprovalRequestId,
+  EnvironmentId,
   ProviderInstanceId,
   ThreadId,
   type ProviderRuntimeEvent,
@@ -24,6 +25,7 @@ import * as AcpErrors from "effect-acp/errors";
 import type * as AcpSchema from "effect-acp/schema";
 
 import { ServerConfig } from "../../config.ts";
+import * as McpProviderSession from "../../mcp/McpProviderSession.ts";
 import { ANTIGRAVITY_SIGN_IN_REQUIRED_MESSAGE } from "../antigravityAuthSupport.ts";
 import type { AcpSessionRuntimeEvent } from "../acp/AcpSessionRuntime.ts";
 import { makeAntigravityAcpRuntime } from "../acp/AntigravityAcpSupport.ts";
@@ -283,7 +285,7 @@ const layer = ServerConfig.layerTest(process.cwd(), {
 
 it.layer(layer)("AntigravityAdapter", (it) => {
   it.effect(
-    "runs native auth, resume, models, commands, and streaming through the ACP transport",
+    "runs native auth, resume, scoped MCP, models, commands, and streaming through the ACP transport",
     () =>
       Effect.gen(function* () {
         const fileSystem = yield* FileSystem.FileSystem;
@@ -300,6 +302,19 @@ it.layer(layer)("AntigravityAdapter", (it) => {
         const commands: string[] = [];
         const observed: ProviderRuntimeEvent[] = [];
         const completed = yield* Deferred.make<void>();
+        const mcp = {
+          environmentId: EnvironmentId.make("antigravity-transport-test"),
+          threadId,
+          providerSessionId: "antigravity-mcp-test",
+          providerInstanceId: instanceId,
+          endpoint: "http://127.0.0.1:12345/mcp",
+          authorizationHeader: "Bearer synthetic-first-session",
+          capabilities: new Set<never>(),
+        };
+        yield* Effect.acquireRelease(
+          Effect.sync(() => McpProviderSession.setMcpProviderSession(mcp)),
+          () => Effect.sync(() => McpProviderSession.clearMcpProviderSession(threadId)),
+        );
         const adapter = yield* makeAntigravityAdapter(decodeSettings({ enabled: true }), {
           instanceId,
           withProcess: (_stop, task) => task,
@@ -340,6 +355,10 @@ it.layer(layer)("AntigravityAdapter", (it) => {
           modelSelection: { instanceId, model: nativeAlternative },
         });
         yield* adapter.stopSession(threadId);
+        McpProviderSession.setMcpProviderSession({
+          ...mcp,
+          authorizationHeader: "Bearer synthetic-resumed-session",
+        });
         const resumed = yield* adapter.startSession({
           threadId,
           cwd,
@@ -366,6 +385,25 @@ it.layer(layer)("AntigravityAdapter", (it) => {
         ).toEqual([{ methodId: "oauth-personal" }, { methodId: "oauth-personal" }]);
         expect(requests.some((request) => request.method === "session/resume")).toBe(true);
         expect(requests.some((request) => request.method === "session/load")).toBe(false);
+        for (const [method, authorization] of [
+          ["session/new", "Bearer synthetic-first-session"],
+          ["session/resume", "Bearer synthetic-resumed-session"],
+        ]) {
+          expect(requests.filter((request) => request.method === method)).toEqual([
+            expect.objectContaining({
+              params: expect.objectContaining({
+                mcpServers: [
+                  {
+                    type: "http",
+                    name: "t3-code",
+                    url: mcp.endpoint,
+                    headers: [{ name: "Authorization", value: authorization }],
+                  },
+                ],
+              }),
+            }),
+          ]);
+        }
         expect(
           requests
             .filter((request) => request.method === "session/set_config_option")
@@ -395,6 +433,7 @@ it.layer(layer)("AntigravityAdapter", (it) => {
       expect(second.model).toBe(nativeAlternative);
       expect(second.cwd).toBe("/tmp");
       expect(h.launches[1]?.resumeSessionId).toBe(nativeSessionId);
+      expect(h.launches.map((launch) => launch.mcpServers)).toEqual([[], []]);
       expect(h.calls).toEqual([
         "start",
         `model:${nativeAlternative}`,

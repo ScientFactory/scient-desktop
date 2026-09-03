@@ -32,7 +32,9 @@ The same range brings mobile preview errors, faster new-model pricing refresh, c
 after failed preview capture, legacy-model grouping, and release verification caching.
 The [preceding phase](docs/internals/2026-09-03-upstream-sync-652515a34.md) remains in ancestry.
 PR #228's owned-main catalog-publication fix is preserved through a separate main merge.
-This is a locally qualified candidate, not a claim of acceptance or merge into owned `main`.
+The local candidate passed automated qualification and the user completed manual review.
+The linked receipt distinguishes observed behavior from unexercised platform paths;
+PR checks and the history-preserving merge remain independently verifiable in GitHub.
 Later observed tips never move `integrationBase` by themselves; only the exact merged and
 verified checkpoint is recorded. Human review and publication remain separate gates.
 

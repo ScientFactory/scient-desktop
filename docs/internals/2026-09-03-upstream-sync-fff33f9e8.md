@@ -1,8 +1,8 @@
 # T3 alignment through fff33f9e8
 
-Status: automatically qualified local Antigravity alignment candidate.
-Integrated visual review, live account acceptance, hosted target
-qualification, PR review, and merge to `main` are separate gates. This receipt
+Status: automatically qualified Antigravity alignment; the user completed manual
+review and authorized PR publication, merge, and candidate cleanup. Hosted target
+qualification, PR checks, and merge to `main` remain separate evidence. This receipt
 does not authorize publication, telemetry, cloud, or mobile activation.
 
 Role: dated evidence for this frozen alignment, not a second architecture or
@@ -237,6 +237,45 @@ not substitute for a physical-device or platform build.
 Use a candidate app with synthetic Scient state and an explicitly authorized
 test account; never copy production credentials or user databases into it.
 
+### Local desktop observations, September 3
+
+The Apple-silicon candidate at `68d999b417f31b120b09f09c38b4f7ba5fa3ca0c`
+was tested through its real UI, with the subsequent targeted card-copy cleanup
+hot-reloaded. It used its own `.scient-next` state, backend port `14320`, web
+port `6280`, and `Scient (Dev) · t3-sync-antigravity` identity. Production and
+the other development candidates were not restarted or modified.
+
+- The user completed the reviewed managed install. The installed state exposed
+  Repair and Remove before authentication, and diagnostics confirmed a private
+  ACP executable below this worktree's `.scient-next/tools/antigravity-acp`.
+- Google sign-in completed; the user confirmed the browser opened correctly.
+  The app reached Ready and discovered 11 account-provided models. The remote
+  callback input remained collapsed during normal sign-in.
+- A live Gemini 3.7 Flash (Low) conversation responded. A subsequent scoped
+  test read synthetic project files and created `verification.txt` with exactly
+  `Aster reference: 17` and `Result: 25`; filesystem inspection confirmed that
+  only this new file was added. The timeline showed the file change and links.
+- The user forked that conversation and received a successful follow-up
+  response in the fork. The synthetic README rendered in the side panel.
+- User review identified redundant build identifiers and default-model copy in
+  the management card. The local cleanup leaves the installed Antigravity
+  version in Runtime diagnostics and removes model/version narration from the
+  ready message. Installation review uses the existing readable version label;
+  lifecycle actions, authentication, and actual version comparison are unchanged.
+
+The copy cleanup passed all 4,872 web unit tests (480 files), web typecheck,
+web production build, targeted formatting/lint, and whitespace checks. The
+existing advisory lint and bundle-size/MathJax warnings remain. The earlier
+repository-wide qualification above is evidence for the underlying alignment;
+it was not relabeled as a new all-platform run after this presentation-only edit.
+
+These observations are bounded live evidence, not completion of every item
+below. Cancellation, restart/resume, explicit permissions/questions, remote
+callback submission, credential-only methods, legacy continuation, native
+Windows/Linux execution, and destructive maintenance were not exercised in
+this UI session. Leave those gates explicit rather than infer them from a
+successful Google account turn.
+
 1. Install, inspect, update/repair, and remove managed ACP; verify Settings and
    composer remain compact and usable before and after sign-in.
 2. Test one-click Google sign-in, cancellation, sign-out, and the remote
@@ -251,6 +290,25 @@ test account; never copy production credentials or user databases into it.
    Intel macOS's documented legacy/remote path. Do not infer these from an
    Apple-silicon run.
 
-Keep the worktree and local history for review. Pushing, PR creation, merging
-to `main`, production account interaction, and publication are not performed
-by this local qualification pass.
+### Final review boundary, September 4
+
+The user accepted the manual review and authorized completing the frozen alignment,
+including PR review, a history-preserving merge, local-main synchronization, and
+owned candidate cleanup. This does not turn unexercised UI/platform paths above
+into observed results or authorize a release or production-account interaction.
+Later T3 commits remain a separate alignment.
+
+Antigravity's ACP chat session already receives Scient's authenticated HTTP MCP
+endpoint. The transport regression test covers `session/new` and `session/resume`,
+including refreshed session credentials; an unregistered session receives no MCP
+configuration. Scient-managed skills and private host awareness remain explicitly
+unsupported pending a separately qualified delivery seam. No hidden user-message
+prefix, global configuration write, or capability flag was added to emulate it.
+
+The live QA Sources call reached the authenticated Scient handler but failed in
+the synthetic ordinary folder, which has no `.scient/project.json`. The unchanged
+Sources store requires an initialized Scient project; its existing test explicitly
+rejects an ordinary folder without creating state. This is not evidence of an ACP
+transport regression. The Skills call was rejected by the existing provider
+capability gate. Neither failure is presented as a successful tool execution;
+clearer Sources errors and shared tool discovery/awareness are separate follow-ups.
