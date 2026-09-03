@@ -37,6 +37,8 @@ export type ModelEsque = {
   name: string;
   shortName?: string | undefined;
   subProvider?: string | undefined;
+  aliases?: ReadonlyArray<string> | undefined;
+  isDefault?: boolean | undefined;
   badge?: "new" | undefined;
   isLegacy?: boolean | undefined;
   /** Provider-reported compact cost label (e.g. `"0.5×"`); absent when unknown. */

@@ -62,6 +62,7 @@ export function ProviderOnboardingPicker(props: {
   readonly open?: boolean;
   readonly onOpenChange?: (open: boolean) => void;
   readonly onInstanceModelChange: (instanceId: ProviderInstanceId, model: string) => void;
+  readonly onOpenProviderSetup?: (instanceId: ProviderInstanceId) => void;
   readonly autoSelectReadyProvider?: boolean;
 }) {
   const navigate = useNavigate();
@@ -142,8 +143,12 @@ export function ProviderOnboardingPicker(props: {
     showHome,
   ]);
 
-  const openSettings = () => {
+  const openSettings = (instanceId?: ProviderInstanceId) => {
     setOpen(false);
+    if (instanceId && props.onOpenProviderSetup) {
+      props.onOpenProviderSetup(instanceId);
+      return;
+    }
     void navigate({ to: "/settings/providers" });
   };
 
@@ -294,7 +299,7 @@ export function ProviderOnboardingPicker(props: {
                       setOpen(false);
                       setDialogEntry(selectedEntry);
                     } else {
-                      openSettings();
+                      openSettings(selectedEntry.instanceId);
                     }
                   }}
                 />

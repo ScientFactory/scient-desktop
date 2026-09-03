@@ -47,6 +47,11 @@ built-in desktop updater to continue finding it.
 
 When Scient opens, the optional [Getting started](./getting-started.md) flow can
 help you connect an AI provider and add your first project. You can skip it and
-configure providers later from **Settings → Providers**. See
-[AI providers](./providers.md) or [Projects](./projects.md) when you need more
-detail.
+configure providers later from **Settings → Providers**. Provider setup is not
+required before Scient itself starts: install or connect a provider when you
+are ready to begin a conversation.
+
+Scient can use a healthy provider tool already installed on the environment or,
+when supported, install and verify a private Scient-managed copy. See
+[AI providers](./providers.md) for setup and lifecycle details, or
+[Projects](./projects.md) for adding a workspace.

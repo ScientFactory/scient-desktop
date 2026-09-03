@@ -33,6 +33,24 @@ describe("ProviderConnectionSubmitAuthorizationCodeInput", () => {
       }),
     ).toThrow();
   });
+
+  it("accepts a bounded OAuth redirect URL without widening provider-side validation", () => {
+    const callbackUrl = `http://127.0.0.1:51234/?code=${"x".repeat(9_000)}`;
+    expect(
+      decodeAuthorizationCode({
+        instanceId: "antigravity",
+        operationId: "connection-1",
+        authorizationCode: callbackUrl,
+      }).authorizationCode,
+    ).toBe(callbackUrl);
+    expect(() =>
+      decodeAuthorizationCode({
+        instanceId: "antigravity",
+        operationId: "connection-1",
+        authorizationCode: "x".repeat(16_385),
+      }),
+    ).toThrow();
+  });
 });
 
 describe("ProviderConnectionOperation", () => {
@@ -62,10 +80,12 @@ describe("ProviderConnectionOperation", () => {
       authorizationUrl: "https://claude.ai/oauth/authorize",
       authorizationUrlKind: "manual_fallback",
       acceptsAuthorizationCode: true,
+      authorizationResponseKind: "callback_url",
     });
 
     expect(decoded.authorizationUrlKind).toBe("manual_fallback");
     expect(decoded.acceptsAuthorizationCode).toBe(true);
+    expect(decoded.authorizationResponseKind).toBe("callback_url");
   });
 
   it("keeps authorization-code support optional for older servers and cached operations", () => {

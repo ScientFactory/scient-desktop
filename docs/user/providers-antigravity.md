@@ -1,84 +1,147 @@
 # Antigravity in Scient
 
-Antigravity is Google's agent for working with project files, code, commands,
-and Git workflows. Scient can manage a private copy of its `agy` tool and
-connect it to an existing Google account subscription.
+Scient runs Google's official Antigravity ACP agent and connects it to the
+account or credential method you select. The runtime, credentials, files, and
+conversation state stay on the environment that runs your project. Scient
+never asks for your Google password or silently substitutes another sign-in
+method.
 
-Scient does not ask for your Google password, read token contents, or store Google tokens. The
-official Antigravity CLI opens and completes sign-in, keeps the resulting session in its own local
-credential store, and refreshes it when necessary.
-
-For the behavior shared by all assisted providers, see [Providers in Scient](./providers.md).
+For behavior shared by assisted providers, see
+[Providers in Scient](./providers.md).
 
 ## Assisted setup
 
-Select **Antigravity** in the first-provider setup or model picker.
+Open **Settings > Providers**, select Antigravity, and choose **Manage**. The
+model picker can open the same compact setup flow. On mobile, open
+**Settings > Environments** and choose **Set up Antigravity** for the host
+environment.
 
-1. If `agy` is missing, choose **Install Antigravity**. On supported desktop targets, Scient
-   downloads and verifies a qualified stable official Google release in its private app data,
-   smoke-tests it, and only then activates it. This does not modify your shell profile or system
-   package manager.
-2. Choose **Sign in with Google**. Scient launches the official interactive `agy` client in a
-   supervised terminal. Antigravity opens Google's sign-in page, or reuses a valid session already
-   present in Antigravity's local credential store.
-3. Complete sign-in with the Google account that has the subscription you want
-   to use. If Google shows a one-time authorization code, paste it into Scient.
-   Scient then checks the account and discovers the models available to it.
+1. If Antigravity is missing, choose **Install Antigravity**. Scient downloads
+   the qualified official runtime into private app storage, checks the archive
+   and executable, and activates it only after validation succeeds.
+2. Choose **Sign in with Google** or **Connect**, according to the configured
+   authentication method.
+3. Complete the provider-owned flow. Scient then checks the account and loads
+   the models available to it.
 
-If managed installation is unavailable, Scient directs you to Google's official installer. You can
-also set an explicit `agy` binary path in **Settings > Providers > Antigravity**.
+Installation and sign-in continue if you leave the setup surface. Background
+status checks never open a browser or start a sign-in flow.
 
-## Subscription boundary
+### Sign in from another device
 
-This integration intentionally uses Antigravity's normal Google-account authentication path. Scient
-does not forward ambient API-key or custom-endpoint environment variables to Antigravity, so an
-unrelated developer key cannot silently replace subscription-backed usage or billing.
+Google returns to a `127.0.0.1` URL on the device running the browser. When the
+browser and provider environment are on different devices, that final page may
+not load. Expand **Signing in on another computer?**, copy the complete URL
+from the browser address bar, and paste it into Scient. Keep the query string
+and do not replace the host with the server address.
 
-If your standalone Antigravity installation is explicitly configured for API-key mode, remove that
-provider override as described in Google's Antigravity authentication documentation before using it
-with Scient. The app will otherwise report that it could not verify a connected Google account.
+The response must match the current sign-in attempt. Other connected clients
+can see that setup is in progress. If the attempt expires, start a new one and
+use its new URL.
 
-Signing out first sends Antigravity's own `/logout` command. If the CLI blocks that command behind a
-first-run screen, Scient can remove only the provider-owned local consumer credentials needed to
-complete logout, without reading token contents. It then verifies that Antigravity reports the
-account as disconnected. This may also sign out other local applications using the same Antigravity
-credential store.
+### Authentication methods
 
-## Models and reasoning
+The Antigravity provider settings select one of the methods exposed by the
+official agent:
 
-The model list is account-owned and dynamic. Scient does not hard-code a claim that every account
-has the same models. It reads the current `agy models` result, groups effort variants into one model,
-and presents available **Low**, **Medium**, and **High** reasoning choices where supported.
+| Method                     | Configuration                        | Connection flow         |
+| -------------------------- | ------------------------------------ | ----------------------- |
+| Google account             | None                                 | Google sign-in page     |
+| Gemini Enterprise          | GCP project and location             | Google sign-in page     |
+| Gemini API key             | API key                              | **Connect**, no browser |
+| Agent Platform (Vertex AI) | API key, or GCP project and location | **Connect**, no browser |
 
-Scient selects a default from the models the account reports. Changing the model or reasoning effort
-starts a new Scient thread because those values are fixed when the native Antigravity process starts.
+Gemini Enterprise resolves access for its configured project and location.
+Agent Platform can use Application Default Credentials on the environment.
+Configured keys are stored in that environment's provider settings and passed
+only to Antigravity. Ambient `GEMINI_API_KEY` and `GOOGLE_*` values do not
+silently change the selected method.
 
-## Session behavior
+Changing the method stops that provider instance's sessions. Disconnect or
+sign out before switching accounts.
 
-Each thread keeps its Antigravity conversation across turns. If the provider
-process crashes or is cancelled, the next turn resumes from the last completed
-provider state. Message attachments are made available only to that session and
-its temporary copies are removed when the session ends.
+## Runtime ownership and updates
 
-## Permissions and current limitations
+Scient supports both app-managed and existing installations:
 
-Antigravity headless mode cannot pause and relay interactive terminal approval questions to Scient.
-In **Full access**, Scient uses Antigravity's documented non-interactive permission bypass. In more
-restrictive modes, Antigravity may deny protected commands rather than ask inside the app.
+- With **Binary path** empty, Scient prefers its verified managed ACP runtime,
+  then looks for the official ACP executable on the environment's `PATH`.
+- An explicit ACP binary path takes priority. Its
+  `localharness_external` helper must be beside it. Scient does not update or
+  remove explicit or system installations.
+- Existing legacy `agy` paths and conversations remain supported through the
+  legacy transport. They are not reinterpreted as ACP sessions.
 
-Native Antigravity conversations currently do not support Scient's in-thread model switching,
-interactive approval responses, or rollback. The UI reports those operations as unsupported instead
-of simulating success.
+Managed ACP downloads are available on Apple Silicon macOS, x64 and ARM64
+Linux, and x64 and ARM64 Windows. Google does not publish the ACP runtime for
+Intel macOS; existing legacy `agy` installations remain usable there, or the
+Mac can connect to a supported remote environment.
+
+Scient's update catalog treats official ACP and legacy `agy` as separate
+release families. When a newer ACP release has passed download, archive,
+native-startup, activation, and removal qualification on its supported target,
+**Update Antigravity** appears for managed ACP installations. An update keeps
+the previous generation available while active sessions finish. It never
+mutates a system or custom installation.
+
+**Repair Antigravity** stages and validates a complete replacement before it
+touches a damaged managed generation. A failed download or verification leaves
+the existing copy and active pointer unchanged. Scient refuses to replace or
+remove a runtime while it is in use.
+
+## Models, files, and permissions
+
+The official agent reports the models available to the selected account.
+Scient keeps the thread's selected model when it resumes and asks for another
+selection if that model disappears. Older model generations remain available
+under **Legacy models** when the provider still offers them.
+
+Use Antigravity's native `/plan` command to request a plan. Scient's separate
+Plan mode control is unavailable when the protocol cannot support it.
+
+Antigravity receives supported workspace files and message attachments through
+the ACP protocol, including images, PDFs, text, and audio. Its file edits,
+shell commands, and web actions use Scient's normal permission surfaces.
+Provider questions with fixed choices remain interactive even in **Full
+access**. See [Permission modes](./permission-modes.md).
+
+Antigravity does not support conversation rewind. Reverting a thread or editing
+and resubmitting an earlier turn is therefore unavailable; send a follow-up or
+start a new thread instead.
+
+## Accounts, disabling, and removal
+
+Each official ACP provider instance has a private profile, so multiple
+instances can use different accounts on one environment.
+
+| Action                      | Result                                                                                                             |
+| --------------------------- | ------------------------------------------------------------------------------------------------------------------ |
+| Disable Antigravity         | Stops that instance's sessions; keeps credentials, runtime, threads, and files.                                    |
+| Sign out or disconnect      | Stops that instance's sessions and clears its official ACP profile credentials; keeps runtime, threads, and files. |
+| Remove managed installation | Removes only Scient's shared ACP runtime; keeps account profiles, threads, files, and external installations.      |
+
+Legacy `agy` credentials use the older provider-owned credential store and are
+kept for legacy-session compatibility. Removing the ACP runtime does not erase
+that external credential store.
+
+Disconnect does not erase API keys saved in provider settings or Application
+Default Credentials managed outside Scient. Remove those separately if you no
+longer want that credential method available.
 
 ## Troubleshooting
 
-- **Antigravity is missing:** use the qualified install action, Google's official installer, or set
-  the absolute binary path in provider settings.
-- **Sign-in did not open:** use **Reopen sign-in page** when Scient captured Antigravity's secure
-  authorization URL, or **Open sign-in help** for Google's authentication instructions.
-- **Connected but no models:** confirm the chosen Google account has Antigravity access, then retry
-  sign-in. `agy models` must succeed and return at least one model before the provider is ready.
-- **API-key configuration error:** return the standalone Antigravity CLI to its default account-based
-  authentication mode; Scient intentionally does not run this provider with API keys.
-- **Broken managed copy:** choose **Repair Antigravity**. Repair restores the exact active release,
-  and a failed repair leaves the previously activated healthy version in place.
+- **Antigravity is missing:** install the managed runtime, use an official
+  system installation, or set its absolute binary path.
+- **Sign-in did not open:** retry from the explicit setup action. Passive
+  refreshes intentionally do not launch a browser.
+- **Remote sign-in stopped at localhost:** paste the full return URL through
+  the collapsed remote-device control.
+- **Credentials are incomplete:** return to provider configuration and supply
+  the key, project, or location required by the selected method.
+- **Connected but no models:** refresh provider status. Google controls account
+  eligibility, models, subscriptions, and limits.
+- **Managed runtime is damaged:** choose **Repair Antigravity**. If sessions are
+  active, stop them first and retry.
+
+The official ACP registry is available at
+[agentclientprotocol/registry](https://github.com/agentclientprotocol/registry/blob/main/antigravity-acp/agent.json).

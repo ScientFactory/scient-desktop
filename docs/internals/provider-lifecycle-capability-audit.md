@@ -12,6 +12,22 @@
 
 ## Role of this document
 
+### Antigravity evidence update — 2026-09-03 candidate
+
+The Antigravity rows in the 2026-08-25 evidence below describe the retained **legacy `agy`**
+transport. They do not constrain the newly aligned official ACP implementation. Its selected
+OAuth/API-key methods, isolated profiles, remote callback URLs, paired installer, and five-target
+catalog are documented in [Provider architecture](./providers.md#antigravity-ownership-and-protocol)
+and the current [lifecycle matrix](./provider-lifecycle.md). The ACP adapter and authentication
+engine come from T3; Scient supplies the management bridge and legacy-cursor routing. Native
+Apple-silicon install/initialize/activation/removal passed in a synthetic root. Hosted qualification
+on the other targets and manual authenticated flows are not yet claimed.
+
+The proposal remains historical; this update does not retroactively reinterpret its subscription-only
+acceptance criteria as a restriction on the upstream ACP account methods.
+
+### Reading the ledger
+
 This audit exists to keep two different questions separate:
 
 1. **What does each provider actually support, and why does it differ?** This document owns that

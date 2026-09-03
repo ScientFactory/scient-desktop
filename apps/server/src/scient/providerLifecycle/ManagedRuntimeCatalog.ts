@@ -11,7 +11,7 @@ import {
   managedRuntimeTargetKey,
   type ManagedRuntimeArtifact,
   type ManagedRuntimeArtifactReceipt,
-  type ManagedRuntimeProvider,
+  type ManagedRuntimeCatalogProvider,
 } from "@scientfactory/provider-runtime";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
@@ -61,6 +61,18 @@ const CatalogArtifactSchema = Schema.Struct({
     digest: NonEmptyString(128),
   }),
   size: Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 4 * 1_024 * 1_024 * 1_024 })),
+  /** ACP ships a verified executable/harness pair; paths and launch policy remain app-owned. */
+  antigravityAcp: Schema.optionalKey(
+    Schema.Struct({
+      version: NonEmptyString(128),
+      executableBytes: Schema.Int.check(
+        Schema.isBetween({ minimum: 1, maximum: 4 * 1_024 * 1_024 * 1_024 }),
+      ),
+      harnessBytes: Schema.Int.check(
+        Schema.isBetween({ minimum: 1, maximum: 4 * 1_024 * 1_024 * 1_024 }),
+      ),
+    }),
+  ),
 });
 
 const CatalogProviderSchema = Schema.Struct({
@@ -106,10 +118,11 @@ export const BUNDLED_MANAGED_RUNTIME_CATALOG: ManagedRuntimeCatalogData = Schema
   ManagedRuntimeCatalogDataSchema,
 )(bundledCatalogJson);
 
-const managedProviders: ReadonlyArray<ManagedRuntimeProvider> = [
+const managedProviders: ReadonlyArray<ManagedRuntimeCatalogProvider> = [
   "codex",
   "claudeAgent",
   "antigravity",
+  "antigravityAcp",
   "cursor",
   "droid",
   "grok",
@@ -160,6 +173,7 @@ function normalizedProviderRelease(release: ManagedRuntimeCatalogData["providers
               digest: artifact.checksum.digest,
             },
             size: artifact.size,
+            ...(artifact.antigravityAcp ? { antigravityAcp: artifact.antigravityAcp } : {}),
           },
         ]),
     ),
@@ -336,7 +350,7 @@ export interface ManagedRuntimeCatalogService {
 
 export interface ManagedRuntimeCatalogChange {
   readonly catalog: ManagedRuntimeCatalogData;
-  readonly changedProviders: ReadonlyArray<ManagedRuntimeProvider>;
+  readonly changedProviders: ReadonlyArray<ManagedRuntimeCatalogProvider>;
 }
 
 const bundledOnlyService: ManagedRuntimeCatalogService = {

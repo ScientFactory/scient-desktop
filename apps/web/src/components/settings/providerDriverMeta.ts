@@ -1,10 +1,10 @@
 import {
+  AntigravitySettings,
   ClaudeSettings,
   CodexSettings,
   CursorSettings,
   DroidSettings,
   GrokSettings,
-  AntigravitySettings,
   OpenCodeSettings,
   compareProviderDriverKinds,
   ProviderDriverKind,

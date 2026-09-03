@@ -22,18 +22,21 @@ revision remains literal ancestry of owned `main`; it is not merely a reviewed
 or observed tip.
 
 The current proposed T3 ancestry is recorded in
-[`docs/internals/2026-09-03-upstream-sync-5b8445b7a.md`](docs/internals/2026-09-03-upstream-sync-5b8445b7a.md)
-and in `upstream-state.json`. The latest refresh merges the exact official
-checkpoint `5b8445b7a777ab1070aa97b062b1618971073a96` into its alignment
-branch, preserving the exact range after the previously integrated tip
-`70cd258d8aac43ea57494527b00bf36de3efa6c0`. The composition receives the
-provider editor and model-list redesign, browser profiles and link routing,
-project icons and clean-default-branch pulls, unified file/media previews,
-pull-request and environment improvements, and the resting composer while
-retaining Scient's product, assisted-provider, projectless, state, attachment,
-browser, and publication boundaries. Later observed T3 tips never move
-`integrationBase` by themselves; it advances only after exact ancestry,
-verification, review, and merge into owned `main`.
+[`docs/internals/2026-09-03-upstream-sync-fff33f9e8.md`](docs/internals/2026-09-03-upstream-sync-fff33f9e8.md)
+and in `upstream-state.json`. The latest local refresh preserves the six official commits
+from `652515a349741d234111b85f27597be3265d1ffc` through
+`fff33f9e851912363c5b1f3ac65598be35eb5f0d`. It adopts T3's official Antigravity ACP engine and
+setup APIs, composes Scient's assisted connection and managed-runtime lifecycle around them,
+and retains legacy `agy` conversations without converting their credentials or cursors.
+The same range brings mobile preview errors, faster new-model pricing refresh, composer recovery
+after failed preview capture, legacy-model grouping, and release verification caching.
+The [preceding phase](docs/internals/2026-09-03-upstream-sync-652515a34.md) remains in ancestry.
+PR #228's owned-main catalog-publication fix is preserved through a separate main merge.
+The local candidate passed automated qualification and the user completed manual review.
+The linked receipt distinguishes observed behavior from unexercised platform paths;
+PR checks and the history-preserving merge remain independently verifiable in GitHub.
+Later observed tips never move `integrationBase` by themselves; only the exact merged and
+verified checkpoint is recorded. Human review and publication remain separate gates.
 
 ## Receiving T3 updates
 

@@ -2,6 +2,9 @@
 import * as NodeCrypto from "node:crypto";
 
 import {
+  ANTIGRAVITY_ACP_TARGETS,
+  antigravityAcpExecutableNames,
+  resolveAntigravityAcpCatalogAsset,
   hydrateManagedRuntimeArtifact,
   isManagedRuntimeUpdate,
   managedRuntimeTargetKey,
@@ -13,8 +16,14 @@ import {
   resolveReviewedGrokArtifact,
   type ManagedRuntimeArtifact,
   type ManagedRuntimeProvider,
+  type ManagedRuntimeCatalogProvider,
   type ManagedRuntimeTarget,
 } from "@scientfactory/provider-runtime";
+import bundledCatalogJson from "../../apps/server/src/scient/providerLifecycle/managed-runtime-catalog.json" with { type: "json" };
+import { inspectAntigravityAcpArtifact } from "./antigravity-acp-artifact.ts";
+
+export const ANTIGRAVITY_ACP_REGISTRY_URL =
+  "https://raw.githubusercontent.com/agentclientprotocol/registry/main/antigravity-acp/agent.json";
 
 const MAX_METADATA_BYTES = 2 * 1_024 * 1_024;
 const MAX_ARTIFACT_BYTES = 4 * 1_024 * 1_024 * 1_024;
@@ -30,6 +39,11 @@ export interface ManagedRuntimeCatalogArtifactData {
     readonly digest: string;
   };
   readonly size: number;
+  readonly antigravityAcp?: {
+    readonly version: string;
+    readonly executableBytes: number;
+    readonly harnessBytes: number;
+  };
 }
 
 export interface ManagedRuntimeCatalogProviderData {
@@ -42,13 +56,13 @@ export interface ManagedRuntimeCatalogProviderData {
 export interface ManagedRuntimeCatalogData {
   readonly schemaVersion: 1;
   readonly providers: Readonly<
-    Partial<Record<ManagedRuntimeProvider, ManagedRuntimeCatalogProviderData>>
+    Partial<Record<ManagedRuntimeCatalogProvider, ManagedRuntimeCatalogProviderData>>
   >;
 }
 
 export interface ManagedRuntimeCatalogRefreshResult {
   readonly catalog: ManagedRuntimeCatalogData;
-  readonly changedProviders: ReadonlyArray<ManagedRuntimeProvider>;
+  readonly changedProviders: ReadonlyArray<ManagedRuntimeCatalogProvider>;
 }
 
 type Fetch = (input: URL, init?: RequestInit) => Promise<Response>;
@@ -74,16 +88,17 @@ const policyResolvers: Readonly<Record<ManagedRuntimeProvider, PolicyResolver>> 
   grok: resolveReviewedGrokArtifact,
 };
 
-export const managedRuntimeProviders: ReadonlyArray<ManagedRuntimeProvider> = [
+export const managedRuntimeProviders: ReadonlyArray<ManagedRuntimeCatalogProvider> = [
   "codex",
   "claudeAgent",
   "antigravity",
+  "antigravityAcp",
   "cursor",
   "droid",
   "grok",
 ];
 
-export function isManagedRuntimeProvider(value: string): value is ManagedRuntimeProvider {
+export function isManagedRuntimeProvider(value: string): value is ManagedRuntimeCatalogProvider {
   return managedRuntimeProviders.some((provider) => provider === value);
 }
 
@@ -221,10 +236,32 @@ async function mapConcurrent<T, R>(
 }
 
 function candidateProvider(input: {
-  readonly provider: ManagedRuntimeProvider;
+  readonly provider: ManagedRuntimeCatalogProvider;
   readonly version: string;
   readonly artifacts: Readonly<Record<string, ManagedRuntimeCatalogArtifactData>>;
 }): ManagedRuntimeCatalogProviderData {
+  if (input.provider === "antigravityAcp") {
+    const release = {
+      contractRevision: CONTRACT_REVISION,
+      channel: "stable" as const,
+      version: input.version,
+      artifacts: input.artifacts,
+    };
+    if (
+      Object.keys(input.artifacts).length !== ANTIGRAVITY_ACP_TARGETS.length ||
+      ANTIGRAVITY_ACP_TARGETS.some(
+        (target) =>
+          !resolveAntigravityAcpCatalogAsset(
+            { providers: { antigravityAcp: release } },
+            target.platform,
+            target.arch,
+          ),
+      )
+    ) {
+      throw new Error("Antigravity ACP release violates app-owned target or artifact policy.");
+    }
+    return release;
+  }
   const policies = policyEntries(input.provider);
   if (Object.keys(input.artifacts).length !== policies.length) {
     throw new Error(`${input.provider} discovery did not return every app-approved target.`);
@@ -270,8 +307,12 @@ export function validateManagedRuntimeCatalog(input: unknown): ManagedRuntimeCat
     );
   }
 
-  const providers: Partial<Record<ManagedRuntimeProvider, ManagedRuntimeCatalogProviderData>> = {};
+  const providers: Partial<
+    Record<ManagedRuntimeCatalogProvider, ManagedRuntimeCatalogProviderData>
+  > = {};
   for (const provider of managedRuntimeProviders) {
+    // An older published feed remains valid while the new family is first qualified.
+    if (provider === "antigravityAcp" && rawProviders[provider] === undefined) continue;
     const rawRelease = record(rawProviders[provider], `Managed runtime catalog ${provider}`);
     if (rawRelease.contractRevision !== CONTRACT_REVISION) {
       throw new Error(`${provider} has an unsupported managed runtime contract revision.`);
@@ -284,14 +325,18 @@ export function validateManagedRuntimeCatalog(input: unknown): ManagedRuntimeCat
       `${provider} catalog release`,
     );
     const rawArtifacts = record(rawRelease.artifacts, `${provider} catalog artifacts`);
-    const expectedTargets = new Set(policyEntries(provider).map(({ key }) => key));
+    const entries =
+      provider === "antigravityAcp"
+        ? ANTIGRAVITY_ACP_TARGETS.map((target) => ({ key: `${target.platform}-${target.arch}` }))
+        : policyEntries(provider);
+    const expectedTargets = new Set(entries.map(({ key }) => key));
     const unexpectedTargets = Object.keys(rawArtifacts).filter((key) => !expectedTargets.has(key));
     if (unexpectedTargets.length > 0) {
       throw new Error(`${provider} contains unapproved targets: ${unexpectedTargets.join(", ")}.`);
     }
 
     const artifacts: Record<string, ManagedRuntimeCatalogArtifactData> = {};
-    for (const { key } of policyEntries(provider)) {
+    for (const { key } of entries) {
       const rawArtifact = record(rawArtifacts[key], `${provider} ${key} artifact`);
       const rawChecksum = record(rawArtifact.checksum, `${provider} ${key} checksum`);
       const algorithm = stringField(rawChecksum, "algorithm", `${provider} ${key} checksum`);
@@ -310,6 +355,24 @@ export function validateManagedRuntimeCatalog(input: unknown): ManagedRuntimeCat
           ),
         },
         size: strictSize(Number(rawArtifact.size), `${provider} ${key}`),
+        ...(provider === "antigravityAcp"
+          ? (() => {
+              const payload = record(rawArtifact.antigravityAcp, `${provider} ${key} payload`);
+              return {
+                antigravityAcp: {
+                  version: stringField(payload, "version", `${provider} ${key} native version`),
+                  executableBytes: strictSize(
+                    Number(payload.executableBytes),
+                    `${provider} ${key} executable`,
+                  ),
+                  harnessBytes: strictSize(
+                    Number(payload.harnessBytes),
+                    `${provider} ${key} harness`,
+                  ),
+                },
+              };
+            })()
+          : {}),
       };
     }
     providers[provider] = candidateProvider({ provider, version, artifacts });
@@ -319,7 +382,7 @@ export function validateManagedRuntimeCatalog(input: unknown): ManagedRuntimeCat
 }
 
 function releaseChanged(
-  provider: ManagedRuntimeProvider,
+  provider: ManagedRuntimeCatalogProvider,
   current: ManagedRuntimeCatalogProviderData,
   version: string,
 ): boolean {
@@ -576,12 +639,72 @@ async function discoverGrok(fetch_: Fetch): Promise<ManagedRuntimeCatalogProvide
   return candidateProvider({ provider: "grok", version, artifacts: Object.fromEntries(entries) });
 }
 
+async function discoverAntigravityAcp(fetch_: Fetch): Promise<ManagedRuntimeCatalogProviderData> {
+  const registry = record(
+    await metadataJson(fetch_, ANTIGRAVITY_ACP_REGISTRY_URL),
+    "Antigravity ACP registry",
+  );
+  if (registry.id !== "antigravity-acp")
+    throw new Error("The ACP registry entry changed identity.");
+  const version = strictVersion(
+    stringField(registry, "version", "Antigravity ACP registry"),
+    "Antigravity ACP registry",
+  );
+  const distribution = record(
+    record(registry.distribution, "Antigravity ACP distribution").binary,
+    "Antigravity ACP binaries",
+  );
+  const entries = await mapConcurrent(ANTIGRAVITY_ACP_TARGETS, 2, async (target) => {
+    const names = antigravityAcpExecutableNames(target.platform);
+    const entry = record(distribution[target.registryKey], `Antigravity ACP ${target.registryKey}`);
+    const url = stringField(entry, "archive", "Antigravity ACP archive");
+    const prefix = `https://dl.google.com/agy-extensions/releases/${target.directory}/agy-acp-server-`;
+    const suffix = `-${target.archiveSuffix}.zip`;
+    if (!url.startsWith(prefix) || !url.endsWith(suffix) || entry.cmd !== `./${names.executable}`) {
+      throw new Error(`Antigravity ACP ${target.registryKey} changed its approved packaging.`);
+    }
+    const nativeVersion = url.slice(prefix.length, -suffix.length);
+    if (!/^agy_acp_server_[A-Za-z0-9_.-]{1,96}$/u.test(nativeVersion))
+      throw new Error("Antigravity ACP returned an invalid native release identity.");
+    const inspected = await inspectAntigravityAcpArtifact(
+      await request({ fetch: fetch_, url, timeoutMs: ARTIFACT_TIMEOUT_MS }),
+      names.executable,
+      names.harness,
+    );
+    return [
+      `${target.platform}-${target.arch}`,
+      {
+        artifactName: url.slice(url.lastIndexOf("/") + 1),
+        url,
+        checksum: { algorithm: "sha256" as const, digest: inspected.digest },
+        size: inspected.size,
+        antigravityAcp: {
+          version: nativeVersion,
+          executableBytes: inspected.executableBytes,
+          harnessBytes: inspected.harnessBytes,
+        },
+      },
+    ] as const;
+  });
+  if (new Set(entries.map(([, artifact]) => artifact.antigravityAcp.version)).size !== 1)
+    throw new Error("Antigravity ACP targets disagree on their native release.");
+  return candidateProvider({
+    provider: "antigravityAcp",
+    version,
+    artifacts: Object.fromEntries(entries),
+  });
+}
+
 const discoverers: Readonly<
-  Record<ManagedRuntimeProvider, (fetch_: Fetch) => Promise<ManagedRuntimeCatalogProviderData>>
+  Record<
+    ManagedRuntimeCatalogProvider,
+    (fetch_: Fetch) => Promise<ManagedRuntimeCatalogProviderData>
+  >
 > = {
   codex: discoverCodex,
   claudeAgent: discoverClaude,
   antigravity: discoverAntigravity,
+  antigravityAcp: discoverAntigravityAcp,
   cursor: discoverCursor,
   droid: discoverDroid,
   grok: discoverGrok,
@@ -595,7 +718,7 @@ export async function refreshManagedRuntimeCatalog(
   if (current.schemaVersion !== 1)
     throw new Error("Managed runtime catalog schema is unsupported.");
   let catalog = current;
-  const changedProviders: ManagedRuntimeProvider[] = [];
+  const changedProviders: ManagedRuntimeCatalogProvider[] = [];
   for (const provider of managedRuntimeProviders) {
     const result = await refreshManagedRuntimeProvider(catalog, provider, fetch_, report);
     catalog = result.catalog;
@@ -607,14 +730,18 @@ export async function refreshManagedRuntimeCatalog(
 /** Discover one provider independently so a broken channel cannot block the other providers. */
 export async function refreshManagedRuntimeProvider(
   current: ManagedRuntimeCatalogData,
-  provider: ManagedRuntimeProvider,
+  provider: ManagedRuntimeCatalogProvider,
   fetch_: Fetch = fetch,
   report: (message: string) => void = () => undefined,
 ): Promise<ManagedRuntimeCatalogRefreshResult> {
   if (current.schemaVersion !== 1) {
     throw new Error("Managed runtime catalog schema is unsupported.");
   }
-  const existing = current.providers[provider];
+  const existing =
+    current.providers[provider] ??
+    (provider === "antigravityAcp"
+      ? validateManagedRuntimeCatalog(bundledCatalogJson).providers.antigravityAcp
+      : undefined);
   if (!existing) throw new Error(`Managed runtime catalog is missing ${provider}.`);
   report(`Checking ${provider} stable channel.`);
   const latestVersion = await discoverLatestVersion(provider, fetch_);
@@ -645,9 +772,11 @@ export async function refreshManagedRuntimeProvider(
 export function mergeQualifiedManagedRuntimeProvider(input: {
   readonly current: ManagedRuntimeCatalogData;
   readonly candidate: ManagedRuntimeCatalogData;
-  readonly provider: ManagedRuntimeProvider;
+  readonly provider: ManagedRuntimeCatalogProvider;
 }): ManagedRuntimeCatalogData {
-  const currentRelease = input.current.providers[input.provider];
+  const currentRelease =
+    input.current.providers[input.provider] ??
+    (input.provider === "antigravityAcp" ? bundledCatalogJson.providers.antigravityAcp : undefined);
   const candidateRelease = input.candidate.providers[input.provider];
   if (!currentRelease || !candidateRelease) {
     throw new Error(`Managed runtime catalog is missing ${input.provider}.`);
@@ -676,10 +805,22 @@ export function mergeQualifiedManagedRuntimeProvider(input: {
 }
 
 async function discoverLatestVersion(
-  provider: ManagedRuntimeProvider,
+  provider: ManagedRuntimeCatalogProvider,
   fetch_: Fetch,
 ): Promise<string> {
   switch (provider) {
+    case "antigravityAcp":
+      return strictVersion(
+        stringField(
+          record(
+            await metadataJson(fetch_, ANTIGRAVITY_ACP_REGISTRY_URL),
+            "Antigravity ACP registry",
+          ),
+          "version",
+          "Antigravity ACP registry",
+        ),
+        "Antigravity ACP registry",
+      );
     case "codex": {
       const channel = record(
         await metadataJson(fetch_, "https://releases.openai.com/codex/channels/latest"),

@@ -1,4 +1,8 @@
 import { describe, expect, it } from "vite-plus/test";
+import {
+  ANTIGRAVITY_ACP_TARGETS,
+  antigravityAcpExecutableNames,
+} from "@scientfactory/provider-runtime";
 
 import {
   mergeQualifiedManagedRuntimeProvider,
@@ -18,6 +22,12 @@ const currentCatalog: ManagedRuntimeCatalogData = {
     codex: { contractRevision: 1, channel: "stable", version: "0.150.1", artifacts: {} },
     claudeAgent: { contractRevision: 1, channel: "stable", version: "2.1.251", artifacts: {} },
     antigravity: { contractRevision: 1, channel: "stable", version: "1.1.22", artifacts: {} },
+    antigravityAcp: {
+      contractRevision: 1,
+      channel: "stable",
+      version: "1.0.0",
+      artifacts: {},
+    },
     cursor: {
       contractRevision: 1,
       channel: "stable",
@@ -28,6 +38,36 @@ const currentCatalog: ManagedRuntimeCatalogData = {
     grok: { contractRevision: 1, channel: "stable", version: "1.0.13", artifacts: {} },
   },
 };
+
+const unixAcpArchive = Buffer.from(
+  "UEsDBBQAAAAIAAAAIl1zEy/oFAAAABQAAAASAAAAYWd5X2FjcF9zZXJ2ZXIucGFyS8wryUwvSizLLKlUKCoFcnJTuQBQSwMEFAAAAAgAAAAiXV9yAykQAAAADgAAABUAAABsb2NhbGhhcm5lc3NfZXh0ZXJuYWzLyU9OzFHISCzKSy0u5gIAUEsBAhQDFAAAAAgAAAAiXXMTL+gUAAAAFAAAABIAAAAAAAAAAAAAAO2BAAAAAGFneV9hY3Bfc2VydmVyLnBhclBLAQIUAxQAAAAIAAAAIl1fcgMpEAAAAA4AAAAVAAAAAAAAAAAAAADtgUQAAABsb2NhbGhhcm5lc3NfZXh0ZXJuYWxQSwUGAAAAAAIAAgCDAAAAhwAAAAAA",
+  "base64",
+);
+const windowsAcpArchive = Buffer.from(
+  "UEsDBBQAAAAIAAAAIl1zEy/oFAAAABQAAAASAAAAYWd5X2FjcF9zZXJ2ZXIuZXhlS8wryUwvSizLLKlUKCoFcnJTuQBQSwMEFAAAAAgAAAAiXV9yAykQAAAADgAAABkAAABsb2NhbGhhcm5lc3NfZXh0ZXJuYWwuZXhly8lPTsxRyEgsykstLuYCAFBLAQIUAxQAAAAIAAAAIl1zEy/oFAAAABQAAAASAAAAAAAAAAAAAADtgQAAAABhZ3lfYWNwX3NlcnZlci5leGVQSwECFAMUAAAACAAAACJdX3IDKRAAAAAOAAAAGQAAAAAAAAAAAAAA7YFEAAAAbG9jYWxoYXJuZXNzX2V4dGVybmFsLmV4ZVBLBQYAAAAAAgACAIcAAACLAAAAAAA=",
+  "base64",
+);
+
+function acpRegistry(version: string, nativeVersion: string) {
+  return {
+    id: "antigravity-acp",
+    version,
+    distribution: {
+      binary: Object.fromEntries(
+        ANTIGRAVITY_ACP_TARGETS.map((target) => {
+          const names = antigravityAcpExecutableNames(target.platform);
+          return [
+            target.registryKey,
+            {
+              archive: `https://dl.google.com/agy-extensions/releases/${target.directory}/agy-acp-server-${nativeVersion}-${target.archiveSuffix}.zip`,
+              cmd: `./${names.executable}`,
+            },
+          ];
+        }),
+      ),
+    },
+  };
+}
 
 function nextPatch(version: string): string {
   const match = /^(.*\.)([0-9]+)$/u.exec(version);
@@ -58,6 +98,12 @@ function stableChannelFetch(codexVersion = "0.150.1") {
       return new Response("<title><![CDATA[CLI v0.208.1: fixes]]></title>");
     }
     if (url === "https://x.ai/cli/stable") return new Response("1.0.13");
+    if (
+      url ===
+      "https://raw.githubusercontent.com/agentclientprotocol/registry/main/antigravity-acp/agent.json"
+    ) {
+      return Response.json({ version: "1.0.0" });
+    }
     throw new Error(`Unexpected release request: ${url}`);
   };
   return { fetch_, requested };
@@ -116,7 +162,7 @@ describe("managed runtime release discovery", () => {
     const result = await refreshManagedRuntimeCatalog(currentCatalog, fetch_);
     expect(result.changedProviders).toEqual([]);
     expect(result.catalog).toEqual(currentCatalog);
-    expect(requested).toHaveLength(6);
+    expect(requested).toHaveLength(7);
   });
 
   it("discovers one provider without coupling it to another provider channel", async () => {
@@ -124,6 +170,26 @@ describe("managed runtime release discovery", () => {
     const result = await refreshManagedRuntimeProvider(currentCatalog, "codex", fetch_);
     expect(result.changedProviders).toEqual([]);
     expect(requested).toEqual(["https://releases.openai.com/codex/channels/latest"]);
+  });
+
+  it("discovers and inspects every approved ACP target as one release family", async () => {
+    const registry = acpRegistry("1.1.0", "agy_acp_server_fixture");
+    const requested: string[] = [];
+    const result = await refreshManagedRuntimeProvider(
+      currentCatalog,
+      "antigravityAcp",
+      async (input) => {
+        const url = input.toString();
+        requested.push(url);
+        if (url.includes("raw.githubusercontent.com")) return Response.json(registry);
+        return new Response(url.includes("windows") ? windowsAcpArchive : unixAcpArchive);
+      },
+    );
+
+    expect(result.changedProviders).toEqual(["antigravityAcp"]);
+    expect(result.catalog.providers.antigravityAcp?.version).toBe("1.1.0");
+    expect(Object.keys(result.catalog.providers.antigravityAcp?.artifacts ?? {})).toHaveLength(5);
+    expect(requested).toHaveLength(7);
   });
 
   it("merges only the qualified provider into the latest published catalog", () => {

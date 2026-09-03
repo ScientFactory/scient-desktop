@@ -39,4 +39,21 @@ describe("ProviderAuthorizationCodeDisclosure", () => {
     expect(markup).toContain("Claude one-time authorization code");
     expect(markup).toContain("Submit");
   });
+
+  it("labels ACP fallback as a complete redirect URL, not a code", () => {
+    const markup = renderToStaticMarkup(
+      <ProviderAuthorizationCodeDisclosure
+        authorizationCode=""
+        expanded
+        responseKind="callback_url"
+        onAuthorizationCodeChange={vi.fn()}
+        onExpandedChange={vi.fn()}
+        onSubmit={vi.fn()}
+        providerName="Antigravity"
+      />,
+    );
+    expect(markup).toContain("Paste the full redirect URL");
+    expect(markup).toContain("Antigravity sign-in redirect URL");
+    expect(markup).not.toContain("one-time authorization code");
+  });
 });

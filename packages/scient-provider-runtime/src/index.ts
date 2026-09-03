@@ -1,6 +1,7 @@
 export * from "./codexManifest.ts";
 export * from "./claudeManifest.ts";
 export * from "./antigravityManifest.ts";
+export * from "./antigravityAcpCatalog.ts";
 export * from "./grokManifest.ts";
 export * from "./droidManifest.ts";
 export * from "./cursorManifest.ts";

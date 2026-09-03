@@ -9,6 +9,8 @@ export type ManagedRuntimeProvider =
   | "cursor"
   | "droid"
   | "grok";
+/** Distinct release families can belong to the same user-facing provider. */
+export type ManagedRuntimeCatalogProvider = ManagedRuntimeProvider | "antigravityAcp";
 export type ManagedRuntimeSupportTier =
   | "fully_assisted"
   | "external_runtime_supported"
