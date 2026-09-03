@@ -130,7 +130,8 @@ describe("Scient Markdown file-preview seam", () => {
     );
     expect(surfaceSource).toContain("projectEnvironment.listDirectory");
     expect(surfaceSource).toContain('view: "with-internals"');
-    expect(surfaceSource).toContain("props.onOpenFile(relativePath);");
+    expect(surfaceSource).toContain("const onOpenFile = props.onOpenFile;");
+    expect(surfaceSource).toContain("onOpenFile(relativePath);");
     expect(surfaceSource).toContain("onOpenWikiLink={handleOpenWikiLink}");
   });
 
