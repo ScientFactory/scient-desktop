@@ -163,9 +163,153 @@ describe("shared image controls", () => {
     expect(more).not.toBeNull();
     await act(() => more!.click());
     const items = Array.from(document.querySelectorAll<HTMLElement>('[role="menuitem"]'));
-    expect(items.map((item) => item.textContent)).toEqual(expected);
+    expect(items.map((item) => item.textContent)).toEqual(
+      expected?.filter((label) => label !== "Expand image"),
+    );
     await act(() => items.find((item) => item.textContent === "Copy image source")!.click());
     expect(copy).toHaveBeenCalledOnce();
+  });
+
+  it.each(["", "An existing caption"])(
+    "keeps the caption focused after the actual More menu closes (%j)",
+    async (value) => {
+      let caption!: HTMLTextAreaElement;
+      const edit = vi.fn(() => {
+        caption.hidden = false;
+        caption.focus();
+      });
+      const result = await fixture(
+        [{ id: "edit-caption", label: "Edit caption", closeViewer: true, run: edit }],
+        async () => null,
+      );
+      caption = result.caption;
+      caption.value = value;
+      caption.hidden = value === "";
+      caption.addEventListener("blur", () => {
+        caption.hidden = caption.value === "";
+      });
+      await act(() =>
+        result.controls
+          .querySelector<HTMLButtonElement>('button[aria-label="More image actions"]')!
+          .click(),
+      );
+      await act(() =>
+        Array.from(document.querySelectorAll<HTMLElement>('[role="menuitem"]'))
+          .find((item) => item.textContent === "Edit caption")!
+          .click(),
+      );
+      expect(edit).toHaveBeenCalledOnce();
+      expect(document.activeElement).toBe(caption);
+      expect(caption.hidden).toBe(false);
+      expect(document.querySelector('[role="menu"]')).toBeNull();
+      const more = result.controls.querySelector<HTMLButtonElement>(
+        'button[aria-label="More image actions"]',
+      )!;
+      await act(() => more.click());
+      await act(() =>
+        document
+          .querySelector('[role="menu"]')!
+          .dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true })),
+      );
+      expect(document.activeElement).toBe(more);
+    },
+  );
+
+  it("discards a focus handoff when its image changes during menu closure", async () => {
+    const edit = vi.fn();
+    const { controls, render } = await fixture(
+      [{ id: "edit-caption", label: "Add caption", closeViewer: true, run: edit }],
+      async () => null,
+      { sourceIdentity: "first" },
+    );
+    await act(() =>
+      controls.querySelector<HTMLButtonElement>('button[aria-label="More image actions"]')!.click(),
+    );
+    let finish!: () => void;
+    const animation = new Promise<void>((resolve) => {
+      finish = resolve;
+    });
+    const popup = document.querySelector('[role="menu"]')!;
+    const getAnimations = vi.fn(() => [{ finished: animation }]);
+    Object.defineProperty(popup, "getAnimations", { value: getAnimations });
+    await act(() =>
+      Array.from(popup.querySelectorAll<HTMLElement>('[role="menuitem"]'))
+        .find((item) => item.textContent === "Add caption")!
+        .click(),
+    );
+    await act(() => new Promise<void>((resolve) => requestAnimationFrame(() => resolve())));
+    expect(getAnimations).toHaveBeenCalled();
+    expect(edit).not.toHaveBeenCalled();
+    await render({ sourceIdentity: "second" });
+    await act(() => finish());
+    expect(edit).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    { expanded: false, picker: false },
+    { expanded: true, picker: false },
+    { expanded: false, picker: true },
+    { expanded: true, picker: true },
+  ])("runs gesture-sensitive actions in the item click (%j)", async ({ expanded, picker }) => {
+    let inClick = false;
+    const action = vi.fn(() => {
+      expect(inClick).toBe(true);
+    });
+    const label = picker ? "Replace image" : "Copy image";
+    const { controls } = await fixture(
+      [
+        {
+          id: picker ? "replace-image" : "copy-image",
+          label,
+          closeViewer: picker,
+          requiresUserActivation: picker,
+          run: action,
+        },
+      ],
+      async () => null,
+    );
+    if (expanded)
+      await act(() =>
+        controls.querySelector<HTMLButtonElement>('button[aria-label="Expand image"]')!.click(),
+      );
+    const surface = expanded ? document.querySelector('[role="dialog"]')! : controls;
+    await act(() =>
+      surface.querySelector<HTMLButtonElement>('button[aria-label="More image actions"]')!.click(),
+    );
+    const item = Array.from(document.querySelectorAll<HTMLElement>('[role="menuitem"]')).find(
+      (entry) => entry.textContent === label,
+    )!;
+    await act(() => {
+      inClick = true;
+      item.click();
+      expect(action).toHaveBeenCalledOnce();
+      inClick = false;
+    });
+    if (expanded)
+      expect(document.querySelector('[role="dialog"][data-open]') !== null).toBe(!picker);
+  });
+
+  it("keeps compact expansion in More and removes it from the expanded menu", async () => {
+    const { controls } = await fixture([], async () => null, { standalone: false });
+    expect(controls.querySelector('button[aria-label="Expand image"]')).toBeNull();
+    await act(() =>
+      controls.querySelector<HTMLButtonElement>('button[aria-label="More image actions"]')!.click(),
+    );
+    const expand = Array.from(document.querySelectorAll<HTMLElement>('[role="menuitem"]')).find(
+      (item) => item.textContent === "Expand image",
+    );
+    expect(expand).toBeDefined();
+    await act(() => expand!.click());
+    const dialog = document.querySelector('[role="dialog"]');
+    expect(dialog).not.toBeNull();
+    await act(() =>
+      dialog!.querySelector<HTMLButtonElement>('button[aria-label="More image actions"]')!.click(),
+    );
+    expect(
+      Array.from(document.querySelectorAll<HTMLElement>('[role="menuitem"]')).some(
+        (item) => item.textContent === "Expand image",
+      ),
+    ).toBe(false);
   });
 
   it("preserves native caption context menus and ignores actions after unmount", async () => {

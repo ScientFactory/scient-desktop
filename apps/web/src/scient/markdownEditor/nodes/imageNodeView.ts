@@ -673,6 +673,7 @@ class ScientImageNodeView implements NodeView {
           id: "replace-image",
           label: this.replacing ? "Replacing image…" : "Replace image",
           closeViewer: true,
+          requiresUserActivation: this.referenceLabel() === null,
           disabled: this.replacing,
           run: guarded(this.replaceImage),
         });

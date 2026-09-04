@@ -1996,6 +1996,73 @@ describe("ScientMarkdownEditorView", () => {
     expect(onUserSourceChange).toHaveBeenCalledTimes(2);
   });
 
+  it.each([
+    ["Add caption", "![Plot](plot.png)\n"],
+    ["Edit caption", '![Plot](plot.png "Existing caption")\n'],
+  ])("keeps caption focus after choosing %s from the real image menu", async (label, source) => {
+    vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+    const onUserSourceChange = vi.fn();
+    const controller = new ScientMarkdownEditorView({
+      source,
+      revision: "r0",
+      mode: "write",
+      ariaLabel: "Image caption menu",
+      onUserSourceChange,
+      resolveImageSource: async () => "https://assets.test/plot.png",
+    });
+    const host = document.createElement("div");
+    document.body.append(host);
+    mounted.push(controller);
+    let view!: EditorView;
+    await act(() => {
+      view = controller.mount(host);
+    });
+    const image = view.dom.querySelector<HTMLImageElement>(".scient-markdown-image-render")!;
+    await act(() => completeImageLoad(image));
+    await act(() =>
+      image.dispatchEvent(
+        new MouseEvent("mousedown", { button: 0, bubbles: true, cancelable: true }),
+      ),
+    );
+    const caption = view.dom.querySelector<HTMLTextAreaElement>("[aria-label='Image caption']")!;
+    const more = view.dom.querySelector<HTMLButtonElement>(
+      "button[aria-label='More image actions']",
+    )!;
+    await act(() => {
+      more.focus();
+      more.click();
+    });
+    const item = [...document.querySelectorAll<HTMLElement>("[role='menuitem']")].find(
+      (entry) => entry.textContent === label,
+    )!;
+    expect(item).toBeDefined();
+    await act(() => {
+      item.focus();
+      item.click();
+    });
+    expect(caption.hidden).toBe(false);
+    expect(document.activeElement).toBe(caption);
+    expect(controller.session.session.draftSource).toBe(source);
+    expect(onUserSourceChange).not.toHaveBeenCalled();
+
+    await act(() => {
+      caption.value = "New caption כיתוב";
+      caption.dispatchEvent(new InputEvent("input", { bubbles: true, inputType: "insertText" }));
+    });
+    expect(document.activeElement).toBe(caption);
+    expect(view.dom.querySelector("[aria-label='Image caption']")).toBe(caption);
+    expect(controller.session.session.draftSource).toBe('![Plot](plot.png "New caption כיתוב")\n');
+    expect(onUserSourceChange).toHaveBeenCalledOnce();
+    await act(() =>
+      caption.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true })),
+    );
+    expect(caption.hidden).toBe(false);
+    expect(controller.session.session.draftSource).toBe('![Plot](plot.png "New caption כיתוב")\n');
+    await act(() => controller.execute("undo"));
+    expect(controller.session.session.draftSource).toBe(source);
+    expect(view.dom.querySelector(".scient-markdown-image-render")).toBe(image);
+  });
+
   it("uses real image viewing controls without creating Markdown edits or saves", async () => {
     vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
     const source = '![Plot](plot.png "Caption")\n';

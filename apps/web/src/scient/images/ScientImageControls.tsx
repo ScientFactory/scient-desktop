@@ -32,8 +32,10 @@ export interface ScientImageAction {
   readonly id: string;
   readonly label: string;
   readonly disabled?: boolean;
-  /** Leave the image viewer before moving focus to another surface. */
+  /** Close image overlays before moving focus to another surface. */
   readonly closeViewer?: boolean;
+  /** Run in the original click, for actions such as opening a native file picker. */
+  readonly requiresUserActivation?: boolean;
   readonly run: () => void | Promise<void>;
 }
 
@@ -76,6 +78,91 @@ const BACKGROUND_CLASS: Record<ScientImageBackground, string> = {
 
 function ownsNativeEditing(target: EventTarget | null): boolean {
   return target instanceof Element && Boolean(target.closest("input, textarea, select"));
+}
+
+function ScientImageActionMenu({
+  actions,
+  busy,
+  run,
+  showExpand,
+}: {
+  readonly actions: readonly ScientImageAction[];
+  readonly busy: boolean;
+  readonly run: (action: ScientImageAction) => void;
+  readonly showExpand: boolean;
+}) {
+  const pendingAction = useRef<ScientImageAction | null>(null);
+  const [handingOffFocus, setHandingOffFocus] = useState(false);
+  return (
+    <Menu
+      onOpenChange={(open) => {
+        if (open) {
+          pendingAction.current = null;
+          setHandingOffFocus(false);
+        }
+      }}
+      onOpenChangeComplete={(open) => {
+        if (open || !pendingAction.current) return;
+        const action = pendingAction.current;
+        pendingAction.current = null;
+        run(action);
+      }}
+    >
+      <Tooltip>
+        <TooltipTrigger
+          render={
+            <MenuTrigger
+              render={
+                <Button
+                  aria-label="More image actions"
+                  className="chat-markdown-chrome-action"
+                  size="icon-xs"
+                  type="button"
+                  variant="ghost"
+                />
+              }
+            />
+          }
+        >
+          <EllipsisIcon className="size-3" />
+        </TooltipTrigger>
+        <TooltipPopup>More image actions</TooltipPopup>
+      </Tooltip>
+      <MenuPopup
+        align="end"
+        className="min-w-52 max-w-[calc(100vw-2rem)]"
+        finalFocus={handingOffFocus ? false : undefined}
+      >
+        {actions
+          .filter((action) => action.id !== "expand-image" || showExpand)
+          .map((action) => (
+            <MenuItem
+              key={action.id}
+              disabled={action.disabled || busy}
+              onClick={() => {
+                if (action.closeViewer && !action.requiresUserActivation) {
+                  // Menu items focus themselves after this callback. Transfer focus only
+                  // after the menu closes, keeping restoration disabled until its next open.
+                  pendingAction.current = action;
+                  setHandingOffFocus(true);
+                } else {
+                  run(action);
+                }
+              }}
+            >
+              {action.id === "expand-image" ? (
+                <ExpandIcon />
+              ) : action.id === "image-background" ? (
+                <PaletteIcon />
+              ) : action.id === "retry-image" ? (
+                <RefreshCwIcon />
+              ) : null}
+              {action.label}
+            </MenuItem>
+          ))}
+      </MenuPopup>
+    </Menu>
+  );
 }
 
 /** Viewing chrome only. Editor selection, native fields, and asset authority stay with the caller. */
@@ -194,11 +281,13 @@ function ScientImageControlsForSource({ ref, ...props }: ScientImageControlsProp
 
   const run = useCallback(
     (action: ScientImageAction | undefined) => {
-      if (!action || action.disabled || actionRunning.current) return;
+      if (!mounted.current || !action || action.disabled || actionRunning.current) return;
       if (expanded && action.closeViewer) {
-        setPendingViewerAction(action);
         closeViewer();
-        return;
+        if (!action.requiresUserActivation) {
+          setPendingViewerAction(action);
+          return;
+        }
       }
       actionRunning.current = true;
       setActiveAction(action.id);
@@ -282,46 +371,12 @@ function ScientImageControlsForSource({ ref, ...props }: ScientImageControlsProp
   }, [actions, props.anchor, props.showContextMenu, run]);
 
   const menu = (
-    <Menu>
-      <Tooltip>
-        <TooltipTrigger
-          render={
-            <MenuTrigger
-              render={
-                <Button
-                  aria-label="More image actions"
-                  className="chat-markdown-chrome-action"
-                  size="icon-xs"
-                  type="button"
-                  variant="ghost"
-                />
-              }
-            />
-          }
-        >
-          <EllipsisIcon className="size-3" />
-        </TooltipTrigger>
-        <TooltipPopup>More image actions</TooltipPopup>
-      </Tooltip>
-      <MenuPopup align="end" className="min-w-52 max-w-[calc(100vw-2rem)]">
-        {actions.map((action) => (
-          <MenuItem
-            key={action.id}
-            disabled={action.disabled || activeAction !== null}
-            onClick={() => run(action)}
-          >
-            {action.id === "expand-image" ? (
-              <ExpandIcon />
-            ) : action.id === "image-background" ? (
-              <PaletteIcon />
-            ) : action.id === "retry-image" ? (
-              <RefreshCwIcon />
-            ) : null}
-            {action.label}
-          </MenuItem>
-        ))}
-      </MenuPopup>
-    </Menu>
+    <ScientImageActionMenu
+      actions={actions}
+      busy={activeAction !== null}
+      run={run}
+      showExpand={!props.standalone && !expanded}
+    />
   );
 
   return (
