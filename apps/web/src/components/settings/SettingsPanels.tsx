@@ -2157,8 +2157,8 @@ export function GeneralSettingsPanel() {
   return (
     <SettingsPageContainer>
       <SharedSettingsMismatchAlert />
+      <ScientGettingStartedSettingsRow />
       <SettingsSection id="organization" title="Organization">
-        <ScientGettingStartedSettingsRow />
         <SettingsRow
           {...searchableSetting("project-grouping")}
           description="Combine matching repositories across environments."

@@ -165,8 +165,8 @@ export function SettingsSection({
   children,
   className,
   ...sectionProps
-}: ComponentPropsWithoutRef<"section"> & {
-  title: string;
+}: Omit<ComponentPropsWithoutRef<"section">, "title"> & {
+  title: ReactNode;
   description?: ReactNode;
   hideTitle?: boolean;
   icon?: ReactNode;
@@ -190,7 +190,7 @@ export function SettingsSection({
           data-settings-scroll-target
           className="flex min-h-7 items-start justify-between gap-4 px-3 sm:px-4"
         >
-          <div className="min-w-0">
+          <div className="min-w-0 flex-1">
             <h2 className="flex min-h-7 items-center gap-2 text-sm font-normal tracking-[-0.005em] text-foreground/70">
               {icon}
               {title}

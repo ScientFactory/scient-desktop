@@ -577,7 +577,7 @@ export function ProviderInstanceCard({
   ) : null;
 
   const versionCodeNode = versionLabel ? (
-    <code className="text-xs text-muted-foreground">{versionLabel}</code>
+    <code className="min-w-0 truncate text-xs text-muted-foreground">{versionLabel}</code>
   ) : null;
 
   const statusHeadline =
@@ -635,16 +635,24 @@ export function ProviderInstanceCard({
         >
           {titleIconNode}
           <span className="min-w-0 flex-1">
-            <span className="flex min-w-0 items-center gap-2">
-              <span className="truncate text-sm font-medium text-foreground">{displayName}</span>
-              {String(instanceId) !== String(instance.driver) ? (
-                <code className="min-w-0 truncate rounded bg-muted/60 px-1 py-0.5 text-[10px] text-muted-foreground">
-                  {instanceId}
-                </code>
-              ) : null}
-              {versionCodeNode}
+            <span className="flex min-w-0 items-baseline gap-2">
+              <span className="min-w-0 truncate text-sm font-medium text-foreground">
+                {displayName}
+              </span>
+              <span className="flex min-w-0 flex-1 items-baseline gap-2">
+                {String(instanceId) !== String(instance.driver) ? (
+                  <code className="min-w-0 truncate rounded bg-muted/60 px-1 py-0.5 text-[10px] text-muted-foreground">
+                    {instanceId}
+                  </code>
+                ) : null}
+                {versionCodeNode}
+              </span>
               {versionAdvisory ? (
-                <span role="img" aria-label="Update available" className="inline-flex shrink-0">
+                <span
+                  role="img"
+                  aria-label="Update available"
+                  className="inline-flex shrink-0 self-center"
+                >
                   <ArrowUpCircleIcon className="size-3.5 text-muted-foreground" />
                 </span>
               ) : null}
@@ -689,7 +697,6 @@ export function ProviderInstanceCard({
           {driverOption.badgeLabel}
         </Badge>
       ) : null}
-      {versionCodeNode}
       <span
         inert={readOnly}
         aria-disabled={readOnly || undefined}
@@ -807,7 +814,12 @@ export function ProviderInstanceCard({
   return (
     <>
       <SettingsSection
-        title={displayName}
+        title={
+          <span className="flex min-w-0 flex-1 items-baseline gap-2">
+            <span className="min-w-0 truncate">{displayName}</span>
+            <span className="flex min-w-0 flex-1">{versionCodeNode}</span>
+          </span>
+        }
         description={editorStatusNode}
         icon={titleIconNode}
         headerAction={editorHeaderAction}

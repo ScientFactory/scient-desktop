@@ -49,11 +49,11 @@ export function ExternalSkillsSettings() {
 
   return (
     <SettingsPageContainer>
-      <SettingsSection title="External skills" icon={<LibraryBigIcon className="size-4" />}>
-        <p className="px-3 pb-1 text-sm leading-relaxed text-muted-foreground sm:px-4">
-          Skills reported by your connected agent providers. Project skills stay with their
-          workspace.
-        </p>
+      <SettingsSection
+        title="External skills"
+        icon={<LibraryBigIcon className="size-4" />}
+        variant="plain"
+      >
         <Link
           className="group mb-2 ms-1 inline-flex min-h-8 cursor-pointer items-center gap-1.5 rounded-lg px-2 text-sm text-muted-foreground outline-none transition-colors hover:bg-foreground/[0.035] hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring sm:ms-2"
           to="/settings/skills"
@@ -102,7 +102,7 @@ export function ExternalSkillsSettings() {
             {expandedGroup ? (
               <div
                 id={`external-skills-${expandedGroup.provider.instanceId}`}
-                className="border-b border-border/70 py-1"
+                className="rounded-xl border border-border/60 bg-card/40 py-1 shadow-xs/5 [&>*+*]:border-t [&>*+*]:border-border/50"
               >
                 {expandedGroup.skills.length === 0 ? (
                   <SettingsRow

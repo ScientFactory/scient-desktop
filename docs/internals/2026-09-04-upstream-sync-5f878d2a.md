@@ -57,6 +57,18 @@ tabs, compact assisted actions, operation progress, and independent provider-row
 selection hit area. The switch does not consume ordinary row selection. An
 unavailable provider definition falls back to Configuration instead of an empty
 Models tab. Searchable shared settings and per-environment read-only boundaries remain.
+Provider versions sit beside the name in both panes, align to its text baseline,
+and truncate on one line after the provider name receives its space. Long native
+release labels no longer expand the Manage controls or force horizontal scrolling.
+
+Following maintainer review, the Skills pages use the shared plain section layout
+and heading typography rather than wrapping the whole page in a card. Introductory
+copy is removed from Skills, External skills, and Project skills. Only the built-in
+skills list and each expanded external-provider skill list are grouped in cards.
+Voice retains its pre-alignment standalone heading and layout through a Scient-owned
+section wrapper with shared search-target behavior. Getting Started is a standalone
+link above Organization, using the normal section gap without extra bottom row
+padding. Other upstream Settings sections and all skill/voice operations are unchanged.
 
 The native Antigravity binary, bundled catalog, and shared registry floor now all
 identify the verified 1.1.1 release. The registry version was checked against
@@ -145,16 +157,22 @@ claim of a warning-free repository. No assertion was removed to make a failure
 pass: obsolete fixture expectations were composed with the received behavior,
 and the remote-preview and catalog-floor defects were fixed.
 
-No interactive app, real browser profile import, live account login, credit
-redemption, or production data access was performed. Physical mobile behavior,
+At the original merge qualification, no interactive app, real browser profile import,
+live account login, credit redemption, or production data access was performed. Physical mobile behavior,
 Windows/Linux native execution, signing/notarization and publication are not
 claimed by the macOS local gate. Mobile native static discovery ran, but SwiftLint,
 ktlint and detekt were unavailable locally; their absence is not a pass claim.
 
-The candidate remains a draft for an isolated-app interaction review: Settings
-selection/managed operations, Antigravity model and reasoning changes, context
-compaction/questions, rich media/floating previews, browser import, and remote
-project-script preview. Automated checks do not establish visual acceptance.
+An isolated, worktree-owned dev app was subsequently launched for maintainer review.
+The maintainer accepted the Settings presentation polish recorded above, including
+Skills, Voice, Getting Started spacing, and provider-version placement/truncation.
+That acceptance does not establish live-provider, managed-operation, or other
+interaction coverage. No additional computer-use review was performed for this polish.
+
+The candidate remains a draft. Remaining interaction checks include provider turns
+and managed operations, Antigravity model/reasoning selection, context compaction
+and questions, composer focus, rich media/floating previews, and—where used—browser
+import and remote project-script previews. Automated checks do not establish visual acceptance.
 Canonical main is synchronized to the owned base, not to this unaccepted candidate.
 Merging to main, publishing a release and removing this review worktree require
 their separate acceptance gates.
