@@ -69,8 +69,10 @@ On web and desktop, an existing thread settles its composer into a single-line r
 the composer loses focus. At wider sizes, scrolling the conversation also rests a focused composer,
 except when scrolling toward the end while already there. When the thread-context strip has room,
 the model and mode controls stay available beside the thread context; otherwise they return when the
-composer is focused. Focus the composer or start typing to expand it again. New-thread layouts keep
-the full composer.
+composer is focused. Focus the composer or start typing to expand it again. The conversation keeps
+the expanded composer's space clear above its last message while the composer rests, so expanding it
+again never covers what you scrolled to. New-thread layouts keep the full composer. **Settings → General → Collapse composer** chooses which triggers rest it:
+**On unfocus**, **On scroll**, both, or neither. With neither selected the composer stays expanded.
 
 At phone-sized web or desktop window widths, existing threads animate between their compact and
 expanded layouts. Up to three image attachments remain visible in either resting layout, followed
@@ -221,6 +223,8 @@ such as System, Personal, Project, or App.
 
 On mobile, these menus are available on the **New task** screen before you start a thread. They
 use the skills and commands from the selected environment and provider.
+
+In a thread with prior conversation context, send `/compact` to reduce context usage. Web and desktop also offer this action from the context meter, and the work log records token counts when the provider reports them.
 
 On web and desktop, new profiles leave **Show skills in slash menu** off. Type `$` to select a skill,
 or turn on this option in **Settings → General** to include skill aliases in `/` as well. Saved

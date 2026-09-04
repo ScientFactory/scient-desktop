@@ -1,4 +1,9 @@
-import { ProviderDriverKind, ProviderInstanceId, type ServerProvider } from "@t3tools/contracts";
+import {
+  ProviderDriverKind,
+  ProviderInstanceId,
+  type ProviderRuntimeOperation,
+  type ServerProvider,
+} from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
 import { providerSettingsLifecyclePresentation } from "./providerSettingsLifecyclePresentation";
@@ -19,6 +24,37 @@ const provider = (patch: Partial<ServerProvider> = {}): ServerProvider => ({
   connection: { methods: ["codex_browser"], canDisconnect: false, operation: null },
   ...patch,
 });
+
+function presentingOperation(patch: Partial<ProviderRuntimeOperation>) {
+  return providerSettingsLifecyclePresentation(
+    provider({
+      connection: {
+        methods: [],
+        canDisconnect: false,
+        operation: null,
+        runtime: {
+          source: "missing",
+          supportTier: "fully_assisted",
+          target: "darwin-arm64",
+          actions: ["install"],
+          managedVersion: null,
+          previousManagedVersion: null,
+          message: "Working.",
+          operation: {
+            operationId: "runtime-1",
+            action: "install",
+            status: "downloading",
+            startedAt: "2026-09-04T00:00:00.000Z",
+            finishedAt: null,
+            message: "Working.",
+            ...patch,
+          },
+        },
+      },
+    }),
+    "Codex",
+  );
+}
 
 describe("provider settings lifecycle presentation", () => {
   it("offers installation when Codex is missing", () => {
@@ -350,8 +386,73 @@ describe("provider settings lifecycle presentation", () => {
         }),
         "Codex",
       ),
-    ).toMatchObject({ kind: "installing", statusLabel: "Installing", busy: true });
+    ).toMatchObject({
+      kind: "installing",
+      statusLabel: "Installing",
+      actionLabel: "Installing",
+      actionKind: "continue",
+      runtimeAction: null,
+      busy: true,
+    });
   });
+
+  it.each([
+    ["install", "Installing"],
+    ["update", "Updating"],
+    ["repair", "Repairing"],
+    ["remove", "Removing"],
+  ] as const)("uses one concise action label throughout %s", (action, label) => {
+    for (const status of ["preparing", "downloading", "installing", "activating"] as const) {
+      expect(presentingOperation({ action, status })).toMatchObject({
+        actionLabel: label,
+        statusLabel: label,
+        runtimeAction: null,
+        busy: true,
+      });
+    }
+  });
+
+  it.each(["verifying", "testing"] as const)(
+    "shows Verifying for %s, not a leftover download percentage",
+    (status) => {
+      const presentation = presentingOperation({ status, downloadedBytes: 100, totalBytes: 100 });
+      expect(presentation).toMatchObject({ actionLabel: "Verifying", busy: true });
+      expect(presentation.downloadPercent).toBeUndefined();
+    },
+  );
+
+  it.each([
+    [0, 100, 0],
+    [42, 100, 42],
+    [999, 1000, 99],
+    [100, 100, 100],
+    [110, 100, 100],
+    [undefined, 100, undefined],
+    [42, undefined, undefined],
+    [42, 0, undefined],
+    [NaN, 100, undefined],
+    [42, Infinity, undefined],
+  ])(
+    "reports only meaningful download bytes (%s / %s)",
+    (downloadedBytes, totalBytes, expected) => {
+      const presentation = presentingOperation({
+        ...(downloadedBytes !== undefined ? { downloadedBytes } : {}),
+        ...(totalBytes !== undefined ? { totalBytes } : {}),
+      });
+      expect(presentation.downloadPercent).toBe(expected);
+      expect(presentation.busy).toBe(true);
+      expect(presentation.actionLabel).toBe("Installing");
+    },
+  );
+
+  it.each(["preparing", "installing", "activating", "succeeded", "failed", "cancelled"] as const)(
+    "never treats download bytes as overall progress during %s",
+    (status) => {
+      expect(
+        presentingOperation({ status, downloadedBytes: 100, totalBytes: 100 }).downloadPercent,
+      ).toBeUndefined();
+    },
+  );
 
   it("keeps an installation failure distinct from a missing runtime", () => {
     expect(
@@ -386,8 +487,9 @@ describe("provider settings lifecycle presentation", () => {
       kind: "failed",
       statusLabel: "Setup failed",
       detail: "Verification failed.",
-      actionKind: "runtime",
-      runtimeAction: "install",
+      actionLabel: "Failed",
+      actionKind: "manage",
+      runtimeAction: null,
     });
   });
 

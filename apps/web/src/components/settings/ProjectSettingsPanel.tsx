@@ -858,7 +858,7 @@ function ProjectDetail({ group }: { group: SidebarProjectSnapshot }) {
                 <ProjectFavicon
                   environmentId={representative.environmentId}
                   cwd={representative.workspaceRoot}
-                  projectName={group.displayName}
+                  projectName={representative.title}
                   faviconPath={faviconPath}
                   projectIcon={projectIcon}
                   className="size-6"
@@ -919,6 +919,9 @@ function ProjectDetail({ group }: { group: SidebarProjectSnapshot }) {
                     }}
                   />
                   <TraitsPicker
+                    onNativeModelChange={(model) =>
+                      setDefaultModel(createModelSelection(resolvedSelection.instanceId, model))
+                    }
                     provider={activeEntry.driverKind as ProviderDriverKind}
                     models={activeEntry.models}
                     model={resolvedSelection.model}

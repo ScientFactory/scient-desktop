@@ -234,13 +234,18 @@ export function makeAntigravityManagedRuntimeActions(input: {
         current: installedRegistryVersion,
         candidate: asset.registryVersion,
       });
-    const actions: ReadonlyArray<ProviderManagedRuntimeAction> = !fullyAssisted
-      ? []
-      : source === "missing" || source === "system"
-        ? ["install"]
-        : source === "scient_managed"
-          ? [...(updateAvailable ? (["update"] as const) : []), "repair", "remove"]
-          : [];
+    const actions: ReadonlyArray<ProviderManagedRuntimeAction> =
+      source === "scient_managed" && !configuredPath
+        ? [
+            ...(updateAvailable ? (["update"] as const) : []),
+            ...(asset ? (["repair"] as const) : []),
+            "remove",
+          ]
+        : !fullyAssisted
+          ? []
+          : source === "missing" || source === "system"
+            ? ["install"]
+            : [];
     const message =
       source === "custom"
         ? "Scient is preserving the custom Antigravity ACP runtime configured for this account."
@@ -286,9 +291,11 @@ export function makeAntigravityManagedRuntimeActions(input: {
 
   const plan: ProviderManagedRuntimeActions["plan"] = (action) =>
     Effect.gen(function* () {
-      const asset = yield* input.installation.latestRelease;
+      const asset = yield* action === "remove"
+        ? input.installation.latestRelease
+        : input.installation.refreshLatestRelease;
       const summary = yield* getSummary;
-      if (!summary.actions.includes(action) || !asset) {
+      if (!summary.actions.includes(action) || (action !== "remove" && !asset)) {
         return yield* failure(
           `The ${action} action is not available for this Antigravity runtime.`,
         );
@@ -296,10 +303,13 @@ export function makeAntigravityManagedRuntimeActions(input: {
       return {
         action,
         target,
-        version: action === "remove" ? null : asset.version,
-        downloadBytes: action === "remove" ? null : asset.archiveBytes,
+        version: action === "remove" ? null : (asset?.version ?? null),
+        downloadBytes: action === "remove" ? null : (asset?.archiveBytes ?? null),
         sourceLabel: "Official Google Antigravity ACP release",
-        catalogRevision: runtimeRevision(asset.version, asset.sha256),
+        catalogRevision:
+          action === "remove"
+            ? `antigravity-acp:remove:${summary.managedVersion ?? "none"}`
+            : runtimeRevision(asset!.version, asset!.sha256),
         message:
           action === "remove"
             ? "Remove Scient's private Antigravity ACP runtime. System and custom installations are untouched."
@@ -334,21 +344,24 @@ export function makeAntigravityManagedRuntimeActions(input: {
 
   const run: ProviderManagedRuntimeActions["run"] = (action, revision, report) =>
     Effect.gen(function* () {
-      const asset = yield* input.installation.latestRelease;
-      if (!asset || revision !== runtimeRevision(asset.version, asset.sha256)) {
-        return yield* failure("The Antigravity installation plan changed. Review it again.");
-      }
       const summary = yield* getSummary;
       if (!summary.actions.includes(action)) {
         return yield* failure(`The ${action} action is no longer available for Antigravity.`);
       }
       if (action === "remove") {
+        if (revision !== `antigravity-acp:remove:${summary.managedVersion ?? "none"}`) {
+          return yield* failure("The Antigravity removal plan changed. Review it again.");
+        }
         yield* report({
           status: "removing",
           message: "Removing Scient's private Antigravity runtime.",
         });
         yield* input.installation.remove(yield* input.protectedBinaryPaths);
         return;
+      }
+      const asset = yield* input.installation.latestRelease;
+      if (!asset || revision !== runtimeRevision(asset.version, asset.sha256)) {
+        return yield* failure("The Antigravity installation plan changed. Review it again.");
       }
       yield* runInstall(asset, report);
     }).pipe(

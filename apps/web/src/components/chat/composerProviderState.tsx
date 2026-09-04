@@ -42,6 +42,7 @@ export type ComposerProviderState = {
 };
 
 type TraitsRenderInput = {
+  onNativeModelChange?: ((model: string) => void) | undefined;
   provider: ProviderDriverKind;
   instanceId?: ProviderInstanceId;
   threadRef?: ScopedThreadRef;
@@ -53,6 +54,7 @@ type TraitsRenderInput = {
   onPromptChange: (prompt: string) => void;
   planModeEnabled: boolean;
   size?: ComposerControlSize;
+  hidden?: boolean;
   triggerVariant?: VariantProps<typeof buttonVariants>["variant"];
   triggerClassName?: string;
   isComposerOwned?: boolean;
@@ -131,6 +133,7 @@ function renderTraitsControl(
     onPromptChange,
     planModeEnabled,
     size,
+    hidden,
     triggerVariant,
     triggerClassName,
     isComposerOwned,
@@ -151,6 +154,7 @@ function renderTraitsControl(
   }
   return (
     <Component
+      onNativeModelChange={input.onNativeModelChange}
       provider={provider}
       {...(instanceId ? { instanceId } : {})}
       models={models}
@@ -162,6 +166,7 @@ function renderTraitsControl(
       onPromptChange={onPromptChange}
       planModeEnabled={planModeEnabled}
       {...(size !== undefined ? { size } : {})}
+      {...(hidden !== undefined ? { hidden } : {})}
       {...(triggerVariant !== undefined ? { triggerVariant } : {})}
       {...(triggerClassName !== undefined ? { triggerClassName } : {})}
       {...(isComposerOwned ? { isComposerOwned } : {})}

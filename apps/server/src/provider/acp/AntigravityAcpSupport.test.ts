@@ -48,6 +48,32 @@ function makeModelRuntime(
 }
 
 describe("applyAntigravityAcpModelSelection", () => {
+  it.effect(
+    "applies each reasoning choice as its exact native model, including after cold resume",
+    () =>
+      Effect.gen(function* () {
+        const options = ["high", "medium", "low"].map((level) => ({
+          value: `gemini-3.8-flash-${level}`,
+          name: level,
+        }));
+        const { runtime, selections } = makeModelRuntime([
+          {
+            ...modelConfig,
+            currentValue: options[0]!.value,
+            options,
+          },
+        ]);
+        for (const { value } of options) {
+          const selected = yield* applyAntigravityAcpModelSelection({
+            runtime,
+            model: value,
+            mapError: (cause) => cause,
+          });
+          expect(selected).toBe(value);
+        }
+        expect(selections).toEqual(options.map(({ value }) => value));
+      }),
+  );
   it.effect("restores the saved model instead of the cold-resume default", () =>
     Effect.gen(function* () {
       const { runtime, selections } = makeModelRuntime();

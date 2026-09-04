@@ -1,3 +1,9 @@
+import {
+  getAntigravityModelGroups,
+  getAntigravityReasoningControl,
+  groupAntigravityModelRows,
+  type AntigravityModelGroup,
+} from "@t3tools/client-runtime/antigravity-model-presentation";
 import type {
   ModelCapabilities,
   ModelSelection,
@@ -9,6 +15,7 @@ import {
 } from "@t3tools/shared/model";
 
 export type ModelOption = {
+  readonly reasoningGroup?: AntigravityModelGroup;
   readonly key: string;
   readonly label: string;
   readonly subtitle: string;
@@ -164,11 +171,16 @@ export function buildModelOptions(
     }
 
     const providerLabel = providerDisplayLabel(provider);
+    const reasoningGroups = getAntigravityModelGroups(provider.driver, provider.models);
     for (const model of provider.models) {
+      const reasoningGroup = reasoningGroups.find((group) =>
+        group.models.some(({ slug }) => slug === model.slug),
+      );
       const key = `${provider.instanceId}:${model.slug}`;
       options.set(key, {
         key,
         label: model.name,
+        ...(reasoningGroup ? { reasoningGroup } : {}),
         subtitle: model.subProvider ?? "",
         providerKey: provider.instanceId,
         providerLabel,
@@ -232,6 +244,32 @@ export function buildModelOptions(
   }
 
   return [...options.values()];
+}
+
+export function modelOptionReasoningControl(option: ModelOption | null | undefined) {
+  return !option?.isUnavailable && option?.reasoningGroup
+    ? getAntigravityReasoningControl([option.reasoningGroup], option.selection.model)
+    : null;
+}
+
+/** Presentation only; callers keep the full catalog for selection and validation. */
+export function groupModelOptionsForDisplay(
+  options: ReadonlyArray<ModelOption>,
+  selectedModel?: string | null,
+): ReadonlyArray<ModelOption> {
+  const groups = [
+    ...new Set(options.flatMap((option) => (option.reasoningGroup ? [option.reasoningGroup] : []))),
+  ];
+  if (groups.length === 0) return options;
+  return groupAntigravityModelRows(
+    options.map((option) => ({
+      ...option,
+      slug: option.selection.model,
+      name: option.label,
+    })),
+    groups,
+    selectedModel,
+  ).map(({ slug: _slug, name, shortName: _shortName, ...option }) => ({ ...option, label: name }));
 }
 
 export function groupByProvider(options: ReadonlyArray<ModelOption>): ReadonlyArray<ProviderGroup> {

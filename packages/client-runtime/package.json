@@ -3,6 +3,10 @@
   "private": true,
   "type": "module",
   "exports": {
+    "./antigravity-model-presentation": {
+      "types": "./src/antigravityModelPresentation.ts",
+      "default": "./src/antigravityModelPresentation.ts"
+    },
     "./connection": {
       "types": "./src/connection/index.ts",
       "default": "./src/connection/index.ts"

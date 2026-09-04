@@ -16,6 +16,8 @@ export * from "./providerInstance.ts";
 export * from "./providerLifecycle.ts";
 export * from "./providerSetup.ts";
 export * from "./providerRuntime.ts";
+export * from "./providerUsageLimits.ts";
+export * from "./usageLimitSourceId.ts";
 export * from "./model.ts";
 export * from "./keybindings.ts";
 export * from "./server.ts";
@@ -46,6 +48,7 @@ export * from "./scientMarkdown.ts";
 // SCIENT-FORK:START — Scient thread queue contracts (new file, no upstream edits).
 export * from "./scientThreadQueue.ts";
 // SCIENT-FORK:END
+export * from "./browserImport.ts";
 export * from "./browserProfile.ts";
 export * from "./preview.ts";
 export * from "./previewAutomation.ts";

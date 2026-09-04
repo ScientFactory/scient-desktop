@@ -74,14 +74,16 @@ pairing model.
 
 ### Headless server
 
-For a separately managed server, the inherited package-compatible command is
-`t3 serve`. For example, a Tailnet-only server can be started with:
+For a separately managed server, use the exact Scient release archive and
+`SCIENT_SERVER_PACKAGE` variable described in [Background service setup](background-service.md).
+The retained compatibility executable is `t3`; do not use T3's npm package.
+For example, a Tailnet-only server can be started with:
 
 ```bash
-npx t3 serve --host "$(tailscale ip -4)"
+npx --yes --allow-scripts=node-pty@1.1.0,msgpackr-extract@3.0.4 --package="$SCIENT_SERVER_PACKAGE" t3 serve --host "$(tailscale ip -4)"
 ```
 
-Use `npx t3 serve --help` for the complete options. To ask the server to manage
+Use the same package command with `t3 serve --help` for the complete options. To ask the server to manage
 Tailscale Serve directly, use `--tailscale-serve`; advanced users can add
 `--tailscale-serve-port 8443` for another HTTPS port. The command prints the
 address and temporary pairing information needed by a client.
@@ -91,6 +93,15 @@ address and temporary pairing information needed by a client.
 In **Settings → Connections**, create a time-limited pairing link or code with
 only the read and write permissions that client needs. Share it only with the
 intended device, and revoke unused links or sessions from the same page.
+
+Pairing codes and share links are available only in the client that created them,
+while its Connections page remains open. After leaving or reloading that page,
+create a new link to share. Other clients can see a link's name, scopes, and expiry,
+and can revoke it if they have access-management permission.
+
+The default endpoint controls the QR code and primary copy action. You can change
+it in the expanded endpoint list. The preference follows the endpoint type rather
+than a particular IP address.
 
 Treat a pairing link like a temporary password:
 

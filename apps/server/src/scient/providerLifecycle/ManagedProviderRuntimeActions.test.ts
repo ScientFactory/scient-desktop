@@ -11,12 +11,12 @@ import {
   ManagedProviderRuntimeError,
   ManagedProviderRuntime,
   ManagedRuntimeFileError,
-  managedRuntimeArtifactReceipt,
   resolveReviewedClaudeArtifact,
   type ManagedRuntimeArtifact,
-  type ManagedProviderRuntimeStatus,
 } from "@scientfactory/provider-runtime";
 import * as Effect from "effect/Effect";
+import * as Stream from "effect/Stream";
+import { BUNDLED_MANAGED_RUNTIME_CATALOG, ManagedRuntimeCatalog } from "./ManagedRuntimeCatalog.ts";
 import * as ChildProcessSpawner from "effect/unstable/process/ChildProcessSpawner";
 
 import {
@@ -26,7 +26,6 @@ import {
   nativeProviderRuntimeBackendLabel,
   resolveManagedRuntimePolicy,
   resolveManagedRuntimeSource,
-  resolveManagedRuntimeActionArtifact,
 } from "./ManagedProviderRuntimeActions.ts";
 
 const temporaryRoots: string[] = [];
@@ -227,63 +226,126 @@ describe("managed provider runtime policy", () => {
     }).pipe(Effect.provide(NodeServices.layer)),
   );
 
-  it.effect("uses the qualified catalog release through the real generic install boundary", () =>
-    Effect.gen(function* () {
-      const baseDir = yield* Effect.promise(() =>
-        NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "scient-managed-provider-catalog-")),
-      );
-      temporaryRoots.push(baseDir);
-      const bundledArtifact = resolveReviewedClaudeArtifact({
-        platform: "darwin",
-        arch: "arm64",
-      });
-      if (!bundledArtifact) throw new Error("Reviewed Claude test policy is missing.");
-      const runtime = new ManagedProviderRuntime(
-        baseDir,
-        { providerDirectory: "claude", displayName: "Claude" },
-        {
-          download: async ({ destination }) => {
-            await NodeFSP.mkdir(NodePath.dirname(destination), { recursive: true });
-            await NodeFSP.writeFile(destination, "downloaded", { flag: "wx" });
+  it.effect(
+    "install and repair refresh the catalog, preserve failed activation, and remove without refresh",
+    () =>
+      Effect.gen(function* () {
+        const baseDir = yield* Effect.promise(() =>
+          NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "scient-managed-provider-catalog-")),
+        );
+        temporaryRoots.push(baseDir);
+        let failSmoke = false;
+        const bundledArtifact = resolveReviewedClaudeArtifact({
+          platform: "darwin",
+          arch: "arm64",
+        });
+        if (!bundledArtifact) throw new Error("Reviewed Claude test policy is missing.");
+        const runtime = new ManagedProviderRuntime(
+          baseDir,
+          { providerDirectory: "claude", displayName: "Claude" },
+          {
+            download: async ({ destination }) => {
+              await NodeFSP.mkdir(NodePath.dirname(destination), { recursive: true });
+              await NodeFSP.writeFile(destination, "downloaded", { flag: "wx" });
+            },
+            verify: async () => undefined,
+            materialize: async ({ destination, executablePath }) => {
+              await NodeFSP.mkdir(destination, { recursive: true });
+              const executable = NodePath.join(destination, executablePath);
+              await NodeFSP.writeFile(executable, "managed", { mode: 0o755 });
+              return executable;
+            },
+            smoke: async () => {
+              if (failSmoke) throw new Error("simulated failed smoke");
+            },
           },
-          verify: async () => undefined,
-          materialize: async ({ destination, executablePath }) => {
-            await NodeFSP.mkdir(destination, { recursive: true });
-            const executable = NodePath.join(destination, executablePath);
-            await NodeFSP.writeFile(executable, "managed", { mode: 0o755 });
-            return executable;
-          },
-          smoke: async () => undefined,
-        },
-      );
-      const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
-      const resolution = yield* makeManagedProviderRuntimeResolution({
-        configuredBinaryPath: "__scient_missing_claude__",
-        defaultBinary: "__scient_missing_claude__",
-        providerName: "Claude",
-        providerSlug: "claude",
-        runtime,
-        bundledArtifact,
-        contractRevision: 1,
-        targetLabel: "darwin-arm64",
-        environment: process.env,
-        spawner,
-        managedInstallationAllowed: true,
-        systemToManagedSwitchAllowed: true,
-        sourceLabel: "Official Anthropic Claude Code release",
-        managedInstallationLimitation: "Managed installation is unavailable here.",
-        diagnosticsHomePath: null,
-        diagnosticsBackend: "macOS native",
-      });
+        );
+        const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+        let catalog = BUNDLED_MANAGED_RUNTIME_CATALOG;
+        let refreshes = 0;
+        let available = catalog;
+        const catalogService = ManagedRuntimeCatalog.of({
+          current: Effect.sync(() => catalog),
+          refresh: Effect.sync(() => {
+            refreshes++;
+            catalog = available;
+            return catalog;
+          }),
+          subscribeChanges: Effect.succeed(Stream.empty),
+        });
+        const resolution = yield* makeManagedProviderRuntimeResolution({
+          configuredBinaryPath: "__scient_missing_claude__",
+          defaultBinary: "__scient_missing_claude__",
+          providerName: "Claude",
+          providerSlug: "claude",
+          runtime,
+          bundledArtifact,
+          contractRevision: 1,
+          targetLabel: "darwin-arm64",
+          environment: process.env,
+          spawner,
+          managedInstallationAllowed: true,
+          systemToManagedSwitchAllowed: true,
+          sourceLabel: "Official Anthropic Claude Code release",
+          managedInstallationLimitation: "Managed installation is unavailable here.",
+          diagnosticsHomePath: null,
+          diagnosticsBackend: "macOS native",
+        }).pipe(Effect.provideService(ManagedRuntimeCatalog, catalogService));
 
-      const plan = yield* resolution.actions.plan("install");
-      expect(plan.version).toBe("2.1.251");
-      yield* resolution.actions.run("install", plan.catalogRevision, () => Effect.void);
-      expect(yield* Effect.promise(() => runtime.status(bundledArtifact))).toMatchObject({
-        installed: true,
-        activeVersion: "2.1.251",
-      });
-    }).pipe(Effect.provide(NodeServices.layer)),
+        const expectedVersion = BUNDLED_MANAGED_RUNTIME_CATALOG.providers.claudeAgent!.version;
+        const plan = yield* resolution.actions.plan("install");
+        expect(plan.version).toBe(expectedVersion);
+        yield* resolution.actions.run("install", plan.catalogRevision, () => Effect.void);
+        expect(yield* Effect.promise(() => runtime.status(bundledArtifact))).toMatchObject({
+          installed: true,
+          activeVersion: expectedVersion,
+        });
+        const release = catalog.providers.claudeAgent!;
+        const parts = release.version.split(".").map(Number);
+        const nextVersion = `${parts[0]}.${parts[1]}.${parts[2]! + 1}`;
+        available = {
+          ...catalog,
+          providers: {
+            ...catalog.providers,
+            claudeAgent: {
+              ...release,
+              version: nextVersion,
+              artifacts: Object.fromEntries(
+                Object.entries(release.artifacts).map(([key, artifact]) => [
+                  key,
+                  {
+                    ...artifact,
+                    url: artifact.url.replace(release.version, nextVersion),
+                    checksum: { algorithm: "sha256" as const, digest: "b".repeat(64) },
+                  },
+                ]),
+              ),
+            },
+          },
+        };
+        const repair = yield* resolution.actions.plan("repair");
+        expect(refreshes).toBe(3); // install plan, install run, repair plan
+        expect(repair.version).toBe(nextVersion);
+        expect(repair.catalogRevision).not.toBe(plan.catalogRevision);
+        failSmoke = true;
+        yield* resolution.actions
+          .run("repair", repair.catalogRevision, () => Effect.void)
+          .pipe(Effect.flip);
+        expect((yield* Effect.promise(() => runtime.status(bundledArtifact))).activeVersion).toBe(
+          expectedVersion,
+        );
+        failSmoke = false;
+        yield* resolution.actions.run("repair", repair.catalogRevision, () => Effect.void);
+        expect((yield* Effect.promise(() => runtime.status(bundledArtifact))).activeVersion).toBe(
+          nextVersion,
+        );
+        const repeatRepair = yield* resolution.actions.plan("repair");
+        expect(repeatRepair.version).toBe(nextVersion);
+        const beforeRemove = refreshes;
+        const remove = yield* resolution.actions.plan("remove");
+        yield* resolution.actions.run("remove", remove.catalogRevision, () => Effect.void);
+        expect(refreshes).toBe(beforeRemove);
+      }).pipe(Effect.provide(NodeServices.layer)),
   );
 
   it("keeps a selected but damaged managed runtime repairable and removable", () => {
@@ -334,49 +396,6 @@ describe("managed provider runtime policy", () => {
         systemToManagedSwitchAllowed: true,
       }),
     ).toMatchObject({ actions: [], supportTier: "external_runtime_supported" });
-  });
-});
-
-describe("managed provider runtime action release", () => {
-  const candidate = {
-    ...reviewedArtifact,
-    version: "2.0.0",
-    url: "https://example.com/claude-2.0.0",
-    checksum: { algorithm: "sha256" as const, digest: "2".repeat(64) },
-    catalogRevision: "test:claude:2.0.0",
-  };
-
-  it("repairs the exact activated release without turning repair into update", () => {
-    const status = {
-      activeArtifact: managedRuntimeArtifactReceipt(reviewedArtifact),
-    } as ManagedProviderRuntimeStatus;
-    expect(
-      resolveManagedRuntimeActionArtifact({
-        action: "repair",
-        bundledArtifact: reviewedArtifact,
-        candidateArtifact: candidate,
-        status,
-      }),
-    ).toMatchObject({ version: "1.0.0", catalogRevision: "test:claude:1.0.0" });
-    expect(
-      resolveManagedRuntimeActionArtifact({
-        action: "update",
-        bundledArtifact: reviewedArtifact,
-        candidateArtifact: candidate,
-        status,
-      }),
-    ).toBe(candidate);
-  });
-
-  it("keeps the historical bundled fallback only for receipt-less legacy state", () => {
-    expect(
-      resolveManagedRuntimeActionArtifact({
-        action: "repair",
-        bundledArtifact: reviewedArtifact,
-        candidateArtifact: candidate,
-        status: {} as ManagedProviderRuntimeStatus,
-      }),
-    ).toBe(reviewedArtifact);
   });
 });
 

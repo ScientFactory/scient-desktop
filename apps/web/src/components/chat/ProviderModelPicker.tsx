@@ -1,3 +1,4 @@
+import { getAntigravityModelGroups } from "@t3tools/client-runtime/antigravity-model-presentation";
 import {
   ANTIGRAVITY_DEFAULT_MODEL,
   type ProviderInstanceId,
@@ -88,13 +89,25 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
       : selectedInstanceOptions[0]);
   const unresolvedTitle =
     props.model === ANTIGRAVITY_DEFAULT_MODEL ? "Choose model" : props.model || "Choose model";
+  const group =
+    activeEntry &&
+    getAntigravityModelGroups(
+      activeEntry.driverKind,
+      activeEntry.models.filter((model) =>
+        selectedInstanceOptions.some((option) => option.slug === model.slug),
+      ),
+    ).find((candidate) => candidate.models.some(({ slug }) => slug === selectedModel?.slug));
+  const triggerModel =
+    selectedModel && group && !selectedModel.isUnavailable
+      ? { ...selectedModel, name: group.name, shortName: group.name }
+      : selectedModel;
   const triggerTitle =
     props.statusLabel ??
-    (selectedModel ? getTriggerDisplayModelName(selectedModel) : unresolvedTitle);
+    (triggerModel ? getTriggerDisplayModelName(triggerModel) : unresolvedTitle);
   const triggerLabel =
     props.statusLabel ??
-    (selectedModel
-      ? `${getTriggerDisplayModelLabel(selectedModel)}${selectedModel.isUnavailable ? " (Unavailable)" : ""}`
+    (triggerModel
+      ? `${getTriggerDisplayModelLabel(triggerModel)}${triggerModel.isUnavailable ? " (Unavailable)" : ""}`
       : triggerTitle);
   const showInstanceBadge =
     activeEntry !== null && shouldShowInstanceBadge(activeEntry, props.instanceEntries);

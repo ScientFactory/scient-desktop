@@ -62,12 +62,33 @@ const main = Effect.gen(function* () {
   ) {
     return yield* fail("ACP installed release identity does not match its qualified candidate.");
   }
-  yield* installation.remove();
+  // Exercise repair and a fresh service resolving the durable activation record.
+  const repaired = yield* installation.startRelease(asset);
+  const repairedState = yield* installation.changes.pipe(
+    Stream.filter(
+      (state) =>
+        state.operationId === repaired.operationId &&
+        ["succeeded", "failed", "cancelled"].includes(state.phase),
+    ),
+    Stream.runHead,
+    Effect.map(Option.getOrThrow),
+  );
+  if (repairedState.phase !== "succeeded")
+    return yield* fail(repairedState.message ?? "ACP repair did not succeed.");
+  const reopened = yield* makeAntigravityInstallation({ baseDir, releaseAsset: asset });
+  const restored = yield* reopened.resolve();
+  if (
+    restored.executablePath !== executable.executablePath ||
+    restored.registryVersion !== asset.registryVersion
+  ) {
+    return yield* fail("ACP activation did not survive a service restart.");
+  }
+  yield* reopened.remove();
   if (yield* fs.exists(installation.managedDirectory))
     return yield* fail("ACP qualification runtime was not removed.");
   yield* Effect.sync(() =>
     process.stdout.write(
-      `Antigravity ACP ${asset.registryVersion} (${asset.version}) passed native ${platform}-${arch} install, initialize, activation and removal.\n`,
+      `Antigravity ACP ${asset.registryVersion} (${asset.version}) passed native ${platform}-${arch} install, initialize, repair, activation recovery and removal.\n`,
     ),
   );
 });

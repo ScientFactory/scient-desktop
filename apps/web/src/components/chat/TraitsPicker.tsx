@@ -1,4 +1,9 @@
 import {
+  ANTIGRAVITY_REASONING_CONTROL,
+  getAntigravityModelGroups,
+  getAntigravityReasoningControl,
+} from "@t3tools/client-runtime/antigravity-model-presentation";
+import {
   type ProviderDriverKind,
   type ProviderInstanceId,
   type ProviderOptionDescriptor,
@@ -15,7 +20,7 @@ import {
   isClaudeUltrathinkPrompt,
   normalizeModelSlug,
 } from "@t3tools/shared/model";
-import { memo, useCallback, useState } from "react";
+import { memo, useCallback } from "react";
 import type { VariantProps } from "class-variance-authority";
 import { ZapIcon } from "lucide-react";
 import { buttonVariants } from "../ui/button";
@@ -39,6 +44,7 @@ import {
   type ComposerControlSize,
 } from "./ComposerControl";
 import { composerFloatingLayerProps } from "./composerEventScope";
+import { useComposerMenuState } from "./useComposerMenuState";
 
 type ProviderOptions = ReadonlyArray<ProviderOptionSelection>;
 
@@ -145,16 +151,22 @@ function getSelectedTraits(
   const modelIsUnavailable =
     provider === "opencode" &&
     !models.some((candidate) => candidate.slug === normalizeModelSlug(model, provider));
-  const descriptors = modelIsUnavailable
-    ? buildUnavailableModelOptionDescriptors(
-        planModeEnabled
-          ? modelOptions
-          : modelOptions?.filter((option) => option.id !== "agent" || option.value !== "plan"),
-      )
-    : getProviderOptionDescriptors({
-        caps,
-        selections: modelOptions,
-      });
+  const nativeModelControl = getAntigravityReasoningControl(
+    getAntigravityModelGroups(provider, models),
+    model,
+  );
+  const descriptors = nativeModelControl
+    ? [nativeModelControl]
+    : modelIsUnavailable
+      ? buildUnavailableModelOptionDescriptors(
+          planModeEnabled
+            ? modelOptions
+            : modelOptions?.filter((option) => option.id !== "agent" || option.value !== "plan"),
+        )
+      : getProviderOptionDescriptors({
+          caps,
+          selections: modelOptions,
+        });
   const selectDescriptors = descriptors.filter(
     (descriptor): descriptor is Extract<ProviderOptionDescriptor, { type: "select" }> =>
       descriptor.type === "select",
@@ -269,6 +281,7 @@ export function shouldRenderTraitsControls(input: {
 }
 
 export interface TraitsMenuContentProps {
+  onNativeModelChange?: ((model: string) => void) | undefined;
   provider: ProviderDriverKind;
   instanceId?: ProviderInstanceId;
   models: ReadonlyArray<ServerProviderModel>;
@@ -284,6 +297,7 @@ export interface TraitsMenuContentProps {
 }
 
 export const TraitsMenuContent = memo(function TraitsMenuContentImpl({
+  onNativeModelChange,
   provider,
   instanceId,
   models,
@@ -341,6 +355,10 @@ export const TraitsMenuContent = memo(function TraitsMenuContentImpl({
     value: string,
   ) => {
     if (!value) return;
+    if (descriptor.id === ANTIGRAVITY_REASONING_CONTROL) {
+      if (descriptor.options.some((option) => option.id === value)) onNativeModelChange?.(value);
+      return;
+    }
     if (descriptor.promptInjectedValues?.includes(value)) {
       const nextPrompt =
         prompt.trim().length === 0
@@ -536,6 +554,7 @@ export function buildTraitsTriggerDisplay(input: {
 }
 
 export const TraitsPicker = memo(function TraitsPicker({
+  onNativeModelChange,
   provider,
   instanceId,
   models,
@@ -549,12 +568,14 @@ export const TraitsPicker = memo(function TraitsPicker({
   triggerClassName,
   isComposerOwned,
   size = "sm",
+  hidden = false,
   ...persistence
 }: TraitsMenuContentProps &
   TraitsPersistence & {
     size?: ComposerControlSize;
+    hidden?: boolean;
   }) {
-  const [isMenuOpen, setIsMenuOpen] = useState(false);
+  const [isMenuOpen, setIsMenuOpen] = useComposerMenuState(hidden);
   const { descriptors, primarySelectDescriptor, ultrathinkPromptControlled } =
     getTraitsSectionVisibility({
       provider,
@@ -592,7 +613,11 @@ export const TraitsPicker = memo(function TraitsPicker({
         size={size}
         className={cn(
           "fill-current opacity-80",
-          provider === "claudeAgent" ? "text-[#d97757]" : "text-foreground",
+          size === "xs"
+            ? "text-current"
+            : provider === "claudeAgent"
+              ? "text-[#d97757]"
+              : "text-foreground",
         )}
       />
       <span className="sr-only">Fast mode on</span>
@@ -623,11 +648,10 @@ export const TraitsPicker = memo(function TraitsPicker({
         }
       >
         {isCodexStyle ? (
+          // The label truncates itself; clipping the wrapper too would cut off
+          // the chevron, whose negative end margin overhangs the wrapper edge.
           <span
-            className={cn(
-              "flex min-w-0 w-full items-center overflow-hidden",
-              size === "xs" ? "gap-1" : "gap-1.5",
-            )}
+            className={cn("flex min-w-0 w-full items-center", size === "xs" ? "gap-1" : "gap-1.5")}
           >
             {fastModeIcon}
             <span className="min-w-0 truncate">{triggerLabel}</span>
@@ -643,6 +667,7 @@ export const TraitsPicker = memo(function TraitsPicker({
       </MenuTrigger>
       <MenuPopup align="start" {...(isComposerOwned ? composerFloatingLayerProps : {})}>
         <TraitsMenuContent
+          onNativeModelChange={onNativeModelChange}
           provider={provider}
           {...(instanceId ? { instanceId } : {})}
           models={models}

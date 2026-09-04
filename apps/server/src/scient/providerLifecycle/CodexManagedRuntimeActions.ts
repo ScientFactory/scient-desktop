@@ -6,13 +6,11 @@ import * as NodePath from "node:path";
 import {
   ManagedCodexRuntime,
   detectManagedRuntimeTarget,
-  hydrateManagedRuntimeArtifact,
   managedRuntimeSmokeEnvironment,
   managedRuntimeTargetKey,
   resolveReviewedCodexArtifact,
   type ManagedCodexRuntimeProgress,
   type ManagedRuntimeArtifact,
-  type ManagedProviderRuntimeStatus,
 } from "@scientfactory/provider-runtime";
 import type {
   CodexSettings,
@@ -36,6 +34,7 @@ import { ProviderConnectionActionError } from "./ProviderConnectionActions.ts";
 import {
   ManagedRuntimeCatalog,
   resolveManagedRuntimeCatalogCandidate,
+  resolveManagedRuntimeRepairArtifact,
   type ManagedRuntimeCatalogData,
 } from "./ManagedRuntimeCatalog.ts";
 import { isManagedRuntimeUpdate } from "./managedRuntimeVersion.ts";
@@ -115,23 +114,6 @@ export function resolveCodexCatalogCandidate(input: {
     bundledArtifact: input.bundledArtifact,
     contractRevision: CODEX_MANAGED_RUNTIME_CONTRACT_REVISION,
   });
-}
-
-/** Repair preserves the exact activated release whenever a durable receipt exists. */
-export function resolveCodexActionArtifact(input: {
-  readonly action: ProviderManagedRuntimeAction;
-  readonly bundledArtifact: ManagedRuntimeArtifact | undefined;
-  readonly candidateArtifact: ManagedRuntimeArtifact | undefined;
-  readonly status: ManagedProviderRuntimeStatus | undefined;
-}): ManagedRuntimeArtifact | undefined {
-  if (input.action !== "repair") return input.candidateArtifact;
-  if (!input.bundledArtifact) return undefined;
-  if (input.status?.activeArtifact) {
-    return hydrateManagedRuntimeArtifact(input.bundledArtifact, input.status.activeArtifact);
-  }
-  // State schema v1/v2 predates durable receipts. Preserve the previous
-  // behavior for those installations by repairing from the bundled release.
-  return input.bundledArtifact;
 }
 
 const qualifyManagedCodexRuntime = Effect.fn("CodexManagedRuntime.qualify")(function* (input: {
@@ -517,38 +499,33 @@ export const makeCodexManagedRuntimeResolution = Effect.fn("CodexManagedRuntime.
     const prepareAction = Effect.fn("CodexManagedRuntime.prepareAction")(function* (
       action: ProviderManagedRuntimeAction,
     ) {
-      // A user opening an install/update confirmation is the one path that
-      // deliberately waits for a TTL-gated refresh. Provider checks remain
-      // non-blocking and use `current` plus the process-owned background fetch.
-      const candidateArtifact = yield* resolveCandidate(
-        action === "install" || action === "update",
-      );
+      // Explicit download actions refresh; routine checks and removal stay local.
+      const candidateArtifact = yield* resolveCandidate(action !== "remove");
       const summary = yield* getSummary;
       if (!summary.actions.includes(action)) {
         return yield* runtimeError(`The ${action} action is not available for this Codex runtime.`);
       }
       const isDownload = action === "install" || action === "update" || action === "repair";
-      const latestStatus = bundledArtifact
-        ? yield* Effect.tryPromise({
-            try: () => runtime.status(bundledArtifact),
-            catch: (cause) =>
-              runtimeError("Scient could not inspect its private Codex runtime.", cause),
-          })
-        : undefined;
-      const actionArtifact = isDownload
-        ? resolveCodexActionArtifact({
-            action,
-            bundledArtifact,
-            candidateArtifact,
-            status: latestStatus,
-          })
-        : undefined;
+      const activeArtifact =
+        action === "repair" && bundledArtifact
+          ? (yield* Effect.tryPromise({
+              try: () => runtime.status(bundledArtifact),
+              catch: (cause) =>
+                runtimeError("Scient could not inspect its private runtime.", cause),
+            })).activeArtifact
+          : undefined;
+      const actionArtifact =
+        action === "repair"
+          ? resolveManagedRuntimeRepairArtifact({
+              bundledArtifact,
+              candidateArtifact,
+              activeArtifact,
+            })
+          : isDownload
+            ? candidateArtifact
+            : undefined;
       if (isDownload && !actionArtifact) {
-        return yield* runtimeError(
-          action === "repair" && latestStatus?.activeArtifact
-            ? "The exact installed Codex release is no longer compatible with this Scient build. Update or remove it instead of replacing it silently."
-            : "No qualified Codex artifact is available for this computer.",
-        );
+        return yield* runtimeError("No qualified Codex artifact is available for this computer.");
       }
       const plan = {
         action,
@@ -565,9 +542,9 @@ export const makeCodexManagedRuntimeResolution = Effect.fn("CodexManagedRuntime.
             : action === "update"
               ? `Scient will download, verify, test, and activate Codex ${actionArtifact?.version ?? ""}. The current version remains active until then.`
               : action === "repair" && summary.source === "system"
-                ? `Scient will restore the exact private Codex ${actionArtifact?.version ?? ""} release and use it after verification. The working system installation is untouched.`
+                ? `Scient will repair the private Codex ${actionArtifact?.version ?? ""} release and use it after verification. The working system installation is untouched.`
                 : action === "repair"
-                  ? `Scient will download, verify, test, and restore the exact Codex ${actionArtifact?.version ?? ""} release currently selected.`
+                  ? `Scient will download, verify, test, and repair Codex ${actionArtifact?.version ?? ""}. The current version remains active until then.`
                   : action === "install" && summary.source === "system"
                     ? `Scient will install private Codex ${actionArtifact?.version ?? ""} beside the system installation. Codex accounts in this environment that use the default runtime will use the verified private copy; custom paths remain unchanged.`
                     : `Scient will download, verify, stage, test, and activate Codex ${actionArtifact?.version ?? ""}.`,

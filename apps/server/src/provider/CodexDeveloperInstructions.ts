@@ -1,4 +1,5 @@
 import type { ProviderInteractionMode } from "@t3tools/contracts";
+import { buildRuntimeInstructions } from "./RuntimeInstructions.ts";
 
 import type { McpCapability } from "../mcp/McpInvocationContext.ts";
 import { buildScientAwareness } from "./ScientAwareness.ts";
@@ -159,11 +160,6 @@ export interface CodexRuntimeInfo {
   readonly reasoningEffort: string;
 }
 
-// Values come from trusted config, but keep the block single-line regardless.
-function toSingleLine(value: string): string {
-  return value.replaceAll(/\s+/g, " ").trim();
-}
-
 export function buildCodexDeveloperInstructions(
   interactionMode: ProviderInteractionMode,
   runtime: CodexRuntimeInfo,
@@ -179,5 +175,5 @@ export function buildCodexDeveloperInstructions(
       : codexDefaultModeDeveloperInstructions(capabilities);
   return `${base}
 
-<runtime_info>In case you're asked: you are running in Scient through the Codex harness, as ${toSingleLine(runtime.model)} with ${toSingleLine(runtime.reasoningEffort)} reasoning effort. No need to mention this otherwise.</runtime_info>`;
+${buildRuntimeInstructions({ harness: "Codex", ...runtime })}`;
 }

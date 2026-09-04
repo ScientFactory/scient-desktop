@@ -25,6 +25,39 @@ adapter in a child scope. Adapter implementations live beside them in
 [`ProviderAdapter.ts`][adapter]. Read the driver plus its adapter to see how a specific agent's
 transport, config, and event shapes are mapped.
 
+## Runtime context
+
+Every adapter uses `apps/server/src/provider/RuntimeInstructions.ts` to identify T3 Code and
+the harness, and describe Markdown image/video embeds. Codex includes it in developer
+instructions; Claude appends it to its system preset; OpenCode sends it in each prompt's
+`system` field. Cursor, Grok, and Antigravity append a separate text block to ACP prompts,
+which have no system-message field. This does not change the stored user message.
+
+Per-turn context includes the current model when known. Codex includes reasoning effort;
+Grok includes it when explicitly selected for the turn. Claude's session-level context omits model and effort because they can
+change during a session. OpenCode variants are not assumed to be reasoning-effort levels.
+
+## Codex async questions
+
+Codex 0.153 exposes `request_user_input_async` through `item/started` and `item/completed`
+notifications. The item has `type: "agentMessage"`, `delivery: "async"`, and a `questions` array.
+Each question has a `title` and an optional `options` array of strings. The tool returns `{"accepted":true}`
+without waiting. This is separate from the `item/tool/requestUserInput` server request.
+See the [Codex tool handler](https://github.com/openai/codex/blob/d979df154cf60e13eafb5453e75b6d84f21c67bf/codex-rs/core/src/tools/handlers/request_user_input_async.rs).
+
+The Codex adapter maps completed question items to `user-input.requested` with
+`responseMode: "message"` and stable request and event IDs. Questions use the existing web,
+desktop, and mobile panels. They stay pending while the turn runs and after it finishes.
+
+The engine reads the request's latest stored activity before deciding a reply. This works after
+startup, when the command snapshot has no activities, and after a resolution leaves the recent
+activity window. The query returns one activity, not the full thread history.
+
+For these requests, the decider saves the resolution and a user message in one transaction.
+The standard turn path delivers the message, including session resume and active-turn input.
+It does not send a JSON-RPC response to Codex. Other providers and blocking Codex questions
+keep their existing response paths.
+
 ## Registry and routing
 
 Two registries separate configuration from live processes:
@@ -111,11 +144,13 @@ environment extension, sets `PYTHONUNBUFFERED=1`, and controls `BROWSER`. A test
 Electron-as-Node helper prevents the official agent from opening a browser on the environment.
 The same launch factory serves setup, health checks, chat, and text generation.
 
-The official agent prints one non-JSON OAuth line on stdout. Only the exact known prefix is
-filtered before ACP decoding. Fragmented lines are joined and bounded. Other malformed
-protocol output remains fatal. Authorization URLs are validated before use. Native stderr is
-drained without logging because it can contain OAuth data. Normal work rejects an interactive
-login request with a sign-in-required error instead of waiting for consent.
+The official agent prints a non-JSON OAuth line on stderr in version 1.1.1. Earlier versions
+print it on stdout. T3 accepts the exact native prefix on either stream and its browser-helper
+marker on stderr. Fragmented lines are joined and bounded. Other malformed protocol output
+remains fatal. Authorization URLs are validated before use. Other stderr is discarded because
+it can contain OAuth data. Normal work rejects an interactive login request with a
+sign-in-required error instead of waiting for consent. A rejected stderr callback fails pending
+ACP requests and closes the owned process.
 
 [`AntigravityAuth`][antigravity-auth] owns each sign-in process and deadline in the instance
 scope. Only the initiating T3 auth session receives its URL and flow ID or can complete or
@@ -180,6 +215,19 @@ Account access starts unknown and becomes authenticated after successful session
 including an explicit model refresh.
 The [provider snapshot][antigravity-provider] takes models and commands from setup and native
 updates. It preserves returned Gemini model IDs, labels, order, and thinking-level choices.
+Desktop/web and mobile derive a presentation-only grouping of recognized Gemini effort variants
+through `packages/client-runtime/src/antigravityModelPresentation.ts`. A family occupies one
+picker row; the existing reasoning control chooses another available native model ID.
+The control descriptor is local UI data, never a provider option sent over ACP or stored on a
+selection. The native ID remains authoritative for drafts, defaults, favorites, resume, and turns.
+Favorites retain exact variant shortcuts; hidden rows are not restored by grouping. Custom
+models, ambiguous names, and models already advertising native options are not rewritten.
+The catalog, ACP adapter, legacy `agy` reasoning path, and managed lifecycle remain unchanged.
+
+ACP `config_option_update` notifications and supplied `session/set_config_option`
+inventories update the instance model catalog. An empty acknowledgment preserves
+an inventory already published by a notification; otherwise it confirms only the
+requested selection. Child session notifications do not change the root catalog.
 The registry treats a successful empty catalog as authoritative and clears cached metadata
 after sign-out. It must not retain a previous account's models. Cached models do not prove
 current access. The auth response does not supply an email, plan tier, or reliable quota.
@@ -229,6 +277,24 @@ and options when catalog metadata is temporarily absent.
 Native configuration files can remain cached while a local helper is alive. Refreshing after its
 idle shutdown starts a new helper and rereads those files. Scient does not own an external OpenCode
 process, so changes there may require that server's own reload or restart before refresh can see them.
+
+Chat adapters send the runtime mode as a session ruleset, but upstream OpenCode evaluates
+doom-loop and subagent asks against the agent ruleset only. In full access the adapter answers
+those asks itself so the user never sees an approval they already granted. It replies `once`
+rather than `always` because OpenCode stores `always` grants per directory, and on a shared
+external server that would widen what a supervised thread in the same directory may do.
+
+OpenCode loads its catalog through the HTTP API when an enabled provider instance starts. The
+provider registry keeps the snapshot in memory and persists it in the existing per-instance cache.
+Each `subscribeServerConfig` connection refreshes all providers, so a client reconnect reloads the
+OpenCode catalog from the current helper. The `serverRefreshProviders` request also refreshes it.
+Periodic OpenCode probes remain disabled. OpenCode reads credentials for each inventory request,
+but its native configuration files can remain cached for the lifetime of the helper process. The
+helper closes 30 seconds after its last inventory or text-generation borrower releases it. A
+refresh after that idle period starts a new helper and reads file changes. Repeated refreshes and
+active text-generation work can extend process reuse. Changes to the provider configuration or
+environment replace the instance and start a new discovery. Changes to unrelated settings only
+update snapshot enrichment. Other providers retain their existing refresh policy.
 
 ## Scient awareness
 

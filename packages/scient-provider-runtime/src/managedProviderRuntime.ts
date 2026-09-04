@@ -135,13 +135,14 @@ export function managedRuntimeSmokeEnvironment(environment: NodeJS.ProcessEnv): 
   );
 }
 
-async function smokeExecutable(
+export async function smokeManagedRuntimeExecutable(
   executable: string,
   args: ReadonlyArray<string>,
   displayName: string,
   environment: Readonly<Record<string, string>> = {},
-  options: { readonly cwd?: string | undefined } = {},
+  options: { readonly cwd?: string | undefined; readonly signal?: AbortSignal | undefined } = {},
 ): Promise<void> {
+  options.signal?.throwIfAborted();
   await new Promise<void>((resolve, reject) => {
     const child = NodeChildProcess.spawn(executable, [...args], {
       ...(options.cwd ? { cwd: options.cwd } : {}),
@@ -151,18 +152,31 @@ async function smokeExecutable(
     });
     let outputBytes = 0;
     let settled = false;
+    let failure: Error | undefined;
+    let terminationRequested = false;
     const finish = (error?: Error) => {
       if (settled) return;
       settled = true;
       clearTimeout(timer);
+      options.signal?.removeEventListener("abort", onAbort);
       if (error) reject(error);
       else resolve();
     };
+    const terminate = (error: Error) => {
+      if (settled || terminationRequested) return;
+      terminationRequested = true;
+      failure ??= error;
+      // This is only the owned, bounded version probe, never a user session.
+      // Wait for close even on failure so staging cleanup cannot race it.
+      child.kill("SIGKILL");
+      child.stdout.destroy();
+      child.stderr.destroy();
+    };
+    const onAbort = () => terminate(new DOMException("Installation cancelled.", "AbortError"));
     const count = (chunk: Buffer) => {
       outputBytes += chunk.byteLength;
       if (outputBytes > MAX_SMOKE_OUTPUT_BYTES) {
-        child.kill();
-        finish(
+        terminate(
           new ManagedProviderRuntimeError(
             `Managed ${displayName} smoke test produced excessive output.`,
           ),
@@ -171,15 +185,19 @@ async function smokeExecutable(
     };
     child.stdout.on("data", count);
     child.stderr.on("data", count);
-    child.once("error", (cause) =>
-      finish(
-        new ManagedProviderRuntimeError(`Managed ${displayName} smoke test could not start.`, {
+    child.once("error", (cause) => {
+      failure ??= new ManagedProviderRuntimeError(
+        `Managed ${displayName} smoke test could not start.`,
+        {
           cause,
-        }),
-      ),
-    );
-    child.once("exit", (code, signal) => {
-      if (code === 0) finish();
+        },
+      );
+    });
+    // exit may precede stdio closure; Windows cannot reliably rename the
+    // package while probe-owned handles are still being released.
+    child.once("close", (code, signal) => {
+      if (failure) finish(failure);
+      else if (code === 0) finish();
       else {
         finish(
           new ManagedProviderRuntimeError(
@@ -189,9 +207,10 @@ async function smokeExecutable(
       }
     });
     const timer = setTimeout(() => {
-      child.kill();
-      finish(new ManagedProviderRuntimeError(`Managed ${displayName} smoke test timed out.`));
+      terminate(new ManagedProviderRuntimeError(`Managed ${displayName} smoke test timed out.`));
     }, SMOKE_TIMEOUT_MS);
+    options.signal?.addEventListener("abort", onAbort, { once: true });
+    if (options.signal?.aborted) onAbort();
   });
 }
 
@@ -204,7 +223,7 @@ export interface ManagedProviderRuntimeDependencies {
     args: ReadonlyArray<string>,
     displayName: string,
     environment?: Readonly<Record<string, string>>,
-    options?: { readonly cwd?: string | undefined },
+    options?: { readonly cwd?: string | undefined; readonly signal?: AbortSignal | undefined },
   ) => Promise<void>;
   readonly commitState: (
     statePath: string,
@@ -238,7 +257,7 @@ const DEFAULT_DEPENDENCIES: ManagedProviderRuntimeDependencies = {
   download: downloadManagedRuntime,
   verify: verifyManagedRuntimeChecksum,
   materialize: materializeManagedRuntimeArtifact,
-  smoke: smokeExecutable,
+  smoke: smokeManagedRuntimeExecutable,
   commitState: commitManagedRuntimeState,
   now: Date.now,
   activationId: NodeCrypto.randomUUID,
@@ -532,7 +551,7 @@ export class ManagedProviderRuntime {
         artifact.smokeArgs,
         this.#displayName,
         artifact.smokeEnvironment,
-        smokeWorkingDirectory ? { cwd: smokeWorkingDirectory } : undefined,
+        { ...(smokeWorkingDirectory ? { cwd: smokeWorkingDirectory } : {}), signal },
       );
       if (signal.aborted) throw new DOMException("Installation cancelled.", "AbortError");
       onProgress?.({ stage: "activating" });

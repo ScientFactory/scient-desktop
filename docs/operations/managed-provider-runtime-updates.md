@@ -11,8 +11,15 @@ transactions, or system/custom installations. Those remain in the
 
 `automation/managed-runtime-catalog-v1` is a generated data branch. Its
 `apps/server/src/scient/providerLifecycle/managed-runtime-catalog.json` file is
-the remote last-known-good catalog read by released apps. `main` keeps the
-catalog bundled with each app release as the offline and minimum fallback.
+the remote last-known-good catalog read by the new catalog client. The app imports
+`bundled-managed-runtime-catalog.json` in the same directory as its offline/minimum
+fallback. Snapshot the newest qualified feed into that **new bundled file** before
+each app release and requalify changed runtime policy.
+
+The older `managed-runtime-catalog.json` on **main** is a compatibility snapshot
+still read directly by v0.6.9. Do not overwrite it during release preparation:
+those clients cannot extract the newer, larger Cursor packages. The identical
+filename on the **generated branch** is the current feed, not this legacy snapshot.
 
 The generated branch may change only immutable release facts for an existing
 app-approved provider and target: version, artifact name, HTTPS URL, checksum,
@@ -33,13 +40,17 @@ Grok. The seven release-family runs are intentionally independent:
 3. If the version is newer, collect complete immutable metadata for every
    app-approved target.
 4. Exercise the normal managed-runtime engine on hosted macOS Apple-silicon,
-   macOS Intel, Linux x64, and Windows x64 runners. Each runner downloads,
+   macOS Intel, Linux x64/ARM64, and Windows x64/ARM64 runners. Each runner downloads,
    verifies, materializes, checks package contents, smoke-tests, activates, and
    removes its native artifact in a temporary private root.
    Official Antigravity ACP uses T3's paired-executable installer instead of the generic
    runtime engine. Its five runners cover Apple-silicon macOS, Linux x64/ARM64, and Windows
    x64/ARM64; no ACP artifact exists for Intel macOS. Its qualification initializes the
-   actual agent without authentication, then checks activation and removal.
+   actual agent without authentication, then checks repair, activation recovery from a new
+   service instance, and removal. Linux musl policy variants have archive/policy tests;
+   the hosted Linux jobs exercise glibc, not native musl, and must not be reported
+   as native musl qualification. Its server dependencies are installed through the
+   already-provisioned Vite+ package-manager entrypoint.
 5. Serialize publication, re-read the latest generated catalog, validate both
    inputs against policy on the immutable discovery commit, and merge only the
    provider that passed.
@@ -55,8 +66,9 @@ downgrade, a same-version repack, or a publication race leaves the current
 catalog untouched. The workflow never force-pushes and never opens a catalog PR,
 so an unrelated monorepo test cannot suppress a qualified provider update.
 
-Before a Scient app release, snapshot the latest generated catalog into the
-bundled catalog on `main` and run its focused policy tests. Live update
+Before a Scient app release, snapshot the latest **qualified** generated catalog into
+`apps/server/src/scient/providerLifecycle/bundled-managed-runtime-catalog.json`
+and run its focused policy tests. Live update
 availability does not wait for this snapshot, but it keeps a newly installed app
 close to the current qualified floor before its first network refresh.
 
@@ -72,9 +84,15 @@ When one provider entry changes, Scient recomputes only that provider's managed
 runtime summary. It does not reload provider processes, interrupt sessions,
 change credentials, switch runtime sources, or install anything. If the active
 source is an older healthy Scient-managed runtime, the existing **Update** action
-appears. The user still opens the plan and confirms the transaction, and the
-local machine independently repeats integrity, package, smoke, and atomic
-activation checks.
+appears. Clicking **Install** or **Update** runs the existing server preflight and starts
+the transaction with that plan's exact catalog revision, without a second confirmation.
+The local machine independently repeats integrity, package, smoke, and atomic
+activation checks. **Repair** refreshes the same catalog and selects the latest known
+qualified release, including when that version is already installed. If the catalog
+cannot be refreshed, the last good catalog/bundle is used; a compatible newer installed
+receipt is not downgraded. ACP rejects an older offer when its installed registry
+receipt is newer, rather than guessing missing archive metadata. Repair does not revoke credentials or modify external installs.
+Removal uses only local state and does not depend on a current download offer.
 
 ## Credentials and branch authority
 
@@ -113,12 +131,40 @@ runs again, previously published releases may remain unavailable to fresh apps.
 
 ## Local qualification
 
+Before merging runtime-policy changes, run **Promote managed provider runtime
+updates** on the feature branch, choose the affected `provider`, and enable
+`qualify_only`. Branch runs always prohibit publication, even if that checkbox
+is left off. They qualify the caller's immutable commit, never current `main`,
+and do not mint a publication token. Qualification-only runs include repair and
+repeat the Windows install/repair/remove cycle five times; every attempt must
+pass (these are not retries that hide a failure).
+
+```sh
+gh workflow run managed-provider-runtime-updates.yml \
+  --ref <feature-branch> -f provider=cursor -F qualify_only=true
+```
+
+Cursor's complete 2026.09.02 Unix packages expand to 511–570 MiB, so its
+app-owned tar budget is 768 MiB. Windows retains its 384 MiB ZIP budget; both
+remain capped at 768 entries. Do not remove bundled executables to fit an older
+budget or increase the shared defaults. The extractor permits an explicitly
+reviewed budget up to 768 MiB independently of its unchanged 512 MiB download
+ceiling and default expansion budget. Native probes must finish closing
+before activation or failure cleanup moves the payload.
+
+The v0.6.9 production app still reads the catalog from `main` and has the older
+Cursor extraction budget. Keep that legacy Cursor entry unchanged until a
+separately reviewed compatibility transition; qualify newer Cursor packages on
+the generated branch for builds containing the new reader and budget. A release
+snapshot updates only the separate bundled file; it must not advertise an incompatible
+package at the legacy main URL.
+
 Use temporary files; do not edit the bundled catalog merely to test discovery:
 
 ```sh
 node scripts/update-managed-runtime-catalog.ts \
   --provider claudeAgent \
-  --input apps/server/src/scient/providerLifecycle/managed-runtime-catalog.json \
+  --input apps/server/src/scient/providerLifecycle/bundled-managed-runtime-catalog.json \
   --output /tmp/managed-runtime-candidate.json
 
 node scripts/qualify-managed-runtime-catalog.ts \
@@ -127,7 +173,7 @@ node scripts/qualify-managed-runtime-catalog.ts \
 
 node scripts/promote-managed-runtime-catalog.ts \
   --provider claudeAgent \
-  --current apps/server/src/scient/providerLifecycle/managed-runtime-catalog.json \
+  --current apps/server/src/scient/providerLifecycle/bundled-managed-runtime-catalog.json \
   --candidate /tmp/managed-runtime-candidate.json \
   --output /tmp/managed-runtime-promoted.json
 ```

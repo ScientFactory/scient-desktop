@@ -37,7 +37,8 @@ function argument(name: string): string | undefined {
 
 const provider = argument("--provider") as ManagedRuntimeProvider | undefined;
 const catalogPath = NodePath.resolve(
-  argument("--catalog") ?? "apps/server/src/scient/providerLifecycle/managed-runtime-catalog.json",
+  argument("--catalog") ??
+    "apps/server/src/scient/providerLifecycle/bundled-managed-runtime-catalog.json",
 );
 if (!provider) throw new Error("--provider is required.");
 
@@ -125,6 +126,13 @@ try {
   const status = await runtime.status(artifact);
   if (!status.installed || !status.selected || status.activeVersion !== artifact.version) {
     throw new Error(`${provider} ${targetKey} did not activate the qualified release.`);
+  }
+  if (process.argv.includes("--repair")) {
+    await runtime.install({ artifact, signal: AbortSignal.timeout(15 * 60_000) });
+    const repaired = await runtime.status(artifact);
+    if (!repaired.installed || !repaired.selected || repaired.activeVersion !== artifact.version) {
+      throw new Error(`${provider} ${targetKey} did not repair the qualified release.`);
+    }
   }
   await runtime.remove();
   const removed = await runtime.status(artifact);
