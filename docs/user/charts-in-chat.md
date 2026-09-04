@@ -29,14 +29,16 @@ animation. The chart card also lets you:
 - copy the current view as a PNG when the platform clipboard supports images.
 
 Compact controls start above the chart, clear of its data, legends, and bound
-inputs. Plotly keeps its zoom, pan, selection, and reset buttons together;
-additional actions are in the chart's **More** menu. Controls remain available
-with a keyboard or touch, without requiring a hover.
+inputs. **Expand** and **More** are quiet utility icons; source, copy, and download
+actions live in More. Plotly keeps its zoom, pan, selection, and reset buttons
+together. Vega-Lite keeps its authored controls and a direct reset button.
+Controls remain available with a keyboard or touch, without requiring a hover.
 
-Drag a control group's dotted corner or empty space to move it within its
-card; action buttons keep their normal behavior. Click the corner grip or
-press Home while focused to return it to the default position; arrow keys
-also move it. Moving these controls does not pan, zoom, or reset the chart.
+Choose **Move controls** in More to expose the utility group's movement handle.
+Drag it or use arrow keys; press Enter or Escape to finish. **Reset controls
+position** restores placement. Plotly's exploration group retains its dotted
+corner: drag it or use arrow keys, and press Home to reset its position.
+Moving controls does not pan, zoom, or reset the chart.
 
 The fenced JSON remains the source of truth in the conversation. Copying the
 whole answer preserves that source rather than replacing it with a generated

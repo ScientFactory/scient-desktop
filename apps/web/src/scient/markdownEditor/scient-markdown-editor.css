@@ -1014,12 +1014,15 @@ sup.scient-markdown-reference {
 }
 
 .scient-markdown-image[data-standalone="true"] {
+  display: flex;
+  width: fit-content;
   flex-direction: column;
   gap: 0.45rem;
   margin-block: 0.4rem;
 }
 
 .scient-markdown-image.is-selected {
+  border-radius: 0.4rem;
   outline: 1px solid color-mix(in oklab, var(--primary) 45%, transparent);
   outline-offset: 2px;
 }

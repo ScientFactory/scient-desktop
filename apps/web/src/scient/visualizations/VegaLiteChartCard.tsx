@@ -3,7 +3,7 @@ import {
   CopyIcon,
   DownloadIcon,
   EllipsisIcon,
-  ExpandIcon,
+  Maximize2Icon,
   FileBracesIcon,
   FileImageIcon,
   ImageIcon,
@@ -14,7 +14,7 @@ import {
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 
 import { Button } from "~/components/ui/button";
-import { Menu, MenuItem, MenuPopup, MenuTrigger } from "~/components/ui/menu";
+import { Menu, MenuItem, MenuTrigger } from "~/components/ui/menu";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "~/components/ui/tooltip";
 import {
   RichFenceSourceMenuItem,
@@ -22,7 +22,12 @@ import {
   useRichFenceContextMenu,
 } from "../presentation/RichFenceSourceActions";
 import { ScientTooltip } from "../presentation/ScientTooltip";
-import { VisualCardDetails, VisualCardToolbar } from "../presentation/VisualCardToolbar";
+import {
+  VisualCardDetails,
+  VisualCardToolbar,
+  VisualCardMenuPopup,
+  VisualCardToolbarMenuItems,
+} from "../presentation/VisualCardToolbar";
 
 import { useNearViewport } from "../presentation/useNearViewport";
 import { VegaLiteChartDialog } from "./VegaLiteChartDialog";
@@ -264,6 +269,20 @@ export function VegaLiteChartCard({
             </span>
           </ScientTooltip>
         ) : null}
+        <ChartActionButton
+          disabled={!ready || activeAction != null}
+          label="Reset chart interaction"
+          onClick={() =>
+            runControllerAction(
+              "reset",
+              (controller) => controller.reset(),
+              "View reset",
+              "Unable to reset the chart view.",
+            )
+          }
+        >
+          <RotateCcwIcon className="size-3.5" />
+        </ChartActionButton>
         <VisualCardToolbar label="Chart actions">
           {ready ? (
             <ChartActionButton
@@ -271,20 +290,10 @@ export function VegaLiteChartCard({
               label="Expand interactive chart"
               onClick={handleExpand}
             >
-              <ExpandIcon className="size-3" />
+              <Maximize2Icon className="size-3.5" strokeWidth={1.5} />
             </ChartActionButton>
           ) : null}
-          <ChartActionButton
-            disabled={activeAction != null}
-            label="Copy chart source"
-            onClick={handleCopySource}
-          >
-            {actionMessage === "Source copied" ? (
-              <CheckIcon className="size-3" />
-            ) : (
-              <CopyIcon className="size-3" />
-            )}
-          </ChartActionButton>
+
           <Menu>
             <Tooltip>
               <TooltipTrigger
@@ -306,8 +315,12 @@ export function VegaLiteChartCard({
               </TooltipTrigger>
               <TooltipPopup side="top">More chart actions</TooltipPopup>
             </Tooltip>
-            <MenuPopup align="end" className="min-w-48">
+            <VisualCardMenuPopup align="end" className="min-w-52 max-w-[calc(100vw-2rem)]">
               <VisualCardDetails title={displayTitle} />
+              <MenuItem disabled={activeAction != null} onClick={handleCopySource}>
+                {actionMessage === "Source copied" ? <CheckIcon /> : <CopyIcon />}
+                Copy source
+              </MenuItem>
               <RichFenceSourceMenuItem
                 authoringActions={authoringActions}
                 onToggleSource={handleToggleSource}
@@ -317,20 +330,7 @@ export function VegaLiteChartCard({
                 <FileBracesIcon />
                 Download Vega-Lite JSON
               </MenuItem>
-              <MenuItem
-                disabled={!ready || activeAction != null}
-                onClick={() =>
-                  runControllerAction(
-                    "reset",
-                    (controller) => controller.reset(),
-                    "View reset",
-                    "Unable to reset the chart view.",
-                  )
-                }
-              >
-                <RotateCcwIcon />
-                Reset interaction
-              </MenuItem>
+
               <MenuItem
                 disabled={!ready || activeAction != null}
                 onClick={() =>
@@ -373,7 +373,8 @@ export function VegaLiteChartCard({
                 <FileImageIcon />
                 {activeAction === "download-png" ? "Creating PNG…" : "Download current PNG"}
               </MenuItem>
-            </MenuPopup>
+              <VisualCardToolbarMenuItems />
+            </VisualCardMenuPopup>
           </Menu>
         </VisualCardToolbar>
       </div>

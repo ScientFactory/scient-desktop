@@ -243,7 +243,10 @@ describe("ScientProseMirrorSession", () => {
       revision: "r0",
     });
     if (edit) session.applyTransaction(session.state.tr.insertText("Before ", 1), "user");
-    const definitionPosition = session.state.doc.firstChild!.nodeSize;
+    // Text inserted before a figure now occupies its own paragraph. The
+    // definition remains the last block regardless of those preceding splits.
+    const definitionPosition =
+      session.state.doc.content.size - session.state.doc.lastChild!.nodeSize;
     expect(
       session.documentPositionForSourceOffset(session.session.draftSource.indexOf("[figure]:")),
     ).toBe(definitionPosition);

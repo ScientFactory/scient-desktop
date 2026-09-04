@@ -1962,6 +1962,29 @@ code {
   color: var(--contrast-foreground);
 }
 
+/* Visual-card utilities are quiet; chart exploration keeps its own toolbar. */
+.scient-visual-utility-controls button:not([data-scient-toolbar-move]) {
+  width: 1.75rem;
+  height: 1.75rem;
+  padding: 0;
+  border: 0;
+  border-radius: 0.35rem;
+  background: transparent;
+  box-shadow: none;
+  color: var(--muted-foreground);
+}
+
+.scient-visual-utility-controls button:not([data-scient-toolbar-move]):hover,
+.scient-visual-utility-controls button:not([data-scient-toolbar-move])[data-popup-open] {
+  color: var(--foreground);
+  background: color-mix(in oklab, var(--foreground) 6%, transparent);
+}
+
+.scient-visual-utility-controls button:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: 1px;
+}
+
 .chat-markdown .chat-markdown-chrome-action[aria-pressed="true"] {
   color: var(--contrast-foreground);
   background: color-mix(in srgb, var(--contrast-foreground) 8%, transparent);

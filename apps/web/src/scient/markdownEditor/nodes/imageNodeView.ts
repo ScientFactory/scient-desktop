@@ -13,6 +13,11 @@ import {
 } from "~/scient/images/ScientImageControls";
 
 import { retainedReferenceLabel } from "../prosemirror/referenceLinks";
+import {
+  canCaptionImage,
+  isolateImage,
+  standaloneImagePosition,
+} from "../prosemirror/imageFigures";
 import { leaveAtomEditor } from "../prosemirror/safeSelection";
 import type { ScientMarkdownExternalPresentationRegistrar } from "./externalPresentation";
 import {
@@ -59,19 +64,11 @@ export function isStandaloneMarkdownImage(
   position: number | undefined,
   node: ProseMirrorNode,
 ): boolean {
-  if (position === undefined || node.marks.some((mark) => mark.type.name === "link")) return false;
-  const resolved = view.state.doc.resolve(position);
-  if (resolved.parent.type.name !== "paragraph") return false;
-  for (let depth = 0; depth <= resolved.depth; depth += 1) {
-    if (["table_cell", "table_header"].includes(resolved.node(depth).type.name)) return false;
-  }
-  let images = 0;
-  let otherContent = false;
-  resolved.parent.forEach((child) => {
-    if (child === node) images += 1;
-    else if (!child.isText || child.text?.trim()) otherContent = true;
-  });
-  return images === 1 && !otherContent;
+  return (
+    position !== undefined &&
+    view.state.doc.nodeAt(position) === node &&
+    standaloneImagePosition(view.state.doc.resolve(position)) === position
+  );
 }
 
 function imageDisplayName(source: string): string {
@@ -158,6 +155,7 @@ class ScientImageNodeView implements NodeView {
     this.fileInput.addEventListener("cancel", this.handleReplacementCancel);
     this.dom.append(this.image, this.placeholder, this.caption, this.chrome, this.fileInput);
     this.dom.addEventListener("mousedown", this.handleMouseDown);
+    this.dom.addEventListener("scient-edit-image-caption", this.editCaption);
     this.root = createRoot(this.chrome);
     this.captionSizeObserver =
       typeof ResizeObserver === "undefined"
@@ -237,6 +235,7 @@ class ScientImageNodeView implements NodeView {
     this.captionSizeObserver?.disconnect();
     this.root.unmount();
     this.dom.removeEventListener("mousedown", this.handleMouseDown);
+    this.dom.removeEventListener("scient-edit-image-caption", this.editCaption);
     this.image.removeEventListener("load", this.handleLoad);
     this.image.removeEventListener("error", this.handleLoadError);
     this.caption.removeEventListener("mousedown", this.handleCaptionPointer);
@@ -419,7 +418,18 @@ class ScientImageNodeView implements NodeView {
     else this.renderChrome();
   };
   private readonly editCaption = () => {
-    if (!this.standalone || this.targetPosition(this.currentTarget()) === null) return;
+    const position = this.targetPosition(this.currentTarget());
+    if (!this.editable || position === null || !canCaptionImage(this.view.state.doc, position))
+      return;
+    if (!this.standalone) {
+      const tr = closeHistory(this.view.state.tr);
+      const isolatedPosition = isolateImage(tr, position);
+      tr.setSelection(NodeSelection.create(tr.doc, isolatedPosition));
+      this.view.dispatch(tr);
+      // Splitting the paragraph can recreate the node view. Focus its current owner.
+      this.view.nodeDOM(isolatedPosition)?.dispatchEvent(new Event("scient-edit-image-caption"));
+      return;
+    }
     if (this.referenceLabel() !== null) {
       this.openDetails("caption");
       return;
@@ -655,13 +665,14 @@ class ScientImageNodeView implements NodeView {
         run: () => this.options.onOpenImageLink?.(String(link.attrs.href), this.dom),
       });
     if (this.editable) {
+      const position = this.getPos();
       actions.push({
         id: "edit-details",
         label: "Edit details",
         closeViewer: true,
         run: guarded(this.editDetails),
       });
-      if (this.standalone)
+      if (position !== undefined && canCaptionImage(this.view.state.doc, position))
         actions.push({
           id: "edit-caption",
           label: this.node.attrs.title ? "Edit caption" : "Add caption",

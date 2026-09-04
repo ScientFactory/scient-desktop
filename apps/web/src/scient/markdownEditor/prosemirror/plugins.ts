@@ -24,6 +24,7 @@ import { scientMarkdownDirectionPresentationPlugin } from "./directionPresentati
 import { runScientMarkdownCommand } from "./commands";
 import { scientMarkdownSchema } from "./schema";
 import { imageUploadPlugin } from "./imageUploads";
+import { imageFigurePlugin } from "./imageFigures";
 import { scientMarkdownOutlinePlugin } from "./outline";
 import { scientMarkdownSearchPlugin } from "./search";
 import { inlineTableArrow } from "./tableNavigation";
@@ -128,6 +129,7 @@ export function buildScientMarkdownPlugins(): ReadonlyArray<Plugin> {
     imageUploadPlugin(),
     scientMarkdownSearchPlugin(),
     scientMarkdownOutlinePlugin(),
+    imageFigurePlugin(),
     inputRules({ rules: [...buildInputRules()] }),
     keymap(buildKeyBindings()),
     keymap(baseKeymap),

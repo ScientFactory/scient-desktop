@@ -15,13 +15,14 @@ The diagram card lets you:
 - copy or download a high-resolution PNG; and
 - retry or read the original source if the diagram is malformed.
 
-Compact controls sit at the top-right without a full-width header bar. Any
-authored title remains visible; **More diagram actions** also identifies the
-diagram and its type. Source inspection opens only when requested.
+Quiet **Expand** and **More** icons sit at the top-right. Any authored title
+remains visible; **More diagram actions** identifies the diagram and its type,
+and contains source, copy, and download actions. Source inspection opens only
+when requested. Expanded viewers keep zoom, fit, and actual-size controls visible.
 
-Drag the dotted corner or empty toolbar space to move it within the card;
-action buttons keep their normal behavior. Click the corner grip or press
-Home while focused to restore its default position; arrow keys also move it.
+Choose **Move controls** in More to expose a movement handle. Drag it or use
+arrow keys to move within the card; press Enter or Escape to finish.
+**Reset controls position** restores the default placement.
 
 While an answer is still being written, Scient shows the Mermaid source as an
 ordinary code block. Rendering begins only after the answer settles and the

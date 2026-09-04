@@ -3,7 +3,7 @@ import {
   CopyIcon,
   DownloadIcon,
   EllipsisIcon,
-  ExpandIcon,
+  Maximize2Icon,
   FileImageIcon,
   ImageIcon,
   RefreshCwIcon,
@@ -11,7 +11,7 @@ import {
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 
 import { Button } from "~/components/ui/button";
-import { Menu, MenuItem, MenuPopup, MenuTrigger } from "~/components/ui/menu";
+import { Menu, MenuItem, MenuTrigger } from "~/components/ui/menu";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "~/components/ui/tooltip";
 import {
   RichFenceSourceMenuItem,
@@ -32,7 +32,12 @@ import {
   type RenderedMermaidDiagram,
 } from "./mermaidRuntime";
 import { useNearViewport } from "../presentation/useNearViewport";
-import { VisualCardDetails, VisualCardToolbar } from "../presentation/VisualCardToolbar";
+import {
+  VisualCardDetails,
+  VisualCardToolbar,
+  VisualCardMenuPopup,
+  VisualCardToolbarMenuItems,
+} from "../presentation/VisualCardToolbar";
 
 import "./scient-diagrams.css";
 
@@ -254,20 +259,10 @@ export function MermaidDiagramCard({
               label="Expand diagram"
               onClick={() => setExpanded(true)}
             >
-              <ExpandIcon className="size-3" />
+              <Maximize2Icon className="size-3.5" strokeWidth={1.5} />
             </DiagramActionButton>
           ) : null}
-          <DiagramActionButton
-            disabled={activeAction != null}
-            label="Copy diagram source"
-            onClick={handleCopySource}
-          >
-            {actionMessage === "Source copied" ? (
-              <CheckIcon className="size-3" />
-            ) : (
-              <CopyIcon className="size-3" />
-            )}
-          </DiagramActionButton>
+
           <Menu>
             <Tooltip>
               <TooltipTrigger
@@ -289,8 +284,12 @@ export function MermaidDiagramCard({
               </TooltipTrigger>
               <TooltipPopup side="top">More diagram actions</TooltipPopup>
             </Tooltip>
-            <MenuPopup align="end" className="min-w-44">
+            <VisualCardMenuPopup align="end" className="min-w-52 max-w-[calc(100vw-2rem)]">
               <VisualCardDetails title={displayTitle} detail={readyResult?.diagramType} />
+              <MenuItem disabled={activeAction != null} onClick={handleCopySource}>
+                {actionMessage === "Source copied" ? <CheckIcon /> : <CopyIcon />}
+                Copy source
+              </MenuItem>
               <RichFenceSourceMenuItem
                 authoringActions={authoringActions}
                 onToggleSource={handleToggleSource}
@@ -317,7 +316,8 @@ export function MermaidDiagramCard({
                 <FileImageIcon />
                 {activeAction === "download-png" ? "Creating PNG…" : "Download PNG"}
               </MenuItem>
-            </MenuPopup>
+              <VisualCardToolbarMenuItems />
+            </VisualCardMenuPopup>
           </Menu>
         </VisualCardToolbar>
       </div>

@@ -3,7 +3,7 @@ import {
   CopyIcon,
   DownloadIcon,
   EllipsisIcon,
-  ExpandIcon,
+  Maximize2Icon,
   FileImageIcon,
   FolderOpenIcon,
   PaletteIcon,
@@ -23,10 +23,15 @@ import {
   DialogPopup,
   DialogTitle,
 } from "~/components/ui/dialog";
-import { Menu, MenuItem, MenuPopup, MenuTrigger } from "~/components/ui/menu";
+import { Menu, MenuItem, MenuTrigger } from "~/components/ui/menu";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "~/components/ui/tooltip";
 import { ScientTooltip } from "../presentation/ScientTooltip";
-import { VisualCardDetails, VisualCardToolbar } from "../presentation/VisualCardToolbar";
+import {
+  VisualCardDetails,
+  VisualCardToolbar,
+  VisualCardMenuPopup,
+  VisualCardToolbarMenuItems,
+} from "../presentation/VisualCardToolbar";
 import { cn } from "~/lib/utils";
 import { useRightPanelStore } from "~/rightPanelStore";
 import { readLocalApi } from "~/localApi";
@@ -151,6 +156,7 @@ function InlineImageActionsMenu(props: {
   readonly onCopyPath: () => void;
   readonly onCycleBackground: () => void;
   readonly onDownload: () => void;
+  readonly onOpenFile?: (() => void) | undefined;
   readonly onRefresh: () => void;
 }) {
   const compact = props.compact ?? false;
@@ -178,7 +184,7 @@ function InlineImageActionsMenu(props: {
         </TooltipTrigger>
         <TooltipPopup side={compact ? "top" : "bottom"}>More image actions</TooltipPopup>
       </Tooltip>
-      <MenuPopup align="end" className="min-w-52">
+      <VisualCardMenuPopup align="end" className="min-w-52">
         {props.image ? (
           <VisualCardDetails
             title={props.image.alt}
@@ -203,6 +209,12 @@ function InlineImageActionsMenu(props: {
           {props.actionMessage === "Path copied" ? <CheckIcon /> : <CopyIcon />}
           Copy relative path
         </MenuItem>
+        {props.onOpenFile ? (
+          <MenuItem onClick={props.onOpenFile}>
+            <FolderOpenIcon />
+            Open image file
+          </MenuItem>
+        ) : null}
         <MenuItem onClick={props.onCycleBackground}>
           <PaletteIcon />
           Background: {backgroundLabel(props.background)}
@@ -211,7 +223,8 @@ function InlineImageActionsMenu(props: {
           <RefreshCwIcon />
           Refresh from file
         </MenuItem>
-      </MenuPopup>
+        <VisualCardToolbarMenuItems />
+      </VisualCardMenuPopup>
     </Menu>
   );
 }
@@ -590,7 +603,6 @@ export function ScientInlineWorkspaceImage(props: {
             authoring={false}
             anchor={controlsAnchor}
             actions={fileActions}
-            primaryAction={fileActions[0]}
             onRetry={handleRetry}
             showContextMenu={showContextMenu}
             onBackgroundChange={setBackground}
@@ -600,12 +612,9 @@ export function ScientInlineWorkspaceImage(props: {
           <VisualCardToolbar className="absolute top-1 right-1 z-10" label="Image actions">
             {loaded ? (
               <ImageActionButton label="Expand image" onClick={() => setExpanded(true)}>
-                <ExpandIcon className="size-3" />
+                <Maximize2Icon className="size-3.5" strokeWidth={1.5} />
               </ImageActionButton>
             ) : null}
-            <ImageActionButton label="Open image file" onClick={handleOpenFile}>
-              <FolderOpenIcon className="size-3" />
-            </ImageActionButton>
             <InlineImageActionsMenu
               actionMessage={actionMessage}
               activeAction={activeAction}
@@ -618,6 +627,7 @@ export function ScientInlineWorkspaceImage(props: {
               onCycleBackground={handleCycleBackground}
               onDownload={handleDownload}
               onRefresh={handleRetry}
+              onOpenFile={handleOpenFile}
             />
           </VisualCardToolbar>
         )}

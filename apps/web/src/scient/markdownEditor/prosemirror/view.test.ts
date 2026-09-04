@@ -2123,6 +2123,16 @@ describe("ScientMarkdownEditorView", () => {
     const moveHandle = toolbar.querySelector<HTMLButtonElement>(
       "button[aria-label='Move image actions']",
     )!;
+    expect(moveHandle.hidden).toBe(true);
+    await act(() =>
+      toolbar.querySelector<HTMLButtonElement>("[aria-label='More image actions']")!.click(),
+    );
+    await act(() =>
+      [...document.querySelectorAll<HTMLElement>("[role='menuitem']")]
+        .find((item) => item.textContent === "Move controls")!
+        .click(),
+    );
+    expect(document.activeElement).toBe(moveHandle);
     for (const [key, shiftKey, translation] of [
       ["ArrowRight", false, "10px 0px"],
       ["ArrowDown", true, "10px 1px"],
@@ -2141,6 +2151,11 @@ describe("ScientMarkdownEditorView", () => {
       expect(toolbar.style.translate).toBe(translation);
       expect(view.state.selection).toBeInstanceOf(NodeSelection);
     }
+    await act(() =>
+      moveHandle.dispatchEvent(
+        new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true }),
+      ),
+    );
     const more = view.dom.querySelector<HTMLButtonElement>(
       "button[aria-label='More image actions']",
     )!;

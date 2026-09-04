@@ -63,6 +63,62 @@ async function fixture(
 }
 
 describe("shared image controls", () => {
+  it("moves controls through More, supports keyboard movement, and restores their position", async () => {
+    const { anchor, controls } = await fixture([], async () => null);
+    const toolbar = controls.querySelector<HTMLElement>("[aria-label='Image actions']")!;
+    const handle = toolbar.querySelector<HTMLButtonElement>("[data-scient-toolbar-move]")!;
+    const more = toolbar.querySelector<HTMLButtonElement>("[aria-label='More image actions']")!;
+    // Model CSS translation independently of Happy DOM's missing implementation.
+    let translation = "";
+    Object.defineProperty(toolbar.style, "translate", {
+      get: () => translation,
+      set: (value: string) => {
+        translation = value;
+      },
+    });
+    const removeProperty = toolbar.style.removeProperty.bind(toolbar.style);
+    vi.spyOn(toolbar.style, "removeProperty").mockImplementation((property) => {
+      if (property === "translate") translation = "";
+      return removeProperty(property);
+    });
+    vi.spyOn(anchor, "getBoundingClientRect").mockReturnValue(new DOMRect(0, 0, 800, 400));
+    vi.spyOn(toolbar, "getBoundingClientRect").mockReturnValue(new DOMRect(700, 10, 60, 28));
+    expect(handle.hidden).toBe(true);
+    await act(() => {
+      more.focus();
+      more.click();
+    });
+    await act(() =>
+      [...document.querySelectorAll<HTMLElement>("[role='menuitem']")]
+        .find((item) => item.textContent === "Move controls")!
+        .click(),
+    );
+    expect(handle.hidden).toBe(false);
+    expect(document.activeElement).toBe(handle);
+    await act(() =>
+      handle.dispatchEvent(
+        new KeyboardEvent("keydown", { key: "ArrowLeft", bubbles: true, cancelable: true }),
+      ),
+    );
+    expect(toolbar.style.translate).toBe("-10px 0px");
+    await act(() =>
+      handle.dispatchEvent(
+        new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true }),
+      ),
+    );
+    expect(handle.hidden).toBe(true);
+    expect(document.activeElement).toBe(more);
+    expect(toolbar.style.translate).toBe("-10px 0px");
+    await act(() => more.click());
+    await act(() =>
+      [...document.querySelectorAll<HTMLElement>("[role='menuitem']")]
+        .find((item) => item.textContent === "Reset controls position")!
+        .click(),
+    );
+    expect(toolbar.style.translate).toBe("");
+    expect(document.activeElement).toBe(more);
+  });
+
   it("isolates fresh viewer access and retry from inline image refresh", async () => {
     const resolve = vi
       .fn()
@@ -163,9 +219,11 @@ describe("shared image controls", () => {
     expect(more).not.toBeNull();
     await act(() => more!.click());
     const items = Array.from(document.querySelectorAll<HTMLElement>('[role="menuitem"]'));
-    expect(items.map((item) => item.textContent)).toEqual(
-      expected?.filter((label) => label !== "Expand image"),
-    );
+    expect(items.map((item) => item.textContent)).toEqual([
+      ...expected!.filter((label) => label !== "Expand image"),
+      "Move controls",
+      "Reset controls position",
+    ]);
     await act(() => items.find((item) => item.textContent === "Copy image source")!.click());
     expect(copy).toHaveBeenCalledOnce();
   });

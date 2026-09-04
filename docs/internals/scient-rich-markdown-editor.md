@@ -182,11 +182,21 @@ its resulting input normally, so a later document undo can reverse it. Clearing 
 caption retains the field until exit. An empty caption never deletes the image.
 
 Standalone figures reuse shared Scient viewing controls and the existing viewer.
+The image figure plugin separates native text input, paste, and composition at
+standalone image boundaries into adjacent paragraphs. A transaction fallback
+covers DOM and programmatic text insertions; history restores original structure
+without normalization. Selecting or leaving a caption does not edit source.
+An explicit caption action can isolate an unlinked paragraph image from surrounding
+prose, then transfer focus to the current NodeView's caption after the split.
 Inline, linked, and table images retain compact layout; linked-image activation
 retains ordinary link navigation. File-preview captions are opt-in and do not
 change ordinary chat images. Viewing actions and load/retry state never create
 save intent. Byte actions obtain fresh rooted capabilities while preserving the
 native PNG clipboard and original-byte download behavior.
+Shared visual utility controls expose Expand and More without a framed toolbar.
+Menu-owned positioning uses a temporary handle and returns keyboard focus after
+menu closure. Plotly's exploration toolbar retains its separate presentation;
+Vega-Lite reset remains directly accessible alongside authored chart interactions.
 Loaded inline pixels survive capability renewal; expanded viewing obtains its
 own fresh URL and keeps load failures and retries local to the viewer.
 

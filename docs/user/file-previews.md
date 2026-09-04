@@ -66,7 +66,18 @@ relocate an already open file automatically.
   change and **Cancel** leaves the document unchanged. Captions edit directly
   in their visible line and save as you type. Enter or Escape leaves the caption;
   Undo remains available. Missing captions stay absent until **Add caption**.
-  Inline images and linked badges keep their compact presentation and link behavior.
+  Typing before or after a standalone image creates a separate paragraph, so
+  text stays above or below the image and its caption. **Add caption** on an
+  image mixed with prose places that image in its own paragraph and opens its
+  caption without discarding surrounding text. Linked badges and table images
+  keep their compact presentation and link behavior.
+- Images, Mermaid diagrams, Plotly, and Vega-Lite share quiet **Expand** and
+  **More** controls. Copy, downloads, and source/details actions live in More.
+  **Move controls** exposes a handle; drag it or use arrow keys, then press
+  Enter or Escape to finish. **Reset controls position** restores placement.
+  Plotly exploration tools remain directly accessible. Vega-Lite keeps its
+  authored interactions and a direct reset control; expanded viewers retain
+  zoom, fit, and exploration controls.
 - Reference-style images share their source and title with a Markdown definition.
   **Edit shared reference** opens that definition; **Make independent** explicitly
   separates this occurrence. Alternative text remains local to the image.

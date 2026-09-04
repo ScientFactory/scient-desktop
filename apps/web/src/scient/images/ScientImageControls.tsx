@@ -1,4 +1,4 @@
-import { EllipsisIcon, ExpandIcon, FolderOpenIcon, PaletteIcon, RefreshCwIcon } from "lucide-react";
+import { EllipsisIcon, Maximize2Icon, PaletteIcon, RefreshCwIcon } from "lucide-react";
 import {
   useCallback,
   useEffect,
@@ -18,10 +18,14 @@ import {
   DialogPopup,
   DialogTitle,
 } from "~/components/ui/dialog";
-import { Menu, MenuItem, MenuPopup, MenuTrigger } from "~/components/ui/menu";
+import { Menu, MenuItem, MenuTrigger } from "~/components/ui/menu";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "~/components/ui/tooltip";
 import { cn } from "~/lib/utils";
-import { VisualCardToolbar } from "../presentation/VisualCardToolbar";
+import {
+  VisualCardToolbar,
+  VisualCardMenuPopup,
+  VisualCardToolbarMenuItems,
+} from "../presentation/VisualCardToolbar";
 
 export const SCIENT_IMAGE_CAPTION_CLASS_NAME =
   "block w-0 min-w-full resize-none border-0 bg-transparent p-0 text-center text-xs leading-[1.45] text-muted-foreground [unicode-bidi:plaintext]";
@@ -65,7 +69,6 @@ export interface ScientImageControlsProps {
   readonly onRetry?: (() => void | Promise<void>) | undefined;
   readonly showContextMenu?: ScientImageContextMenuHandler | undefined;
   readonly onBackgroundChange?: ((background: ScientImageBackground) => void) | undefined;
-  readonly primaryAction?: ScientImageAction | undefined;
   readonly revisionKey?: string | undefined;
   readonly onLoadError?: (() => void) | undefined;
 }
@@ -128,7 +131,7 @@ function ScientImageActionMenu({
         </TooltipTrigger>
         <TooltipPopup>More image actions</TooltipPopup>
       </Tooltip>
-      <MenuPopup
+      <VisualCardMenuPopup
         align="end"
         className="min-w-52 max-w-[calc(100vw-2rem)]"
         finalFocus={handingOffFocus ? false : undefined}
@@ -151,7 +154,7 @@ function ScientImageActionMenu({
               }}
             >
               {action.id === "expand-image" ? (
-                <ExpandIcon />
+                <Maximize2Icon />
               ) : action.id === "image-background" ? (
                 <PaletteIcon />
               ) : action.id === "retry-image" ? (
@@ -160,7 +163,8 @@ function ScientImageActionMenu({
               {action.label}
             </MenuItem>
           ))}
-      </MenuPopup>
+        <VisualCardToolbarMenuItems />
+      </VisualCardMenuPopup>
     </Menu>
   );
 }
@@ -406,29 +410,10 @@ function ScientImageControlsForSource({ ref, ...props }: ScientImageControlsProp
                   />
                 }
               >
-                <ExpandIcon className="size-3" />
+                <Maximize2Icon className="size-3.5" strokeWidth={1.5} />
               </TooltipTrigger>
               <TooltipPopup>Expand image</TooltipPopup>
             </Tooltip>
-            {props.primaryAction ? (
-              <Tooltip>
-                <TooltipTrigger
-                  render={
-                    <Button
-                      aria-label={props.primaryAction.label}
-                      disabled={props.primaryAction.disabled}
-                      onClick={() => run(props.primaryAction)}
-                      size="icon-xs"
-                      type="button"
-                      variant="ghost"
-                    />
-                  }
-                >
-                  <FolderOpenIcon className="size-3" />
-                </TooltipTrigger>
-                <TooltipPopup>{props.primaryAction.label}</TooltipPopup>
-              </Tooltip>
-            ) : null}
             {menu}
           </VisualCardToolbar>
         ) : (
