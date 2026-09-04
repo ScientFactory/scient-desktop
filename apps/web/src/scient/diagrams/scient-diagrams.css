@@ -27,12 +27,3 @@
     scroll-behavior: auto !important;
   }
 }
-
-.scient-mermaid-source[role="button"] {
-  cursor: text;
-}
-
-.scient-mermaid-source[role="button"]:focus-visible {
-  outline: 2px solid var(--ring);
-  outline-offset: 2px;
-}

@@ -1,5 +1,5 @@
 import { Code2Icon } from "lucide-react";
-import { useCallback, type MouseEvent as ReactMouseEvent } from "react";
+import { useCallback, useLayoutEffect, useRef, type MouseEvent as ReactMouseEvent } from "react";
 
 import { MenuItem } from "~/components/ui/menu";
 
@@ -8,7 +8,6 @@ export type ScientRichFenceContextMenuAction = "copy-source" | "edit-source";
 /** Optional authoring capability; ordinary previews intentionally omit it. */
 export interface ScientRichFenceAuthoringActions {
   readonly onEditSource: () => void;
-  readonly sourceEditorOpen?: boolean;
   readonly showContextMenu?: (position: {
     readonly x: number;
     readonly y: number;
@@ -33,34 +32,39 @@ export function RichFenceSourceMenuItem(props: {
   );
 }
 
-/** Visible source is also an edit entry point, without taking over visual gestures. */
+/** The document owns one editor; the card supplies its stable visible source slot. */
+export interface ScientRichFenceSourceEditor {
+  readonly open: boolean;
+  readonly mount: (host: HTMLElement) => () => void;
+}
+
 export function RichFenceSourcePreview(props: {
-  readonly authoringActions?: ScientRichFenceAuthoringActions | undefined;
+  readonly editor?: ScientRichFenceSourceEditor | undefined;
+  readonly visible: boolean;
   readonly source: string;
   readonly className: string;
-  readonly label: string;
 }) {
-  if (props.authoringActions?.sourceEditorOpen) return null;
-  const edit = props.authoringActions?.onEditSource;
+  const host = useRef<HTMLDivElement>(null);
+  const mount = props.editor?.mount;
+  useLayoutEffect(() => {
+    if (!props.visible || !mount || !host.current) return;
+    return mount(host.current);
+  }, [mount, props.visible]);
+
   return (
-    <pre
+    <div
       className={props.className}
-      role={edit ? "button" : undefined}
-      tabIndex={edit ? 0 : undefined}
-      aria-label={edit ? props.label : undefined}
-      onClick={edit}
-      onKeyDown={
-        edit
-          ? (event) => {
-              if (event.key !== "Enter" && event.key !== " ") return;
-              event.preventDefault();
-              edit();
-            }
-          : undefined
-      }
+      hidden={!props.visible}
+      onContextMenu={props.editor ? (event) => event.stopPropagation() : undefined}
     >
-      <code>{props.source}</code>
-    </pre>
+      {props.editor ? (
+        <div ref={host} />
+      ) : (
+        <pre className="scient-mermaid-source max-h-72 overflow-auto rounded-md bg-background/70 p-3 text-xs leading-relaxed">
+          <code>{props.source}</code>
+        </pre>
+      )}
+    </div>
   );
 }
 

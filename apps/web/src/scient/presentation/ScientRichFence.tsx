@@ -2,7 +2,10 @@ import { MermaidDiagramCard } from "../diagrams/MermaidDiagramCard";
 import { PlotlyChartCard } from "../visualizations/PlotlyChartCard";
 import { VegaLiteChartCard } from "../visualizations/VegaLiteChartCard";
 
-import type { ScientRichFenceAuthoringActions } from "./RichFenceSourceActions";
+import type {
+  ScientRichFenceAuthoringActions,
+  ScientRichFenceSourceEditor,
+} from "./RichFenceSourceActions";
 
 const SCIENT_RICH_FENCE_RENDERERS = {
   mermaid: MermaidDiagramCard,
@@ -25,6 +28,7 @@ const SCIENT_RICH_FENCE_ALIASES: Readonly<Record<string, ScientRichFenceKind>> =
 
 interface ScientRichFenceProps {
   readonly authoringActions?: ScientRichFenceAuthoringActions | undefined;
+  readonly sourceEditor?: ScientRichFenceSourceEditor | undefined;
   readonly fenceMeta?: string | undefined;
   readonly kind: ScientRichFenceKind;
   readonly language: string;
@@ -40,6 +44,7 @@ export function resolveScientRichFenceKind(language: string): ScientRichFenceKin
 
 export function ScientRichFence({
   authoringActions,
+  sourceEditor,
   fenceMeta,
   kind,
   language,
@@ -52,6 +57,7 @@ export function ScientRichFence({
   return (
     <Renderer
       authoringActions={authoringActions}
+      sourceEditor={sourceEditor}
       fenceMeta={fenceMeta}
       language={language}
       source={source}

@@ -556,10 +556,8 @@
   margin-block: 0;
 }
 
-/* Once source editing is requested, only the nested editor becomes a code
-   surface. The rendered visual remains mounted and visually unchanged. */
-.scient-markdown-code-block[data-scient-markdown-rich-fence] > .scient-markdown-code-editor {
-  margin-block-start: 0.65rem;
+/* A visible source box is one persistent editor, whether inside a card or below it. */
+.scient-markdown-code-block[data-scient-markdown-rich-fence] .scient-markdown-code-editor {
   overflow: hidden;
   border: 1px solid var(--contrast-border, var(--border));
   border-radius: var(--radius);
@@ -568,8 +566,32 @@
 }
 
 .scient-markdown-code-block[data-scient-markdown-rich-fence]
-  > .scient-markdown-code-editor:focus-within {
+  .scient-markdown-code-editor:focus-within {
   border-color: color-mix(in oklab, var(--primary) 45%, var(--border));
+}
+
+.scient-markdown-code-block[data-scient-markdown-rich-fence] > .scient-markdown-code-editor {
+  margin-block-start: 0.65rem;
+}
+
+.scient-markdown-code-editor.is-inline-rich-source .cm-editor {
+  font-size: 0.75rem;
+}
+
+.scient-markdown-code-editor.is-inline-rich-source .cm-scroller,
+.scient-markdown-code-editor.is-source-fallback {
+  max-height: 18rem;
+  padding: 0.75rem;
+  line-height: 1.625;
+}
+
+.scient-markdown-code-block[data-scient-markdown-rich-fence]
+  .scient-markdown-code-editor.is-source-fallback {
+  overflow: auto;
+  font-family: var(--font-mono);
+  font-size: 0.75rem;
+  white-space: pre;
+  tab-size: 4;
 }
 
 .scient-markdown-code-editor .cm-editor {

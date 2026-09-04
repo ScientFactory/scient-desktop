@@ -1,7 +1,10 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import { renderMermaidDiagram } from "~/scient/diagrams/mermaidRuntime";
-import type { ScientRichFenceAuthoringActions } from "~/scient/presentation/RichFenceSourceActions";
+import type {
+  ScientRichFenceAuthoringActions,
+  ScientRichFenceSourceEditor,
+} from "~/scient/presentation/RichFenceSourceActions";
 import { type ScientRichFenceKind, ScientRichFence } from "~/scient/presentation/ScientRichFence";
 import { useNearViewport } from "~/scient/presentation/useNearViewport";
 import { parsePlotlySource } from "~/scient/visualizations/plotlySpec";
@@ -9,6 +12,7 @@ import { parseVegaLiteSource } from "~/scient/visualizations/vegaLiteSpec";
 
 interface ScientEditableRichFenceProps {
   readonly authoringActions?: ScientRichFenceAuthoringActions | undefined;
+  readonly sourceEditor?: ScientRichFenceSourceEditor | undefined;
   readonly fenceMeta?: string | undefined;
   readonly kind: ScientRichFenceKind;
   readonly language: string;
@@ -190,6 +194,7 @@ export function ScientEditableRichFence(props: ScientEditableRichFenceProps) {
     >
       <ScientRichFence
         authoringActions={props.authoringActions}
+        sourceEditor={props.sourceEditor}
         kind={props.kind}
         language={props.language}
         source={renderedSource}

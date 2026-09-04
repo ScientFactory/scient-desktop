@@ -56,6 +56,8 @@ class ScientCodeBlockNodeView implements NodeView {
   private selected = false;
   private selectingFromEditorPointer = false;
   private richSourceOpen = false;
+  private inlineSourceHost: HTMLElement | null = null;
+  private focusSourceOnMount = false;
   private readonly authoringActions: ScientRichFenceAuthoringActions;
   private readonly unregisterExternalPresentation: (() => void) | undefined;
 
@@ -100,6 +102,7 @@ class ScientCodeBlockNodeView implements NodeView {
     // Ordinary code is always one CodeMirror surface. Rich cards own every
     // event in their rendered surface and expose source editing explicitly.
     this.dom.addEventListener("mousedown", this.handleMouseDown);
+    this.editorHost.addEventListener("focusin", this.handleEditorFocus);
     this.unregisterExternalPresentation = registerExternalPresentation?.((change) => {
       if ((change === "appearance" || change === "mode") && this.isRichFence()) {
         if (!this.view.editable) {
@@ -130,7 +133,7 @@ class ScientCodeBlockNodeView implements NodeView {
     this.selected = false;
     if (!this.isRichFence()) return;
     this.richSourceOpen = false;
-    this.editorHost.hidden = true;
+    this.editorHost.hidden = !this.inlineSourceHost;
     this.loadError.hidden = true;
     this.render();
   }
@@ -159,6 +162,7 @@ class ScientCodeBlockNodeView implements NodeView {
     this.unregisterExternalPresentation?.();
     this.retryButton.removeEventListener("click", this.retryEditor);
     this.dom.removeEventListener("mousedown", this.handleMouseDown);
+    this.editorHost.removeEventListener("focusin", this.handleEditorFocus);
   }
 
   private isRichFenceRenderedTarget(target: EventTarget | null): boolean {
@@ -174,7 +178,12 @@ class ScientCodeBlockNodeView implements NodeView {
   private readonly handleMouseDown = (event: MouseEvent) => {
     if (event.button !== 0 || !(event.target instanceof Element)) return;
     if (this.editorHost.contains(event.target)) {
-      if (this.isRichFence() || !this.view.editable || this.selected) return;
+      if (!this.view.editable) return;
+      if (this.inlineSourceHost) {
+        this.openSourceEditor(false);
+        return;
+      }
+      if (this.isRichFence() || this.selected) return;
       const position = this.getPos();
       if (position !== undefined) {
         this.selectingFromEditorPointer = true;
@@ -194,8 +203,8 @@ class ScientCodeBlockNodeView implements NodeView {
     if (position === undefined) return;
     event.preventDefault();
     if (this.isRichFence()) {
-      // A rich card only becomes the selection; its source editor opens below
-      // the card through the explicit action, never from a bare click.
+      // A bare click selects the visual fence. Its visible source or explicit
+      // source action owns entry into editing.
       if (!this.selected) this.selectSelf(position);
       return;
     }
@@ -209,7 +218,13 @@ class ScientCodeBlockNodeView implements NodeView {
     );
   }
 
-  private readonly requestSourceEdit = () => {
+  private readonly requestSourceEdit = () => this.openSourceEditor(true);
+
+  private readonly handleEditorFocus = () => {
+    if (this.inlineSourceHost) this.openSourceEditor(false);
+  };
+
+  private openSourceEditor(focus: boolean): void {
     if (this.destroyed || !this.view.editable) return;
     const position = this.getPos();
     if (position === undefined) return;
@@ -221,13 +236,32 @@ class ScientCodeBlockNodeView implements NodeView {
           .setMeta("addToHistory", false),
       );
     }
+    if (this.richSourceOpen && !focus) return;
     this.richSourceOpen = true;
-    this.render(true);
+    this.render(focus);
+  }
+
+  private readonly mountSourceEditor = (host: HTMLElement): (() => void) => {
+    this.inlineSourceHost = host;
+    this.editorHost.classList.add("is-inline-rich-source");
+    host.append(this.editorHost);
+    const focus = this.focusSourceOnMount;
+    this.focusSourceOnMount = false;
+    this.activateEditor(focus);
+    return () => {
+      this.inlineSourceHost = null;
+      if (this.destroyed) return;
+      this.editorHost.classList.remove("is-inline-rich-source");
+      this.dom.insertBefore(this.editorHost, this.loadError);
+      this.editorHost.hidden = !this.richSourceOpen;
+    };
   };
 
   private readonly retryEditor = () => {
     if (this.destroyed) return;
-    if (this.isRichFence()) {
+    if (this.inlineSourceHost) {
+      this.activateEditor(false);
+    } else if (this.isRichFence()) {
       if (!this.view.editable || !this.selected) return;
       this.richSourceOpen = true;
       this.render(true);
@@ -266,15 +300,21 @@ class ScientCodeBlockNodeView implements NodeView {
 
   private activateEditor(focus: boolean): void {
     if (this.destroyed) return;
-    if (this.isRichFence() && (!this.selected || !this.richSourceOpen)) return;
+    if (this.isRichFence() && !this.inlineSourceHost && (!this.selected || !this.richSourceOpen))
+      return;
     const editor = this.ensureEditor();
     if (!editor) {
-      this.editorHost.hidden = true;
+      this.editorHost.hidden = !this.inlineSourceHost;
+      if (this.inlineSourceHost) {
+        this.editorHost.classList.add("is-source-fallback");
+        this.editorHost.textContent = this.node.textContent;
+      }
       this.rendered.hidden = false;
       this.loadError.hidden = false;
       return;
     }
     editor.replaceExternalCode(this.node.textContent, codeLanguage(this.node));
+    this.editorHost.classList.remove("is-source-fallback");
     this.loadError.hidden = true;
     this.rendered.hidden = !this.isRichFence();
     this.editorHost.hidden = false;
@@ -307,18 +347,24 @@ class ScientCodeBlockNodeView implements NodeView {
     if (richKind) {
       this.dom.setAttribute("data-scient-markdown-rich-fence", richKind);
       this.rendered.hidden = false;
-      if (this.richSourceOpen) this.activateEditor(focusEditor);
-      else this.editorHost.hidden = true;
+      if (this.inlineSourceHost || (richKind !== "mermaid" && this.richSourceOpen)) {
+        this.activateEditor(focusEditor);
+      } else {
+        this.editorHost.hidden = true;
+        this.focusSourceOnMount = focusEditor;
+      }
       this.reactRoot ??= createRoot(this.rendered);
       const theme = this.resolveTheme();
       this.reactRoot.render(
         createElement(ScientEditableRichFence, {
-          authoringActions: this.view.editable
-            ? {
-                ...this.authoringActions,
-                sourceEditorOpen: this.richSourceOpen && !this.editorHost.hidden,
-              }
-            : undefined,
+          authoringActions: this.view.editable ? this.authoringActions : undefined,
+          sourceEditor:
+            richKind === "mermaid"
+              ? {
+                  open: this.richSourceOpen,
+                  mount: this.mountSourceEditor,
+                }
+              : undefined,
           kind: richKind,
           language,
           source: code,

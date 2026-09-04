@@ -17,6 +17,7 @@ import {
   RichFenceSourceMenuItem,
   RichFenceSourcePreview,
   type ScientRichFenceAuthoringActions,
+  type ScientRichFenceSourceEditor,
   useRichFenceContextMenu,
 } from "../presentation/RichFenceSourceActions";
 
@@ -44,6 +45,7 @@ import "./scient-diagrams.css";
 
 interface MermaidDiagramCardProps {
   readonly authoringActions?: ScientRichFenceAuthoringActions | undefined;
+  readonly sourceEditor?: ScientRichFenceSourceEditor | undefined;
   readonly source: string;
   readonly language: string;
   readonly fenceMeta?: string | undefined;
@@ -99,6 +101,7 @@ function DiagramActionButton({
 
 export function MermaidDiagramCard({
   authoringActions,
+  sourceEditor,
   fenceMeta,
   language,
   source,
@@ -124,7 +127,8 @@ export function MermaidDiagramCard({
     if (!isNearViewport) return;
     const generation = renderGenerationRef.current + 1;
     renderGenerationRef.current = generation;
-    setDiagramState({ status: "loading" });
+    // Keep an error's geometry while its source is corrected or retried.
+    setDiagramState((current) => (current.status === "error" ? current : { status: "loading" }));
 
     void renderMermaidDiagram(source, theme).then(
       (result) => {
@@ -354,12 +358,6 @@ export function MermaidDiagramCard({
               Retry
             </Button>
           </div>
-          <RichFenceSourcePreview
-            authoringActions={authoringActions}
-            source={source}
-            label="Edit diagram source"
-            className="scient-mermaid-source max-h-72 overflow-auto rounded-md bg-background/70 p-3 text-xs leading-relaxed"
-          />
         </div>
       ) : diagramState.status === "ready" ? (
         <div className="scient-mermaid-inline overflow-auto p-2">
@@ -371,16 +369,16 @@ export function MermaidDiagramCard({
         </div>
       ) : null}
 
-      {sourceVisible && !authoringActions?.sourceEditorOpen && diagramState.status !== "error" ? (
-        <div className="border-t border-border/60 bg-background/45 p-3">
-          <RichFenceSourcePreview
-            authoringActions={authoringActions}
-            source={source}
-            label="Edit diagram source"
-            className="scient-mermaid-source max-h-72 overflow-auto text-xs leading-relaxed"
-          />
-        </div>
-      ) : null}
+      <RichFenceSourcePreview
+        editor={sourceEditor}
+        visible={diagramState.status === "error" || sourceVisible || sourceEditor?.open === true}
+        source={source}
+        className={
+          sourceEditor || diagramState.status === "error"
+            ? "px-4 pb-4"
+            : "border-t border-border/60 bg-background/45 p-3"
+        }
+      />
 
       {readyResult != null ? (
         <MermaidDiagramDialog

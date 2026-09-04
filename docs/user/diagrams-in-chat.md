@@ -20,11 +20,11 @@ remains visible; **More diagram actions** identifies the diagram and its type,
 and contains source, copy, and download actions. Source inspection opens only
 when requested. Expanded viewers keep zoom, fit, and actual-size controls visible.
 
-In an editable Markdown file, click the source box below a diagram error to
-correct it directly, or focus the box and press Enter. The source opens in one
-editor and the diagram updates as you fix it. Leaving the editor restores the
-source preview if the diagram still cannot render. Read-only previews keep the
-source selectable for copying.
+In an editable Markdown file, the source box below a diagram error is already
+an editor. Click anywhere in its text and type there; the box stays in place.
+The diagram updates as you fix the source. Escape returns to the document, and
+the same source box remains visible while the error persists. Read mode keeps
+the source selectable for copying.
 
 Choose **Move controls** in More to expose a movement handle. Drag it or use
 arrow keys to move within the card; press Enter or Escape to finish.

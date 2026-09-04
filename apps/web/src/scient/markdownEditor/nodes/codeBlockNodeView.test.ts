@@ -354,8 +354,8 @@ describe("persistent nested code editor", () => {
     nodeView.destroy?.();
   });
 
-  it("opens rich-fence source only through its explicit authoring action", async () => {
-    const { nodeView, state } = fixture({ params: "mermaid" });
+  it("opens chart source only through its explicit authoring action", async () => {
+    const { nodeView, state } = fixture({ params: "plotly" });
     const dom = nodeView.dom as HTMLElement;
     const edit = await vi.waitFor(() => {
       const button = dom.querySelector<HTMLButtonElement>("[data-edit-rich-source]");

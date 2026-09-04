@@ -118,7 +118,7 @@ describe("rich Markdown preview presentation parity", () => {
     );
     expect(cssSource).toMatch(/> \[data-scient-visual-card\] \{\s*margin-block: 0;/su);
     expect(cssSource).toMatch(
-      /\.scient-markdown-code-block\[data-scient-markdown-rich-fence\] > \.scient-markdown-code-editor \{[^}]*border: 1px solid[^}]*--markdown-code-block-background/su,
+      /\.scient-markdown-code-block\[data-scient-markdown-rich-fence\] \.scient-markdown-code-editor \{[^}]*border: 1px solid[^}]*--markdown-code-block-background/su,
     );
   });
 
