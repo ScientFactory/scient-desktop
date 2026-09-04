@@ -2504,6 +2504,13 @@ const make = Effect.gen(function* () {
           createdAt: now,
           commandTag: "assistant-generated-image-turn-aborted",
         });
+        // An aborted turn never produces a successful answer. Release the
+        // barrier as unsuccessful so the queue waits for recovery instead of
+        // staying blocked with no terminal signal.
+        yield* finalizeQueueTurn(thread.id, eventTurnId, false).pipe(
+          Effect.provideService(SqlClient.SqlClient, queueSql),
+          Effect.orDie,
+        );
       }
 
       if (event.type === "session.exited") {

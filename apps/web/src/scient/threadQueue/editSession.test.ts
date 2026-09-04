@@ -146,6 +146,17 @@ describe("queue edit handoff", () => {
     expect(useQueueEditSessions.getState().sessions[composerTargetKey(target)]).toBeUndefined();
     expect(useComposerDraftStore.getState().getComposerDraft(target)?.prompt).toBe("ordinary");
   });
+  it("preserves the ordinary draft and queue when browser locks are unavailable", async () => {
+    vi.stubGlobal("navigator", {});
+    vi.mocked(controlThreadQueue).mockClear();
+    useComposerDraftStore.getState().setPrompt(target, "ordinary draft");
+    await expect(beginQueueEdit(target, item)).rejects.toThrow("Use HTTPS or localhost");
+    expect(controlThreadQueue).not.toHaveBeenCalled();
+    expect(useQueueEditSessions.getState().sessions[composerTargetKey(target)]).toBeUndefined();
+    expect(useComposerDraftStore.getState().getComposerDraft(target)?.prompt).toBe(
+      "ordinary draft",
+    );
+  });
   it("does not withdraw a message when another window owns this thread's edit lease", async () => {
     vi.stubGlobal("navigator", {
       locks: {

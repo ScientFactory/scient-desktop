@@ -58,6 +58,12 @@ export const updateQueue = Effect.fn("ScientQueue.update")(function* (
     edit_fingerprint: string | null;
   }>`SELECT edit_token, edit_fingerprint FROM scient_queue_receipts WHERE queue_item_id = ${payload.queueItemId} AND thread_id = ${payload.threadId}`;
   if (receipts[0]?.edit_token === payload.editToken) {
+    // A stash receipt is not proof that an update was ever accepted.
+    if (receipts[0].edit_fingerprint === null)
+      return yield* new QueueError({
+        message:
+          "This edit was already stashed. Stash these changes to keep them and restore your ordinary draft.",
+      });
     if (receipts[0].edit_fingerprint !== fingerprint)
       return yield* new QueueError({
         message:
@@ -163,7 +169,7 @@ export const controlQueue = Effect.fn("ScientQueue.control")(function* (
   if (payload.action === "stash") {
     if (item.state !== "editing" || item.editToken !== payload.editToken)
       return yield* new QueueError({ message: "This queue edit belongs to another editor." });
-    yield* sql`UPDATE scient_queue_receipts SET edit_token = ${payload.editToken} WHERE queue_item_id = ${item.queueItemId} AND thread_id = ${payload.threadId}`;
+    yield* sql`UPDATE scient_queue_receipts SET edit_token = ${payload.editToken}, edit_fingerprint = NULL WHERE queue_item_id = ${item.queueItemId} AND thread_id = ${payload.threadId}`;
     return { ...doc, items: doc.items.filter((entry) => entry !== item) };
   }
   if (payload.action === "steer") {

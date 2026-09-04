@@ -1,10 +1,6 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import {
-  isSteerShortcut,
-  resolveComposerSendDisposition,
-  shouldDispatchNextQueuedMessage,
-} from "./disposition";
+import { isSteerShortcut, resolveComposerSendDisposition } from "./disposition";
 
 describe("resolveComposerSendDisposition", () => {
   it("sends immediately when the thread is idle", () => {
@@ -33,35 +29,6 @@ describe("isSteerShortcut", () => {
   it("rejects plain Enter and Shift+Cmd+Enter", () => {
     expect(isSteerShortcut({ metaKey: false, ctrlKey: false, shiftKey: false })).toBe(false);
     expect(isSteerShortcut({ metaKey: true, ctrlKey: false, shiftKey: true })).toBe(false);
-  });
-});
-
-describe("shouldDispatchNextQueuedMessage", () => {
-  it("advances the first queued message after the active turn settles", () => {
-    expect(
-      shouldDispatchNextQueuedMessage({
-        threadReady: true,
-        hasQueuedItem: true,
-        dispatchBlocked: false,
-      }),
-    ).toBe(true);
-  });
-
-  it("does not overlap an active turn or a previous dispatch", () => {
-    expect(
-      shouldDispatchNextQueuedMessage({
-        threadReady: false,
-        hasQueuedItem: true,
-        dispatchBlocked: false,
-      }),
-    ).toBe(false);
-    expect(
-      shouldDispatchNextQueuedMessage({
-        threadReady: true,
-        hasQueuedItem: true,
-        dispatchBlocked: true,
-      }),
-    ).toBe(false);
   });
 });
 

@@ -950,25 +950,28 @@ const make = Effect.gen(function* () {
         pending.delete(event.threadId);
         yield* pullRequests.refreshAfterTurn;
       }
-      if (event.type === "turn.aborted") return;
-      let checkpointSuccessful = true;
-      yield* captureCheckpointFromTurnCompletion(event).pipe(
-        Effect.tapError(() =>
-          Effect.sync(() => {
-            checkpointSuccessful = false;
-          }),
-        ),
-        Effect.catch((error) =>
-          Effect.flatMap(nowIso, (createdAt) =>
-            appendCaptureFailureActivity({
-              threadId: event.threadId,
-              turnId,
-              detail: error.message,
-              createdAt,
-            }).pipe(Effect.catch(() => Effect.void)),
+      // An aborted turn captures no checkpoint, so it is an unsuccessful
+      // checkpoint outcome rather than a separate path: the queue barrier still
+      // needs its checkpoint half signalled or delivery never releases.
+      let checkpointSuccessful = event.type === "turn.completed";
+      if (event.type === "turn.completed")
+        yield* captureCheckpointFromTurnCompletion(event).pipe(
+          Effect.tapError(() =>
+            Effect.sync(() => {
+              checkpointSuccessful = false;
+            }),
           ),
-        ),
-      );
+          Effect.catch((error) =>
+            Effect.flatMap(nowIso, (createdAt) =>
+              appendCaptureFailureActivity({
+                threadId: event.threadId,
+                turnId,
+                detail: error.message,
+                createdAt,
+              }).pipe(Effect.catch(() => Effect.void)),
+            ),
+          ),
+        );
       if (turnId)
         yield* finalizeQueueTurn(event.threadId, turnId, checkpointSuccessful, "checkpoint").pipe(
           Effect.provideService(SqlClient.SqlClient, queueSql),

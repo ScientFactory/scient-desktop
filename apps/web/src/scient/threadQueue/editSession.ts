@@ -61,7 +61,10 @@ function revive(draft: ComposerThreadDraftState): ComposerThreadDraftState {
 const leases = new Map<string, () => void>();
 async function acquireEditLease(key: string) {
   if (leases.has(key)) return true;
-  if (!globalThis.navigator?.locks) throw new Error("This browser cannot safely own a queue edit.");
+  if (!globalThis.navigator?.locks)
+    throw new Error(
+      "This browser cannot safely own a queue edit. Use HTTPS or localhost to enable browser locks.",
+    );
   return new Promise<boolean>((resolve, reject) => {
     void navigator.locks
       .request(`scient-queue-edit:${key}`, { ifAvailable: true }, async (lock) => {

@@ -151,7 +151,13 @@ The lifecycle transitions are:
 | Session becomes ready, or only one finalizer finishes     | Unchanged | Unchanged            | Preserved                            |
 | Both finalizers succeed for the eligible turn             | false     | false                | Next item becomes eligible           |
 | Finalization fails                                        | false     | true                 | Preserved                            |
+| Aborted turn for the eligible turn                        | false     | true                 | Preserved                            |
 | Worker admits the next waiting item                       | true      | false                | Exactly that item consumed           |
+
+An aborted turn signals both finalizers as unsuccessful, so it ends the barrier
+the same way a failed answer does rather than leaving delivery blocked with no
+terminal signal. The eligible-turn check still applies: an abort naming any
+other turn cannot release the current one.
 
 Stop clears the eligible turn ID and cancels any unadmitted Steer request,
 retaining that message in its slot. A new explicit Steer action remains available.
@@ -186,6 +192,9 @@ Before withdrawal, both drafts are durably saved. The server's editing token
 owns the reserved slot; other tokens cannot overwrite or delete it. Browser
 Web Locks prevent two windows in the same origin from simultaneously recovering
 and editing the same journal. Closing the owning window releases its lease.
+If Web Locks are unavailable, editing fails before withdrawal and leaves the
+ordinary draft intact; use HTTPS or localhost. A server token cannot replace
+this lock because same-origin windows recover the same journal and token.
 Other devices are still governed by the server token and cannot adopt that
 window's local unsaved draft.
 
@@ -198,7 +207,12 @@ if the worker already consumed the replacement. Storage/network failures retain
 both drafts and report an error. A lost withdrawal response retains its durable
 intent and token for retry. A definitive conflict leaves the ordinary composer
 untouched. A committed edit receipt also stores a payload fingerprint: changed
-text after a lost response cannot be mistaken for an identical retry.
+text after a lost response cannot be mistaken for an identical retry. Stash
+spends the token without an accepted-update fingerprint: repeating Stash is
+harmless, but a subsequent requeue is rejected so unsubmitted edits remain
+recoverable instead of being acknowledged as sent. Ordinary enqueue identities
+use SHA-256 of the payload and are scoped to environment/thread; plain HTTP uses
+the existing JavaScript SHA-256 implementation when Web Crypto is unavailable.
 
 Async attachment and transcript callbacks retain their original draft target.
 The composer is remounted on draft identity changes; unmounted voice callbacks
@@ -257,7 +271,7 @@ contract and recovery path.
 ## Verification and manual acceptance
 
 Automated coverage belongs to `Ledger.test.ts`, `Worker.test.ts`, `Store.test.ts`,
-`editSession.test.ts`, orchestration engine/ingestion/checkpoint tests, migration
+`editSession.test.ts`, `submission.test.ts`, orchestration engine/ingestion/checkpoint tests, migration
 schema tests, and the existing disposition/image-restore tests. The worker test
 uses real SQL, normalization, engine receipts and projections, with no mounted
 client or provider call. Repository format, lint, type, test, build, and desktop

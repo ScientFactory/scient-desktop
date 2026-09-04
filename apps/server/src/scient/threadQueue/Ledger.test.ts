@@ -261,6 +261,23 @@ describe("server queue ordering and admission", () => {
       }),
     ),
   );
+  it.effect("does not let a terminal signal release a start that is not yet adopted", () =>
+    run(
+      Effect.gen(function* () {
+        const doc = yield* enqueue("A");
+        yield* writeQueue(threadId, { ...doc, blocked: true, turnId: "old-turn" });
+        yield* finish("old-turn");
+        // Admission records no provider turn until adoption, so `turnId` is null
+        // for a window on every ordinary start. Relaxing the eligible-turn check
+        // to treat null as "matches anything" would let this late duplicate of an
+        // already-finished turn release the new start and deliver twice.
+        const admitted = yield* readQueue(threadId);
+        yield* writeQueue(threadId, { ...admitted, blocked: true, turnId: null });
+        yield* finish("old-turn");
+        expect((yield* readQueue(threadId)).blocked).toBe(true);
+      }),
+    ),
+  );
   it.effect("waits after failed completion rather than delivering the next message", () =>
     run(
       Effect.gen(function* () {
@@ -290,6 +307,29 @@ describe("server queue ordering and admission", () => {
         yield* transaction(observeQueueCommand(command("A", doc.revision), undefined));
         yield* enqueue("A");
         yield* update("A");
+        expect((yield* readQueue(threadId)).items).toEqual([]);
+      }),
+    ),
+  );
+  it.effect("retries Stash safely without acknowledging an update that was never queued", () =>
+    run(
+      Effect.gen(function* () {
+        yield* enqueue("A");
+        yield* edit("A");
+        yield* change((doc) =>
+          controlQueue(
+            { threadId, action: "stash", queueItemId: "qitem_A", editToken: "editor-a" },
+            doc,
+          ),
+        );
+        const retry = yield* change((doc) =>
+          controlQueue(
+            { threadId, action: "stash", queueItemId: "qitem_A", editToken: "editor-a" },
+            doc,
+          ),
+        );
+        expect(retry.items).toEqual([]);
+        expect(Exit.isFailure(yield* Effect.exit(update("A")))).toBe(true);
         expect((yield* readQueue(threadId)).items).toEqual([]);
       }),
     ),
@@ -417,6 +457,52 @@ describe("server queue ordering and admission", () => {
 });
 
 describe("Stop and completion recovery", () => {
+  it.effect.each(["answer", "checkpoint"] as const)(
+    "an abort with %s first preserves the queue until recovery completes",
+    (first) =>
+      run(
+        Effect.gen(function* () {
+          yield* enqueue("A");
+          yield* enqueue("B");
+          yield* edit("A");
+          yield* adopt("aborted");
+          const items = (yield* readQueue(threadId)).items;
+          yield* finalizeQueueTurn(threadId, "aborted", false, first);
+          expect((yield* readQueue(threadId)).blocked).toBe(true);
+          yield* finalizeQueueTurn(
+            threadId,
+            "aborted",
+            false,
+            first === "answer" ? "checkpoint" : "answer",
+          );
+          const waiting = yield* readQueue(threadId);
+          expect(waiting.blocked).toBe(false);
+          expect(waiting.awaitingCompletion).toBe(true);
+          expect(waiting.items).toEqual(items);
+          expect(
+            Exit.isFailure(
+              yield* Effect.exit(
+                transaction(observeQueueCommand(command("B", waiting.revision), undefined)),
+              ),
+            ),
+          ).toBe(true);
+          yield* ordinaryStart();
+          yield* adopt("recovery");
+          yield* finish("aborted");
+          expect((yield* readQueue(threadId)).turnId).toBe("recovery");
+          expect((yield* readQueue(threadId)).awaitingCompletion).toBe(true);
+          yield* finish("recovery");
+          const ready = yield* readQueue(threadId);
+          expect(ready.awaitingCompletion).toBe(false);
+          expect(ready.items).toEqual(items);
+          yield* transaction(observeQueueCommand(command("B", ready.revision), undefined));
+          expect((yield* readQueue(threadId)).items.map((item) => item.queueItemId)).toEqual([
+            "qitem_A",
+          ]);
+        }),
+      ),
+  );
+
   it.effect(
     "Stop cancels a pending Steer but preserves an explicit Steer requested afterward",
     () =>

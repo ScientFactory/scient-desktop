@@ -360,6 +360,21 @@ describe("ProviderRuntimeIngestion", () => {
             return rows[0]?.text;
           }),
         ),
+      readQueueFinalization: (turnId: string) =>
+        runtime!.runPromise(
+          Effect.gen(function* () {
+            const sql = yield* SqlClient.SqlClient;
+            const rows = yield* sql<{
+              readonly answer_done: number;
+              readonly successful: number;
+            }>`
+              SELECT answer_done, successful
+              FROM scient_queue_finalization
+              WHERE turn_id = ${turnId}
+            `;
+            return rows[0];
+          }),
+        ),
       emit: provider.emit,
       setProviderSession: provider.setSession,
       drain,
@@ -367,6 +382,78 @@ describe("ProviderRuntimeIngestion", () => {
       authenticationFailures,
     };
   }
+
+  it("signals the queue answer barrier for an aborted turn", async () => {
+    const harness = await createHarness();
+    const now = "2026-01-01T00:00:00.000Z";
+
+    harness.emit({
+      type: "turn.started",
+      eventId: asEventId("evt-queue-abort-started"),
+      provider: ProviderDriverKind.make("codex"),
+      threadId: asThreadId("thread-1"),
+      createdAt: now,
+      turnId: asTurnId("turn-abort"),
+    });
+    await waitForThread(
+      harness.readModel,
+      (thread) => thread.session?.activeTurnId === "turn-abort",
+    );
+
+    harness.emit({
+      type: "turn.aborted",
+      eventId: asEventId("evt-queue-abort"),
+      provider: ProviderDriverKind.make("codex"),
+      threadId: asThreadId("thread-1"),
+      createdAt: now,
+      turnId: asTurnId("turn-abort"),
+    });
+    await harness.drain();
+
+    // An aborted turn never yields a successful answer. Without this signal the
+    // queue barrier keeps its admitted turn and never releases.
+    const completion = await harness.readQueueFinalization("turn-abort");
+    expect(completion?.answer_done).toBe(1);
+    expect(completion?.successful).toBe(0);
+  });
+
+  it("does not let a superseded turn's completion signal the queue barrier", async () => {
+    const harness = await createHarness();
+    const now = "2026-01-01T00:00:00.000Z";
+
+    harness.emit({
+      type: "turn.started",
+      eventId: asEventId("evt-queue-stale-started"),
+      provider: ProviderDriverKind.make("codex"),
+      threadId: asThreadId("thread-1"),
+      createdAt: now,
+      turnId: asTurnId("turn-active"),
+    });
+    await waitForThread(
+      harness.readModel,
+      (thread) => thread.session?.activeTurnId === "turn-active",
+    );
+
+    // A completion naming a turn other than the active one cannot close the
+    // lifecycle state, and must not reach the queue barrier either.
+    harness.emit({
+      type: "turn.completed",
+      eventId: asEventId("evt-queue-stale-completed"),
+      provider: ProviderDriverKind.make("codex"),
+      threadId: asThreadId("thread-1"),
+      createdAt: now,
+      turnId: asTurnId("turn-superseded"),
+      payload: { state: "completed" },
+    });
+    await harness.drain();
+
+    expect(await harness.readQueueFinalization("turn-superseded")).toBeUndefined();
+    const thread = await waitForThread(
+      harness.readModel,
+      (entry) => entry.session?.activeTurnId === "turn-active",
+    );
+    expect(thread.session?.activeTurnId).toBe("turn-active");
+  });
 
   it("maps turn started/completed events into thread session updates", async () => {
     const harness = await createHarness();
