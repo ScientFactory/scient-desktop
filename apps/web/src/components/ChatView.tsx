@@ -9114,7 +9114,7 @@ function ChatViewContent(props: ChatViewProps) {
             setForkCommandTarget(null);
           }
         }}
-        onConfirm={(confirmation) => {
+        onConfirm={(confirmation, beforeNavigate) => {
           const target = forkCommandTarget;
           if (
             !target ||
@@ -9123,10 +9123,11 @@ function ChatViewContent(props: ChatViewProps) {
             target.environmentId !== activeThreadEnvironmentId
           )
             return;
-          void forkFromMessage(
+          return forkFromMessage(
             forkSource,
             {
               ...confirmation,
+              beforeNavigate,
               ...(target.kind === "assistant-response" &&
               target.source === "switch-provider" &&
               !queueEdit &&

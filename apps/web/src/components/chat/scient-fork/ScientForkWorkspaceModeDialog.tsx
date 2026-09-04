@@ -6,7 +6,15 @@ import type {
 } from "@t3tools/contracts";
 import { deriveForkTitle } from "@t3tools/shared/scientForkTitle";
 import { SplitIcon } from "lucide-react";
-import { type FormEvent, useEffect, useId, useMemo, useRef, useState } from "react";
+import {
+  type FormEvent,
+  useEffect,
+  useId,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 
 import { useEnvironmentThreadShells } from "../../../state/entities";
 import { Button } from "../../ui/button";
@@ -91,7 +99,10 @@ interface ScientForkDialogProps {
   readonly titleOverrideSupported: boolean;
   readonly worktreeAvailability: ForkWorktreeAvailability;
   readonly onOpenChange: (open: boolean) => void;
-  readonly onConfirm: (confirmation: ScientForkConfirmation) => void;
+  readonly onConfirm: (
+    confirmation: ScientForkConfirmation,
+    beforeNavigate: () => Promise<boolean>,
+  ) => void | Promise<unknown>;
   readonly open: boolean;
   readonly error?: string | null | undefined;
   readonly checking?: boolean;
@@ -185,6 +196,17 @@ export function ScientForkWorkspaceModeDialog({
   const [titleEdited, setTitleEdited] = useState(false);
   const [newWorktree, setNewWorktree] = useState(false);
   const wasOpenRef = useRef(false);
+  const [closingForNavigation, setClosingForNavigation] = useState(false);
+  const finishClose = useRef<((completed: boolean) => void) | null>(null);
+  useLayoutEffect(() => {
+    if (!open) return;
+    return () => {
+      // Leaving the source while the card closes must release the operation
+      // without navigating back or leaving the origin locked.
+      finishClose.current?.(false);
+      finishClose.current = null;
+    };
+  }, [open]);
 
   useEffect(() => {
     if (open && !wasOpenRef.current) {
@@ -227,14 +249,34 @@ export function ScientForkWorkspaceModeDialog({
     worktreeAvailability,
   });
 
-  const handleSubmit = (event: FormEvent) => {
+  const handleSubmit = async (event: FormEvent) => {
     event.preventDefault();
     if (disabled || checking || !submission.ok) return;
-    onConfirm({ ...submission.confirmation, displayTitle: displayedTitle });
+    try {
+      await onConfirm(
+        { ...submission.confirmation, displayTitle: displayedTitle },
+        () =>
+          new Promise<boolean>((resolve) => {
+            finishClose.current = resolve;
+            setClosingForNavigation(true);
+          }),
+      );
+    } finally {
+      // A failed navigation reopens the same form with its saved retry state.
+      setClosingForNavigation(false);
+    }
   };
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
+    <Dialog
+      open={open && !closingForNavigation}
+      onOpenChange={onOpenChange}
+      onOpenChangeComplete={(isOpen) => {
+        if (isOpen) return;
+        finishClose.current?.(true);
+        finishClose.current = null;
+      }}
+    >
       <DialogPopup
         className="max-w-[23rem] -translate-y-4"
         backdropClassName="!backdrop-blur-[0.5px]"

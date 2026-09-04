@@ -211,6 +211,76 @@ describe("fork lifecycle across navigation and remounts", () => {
     ).toBe("Draft written in ready fork");
   });
 
+  it("finishes the card exit before transferring the draft and navigating", async () => {
+    let finishExit!: (completed: boolean) => void;
+    const beforeNavigate = vi.fn(
+      () =>
+        new Promise<boolean>((resolve) => {
+          finishExit = resolve;
+        }),
+    );
+    useComposerDraftStore.getState().setPrompt(sourceRef, "Keep visible until the card closes");
+    await render();
+    let pending!: Promise<unknown>;
+    await act(async () => {
+      pending = hook.forkFromMessage(source, { ...options, beforeNavigate }, "/workspace");
+    });
+    expect(beforeNavigate).toHaveBeenCalledOnce();
+    expect(navigate).not.toHaveBeenCalled();
+    expect(
+      useComposerDraftStore.getState().draftsByThreadKey[scopedThreadKey(sourceRef)]?.prompt,
+    ).toBe("Keep visible until the card closes");
+    await act(async () => {
+      finishExit(true);
+      await pending;
+    });
+    expect(navigate).toHaveBeenCalledOnce();
+    expect(
+      useComposerDraftStore.getState().draftsByThreadKey[scopedThreadKey(sourceRef)]?.prompt ?? "",
+    ).toBe("");
+  });
+
+  it("does not steal navigation when the source changes during the card exit", async () => {
+    let finishExit!: (completed: boolean) => void;
+    await render();
+    let pending!: Promise<unknown>;
+    await act(async () => {
+      pending = hook.forkFromMessage(
+        source,
+        {
+          ...options,
+          beforeNavigate: () =>
+            new Promise((resolve) => {
+              finishExit = resolve;
+            }),
+        },
+        "/workspace",
+      );
+    });
+    await render(other);
+    await act(async () => {
+      finishExit(true);
+      await pending;
+    });
+    expect(navigate).not.toHaveBeenCalled();
+    await render();
+    await act(() => hook.forkFromMessage(source, options, "/workspace"));
+    expect(commands.dispatch).toHaveBeenCalledOnce();
+    expect(navigate).toHaveBeenCalledOnce();
+  });
+
+  it("keeps a cancelled exit recoverable without another fork command", async () => {
+    await render();
+    await act(() =>
+      hook.forkFromMessage(source, { ...options, beforeNavigate: async () => false }, "/workspace"),
+    );
+    expect(navigate).not.toHaveBeenCalled();
+    expect(hook.isForking).toBe(false);
+    await act(() => hook.forkFromMessage(source, options, "/workspace"));
+    expect(commands.dispatch).toHaveBeenCalledOnce();
+    expect(navigate).toHaveBeenCalledOnce();
+  });
+
   it("uses the server's completed boundary for the latest-response entry point", async () => {
     const completed = MessageId.make("earlier-completed-answer");
     commands.options.mockResolvedValue(

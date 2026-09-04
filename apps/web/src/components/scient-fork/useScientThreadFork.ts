@@ -354,6 +354,8 @@ export function useScientThreadFork({
         readonly workspaceMode: "new-worktree" | "local";
         readonly titleOverride?: string;
         readonly displayTitle?: string;
+        /** Complete the source dialog exit before changing the conversation. */
+        readonly beforeNavigate?: () => Promise<boolean>;
         /** Move only portable unsent text/images after the fork command is accepted. */
         readonly composerDraftSource?: ScopedThreadRef;
       },
@@ -429,6 +431,8 @@ export function useScientThreadFork({
             });
             // Completing in the background must not steal navigation or a composer
             // from the conversation the user has since opened.
+            if (!mounted.current || activeOrigin.current !== originKey) return "accepted";
+            if (options.beforeNavigate && !(await options.beforeNavigate())) return "accepted";
             if (!mounted.current || activeOrigin.current !== originKey) return "accepted";
             if (!attempt.handoffDone) {
               if (

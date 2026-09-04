@@ -173,6 +173,12 @@ Transport errors without this field preserve both the command and draft.
 Once ready, retry only performs the client handoff and navigation. Optional
 panel continuity cannot turn a ready fork into a failed creation.
 
+After provisioning succeeds, the source dialog finishes its existing exit
+animation before the draft handoff and navigation. Base UI
+`onOpenChangeComplete(false)` owns this boundary; there is no fixed delay. The
+form stays unchanged during its exit. Leaving the source or unmounting cancels
+the pending navigation, while a navigation failure reopens the same retry form.
+
 Errors and retries stay inside the existing confirmation form. Title and
 workspace inputs are locked while resuming an unresolved operation. Navigating
 elsewhere or unmounting the hook does not cancel accepted server work and does
