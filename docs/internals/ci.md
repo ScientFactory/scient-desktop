@@ -51,6 +51,14 @@ test` across every workspace package except the server app and the monorepo root
 - **Release Smoke**: exercises release-only workflow steps through `scripts/release-smoke.ts`, so
   release breakage surfaces on PRs rather than at tag time.
 
+[`.github/workflows/windows-tests.yml`](../../.github/workflows/windows-tests.yml) is a manual
+Windows lane (`workflow_dispatch` only) on Scient's GitHub-hosted Windows 2025 runner family. The suite does not
+pass on Windows yet, so it is not a required check; it exists so the work to get there can be
+iterated against a real Windows box without one on hand. Dispatch it with `gh workflow run
+windows-tests.yml --ref <branch>`, optionally with `-f package=<dir>` to run one workspace package
+and `-f files="<paths>"` to run specific test files inside it. Once it is green, fold it into
+`ci.yml`.
+
 [`promote-release.yml`](../../.github/workflows/promote-release.yml) manually fast-forwards
 `release/stable` to an exact green `main` commit. The manual-only
 [`release.yml`](../../.github/workflows/release.yml) then builds macOS (`arm64` and `x64`), Linux

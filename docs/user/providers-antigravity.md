@@ -96,6 +96,9 @@ Scient keeps the thread's selected model when it resumes and asks for another
 selection if that model disappears. Older model generations remain available
 under **Legacy models** when the provider still offers them.
 
+The model picker also refreshes when a running session reports new model choices.
+Models available in other Antigravity apps may not be available through the ACP agent.
+
 For supported Gemini variants, choose the model once and use **Reasoning** to
 select an available level. On mobile, open **Model and reasoning settings**.
 Changing the level selects Google's corresponding model variant; it does not
@@ -114,6 +117,19 @@ access**. See [Permission modes](./permission-modes.md).
 Antigravity does not support conversation rewind. Reverting a thread or editing
 and resubmitting an earlier turn is therefore unavailable; send a follow-up or
 start a new thread instead.
+
+## Skills and subagents
+
+Project skills should use `.agents/skills`. Scient also discovers `.gemini/skills`
+and the legacy `.agent/skills` directory. For duplicate skill names, precedence is
+`.gemini/skills`, then `.agents/skills`, then `.agent/skills`.
+
+Subagent launches appear as **Antigravity subagent batch** in **Agents** on web and
+desktop, and in the mobile work log. A launch can start several agents. The batch
+stays active while its parent turn runs, then becomes idle; launch errors remain
+visible. Google does not expose individual child status, names, models, usage,
+or reply ownership through ACP. A batch is not a separate controllable thread,
+and its launch description is not a child result.
 
 ## Accounts, disabling, and removal
 
@@ -135,6 +151,12 @@ Default Credentials managed outside Scient. Remove those separately if you no
 longer want that credential method available.
 
 ## Troubleshooting
+
+Health checks, model refresh, and sign-out allow up to 90 seconds for the official
+runtime to start, which can be slow on some computers. Explicit refresh uses saved
+credentials and does not launch a login page. Automatic checks verify installation
+only. Google controls account eligibility and limits; Scient does not silently
+switch authentication methods to bypass an account restriction.
 
 - **Antigravity is missing:** install the managed runtime, use an official
   system installation, or set its absolute binary path.

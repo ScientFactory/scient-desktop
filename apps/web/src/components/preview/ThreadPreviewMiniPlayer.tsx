@@ -34,6 +34,7 @@ import {
   type PreviewMiniPlayerResizeDirection,
   resizePreviewMiniPlayerRect,
   resolvePreviewMiniPlayerDefaultPosition,
+  PREVIEW_MINI_PLAYER_WEBVIEW_Z_INDEX,
 } from "./previewMiniPlayerLayout";
 
 const KEYBOARD_MOVE_STEP = 8;
@@ -493,7 +494,7 @@ export function ThreadPreviewMiniPlayer({ threadRef }: Props) {
       }
     >
       <div
-        className="group pointer-events-auto absolute inset-x-0 top-0 z-[34] flex h-7 touch-none cursor-grab items-center rounded-t-xl border-b border-border/60 bg-popover/95 px-2 outline-none focus-visible:ring-2 focus-visible:ring-ring/60 active:cursor-grabbing"
+        className="group pointer-events-auto absolute inset-x-0 top-0 z-[49] flex h-7 touch-none cursor-grab items-center rounded-t-xl border-b border-border/60 bg-popover/95 px-2 outline-none focus-visible:ring-2 focus-visible:ring-ring/60 active:cursor-grabbing"
         role="toolbar"
         tabIndex={0}
         aria-label="Floating preview controls. Use arrow keys to move."
@@ -576,7 +577,7 @@ export function ThreadPreviewMiniPlayer({ threadRef }: Props) {
       </div>
 
       <div
-        className="pointer-events-auto absolute inset-x-2 bottom-0 z-[34] h-3 touch-none cursor-grab rounded-b-xl border-t border-border/60 bg-popover/95 active:cursor-grabbing"
+        className="pointer-events-auto absolute inset-x-2 bottom-0 z-[49] h-3 touch-none cursor-grab rounded-b-xl border-t border-border/60 bg-popover/95 active:cursor-grabbing"
         onPointerDown={handlePointerDown}
         onPointerMove={handlePointerMove}
         onPointerUp={endDrag}
@@ -585,26 +586,27 @@ export function ThreadPreviewMiniPlayer({ threadRef }: Props) {
       />
 
       <div className="relative h-full min-h-0">
-        <div className="absolute inset-0 z-[29] rounded-xl bg-muted shadow-2xl/35" />
+        <div className="absolute inset-0 z-[47] rounded-xl bg-muted shadow-2xl/35" />
         {content.kind === "static-artifact" ? (
           <StaticAssetImageSurface
             environmentId={threadRef.environmentId}
             image={content.artifact}
-            className="absolute inset-x-2 bottom-3 top-7 z-[30]"
+            className="absolute inset-x-2 bottom-3 top-7 z-[48]"
           />
         ) : (
           <BrowserSurfaceSlot
             tabId={runtimeTabId!}
             visible={Boolean(desktopOverlay?.hasWebContents)}
             cornerRadius={8}
+            zIndex={PREVIEW_MINI_PLAYER_WEBVIEW_Z_INDEX}
             fitSourceContent
             layoutVersion={position ? `${position.x}:${position.y}` : "initial"}
             className="absolute inset-x-2 bottom-3 top-7"
           />
         )}
-        <div className="pointer-events-none absolute inset-0 z-[31] rounded-xl ring-1 ring-inset ring-border/80" />
+        <div className="pointer-events-none absolute inset-0 z-[49] rounded-xl ring-1 ring-inset ring-border/80" />
         {content.kind === "browser" && !desktopOverlay?.hasWebContents ? (
-          <div className="pointer-events-none absolute inset-x-2 bottom-3 top-7 z-[32] flex items-center justify-center bg-muted text-xs text-muted-foreground">
+          <div className="pointer-events-none absolute inset-x-2 bottom-3 top-7 z-[49] flex items-center justify-center bg-muted text-xs text-muted-foreground">
             Reconnecting preview…
           </div>
         ) : null}
@@ -615,7 +617,7 @@ export function ThreadPreviewMiniPlayer({ threadRef }: Props) {
                 <button
                   type="button"
                   aria-label={`Resize floating preview from ${handle.label}`}
-                  className={`pointer-events-auto absolute z-[35] touch-none focus-visible:z-[36] focus-visible:outline focus-visible:outline-2 focus-visible:outline-ring/60 ${handle.className}`}
+                  className={`pointer-events-auto absolute z-[49] touch-none focus-visible:z-[49] focus-visible:outline focus-visible:outline-2 focus-visible:outline-ring/60 ${handle.className}`}
                   onPointerDown={(event) => handleResizePointerDown(event, handle.direction)}
                   onPointerMove={handleResizePointerMove}
                   onPointerUp={endResize}

@@ -35,6 +35,9 @@ npx --yes \
 With those variables still set in the shell, use the same package and replace
 only the final service action to inspect, repair, or remove the service:
 
+On Linux, status also checks whether the service is running, enabled at startup,
+and allowed to keep running after logout.
+
 ```sh
 # Show the installed service, selected runtime, and log path.
 npx --yes --allow-scripts=node-pty@1.1.0,msgpackr-extract@3.0.4 --package="$SCIENT_SERVER_PACKAGE" t3 service status
@@ -78,6 +81,10 @@ Scient uses a systemd user unit at
 `~/.config/systemd/user/scient.service`. Installation enables user lingering
 so the service can remain active without an interactive login.
 
+Setup checks the systemd user manager and enables lingering before installing a
+runtime or stopping an existing service. If administrator permission is needed,
+it stops with a recovery command and leaves the existing service running.
+
 ### macOS
 
 Scient uses the launch agent
@@ -93,6 +100,9 @@ or Downloads, review that executable in **System Settings → Privacy &
 Security**. Do not grant broader filesystem access unless the hosted projects
 require it.
 
+If the agent was disabled in **System Settings > General > Login Items** or with
+`launchctl disable`, enable it again before expecting it to start at login.
+
 ## Connection and removal boundaries
 
 Installing a service does not publish it to the internet, create a Scient cloud
@@ -102,3 +112,24 @@ private-network access separately; see [Remote environments](./remote-access.md)
 Revoking a client credential or disconnecting a remote environment does not
 uninstall the service. Conversely, uninstalling the service does not delete its
 project files or silently erase the server state directory.
+
+## Troubleshooting
+
+Run the exact Scient `service status` command above on the server machine. An
+installed version alone does not mean the service is running or will survive logout.
+
+| Status                     | Meaning and recovery                                                                                      |
+| -------------------------- | --------------------------------------------------------------------------------------------------------- |
+| `linger-disabled`          | Run `sudo loginctl enable-linger "$(id -un)"`, then retry setup as your normal user.                      |
+| `linger-unavailable`       | Check `loginctl show-user "$(id -un)" --property=Linger` and whether systemd-logind is available.         |
+| `user-manager-unavailable` | Check `systemctl --user status` in a login session for the service user.                                  |
+| `service-disabled`         | Re-enable the service using the repair command shown by status.                                           |
+| `service-stopped`          | Read the service log and `systemctl --user status scient.service`, then use the displayed repair command. |
+
+Only the `loginctl` administrator action should run with sudo, not the Scient
+server command. Over SSH, use an interactive terminal for its password prompt.
+If administrator access is unavailable, run the Scient server in a foreground
+terminal and keep that session open.
+
+The status command prints the log path. Keep diagnostic messages when reporting
+failures, but never share pairing credentials or the secrets directory.
