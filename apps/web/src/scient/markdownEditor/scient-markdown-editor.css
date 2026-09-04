@@ -1054,14 +1054,11 @@ sup.scient-markdown-reference {
   margin-block: 0.4rem;
 }
 
-.scient-markdown-image.is-selected {
+.scient-markdown-image.is-selected,
+.scient-markdown-image:has(.scient-markdown-image-caption:focus) {
   border-radius: 0.4rem;
   outline: 1px solid color-mix(in oklab, var(--primary) 45%, transparent);
-  outline-offset: 2px;
-}
-
-.scient-markdown-image.is-selected:has(.scient-markdown-image-caption:focus) {
-  outline: none;
+  outline-offset: -1px;
 }
 
 .scient-markdown-image-render {
@@ -1083,6 +1080,7 @@ sup.scient-markdown-reference {
   background: transparent;
   padding: 0;
   color: var(--muted-foreground);
+  caret-color: var(--foreground);
   font-size: 0.75rem;
   line-height: 1.45;
   text-align: center;
@@ -1294,7 +1292,6 @@ textarea.scient-markdown-math-source {
   resize: vertical;
 }
 
-.scient-markdown-image-caption:focus-visible,
 .scient-markdown-reference-source:focus-visible {
   outline: 2px solid color-mix(in oklab, var(--primary) 55%, transparent);
   outline-offset: 1px;
@@ -1381,6 +1378,11 @@ textarea.scient-markdown-math-source {
 
 .scient-markdown-document.ProseMirror-hideselection *::selection {
   background: transparent;
+}
+
+/* The outer node selection must not hide selection inside its native caption field. */
+.scient-markdown-document.ProseMirror-hideselection .scient-markdown-image-caption::selection {
+  background: color-mix(in oklab, var(--primary) 22%, transparent);
 }
 
 .scient-markdown-document .selectedCell::after {

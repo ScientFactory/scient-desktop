@@ -136,6 +136,7 @@ class ScientImageNodeView implements NodeView {
     this.caption.dir = "auto";
     this.caption.dataset.keybindingCapture = "";
     this.caption.setAttribute("aria-label", "Image caption");
+    this.caption.placeholder = "Add a caption…";
     this.caption.addEventListener("mousedown", this.handleCaptionPointer);
     this.caption.addEventListener("focus", this.handleCaptionFocus);
     this.caption.addEventListener("blur", this.handleCaptionBlur);
@@ -333,6 +334,15 @@ class ScientImageNodeView implements NodeView {
     return retainedReferenceLabel(this.node.attrs, "src");
   }
 
+  private selectImage(): boolean {
+    const position = this.targetPosition(this.currentTarget());
+    if (position === null) return false;
+    const selection = NodeSelection.create(this.view.state.doc, position);
+    if (!this.view.state.selection.eq(selection))
+      this.view.dispatch(this.view.state.tr.setSelection(selection).setMeta("addToHistory", false));
+    return true;
+  }
+
   private readonly handleMouseDown = (event: MouseEvent) => {
     if (
       event.button !== 0 ||
@@ -343,15 +353,18 @@ class ScientImageNodeView implements NodeView {
       return;
     if (event.target.closest("button, input, textarea, a, [role='button']")) return;
     if (this.node.marks.some((mark) => mark.type.name === "link")) return;
-    const position = this.targetPosition(this.currentTarget());
-    if (position === null) return;
+    if (!this.selectImage()) return;
     event.preventDefault();
-    this.view.dispatch(
-      this.view.state.tr
-        .setSelection(NodeSelection.create(this.view.state.doc, position))
-        .setMeta("addToHistory", false),
-    );
-    this.view.focus();
+    if (
+      this.standalone &&
+      this.referenceLabel() === null &&
+      !event.shiftKey &&
+      !event.metaKey &&
+      !event.ctrlKey &&
+      !event.altKey
+    )
+      this.editCaption();
+    else this.view.focus();
   };
   private readonly editDetails = () => this.openDetails("details");
   private openDetails(intent: ScientImageDetailsSession["intent"]): void {
@@ -437,7 +450,10 @@ class ScientImageNodeView implements NodeView {
     this.captionActive = true;
     this.captionTarget = this.node;
     this.renderCaption();
-    this.caption.focus({ preventScroll: true });
+    if (document.activeElement !== this.caption) {
+      this.caption.focus({ preventScroll: true });
+      this.caption.setSelectionRange(this.caption.value.length, this.caption.value.length);
+    }
   };
   private readonly handleCaptionPointer = (event: MouseEvent) => {
     if (event.button !== 0 || !this.editable) return;
@@ -448,6 +464,7 @@ class ScientImageNodeView implements NodeView {
   };
   private readonly handleCaptionFocus = () => {
     if (!this.editable || !this.view.editable || this.referenceLabel() !== null) return;
+    if (!this.selectImage()) return;
     this.captionActive = true;
     this.captionTarget = this.node;
     this.renderCaption();

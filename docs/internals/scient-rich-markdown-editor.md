@@ -172,7 +172,11 @@ same exact source field; there is no copied form model or definition reserializa
 
 Image NodeViews keep selection, explicit details drafts, live caption input, and
 asset loading independent. Selecting an image does not open metadata or write
-source. A pane-constrained details panel applies changed attributes together as
+source. An unmodified click on a standalone, locally owned image selects its node
+and focuses the existing caption field without scrolling. Direct caption focus
+selects the same node; one inset outline encloses the figure in both cases.
+Keyboard node selection remains available without entering the caption.
+A pane-constrained details panel applies changed attributes together as
 one history transaction; cancellation is presentation-only. Captions use the
 existing optional Markdown title and publish completed input through attribute
 transactions, so the normal save, conflict, and departure machinery owns them.

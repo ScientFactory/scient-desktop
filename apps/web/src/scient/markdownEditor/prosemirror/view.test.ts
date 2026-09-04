@@ -2060,10 +2060,14 @@ describe("ScientMarkdownEditorView", () => {
     const caption = view.dom.querySelector<HTMLTextAreaElement>("[aria-label='Image caption']")!;
     expect(caption.value).toBe("Cell culture");
     expect(resolveImageSource).toHaveBeenCalledWith("figures/cell.png");
-    view.dispatch(view.state.tr.setSelection(NodeSelection.create(view.state.doc, 1)));
+    image!.dispatchEvent(
+      new MouseEvent("mousedown", { button: 0, bubbles: true, cancelable: true }),
+    );
     expect(document.querySelector("[aria-label='Image source']")).toBeNull();
     expect(image?.hidden).toBe(false);
-    caption.focus();
+    expect(document.activeElement).toBe(caption);
+    expect(caption.selectionStart).toBe(caption.value.length);
+    expect(onUserSourceChange).not.toHaveBeenCalled();
     for (const value of ["Updated caption", "Updated caption again"]) {
       caption.value = value;
       caption.dispatchEvent(new InputEvent("input", { bubbles: true, inputType: "insertText" }));

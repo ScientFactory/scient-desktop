@@ -109,6 +109,85 @@ function decodeState(image: HTMLImageElement, width: number, complete = true) {
 }
 
 describe("Markdown image NodeView", () => {
+  it.each(["Caption", ""])(
+    "focuses the caption from one image click without publishing an edit: %s",
+    async (title) => {
+      const { view, image, caption, registration, changed } = await fixture({
+        source: title ? `![Alt](image.png "${title}")` : "![Alt](image.png)",
+      });
+      const before = view.state.doc;
+      const clickImage = () =>
+        image.dispatchEvent(
+          new MouseEvent("mousedown", { button: 0, bubbles: true, cancelable: true }),
+        );
+      await act(clickImage);
+      expect(document.activeElement).toBe(caption);
+      expect(caption.hidden).toBe(false);
+      expect(caption.selectionStart).toBe(title.length);
+      expect(caption.selectionEnd).toBe(title.length);
+      expect(view.state.selection).toBeInstanceOf(NodeSelection);
+      expect(view.state.doc).toBe(before);
+      expect(changed).not.toHaveBeenCalled();
+
+      // Clicking the image again does not reset an existing caption caret.
+      caption.setSelectionRange(0, 0);
+      await act(clickImage);
+      expect(caption.selectionStart).toBe(0);
+      await act(() =>
+        caption.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true })),
+      );
+      expect(document.activeElement).toBe(view.dom);
+      expect(view.state.selection).toBeInstanceOf(TextSelection);
+      expect(caption.hidden).toBe(title.length === 0);
+      expect(registration.element.classList.contains("is-selected")).toBe(false);
+      expect(changed).not.toHaveBeenCalled();
+    },
+  );
+
+  it("selects the image when its caption receives keyboard focus without replacing the field", async () => {
+    const { view, caption, registration, changed } = await fixture();
+    await act(() => caption.focus());
+    expect(document.activeElement).toBe(caption);
+    expect(view.state.selection).toBeInstanceOf(NodeSelection);
+    expect(registration.element.querySelector("textarea")).toBe(caption);
+    expect(changed).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    "Before ![Alt](image.png) after",
+    "[![Alt](image.png)](https://example.test)",
+    '![Alt][figure]\n\n[figure]: image.png "Shared caption"',
+  ])(
+    "keeps image clicks from changing inline, linked, or shared-reference content: %s",
+    async (source) => {
+      const { view, image, caption, changed } = await fixture({ source });
+      const before = view.state.doc;
+      await act(() =>
+        image.dispatchEvent(
+          new MouseEvent("mousedown", { button: 0, bubbles: true, cancelable: true }),
+        ),
+      );
+      expect(document.activeElement).not.toBe(caption);
+      expect(view.state.doc).toBe(before);
+      expect(changed).not.toHaveBeenCalled();
+      expect(document.querySelector("[data-slot='popover-popup']")).toBeNull();
+    },
+  );
+
+  it("keeps read-only image clicks out of caption editing", async () => {
+    const { view, image, caption, registration, changed } = await fixture();
+    await act(() => {
+      view.setProps({ editable: () => false });
+      registration.setEditable(false);
+      image.dispatchEvent(
+        new MouseEvent("mousedown", { button: 0, bubbles: true, cancelable: true }),
+      );
+    });
+    expect(document.activeElement).not.toBe(caption);
+    expect(caption.readOnly).toBe(true);
+    expect(changed).not.toHaveBeenCalled();
+  });
+
   it("does not publish a no-op details Apply for intentionally empty alt", async () => {
     const { view, registration, changed, image } = await fixture({ source: "![](image.png)" });
     const before = view.state.doc;

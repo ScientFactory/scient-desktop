@@ -1991,6 +1991,19 @@ code {
   border-radius: inherit;
 }
 
+[data-scient-image-controls]
+  .scient-visual-utility-controls
+  button:not([data-scient-toolbar-move]) {
+  width: calc(1.75rem - 2px);
+  height: calc(1.75rem - 2px);
+}
+
+[data-scient-image-controls]
+  .scient-visual-utility-controls
+  button:not([data-scient-toolbar-move])::before {
+  inset: 1px;
+}
+
 .scient-visual-utility-controls button:not([data-scient-toolbar-move]):hover,
 .scient-visual-utility-controls button:not([data-scient-toolbar-move])[data-popup-open] {
   --control-icon-color: var(--foreground);

@@ -376,7 +376,7 @@ function ScientImageControlsForSource({ ref, ...props }: ScientImageControlsProp
       <span
         data-scient-image-controls
         className={cn(
-          "absolute top-1 right-1 z-10 max-w-full",
+          "absolute top-0 right-1 z-10 max-w-full",
           props.authoring &&
             !props.selected &&
             "opacity-0 group-hover/scient-image:opacity-100 focus-within:opacity-100",

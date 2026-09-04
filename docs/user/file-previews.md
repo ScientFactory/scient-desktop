@@ -68,9 +68,12 @@ relocate an already open file automatically.
   open blocks. Copy includes the current code without adding Markdown fences.
 - Standalone Markdown images expose floating viewing controls. Use **Edit
   details** for the image source and alternative text; **Apply** saves one
-  change and **Cancel** leaves the document unchanged. Captions edit directly
-  in their visible line and save as you type. Enter or Escape leaves the caption;
-  Undo remains available. Missing captions stay absent until **Add caption**.
+  change and **Cancel** leaves the document unchanged. Click an image to place
+  the caret in its caption, or click the caption to choose a text position.
+  One outline surrounds the image and caption while editing. Captions save as
+  you type; Enter or Escape leaves the caption, and Undo remains available.
+  An image without a caption shows an empty field when clicked or after
+  **Add caption**; leaving it empty does not change the document.
   Typing before or after a standalone image creates a separate paragraph, so
   text stays above or below the image and its caption. **Add caption** on an
   image mixed with prose places that image in its own paragraph and opens its
