@@ -104,6 +104,7 @@ export interface ScientNestedCodeEditor {
   readonly refreshAppearance: () => void;
   readonly replaceExternalCode: (code: string, language?: string) => void;
   readonly setEditable: (editable: boolean) => void;
+  readonly setWordWrap: (wrapped: boolean) => void;
   readonly destroy: () => void;
 }
 
@@ -115,6 +116,7 @@ export function createScientNestedCodeEditor(input: {
   readonly code: string;
   readonly editable: boolean;
   readonly language: string;
+  readonly wordWrap?: boolean;
   readonly onUserCodeChange: (code: string) => void;
   readonly onEscape: () => void;
 }): ScientNestedCodeEditor {
@@ -122,10 +124,12 @@ export function createScientNestedCodeEditor(input: {
   const appearanceCompartment = new Compartment();
   const editableCompartment = new Compartment();
   const accessibilityCompartment = new Compartment();
+  const wrappingCompartment = new Compartment();
   const documentRoot = input.parent.ownerDocument.documentElement;
   let destroyed = false;
   let isDark = documentRoot.classList.contains("dark");
   let editable = input.editable;
+  let wrapped = input.wordWrap ?? true;
   let language = "";
   let languageVersion = 0;
   const accessibilityLabel = (nextLanguage: string): string =>
@@ -147,7 +151,7 @@ export function createScientNestedCodeEditor(input: {
           EditorState.readOnly.of(!editable),
           EditorView.editable.of(editable),
         ]),
-        EditorView.lineWrapping,
+        wrappingCompartment.of(wrapped ? EditorView.lineWrapping : []),
         accessibilityCompartment.of(
           EditorView.contentAttributes.of({
             "aria-label": accessibilityLabel(input.language),
@@ -238,6 +242,13 @@ export function createScientNestedCodeEditor(input: {
           EditorState.readOnly.of(!editable),
           EditorView.editable.of(editable),
         ]),
+      });
+    },
+    setWordWrap: (nextWrapped) => {
+      if (destroyed || nextWrapped === wrapped) return;
+      wrapped = nextWrapped;
+      view.dispatch({
+        effects: wrappingCompartment.reconfigure(wrapped ? EditorView.lineWrapping : []),
       });
     },
     destroy: () => {

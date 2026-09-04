@@ -10,6 +10,9 @@ import type {
 } from "~/scient/presentation/RichFenceSourceActions";
 import { resolveScientRichFenceKind } from "~/scient/presentation/ScientRichFence";
 
+import { getClientSettings } from "~/hooks/useSettings";
+import { mountCodeBlockActions } from "./codeBlockActions";
+
 import { leaveAtomEditor } from "../prosemirror/safeSelection";
 import {
   createScientNestedCodeEditor,
@@ -48,6 +51,8 @@ class ScientCodeBlockNodeView implements NodeView {
   private readonly editorHost = document.createElement("div");
   private readonly loadError = document.createElement("div");
   private readonly retryButton = document.createElement("button");
+  private readonly unmountActions: () => void;
+  private wrapped = getClientSettings().wordWrap;
   private nestedEditor: ScientNestedCodeEditor | null = null;
   private unregisterCodeEditor: (() => void) | undefined;
   private reactRoot: Root | null = null;
@@ -82,7 +87,14 @@ class ScientCodeBlockNodeView implements NodeView {
     const header = document.createElement("div");
     header.className = "scient-markdown-code-header";
     this.languageLabel.className = "scient-markdown-code-language";
-    header.append(this.languageLabel);
+    const actions = document.createElement("span");
+    header.append(this.languageLabel, actions);
+    this.unmountActions = mountCodeBlockActions(
+      actions,
+      () => this.node.textContent,
+      this.setWordWrap,
+    );
+    this.dom.dataset.wrap = String(this.wrapped);
     this.dom.append(header);
     this.rendered.className = "scient-markdown-code-render";
     this.dom.append(this.rendered);
@@ -153,6 +165,7 @@ class ScientCodeBlockNodeView implements NodeView {
 
   destroy(): void {
     this.destroyed = true;
+    this.unmountActions();
     this.unregisterCodeEditor?.();
     this.unregisterCodeEditor = undefined;
     this.nestedEditor?.destroy();
@@ -270,6 +283,12 @@ class ScientCodeBlockNodeView implements NodeView {
     }
   };
 
+  private readonly setWordWrap = (wrapped: boolean) => {
+    this.wrapped = wrapped;
+    this.dom.dataset.wrap = String(wrapped);
+    this.nestedEditor?.setWordWrap(wrapped);
+  };
+
   private ensureEditor(): ScientNestedCodeEditor | null {
     if (this.nestedEditor) return this.nestedEditor;
     this.editorHost.replaceChildren();
@@ -279,6 +298,7 @@ class ScientCodeBlockNodeView implements NodeView {
         code: this.node.textContent,
         editable: this.view.editable,
         language: codeLanguage(this.node),
+        wordWrap: this.wrapped,
         onEscape: () => leaveAtomEditor(this.view, this.getPos, this.node),
         onUserCodeChange: (code) => this.replaceCode(code),
       });

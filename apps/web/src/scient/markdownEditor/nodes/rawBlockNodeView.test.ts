@@ -70,6 +70,7 @@ describe("raw Markdown source islands", () => {
         refreshAppearance: vi.fn(),
         replaceExternalCode: vi.fn(),
         setEditable: vi.fn(),
+        setWordWrap: vi.fn(),
       };
     });
   });

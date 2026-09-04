@@ -57,6 +57,28 @@ describe("ScientMarkdownEditorView", () => {
     return source!;
   }
 
+  it("still observes prose edits and renders authored attributes behind the presentation guard", async () => {
+    const { view, controller } = mountEditor();
+    controller.setMode("write");
+    const heading = view.dom.querySelector("h1")!;
+    await act(async () => {
+      await new Promise<void>((resolve) => {
+        const observer = new MutationObserver(() => {
+          observer.disconnect();
+          resolve();
+        });
+        observer.observe(heading, { childList: true });
+        heading.textContent = "Changed heading";
+      });
+      (view as EditorView & { domObserver: { flush: () => void } }).domObserver.flush();
+    });
+    expect(view.state.doc.firstChild?.textContent).toBe("Changed heading");
+    expect(controller.session.session.draftSource).toContain("Changed heading");
+    view.dispatch(view.state.tr.setNodeMarkup(0, undefined, { level: 2, dir: "rtl" }));
+    expect(view.dom.querySelector("h2")?.getAttribute("dir")).toBe("rtl");
+    expect(view.dom.querySelector("h2")?.textContent).toBe("Changed heading");
+  });
+
   async function changeImageDetail(input: HTMLInputElement, value: string): Promise<void> {
     await act(() => {
       Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(input, value);
@@ -1958,6 +1980,8 @@ describe("ScientMarkdownEditorView", () => {
 
   it.each([
     "![Plot](plot.png)\n",
+    "Before.\n\n```ts\nconst sample = 1;\n```\n\n![Plot](plot.png)\n",
+    "# Heading\n\n- Item\n\n  ```ts\n  const sample = 1;\n  ```\n\n| Image |\n| --- |\n| ![Plot](plot.png) |\n",
     "Before ![Plot](plot.png) after.\n",
     "[![Plot](plot.png)](https://example.test)\n",
     "| Image |\n| --- |\n| ![Plot](plot.png) |\n",
@@ -1975,17 +1999,41 @@ describe("ScientMarkdownEditorView", () => {
     mounted.push(controller);
     const host = document.createElement("div");
     document.body.append(host);
+    let view!: EditorView;
     await act(() => {
-      controller.mount(host);
+      view = controller.mount(host);
     });
     await act(() => completeImageLoad(host.querySelector("img")!));
     const expand = host.querySelector<HTMLButtonElement>("[aria-label='Expand image']")!;
     expect(expand).not.toBeNull();
     await act(() => expand.click());
+    // Process the modal's accessibility mutations at the editor's observer
+    // checkpoint, including records not yet delivered by MutationObserver.
+    await act(() => {
+      (view as EditorView & { domObserver: { flush: () => void } }).domObserver.flush();
+    });
+    expect(host.querySelector("[aria-label='Expand image']")).toBe(expand);
     expect(
       document.querySelector("[role='dialog'] [data-preview-image-surface] img"),
     ).not.toBeNull();
     expect(controller.session.session.draftSource).toBe(source);
+    expect(onUserSourceChange).not.toHaveBeenCalled();
+    await act(() => {
+      document
+        .querySelector<HTMLButtonElement>("[role='dialog'] button[aria-label='Close']")!
+        .click();
+    });
+    await act(() => {
+      (view as EditorView & { domObserver: { flush: () => void } }).domObserver.flush();
+    });
+    expect(host.querySelector("[aria-label='Expand image']")).toBe(expand);
+    await act(() => expand.click());
+    await act(() => {
+      (view as EditorView & { domObserver: { flush: () => void } }).domObserver.flush();
+    });
+    expect(
+      document.querySelector("[role='dialog'] [data-preview-image-surface] img"),
+    ).not.toBeNull();
     expect(onUserSourceChange).not.toHaveBeenCalled();
   });
 

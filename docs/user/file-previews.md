@@ -61,6 +61,11 @@ relocate an already open file automatically.
   preference. A link to a specific Markdown line opens source so the requested
   line can be shown. Relative image paths resolve from the Markdown file's
   folder, including nested folders; inline sizes and alignment are preserved.
+- Code blocks and HTML/YAML/TOML source boxes stay directly editable and offer
+  **Wrap lines** and **Copy code** in their headers, matching chat. Wrapping
+  follows **Settings → Word wrap**, which defaults on. A block's wrap button
+  changes only that block; changing the setting applies the new preference to
+  open blocks. Copy includes the current code without adding Markdown fences.
 - Standalone Markdown images expose floating viewing controls. Use **Edit
   details** for the image source and alternative text; **Apply** saves one
   change and **Cancel** leaves the document unchanged. Captions edit directly

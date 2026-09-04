@@ -1413,7 +1413,8 @@ html[data-theme-id] .chat-markdown .chat-markdown-codeblock pre {
 }
 
 html[data-theme-id] .chat-markdown .chat-markdown-codeblock-header,
-html[data-theme-id] .chat-markdown .chat-markdown-chrome-action {
+html[data-theme-id] .chat-markdown .chat-markdown-chrome-action,
+html[data-theme-id] .scient-markdown-code-header .chat-markdown-chrome-action {
   color: color-mix(in srgb, var(--code-foreground) 72%, transparent);
 }
 
@@ -1440,7 +1441,9 @@ html[data-theme-id="t3-chat"] {
 }
 
 html[data-theme-id] .chat-markdown .chat-markdown-chrome-action:hover,
-html[data-theme-id] .chat-markdown .chat-markdown-chrome-action[aria-pressed="true"] {
+html[data-theme-id] .chat-markdown .chat-markdown-chrome-action[aria-pressed="true"],
+html[data-theme-id] .scient-markdown-code-header .chat-markdown-chrome-action:hover,
+html[data-theme-id] .scient-markdown-code-header .chat-markdown-chrome-action[aria-pressed="true"] {
   color: var(--code-foreground);
 }
 
@@ -1950,7 +1953,8 @@ code {
 }
 
 .chat-markdown .chat-markdown-codeblock-header,
-.chat-markdown .chat-markdown-chrome-action {
+.chat-markdown .chat-markdown-chrome-action,
+.scient-markdown-code-header .chat-markdown-chrome-action {
   color: color-mix(in srgb, var(--contrast-foreground) 72%, transparent);
 }
 
@@ -1958,7 +1962,8 @@ code {
   background-color: var(--markdown-code-block-background);
 }
 
-.chat-markdown .chat-markdown-chrome-action:hover {
+.chat-markdown .chat-markdown-chrome-action:hover,
+.scient-markdown-code-header .chat-markdown-chrome-action:hover {
   color: var(--contrast-foreground);
 }
 
@@ -1998,7 +2003,8 @@ code {
   outline-offset: 1px;
 }
 
-.chat-markdown .chat-markdown-chrome-action[aria-pressed="true"] {
+.chat-markdown .chat-markdown-chrome-action[aria-pressed="true"],
+.scient-markdown-code-header .chat-markdown-chrome-action[aria-pressed="true"] {
   color: var(--contrast-foreground);
   background: color-mix(in srgb, var(--contrast-foreground) 8%, transparent);
 }

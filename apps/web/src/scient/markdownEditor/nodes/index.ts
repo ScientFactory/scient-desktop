@@ -3,6 +3,8 @@ import type { NodeViewConstructor } from "prosemirror-view";
 import type { ScientRichFenceContextMenuHandler } from "~/scient/presentation/RichFenceSourceActions";
 
 import type { ScientMarkdownLinkOpenHandler } from "../linkOpen";
+import { scientMarkdownSchema } from "../prosemirror/schema";
+import { createPresentationNodeView, guardPresentationMutations } from "./presentationMutations";
 import {
   createScientCodeBlockNodeView,
   type ScientMarkdownCodeEditorRegistrar,
@@ -55,7 +57,13 @@ export interface ScientMarkdownNodeViewOptions {
 export function buildScientMarkdownNodeViews(
   options: ScientMarkdownNodeViewOptions,
 ): Readonly<Record<string, NodeViewConstructor>> {
-  return {
+  const constructors: Record<string, NodeViewConstructor> = {
+    ...Object.fromEntries(
+      Object.entries(scientMarkdownSchema.nodes)
+        // The table plugin owns its wrapper, sizing and selection controls.
+        .filter(([name, type]) => name !== "table" && !type.isText && type.spec.toDOM)
+        .map(([name]) => [name, createPresentationNodeView]),
+    ),
     code_block: (node, view, getPos) =>
       createScientCodeBlockNodeView(
         node,
@@ -103,4 +111,10 @@ export function buildScientMarkdownNodeViews(
         options.registerExternalPresentation,
       ),
   };
+  return Object.fromEntries(
+    Object.entries(constructors).map(([name, create]) => [
+      name,
+      (...args: Parameters<NodeViewConstructor>) => guardPresentationMutations(create(...args)),
+    ]),
+  );
 }

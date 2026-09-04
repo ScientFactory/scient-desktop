@@ -2,6 +2,9 @@ import type { Node as ProseMirrorNode } from "prosemirror-model";
 import { NodeSelection } from "prosemirror-state";
 import type { EditorView, NodeView } from "prosemirror-view";
 
+import { getClientSettings } from "~/hooks/useSettings";
+import { mountCodeBlockActions } from "./codeBlockActions";
+
 import { leaveAtomEditor } from "../prosemirror/safeSelection";
 import {
   createScientNestedCodeEditor,
@@ -29,6 +32,8 @@ function sourceKindLabel(kind: string): string {
 class ScientRawBlockNodeView implements NodeView {
   readonly dom = document.createElement("div");
   private readonly kind = document.createElement("span");
+  private unmountActions: (() => void) | undefined;
+  private wrapped = getClientSettings().wordWrap;
   private sourceEditor: HTMLTextAreaElement | null = null;
   private codeEditorHost: HTMLDivElement | null = null;
   private nestedEditor: ScientNestedCodeEditor | null = null;
@@ -48,7 +53,21 @@ class ScientRawBlockNodeView implements NodeView {
     this.dom.dir = "ltr";
     this.dom.setAttribute("data-scient-markdown-source-island", "true");
     this.kind.className = "scient-markdown-source-island-kind";
-    this.dom.append(this.kind);
+    if (node.attrs.sourceKind === "definition") {
+      this.dom.append(this.kind);
+    } else {
+      const header = document.createElement("div");
+      header.className = "scient-markdown-code-header";
+      const actions = document.createElement("span");
+      header.append(this.kind, actions);
+      this.dom.append(header);
+      this.unmountActions = mountCodeBlockActions(
+        actions,
+        () => String(this.node.attrs.source),
+        this.setWordWrap,
+      );
+    }
+    this.dom.dataset.wrap = String(this.wrapped);
     this.dom.addEventListener("mousedown", this.handleMouseDown);
     this.mountEditor();
     this.render();
@@ -73,6 +92,7 @@ class ScientRawBlockNodeView implements NodeView {
 
   stopEvent(event: Event): boolean {
     return (
+      (event.target instanceof Element && event.target.closest("button") !== null) ||
       event.target === this.sourceEditor ||
       (event.target instanceof globalThis.Node && this.codeEditorHost?.contains(event.target)) ===
         true
@@ -84,6 +104,7 @@ class ScientRawBlockNodeView implements NodeView {
   }
 
   destroy(): void {
+    this.unmountActions?.();
     this.unregisterEditor?.();
     this.unregisterEditor = undefined;
     this.nestedEditor?.destroy();
@@ -147,6 +168,13 @@ class ScientRawBlockNodeView implements NodeView {
     leaveAtomEditor(this.view, this.getPos, this.node);
   };
 
+  private readonly setWordWrap = (wrapped: boolean) => {
+    this.wrapped = wrapped;
+    this.dom.dataset.wrap = String(wrapped);
+    this.nestedEditor?.setWordWrap(wrapped);
+    if (this.sourceEditor) this.sourceEditor.wrap = wrapped ? "soft" : "off";
+  };
+
   private mountEditor(): void {
     const kind = String(this.node.attrs.sourceKind);
     if (kind === "definition") {
@@ -168,6 +196,7 @@ class ScientRawBlockNodeView implements NodeView {
         code: String(this.node.attrs.source),
         editable: this.view.editable,
         language: kind,
+        wordWrap: this.wrapped,
         onEscape: () => leaveAtomEditor(this.view, this.getPos, this.node),
         onUserCodeChange: (source) => this.replaceSource(source),
       });
@@ -194,6 +223,7 @@ class ScientRawBlockNodeView implements NodeView {
     sourceEditor.dir = "ltr";
     sourceEditor.rows = this.node.attrs.sourceKind === "definition" ? 1 : 3;
     sourceEditor.spellcheck = false;
+    sourceEditor.wrap = this.wrapped ? "soft" : "off";
     sourceEditor.tabIndex = this.node.attrs.sourceKind === "definition" ? 0 : -1;
     sourceEditor.dataset.scientMarkdownAtomEditor = "true";
     sourceEditor.readOnly = !this.view.editable;

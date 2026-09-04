@@ -50,6 +50,7 @@ describe("persistent nested code editor", () => {
         refreshAppearance: vi.fn(),
         replaceExternalCode: vi.fn(),
         setEditable: vi.fn(),
+        setWordWrap: vi.fn(),
       };
     });
   });
@@ -172,6 +173,7 @@ describe("persistent nested code editor", () => {
       refreshAppearance: vi.fn(),
       replaceExternalCode: vi.fn(),
       setEditable: vi.fn(),
+      setWordWrap: vi.fn(),
     };
     mocks.create.mockImplementationOnce(() => {
       throw new Error("Editor initialization failed");
@@ -331,6 +333,7 @@ describe("persistent nested code editor", () => {
       refreshAppearance: vi.fn(),
       replaceExternalCode: vi.fn(),
       setEditable: vi.fn(),
+      setWordWrap: vi.fn(),
     };
     mocks.create.mockImplementationOnce(() => {
       throw new Error("Editor initialization failed");

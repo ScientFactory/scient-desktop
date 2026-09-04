@@ -2,6 +2,7 @@ import { DOMSerializer, type Node as ProseMirrorNode } from "prosemirror-model";
 import { Plugin, type Command } from "prosemirror-state";
 import { CellSelection, findTable, TableMap, TableView } from "prosemirror-tables";
 import { Decoration, DecorationSet, type EditorView, type NodeView } from "prosemirror-view";
+import { guardPresentationMutations } from "../nodes/presentationMutations";
 
 /** Reuse the normal cell selection so formatting, copying, and table commands agree. */
 export const selectMarkdownTable: Command = (state, dispatch) => {
@@ -57,7 +58,7 @@ function markdownTableView(node: ProseMirrorNode, view: EditorView): NodeView {
     else tableView.table.removeAttribute("dir");
   };
   syncDirection(node);
-  return {
+  return guardPresentationMutations({
     dom,
     contentDOM: tableView.contentDOM,
     update(current) {
@@ -70,7 +71,7 @@ function markdownTableView(node: ProseMirrorNode, view: EditorView): NodeView {
       event.target instanceof globalThis.Node &&
       button.contains(event.target),
     ignoreMutation: (record) => button.contains(record.target) || tableView.ignoreMutation(record),
-  };
+  });
 }
 
 /** Keep the editable table model within the GFM representation we publish. */

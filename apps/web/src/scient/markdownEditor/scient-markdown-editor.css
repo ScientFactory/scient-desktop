@@ -448,6 +448,11 @@
   user-select: none;
 }
 
+.scient-markdown-code-header .scient-markdown-source-island-kind {
+  min-height: 0;
+  padding: 0;
+}
+
 .scient-markdown-code-block.is-empty .scient-markdown-code-header {
   display: none;
 }
@@ -487,6 +492,12 @@
   white-space: pre-wrap;
   overflow-wrap: anywhere;
   scrollbar-width: thin;
+}
+
+[data-wrap="false"] > .scient-markdown-code-render,
+[data-wrap="false"] .scient-markdown-code-editor.is-source-fallback {
+  white-space: pre;
+  overflow-wrap: normal;
 }
 
 .scient-markdown-code-render::-webkit-scrollbar {
