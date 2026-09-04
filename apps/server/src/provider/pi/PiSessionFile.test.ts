@@ -7,6 +7,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Fiber from "effect/Fiber";
 import * as Path from "effect/Path";
 import * as PlatformError from "effect/PlatformError";
+import * as Schema from "effect/Schema";
 
 import {
   allocateFreshPiSessionFile,
@@ -17,8 +18,27 @@ import {
   validatePiResumeSessionFile,
 } from "./PiSessionFile.ts";
 
+const json = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
+
 describe("PiSessionFile", () => {
   it.layer(NodeServices.layer)("allocates private, exclusive per-instance session files", (it) => {
+    it.effect("keeps instance IDs from becoming directory traversal segments", () =>
+      Effect.gen(function* () {
+        const path = yield* Path.Path;
+        const stateDir = path.resolve("synthetic-pi-state");
+        for (const instanceId of [".", "..", "", " pi "]) {
+          expect(yield* Effect.result(piInstanceStateRoot({ stateDir, instanceId }))).toMatchObject(
+            {
+              _tag: "Failure",
+            },
+          );
+        }
+        expect(yield* piInstanceStateRoot({ stateDir, instanceId: "../other" })).toBe(
+          path.join(stateDir, "providers", "pi", "..%2Fother", "sessions"),
+        );
+      }),
+    );
+
     it.effect("allocates and only cleans fresh files", () =>
       Effect.scoped(
         Effect.gen(function* () {
@@ -122,14 +142,13 @@ describe("PiSessionFile", () => {
       Effect.scoped(
         Effect.gen(function* () {
           const fs = yield* FileSystem.FileSystem;
-          const path = yield* Path.Path;
           const cwd = yield* fs.makeTempDirectoryScoped({ prefix: "scient-pi-large-session-" });
           const root = yield* piInstanceStateRoot({ stateDir: cwd, instanceId: "pi" });
           const fresh = yield* allocateFreshPiSessionFile({ stateRoot: root, fileId: "large" });
           const cursor = { ...fresh, schemaVersion: 1 as const, sessionId: "large" };
           yield* fs.writeFileString(
             fresh.sessionFile,
-            JSON.stringify({ type: "session", id: "large", cwd }) + "\n" + "x".repeat(1024 * 1024),
+            json({ type: "session", id: "large", cwd }) + "\n" + "x".repeat(1024 * 1024),
           );
           let boundedReads = 0;
           const boundedFs = FileSystem.FileSystem.of({

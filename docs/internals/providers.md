@@ -377,7 +377,8 @@ The [provider lifecycle architecture](./provider-lifecycle.md) owns the shared m
 
 [`PiDriver.ts`][pi] composes the same provider-instance registry, lifecycle actions, settings, and
 orchestration contracts as the other drivers. It does not import a second provider architecture or
-ACP translation layer. Its implementation is qualified against official Pi 0.84.4.
+ACP translation layer. Native protocol tests cover official Pi 0.84.4 and 0.85.0; the managed
+installation remains pinned to the qualified 0.84.4 archive.
 
 - `provider/pi/PiRpcClient.ts` owns the newline-delimited RPC transport, request correlation, bounded
   frames/queues and query timeouts. Prompt acceptance can wait for extension input; writes remain
@@ -402,7 +403,9 @@ ACP translation layer. Its implementation is qualified against official Pi 0.84.
   UI APIs are not emulated.
 - `provider/Layers/PiProvider.ts` discovers models, thinking options, native skills and templates
   passively with extensions/tools/context disabled. Authentication remains model-specific and
-  unknown until exercised. Live execution verifies the selected model and thinking level.
+  unknown until exercised. The driver's shared `snapshotForCwd` hook discovers workspace-local
+  resources without overriding Pi's project-trust policy. Live execution verifies the selected
+  model and thinking level, including image support when steering.
 - `textGeneration/PiTextGeneration.ts` uses ephemeral, tool-free and extension-free sessions for
   internal structured-output helpers, without Scient MCP credentials or project instructions.
 - `scient/providerLifecycle/PiManagedRuntimeActions.ts` and the shared runtime package own private

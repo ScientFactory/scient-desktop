@@ -38,6 +38,8 @@ export interface ProviderClientDefinition {
   readonly label: string;
   readonly icon: Icon;
   readonly settingsSchema: ProviderSettingsSchema;
+  /** False when model definitions must come from the native provider catalog. */
+  readonly supportsCustomModels?: boolean;
   /**
    * Optional short label rendered as a `variant="warning"` badge next to
    * the instance title. Used to flag drivers that still ship under an
@@ -55,6 +57,7 @@ const PROVIDER_CLIENT_DEFINITIONS_UNORDERED: readonly ProviderClientDefinition[]
     icon: PiIcon,
     badgeLabel: "Early Access",
     settingsSchema: PiSettings,
+    supportsCustomModels: false,
   },
   {
     value: ProviderDriverKind.make("codex"),
@@ -101,6 +104,7 @@ const PROVIDER_CLIENT_DEFINITIONS_UNORDERED: readonly ProviderClientDefinition[]
     icon: AntigravityIcon,
     badgeLabel: "Early Access",
     settingsSchema: AntigravitySettings,
+    supportsCustomModels: false,
   },
 ];
 

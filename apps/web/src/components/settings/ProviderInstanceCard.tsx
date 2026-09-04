@@ -498,7 +498,9 @@ export function ProviderInstanceCard({
     ? instance.driver
     : null;
   const customModels =
-    instance.driver === "antigravity" ? [] : readConfigCustomModels(instance.config);
+    driverOption?.supportsCustomModels === false || instance.driver === "antigravity"
+      ? []
+      : readConfigCustomModels(instance.config);
   // Server-returned models may lag behind settings writes. Treat probe
   // models as the source for built-ins only; custom rows come directly
   // from the current instance config so add/remove reflects immediately.
@@ -986,6 +988,7 @@ export function ProviderInstanceCard({
               <ProviderModelsSection
                 instanceId={instanceId}
                 driverKind={driverKind}
+                supportsCustomModels={driverOption.supportsCustomModels !== false}
                 models={modelsForDisplay}
                 customModels={customModels}
                 hiddenModels={hiddenModels}

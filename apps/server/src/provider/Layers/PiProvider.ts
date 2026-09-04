@@ -24,6 +24,7 @@ const PRESENTATION = {
   displayName: "Pi",
   showInteractionModeToggle: false,
   supportedRuntimeModes: ["full-access"],
+  supportsConversationRollback: false,
   requiresNewThreadForModelChange: false,
 } as const;
 const DETERMINISTIC_ARGS = [
@@ -106,6 +107,7 @@ export const checkPiProviderStatus = Effect.fn("checkPiProviderStatus")(function
   settings: PiSettings,
   environment: NodeJS.ProcessEnv = process.env,
   makeRpcClient: PiRpcClientFactory = makePiRpcClient,
+  cwd?: string,
 ): Effect.fn.Return<ServerProviderDraft, never, ChildProcessSpawner.ChildProcessSpawner> {
   const checkedAt = DateTime.formatIso(yield* DateTime.now);
   if (!settings.enabled) return yield* makePendingPiProvider(settings);
@@ -114,6 +116,7 @@ export const checkPiProviderStatus = Effect.fn("checkPiProviderStatus")(function
       const client = yield* makeRpcClient({
         command: settings.binaryPath,
         args: DETERMINISTIC_ARGS,
+        ...(cwd ? { cwd } : {}),
         env: {
           ...environment,
           PI_TELEMETRY: "0",

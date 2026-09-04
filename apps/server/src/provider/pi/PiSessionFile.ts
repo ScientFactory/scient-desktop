@@ -23,7 +23,12 @@ export class PiSessionFileError extends Schema.TaggedErrorClass<PiSessionFileErr
 export const piInstanceStateRoot = Effect.fn("PiSessionFile.piInstanceStateRoot")(
   function* (input: { readonly stateDir: string; readonly instanceId: string }) {
     const path = yield* Path.Path;
-    if (!input.instanceId || input.instanceId.trim() !== input.instanceId) {
+    if (
+      !input.instanceId ||
+      input.instanceId.trim() !== input.instanceId ||
+      input.instanceId === "." ||
+      input.instanceId === ".."
+    ) {
       return yield* new PiSessionFileError({
         operation: "instanceId",
         sessionFile: input.stateDir,

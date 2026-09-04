@@ -66,6 +66,7 @@ export interface ServerProviderPresentation {
   readonly badgeLabel?: string;
   readonly showInteractionModeToggle?: boolean;
   readonly supportedRuntimeModes?: ReadonlyArray<RuntimeMode>;
+  readonly supportsConversationRollback?: boolean;
   readonly requiresNewThreadForModelChange?: boolean;
 }
 
@@ -252,6 +253,9 @@ export function buildServerProvider(input: {
       : {}),
     ...(input.presentation.supportedRuntimeModes !== undefined
       ? { supportedRuntimeModes: [...input.presentation.supportedRuntimeModes] }
+      : {}),
+    ...(input.presentation.supportsConversationRollback !== undefined
+      ? { supportsConversationRollback: input.presentation.supportsConversationRollback }
       : {}),
     ...(typeof input.presentation.requiresNewThreadForModelChange === "boolean"
       ? { requiresNewThreadForModelChange: input.presentation.requiresNewThreadForModelChange }

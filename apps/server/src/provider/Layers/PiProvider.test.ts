@@ -88,6 +88,7 @@ it.effect("maps Pi RPC inventory into selectable models", () =>
     assert.equal(snapshot.status, "ready");
     assert.equal(snapshot.auth.status, "unknown");
     assert.deepEqual(snapshot.supportedRuntimeModes, ["full-access"]);
+    assert.equal(snapshot.supportsConversationRollback, false);
     assert.equal(snapshot.models[0]?.slug, "openai%20compatible/gpt%2F5");
     assert.equal(snapshot.models[0]?.name, "GPT Five");
     assert.equal(snapshot.models[0]?.isDefault, true);

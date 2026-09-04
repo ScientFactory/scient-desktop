@@ -12,7 +12,8 @@ remove affect only that private runtime, not your system installation or Pi cred
 
 Alternatively, install Pi using its [official instructions](https://github.com/earendil-works/pi),
 then configure its executable path if `pi` is not on the Scient server's `PATH`. The integration is
-qualified against Pi 0.84.4 and requires that version or newer. Other operating-system targets require a separately installed runtime;
+tested against Pi 0.84.4 and 0.85.0 and requires 0.84.4 or newer. The managed runtime remains pinned to
+the qualified 0.84.4 archive. Other operating-system targets require a separately installed runtime;
 Scient does not currently offer a qualified managed Pi build for those targets.
 
 Configure models and API keys, or complete Pi's supported `/login` flow, in Pi itself on the machine
@@ -32,6 +33,9 @@ server's endpoint and exact model ID to the Pi profile's `models.json` (normally
 and select the model in a new conversation. Follow Pi's
 [custom-model configuration](https://github.com/earendil-works/pi/blob/main/packages/coding-agent/docs/models.md),
 including its placeholder-key requirement for keyless local servers.
+
+Scient's model list lets you favorite, hide, and order discovered models. Define new models in
+Pi's configuration, not as custom model entries in Scient Settings.
 
 Scient runs the Pi agent, not the model server: importing model weights and starting/managing a
 local inference server are not built into this integration. Model discovery does not establish
@@ -67,6 +71,13 @@ for confirmation, selection, or text are shown as questions in Scient. Terminal-
 custom TUI screens, editor layout changes, and arbitrary Pi UI elements are not reproduced.
 Native editor requests are text questions, not a full Pi editor: initial text is shown as context
 and you submit the complete replacement. Shared question controls trim surrounding whitespace.
+Selection answers preserve Pi's exact native values and cannot be replaced by arbitrary free text.
+
+Project-local skills and templates are discovered for the selected workspace. Pi's own project-trust
+rules still apply: in Pi 0.85.0, RPC mode ignores untrusted project resources by default. To use those
+resources, review the project and save its trust decision through Pi's interactive `/trust` command,
+then restart the Pi session and refresh Scient. Selecting Full access in Scient does not create a
+Pi trust decision. See Pi's [project settings and trust documentation](https://github.com/earendil-works/pi/blob/main/packages/coding-agent/docs/settings.md).
 
 Recognized native commands are sent verbatim: their extensions, skills, or templates own argument
 handling and prompt expansion. Scient still applies the conversation's tool and skill permissions,

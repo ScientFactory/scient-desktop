@@ -138,6 +138,11 @@ export const PiDriver: ProviderDriver<PiSettings, PiDriverEnv> = {
         accentColor,
         enabled,
         snapshot,
+        snapshotForCwd: (cwd) =>
+          checkPiProviderStatus(effectiveConfig, processEnv, undefined, cwd).pipe(
+            Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+            Effect.map(stamp),
+          ),
         adapter,
         textGeneration,
         managedRuntimeActions: managedRuntime.actions,

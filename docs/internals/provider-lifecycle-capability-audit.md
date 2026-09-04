@@ -117,6 +117,23 @@ This addition records the Pi candidate on `codex/pi-provider-20260831`, based on
   both live access menus showed Full access only. Native/headless evidence does not promote these
   remaining cases to live-app acceptance.
 
+### Main alignment and follow-up — 2026-09-05
+
+The candidate was realigned with merged Scient main
+`0b33fabfb97a009651ccc78bb3be944e50cb84aa`. Native protocol tests passed against official
+Pi 0.84.4 and 0.85.0, including workspace-local discovery without extension execution; the
+managed catalog remains pinned to 0.84.4. Follow-up fixes preserve exact native selection values,
+bound session-header reads, reject directory-segment instance IDs and unsupported image steering,
+and suppress unsupported rollback
+and Scient-side custom-model entry controls. Existing catalog curation remains available.
+
+The isolated desktop pass repeated Scient tool calls, native file reads, all four question types,
+generation Stop, exact-session continuation, model-error recovery, and model/thinking selection.
+After a fresh backend restart, desktop checks also verified image delivery to the synthetic model
+endpoint, generic-file attachment paths, queued-message steering through completion, native model
+favorites, and the corrected model-entry/runtime-management presentation. Hosted models and the
+other unqualified cases above remain separate acceptance gates.
+
 ## Lifecycle dimensions
 
 Provider parity should be evaluated across independent dimensions rather than one generic connected
