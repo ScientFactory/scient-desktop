@@ -178,6 +178,7 @@ const makeHarness = Effect.fn("ProviderRegistryTransientState.makeHarness")(func
         packageName: null,
       }),
       getSnapshot: Ref.get(snapshotRef),
+      applyUsageLimits: () => Effect.void,
       refresh: Effect.gen(function* () {
         const beforeRefreshSnapshot = yield* Ref.get(beforeRefreshSnapshotRef);
         yield* beforeRefreshSnapshot;

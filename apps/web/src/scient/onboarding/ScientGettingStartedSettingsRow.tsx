@@ -10,6 +10,7 @@ export function ScientGettingStartedSettingsRow() {
       to="/getting-started"
     >
       <SettingsRow
+        className="pb-0"
         description="Connect an AI and update your local preferences."
         title={
           <span className="inline-flex items-center gap-2.5 transition-colors group-hover:text-foreground/75">

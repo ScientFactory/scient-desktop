@@ -173,7 +173,7 @@ describe("managed runtime release discovery", () => {
   });
 
   it("discovers and inspects every approved ACP target as one release family", async () => {
-    const registry = acpRegistry("1.1.0", "agy_acp_server_fixture");
+    const registry = acpRegistry("1.2.0", "agy_acp_server_fixture");
     const requested: string[] = [];
     const result = await refreshManagedRuntimeProvider(
       currentCatalog,
@@ -187,7 +187,7 @@ describe("managed runtime release discovery", () => {
     );
 
     expect(result.changedProviders).toEqual(["antigravityAcp"]);
-    expect(result.catalog.providers.antigravityAcp?.version).toBe("1.1.0");
+    expect(result.catalog.providers.antigravityAcp?.version).toBe("1.2.0");
     expect(Object.keys(result.catalog.providers.antigravityAcp?.artifacts ?? {})).toHaveLength(5);
     expect(requested).toHaveLength(7);
   });

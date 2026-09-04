@@ -45,6 +45,9 @@ built-in desktop updater to continue finding it.
 
 ## Start using Scient
 
+If the app shows **Scient could not load**, check your connection and select
+**Reload** to try again.
+
 When Scient opens, the optional [Getting started](./getting-started.md) flow can
 help you connect an AI provider and add your first project. You can skip it and
 configure providers later from **Settings → Providers**. Provider setup is not

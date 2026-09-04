@@ -40,7 +40,8 @@ export interface AntigravityAcpCatalogAsset {
   readonly harness: { readonly name: string; readonly bytes: number };
 }
 
-export const ANTIGRAVITY_ACP_REGISTRY_VERSION = "1.0.0";
+// Registry revision of the bundled native ACP release; advance both together during alignment.
+export const ANTIGRAVITY_ACP_REGISTRY_VERSION = "1.1.1";
 export const ANTIGRAVITY_ACP_CATALOG_KEY = "antigravityAcp";
 export const ANTIGRAVITY_ACP_TARGETS = [
   {

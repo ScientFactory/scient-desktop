@@ -22,21 +22,24 @@ revision remains literal ancestry of owned `main`; it is not merely a reviewed
 or observed tip.
 
 The current proposed T3 ancestry is recorded in
-[`docs/internals/2026-09-03-upstream-sync-fff33f9e8.md`](docs/internals/2026-09-03-upstream-sync-fff33f9e8.md)
-and in `upstream-state.json`. The latest local refresh preserves the six official commits
-from `652515a349741d234111b85f27597be3265d1ffc` through
-`fff33f9e851912363c5b1f3ac65598be35eb5f0d`. It adopts T3's official Antigravity ACP engine and
-setup APIs, composes Scient's assisted connection and managed-runtime lifecycle around them,
-and retains legacy `agy` conversations without converting their credentials or cursors.
-The same range brings mobile preview errors, faster new-model pricing refresh, composer recovery
-after failed preview capture, legacy-model grouping, and release verification caching.
-The [preceding phase](docs/internals/2026-09-03-upstream-sync-652515a34.md) remains in ancestry.
-PR #228's owned-main catalog-publication fix is preserved through a separate main merge.
-The local candidate passed automated qualification and the user completed manual review.
-The linked receipt distinguishes observed behavior from unexercised platform paths;
-PR checks and the history-preserving merge remain independently verifiable in GitHub.
-Later observed tips never move `integrationBase` by themselves; only the exact merged and
-verified checkpoint is recorded. Human review and publication remain separate gates.
+[`docs/internals/2026-09-04-upstream-sync-5f878d2a.md`](docs/internals/2026-09-04-upstream-sync-5f878d2a.md)
+and in `upstream-state.json`. This refresh preserves all 102 official commits
+from `fff33f9e851912363c5b1f3ac65598be35eb5f0d` through
+`5f878d2a85807618a4c8571cdef5daa3124672d6`. It includes Antigravity ACP 1.1.1,
+live model updates, subscription limits, context compaction, browser-login import,
+Settings/composer improvements, and the associated Git, mobile, connection, and
+runtime fixes. Scient's assisted lifecycle, managed/system ownership, reasoning
+selector, models-first view, scientific features, and release authority remain.
+The incoming owned PR #231 was merged into main before the provider/Settings
+composition; canonical main and the candidate base both include it.
+
+The history-preserving merge is `c927c346e0dc4e467634293e35fb89049270ef7a`.
+Automated qualification passed; isolated-app interaction and human visual
+acceptance remain pending. The linked receipt states the platform limits and
+meaningful conflict decisions. The [preceding checkpoint](docs/internals/2026-09-03-upstream-sync-fff33f9e8.md)
+remains in ancestry. This draft candidate does not claim to be merged into main.
+Later observed upstream tips do not move `integrationBase` by themselves, and
+publication remains a separate gate.
 
 ## Receiving T3 updates
 

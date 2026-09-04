@@ -22,10 +22,11 @@ export function ProjectSkillsSettingsPage() {
 
   return (
     <SettingsPageContainer>
-      <SettingsSection title="Project skills" icon={<FolderIcon className="size-4" />}>
-        <p className="px-3 pb-1 text-sm leading-relaxed text-muted-foreground sm:px-4">
-          Skills stored in the selected workspace and available only to that project.
-        </p>
+      <SettingsSection
+        title="Project skills"
+        icon={<FolderIcon className="size-4" />}
+        variant="plain"
+      >
         <Link
           className="group mb-2 ms-1 inline-flex min-h-8 cursor-pointer items-center gap-1.5 rounded-lg px-2 text-sm text-muted-foreground outline-none transition-colors hover:bg-foreground/[0.035] hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring sm:ms-2"
           to="/settings/skills"

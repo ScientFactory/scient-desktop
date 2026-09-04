@@ -47,6 +47,12 @@ const remoteDebuggingPort = process.env.T3CODE_DESKTOP_REMOTE_DEBUGGING_PORT?.tr
 const hostPlatform = NodeOS.platform();
 const managedByLocalDevApp = process.env.SCIENT_LOCAL_DEV_APP_MANAGED === "1";
 
+NodeChildProcess.execFileSync(
+  process.execPath,
+  [NodePath.join(desktopDir, "scripts/build-browser-secret.mjs")],
+  { stdio: "inherit" },
+);
+
 await waitForResources({
   baseDir: desktopDir,
   files: requiredFiles,
