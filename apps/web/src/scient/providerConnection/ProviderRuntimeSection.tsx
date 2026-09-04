@@ -634,7 +634,6 @@ export function ProviderRuntimeSection(props: {
       <CheckCircle2Icon className="mt-0.5 size-5 shrink-0 text-success" aria-hidden />
     );
   const presentsCompactUpdateSeparately = props.compact && runtime.actions.includes("update");
-  const summaryVersion = props.provider.driver === "antigravity" ? null : runtime.managedVersion;
   const trailingActions: ReadonlyArray<ProviderManagedRuntimeAction> =
     presentsCompactUpdateSeparately
       ? runtime.actions.filter((action) => action !== "update")
@@ -653,18 +652,9 @@ export function ProviderRuntimeSection(props: {
           {statusIcon}
           <div className="min-w-0 flex-1">
             <p className="text-sm font-medium text-foreground">{runtimeSourceLabel(runtime)}</p>
-            {props.compact && summaryVersion ? (
-              <p className="mt-0.5 text-xs text-muted-foreground">
-                {props.displayName} {summaryVersion}
-              </p>
-            ) : statusMessage ? (
+            {statusMessage ? (
               <p className="mt-0.5 text-xs leading-relaxed text-muted-foreground">
                 {statusMessage}
-              </p>
-            ) : null}
-            {!props.compact && summaryVersion ? (
-              <p className="mt-0.5 text-xs text-muted-foreground">
-                {props.displayName} {summaryVersion}
               </p>
             ) : null}
           </div>

@@ -37,7 +37,8 @@ function argument(name: string): string | undefined {
 
 const provider = argument("--provider") as ManagedRuntimeProvider | undefined;
 const catalogPath = NodePath.resolve(
-  argument("--catalog") ?? "apps/server/src/scient/providerLifecycle/managed-runtime-catalog.json",
+  argument("--catalog") ??
+    "apps/server/src/scient/providerLifecycle/bundled-managed-runtime-catalog.json",
 );
 if (!provider) throw new Error("--provider is required.");
 

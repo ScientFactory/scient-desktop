@@ -121,7 +121,7 @@ scanner never guesses that a newline ended terminal metadata and exposes a URL f
 | Install            | Adds and selects a qualified app-private runtime after confirmation, verification, smoke testing, and atomic activation.                                                         |
 | Use Scient-managed | Runs the same qualified install path while a healthy default system runtime remains active. The system installation is not removed or modified.                                  |
 | Update             | Replaces an active Scient-managed runtime with a strictly newer qualified stable release through the safe replacement path.                                                      |
-| Repair             | Restores the exact activated release when its durable receipt remains compatible with this app. It never silently turns into Update.                                             |
+| Repair             | Refreshes the qualified catalog and installs/restores its latest release, even at the current version. A compatible newer installed receipt is the offline floor.                |
 | Remove             | Deletes only Scient's app-private runtime. It preserves provider credentials, custom paths, and system installations, then re-probes the provider.                               |
 | Sign in            | Starts one official provider-owned account flow and verifies the resulting provider state before reporting success.                                                              |
 | Submit code        | Sends a bounded transient code only to the matching live provider operation when that operation explicitly advertises support. It is not persisted.                              |

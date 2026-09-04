@@ -12,6 +12,31 @@ function workflow(name: string) {
 }
 
 describe("managed provider runtime update workflow", () => {
+  it("keeps ACP on its own native installer and uses the provisioned package manager", () => {
+    const caller = workflow("managed-provider-runtime-updates.yml");
+    const reusable = workflow("managed-provider-runtime-update-provider.yml");
+    expect(caller.on.workflow_dispatch.inputs.provider.options).toContain("antigravityAcp");
+    expect(caller.jobs.provider.strategy.matrix.provider).toContain('"antigravityAcp"');
+    const steps = reusable.jobs.qualify.steps;
+    expect(
+      steps.find((step: { run?: string }) =>
+        step.run?.includes("node scripts/qualify-managed-runtime-catalog.ts"),
+      ).if,
+    ).toBe("inputs.provider != 'antigravityAcp'");
+    const deps = steps.find(
+      (step: { name: string }) => step.name === "Install official ACP qualification dependencies",
+    );
+    expect(deps.if).toBe("inputs.provider == 'antigravityAcp'");
+    expect(deps.run).toBe("vp install --frozen-lockfile --filter=t3...");
+    expect(
+      steps.find((step: { run?: string }) =>
+        step.run?.includes("node apps/server/scripts/qualify-antigravity-acp-catalog.ts"),
+      ).if,
+    ).toBe("inputs.provider == 'antigravityAcp'");
+    expect(reusable.env.CATALOG_PATH).toContain("/managed-runtime-catalog.json");
+    expect(reusable.env.BUNDLED_CATALOG_PATH).toContain("/bundled-managed-runtime-catalog.json");
+  });
+
   it("gives GitHub CLI the least-privilege release app token during publication", () => {
     const workflow = NodeFS.readFileSync(
       NodePath.join(
@@ -67,7 +92,10 @@ describe("managed provider runtime update workflow", () => {
     expect(reusable.jobs.qualify.if).toBe(
       "needs.discover.outputs.changed == 'true' || !inputs.publish",
     );
-    const exercise = reusable.jobs.qualify.steps.at(-1);
+    const exercise = reusable.jobs.qualify.steps.find(
+      (step: { name: string }) =>
+        step.name === "Exercise download, verification, smoke, activation, and removal",
+    );
     expect(exercise.env.QUALIFICATION_RUNS).toBe(
       "${{ !inputs.publish && runner.os == 'Windows' && '5' || '1' }}",
     );

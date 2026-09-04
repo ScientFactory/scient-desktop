@@ -978,7 +978,53 @@ describe("ProviderRuntimeSection", () => {
     },
   );
 
-  it("never hides a terminal runtime failure behind the installed version", () => {
+  it.each([true, false])("keeps the version in diagnostics only (compact=%s)", (compact) => {
+    const version = "2026.09.02-c22c1a3";
+    const managedProvider: ServerProvider = {
+      ...provider,
+      instanceId: ProviderInstanceId.make("cursor"),
+      driver: ProviderDriverKind.make("cursor"),
+      installed: true,
+      version,
+      status: "ready",
+      connection: {
+        ...provider.connection!,
+        methods: ["cursor_browser"],
+        runtime: {
+          ...provider.connection!.runtime!,
+          source: "scient_managed",
+          actions: ["repair", "remove"],
+          managedVersion: version,
+          diagnostics: {
+            executable: "/private/qa/cursor-agent",
+            version,
+            homePath: "/private/qa",
+            backend: "macOS native",
+          },
+        },
+      },
+    };
+    hooks.beginRender();
+    const markup = renderToStaticMarkup(
+      ProviderRuntimeSection({
+        compact,
+        environmentId,
+        provider: managedProvider,
+        displayName: "Cursor",
+      }),
+    );
+    const diagnosticsStart = markup.indexOf("<details");
+    expect(diagnosticsStart).toBeGreaterThan(-1);
+    const summary = markup.slice(0, diagnosticsStart);
+    expect(summary).toContain("Managed by Scient");
+    expect(summary).not.toContain(version);
+    expect(summary).toContain(">Repair<");
+    expect(summary).toContain(">Remove<");
+    expect(markup.slice(diagnosticsStart)).toContain(version);
+    expect(markup).not.toContain(`Cursor ${version}`);
+  });
+
+  it.each([true, false])("keeps a terminal runtime failure visible (compact=%s)", (compact) => {
     const failedProvider: ServerProvider = {
       ...provider,
       installed: true,
@@ -1011,6 +1057,7 @@ describe("ProviderRuntimeSection", () => {
     const markup = renderToStaticMarkup(
       ProviderRuntimeSection({
         environmentId,
+        compact,
         provider: failedProvider,
         displayName: "Antigravity",
       }),

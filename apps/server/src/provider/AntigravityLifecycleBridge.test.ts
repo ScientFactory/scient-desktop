@@ -161,6 +161,7 @@ it.effect("classifies system, custom, and managed ACP runtimes without taking ow
     const installation = AntigravityInstallation.of({
       managedDirectory: "/managed/antigravity",
       latestRelease: Effect.succeed(bundledAntigravityAcpAsset("linux", "x64")),
+      refreshLatestRelease: Effect.succeed(bundledAntigravityAcpAsset("linux", "x64")),
       startRelease: () => Effect.die("not used"),
       resolve: (binaryPath) =>
         Effect.succeed({
@@ -218,9 +219,23 @@ it.effect("never removes a managed runtime when its repair download or verificat
   Effect.gen(function* () {
     let starts = 0;
     let removes = 0;
+    let refreshes = 0;
+    const bundled = bundledAntigravityAcpAsset("linux", "x64")!;
+    let current: typeof bundled | null = bundled;
+    const newest = {
+      ...bundled,
+      version: "agy_acp_server_9.0.0",
+      registryVersion: "9.0.0",
+      sha256: "9".repeat(64),
+    };
     const installation = AntigravityInstallation.of({
       managedDirectory: "/managed/antigravity",
-      latestRelease: Effect.succeed(bundledAntigravityAcpAsset("linux", "x64")),
+      latestRelease: Effect.sync(() => current),
+      refreshLatestRelease: Effect.sync(() => {
+        refreshes++;
+        current = newest;
+        return current;
+      }),
       resolve: () =>
         Effect.succeed({
           executablePath: "/managed/antigravity/agy_acp_server.par",
@@ -278,7 +293,11 @@ it.effect("never removes a managed runtime when its repair download or verificat
       arch: "x64",
       protectedBinaryPaths: Effect.succeed(["/other/custom/runtime"]),
     });
+    yield* actions.getSummary;
+    expect(refreshes).toBe(0);
     const plan = yield* actions.plan("repair");
+    expect(refreshes).toBe(1);
+    expect(plan.version).toBe(newest.version);
     const progress: string[] = [];
     const error = yield* actions
       .run("repair", plan.catalogRevision, (update) =>
@@ -290,5 +309,16 @@ it.effect("never removes a managed runtime when its repair download or verificat
     expect(starts).toBe(1);
     expect(removes).toBe(0);
     expect(progress).toEqual(["downloading", "preparing"]);
+    current = { ...newest, sha256: "8".repeat(64) };
+    expect(
+      (yield* actions.run("repair", plan.catalogRevision, () => Effect.void).pipe(Effect.flip))
+        .message,
+    ).toContain("plan changed");
+    expect(starts).toBe(1);
+    const removePlan = yield* actions.plan("remove");
+    current = null; // Removal does not depend on the download catalog.
+    yield* actions.run("remove", removePlan.catalogRevision, () => Effect.void);
+    expect(removes).toBe(1);
+    expect(refreshes).toBe(1);
   }),
 );

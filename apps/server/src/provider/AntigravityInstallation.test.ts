@@ -239,6 +239,10 @@ it.layer(NodeServices.layer)("Antigravity installation", (it) => {
       expect((yield* terminalState(h.installation)).phase).toBe("succeeded");
       expect((yield* h.installation.resolve()).registryVersion).toBe("1.1.0");
       expect(h.requests).toHaveLength(1);
+      const rejected = yield* h.installation.startRelease(asset).pipe(Effect.flip);
+      expect(rejected.message).toContain("newer Antigravity runtime is already installed");
+      expect((yield* h.installation.resolve()).registryVersion).toBe("1.1.0");
+      expect(h.requests).toHaveLength(1);
     }),
   );
 

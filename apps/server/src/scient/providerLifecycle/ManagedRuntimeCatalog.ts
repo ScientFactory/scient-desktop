@@ -36,7 +36,7 @@ import { writeFileStringAtomically } from "../../atomicWrite.ts";
 import { ServerConfig } from "../../config.ts";
 import * as ServerSettings from "../../serverSettings.ts";
 import { isManagedRuntimeUpdate } from "./managedRuntimeVersion.ts";
-import bundledCatalogJson from "./managed-runtime-catalog.json" with { type: "json" };
+import bundledCatalogJson from "./bundled-managed-runtime-catalog.json" with { type: "json" };
 
 export const MANAGED_RUNTIME_CATALOG_URL =
   "https://raw.githubusercontent.com/ScientFactory/scient-desktop/automation/managed-runtime-catalog-v1/apps/server/src/scient/providerLifecycle/managed-runtime-catalog.json";
@@ -333,6 +333,28 @@ export function resolveManagedRuntimeCatalogCandidate(input: {
   })
     ? remote
     : bundledArtifact;
+}
+
+/** Latest known qualified repair target, including a newer durable installation receipt offline. */
+export function resolveManagedRuntimeRepairArtifact(input: {
+  readonly bundledArtifact: ManagedRuntimeArtifact | undefined;
+  readonly candidateArtifact: ManagedRuntimeArtifact | undefined;
+  readonly activeArtifact: ManagedRuntimeArtifactReceipt | null | undefined;
+}): ManagedRuntimeArtifact | undefined {
+  const candidate = input.candidateArtifact;
+  const installed =
+    input.bundledArtifact && input.activeArtifact
+      ? hydrateManagedRuntimeArtifact(input.bundledArtifact, input.activeArtifact)
+      : undefined;
+  return installed &&
+    (!candidate ||
+      isManagedRuntimeUpdate({
+        provider: installed.provider,
+        current: candidate.version,
+        candidate: installed.version,
+      }))
+    ? installed
+    : candidate;
 }
 
 export interface ManagedRuntimeCatalogService {

@@ -18,6 +18,7 @@ permissions:
 env:
   CATALOG_BRANCH: automation/managed-runtime-catalog-v1
   CATALOG_PATH: apps/server/src/scient/providerLifecycle/managed-runtime-catalog.json
+  BUNDLED_CATALOG_PATH: apps/server/src/scient/providerLifecycle/bundled-managed-runtime-catalog.json
 
 jobs:
   discover:
@@ -62,7 +63,7 @@ jobs:
               "refs/heads/$CATALOG_BRANCH:refs/remotes/origin/$CATALOG_BRANCH"
             git show "refs/remotes/origin/$CATALOG_BRANCH:$CATALOG_PATH" > "$current"
           else
-            cp "$CATALOG_PATH" "$current"
+            cp "$BUNDLED_CATALOG_PATH" "$current"
           fi
 
       - id: catalog
@@ -91,7 +92,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        runner: ${{ fromJSON(inputs.provider == 'antigravityAcp' && '["macos-26","ubuntu-24.04","ubuntu-24.04-arm","windows-2025","windows-11-arm"]' || '["macos-26","macos-15-intel","ubuntu-24.04","windows-2025"]') }}
+        runner: ${{ fromJSON(inputs.provider == 'antigravityAcp' && '["macos-26","ubuntu-24.04","ubuntu-24.04-arm","windows-2025","windows-11-arm"]' || '["macos-26","macos-15-intel","ubuntu-24.04","ubuntu-24.04-arm","windows-2025","windows-11-arm"]') }}
     steps:
       - name: Checkout immutable discovery source
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
@@ -135,7 +136,7 @@ jobs:
 
       - name: Install official ACP qualification dependencies
         if: inputs.provider == 'antigravityAcp'
-        run: pnpm install --frozen-lockfile --filter=t3...
+        run: vp install --frozen-lockfile --filter=t3...
 
       - name: Qualify the official ACP executable and harness through the app installer
         if: inputs.provider == 'antigravityAcp'
@@ -210,6 +211,7 @@ jobs:
           if ! git diff --quiet "$SOURCE_SHA" refs/remotes/origin/main -- \
             .github/workflows/managed-provider-runtime-update-provider.yml \
             apps/server/src/scient/providerLifecycle/ManagedRuntimeCatalog.ts \
+            apps/server/src/scient/providerLifecycle/bundled-managed-runtime-catalog.json \
             apps/server/src/provider/AntigravityInstallation.ts \
             apps/server/src/provider/antigravityRelease.ts \
             apps/server/src/provider/antigravityAuthSupport.ts \
@@ -236,7 +238,7 @@ jobs:
               "refs/heads/$CATALOG_BRANCH:refs/remotes/origin/$CATALOG_BRANCH"
             git show "refs/remotes/origin/$CATALOG_BRANCH:$CATALOG_PATH" > "$current"
           else
-            cp "$CATALOG_PATH" "$current"
+            cp "$BUNDLED_CATALOG_PATH" "$current"
           fi
 
           node scripts/promote-managed-runtime-catalog.ts \
@@ -262,7 +264,7 @@ jobs:
           git add "$CATALOG_PATH"
           git commit \
             -m "chore(provider-runtime): publish qualified $PROVIDER release" \
-            -m "Qualified from main@$SOURCE_SHA on all four native runner families."
+            -m "Qualified from main@$SOURCE_SHA on all required native runner targets."
           git push origin "HEAD:refs/heads/$CATALOG_BRANCH"
 
           remote_sha="$(git ls-remote --heads origin "refs/heads/$CATALOG_BRANCH" | awk '{print $1}')"
