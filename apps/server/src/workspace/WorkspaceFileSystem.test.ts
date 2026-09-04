@@ -758,6 +758,172 @@ it.layer(TestLayer, { excludeTestServices: true })("WorkspaceFileSystemLive", (i
       }),
     );
 
+    it.effect("converges an identical conditional retry without replacing the file", () =>
+      Effect.gen(function* () {
+        const workspaceFileSystem = yield* WorkspaceFileSystem.WorkspaceFileSystem;
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const cwd = yield* makeTempDir;
+        const relativePath = "notes.md";
+        const absolutePath = path.join(cwd, relativePath);
+        yield* writeTextFile(cwd, relativePath, "# Before\n");
+        const opened = yield* workspaceFileSystem.readFile({ cwd, relativePath });
+        const contents = "# שלום 😀\r\nCafé and café\r\n";
+        const first = yield* workspaceFileSystem.writeFile({
+          cwd,
+          relativePath,
+          contents,
+          expectedRevision: opened.revision,
+        });
+        if ((yield* HostProcessPlatform) !== "win32") {
+          yield* fileSystem.chmod(absolutePath, 0o751);
+        }
+        yield* fileSystem.utimes(absolutePath, 1_000_000, 1_000_000);
+        const beforeRetry = yield* fileSystem.stat(absolutePath);
+
+        const retry = yield* workspaceFileSystem.writeFile({
+          cwd,
+          relativePath,
+          contents,
+          expectedRevision: opened.revision,
+        });
+        const afterRetry = yield* fileSystem.stat(absolutePath);
+
+        expect(retry).toEqual(first);
+        expect(afterRetry.ino).toEqual(beforeRetry.ino);
+        expect(afterRetry.mtime).toEqual(beforeRetry.mtime);
+        expect(afterRetry.mode).toBe(beforeRetry.mode);
+        expect(Array.from(yield* fileSystem.readFile(absolutePath))).toEqual(
+          Array.from(new TextEncoder().encode(contents)),
+        );
+      }),
+    );
+
+    it.effect("uses raw byte revisions rather than decoded text to establish convergence", () =>
+      Effect.gen(function* () {
+        const workspaceFileSystem = yield* WorkspaceFileSystem.WorkspaceFileSystem;
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const cwd = yield* makeTempDir;
+        const relativePath = "notes.md";
+        const absolutePath = path.join(cwd, relativePath);
+        yield* writeTextFile(cwd, relativePath, "Before");
+        const opened = yield* workspaceFileSystem.readFile({ cwd, relativePath });
+        yield* fileSystem.writeFile(absolutePath, Uint8Array.from([0xff]));
+        const current = yield* workspaceFileSystem.readFile({ cwd, relativePath });
+        expect(current.contents).toBe("�");
+
+        const error = yield* workspaceFileSystem
+          .writeFile({
+            cwd,
+            relativePath,
+            contents: current.contents,
+            expectedRevision: opened.revision,
+          })
+          .pipe(Effect.flip);
+
+        expect(error).toBeInstanceOf(WorkspaceFileSystem.WorkspaceFileRevisionConflictError);
+        expect(Array.from(yield* fileSystem.readFile(absolutePath))).toEqual([0xff]);
+      }),
+    );
+
+    it.effect("refreshes workspace entries when an already-published retry converges", () =>
+      Effect.gen(function* () {
+        const workspaceEntries = yield* WorkspaceEntries.WorkspaceEntries;
+        const workspaceFileSystem = yield* WorkspaceFileSystem.WorkspaceFileSystem;
+        const cwd = yield* makeTempDir;
+        yield* writeTextFile(cwd, "existing.md", "# Existing\n");
+        const opened = yield* workspaceFileSystem.readFile({ cwd, relativePath: "existing.md" });
+        const beforeWrite = yield* workspaceEntries.list({ cwd });
+        expect(beforeWrite.entries.some((entry) => entry.path === "published.md")).toBe(false);
+        // Simulate publication completing before its index refresh/response.
+        yield* writeTextFile(cwd, "published.md", "# Published\n");
+
+        yield* workspaceFileSystem.writeFile({
+          cwd,
+          relativePath: "published.md",
+          contents: "# Published\n",
+          expectedRevision: opened.revision,
+        });
+
+        const afterRetry = yield* workspaceEntries.list({ cwd });
+        expect(afterRetry.entries).toEqual(
+          expect.arrayContaining([expect.objectContaining({ path: "published.md" })]),
+        );
+      }),
+    );
+
+    it.effect("never treats an identical exclusive create as a convergent retry", () =>
+      Effect.gen(function* () {
+        const workspaceFileSystem = yield* WorkspaceFileSystem.WorkspaceFileSystem;
+        const cwd = yield* makeTempDir;
+        yield* writeTextFile(cwd, "notes.md", "# Existing\n");
+        const opened = yield* workspaceFileSystem.readFile({ cwd, relativePath: "notes.md" });
+
+        const error = yield* workspaceFileSystem
+          .writeFile({
+            cwd,
+            relativePath: "notes.md",
+            contents: opened.contents,
+            expectedRevision: opened.revision,
+            createOnly: true,
+          })
+          .pipe(Effect.flip);
+
+        expect(error).toBeInstanceOf(WorkspaceFileSystem.WorkspaceFileExistsError);
+      }),
+    );
+
+    it.effect("never converges against the matching prefix of a truncated file", () =>
+      Effect.gen(function* () {
+        const workspaceFileSystem = yield* WorkspaceFileSystem.WorkspaceFileSystem;
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const cwd = yield* makeTempDir;
+        const contents = "x".repeat(1024 * 1024 + 1);
+        yield* writeTextFile(cwd, "large.md", contents);
+        const opened = yield* workspaceFileSystem.readFile({ cwd, relativePath: "large.md" });
+        expect(opened.truncated).toBe(true);
+
+        const error = yield* workspaceFileSystem
+          .writeFile({
+            cwd,
+            relativePath: "large.md",
+            contents: opened.contents,
+            expectedRevision: opened.revision,
+          })
+          .pipe(Effect.flip);
+
+        expect(error).toBeInstanceOf(WorkspaceFileSystem.WorkspaceFileRevisionConflictError);
+        expect(yield* fileSystem.readFileString(path.join(cwd, "large.md"))).toBe(contents);
+      }),
+    );
+
+    it.effect("converges concurrent conditional writes requesting identical bytes", () =>
+      Effect.gen(function* () {
+        const workspaceFileSystem = yield* WorkspaceFileSystem.WorkspaceFileSystem;
+        const cwd = yield* makeTempDir;
+        yield* writeTextFile(cwd, "notes.md", "# Before\n");
+        const opened = yield* workspaceFileSystem.readFile({ cwd, relativePath: "notes.md" });
+        const input = {
+          cwd,
+          relativePath: "notes.md",
+          contents: "# After\n",
+          expectedRevision: opened.revision,
+        };
+
+        const results = yield* Effect.all(
+          [workspaceFileSystem.writeFile(input), workspaceFileSystem.writeFile(input)],
+          { concurrency: 2 },
+        );
+
+        expect(results[0]).toEqual(results[1]);
+        const after = yield* workspaceFileSystem.readFile({ cwd, relativePath: "notes.md" });
+        expect(after.contents).toBe(input.contents);
+        expect(after.revision).toBe(results[0]?.revision);
+      }),
+    );
+
     it.effect("allows only one concurrent write against the same source revision", () =>
       Effect.gen(function* () {
         const workspaceFileSystem = yield* WorkspaceFileSystem.WorkspaceFileSystem;

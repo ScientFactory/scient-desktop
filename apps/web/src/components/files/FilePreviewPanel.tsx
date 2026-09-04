@@ -26,6 +26,7 @@ import {
   Suspense,
   useCallback,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -50,6 +51,7 @@ import type { HtmlFilePresentationRequest, LatexFilePresentationRequest } from "
 import { isAbsolutePath, resolvePathLinkTarget } from "~/terminal-links";
 import { ScrollArea } from "~/components/ui/scroll-area";
 import { Toggle } from "~/components/ui/toggle";
+import { Button } from "~/components/ui/button";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "~/components/ui/tooltip";
 import { stackedThreadToast, toastManager } from "~/components/ui/toast";
 import { type DraftId, useComposerDraftStore } from "~/composerDraftStore";
@@ -72,10 +74,12 @@ import {
   isScientMarkdownDocumentPath,
   shouldUseScientMarkdownEditor,
 } from "~/scient/markdownEditor/markdownDocumentPaths";
-import {
-  ScientMarkdownSaveStatus,
-  type ScientMarkdownSaveStatusKind,
-} from "~/scient/markdownEditor/ui/ScientMarkdownSaveStatus";
+import { ScientMarkdownPersistenceNotice } from "~/scient/markdownEditor/ui/ScientMarkdownPersistenceNotice";
+import { useMarkdownPersistenceLease } from "~/scient/markdownEditor/persistence/useMarkdownPersistenceLease";
+import { useMarkdownPersistenceGuards } from "~/scient/markdownEditor/persistence/useMarkdownPersistenceGuards";
+import { useMarkdownSourcePersistence } from "~/scient/markdownEditor/persistence/useMarkdownSourcePersistence";
+import type { MarkdownPersistenceLease } from "~/scient/markdownEditor/persistence/markdownPersistenceRegistry";
+import { markdownPersistenceRegistry } from "~/scient/markdownEditor/persistence/markdownPersistenceRegistry";
 import { workspacePdfSourceForPreview } from "~/scient/pdf/pdfSource";
 import {
   ScientFileFreshnessNotices,
@@ -86,7 +90,6 @@ import {
   useWorkspaceFileRefresh,
 } from "~/scient/fileSurfaces/useWorkspaceFileRefresh";
 import { usePendingSurfaceDeparture } from "~/scient/fileSurfaces/usePendingSurfaceDeparture";
-import { authoritativeFileSnapshotForEditor } from "~/scient/fileSurfaces/fileRefreshPolicy";
 
 import FileBrowserPanel from "./FileBrowserPanel";
 import { FileBreadcrumbs } from "./FileBreadcrumbs";
@@ -873,7 +876,29 @@ function useFileSaveCoordinator({
   return coordinator;
 }
 
-export function EditableFileSurface({
+export function EditableFileSurface(props: EditableFileSurfaceProps) {
+  const coordinator = useFileSaveCoordinator(props);
+  const onContentsChange = useCallback(
+    (contents: string) => {
+      setProjectFileQueryData(props.environmentId, props.cwd, props.relativePath, contents);
+      coordinator.change(contents);
+    },
+    [coordinator, props.environmentId, props.cwd, props.relativePath],
+  );
+  return <EditableFileEditor {...props} onContentsChange={onContentsChange} />;
+}
+
+export function MarkdownSourceSurface({
+  persistence,
+  ...props
+}: Omit<Parameters<typeof EditableFileEditor>[0], "contents" | "revision" | "onContentsChange"> & {
+  persistence: MarkdownPersistenceLease;
+}) {
+  const bindings = useMarkdownSourcePersistence(persistence);
+  return <EditableFileEditor {...props} {...bindings} />;
+}
+
+function EditableFileEditor({
   environmentId,
   cwd,
   relativePath,
@@ -884,17 +909,30 @@ export function EditableFileSurface({
   revealRequestId,
   wordWrap,
   onPostRender,
-  onPendingChange,
-  onSaveFailure,
-  onSaveConfirmed,
-  onSaveResolutionApplied,
-  saveResolution,
+  onContentsChange,
+  onProjectionApplied,
+  externalPersistence,
+  onExternalVersionApplied,
+  editingBlocked = false,
   onSelectionChange,
   activeLineRange,
   onEditorSelectionChange,
   renderEditorGutterAction,
   onRunShortcut,
-}: EditableFileSurfaceProps) {
+}: Omit<
+  EditableFileSurfaceProps,
+  | "onPendingChange"
+  | "onSaveFailure"
+  | "onSaveConfirmed"
+  | "onSaveResolutionApplied"
+  | "saveResolution"
+> & {
+  onContentsChange: (source: string) => void;
+  onProjectionApplied?: (source: string) => void;
+  externalPersistence?: MarkdownPersistenceLease;
+  onExternalVersionApplied?: (version: number) => void;
+  editingBlocked?: boolean;
+}) {
   const addReviewComment = useComposerDraftStore((store) => store.addReviewComment);
   const removeReviewComment = useComposerDraftStore((store) => store.removeReviewComment);
   const [lineAnnotations, setLineAnnotations] = useState<FileCommentLineAnnotation[]>([]);
@@ -913,25 +951,25 @@ export function EditableFileSurface({
   const selectionFrameRef = useRef<number | null>(null);
   const editorSelectionFrameRef = useRef<number | null>(null);
   const reportEditorSelectionRef = useRef<() => void>(() => undefined);
-  const saveCoordinator = useFileSaveCoordinator({
-    environmentId,
-    cwd,
-    relativePath,
-    revision,
-    onPendingChange,
-    onSaveFailure,
-    onSaveConfirmed,
-    onSaveResolutionApplied,
-    saveResolution,
-  });
+  const projectionAppliedRef = useRef(onProjectionApplied);
+  projectionAppliedRef.current = onProjectionApplied;
+  const applyingExternal = useRef(false);
+  const externalBindings = useRef({ externalPersistence, onExternalVersionApplied });
+  externalBindings.current = { externalPersistence, onExternalVersionApplied };
   const editor = useMemo(
     () =>
       new Editor<FileCommentAnnotationGroup>({
         persistState: true,
         persistStateStorage: "inMemory",
+        onAttach: (attachedEditor) => {
+          const projected = attachedEditor.getFile();
+          if (projected) projectionAppliedRef.current?.(projected.contents);
+          queueMicrotask(() =>
+            externalBindings.current.externalPersistence?.resumeExternalUpdates(),
+          );
+        },
         onChange: (file, nextLineAnnotations) => {
-          setProjectFileQueryData(environmentId, cwd, relativePath, file.contents);
-          saveCoordinator.change(file.contents);
+          if (!applyingExternal.current) onContentsChange(file.contents);
           if (nextLineAnnotations) {
             const remapped = remapFileCommentAnnotations(
               nextLineAnnotations as FileCommentLineAnnotation[],
@@ -958,7 +996,33 @@ export function EditableFileSurface({
         },
         onFocus: () => queueMicrotask(() => reportEditorSelectionRef.current()),
       }),
-    [addReviewComment, composerDraftTarget, cwd, environmentId, relativePath, saveCoordinator],
+    [addReviewComment, composerDraftTarget, onContentsChange, relativePath],
+  );
+
+  useLayoutEffect(
+    () =>
+      externalPersistence?.registerExternalProjection((update) => {
+        if (!editor.getFile() || editor.isComposing) return "defer";
+        const prepared = editor.prepareExternalEdits(
+          update.previousSource,
+          update.patches.map((patch) => ({
+            start: patch.start,
+            end: patch.end,
+            text: patch.replacement,
+          })),
+        );
+        if (!prepared) return null;
+        return () => {
+          applyingExternal.current = true;
+          try {
+            prepared();
+            externalBindings.current.onExternalVersionApplied?.(update.editVersion);
+          } finally {
+            applyingExternal.current = false;
+          }
+        };
+      }),
+    [editor, externalPersistence],
   );
 
   const reportEditorSelection = useCallback(() => {
@@ -1146,6 +1210,11 @@ export function EditableFileSurface({
       <div
         ref={surfaceRef}
         className="flex min-h-0 flex-1"
+        onCompositionEnd={() =>
+          queueMicrotask(() =>
+            externalBindings.current.externalPersistence?.resumeExternalUpdates(),
+          )
+        }
         onKeyDownCapture={(event) => {
           if (
             onRunShortcut === undefined ||
@@ -1217,7 +1286,7 @@ export function EditableFileSurface({
               ? {}
               : { renderGutterUtility: renderEditorGutterAction })}
             className="min-h-full"
-            contentEditable
+            contentEditable={!editingBlocked}
           />
         </Virtualizer>
       </div>
@@ -1354,10 +1423,20 @@ export default function FilePreviewPanel({
   // workspace editor or explorer.
   const isHostFile =
     attachment !== undefined || (relativePath !== null && isAbsolutePath(relativePath));
-  const [pendingPaths, setPendingPaths] = useState<ReadonlySet<string>>(() => new Set());
+  const [genericPendingPaths, setPendingPaths] = useState<ReadonlySet<string>>(() => new Set());
+  const {
+    pendingSurfaceIds: pendingPaths,
+    quietSurfaceIds: quietMarkdownPaths,
+    departureOptions,
+  } = useMarkdownPersistenceGuards({
+    environmentId,
+    cwd,
+    idKind: "path",
+    genericPendingIds: genericPendingPaths,
+  });
   const sourcePending = relativePath !== null && pendingPaths.has(relativePath);
   const effectiveSourcePending = sourcePending || selectedFilePending;
-  const runAfterPendingSave = usePendingSurfaceDeparture(pendingPaths);
+  const runAfterPendingSave = usePendingSurfaceDeparture(pendingPaths, departureOptions);
   const [explorerOpen, setExplorerOpen] = useState(initialExplorerOpen);
   const [pdfExplorerOpen, setPdfExplorerOpen] = useState(false);
   const effectiveExplorerOpen = isPdf ? pdfExplorerOpen : explorerOpen;
@@ -1402,8 +1481,7 @@ export default function FilePreviewPanel({
   const {
     automaticRefreshUnavailable,
     cancelReloadNotice,
-    file,
-    handleExternalConflict,
+    file: queriedFile,
     handleSaveConfirmed,
     handleSaveFailure,
     handleSaveResolutionApplied,
@@ -1422,45 +1500,58 @@ export default function FilePreviewPanel({
     relativePath,
     loadAsText: attachment === undefined && shouldLoadFileAsText(relativePath),
     sourcePending: effectiveSourcePending,
-    surfaceOwnsConflictDetection: isRichMarkdown && renderMarkdown,
+    surfaceOwnsConflictDetection: isRichMarkdown && !isHostFile,
     workspaceMutationId,
-    watchChanges: attachment === undefined && !isHostFile,
+    watchChanges:
+      attachment === undefined && !isHostFile && !quietMarkdownPaths.has(relativePath ?? ""),
   });
-  // A confirmed optimistic value can briefly be newer than the last completed
-  // read. Do not feed that stale read back into a clean rich session while the
-  // confirmation refresh catches up.
-  const markdownAuthoritativeFile = authoritativeFileSnapshotForEditor({
-    authoritative: file.authoritativeData,
-    optimistic: file.data,
-    pending: effectiveSourcePending,
+  const {
+    lease: markdownLease,
+    snapshot: markdownSnapshot,
+    admissionError,
+    retryAdmission,
+  } = useMarkdownPersistenceLease({
+    target:
+      isRichMarkdown && !isHostFile && relativePath !== null
+        ? { environmentId, cwd, relativePath }
+        : null,
+    authoritativeSnapshot: queriedFile.authoritativeData,
+    workspaceMutationId,
   });
-  const markdownAuthoritativeSnapshot =
-    markdownAuthoritativeFile === null
-      ? null
-      : {
-          source: markdownAuthoritativeFile.contents,
-          revision: markdownAuthoritativeFile.revision,
-        };
-  const markdownSaveStatus: ScientMarkdownSaveStatusKind =
-    file.data === null
-      ? "loading"
-      : reloadNotice?.kind === "external-change" || reloadNotice?.kind === "confirm-overwrite"
-        ? "conflict"
-        : reloadNotice?.kind === "manual-reload"
-          ? "unsaved"
-          : saveError?.relativePath === relativePath
-            ? "failed"
-            : effectiveSourcePending
-              ? "saving"
-              : "saved";
+  // Once admitted, the retained draft is the editor's display truth even when
+  // an unrelated cached query fails or temporarily returns an older snapshot.
+  const file =
+    markdownSnapshot && relativePath !== null
+      ? {
+          ...queriedFile,
+          error: null,
+          isPending: false,
+          data: {
+            relativePath,
+            contents: markdownSnapshot.draftSource,
+            revision: markdownSnapshot.baselineRevision,
+            byteLength: queriedFile.data?.byteLength ?? 0,
+            truncated: false,
+            readOnly: false,
+          },
+        }
+      : queriedFile;
+  const awaitingMarkdownLease =
+    isRichMarkdown &&
+    !isHostFile &&
+    markdownLease === null &&
+    queriedFile.authoritativeData !== null &&
+    !queriedFile.authoritativeData.truncated &&
+    !queriedFile.authoritativeData.readOnly;
   const usesScientMarkdownEditor =
     relativePath !== null &&
+    markdownLease !== null &&
     file.data !== null &&
     shouldUseScientMarkdownEditor({
       path: relativePath,
-      readOnly: file.data.readOnly ?? false,
+      readOnly: false,
       renderMarkdown,
-      truncated: file.data.truncated,
+      truncated: false,
     });
   const handleRenderMarkdownChange = useCallback(
     (pressed: boolean) => {
@@ -1646,10 +1737,15 @@ export default function FilePreviewPanel({
                   currentFileControl={
                     isRichMarkdown && !file.data?.readOnly ? (
                       <ScientMarkdownRenameButton
+                        {...(markdownLease
+                          ? { beforeRename: () => markdownLease.holdForRename() }
+                          : {})}
                         environmentId={environmentId}
                         cwd={cwd}
                         relativePath={relativePath}
-                        revision={file.data?.revision ?? "unavailable"}
+                        revision={
+                          markdownSnapshot?.baselineRevision ?? file.data?.revision ?? "unavailable"
+                        }
                         disabled={
                           effectiveSourcePending ||
                           file.data === null ||
@@ -1657,6 +1753,11 @@ export default function FilePreviewPanel({
                         }
                         label={relativePath.slice(relativePath.lastIndexOf("/") + 1)}
                         onRenamed={(destinationRelativePath, revision) => {
+                          markdownPersistenceRegistry.forgetClean({
+                            environmentId,
+                            cwd,
+                            relativePath,
+                          });
                           if (file.data) {
                             setProjectFileQueryData(
                               environmentId,
@@ -1687,9 +1788,6 @@ export default function FilePreviewPanel({
               compact
               enableShortcut={false}
             />
-          ) : null}
-          {isRichMarkdown && !file.data?.readOnly ? (
-            <ScientMarkdownSaveStatus status={markdownSaveStatus} />
           ) : null}
           {canToggleRenderedForSurface ? (
             <Tooltip>
@@ -1732,8 +1830,14 @@ export default function FilePreviewPanel({
           {attachment === undefined ? (
             <ScientFileReloadButton
               automaticRefreshUnavailable={automaticRefreshUnavailable}
-              isPending={file.isPending}
-              onReload={requestManualReload}
+              isPending={markdownSnapshot?.reading ?? file.isPending}
+              onReload={
+                markdownLease
+                  ? () => void markdownLease.refresh()
+                  : admissionError
+                    ? retryAdmission
+                    : requestManualReload
+              }
             />
           ) : null}
           {!isHostFile ? (
@@ -1759,25 +1863,29 @@ export default function FilePreviewPanel({
           ) : null}
         </div>
       ) : null}
-      <ScientFileFreshnessNotices
-        relativePath={relativePath}
-        notice={reloadNotice}
-        readError={file.error}
-        saveError={saveError}
-        saveRetryReady={saveRetryReady}
-        hasFallbackData={file.data !== null}
-        onCancel={cancelReloadNotice}
-        onReload={requestManualReload}
-        onRequestOverwrite={requestOverwrite}
-        onRetrySave={requestRetrySave}
-        onResolve={resolveReloadNotice}
-      />
-      {relativePath && !isPdf && file.data?.readOnly ? (
+      {markdownLease ? (
+        <ScientMarkdownPersistenceNotice key={relativePath} persistence={markdownLease} />
+      ) : (
+        <ScientFileFreshnessNotices
+          relativePath={relativePath}
+          notice={reloadNotice}
+          readError={file.error}
+          saveError={saveError}
+          saveRetryReady={saveRetryReady}
+          hasFallbackData={file.data !== null}
+          onCancel={cancelReloadNotice}
+          onReload={requestManualReload}
+          onRequestOverwrite={requestOverwrite}
+          onRetrySave={requestRetrySave}
+          onResolve={resolveReloadNotice}
+        />
+      )}
+      {relativePath && !markdownLease && !isPdf && file.data?.readOnly ? (
         <div className="shrink-0 border-b border-border/50 bg-muted/35 px-3 py-1.5 text-[11px] text-muted-foreground">
           This file is read-only in Files.
         </div>
       ) : null}
-      {relativePath && !isMedia && !renderBrowserFile && file.data?.truncated ? (
+      {relativePath && !markdownLease && !isMedia && !renderBrowserFile && file.data?.truncated ? (
         <div className="shrink-0 border-b border-warning/20 bg-warning-surface px-3 py-1.5 text-[11px] text-warning-foreground">
           Read-only preview limited to the first 1 MB of a {file.data.byteLength.toLocaleString()}{" "}
           byte file.
@@ -1839,6 +1947,41 @@ export default function FilePreviewPanel({
               title={relativePath}
               refreshKey={viewerRefreshKey}
             />
+          ) : awaitingMarkdownLease && admissionError ? (
+            <>
+              <div
+                role="alert"
+                className="shrink-0 border-b border-warning/24 bg-warning-surface px-3 py-2 text-xs text-warning-foreground"
+              >
+                <p>
+                  This file could not be opened safely for editing. The last available preview is
+                  read-only.
+                </p>
+                <p>
+                  {admissionError instanceof Error
+                    ? admissionError.message
+                    : "The current disk version could not be verified."}
+                </p>
+                <Button size="xs" variant="outline" onClick={retryAdmission}>
+                  Try again
+                </Button>
+              </div>
+              {relativePath && file.data ? (
+                <StaticTextFileSurface
+                  cwd={cwd}
+                  relativePath={relativePath}
+                  contents={file.data.contents}
+                  resolvedTheme={resolvedTheme}
+                  wordWrap={wordWrap}
+                  onPostRender={onFilePostRender}
+                />
+              ) : null}
+            </>
+          ) : awaitingMarkdownLease ? (
+            <div
+              className="flex min-h-0 flex-1 items-center justify-center text-muted-foreground"
+              aria-label="Opening Markdown editor"
+            />
           ) : relativePath && file.error && file.data === null ? (
             <div className="flex min-h-0 flex-1 items-center justify-center px-6 text-center text-xs leading-relaxed text-destructive">
               {file.error}
@@ -1848,7 +1991,7 @@ export default function FilePreviewPanel({
               <LoaderCircle className="size-5 animate-spin" />
             </div>
           ) : relativePath && file.data ? (
-            file.data.readOnly ? (
+            file.data.readOnly && !markdownLease ? (
               isMarkdownDocument && renderMarkdown ? (
                 <RenderedMarkdownSurface
                   environmentId={environmentId}
@@ -1941,7 +2084,7 @@ export default function FilePreviewPanel({
                   saveResolution={saveResolution}
                 />
               </Suspense>
-            ) : usesScientMarkdownEditor ? (
+            ) : usesScientMarkdownEditor && markdownLease ? (
               <Suspense
                 fallback={
                   <div className="flex min-h-0 flex-1 items-center justify-center text-muted-foreground">
@@ -1955,26 +2098,27 @@ export default function FilePreviewPanel({
                   cwd={cwd}
                   relativePath={relativePath}
                   threadRef={threadRef}
-                  contents={file.data.contents}
-                  revision={file.data.revision}
+                  persistence={markdownLease}
                   resolvedTheme={resolvedTheme}
-                  authoritativeSnapshot={markdownAuthoritativeSnapshot}
                   onOpenFile={onOpenFile}
                   onOpenFileSource={(path, line) =>
                     runAfterPendingSave([relativePath], () => onOpenFileSource(path, line))
                   }
-                  onPendingChange={handlePendingChange}
-                  onSaveFailure={handleSaveFailure}
-                  onSaveConfirmed={handleSaveConfirmed}
-                  onSaveResolutionApplied={handleSaveResolutionApplied}
-                  onExternalConflict={({ source, revision }) =>
-                    handleExternalConflict(relativePath, source, revision)
-                  }
-                  saveResolution={
-                    saveResolution?.relativePath === relativePath ? saveResolution : null
-                  }
                 />
               </Suspense>
+            ) : markdownLease ? (
+              <MarkdownSourceSurface
+                key={relativePath}
+                persistence={markdownLease}
+                environmentId={environmentId}
+                cwd={cwd}
+                relativePath={relativePath}
+                composerDraftTarget={composerDraftTarget}
+                resolvedTheme={resolvedTheme}
+                revealRequestId={revealRequestId}
+                wordWrap={wordWrap}
+                onPostRender={onFilePostRender}
+              />
             ) : isMarkdownDocument && renderMarkdown ? (
               <RenderedMarkdownSurface
                 environmentId={environmentId}

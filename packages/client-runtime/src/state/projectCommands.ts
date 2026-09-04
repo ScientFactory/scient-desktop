@@ -36,7 +36,8 @@ export interface OptimisticProjectFileTarget {
   readonly relativePath: string;
 }
 
-function optimisticProjectFileKey(target: OptimisticProjectFileTarget): string {
+/** Identity shared by file persistence ownership and its ordered command lane. */
+export function projectFileOperationKey(target: OptimisticProjectFileTarget): string {
   return JSON.stringify([target.environmentId, target.cwd, target.relativePath]);
 }
 
@@ -54,6 +55,17 @@ export function createProjectEnvironmentAtoms<R, E>(
     mode: "serial" as const,
     key: ({ environmentId, input }: { environmentId: string; input: { projectId: string } }) =>
       JSON.stringify([environmentId, input.projectId]),
+  };
+  const fileConcurrency = {
+    mode: "serial" as const,
+    key: ({
+      environmentId,
+      input,
+    }: {
+      environmentId: EnvironmentId;
+      input: { cwd: string; relativePath: string };
+    }) =>
+      projectFileOperationKey({ environmentId, cwd: input.cwd, relativePath: input.relativePath }),
   };
   return {
     searchEntries: createEnvironmentRpcQueryAtomFamily(runtime, {
@@ -77,6 +89,14 @@ export function createProjectEnvironmentAtoms<R, E>(
       staleTimeMs: 30_000,
       idleTtlMs: 5 * 60_000,
     }),
+    // Unlike the SWR query, this starts a new read only after preceding writes
+    // in this renderer's file lane have settled (including failed writes).
+    readFileOrdered: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:projects:read-file-ordered",
+      tag: WS_METHODS.projectsReadFile,
+      scheduler: fileScheduler,
+      concurrency: fileConcurrency,
+    }),
     fileChanges: createEnvironmentRpcSubscriptionAtomFamily(runtime, {
       label: "environment-data:projects:file-changes",
       tag: WS_METHODS.projectsSubscribeFileChanges,
@@ -85,7 +105,7 @@ export function createProjectEnvironmentAtoms<R, E>(
       idleTtlMs: 0,
     }),
     optimisticFile: (target: OptimisticProjectFileTarget) =>
-      optimisticFileFamily(optimisticProjectFileKey(target)),
+      optimisticFileFamily(projectFileOperationKey(target)),
     create: createEnvironmentCommand(runtime, {
       label: "environment-data:commands:project:create",
       execute: (input: CreateProjectInput) => createProject(input),
@@ -108,11 +128,7 @@ export function createProjectEnvironmentAtoms<R, E>(
       label: "environment-data:projects:write-file",
       tag: WS_METHODS.projectsWriteFile,
       scheduler: fileScheduler,
-      concurrency: {
-        mode: "serial",
-        key: ({ environmentId, input }) =>
-          JSON.stringify([environmentId, input.cwd, input.relativePath]),
-      },
+      concurrency: fileConcurrency,
     }),
     renameFile: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:projects:rename-file",
