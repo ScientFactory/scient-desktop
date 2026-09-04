@@ -6,6 +6,7 @@ import { DOMParser } from "prosemirror-model";
 import { EditorView as CodeMirrorEditorView } from "@codemirror/view";
 import { act } from "react";
 import type { EditorView } from "prosemirror-view";
+import { getScientKatexRuntimePromise } from "~/scient/math/ScientMath";
 import { scientMarkdownSchema } from "./schema";
 
 import { ScientMarkdownEditorView } from "./view";
@@ -667,6 +668,7 @@ describe("ScientMarkdownEditorView", () => {
   });
 
   it("keeps rendered math visible while the rich document is editable", async () => {
+    vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
     const onUserSourceChange = vi.fn();
     const source = [
       "Dollar $E=mc^2$ and backslash \\(a+b\\).",
@@ -690,16 +692,20 @@ describe("ScientMarkdownEditorView", () => {
     const host = document.createElement("div");
     document.body.append(host);
     mounted.push(controller);
-    const view = controller.mount(host);
+    let view!: EditorView;
+    // Loading the runtime and committing the Suspense content are separate
+    // steps. Flush both before asserting the visible equation DOM.
+    await act(async () => {
+      view = controller.mount(host);
+      await getScientKatexRuntimePromise();
+    });
 
     expect(view.editable).toBe(true);
     expect(view.dom.querySelectorAll("[data-scient-markdown-math]")).toHaveLength(4);
-    await vi.waitFor(() => {
-      expect(view.dom.querySelectorAll(".scient-markdown-math-render .katex")).toHaveLength(4);
-      expect(view.dom.querySelectorAll(".scient-markdown-math-render .katex-display")).toHaveLength(
-        2,
-      );
-    });
+    expect(view.dom.querySelectorAll(".scient-markdown-math-render .katex")).toHaveLength(4);
+    expect(view.dom.querySelectorAll(".scient-markdown-math-render .katex-display")).toHaveLength(
+      2,
+    );
     expect(controller.session.session.draftSource).toBe(source);
     expect(onUserSourceChange).not.toHaveBeenCalled();
 
@@ -728,6 +734,7 @@ describe("ScientMarkdownEditorView", () => {
   });
 
   it("retains the last valid rendered equation during invalid TeX edits", async () => {
+    vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
     const onUserSourceChange = vi.fn();
     const controller = new ScientMarkdownEditorView({
       source: "$$\nE=mc^2\n$$\n",
@@ -739,30 +746,31 @@ describe("ScientMarkdownEditorView", () => {
     const host = document.createElement("div");
     document.body.append(host);
     mounted.push(controller);
-    const view = controller.mount(host);
-
-    await vi.waitFor(() => {
-      expect(view.dom.querySelector("[data-scient-markdown-math-validity='valid']")).not.toBeNull();
+    let view!: EditorView;
+    await act(async () => {
+      view = controller.mount(host);
+      await getScientKatexRuntimePromise();
     });
-    const renderedBefore = view.dom.querySelector(".scient-markdown-math-render")?.textContent;
+    expect(view.dom.querySelector("[data-scient-markdown-math-validity='valid']")).not.toBeNull();
+    const renderedEquation = view.dom.querySelector(".scient-markdown-math-render .katex");
+    expect(renderedEquation).not.toBeNull();
+    const renderedBefore = renderedEquation!.outerHTML;
     const equation = view.state.doc.firstChild;
     expect(equation?.type.name).toBe("display_math");
-    view.dispatch(
-      view.state.tr.setNodeMarkup(0, undefined, {
-        ...equation!.attrs,
-        tex: "\\frac{",
-      }),
-    );
-
-    await vi.waitFor(() => {
-      expect(
-        view.dom.querySelector("[data-scient-markdown-math-source-state='retained']"),
-      ).not.toBeNull();
-      expect(
-        view.dom.querySelector("[data-scient-markdown-math-validity='invalid']"),
-      ).not.toBeNull();
+    await act(async () => {
+      view.dispatch(
+        view.state.tr.setNodeMarkup(0, undefined, {
+          ...equation!.attrs,
+          tex: "\\frac{",
+        }),
+      );
+      await getScientKatexRuntimePromise();
     });
-    expect(view.dom.querySelector(".scient-markdown-math-render")?.textContent).toBe(
+    expect(
+      view.dom.querySelector("[data-scient-markdown-math-source-state='retained']"),
+    ).not.toBeNull();
+    expect(view.dom.querySelector("[data-scient-markdown-math-validity='invalid']")).not.toBeNull();
+    expect(view.dom.querySelector(".scient-markdown-math-render .katex")?.outerHTML).toBe(
       renderedBefore,
     );
     expect(view.dom.querySelector(".scient-markdown-math-retained")?.textContent).toContain(
