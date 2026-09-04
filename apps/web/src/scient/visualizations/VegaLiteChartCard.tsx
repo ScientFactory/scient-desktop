@@ -290,7 +290,7 @@ export function VegaLiteChartCard({
               label="Expand interactive chart"
               onClick={handleExpand}
             >
-              <Maximize2Icon className="size-3.5" strokeWidth={1.5} />
+              <Maximize2Icon className="size-3" strokeWidth={1.5} />
             </ChartActionButton>
           ) : null}
 

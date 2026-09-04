@@ -598,7 +598,6 @@ export function ScientInlineWorkspaceImage(props: {
             alt={props.authoredAlt ?? props.image.alt}
             displayName={props.image.alt}
             loaded={loaded}
-            standalone
             selected={false}
             authoring={false}
             anchor={controlsAnchor}
@@ -612,7 +611,7 @@ export function ScientInlineWorkspaceImage(props: {
           <VisualCardToolbar className="absolute top-1 right-1 z-10" label="Image actions">
             {loaded ? (
               <ImageActionButton label="Expand image" onClick={() => setExpanded(true)}>
-                <Maximize2Icon className="size-3.5" strokeWidth={1.5} />
+                <Maximize2Icon className="size-3" strokeWidth={1.5} />
               </ImageActionButton>
             ) : null}
             <InlineImageActionsMenu

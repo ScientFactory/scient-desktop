@@ -371,6 +371,7 @@ export class ScientMarkdownEditorView {
     this.session.setMode(mode);
     this.syncViewProps();
     this.syncNodeViewEditability();
+    this.refreshExternalPresentation("mode");
     this.refreshFootnoteNodeViews();
     this.publishSnapshot();
     if (!wasEditable && modeIsEditable(mode)) this.editorView?.focus();

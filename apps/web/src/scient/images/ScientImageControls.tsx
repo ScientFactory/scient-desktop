@@ -61,7 +61,6 @@ export interface ScientImageControlsProps {
   readonly alt: string;
   readonly displayName: string;
   readonly loaded: boolean;
-  readonly standalone: boolean;
   readonly selected: boolean;
   readonly authoring: boolean;
   readonly anchor: HTMLElement | null;
@@ -87,12 +86,10 @@ function ScientImageActionMenu({
   actions,
   busy,
   run,
-  showExpand,
 }: {
   readonly actions: readonly ScientImageAction[];
   readonly busy: boolean;
   readonly run: (action: ScientImageAction) => void;
-  readonly showExpand: boolean;
 }) {
   const pendingAction = useRef<ScientImageAction | null>(null);
   const [handingOffFocus, setHandingOffFocus] = useState(false);
@@ -137,7 +134,7 @@ function ScientImageActionMenu({
         finalFocus={handingOffFocus ? false : undefined}
       >
         {actions
-          .filter((action) => action.id !== "expand-image" || showExpand)
+          .filter((action) => action.id !== "expand-image")
           .map((action) => (
             <MenuItem
               key={action.id}
@@ -153,9 +150,7 @@ function ScientImageActionMenu({
                 }
               }}
             >
-              {action.id === "expand-image" ? (
-                <Maximize2Icon />
-              ) : action.id === "image-background" ? (
+              {action.id === "image-background" ? (
                 <PaletteIcon />
               ) : action.id === "retry-image" ? (
                 <RefreshCwIcon />
@@ -374,14 +369,7 @@ function ScientImageControlsForSource({ ref, ...props }: ScientImageControlsProp
     };
   }, [actions, props.anchor, props.showContextMenu, run]);
 
-  const menu = (
-    <ScientImageActionMenu
-      actions={actions}
-      busy={activeAction !== null}
-      run={run}
-      showExpand={!props.standalone && !expanded}
-    />
-  );
+  const menu = <ScientImageActionMenu actions={actions} busy={activeAction !== null} run={run} />;
 
   return (
     <>
@@ -394,31 +382,27 @@ function ScientImageControlsForSource({ ref, ...props }: ScientImageControlsProp
             "opacity-0 group-hover/scient-image:opacity-100 focus-within:opacity-100",
         )}
       >
-        {props.standalone ? (
-          <VisualCardToolbar label="Image actions">
-            <Tooltip>
-              <TooltipTrigger
-                render={
-                  <Button
-                    aria-label="Expand image"
-                    disabled={!props.loaded || !props.imageURL}
-                    className="chat-markdown-chrome-action"
-                    onClick={expand}
-                    size="icon-xs"
-                    type="button"
-                    variant="ghost"
-                  />
-                }
-              >
-                <Maximize2Icon className="size-3.5" strokeWidth={1.5} />
-              </TooltipTrigger>
-              <TooltipPopup>Expand image</TooltipPopup>
-            </Tooltip>
-            {menu}
-          </VisualCardToolbar>
-        ) : (
-          menu
-        )}
+        <VisualCardToolbar label="Image actions">
+          <Tooltip>
+            <TooltipTrigger
+              render={
+                <Button
+                  aria-label="Expand image"
+                  disabled={!props.loaded || !props.imageURL}
+                  className="chat-markdown-chrome-action"
+                  onClick={expand}
+                  size="icon-xs"
+                  type="button"
+                  variant="ghost"
+                />
+              }
+            >
+              <Maximize2Icon className="size-3" strokeWidth={1.5} />
+            </TooltipTrigger>
+            <TooltipPopup>Expand image</TooltipPopup>
+          </Tooltip>
+          {menu}
+        </VisualCardToolbar>
       </span>
       {message && !expanded ? (
         <span

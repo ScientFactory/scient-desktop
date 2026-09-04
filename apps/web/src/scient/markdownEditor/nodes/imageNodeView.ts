@@ -711,7 +711,6 @@ class ScientImageNodeView implements NodeView {
           alt: String(this.node.attrs.alt ?? ""),
           displayName: imageDisplayName(source),
           loaded: this.loadState === "loaded",
-          standalone: this.standalone,
           selected: this.selected,
           authoring: this.editable,
           anchor: this.dom,

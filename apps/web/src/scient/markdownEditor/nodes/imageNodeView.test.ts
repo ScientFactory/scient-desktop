@@ -221,7 +221,6 @@ describe("Markdown image NodeView", () => {
     const { registration, caption } = await fixture({ source });
     expect(registration.element.dataset.standalone).toBe(String(standalone));
     expect(caption.hidden).toBe(true);
-    expect(controls.get(registration.element)?.standalone).toBe(standalone);
   });
 
   it("separates URL resolution, actual decoding, retry, and stale resolution", async () => {

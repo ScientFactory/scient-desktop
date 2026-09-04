@@ -8,7 +8,7 @@ import { parsePlotlySource } from "~/scient/visualizations/plotlySpec";
 import { parseVegaLiteSource } from "~/scient/visualizations/vegaLiteSpec";
 
 interface ScientEditableRichFenceProps {
-  readonly authoringActions: ScientRichFenceAuthoringActions;
+  readonly authoringActions?: ScientRichFenceAuthoringActions | undefined;
   readonly fenceMeta?: string | undefined;
   readonly kind: ScientRichFenceKind;
   readonly language: string;

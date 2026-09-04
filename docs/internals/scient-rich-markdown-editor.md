@@ -311,7 +311,10 @@ focus. This composition is local to the rich editor, not a change to T3's menu p
 Ordinary code mounts its nested editor synchronously and keeps that same surface for viewing,
 selection, and editing, eliminating activation-time replacement and layout movement. Rich visual
 fences remain lazy because their rendered chart or diagram is the primary interaction surface;
-their source editor is created only after the explicit edit command.
+their source editor is created only after the explicit edit command. The visible Mermaid
+error source is another explicit editing entry point, including keyboard activation. While
+that editor is open, its static source preview is omitted so only one source box remains.
+Read-only documents do not receive this authoring capability.
 
 GFM table cells contain inline content directly. The Scient table-navigation adapter handles
 only cell-edge arrows, since the upstream table handler expects a paragraph inside each cell.

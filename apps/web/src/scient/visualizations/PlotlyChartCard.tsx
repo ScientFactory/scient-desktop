@@ -320,7 +320,7 @@ export function PlotlyChartCard({
               label="Expand interactive figure"
               onClick={handleExpand}
             >
-              <Maximize2Icon className="size-3.5" strokeWidth={1.5} />
+              <Maximize2Icon className="size-3" strokeWidth={1.5} />
             </ChartActionButton>
           ) : null}
 

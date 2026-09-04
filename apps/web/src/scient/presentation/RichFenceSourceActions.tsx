@@ -8,6 +8,7 @@ export type ScientRichFenceContextMenuAction = "copy-source" | "edit-source";
 /** Optional authoring capability; ordinary previews intentionally omit it. */
 export interface ScientRichFenceAuthoringActions {
   readonly onEditSource: () => void;
+  readonly sourceEditorOpen?: boolean;
   readonly showContextMenu?: (position: {
     readonly x: number;
     readonly y: number;
@@ -29,6 +30,37 @@ export function RichFenceSourceMenuItem(props: {
       <Code2Icon />
       {editSource ? "Edit source" : props.sourceVisible ? "Hide source" : "Show source"}
     </MenuItem>
+  );
+}
+
+/** Visible source is also an edit entry point, without taking over visual gestures. */
+export function RichFenceSourcePreview(props: {
+  readonly authoringActions?: ScientRichFenceAuthoringActions | undefined;
+  readonly source: string;
+  readonly className: string;
+  readonly label: string;
+}) {
+  if (props.authoringActions?.sourceEditorOpen) return null;
+  const edit = props.authoringActions?.onEditSource;
+  return (
+    <pre
+      className={props.className}
+      role={edit ? "button" : undefined}
+      tabIndex={edit ? 0 : undefined}
+      aria-label={edit ? props.label : undefined}
+      onClick={edit}
+      onKeyDown={
+        edit
+          ? (event) => {
+              if (event.key !== "Enter" && event.key !== " ") return;
+              event.preventDefault();
+              edit();
+            }
+          : undefined
+      }
+    >
+      <code>{props.source}</code>
+    </pre>
   );
 }
 

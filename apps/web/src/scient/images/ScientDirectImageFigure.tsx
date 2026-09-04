@@ -87,7 +87,6 @@ export function ScientDirectImageFigure(props: {
           alt={props.alt}
           displayName={displayName}
           loaded={loaded}
-          standalone
           selected={false}
           authoring={false}
           anchor={anchor}

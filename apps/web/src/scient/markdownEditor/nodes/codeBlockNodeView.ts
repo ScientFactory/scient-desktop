@@ -101,7 +101,13 @@ class ScientCodeBlockNodeView implements NodeView {
     // event in their rendered surface and expose source editing explicitly.
     this.dom.addEventListener("mousedown", this.handleMouseDown);
     this.unregisterExternalPresentation = registerExternalPresentation?.((change) => {
-      if (change === "appearance" && this.isRichFence()) this.render();
+      if ((change === "appearance" || change === "mode") && this.isRichFence()) {
+        if (!this.view.editable) {
+          this.richSourceOpen = false;
+          this.loadError.hidden = true;
+        }
+        this.render();
+      }
     });
     this.render();
   }
@@ -126,6 +132,7 @@ class ScientCodeBlockNodeView implements NodeView {
     this.richSourceOpen = false;
     this.editorHost.hidden = true;
     this.loadError.hidden = true;
+    this.render();
   }
 
   stopEvent(event: Event): boolean {
@@ -215,7 +222,7 @@ class ScientCodeBlockNodeView implements NodeView {
       );
     }
     this.richSourceOpen = true;
-    this.activateEditor(true);
+    this.render(true);
   };
 
   private readonly retryEditor = () => {
@@ -223,8 +230,10 @@ class ScientCodeBlockNodeView implements NodeView {
     if (this.isRichFence()) {
       if (!this.view.editable || !this.selected) return;
       this.richSourceOpen = true;
+      this.render(true);
+    } else {
+      this.activateEditor(this.view.editable);
     }
-    this.activateEditor(this.view.editable);
   };
 
   private ensureEditor(): ScientNestedCodeEditor | null {
@@ -284,7 +293,7 @@ class ScientCodeBlockNodeView implements NodeView {
     );
   }
 
-  private render(): void {
+  private render(focusEditor = false): void {
     const language = codeLanguage(this.node);
     const code = this.node.textContent;
     const richKind = resolveScientRichFenceKind(language);
@@ -296,11 +305,20 @@ class ScientCodeBlockNodeView implements NodeView {
     );
     this.nestedEditor?.replaceExternalCode(code, language);
     if (richKind) {
+      this.dom.setAttribute("data-scient-markdown-rich-fence", richKind);
+      this.rendered.hidden = false;
+      if (this.richSourceOpen) this.activateEditor(focusEditor);
+      else this.editorHost.hidden = true;
       this.reactRoot ??= createRoot(this.rendered);
       const theme = this.resolveTheme();
       this.reactRoot.render(
         createElement(ScientEditableRichFence, {
-          authoringActions: this.authoringActions,
+          authoringActions: this.view.editable
+            ? {
+                ...this.authoringActions,
+                sourceEditorOpen: this.richSourceOpen && !this.editorHost.hidden,
+              }
+            : undefined,
           kind: richKind,
           language,
           source: code,
@@ -309,10 +327,6 @@ class ScientCodeBlockNodeView implements NodeView {
           ...(metadata ? { fenceMeta: metadata } : {}),
         }),
       );
-      this.dom.setAttribute("data-scient-markdown-rich-fence", richKind);
-      this.rendered.hidden = false;
-      if (this.richSourceOpen) this.activateEditor(false);
-      else this.editorHost.hidden = true;
       return;
     }
 

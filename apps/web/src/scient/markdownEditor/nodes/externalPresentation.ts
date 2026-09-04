@@ -1,4 +1,4 @@
-export type ScientMarkdownExternalPresentationChange = "appearance" | "workspace";
+export type ScientMarkdownExternalPresentationChange = "appearance" | "workspace" | "mode";
 
 export type ScientMarkdownExternalPresentationRefresh = (
   change: ScientMarkdownExternalPresentationChange,

@@ -1971,12 +1971,14 @@ code {
   border-radius: 0.35rem;
   background: transparent;
   box-shadow: none;
-  color: var(--muted-foreground);
+  --control-icon-color: color-mix(in oklab, var(--muted-foreground) 80%, transparent);
+  color: var(--control-icon-color);
 }
 
 .scient-visual-utility-controls button:not([data-scient-toolbar-move]):hover,
 .scient-visual-utility-controls button:not([data-scient-toolbar-move])[data-popup-open] {
-  color: var(--foreground);
+  --control-icon-color: var(--foreground);
+  color: var(--control-icon-color);
   background: color-mix(in oklab, var(--foreground) 6%, transparent);
 }
 

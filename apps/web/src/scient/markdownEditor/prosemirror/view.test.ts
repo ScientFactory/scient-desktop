@@ -1956,6 +1956,39 @@ describe("ScientMarkdownEditorView", () => {
     expect(onUserSourceChange).toHaveBeenCalledOnce();
   });
 
+  it.each([
+    "![Plot](plot.png)\n",
+    "Before ![Plot](plot.png) after.\n",
+    "[![Plot](plot.png)](https://example.test)\n",
+    "| Image |\n| --- |\n| ![Plot](plot.png) |\n",
+  ])("expands an image directly without editing its authored context: %s", async (source) => {
+    vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+    const onUserSourceChange = vi.fn();
+    const controller = new ScientMarkdownEditorView({
+      source,
+      revision: "r0",
+      mode: "write",
+      ariaLabel: "Image expansion",
+      resolveImageSource: () => "https://assets.test/plot.png",
+      onUserSourceChange,
+    });
+    mounted.push(controller);
+    const host = document.createElement("div");
+    document.body.append(host);
+    await act(() => {
+      controller.mount(host);
+    });
+    await act(() => completeImageLoad(host.querySelector("img")!));
+    const expand = host.querySelector<HTMLButtonElement>("[aria-label='Expand image']")!;
+    expect(expand).not.toBeNull();
+    await act(() => expand.click());
+    expect(
+      document.querySelector("[role='dialog'] [data-preview-image-surface] img"),
+    ).not.toBeNull();
+    expect(controller.session.session.draftSource).toBe(source);
+    expect(onUserSourceChange).not.toHaveBeenCalled();
+  });
+
   it("edits the visible image caption repeatedly without hiding it or reloading the image", async () => {
     const onUserSourceChange = vi.fn();
     const resolveImageSource = vi.fn(async (source: string) => `https://asset.test/${source}`);

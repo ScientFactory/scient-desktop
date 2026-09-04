@@ -47,7 +47,6 @@ async function fixture(
           alt=""
           displayName="figure.png"
           loaded
-          standalone
           selected
           authoring
           anchor={anchor}
@@ -347,24 +346,31 @@ describe("shared image controls", () => {
       expect(document.querySelector('[role="dialog"][data-open]') !== null).toBe(!picker);
   });
 
-  it("keeps compact expansion in More and removes it from the expanded menu", async () => {
-    const { controls } = await fixture([], async () => null, { standalone: false });
-    expect(controls.querySelector('button[aria-label="Expand image"]')).toBeNull();
+  it("expands directly beside More and keeps expansion out of both menus", async () => {
+    const { controls } = await fixture([], async () => null);
     await act(() =>
       controls.querySelector<HTMLButtonElement>('button[aria-label="More image actions"]')!.click(),
     );
-    const expand = Array.from(document.querySelectorAll<HTMLElement>('[role="menuitem"]')).find(
-      (item) => item.textContent === "Expand image",
+    expect(
+      [...document.querySelectorAll('[role="menuitem"]')].some(
+        (item) => item.textContent === "Expand image",
+      ),
+    ).toBe(false);
+    await act(() =>
+      document
+        .querySelector('[role="menu"]')!
+        .dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true })),
     );
-    expect(expand).toBeDefined();
-    await act(() => expand!.click());
+    await act(() =>
+      controls.querySelector<HTMLButtonElement>('button[aria-label="Expand image"]')!.click(),
+    );
     const dialog = document.querySelector('[role="dialog"]');
     expect(dialog).not.toBeNull();
     await act(() =>
       dialog!.querySelector<HTMLButtonElement>('button[aria-label="More image actions"]')!.click(),
     );
     expect(
-      Array.from(document.querySelectorAll<HTMLElement>('[role="menuitem"]')).some(
+      [...document.querySelectorAll('[role="menuitem"]')].some(
         (item) => item.textContent === "Expand image",
       ),
     ).toBe(false);

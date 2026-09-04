@@ -15,6 +15,7 @@ import { Menu, MenuItem, MenuTrigger } from "~/components/ui/menu";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "~/components/ui/tooltip";
 import {
   RichFenceSourceMenuItem,
+  RichFenceSourcePreview,
   type ScientRichFenceAuthoringActions,
   useRichFenceContextMenu,
 } from "../presentation/RichFenceSourceActions";
@@ -259,7 +260,7 @@ export function MermaidDiagramCard({
               label="Expand diagram"
               onClick={() => setExpanded(true)}
             >
-              <Maximize2Icon className="size-3.5" strokeWidth={1.5} />
+              <Maximize2Icon className="size-3" strokeWidth={1.5} />
             </DiagramActionButton>
           ) : null}
 
@@ -353,9 +354,12 @@ export function MermaidDiagramCard({
               Retry
             </Button>
           </div>
-          <pre className="scient-mermaid-source max-h-72 overflow-auto rounded-md bg-background/70 p-3 text-xs leading-relaxed">
-            <code>{source}</code>
-          </pre>
+          <RichFenceSourcePreview
+            authoringActions={authoringActions}
+            source={source}
+            label="Edit diagram source"
+            className="scient-mermaid-source max-h-72 overflow-auto rounded-md bg-background/70 p-3 text-xs leading-relaxed"
+          />
         </div>
       ) : diagramState.status === "ready" ? (
         <div className="scient-mermaid-inline overflow-auto p-2">
@@ -367,11 +371,14 @@ export function MermaidDiagramCard({
         </div>
       ) : null}
 
-      {sourceVisible && diagramState.status !== "error" ? (
+      {sourceVisible && !authoringActions?.sourceEditorOpen && diagramState.status !== "error" ? (
         <div className="border-t border-border/60 bg-background/45 p-3">
-          <pre className="scient-mermaid-source max-h-72 overflow-auto text-xs leading-relaxed">
-            <code>{source}</code>
-          </pre>
+          <RichFenceSourcePreview
+            authoringActions={authoringActions}
+            source={source}
+            label="Edit diagram source"
+            className="scient-mermaid-source max-h-72 overflow-auto text-xs leading-relaxed"
+          />
         </div>
       ) : null}
 
