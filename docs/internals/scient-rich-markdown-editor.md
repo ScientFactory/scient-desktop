@@ -224,8 +224,10 @@ completions; document removal never deletes an asset or shared definition.
 - Paste, drop, or select an image; validate bytes and type on the server; write atomically to a
   configurable sibling asset directory; insert a relative path only after success.
 - Autosave begins only after a user-authored document transaction and is debounced.
-- Writes use compare-and-swap revisions. A conflicting external edit pauses saving and offers a
-  clear compare/reload/keep-local workflow.
+- Writes use compare-and-swap revisions. A rejection is verified with an ordered read before
+  presenting a real external conflict. Identical already-published bytes converge without rewriting.
+- Routine saves have no status label, pending dot, or live announcement. A verified conflict or
+  exhausted failure has one accessible recovery region; conflicting replacements require confirmation.
 - Closing, switching files, renaming, or changing presentation waits for pending edits to settle
   or enter visible recovery, without polling loops or fire-and-forget loss.
 - Undo/redo covers document transactions, not presentation changes or server refreshes.
@@ -349,19 +351,66 @@ physical and does not flip with cell direction. Cell direction is decoration onl
 HTML format or second table model is introduced. Explicit document commands begin separate undo
 steps, even when invoked in quick succession.
 
-One workspace surface owns exactly one editor controller, one document session, and one serial
-save queue. React mounts that controller but does not mirror the document source in component
-state. Compare-and-swap revisions, explicit retry/discard recovery, typed server operations, and
-the asset pipeline remain independent of the editor library.
+One renderer-scoped registry owns a persistence coordinator per exact environment, workspace,
+and relative path. Rich and source views lease that same owner; neither owns a save queue.
+Releasing a view never flushes, resets, or clears a persistence failure. It does release that
+view's composition deferral so another mounted view or the retained owner can proceed. Dirty, failed, and conflicted
+entries survive remounts and hot reload; unused clean entries have bounded retention.
+Queued reads retain the reconnect subscription just like active reads; idle eviction
+does not poll an operation that cannot yet finish. Bootstrap shares an ordered read,
+then creates the entry and acquires its first lease synchronously before any clean sweep.
 
-The persistence coordinator observes every draft transition, not only eligible save intents.
-Undo-to-baseline cancels debounced work; undo or discard during an in-flight write compensates
-against the acknowledged revision. Edits made during conflict recovery remain the current draft.
-An authoritative read can retire a command and release flush waiters even if its response never
-arrives. A late acknowledgement cannot clear a newer observed external conflict. If the watcher
-observes an in-flight save before its command reply while newer typing is queued, confirming that
-same snapshot must clear both the apparent conflict and its queue pause; newer typing then saves
-against the acknowledged revision.
+The coordinator observes every draft transition. Undo-to-baseline cancels debounced work; undo
+during an in-flight write compensates against its acknowledged revision. New typing coalesces
+separately from the immutable in-flight attempt. Transient failures retry that identical attempt
+with a bounded budget; semantic failures do not retry automatically. Older servers remain safe:
+a retry rejected by strict CAS is reconciled with an ordered read.
+
+Watcher events and reconnects are freshness hints, never publication receipts. Generation-checked
+reads use `readFileOrdered`, an existing read RPC scheduled behind earlier writes for the same
+file. A new owner bootstraps from a complete ordered read, not a possibly stale query snapshot;
+concurrent mounts share that admission. Read bytes must match the server's revision and byte
+length before they can establish or acknowledge a baseline. Cached query data is presentation
+only, never persistence authority. A late
+ordinary read cannot replace intervening typing, acknowledge a queued undo, or manufacture an
+external conflict. Real divergence preserves the baseline, local draft, and disk snapshot.
+
+Verified divergence may reconcile silently when both writers changed unambiguously separate
+top-level Markdown blocks. The bounded three-way helper compares the acknowledged baseline,
+the latest draft (including typing during a read), and verified disk bytes. It preserves exact
+source slices, deduplicates identical changes, and reparses the result to verify block ownership.
+Lists, tables, paragraphs, quotes and fences are indivisible. Overlap, competing insertions,
+repeated-block ambiguity, changing document-wide context (including nested definitions), or
+uncertain publication ancestry keep the existing explicit conflict choices. No conflict markers
+or speculative publication acknowledgements are introduced. Reconciliation is limited to
+256,000 UTF-16 units, 2,000 blocks, bounded diff work, and three consecutive reconciliation
+attempts before asking for a decision; only a successful conditional write confirms a dirty merge.
+
+Mounted editors prepare an incremental update before the owner changes its draft. Composition
+defers and rereads on completion; new typing invalidates a stale preparation. Rich updates use
+non-history ProseMirror transactions with mapped selections and retained unchanged NodeViews.
+The opt-in Pierre external-edit path commutes the incoming patches through both undo and redo
+stacks, including selections and line annotations; it declines unsafe history intersections or
+work beyond its budget. Generic source-editor edits retain their existing semantics. Undo removes
+the user's own edit without undoing the incoming contribution. Safe already-saved refreshes use
+the same path; unsupported clean refreshes retain their established full-replacement behavior.
+Dirty updates that cannot safely project into every mounted editor remain explicit conflicts.
+
+The source input adapter also handles the browser's initial selection ordering: a first
+`beforeinput` may arrive before `selectionchange`. When Pierre has no selection yet, it adopts
+only the native range belonging to that editor before applying the character. Existing
+multi-caret selections and composition handling are left intact.
+
+Keep-local resolution rereads and compares the presented revision before another conditional
+write. Use-disk resolution retains the replaced local draft in memory for explicit restoration.
+Departure guards remain in place: quick departures are silent; a slow requested departure may
+say “Finishing your changes.” A verified problem cancels the requested action, so resolving it
+later cannot unexpectedly navigate or close the document.
+
+These guarantees are renderer-local plus the existing server-process mutation lock. They do not
+provide cross-process filesystem CAS, general collaborative editing, historical ABA detection, fsync, or a
+durable draft journal. A hard crash or power loss can still lose edits not yet on disk. No UI
+claims otherwise; app/window/file departure remains guarded while local publication is pending.
 
 Controller callbacks forward to current host bindings without remounting the rich editor. The
 file adapter keys controller ownership by environment, workspace root, and relative path. The
@@ -459,12 +508,13 @@ large-document latency.
 packages/scient-markdown/
   sourceLedger.ts  Reuses untouched source ranges and applies bounded patches
   session.ts       Baseline, draft, revision, and explicit save intent
-  saveQueue.ts     Serial debounced CAS save and retry/discard recovery
+  persistenceCoordinator.ts  Serial publication, ordered verification, retry and recovery
 
 apps/web/src/scient/markdownEditor/
   prosemirror/   Schema, source projection, commands, plugins, session, controller
   nodes/         Owned math, code, image, reference, raw, task, and wiki NodeViews
-  ui/            Formatting, find, lifecycle, save status, and wiki-link controls
+  persistence/   Renderer registry, leases, ordered transport, watcher/cache adapters
+  ui/            Formatting, find, lifecycle, exceptional recovery, and wiki-link controls
   assets/        Authenticated image-upload client
   *.tsx          File/workspace lifetime adapters
 
@@ -594,11 +644,11 @@ disk source + revision -> source ledger -> ProseMirror projection
                                                      save intent -> serial CAS write
 ```
 
-The workspace owns the controller and save queue; the React document adapter only mounts the
-controller. External file updates enter through an explicit session transition. A clean editor
-adopts the new source and revision; a dirty editor pauses the queue and exposes retry/discard
-recovery. Programmatic adoption, selection, decoration, viewport, and remote-sync transactions do
-not create save intent.
+The workspace owns its editor controller and projects the leased persistence snapshot. Save
+acknowledgements update metadata without replacing ProseMirror state, selection, or undo history.
+Ordered external updates enter through explicit coordinator transitions. A clean editor adopts
+the new source; verified divergence while dirty requires a choice. Programmatic adoption,
+selection, decoration, viewport, and remote-sync transactions do not create save intent.
 
 ### Source preservation
 

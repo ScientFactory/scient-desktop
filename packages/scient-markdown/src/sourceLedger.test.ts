@@ -98,6 +98,75 @@ function fuzzMarkdown(seed: number): string {
 }
 
 describe("createMarkdownSourceLedger", () => {
+  it.each(["\uFEFF", "\uFEFF\r\n", `\uFEFF${SCIENTIFIC_FIXTURE}`, "\uFEFF\uFEFF"])(
+    "round-trips BOM-prefixed source without edits: %j",
+    (source) => {
+      const ledger = createMarkdownSourceLedger(source);
+
+      expect(replaceMarkdownSourceBlocks(ledger, [])).toBe(source);
+      expect(ledger.prefix.startsWith("\uFEFF")).toBe(true);
+    },
+  );
+
+  it("preserves the BOM and CRLF trivia when replacing the first heading", () => {
+    const source = "\uFEFF# Title\r\n\r\nBody\r\n";
+    const ledger = createMarkdownSourceLedger(source);
+    const heading = ledger.blocks[0]!;
+
+    expect(ledger.prefix).toBe("\uFEFF");
+    expect(heading.source).toBe("# Title");
+    expect(heading.trailing).toBe("\r\n\r\n");
+    expect(heading.textSpans).toEqual([
+      { textStart: 0, textEnd: 5, sourceStart: 3, sourceEnd: 8, direct: true },
+    ]);
+    expect(replaceMarkdownSourceBlocks(ledger, [{ id: heading.id, markdown: "# Updated" }])).toBe(
+      "\uFEFF# Updated\r\n\r\nBody\r\n",
+    );
+    const body = ledger.blocks[1]!;
+    const span = body.textSpans[0]!;
+    expect(
+      applyMarkdownSourcePatches(source, [
+        { start: span.sourceStart, end: span.sourceEnd, replacement: "תוצאות 😀" },
+      ]),
+    ).toBe("\uFEFF# Title\r\n\r\nתוצאות 😀\r\n");
+  });
+
+  it("preserves BOM-prefixed nested text offsets around CRLF hard wraps", () => {
+    const source = "\uFEFF> **first line**\r\n> **second line**\r\n";
+    const block = createMarkdownSourceLedger(source).blocks[0]!;
+    const lastSpan = block.textSpans.at(-1)!;
+
+    expect(lastSpan.direct).toBe(true);
+    expect(source.slice(lastSpan.sourceStart, lastSpan.sourceEnd)).toBe("second line");
+    expect(
+      applyMarkdownSourcePatches(source, [
+        { start: lastSpan.sourceStart, end: lastSpan.sourceEnd, replacement: "updated line" },
+      ]),
+    ).toBe("\uFEFF> **first line**\r\n> **updated line**\r\n");
+  });
+
+  it("treats only the first BOM as prefix and leaves a second BOM in parsed content", () => {
+    const source = "\uFEFF\uFEFF# Title\r\n\r\nBody\r\n";
+    const ledger = createMarkdownSourceLedger(source);
+    const block = ledger.blocks[0]!;
+
+    expect(ledger.prefix).toBe("\uFEFF");
+    expect(block.kind).toBe("paragraph");
+    expect(block.source).toBe("\uFEFF# Title");
+    expect(block.logicalText).toBe("\uFEFF# Title");
+    expect(block.textSpans[0]).toEqual({
+      textStart: 0,
+      textEnd: 8,
+      sourceStart: 1,
+      sourceEnd: 9,
+      direct: true,
+    });
+    expect(replaceMarkdownSourceBlocks(ledger, [])).toBe(source);
+    expect(applyMarkdownSourcePatches(source, [{ start: 4, end: 9, replacement: "Updated" }])).toBe(
+      "\uFEFF\uFEFF# Updated\r\n\r\nBody\r\n",
+    );
+  });
+
   it("round-trips a mixed scientific document byte-for-byte", () => {
     const ledger = createMarkdownSourceLedger(SCIENTIFIC_FIXTURE);
 

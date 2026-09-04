@@ -19,6 +19,7 @@ import {
   Plus,
   Sigma,
   TerminalSquare,
+  TriangleAlert,
   Volume2,
   VolumeOff,
 } from "lucide-react";
@@ -83,6 +84,8 @@ interface RightPanelTabsProps {
   environmentId: EnvironmentId | null;
   activeSurfaceId: string | null;
   pendingSurfaceIds: ReadonlySet<string>;
+  /** Verified persistence issues only; ordinary Markdown saves stay quiet. */
+  attentionSurfaceIds?: ReadonlySet<string>;
   previewSessions: Readonly<Record<string, PreviewSessionSnapshot>>;
   desktopByTabId: Readonly<Record<string, DesktopPreviewOverlay>>;
   /**
@@ -1076,6 +1079,7 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
             {props.surfaces.map((surface) => {
               const active = surface.id === props.activeSurfaceId;
               const pending = props.pendingSurfaceIds.has(surface.id);
+              const attention = !active && props.attentionSurfaceIds?.has(surface.id);
               const title = surfaceTitle(surface, props.previewSessions, props.terminalLabelsById);
               const previewTabId = previewTabIdOf(surface, props.previewSessions);
               // Desktop state is keyed by the session id, but desktop actions
@@ -1155,11 +1159,18 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
                         <button
                           type="button"
                           className="cursor-pointer flex min-w-0 flex-1 items-center"
+                          aria-label={attention ? `${title} — changes need attention` : undefined}
                           onClick={() => props.onActivate(surface)}
                         >
                           <span className="min-w-0 flex-1 truncate text-start" dir="auto">
                             {title}
                           </span>
+                          {attention ? (
+                            <TriangleAlert
+                              className="ml-1 size-3 shrink-0 text-amber-600 dark:text-amber-400"
+                              aria-hidden
+                            />
+                          ) : null}
                         </button>
                       }
                     />

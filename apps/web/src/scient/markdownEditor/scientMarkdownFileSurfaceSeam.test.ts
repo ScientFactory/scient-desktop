@@ -32,27 +32,28 @@ describe("Scient Markdown file-preview seam", () => {
   it("lazily mounts one owned plain-Markdown editor while retaining T3's MDX preview", () => {
     expect(panelSource).toContain('import("~/scient/markdownEditor/ScientMarkdownFileSurface")');
     expect(panelSource.match(/<ScientMarkdownFileSurface\b/gu)).toHaveLength(1);
-    expect(panelSource.match(/<ScientMarkdownSaveStatus\b/gu)).toHaveLength(1);
+    expect(panelSource).not.toContain("ScientMarkdownSaveStatus");
+    expect(panelSource.match(/<ScientMarkdownPersistenceNotice\b/gu)).toHaveLength(1);
     expect(panelSource).toContain("isScientMarkdownDocumentPath(relativePath)");
     expect(panelSource).toContain("isMarkdownDocument && renderMarkdown");
     expect(panelSource).toContain("RenderedMarkdownSurface");
     expect(panelSource).toContain("<FileMarkdownPreview");
     expect(panelSource).not.toContain("<ChatMarkdown");
     expect(panelSource).toContain("shouldUseScientMarkdownEditor({");
-    expect(panelSource).toContain("readOnly: file.data.readOnly ?? false");
-    expect(panelSource).toContain("file.data.readOnly ? (");
+    expect(panelSource).toContain("file.data.readOnly && !markdownLease ? (");
     expect(panelSource).toContain("isMarkdownDocument && renderMarkdown ? (");
     expect(panelSource).toContain("readOnly={false}");
   });
 
   it("keeps parsing, editor state, and persistence policy out of the inherited panel", () => {
     expect(panelSource).not.toMatch(/ProseMirror|CodeMirror|MarkdownSaveQueue|MarkdownParser/gu);
-    expect(surfaceSource).toContain("projectEnvironment.writeFile");
-    expect(surfaceSource).toContain("expectedRevision: intent.expectedRevision");
-    expect(surfaceSource).toContain("setProjectFileQueryData(props.environmentId");
-    expect(surfaceSource).toContain("confirmProjectFileQueryData(");
-    expect(panelSource).toContain("authoritativeSnapshot={markdownAuthoritativeSnapshot}");
-    expect(surfaceSource).toContain("authoritativeSnapshot={props.authoritativeSnapshot}");
+    expect(surfaceSource).not.toContain("projectEnvironment.writeFile");
+    expect(surfaceSource).not.toContain("confirmProjectFileQueryData(");
+    expect(panelSource).toContain("useMarkdownPersistenceLease({");
+    expect(panelSource).toContain("persistence={markdownLease}");
+    expect(surfaceSource).toContain("persistence={props.persistence}");
+    expect(workspaceSource).not.toContain("acknowledgePublished");
+    expect(workspaceSource).not.toContain("MarkdownSaveQueue");
     expect(surfaceSource.match(/onOpenLink=\{handleOpenLink\}/gu)).toHaveLength(1);
   });
 
@@ -84,7 +85,9 @@ describe("Scient Markdown file-preview seam", () => {
   it("keeps pending-save policy in one owned adapter instead of inherited tabs", () => {
     expect(chatViewSource).toContain('from "~/scient/fileSurfaces/usePendingSurfaceDeparture";');
     expect(chatViewSource).toContain("useActivePendingSurfaceDeparture({");
-    expect(chatViewSource).toContain("usePendingSurfaceNavigationBlocker(pendingFileSurfaceIds);");
+    expect(chatViewSource).toContain("useMarkdownPersistenceNavigationGuards({");
+    expect(chatViewSource).toContain("markdownNavigation.pendingSurfaceIds,");
+    expect(chatViewSource).toContain("markdownNavigation.departureOptions,");
     expect(rightPanelTabsSource).not.toMatch(
       /usePendingSurface|pendingSurfaceBlocks|Finishing the file save/gu,
     );

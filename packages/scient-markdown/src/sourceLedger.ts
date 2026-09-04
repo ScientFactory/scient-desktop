@@ -46,6 +46,8 @@ export interface MarkdownSourceLedger {
   readonly hasFinalLineEnding: boolean;
   /** Includes definitions nested in lists or blockquotes. */
   readonly hasReferenceDefinitions: boolean;
+  /** Exact document-context syntax in parse order, including nested definitions. */
+  readonly contextSources: readonly string[];
 }
 
 export interface MarkdownSourceBlockReplacement {
@@ -96,9 +98,24 @@ function hasReferenceDefinition(node: MdastValueNode): boolean {
   return node.type === "definition" || (node.children?.some(hasReferenceDefinition) ?? false);
 }
 
+const CONTEXT_NODE_KINDS = new Set(["definition", "footnoteDefinition", "yaml", "toml", "html"]);
+
+function contextSources(node: MdastValueNode, source: string, parserOffset: number): string[] {
+  if (CONTEXT_NODE_KINDS.has(node.type)) {
+    return [
+      source.slice(
+        requiredOffset(node.position?.start, "start") + parserOffset,
+        requiredOffset(node.position?.end, "end") + parserOffset,
+      ),
+    ];
+  }
+  return node.children?.flatMap((child) => contextSources(child, source, parserOffset)) ?? [];
+}
+
 function markdownLogicalText(
   node: MdastValueNode,
   source: string,
+  parserOffset: number,
 ): {
   readonly logicalText: string;
   readonly textSpans: ReadonlyArray<MarkdownSourceTextSpan>;
@@ -111,9 +128,11 @@ function markdownLogicalText(
       const textStart = logicalText.length;
       logicalText += value;
       const textEnd = logicalText.length;
-      const sourceStart = current.position?.start?.offset;
-      const sourceEnd = current.position?.end?.offset;
-      if (typeof sourceStart === "number" && typeof sourceEnd === "number") {
+      const parsedStart = current.position?.start?.offset;
+      const parsedEnd = current.position?.end?.offset;
+      if (typeof parsedStart === "number" && typeof parsedEnd === "number") {
+        const sourceStart = parsedStart + parserOffset;
+        const sourceEnd = parsedEnd + parserOffset;
         const sourceValue = source.slice(sourceStart, sourceEnd);
         if (
           current.type === "text" &&
@@ -239,10 +258,14 @@ export function createMarkdownSourceLedger(source: string): MarkdownSourceLedger
       mathFromMarkdown(),
     ],
   });
+  // mdast excludes exactly one leading BOM from every reported offset. Keep
+  // it as source prefix while aligning block and nested text ownership with
+  // the original string. A second BOM remains ordinary parsed content.
+  const parserOffset = source.startsWith("\uFEFF") ? 1 : 0;
   const positioned = root.children.map((node) => ({
     node,
-    start: requiredOffset(node.position?.start, "start"),
-    contentEnd: requiredOffset(node.position?.end, "end"),
+    start: requiredOffset(node.position?.start, "start") + parserOffset,
+    contentEnd: requiredOffset(node.position?.end, "end") + parserOffset,
   }));
   const prefix = positioned.length > 0 ? source.slice(0, positioned[0]?.start ?? 0) : source;
   const blocks = mergeDirectionRegions(
@@ -252,7 +275,7 @@ export function createMarkdownSourceLedger(source: string): MarkdownSourceLedger
       if (start > contentEnd || contentEnd > end) {
         throw new Error(`Invalid Markdown source range for top-level ${node.type} block.`);
       }
-      const text = markdownLogicalText(node as MdastValueNode, source);
+      const text = markdownLogicalText(node as MdastValueNode, source, parserOffset);
       return {
         // Position is deliberately excluded: ordinary text edits can move every
         // later block offset, while their session identities must remain stable.
@@ -275,6 +298,7 @@ export function createMarkdownSourceLedger(source: string): MarkdownSourceLedger
     lineEnding: lineEndingOf(source),
     hasFinalLineEnding: source.endsWith("\n"),
     hasReferenceDefinitions: hasReferenceDefinition(root),
+    contextSources: contextSources(root, source, parserOffset),
   };
 }
 

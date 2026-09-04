@@ -22,6 +22,8 @@ interface ScientMarkdownRenameButtonProps {
   readonly relativePath: string;
   readonly revision: string;
   readonly disabled: boolean;
+  /** Acquires the file's short clean-state barrier before dispatching the rename. */
+  readonly beforeRename?: () => (() => void) | null;
   readonly label: string;
   readonly onRenamed: (destinationRelativePath: string, revision: string) => void;
 }
@@ -48,6 +50,7 @@ export function ScientMarkdownRenameButton(props: ScientMarkdownRenameButtonProp
   }, [open, props.relativePath]);
 
   const submit = async () => {
+    if (props.disabled || submitting) return;
     const destinationRelativePath = normalizeMarkdownCreatePath(path);
     if (!destinationRelativePath) {
       setError("Enter a relative Markdown path inside this workspace.");
@@ -55,6 +58,11 @@ export function ScientMarkdownRenameButton(props: ScientMarkdownRenameButtonProp
     }
     if (destinationRelativePath === props.relativePath) {
       setOpen(false);
+      return;
+    }
+    const release = props.beforeRename?.();
+    if (props.beforeRename && !release) {
+      setError("Finish the current file operation before renaming.");
       return;
     }
     setSubmitting(true);
@@ -87,6 +95,7 @@ export function ScientMarkdownRenameButton(props: ScientMarkdownRenameButtonProp
               : "Unable to rename the Markdown file.",
       );
     } finally {
+      release?.();
       setSubmitting(false);
     }
   };
@@ -134,7 +143,12 @@ export function ScientMarkdownRenameButton(props: ScientMarkdownRenameButtonProp
               {error}
             </p>
           ) : null}
-          <Button className="self-end" disabled={submitting} size="sm" type="submit">
+          <Button
+            className="self-end"
+            disabled={submitting || props.disabled}
+            size="sm"
+            type="submit"
+          >
             {submitting ? "Renaming…" : "Rename"}
           </Button>
         </form>

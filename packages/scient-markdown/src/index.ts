@@ -24,7 +24,12 @@ export {
   type MarkdownSaveIntent,
 } from "./session.ts";
 export {
-  MarkdownSaveQueue,
-  type MarkdownSaveQueueOptions,
-  type MarkdownSaveResult,
-} from "./saveQueue.ts";
+  MarkdownPersistenceCoordinator,
+  type MarkdownPersistenceFailureKind,
+  type MarkdownPersistenceOptions,
+  type MarkdownPersistenceReadResult,
+  type MarkdownPersistenceSnapshot,
+  type MarkdownExternalUpdate,
+  type PrepareMarkdownExternalUpdate,
+} from "./persistenceCoordinator.ts";
+export { reconcileMarkdown, type MarkdownReconciliation } from "./reconciliation.ts";
