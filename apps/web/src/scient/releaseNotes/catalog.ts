@@ -9,6 +9,46 @@ import type { ScientReleaseNote } from "./model";
  */
 export const SCIENT_RELEASE_NOTES = [
   {
+    version: "0.6.10",
+    publishedAt: "2026-09-04",
+    kicker: "Direct Markdown editing and a smoother research workflow",
+    headline: "Edit scientific Markdown directly",
+    summary:
+      "Scient 0.6.10 puts direct Markdown editing at the center of the workspace, while making agent follow-ups more reliable, authenticated browser research easier to reuse, provider limits clearer, and large workspaces faster to review.",
+    highlights: [
+      {
+        id: "direct-markdown-editing",
+        title: "Edit Markdown directly in the workspace",
+        description:
+          "Work directly with Markdown source while preserving formatting and previewing TeX, Mermaid diagrams, aligned tables, and image captions as you write.",
+      },
+      {
+        id: "reliable-follow-up-messages",
+        title: "More reliable follow-up messages",
+        description:
+          "Queued messages stay attached to their original thread and send one at a time after the active answer finishes. Editing preserves your draft and queue position, and stopping leaves pending messages waiting until a later answer finishes successfully.",
+      },
+      {
+        id: "browser-session-import",
+        title: "Reuse authenticated browser sessions",
+        description:
+          "Import supported browser profiles into Scient so authenticated sites can be opened without signing in again.",
+      },
+      {
+        id: "provider-usage-limits",
+        title: "See provider limits and reset options together",
+        description:
+          "The Usage page brings token usage, subscription limits, reset dates, and available reset credits into one place for supported providers. Open its Limits view to see your remaining subscription allowance.",
+      },
+      {
+        id: "smoother-workspace-review",
+        title: "Review large workspaces more smoothly",
+        description:
+          "Improved syntax highlighting, file presentation, and panel controls make large files and workspace reviews faster to navigate.",
+      },
+    ],
+  },
+  {
     version: "0.6.9",
     publishedAt: "2026-08-31",
     kicker: "More ways to share, clearer figures, and smoother everyday work.",
