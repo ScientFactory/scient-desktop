@@ -1,5 +1,41 @@
 # Third-Party Notices
 
+## ProseMirror and markdown-it
+
+Scient's rich Markdown document surface uses unmodified, locally bundled
+[`ProseMirror`](https://prosemirror.net/) packages and
+[`markdown-it`](https://github.com/markdown-it/markdown-it). The editor,
+parser, and source-preservation policy remain Scient-owned and require no
+hosted service. ProseMirror is Copyright (C) 2015-2026 by Marijn Haverbeke and
+others; markdown-it is Copyright (C) 2014 Vitaly Puzrin and Alex Kocharin.
+Both projects are licensed under the MIT License.
+
+- <https://github.com/ProseMirror/prosemirror-view/blob/master/LICENSE>
+- <https://github.com/markdown-it/markdown-it/blob/master/LICENSE>
+
+## mdast and micromark Markdown utilities
+
+Scient's exact-source Markdown ledger uses unmodified, locally bundled
+`mdast-util-from-markdown`, `mdast-util-frontmatter`, `mdast-util-gfm`,
+`mdast-util-math`, `micromark-extension-frontmatter`,
+`micromark-extension-gfm`, and `micromark-extension-math` packages. These
+packages are Copyright (c) Titus Wormer and contributors and are licensed
+under the MIT License.
+
+- <https://github.com/syntax-tree/mdast-util-from-markdown/blob/main/license>
+- <https://github.com/micromark/micromark-extension-frontmatter/blob/main/license>
+- <https://github.com/micromark/micromark-extension-gfm/blob/main/license>
+- <https://github.com/micromark/micromark-extension-math/blob/main/license>
+
+## CodeMirror
+
+Scient's editable Markdown code blocks use unmodified, locally bundled
+[CodeMirror 6](https://codemirror.net/) packages. CodeMirror is
+Copyright (C) 2018-2026 by Marijn Haverbeke and others and is licensed under
+the MIT License.
+
+- <https://github.com/codemirror/view/blob/main/LICENSE>
+
 ## Vega, Vega-Lite, Vega-Embed, and Vega Tooltip
 
 Scient renders interactive charts with unmodified, locally bundled

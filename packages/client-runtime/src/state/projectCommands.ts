@@ -114,5 +114,20 @@ export function createProjectEnvironmentAtoms<R, E>(
           JSON.stringify([environmentId, input.cwd, input.relativePath]),
       },
     }),
+    renameFile: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:projects:rename-file",
+      tag: WS_METHODS.projectsRenameFile,
+      scheduler: fileScheduler,
+      concurrency: {
+        mode: "serial",
+        key: ({ environmentId, input }) =>
+          JSON.stringify([
+            environmentId,
+            input.cwd,
+            input.relativePath,
+            input.destinationRelativePath,
+          ]),
+      },
+    }),
   };
 }

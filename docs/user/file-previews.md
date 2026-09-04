@@ -54,11 +54,47 @@ Current limitation: automatic refresh follows the exact known path. If the file
 is renamed or moved, reopen it from its new location; Scient does not yet
 relocate an already open file automatically.
 
-- Markdown files open as rendered documents. Use the source/preview control in
-  the file header to switch modes; Scient remembers that preference. A link to
-  a specific Markdown line opens source so the requested line can be shown.
-  Relative image paths resolve from the Markdown file's folder, including
-  nested folders; inline sizes and alignment are preserved.
+- Markdown files open as rendered documents. Writable project Markdown is
+  directly editable in that rendered surface; formatting controls appear
+  without replacing it with a second preview. Use the source/rendered control
+  in the file header when exact Markdown text is needed; Scient remembers that
+  preference. A link to a specific Markdown line opens source so the requested
+  line can be shown. Relative image paths resolve from the Markdown file's
+  folder, including nested folders; inline sizes and alignment are preserved.
+- Code blocks and HTML/YAML/TOML source boxes stay directly editable and offer
+  **Wrap lines** and **Copy code** in their headers, matching chat. Wrapping
+  follows **Settings → Word wrap**, which defaults on. A block's wrap button
+  changes only that block; changing the setting applies the new preference to
+  open blocks. Copy includes the current code without adding Markdown fences.
+  Code headers use the same colored language icons or filename titles as chat.
+  HTML tags and attributes, operators, and punctuation are highlighted in the
+  editor. Code boxes have a subtle border and the same thin scrollbar as math.
+- Standalone Markdown images expose floating viewing controls. Use **Edit
+  details** for the image source and alternative text; **Apply** saves one
+  change and **Cancel** leaves the document unchanged. Click an image to place
+  the caret in its caption, or click the caption to choose a text position.
+  One outline surrounds the image and caption while editing. Captions save as
+  you type; Enter or Escape leaves the caption, and Undo remains available.
+  An image without a caption shows an empty field when clicked or after
+  **Add caption**; leaving it empty does not change the document.
+  Typing before or after a standalone image creates a separate paragraph, so
+  text stays above or below the image and its caption. **Add caption** on an
+  image mixed with prose places that image in its own paragraph and opens its
+  caption without discarding surrounding text. Linked badges and table images
+  keep their compact presentation and link behavior.
+- Images, Mermaid diagrams, Plotly, and Vega-Lite share quiet **Expand** and
+  **More** controls. Copy, downloads, and source/details actions live in More.
+  **Move controls** exposes a handle; drag it or use arrow keys, then press
+  Enter or Escape to finish. **Reset controls position** restores placement.
+  Plotly exploration tools remain directly accessible. Vega-Lite keeps its
+  authored interactions and a direct reset control; expanded viewers retain
+  zoom, fit, and exploration controls.
+- Reference-style images share their source and title with a Markdown definition.
+  **Edit shared reference** opens that definition; **Make independent** explicitly
+  separates this occurrence. Alternative text remains local to the image.
+  **Replace image** keeps the original until upload succeeds, and **Remove from
+  document** never deletes the file. Copy, expand, background, and retry actions
+  do not edit Markdown.
 - Text files larger than the preview limit open read-only. In rendered
   Markdown, task checkboxes are also non-interactive so a partial preview can
   never replace the complete file.

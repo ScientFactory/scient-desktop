@@ -323,6 +323,7 @@ export const ProjectFileFailure = Schema.Literals([
   "workspace_path_outside_root",
   "resolved_path_outside_root",
   "path_not_file",
+  "path_exists",
   "binary_file",
   "revision_conflict",
   "read_only_in_files",
@@ -341,6 +342,8 @@ export const ProjectFileOperation = Schema.Literals([
   "make-directory",
   "write-file",
   "atomic-write-file",
+  "link",
+  "unlink",
   "watch",
 ]);
 export type ProjectFileOperation = typeof ProjectFileOperation.Type;
@@ -387,6 +390,8 @@ export const ProjectWriteFileInput = Schema.Struct({
   relativePath: TrimmedNonEmptyString.check(Schema.isMaxLength(PROJECT_WRITE_FILE_PATH_MAX_LENGTH)),
   contents: Schema.String,
   expectedRevision: Schema.optional(TrimmedNonEmptyString),
+  /** Create a new file atomically and fail if its path already exists. */
+  createOnly: Schema.optional(Schema.Literal(true)),
 });
 export type ProjectWriteFileInput = typeof ProjectWriteFileInput.Type;
 
@@ -420,6 +425,50 @@ export class ProjectWriteFileError extends Schema.TaggedErrorClass<ProjectWriteF
         (props.failure === "read_only_in_files"
           ? `Workspace file '${props.relativePath}' is read-only in Files.`
           : `Failed to write workspace file '${props.relativePath}' in '${props.cwd}'.`),
+    } as any);
+  }
+}
+
+export const ProjectRenameFileInput = Schema.Struct({
+  cwd: TrimmedNonEmptyString,
+  relativePath: TrimmedNonEmptyString.check(Schema.isMaxLength(PROJECT_WRITE_FILE_PATH_MAX_LENGTH)),
+  destinationRelativePath: TrimmedNonEmptyString.check(
+    Schema.isMaxLength(PROJECT_WRITE_FILE_PATH_MAX_LENGTH),
+  ),
+  expectedRevision: TrimmedNonEmptyString,
+});
+export type ProjectRenameFileInput = typeof ProjectRenameFileInput.Type;
+
+export const ProjectRenameFileResult = Schema.Struct({
+  relativePath: TrimmedNonEmptyString,
+  destinationRelativePath: TrimmedNonEmptyString,
+  revision: TrimmedNonEmptyString,
+});
+export type ProjectRenameFileResult = typeof ProjectRenameFileResult.Type;
+
+export class ProjectRenameFileError extends Schema.TaggedErrorClass<ProjectRenameFileError>()(
+  "ProjectRenameFileError",
+  {
+    cwd: Schema.optional(TrimmedNonEmptyString),
+    relativePath: Schema.optional(TrimmedNonEmptyString),
+    destinationRelativePath: Schema.optional(TrimmedNonEmptyString),
+    failure: Schema.optional(ProjectFileFailure),
+    resolvedPath: Schema.optional(TrimmedNonEmptyString),
+    resolvedWorkspaceRoot: Schema.optional(TrimmedNonEmptyString),
+    operation: Schema.optional(ProjectFileOperation),
+    operationPath: Schema.optional(TrimmedNonEmptyString),
+    currentRevision: Schema.optional(TrimmedNonEmptyString),
+    message: TrimmedNonEmptyString,
+    cause: Schema.optional(Schema.Defect()),
+  },
+) {
+  // @effect-diagnostics-next-line overriddenSchemaConstructor:off
+  constructor(props: ProjectFileFailureContext & { readonly destinationRelativePath: string }) {
+    super({
+      ...props,
+      message:
+        decodedProjectErrorMessage(props) ??
+        `Failed to rename workspace file '${props.relativePath}' to '${props.destinationRelativePath}' in '${props.cwd}'.`,
     } as any);
   }
 }

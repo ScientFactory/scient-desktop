@@ -1,3 +1,5 @@
+import { CodeBlockTitle, extractFenceTitle } from "~/scient/presentation/CodeBlockTitle";
+import { CodeBlockActions, useCodeBlockWordWrap } from "~/scient/presentation/CodeBlockActions";
 import { useAtomValue } from "@effect/atom-react";
 import {
   CheckIcon,
@@ -18,7 +20,6 @@ import {
   PresentationIcon,
   SparklesIcon,
   TriangleAlertIcon,
-  WrapTextIcon,
   type LucideIcon,
 } from "lucide-react";
 import type {
@@ -91,7 +92,6 @@ import { MediaVideoPlayer } from "./media/MediaVideoPlayer";
 import { MediaActions, type MediaActionSource } from "./media/MediaActions";
 import { resolveProtocolRelativeMediaUrl } from "./media/mediaContent";
 import { CHAT_FILE_TAG_CHIP_CLASS_NAME, FileTagChipContent } from "./chat/FileTagChip";
-import { PierreEntryIcon } from "./chat/PierreEntryIcon";
 import {
   revealInFileExplorerLabelForKind,
   revealInFileExplorerLabelForOs,
@@ -100,7 +100,6 @@ import {
   resolveExternalWebLinkHost,
   showExternalLinkContextMenu,
 } from "./chat/externalLinkContextMenu";
-import { hasSpecificPierreIconForFileName, syntheticFileNameForLanguageId } from "../pierre-icons";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
 import { Button } from "./ui/button";
 import { Collapsible, CollapsiblePanel, CollapsibleTrigger } from "./ui/collapsible";
@@ -197,6 +196,7 @@ import {
   ScientInlineWorkspaceImage,
   ScientPendingWorkspaceImage,
 } from "../scient/images/ScientInlineWorkspaceImage";
+import { ScientDirectImageFigure } from "../scient/images/ScientDirectImageFigure";
 import {
   inlineWorkspaceImageMarkdownSource,
   inlineWorkspaceImageResource,
@@ -243,6 +243,8 @@ interface ChatMarkdownProps {
   /** Directory that anchors relative links and images; defaults to `cwd`. Set
       to the file's own directory when rendering a markdown file. */
   imageBaseDir?: string | undefined;
+  /** File previews share the rich editor's standalone title-as-caption presentation. */
+  imageCaptions?: boolean | undefined;
   onImageExpand?: ((preview: ExpandedImagePreview) => void) | undefined;
   extraRemarkPlugins?: NonNullable<ReactMarkdownOptions["remarkPlugins"]>;
 }
@@ -401,7 +403,11 @@ type MarkdownImageHastNode = {
 /** Carries authored image source metadata through the sanitizer to the image renderer. */
 function rehypePreserveImageSourceMeta() {
   return (tree: MarkdownImageHastNode) => {
-    const visit = (node: MarkdownImageHastNode, parent?: MarkdownImageHastNode) => {
+    const visit = (
+      node: MarkdownImageHastNode,
+      parent?: MarkdownImageHastNode,
+      inTableCell = false,
+    ) => {
       const src = node.properties?.src;
       const title = node.properties?.title;
       if (node.type === "element" && node.tagName === "img") {
@@ -411,6 +417,7 @@ function rehypePreserveImageSourceMeta() {
           ...(typeof title === "string" ? { dataMarkdownTitle: title } : {}),
           // Keep Scient's actions for standalone figures, not authored inline layouts.
           dataScientImageCard:
+            !inTableCell &&
             parent?.tagName === "p" &&
             !parent.properties?.align &&
             !node.properties?.width &&
@@ -420,7 +427,9 @@ function rehypePreserveImageSourceMeta() {
             ),
         };
       }
-      node.children?.forEach((child) => visit(child, node));
+      node.children?.forEach((child) =>
+        visit(child, node, inTableCell || node.tagName === "td" || node.tagName === "th"),
+      );
     };
 
     visit(tree);
@@ -523,18 +532,6 @@ function extractFenceLanguage(className: string | undefined): string {
   const raw = match?.[1] ?? "text";
   // Shiki doesn't bundle a gitignore grammar; ini is a close match (#685)
   return raw === "gitignore" ? "ini" : raw;
-}
-
-const FENCE_TITLE_ATTR_REGEX = /(?:^|\s)(?:title|file(?:name)?)=(?:"([^"]+)"|'([^']+)'|(\S+))/i;
-const FENCE_FILENAME_TOKEN_REGEX = /^[\w@][\w@./-]*\.[A-Za-z0-9]+$/;
-
-/** Pulls a filename out of fence meta: ```ts title="x.ts" / ```ts src/main.ts */
-function extractFenceTitle(meta: string | undefined): string | null {
-  if (!meta) return null;
-  const attrMatch = FENCE_TITLE_ATTR_REGEX.exec(meta);
-  const attrTitle = attrMatch?.[1] ?? attrMatch?.[2] ?? attrMatch?.[3];
-  if (attrTitle) return attrTitle;
-  return meta.split(/\s+/).find((candidate) => FENCE_FILENAME_TOKEN_REGEX.test(candidate)) ?? null;
 }
 
 function extractPreCodeMeta(node: unknown): string | undefined {
@@ -849,47 +846,6 @@ function MarkdownDetails({
   );
 }
 
-/**
- * Filename titles render icon + text; language-only titles render just the
- * icon (redundant next to its own name) and fall back to the language text
- * when no specific icon exists or it fails to load.
- */
-function MarkdownCodeBlockTitleContent({
-  fenceTitle,
-  language,
-  theme,
-}: {
-  fenceTitle: string | null;
-  language: string;
-  theme: "light" | "dark";
-}) {
-  if (fenceTitle) {
-    return (
-      <>
-        <PierreEntryIcon pathValue={fenceTitle} kind="file" theme={theme} className="size-3.5" />
-        <span className="truncate">{fenceTitle}</span>
-      </>
-    );
-  }
-
-  const fileName = syntheticFileNameForLanguageId(language);
-  if (!hasSpecificPierreIconForFileName(fileName)) {
-    return <span className="truncate">{language}</span>;
-  }
-  return (
-    <Tooltip>
-      <TooltipTrigger
-        render={
-          <span className="inline-flex shrink-0 rounded-sm" aria-label={`Language: ${language}`} />
-        }
-      >
-        <PierreEntryIcon pathValue={fileName} kind="file" theme={theme} className="size-3.5" />
-      </TooltipTrigger>
-      <TooltipPopup side="top">{language}</TooltipPopup>
-    </Tooltip>
-  );
-}
-
 function MarkdownCodeBlock({
   code,
   language,
@@ -905,49 +861,7 @@ function MarkdownCodeBlock({
   copyTextDirection: "auto" | "rtl" | "ltr";
   children: ReactNode;
 }) {
-  const [copied, setCopied] = useState(false);
-  const [wrapped, setWrapped] = useState(readInitialWordWrapSetting);
-  const copiedTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const wrapLabel = wrapped ? "Disable line wrap" : "Wrap lines";
-  const copyLabel = copied ? "Copied" : "Copy code";
-
-  const handleCopy = useCallback(() => {
-    if (typeof navigator === "undefined" || navigator.clipboard == null) {
-      return;
-    }
-    void navigator.clipboard
-      .writeText(code)
-      .then(() => {
-        if (copiedTimerRef.current != null) {
-          clearTimeout(copiedTimerRef.current);
-        }
-        setCopied(true);
-        copiedTimerRef.current = setTimeout(() => {
-          setCopied(false);
-          copiedTimerRef.current = null;
-        }, 1200);
-      })
-      .catch((cause) => {
-        reportMarkdownActionFailure(
-          {
-            operation: "copy-code-block",
-            language,
-            ...(fenceTitle ? { fenceTitle } : {}),
-          },
-          cause,
-        );
-      });
-  }, [code, fenceTitle, language]);
-
-  useEffect(
-    () => () => {
-      if (copiedTimerRef.current != null) {
-        clearTimeout(copiedTimerRef.current);
-        copiedTimerRef.current = null;
-      }
-    },
-    [],
-  );
+  const [wrapped, setWrapped] = useCodeBlockWordWrap();
 
   return (
     <div
@@ -959,49 +873,19 @@ function MarkdownCodeBlock({
     >
       <div className="chat-markdown-codeblock-header flex items-center justify-between gap-2 pt-1.5 pr-1.5 pb-0 pl-3 select-none">
         <span className="inline-flex min-w-0 items-center gap-[0.4rem] [font-family:var(--font-mono,ui-monospace,SFMono-Regular,monospace)] [font-size:0.6875rem]">
-          <MarkdownCodeBlockTitleContent
-            fenceTitle={fenceTitle}
-            language={language}
-            theme={theme}
-          />
+          <CodeBlockTitle fenceTitle={fenceTitle} language={language} theme={theme} />
         </span>
-        <span className="flex items-center gap-0.5" role="toolbar" aria-label="Code block actions">
-          <Tooltip>
-            <TooltipTrigger
-              render={
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="icon-xs"
-                  className="chat-markdown-chrome-action"
-                  aria-pressed={wrapped}
-                  onClick={() => setWrapped((value) => !value)}
-                  aria-label={wrapLabel}
-                />
-              }
-            >
-              <WrapTextIcon className="size-3" />
-            </TooltipTrigger>
-            <TooltipPopup side="top">{wrapLabel}</TooltipPopup>
-          </Tooltip>
-          <Tooltip>
-            <TooltipTrigger
-              render={
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="icon-xs"
-                  className="chat-markdown-chrome-action"
-                  onClick={handleCopy}
-                  aria-label={copyLabel}
-                />
-              }
-            >
-              {copied ? <CheckIcon className="size-3" /> : <CopyIcon className="size-3" />}
-            </TooltipTrigger>
-            <TooltipPopup side="top">{copyLabel}</TooltipPopup>
-          </Tooltip>
-        </span>
+        <CodeBlockActions
+          wrapped={wrapped}
+          onWrapChange={setWrapped}
+          readCode={() => code}
+          onCopyFailure={(cause) =>
+            reportMarkdownActionFailure(
+              { operation: "copy-code-block", language, ...(fenceTitle ? { fenceTitle } : {}) },
+              cause,
+            )
+          }
+        />
       </div>
       {children}
     </div>
@@ -2049,6 +1933,7 @@ function ChatMarkdown({
   parseRawHtml = true,
   onUseArtifactTemplate,
   imageBaseDir,
+  imageCaptions = false,
   onImageExpand,
   extraRemarkPlugins = EMPTY_REMARK_PLUGINS,
 }: ChatMarkdownProps) {
@@ -2539,6 +2424,10 @@ function ChatMarkdown({
               markdownSource={markdownSource}
               threadRef={threadRef}
               srcFragment={srcFragment}
+              filePresentation={imageCaptions}
+              caption={imageCaptions ? authoredTitle : undefined}
+              authoredAlt={altText}
+              authoredSource={srcString}
             />
           );
         }
@@ -2572,6 +2461,17 @@ function ChatMarkdown({
                 style={style}
                 onImageExpand={imageExpand}
                 actionsSource={actionsSource}
+              />
+            );
+          }
+          if (imageCaptions && useScientImageCard) {
+            return (
+              <ScientDirectImageFigure
+                src={mediaSrc}
+                authoredSource={srcString}
+                alt={altText}
+                caption={authoredTitle}
+                markdownSource={markdownSource}
               />
             );
           }
@@ -2986,6 +2886,7 @@ function ChatMarkdown({
     fileLinkParentSuffixByPath,
     inlineCodeFileLinkMetaByText,
     imageBaseDir,
+    imageCaptions,
     isStreaming,
     linkTargetPreference,
     markdownFileLinkMetaByHref,

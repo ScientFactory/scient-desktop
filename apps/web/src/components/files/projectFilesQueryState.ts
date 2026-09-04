@@ -41,6 +41,10 @@ export function getProjectEntriesQueryAtom(environmentId: EnvironmentId, cwd: st
   return projectEnvironment.listEntries({ environmentId, input: { cwd } });
 }
 
+export function refreshProjectEntriesQuery(environmentId: EnvironmentId, cwd: string): void {
+  appAtomRegistry.refresh(getProjectEntriesQueryAtom(environmentId, cwd));
+}
+
 export function getProjectFileQueryAtom(
   environmentId: EnvironmentId,
   cwd: string,

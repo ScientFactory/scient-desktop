@@ -48,6 +48,7 @@ import {
   ProjectListDirectoryError,
   ProjectListEntriesError,
   ProjectReadFileError,
+  ProjectRenameFileError,
   ProjectSearchContentsError,
   ProjectSearchEntriesError,
   ProjectWriteFileError,
@@ -346,6 +347,8 @@ function projectFileFailureContext(
       };
     case "WorkspacePathNotFileError":
       return { failure: "path_not_file", resolvedPath: error.resolvedPath };
+    case "WorkspaceFileExistsError":
+      return { failure: "path_exists", resolvedPath: error.resolvedPath };
     case "WorkspaceBinaryFileError":
       return { failure: "binary_file", resolvedPath: error.resolvedPath };
     case "WorkspaceFileRevisionConflictError":
@@ -2613,6 +2616,23 @@ const makeWsRpcLayer = (
                 ),
               );
             }),
+            { "rpc.aggregate": "workspace" },
+          ),
+        [WS_METHODS.projectsRenameFile]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.projectsRenameFile,
+            workspaceFileSystem.renameFile(input).pipe(
+              Effect.mapError(
+                (cause) =>
+                  new ProjectRenameFileError({
+                    cwd: input.cwd,
+                    relativePath: input.relativePath,
+                    destinationRelativePath: input.destinationRelativePath,
+                    ...projectFileFailureContext(cause),
+                    cause,
+                  }),
+              ),
+            ),
             { "rpc.aggregate": "workspace" },
           ),
         [WS_METHODS.analysisInspectRuntimes]: (input) =>

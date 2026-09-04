@@ -67,6 +67,15 @@ import {
 } from "~/scient/fileOpening/fileOpeningPolicy";
 import { scientificSourceLanguageOverride } from "~/scient/analysis/sourceLanguage";
 import { ScientFileAuxiliarySurface } from "~/scient/fileSurfaces/ScientFileAuxiliarySurface";
+import { ScientMarkdownRenameButton } from "~/scient/markdownEditor/ui/ScientMarkdownRenameButton";
+import {
+  isScientMarkdownDocumentPath,
+  shouldUseScientMarkdownEditor,
+} from "~/scient/markdownEditor/markdownDocumentPaths";
+import {
+  ScientMarkdownSaveStatus,
+  type ScientMarkdownSaveStatusKind,
+} from "~/scient/markdownEditor/ui/ScientMarkdownSaveStatus";
 import { workspacePdfSourceForPreview } from "~/scient/pdf/pdfSource";
 import {
   ScientFileFreshnessNotices,
@@ -76,6 +85,8 @@ import {
   type FileSaveResolution,
   useWorkspaceFileRefresh,
 } from "~/scient/fileSurfaces/useWorkspaceFileRefresh";
+import { usePendingSurfaceDeparture } from "~/scient/fileSurfaces/usePendingSurfaceDeparture";
+import { authoritativeFileSnapshotForEditor } from "~/scient/fileSurfaces/fileRefreshPolicy";
 
 import FileBrowserPanel from "./FileBrowserPanel";
 import { FileBreadcrumbs } from "./FileBreadcrumbs";
@@ -104,8 +115,10 @@ import {
 } from "./filePreviewMode";
 import { FileSaveCoordinator } from "./fileSaveCoordinator";
 import {
+  clearProjectFileQueryData,
   confirmProjectFileQueryData,
   getOptimisticProjectFileQueryData,
+  refreshProjectEntriesQuery,
   setProjectFileQueryData,
 } from "./projectFilesQueryState";
 
@@ -214,6 +227,11 @@ const ScientLatexSurface = lazy(() =>
 const ScientPythonComputeSurface = lazy(() =>
   import("~/scient/compute/ScientPythonComputeSurface").then((module) => ({
     default: module.ScientPythonComputeSurface,
+  })),
+);
+const ScientMarkdownFileSurface = lazy(() =>
+  import("~/scient/markdownEditor/ScientMarkdownFileSurface").then((module) => ({
+    default: module.ScientMarkdownFileSurface,
   })),
 );
 type FilePostRender = NonNullable<FileOptions<unknown>["onPostRender"]>;
@@ -1207,6 +1225,7 @@ export function EditableFileSurface({
   );
 }
 
+/** T3's ordinary rendered preview remains authoritative for MDX. */
 function RenderedMarkdownSurface({
   environmentId,
   cwd,
@@ -1214,8 +1233,8 @@ function RenderedMarkdownSurface({
   contents,
   revision,
   truncated,
-  threadRef,
   readOnly,
+  threadRef,
   onPendingChange,
   onSaveFailure,
   onSaveConfirmed,
@@ -1231,8 +1250,8 @@ function RenderedMarkdownSurface({
   | "onPostRender"
 > & {
   truncated: boolean;
-  threadRef: ScopedThreadRef;
   readOnly: boolean;
+  threadRef: ScopedThreadRef;
 }) {
   const saveCoordinator = useFileSaveCoordinator({
     environmentId,
@@ -1337,28 +1356,8 @@ export default function FilePreviewPanel({
     attachment !== undefined || (relativePath !== null && isAbsolutePath(relativePath));
   const [pendingPaths, setPendingPaths] = useState<ReadonlySet<string>>(() => new Set());
   const sourcePending = relativePath !== null && pendingPaths.has(relativePath);
-  const {
-    automaticRefreshUnavailable,
-    cancelReloadNotice,
-    file,
-    handleSaveConfirmed,
-    handleSaveFailure,
-    handleSaveResolutionApplied,
-    reloadNotice,
-    requestManualReload,
-    requestOverwrite,
-    resolveReloadNotice,
-    saveResolution,
-    viewerRefreshKey,
-  } = useWorkspaceFileRefresh({
-    environmentId,
-    cwd,
-    relativePath,
-    loadAsText: attachment === undefined && shouldLoadFileAsText(relativePath),
-    sourcePending: sourcePending || selectedFilePending,
-    workspaceMutationId,
-    watchChanges: attachment === undefined && !isHostFile,
-  });
+  const effectiveSourcePending = sourcePending || selectedFilePending;
+  const runAfterPendingSave = usePendingSurfaceDeparture(pendingPaths);
   const [explorerOpen, setExplorerOpen] = useState(initialExplorerOpen);
   const [pdfExplorerOpen, setPdfExplorerOpen] = useState(false);
   const effectiveExplorerOpen = isPdf ? pdfExplorerOpen : explorerOpen;
@@ -1379,31 +1378,136 @@ export default function FilePreviewPanel({
     true,
     Schema.Boolean,
   );
-  // Paired with the path on purpose: each file surface counts its reveals from
-  // one, so a bare id would let a dismissed reveal on one file swallow the first
-  // reveal on the next.
+  // A reveal still wins over the preference: the line only exists in the source.
   const [handledReveal, setHandledReveal] = useState<{ path: string; requestId: number } | null>(
     null,
   );
   const breadcrumbRef = useRef<HTMLDivElement>(null);
-  const isMarkdown = relativePath ? isMarkdownPreviewFile(relativePath) : false;
-  // A reveal still wins over the preference: the line only exists in the source.
+  const isMarkdownPreview = relativePath ? isMarkdownPreviewFile(relativePath) : false;
+  const isRichMarkdown = relativePath ? isScientMarkdownDocumentPath(relativePath) : false;
+  const isMarkdownDocument = isMarkdownPreview || isRichMarkdown;
   const revealHandled =
     revealLine === null ||
     (handledReveal?.path === relativePath && handledReveal.requestId === revealRequestId);
-  const renderMarkdown = isMarkdown && renderMarkdownPreferred && revealHandled;
+  const renderMarkdown = isMarkdownDocument && renderMarkdownPreferred && revealHandled;
   const requestedHtmlMode =
     htmlPresentationRequest?.id === revealRequestId ? htmlPresentationRequest.mode : null;
   const renderBrowserFile =
     isHtml &&
     resolveHtmlRenderedState(renderBrowserFilePreferred, requestedHtmlMode) &&
     revealHandled;
-  const canToggleRendered = isMarkdown || isHtml;
-  const rendered = isMarkdown ? renderMarkdown : isHtml ? renderBrowserFile : false;
+  const canToggleRendered = isMarkdownDocument || isHtml;
+  const rendered = isMarkdownDocument ? renderMarkdown : isHtml ? renderBrowserFile : false;
   const canToggleRenderedForSurface = attachment === undefined && canToggleRendered;
-  const setRenderedPreferred = isMarkdown
-    ? setRenderMarkdownPreferred
-    : setRenderBrowserFilePreferred;
+  const {
+    automaticRefreshUnavailable,
+    cancelReloadNotice,
+    file,
+    handleExternalConflict,
+    handleSaveConfirmed,
+    handleSaveFailure,
+    handleSaveResolutionApplied,
+    reloadNotice,
+    requestManualReload,
+    requestOverwrite,
+    requestRetrySave,
+    resolveReloadNotice,
+    saveError,
+    saveResolution,
+    saveRetryReady,
+    viewerRefreshKey,
+  } = useWorkspaceFileRefresh({
+    environmentId,
+    cwd,
+    relativePath,
+    loadAsText: attachment === undefined && shouldLoadFileAsText(relativePath),
+    sourcePending: effectiveSourcePending,
+    surfaceOwnsConflictDetection: isRichMarkdown && renderMarkdown,
+    workspaceMutationId,
+    watchChanges: attachment === undefined && !isHostFile,
+  });
+  // A confirmed optimistic value can briefly be newer than the last completed
+  // read. Do not feed that stale read back into a clean rich session while the
+  // confirmation refresh catches up.
+  const markdownAuthoritativeFile = authoritativeFileSnapshotForEditor({
+    authoritative: file.authoritativeData,
+    optimistic: file.data,
+    pending: effectiveSourcePending,
+  });
+  const markdownAuthoritativeSnapshot =
+    markdownAuthoritativeFile === null
+      ? null
+      : {
+          source: markdownAuthoritativeFile.contents,
+          revision: markdownAuthoritativeFile.revision,
+        };
+  const markdownSaveStatus: ScientMarkdownSaveStatusKind =
+    file.data === null
+      ? "loading"
+      : reloadNotice?.kind === "external-change" || reloadNotice?.kind === "confirm-overwrite"
+        ? "conflict"
+        : reloadNotice?.kind === "manual-reload"
+          ? "unsaved"
+          : saveError?.relativePath === relativePath
+            ? "failed"
+            : effectiveSourcePending
+              ? "saving"
+              : "saved";
+  const usesScientMarkdownEditor =
+    relativePath !== null &&
+    file.data !== null &&
+    shouldUseScientMarkdownEditor({
+      path: relativePath,
+      readOnly: file.data.readOnly ?? false,
+      renderMarkdown,
+      truncated: file.data.truncated,
+    });
+  const handleRenderMarkdownChange = useCallback(
+    (pressed: boolean) => {
+      const apply = () => {
+        setRenderMarkdownPreferred(pressed);
+        setHandledReveal(
+          pressed && relativePath !== null
+            ? { path: relativePath, requestId: revealRequestId }
+            : null,
+        );
+      };
+      if (relativePath === null) {
+        apply();
+        return;
+      }
+      runAfterPendingSave([relativePath], apply);
+    },
+    [relativePath, revealRequestId, runAfterPendingSave, setRenderMarkdownPreferred],
+  );
+  const handleRenderedChange = useCallback(
+    (pressed: boolean) => {
+      if (isMarkdownDocument) {
+        handleRenderMarkdownChange(pressed);
+        return;
+      }
+      if (!isHtml) return;
+      if (relativePath !== null && htmlPresentationRequest !== null) {
+        onHtmlPresentationRequestHandled(relativePath, htmlPresentationRequest);
+      }
+      setRenderBrowserFilePreferred(pressed);
+      setHandledReveal(
+        pressed && relativePath !== null
+          ? { path: relativePath, requestId: revealRequestId }
+          : null,
+      );
+    },
+    [
+      handleRenderMarkdownChange,
+      htmlPresentationRequest,
+      isHtml,
+      isMarkdownDocument,
+      onHtmlPresentationRequestHandled,
+      relativePath,
+      revealRequestId,
+      setRenderBrowserFilePreferred,
+    ],
+  );
   const canOpenInBrowser =
     relativePath !== null &&
     attachment === undefined &&
@@ -1497,7 +1601,12 @@ export default function FilePreviewPanel({
     <div className="flex min-h-0 flex-1 flex-col overflow-hidden bg-background">
       {relativePath ? (
         <div
-          className="flex h-10 min-h-10 shrink-0 items-center gap-2 border-b border-border/60 bg-background px-3 in-data-[preview-panel-mode=inline]:mb-3 in-data-[preview-panel-mode=inline]:h-7 in-data-[preview-panel-mode=inline]:min-h-7 in-data-[preview-panel-mode=inline]:border-b-transparent"
+          className={cn(
+            "flex h-10 min-h-10 shrink-0 items-center gap-2 border-b border-border/60 bg-background px-3 in-data-[preview-panel-mode=inline]:h-7 in-data-[preview-panel-mode=inline]:min-h-7 in-data-[preview-panel-mode=inline]:border-b-transparent",
+            usesScientMarkdownEditor
+              ? "in-data-[preview-panel-mode=inline]:mb-2"
+              : "in-data-[preview-panel-mode=inline]:mb-3",
+          )}
           data-surface-subheader
         >
           {attachment ? (
@@ -1534,6 +1643,36 @@ export default function FilePreviewPanel({
                   projectName={projectName}
                   relativePath={relativePath}
                   onOpenFile={onOpenFile}
+                  currentFileControl={
+                    isRichMarkdown && !file.data?.readOnly ? (
+                      <ScientMarkdownRenameButton
+                        environmentId={environmentId}
+                        cwd={cwd}
+                        relativePath={relativePath}
+                        revision={file.data?.revision ?? "unavailable"}
+                        disabled={
+                          effectiveSourcePending ||
+                          file.data === null ||
+                          (file.data?.truncated ?? false)
+                        }
+                        label={relativePath.slice(relativePath.lastIndexOf("/") + 1)}
+                        onRenamed={(destinationRelativePath, revision) => {
+                          if (file.data) {
+                            setProjectFileQueryData(
+                              environmentId,
+                              cwd,
+                              destinationRelativePath,
+                              file.data.contents,
+                              revision,
+                            );
+                          }
+                          clearProjectFileQueryData(environmentId, cwd, relativePath);
+                          refreshProjectEntriesQuery(environmentId, cwd);
+                          onOpenFile(destinationRelativePath);
+                        }}
+                      />
+                    ) : undefined
+                  }
                 />
               )}
             </ScrollArea>
@@ -1549,6 +1688,9 @@ export default function FilePreviewPanel({
               enableShortcut={false}
             />
           ) : null}
+          {isRichMarkdown && !file.data?.readOnly ? (
+            <ScientMarkdownSaveStatus status={markdownSaveStatus} />
+          ) : null}
           {canToggleRenderedForSurface ? (
             <Tooltip>
               <TooltipTrigger
@@ -1556,18 +1698,8 @@ export default function FilePreviewPanel({
                   <Toggle
                     className="shrink-0"
                     pressed={rendered}
-                    onPressedChange={(pressed) => {
-                      if (isHtml && relativePath !== null && htmlPresentationRequest !== null) {
-                        onHtmlPresentationRequestHandled(relativePath, htmlPresentationRequest);
-                      }
-                      setRenderedPreferred(pressed);
-                      setHandledReveal(
-                        pressed && relativePath !== null
-                          ? { path: relativePath, requestId: revealRequestId }
-                          : null,
-                      );
-                    }}
-                    aria-label={renderedToggleLabel(isMarkdown, rendered)}
+                    onPressedChange={handleRenderedChange}
+                    aria-label={renderedToggleLabel(isMarkdownDocument, rendered)}
                     variant="ghost"
                     size="sm"
                   >
@@ -1575,7 +1707,7 @@ export default function FilePreviewPanel({
                   </Toggle>
                 }
               />
-              <TooltipPopup>{renderedToggleLabel(isMarkdown, rendered)}</TooltipPopup>
+              <TooltipPopup>{renderedToggleLabel(isMarkdownDocument, rendered)}</TooltipPopup>
             </Tooltip>
           ) : null}
           {canOpenInBrowser ? (
@@ -1631,10 +1763,13 @@ export default function FilePreviewPanel({
         relativePath={relativePath}
         notice={reloadNotice}
         readError={file.error}
+        saveError={saveError}
+        saveRetryReady={saveRetryReady}
         hasFallbackData={file.data !== null}
         onCancel={cancelReloadNotice}
         onReload={requestManualReload}
         onRequestOverwrite={requestOverwrite}
+        onRetrySave={requestRetrySave}
         onResolve={resolveReloadNotice}
       />
       {relativePath && !isPdf && file.data?.readOnly ? (
@@ -1714,7 +1849,7 @@ export default function FilePreviewPanel({
             </div>
           ) : relativePath && file.data ? (
             file.data.readOnly ? (
-              isMarkdown && renderMarkdown ? (
+              isMarkdownDocument && renderMarkdown ? (
                 <RenderedMarkdownSurface
                   environmentId={environmentId}
                   cwd={cwd}
@@ -1794,7 +1929,7 @@ export default function FilePreviewPanel({
                   revealRequestId={revealRequestId}
                   wordWrap={wordWrap}
                   sourcePending={
-                    sourcePending ||
+                    effectiveSourcePending ||
                     (file.authoritativeData !== null &&
                       file.data.contents !== file.authoritativeData.contents)
                   }
@@ -1806,7 +1941,41 @@ export default function FilePreviewPanel({
                   saveResolution={saveResolution}
                 />
               </Suspense>
-            ) : isMarkdown && renderMarkdown ? (
+            ) : usesScientMarkdownEditor ? (
+              <Suspense
+                fallback={
+                  <div className="flex min-h-0 flex-1 items-center justify-center text-muted-foreground">
+                    <LoaderCircle className="size-5 animate-spin" />
+                  </div>
+                }
+              >
+                <ScientMarkdownFileSurface
+                  key={relativePath}
+                  environmentId={environmentId}
+                  cwd={cwd}
+                  relativePath={relativePath}
+                  threadRef={threadRef}
+                  contents={file.data.contents}
+                  revision={file.data.revision}
+                  resolvedTheme={resolvedTheme}
+                  authoritativeSnapshot={markdownAuthoritativeSnapshot}
+                  onOpenFile={onOpenFile}
+                  onOpenFileSource={(path, line) =>
+                    runAfterPendingSave([relativePath], () => onOpenFileSource(path, line))
+                  }
+                  onPendingChange={handlePendingChange}
+                  onSaveFailure={handleSaveFailure}
+                  onSaveConfirmed={handleSaveConfirmed}
+                  onSaveResolutionApplied={handleSaveResolutionApplied}
+                  onExternalConflict={({ source, revision }) =>
+                    handleExternalConflict(relativePath, source, revision)
+                  }
+                  saveResolution={
+                    saveResolution?.relativePath === relativePath ? saveResolution : null
+                  }
+                />
+              </Suspense>
+            ) : isMarkdownDocument && renderMarkdown ? (
               <RenderedMarkdownSurface
                 environmentId={environmentId}
                 cwd={cwd}

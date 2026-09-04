@@ -10,9 +10,10 @@ export function attachVisualCardToolbarDrag(
   toolbar: HTMLElement,
   handle: HTMLButtonElement,
   onDraggingChange: (dragging: boolean) => void = () => {},
+  canDrag: () => boolean = () => true,
 ) {
   const card = toolbar.closest<HTMLElement>("[data-scient-visual-card]");
-  if (!card) return () => {};
+  if (!card) return Object.assign(() => {}, { reset: () => {} });
 
   let position: Position = { x: 0, y: 0 };
   let drag: {
@@ -92,7 +93,8 @@ export function attachVisualCardToolbarDrag(
   }
 
   function beginDrag(event: PointerEvent, resetOnClick: boolean) {
-    if (event.defaultPrevented || event.button !== 0 || !event.isPrimary || drag) return;
+    if (!canDrag() || event.defaultPrevented || event.button !== 0 || !event.isPrimary || drag)
+      return;
     event.preventDefault();
     event.stopPropagation();
     suppressClick = false;
@@ -175,6 +177,7 @@ export function attachVisualCardToolbarDrag(
   handle.addEventListener(
     "keydown",
     (event) => {
+      if (!canDrag()) return;
       if (event.altKey || event.ctrlKey || event.metaKey) return;
       // Keyboard activation must still reset if a browser omitted the click
       // following an earlier pointer drag.
@@ -207,8 +210,11 @@ export function attachVisualCardToolbarDrag(
     { signal: listeners.signal },
   );
 
-  return () => {
-    listeners.abort();
-    reset();
-  };
+  return Object.assign(
+    () => {
+      listeners.abort();
+      reset();
+    },
+    { reset },
+  );
 }

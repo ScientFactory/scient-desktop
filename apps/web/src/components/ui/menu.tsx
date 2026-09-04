@@ -28,6 +28,7 @@ function MenuPopup({
   alignOffset,
   side = "bottom",
   anchor,
+  collisionAvoidance,
   ...props
 }: MenuPrimitive.Popup.Props & {
   align?: MenuPrimitive.Positioner.Props["align"];
@@ -35,6 +36,7 @@ function MenuPopup({
   alignOffset?: MenuPrimitive.Positioner.Props["alignOffset"];
   side?: MenuPrimitive.Positioner.Props["side"];
   anchor?: MenuPrimitive.Positioner.Props["anchor"];
+  collisionAvoidance?: MenuPrimitive.Positioner.Props["collisionAvoidance"];
 }) {
   const hasExplicitWidthClass =
     typeof className === "string" &&
@@ -50,6 +52,7 @@ function MenuPopup({
         alignOffset={alignOffset}
         anchor={anchor}
         className="z-[130]"
+        collisionAvoidance={collisionAvoidance}
         data-slot="menu-positioner"
         side={side}
         sideOffset={sideOffset}
@@ -258,11 +261,15 @@ function MenuSubPopup({
   sideOffset = 0,
   alignOffset,
   align = "start",
+  side = "inline-end",
+  collisionAvoidance,
   ...props
 }: MenuPrimitive.Popup.Props & {
   align?: MenuPrimitive.Positioner.Props["align"];
   sideOffset?: MenuPrimitive.Positioner.Props["sideOffset"];
   alignOffset?: MenuPrimitive.Positioner.Props["alignOffset"];
+  side?: MenuPrimitive.Positioner.Props["side"];
+  collisionAvoidance?: MenuPrimitive.Positioner.Props["collisionAvoidance"];
 }) {
   const defaultAlignOffset = align !== "center" ? -5 : undefined;
 
@@ -271,8 +278,9 @@ function MenuSubPopup({
       align={align}
       alignOffset={alignOffset ?? defaultAlignOffset}
       className={className}
+      collisionAvoidance={collisionAvoidance}
       data-slot="menu-sub-content"
-      side="inline-end"
+      side={side}
       sideOffset={sideOffset}
       {...props}
     />

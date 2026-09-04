@@ -1,0 +1,595 @@
+import { describe, expect, it } from "vite-plus/test";
+
+import {
+  createScientMarkdownProjection,
+  serializeScientMarkdownProjection,
+  withProjectedDocument,
+} from "./projection";
+import { ScientProseMirrorSession } from "./session";
+
+const SOURCE = [
+  "---",
+  'title: "Source fidelity"',
+  "---",
+  "",
+  "# Results",
+  "",
+  "Paragraph with  deliberate spacing.",
+  "",
+  "- first",
+  "  - nested",
+  "",
+  "| Group | Mean |",
+  "| :--- | ---: |",
+  "| A | 2.4 |",
+  "",
+].join("\n");
+
+describe("Scient ProseMirror projection", () => {
+  it("projects an empty file as one writable paragraph without changing its bytes", () => {
+    const projection = createScientMarkdownProjection("");
+
+    expect(projection.document.childCount).toBe(1);
+    expect(projection.document.firstChild?.type.name).toBe("paragraph");
+    expect(serializeScientMarkdownProjection(projection, projection.document)).toBe("");
+  });
+
+  it("returns exact Markdown when the projected document is untouched", () => {
+    const projection = createScientMarkdownProjection(SOURCE);
+    expect(serializeScientMarkdownProjection(projection, projection.document)).toBe(SOURCE);
+  });
+
+  it("round-trips 250 varied Unicode and CRLF projections without normalization", () => {
+    const words = ["result", "תוצאה", "نتيجة", "😀", "e\u0301", "\u2067RTL\u2069"];
+    for (let seed = 0; seed < 250; seed += 1) {
+      const eol = seed % 2 === 0 ? "\n" : "\r\n";
+      const left = words[seed % words.length];
+      const right = words[(seed * 7 + 3) % words.length];
+      const source =
+        [
+          ...(seed % 5 === 0 ? ["---", `title: ${left}`, "---", ""] : []),
+          `${"#".repeat((seed % 6) + 1)} ${left} ${right}`,
+          "",
+          `Paragraph  with __${left}__ and &copy; ${right}.`,
+          "",
+          `- ${left}`,
+          `  ${seed % 2 === 0 ? "+" : "*"} nested ${right}`,
+          "",
+          `| Name|Value |`,
+          `|:--| --:|`,
+          `| ${left} | ${seed} |`,
+          "",
+          seed % 3 === 0 ? `<!-- malformed -- ${right} -->` : `$$${left}_${seed}$$`,
+          ...(seed % 4 === 0 ? ["", "````text meta=kept", `${left} ${right}`, "````"] : []),
+        ].join(eol) + (seed % 3 === 0 ? "" : eol);
+      const projection = createScientMarkdownProjection(source);
+      expect(serializeScientMarkdownProjection(projection, projection.document)).toBe(source);
+    }
+  });
+
+  it("serializes only an edited paragraph and preserves unsupported blocks verbatim", () => {
+    const projection = createScientMarkdownProjection(SOURCE);
+    let paragraphPosition: number | null = null;
+    projection.document.forEach((node, offset) => {
+      if (paragraphPosition === null && node.type.name === "paragraph")
+        paragraphPosition = offset + 1;
+    });
+    expect(paragraphPosition).not.toBeNull();
+    const state = new ScientProseMirrorSession({ source: SOURCE, revision: "sha256:before" });
+    const transaction = state.state.tr.insertText(
+      "Updated ",
+      paragraphPosition!,
+      paragraphPosition!,
+    );
+    state.applyTransaction(transaction, "user");
+
+    const next = state.session.draftSource;
+    expect(next).toContain("Updated Paragraph with  deliberate spacing.");
+    expect(next).toContain("- first\n  - nested");
+    expect(next).toContain("| Group | Mean |\n| :--- | ---: |\n| A | 2.4 |");
+    expect(next.startsWith('---\ntitle: "Source fidelity"\n---\n')).toBe(true);
+  });
+
+  it("keeps a GFM table rendered and rewrites only its source block after a cell edit", () => {
+    const state = new ScientProseMirrorSession({ source: SOURCE, revision: "sha256:before" });
+    const table = state.state.doc.lastChild;
+    expect(table?.type.name).toBe("table");
+    expect(table?.child(0).child(0).type.name).toBe("table_header");
+    expect(table?.child(1).child(1).textContent).toBe("2.4");
+
+    let meanPosition: number | null = null;
+    state.state.doc.descendants((node, position) => {
+      if (node.isText && node.text === "2.4") meanPosition = position;
+    });
+    expect(meanPosition).not.toBeNull();
+    state.applyTransaction(
+      state.state.tr.insertText("3.1", meanPosition!, meanPosition! + "2.4".length),
+      "user",
+    );
+
+    const next = state.session.draftSource;
+    const tableStart = SOURCE.indexOf("| Group");
+    expect(next.slice(0, tableStart)).toBe(SOURCE.slice(0, tableStart));
+    expect(next).toContain("| A | 3.1 |");
+    expect(next).not.toContain("2.4");
+  });
+
+  it("rewrites one changed list block without touching surrounding source", () => {
+    const source = "# Before\n\n- first\n  - nested\n\nAfter  with spacing.\n";
+    const state = new ScientProseMirrorSession({ source, revision: "sha256:before" });
+    let nestedPosition: number | null = null;
+    state.state.doc.descendants((node, position) => {
+      if (node.isText && node.text === "nested") nestedPosition = position;
+    });
+    expect(nestedPosition).not.toBeNull();
+    state.applyTransaction(
+      state.state.tr.insertText(
+        "deeply nested",
+        nestedPosition!,
+        nestedPosition! + "nested".length,
+      ),
+      "user",
+    );
+
+    expect(state.session.draftSource.startsWith("# Before\n\n")).toBe(true);
+    expect(state.session.draftSource).toContain("deeply nested");
+    expect(state.session.draftSource.endsWith("\n\nAfter  with spacing.\n")).toBe(true);
+  });
+
+  it("patches text without normalizing list markers or emphasis delimiters", () => {
+    const source = "- parent\n  * nested __item__\n  * untouched  spacing\n";
+    const state = new ScientProseMirrorSession({ source, revision: "sha256:before" });
+    let itemPosition: number | null = null;
+    state.state.doc.descendants((node, position) => {
+      if (node.isText && node.text === "item") itemPosition = position;
+    });
+    expect(itemPosition).not.toBeNull();
+
+    state.applyTransaction(
+      state.state.tr.insertText("result", itemPosition!, itemPosition! + "item".length),
+      "user",
+    );
+
+    expect(state.session.draftSource).toBe(
+      "- parent\n  * nested __result__\n  * untouched  spacing\n",
+    );
+  });
+
+  it("patches a hard-wrapped paragraph without reflowing its source lines", () => {
+    const source = "Sentence one\nsentence two stays wrapped.\n\nAfter.\n";
+    const state = new ScientProseMirrorSession({ source, revision: "sha256:before" });
+    let position: number | null = null;
+    state.state.doc.descendants((node, nodePosition) => {
+      if (node.isText && node.text?.includes("two")) {
+        position = nodePosition + node.text.indexOf("two");
+      }
+    });
+    expect(position).not.toBeNull();
+
+    state.applyTransaction(state.state.tr.insertText("three", position!, position! + 3), "user");
+
+    expect(state.session.draftSource).toBe(
+      "Sentence one\nsentence three stays wrapped.\n\nAfter.\n",
+    );
+  });
+
+  it("patches CRLF hard wraps without reflowing or mixing line endings", () => {
+    const source = "Sentence one\r\nsentence two stays wrapped.\r\n\r\nAfter.\r\n";
+    const state = new ScientProseMirrorSession({ source, revision: "sha256:before" });
+    let position: number | null = null;
+    state.state.doc.descendants((node, nodePosition) => {
+      if (node.isText && node.text?.includes("two")) {
+        position = nodePosition + node.text.indexOf("two");
+      }
+    });
+    expect(position).not.toBeNull();
+
+    state.applyTransaction(state.state.tr.insertText("three", position!, position! + 3), "user");
+
+    expect(state.session.draftSource).toBe(
+      "Sentence one\r\nsentence three stays wrapped.\r\n\r\nAfter.\r\n",
+    );
+    expect(state.session.draftSource.replaceAll("\r\n", "")).not.toContain("\n");
+  });
+
+  it("preserves surrounding source syntax when editing beside a wiki link", () => {
+    const source = "Before [[notes|label]] and __bold__ remains.\n";
+    const state = new ScientProseMirrorSession({ source, revision: "sha256:before" });
+    let position: number | null = null;
+    state.state.doc.descendants((node, nodePosition) => {
+      if (node.isText && node.text?.includes("remains")) {
+        position = nodePosition + node.text.indexOf("remains");
+      }
+    });
+    expect(position).not.toBeNull();
+
+    state.applyTransaction(state.state.tr.insertText("stays", position!, position! + 7), "user");
+
+    expect(state.session.draftSource).toBe("Before [[notes|label]] and __bold__ stays.\n");
+  });
+
+  it("patches an emoji replacement without splitting its Unicode surrogate pair", () => {
+    const source = "Mood  😀  remains exact.\n";
+    const state = new ScientProseMirrorSession({ source, revision: "sha256:before" });
+    let emojiPosition: number | null = null;
+    state.state.doc.descendants((node, position) => {
+      if (node.isText && node.text?.includes("😀"))
+        emojiPosition = position + node.text.indexOf("😀");
+    });
+    expect(emojiPosition).not.toBeNull();
+
+    expect(() =>
+      state.applyTransaction(
+        state.state.tr.insertText("😁", emojiPosition!, emojiPosition! + "😀".length),
+        "user",
+      ),
+    ).not.toThrow();
+
+    expect(state.session.draftSource).toBe("Mood  😁  remains exact.\n");
+  });
+
+  it("patches a table cell without normalizing the table source", () => {
+    const source = "| Name|Value |\n|:--| --:|\n|  A  | **2.4** |\n";
+    const state = new ScientProseMirrorSession({ source, revision: "sha256:before" });
+    let valuePosition: number | null = null;
+    state.state.doc.descendants((node, position) => {
+      if (node.isText && node.text === "2.4") valuePosition = position;
+    });
+    expect(valuePosition).not.toBeNull();
+
+    state.applyTransaction(
+      state.state.tr.insertText("3.1", valuePosition!, valuePosition! + "2.4".length),
+      "user",
+    );
+
+    expect(state.session.draftSource).toBe("| Name|Value |\n|:--| --:|\n|  A  | **3.1** |\n");
+  });
+
+  it("projects task lists, strikethrough, and wiki links as editable rich structure", () => {
+    const source = [
+      "- [x] Collected",
+      "- [ ] Analyze",
+      "",
+      "Keep ~~obsolete~~ notes in [[Methods/Protocol|the protocol]].",
+      "",
+    ].join("\n");
+    const state = new ScientProseMirrorSession({ source, revision: "sha256:before" });
+    const list = state.state.doc.firstChild;
+    expect(list?.type.name).toBe("bullet_list");
+    expect(list?.child(0).attrs.taskChecked).toBe(true);
+    expect(list?.child(1).attrs.taskChecked).toBe(false);
+
+    let strikeText = false;
+    let wikiPosition: number | null = null;
+    state.state.doc.descendants((node, position) => {
+      if (node.isText && node.text === "obsolete") {
+        strikeText = node.marks.some((mark) => mark.type.name === "strike");
+      }
+      if (node.type.name === "wiki_link") wikiPosition = position;
+    });
+    expect(strikeText).toBe(true);
+    expect(wikiPosition).not.toBeNull();
+    expect(state.state.doc.nodeAt(wikiPosition!)?.attrs).toMatchObject({
+      label: "the protocol",
+      target: "Methods/Protocol",
+    });
+
+    state.applyTransaction(
+      state.state.tr.setNodeMarkup(wikiPosition!, undefined, {
+        label: "updated protocol",
+        target: "Methods/Updated",
+      }),
+      "user",
+    );
+    expect(state.session.draftSource).toContain(
+      "Keep ~~obsolete~~ notes in [[Methods/Updated|updated protocol]].",
+    );
+  });
+
+  it("serializes a task checkbox change without touching the following block", () => {
+    const source = "- [x] Complete\n- [ ] Pending\n\nFollowing  bytes.\n";
+    const state = new ScientProseMirrorSession({ source, revision: "sha256:before" });
+    const list = state.state.doc.firstChild!;
+    const firstItemPosition = 1;
+    state.applyTransaction(
+      state.state.tr.setNodeMarkup(firstItemPosition, undefined, {
+        ...list.child(0).attrs,
+        taskChecked: false,
+      }),
+      "user",
+    );
+
+    expect(state.session.draftSource).toContain("- [ ] Complete\n- [ ] Pending");
+    expect(state.session.draftSource.endsWith("\n\nFollowing  bytes.\n")).toBe(true);
+  });
+
+  it("projects citations and footnotes as rich references with editable source", () => {
+    const source = [
+      "Evidence [@smith2020, pp. 2-3] and note[^lab].",
+      "",
+      "[^lab]: Collected **twice**.",
+      "",
+    ].join("\n");
+    const state = new ScientProseMirrorSession({ source, revision: "sha256:before" });
+    let citationPosition: number | null = null;
+    let footnoteReferencePosition: number | null = null;
+    let footnoteDefinitionPosition: number | null = null;
+    state.state.doc.descendants((node, position) => {
+      if (node.type.name === "citation") citationPosition = position;
+      if (node.type.name === "footnote_reference") footnoteReferencePosition = position;
+      if (node.type.name === "footnote_definition") footnoteDefinitionPosition = position;
+    });
+
+    expect(state.state.doc.nodeAt(citationPosition!)?.attrs.source).toBe("@smith2020, pp. 2-3");
+    expect(state.state.doc.nodeAt(footnoteReferencePosition!)?.attrs.label).toBe("lab");
+    expect(state.state.doc.nodeAt(footnoteDefinitionPosition!)?.attrs).toMatchObject({
+      label: "lab",
+      source: "[^lab]: Collected **twice**.",
+    });
+
+    state.applyTransaction(
+      state.state.tr.setNodeMarkup(citationPosition!, undefined, {
+        source: "@smith2020, p. 4",
+      }),
+      "user",
+    );
+    expect(state.session.draftSource).toContain("Evidence [@smith2020, p. 4] and note[^lab].");
+    expect(state.session.draftSource.endsWith("\n\n[^lab]: Collected **twice**.\n")).toBe(true);
+  });
+
+  it("keeps footnote references bound when their definition label is renamed", () => {
+    const state = new ScientProseMirrorSession({
+      source: "Evidence[^lab].\n\n[^lab]: Collected twice.\n",
+      revision: "sha256:before",
+    });
+    let definitionPosition: number | null = null;
+    state.state.doc.descendants((node, position) => {
+      if (node.type.name === "footnote_definition") definitionPosition = position;
+    });
+    expect(definitionPosition).not.toBeNull();
+    const definition = state.state.doc.nodeAt(definitionPosition!);
+    state.applyTransaction(
+      state.state.tr.setNodeMarkup(definitionPosition!, undefined, {
+        ...definition?.attrs,
+        label: "method",
+        source: "[^method]: Collected twice.",
+      }),
+      "user",
+    );
+
+    expect(state.session.draftSource).toBe("Evidence[^method].\n\n[^method]: Collected twice.\n");
+    const labels: string[] = [];
+    state.state.doc.descendants((node) => {
+      if (node.type.name === "footnote_reference") labels.push(String(node.attrs.label));
+    });
+    expect(labels).toEqual(["method"]);
+  });
+
+  it("parses citation-like text inside Markdown links as a link, not a citation", () => {
+    const projection = createScientMarkdownProjection("[see @smith](notes.md)\n");
+    let citationCount = 0;
+    let linkedText = false;
+    projection.document.descendants((node) => {
+      if (node.type.name === "citation") citationCount += 1;
+      if (node.isText && node.text === "see @smith") {
+        linkedText = node.marks.some(
+          (mark) => mark.type.name === "link" && mark.attrs.href === "notes.md",
+        );
+      }
+    });
+    expect(citationCount).toBe(0);
+    expect(linkedText).toBe(true);
+  });
+
+  it("preserves CRLF fences and raw blocks around a mixed-direction edit", () => {
+    const source = [
+      "~~~python linenos",
+      'print("עברית 😀")',
+      "~~~",
+      "",
+      "פסקה בעברית with **bold**.",
+      "",
+      "<!-- keep  exact -->",
+      "",
+    ].join("\r\n");
+    const state = new ScientProseMirrorSession({ source, revision: "sha256:before" });
+    let hebrewPosition: number | null = null;
+    state.state.doc.descendants((node, position) => {
+      if (node.isText && node.text?.includes("פסקה בעברית")) {
+        hebrewPosition = position + "פסקה ".length;
+      }
+    });
+    expect(hebrewPosition).not.toBeNull();
+    state.applyTransaction(
+      state.state.tr.insertText("חדשה", hebrewPosition!, hebrewPosition! + "בעברית".length),
+      "user",
+    );
+
+    expect(state.session.draftSource).toContain(
+      '~~~python linenos\r\nprint("עברית 😀")\r\n~~~\r\n\r\n',
+    );
+    expect(state.session.draftSource).toContain("פסקה חדשה with **bold**.");
+    expect(state.session.draftSource.endsWith("\r\n\r\n<!-- keep  exact -->\r\n")).toBe(true);
+  });
+
+  it("keeps inline and display math as rich nodes and rewrites only the edited source block", () => {
+    const source = [
+      "Energy is $E=mc^2$.",
+      "",
+      "$$",
+      "\\int_0^1 x \\, dx",
+      "$$",
+      "",
+      "Untouched  spacing.",
+      "",
+    ].join("\n");
+    const state = new ScientProseMirrorSession({ source, revision: "sha256:before" });
+    let inlineMathPosition: number | null = null;
+    let displayMathPosition: number | null = null;
+    state.state.doc.descendants((node, position) => {
+      if (node.type.name === "inline_math") inlineMathPosition = position;
+      if (node.type.name === "display_math") displayMathPosition = position;
+    });
+
+    expect(inlineMathPosition).not.toBeNull();
+    expect(displayMathPosition).not.toBeNull();
+    expect(state.state.doc.nodeAt(inlineMathPosition!)?.attrs.tex).toBe("E=mc^2");
+    expect(state.state.doc.nodeAt(displayMathPosition!)?.attrs.tex).toBe("\\int_0^1 x \\, dx");
+
+    state.applyTransaction(
+      state.state.tr.setNodeMarkup(inlineMathPosition!, undefined, {
+        ...state.state.doc.nodeAt(inlineMathPosition!)?.attrs,
+        tex: "E=mc^3",
+      }),
+      "user",
+    );
+
+    expect(state.session.draftSource).toBe(
+      [
+        "Energy is $E=mc^3$.",
+        "",
+        "$$",
+        "\\int_0^1 x \\, dx",
+        "$$",
+        "",
+        "Untouched  spacing.",
+        "",
+      ].join("\n"),
+    );
+  });
+
+  it("shares backslash-delimited math with the preview while preserving authored source", () => {
+    const source = [
+      "Inline \\(x + 1\\), display \\[E = mc^2\\], and `\\(literal\\)`.",
+      "",
+      "\\[",
+      "\\int_0^1 x \\, dx",
+      "\\]",
+      "",
+      '<span title="\\(literal\\)">raw</span>',
+      "",
+    ].join("\n");
+    const state = new ScientProseMirrorSession({ source, revision: "sha256:before" });
+    const inlineMath: Array<{
+      display: boolean;
+      delimiter: string;
+      position: number;
+      tex: string;
+    }> = [];
+    let displayPosition: number | null = null;
+    state.state.doc.descendants((node, position) => {
+      if (node.type.name === "inline_math") {
+        inlineMath.push({
+          display: node.attrs.display === true,
+          delimiter: String(node.attrs.delimiter),
+          position,
+          tex: String(node.attrs.tex),
+        });
+      }
+      if (node.type.name === "display_math") displayPosition = position;
+    });
+
+    expect(inlineMath.map(({ position: _position, ...math }) => math)).toEqual([
+      { delimiter: "\\(", display: false, tex: "x + 1" },
+      { delimiter: "\\[", display: true, tex: "E = mc^2" },
+    ]);
+    expect(displayPosition).not.toBeNull();
+    expect(state.state.doc.nodeAt(displayPosition!)?.attrs).toMatchObject({
+      delimiter: "\\[",
+      tex: "\\int_0^1 x \\, dx",
+    });
+    expect(state.session.draftSource).toBe(source);
+
+    state.applyTransaction(
+      state.state.tr.setNodeMarkup(inlineMath[0]!.position, undefined, {
+        ...state.state.doc.nodeAt(inlineMath[0]!.position)?.attrs,
+        tex: "x + 2",
+      }),
+      "user",
+    );
+    state.applyTransaction(
+      state.state.tr.setNodeMarkup(displayPosition!, undefined, {
+        ...state.state.doc.nodeAt(displayPosition!)?.attrs,
+        tex: "\\int_0^2 x \\, dx",
+      }),
+      "user",
+    );
+
+    expect(state.session.draftSource).toContain("Inline \\(x + 2\\), display \\[E = mc^2\\]");
+    expect(state.session.draftSource).toContain("\\[\n\\int_0^2 x \\, dx\n\\]");
+    expect(state.session.draftSource).toContain("`\\(literal\\)`");
+    expect(state.session.draftSource).toContain('<span title="\\(literal\\)">raw</span>');
+    const reopened = new ScientProseMirrorSession({
+      source: state.session.draftSource,
+      revision: "sha256:reopened",
+    });
+    expect(reopened.state.doc.eq(state.state.doc)).toBe(true);
+  });
+
+  it("keeps serializer-escaped literal brackets distinct from TeX delimiters", () => {
+    const state = new ScientProseMirrorSession({
+      source: "| Value |\n| --- |\n| original |\n",
+      revision: "sha256:before",
+    });
+    let textPosition: number | null = null;
+    state.state.doc.descendants((node, position) => {
+      if (node.text === "original") textPosition = position;
+    });
+    expect(textPosition).not.toBeNull();
+
+    state.applyTransaction(
+      state.state.tr.insertText("[x] [0,1] [x](file.md) ", textPosition!),
+      "user",
+    );
+
+    expect(state.session.draftSource).toContain(
+      "&#91;x&#93; &#91;0,1&#93; &#91;x&#93;(file.md) original",
+    );
+    const reopened = new ScientProseMirrorSession({
+      source: state.session.draftSource,
+      revision: "sha256:reopened",
+    });
+    expect(reopened.state.doc.eq(state.state.doc)).toBe(true);
+    const mathNodes: string[] = [];
+    reopened.state.doc.descendants((node) => {
+      if (node.type.name === "inline_math" || node.type.name === "display_math") {
+        mathNodes.push(node.type.name);
+      }
+    });
+    expect(mathNodes).toEqual([]);
+  });
+
+  it("matches the preview's GFM bare-link recognition without rewriting untouched URLs", () => {
+    const source =
+      "Read https://example.com and www.example.org, email team@example.org, and keep file.md plain.\n";
+    const state = new ScientProseMirrorSession({ source, revision: "sha256:before" });
+    const links: string[] = [];
+    state.state.doc.descendants((node) => {
+      for (const mark of node.marks) {
+        if (mark.type.name === "link") links.push(String(mark.attrs.href));
+      }
+    });
+
+    expect(links).toEqual([
+      "https://example.com",
+      "http://www.example.org",
+      "mailto:team@example.org",
+    ]);
+    expect(state.session.draftSource).toBe(source);
+    state.applyTransaction(state.state.tr.insertText("Now: ", 1), "user");
+    expect(state.session.draftSource).toBe(`Now: ${source}`);
+    const reopened = new ScientProseMirrorSession({
+      source: state.session.draftSource,
+      revision: "sha256:reopened",
+    });
+    expect(reopened.state.doc.eq(state.state.doc)).toBe(true);
+  });
+
+  it("keeps the projection immutable when replacing only the current document", () => {
+    const projection = createScientMarkdownProjection("One\n");
+    const next = withProjectedDocument(projection, projection.document);
+    expect(next).not.toBe(projection);
+    expect(next.ledger).toBe(projection.ledger);
+    expect(next.baselineDocument).toBe(projection.baselineDocument);
+  });
+});
