@@ -6,6 +6,7 @@
   min-width: 0;
   max-width: 100%;
   margin-block: 0.75rem;
+  padding-bottom: 0.375rem;
   /* Only indivisible expressions need scrolling; ordinary terms can wrap. */
   overflow-x: auto;
   overflow-y: hidden;

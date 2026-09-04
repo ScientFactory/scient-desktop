@@ -1330,15 +1330,19 @@ textarea.scient-markdown-math-source {
   outline: none;
 }
 
-/* Code and exact-source blocks signal editing with their existing border, not
-   a second outline, so viewing and editing remain one quiet surface. */
+/* Code and exact-source blocks keep one border when selected. */
 .scient-markdown-document .scient-markdown-code-block.ProseMirror-selectednode,
 .scient-markdown-document .scient-markdown-source-island.ProseMirror-selectednode {
   outline: none;
-  border-color: color-mix(in oklab, var(--primary) 45%, var(--border));
 }
 
-.scient-markdown-document .scient-markdown-source-island:focus-within {
+/* HTML source uses its caret to signal editing, like an ordinary code box. */
+.scient-markdown-document .scient-markdown-code-block.ProseMirror-selectednode,
+.scient-markdown-document
+  .scient-markdown-source-island:not([data-scient-markdown-source-kind="html"]):is(
+    .ProseMirror-selectednode,
+    :focus-within
+  ) {
   border-color: color-mix(in oklab, var(--primary) 45%, var(--border));
 }
 

@@ -330,7 +330,7 @@ describe("rich Markdown compact-surface styles", () => {
       /\.scient-markdown-reference-source:focus-visible \{[^}]*outline: 2px solid[^}]*outline-offset: 1px/su,
     );
     expect(cssSource).toMatch(
-      /\.scient-markdown-document \.scient-markdown-source-island:focus-within \{[^}]*border-color:/su,
+      /\.scient-markdown-source-island:not\(\[data-scient-markdown-source-kind="html"\]\):is\([^}]*:focus-within[^}]*border-color:/su,
     );
     expect(cssSource).toMatch(
       /\.scient-markdown-math-source:focus-visible \{[^}]*border-color: color-mix\(in oklab, var\(--muted-foreground\) 45%, var\(--border\)\)[^}]*outline: none/su,
