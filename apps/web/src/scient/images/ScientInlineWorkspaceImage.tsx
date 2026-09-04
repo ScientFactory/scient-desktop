@@ -251,7 +251,7 @@ function InlineImageDialog(props: {
     <Dialog open={props.open} onOpenChange={props.onOpenChange}>
       <DialogPopup
         bottomStickOnMobile={false}
-        className="flex h-[min(92vh,64rem)] w-[min(94vw,96rem)] max-w-none flex-col overflow-hidden"
+        className="scient-visual-dialog flex max-w-none flex-col overflow-hidden"
       >
         <DialogHeader className="flex-row items-center gap-3 border-b px-4 py-3 pe-12">
           <div className="min-w-0 flex-1">

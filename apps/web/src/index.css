@@ -1968,6 +1968,10 @@ code {
 }
 
 /* Visual-card utilities are quiet; chart exploration keeps its own toolbar. */
+.scient-visual-utility-controls {
+  column-gap: 0;
+}
+
 .scient-visual-utility-controls button:not([data-scient-toolbar-move]) {
   isolation: isolate;
   width: 1.75rem;
@@ -2001,6 +2005,18 @@ code {
 .scient-visual-utility-controls button:focus-visible {
   outline: 2px solid var(--ring);
   outline-offset: 1px;
+}
+
+.scient-visual-dialog {
+  width: min(88vw, 88rem);
+  height: min(84vh, 56rem);
+}
+
+@media (width < 40rem) {
+  .scient-visual-dialog {
+    width: 94vw;
+    height: 92vh;
+  }
 }
 
 .chat-markdown .chat-markdown-chrome-action[aria-pressed="true"],
