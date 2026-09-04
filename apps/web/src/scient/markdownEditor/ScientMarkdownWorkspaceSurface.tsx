@@ -1,5 +1,4 @@
-import { MarkdownSaveQueue, type MarkdownSaveIntent } from "@scientfactory/scient-markdown";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore } from "react";
 
 import { readLocalApi } from "~/localApi";
 
@@ -27,9 +26,8 @@ import {
 import { showScientMarkdownTableContextMenu } from "./tableContextMenu";
 import { ScientMarkdownControls } from "./ui/ScientMarkdownControls";
 import { useFinalUnmount } from "./useFinalUnmount";
+import type { MarkdownPersistenceLease } from "./persistence/markdownPersistenceRegistry";
 import type { ScientMarkdownWikiLinkCandidate } from "./wikiLinkPicker";
-
-const SAVE_DEBOUNCE_MS = 500;
 
 const CHROME_BLOCK_SHORTCUTS = [
   ["moveBlockUp", "move-up"],
@@ -46,25 +44,11 @@ function targetOwnsTextEditing(target: EventTarget | null): boolean {
 }
 
 export interface ScientMarkdownWorkspaceSurfaceProps {
-  readonly source: string;
-  readonly revision: string;
-  readonly authoritativeSnapshot: {
-    readonly source: string;
-    readonly revision: string;
-  } | null;
+  readonly persistence: MarkdownPersistenceLease;
   readonly ariaLabel: string;
   readonly resolvedTheme?: "light" | "dark";
   /** Resource availability key; changes invalidate missing asset/link presentation. */
   readonly workspaceResourceIndexKey?: string;
-  readonly persist: (intent: MarkdownSaveIntent) => Promise<{ readonly revision: string }>;
-  readonly onPendingChange: (pending: boolean) => void;
-  readonly onDraftSourceChange: (source: string) => void;
-  readonly onSaveConfirmed: (source: string, revision: string) => void;
-  readonly onSaveFailure: (error: unknown) => void;
-  readonly onExternalConflict: (input: {
-    readonly source: string;
-    readonly revision: string;
-  }) => void;
   readonly onLocalHeadingOpened?: () => void;
   readonly onOpenWikiLink?: ScientMarkdownLinkOpenHandler;
   readonly onOpenLink?: ScientMarkdownLinkOpenHandler;
@@ -79,16 +63,10 @@ export interface ScientMarkdownWorkspaceSurfaceProps {
   readonly wikiLinkCandidates?: ReadonlyArray<ScientMarkdownWikiLinkCandidate>;
   readonly recentWikiLinkPaths?: ReadonlyArray<string>;
   readonly onWikiLinkSelected?: (path: string) => void;
-  readonly saveResolution?: {
-    readonly action: "discard" | "retry";
-    readonly contents: string;
-    readonly revision: string;
-  } | null;
-  readonly onSaveResolutionApplied?: () => void;
 }
 
 /**
- * Coordinates one always-editable rich document and one serial save lane.
+ * Projects the shared file session into one always-editable rich document.
  * The rendered view is the editor: clicking into it edits it. The editing
  * controls stay collapsed until the reader opens them or starts typing.
  */
@@ -101,36 +79,25 @@ export function ScientMarkdownWorkspaceSurface(props: ScientMarkdownWorkspaceSur
 
   const [chromeExpanded, setChromeExpanded] = useState(false);
   const controllerRef = useRef<ScientMarkdownEditorView | null>(null);
-  const [saveQueue] = useState(
-    () =>
-      new MarkdownSaveQueue({
-        debounceMs: SAVE_DEBOUNCE_MS,
-        persist: (intent) => bindingsRef.current.persist(intent),
-        onPendingChange: (pending) => bindingsRef.current.onPendingChange(pending),
-        onConfirmed: (intent, result) => {
-          controllerRef.current?.confirmSave(intent, result.revision);
-          if (controllerRef.current) saveQueue.synchronize(controllerRef.current.session.session);
-          const session = controllerRef.current?.session.session;
-          if (
-            !session ||
-            (session.conflict === null && session.baselineRevision === result.revision)
-          ) {
-            // The watcher can observe this save before its reply while newer
-            // typing is queued. Confirming that snapshot clears the apparent
-            // conflict; release its pause too, but never a newer real conflict.
-            if (session && saveQueue.failureBlocked) saveQueue.resume();
-            bindingsRef.current.onSaveConfirmed(intent.source, result.revision);
-          }
-        },
-        onFailure: (_intent, error) => bindingsRef.current.onSaveFailure(error),
-      }),
+  const activeViewRef = useRef(false);
+  const composingRef = useRef(false);
+  useLayoutEffect(() => {
+    activeViewRef.current = true;
+    return () => {
+      activeViewRef.current = false;
+    };
+  }, []);
+  const persistenceSnapshot = useSyncExternalStore(
+    props.persistence.subscribe,
+    props.persistence.getSnapshot,
   );
+  const appliedVersionRef = useRef(persistenceSnapshot.editVersion);
   const [controller] = useState(
     () =>
       new ScientMarkdownEditorView({
-        source: props.source,
-        revision: props.authoritativeSnapshot?.revision ?? props.revision,
-        authoritativeSource: props.authoritativeSnapshot?.source ?? props.source,
+        source: persistenceSnapshot.draftSource,
+        revision: persistenceSnapshot.baselineRevision,
+        authoritativeSource: persistenceSnapshot.baselineSource,
         mode: "write",
         ariaLabel: props.ariaLabel,
         resolveTheme: () =>
@@ -214,14 +181,40 @@ export function ScientMarkdownWorkspaceSurface(props: ScientMarkdownWorkspaceSur
           );
         },
         onUserSourceChange: (source) => {
+          if (!activeViewRef.current) return;
           // First real edit reveals the formatting controls.
           setChromeExpanded(true);
-          bindingsRef.current.onDraftSourceChange(source);
-          if (controllerRef.current) saveQueue.synchronize(controllerRef.current.session.session);
+          const lease = bindingsRef.current.persistence;
+          const accepted = lease.change(source, appliedVersionRef.current);
+          const snapshot = lease.getSnapshot();
+          appliedVersionRef.current = snapshot.editVersion;
+          controllerRef.current?.synchronizePersistence(snapshot);
+          if (!accepted)
+            queueMicrotask(() => {
+              // The originating ProseMirror dispatch finishes after this callback.
+              // Re-apply current truth after that dispatch if this view was stale.
+              const controller = controllerRef.current;
+              if (controller?.view) controller.view.updateState(controller.session.state);
+            });
         },
       }),
   );
   controllerRef.current = controller;
+
+  useLayoutEffect(
+    () =>
+      props.persistence.registerExternalProjection((update) => {
+        if (composingRef.current) return "defer";
+        const apply = controller.prepareExternalUpdate(update);
+        if (apply === "defer") return "defer";
+        if (!apply) return null;
+        return () => {
+          apply();
+          appliedVersionRef.current = update.editVersion;
+        };
+      }),
+    [controller, props.persistence],
+  );
 
   useEffect(() => {
     if (previousThemeRef.current !== props.resolvedTheme) {
@@ -238,70 +231,15 @@ export function ScientMarkdownWorkspaceSurface(props: ScientMarkdownWorkspaceSur
   }, [controller, props.workspaceResourceIndexKey]);
 
   useEffect(() => {
-    const authoritative = props.authoritativeSnapshot;
-    if (authoritative === null) return;
-    const publishedIntent = saveQueue.acknowledgePublished(
-      authoritative.source,
-      controller.session.session.baselineRevision,
-    );
-    if (publishedIntent !== null) {
-      controller.confirmSave(publishedIntent, authoritative.revision);
-      saveQueue.synchronize(controller.session.session);
-      const session = controller.session.session;
-      if (session.conflict === null && session.baselineRevision === authoritative.revision) {
-        bindingsRef.current.onSaveConfirmed(authoritative.source, authoritative.revision);
-      }
-      return;
-    }
-    const result = controller.receiveExternalSource({
-      source: authoritative.source,
-      revision: authoritative.revision,
-    });
-    const currentIntent = controller.createSaveIntent();
-    if (result === "adopted") {
-      // The queued draft is unchanged; rebase its revision so the debounced
-      // write does not dead-end on a stale compare-and-swap.
-      saveQueue.synchronize(controller.session.session);
-    } else if (result === "conflict") {
-      saveQueue.pause();
-      bindingsRef.current.onExternalConflict(authoritative);
-    } else if (currentIntent) {
-      saveQueue.synchronize(controller.session.session);
-    }
-  }, [
-    controller,
-    props.authoritativeSnapshot?.revision,
-    props.authoritativeSnapshot?.source,
-    saveQueue,
-  ]);
-
-  useEffect(() => {
-    if (!props.saveResolution) return;
-    const authoritative = {
-      source: props.saveResolution.contents,
-      revision: props.saveResolution.revision,
-    };
-    if (props.saveResolution.action === "discard") {
-      controller.discardLocalChanges(authoritative);
-    } else {
-      controller.rebaseLocalChanges(authoritative);
-    }
-    saveQueue.synchronize(controller.session.session);
-    const alreadyPersisted =
-      props.saveResolution.action === "retry" &&
-      controller.session.session.draftSource === authoritative.source;
-    saveQueue.resume();
-    if (alreadyPersisted) {
-      bindingsRef.current.onSaveConfirmed(authoritative.source, authoritative.revision);
-    }
-    bindingsRef.current.onSaveResolutionApplied?.();
-  }, [controller, props.saveResolution, saveQueue]);
+    // Read the current store, not an older React render, after a synchronous edit.
+    const snapshot = props.persistence.getSnapshot();
+    appliedVersionRef.current = snapshot.editVersion;
+    controller.setMode(snapshot.editingBlocked ? "read" : "write");
+    controller.synchronizePersistence(snapshot);
+  }, [controller, props.persistence, persistenceSnapshot]);
 
   useFinalUnmount(() => {
-    // Normal surface departures are held by the shared pending-save guard.
-    // Dispose remains a best-effort final flush for direct tree/app teardown,
-    // then release the externally owned ProseMirror view deterministically.
-    void saveQueue.dispose({ flush: true });
+    // Persistence outlives this view. Unmount must never flush or unblock it.
     controller.destroy();
     controllerRef.current = null;
   });
@@ -310,6 +248,13 @@ export function ScientMarkdownWorkspaceSurface(props: ScientMarkdownWorkspaceSur
     <div
       className="scient-markdown-workspace"
       data-keybinding-capture=""
+      onCompositionStartCapture={() => {
+        composingRef.current = true;
+      }}
+      onCompositionEnd={() => {
+        composingRef.current = false;
+        queueMicrotask(() => props.persistence.resumeExternalUpdates());
+      }}
       onKeyDown={(event) => {
         if (event.defaultPrevented || event.nativeEvent.isComposing) return;
         if (matchesScientMarkdownShortcut(event, "find")) {

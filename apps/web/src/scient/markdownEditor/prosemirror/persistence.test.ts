@@ -1,143 +1,135 @@
-import { MarkdownSaveQueue, type MarkdownSaveIntent } from "@scientfactory/scient-markdown";
+import {
+  MarkdownPersistenceCoordinator,
+  type MarkdownSaveIntent,
+} from "@scientfactory/scient-markdown";
+import { undo } from "prosemirror-history";
 import { describe, expect, it, vi } from "vite-plus/test";
 
 import { ScientProseMirrorSession } from "./session";
 
 function harness(persist = vi.fn(async (_intent: MarkdownSaveIntent) => ({ revision: "r1" }))) {
-  const pending = vi.fn();
+  const read = vi.fn(async () => ({ source: "Original", revision: "r0" }));
+  const coordinator = new MarkdownPersistenceCoordinator({
+    source: "Original",
+    revision: "r0",
+    debounceMs: 60_000,
+    write: persist,
+    read,
+    classifyFailure: (error) => (error === "conflict" ? "conflict" : "terminal"),
+  });
   const session = new ScientProseMirrorSession({
     source: "Original",
     revision: "r0",
-    onUserSourceChange: () => queue.synchronize(session.session),
+    onUserSourceChange: (source) => coordinator.change(source),
   });
-  const queue = new MarkdownSaveQueue({
-    debounceMs: 60_000,
-    persist,
-    onPendingChange: pending,
-    onFailure: vi.fn(),
-    onConfirmed: (intent, result) => {
-      session.confirmSave(intent, result.revision);
-      queue.synchronize(session.session);
-    },
-  });
+  coordinator.subscribe(() => session.synchronizePersistence(coordinator.getSnapshot()));
   const edit = (source: string) => session.replaceUserSource(source);
-  return { session, queue, persist, pending, edit };
+  return { session, coordinator, persist, read, edit };
 }
 
 describe("Markdown draft and persistence coherence", () => {
-  it("does not clear a newer external conflict when an older save acknowledges", async () => {
-    let resolve!: (result: { revision: string }) => void;
-    const first = new Promise<{ revision: string }>((done) => {
-      resolve = done;
-    });
-    const persist = vi
-      .fn(async (_intent: MarkdownSaveIntent) => ({ revision: "r3" }))
-      .mockImplementationOnce(() => first);
-    const h = harness(persist);
-    h.edit("Mine");
-    const flushed = h.queue.flush();
-    h.session.receiveExternalSource({ source: "Agent after my save", revision: "r2" });
-    h.queue.pause();
-    h.edit("Mine with more edits");
-    resolve({ revision: "r1" });
-    await flushed;
-    expect(persist).toHaveBeenCalledTimes(1);
-    expect(h.session.session.conflict?.externalRevision).toBe("r2");
-    expect(h.queue.pending).toBe(true);
-    h.session.resolveExternalConflict("local");
-    h.queue.synchronize(h.session.session);
-    h.queue.resume();
-    await h.queue.flush();
-    expect(persist.mock.calls[1]?.[0]).toMatchObject({
-      source: "Mine with more edits",
-      expectedRevision: "r2",
-    });
-    await h.queue.dispose();
+  it("confirms metadata without replacing selection or undo history", async () => {
+    const h = harness();
+    h.session.applyTransaction(h.session.state.tr.insertText("!", 9), "user");
+    const state = h.session.state;
+    expect(await h.coordinator.flushNow()).toBe(true);
+    expect(h.session.state).toBe(state);
+    expect(h.session.session.baselineRevision).toBe("r1");
+    undo(h.session.state, (transaction) => h.session.applyTransaction(transaction, "user"));
+    expect(h.session.session.draftSource).toBe("Original");
+    await h.coordinator.flushNow();
   });
 
-  it("refreshes the revision of unchanged disk bytes without replacing selection or history", async () => {
-    const h = harness();
-    h.edit("Original!");
-    const state = h.session.state;
-    expect(h.session.receiveExternalSource({ source: "Original", revision: "r-refreshed" })).toBe(
-      "unchanged",
-    );
-    expect(h.session.state).toBe(state);
-    h.queue.synchronize(h.session.session);
-    await h.queue.flush();
-    expect(h.persist.mock.calls[0]?.[0].expectedRevision).toBe("r-refreshed");
-    await h.queue.dispose();
-  });
   it("cancels an obsolete debounced edit when undo returns to baseline", async () => {
     const h = harness();
     h.edit("Original!");
     h.edit("Original");
-    await h.queue.flush();
+    expect(await h.coordinator.flushNow()).toBe(true);
     expect(h.persist).not.toHaveBeenCalled();
-    expect(h.pending).toHaveBeenLastCalledWith(false);
+    expect(h.coordinator.getSnapshot().pending).toBe(false);
     expect(h.session.createSaveIntent()).toBeNull();
-    await h.queue.dispose();
   });
 
-  it.each(["undo", "discard"])("compensates an in-flight write after %s", async (action) => {
-    let resolveFirst!: (value: { revision: string }) => void;
-    const first = new Promise<{ revision: string }>((resolve) => {
-      resolveFirst = resolve;
+  it("compensates an in-flight write after undo", async () => {
+    let resolve!: (value: { revision: string }) => void;
+    const first = new Promise<{ revision: string }>((complete) => {
+      resolve = complete;
     });
     const persist = vi
       .fn(async (_intent: MarkdownSaveIntent) => ({ revision: "r2" }))
       .mockImplementationOnce(() => first);
     const h = harness(persist);
     h.edit("Original!");
-    const flushed = h.queue.flush();
-    if (action === "undo") h.edit("Original");
-    else {
-      h.session.discardLocalChanges({ source: "Original", revision: "r0" });
-      h.queue.synchronize(h.session.session);
-      h.queue.resume();
-    }
-    resolveFirst({ revision: "r1" });
-    await flushed;
+    const flushed = h.coordinator.flushNow();
+    h.edit("Original");
+    resolve({ revision: "r1" });
+    expect(await flushed).toBe(true);
     expect(persist.mock.calls.map(([intent]) => [intent.source, intent.expectedRevision])).toEqual([
       ["Original!", "r0"],
       ["Original", "r1"],
     ]);
     expect(h.session.createSaveIntent()).toBeNull();
-    expect(h.queue.pending).toBe(false);
-    await h.queue.dispose();
   });
 
-  it("retries the latest draft including edits made during a conflict", async () => {
-    const h = harness();
+  it("keeps editing during conflict and resolves only against a rechecked disk snapshot", async () => {
+    const persist = vi
+      .fn(async (_intent: MarkdownSaveIntent) => ({ revision: "r2" }))
+      .mockRejectedValueOnce("conflict");
+    const h = harness(persist);
+    h.read.mockResolvedValue({ source: "External", revision: "r-agent" });
     h.edit("Original!");
-    h.session.receiveExternalSource({ source: "External", revision: "r-agent" });
-    h.queue.pause();
+    expect(await h.coordinator.flushNow()).toBe(false);
     h.edit("Original!new");
-    h.session.resolveExternalConflict("local");
-    h.queue.synchronize(h.session.session);
-    h.queue.resume();
-    await h.queue.flush();
-    expect(h.persist).toHaveBeenCalledExactlyOnceWith({
+    expect(h.session.session.conflict?.externalRevision).toBe("r-agent");
+    expect(await h.coordinator.resolveWithLocal("r-agent")).toBe(true);
+    expect(h.persist).toHaveBeenLastCalledWith({
       source: "Original!new",
       expectedRevision: "r-agent",
       editVersion: 2,
     });
     expect(h.session.createSaveIntent()).toBeNull();
-    expect(h.queue.pending).toBe(false);
-    await h.queue.dispose();
+    expect(h.read).toHaveBeenCalledTimes(2);
   });
 
-  it("discards local edits even without an external conflict", async () => {
+  it("adopts a clean ordered refresh without creating a save loop", async () => {
     const h = harness();
-    h.edit("Original!");
-    h.session.discardLocalChanges({ source: "Original", revision: "r0" });
-    h.queue.synchronize(h.session.session);
-    await h.queue.flush();
-    expect(h.session.state.doc.textContent).toBe("Original");
+    h.read.mockResolvedValue({ source: "External", revision: "r-agent" });
+    await h.coordinator.refresh();
+    expect(h.session.state.doc.textContent).toBe("External");
     expect(h.persist).not.toHaveBeenCalled();
     h.session.applyTransaction(h.session.state.tr.insertText("next ", 1), "user");
-    await h.queue.flush();
-    expect(h.persist.mock.calls[0]?.[0].source).toBe("next Original");
-    await h.queue.dispose();
+    await h.coordinator.flushNow();
+    expect(h.persist.mock.calls[0]?.[0]).toMatchObject({
+      source: "next External",
+      expectedRevision: "r-agent",
+    });
+  });
+
+  it("keeps a discarded draft recoverable after explicitly choosing disk", async () => {
+    const persist = vi
+      .fn(async (_intent: MarkdownSaveIntent) => ({ revision: "r2" }))
+      .mockRejectedValueOnce("conflict");
+    const h = harness(persist);
+    h.read.mockResolvedValue({ source: "External", revision: "r-agent" });
+    h.edit("Mine");
+    await h.coordinator.flushNow();
+    await h.coordinator.resolveWithDisk();
+    expect(h.session.state.doc.textContent).toBe("External");
+    expect(h.coordinator.restoreRecovery()).toBe(true);
+    expect(h.session.state.doc.textContent).toBe("Mine");
+    await h.coordinator.flushNow();
+  });
+
+  it("retains editor state while verification rebases unchanged disk bytes", async () => {
+    const persist = vi
+      .fn(async (_intent: MarkdownSaveIntent) => ({ revision: "r1" }))
+      .mockRejectedValueOnce("conflict");
+    const h = harness(persist);
+    h.read.mockResolvedValue({ source: "Original", revision: "r-refreshed" });
+    h.edit("Original!");
+    const state = h.session.state;
+    await h.coordinator.flushNow();
+    expect(h.session.state).toBe(state);
+    expect(h.persist.mock.calls[1]?.[0].expectedRevision).toBe("r-refreshed");
   });
 });

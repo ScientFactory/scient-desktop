@@ -7,6 +7,31 @@ import { describe, expect, it, vi } from "vite-plus/test";
 import { ScientProseMirrorSession } from "./session";
 
 describe("ScientProseMirrorSession", () => {
+  it("preserves a leading BOM and CRLF through a first-heading edit and reopen", () => {
+    const source = "\uFEFF# Title\r\n\r\nBody\r\n";
+    const onUserSourceChange = vi.fn();
+    const session = new ScientProseMirrorSession({
+      source,
+      revision: "sha256:before",
+      onUserSourceChange,
+    });
+
+    expect(session.session.draftSource).toBe(source);
+    expect(session.createSaveIntent()).toBeNull();
+    expect(onUserSourceChange).not.toHaveBeenCalled();
+    expect(session.state.doc.firstChild?.textContent).toBe("Title");
+    session.applyTransaction(session.state.tr.insertText("Updated ", 1), "user");
+
+    const expected = "\uFEFF# Updated Title\r\n\r\nBody\r\n";
+    expect(session.session.draftSource).toBe(expected);
+    expect(session.createSaveIntent()?.source).toBe(expected);
+    const reopened = new ScientProseMirrorSession({ source: expected, revision: "sha256:after" });
+    expect(reopened.state.doc.firstChild?.type.name).toBe("heading");
+    expect(reopened.state.doc.firstChild?.textContent).toBe("Updated Title");
+    expect(reopened.session.draftSource).toBe(expected);
+    expect(reopened.createSaveIntent()).toBeNull();
+  });
+
   it("starts in the first writable block instead of selecting leading front matter", () => {
     const source = "---\ntitle: Safe\n---\n\n# Heading\n";
     const session = new ScientProseMirrorSession({ source, revision: "sha256:before" });

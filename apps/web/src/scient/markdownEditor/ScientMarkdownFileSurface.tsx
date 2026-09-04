@@ -6,9 +6,7 @@ import { useCallback, useEffect, useMemo, useRef } from "react";
 
 import { resolveAssetUrl } from "~/assets/assetUrls";
 import {
-  confirmProjectFileQueryData,
   refreshProjectEntriesQuery,
-  setProjectFileQueryData,
   useProjectEntriesQuery,
 } from "~/components/files/projectFilesQueryState";
 import { anchoredToastManager, toastManager } from "~/components/ui/toast";
@@ -28,7 +26,7 @@ import type { ScientMarkdownLinkCopyRequest, ScientMarkdownLinkKind } from "./li
 import { isScientMarkdownDocumentPath } from "./markdownDocumentPaths";
 import { resolveMarkdownImageSource } from "./markdownImageSource";
 import { uploadMarkdownImage } from "./assets/client";
-import type { MarkdownSaveIntent } from "@scientfactory/scient-markdown";
+import type { MarkdownPersistenceLease } from "./persistence/markdownPersistenceRegistry";
 import {
   markdownWikiTargetForPath,
   resolveMarkdownUrlPath,
@@ -62,33 +60,14 @@ export interface ScientMarkdownFileSurfaceProps {
   readonly cwd: string;
   readonly relativePath: string;
   readonly threadRef: ScopedThreadRef;
-  readonly contents: string;
-  readonly revision: string;
+  readonly persistence: MarkdownPersistenceLease;
   readonly resolvedTheme: "light" | "dark";
-  readonly authoritativeSnapshot: {
-    readonly source: string;
-    readonly revision: string;
-  } | null;
   readonly onOpenFile: (relativePath: string) => void;
   readonly onOpenFileSource?: (relativePath: string, line?: number) => void;
-  readonly onPendingChange: (relativePath: string, pending: boolean) => void;
-  readonly onSaveConfirmed: (relativePath: string, contents: string, revision: string) => void;
-  readonly onSaveFailure: (relativePath: string, error: unknown) => void;
-  readonly onExternalConflict: (input: {
-    readonly source: string;
-    readonly revision: string;
-  }) => void;
-  readonly saveResolution?: {
-    readonly action: "discard" | "retry";
-    readonly contents: string;
-    readonly revision: string;
-  } | null;
-  readonly onSaveResolutionApplied?: () => void;
 }
 
 export function ScientMarkdownFileSurface(props: ScientMarkdownFileSurfaceProps) {
   const onOpenFile = props.onOpenFile;
-  const writeFile = useAtomCommand(projectEnvironment.writeFile, { reportFailure: false });
   const listDirectory = useAtomCommand(projectEnvironment.listDirectory, {
     reportDefect: false,
     reportFailure: false,
@@ -195,22 +174,6 @@ export function ScientMarkdownFileSurface(props: ScientMarkdownFileSurfaceProps)
       return entriesTruncatedRef.current ? null : false;
     },
     [props.relativePath],
-  );
-  const persist = useCallback(
-    async (intent: MarkdownSaveIntent) => {
-      const result = await writeFile({
-        environmentId: props.environmentId,
-        input: {
-          cwd: props.cwd,
-          relativePath: props.relativePath,
-          contents: intent.source,
-          expectedRevision: intent.expectedRevision,
-        },
-      });
-      if (result._tag === "Failure") throw squashAtomCommandFailure(result);
-      return { revision: result.value.revision };
-    },
-    [props.cwd, props.environmentId, props.relativePath, writeFile],
   );
   const resolveImageSource = useCallback(
     async (authoredSource: string): Promise<string | null> => {
@@ -464,29 +427,10 @@ export function ScientMarkdownFileSurface(props: ScientMarkdownFileSurfaceProps)
   return (
     <ScientMarkdownWorkspaceSurface
       key={JSON.stringify([props.environmentId, props.cwd, props.relativePath])}
-      source={props.contents}
-      revision={props.revision}
-      authoritativeSnapshot={props.authoritativeSnapshot}
+      persistence={props.persistence}
       ariaLabel={`${props.relativePath} Markdown document`}
       resolvedTheme={props.resolvedTheme}
       workspaceResourceIndexKey={workspaceResourceIndexKey}
-      persist={persist}
-      onPendingChange={(pending) => props.onPendingChange(props.relativePath, pending)}
-      onDraftSourceChange={(source) =>
-        setProjectFileQueryData(props.environmentId, props.cwd, props.relativePath, source)
-      }
-      onSaveConfirmed={(source, revision) => {
-        confirmProjectFileQueryData(
-          props.environmentId,
-          props.cwd,
-          props.relativePath,
-          source,
-          revision,
-        );
-        props.onSaveConfirmed(props.relativePath, source, revision);
-      }}
-      onSaveFailure={(error) => props.onSaveFailure(props.relativePath, error)}
-      onExternalConflict={props.onExternalConflict}
       onLocalHeadingOpened={() => {
         beginLinkOpen();
       }}
@@ -520,10 +464,6 @@ export function ScientMarkdownFileSurface(props: ScientMarkdownFileSurfaceProps)
           description: error instanceof Error ? error.message : "The image upload failed.",
         });
       }}
-      {...(props.saveResolution === undefined ? {} : { saveResolution: props.saveResolution })}
-      {...(props.onSaveResolutionApplied
-        ? { onSaveResolutionApplied: props.onSaveResolutionApplied }
-        : {})}
     />
   );
 }

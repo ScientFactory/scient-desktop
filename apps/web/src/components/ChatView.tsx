@@ -1,4 +1,8 @@
 import {
+  useMarkdownPersistenceGuards,
+  useMarkdownPersistenceNavigationGuards,
+} from "~/scient/markdownEditor/persistence/useMarkdownPersistenceGuards";
+import {
   type AssistantCitation,
   type ApprovalRequestId,
   type ChatFileAttachment,
@@ -2157,9 +2161,27 @@ function ChatViewContent(props: ChatViewProps) {
   const [pendingFileSurfaceIdsByProject, setPendingFileSurfaceIdsByProject] = useState<
     ReadonlyMap<string, ReadonlySet<string>>
   >(() => new Map());
-  const pendingFileSurfaceIds = activeWorkspaceKey
+  const genericPendingFileSurfaceIds = activeWorkspaceKey
     ? (pendingFileSurfaceIdsByProject.get(activeWorkspaceKey) ?? EMPTY_PENDING_FILE_SURFACE_IDS)
     : EMPTY_PENDING_FILE_SURFACE_IDS;
+  const handleMarkdownAttention = useCallback(
+    (surfaceId: string) => {
+      if (activeThreadRef)
+        useRightPanelStore.getState().activateSurface(activeThreadRef, surfaceId);
+    },
+    [activeThreadRef],
+  );
+  const {
+    pendingSurfaceIds: pendingFileSurfaceIds,
+    attentionSurfaceIds: markdownAttentionSurfaceIds,
+    departureOptions: markdownDepartureOptions,
+  } = useMarkdownPersistenceGuards({
+    environmentId: activeThread?.environmentId,
+    cwd: activeWorkspaceKeyRoot,
+    idKind: "surface",
+    genericPendingIds: genericPendingFileSurfaceIds,
+    onAttention: handleMarkdownAttention,
+  });
   const handleFilePendingChange = useCallback(
     (relativePath: string, pending: boolean) => {
       if (!activeWorkspaceKey) return;
@@ -2178,12 +2200,25 @@ function ChatViewContent(props: ChatViewProps) {
     },
     [activeWorkspaceKey],
   );
-  const runAfterPendingSurfaceSave = usePendingSurfaceDeparture(pendingFileSurfaceIds);
+  const runAfterPendingSurfaceSave = usePendingSurfaceDeparture(
+    pendingFileSurfaceIds,
+    markdownDepartureOptions,
+  );
   const runAfterPendingFileSave = useActivePendingSurfaceDeparture({
     activeSurfaceId: activeRightPanelSurface?.id ?? null,
     pendingSurfaceIds: pendingFileSurfaceIds,
+    ...markdownDepartureOptions,
   });
-  usePendingSurfaceNavigationBlocker(pendingFileSurfaceIds);
+  const markdownNavigation = useMarkdownPersistenceNavigationGuards({
+    environmentId: activeThread?.environmentId,
+    cwd: activeWorkspaceKeyRoot,
+    genericPendingByWorkspace: pendingFileSurfaceIdsByProject,
+    onAttention: handleMarkdownAttention,
+  });
+  usePendingSurfaceNavigationBlocker(
+    markdownNavigation.pendingSurfaceIds,
+    markdownNavigation.departureOptions,
+  );
   const configuredPreviewUrls = useMemo(
     () => getConfiguredPreviewUrls(activeProject?.scripts),
     [activeProject?.scripts],
@@ -9018,7 +9053,8 @@ function ChatViewContent(props: ChatViewProps) {
           surfaces={renderedRightPanelSurfaces}
           environmentId={activeThreadRef.environmentId}
           activeSurfaceId={renderedRightPanelSurface?.id ?? null}
-          pendingSurfaceIds={pendingFileSurfaceIds}
+          pendingSurfaceIds={genericPendingFileSurfaceIds}
+          attentionSurfaceIds={markdownAttentionSurfaceIds}
           previewSessions={activePreviewState.sessions}
           desktopByTabId={activePreviewState.desktopByTabId}
           previewRuntimeTabId={resolvePreviewRuntimeTabId}
@@ -9072,7 +9108,8 @@ function ChatViewContent(props: ChatViewProps) {
             surfaces={renderedRightPanelSurfaces}
             environmentId={activeThreadRef.environmentId}
             activeSurfaceId={renderedRightPanelSurface?.id ?? null}
-            pendingSurfaceIds={pendingFileSurfaceIds}
+            pendingSurfaceIds={genericPendingFileSurfaceIds}
+            attentionSurfaceIds={markdownAttentionSurfaceIds}
             previewSessions={activePreviewState.sessions}
             desktopByTabId={activePreviewState.desktopByTabId}
             previewRuntimeTabId={resolvePreviewRuntimeTabId}

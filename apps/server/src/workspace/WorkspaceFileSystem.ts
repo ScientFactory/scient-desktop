@@ -763,6 +763,16 @@ export const make = Effect.gen(function* () {
         }
         if (input.expectedRevision !== undefined) {
           const current = yield* readFile({ cwd: input.cwd, relativePath: input.relativePath });
+          // A lost response can leave the requested bytes on disk with a newer
+          // revision. Converge without replacing that already-published file.
+          // Truncated reads cannot establish equality with the entire file.
+          if (!current.truncated && current.revision === revisionForContents(input.contents)) {
+            yield* workspaceEntries.refresh(input.cwd);
+            return {
+              relativePath: target.relativePath,
+              revision: current.revision,
+            };
+          }
           if (current.truncated || current.revision !== input.expectedRevision) {
             return yield* new WorkspaceFileRevisionConflictError({
               workspaceRoot: input.cwd,

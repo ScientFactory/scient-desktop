@@ -1,6 +1,7 @@
 // @vitest-environment happy-dom
 
 import { EnvironmentId, ThreadId } from "@t3tools/contracts";
+import { MarkdownPersistenceCoordinator } from "@scientfactory/scient-markdown";
 import { act, StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
@@ -132,6 +133,30 @@ describe("ScientMarkdownFileSurface link navigation", () => {
   });
 
   async function mount(relativePath = "notes/current.md") {
+    const coordinator = new MarkdownPersistenceCoordinator({
+      source: "Body",
+      revision: "r0",
+      write: async () => ({ revision: "r1" }),
+      read: async () => ({ source: "Body", revision: "r0" }),
+      classifyFailure: () => "terminal",
+    });
+    const persistence = {
+      target: { environmentId, cwd: "/workspace", relativePath },
+      getSnapshot: coordinator.getSnapshot,
+      subscribe: coordinator.subscribe,
+      change: (source: string, version: number) => coordinator.change(source, version),
+      noteFreshnessHint: (reason?: string) => coordinator.noteFreshnessHint(reason),
+      flushNow: () => coordinator.flushNow(),
+      retry: () => coordinator.retry(),
+      refresh: () => coordinator.refresh(),
+      resolveWithLocal: (revision: string) => coordinator.resolveWithLocal(revision),
+      resolveWithDisk: () => coordinator.resolveWithDisk(),
+      restoreRecovery: () => coordinator.restoreRecovery(),
+      holdForRename: () => coordinator.holdForRename(),
+      registerExternalProjection: () => () => {},
+      resumeExternalUpdates: () => coordinator.resumeExternalUpdates(),
+      release: () => {},
+    };
     const onOpenFile = vi.fn();
     const host = document.createElement("div");
     document.body.append(host);
@@ -145,15 +170,9 @@ describe("ScientMarkdownFileSurface link navigation", () => {
             cwd="/workspace"
             relativePath={relativePath}
             threadRef={threadRef}
-            contents="Body"
-            revision="r0"
+            persistence={persistence}
             resolvedTheme="light"
-            authoritativeSnapshot={{ source: "Body", revision: "r0" }}
             onOpenFile={onOpenFile}
-            onPendingChange={vi.fn()}
-            onSaveConfirmed={vi.fn()}
-            onSaveFailure={vi.fn()}
-            onExternalConflict={vi.fn()}
           />
         </StrictMode>,
       ),

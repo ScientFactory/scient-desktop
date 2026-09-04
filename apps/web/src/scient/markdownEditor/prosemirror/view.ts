@@ -1,4 +1,8 @@
-import type { MarkdownDocumentMode, MarkdownSaveIntent } from "@scientfactory/scient-markdown";
+import type {
+  MarkdownDocumentMode,
+  MarkdownSaveIntent,
+  MarkdownExternalUpdate,
+} from "@scientfactory/scient-markdown";
 import { markdownLinkAtPosition, selectedMarkdownLink } from "./links";
 import { closeHistory, redoDepth, undoDepth } from "prosemirror-history";
 import type { Node as ProseMirrorNode } from "prosemirror-model";
@@ -448,6 +452,30 @@ export class ScientMarkdownEditorView {
 
   confirmSave(intent: MarkdownSaveIntent, revision: string): void {
     this.session.confirmSave(intent, revision);
+  }
+
+  synchronizePersistence(snapshot: ScientProseMirrorSession["session"]): void {
+    if (!this.session.synchronizePersistence(snapshot)) return;
+    this.invalidateImageEditing();
+    this.editorView?.updateState(this.session.state);
+    this.refreshImageContexts();
+    this.refreshFootnoteNodeViews();
+    this.syncViewProps();
+    this.publishSnapshot(false);
+  }
+
+  prepareExternalUpdate(update: MarkdownExternalUpdate): (() => void) | "defer" | null {
+    if (this.editorView?.composing) return "defer";
+    const apply = this.session.prepareExternalUpdate(update);
+    if (!apply) return null;
+    return () => {
+      apply();
+      this.editorView?.updateState(this.session.state);
+      this.refreshImageContexts();
+      this.refreshFootnoteNodeViews();
+      this.syncViewProps();
+      this.publishSnapshot(false);
+    };
   }
 
   /** A save intent for the current draft against the current baseline revision. */

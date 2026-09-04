@@ -11,6 +11,7 @@ import {
   type MarkdownDocumentMode,
   type MarkdownDocumentSession,
   type MarkdownSaveIntent,
+  type MarkdownExternalUpdate,
 } from "@scientfactory/scient-markdown";
 import type { Node as ProseMirrorNode } from "prosemirror-model";
 import type { Transaction } from "prosemirror-state";
@@ -27,6 +28,7 @@ import { selectionOutsideNode } from "./safeSelection";
 import { buildScientMarkdownPlugins } from "./plugins";
 import { findScientMarkdownReferenceDefinition } from "./referenceLinks";
 import { scientMarkdownParser } from "./schema";
+import { prepareScientExternalProjection } from "./externalProjection";
 
 export type ScientMarkdownTransactionOrigin = "user" | "external" | "system";
 
@@ -282,6 +284,35 @@ export class ScientProseMirrorSession {
     // Persistence changes the CAS baseline, not the projection's source
     // identities. Keep the ledger paired with the document it actually parsed;
     // this also preserves undo history and newer in-flight edits.
+  }
+
+  /** Persistence owns document truth; metadata-only acknowledgements preserve the editor state. */
+  prepareExternalUpdate(update: MarkdownExternalUpdate): (() => void) | null {
+    if (this.documentSession.draftSource !== update.previousSource) return null;
+    const before = this.editorState;
+    const prepared = prepareScientExternalProjection(before, this.projectedBlockRanges, update);
+    if (!prepared) return null;
+    return () => {
+      if (this.editorState !== before) throw new Error("External rich update became stale");
+      this.editorState = prepared.state;
+      this.projection = prepared.projection;
+      this.projectedBlockRanges = blockRanges(prepared.projection);
+      this.documentSession = {
+        ...this.documentSession,
+        draftSource: update.source,
+        editVersion: update.editVersion,
+      };
+    };
+  }
+
+  synchronizePersistence(snapshot: MarkdownDocumentSession): boolean {
+    const sourceChanged = snapshot.draftSource !== this.documentSession.draftSource;
+    this.documentSession = { ...snapshot, mode: this.documentSession.mode };
+    if (!sourceChanged) return false;
+    this.projection = createScientMarkdownProjection(snapshot.draftSource);
+    this.projectedBlockRanges = blockRanges(this.projection);
+    this.editorState = createEditorState(this.projection.document, this.editorState.plugins);
+    return true;
   }
 
   /** A save intent for the current draft against the current baseline revision. */

@@ -1,5 +1,5 @@
 import { useBlocker } from "@tanstack/react-router";
-import { useCallback, useEffect, useRef } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef } from "react";
 
 import { toastManager } from "~/components/ui/toast";
 
@@ -27,40 +27,128 @@ interface PendingSurfaceDeparture {
   readonly run: () => void;
 }
 
+export interface PendingSurfaceDepartureOptions {
+  readonly quietSurfaceIds?: ReadonlySet<string>;
+  readonly attentionSurfaceIds?: ReadonlySet<string>;
+  /** Read synchronous persistence truth before React has committed its snapshot. */
+  readonly getPendingSurfaceIds?: () => ReadonlySet<string>;
+  readonly getAttentionSurfaceIds?: () => ReadonlySet<string>;
+  readonly onFlush?: (surfaceIds: ReadonlyArray<string>) => void;
+  readonly onAttention?: (surfaceId: string) => void;
+}
+
+const EMPTY_OPTIONS: PendingSurfaceDepartureOptions = {};
+
 /**
  * Defers the latest requested action until every affected file surface has
- * confirmed its serial save. A failed or conflicted save stays pending, so the
- * action resumes only after the visible recovery flow succeeds or discards it.
+ * confirmed its serial save. A verified attention state cancels the request;
+ * resolving a conflict later must not unexpectedly close or navigate away.
  */
-export function usePendingSurfaceDeparture(pendingSurfaceIds: ReadonlySet<string>) {
+export function usePendingSurfaceDeparture(
+  pendingSurfaceIds: ReadonlySet<string>,
+  options: PendingSurfaceDepartureOptions = EMPTY_OPTIONS,
+) {
   const departureRef = useRef<PendingSurfaceDeparture | null>(null);
   const pendingSurfaceIdsRef = useRef(pendingSurfaceIds);
-  pendingSurfaceIdsRef.current = pendingSurfaceIds;
+  const optionsRef = useRef(options);
+  const noticeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const noticeIdRef = useRef<string | null>(null);
+  useLayoutEffect(() => {
+    pendingSurfaceIdsRef.current = pendingSurfaceIds;
+    optionsRef.current = options;
+  }, [pendingSurfaceIds, options]);
 
-  const runAfterPendingSave = useCallback((surfaceIds: ReadonlyArray<string>, run: () => void) => {
-    if (!pendingSurfaceBlocksClose(surfaceIds, pendingSurfaceIdsRef.current)) {
-      departureRef.current = null;
-      run();
-      return true;
-    }
-    departureRef.current = { surfaceIds: [...surfaceIds], run };
-    toastManager.add({
-      type: "warning",
-      title: "Finishing the file save",
-      description:
-        "Scient will continue automatically when the file is safely saved. Resolve the file notice if saving cannot finish.",
-    });
-    return false;
+  const clearNotice = useCallback(() => {
+    if (noticeTimerRef.current !== null) clearTimeout(noticeTimerRef.current);
+    noticeTimerRef.current = null;
+    if (noticeIdRef.current !== null) toastManager.close(noticeIdRef.current);
+    noticeIdRef.current = null;
   }, []);
 
+  const settleDeparture = useCallback(
+    (
+      pendingSnapshot = pendingSurfaceIdsRef.current,
+      attentionSnapshot = optionsRef.current.attentionSurfaceIds,
+    ) => {
+      const departure = departureRef.current;
+      if (departure === null) return;
+      const options = optionsRef.current;
+      const pending = options.getPendingSurfaceIds?.() ?? pendingSnapshot;
+      const attention = options.getAttentionSurfaceIds?.() ?? attentionSnapshot;
+      // A clean refresh problem stays visible but owns no unpublished bytes.
+      // Only attention on a still-pending file may cancel the requested action.
+      const attentionId = departure.surfaceIds.find((id) => pending.has(id) && attention?.has(id));
+      if (attentionId !== undefined) {
+        departureRef.current = null;
+        clearNotice();
+        options.onAttention?.(attentionId);
+        return;
+      }
+      if (pendingSurfaceBlocksClose(departure.surfaceIds, pending)) return;
+      departureRef.current = null;
+      clearNotice();
+      departure.run();
+    },
+    [clearNotice],
+  );
+
+  const runAfterPendingSave = useCallback(
+    (surfaceIds: ReadonlyArray<string>, run: () => void) => {
+      clearNotice();
+      const options = optionsRef.current;
+      const pending = options.getPendingSurfaceIds?.() ?? pendingSurfaceIdsRef.current;
+      let departed = false;
+      departureRef.current = {
+        surfaceIds: [...surfaceIds],
+        run: () => {
+          departed = true;
+          run();
+        },
+      };
+      settleDeparture();
+      if (departureRef.current === null) return departed;
+
+      options.onFlush?.(surfaceIds);
+      settleDeparture();
+      if (departureRef.current === null) return departed;
+      const quiet = surfaceIds
+        .filter((id) => pending.has(id))
+        .every((id) => options.quietSurfaceIds?.has(id));
+      if (quiet) {
+        noticeTimerRef.current = setTimeout(() => {
+          noticeTimerRef.current = null;
+          settleDeparture();
+          if (departureRef.current === null) return;
+          noticeIdRef.current = toastManager.add({
+            type: "info",
+            title: "Finishing your changes",
+            description: "Scient will continue when your changes are on disk.",
+          });
+        }, 1_000);
+      } else {
+        noticeIdRef.current = toastManager.add({
+          type: "warning",
+          title: "Finishing the file save",
+          description:
+            "Scient will continue automatically when the file is safely saved. Resolve the file notice if saving cannot finish.",
+        });
+      }
+      return false;
+    },
+    [clearNotice, settleDeparture],
+  );
+
   useEffect(() => {
-    const departure = departureRef.current;
-    if (departure === null || pendingSurfaceBlocksClose(departure.surfaceIds, pendingSurfaceIds)) {
-      return;
-    }
-    departureRef.current = null;
-    departure.run();
-  }, [pendingSurfaceIds]);
+    settleDeparture(pendingSurfaceIds, options.attentionSurfaceIds);
+  }, [pendingSurfaceIds, options.attentionSurfaceIds, settleDeparture]);
+
+  useEffect(
+    () => () => {
+      departureRef.current = null;
+      clearNotice();
+    },
+    [clearNotice],
+  );
 
   return runAfterPendingSave;
 }
@@ -69,25 +157,30 @@ export function usePendingSurfaceDeparture(pendingSurfaceIds: ReadonlySet<string
  * Adapts the generic departure lane to a tab-style surface switch. Keeping the
  * policy here leaves the inherited chat shell responsible only for composition.
  */
-export function useActivePendingSurfaceDeparture(input: {
-  readonly activeSurfaceId: string | null;
-  readonly pendingSurfaceIds: ReadonlySet<string>;
-}) {
-  const runAfterPendingSave = usePendingSurfaceDeparture(input.pendingSurfaceIds);
+export function useActivePendingSurfaceDeparture(
+  input: PendingSurfaceDepartureOptions & {
+    readonly activeSurfaceId: string | null;
+    readonly pendingSurfaceIds: ReadonlySet<string>;
+  },
+) {
+  const runAfterPendingSave = usePendingSurfaceDeparture(input.pendingSurfaceIds, input);
   const inputRef = useRef(input);
-  inputRef.current = input;
+  useLayoutEffect(() => {
+    inputRef.current = input;
+  }, [input]);
   return useCallback(
     (targetSurfaceId: string | null, run: () => void) => {
       const input = inputRef.current;
+      const pendingSurfaceIds = input.getPendingSurfaceIds?.() ?? input.pendingSurfaceIds;
       const blockedSurfaceIds =
         targetSurfaceId === null
-          ? input.activeSurfaceId !== null && input.pendingSurfaceIds.has(input.activeSurfaceId)
+          ? input.activeSurfaceId !== null && pendingSurfaceIds.has(input.activeSurfaceId)
             ? [input.activeSurfaceId]
             : []
           : pendingSurfaceBlocksActivation({
                 activeSurfaceId: input.activeSurfaceId,
                 targetSurfaceId,
-                pendingSurfaceIds: input.pendingSurfaceIds,
+                pendingSurfaceIds,
               })
             ? [input.activeSurfaceId!]
             : [];
@@ -98,32 +191,56 @@ export function useActivePendingSurfaceDeparture(input: {
 }
 
 /** Holds route and window departure while any file surface still owns local bytes. */
-export function usePendingSurfaceNavigationBlocker(pendingSurfaceIds: ReadonlySet<string>): void {
+export function usePendingSurfaceNavigationBlocker(
+  pendingSurfaceIds: ReadonlySet<string>,
+  options: PendingSurfaceDepartureOptions = EMPTY_OPTIONS,
+): void {
   const notifiedRef = useRef(false);
+  const optionsRef = useRef(options);
+  const pendingRef = useRef(pendingSurfaceIds);
+  useLayoutEffect(() => {
+    optionsRef.current = options;
+    pendingRef.current = pendingSurfaceIds;
+  }, [options, pendingSurfaceIds]);
+  const readPending = useCallback(
+    () => optionsRef.current.getPendingSurfaceIds?.() ?? pendingRef.current,
+    [],
+  );
   const navigation = useBlocker({
     shouldBlockFn: ({ current, next }) =>
-      pendingSurfaceIds.size > 0 && current.pathname !== next.pathname,
-    enableBeforeUnload: () => pendingSurfaceIds.size > 0,
+      readPending().size > 0 && current.pathname !== next.pathname,
+    enableBeforeUnload: () => readPending().size > 0,
     withResolver: true,
+  });
+  const navigationRef = useRef(navigation);
+  useLayoutEffect(() => {
+    navigationRef.current = navigation;
+  }, [navigation]);
+  const depart = usePendingSurfaceDeparture(pendingSurfaceIds, {
+    ...options,
+    onAttention: (surfaceId) => {
+      const current = navigationRef.current;
+      if (current.status === "blocked") current.reset();
+      optionsRef.current.onAttention?.(surfaceId);
+    },
   });
 
   useEffect(() => {
     if (navigation.status !== "blocked") {
+      if (notifiedRef.current) depart([], () => undefined);
       notifiedRef.current = false;
-      return;
-    }
-    if (pendingSurfaceIds.size === 0) {
-      notifiedRef.current = false;
-      navigation.proceed();
       return;
     }
     if (notifiedRef.current) return;
     notifiedRef.current = true;
-    toastManager.add({
-      type: "warning",
-      title: "Finishing the file save",
-      description:
-        "Scient will open the next page automatically when the file is safely saved. Resolve the file notice if saving cannot finish.",
-    });
-  }, [navigation, pendingSurfaceIds]);
+    const finish = () => {
+      const current = navigationRef.current;
+      if (current.status !== "blocked") return;
+      // A second surface may become dirty while this departure is waiting.
+      const pending = readPending();
+      if (pending.size > 0) depart([...pending], finish);
+      else current.proceed();
+    };
+    depart([...readPending()], finish);
+  }, [navigation, depart, readPending]);
 }
