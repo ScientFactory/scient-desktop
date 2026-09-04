@@ -118,11 +118,11 @@ scanner never guesses that a newline ended terminal metadata and exposes a URL f
 | Action             | Exact meaning                                                                                                                                                                    |
 | ------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Enable             | Changes only the provider's enabled setting. It does not install, sign in, or open a browser.                                                                                    |
-| Install            | Adds and selects a qualified app-private runtime after confirmation, verification, smoke testing, and atomic activation.                                                         |
+| Install            | One explicit click runs preflight, then adds and selects a qualified app-private runtime through verification, smoke testing, and atomic activation.                             |
 | Use Scient-managed | Runs the same qualified install path while a healthy default system runtime remains active. The system installation is not removed or modified.                                  |
-| Update             | Replaces an active Scient-managed runtime with a strictly newer qualified stable release through the safe replacement path.                                                      |
+| Update             | One explicit click runs preflight, then replaces an active Scient-managed runtime with a strictly newer qualified stable release through the safe replacement path.              |
 | Repair             | Refreshes the qualified catalog and installs/restores its latest release, even at the current version. A compatible newer installed receipt is the offline floor.                |
-| Remove             | Deletes only Scient's app-private runtime. It preserves provider credentials, custom paths, and system installations, then re-probes the provider.                               |
+| Remove             | After confirmation, deletes only Scient's app-private runtime. It preserves provider credentials, custom paths, and system installations, then re-probes the provider.           |
 | Sign in            | Starts one official provider-owned account flow and verifies the resulting provider state before reporting success.                                                              |
 | Submit code        | Sends a bounded transient code only to the matching live provider operation when that operation explicitly advertises support. It is not persisted.                              |
 | Cancel             | Requests cancellation of the exact live operation. Final connection verification and committed runtime finalization finish authoritatively instead of being relabeled cancelled. |
@@ -175,9 +175,10 @@ catalog service may fetch a newer qualified catalog from the generated
 `automation/managed-runtime-catalog-v1` branch when provider update checks are enabled. It starts an
 immediate non-blocking refresh, revalidates successful results at most hourly using HTTP ETags, and
 retries a failed fetch after five minutes. Re-enabling update checks also triggers a refresh. Memory
-and an atomic disk cache keep provider status available while offline. Opening an Install or Update
-confirmation is the one user action that may wait for the same TTL-gated refresh so the plan shows the
-release it will actually install.
+and an atomic disk cache keep provider status available while offline. An explicit Install, Update,
+or Repair click may wait for the same TTL-gated refresh. The client then starts the operation with
+the preflight plan's exact catalog revision; no second confirmation or technical plan screen is needed.
+Opening Manage, selecting a provider, and enabling one never implicitly start installation.
 
 When a qualified provider entry changes, Scient recomputes only that provider's volatile managed
 runtime summary. It does not reload the provider, interrupt sessions, change authentication, select a
@@ -211,7 +212,7 @@ recovery procedure are documented in the
 [managed provider runtime update runbook](../operations/managed-provider-runtime-updates.md).
 
 Promotion never installs anything on a user's computer. It only makes the existing **Update** action
-available. The user still reviews the exact plan and starts the mutation; the previous runtime remains
+available. Only the user's explicit action starts the mutation after server preflight; the previous runtime remains
 active until local verification and activation succeed.
 
 ### Download and activation boundary
@@ -327,6 +328,12 @@ presentation rules; provider views retain their real authentication and recovery
 
 - **Settings** is the complete management surface. It can show runtime source, diagnostics, managed
   maintenance, system-to-managed handoff, account actions, and recovery.
+- Settings Install and managed Update run the existing plan/start command directly from the click,
+  without opening a dialog. The same button shows concise server-derived progress and remains
+  clickable for details. Percentages represent download bytes only and disappear after download.
+  A failed runtime operation opens existing recovery controls, not an implicit retry. Preflight/start
+  errors retain the existing toast. This presentation does not alter backend retry, failure, or
+  rollback behavior; sign-in and external updater flows retain their existing behavior.
 - **Composer** is the fastest safe setup path. An unavailable selected provider can show Enable,
   Install, or Sign in in place of its model list. Full maintenance remains in Manage.
 - A disabled provider opens one shared disabled state. A permitted Enable action keeps the surface

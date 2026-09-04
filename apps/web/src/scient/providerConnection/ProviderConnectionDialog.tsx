@@ -218,18 +218,12 @@ function AssistedProviderConnectionDialog(props: ProviderConnectionDialogContent
     (runtime.actions.length > 0 || runtime.operation !== null);
   const hasQualifiedSystemManagedAction =
     runtime?.source === "system" && runtime.actions.includes("install");
-  const cursorInlineInstallIsRunning =
-    isCursor &&
-    props.initialRuntimeAction === "install" &&
-    isRuntimeWorking &&
-    runtime?.operation?.action === "install";
   const hasRuntimeMaintenanceActions =
     runtime?.actions.some((action) => action !== "install") ?? false;
   const showManagedRuntime =
     runtime !== undefined &&
-    !cursorInlineInstallIsRunning &&
     (isCursor
-      ? isConnected || hasRuntimeMaintenanceActions
+      ? isConnected || props.initialRuntimeAction !== undefined || hasRuntimeMaintenanceActions
       : isConnected ||
         props.initialRuntimeAction !== undefined ||
         hasActionableManagedRuntime ||

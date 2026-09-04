@@ -84,8 +84,9 @@ When one provider entry changes, Scient recomputes only that provider's managed
 runtime summary. It does not reload provider processes, interrupt sessions,
 change credentials, switch runtime sources, or install anything. If the active
 source is an older healthy Scient-managed runtime, the existing **Update** action
-appears. The user still opens the plan and confirms the transaction, and the
-local machine independently repeats integrity, package, smoke, and atomic
+appears. Clicking **Install** or **Update** runs the existing server preflight and starts
+the transaction with that plan's exact catalog revision, without a second confirmation.
+The local machine independently repeats integrity, package, smoke, and atomic
 activation checks. **Repair** refreshes the same catalog and selects the latest known
 qualified release, including when that version is already installed. If the catalog
 cannot be refreshed, the last good catalog/bundle is used; a compatible newer installed

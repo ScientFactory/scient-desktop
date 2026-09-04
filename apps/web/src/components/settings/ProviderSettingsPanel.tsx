@@ -870,10 +870,7 @@ export function EnvironmentProviderSettings({
                   instanceId: row.instanceId,
                   ...(requestedRuntimeAction !== undefined
                     ? { initialRuntimeAction: requestedRuntimeAction }
-                    : liveProvider?.installed === false &&
-                        liveProvider.connection?.runtime?.actions.includes("install")
-                      ? { initialRuntimeAction: "install" as const }
-                      : {}),
+                    : {}),
                 })
             : undefined
         }

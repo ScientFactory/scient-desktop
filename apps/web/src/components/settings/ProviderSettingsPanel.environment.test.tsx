@@ -260,37 +260,42 @@ describe("EnvironmentProviderSettings routing", () => {
     });
   });
 
-  it("opens a missing provider directly on its reviewed installation plan", () => {
-    atoms.providers = [missingAntigravityProvider()];
-    let panel = renderPanel();
-    const providerRow = visitElements(
-      panel,
-      (element) => element.props.instanceId === antigravityId && element.props.mode === "list",
-    );
-    expect(providerRow).not.toBeNull();
-    (providerRow?.props.onSelect as (() => void) | undefined)?.();
-
-    panel = renderPanel();
-    const providerCard = visitElements(
-      panel,
-      (element) =>
-        element.props.instanceId === antigravityId &&
-        typeof element.props.onManageConnection === "function",
-    );
-    expect(providerCard).not.toBeNull();
-
-    (providerCard?.props.onManageConnection as (() => void) | undefined)?.();
-
-    const updatedPanel = renderPanel();
-    const connectionDialog = visitElements(updatedPanel, (element) => {
-      const dialogProvider = element.props.provider as ServerProvider | undefined;
-      return (
-        dialogProvider?.instanceId === antigravityId &&
-        element.props.initialRuntimeAction === "install"
+  it.each([undefined, "install"] as const)(
+    "opens a missing provider with only the requested action (%s)",
+    (action) => {
+      atoms.providers = [missingAntigravityProvider()];
+      let panel = renderPanel();
+      const providerRow = visitElements(
+        panel,
+        (element) => element.props.instanceId === antigravityId && element.props.mode === "list",
       );
-    });
-    expect(connectionDialog).not.toBeNull();
-  });
+      expect(providerRow).not.toBeNull();
+      (providerRow?.props.onSelect as (() => void) | undefined)?.();
+
+      panel = renderPanel();
+      const providerCard = visitElements(
+        panel,
+        (element) =>
+          element.props.instanceId === antigravityId &&
+          typeof element.props.onManageConnection === "function",
+      );
+      expect(providerCard).not.toBeNull();
+
+      (providerCard?.props.onManageConnection as ((action?: "install") => void) | undefined)?.(
+        action,
+      );
+
+      const updatedPanel = renderPanel();
+      const connectionDialog = visitElements(updatedPanel, (element) => {
+        const dialogProvider = element.props.provider as ServerProvider | undefined;
+        return (
+          dialogProvider?.instanceId === antigravityId &&
+          element.props.initialRuntimeAction === action
+        );
+      });
+      expect(connectionDialog).not.toBeNull();
+    },
+  );
 
   it("forwards a requested runtime action into the lifecycle dialog", () => {
     atoms.providers = [provider()];

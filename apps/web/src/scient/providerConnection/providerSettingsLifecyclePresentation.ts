@@ -35,6 +35,8 @@ export interface ProviderSettingsLifecyclePresentation {
   readonly actionKind: ProviderSettingsLifecycleActionKind | null;
   readonly runtimeAction: ProviderManagedRuntimeAction | null;
   readonly busy: boolean;
+  /** Download-only progress; not an estimate of the whole operation. */
+  readonly downloadPercent?: number;
 }
 
 function action(input: {
@@ -54,6 +56,13 @@ const NO_ACTION = {
   actionLabel: null,
   runtimeAction: null,
 } as const;
+
+const RUNTIME_ACTION_LABELS = {
+  install: "Installing",
+  update: "Updating",
+  repair: "Repairing",
+  remove: "Removing",
+} satisfies Record<ProviderManagedRuntimeAction, string>;
 
 export function providerSettingsLifecyclePresentation(
   provider: ServerProvider | undefined,
@@ -89,26 +98,36 @@ export function providerSettingsLifecyclePresentation(
 
   const runtimeOperation = provider.connection?.runtime?.operation ?? null;
   if (runtimeOperation?.status === "failed") {
-    const retryableAction = provider.connection?.runtime?.actions.includes(runtimeOperation.action)
-      ? runtimeOperation.action
-      : null;
     return {
       kind: "failed",
       statusLabel: "Setup failed",
       detail: runtimeOperation.message,
-      ...(retryableAction
-        ? action({ kind: "runtime", label: "Retry", runtimeAction: retryableAction })
-        : action({ kind: "manage", label: "Manage" })),
+      ...action({ kind: "manage", label: "Failed" }),
       busy: false,
     };
   }
   if (runtimeOperation && isActiveProviderRuntimeOperation(runtimeOperation)) {
+    const label =
+      runtimeOperation.status === "verifying" || runtimeOperation.status === "testing"
+        ? "Verifying"
+        : RUNTIME_ACTION_LABELS[runtimeOperation.action];
+    const { downloadedBytes, totalBytes } = runtimeOperation;
+    const downloadPercent =
+      runtimeOperation.status === "downloading" &&
+      downloadedBytes !== undefined &&
+      totalBytes !== undefined &&
+      Number.isFinite(downloadedBytes) &&
+      Number.isFinite(totalBytes) &&
+      totalBytes > 0
+        ? Math.max(0, Math.min(100, Math.floor((downloadedBytes / totalBytes) * 100)))
+        : undefined;
     return {
       kind: "installing",
-      statusLabel: runtimeOperation.status === "removing" ? "Removing" : "Installing",
+      statusLabel: label,
       detail: runtimeOperation.message,
-      ...action({ kind: "continue", label: "Continue" }),
+      ...action({ kind: "continue", label }),
       busy: true,
+      ...(downloadPercent !== undefined ? { downloadPercent } : {}),
     };
   }
   if (
