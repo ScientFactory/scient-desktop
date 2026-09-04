@@ -28,6 +28,8 @@
 .scient-markdown-editor-dock {
   position: relative;
   z-index: 20;
+  /* Trim paint at the pane divider without changing control positions or sizing. */
+  clip-path: inset(0 0 0 1px);
   display: flex;
   max-width: 100%;
   flex: 0 0 auto;
