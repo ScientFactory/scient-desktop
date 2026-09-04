@@ -1,10 +1,6 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import {
-  isSteerShortcut,
-  resolveComposerSendDisposition,
-  shouldDispatchNextQueuedMessage,
-} from "./disposition";
+import { isSteerShortcut, resolveComposerSendDisposition } from "./disposition";
 
 describe("resolveComposerSendDisposition", () => {
   it("sends immediately when the thread is idle", () => {
@@ -36,31 +32,24 @@ describe("isSteerShortcut", () => {
   });
 });
 
-describe("shouldDispatchNextQueuedMessage", () => {
-  it("advances the first queued message after the active turn settles", () => {
+describe("composer recovery after Stop", () => {
+  it("starts an ordinary message while stopped messages wait, then queues while the new answer runs", () => {
+    const recovery = { hasQueuedItems: true, awaitingCompletion: true, steerRequested: false };
+    expect(resolveComposerSendDisposition({ ...recovery, threadBusy: false })).toBe("send");
+    expect(resolveComposerSendDisposition({ ...recovery, threadBusy: true })).toBe("queue");
     expect(
-      shouldDispatchNextQueuedMessage({
-        threadReady: true,
-        hasQueuedItem: true,
-        dispatchBlocked: false,
-      }),
-    ).toBe(true);
+      resolveComposerSendDisposition({ ...recovery, threadBusy: false, awaitingCompletion: false }),
+    ).toBe("queue");
   });
-
-  it("does not overlap an active turn or a previous dispatch", () => {
+  it("requeues an edited item in place even while stopped or with the steer modifier", () => {
     expect(
-      shouldDispatchNextQueuedMessage({
-        threadReady: false,
-        hasQueuedItem: true,
-        dispatchBlocked: false,
+      resolveComposerSendDisposition({
+        threadBusy: false,
+        hasQueuedItems: true,
+        awaitingCompletion: true,
+        editingQueuedItem: true,
+        steerRequested: true,
       }),
-    ).toBe(false);
-    expect(
-      shouldDispatchNextQueuedMessage({
-        threadReady: true,
-        hasQueuedItem: true,
-        dispatchBlocked: true,
-      }),
-    ).toBe(false);
+    ).toBe("queue");
   });
 });

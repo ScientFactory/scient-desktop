@@ -128,6 +128,7 @@ import {
 import {
   ScientThreadQueueEnqueueRequest,
   ScientThreadQueueListRequest,
+  ScientThreadQueueControlRequest,
   ScientThreadQueueRemoveRequest,
   ScientThreadQueueReorderRequest,
   ScientThreadQueueSnapshot,
@@ -1012,45 +1013,63 @@ export class EnvironmentScientAnalyticsHttpApi extends HttpApiGroup.make("scient
 // SCIENT-FORK:START — Scient thread queue group. Appended after inherited
 // groups like the other Scient groups so upstream additions never collide
 // with this class or the composition seam below.
+export class ScientThreadQueueOperationError extends Schema.TaggedErrorClass<ScientThreadQueueOperationError>()(
+  "ScientThreadQueueOperationError",
+  { message: Schema.String },
+  { httpApiStatus: 409 },
+) {
+  [HttpServerRespondable.symbol]() {
+    return HttpServerResponse.schemaJson(ScientThreadQueueOperationError)(this, { status: 409 });
+  }
+}
+
 export class EnvironmentScientThreadQueueHttpApi extends HttpApiGroup.make("scientThreadQueue")
   .add(
-    HttpApiEndpoint.post("list", "/api/scient/thread-queue/list", {
+    HttpApiEndpoint.post("list", "/api/scient/thread-queue/v2/list", {
       headers: OptionalBearerHeaders,
       payload: ScientThreadQueueListRequest,
       success: ScientThreadQueueSnapshot,
-      error: EnvironmentHttpCommonError,
+      error: [EnvironmentHttpCommonError, ScientThreadQueueOperationError],
     }).middleware(EnvironmentAuthenticatedAuth),
   )
   .add(
-    HttpApiEndpoint.post("enqueue", "/api/scient/thread-queue/enqueue", {
+    HttpApiEndpoint.post("enqueue", "/api/scient/thread-queue/v2/enqueue", {
       headers: OptionalBearerHeaders,
       payload: ScientThreadQueueEnqueueRequest,
       success: ScientThreadQueueSnapshot,
-      error: EnvironmentHttpCommonError,
+      error: [EnvironmentHttpCommonError, ScientThreadQueueOperationError],
     }).middleware(EnvironmentAuthenticatedAuth),
   )
   .add(
-    HttpApiEndpoint.post("update", "/api/scient/thread-queue/update", {
+    HttpApiEndpoint.post("update", "/api/scient/thread-queue/v2/update", {
       headers: OptionalBearerHeaders,
       payload: ScientThreadQueueUpdateRequest,
       success: ScientThreadQueueSnapshot,
-      error: EnvironmentHttpCommonError,
+      error: [EnvironmentHttpCommonError, ScientThreadQueueOperationError],
     }).middleware(EnvironmentAuthenticatedAuth),
   )
   .add(
-    HttpApiEndpoint.post("remove", "/api/scient/thread-queue/remove", {
+    HttpApiEndpoint.post("remove", "/api/scient/thread-queue/v2/remove", {
       headers: OptionalBearerHeaders,
       payload: ScientThreadQueueRemoveRequest,
       success: ScientThreadQueueSnapshot,
-      error: EnvironmentHttpCommonError,
+      error: [EnvironmentHttpCommonError, ScientThreadQueueOperationError],
     }).middleware(EnvironmentAuthenticatedAuth),
   )
   .add(
-    HttpApiEndpoint.post("reorder", "/api/scient/thread-queue/reorder", {
+    HttpApiEndpoint.post("reorder", "/api/scient/thread-queue/v2/reorder", {
       headers: OptionalBearerHeaders,
       payload: ScientThreadQueueReorderRequest,
       success: ScientThreadQueueSnapshot,
-      error: EnvironmentHttpCommonError,
+      error: [EnvironmentHttpCommonError, ScientThreadQueueOperationError],
+    }).middleware(EnvironmentAuthenticatedAuth),
+  )
+  .add(
+    HttpApiEndpoint.post("control", "/api/scient/thread-queue/v2/control", {
+      headers: OptionalBearerHeaders,
+      payload: ScientThreadQueueControlRequest,
+      success: ScientThreadQueueSnapshot,
+      error: [EnvironmentHttpCommonError, ScientThreadQueueOperationError],
     }).middleware(EnvironmentAuthenticatedAuth),
   ) {}
 // SCIENT-FORK:END

@@ -29,6 +29,7 @@ import * as ManagedRuntime from "effect/ManagedRuntime";
 import * as PubSub from "effect/PubSub";
 import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
+import * as SqlClient from "effect/unstable/sql/SqlClient";
 import { it as effectIt } from "@effect/vitest";
 import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 
@@ -262,7 +263,8 @@ describe("CheckpointReactor", () => {
     | OrchestrationEngineService
     | CheckpointReactor
     | CheckpointStore.CheckpointStore
-    | ProjectionSnapshotQuery,
+    | ProjectionSnapshotQuery
+    | SqlClient.SqlClient,
     unknown
   > | null = null;
   let scope: Scope.Closeable | null = null;
@@ -354,6 +356,9 @@ describe("CheckpointReactor", () => {
     });
 
     const layer = CheckpointReactorLive.pipe(
+      // Merged, not just provided, so tests can read the same queue tables the
+      // reactor writes through its captured SqlClient.
+      Layer.provideMerge(SqlitePersistenceMemory),
       Layer.provideMerge(orchestrationLayer),
       Layer.provideMerge(projectionSnapshotLayer),
       Layer.provideMerge(RuntimeReceiptBusLive),
@@ -467,6 +472,21 @@ describe("CheckpointReactor", () => {
     return {
       engine,
       readModel: () => Effect.runPromise(snapshotQuery.getSnapshot()),
+      readQueueFinalization: (turnId: string) =>
+        runtime!.runPromise(
+          Effect.gen(function* () {
+            const sql = yield* SqlClient.SqlClient;
+            const rows = yield* sql<{
+              readonly checkpoint_done: number;
+              readonly successful: number;
+            }>`
+              SELECT checkpoint_done, successful
+              FROM scient_queue_finalization
+              WHERE turn_id = ${turnId}
+            `;
+            return rows[0];
+          }),
+        ),
       provider,
       cwd,
       drain,
@@ -548,6 +568,40 @@ describe("CheckpointReactor", () => {
         "README.md",
       ),
     ).toBe("v2\n");
+  });
+
+  it("signals the queue checkpoint barrier for an aborted turn", async () => {
+    const harness = await createHarness({ seedFilesystemCheckpoints: false });
+    const createdAt = "2026-01-01T00:00:00.000Z";
+
+    harness.provider.emit({
+      type: "turn.started",
+      eventId: EventId.make("evt-turn-started-aborted-queue"),
+      provider: ProviderDriverKind.make("codex"),
+      createdAt,
+      threadId: ThreadId.make("thread-1"),
+      turnId: asTurnId("turn-abort"),
+    });
+    await waitForGitRefExists(
+      harness.cwd,
+      checkpointRefForThreadTurn(ThreadId.make("thread-1"), 0),
+    );
+
+    harness.provider.emit({
+      type: "turn.aborted",
+      eventId: EventId.make("evt-turn-aborted-queue"),
+      provider: ProviderDriverKind.make("codex"),
+      createdAt,
+      threadId: ThreadId.make("thread-1"),
+      turnId: asTurnId("turn-abort"),
+    });
+    await harness.drain();
+
+    // An aborted turn captures no checkpoint, but the queue barrier still needs
+    // its checkpoint half recorded as unsuccessful or delivery blocks forever.
+    const completion = await harness.readQueueFinalization("turn-abort");
+    expect(completion?.checkpoint_done).toBe(1);
+    expect(completion?.successful).toBe(0);
   });
 
   it("refreshes local git status state on turn completion using the session cwd", async () => {

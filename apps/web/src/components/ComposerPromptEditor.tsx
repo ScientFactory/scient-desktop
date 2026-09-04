@@ -2,7 +2,11 @@ import { LexicalComposer, type InitialConfigType } from "@lexical/react/LexicalC
 import { useLexicalComposerContext } from "@lexical/react/LexicalComposerContext";
 import { ContentEditable } from "@lexical/react/LexicalContentEditable";
 import { LexicalErrorBoundary } from "@lexical/react/LexicalErrorBoundary";
-import { HistoryPlugin } from "@lexical/react/LexicalHistoryPlugin";
+import {
+  HistoryPlugin,
+  createEmptyHistoryState,
+  type HistoryState,
+} from "@lexical/react/LexicalHistoryPlugin";
 import { OnChangePlugin } from "@lexical/react/LexicalOnChangePlugin";
 import { PlainTextPlugin } from "@lexical/react/LexicalPlainTextPlugin";
 import { type ServerProviderSkill } from "@t3tools/contracts";
@@ -900,7 +904,29 @@ export interface ComposerPromptEditorHandle {
   };
 }
 
+type ComposerEditorMemory = {
+  history: HistoryState;
+  state?: EditorState;
+  value?: string;
+  cursor?: number;
+};
+const composerEditorMemories = new Map<string, ComposerEditorMemory>();
+function editorMemory(key: string) {
+  let memory = composerEditorMemories.get(key);
+  if (!memory) {
+    memory = { history: createEmptyHistoryState() };
+    composerEditorMemories.set(key, memory);
+    if (composerEditorMemories.size > 128)
+      composerEditorMemories.delete(composerEditorMemories.keys().next().value!);
+  }
+  return memory;
+}
+export function rememberedComposerCursor(key: string): number | undefined {
+  return composerEditorMemories.get(key)?.cursor;
+}
+
 interface ComposerPromptEditorProps {
+  draftIdentity?: string;
   value: string;
   cursor: number;
   terminalContexts: ReadonlyArray<TerminalContextDraft>;
@@ -1558,6 +1584,7 @@ function ComposerSurroundSelectionPlugin(props: {
 }
 
 function ComposerPromptEditorInner({
+  draftIdentity,
   value,
   cursor,
   terminalContexts,
@@ -1579,6 +1606,27 @@ function ComposerPromptEditorInner({
   editorRef,
 }: ComposerPromptEditorProps) {
   const [editor] = useLexicalComposerContext();
+  const memory = useMemo(
+    () => (draftIdentity ? editorMemory(draftIdentity) : { history: createEmptyHistoryState() }),
+    [draftIdentity],
+  );
+  // Undo entries refer to the editor that created them. Rebind after remount,
+  // retaining the original draft's history without mixing queue-edit history.
+  useLayoutEffect(() => {
+    for (const entry of [
+      ...memory.history.undoStack,
+      ...memory.history.redoStack,
+      ...(memory.history.current ? [memory.history.current] : []),
+    ])
+      entry.editor = editor;
+    return editor.registerUpdateListener(({ editorState }) => {
+      memory.state = editorState;
+      memory.value = editorState.read(() => $getRoot().getTextContent());
+    });
+  }, [editor, memory]);
+  useLayoutEffect(() => {
+    memory.cursor = cursor;
+  }, [memory, cursor]);
   const onChangeRef = useRef(onChange);
   const onVisibleSelectionChangeRef = useRef(onVisibleSelectionChange);
   const initialCursor = clampCollapsedComposerCursor(value, cursor);
@@ -1951,7 +1999,7 @@ function ComposerPromptEditorInner({
           <ComposerInlineTokenBackspacePlugin />
           <ComposerInlineTokenPastePlugin />
           <ComposerChipSelectionPlugin />
-          <HistoryPlugin />
+          <HistoryPlugin externalHistoryState={memory.history} />
         </div>
       </ComposerCitationCommentContext>
     </ComposerTerminalContextActionsContext>
@@ -1959,6 +2007,7 @@ function ComposerPromptEditorInner({
 }
 
 export function ComposerPromptEditor({
+  draftIdentity,
   value,
   cursor,
   terminalContexts,
@@ -1982,8 +2031,13 @@ export function ComposerPromptEditor({
   const initialValueRef = useRef(value);
   const initialTerminalContextsRef = useRef(terminalContexts);
   const initialSkillMetadataRef = useRef(skillMetadataByName(skills));
-  const initialConfig = useMemo<InitialConfigType>(
-    () => ({
+  const initialConfig = useMemo<InitialConfigType>(() => {
+    const memory = draftIdentity ? editorMemory(draftIdentity) : undefined;
+    if (memory && memory.value !== initialValueRef.current) {
+      memory.history = createEmptyHistoryState();
+      delete memory.state;
+    }
+    return {
       namespace: "t3tools-composer-editor",
       editable: true,
       nodes: [
@@ -1992,23 +2046,27 @@ export function ComposerPromptEditor({
         ComposerCitationNode,
         ComposerTerminalContextNode,
       ],
-      editorState: () => {
-        $setComposerEditorPrompt(
-          initialValueRef.current,
-          initialTerminalContextsRef.current,
-          initialSkillMetadataRef.current,
-        );
-      },
+      editorState:
+        (draftIdentity && editorMemory(draftIdentity).value === initialValueRef.current
+          ? editorMemory(draftIdentity).state
+          : undefined) ??
+        (() => {
+          $setComposerEditorPrompt(
+            initialValueRef.current,
+            initialTerminalContextsRef.current,
+            initialSkillMetadataRef.current,
+          );
+        }),
       onError: (error) => {
         throw error;
       },
-    }),
-    [],
-  );
+    };
+  }, [draftIdentity]);
 
   return (
     <LexicalComposer key={COMPOSER_EDITOR_HMR_KEY} initialConfig={initialConfig}>
       <ComposerPromptEditorInner
+        {...(draftIdentity ? { draftIdentity } : {})}
         value={value}
         cursor={cursor}
         terminalContexts={terminalContexts}

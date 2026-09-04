@@ -1,3 +1,5 @@
+import * as SqlClient from "effect/unstable/sql/SqlClient";
+import { finalizeQueueTurn } from "../../scient/threadQueue/Ledger.ts";
 import {
   ApprovalRequestId,
   type AssistantDeliveryMode,
@@ -999,6 +1001,7 @@ export function runtimeEventToActivities(
 }
 
 const make = Effect.gen(function* () {
+  const queueSql = yield* SqlClient.SqlClient;
   const threadBackgroundLiveness = yield* ThreadBackgroundLivenessService;
   const threadPlanProgress = yield* ThreadPlanProgressService;
   const crypto = yield* Crypto.Crypto;
@@ -2485,6 +2488,14 @@ const make = Effect.gen(function* () {
         }
       }
 
+      if (event.type === "turn.completed" && shouldApplyThreadLifecycle && eventTurnId) {
+        yield* finalizeQueueTurn(
+          thread.id,
+          eventTurnId,
+          normalizeRuntimeTurnState(event.payload.state) === "completed",
+        ).pipe(Effect.provideService(SqlClient.SqlClient, queueSql), Effect.orDie);
+      }
+
       if (event.type === "turn.aborted" && eventTurnId) {
         yield* flushGeneratedImagesForTurn({
           event,
@@ -2493,6 +2504,13 @@ const make = Effect.gen(function* () {
           createdAt: now,
           commandTag: "assistant-generated-image-turn-aborted",
         });
+        // An aborted turn never produces a successful answer. Release the
+        // barrier as unsuccessful so the queue waits for recovery instead of
+        // staying blocked with no terminal signal.
+        yield* finalizeQueueTurn(thread.id, eventTurnId, false).pipe(
+          Effect.provideService(SqlClient.SqlClient, queueSql),
+          Effect.orDie,
+        );
       }
 
       if (event.type === "session.exited") {

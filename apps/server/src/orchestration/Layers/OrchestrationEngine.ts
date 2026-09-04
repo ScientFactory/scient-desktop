@@ -1,3 +1,4 @@
+import { observeQueueCommand } from "../../scient/threadQueue/Ledger.ts";
 import type {
   OrchestrationClientOrigin,
   OrchestrationEvent,
@@ -298,6 +299,24 @@ const makeOrchestrationEngine = Effect.gen(function* () {
         const committedCommand = yield* sql
           .withTransaction(
             Effect.gen(function* () {
+              yield* observeQueueCommand(
+                envelope.command,
+                "threadId" in envelope.command
+                  ? commandReadModel.threads.find(
+                      (thread) =>
+                        "threadId" in envelope.command && thread.id === envelope.command.threadId,
+                    )
+                  : undefined,
+              ).pipe(
+                Effect.provideService(SqlClient.SqlClient, sql),
+                Effect.mapError(
+                  (cause) =>
+                    new OrchestrationCommandInvariantError({
+                      commandType: envelope.command.type,
+                      detail: String(cause),
+                    }),
+                ),
+              );
               const committedEvents: OrchestrationEvent[] = [];
               const attachmentCleanups: Effect.Effect<void>[] = [];
               let nextCommandReadModel = commandReadModel;

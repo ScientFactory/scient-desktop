@@ -1,3 +1,4 @@
+import { ScientQueueWorker } from "../../scient/threadQueue/Worker.ts";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 
@@ -26,6 +27,7 @@ export const makeOrchestrationReactor = Effect.gen(function* () {
   const threadSettlementReactor = yield* ThreadSettlementReactor.ThreadSettlementReactor;
   const agentAwarenessRelay = yield* AgentAwarenessRelay.AgentAwarenessRelay;
 
+  const queueWorker = yield* ScientQueueWorker;
   const start: OrchestrationReactorShape["start"] = Effect.fn("start")(function* () {
     yield* providerRuntimeIngestion.start();
     yield* providerCommandReactor.start();
@@ -36,6 +38,7 @@ export const makeOrchestrationReactor = Effect.gen(function* () {
     yield* threadDeletionReactor.start();
     yield* threadSettlementReactor.start();
     yield* agentAwarenessRelay.start();
+    yield* queueWorker.start;
   });
 
   return {

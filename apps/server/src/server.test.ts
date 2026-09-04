@@ -6835,6 +6835,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       );
       const turnCommand = (client: string) => ({
         type: "thread.turn.start" as const,
+        queueProtocolVersion: 2 as const,
         commandId: CommandId.make(`cmd-${client}-turn`),
         threadId: ThreadId.make(`thread-${client}`),
         message: {
@@ -9621,6 +9622,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
           withWsRpcClient(wsUrl, (client) =>
             client[ORCHESTRATION_WS_METHODS.dispatchCommand]({
               type: "thread.turn.start",
+              queueProtocolVersion: 2,
               commandId: CommandId.make("cmd-bootstrap-turn-start"),
               threadId: ThreadId.make("thread-bootstrap"),
               message: {
@@ -9779,6 +9781,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
         withWsRpcClient(wsUrl, (client) =>
           client[ORCHESTRATION_WS_METHODS.dispatchCommand]({
             type: "thread.turn.start",
+            queueProtocolVersion: 2,
             commandId: CommandId.make("cmd-bootstrap-turn-start-no-origin"),
             threadId: ThreadId.make("thread-bootstrap-no-origin"),
             message: {
@@ -9890,6 +9893,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
         withWsRpcClient(wsUrl, (client) =>
           client[ORCHESTRATION_WS_METHODS.dispatchCommand]({
             type: "thread.turn.start",
+            queueProtocolVersion: 2,
             commandId: CommandId.make("cmd-bootstrap-turn-start-setup-failure"),
             threadId: ThreadId.make("thread-bootstrap-setup-failure"),
             message: {
@@ -10011,6 +10015,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
         withWsRpcClient(wsUrl, (client) =>
           client[ORCHESTRATION_WS_METHODS.dispatchCommand]({
             type: "thread.turn.start",
+            queueProtocolVersion: 2,
             commandId: CommandId.make("cmd-bootstrap-turn-start-setup-activity-failure"),
             threadId: ThreadId.make("thread-bootstrap-setup-activity-failure"),
             message: {
@@ -10110,6 +10115,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
 
             return yield* client[ORCHESTRATION_WS_METHODS.dispatchCommand]({
               type: "thread.turn.start",
+              queueProtocolVersion: 2,
               commandId: CommandId.make("cmd-bootstrap-turn-start-defect"),
               threadId: ThreadId.make("thread-bootstrap-defect"),
               message: {
@@ -10241,6 +10247,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
             const bootstrapCreate = yield* Effect.forkChild(
               client[ORCHESTRATION_WS_METHODS.dispatchCommand]({
                 type: "thread.turn.start",
+                queueProtocolVersion: 2,
                 commandId: CommandId.make("cmd-retry-bootstrap"),
                 threadId,
                 message: {
@@ -10313,6 +10320,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
         withWsRpcClient(wsUrl, (client) =>
           client[ORCHESTRATION_WS_METHODS.dispatchCommand]({
             type: "thread.turn.start",
+            queueProtocolVersion: 2,
             commandId: CommandId.make("cmd-bootstrap-turn-start-cleanup-defect"),
             threadId: ThreadId.make("thread-bootstrap-cleanup-defect"),
             message: {
@@ -10609,6 +10617,7 @@ it.live(
                     const turnStartSqlStatements = sqlCounter.count();
                     yield* threadClient.client[ORCHESTRATION_WS_METHODS.dispatchCommand]({
                       type: "thread.turn.start",
+                      queueProtocolVersion: 2,
                       commandId: CommandId.make(`transfer:${provider}:measured-turn`),
                       threadId: TRANSFER_THREAD_ID,
                       message: {

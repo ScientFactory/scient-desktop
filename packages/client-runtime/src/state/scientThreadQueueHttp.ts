@@ -2,6 +2,7 @@ import * as Effect from "effect/Effect";
 
 import type {
   ThreadId,
+  ScientThreadQueueControlRequest,
   ScientThreadQueueEnqueueRequest,
   ScientThreadQueueRemoveRequest,
   ScientThreadQueueReorderRequest,
@@ -39,10 +40,14 @@ const requestContext = Effect.fn("clientRuntime.state.scientThreadQueueRequestCo
 
 export const listEnvironmentScientThreadQueue = Effect.fn(
   "clientRuntime.state.listEnvironmentScientThreadQueue",
-)(function* (input: { readonly prepared: PreparedConnection; readonly threadId: ThreadId }) {
+)(function* (input: {
+  readonly prepared: PreparedConnection;
+  readonly threadId: ThreadId;
+  readonly knownRevision?: number;
+}) {
   const context = yield* requestContext({
     prepared: input.prepared,
-    path: "/api/scient/thread-queue/list",
+    path: "/api/scient/thread-queue/v2/list",
   });
   return yield* executeEnvironmentHttpRequest(
     context.requestUrl,
@@ -51,7 +56,10 @@ export const listEnvironmentScientThreadQueue = Effect.fn(
       input.prepared.httpAuthorization,
       context.client.scientThreadQueue.list({
         headers: context.headers,
-        payload: { threadId: input.threadId },
+        payload: {
+          threadId: input.threadId,
+          ...(input.knownRevision !== undefined ? { knownRevision: input.knownRevision } : {}),
+        },
       }),
     ),
   );
@@ -62,12 +70,16 @@ export const enqueueEnvironmentScientThreadQueueItem = Effect.fn(
 )(function* (input: {
   readonly prepared: PreparedConnection;
   readonly threadId: ThreadId;
+  readonly queueItemId: string;
+  readonly modelSelection?: ScientThreadQueueEnqueueRequest["modelSelection"];
+  readonly runtimeMode?: ScientThreadQueueEnqueueRequest["runtimeMode"];
+  readonly interactionMode?: ScientThreadQueueEnqueueRequest["interactionMode"];
   readonly text: ScientThreadQueueEnqueueRequest["text"];
   readonly attachments: ScientThreadQueueEnqueueRequest["attachments"];
 }) {
   const context = yield* requestContext({
     prepared: input.prepared,
-    path: "/api/scient/thread-queue/enqueue",
+    path: "/api/scient/thread-queue/v2/enqueue",
   });
   return yield* executeEnvironmentHttpRequest(
     context.requestUrl,
@@ -78,6 +90,10 @@ export const enqueueEnvironmentScientThreadQueueItem = Effect.fn(
         headers: context.headers,
         payload: {
           threadId: input.threadId,
+          queueItemId: input.queueItemId,
+          modelSelection: input.modelSelection,
+          runtimeMode: input.runtimeMode,
+          interactionMode: input.interactionMode,
           text: input.text,
           attachments: input.attachments,
         },
@@ -95,7 +111,7 @@ export const removeEnvironmentScientThreadQueueItem = Effect.fn(
 }) {
   const context = yield* requestContext({
     prepared: input.prepared,
-    path: "/api/scient/thread-queue/remove",
+    path: "/api/scient/thread-queue/v2/remove",
   });
   return yield* executeEnvironmentHttpRequest(
     context.requestUrl,
@@ -116,12 +132,16 @@ export const updateEnvironmentScientThreadQueueItem = Effect.fn(
   readonly prepared: PreparedConnection;
   readonly threadId: ThreadId;
   readonly queueItemId: ScientThreadQueueUpdateRequest["queueItemId"];
+  readonly editToken: string;
+  readonly modelSelection?: ScientThreadQueueUpdateRequest["modelSelection"];
+  readonly runtimeMode?: ScientThreadQueueUpdateRequest["runtimeMode"];
+  readonly interactionMode?: ScientThreadQueueUpdateRequest["interactionMode"];
   readonly text: ScientThreadQueueUpdateRequest["text"];
   readonly attachments: ScientThreadQueueUpdateRequest["attachments"];
 }) {
   const context = yield* requestContext({
     prepared: input.prepared,
-    path: "/api/scient/thread-queue/update",
+    path: "/api/scient/thread-queue/v2/update",
   });
   return yield* executeEnvironmentHttpRequest(
     context.requestUrl,
@@ -133,6 +153,10 @@ export const updateEnvironmentScientThreadQueueItem = Effect.fn(
         payload: {
           threadId: input.threadId,
           queueItemId: input.queueItemId,
+          editToken: input.editToken,
+          modelSelection: input.modelSelection,
+          runtimeMode: input.runtimeMode,
+          interactionMode: input.interactionMode,
           text: input.text,
           attachments: input.attachments,
         },
@@ -150,7 +174,7 @@ export const reorderEnvironmentScientThreadQueue = Effect.fn(
 }) {
   const context = yield* requestContext({
     prepared: input.prepared,
-    path: "/api/scient/thread-queue/reorder",
+    path: "/api/scient/thread-queue/v2/reorder",
   });
   return yield* executeEnvironmentHttpRequest(
     context.requestUrl,
@@ -160,6 +184,29 @@ export const reorderEnvironmentScientThreadQueue = Effect.fn(
       context.client.scientThreadQueue.reorder({
         headers: context.headers,
         payload: { threadId: input.threadId, queueItemIds: input.queueItemIds },
+      }),
+    ),
+  );
+});
+
+export const controlEnvironmentScientThreadQueue = Effect.fn(
+  "clientRuntime.state.controlScientThreadQueue",
+)(function* (input: {
+  readonly prepared: PreparedConnection;
+  readonly payload: ScientThreadQueueControlRequest;
+}) {
+  const context = yield* requestContext({
+    prepared: input.prepared,
+    path: "/api/scient/thread-queue/v2/control",
+  });
+  return yield* executeEnvironmentHttpRequest(
+    context.requestUrl,
+    REQUEST_TIMEOUT_MS,
+    withEnvironmentCredentials(
+      input.prepared.httpAuthorization,
+      context.client.scientThreadQueue.control({
+        headers: context.headers,
+        payload: input.payload,
       }),
     ),
   );

@@ -2,7 +2,7 @@
 // Async lifecycle and stale-operation protection live in the controller hook;
 // this component only renders the current state into one explicit footer slot.
 
-import { memo, type ReactNode, useMemo } from "react";
+import { memo, type ReactNode, useMemo, useEffect } from "react";
 import {
   ArrowUpIcon,
   CircleAlertIcon,
@@ -47,6 +47,7 @@ export { describeVoiceRecorderError, formatVoiceTimer } from "./useScientVoiceCo
 export interface ScientVoiceComposerControlProps {
   readonly disabled?: boolean;
   readonly environmentId?: EnvironmentId;
+  readonly onBusyChange?: (busy: boolean) => void;
   readonly onTranscript: (text: string) => void;
   readonly onRequestSubmit?: () => void;
   readonly className?: string;
@@ -172,6 +173,7 @@ export function ScientVoiceComposerControl({
   disabled = false,
   environmentId,
   onTranscript,
+  onBusyChange,
   onRequestSubmit,
   className,
 }: ScientVoiceComposerControlProps): ReactNode {
@@ -196,6 +198,15 @@ export function ScientVoiceComposerControl({
     onTranscript,
     ...(onRequestSubmit ? { onRequestSubmit } : {}),
   });
+
+  useEffect(() => {
+    onBusyChange?.(
+      controller.phase === "requesting-permission" ||
+        controller.phase === "recording" ||
+        controller.phase === "transcribing" ||
+        controller.phase === "correcting",
+    );
+  }, [controller.phase, onBusyChange]);
 
   if (!client) return null;
 

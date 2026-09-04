@@ -1,3 +1,4 @@
+import { ScientQueueWorkerLive } from "./scient/threadQueue/Worker.ts";
 import { EnvironmentHttpApi, ProviderDriverKind } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import * as Duration from "effect/Duration";
@@ -310,6 +311,7 @@ const PlatformServicesLive = Layer.unwrap(
 
 const ReactorLayerLive = Layer.empty.pipe(
   Layer.provideMerge(OrchestrationReactorLive),
+  Layer.provideMerge(ScientQueueWorkerLive),
   Layer.provideMerge(ProviderRuntimeIngestionLive),
   // SCIENT-FORK:START — one narrow provider-neutral context seam.
   Layer.provideMerge(
@@ -633,7 +635,7 @@ export const makeRoutesLayer = Layer.mergeAll(
       Layer.provide(scientAnalyticsHttpApiLayer),
       Layer.provide(scientLatexHttpApiLayer),
       Layer.provide(scientMarkdownHttpApiLayer),
-      Layer.provide(scientThreadQueueHttpApiLayer),
+      Layer.provide(scientThreadQueueHttpApiLayer.pipe(Layer.provide(PersistenceLayerLive))),
       Layer.provide(serverEnvironmentHttpApiLayer),
       Layer.provide(environmentAuthenticatedAuthLayer),
     ),
