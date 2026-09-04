@@ -1,4 +1,8 @@
 import {
+  getAntigravityModelGroups,
+  groupAntigravityModelRows,
+} from "@t3tools/client-runtime/antigravity-model-presentation";
+import {
   ANTIGRAVITY_DEFAULT_MODEL,
   type ProviderInstanceId,
   type ProviderDriverKind,
@@ -56,6 +60,7 @@ import {
 import { providerModelKey, sortProviderModelItems } from "../../modelOrdering";
 
 type ModelPickerItem = {
+  isDefault?: boolean | undefined;
   slug: string;
   name: string;
   shortName?: string;
@@ -446,6 +451,7 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
         out.push({
           slug: model.slug,
           name: model.name,
+          ...(model.isDefault ? { isDefault: true } : {}),
           ...(model.shortName ? { shortName: model.shortName } : {}),
           ...(model.subProvider ? { subProvider: model.subProvider } : {}),
           ...(model.badge ? { badge: model.badge } : {}),
@@ -527,7 +533,7 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
   );
 
   // Filter models based on search query and selected instance
-  const filteredModels = useMemo(() => {
+  const ungroupedFilteredModels = useMemo(() => {
     let result = flatModels;
 
     // Apply tokenized fuzzy search across the combined provider/model search fields.
@@ -630,6 +636,37 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
     props.lockedProvider,
     searchQuery,
     selectedInstanceId,
+  ]);
+
+  const filteredModels = useMemo(() => {
+    // Favorites remain exact model/effort shortcuts, including pre-existing bookmarks.
+    if (
+      selectedInstanceId === "favorites" ||
+      !ungroupedFilteredModels.some((model) => model.driverKind === "antigravity")
+    )
+      return ungroupedFilteredModels;
+    const visible = new Map<string, ModelPickerItem>();
+    for (const entry of instanceEntries) {
+      const rows = ungroupedFilteredModels.filter((model) => model.instanceId === entry.instanceId);
+      const groups = getAntigravityModelGroups(entry.driverKind, entry.models);
+      for (const row of groupAntigravityModelRows(
+        rows,
+        groups,
+        entry.instanceId === props.activeInstanceId ? activeModelSlug : null,
+      )) {
+        visible.set(providerModelKey(row.instanceId, row.slug), row);
+      }
+    }
+    return ungroupedFilteredModels.flatMap((row) => {
+      const shown = visible.get(providerModelKey(row.instanceId, row.slug));
+      return shown ? [shown] : [];
+    });
+  }, [
+    ungroupedFilteredModels,
+    selectedInstanceId,
+    instanceEntries,
+    props.activeInstanceId,
+    activeModelSlug,
   ]);
 
   const legacySection = useMemo(() => {

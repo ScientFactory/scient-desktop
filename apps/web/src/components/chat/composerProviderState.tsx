@@ -42,6 +42,7 @@ export type ComposerProviderState = {
 };
 
 type TraitsRenderInput = {
+  onNativeModelChange?: ((model: string) => void) | undefined;
   provider: ProviderDriverKind;
   instanceId?: ProviderInstanceId;
   threadRef?: ScopedThreadRef;
@@ -151,6 +152,7 @@ function renderTraitsControl(
   }
   return (
     <Component
+      onNativeModelChange={input.onNativeModelChange}
       provider={provider}
       {...(instanceId ? { instanceId } : {})}
       models={models}

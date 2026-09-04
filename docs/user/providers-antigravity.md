@@ -96,6 +96,12 @@ Scient keeps the thread's selected model when it resumes and asks for another
 selection if that model disappears. Older model generations remain available
 under **Legacy models** when the provider still offers them.
 
+For supported Gemini variants, choose the model once and use **Reasoning** to
+select an available level. On mobile, open **Model and reasoning settings**.
+Changing the level selects Google's corresponding model variant; it does not
+change your account or installation. Saved favorites keep their exact model
+and reasoning level, so their labels still include the level.
+
 Use Antigravity's native `/plan` command to request a plan. Scient's separate
 Plan mode control is unavailable when the protocol cannot support it.
 

@@ -193,6 +193,27 @@ function draftByKey(key: string) {
 
 describe("composerDraftStore assistant citations", () => {
   beforeEach(resetComposerDraftStore);
+  it("persists Antigravity reasoning changes as native model selections across reload and new drafts", () => {
+    const instanceId = ProviderInstanceId.make("google_work");
+    const threadId = ThreadId.make("antigravity-reasoning");
+    const target = scopeThreadRef(TEST_ENVIRONMENT_ID, threadId);
+    const selection = createModelSelection(instanceId, "gemini-3.8-flash-low");
+    useComposerDraftStore.getState().setModelSelection(target, selection, { explicit: true });
+    useComposerDraftStore.getState().setStickyModelSelection(selection);
+    const options = useComposerDraftStore.persist.getOptions();
+    const saved = JSON.parse(JSON.stringify(options.partialize!(useComposerDraftStore.getState())));
+    useComposerDraftStore.setState(options.merge!(saved, useComposerDraftStore.getState()));
+    expect(draftFor(threadId, TEST_ENVIRONMENT_ID)?.modelSelectionByProvider[instanceId]).toEqual(
+      selection,
+    );
+    const newThreadId = ThreadId.make("antigravity-next-draft");
+    useComposerDraftStore
+      .getState()
+      .applyStickyState(scopeThreadRef(TEST_ENVIRONMENT_ID, newThreadId));
+    expect(
+      draftFor(newThreadId, TEST_ENVIRONMENT_ID)?.modelSelectionByProvider[instanceId],
+    ).toEqual(selection);
+  });
   afterEach(resetComposerDraftStore);
 
   it("keeps quotes, comments, and remote source IDs through persistence and removes them on clear", () => {

@@ -640,7 +640,7 @@ export function ProviderInstanceCard({
         className={cn(
           // Sidebar-style selection with a fixed row height so the list stays
           // even; the status line clamps to two lines instead of growing.
-          "group flex min-h-19 items-start gap-3 rounded-md px-3 py-2 transition-colors",
+          "group relative isolate flex min-h-19 items-start gap-3 rounded-md px-3 py-2 transition-colors",
           // Foreground-alpha tint so the fill reads the same in light and dark themes.
           selected ? "bg-foreground/8" : "hover:bg-foreground/4",
         )}
@@ -648,7 +648,8 @@ export function ProviderInstanceCard({
         <button
           type="button"
           className={cn(
-            "flex min-w-0 flex-1 cursor-pointer items-start gap-3 rounded-sm text-left outline-none transition-opacity focus-visible:ring-2 focus-visible:ring-ring",
+            // Extend the native button's hit area over the row without nesting the switch.
+            "flex min-w-0 flex-1 cursor-pointer items-start gap-3 rounded-sm text-left outline-none transition-opacity after:absolute after:inset-0 after:rounded-md focus-visible:after:ring-2 focus-visible:after:ring-ring",
             !enabled && !selected && "opacity-60 group-hover:opacity-100",
           )}
           onClick={onSelect}
@@ -681,7 +682,7 @@ export function ProviderInstanceCard({
             </span>
           </span>
         </button>
-        <span className="flex h-5 shrink-0 items-center">
+        <span className="relative z-10 flex h-5 shrink-0 items-center">
           <Switch
             checked={enabled}
             disabled={readOnly}

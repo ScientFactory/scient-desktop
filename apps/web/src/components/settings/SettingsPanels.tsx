@@ -2830,6 +2830,14 @@ export function GeneralSettingsPanel() {
                 />
                 {textGenInstanceEntry ? (
                   <TraitsPicker
+                    onNativeModelChange={(model) =>
+                      updateSettings({
+                        textGenerationModelSelection: createModelSelection(
+                          textGenInstanceId,
+                          model,
+                        ),
+                      })
+                    }
                     provider={textGenProvider}
                     models={
                       // Use the exact instance's models (rather than the

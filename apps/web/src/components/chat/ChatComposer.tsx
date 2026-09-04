@@ -2174,6 +2174,13 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   // ------------------------------------------------------------------
   // Provider traits UI
   // ------------------------------------------------------------------
+  const selectedTraitModels = useMemo(() => {
+    if (selectedProvider !== "antigravity") return selectedProviderModels;
+    const visible = new Set(
+      (modelOptionsByInstance.get(selectedInstanceId) ?? []).map((model) => model.slug),
+    );
+    return selectedProviderModels.filter((model) => visible.has(model.slug));
+  }, [selectedProvider, selectedProviderModels, modelOptionsByInstance, selectedInstanceId]);
   const setPromptFromTraits = useCallback(
     (nextPrompt: string) => {
       if (nextPrompt === promptRef.current) {
@@ -2191,24 +2198,26 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   );
 
   const providerTraitsMenuContent = renderProviderTraitsMenuContent({
+    onNativeModelChange: (model) => onProviderModelSelect(selectedInstanceId, model),
     provider: selectedProvider,
     instanceId: selectedInstanceId,
     ...(routeKind === "server" ? { threadRef: routeThreadRef } : {}),
     ...(routeKind === "draft" && draftId ? { draftId } : {}),
     model: selectedModel,
-    models: selectedProviderModels,
+    models: selectedTraitModels,
     modelOptions: composerModelOptions?.[selectedInstanceId],
     prompt,
     onPromptChange: setPromptFromTraits,
     planModeEnabled: settings.planModeEnabled,
   });
   const providerTraitsPickerInput = {
+    onNativeModelChange: (model: string) => onProviderModelSelect(selectedInstanceId, model),
     provider: selectedProvider,
     instanceId: selectedInstanceId,
     ...(routeKind === "server" ? { threadRef: routeThreadRef } : {}),
     ...(routeKind === "draft" && draftId ? { draftId } : {}),
     model: selectedModel,
-    models: selectedProviderModels,
+    models: selectedTraitModels,
     modelOptions: composerModelOptions?.[selectedInstanceId],
     prompt,
     onPromptChange: setPromptFromTraits,

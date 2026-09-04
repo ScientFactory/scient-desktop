@@ -180,6 +180,14 @@ Account access starts unknown and becomes authenticated after successful session
 including an explicit model refresh.
 The [provider snapshot][antigravity-provider] takes models and commands from setup and native
 updates. It preserves returned Gemini model IDs, labels, order, and thinking-level choices.
+Desktop/web and mobile derive a presentation-only grouping of recognized Gemini effort variants
+through `packages/client-runtime/src/antigravityModelPresentation.ts`. A family occupies one
+picker row; the existing reasoning control chooses another available native model ID.
+The control descriptor is local UI data, never a provider option sent over ACP or stored on a
+selection. The native ID remains authoritative for drafts, defaults, favorites, resume, and turns.
+Favorites retain exact variant shortcuts; hidden rows are not restored by grouping. Custom
+models, ambiguous names, and models already advertising native options are not rewritten.
+The catalog, ACP adapter, legacy `agy` reasoning path, and managed lifecycle remain unchanged.
 The registry treats a successful empty catalog as authoritative and clears cached metadata
 after sign-out. It must not retain a previous account's models. Cached models do not prove
 current access. The auth response does not supply an email, plan tier, or reliable quota.

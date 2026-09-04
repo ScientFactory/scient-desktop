@@ -399,6 +399,15 @@ never through a broad merge into this repository.
 
 ## Post-D4 Scient-owned feature seams
 
+Antigravity reasoning presentation is a narrow client-side divergence. The shared
+`packages/client-runtime/src/antigravityModelPresentation.ts` groups recognized
+Google Gemini effort variants for the existing model and reasoning controls.
+It does not replace T3's model catalog or ACP selection: choices, persistence,
+and dispatch retain exact native IDs. Preserve this presentation seam in web
+and mobile without moving grouping into the provider engine. If Google or T3
+exposes native reasoning options, prefer those; models with native options
+already bypass grouping. See [provider architecture](docs/internals/providers.md).
+
 Scient retired its projectless Quick Chat experiment. Every newly created
 thread now requires a real owning project; the product surfaces, capability,
 relocation command, and seam verifier were removed together. A migration

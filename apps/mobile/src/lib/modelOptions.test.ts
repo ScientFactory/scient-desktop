@@ -4,6 +4,8 @@ import { ProviderInstanceId, type ModelSelection, type ServerConfig } from "@t3t
 
 import {
   buildModelOptions,
+  groupModelOptionsForDisplay,
+  modelOptionReasoningControl,
   groupByProvider,
   isModelSelectionUnavailable,
   resolveDefaultableModelSelection,
@@ -13,6 +15,46 @@ import {
 } from "./modelOptions";
 
 describe("mobile model options", () => {
+  it("groups the picker but preserves native selections and rebuilds controls from the account catalog", () => {
+    const provider = {
+      instanceId: "google_work",
+      driver: "antigravity",
+      enabled: true,
+      installed: true,
+      auth: { status: "authenticated" },
+      availability: "available",
+      models: ["High", "Medium", "Low"].map((level) => ({
+        slug: `gemini-3.8-flash-${level.toLowerCase()}`,
+        name: `Gemini 3.8 Flash (${level})`,
+        isCustom: false,
+        isDefault: level === "High",
+        capabilities: { optionDescriptors: [] },
+      })),
+    };
+    const config = { providers: [provider] } as unknown as ServerConfig;
+    const saved: ModelSelection = {
+      instanceId: ProviderInstanceId.make("google_work"),
+      model: "gemini-3.8-flash-low",
+    };
+    const options = buildModelOptions(config, saved);
+    expect(options).toHaveLength(3);
+    const rows = groupModelOptionsForDisplay(options, saved.model);
+    expect(rows).toHaveLength(1);
+    expect(rows[0]?.label).toBe("Gemini 3.8 Flash");
+    expect(rows[0]?.selection).toEqual(saved);
+    const control = modelOptionReasoningControl(rows[0]);
+    expect(control?.currentValue).toBe(saved.model);
+    const high = options.find((option) => option.selection.model === control?.options[2]?.id)!;
+    expect(high.selection).toEqual({ ...saved, model: "gemini-3.8-flash-high" });
+    // No reasoning value is stored separately or converted into an invented base ID.
+    expect(high.selection.options).toBeUndefined();
+    provider.models = provider.models.filter((model) => model.slug !== saved.model);
+    const refreshed = buildModelOptions(config, saved);
+    const missing = refreshed.find((option) => option.selection.model === saved.model)!;
+    expect(missing.isUnavailable).toBe(true);
+    expect(modelOptionReasoningControl(missing)).toBeNull();
+    expect(groupModelOptionsForDisplay(refreshed, saved.model)).toContainEqual(missing);
+  });
   it("groups models by provider and flags legacy entries", () => {
     const config = {
       providers: [

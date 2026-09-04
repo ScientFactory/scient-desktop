@@ -1,4 +1,9 @@
 import {
+  ANTIGRAVITY_REASONING_CONTROL,
+  getAntigravityModelGroups,
+  getAntigravityReasoningControl,
+} from "@t3tools/client-runtime/antigravity-model-presentation";
+import {
   type ProviderDriverKind,
   type ProviderInstanceId,
   type ProviderOptionDescriptor,
@@ -145,16 +150,22 @@ function getSelectedTraits(
   const modelIsUnavailable =
     provider === "opencode" &&
     !models.some((candidate) => candidate.slug === normalizeModelSlug(model, provider));
-  const descriptors = modelIsUnavailable
-    ? buildUnavailableModelOptionDescriptors(
-        planModeEnabled
-          ? modelOptions
-          : modelOptions?.filter((option) => option.id !== "agent" || option.value !== "plan"),
-      )
-    : getProviderOptionDescriptors({
-        caps,
-        selections: modelOptions,
-      });
+  const nativeModelControl = getAntigravityReasoningControl(
+    getAntigravityModelGroups(provider, models),
+    model,
+  );
+  const descriptors = nativeModelControl
+    ? [nativeModelControl]
+    : modelIsUnavailable
+      ? buildUnavailableModelOptionDescriptors(
+          planModeEnabled
+            ? modelOptions
+            : modelOptions?.filter((option) => option.id !== "agent" || option.value !== "plan"),
+        )
+      : getProviderOptionDescriptors({
+          caps,
+          selections: modelOptions,
+        });
   const selectDescriptors = descriptors.filter(
     (descriptor): descriptor is Extract<ProviderOptionDescriptor, { type: "select" }> =>
       descriptor.type === "select",
@@ -269,6 +280,7 @@ export function shouldRenderTraitsControls(input: {
 }
 
 export interface TraitsMenuContentProps {
+  onNativeModelChange?: ((model: string) => void) | undefined;
   provider: ProviderDriverKind;
   instanceId?: ProviderInstanceId;
   models: ReadonlyArray<ServerProviderModel>;
@@ -284,6 +296,7 @@ export interface TraitsMenuContentProps {
 }
 
 export const TraitsMenuContent = memo(function TraitsMenuContentImpl({
+  onNativeModelChange,
   provider,
   instanceId,
   models,
@@ -341,6 +354,10 @@ export const TraitsMenuContent = memo(function TraitsMenuContentImpl({
     value: string,
   ) => {
     if (!value) return;
+    if (descriptor.id === ANTIGRAVITY_REASONING_CONTROL) {
+      if (descriptor.options.some((option) => option.id === value)) onNativeModelChange?.(value);
+      return;
+    }
     if (descriptor.promptInjectedValues?.includes(value)) {
       const nextPrompt =
         prompt.trim().length === 0
@@ -536,6 +553,7 @@ export function buildTraitsTriggerDisplay(input: {
 }
 
 export const TraitsPicker = memo(function TraitsPicker({
+  onNativeModelChange,
   provider,
   instanceId,
   models,
@@ -643,6 +661,7 @@ export const TraitsPicker = memo(function TraitsPicker({
       </MenuTrigger>
       <MenuPopup align="start" {...(isComposerOwned ? composerFloatingLayerProps : {})}>
         <TraitsMenuContent
+          onNativeModelChange={onNativeModelChange}
           provider={provider}
           {...(instanceId ? { instanceId } : {})}
           models={models}
