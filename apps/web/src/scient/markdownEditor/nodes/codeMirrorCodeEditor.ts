@@ -210,7 +210,25 @@ export function createScientNestedCodeEditor(input: {
         }),
       ),
     });
-    const description = LanguageDescription.matchLanguageName(languages, language, true);
+    const syntaxLanguage = /^(?:plotly(?:\.js|-json|js)?|vega(?:-lite)?|vegalite|vl)$/i.test(
+      language.trim(),
+    )
+      ? "json"
+      : language;
+    if (syntaxLanguage.toLowerCase() === "mermaid") {
+      view.dispatch({ effects: languageCompartment.reconfigure([]) });
+      void import("./mermaidCodeHighlighting")
+        .then(({ mermaidCodeHighlighting }) => {
+          if (!destroyed && version === languageVersion) {
+            view.dispatch({ effects: languageCompartment.reconfigure(mermaidCodeHighlighting) });
+          }
+        })
+        .catch(() => {
+          /* Keep the source editable if highlighting cannot load. */
+        });
+      return;
+    }
+    const description = LanguageDescription.matchLanguageName(languages, syntaxLanguage, true);
     if (!description) {
       view.dispatch({ effects: languageCompartment.reconfigure([]) });
       return;

@@ -134,6 +134,78 @@ describe("Scient nested code editor", () => {
   });
 
   it.each([
+    "plotly",
+    "plotly.js",
+    "plotly-json",
+    "plotlyjs",
+    "vega",
+    "vega-lite",
+    "vegalite",
+    "vl",
+  ])("highlights %s source as JSON without changing its source language", async (language) => {
+    const parent = document.createElement("div");
+    document.body.append(parent);
+    const onUserCodeChange = vi.fn();
+    editor = createScientNestedCodeEditor({
+      parent,
+      code: '{"data": [1, true, "label"]}',
+      editable: true,
+      language,
+      onEscape: vi.fn(),
+      onUserCodeChange,
+    });
+    await vi.waitFor(() => {
+      const tokens = [...parent.querySelectorAll(".cm-line span")];
+      expect(tokens.some((token) => token.textContent === '"data"')).toBe(true);
+      expect(new Set(tokens.map((token) => getComputedStyle(token).color)).size).toBeGreaterThan(2);
+    });
+    expect(parent.querySelector(".cm-content")?.getAttribute("aria-label")).toBe(
+      `${language} code block`,
+    );
+    expect(onUserCodeChange).not.toHaveBeenCalled();
+  });
+
+  it("colors Mermaid across edits and themes without replacing the editor or its undo history", async () => {
+    const parent = document.createElement("div");
+    document.body.append(parent);
+    const onUserCodeChange = vi.fn();
+    const code = "flowchart LR\n  A[Start] --> B[End]";
+    editor = createScientNestedCodeEditor({
+      parent,
+      code,
+      editable: true,
+      language: "mermaid",
+      onEscape: vi.fn(),
+      onUserCodeChange,
+    });
+    const surface = parent.querySelector<HTMLElement>(".cm-editor")!;
+    const view = EditorView.findFromDOM(surface)!;
+    const keywordColor = () =>
+      [...parent.querySelectorAll<HTMLElement>(".cm-line span")].find(
+        (span) => span.textContent === "flowchart",
+      )?.style.color;
+    await vi.waitFor(() => expect(keywordColor()).toBeTruthy());
+    const lightColor = keywordColor();
+    expect(onUserCodeChange).not.toHaveBeenCalled();
+    view.dispatch({
+      changes: { from: code.length, insert: "\n  B --> C" },
+      selection: { anchor: code.length + 10 },
+    });
+    const selection = view.state.selection;
+    document.documentElement.classList.add("dark");
+    editor.refreshAppearance();
+    await vi.waitFor(() => expect(keywordColor()).not.toBe(lightColor));
+    expect(parent.querySelector(".cm-editor")).toBe(surface);
+    expect(view.state.selection).toBe(selection);
+    expect(view.state.doc.toString()).toBe(code + "\n  B --> C");
+    expect(undo(view)).toBe(true);
+    expect(view.state.doc.toString()).toBe(code);
+    expect(keywordColor()).toBeTruthy();
+    editor.replaceExternalCode("plain source", "text");
+    await vi.waitFor(() => expect(parent.querySelector(".cm-line span[style]")).toBeNull());
+  });
+
+  it.each([
     ["light", "#d5512f", "#18a46c", "#636363"],
     ["dark", "#ff855e", "#60d199", "#636363"],
   ])(

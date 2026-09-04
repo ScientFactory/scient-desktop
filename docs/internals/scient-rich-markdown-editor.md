@@ -381,6 +381,12 @@ attributes, operators, and punctuation. The shared code border token and
 `scient-content-scrollbar.css` keep code and math presentation consistent across
 chat and the editor without changing other application scrollbars.
 
+Plotly and Vega-Lite fence aliases use the JSON highlighter in the same nested
+editor. Mermaid uses the preview's cached Shiki grammar and Pierre palette as
+CodeMirror decorations, retaining source, selection, and undo ownership in the
+existing editor. Grammar loading failure leaves the source editable without
+colors. Math source remains plain text.
+
 Document direction is also presentation state. The controller derives stable block directions
 from visible prose while technical nodes remain LTR. In an RTL prose block, only standalone
 right-flow arrow glyphs are mirrored with decorations; code, math, links, source bytes, copied
