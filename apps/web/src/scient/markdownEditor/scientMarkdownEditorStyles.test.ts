@@ -88,6 +88,14 @@ describe("rich Markdown preview presentation parity", () => {
     expect(previewCssSource).toMatch(
       /\.chat-markdown thead th,\s*\.chat-markdown tbody td \{[^}]*border-bottom: 1px solid transparent[^}]*background-position: center bottom[^}]*background-repeat: no-repeat[^}]*background-size: calc\(100% - 1rem\) 1px/su,
     );
+    // Same specificity as the inherited separators, so the override must come later.
+    const inheritedSeparator = previewCssSource.indexOf(
+      ".chat-markdown tbody td {\n  border-bottom: 1px solid color-mix(",
+    );
+    expect(inheritedSeparator).toBeGreaterThanOrEqual(0);
+    expect(
+      previewCssSource.indexOf(".chat-markdown thead th,\n.chat-markdown tbody td {"),
+    ).toBeGreaterThan(inheritedSeparator);
     expect(cssSource).toContain(".scient-markdown-table-select");
     expect(cssSource).toContain(".scient-markdown-document .selectedCell::after");
     expect(cssSource).not.toContain("text-overflow: ellipsis");
@@ -135,6 +143,16 @@ describe("rich Markdown preview presentation parity", () => {
     expect(previewCssSource).toMatch(
       /\.chat-markdown \.chat-markdown-codeblock \{[^}]*background-color: var\(--markdown-code-block-background\)/su,
     );
+    // The inherited themed rule stays byte-identical; the Scient override wins by order.
+    const inheritedThemedCodeblock = previewCssSource.indexOf(
+      "html[data-theme-id] .chat-markdown .chat-markdown-codeblock {\n  background-color: var(--code-background)",
+    );
+    expect(inheritedThemedCodeblock).toBeGreaterThanOrEqual(0);
+    expect(
+      previewCssSource.indexOf(
+        "html[data-theme-id] .chat-markdown .chat-markdown-codeblock {\n  background-color: var(--markdown-code-block-background)",
+      ),
+    ).toBeGreaterThan(inheritedThemedCodeblock);
     expect(cssSource).toMatch(
       /\.scient-markdown-code-render \{[^}]*padding: 0\.55rem 0\.8rem 0\.75rem[^}]*font-size: 0\.8rem[^}]*line-height: 1\.55/su,
     );

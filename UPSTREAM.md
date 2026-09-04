@@ -478,6 +478,23 @@ coordination, validation, publication, Save Copy, and receipt behavior must
 remain outside inherited T3 components. See
 [Scient browser HTML to PDF export](docs/internals/scient-browser-pdf-export.md).
 
+The rich Markdown editor is isolated under `packages/scient-markdown`,
+`apps/web/src/scient/markdownEditor`, `apps/web/src/scient/presentation`, and
+`apps/server/src/scient/markdown`, with `packages/contracts/src/scientMarkdown.ts`
+and `packages/client-runtime/src/state/scientMarkdownHttp.ts` as the owned files
+outside those roots. The inherited-host seams are limited to one lazy editor
+mount and eye switch in `FilePreviewPanel.tsx`, one create button in
+`FileBrowserPanel.tsx`, a generic current-file control slot in
+`FileBreadcrumbNavigator.tsx`, the pending-departure calls in `ChatView.tsx`,
+typed workspace operations in `WorkspaceFileSystem.ts`, RPC, and contracts, the
+shared code-block title and actions imported by `ChatMarkdown.tsx`, optional
+positioner props on `ui/menu.tsx` and `ui/popover.tsx`, `useMediaActionUrl` in
+`MediaActions.tsx`, and an additive trailing block plus two tokens in
+`index.css`. Source projection, the save queue, command policy, nested-node
+behavior, and Markdown transport must remain outside inherited T3 components;
+`index.css` inherited rule bodies stay byte-identical. See
+[Scient rich Markdown editor](docs/internals/scient-rich-markdown-editor.md).
+
 No upstream update authorizes public release, live cloud, mobile publication,
 production credentials, or user-data conversion. Those remain separate Scient
 gates even when inherited T3 code contains the capability.

@@ -1397,8 +1397,8 @@ html[data-theme-id] [data-chat-header] [data-slot="separator"] {
    default look keeps its secondary/input tints; themed palettes tint those
    surfaces with the accent, which fights syntax highlighting. */
 html[data-theme-id] .chat-markdown .chat-markdown-codeblock {
-  background-color: var(--markdown-code-block-background);
-  border-color: var(--markdown-code-block-border);
+  background-color: var(--code-background);
+  border-color: var(--contrast-border);
   color: var(--code-foreground);
 }
 
@@ -1412,8 +1412,7 @@ html[data-theme-id] .chat-markdown .chat-markdown-codeblock pre {
 }
 
 html[data-theme-id] .chat-markdown .chat-markdown-codeblock-header,
-html[data-theme-id] .chat-markdown .chat-markdown-chrome-action,
-html[data-theme-id] .scient-markdown-code-header .chat-markdown-chrome-action {
+html[data-theme-id] .chat-markdown .chat-markdown-chrome-action {
   color: color-mix(in srgb, var(--code-foreground) 72%, transparent);
 }
 
@@ -1440,9 +1439,7 @@ html[data-theme-id="t3-chat"] {
 }
 
 html[data-theme-id] .chat-markdown .chat-markdown-chrome-action:hover,
-html[data-theme-id] .chat-markdown .chat-markdown-chrome-action[aria-pressed="true"],
-html[data-theme-id] .scient-markdown-code-header .chat-markdown-chrome-action:hover,
-html[data-theme-id] .scient-markdown-code-header .chat-markdown-chrome-action[aria-pressed="true"] {
+html[data-theme-id] .chat-markdown .chat-markdown-chrome-action[aria-pressed="true"] {
   color: var(--code-foreground);
 }
 
@@ -1952,88 +1949,15 @@ code {
 }
 
 .chat-markdown .chat-markdown-codeblock-header,
-.chat-markdown .chat-markdown-chrome-action,
-.scient-markdown-code-header .chat-markdown-chrome-action {
+.chat-markdown .chat-markdown-chrome-action {
   color: color-mix(in srgb, var(--contrast-foreground) 72%, transparent);
 }
 
-.chat-markdown .chat-markdown-codeblock {
-  background-color: var(--markdown-code-block-background);
-  border-color: var(--markdown-code-block-border);
-}
-
-.chat-markdown .chat-markdown-chrome-action:hover,
-.scient-markdown-code-header .chat-markdown-chrome-action:hover {
+.chat-markdown .chat-markdown-chrome-action:hover {
   color: var(--contrast-foreground);
 }
 
-/* Visual-card utilities are quiet; chart exploration keeps its own toolbar. */
-.scient-visual-utility-controls {
-  column-gap: 0;
-}
-
-.scient-visual-utility-controls button:not([data-scient-toolbar-move]) {
-  isolation: isolate;
-  width: 1.75rem;
-  height: 1.75rem;
-  padding: 0;
-  border: 0;
-  border-radius: 0.35rem;
-  background: transparent;
-  box-shadow: none;
-  --control-icon-color: color-mix(in oklab, var(--muted-foreground) 80%, transparent);
-  color: var(--control-icon-color);
-}
-
-.scient-visual-utility-controls button:not([data-scient-toolbar-move])::before {
-  inset: 2px;
-  z-index: -1;
-  border-radius: inherit;
-}
-
-[data-scient-image-controls]
-  .scient-visual-utility-controls
-  button:not([data-scient-toolbar-move]) {
-  width: calc(1.75rem - 2px);
-  height: calc(1.75rem - 2px);
-}
-
-[data-scient-image-controls]
-  .scient-visual-utility-controls
-  button:not([data-scient-toolbar-move])::before {
-  inset: 1px;
-}
-
-.scient-visual-utility-controls button:not([data-scient-toolbar-move]):hover,
-.scient-visual-utility-controls button:not([data-scient-toolbar-move])[data-popup-open] {
-  --control-icon-color: var(--foreground);
-  color: var(--control-icon-color);
-}
-
-.scient-visual-utility-controls button:not([data-scient-toolbar-move]):hover::before,
-.scient-visual-utility-controls button:not([data-scient-toolbar-move])[data-popup-open]::before {
-  background: color-mix(in oklab, var(--foreground) 6%, transparent);
-}
-
-.scient-visual-utility-controls button:focus-visible {
-  outline: 2px solid var(--ring);
-  outline-offset: 1px;
-}
-
-.scient-visual-dialog {
-  width: min(88vw, 88rem);
-  height: min(84vh, 56rem);
-}
-
-@media (width < 40rem) {
-  .scient-visual-dialog {
-    width: 94vw;
-    height: 92vh;
-  }
-}
-
-.chat-markdown .chat-markdown-chrome-action[aria-pressed="true"],
-.scient-markdown-code-header .chat-markdown-chrome-action[aria-pressed="true"] {
+.chat-markdown .chat-markdown-chrome-action[aria-pressed="true"] {
   color: var(--contrast-foreground);
   background: color-mix(in srgb, var(--contrast-foreground) 8%, transparent);
 }
@@ -2054,8 +1978,8 @@ code {
   background: transparent !important;
 }
 
-/* Diagnostics-style tables: interrupted row separators only, uppercase
-   headers, and a scroll-fade container for horizontal overflow. The root chat-markdown
+/* Diagnostics-style tables: row separators only, uppercase headers, and a
+   scroll-fade container for horizontal overflow. The root chat-markdown
    wrapping rules (overflow-wrap: anywhere) would let columns shrink to single
    characters and defeat the overflow — restore word-boundary wrapping so the
    min column width is the longest word. */
@@ -2074,23 +1998,15 @@ code {
   text-align: left;
 }
 
-.chat-markdown thead th,
-.chat-markdown tbody td {
-  border-bottom: 1px solid transparent;
-  background-image: linear-gradient(
-    to right,
-    color-mix(in srgb, var(--contrast-border) 60%, transparent),
-    color-mix(in srgb, var(--contrast-border) 60%, transparent)
-  );
-  background-position: center bottom;
-  background-repeat: no-repeat;
-  background-size: calc(100% - 1rem) 1px;
-}
-
 .chat-markdown thead th {
+  border-bottom: 1px solid color-mix(in srgb, var(--contrast-border) 60%, transparent);
   padding-block: 0.55rem;
   font-weight: 600;
   white-space: nowrap;
+}
+
+.chat-markdown tbody td {
+  border-bottom: 1px solid color-mix(in srgb, var(--contrast-border) 60%, transparent);
 }
 
 /* Collapsed (default): single-line cells truncate so arbitrary chat content
@@ -2243,5 +2159,118 @@ code {
 
   .preview-loading-progress[data-loading="true"] {
     transform: scaleX(0.9);
+  }
+}
+
+/* Scient shared Markdown presentation. Every rule below is additive and sits
+   after the inherited rules it refines, so upstream T3 lines above stay
+   byte-identical through merges. The tokens live beside --code-background. */
+
+/* Chat and file-preview code blocks share the rich editor's quiet code card. */
+.chat-markdown .chat-markdown-codeblock,
+html[data-theme-id] .chat-markdown .chat-markdown-codeblock {
+  background-color: var(--markdown-code-block-background);
+  border-color: var(--markdown-code-block-border);
+}
+
+/* The rich editor's code header reuses the chat code-block chrome actions. */
+.scient-markdown-code-header .chat-markdown-chrome-action {
+  color: color-mix(in srgb, var(--contrast-foreground) 72%, transparent);
+}
+
+.scient-markdown-code-header .chat-markdown-chrome-action:hover {
+  color: var(--contrast-foreground);
+}
+
+.scient-markdown-code-header .chat-markdown-chrome-action[aria-pressed="true"] {
+  color: var(--contrast-foreground);
+  background: color-mix(in srgb, var(--contrast-foreground) 8%, transparent);
+}
+
+html[data-theme-id] .scient-markdown-code-header .chat-markdown-chrome-action {
+  color: color-mix(in srgb, var(--code-foreground) 72%, transparent);
+}
+
+html[data-theme-id] .scient-markdown-code-header .chat-markdown-chrome-action:hover,
+html[data-theme-id] .scient-markdown-code-header .chat-markdown-chrome-action[aria-pressed="true"] {
+  color: var(--code-foreground);
+}
+
+/* Interrupted row separators: the line stops short of each cell edge. */
+.chat-markdown thead th,
+.chat-markdown tbody td {
+  border-bottom: 1px solid transparent;
+  background-image: linear-gradient(
+    to right,
+    color-mix(in srgb, var(--contrast-border) 60%, transparent),
+    color-mix(in srgb, var(--contrast-border) 60%, transparent)
+  );
+  background-position: center bottom;
+  background-repeat: no-repeat;
+  background-size: calc(100% - 1rem) 1px;
+}
+
+/* Visual-card utilities are quiet; chart exploration keeps its own toolbar. */
+.scient-visual-utility-controls {
+  column-gap: 0;
+}
+
+.scient-visual-utility-controls button:not([data-scient-toolbar-move]) {
+  isolation: isolate;
+  width: 1.75rem;
+  height: 1.75rem;
+  padding: 0;
+  border: 0;
+  border-radius: 0.35rem;
+  background: transparent;
+  box-shadow: none;
+  --control-icon-color: color-mix(in oklab, var(--muted-foreground) 80%, transparent);
+  color: var(--control-icon-color);
+}
+
+.scient-visual-utility-controls button:not([data-scient-toolbar-move])::before {
+  inset: 2px;
+  z-index: -1;
+  border-radius: inherit;
+}
+
+[data-scient-image-controls]
+  .scient-visual-utility-controls
+  button:not([data-scient-toolbar-move]) {
+  width: calc(1.75rem - 2px);
+  height: calc(1.75rem - 2px);
+}
+
+[data-scient-image-controls]
+  .scient-visual-utility-controls
+  button:not([data-scient-toolbar-move])::before {
+  inset: 1px;
+}
+
+.scient-visual-utility-controls button:not([data-scient-toolbar-move]):hover,
+.scient-visual-utility-controls button:not([data-scient-toolbar-move])[data-popup-open] {
+  --control-icon-color: var(--foreground);
+  color: var(--control-icon-color);
+}
+
+.scient-visual-utility-controls button:not([data-scient-toolbar-move]):hover::before,
+.scient-visual-utility-controls button:not([data-scient-toolbar-move])[data-popup-open]::before {
+  background: color-mix(in oklab, var(--foreground) 6%, transparent);
+}
+
+.scient-visual-utility-controls button:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: 1px;
+}
+
+.scient-visual-dialog {
+  width: min(88vw, 88rem);
+  height: min(84vh, 56rem);
+}
+
+@media (width < 40rem) {
+  .scient-visual-dialog {
+    width: 94vw;
+    height: 92vh;
   }
 }
