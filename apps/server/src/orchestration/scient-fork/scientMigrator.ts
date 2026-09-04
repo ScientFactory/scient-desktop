@@ -45,6 +45,7 @@ import Migration006 from "./migrations/006_AnalysisRunProjectionState.ts";
 import Migration007 from "./migrations/007_AnalysisRunStorageStatus.ts";
 import Migration008 from "./migrations/008_ForkDeliveryAndBoundaries.ts";
 import Migration009 from "./migrations/009_CopiedForkBoundaryManifest.ts";
+import Migration011 from "./migrations/011_ThreadQueue.ts";
 import Migration010 from "./migrations/010_RetireProjectlessThreadLineage.ts";
 
 // ---------------------------------------------------------------------------
@@ -97,6 +98,7 @@ export const SCIENT_MIGRATIONS: ReadonlyArray<ScientMigration> = [
   { id: 8, name: "fork-delivery-and-seed", effect: Migration008 },
   { id: 9, name: "copied-fork-boundary-manifest", effect: Migration009 },
   { id: 10, name: "retire-projectless-thread-lineage", effect: Migration010 },
+  { id: 11, name: "thread-queue", effect: Migration011 },
 ] as const;
 
 const loader = Migrator.fromRecord(

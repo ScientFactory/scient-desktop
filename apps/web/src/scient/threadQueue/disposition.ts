@@ -15,8 +15,13 @@ export type ComposerSendDisposition = "send" | "queue";
 export function resolveComposerSendDisposition(input: {
   readonly threadBusy: boolean;
   readonly steerRequested: boolean;
+  readonly hasQueuedItems?: boolean;
+  readonly awaitingCompletion?: boolean;
+  readonly editingQueuedItem?: boolean;
 }): ComposerSendDisposition {
-  return input.steerRequested || !input.threadBusy ? "send" : "queue";
+  if (input.editingQueuedItem) return "queue";
+  const mustQueue = input.threadBusy || (input.hasQueuedItems && !input.awaitingCompletion);
+  return input.steerRequested || !mustQueue ? "send" : "queue";
 }
 
 /** True when the keyboard event asks for an immediate steer (Cmd/Ctrl+Enter). */

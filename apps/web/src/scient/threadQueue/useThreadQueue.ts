@@ -1,16 +1,16 @@
 import type {
   EnvironmentId,
-  ScientThreadQueueItem,
   ScientThreadQueueItemId,
+  ScientThreadQueueSnapshot,
+  ScientThreadQueueEnqueueRequest,
+  ScientThreadQueueUpdateRequest,
   ThreadId,
-  UploadChatAttachment,
 } from "@t3tools/contracts";
 import * as Option from "effect/Option";
 import { useCallback, useEffect, useRef, useState } from "react";
-
 import { usePreparedConnection } from "../../state/session";
-
 import {
+  controlThreadQueue,
   enqueueThreadQueueItem,
   listThreadQueue,
   removeThreadQueueItem,
@@ -18,156 +18,177 @@ import {
   updateThreadQueueItem,
 } from "./client";
 
-/**
- * State and mutations for one thread's Scient message queue. Every mutation
- * returns the authoritative snapshot from the server, so the hook never
- * guesses queue contents; reorder is the one optimistic path (drag and drop
- * feels broken otherwise) and rolls back through a refetch on failure.
- *
- * The queue never dispatches by itself. Sending a queued item is the caller's
- * job and always goes through the ordinary thread.turn.start flow.
- */
+/** A view of server-owned delivery. No render or navigation can dispatch a turn. */
 export function useThreadQueue(input: {
   readonly environmentId: EnvironmentId | null;
   readonly threadId: ThreadId | null;
-  /** Drives a cheap cross-device refresh when a turn settles. */
   readonly threadBusy: boolean;
 }) {
-  const { environmentId, threadId, threadBusy } = input;
-  const [items, setItems] = useState<ReadonlyArray<ScientThreadQueueItem>>([]);
-  const [error, setError] = useState<string | null>(null);
-  const generation = useRef(0);
-  // Mutations resolve asynchronously; a thread switch in the meantime must not
-  // let a stale snapshot overwrite the freshly loaded one.
-  const contextRef = useRef({ environmentId, threadId });
-  contextRef.current = { environmentId, threadId };
-  const isCurrentContext = useCallback(
-    () =>
-      contextRef.current.environmentId === environmentId &&
-      contextRef.current.threadId === threadId,
-    [environmentId, threadId],
-  );
-
-  const refresh = useCallback(async () => {
-    const request = ++generation.current;
-    if (!environmentId || !threadId) {
-      setItems([]);
-      setError(null);
-      return;
-    }
-    try {
-      const snapshot = await listThreadQueue(environmentId, threadId);
-      if (generation.current === request) {
-        setItems(snapshot.items);
-        setError(null);
-      }
-    } catch (cause) {
-      if (generation.current === request) {
-        setError(cause instanceof Error ? cause.message : "The message queue could not be read.");
-      }
-    }
-  }, [environmentId, threadId]);
-
-  useEffect(() => {
-    setItems([]);
-    setError(null);
-    void refresh();
-  }, [refresh]);
-
-  // A cold app start mounts this hook before the environment's connection is
-  // prepared, so the initial refresh above fails and leaves the queue empty.
-  // Refetch the moment the connection becomes ready, otherwise persisted items
-  // only reappear after the next enqueue.
+  const { environmentId, threadId } = input;
+  const key = JSON.stringify([environmentId, threadId]);
+  const currentKey = useRef(key);
+  currentKey.current = key;
+  const [state, setState] = useState<{
+    key: string;
+    snapshot: ScientThreadQueueSnapshot | null;
+    error: string | null;
+  }>({ key, snapshot: null, error: null });
+  const [optimisticOrder, setOptimisticOrder] = useState<{
+    key: string;
+    ids: ReadonlyArray<string>;
+    sequence: number;
+  } | null>(null);
+  const reorderSequence = useRef(0);
+  const reorderTail = useRef<Promise<unknown>>(Promise.resolve());
+  const refreshInFlight = useRef<string | null>(null);
+  const revisionRef = useRef<{ key: string; revision: number | undefined }>({
+    key,
+    revision: undefined,
+  });
   const connected = Option.isSome(usePreparedConnection(environmentId));
-  const previousConnected = useRef(connected);
-  useEffect(() => {
-    const wasConnected = previousConnected.current;
-    previousConnected.current = connected;
-    if (!wasConnected && connected) void refresh();
-  }, [connected, refresh]);
-
-  // Another device may have dispatched or edited the queue while this thread
-  // was running here. The running -> idle transition is the one moment the
-  // queue can have changed without this client knowing, so resync then.
-  const previousBusy = useRef(threadBusy);
-  useEffect(() => {
-    const wasBusy = previousBusy.current;
-    previousBusy.current = threadBusy;
-    if (wasBusy && !threadBusy) void refresh();
-  }, [threadBusy, refresh]);
-
-  const enqueue = useCallback(
-    async (enqueueInput: {
-      readonly text: string;
-      readonly attachments: ReadonlyArray<UploadChatAttachment>;
-    }) => {
-      if (!environmentId || !threadId) throw new Error("No active thread for the queue.");
-      const request = ++generation.current;
-      const snapshot = await enqueueThreadQueueItem(environmentId, {
-        threadId,
-        text: enqueueInput.text,
-        attachments: enqueueInput.attachments,
-      });
-      if (isCurrentContext() && generation.current === request) setItems(snapshot.items);
+  const accept = useCallback(
+    (snapshot: ScientThreadQueueSnapshot) => {
+      if (currentKey.current !== key || snapshot.threadId !== threadId) return;
+      if (snapshot.unchanged) {
+        setState((old) => (old.key === key && old.error !== null ? { ...old, error: null } : old));
+        return snapshot;
+      }
+      if (
+        revisionRef.current.key === key &&
+        (revisionRef.current.revision ?? -1) > (snapshot.revision ?? 0)
+      )
+        return snapshot;
+      revisionRef.current = { key, revision: snapshot.revision };
+      setState((old) =>
+        old.key === key && (old.snapshot?.revision ?? -1) > (snapshot.revision ?? 0)
+          ? old
+          : { key, snapshot, error: null },
+      );
       return snapshot;
     },
-    [environmentId, threadId, isCurrentContext],
+    [key, threadId],
   );
-
-  const remove = useCallback(
-    async (queueItemId: ScientThreadQueueItemId) => {
-      if (!environmentId || !threadId) throw new Error("No active thread for the queue.");
-      const request = ++generation.current;
-      const snapshot = await removeThreadQueueItem(environmentId, { threadId, queueItemId });
-      if (isCurrentContext() && generation.current === request) setItems(snapshot.items);
-      return snapshot;
+  const fail = useCallback(
+    (cause: unknown) => {
+      if (currentKey.current === key)
+        setState((old) => ({
+          key,
+          snapshot: old.key === key ? old.snapshot : null,
+          error: cause instanceof Error ? cause.message : String(cause),
+        }));
     },
-    [environmentId, threadId, isCurrentContext],
+    [key],
   );
-
-  const update = useCallback(
-    async (updateInput: {
-      readonly queueItemId: ScientThreadQueueItemId;
-      readonly text: string;
-      readonly attachments: ReadonlyArray<UploadChatAttachment>;
-    }) => {
-      if (!environmentId || !threadId) throw new Error("No active thread for the queue.");
-      const request = ++generation.current;
-      const snapshot = await updateThreadQueueItem(environmentId, {
-        threadId,
-        queueItemId: updateInput.queueItemId,
-        text: updateInput.text,
-        attachments: updateInput.attachments,
-      });
-      if (isCurrentContext() && generation.current === request) setItems(snapshot.items);
-      return snapshot;
-    },
-    [environmentId, threadId, isCurrentContext],
-  );
-
-  const reorder = useCallback(
-    async (queueItemIds: ReadonlyArray<ScientThreadQueueItemId>) => {
-      if (!environmentId || !threadId) throw new Error("No active thread for the queue.");
-      const request = ++generation.current;
-      const rank = new Map(queueItemIds.map((id, index) => [id, index] as const));
-      setItems((current) =>
-        [...current].sort(
-          (left, right) =>
-            (rank.get(left.queueItemId) ?? Number.MAX_SAFE_INTEGER) -
-            (rank.get(right.queueItemId) ?? Number.MAX_SAFE_INTEGER),
+  const refresh = useCallback(async () => {
+    if (!environmentId || !threadId || refreshInFlight.current === key) return;
+    refreshInFlight.current = key;
+    try {
+      accept(
+        await listThreadQueue(
+          environmentId,
+          threadId,
+          revisionRef.current.key === key ? revisionRef.current.revision : undefined,
         ),
       );
-      try {
-        const snapshot = await reorderThreadQueue(environmentId, { threadId, queueItemIds });
-        if (isCurrentContext() && generation.current === request) setItems(snapshot.items);
-        return snapshot;
-      } catch (cause) {
-        if (isCurrentContext() && generation.current === request) void refresh();
-        throw cause;
-      }
-    },
-    [environmentId, threadId, isCurrentContext, refresh],
-  );
-
-  return { items, error, enqueue, update, remove, reorder, refresh };
+    } catch (cause) {
+      fail(cause);
+    } finally {
+      if (refreshInFlight.current === key) refreshInFlight.current = null;
+    }
+  }, [environmentId, threadId, key, accept, fail]);
+  useEffect(() => {
+    if (!connected) return;
+    void refresh();
+    const timer = setInterval(() => void refresh(), 1000);
+    return () => clearInterval(timer);
+  }, [connected, refresh]);
+  const scope = () => {
+    if (!environmentId || !threadId) throw new Error("No active thread for the queue.");
+    return { environmentId, threadId };
+  };
+  const mutate = async (operation: () => Promise<ScientThreadQueueSnapshot>) => {
+    try {
+      const result = await operation();
+      accept(result);
+      return result;
+    } catch (cause) {
+      fail(cause);
+      throw cause;
+    }
+  };
+  const enqueue = (payload: Omit<ScientThreadQueueEnqueueRequest, "threadId">) => {
+    const target = scope();
+    return mutate(() =>
+      enqueueThreadQueueItem(target.environmentId, { threadId: target.threadId, ...payload }),
+    );
+  };
+  const update = (payload: Omit<ScientThreadQueueUpdateRequest, "threadId">) => {
+    const target = scope();
+    return mutate(() =>
+      updateThreadQueueItem(target.environmentId, { threadId: target.threadId, ...payload }),
+    );
+  };
+  const remove = (queueItemId: string) => {
+    const target = scope();
+    return mutate(() =>
+      removeThreadQueueItem(target.environmentId, { threadId: target.threadId, queueItemId }),
+    );
+  };
+  const reorder = (queueItemIds: ReadonlyArray<ScientThreadQueueItemId>) => {
+    const target = scope();
+    const sequence = ++reorderSequence.current;
+    setOptimisticOrder({ key, ids: queueItemIds, sequence });
+    const pending = reorderTail.current
+      .catch(() => undefined)
+      .then(() =>
+        mutate(() =>
+          reorderThreadQueue(target.environmentId, { threadId: target.threadId, queueItemIds }),
+        ),
+      );
+    reorderTail.current = pending;
+    return pending.finally(() =>
+      setOptimisticOrder((order) =>
+        order?.key === key && order.sequence === sequence ? null : order,
+      ),
+    );
+  };
+  const control = (
+    action: "edit" | "resume" | "steer",
+    queueItemId?: string,
+    editToken?: string,
+  ) => {
+    const target = scope();
+    return mutate(() =>
+      controlThreadQueue(target.environmentId, {
+        threadId: target.threadId,
+        action,
+        ...(queueItemId ? { queueItemId } : {}),
+        ...(editToken ? { editToken } : {}),
+      }),
+    );
+  };
+  const snapshot = state.key === key ? state.snapshot : null;
+  const visibleItems = snapshot?.items.filter((item) => item.state !== "editing") ?? [];
+  if (optimisticOrder?.key === key) {
+    const rank = new Map(optimisticOrder.ids.map((id, index) => [id, index]));
+    visibleItems.sort(
+      (a, b) => (rank.get(a.queueItemId) ?? Infinity) - (rank.get(b.queueItemId) ?? Infinity),
+    );
+  }
+  return {
+    items: visibleItems,
+    editingItems: snapshot?.items.filter((item) => item.state === "editing") ?? [],
+    error:
+      state.key === key
+        ? (state.error ?? (snapshot?.items.length ? snapshot.paused : null) ?? null)
+        : null,
+    paused: snapshot?.paused ?? null,
+    awaitingCompletion: snapshot?.awaitingCompletion ?? false,
+    enqueue,
+    update,
+    remove,
+    reorder,
+    control,
+    refresh,
+  };
 }

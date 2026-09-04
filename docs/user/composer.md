@@ -279,23 +279,40 @@ does not open a partially created conversation.
 
 ## Queue or steer while an agent is working
 
-When the current turn is running, ordinary `Enter` saves the complete message
-and its images in that thread's queue instead of interrupting the turn. Queued
-messages appear above the composer and send in order, one turn at a time, after
-the active turn becomes ready.
+On desktop and web, press **Enter** while an answer is running to queue your
+message and images in that thread. Messages start one at a time after the
+previous answer has fully finished. They continue in their original thread when
+you visit another thread or close its view. Sending while other messages are
+waiting normally adds your message behind them. After **Stop**, an ordinary new
+message starts work while that queue waits, as described below.
 
-Use `Cmd+Enter` on macOS or `Ctrl+Enter` on Windows and Linux to request an
-immediate steer instead. A steer is submitted to the active provider rather
-than added to the queue. Provider command acceptance and actual same-turn
-adoption are separate: a provider that cannot accept that prompt can report a
-failure without turning the message into a silently queued item.
+Use **Cmd+Enter** on macOS, **Ctrl+Enter** elsewhere, or a queued row's **Steer**
+action to request an immediate steer. The provider must support adopting the
+message into its current turn; a rejection remains visible.
 
-Queued rows can be reordered or deleted. **Edit** first removes the item from
-the queue and restores its text and readable images to an empty composer; it
-does not create an invisible second copy. A failed auto-send remains visible at
-the head of the queue with an explicit retry instead of being skipped or
-retried silently.
+Drag queued rows to change their order, or delete them. **Edit** removes a row
+from the waiting list and puts its text and images into the same composer. If
+you were already writing, that ordinary draft is temporarily hidden and kept
+intact. Send the edit to return it to its previous place and restore your
+ordinary draft. Messages that already started cannot be overtaken.
 
-Queues belong to one server thread, survive app restarts, and are limited to 20
-items and 64 MiB per thread. A local draft that has not created a server thread
-yet has no persistent queue.
+An item being edited cannot send itself. Other waiting messages can continue
+while you edit. The existing **Stash** action saves the edit for later, releases
+its queue position, and brings back your ordinary draft. Restore the saved text
+and attachments through the usual stash menu.
+
+**Stop** leaves queued messages in place. When you send another message, that
+answer runs first; the queue waits until it finishes successfully, then advances
+one message at a time. Restarting work or the server does not send queued messages
+by itself. A failed answer also leaves the remaining queue waiting for later
+successful work. No extra **Retry** is needed after that answer finishes.
+
+**Retry** is for a queue delivery error; it cannot bypass a running answer or
+release messages waiting after Stop. If an ordinary Send races another start,
+Scient preserves the draft and asks you to send again so it can join the queue safely.
+
+Queues survive app restarts and hold up to 20 messages and 64 MiB per thread.
+Generic files still cannot be queued. Local threads that have not reached the
+server yet have no persistent queue. Edited drafts recover from this browser's
+local storage; keep the owning window or reopen it to finish an edit. Older
+clients must update before sending to a server using the new queue protocol.

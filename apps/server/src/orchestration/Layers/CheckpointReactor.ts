@@ -1,3 +1,5 @@
+import * as SqlClient from "effect/unstable/sql/SqlClient";
+import { finalizeQueueTurn } from "../../scient/threadQueue/Ledger.ts";
 import {
   CommandId,
   type CheckpointRef,
@@ -77,6 +79,7 @@ function checkpointStatusFromRuntime(status: string | undefined): "ready" | "mis
 }
 
 const make = Effect.gen(function* () {
+  const queueSql = yield* SqlClient.SqlClient;
   const crypto = yield* Crypto.Crypto;
   const randomUUID = crypto.randomUUIDv4;
   const serverEventId = randomUUID.pipe(Effect.map(EventId.make));
@@ -948,7 +951,13 @@ const make = Effect.gen(function* () {
         yield* pullRequests.refreshAfterTurn;
       }
       if (event.type === "turn.aborted") return;
+      let checkpointSuccessful = true;
       yield* captureCheckpointFromTurnCompletion(event).pipe(
+        Effect.tapError(() =>
+          Effect.sync(() => {
+            checkpointSuccessful = false;
+          }),
+        ),
         Effect.catch((error) =>
           Effect.flatMap(nowIso, (createdAt) =>
             appendCaptureFailureActivity({
@@ -960,6 +969,11 @@ const make = Effect.gen(function* () {
           ),
         ),
       );
+      if (turnId)
+        yield* finalizeQueueTurn(event.threadId, turnId, checkpointSuccessful, "checkpoint").pipe(
+          Effect.provideService(SqlClient.SqlClient, queueSql),
+          Effect.orDie,
+        );
       return;
     }
   });

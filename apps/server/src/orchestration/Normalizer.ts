@@ -254,6 +254,7 @@ export const normalizeDispatchCommand = (command: ClientOrchestrationCommand) =>
             ),
           );
 
+          claimedAttachmentPaths.push(attachmentPath);
           return persistedAttachment;
         }),
       { concurrency: 1 },
@@ -270,7 +271,11 @@ export const normalizeDispatchCommand = (command: ClientOrchestrationCommand) =>
 
 export const cleanupFailedUploadedAttachments = Effect.fn(
   "Normalizer.cleanupFailedUploadedAttachments",
-)(function* (command: ClientOrchestrationCommand, normalizedCommand: OrchestrationCommand) {
+)(function* (
+  command: ClientOrchestrationCommand,
+  normalizedCommand: OrchestrationCommand,
+  options?: { includeInline?: boolean },
+) {
   if (command.type !== "thread.turn.start" || normalizedCommand.type !== "thread.turn.start") {
     return;
   }
@@ -281,8 +286,9 @@ export const cleanupFailedUploadedAttachments = Effect.fn(
     const original = command.message.attachments[index];
     if (
       !original ||
-      "dataUrl" in original ||
-      parseThreadSegmentFromAttachmentId(original.id) !== PENDING_ATTACHMENT_THREAD_SEGMENT
+      ("dataUrl" in original
+        ? options?.includeInline !== true
+        : parseThreadSegmentFromAttachmentId(original.id) !== PENDING_ATTACHMENT_THREAD_SEGMENT)
     ) {
       continue;
     }
@@ -297,3 +303,15 @@ export const cleanupFailedUploadedAttachments = Effect.fn(
   }
   yield* removeClaimedAttachmentPaths(claimedPaths);
 });
+
+/** Reject old client-owned queue pumps before they can create a turn. */
+export const requireQueueProtocol = (
+  command: ClientOrchestrationCommand,
+): Effect.Effect<void, OrchestrationDispatchCommandError> =>
+  command.type === "thread.turn.start" && command.queueProtocolVersion !== 2
+    ? Effect.fail(
+        new OrchestrationDispatchCommandError({
+          message: "Update this client before sending messages. This server uses queue protocol 2.",
+        }),
+      )
+    : Effect.void;

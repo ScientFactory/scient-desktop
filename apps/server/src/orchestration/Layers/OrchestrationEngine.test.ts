@@ -1,3 +1,6 @@
+import { enqueueQueue } from "../../scient/threadQueue/operations.ts";
+import { readQueue, writeQueue } from "../../scient/threadQueue/Ledger.ts";
+import * as SqlClient from "effect/unstable/sql/SqlClient";
 // @effect-diagnostics nodeBuiltinImport:off
 import * as NodeFSP from "node:fs/promises";
 import * as NodeOS from "node:os";
@@ -78,7 +81,7 @@ function makeOrchestrationLayer(databasePath?: string) {
     Layer.provide(OrchestrationEventStoreLive),
     Layer.provideMerge(OrchestrationCommandReceiptRepositoryLive),
     Layer.provide(RepositoryIdentityResolver.layer),
-    Layer.provide(persistence),
+    Layer.provideMerge(persistence),
     Layer.provideMerge(ServerConfigLayer),
     Layer.provideMerge(NodeServices.layer),
   );
@@ -93,7 +96,7 @@ async function createOrchestrationSystem(databasePath?: string) {
     readModel: () => runtime.runPromise(snapshotQuery.getSnapshot()),
     readThread: (threadId: ThreadId) =>
       runtime.runPromise(snapshotQuery.getThreadDetailById(threadId)),
-    run: <A, E>(effect: Effect.Effect<A, E>) => runtime.runPromise(effect),
+    run: <A, E>(effect: Effect.Effect<A, E, SqlClient.SqlClient>) => runtime.runPromise(effect),
     dispose: () => runtime.dispose(),
   };
 }
@@ -1875,5 +1878,88 @@ describe("OrchestrationEngine", () => {
     expect(withoutOrigin?.metadata.origin).toBeUndefined();
 
     await system.dispose();
+  });
+});
+
+describe("Scient queue atomic engine boundary", () => {
+  it("commits queue consumption with exactly one user message and stable command receipt", async () => {
+    const system = await createOrchestrationSystem();
+    const threadId = ThreadId.make("queue-atomic-thread");
+    const projectId = ProjectId.make("queue-atomic-project");
+    try {
+      await system.run(
+        system.engine.dispatch({
+          type: "project.create",
+          commandId: CommandId.make("queue-project"),
+          projectId,
+          title: "Queue test",
+          workspaceRoot: "/tmp/queue-test",
+          createdAt: now(),
+        }),
+      );
+      await system.run(
+        system.engine.dispatch({
+          type: "thread.create",
+          commandId: CommandId.make("queue-thread"),
+          threadId,
+          projectId,
+          title: "Queue test",
+          modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5.4" },
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          branch: null,
+          worktreePath: null,
+          createdAt: now(),
+        }),
+      );
+      const doc = await system.run(
+        Effect.gen(function* () {
+          const sql = yield* SqlClient.SqlClient;
+          return yield* sql.withTransaction(
+            Effect.gen(function* () {
+              const initial = yield* readQueue(threadId);
+              const queued = yield* enqueueQueue(
+                { threadId, queueItemId: "qitem_atomic", text: "one message", attachments: [] },
+                initial,
+              );
+              return yield* writeQueue(threadId, queued);
+            }),
+          );
+        }),
+      );
+      const command = {
+        type: "thread.turn.start" as const,
+        commandId: CommandId.make(`queue:qitem_atomic:${doc.revision}`),
+        queueItemId: "qitem_atomic",
+        queueRevision: doc.revision,
+        threadId,
+        message: {
+          messageId: MessageId.make("queue:qitem_atomic"),
+          role: "user" as const,
+          text: "one message",
+          attachments: [],
+        },
+        runtimeMode: "full-access" as const,
+        interactionMode: "default" as const,
+        createdAt: now(),
+      };
+      const [first, duplicate] = await Promise.all([
+        system.run(system.engine.dispatch(command)),
+        system.run(system.engine.dispatch(command)),
+      ]);
+      expect(first).toEqual(duplicate);
+      expect((await system.run(readQueue(threadId))).items).toHaveLength(0);
+      expect((await system.run(readQueue(threadId))).blocked).toBe(true);
+      const thread = await system.readThread(threadId);
+      expect(
+        Option.isSome(thread)
+          ? thread.value.messages
+              .filter((message) => message.role === "user")
+              .map((message) => message.text)
+          : [],
+      ).toEqual(["one message"]);
+    } finally {
+      await system.dispose();
+    }
   });
 });

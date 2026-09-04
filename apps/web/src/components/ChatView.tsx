@@ -1,3 +1,13 @@
+import { queueSubmissionId, acknowledgeQueueSubmission } from "../scient/threadQueue/submission";
+import {
+  beginQueueEdit,
+  stashQueueEdit,
+  finishQueueEdit,
+  flushQueueEdit,
+  loadQueueEdits,
+  useQueueEditSessions,
+} from "../scient/threadQueue/editSession";
+import { composerTargetKey } from "../composerDraftStore";
 import {
   type AssistantCitation,
   type ApprovalRequestId,
@@ -220,11 +230,7 @@ import {
 // SCIENT-FORK:START — thread queue seam. To retire, delete this block, the
 // marked blocks below, and `~/scient/threadQueue`.
 import { ThreadQueueStrip } from "~/scient/threadQueue/ThreadQueueStrip";
-import {
-  resolveComposerSendDisposition,
-  shouldDispatchNextQueuedMessage,
-} from "~/scient/threadQueue/disposition";
-import { restoreQueuedImages } from "~/scient/threadQueue/queueImageRestore";
+import { resolveComposerSendDisposition } from "~/scient/threadQueue/disposition";
 import { useThreadQueue } from "~/scient/threadQueue/useThreadQueue";
 import type { ScientThreadQueueItem, ScientThreadQueueItemId } from "@t3tools/contracts";
 // SCIENT-FORK:END
@@ -282,6 +288,7 @@ import {
   finalizePromotedDraftThreadByRef,
   markPromotedDraftThreadByRef,
   useComposerDraftStore,
+  flushComposerDraftPersistence,
   type DraftId,
 } from "../composerDraftStore";
 import {
@@ -1498,8 +1505,18 @@ function ChatViewContent(props: ChatViewProps) {
     () => new Map(environments.map((environment) => [environment.environmentId, environment])),
     [environments],
   );
-  const composerDraftTarget: ScopedThreadRef | DraftId =
+  const ordinaryComposerTarget: ScopedThreadRef | DraftId =
     routeKind === "server" ? routeThreadRef : props.draftId;
+  const queueEditsReady = useQueueEditSessions((state) => state.ready);
+  const queueEditStorageError = useQueueEditSessions((state) => state.error);
+  const queueEdit = useQueueEditSessions(
+    (state) => state.sessions[composerTargetKey(ordinaryComposerTarget)],
+  );
+  useEffect(() => {
+    void loadQueueEdits();
+  }, []);
+  const composerDraftTarget: ScopedThreadRef | DraftId =
+    queueEdit?.editTarget ?? ordinaryComposerTarget;
   const draftThread = useComposerDraftStore((store) =>
     routeKind === "server"
       ? store.getDraftSessionByRef(routeThreadRef)
@@ -2693,20 +2710,6 @@ function ChatViewContent(props: ChatViewProps) {
   });
   const queueContextKeyRef = useRef(activeThreadKey);
   queueContextKeyRef.current = activeThreadKey;
-  const [dispatchingQueueItemId, setDispatchingQueueItemId] =
-    useState<ScientThreadQueueItemId | null>(null);
-  const queueDispatchBlockedRef = useRef(false);
-  const blockedQueueItemIdRef = useRef<ScientThreadQueueItemId | null>(null);
-  const [queueDispatchError, setQueueDispatchError] = useState<{
-    readonly itemId: ScientThreadQueueItemId;
-    readonly message: string;
-  } | null>(null);
-  useEffect(() => {
-    setDispatchingQueueItemId(null);
-    queueDispatchBlockedRef.current = false;
-    blockedQueueItemIdRef.current = null;
-    setQueueDispatchError(null);
-  }, [environmentId, activeThreadId]);
   // SCIENT-FORK:END
   const threadActivities = activeThread?.activities ?? EMPTY_ACTIVITIES;
   const activeContextWindow = useMemo(
@@ -3520,6 +3523,17 @@ function ChatViewContent(props: ChatViewProps) {
       setThreadError(forkErrorUpdate.threadId, forkErrorUpdate.message);
     }
   }, [forkErrorUpdate, setThreadError]);
+
+  const composerIdentity = composerTargetKey(composerDraftTarget);
+  const previousComposerIdentity = useRef({ thread: activeThreadKey, draft: composerIdentity });
+  useLayoutEffect(() => {
+    const previous = previousComposerIdentity.current;
+    previousComposerIdentity.current = { thread: activeThreadKey, draft: composerIdentity };
+    if (previous.thread === activeThreadKey && previous.draft !== composerIdentity) {
+      const composer = composerRef.current;
+      if (composer) composer.focusAt(composer.readSnapshot().cursor);
+    }
+  }, [activeThreadKey, composerIdentity, composerRef]);
 
   const focusComposer = useCallback(() => {
     composerRef.current?.focusAtEnd();
@@ -6399,6 +6413,7 @@ function ChatViewContent(props: ChatViewProps) {
     };
     if (
       !activeThread ||
+      !queueEditsReady ||
       isSendBusy ||
       isConnecting ||
       threadDetailLoading ||
@@ -6422,7 +6437,7 @@ function ChatViewContent(props: ChatViewProps) {
       });
       return;
     }
-    if (activePendingProgress) {
+    if (activePendingProgress && !queueEdit) {
       if (directAnnotation) {
         notifyDirectAnnotationAttached();
         return;
@@ -6431,7 +6446,7 @@ function ChatViewContent(props: ChatViewProps) {
       return;
     }
     const sendCtx = composerRef.current?.getSendContext();
-    if (!sendCtx) {
+    if (!sendCtx || sendCtx.pendingAttachments) {
       notifyDirectAnnotationAttached();
       return;
     }
@@ -6483,6 +6498,9 @@ function ChatViewContent(props: ChatViewProps) {
           ]
         : sendContextPreviewAnnotations;
     const promptForSend = promptRef.current;
+    const draftSnapshotForSend = useComposerDraftStore
+      .getState()
+      .getComposerDraft(composerDraftTarget);
     const {
       trimmedPrompt: trimmed,
       sendableTerminalContexts: sendableComposerTerminalContexts,
@@ -6498,6 +6516,7 @@ function ChatViewContent(props: ChatViewProps) {
         composerReviewComments.length,
     });
     const standaloneForkCommand =
+      !queueEdit &&
       !directAnnotation &&
       composerImages.length === 0 &&
       sendableComposerTerminalContexts.length === 0 &&
@@ -6513,6 +6532,7 @@ function ChatViewContent(props: ChatViewProps) {
       return;
     }
     const feedbackCommand =
+      !queueEdit &&
       ctxSelectedProvider === "codex" &&
       composerImages.length === 0 &&
       composerFiles.length === 0 &&
@@ -6613,6 +6633,7 @@ function ChatViewContent(props: ChatViewProps) {
       return;
     }
     if (
+      !queueEdit &&
       !directAnnotation &&
       sendInteractionModeEnabled &&
       showPlanFollowUpPrompt &&
@@ -6645,6 +6666,7 @@ function ChatViewContent(props: ChatViewProps) {
     }
     // Providers without the legacy toggle receive their native commands unchanged.
     const standaloneSlashCommand =
+      !queueEdit &&
       sendInteractionModeEnabled &&
       composerImages.length === 0 &&
       composerFiles.length === 0 &&
@@ -6750,9 +6772,11 @@ function ChatViewContent(props: ChatViewProps) {
     };
 
     sendInFlightRef.current = true;
+    if (queueEdit) beginLocalDispatch({ preparingWorktree: false, submissionIntent: "foreground" });
     const attachmentCapabilitiesBeforeUpload = readLiveAttachmentCapabilities();
     if (attachmentCapabilitiesBeforeUpload.fileBlockReason !== null) {
       sendInFlightRef.current = false;
+      if (queueEdit) resetLocalDispatch();
       setThreadError(threadIdForSend, attachmentCapabilitiesBeforeUpload.fileBlockReason);
       return;
     }
@@ -6772,11 +6796,13 @@ function ChatViewContent(props: ChatViewProps) {
       const attachmentCapabilitiesAfterUpload = readLiveAttachmentCapabilities();
       if (attachmentCapabilitiesAfterUpload.fileBlockReason !== null) {
         sendInFlightRef.current = false;
+        if (queueEdit) resetLocalDispatch();
         setThreadError(threadIdForSend, attachmentCapabilitiesAfterUpload.fileBlockReason);
         return;
       }
       if (getUploadedAttachments({ environmentId, images: composerAttachmentsSnapshot }) === null) {
         sendInFlightRef.current = false;
+        if (queueEdit) resetLocalDispatch();
         setThreadError(threadIdForSend, "Retry or remove failed uploads before sending.");
         return;
       }
@@ -6810,6 +6836,7 @@ function ChatViewContent(props: ChatViewProps) {
     const attachmentCapabilitiesBeforeDispatch = readLiveAttachmentCapabilities();
     if (attachmentCapabilitiesBeforeDispatch.fileBlockReason !== null) {
       sendInFlightRef.current = false;
+      if (queueEdit) resetLocalDispatch();
       setThreadError(threadIdForSend, attachmentCapabilitiesBeforeDispatch.fileBlockReason);
       setDockedDraftHeroThreadKey((currentThreadKey) =>
         currentThreadKey === activeThreadKey ? null : currentThreadKey,
@@ -6823,36 +6850,18 @@ function ChatViewContent(props: ChatViewProps) {
 
     const messageIdForSend = newMessageId();
     const messageCreatedAt = new Date().toISOString();
-    const turnAttachmentsPromise = Promise.all(
-      composerAttachmentsSnapshot.map(async (attachment) => {
-        if (turnUsesAttachmentUploads) {
-          const uploaded = getUploadedAttachments({ environmentId, images: [attachment] })?.[0];
-          if (!uploaded) {
-            throw new Error(`Attachment '${attachment.name}' did not finish uploading.`);
-          }
-          return uploaded;
-        }
-        if (attachment.type !== "image") {
-          throw new Error("This server does not support file attachments.");
-        }
-        return {
-          type: "image" as const,
-          name: attachment.name,
-          mimeType: attachment.mimeType,
-          sizeBytes: attachment.sizeBytes,
-          dataUrl: await readFileAsDataUrl(attachment.file),
-        };
-      }),
-    );
     // SCIENT-FORK:START — while a turn is running, Enter enqueues the
     // message instead of dispatching a new turn. Cmd/Ctrl+Enter
-    // (options.steer) and queued-item dispatch bypass this branch.
+    // (options.steer) bypasses this branch; the server owns queued delivery.
     if (
       isServerThread &&
       !directAnnotation &&
       resolveComposerSendDisposition({
-        threadBusy: phase === "running",
-        steerRequested: options?.steer ?? false,
+        threadBusy: phase === "running" || phase === "connecting",
+        hasQueuedItems: threadQueue.items.length > 0,
+        awaitingCompletion: threadQueue.awaitingCompletion,
+        editingQueuedItem: queueEdit !== undefined,
+        steerRequested: queueEdit ? false : (options?.steer ?? false),
       }) === "queue"
     ) {
       if (composerFilesSnapshot.length > 0) {
@@ -6882,15 +6891,49 @@ function ChatViewContent(props: ChatViewProps) {
       );
       if (queueAttachmentsResult._tag === "Success") {
         try {
-          await threadQueue.enqueue({
-            text: outgoingMessageText,
-            attachments: queueAttachmentsResult.value,
-          });
-          if (queueContextKeyRef.current === submissionContextKey) {
+          let acceptedQueueId: string | undefined;
+          const queueSettings = {
+            modelSelection: ctxSelectedModelSelection,
+            runtimeMode: composerRuntimeMode ?? activeThread.runtimeMode,
+            interactionMode: sendInteractionMode,
+          };
+          if (queueEdit) {
+            await flushQueueEdit(queueEdit);
+            await threadQueue.control("edit", queueEdit.queueItemId, queueEdit.editToken);
+            await threadQueue.update({
+              queueItemId: queueEdit.queueItemId,
+              editToken: queueEdit.editToken,
+              ...queueSettings,
+              text: outgoingMessageText,
+              attachments: queueAttachmentsResult.value,
+            });
+            await finishQueueEdit(queueEdit, draftSnapshotForSend ?? undefined);
+          } else {
+            const queuePayload = {
+              ...queueSettings,
+              text: outgoingMessageText,
+              attachments: queueAttachmentsResult.value,
+            };
+            const queueId = await queueSubmissionId(
+              composerTargetKey(composerDraftTarget),
+              queuePayload,
+            );
+            await threadQueue.enqueue({ queueItemId: queueId, ...queuePayload });
+            acceptedQueueId = queueId;
+          }
+          if (
+            !queueEdit &&
+            queueContextKeyRef.current === submissionContextKey &&
+            useComposerDraftStore.getState().getComposerDraft(composerDraftTarget) ===
+              draftSnapshotForSend
+          ) {
             promptRef.current = "";
             clearComposerDraftContent(composerDraftTarget);
+            flushComposerDraftPersistence();
             composerRef.current?.resetCursorState();
           }
+          if (acceptedQueueId)
+            acknowledgeQueueSubmission(composerTargetKey(composerDraftTarget), acceptedQueueId);
         } catch (cause) {
           setThreadError(threadIdForSend, chatActionErrorMessage(cause));
         }
@@ -6906,6 +6949,27 @@ function ChatViewContent(props: ChatViewProps) {
       return;
     }
     // SCIENT-FORK:END
+    const turnAttachmentsPromise = Promise.all(
+      composerAttachmentsSnapshot.map(async (attachment) => {
+        if (turnUsesAttachmentUploads) {
+          const uploaded = getUploadedAttachments({ environmentId, images: [attachment] })?.[0];
+          if (!uploaded) {
+            throw new Error(`Attachment '${attachment.name}' did not finish uploading.`);
+          }
+          return uploaded;
+        }
+        if (attachment.type !== "image") {
+          throw new Error("This server does not support file attachments.");
+        }
+        return {
+          type: "image" as const,
+          name: attachment.name,
+          mimeType: attachment.mimeType,
+          sizeBytes: attachment.sizeBytes,
+          dataUrl: await readFileAsDataUrl(attachment.file),
+        };
+      }),
+    );
     const optimisticAttachments = composerAttachmentsSnapshot.map((attachment) =>
       attachment.type === "image"
         ? {
@@ -6971,9 +7035,16 @@ function ChatViewContent(props: ChatViewProps) {
         }),
       );
     }
-    promptRef.current = "";
-    clearComposerDraftContent(composerDraftTarget);
-    composerRef.current?.resetCursorState();
+    if (
+      useComposerDraftStore.getState().getComposerDraft(composerDraftTarget) ===
+      draftSnapshotForSend
+    ) {
+      clearComposerDraftContent(composerDraftTarget);
+      if (queueContextKeyRef.current === activeThreadKey) {
+        promptRef.current = "";
+        composerRef.current?.resetCursorState();
+      }
+    }
 
     let firstComposerImageName: string | null = null;
     if (composerImagesSnapshot.length > 0) {
@@ -7090,6 +7161,7 @@ function ChatViewContent(props: ChatViewProps) {
         environmentId,
         input: {
           threadId: threadIdForSend,
+          sendIntent: options?.steer || directAnnotation ? "steer" : "normal",
           message: {
             messageId: messageIdForSend,
             role: "user",
@@ -7168,16 +7240,17 @@ function ChatViewContent(props: ChatViewProps) {
     }
 
     if (failure !== null) {
+      const retryDraft = useComposerDraftStore.getState().getComposerDraft(composerDraftTarget);
+      const retryTargetVisible = queueContextKeyRef.current === activeThreadKey;
       if (
-        promptRef.current.length === 0 &&
-        composerImagesRef.current.length === 0 &&
-        composerFilesRef.current.length === 0 &&
-        composerTerminalContextsRef.current.length === 0 &&
-        composerElementContextsRef.current.length === 0 &&
-        (useComposerDraftStore.getState().getComposerDraft(composerDraftTarget)?.previewAnnotations
-          .length ?? 0) === 0 &&
-        (useComposerDraftStore.getState().getComposerDraft(composerDraftTarget)?.reviewComments
-          .length ?? 0) === 0
+        !retryDraft ||
+        (!retryDraft.prompt &&
+          !retryDraft.images.length &&
+          !retryDraft.files.length &&
+          !retryDraft.terminalContexts.length &&
+          !retryDraft.elementContexts.length &&
+          !retryDraft.previewAnnotations.length &&
+          !retryDraft.reviewComments.length)
       ) {
         setOptimisticUserMessages((existing) => {
           const removed = existing.filter((message) => message.id === messageIdForSend);
@@ -7187,12 +7260,14 @@ function ChatViewContent(props: ChatViewProps) {
           const next = existing.filter((message) => message.id !== messageIdForSend);
           return next.length === existing.length ? existing : next;
         });
-        promptRef.current = promptForSend;
         const retryComposerImages = composerImagesSnapshot.map(cloneComposerImageForRetry);
-        composerImagesRef.current = retryComposerImages;
-        composerFilesRef.current = composerFilesSnapshot;
-        composerTerminalContextsRef.current = composerTerminalContextsSnapshot;
-        composerElementContextsRef.current = composerElementContextsSnapshot;
+        if (retryTargetVisible) {
+          promptRef.current = promptForSend;
+          composerImagesRef.current = retryComposerImages;
+          composerFilesRef.current = composerFilesSnapshot;
+          composerTerminalContextsRef.current = composerTerminalContextsSnapshot;
+          composerElementContextsRef.current = composerElementContextsSnapshot;
+        }
         setComposerDraftPrompt(composerDraftTarget, promptForSend);
         addComposerDraftImages(composerDraftTarget, retryComposerImages);
         addComposerDraftFiles(composerDraftTarget, composerFilesSnapshot);
@@ -7200,11 +7275,12 @@ function ChatViewContent(props: ChatViewProps) {
         setComposerDraftElementContexts(composerDraftTarget, composerElementContextsSnapshot);
         setComposerDraftPreviewAnnotations(composerDraftTarget, composerPreviewAnnotationsSnapshot);
         setComposerDraftReviewComments(composerDraftTarget, composerReviewCommentsSnapshot);
-        composerRef.current?.resetCursorState({
-          cursor: collapseExpandedComposerCursor(promptForSend, promptForSend.length),
-          prompt: promptForSend,
-          detectTrigger: true,
-        });
+        if (retryTargetVisible)
+          composerRef.current?.resetCursorState({
+            cursor: collapseExpandedComposerCursor(promptForSend, promptForSend.length),
+            prompt: promptForSend,
+            detectTrigger: true,
+          });
       }
       if (!isAtomCommandInterrupted(failure)) {
         const error = squashAtomCommandFailure(failure);
@@ -7255,214 +7331,34 @@ function ChatViewContent(props: ChatViewProps) {
     }
   };
 
-  // SCIENT-FORK:START — queued-item actions use the ordinary thread.turn.start
-  // command. The queue pump below invokes this only after the active turn
-  // settles, preserving ordering without overlapping dispatches.
-  const dispatchQueuedItem = useCallback(
-    async (item: ScientThreadQueueItem) => {
-      const thread = activeThread;
-      if (!isServerThread || !thread || sendInFlightRef.current) return;
-      const dispatchContextKey = activeThreadKey;
-      const isDispatchCurrent = () => queueContextKeyRef.current === dispatchContextKey;
-      sendInFlightRef.current = true;
-      queueDispatchBlockedRef.current = true;
-      blockedQueueItemIdRef.current = item.queueItemId;
-      setDispatchingQueueItemId(item.queueItemId);
-      setQueueDispatchError(null);
-      beginLocalDispatch({ preparingWorktree: false });
-      try {
-        const result = await startThreadTurn({
-          environmentId,
-          input: {
-            threadId: thread.id,
-            message: {
-              messageId: newMessageId(),
-              role: "user",
-              text: item.text,
-              attachments: item.attachments,
-            },
-            modelSelection: thread.modelSelection,
-            titleSeed: thread.title,
-            runtimeMode: thread.runtimeMode,
-            interactionMode: thread.interactionMode,
-            createdAt: new Date().toISOString(),
-          },
-        });
-        if (result._tag !== "Success") {
-          const error = squashAtomCommandFailure(result);
-          const message =
-            error instanceof Error ? error.message : "Failed to send the queued message.";
-          if (isDispatchCurrent()) {
-            setThreadError(thread.id, message);
-            setQueueDispatchError({ itemId: item.queueItemId, message });
-          }
-          return;
-        }
-        if (isDispatchCurrent()) {
-          acknowledgeActiveThreadWoke();
-        }
-        try {
-          await threadQueue.remove(item.queueItemId);
-        } catch {
-          toastManager.add(
-            stackedThreadToast({
-              type: "warning",
-              title: "Message sent, but the queued copy could not be cleared.",
-              description: "Delete it from the queue to avoid resending it.",
-            }),
-          );
-        }
-      } catch (cause) {
-        const message = chatActionErrorMessage(cause);
-        if (isDispatchCurrent()) {
-          setThreadError(thread.id, message);
-          setQueueDispatchError({ itemId: item.queueItemId, message });
-        }
-      } finally {
-        sendInFlightRef.current = false;
-        if (isDispatchCurrent()) {
-          resetLocalDispatch();
-          setDispatchingQueueItemId(null);
-        }
-      }
-    },
-    [
-      acknowledgeActiveThreadWoke,
-      activeThread,
-      beginLocalDispatch,
-      environmentId,
-      isServerThread,
-      resetLocalDispatch,
-      setThreadError,
-      startThreadTurn,
-      threadQueue,
-    ],
-  );
-
-  useEffect(() => {
-    const firstQueuedItem = threadQueue.items[0];
-    if (
-      queueDispatchBlockedRef.current &&
-      firstQueuedItem?.queueItemId !== blockedQueueItemIdRef.current
-    ) {
-      // The blocked item left the head of the queue: either its turn started
-      // (normal auto-advance) or the user deleted / edited / reordered it.
-      // Release the block and clear any error that was pinned to that item,
-      // then fall through so the next item can advance without waiting for an
-      // unrelated re-render. When a turn is still starting the busy checks below
-      // hold dispatch until the next running -> ready settle; when the thread is
-      // already idle (e.g. the failed item was removed) the next item goes now.
-      const releasedItemId = blockedQueueItemIdRef.current;
-      queueDispatchBlockedRef.current = false;
-      blockedQueueItemIdRef.current = null;
-      if (queueDispatchError?.itemId === releasedItemId) {
-        setQueueDispatchError(null);
-        return; // the resulting render re-runs this effect with the error cleared
-      }
-    }
-    if (
-      !firstQueuedItem ||
-      queueDispatchError !== null ||
-      !shouldDispatchNextQueuedMessage({
-        threadReady: phase === "ready",
-        hasQueuedItem: true,
-        dispatchBlocked: queueDispatchBlockedRef.current || sendInFlightRef.current || isSendBusy,
-      })
-    ) {
-      return;
-    }
-    void dispatchQueuedItem(firstQueuedItem);
-  }, [dispatchQueuedItem, isSendBusy, phase, queueDispatchError, threadQueue.items]);
-
+  // SCIENT-FORK:START — actions mutate the captured thread queue. Only the
+  // server worker admits queued messages into orchestration.
   const editQueuedItem = useCallback(
     (item: ScientThreadQueueItem) => {
       if (!isServerThread || !activeThreadId) return;
-      const composerDraft = useComposerDraftStore.getState().getComposerDraft(composerDraftTarget);
-      if (
-        promptRef.current.trim().length > 0 ||
-        composerImagesRef.current.length > 0 ||
-        (composerDraft?.images.length ?? 0) > 0 ||
-        composerTerminalContextsRef.current.length > 0 ||
-        composerElementContextsRef.current.length > 0 ||
-        (composerDraft?.previewAnnotations.length ?? 0) > 0 ||
-        (composerDraft?.reviewComments.length ?? 0) > 0
-      ) {
-        toastManager.add(
-          stackedThreadToast({
-            type: "warning",
-            title: "The composer already has a draft.",
-            description: "Send or clear it before editing a queued message.",
-          }),
+      if (activePendingProgress || pendingApprovals.length > 0 || isConnecting || isSendBusy) {
+        setThreadError(
+          activeThreadId,
+          "Finish the current approval or question before editing a queued message.",
         );
         return;
       }
-      const imageAttachments = item.attachments.filter(
-        (attachment): attachment is Extract<typeof attachment, { type: "image" }> =>
-          attachment.type === "image",
-      );
-      const restoredImages = restoreQueuedImages(imageAttachments);
-      if (restoredImages.length !== imageAttachments.length) {
-        toastManager.add(
-          stackedThreadToast({
-            type: "warning",
-            title: "This queued message has an unreadable image.",
-            description: "Send it as-is or delete it; editing would drop the image.",
-          }),
-        );
-        return;
-      }
-      // Pull the message out of the queue and back into the composer. Editing is
-      // a "bring it back" action, not an in-place edit: the queue then shows
-      // only what is still waiting, and pressing Enter re-queues the reworked
-      // message (or sends it, if the turn has already finished).
-      //
-      // Remove from the queue FIRST, then load the composer. Ordering it this
-      // way keeps the message in exactly one place at every instant: if the
-      // remove fails the composer is left untouched, so the user can never send
-      // the restored text while the original stays queued and the pump later
-      // sends it too (a duplicate message + duplicated images). The composer is
-      // repopulated through its own imperative insertion path (the same one used
-      // for voice transcripts and mentions) so the live Lexical editor is
-      // actually repainted. `insertTextAtEnd` already schedules focus on the
-      // next frame — after the editor's controlled sync has run — so we must NOT
-      // focus the composer synchronously here: doing so reads the editor's stale
-      // (empty) snapshot and echoes it back as an empty draft, wiping the text.
-      void (async () => {
-        try {
-          await threadQueue.remove(item.queueItemId);
-        } catch (cause) {
+      void beginQueueEdit(routeThreadRef, item)
+        .then(() => threadQueue.refresh())
+        .catch((cause) => {
           setThreadError(activeThreadId, chatActionErrorMessage(cause));
-          return;
-        }
-        const insertedText = composerRef.current?.insertTextAtEnd(item.text) ?? false;
-        if (!insertedText) {
-          // The composer became unavailable (connecting/approval/pending) in the
-          // brief window after the remove. Put the message back so it is neither
-          // dropped nor duplicated; it rejoins the queue at the end.
-          void threadQueue
-            .enqueue({ text: item.text, attachments: item.attachments })
-            .catch((cause) => setThreadError(activeThreadId, chatActionErrorMessage(cause)));
-          toastManager.add(
-            stackedThreadToast({
-              type: "warning",
-              title: "Can't edit this message right now.",
-              description: "The composer is busy; the message stayed in the queue.",
-            }),
-          );
-          return;
-        }
-        if (restoredImages.length > 0) {
-          addComposerDraftImages(composerDraftTarget, restoredImages);
-        }
-      })();
+        });
     },
     [
-      activeThreadId,
-      addComposerDraftImages,
-      composerDraftTarget,
       isServerThread,
-      setThreadError,
+      activeThreadId,
+      routeThreadRef,
       threadQueue,
+      setThreadError,
+      activePendingProgress,
+      pendingApprovals.length,
+      isConnecting,
+      isSendBusy,
     ],
   );
 
@@ -8646,20 +8542,27 @@ function ChatViewContent(props: ChatViewProps) {
                     <div className="mx-auto w-full max-w-3xl">
                       <ThreadQueueStrip
                         items={threadQueue.items}
-                        error={queueDispatchError?.message ?? null}
+                        error={threadQueue.error ?? queueEditStorageError}
                         threadBusy={phase === "running"}
-                        dispatchingItemId={dispatchingQueueItemId}
-                        onSteer={(item) => void dispatchQueuedItem(item)}
-                        {...(queueDispatchError !== null
-                          ? {
-                              retryItemId: queueDispatchError.itemId,
-                              onRetry: (item: ScientThreadQueueItem) =>
-                                void dispatchQueuedItem(item),
-                            }
-                          : {})}
+                        dispatchingItemId={null}
+                        onSteer={(item) => {
+                          void threadQueue.control("steer", item.queueItemId).catch(() => {});
+                        }}
+                        onRetry={() => {
+                          void (
+                            threadQueue.paused
+                              ? threadQueue.control("resume")
+                              : threadQueue.refresh()
+                          ).catch(() => {});
+                        }}
                         onEdit={editQueuedItem}
                         onDelete={deleteQueuedItem}
-                        onReorder={threadQueue.reorder}
+                        onReorder={(ids) => {
+                          void threadQueue.reorder(ids).catch((cause) => {
+                            if (activeThreadId)
+                              setThreadError(activeThreadId, chatActionErrorMessage(cause));
+                          });
+                        }}
                       />
                     </div>
                     {/* SCIENT-FORK:END */}
@@ -8667,6 +8570,10 @@ function ChatViewContent(props: ChatViewProps) {
                       <ComposerSurface.Host>
                         <div ref={attachDraftHeroComposerAnchorRef} className="relative z-10">
                           <ChatComposer
+                            key={composerTargetKey(composerDraftTarget)}
+                            {...(queueEdit
+                              ? { onStashQueueEdit: () => stashQueueEdit(queueEdit) }
+                              : {})}
                             composerRef={composerRef}
                             composerDraftTarget={composerDraftTarget}
                             environmentId={environmentId}
@@ -8689,7 +8596,7 @@ function ChatViewContent(props: ChatViewProps) {
                               activeProject === null
                             }
                             phase={phase}
-                            isConnecting={isConnecting}
+                            isConnecting={isConnecting || !queueEditsReady}
                             isSendBusy={isSendBusy}
                             sendDisabledReason={
                               feedbackUploading
@@ -8701,16 +8608,16 @@ function ChatViewContent(props: ChatViewProps) {
                             isPreparingWorktree={isPreparingWorktree}
                             bannerItems={composerBannerItems}
                             environmentUnavailable={activeEnvironmentUnavailableState}
-                            activePendingApproval={activePendingApproval}
-                            pendingApprovals={pendingApprovals}
-                            pendingUserInputs={pendingUserInputs}
-                            activePendingProgress={activePendingProgress}
+                            activePendingApproval={queueEdit ? null : activePendingApproval}
+                            pendingApprovals={queueEdit ? [] : pendingApprovals}
+                            pendingUserInputs={queueEdit ? [] : pendingUserInputs}
+                            activePendingProgress={queueEdit ? null : activePendingProgress}
                             activePendingResolvedAnswers={activePendingResolvedAnswers}
                             activePendingIsResponding={activePendingIsResponding}
                             activePendingDraftAnswers={activePendingDraftAnswers}
                             activePendingQuestionIndex={activePendingQuestionIndex}
                             respondingRequestIds={respondingRequestIds}
-                            showPlanFollowUpPrompt={showPlanFollowUpPrompt}
+                            showPlanFollowUpPrompt={!queueEdit && showPlanFollowUpPrompt}
                             activeProposedPlan={activeProposedPlan}
                             activeTasksProgress={activeComposerTasksProgress}
                             activeTaskSteps={activeComposerTaskSteps}

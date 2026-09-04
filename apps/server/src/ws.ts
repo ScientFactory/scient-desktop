@@ -97,6 +97,7 @@ import { makeThreadLiveEventCoalescer } from "./orchestration/ThreadLiveEventCoa
 import {
   cleanupFailedUploadedAttachments,
   normalizeDispatchCommand,
+  requireQueueProtocol,
 } from "./orchestration/Normalizer.ts";
 import * as OrchestrationEngine from "./orchestration/Services/OrchestrationEngine.ts";
 import * as ProjectionSnapshotQuery from "./orchestration/Services/ProjectionSnapshotQuery.ts";
@@ -1483,6 +1484,7 @@ const makeWsRpcLayer = (
           observeRpcEffect(
             ORCHESTRATION_WS_METHODS.dispatchCommand,
             Effect.gen(function* () {
+              yield* requireQueueProtocol(command);
               const normalizedCommand = yield* normalizeDispatchCommand(command);
               // Archive removes the thread from the client, so this transport
               // closes its session and terminals after the command lands.

@@ -1,3 +1,4 @@
+import { restoreQueueEditStash } from "../../scient/threadQueue/editSession";
 import type {
   ApprovalRequestId,
   AssistantCitation,
@@ -184,7 +185,11 @@ import {
 } from "../composerFooterLayout";
 import { measureRestingComposerControls } from "./restingComposerControlsMeasurement";
 import { observeResponsiveBreakpointFade, usePanelAnimationSettings } from "../../panelAnimations";
-import { type ComposerPromptEditorHandle, ComposerPromptEditor } from "../ComposerPromptEditor";
+import {
+  type ComposerPromptEditorHandle,
+  ComposerPromptEditor,
+  rememberedComposerCursor,
+} from "../ComposerPromptEditor";
 import { ProviderModelPicker } from "./ProviderModelPicker";
 import { type ComposerCommandItem, ComposerCommandMenu } from "./ComposerCommandMenu";
 import { ComposerPendingApprovalActions } from "./ComposerPendingApprovalActions";
@@ -1155,6 +1160,7 @@ export interface ChatComposerHandle {
   addTerminalContext: (selection: TerminalContextSelection) => void;
   /** Get the current prompt/effort/model state for use in send. */
   getSendContext: () => {
+    pendingAttachments: boolean;
     prompt: string;
     images: ComposerImageAttachment[];
     files: ComposerFileAttachment[];
@@ -1181,6 +1187,7 @@ export interface ChatComposerHandle {
 // --------------------------------------------------------------------------
 
 export interface ChatComposerProps {
+  onStashQueueEdit?: () => Promise<void>;
   composerDraftTarget: ScopedThreadRef | DraftId;
   environmentId: EnvironmentId;
   attachmentUploadsCapabilityKnown: boolean;
@@ -1336,6 +1343,7 @@ export interface ChatComposerProps {
 
 export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps) {
   const {
+    onStashQueueEdit,
     composerDraftTarget,
     environmentId,
     attachmentUploadsCapabilityKnown,
@@ -1426,6 +1434,13 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   // ------------------------------------------------------------------
   // Store subscriptions (prompt / images / terminal contexts)
   // ------------------------------------------------------------------
+  const composerMountedRef = useRef(true);
+  useEffect(() => {
+    composerMountedRef.current = true;
+    return () => {
+      composerMountedRef.current = false;
+    };
+  }, []);
   const composerDraft = useComposerThreadDraft(composerDraftTarget);
   // Live target key, for async flows that must notice a thread switch that
   // happened while they awaited.
@@ -1874,8 +1889,10 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   // ------------------------------------------------------------------
   // Composer-local state
   // ------------------------------------------------------------------
-  const [composerCursor, setComposerCursor] = useState(() =>
-    collapseExpandedComposerCursor(prompt, prompt.length),
+  const [composerCursor, setComposerCursor] = useState(
+    () =>
+      rememberedComposerCursor(composerTargetKey(composerDraftTarget)) ??
+      collapseExpandedComposerCursor(prompt, prompt.length),
   );
   const [composerTrigger, setComposerTrigger] = useState<ComposerTrigger | null>(() =>
     detectComposerTrigger(prompt, prompt.length),
@@ -1981,6 +1998,10 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
    * and checked by `submitComposer` so a send can't race an image into the
    * next draft.
    */
+  const voiceBusyRef = useRef(false);
+  const onVoiceBusyChange = useCallback((busy: boolean) => {
+    voiceBusyRef.current = busy;
+  }, []);
   const pendingImageCompressionsRef = useRef<Map<ThreadId, number>>(new Map());
 
   // ------------------------------------------------------------------
@@ -3217,6 +3238,16 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
 
   const restoreStashEntry = useCallback(
     async (menuEntry: PromptStashEntry) => {
+      if (menuEntry.queueEditKey) {
+        try {
+          await restoreQueueEditStash(menuEntry, composerDraftTarget, environmentId);
+          takeStashEntry(menuEntry.id);
+          setIsStashMenuOpen(false);
+        } catch (cause) {
+          toastManager.add({ type: "error", title: String(cause) });
+        }
+        return;
+      }
       const filesToVerify = menuEntry.files ?? [];
       if (filesToVerify.some((file) => file.environmentId !== environmentId)) {
         toastManager.add({
@@ -3518,6 +3549,14 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   );
 
   const stashCurrentPrompt = useCallback(async () => {
+    if (onStashQueueEdit) {
+      try {
+        await onStashQueueEdit();
+      } catch (cause) {
+        toastManager.add({ type: "error", title: String(cause) });
+      }
+      return;
+    }
     // Terminal-context placeholders reference live sessions the stash can't
     // round-trip, so they are stripped from the stashed prompt.
     const prompt = promptRef.current.split(INLINE_TERMINAL_CONTEXT_PLACEHOLDER).join("").trim();
@@ -3703,6 +3742,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       stashInFlightRef.current.delete(snapshotKey);
     }
   }, [
+    onStashQueueEdit,
     clearComposerDraftPromptAndImages,
     composerDraftTarget,
     composerFilesRef,
@@ -4765,6 +4805,10 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         });
       },
       getSendContext: () => ({
+        pendingAttachments:
+          voiceBusyRef.current ||
+          (activeThreadId != null &&
+            (pendingImageCompressionsRef.current.get(activeThreadId) ?? 0) > 0),
         prompt: promptRef.current,
         images: composerImagesRef.current,
         files: composerFilesRef.current,
@@ -5525,6 +5569,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                 )}
               >
                 <ComposerPromptEditor
+                  draftIdentity={composerTargetKey(composerDraftTarget)}
                   editorRef={composerEditorRef}
                   value={
                     isComposerApprovalState
@@ -5578,6 +5623,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                                 : "Ask anything, @tag files/folders, $use skills, or / for commands"
                   }
                   disabled={
+                    (onStashQueueEdit !== undefined && isSendBusy) ||
                     isConnecting ||
                     isComposerApprovalState ||
                     projectSelectionRequired ||
@@ -5678,6 +5724,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                               size="icon-sm"
                               onPointerDown={(event) => event.preventDefault()}
                               onClick={() => attachmentInputRef.current?.click()}
+                              disabled={onStashQueueEdit !== undefined && isSendBusy}
                               aria-label="Attach files"
                             />
                           }
@@ -5691,13 +5738,34 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                   {showMobilePendingAnswerActions ? null : inlineTasksBadge}
                   <ScientVoiceComposerControl
                     environmentId={environmentId}
+                    onBusyChange={onVoiceBusyChange}
                     onTranscript={(text) => {
+                      voiceBusyRef.current = false;
+                      if (!composerMountedRef.current) {
+                        const originalPrompt =
+                          useComposerDraftStore.getState().getComposerDraft(composerDraftTarget)
+                            ?.prompt ?? "";
+                        applyVoiceTranscript(originalPrompt, text, (start, end, replacement) => {
+                          setComposerDraftPrompt(
+                            composerDraftTarget,
+                            replaceTextRange(originalPrompt, start, end, replacement).text,
+                          );
+                          return true;
+                        });
+                        return;
+                      }
                       applyVoiceTranscript(promptRef.current, text, applyPromptReplacement);
                     }}
                     {...(pendingUserInputs.length === 0
-                      ? { onRequestSubmit: () => submitComposer() }
+                      ? {
+                          onRequestSubmit: () => {
+                            if (composerMountedRef.current) submitComposer();
+                          },
+                        }
                       : {})}
-                    disabled={projectSelectionRequired}
+                    disabled={
+                      projectSelectionRequired || (onStashQueueEdit !== undefined && isSendBusy)
+                    }
                   />
                   <ComposerFooterPrimaryActions
                     compact={isComposerResting || isComposerPrimaryActionsCompact}

@@ -1,5 +1,6 @@
 import {
   EnvironmentHttpApi,
+  ScientThreadQueueOperationError,
   EnvironmentHttpCommonError,
   type EnvironmentAuthInvalidError,
   type EnvironmentInternalError,
@@ -67,6 +68,7 @@ export class RemoteEnvironmentAuthTimeoutError extends Data.TaggedError(
 }
 
 export type RemoteEnvironmentRequestError =
+  | ScientThreadQueueOperationError
   | EnvironmentRequestInvalidError
   | EnvironmentAuthInvalidError
   | EnvironmentScopeRequiredError
@@ -112,7 +114,7 @@ const failRemoteRequest = (
   if (cause instanceof RemoteEnvironmentAuthTimeoutError) {
     return Effect.fail(cause);
   }
-  if (isEnvironmentHttpCommonError(cause)) {
+  if (isEnvironmentHttpCommonError(cause) || Schema.is(ScientThreadQueueOperationError)(cause)) {
     return Effect.fail(cause);
   }
   if (Schema.isSchemaError(cause)) {

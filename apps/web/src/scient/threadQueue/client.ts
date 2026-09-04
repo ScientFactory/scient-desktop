@@ -1,5 +1,6 @@
 import {
   enqueueEnvironmentScientThreadQueueItem,
+  controlEnvironmentScientThreadQueue,
   listEnvironmentScientThreadQueue,
   removeEnvironmentScientThreadQueueItem,
   reorderEnvironmentScientThreadQueue,
@@ -7,9 +8,11 @@ import {
 } from "@t3tools/client-runtime/state/scient-thread-queue";
 import type {
   EnvironmentId,
+  ScientThreadQueueControlRequest,
+  ScientThreadQueueEnqueueRequest,
+  ScientThreadQueueUpdateRequest,
   ScientThreadQueueItemId,
   ThreadId,
-  UploadChatAttachment,
 } from "@t3tools/contracts";
 
 import { runtime } from "../../lib/runtime";
@@ -21,19 +24,23 @@ function prepared(environmentId: EnvironmentId) {
   return connection;
 }
 
-export function listThreadQueue(environmentId: EnvironmentId, threadId: ThreadId) {
+export function listThreadQueue(
+  environmentId: EnvironmentId,
+  threadId: ThreadId,
+  knownRevision?: number,
+) {
   return runtime.runPromise(
-    listEnvironmentScientThreadQueue({ prepared: prepared(environmentId), threadId }),
+    listEnvironmentScientThreadQueue({
+      prepared: prepared(environmentId),
+      threadId,
+      ...(knownRevision !== undefined ? { knownRevision } : {}),
+    }),
   );
 }
 
 export function enqueueThreadQueueItem(
   environmentId: EnvironmentId,
-  input: {
-    readonly threadId: ThreadId;
-    readonly text: string;
-    readonly attachments: ReadonlyArray<UploadChatAttachment>;
-  },
+  input: ScientThreadQueueEnqueueRequest,
 ) {
   return runtime.runPromise(
     enqueueEnvironmentScientThreadQueueItem({ prepared: prepared(environmentId), ...input }),
@@ -51,12 +58,7 @@ export function removeThreadQueueItem(
 
 export function updateThreadQueueItem(
   environmentId: EnvironmentId,
-  input: {
-    readonly threadId: ThreadId;
-    readonly queueItemId: ScientThreadQueueItemId;
-    readonly text: string;
-    readonly attachments: ReadonlyArray<UploadChatAttachment>;
-  },
+  input: ScientThreadQueueUpdateRequest,
 ) {
   return runtime.runPromise(
     updateEnvironmentScientThreadQueueItem({ prepared: prepared(environmentId), ...input }),
@@ -72,5 +74,14 @@ export function reorderThreadQueue(
 ) {
   return runtime.runPromise(
     reorderEnvironmentScientThreadQueue({ prepared: prepared(environmentId), ...input }),
+  );
+}
+
+export function controlThreadQueue(
+  environmentId: EnvironmentId,
+  payload: ScientThreadQueueControlRequest,
+) {
+  return runtime.runPromise(
+    controlEnvironmentScientThreadQueue({ prepared: prepared(environmentId), payload }),
   );
 }

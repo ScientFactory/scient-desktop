@@ -1,297 +1,85 @@
-// @effect-diagnostics nodeBuiltinImport:off -- The queue store persists plain JSON files.
-// @effect-diagnostics globalDate:off -- Queue timestamps are interoperable ISO strings.
+// @effect-diagnostics nodeBuiltinImport:off -- Read-only compatibility reader for v1 JSON queue files.
 import * as NodeCrypto from "node:crypto";
 import * as NodeFSP from "node:fs/promises";
 import * as NodePath from "node:path";
-
 import {
-  SCIENT_THREAD_QUEUE_MAX_ITEMS_PER_THREAD,
   SCIENT_THREAD_QUEUE_MAX_BYTES_PER_THREAD,
+  SCIENT_THREAD_QUEUE_MAX_ITEMS_PER_THREAD,
   ScientThreadQueueItem,
-  type ScientThreadQueueItemId,
+  ThreadId,
   type ScientThreadQueueSnapshot,
-  type ThreadId,
-  type UploadChatAttachment,
 } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
 
-/**
- * Scient thread queue store.
- *
- * One hashed JSON document per thread under `<stateDir>/scient/thread-queue/`. The
- * queue is a holding area, not an orchestration concept: items become real
- * messages only when the client dispatches them through `thread.turn.start`.
- * Writes are atomic (temp file + rename) and serialized per thread so a
- * double-click or racing devices cannot interleave partial updates.
- *
- * This module is Scient-owned end to end. See
- * `docs/internals/scient-thread-queue.md`.
- */
-
-const PersistedThreadQueue = Schema.Struct({
+const LegacyQueue = Schema.Struct({
   formatVersion: Schema.Literal(1),
-  threadId: Schema.String,
+  threadId: ThreadId,
   items: Schema.Array(ScientThreadQueueItem).check(
     Schema.isMaxLength(SCIENT_THREAD_QUEUE_MAX_ITEMS_PER_THREAD),
   ),
 });
-const decodePersistedThreadQueue = Schema.decodeUnknownSync(PersistedThreadQueue);
-
-function queueSnapshotByteLength(snapshot: ScientThreadQueueSnapshot): number {
-  return Buffer.byteLength(JSON.stringify({ formatVersion: 1, ...snapshot }), "utf8");
+const decode = Schema.decodeUnknownSync(Schema.fromJsonString(LegacyQueue));
+const directory = (stateDir: string) => NodePath.join(stateDir, "scient", "thread-queue");
+export function legacyQueueFilePath(stateDir: string, threadId: ThreadId) {
+  return NodePath.join(
+    directory(stateDir),
+    `${NodeCrypto.createHash("sha256").update(threadId).digest("hex")}.json`,
+  );
 }
-
-function assertQueueFitsDiskBudget(snapshot: ScientThreadQueueSnapshot): void {
-  const bytes = queueSnapshotByteLength(snapshot);
-  if (bytes > SCIENT_THREAD_QUEUE_MAX_BYTES_PER_THREAD) {
-    throw new Error(
-      `The queue would use ${bytes} bytes, over its ${SCIENT_THREAD_QUEUE_MAX_BYTES_PER_THREAD}-byte limit. Remove an image or send a queued message first.`,
-    );
-  }
-}
-
-function queueFilePath(stateDir: string, threadId: ThreadId): string {
-  const fileKey = NodeCrypto.createHash("sha256").update(threadId).digest("hex");
-  return NodePath.join(stateDir, "scient", "thread-queue", `${fileKey}.json`);
-}
-
-const LEGACY_THREAD_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/u;
-
-function legacyQueueFilePath(stateDir: string, threadId: ThreadId): string | null {
-  return LEGACY_THREAD_ID_PATTERN.test(threadId)
-    ? NodePath.join(stateDir, "scient", "thread-queue", `${threadId}.json`)
-    : null;
-}
-
-async function writeQueueAtomic(filePath: string, snapshot: ScientThreadQueueSnapshot) {
-  await NodeFSP.mkdir(NodePath.dirname(filePath), { recursive: true });
-  const temporaryPath = `${filePath}.${NodeCrypto.randomUUID()}.tmp`;
-  await NodeFSP.writeFile(temporaryPath, JSON.stringify({ formatVersion: 1, ...snapshot }), {
-    encoding: "utf8",
-    mode: 0o600,
-  });
-  await NodeFSP.rename(temporaryPath, filePath);
-}
-
-async function readQueueDocument(
-  filePath: string,
-  threadId: ThreadId,
-): Promise<ScientThreadQueueSnapshot | null> {
+async function read(filePath: string): Promise<ScientThreadQueueSnapshot | null> {
   let raw: string;
   try {
     raw = await NodeFSP.readFile(filePath, "utf8");
-  } catch (error) {
-    if (error instanceof Error && "code" in error && error.code === "ENOENT") {
-      return null;
-    }
-    throw error;
+  } catch (cause) {
+    if (cause instanceof Error && "code" in cause && cause.code === "ENOENT") return null;
+    throw cause;
   }
-  try {
-    const decoded = decodePersistedThreadQueue(JSON.parse(raw));
-    if (decoded.threadId !== threadId) {
-      throw new Error("The stored queue belongs to another thread.");
-    }
-    assertQueueFitsDiskBudget({ threadId, items: decoded.items });
-    return { threadId, items: decoded.items };
-  } catch (error) {
-    // Never trap the user behind an undecodable file: move it aside once and
-    // start from an empty queue. The quarantined copy keeps the evidence.
-    const quarantinePath = `${filePath}.corrupt-${NodeCrypto.randomUUID()}`;
-    await NodeFSP.rename(filePath, quarantinePath).catch(() => undefined);
-    throw error instanceof Error
-      ? new Error(`The stored thread queue is unreadable and was moved aside: ${error.message}`)
-      : error;
-  }
+  if (Buffer.byteLength(raw, "utf8") > SCIENT_THREAD_QUEUE_MAX_BYTES_PER_THREAD)
+    throw new Error("The saved queue exceeds the queue size limit. Its source file has been kept.");
+  const parsed = decode(raw);
+  if (new Set(parsed.items.map((item) => item.queueItemId)).size !== parsed.items.length)
+    throw new Error(
+      "The saved queue contains duplicate message IDs. Its source file has been kept.",
+    );
+  return { threadId: parsed.threadId, items: parsed.items };
 }
-
-async function readQueueForThread(
-  filePath: string,
-  stateDir: string,
-  threadId: ThreadId,
-): Promise<ScientThreadQueueSnapshot> {
-  const current = await readQueueDocument(filePath, threadId);
-  if (current !== null) return current;
-
-  const legacyPath = legacyQueueFilePath(stateDir, threadId);
-  if (legacyPath === null || legacyPath === filePath) return { threadId, items: [] };
-  try {
-    const legacy = await readQueueDocument(legacyPath, threadId);
-    if (legacy === null) return { threadId, items: [] };
-    await writeQueueAtomic(filePath, legacy);
-    await NodeFSP.rm(legacyPath, { force: true });
-    return legacy;
-  } catch (error) {
-    if (error instanceof Error && "code" in error && error.code === "ENOENT") {
-      return { threadId, items: [] };
-    }
-    throw error;
-  }
-}
-
-// Per-file promise lanes serialize mutations without blocking unrelated
-// threads. The lane map stays bounded because entries are removed as soon as
-// the tail settles.
-const queueLanes = new Map<string, Promise<unknown>>();
-
-async function withQueueLane<A>(key: string, run: () => Promise<A>): Promise<A> {
-  const previous = queueLanes.get(key) ?? Promise.resolve();
-  let release: (() => void) | undefined;
-  const gate = new Promise<void>((resolve) => {
-    release = resolve;
-  });
-  const tail = previous.catch(() => undefined).then(() => gate);
-  queueLanes.set(key, tail);
-  await previous.catch(() => undefined);
-  try {
-    return await run();
-  } finally {
-    release?.();
-    if (queueLanes.get(key) === tail) queueLanes.delete(key);
-  }
-}
-
-function withLane<A>(
-  stateDir: string,
-  threadId: ThreadId,
-  run: (filePath: string) => Promise<A>,
-): Promise<A> {
-  const filePath = queueFilePath(stateDir, threadId);
-  return withQueueLane(filePath, () => run(filePath));
-}
-
+/** Read only: SQL records the import receipt, and source files remain available for recovery. */
 export async function listScientThreadQueue(input: {
-  readonly stateDir: string;
-  readonly threadId: ThreadId;
+  stateDir: string;
+  threadId: ThreadId;
 }): Promise<ScientThreadQueueSnapshot> {
-  return withLane(input.stateDir, input.threadId, (filePath) =>
-    readQueueForThread(filePath, input.stateDir, input.threadId),
-  );
+  const hashed = await read(legacyQueueFilePath(input.stateDir, input.threadId));
+  const old =
+    hashed ??
+    (/^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/u.test(input.threadId)
+      ? await read(NodePath.join(directory(input.stateDir), `${input.threadId}.json`))
+      : null);
+  if (old && old.threadId !== input.threadId)
+    throw new Error("The saved queue belongs to another thread. Its source file has been kept.");
+  return old ?? { threadId: input.threadId, items: [] };
 }
-
-export async function enqueueScientThreadQueueItem(input: {
-  readonly stateDir: string;
-  readonly threadId: ThreadId;
-  readonly text: string;
-  readonly attachments: ReadonlyArray<UploadChatAttachment>;
-}): Promise<ScientThreadQueueSnapshot> {
-  return withLane(input.stateDir, input.threadId, async (filePath) => {
-    const current = await readQueueForThread(filePath, input.stateDir, input.threadId);
-    if (current.items.length >= SCIENT_THREAD_QUEUE_MAX_ITEMS_PER_THREAD) {
-      throw new Error(
-        `The queue already holds ${SCIENT_THREAD_QUEUE_MAX_ITEMS_PER_THREAD} messages. Send or delete one before queueing more.`,
-      );
+export async function discoverLegacyQueueThreads(stateDir: string): Promise<ThreadId[]> {
+  let files: string[];
+  try {
+    files = await NodeFSP.readdir(directory(stateDir));
+  } catch (cause) {
+    if (cause instanceof Error && "code" in cause && cause.code === "ENOENT") return [];
+    throw cause;
+  }
+  const ids = new Set<ThreadId>();
+  for (const filename of files) {
+    if (!filename.endsWith(".json")) continue;
+    try {
+      const doc = await read(NodePath.join(directory(stateDir), filename));
+      if (
+        doc &&
+        (filename === NodePath.basename(legacyQueueFilePath(stateDir, doc.threadId)) ||
+          filename === `${doc.threadId}.json`)
+      )
+        ids.add(doc.threadId);
+    } catch {
+      /* An unreadable source remains intact and reports its error when that thread is opened. */
     }
-    const now = new Date().toISOString();
-    const next: ScientThreadQueueSnapshot = {
-      threadId: input.threadId,
-      items: [
-        ...current.items,
-        {
-          queueItemId: `qitem_${NodeCrypto.randomUUID()}`,
-          text: input.text,
-          attachments: [...input.attachments],
-          createdAt: now,
-          updatedAt: now,
-        },
-      ],
-    };
-    assertQueueFitsDiskBudget(next);
-    await writeQueueAtomic(filePath, next);
-    return next;
-  });
+  }
+  return [...ids];
 }
-
-export async function updateScientThreadQueueItem(input: {
-  readonly stateDir: string;
-  readonly threadId: ThreadId;
-  readonly queueItemId: ScientThreadQueueItemId;
-  readonly text: string;
-  readonly attachments: ReadonlyArray<UploadChatAttachment>;
-}): Promise<ScientThreadQueueSnapshot> {
-  return withLane(input.stateDir, input.threadId, async (filePath) => {
-    const current = await readQueueForThread(filePath, input.stateDir, input.threadId);
-    const itemIndex = current.items.findIndex((item) => item.queueItemId === input.queueItemId);
-    if (itemIndex === -1) {
-      throw new Error("The queued message no longer exists. Refresh the queue and try again.");
-    }
-    const existing = current.items[itemIndex]!;
-    const now = Date.now();
-    const previousUpdatedAt = Date.parse(existing.updatedAt);
-    const updatedAt = new Date(
-      Number.isFinite(previousUpdatedAt) && previousUpdatedAt >= now ? previousUpdatedAt + 1 : now,
-    ).toISOString();
-    const next: ScientThreadQueueSnapshot = {
-      threadId: input.threadId,
-      items: current.items.with(itemIndex, {
-        ...existing,
-        text: input.text,
-        attachments: [...input.attachments],
-        updatedAt,
-      }),
-    };
-    assertQueueFitsDiskBudget(next);
-    await writeQueueAtomic(filePath, next);
-    return next;
-  });
-}
-
-export async function removeScientThreadQueueItem(input: {
-  readonly stateDir: string;
-  readonly threadId: ThreadId;
-  readonly queueItemId: ScientThreadQueueItemId;
-}): Promise<ScientThreadQueueSnapshot> {
-  return withLane(input.stateDir, input.threadId, async (filePath) => {
-    const current = await readQueueForThread(filePath, input.stateDir, input.threadId);
-    const next: ScientThreadQueueSnapshot = {
-      threadId: input.threadId,
-      items: current.items.filter((item) => item.queueItemId !== input.queueItemId),
-    };
-    if (next.items.length === current.items.length) {
-      return current;
-    }
-    if (next.items.length === 0) {
-      await NodeFSP.rm(filePath, { force: true });
-      return next;
-    }
-    await writeQueueAtomic(filePath, next);
-    return next;
-  });
-}
-
-export async function reorderScientThreadQueue(input: {
-  readonly stateDir: string;
-  readonly threadId: ThreadId;
-  readonly queueItemIds: ReadonlyArray<ScientThreadQueueItemId>;
-}): Promise<ScientThreadQueueSnapshot> {
-  return withLane(input.stateDir, input.threadId, async (filePath) => {
-    const current = await readQueueForThread(filePath, input.stateDir, input.threadId);
-    const rank = new Map(input.queueItemIds.map((id, index) => [id, index] as const));
-    if (
-      rank.size !== input.queueItemIds.length ||
-      rank.size !== current.items.length ||
-      current.items.some((item) => !rank.has(item.queueItemId))
-    ) {
-      throw new Error("The queue order does not match the current queue. Refresh and try again.");
-    }
-    const next: ScientThreadQueueSnapshot = {
-      threadId: input.threadId,
-      items: [...current.items].sort(
-        (left, right) => rank.get(left.queueItemId)! - rank.get(right.queueItemId)!,
-      ),
-    };
-    if (
-      next.items.length === current.items.length &&
-      next.items.every((item, index) => item.queueItemId === current.items[index]?.queueItemId)
-    ) {
-      return current;
-    }
-    await writeQueueAtomic(filePath, next);
-    return next;
-  });
-}
-
-/** Test-only introspection: the store keeps no other module state. */
-export const scientThreadQueueStoreInternals = {
-  queueFilePath,
-  lanes: queueLanes,
-};

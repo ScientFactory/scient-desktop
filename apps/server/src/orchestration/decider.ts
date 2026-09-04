@@ -977,8 +977,10 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
             ? { modelSelection: command.modelSelection }
             : {}),
           ...(command.titleSeed !== undefined ? { titleSeed: command.titleSeed } : {}),
-          runtimeMode: targetThread.runtimeMode,
-          interactionMode: targetThread.interactionMode,
+          runtimeMode: command.queueItemId ? command.runtimeMode : targetThread.runtimeMode,
+          interactionMode: command.queueItemId
+            ? command.interactionMode
+            : targetThread.interactionMode,
           ...(sourceProposedPlan !== undefined ? { sourceProposedPlan } : {}),
           createdAt: command.createdAt,
         },
@@ -989,6 +991,55 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
       // A snooze clears the same way — sending a message to a snoozed
       // thread is the user re-engaging, so the return ticket is spent.
       const lifecycleResetEvents: Array<Omit<OrchestrationEvent, "sequence">> = [];
+      // Queue settings become thread settings only when this item is atomically admitted.
+      if (command.queueItemId) {
+        if (command.runtimeMode !== targetThread.runtimeMode)
+          lifecycleResetEvents.push({
+            ...(yield* withEventBase({
+              aggregateKind: "thread",
+              aggregateId: command.threadId,
+              occurredAt: command.createdAt,
+              commandId: command.commandId,
+            })),
+            type: "thread.runtime-mode-set",
+            payload: {
+              threadId: command.threadId,
+              runtimeMode: command.runtimeMode,
+              updatedAt: command.createdAt,
+            },
+          });
+        if (command.interactionMode !== targetThread.interactionMode)
+          lifecycleResetEvents.push({
+            ...(yield* withEventBase({
+              aggregateKind: "thread",
+              aggregateId: command.threadId,
+              occurredAt: command.createdAt,
+              commandId: command.commandId,
+            })),
+            type: "thread.interaction-mode-set",
+            payload: {
+              threadId: command.threadId,
+              interactionMode: command.interactionMode,
+              updatedAt: command.createdAt,
+            },
+          });
+        if (command.modelSelection)
+          lifecycleResetEvents.push({
+            ...(yield* withEventBase({
+              aggregateKind: "thread",
+              aggregateId: command.threadId,
+              occurredAt: command.createdAt,
+              commandId: command.commandId,
+            })),
+            type: "thread.meta-updated",
+            payload: {
+              threadId: command.threadId,
+              modelSelection: command.modelSelection,
+              updatedAt: command.createdAt,
+            },
+          });
+      }
+
       if (targetThread.settledOverride !== null) {
         lifecycleResetEvents.push({
           ...(yield* withEventBase({

@@ -64,3 +64,25 @@ describe("shouldDispatchNextQueuedMessage", () => {
     ).toBe(false);
   });
 });
+
+describe("composer recovery after Stop", () => {
+  it("starts an ordinary message while stopped messages wait, then queues while the new answer runs", () => {
+    const recovery = { hasQueuedItems: true, awaitingCompletion: true, steerRequested: false };
+    expect(resolveComposerSendDisposition({ ...recovery, threadBusy: false })).toBe("send");
+    expect(resolveComposerSendDisposition({ ...recovery, threadBusy: true })).toBe("queue");
+    expect(
+      resolveComposerSendDisposition({ ...recovery, threadBusy: false, awaitingCompletion: false }),
+    ).toBe("queue");
+  });
+  it("requeues an edited item in place even while stopped or with the steer modifier", () => {
+    expect(
+      resolveComposerSendDisposition({
+        threadBusy: false,
+        hasQueuedItems: true,
+        awaitingCompletion: true,
+        editingQueuedItem: true,
+        steerRequested: true,
+      }),
+    ).toBe("queue");
+  });
+});

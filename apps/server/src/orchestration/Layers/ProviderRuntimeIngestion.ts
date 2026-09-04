@@ -1,3 +1,5 @@
+import * as SqlClient from "effect/unstable/sql/SqlClient";
+import { finalizeQueueTurn } from "../../scient/threadQueue/Ledger.ts";
 import {
   ApprovalRequestId,
   type AssistantDeliveryMode,
@@ -999,6 +1001,7 @@ export function runtimeEventToActivities(
 }
 
 const make = Effect.gen(function* () {
+  const queueSql = yield* SqlClient.SqlClient;
   const threadBackgroundLiveness = yield* ThreadBackgroundLivenessService;
   const threadPlanProgress = yield* ThreadPlanProgressService;
   const crypto = yield* Crypto.Crypto;
@@ -2483,6 +2486,14 @@ const make = Effect.gen(function* () {
             updatedAt: now,
           });
         }
+      }
+
+      if (event.type === "turn.completed" && shouldApplyThreadLifecycle && eventTurnId) {
+        yield* finalizeQueueTurn(
+          thread.id,
+          eventTurnId,
+          normalizeRuntimeTurnState(event.payload.state) === "completed",
+        ).pipe(Effect.provideService(SqlClient.SqlClient, queueSql), Effect.orDie);
       }
 
       if (event.type === "turn.aborted" && eventTurnId) {
