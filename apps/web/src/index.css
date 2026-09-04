@@ -1,5 +1,6 @@
 @import "tailwindcss";
 @import "./scient/typography/profile.css";
+@import "./scient/presentation/scient-content-scrollbar.css";
 
 @custom-variant dark (&:is(.dark, .dark *));
 @custom-variant light (&:not(.dark, .dark *));
@@ -1112,6 +1113,11 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
     var(--code-background) 95%,
     var(--code-foreground) 5%
   );
+  --markdown-code-block-border: color-mix(
+    in srgb,
+    var(--markdown-code-block-background) 96%,
+    var(--code-foreground) 4%
+  );
   --terminal-background: var(--background);
   --terminal-foreground: var(--foreground);
   --terminal-cursor: rgb(38 56 78);
@@ -1399,7 +1405,7 @@ html[data-theme-id] [data-chat-header] [data-slot="separator"] {
    surfaces with the accent, which fights syntax highlighting. */
 html[data-theme-id] .chat-markdown .chat-markdown-codeblock {
   background-color: var(--markdown-code-block-background);
-  border-color: var(--contrast-border);
+  border-color: var(--markdown-code-block-border);
   color: var(--code-foreground);
 }
 
@@ -1960,6 +1966,7 @@ code {
 
 .chat-markdown .chat-markdown-codeblock {
   background-color: var(--markdown-code-block-background);
+  border-color: var(--markdown-code-block-border);
 }
 
 .chat-markdown .chat-markdown-chrome-action:hover,

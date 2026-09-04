@@ -66,6 +66,9 @@ relocate an already open file automatically.
   follows **Settings → Word wrap**, which defaults on. A block's wrap button
   changes only that block; changing the setting applies the new preference to
   open blocks. Copy includes the current code without adding Markdown fences.
+  Code headers use the same colored language icons or filename titles as chat.
+  HTML tags and attributes, operators, and punctuation are highlighted in the
+  editor. Code boxes have a subtle border and the same thin scrollbar as math.
 - Standalone Markdown images expose floating viewing controls. Use **Edit
   details** for the image source and alternative text; **Apply** saves one
   change and **Cancel** leaves the document unchanged. Click an image to place

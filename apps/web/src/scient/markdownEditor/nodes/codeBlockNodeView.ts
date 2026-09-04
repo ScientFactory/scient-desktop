@@ -11,7 +11,8 @@ import type {
 import { resolveScientRichFenceKind } from "~/scient/presentation/ScientRichFence";
 
 import { getClientSettings } from "~/hooks/useSettings";
-import { mountCodeBlockActions } from "./codeBlockActions";
+import { mountCodeBlockHeader } from "./codeBlockActions";
+import { extractFenceTitle } from "~/scient/presentation/CodeBlockTitle";
 
 import { leaveAtomEditor } from "../prosemirror/safeSelection";
 import {
@@ -46,12 +47,11 @@ function documentTheme(): ScientMarkdownTheme {
 
 class ScientCodeBlockNodeView implements NodeView {
   readonly dom = document.createElement("div");
-  private readonly languageLabel = document.createElement("span");
   private readonly rendered = document.createElement("div");
   private readonly editorHost = document.createElement("div");
   private readonly loadError = document.createElement("div");
   private readonly retryButton = document.createElement("button");
-  private readonly unmountActions: () => void;
+  private readonly header: ReturnType<typeof mountCodeBlockHeader>;
   private wrapped = getClientSettings().wordWrap;
   private nestedEditor: ScientNestedCodeEditor | null = null;
   private unregisterCodeEditor: (() => void) | undefined;
@@ -86,14 +86,7 @@ class ScientCodeBlockNodeView implements NodeView {
     this.dom.setAttribute("data-scient-markdown-code-block", "true");
     const header = document.createElement("div");
     header.className = "scient-markdown-code-header";
-    this.languageLabel.className = "scient-markdown-code-language";
-    const actions = document.createElement("span");
-    header.append(this.languageLabel, actions);
-    this.unmountActions = mountCodeBlockActions(
-      actions,
-      () => this.node.textContent,
-      this.setWordWrap,
-    );
+    this.header = mountCodeBlockHeader(header, () => this.node.textContent, this.setWordWrap);
     this.dom.dataset.wrap = String(this.wrapped);
     this.dom.append(header);
     this.rendered.className = "scient-markdown-code-render";
@@ -116,7 +109,7 @@ class ScientCodeBlockNodeView implements NodeView {
     this.dom.addEventListener("mousedown", this.handleMouseDown);
     this.editorHost.addEventListener("focusin", this.handleEditorFocus);
     this.unregisterExternalPresentation = registerExternalPresentation?.((change) => {
-      if ((change === "appearance" || change === "mode") && this.isRichFence()) {
+      if (change === "appearance" || (change === "mode" && this.isRichFence())) {
         if (!this.view.editable) {
           this.richSourceOpen = false;
           this.loadError.hidden = true;
@@ -165,7 +158,7 @@ class ScientCodeBlockNodeView implements NodeView {
 
   destroy(): void {
     this.destroyed = true;
-    this.unmountActions();
+    this.header.destroy();
     this.unregisterCodeEditor?.();
     this.unregisterCodeEditor = undefined;
     this.nestedEditor?.destroy();
@@ -358,7 +351,12 @@ class ScientCodeBlockNodeView implements NodeView {
     const code = this.node.textContent;
     const richKind = resolveScientRichFenceKind(language);
     const metadata = fenceMetadata(this.node);
-    this.languageLabel.textContent = language === "text" ? "Plain text" : language;
+    const theme = this.resolveTheme();
+    this.header.updateTitle({
+      language: language === "text" ? "Plain text" : language,
+      fenceTitle: extractFenceTitle(metadata),
+      theme,
+    });
     this.dom.classList.toggle(
       "is-empty",
       code.length === 0 && language === "text" && richKind === null,
@@ -374,7 +372,6 @@ class ScientCodeBlockNodeView implements NodeView {
         this.focusSourceOnMount = focusEditor;
       }
       this.reactRoot ??= createRoot(this.rendered);
-      const theme = this.resolveTheme();
       this.reactRoot.render(
         createElement(ScientEditableRichFence, {
           authoringActions: this.view.editable ? this.authoringActions : undefined,

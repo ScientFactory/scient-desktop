@@ -1,7 +1,8 @@
-import { useLayoutEffect } from "react";
+import { type ComponentProps, useLayoutEffect } from "react";
 import { createRoot } from "react-dom/client";
 
 import { CodeBlockActions, useCodeBlockWordWrap } from "~/scient/presentation/CodeBlockActions";
+import { CodeBlockTitle } from "~/scient/presentation/CodeBlockTitle";
 
 function EditorCodeBlockActions({
   readCode,
@@ -23,4 +24,34 @@ export function mountCodeBlockActions(
   const root = createRoot(host);
   root.render(<EditorCodeBlockActions readCode={readCode} onWrapChange={onWrapChange} />);
   return () => root.unmount();
+}
+
+export function mountCodeBlockHeader(
+  host: HTMLElement,
+  readCode: () => string,
+  onWrapChange: (wrapped: boolean) => void,
+) {
+  const root = createRoot(host);
+  let previousTitle: ComponentProps<typeof CodeBlockTitle> | undefined;
+  return {
+    updateTitle: (title: ComponentProps<typeof CodeBlockTitle>) => {
+      if (
+        previousTitle?.language === title.language &&
+        previousTitle.fenceTitle === title.fenceTitle &&
+        previousTitle.theme === title.theme
+      ) {
+        return;
+      }
+      previousTitle = title;
+      root.render(
+        <>
+          <span className="scient-markdown-code-language inline-flex min-w-0 items-center gap-[0.4rem]">
+            <CodeBlockTitle {...title} />
+          </span>
+          <EditorCodeBlockActions readCode={readCode} onWrapChange={onWrapChange} />
+        </>,
+      );
+    },
+    destroy: () => root.unmount(),
+  };
 }

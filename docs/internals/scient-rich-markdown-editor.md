@@ -369,9 +369,17 @@ pending-surface adapter reads current departure state when a link or host contro
 
 NodeViews that depend on state outside the document register with one controller-owned
 presentation channel. Workspace-index changes retry unresolved images and refresh wiki-target
-status; appearance changes refresh shared rich-fence visuals and reconfigure persistent nested code
+status; appearance changes refresh shared rich-fence visuals, code header icons, and persistent nested code
 editors through the same controller event. Neither path creates a transaction or save, and the
 number of code blocks does not multiply document-level theme observers.
+
+Ordinary code headers reuse `CodeBlockTitle` with chat, including language icons,
+filename metadata, and the plain-text fallback. Header refreshes keep the same
+Wrap/Copy component state and never replace the nested editor. CodeMirror uses
+the Pierre semantic palette, supplemented by its TextMate colors for HTML tags,
+attributes, operators, and punctuation. The shared code border token and
+`scient-content-scrollbar.css` keep code and math presentation consistent across
+chat and the editor without changing other application scrollbars.
 
 Document direction is also presentation state. The controller derives stable block directions
 from visible prose while technical nodes remain LTR. In an RTL prose block, only standalone

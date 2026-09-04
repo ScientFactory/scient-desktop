@@ -1,16 +1,43 @@
-/* Scoped to the two rendered-math wrappers; KaTeX owns everything inside them.
-   Both selectors outrank KaTeX's own rules, which load from a later chunk. */
+/* Scoped to rendered math. Selectors outrank KaTeX's own rules, which load
+   from a later chunk; KaTeX retains ownership of each mathematical group. */
 
 .scient-math-display {
   display: block;
+  min-width: 0;
+  max-width: 100%;
   margin-block: 0.75rem;
-  /* A wide equation scrolls inside its own block, never the conversation. */
+  /* Only indivisible expressions need scrolling; ordinary terms can wrap. */
   overflow-x: auto;
   overflow-y: hidden;
 }
 
 .scient-math-display > .katex-display {
   margin: 0;
+}
+
+/* KaTeX groups terms into unbreakable .base spans at mathematical break points.
+   Relax only the display wrapper, preserving fractions and authored alignment. */
+.scient-math-display > .katex-display > .katex {
+  white-space: normal;
+}
+
+.scient-math-display > .katex-display > .katex > .katex-html {
+  /* Center fitting equations without pushing the start of oversized groups
+     into negative, unreachable scroll space. */
+  width: fit-content;
+  min-width: 100%;
+  display: flow-root;
+}
+
+.scient-math-display > .katex-display > .katex > .katex-html > .base {
+  margin-block: 0.15em;
+}
+
+/* Let equation numbers take space on the final line instead of overlaying it. */
+.scient-math-display > .katex-display > .katex > .katex-html > .tag {
+  position: static;
+  float: right;
+  margin-left: 1em;
 }
 
 /* KaTeX bumps itself to 1.21em; inline math reads at the size of its sentence. */

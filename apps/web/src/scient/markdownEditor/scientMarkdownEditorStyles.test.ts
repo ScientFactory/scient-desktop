@@ -402,7 +402,7 @@ describe("rich Markdown compact-surface styles", () => {
   it("uses the persistent code surface for multiline raw YAML and HTML source", () => {
     expect(cssSource).not.toContain(".scient-markdown-source-island-preview");
     expect(cssSource).toMatch(
-      /\.scient-markdown-source-island \{[^}]*border: 1px solid var\(--contrast-border, var\(--border\)\)[^}]*background: var\(--markdown-code-block-background/su,
+      /\.scient-markdown-source-island \{[^}]*border: 1px solid var\(--markdown-code-block-border, var\(--border\)\)[^}]*background: var\(--markdown-code-block-background/su,
     );
     expect(cssSource).toMatch(/\.scient-markdown-source-island-code-editor \{[^}]*min-width: 0/su);
     expect(cssSource).toMatch(

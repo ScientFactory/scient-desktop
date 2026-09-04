@@ -132,4 +132,46 @@ describe("Scient nested code editor", () => {
     editor.replaceExternalCode('title = "Exact"', "toml");
     expect(content.getAttribute("aria-label")).toBe("HTML source");
   });
+
+  it.each([
+    ["light", "#d5512f", "#18a46c", "#636363"],
+    ["dark", "#ff855e", "#60d199", "#636363"],
+  ])(
+    "highlights HTML tags, attributes, and punctuation in %s mode",
+    async (mode, tag, attribute, punctuation) => {
+      document.documentElement.classList.toggle("dark", mode === "dark");
+      const parent = document.createElement("div");
+      document.body.append(parent);
+      const onUserCodeChange = vi.fn();
+      editor = createScientNestedCodeEditor({
+        parent,
+        code: '<div class="note">Hello &amp; welcome</div>',
+        editable: true,
+        language: "html",
+        onEscape: vi.fn(),
+        onUserCodeChange,
+      });
+      const surface = parent.querySelector<HTMLElement>(".cm-editor")!;
+      const colorOf = (text: string) => {
+        const token = [...parent.querySelectorAll(".cm-line span")].find(
+          (span) => span.textContent === text,
+        );
+        return token ? getComputedStyle(token).color : null;
+      };
+      await vi.waitFor(() => {
+        expect(colorOf("div")).toBe(tag);
+        expect(colorOf("class")).toBe(attribute);
+        expect(colorOf("<")).toBe(punctuation);
+      });
+
+      // Editing and a language change retain the same code surface and palette.
+      editor.replaceExternalCode("const value = Math.max(1, 2);", "javascript");
+      await vi.waitFor(() => {
+        expect(colorOf("=")).toBe(punctuation);
+        expect(colorOf(".")).toBe(punctuation);
+      });
+      expect(parent.querySelector(".cm-editor")).toBe(surface);
+      expect(onUserCodeChange).not.toHaveBeenCalled();
+    },
+  );
 });

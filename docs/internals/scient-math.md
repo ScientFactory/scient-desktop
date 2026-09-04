@@ -142,9 +142,18 @@ fallback math element carries `data-markdown-copy` with its dollar-form
 source, so highlight-and-copy (`markdown-clipboard.ts`) round-trips math
 instead of serializing KaTeX's DOM. Both copy forms use `$$` — the only
 dollar form that re-renders on paste now that single-dollar spans are not
-recognized — with newline framing keeping display math a block. The stylesheet resets the chat surface's
-aggressive `overflow-wrap`/`word-break` inside equations and keeps wide
-display math scrolling inside its own container.
+recognized — with newline framing keeping display math a block.
+
+The shared `scient-math.css` stylesheet resets the chat surface's aggressive
+`overflow-wrap`/`word-break` inside equations. Display math wraps between KaTeX's
+atomic `.base` spans, using the renderer's mathematical break opportunities
+without splitting fractions, matrices, or authored alignment. A fit-content
+inner container keeps oversized groups reachable from their left edge; only
+those groups require horizontal scrolling. `scient-content-scrollbar.css` owns
+the scoped thin scrollbar shared with Markdown code boxes.
+Equation tags participate in flow at the right edge so they cannot overlap the
+last term when space is tight. The editor's math NodeView uses the same shared
+renderer and leaves overflow ownership to it, avoiding a second scroll container.
 
 ## Verification
 

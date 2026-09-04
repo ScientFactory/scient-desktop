@@ -40,6 +40,15 @@ function semanticColor(
   return typeof color === "string" ? color : theme.colors["editor.foreground"]!;
 }
 
+// These syntactic categories have no semantic-token equivalent. Use the same
+// TextMate palette that Shiki reads for the shared Markdown preview.
+function syntaxColor(theme: typeof pierreLight | typeof pierreDark, scope: string): string {
+  const token = theme.tokenColors.findLast((entry) =>
+    typeof entry.scope === "string" ? entry.scope === scope : entry.scope?.includes(scope) === true,
+  );
+  return token?.settings.foreground ?? theme.colors["editor.foreground"]!;
+}
+
 function pierreHighlightStyle(
   theme: typeof pierreLight | typeof pierreDark,
   themeType: "light" | "dark",
@@ -59,9 +68,14 @@ function pierreHighlightStyle(
       { tag: tags.variableName, color: semanticColor(theme, "variable") },
       { tag: tags.propertyName, color: semanticColor(theme, "property") },
       {
-        tag: [tags.function(tags.variableName), tags.macroName],
+        tag: [tags.function(tags.variableName), tags.function(tags.propertyName), tags.macroName],
         color: semanticColor(theme, "function"),
       },
+      { tag: tags.operator, color: syntaxColor(theme, "keyword.operator") },
+      { tag: tags.punctuation, color: syntaxColor(theme, "punctuation") },
+      { tag: tags.tagName, color: syntaxColor(theme, "entity.name.tag") },
+      { tag: tags.attributeName, color: syntaxColor(theme, "entity.other.attribute-name") },
+      { tag: tags.attributeValue, color: semanticColor(theme, "string") },
       { tag: tags.typeName, color: semanticColor(theme, "type") },
       { tag: tags.className, color: semanticColor(theme, "class") },
       { tag: tags.namespace, color: semanticColor(theme, "namespace") },

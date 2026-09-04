@@ -25,6 +25,7 @@ describe("editor code actions", () => {
     await act(() => controller?.destroy());
     controller = undefined;
     document.body.replaceChildren();
+    document.documentElement.classList.remove("dark");
     preference.wrapped = true;
     vi.unstubAllGlobals();
   });
@@ -79,6 +80,33 @@ describe("editor code actions", () => {
       expect(writeText).toHaveBeenCalledExactlyOnceWith(`updated ${code}`);
       expect(host.querySelector("[aria-label='Copied']")).not.toBeNull();
       expect(onUserSourceChange).toHaveBeenCalledOnce();
+      if (controller!.view!.state.doc.firstChild!.type.name === "code_block") {
+        const view = controller!.view!;
+        await act(() => {
+          view.dispatch(
+            view.state.tr.setNodeMarkup(0, undefined, {
+              ...view.state.doc.firstChild!.attrs,
+              params: 'html title="sample.html"',
+            }),
+          );
+        });
+        expect(host.querySelector(".scient-markdown-code-language")?.textContent).toBe(
+          "sample.html",
+        );
+        const icon = host.querySelector<SVGElement>("[data-icon-token='html']")!;
+        expect(icon).not.toBeNull();
+        const lightColor = icon.style.color;
+        const sourceChanges = onUserSourceChange.mock.calls.length;
+        await act(() => {
+          document.documentElement.classList.add("dark");
+          controller!.refreshExternalPresentation("appearance");
+        });
+        expect(icon.style.color).not.toBe(lightColor);
+        expect(onUserSourceChange).toHaveBeenCalledTimes(sourceChanges);
+        expect(host.querySelector(".cm-editor")).toBe(surface);
+        expect(editor.contentDOM.classList.contains("cm-lineWrapping")).toBe(true);
+        expect(host.querySelector("[aria-label='Copied']")).not.toBeNull();
+      }
       await act(() => {
         controller!.setMode("read");
       });
