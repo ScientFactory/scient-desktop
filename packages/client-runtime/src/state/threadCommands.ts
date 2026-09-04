@@ -1,6 +1,6 @@
 import * as Crypto from "effect/Crypto";
 import { Atom } from "effect/unstable/reactivity";
-import { WS_METHODS } from "@t3tools/contracts";
+import { WS_METHODS, ORCHESTRATION_WS_METHODS } from "@t3tools/contracts";
 
 import {
   createAtomCommandScheduler,
@@ -222,6 +222,10 @@ export function createThreadEnvironmentAtoms<R, E>(
         key: ({ environmentId, input }: { environmentId: string; input: ForkThreadInput }) =>
           JSON.stringify([environmentId, input.originThreadId]),
       },
+    }),
+    getForkOptions: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:commands:thread:fork-options",
+      tag: ORCHESTRATION_WS_METHODS.getForkOptions,
     }),
     // SCIENT-FORK:END
     uploadFeedback: createEnvironmentRpcCommand(runtime, {

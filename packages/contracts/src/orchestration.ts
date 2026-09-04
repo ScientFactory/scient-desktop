@@ -26,6 +26,7 @@ import { ProviderInstanceId } from "./providerInstance.ts";
 
 export const ORCHESTRATION_WS_METHODS = {
   dispatchCommand: "orchestration.dispatchCommand",
+  getForkOptions: "orchestration.getForkOptions",
   getWorkflowScript: "orchestration.getWorkflowScript",
   getTurnDiff: "orchestration.getTurnDiff",
   getFullThreadDiff: "orchestration.getFullThreadDiff",
@@ -1155,6 +1156,33 @@ export const ThreadForkCommand = Schema.Struct({
   ),
 );
 export type ThreadForkCommand = typeof ThreadForkCommand.Type;
+
+/** Omit both message ids to resolve the latest completed response on the server. */
+export const GetForkOptionsInput = Schema.Struct({
+  originThreadId: ThreadId,
+  sourceAssistantMessageId: Schema.optional(MessageId),
+  sourceUserMessageId: Schema.optional(MessageId),
+});
+export type GetForkOptionsInput = typeof GetForkOptionsInput.Type;
+export const ForkOptions = Schema.Struct({
+  available: Schema.Boolean,
+  localAvailable: Schema.Boolean,
+  reason: Schema.NullOr(Schema.String),
+  sourceAssistantMessageId: Schema.NullOr(MessageId),
+  sourceUserMessageId: Schema.NullOr(MessageId),
+  newWorktree: Schema.Boolean,
+});
+export type ForkOptions = typeof ForkOptions.Type;
+export const ForkDisposition = Schema.Literals([
+  "unknown",
+  "rejected",
+  "pending",
+  "provisioning",
+  "failed",
+  "abandoned",
+  "ready",
+]);
+export type ForkDisposition = typeof ForkDisposition.Type;
 // SCIENT-FORK:END
 
 const DispatchableClientOrchestrationCommand = Schema.Union([
@@ -2103,6 +2131,7 @@ export class OrchestrationDispatchCommandError extends Schema.TaggedErrorClass<O
     message: TrimmedNonEmptyString,
     cause: Schema.optional(Schema.Defect()),
     bootstrapThreadDisposition: Schema.optional(Schema.Literal("deleted")),
+    forkDisposition: Schema.optional(ForkDisposition),
   },
 ) {}
 

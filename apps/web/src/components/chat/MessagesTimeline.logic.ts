@@ -515,7 +515,10 @@ export function findLatestCompletedAssistantMessageId(input: {
       entry?.kind === "message" &&
       entry.message.role === "assistant" &&
       !entry.message.streaming &&
-      entry.message.turnId !== unsettledTurnId &&
+      (unsettledTurnId === null || entry.message.turnId !== unsettledTurnId) &&
+      !(
+        entry.message.turnId === input.latestTurn?.turnId && input.latestTurn.state !== "completed"
+      ) &&
       terminalAssistantMessageIds.has(entry.message.id)
     ) {
       return entry.message.id;
@@ -862,6 +865,9 @@ export function deriveMessagesTimelineRows(input: {
   forkBaselineAssistantMessageId?: MessageId | null | undefined;
 }): MessagesTimelineRow[] {
   const nextRows: MessagesTimelineRow[] = [];
+  if (input.hasForkBaseline === true && input.forkBaselineAssistantMessageId === null) {
+    nextRows.push({ kind: "fork-marker", id: "conversation-fork-marker" });
+  }
   const durationStartByMessageId = computeMessageDurationStart(
     input.timelineEntries.flatMap((entry) => (entry.kind === "message" ? [entry.message] : [])),
   );
@@ -1230,7 +1236,12 @@ export function deriveMessagesTimelineRows(input: {
       canForkConversation:
         timelineEntry.message.role === "user"
           ? !timelineEntry.message.streaming
-          : timelineEntry.message.role === "assistant" && showAssistantMeta
+          : timelineEntry.message.role === "assistant" &&
+              showAssistantMeta &&
+              !(
+                timelineEntry.message.turnId === input.latestTurn?.turnId &&
+                input.latestTurn.state !== "completed"
+              )
             ? !timelineEntry.message.streaming
             : undefined,
       assistantDirectionHint:

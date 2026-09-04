@@ -1,5 +1,5 @@
 /** Scient-owned durable file ownership transfer for retained fork attachments. */
-import { ThreadForkAttachmentCopy, ThreadId } from "@t3tools/contracts";
+import { ThreadForkAttachmentCopy, ThreadId, type ChatAttachment } from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -33,6 +33,10 @@ export class ScientForkAttachmentCopyError extends Schema.TaggedErrorClass<Scien
 }
 
 export interface ScientForkAttachmentCopierShape {
+  readonly checkSources: (input: {
+    readonly threadId: ThreadId;
+    readonly attachments: ReadonlyArray<ChatAttachment>;
+  }) => Effect.Effect<void, ScientForkAttachmentCopyError>;
   readonly copyAll: (input: {
     readonly threadId: ThreadId;
     readonly copies: ReadonlyArray<ThreadForkAttachmentCopy>;
@@ -47,6 +51,25 @@ export class ScientForkAttachmentCopier extends Context.Service<
 const make = Effect.gen(function* () {
   const fileSystem = yield* FileSystem.FileSystem;
   const { attachmentsDir } = yield* ServerConfig;
+  const checkSources: ScientForkAttachmentCopierShape["checkSources"] = (input) =>
+    Effect.forEach(
+      input.attachments,
+      (attachment) =>
+        Effect.gen(function* () {
+          const path = resolveAttachmentPath({ attachmentsDir, attachment });
+          const info =
+            path === null
+              ? null
+              : yield* fileSystem.stat(path).pipe(Effect.catch(() => Effect.succeed(null)));
+          if (info?.type !== "File")
+            return yield* new ScientForkAttachmentCopyError({
+              threadId: input.threadId,
+              reason: "source-unavailable",
+              detail: `The retained file '${attachment.name}' is unavailable. Restore it or choose a fork point before it was attached.`,
+            });
+        }),
+      { concurrency: 1, discard: true },
+    );
 
   const copyAll: ScientForkAttachmentCopierShape["copyAll"] = Effect.fn(
     "copyScientForkAttachments",
@@ -95,6 +118,20 @@ const make = Effect.gen(function* () {
             });
           }
 
+          // A verified, atomically published destination owns these bytes even
+          // if the original attachment is removed before a later setup retry.
+          const temporaryPath = `${targetPath}.part`;
+          yield* Effect.addFinalizer(() =>
+            fileSystem.remove(temporaryPath, { force: true }).pipe(Effect.ignoreCause),
+          );
+          const existingTarget = yield* fileSystem
+            .stat(targetPath)
+            .pipe(Effect.catch(() => Effect.succeed(null)));
+          if (
+            existingTarget?.type === "File" &&
+            existingTarget.size === BigInt(copy.target.sizeBytes)
+          )
+            return;
           const sourceInfo = yield* fileSystem.stat(sourcePath).pipe(
             Effect.mapError(
               (cause) =>
@@ -114,7 +151,7 @@ const make = Effect.gen(function* () {
             });
           }
 
-          yield* fileSystem.copyFile(sourcePath, targetPath).pipe(
+          yield* fileSystem.copyFile(sourcePath, temporaryPath).pipe(
             Effect.mapError(
               (cause) =>
                 new ScientForkAttachmentCopyError({
@@ -125,7 +162,7 @@ const make = Effect.gen(function* () {
                 }),
             ),
           );
-          const targetInfo = yield* fileSystem.stat(targetPath).pipe(
+          const targetInfo = yield* fileSystem.stat(temporaryPath).pipe(
             Effect.mapError(
               (cause) =>
                 new ScientForkAttachmentCopyError({
@@ -139,7 +176,8 @@ const make = Effect.gen(function* () {
           if (
             sourceInfo.type !== "File" ||
             targetInfo.type !== "File" ||
-            sourceInfo.size !== targetInfo.size
+            sourceInfo.size !== targetInfo.size ||
+            targetInfo.size !== BigInt(copy.target.sizeBytes)
           ) {
             return yield* new ScientForkAttachmentCopyError({
               threadId: input.threadId,
@@ -147,12 +185,23 @@ const make = Effect.gen(function* () {
               detail: `Retained attachment '${copy.source.name}' did not copy completely.`,
             });
           }
-        }),
+          yield* fileSystem.rename(temporaryPath, targetPath).pipe(
+            Effect.mapError(
+              (cause) =>
+                new ScientForkAttachmentCopyError({
+                  threadId: input.threadId,
+                  reason: "target-write-failed",
+                  detail: `Unable to publish retained attachment '${copy.source.name}'.`,
+                  cause,
+                }),
+            ),
+          );
+        }).pipe(Effect.scoped),
       { concurrency: 1, discard: true },
     );
   });
 
-  return { copyAll } satisfies ScientForkAttachmentCopierShape;
+  return { copyAll, checkSources } satisfies ScientForkAttachmentCopierShape;
 });
 
 export const ScientForkAttachmentCopierLive = Layer.effect(ScientForkAttachmentCopier, make);
@@ -162,5 +211,6 @@ export const testLayer = (
 ): Layer.Layer<ScientForkAttachmentCopier> =>
   Layer.succeed(ScientForkAttachmentCopier, {
     copyAll: () => Effect.void,
+    checkSources: () => Effect.void,
     ...overrides,
   });

@@ -402,6 +402,16 @@ never through a broad merge into this repository.
 
 ## Post-D4 Scient-owned feature seams
 
+Conversation forks keep server-owned boundary resolution, durable provisioning,
+and provider-neutral context bootstrap. Preserve the read-authorized
+`orchestration.getForkOptions` RPC and its `threadForkRecovery` capability,
+typed fork dispositions on dispatch errors, and the pre-send readiness gate.
+Client retries retain one operation identity and draft across navigation and
+transport failures. Thread routes must wait for authoritative detail rather
+than infer deletion from an absent sidebar entry. See the
+[fork maintenance contract](docs/internals/scient-fork-divergence.md) for
+workspace fidelity, lineage links, provider selection, and recovery boundaries.
+
 Antigravity reasoning presentation is a narrow client-side divergence. The shared
 `packages/client-runtime/src/antigravityModelPresentation.ts` groups recognized
 Google Gemini effort variants for the existing model and reasoning controls.

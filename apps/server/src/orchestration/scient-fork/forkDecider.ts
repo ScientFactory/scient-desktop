@@ -101,7 +101,7 @@ const withForkEventBase = (input: {
  * user ids on their boundaries, so the nearest unclaimed user message before
  * each boundary assistant is associated as a legacy fallback.
  */
-function retainPrefixMessages(
+export function retainPrefixMessages(
   messages: ReadonlyArray<OrchestrationMessage>,
   retainedBoundaries: ReadonlyArray<OrchestrationForkBoundary>,
   retainedTurnIds: ReadonlySet<string>,
@@ -112,8 +112,17 @@ function retainPrefixMessages(
   const retainedMessageIds = new Set<string>();
   const sourceTurnIdByMessageId = new Map<string, TurnId>();
   const claimedUserMessageIds = new Set<string>();
+  const messageById = new Map(messages.map((message, index) => [message.id, { message, index }]));
+  let lastRetainedIndex = -1;
+  for (const boundary of retainedBoundaries) {
+    const index =
+      boundary.assistantMessageId === null
+        ? -1
+        : (messageById.get(boundary.assistantMessageId)?.index ?? -1);
+    lastRetainedIndex = Math.max(lastRetainedIndex, index);
+  }
 
-  for (const message of messages) {
+  for (const message of messages.slice(0, lastRetainedIndex + 1)) {
     if (message.role === "system") {
       retainedMessageIds.add(message.id);
     } else if (message.turnId !== null && retainedTurnIds.has(message.turnId)) {
@@ -126,9 +135,7 @@ function retainPrefixMessages(
       continue;
     }
 
-    const assistantIndex = messages.findIndex(
-      (message) => message.id === boundary.assistantMessageId,
-    );
+    const assistantIndex = messageById.get(boundary.assistantMessageId)?.index ?? -1;
     if (assistantIndex < 0) {
       continue;
     }
@@ -142,17 +149,17 @@ function retainPrefixMessages(
     const explicitUser =
       boundary.userMessageId === null
         ? undefined
-        : messages.find(
-            (message) => message.id === boundary.userMessageId && message.role === "user",
-          );
-    const user =
-      explicitUser ??
-      messages.findLast(
-        (message, index) =>
-          index < assistantIndex &&
-          message.role === "user" &&
-          !claimedUserMessageIds.has(message.id),
-      );
+        : messageById.get(boundary.userMessageId)?.message;
+    let user = explicitUser?.role === "user" ? explicitUser : undefined;
+    if (!user) {
+      for (let index = assistantIndex - 1; index >= 0; index--) {
+        const candidate = messages[index]!;
+        if (candidate.role === "user" && !claimedUserMessageIds.has(candidate.id)) {
+          user = candidate;
+          break;
+        }
+      }
+    }
     if (user) {
       retainedMessageIds.add(user.id);
       claimedUserMessageIds.add(user.id);
@@ -266,7 +273,7 @@ export const forkThread = Effect.fn("scientForkThread")(function* ({
       sourceMessage.role !== "assistant" ||
       sourceMessage.streaming ||
       selectedBoundary.turnId === null ||
-      sourceMessage.turnId !== selectedBoundary.turnId
+      (sourceMessage.turnId !== null && sourceMessage.turnId !== selectedBoundary.turnId)
     ) {
       return yield* invariant(
         `Assistant message '${forkPoint.messageId}' is not a terminal completed response of origin thread '${command.originThreadId}'.`,

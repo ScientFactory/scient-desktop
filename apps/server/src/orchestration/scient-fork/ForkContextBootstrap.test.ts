@@ -525,7 +525,7 @@ it.layer(layer)("ScientForkContextBootstrap", (it) => {
       );
       assert.strictEqual(result._tag, "Failure");
       if (result._tag === "Failure") {
-        assert.include(result.failure.detail, "cannot prove");
+        assert.include(result.failure.detail, "will not send it twice");
       }
     }),
   );
@@ -606,6 +606,35 @@ it.layer(layer)("ScientForkContextBootstrap", (it) => {
           omittedAttachmentCount: 0,
         });
       }),
+  );
+
+  it.effect("does not use another user message's response to resolve an ambiguous send", () =>
+    Effect.gen(function* () {
+      yield* insertFork();
+      const service = yield* ScientForkContextBootstrap;
+      const attempted = message({ id: "attempted", role: "user", text: "What next?" });
+      yield* service.beginAttempt({ threadId: THREAD, messageId: attempted.id });
+      yield* service.markAmbiguous({ threadId: THREAD, messageId: attempted.id });
+      const current = message({ id: "current", role: "user", text: "Continue" });
+      const result = yield* Effect.result(
+        service.prepareTurn({
+          thread: thread([
+            message({ id: "user-1", role: "user", text: "Inspect" }),
+            message({ id: "assistant-1", role: "assistant", text: "Evidence" }),
+            attempted,
+            message({ id: "unrelated", role: "user", text: "Another request" }),
+            message({ id: "unrelated-response", role: "assistant", text: "Another answer" }),
+            current,
+          ]),
+          currentMessageId: current.id,
+          messageText: current.text,
+          attachments: [],
+        }),
+      );
+      assert.strictEqual(result._tag, "Failure");
+      if (result._tag === "Failure")
+        assert.include(result.failure.detail, "will not send it twice");
+    }),
   );
 
   // -------------------------------------------------------------------------

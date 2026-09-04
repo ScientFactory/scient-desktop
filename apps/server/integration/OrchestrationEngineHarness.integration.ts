@@ -401,6 +401,16 @@ export const makeOrchestrationIntegrationHarness = (
           start: () => Effect.void,
           drain: Effect.void,
           awaitCompletion: () => Effect.void,
+          getDisposition: () => Effect.succeed("unknown"),
+          getOptions: () =>
+            Effect.succeed({
+              available: false,
+              localAvailable: false,
+              reason: "No fixture boundary",
+              newWorktree: false,
+              sourceAssistantMessageId: null,
+              sourceUserMessageId: null,
+            }),
         }),
       ),
       // SCIENT-FORK:END

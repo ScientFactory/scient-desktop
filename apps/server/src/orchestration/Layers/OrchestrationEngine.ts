@@ -43,6 +43,7 @@ import {
 } from "../Errors.ts";
 import { decideOrchestrationCommand } from "../decider.ts";
 import { withForkOriginDetail } from "../scient-fork/forkDecisionReadModel.ts";
+import { getForkStatus } from "../scient-fork/forkRepository.ts";
 import { makeForkBoundaryResolver } from "../scient-fork/ForkBoundaryReadModel.ts";
 import type { ResolvedForkBoundaries } from "../scient-fork/forkBoundaryTypes.ts";
 import { createEmptyReadModel, projectEvent } from "../projector.ts";
@@ -201,6 +202,16 @@ const makeOrchestrationEngine = Effect.gen(function* () {
         // production fallback to snapshot boundary arrays or checkpoints.
         let decisionReadModel = commandReadModel;
         let resolvedForkBoundaries: ResolvedForkBoundaries | undefined;
+        if (envelope.command.type === "thread.turn.start") {
+          const forkStatus = yield* getForkStatus(sql, envelope.command.threadId);
+          if (forkStatus !== null && forkStatus.status !== "ready") {
+            return yield* new OrchestrationCommandInvariantError({
+              commandType: envelope.command.type,
+              detail:
+                "This fork is not ready yet. Finish or retry its setup before sending a message.",
+            });
+          }
+        }
         if (envelope.command.type === "thread.fork") {
           const originOption = yield* projectionSnapshotQuery.getThreadDetailById(
             envelope.command.originThreadId,

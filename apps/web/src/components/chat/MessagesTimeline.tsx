@@ -6,8 +6,10 @@ import {
   type ServerProviderSkill,
   type ToolActivityIcon,
   type TurnId,
+  type ThreadId,
 } from "@t3tools/contracts";
 import { parseScopedThreadKey } from "@t3tools/client-runtime/environment";
+import { Link } from "@tanstack/react-router";
 import type { CodexArtifactTemplate } from "@t3tools/client-runtime/codex-artifact-templates";
 import {
   resolveWorkEntryToolPresentation,
@@ -202,6 +204,7 @@ interface TimelineRowSharedState {
   // `| undefined` is explicit for exactOptionalPropertyTypes: the shared-state
   // object always carries the key (possibly undefined) so rows can gate on it.
   onForkAssistantMessage?: ((messageId: MessageId) => void) | undefined;
+  forkOriginThreadId?: ThreadId | undefined;
   onForkUserMessage?: ((message: ChatMessage) => void) | undefined;
   // SCIENT-FORK:END
   onUseArtifactTemplate: (template: CodexArtifactTemplate) => void;
@@ -318,6 +321,7 @@ interface MessagesTimelineProps {
   onRevertUserMessage: (messageId: MessageId) => void;
   hasForkBaseline?: boolean;
   forkBaselineAssistantMessageId?: MessageId | null;
+  forkOriginThreadId?: ThreadId | undefined;
   // SCIENT-FORK:START
   onForkAssistantMessage?: (messageId: MessageId) => void;
   onForkUserMessage?: (message: ChatMessage) => void;
@@ -376,6 +380,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
   onRevertUserMessage,
   hasForkBaseline,
   forkBaselineAssistantMessageId,
+  forkOriginThreadId,
   // SCIENT-FORK:START
   onForkAssistantMessage,
   onForkUserMessage,
@@ -677,6 +682,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       // SCIENT-FORK:START — expose the fork trigger to rows via context.
       onForkAssistantMessage,
       onForkUserMessage,
+      forkOriginThreadId,
       // SCIENT-FORK:END
       onUseArtifactTemplate,
       onImageExpand,
@@ -705,6 +711,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       // SCIENT-FORK:START
       onForkAssistantMessage,
       onForkUserMessage,
+      forkOriginThreadId,
       // SCIENT-FORK:END
       onUseArtifactTemplate,
       onImageExpand,
@@ -1188,11 +1195,26 @@ const TimelineRowContent = memo(function TimelineRowContent({ row }: { row: Time
 });
 
 function ForkMarkerTimelineRow() {
+  const ctx = use(TimelineRowCtx);
   return (
     <div className="flex items-center gap-3 px-1 py-3 text-xs text-muted-foreground">
       <div className="h-px flex-1 bg-border/60" />
       <span className="shrink-0 rounded-full border border-border/70 bg-muted/35 px-2.5 py-1">
-        Conversation forked here
+        {ctx.forkOriginThreadId ? (
+          <Link
+            to="/$environmentId/$threadId"
+            params={{
+              environmentId: ctx.activeThreadEnvironmentId,
+              threadId: ctx.forkOriginThreadId,
+            }}
+            className="hover:text-foreground hover:underline"
+            aria-label="Open original conversation"
+          >
+            Conversation forked here
+          </Link>
+        ) : (
+          "Conversation forked here"
+        )}
       </span>
       <div className="h-px flex-1 bg-border/60" />
     </div>

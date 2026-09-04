@@ -126,7 +126,7 @@ import {
   getAnchoredTurnMetrics,
   type TimelineScrollMode,
 } from "./chat/timelineScrollAnchoring";
-import { useScientThreadFork } from "./scient-fork/useScientThreadFork";
+import { useScientThreadFork, type ForkSource } from "./scient-fork/useScientThreadFork";
 import {
   ScientForkDialog,
   type ForkWorktreeAvailability,
@@ -1848,20 +1848,32 @@ function ChatViewContent(props: ChatViewProps) {
   const isServerThread = activeServerThread !== null;
   const activeThread = activeServerThread ?? localDraftThread;
   const hasProjectWorkspace = activeThread?.projectId != null;
+  const forkRecoverySupported =
+    activeThread != null &&
+    serverConfigs.get(activeThread.environmentId)?.environment.capabilities.threadForkRecovery ===
+      true;
   const {
     errorUpdate: forkErrorUpdate,
     isForking: isForkingThread,
     forkFromMessage,
-  } = useScientThreadFork({ origin: activeThread ?? null, navigate });
+    prepareFork,
+    preview: forkPreview,
+  } = useScientThreadFork({
+    origin: activeThread ?? null,
+    navigate,
+    supportsRecovery: forkRecoverySupported,
+  });
   const [forkCommandTarget, setForkCommandTarget] = useState<
     | {
         readonly threadId: ThreadId;
+        readonly environmentId: EnvironmentId;
         readonly kind: "assistant-response";
-        readonly messageId: MessageId;
+        readonly messageId: MessageId | null;
         readonly source: ScientForkSource;
       }
     | {
         readonly threadId: ThreadId;
+        readonly environmentId: EnvironmentId;
         readonly kind: "user-message";
         readonly messageId: MessageId;
         readonly message: ChatMessage;
@@ -1873,7 +1885,31 @@ function ChatViewContent(props: ChatViewProps) {
     forkCommandTarget !== null &&
     activeThread !== null &&
     activeThread !== undefined &&
-    forkCommandTarget.threadId === activeThread.id;
+    forkCommandTarget.threadId === activeThread.id &&
+    forkCommandTarget.environmentId === activeThread.environmentId;
+  const forkSource = useMemo(
+    (): ForkSource | null =>
+      forkCommandTarget === null
+        ? null
+        : forkCommandTarget.kind === "assistant-response"
+          ? {
+              kind: forkCommandTarget.kind,
+              messageId: forkCommandTarget.messageId,
+              latest:
+                forkCommandTarget.source === "latest-response" ||
+                forkCommandTarget.source === "switch-provider",
+            }
+          : {
+              kind: forkCommandTarget.kind,
+              messageId: forkCommandTarget.messageId,
+              prompt: forkCommandTarget.message.text,
+              attachments: forkCommandTarget.message.attachments ?? [],
+            },
+    [forkCommandTarget],
+  );
+  useEffect(() => {
+    if (forkDialogOpen && forkSource) void prepareFork(forkSource);
+  }, [forkDialogOpen, forkSource, prepareFork]);
   const forkTitleOverrideSupported =
     activeThread !== null &&
     activeThread !== undefined &&
@@ -1904,12 +1940,15 @@ function ChatViewContent(props: ChatViewProps) {
   const isLocalDraftThread = !isServerThread && localDraftThread !== undefined;
   const canCheckoutPullRequestIntoThread = isLocalDraftThread;
   const activeThreadId = activeThread?.id ?? null;
+  const activeThreadEnvironmentId = activeThread?.environmentId ?? null;
   useEffect(() => {
     setForkCommandTarget((current) =>
-      current && current.threadId !== activeThreadId ? null : current,
+      current &&
+      (current.threadId !== activeThreadId || current.environmentId !== activeThreadEnvironmentId)
+        ? null
+        : current,
     );
-  }, [activeThreadId]);
-  const activeThreadEnvironmentId = activeThread?.environmentId ?? null;
+  }, [activeThreadId, activeThreadEnvironmentId]);
   const runningTerminalIds = useThreadRunningTerminalIds({
     environmentId: activeThread?.environmentId ?? null,
     threadId: activeThreadId,
@@ -3256,25 +3295,16 @@ function ChatViewContent(props: ChatViewProps) {
   );
   const onForkConversation = useCallback(
     (options?: { readonly preserveComposerDraft?: boolean }) => {
-      if (latestCompletedAssistantMessageId === null) {
-        toastManager.add(
-          stackedThreadToast({
-            type: "warning",
-            title: "Fork unavailable",
-            description: "This conversation does not expose a completed fork boundary yet.",
-          }),
-        );
-        return;
-      }
-      if (!activeThreadId) return;
+      if (!activeThreadId || !activeThreadEnvironmentId) return;
       setForkCommandTarget({
         threadId: activeThreadId,
+        environmentId: activeThreadEnvironmentId,
         kind: "assistant-response",
         messageId: latestCompletedAssistantMessageId,
         source: options?.preserveComposerDraft ? "switch-provider" : "latest-response",
       });
     },
-    [activeThreadId, latestCompletedAssistantMessageId],
+    [activeThreadId, activeThreadEnvironmentId, latestCompletedAssistantMessageId],
   );
 
   const gitCwd = activeProject
@@ -3415,7 +3445,7 @@ function ChatViewContent(props: ChatViewProps) {
       return { available: false, reason: "no-git-repository" };
     }
 
-    const target = forkCommandTarget?.threadId === activeThreadId ? forkCommandTarget : null;
+    const target = forkDialogOpen ? forkCommandTarget : null;
     const checkpointAssistantMessageId =
       target?.kind === "assistant-response"
         ? target.messageId
@@ -3433,7 +3463,7 @@ function ChatViewContent(props: ChatViewProps) {
     }
     return { available: false, reason: "no-checkpoint" };
   }, [
-    activeThreadId,
+    forkDialogOpen,
     forkCommandTarget,
     isGitRepo,
     timelineEntries,
@@ -3565,11 +3595,6 @@ function ChatViewContent(props: ChatViewProps) {
     },
     [activeServerThread, draftId, routeThreadKey, routeThreadRef],
   );
-  useEffect(() => {
-    if (forkErrorUpdate) {
-      setThreadError(forkErrorUpdate.threadId, forkErrorUpdate.message);
-    }
-  }, [forkErrorUpdate, setThreadError]);
 
   const composerIdentity = composerTargetKey(composerDraftTarget);
   const previousComposerIdentity = useRef({ thread: activeThreadKey, draft: composerIdentity });
@@ -8150,28 +8175,30 @@ function ChatViewContent(props: ChatViewProps) {
   }, []);
   const onForkAssistantMessage = useCallback(
     (sourceAssistantMessageId: MessageId) => {
-      if (!activeThreadId) return;
+      if (!activeThreadId || !activeThreadEnvironmentId) return;
       setForkCommandTarget({
         threadId: activeThreadId,
+        environmentId: activeThreadEnvironmentId,
         kind: "assistant-response",
         messageId: sourceAssistantMessageId,
         source: "this-response",
       });
     },
-    [activeThreadId],
+    [activeThreadId, activeThreadEnvironmentId],
   );
   const onForkUserMessage = useCallback(
     (message: ChatMessage) => {
-      if (!activeThreadId) return;
+      if (!activeThreadId || !activeThreadEnvironmentId) return;
       setForkCommandTarget({
         threadId: activeThreadId,
+        environmentId: activeThreadEnvironmentId,
         kind: "user-message",
         messageId: message.id,
         message,
         source: "this-message",
       });
     },
-    [activeThreadId],
+    [activeThreadId, activeThreadEnvironmentId],
   );
   // SCIENT-FORK:END
 
@@ -8571,6 +8598,7 @@ function ChatViewContent(props: ChatViewProps) {
                 onOpenTurnDiff={onOpenTurnDiff}
                 revertTurnCountByUserMessageId={revertTurnCountByUserMessageId}
                 hasForkBaseline={activeThread?.forkLineage != null}
+                forkOriginThreadId={activeThread?.forkLineage?.originThreadId}
                 forkBaselineAssistantMessageId={
                   activeThread?.forkLineage?.baselineAssistantMessageId ?? null
                 }
@@ -9064,7 +9092,23 @@ function ChatViewContent(props: ChatViewProps) {
         disabled={isForkingThread}
         source={forkCommandTarget?.source ?? "latest-response"}
         titleOverrideSupported={forkTitleOverrideSupported}
-        worktreeAvailability={forkWorktreeAvailability}
+        worktreeAvailability={
+          forkPreview?.options && (forkRecoverySupported || forkPreview.locked)
+            ? forkPreview.options.newWorktree
+              ? { available: true }
+              : { available: false, reason: "no-checkpoint" }
+            : forkWorktreeAvailability
+        }
+        checking={forkPreview?.checking ?? true}
+        locked={forkPreview?.locked ?? false}
+        retryTitle={forkPreview?.retryTitle}
+        retryWorkspaceMode={forkPreview?.retryWorkspaceMode}
+        error={
+          forkErrorUpdate?.environmentId === activeThread?.environmentId &&
+          forkErrorUpdate?.threadId === activeThread?.id
+            ? forkErrorUpdate?.message
+            : forkPreview?.options?.reason
+        }
         onOpenChange={(open) => {
           if (!open && !isForkingThread) {
             setForkCommandTarget(null);
@@ -9072,20 +9116,20 @@ function ChatViewContent(props: ChatViewProps) {
         }}
         onConfirm={(confirmation) => {
           const target = forkCommandTarget;
-          if (!target || target.threadId !== activeThreadId) return;
+          if (
+            !target ||
+            !forkSource ||
+            target.threadId !== activeThreadId ||
+            target.environmentId !== activeThreadEnvironmentId
+          )
+            return;
           void forkFromMessage(
-            target.kind === "assistant-response"
-              ? { kind: target.kind, messageId: target.messageId }
-              : {
-                  kind: target.kind,
-                  messageId: target.messageId,
-                  prompt: target.message.text,
-                  attachments: target.message.attachments ?? [],
-                },
+            forkSource,
             {
               ...confirmation,
               ...(target.kind === "assistant-response" &&
               target.source === "switch-provider" &&
+              !queueEdit &&
               activeThreadRef
                 ? { composerDraftSource: activeThreadRef }
                 : {}),

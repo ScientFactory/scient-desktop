@@ -88,6 +88,8 @@ import { KeybindingsConfigError } from "./keybindings.ts";
 import {
   ClientOrchestrationCommand,
   ORCHESTRATION_WS_METHODS,
+  GetForkOptionsInput,
+  ForkOptions,
   OrchestrationDispatchCommandError,
   OrchestrationGetFullThreadDiffError,
   OrchestrationGetFullThreadDiffInput,
@@ -1496,6 +1498,12 @@ export const WsOrchestrationDispatchCommandRpc = Rpc.make(
   },
 );
 
+export const WsOrchestrationGetForkOptionsRpc = Rpc.make(ORCHESTRATION_WS_METHODS.getForkOptions, {
+  payload: GetForkOptionsInput,
+  success: ForkOptions,
+  error: Schema.Union([OrchestrationGetSnapshotError, EnvironmentAuthorizationError]),
+});
+
 export const WsOrchestrationGetWorkflowScriptRpc = Rpc.make(
   ORCHESTRATION_WS_METHODS.getWorkflowScript,
   {
@@ -1779,6 +1787,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsSubscribeResourceTelemetryRpc,
   WsSubscribeDocumentBindingChangesRpc,
   WsOrchestrationDispatchCommandRpc,
+  WsOrchestrationGetForkOptionsRpc,
   WsOrchestrationGetWorkflowScriptRpc,
   WsOrchestrationGetTurnDiffRpc,
   WsOrchestrationGetFullThreadDiffRpc,

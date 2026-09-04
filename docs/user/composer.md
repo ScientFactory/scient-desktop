@@ -277,6 +277,46 @@ Forking from a sent user message places that message and its images in the new
 composer as an unsent draft. A temporary setup failure is safe to retry; Scient
 does not open a partially created conversation.
 
+Scient checks the selected response, retained attachments, and available
+workspace before creating the fork. A stopped or failed answer is not a
+completed fork point; choose an earlier completed response or a sent user
+message instead. `/fork` and the provider picker's Fork action resolve the
+latest completed response on the server.
+
+Errors appear inside the fork dialog. **Retry** resumes the same attempt,
+including its original title and workspace choice. Losing the connection does
+not discard the staged draft or create another conversation. This recovery
+survives reloading the app in the same browser profile. If you switch
+conversations during setup, Scient finishes the fork in the background without
+moving you away from your current conversation. Open the ready fork from the
+sidebar, or return to the same Fork action to resume it.
+
+If the original worktree was removed, **New worktree** can still restore its
+saved checkpoint when the project repository retains it. Scient never silently
+substitutes a different workspace. Missing retained files must be restored, or
+you can choose a fork point before they were attached.
+
+You can rename the fork afterward without affecting its history or source link.
+The **Conversation forked here** marker opens the original conversation, even
+after either conversation is renamed. Archived originals can still be opened;
+deleted originals remain unavailable.
+
+Choose any configured, available provider and model before the fork's first
+send. The provider-switch Fork action moves an unchanged ordinary composer
+draft after setup succeeds. A draft changed during setup stays in the original
+conversation. Queued messages and queue edits always stay with the original;
+forking never sends them.
+
+If the first request's provider acknowledgement is lost, Scient does not
+automatically send it again. A response to that request lets you continue in
+the same fork. If no response arrives, create a fresh fork from the last
+completed response to start an independent session. Retained history is sent
+as bounded context, so very long histories and older images may be omitted
+from the provider's input while remaining visible in Scient.
+
+Server-checked eligibility and in-place setup retries require an updated
+server. Older servers retain their previous fork behavior and recovery limits.
+
 ## Queue or steer while an agent is working
 
 On desktop and web, press **Enter** while an answer is running to queue your

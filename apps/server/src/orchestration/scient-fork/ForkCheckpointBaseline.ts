@@ -9,11 +9,14 @@ import type { CheckpointRef, VcsError } from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as FileSystem from "effect/FileSystem";
 
 import { VcsProcess } from "../../vcs/VcsProcess.ts";
 
 export interface ScientForkCheckpointBaselineShape {
+  readonly workspaceExists: (cwd: string) => Effect.Effect<boolean>;
   readonly isGitRepository: (cwd: string) => Effect.Effect<boolean, VcsError>;
+  readonly hasCheckpoint: (cwd: string, ref: CheckpointRef) => Effect.Effect<boolean, VcsError>;
   readonly copy: (input: {
     readonly cwd: string;
     readonly fromCheckpointRef: CheckpointRef;
@@ -28,6 +31,12 @@ export class ScientForkCheckpointBaseline extends Context.Service<
 
 const make = Effect.gen(function* () {
   const process = yield* VcsProcess;
+  const fs = yield* FileSystem.FileSystem;
+  const workspaceExists: ScientForkCheckpointBaselineShape["workspaceExists"] = (cwd) =>
+    fs.stat(cwd).pipe(
+      Effect.map((info) => info.type === "Directory"),
+      Effect.orElseSucceed(() => false),
+    );
 
   const isGitRepository: ScientForkCheckpointBaselineShape["isGitRepository"] = (cwd) =>
     process
@@ -67,7 +76,23 @@ const make = Effect.gen(function* () {
     return true;
   });
 
-  return { isGitRepository, copy } satisfies ScientForkCheckpointBaselineShape;
+  const hasCheckpoint: ScientForkCheckpointBaselineShape["hasCheckpoint"] = (cwd, ref) =>
+    process
+      .run({
+        operation: "ScientForkCheckpointBaseline.hasCheckpoint",
+        command: "git",
+        args: ["rev-parse", "--verify", "--quiet", `${ref}^{commit}`],
+        cwd,
+        allowNonZeroExit: true,
+      })
+      .pipe(Effect.map((result) => result.exitCode === 0));
+
+  return {
+    isGitRepository,
+    hasCheckpoint,
+    workspaceExists,
+    copy,
+  } satisfies ScientForkCheckpointBaselineShape;
 });
 
 export const ScientForkCheckpointBaselineLive = Layer.effect(ScientForkCheckpointBaseline, make);
@@ -77,6 +102,8 @@ export const testLayer = (
 ): Layer.Layer<ScientForkCheckpointBaseline> =>
   Layer.succeed(ScientForkCheckpointBaseline, {
     isGitRepository: () => Effect.succeed(true),
+    hasCheckpoint: () => Effect.succeed(true),
+    workspaceExists: () => Effect.succeed(true),
     copy: () => Effect.succeed(true),
     ...overrides,
   });

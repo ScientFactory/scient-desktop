@@ -101,6 +101,10 @@ import {
   requireQueueProtocol,
 } from "./orchestration/Normalizer.ts";
 import * as OrchestrationEngine from "./orchestration/Services/OrchestrationEngine.ts";
+import {
+  isOrchestrationCommandRejection,
+  OrchestrationCommandPreviouslyRejectedError,
+} from "./orchestration/Errors.ts";
 import * as ProjectionSnapshotQuery from "./orchestration/Services/ProjectionSnapshotQuery.ts";
 // SCIENT-FORK:START — wait for durable fork provisioning before acknowledging
 // the command, so the client cannot enter a fork with the wrong workspace.
@@ -1410,7 +1414,15 @@ const makeWsRpcLayer = (
                     : Effect.void,
                 ),
                 Effect.mapError((cause) =>
-                  toDispatchCommandError(cause, "Failed to dispatch orchestration command"),
+                  normalizedCommand.type === "thread.fork" &&
+                  (isOrchestrationCommandRejection(cause) ||
+                    Schema.is(OrchestrationCommandPreviouslyRejectedError)(cause))
+                    ? new OrchestrationDispatchCommandError({
+                        message: cause.message,
+                        cause,
+                        forkDisposition: "rejected",
+                      })
+                    : toDispatchCommandError(cause, "Failed to dispatch orchestration command"),
                 ),
               );
 
@@ -1561,21 +1573,51 @@ const makeWsRpcLayer = (
               }
               return result;
             }).pipe(
-              Effect.mapError((cause) =>
-                isOrchestrationDispatchCommandError(cause)
-                  ? cause
-                  : new OrchestrationDispatchCommandError({
-                      // SCIENT-FORK:START — generic dispatch failures retain T3's
-                      // existing message; fork provisioning failures are safe and
-                      // actionable, so do not hide their typed explanation.
-                      message: isScientForkCompletionError(cause)
-                        ? cause.message
-                        : "Failed to dispatch orchestration command",
-                      // SCIENT-FORK:END
+              Effect.catch((cause) =>
+                Effect.gen(function* () {
+                  if (command.type === "thread.fork") {
+                    if (
+                      isOrchestrationDispatchCommandError(cause) &&
+                      cause.forkDisposition === "rejected"
+                    )
+                      return yield* cause;
+                    const forkDisposition = yield* scientForkReactor
+                      .getDisposition(command.newThreadId)
+                      .pipe(Effect.catch(() => Effect.succeed(undefined)));
+                    return yield* new OrchestrationDispatchCommandError({
+                      message:
+                        cause instanceof Error ? cause.message : "Unable to complete this fork.",
                       cause,
-                    }),
+                      ...(forkDisposition === undefined ? {} : { forkDisposition }),
+                    });
+                  }
+                  return yield* isOrchestrationDispatchCommandError(cause)
+                    ? cause
+                    : new OrchestrationDispatchCommandError({
+                        // SCIENT-FORK:START — generic dispatch failures retain T3's
+                        // existing message; fork provisioning failures are safe and
+                        // actionable, so do not hide their typed explanation.
+                        message: isScientForkCompletionError(cause)
+                          ? cause.message
+                          : "Failed to dispatch orchestration command",
+                        // SCIENT-FORK:END
+                        cause,
+                      });
+                }),
               ),
             ),
+            { "rpc.aggregate": "orchestration" },
+          ),
+        [ORCHESTRATION_WS_METHODS.getForkOptions]: (input) =>
+          observeRpcEffect(
+            ORCHESTRATION_WS_METHODS.getForkOptions,
+            scientForkReactor
+              .getOptions(input)
+              .pipe(
+                Effect.mapError(
+                  (cause) => new OrchestrationGetSnapshotError({ message: cause.message, cause }),
+                ),
+              ),
             { "rpc.aggregate": "orchestration" },
           ),
         [ORCHESTRATION_WS_METHODS.getWorkflowScript]: (input) =>
