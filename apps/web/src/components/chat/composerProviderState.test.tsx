@@ -19,6 +19,27 @@ import {
 const PROVIDER: ProviderDriverKind = ProviderDriverKind.make("codex");
 const MODEL = "test-model";
 
+it("does not dispatch a synthetic reasoning option for native Antigravity variants", () => {
+  const provider = ProviderDriverKind.make("antigravity");
+  const models = ["High", "Medium", "Low"].map((level) => ({
+    slug: `gemini-3.8-flash-${level.toLowerCase()}`,
+    name: `Gemini 3.8 Flash (${level})`,
+    isCustom: false,
+    capabilities: { optionDescriptors: [] },
+  }));
+  for (const model of models) {
+    const state = getComposerProviderState({
+      provider,
+      models,
+      model: model.slug,
+      modelOptions: undefined,
+      planModeEnabled: false,
+    });
+    expect(state.modelOptionsForDispatch).toBeUndefined();
+    expect(state.promptEffort).toBeNull();
+  }
+});
+
 function selectDescriptor(
   id: string,
   options: ReadonlyArray<{ id: string; label: string; isDefault?: boolean }>,

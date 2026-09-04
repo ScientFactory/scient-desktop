@@ -919,6 +919,9 @@ function ProjectDetail({ group }: { group: SidebarProjectSnapshot }) {
                     }}
                   />
                   <TraitsPicker
+                    onNativeModelChange={(model) =>
+                      setDefaultModel(createModelSelection(resolvedSelection.instanceId, model))
+                    }
                     provider={activeEntry.driverKind as ProviderDriverKind}
                     models={activeEntry.models}
                     model={resolvedSelection.model}

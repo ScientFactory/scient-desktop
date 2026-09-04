@@ -1,3 +1,5 @@
+import { ANTIGRAVITY_REASONING_CONTROL } from "@t3tools/client-runtime/antigravity-model-presentation";
+import { groupModelOptionsForDisplay, modelOptionReasoningControl } from "../../lib/modelOptions";
 import type {
   EnvironmentId,
   ModelSelection,
@@ -426,17 +428,24 @@ function ThreadSettingsSessionProvider(
   // While a model is staged, the settings rows describe and edit the staged
   // model's options (kept on its pending selection); Save applies model and
   // options together. Otherwise they edit the applied selection directly.
+  const displayedOption = props.providerGroups.flatMap((group) => group.models).find(isDisplayed);
+  const nativeModelControl = useMemo(
+    () => modelOptionReasoningControl(displayedOption),
+    [displayedOption],
+  );
   const displayedDescriptors = useMemo(
     () =>
-      pendingModel
-        ? pendingModel.capabilities
-          ? getProviderOptionDescriptors({
-              caps: pendingModel.capabilities,
-              selections: pendingModel.selection.options,
-            })
-          : []
-        : props.optionDescriptors,
-    [pendingModel, props.optionDescriptors],
+      nativeModelControl
+        ? [nativeModelControl]
+        : pendingModel
+          ? pendingModel.capabilities
+            ? getProviderOptionDescriptors({
+                caps: pendingModel.capabilities,
+                selections: pendingModel.selection.options,
+              })
+            : []
+          : props.optionDescriptors,
+    [nativeModelControl, pendingModel, props.optionDescriptors],
   );
 
   const hasLegacyModels = useMemo(
@@ -457,6 +466,16 @@ function ThreadSettingsSessionProvider(
 
   const applyOptionChange = useCallback(
     (id: string, value: string | boolean) => {
+      if (id === ANTIGRAVITY_REASONING_CONTROL && nativeModelControl) {
+        if (!nativeModelControl.options.some((option) => option.id === value)) return;
+        const nextModel = props.providerGroups
+          .find((group) => group.providerKey === displayedOption?.providerKey)
+          ?.models.find((option) => !option.isUnavailable && option.selection.model === value);
+        if (!nextModel) return;
+        if (pendingModel) setPendingModel(nextModel);
+        else props.onSelectModel(nextModel);
+        return;
+      }
       const next = applyProviderOptionSelection(displayedDescriptors, { id, value });
       if (!next) {
         return;
@@ -470,7 +489,15 @@ function ThreadSettingsSessionProvider(
         props.onUpdateOptionSelections(next);
       }
     },
-    [displayedDescriptors, pendingModel, props.onUpdateOptionSelections],
+    [
+      displayedDescriptors,
+      pendingModel,
+      props.onUpdateOptionSelections,
+      props.onSelectModel,
+      props.providerGroups,
+      nativeModelControl,
+      displayedOption,
+    ],
   );
 
   const toggleProvider = useCallback((providerKey: string) => {
@@ -651,12 +678,16 @@ function useThreadSettingsCatalogItems(
         const catalogModels = session.showLegacy
           ? group.models
           : group.models.filter((model) => !model.isLegacy || session.isDisplayed(model));
-        const visibleModels = catalogModels.filter((model) =>
+        const matchingModels = catalogModels.filter((model) =>
           modelMatchesCatalogQuery({
             model,
             providerLabel: group.providerLabel,
             query: session.searchQuery,
           }),
+        );
+        const visibleModels = groupModelOptionsForDisplay(
+          matchingModels,
+          group.models.find(session.isDisplayed)?.selection.model,
         );
         if (visibleModels.length === 0) {
           return [];
