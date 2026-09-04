@@ -33,6 +33,7 @@ const workspaceFiles = [
   "packages/scient-analytics/package.json",
   "packages/scient-document-artifacts/package.json",
   "packages/scient-execution/package.json",
+  "packages/scient-markdown/package.json",
   "packages/scient-pdf-validation/package.json",
   "packages/scient-provider-runtime/package.json",
   "packages/scient-project-init/package.json",
