@@ -1964,6 +1964,7 @@ code {
 
 /* Visual-card utilities are quiet; chart exploration keeps its own toolbar. */
 .scient-visual-utility-controls button:not([data-scient-toolbar-move]) {
+  isolation: isolate;
   width: 1.75rem;
   height: 1.75rem;
   padding: 0;
@@ -1975,10 +1976,20 @@ code {
   color: var(--control-icon-color);
 }
 
+.scient-visual-utility-controls button:not([data-scient-toolbar-move])::before {
+  inset: 2px;
+  z-index: -1;
+  border-radius: inherit;
+}
+
 .scient-visual-utility-controls button:not([data-scient-toolbar-move]):hover,
 .scient-visual-utility-controls button:not([data-scient-toolbar-move])[data-popup-open] {
   --control-icon-color: var(--foreground);
   color: var(--control-icon-color);
+}
+
+.scient-visual-utility-controls button:not([data-scient-toolbar-move]):hover::before,
+.scient-visual-utility-controls button:not([data-scient-toolbar-move])[data-popup-open]::before {
   background: color-mix(in oklab, var(--foreground) 6%, transparent);
 }
 
