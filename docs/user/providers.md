@@ -50,18 +50,23 @@ that environment; it does not install or remove provider software on the device 
 | -------- | ------------------------------------------------------------------------ | ------------------------------------------------------------------------------- |
 | Install  | Downloads, verifies, tests, and activates a qualified private runtime.   | System/custom installations and provider credentials.                           |
 | Update   | Safely replaces a Scient-managed runtime with a newer qualified version. | The previous working copy until activation succeeds, plus provider credentials. |
-| Repair   | Restores and verifies the exact active managed release.                  | The previous working copy until repair succeeds, plus provider credentials.     |
+| Repair   | Installs or restores the latest qualified managed release.               | The previous working copy until repair succeeds, plus provider credentials.     |
 | Remove   | Deletes only Scient's private runtime.                                   | System/custom installations and provider credentials.                           |
 | Sign out | Asks the provider to revoke the account session and verifies the result. | Every provider runtime.                                                         |
 
 When provider update checks are enabled, Scient checks its qualified stable-release catalog when the
-app starts, periodically while it remains open, and when you open an Install or Update plan. A newly
-qualified release can appear as **Update** without restarting Scient. Scient never installs a provider
-update by itself: you still confirm the exact release, and the local computer independently verifies
-and tests it before activation. Repair keeps a separate meaning: it restores the exact active managed
-release instead of silently updating it.
+app starts, periodically while it remains open, and when you click **Install**, **Update**, or **Repair**.
+A newly qualified release can appear as **Update** without restarting Scient. Clicking **Install** or
+**Update** starts the operation directly, without a second confirmation. In Settings, it runs without
+opening the management card: the button shows **Installing**, **Updating**, or **Verifying**, with a
+small download percentage when available. Click that button to open details. A **Failed** button opens
+the existing error and recovery controls; errors before an operation starts appear as notifications.
+The local computer independently verifies and tests the release before activation.
+Scient never installs a provider update without your action. Repair also uses the latest qualified release and can restore it
+when you already have that version. Offline, Scient uses the latest qualified release it already
+knows about; it does not claim to have checked for newer releases.
 
-Removing a runtime does not sign out. Signing out does not uninstall anything. Disabling a provider
+**Remove** still asks for confirmation. Removing a runtime does not sign out. Signing out does not uninstall anything. Disabling a provider
 also preserves both its runtime and its credentials.
 
 ## Accounts, subscriptions, and codes

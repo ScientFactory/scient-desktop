@@ -21,7 +21,8 @@ if (!provider || !isManagedRuntimeProvider(provider)) {
 }
 
 const currentPath = NodePath.resolve(
-  argument("--current") ?? "apps/server/src/scient/providerLifecycle/managed-runtime-catalog.json",
+  argument("--current") ??
+    "apps/server/src/scient/providerLifecycle/bundled-managed-runtime-catalog.json",
 );
 const candidatePath = NodePath.resolve(argument("--candidate") ?? "");
 const outputPath = NodePath.resolve(argument("--output") ?? currentPath);

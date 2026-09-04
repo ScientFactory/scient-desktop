@@ -6,6 +6,7 @@ import {
   HostProcessEnvironment,
   HostProcessPlatform,
 } from "@t3tools/shared/hostProcess";
+import { isManagedRuntimeUpdate } from "@scientfactory/provider-runtime";
 import * as Clock from "effect/Clock";
 import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
@@ -92,6 +93,8 @@ export interface AntigravityExecutable {
 interface AntigravityInstallationService {
   readonly managedDirectory: string;
   readonly latestRelease: Effect.Effect<AntigravityReleaseAsset | null>;
+  /** Bounded catalog refresh for explicit install, update, or repair. */
+  readonly refreshLatestRelease: Effect.Effect<AntigravityReleaseAsset | null>;
   readonly resolve: (
     binaryPath?: string,
     environment?: NodeJS.ProcessEnv,
@@ -129,6 +132,13 @@ export class AntigravityInstallation extends Context.Service<
       const arch = yield* HostProcessArchitecture;
       return yield* makeAntigravityInstallation({
         baseDir: config.baseDir,
+        refreshLatestRelease: catalog.refresh.pipe(
+          Effect.map(
+            (current) =>
+              resolveAntigravityAcpCatalogAsset(current, platform, arch) ??
+              bundledAntigravityAcpAsset(platform, arch),
+          ),
+        ),
         latestRelease: catalog.current.pipe(
           Effect.map(
             (current) =>
@@ -145,6 +155,7 @@ export interface AntigravityInstallationOptions {
   readonly baseDir: string;
   readonly releaseAsset?: AntigravityReleaseAsset | null;
   readonly latestRelease?: Effect.Effect<AntigravityReleaseAsset | null>;
+  readonly refreshLatestRelease?: Effect.Effect<AntigravityReleaseAsset | null>;
   readonly validate?: (
     executable: AntigravityExecutable,
     expectedVersion: string,
@@ -305,6 +316,7 @@ export const makeAntigravityInstallation = Effect.fn("AntigravityInstallation.ma
       ? resolveAntigravityReleaseAsset(platform, arch)
       : options.releaseAsset;
   const latestRelease = options.latestRelease ?? Effect.succeed(releaseAsset);
+  const refreshLatestRelease = options.refreshLatestRelease ?? latestRelease;
   const names = executableNames(platform);
   const managedDirectory = path.join(
     options.baseDir,
@@ -897,6 +909,30 @@ export const makeAntigravityInstallation = Effect.fn("AntigravityInstallation.ma
               "Another Antigravity release is already being installed. Wait for it to finish.",
             );
           }
+          const activeRecord = yield* readRecord(activePath, ActiveRelease).pipe(
+            Effect.flatMap((active) =>
+              readRecord(
+                path.join(versionsDirectory, active.releaseId, RELEASE_RECORD),
+                InstalledRelease,
+              ),
+            ),
+            Effect.option,
+          );
+          if (
+            Option.isSome(activeRecord) &&
+            asset.registryVersion &&
+            activeRecord.value.registryVersion &&
+            isManagedRuntimeUpdate({
+              provider: "antigravityAcp",
+              current: asset.registryVersion,
+              candidate: activeRecord.value.registryVersion,
+            })
+          ) {
+            return yield* installationError(
+              "start",
+              "A newer Antigravity runtime is already installed. Refresh the provider catalog before repairing it.",
+            );
+          }
           const operationId = yield* crypto.randomUUIDv4;
           const next: ProviderInstallState = {
             driver: DRIVER,
@@ -944,7 +980,7 @@ export const makeAntigravityInstallation = Effect.fn("AntigravityInstallation.ma
       )
       .pipe(Effect.mapError(wrapFailure("start", "Could not start the Antigravity installation.")));
 
-  const start = latestRelease.pipe(
+  const start = refreshLatestRelease.pipe(
     Effect.flatMap((asset) =>
       asset
         ? startRelease(asset)
@@ -1058,6 +1094,7 @@ export const makeAntigravityInstallation = Effect.fn("AntigravityInstallation.ma
   return AntigravityInstallation.of({
     managedDirectory,
     latestRelease,
+    refreshLatestRelease,
     resolve,
     acquire,
     start,

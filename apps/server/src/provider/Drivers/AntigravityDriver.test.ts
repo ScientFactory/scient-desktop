@@ -173,6 +173,7 @@ const makeHarness = Effect.fn("makeAntigravityDriverHarness")(function* (
     AntigravityInstallation.of({
       managedDirectory: root,
       latestRelease: Effect.succeed(bundledAntigravityAcpAsset("linux", "x64")),
+      refreshLatestRelease: Effect.succeed(bundledAntigravityAcpAsset("linux", "x64")),
       resolve: () => resolveSelected(),
       acquire: (binaryPath, environment) =>
         Effect.gen(function* () {

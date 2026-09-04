@@ -19,7 +19,7 @@ import {
   type ManagedRuntimeCatalogProvider,
   type ManagedRuntimeTarget,
 } from "@scientfactory/provider-runtime";
-import bundledCatalogJson from "../../apps/server/src/scient/providerLifecycle/managed-runtime-catalog.json" with { type: "json" };
+import bundledCatalogJson from "../../apps/server/src/scient/providerLifecycle/bundled-managed-runtime-catalog.json" with { type: "json" };
 import { inspectAntigravityAcpArtifact } from "./antigravity-acp-artifact.ts";
 
 export const ANTIGRAVITY_ACP_REGISTRY_URL =
@@ -745,7 +745,7 @@ export async function refreshManagedRuntimeProvider(
   if (!existing) throw new Error(`Managed runtime catalog is missing ${provider}.`);
   report(`Checking ${provider} stable channel.`);
   const latestVersion = await discoverLatestVersion(provider, fetch_);
-  if (!releaseChanged(provider, existing, latestVersion)) {
+  if (current.providers[provider] && !releaseChanged(provider, existing, latestVersion)) {
     report(`${provider} is already current at ${latestVersion}.`);
     return { catalog: current, changedProviders: [] };
   }
@@ -785,7 +785,12 @@ export function mergeQualifiedManagedRuntimeProvider(input: {
     if (JSON.stringify(currentRelease) !== JSON.stringify(candidateRelease)) {
       throw new Error(`${input.provider} attempted a same-version catalog repack.`);
     }
-    return input.current;
+    return input.current.providers[input.provider]
+      ? input.current
+      : {
+          schemaVersion: 1,
+          providers: { ...input.current.providers, [input.provider]: candidateRelease },
+        };
   }
   if (
     !isManagedRuntimeUpdate({

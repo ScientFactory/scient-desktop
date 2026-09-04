@@ -17,7 +17,8 @@ function argument(name: string): string | undefined {
 }
 
 const inputPath = NodePath.resolve(
-  argument("--input") ?? "apps/server/src/scient/providerLifecycle/managed-runtime-catalog.json",
+  argument("--input") ??
+    "apps/server/src/scient/providerLifecycle/bundled-managed-runtime-catalog.json",
 );
 const outputPath = NodePath.resolve(argument("--output") ?? inputPath);
 const requestedProvider = argument("--provider");

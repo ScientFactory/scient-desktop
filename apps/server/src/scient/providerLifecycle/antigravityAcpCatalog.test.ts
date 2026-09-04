@@ -1,6 +1,6 @@
 import { expect, it } from "@effect/vitest";
 
-import catalog from "./managed-runtime-catalog.json" with { type: "json" };
+import catalog from "./bundled-managed-runtime-catalog.json" with { type: "json" };
 import {
   bundledAntigravityAcpAsset,
   resolveAntigravityAcpCatalogAsset,
@@ -16,9 +16,14 @@ const targets = [
 
 it("hydrates only the five app-owned ACP targets and preserves the bundled release floor", () => {
   for (const [platform, arch] of targets) {
-    expect(resolveAntigravityAcpCatalogAsset(catalog, platform, arch)).toEqual(
-      bundledAntigravityAcpAsset(platform, arch),
+    const asset = resolveAntigravityAcpCatalogAsset(catalog, platform, arch);
+    expect(asset?.registryVersion).toBe(catalog.providers.antigravityAcp.version);
+    expect(asset?.sha256).toBe(
+      catalog.providers.antigravityAcp.artifacts[
+        `${platform}-${arch}` as keyof typeof catalog.providers.antigravityAcp.artifacts
+      ].checksum.digest,
     );
+    expect(bundledAntigravityAcpAsset(platform, arch)).not.toBeNull();
   }
   expect(resolveAntigravityAcpCatalogAsset(catalog, "darwin", "x64")).toBeUndefined();
 });

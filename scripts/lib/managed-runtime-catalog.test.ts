@@ -14,7 +14,7 @@ import {
   validateManagedRuntimeCatalog,
   type ManagedRuntimeCatalogData,
 } from "./managed-runtime-catalog.ts";
-import bundledCatalogJson from "../../apps/server/src/scient/providerLifecycle/managed-runtime-catalog.json" with { type: "json" };
+import bundledCatalogJson from "../../apps/server/src/scient/providerLifecycle/bundled-managed-runtime-catalog.json" with { type: "json" };
 
 const currentCatalog: ManagedRuntimeCatalogData = {
   schemaVersion: 1,
@@ -190,6 +190,30 @@ describe("managed runtime release discovery", () => {
     expect(result.catalog.providers.antigravityAcp?.version).toBe("1.1.0");
     expect(Object.keys(result.catalog.providers.antigravityAcp?.artifacts ?? {})).toHaveLength(5);
     expect(requested).toHaveLength(7);
+  });
+
+  it("discovers a missing ACP feed entry even when its version equals the bundled release", async () => {
+    const current = validateManagedRuntimeCatalog(bundledCatalogJson);
+    const { antigravityAcp: _bundledAcp, ...providers } = current.providers;
+    const legacy = { ...current, providers };
+    const version = bundledCatalogJson.providers.antigravityAcp.version;
+    const registry = acpRegistry(version, "agy_acp_server_fixture");
+    const result = await refreshManagedRuntimeProvider(legacy, "antigravityAcp", async (input) =>
+      input.toString().includes("raw.githubusercontent.com")
+        ? Response.json(registry)
+        : new Response(input.toString().includes("windows") ? windowsAcpArchive : unixAcpArchive),
+    );
+    expect(result.changedProviders).toEqual(["antigravityAcp"]);
+    expect(result.catalog.providers.antigravityAcp?.version).toBe(version);
+    // Native qualification must still run before publication. A matching bundled
+    // release can then initialize an older feed without waiting for another version.
+    const promoted = mergeQualifiedManagedRuntimeProvider({
+      current: legacy,
+      candidate: validateManagedRuntimeCatalog(bundledCatalogJson),
+      provider: "antigravityAcp",
+    });
+    expect(promoted.providers.antigravityAcp).toEqual(bundledCatalogJson.providers.antigravityAcp);
+    expect("antigravityAcp" in legacy.providers).toBe(false);
   });
 
   it("merges only the qualified provider into the latest published catalog", () => {

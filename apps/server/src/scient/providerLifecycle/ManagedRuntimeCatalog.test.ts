@@ -1,5 +1,6 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import {
+  managedRuntimeArtifactReceipt,
   resolveReviewedAntigravityArtifact,
   resolveReviewedClaudeArtifact,
   resolveReviewedCodexArtifact,
@@ -25,6 +26,7 @@ import {
   mergeManagedRuntimeCatalogs,
   resolveManagedRuntimeCatalogArtifact,
   resolveManagedRuntimeCatalogCandidate,
+  resolveManagedRuntimeRepairArtifact,
   resolveFetchedManagedRuntimeCatalog,
   type ManagedRuntimeCatalogData,
 } from "./ManagedRuntimeCatalog.ts";
@@ -464,4 +466,59 @@ describe("ManagedRuntimeCatalog service", () => {
       ),
     ),
   );
+});
+
+describe("latest qualified repair selection", () => {
+  for (const { provider, resolve } of policies) {
+    it(`repairs latest for ${provider} and never downgrades a newer compatible receipt offline`, () => {
+      const bundled = resolve({ platform: "darwin", arch: "arm64" });
+      assert.isDefined(bundled);
+      const candidate = resolveManagedRuntimeCatalogCandidate({
+        bundledArtifact: bundled,
+        catalog: BUNDLED_MANAGED_RUNTIME_CATALOG,
+        contractRevision: 1,
+      });
+      assert.isDefined(candidate);
+      const newer = {
+        ...candidate,
+        version: provider === "cursor" ? "2099.01.01-abcdef0" : "99.0.0",
+        catalogRevision: "fixture-newer",
+      };
+      assert.strictEqual(
+        resolveManagedRuntimeRepairArtifact({
+          bundledArtifact: bundled,
+          candidateArtifact: newer,
+          activeArtifact: managedRuntimeArtifactReceipt(candidate),
+        }),
+        newer,
+      );
+      assert.strictEqual(
+        resolveManagedRuntimeRepairArtifact({
+          bundledArtifact: bundled,
+          candidateArtifact: candidate,
+          activeArtifact: undefined,
+        }),
+        candidate,
+      );
+      assert.equal(
+        resolveManagedRuntimeRepairArtifact({
+          bundledArtifact: bundled,
+          candidateArtifact: candidate,
+          activeArtifact: managedRuntimeArtifactReceipt(newer),
+        })?.version,
+        newer.version,
+      );
+      assert.strictEqual(
+        resolveManagedRuntimeRepairArtifact({
+          bundledArtifact: bundled,
+          candidateArtifact: candidate,
+          activeArtifact: {
+            ...managedRuntimeArtifactReceipt(newer),
+            url: "https://untrusted.example/runtime",
+          },
+        }),
+        candidate,
+      );
+    });
+  }
 });

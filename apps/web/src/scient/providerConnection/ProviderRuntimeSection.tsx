@@ -25,7 +25,6 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { serverEnvironment } from "../../state/server";
 import { useAtomCommand } from "../../state/use-atom-command";
-import { getProviderVersionLabel } from "../../components/settings/providerStatus";
 import { Button } from "../../components/ui/button";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../../components/ui/tooltip";
 import {
@@ -117,32 +116,6 @@ export function resolveProviderRuntimeForPresentation(
   return localRuntime;
 }
 
-function formatDownloadSize(bytes: number | null): string | null {
-  if (bytes === null) return null;
-  return `${Math.max(1, Math.round(bytes / (1024 * 1024)))} MB`;
-}
-
-function platformLabel(target: string): string {
-  const [platform, arch, libc] = target.split("-");
-  const platformName = platform === "darwin" ? "macOS" : platform === "win32" ? "Windows" : "Linux";
-  const architecture =
-    arch === "arm64" ? (platform === "darwin" ? "Apple silicon" : "ARM64") : "Intel/AMD 64-bit";
-  return [platformName, architecture, libc].filter(Boolean).join(" · ");
-}
-
-function actionLabel(action: ProviderManagedRuntimeAction, displayName: string): string {
-  switch (action) {
-    case "install":
-      return `Install ${displayName}`;
-    case "update":
-      return `Update ${displayName}`;
-    case "repair":
-      return `Repair ${displayName}`;
-    case "remove":
-      return `Remove managed ${displayName}`;
-  }
-}
-
 function runtimeSourceLabel(runtime: ProviderRuntimeSummary): string {
   if (runtime.source === "scient_managed") return "Managed by Scient";
   if (runtime.source === "system") return "System installation";
@@ -157,6 +130,7 @@ export function ProviderRuntimeSection(props: {
   readonly displayName: string;
   readonly compact?: boolean;
   readonly disabled?: boolean;
+  /** An explicit action clicked before opening this surface, never inferred from provider state. */
   readonly initialAction?: ProviderManagedRuntimeAction | undefined;
   readonly onActionSucceeded?: (action: ProviderManagedRuntimeAction) => void;
   readonly onPlanOpenChange?: (open: boolean) => void;
@@ -322,7 +296,7 @@ export function ProviderRuntimeSection(props: {
       }
       setLocalFailure(null);
       setPendingAction("plan");
-      if (action !== "repair") props.onPlanOpenChange?.(true);
+      if (action === "remove") props.onPlanOpenChange?.(true);
       const result = await planRuntime({
         environmentId: props.environmentId,
         input: { instanceId: props.provider.instanceId, action },
@@ -342,7 +316,10 @@ export function ProviderRuntimeSection(props: {
         }
         return;
       }
-      if (action === "repair") {
+      // Install, update, and repair are already authorized by the action click.
+      // Keep the server preflight and its exact catalog revision; only removal
+      // needs a second, destructive confirmation.
+      if (action !== "remove") {
         await startPlan(result.value);
         return;
       }
@@ -481,7 +458,7 @@ export function ProviderRuntimeSection(props: {
     );
   }
 
-  if (pendingAction === "plan" && props.initialAction && !plan) {
+  if ((pendingAction === "plan" || pendingAction === "start") && props.initialAction && !plan) {
     return (
       <div
         className={
@@ -492,9 +469,8 @@ export function ProviderRuntimeSection(props: {
       >
         <LoaderIcon className="mt-0.5 size-5 shrink-0 animate-spin text-primary" aria-hidden />
         <div className="min-w-0">
-          <p className="text-sm font-medium text-foreground">Preparing installation</p>
-          <p className="mt-0.5 text-xs leading-relaxed text-muted-foreground">
-            Loading the reviewed {props.displayName} installation details…
+          <p role="status" className="text-sm font-medium text-foreground">
+            Preparing {props.displayName}…
           </p>
         </div>
       </div>
@@ -502,11 +478,6 @@ export function ProviderRuntimeSection(props: {
   }
 
   if (plan) {
-    const downloadSize = formatDownloadSize(plan.downloadBytes);
-    const versionLabel = getProviderVersionLabel(plan.version);
-    const isRemovePlan = plan.action === "remove";
-    const isCompactInstallPlan = props.compact && plan.action === "install";
-    const isSystemManagedInstallPlan = isCompactInstallPlan && runtime.source === "system";
     return (
       <div
         className={
@@ -518,52 +489,13 @@ export function ProviderRuntimeSection(props: {
         <div className="flex items-start gap-3">
           <ShieldCheckIcon className="mt-0.5 size-5 shrink-0 text-primary" aria-hidden />
           <div className="min-w-0">
-            <p className="text-sm font-medium text-foreground">
-              {isRemovePlan
-                ? `Remove ${props.displayName}?`
-                : isSystemManagedInstallPlan
-                  ? `Use Scient-managed ${props.displayName}?`
-                  : isCompactInstallPlan
-                    ? `Install ${props.displayName}`
-                    : `Review ${props.displayName} setup`}
-            </p>
+            <p className="text-sm font-medium text-foreground">Remove {props.displayName}?</p>
             <p className="mt-0.5 text-xs leading-relaxed text-muted-foreground">
-              {isRemovePlan
-                ? `Only Scient’s managed copy will be removed. Your account and other ${props.displayName} installations stay unchanged.`
-                : isSystemManagedInstallPlan
-                  ? `${versionLabel ?? props.displayName} · ${platformLabel(plan.target)}${downloadSize ? ` · about ${downloadSize}` : ""}. Accounts using the default installation will use Scient’s private copy; system and custom installations stay unchanged.`
-                  : isCompactInstallPlan
-                    ? `${versionLabel ?? props.displayName} · ${platformLabel(plan.target)}${downloadSize ? ` · about ${downloadSize}` : ""}`
-                    : plan.message}
+              Only Scient’s managed copy will be removed. Your account and other {props.displayName}{" "}
+              installations stay unchanged.
             </p>
           </div>
         </div>
-        {!isRemovePlan && !isCompactInstallPlan ? (
-          <>
-            <dl className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 text-xs">
-              <dt className="text-muted-foreground">Computer</dt>
-              <dd className="text-right text-foreground">{platformLabel(plan.target)}</dd>
-              {plan.version ? (
-                <>
-                  <dt className="text-muted-foreground">Version</dt>
-                  <dd className="text-right text-foreground">{versionLabel}</dd>
-                </>
-              ) : null}
-              {downloadSize ? (
-                <>
-                  <dt className="text-muted-foreground">Download</dt>
-                  <dd className="text-right text-foreground">About {downloadSize}</dd>
-                </>
-              ) : null}
-              <dt className="text-muted-foreground">Source</dt>
-              <dd className="text-right text-foreground">{plan.sourceLabel}</dd>
-            </dl>
-            <p className="text-[11px] leading-relaxed text-muted-foreground">
-              Scient keeps this copy inside its private app data and never changes a system or
-              custom installation.
-            </p>
-          </>
-        ) : null}
         {localError ? (
           <p role="alert" className="text-xs leading-relaxed text-destructive">
             {localError}
@@ -585,31 +517,13 @@ export function ProviderRuntimeSection(props: {
           <Button
             type="button"
             size="sm"
-            variant={isRemovePlan ? "ghost-muted" : "ghost"}
-            className={
-              isRemovePlan
-                ? "text-destructive hover:bg-destructive/8 hover:text-destructive"
-                : PRIMARY_GHOST_ACTION_CLASS
-            }
+            variant="ghost-muted"
+            className="text-destructive hover:bg-destructive/8 hover:text-destructive"
             disabled={isWorking}
             onClick={() => void start()}
           >
-            {pendingAction === "start" ? (
-              <LoaderIcon className="animate-spin" />
-            ) : plan.action === "install" ? (
-              <DownloadIcon />
-            ) : plan.action === "update" ? (
-              <RefreshCwIcon />
-            ) : plan.action === "remove" ? (
-              <Trash2Icon />
-            ) : (
-              <WrenchIcon />
-            )}
-            {isRemovePlan
-              ? "Remove"
-              : isCompactInstallPlan
-                ? "Install"
-                : actionLabel(plan.action, props.displayName)}
+            {pendingAction === "start" ? <LoaderIcon className="animate-spin" /> : <Trash2Icon />}
+            Remove
           </Button>
         </div>
       </div>
@@ -634,7 +548,6 @@ export function ProviderRuntimeSection(props: {
       <CheckCircle2Icon className="mt-0.5 size-5 shrink-0 text-success" aria-hidden />
     );
   const presentsCompactUpdateSeparately = props.compact && runtime.actions.includes("update");
-  const summaryVersion = props.provider.driver === "antigravity" ? null : runtime.managedVersion;
   const trailingActions: ReadonlyArray<ProviderManagedRuntimeAction> =
     presentsCompactUpdateSeparately
       ? runtime.actions.filter((action) => action !== "update")
@@ -653,18 +566,9 @@ export function ProviderRuntimeSection(props: {
           {statusIcon}
           <div className="min-w-0 flex-1">
             <p className="text-sm font-medium text-foreground">{runtimeSourceLabel(runtime)}</p>
-            {props.compact && summaryVersion ? (
-              <p className="mt-0.5 text-xs text-muted-foreground">
-                {props.displayName} {summaryVersion}
-              </p>
-            ) : statusMessage ? (
+            {statusMessage ? (
               <p className="mt-0.5 text-xs leading-relaxed text-muted-foreground">
                 {statusMessage}
-              </p>
-            ) : null}
-            {!props.compact && summaryVersion ? (
-              <p className="mt-0.5 text-xs text-muted-foreground">
-                {props.displayName} {summaryVersion}
               </p>
             ) : null}
           </div>
@@ -698,7 +602,7 @@ export function ProviderRuntimeSection(props: {
                   disabled={isWorking}
                   onClick={() => void requestPlan(action)}
                 >
-                  {pendingAction === "plan" ? (
+                  {pendingAction === "plan" || pendingAction === "start" ? (
                     <LoaderIcon className="animate-spin" />
                   ) : action === "install" ? (
                     <DownloadIcon />
@@ -712,7 +616,7 @@ export function ProviderRuntimeSection(props: {
                   {action === "install"
                     ? isSystemManagedSwitch
                       ? "Use Scient-managed"
-                      : "Review setup"
+                      : "Install"
                     : action === "update"
                       ? "Update"
                       : action === "repair"
@@ -763,7 +667,11 @@ export function ProviderRuntimeSection(props: {
             type="button"
             variant="ghost"
           >
-            {pendingAction === "plan" ? <LoaderIcon className="animate-spin" /> : <RefreshCwIcon />}
+            {pendingAction === "plan" || pendingAction === "start" ? (
+              <LoaderIcon className="animate-spin" />
+            ) : (
+              <RefreshCwIcon />
+            )}
             Update
           </Button>
         </div>
