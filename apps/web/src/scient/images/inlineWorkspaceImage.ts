@@ -45,7 +45,8 @@ function normalizeWorkspaceRelativePath(value: string): string | null {
   return segments.length > 0 ? segments.join("/") : null;
 }
 
-function joinWorkspacePath(workspaceRoot: string, relativePath: string): string {
+/** Join a normalized workspace-relative path without interpreting shell syntax. */
+export function joinWorkspaceImagePath(workspaceRoot: string, relativePath: string): string {
   const separator = WINDOWS_ABSOLUTE_PATH.test(workspaceRoot) ? "\\" : "/";
   return `${workspaceRoot.replace(/[\\/]+$/u, "")}${separator}${relativePath.replaceAll(
     "/",
@@ -75,7 +76,7 @@ export function resolveInlineWorkspaceImage(input: {
 
   const alt = input.alt?.trim();
   return {
-    absolutePath: joinWorkspacePath(input.cwd, relativePath),
+    absolutePath: joinWorkspaceImagePath(input.cwd, relativePath),
     alt: alt || fileName,
     displayPath: relativePath,
     fileName,

@@ -179,6 +179,10 @@
       "types": "./src/state/scientLatexHttp.ts",
       "default": "./src/state/scientLatexHttp.ts"
     },
+    "./state/scient-markdown": {
+      "types": "./src/state/scientMarkdownHttp.ts",
+      "default": "./src/state/scientMarkdownHttp.ts"
+    },
     "./state/scient-sources": {
       "types": "./src/state/scientSourcesHttp.ts",
       "default": "./src/state/scientSourcesHttp.ts"

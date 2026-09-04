@@ -288,6 +288,33 @@ describe("ChatMarkdown workspace images", () => {
     expect(copiedMarkdownFrom(html)).toBe('![logo](images/logo.svg "My Title")');
   });
 
+  it("projects standalone image titles as captions in files while preserving ordinary chat", () => {
+    const markdown = '![logo](images/logo.svg "Visible caption")';
+    const file = renderFilePreview("C:\\Users\\shawn\\project", "notes.md", markdown);
+    expect(file).toContain(">Visible caption</span>");
+    expect(copiedMarkdownFrom(file)).toBe(markdown);
+    expect(render(markdown)).not.toContain(">Visible caption</span>");
+    const remote = renderFilePreview(
+      "C:\\Users\\shawn\\project",
+      "notes.md",
+      '![logo](https://images.test/logo.svg "Remote caption")',
+    );
+    expect(remote).toContain(">Remote caption</span>");
+  });
+
+  it("keeps titles on inline, linked, and table file images out of the figure caption flow", () => {
+    for (const markdown of [
+      'Before ![logo](images/logo.svg "Compact title") after.',
+      '[![logo](images/logo.svg "Compact title")](https://example.test)',
+      '| Image |\n| --- |\n| ![logo](images/logo.svg "Compact title") |',
+      '<table><tr><td><p><img src="images/logo.svg" alt="logo" title="Compact title"></p></td></tr></table>',
+    ]) {
+      expect(renderFilePreview("C:\\Users\\shawn\\project", "notes.md", markdown)).not.toContain(
+        ">Compact title</span>",
+      );
+    }
+  });
+
   it("escapes double quotes in an authored image title", () => {
     const html = render(`![logo](images/logo.svg 'My "Title"')`);
 

@@ -1,10 +1,9 @@
 import {
   CheckIcon,
-  Code2Icon,
   CopyIcon,
   DownloadIcon,
   EllipsisIcon,
-  ExpandIcon,
+  Maximize2Icon,
   FileImageIcon,
   ImageIcon,
   RefreshCwIcon,
@@ -12,8 +11,15 @@ import {
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 
 import { Button } from "~/components/ui/button";
-import { Menu, MenuItem, MenuPopup, MenuTrigger } from "~/components/ui/menu";
+import { Menu, MenuItem, MenuTrigger } from "~/components/ui/menu";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "~/components/ui/tooltip";
+import {
+  RichFenceSourceMenuItem,
+  RichFenceSourcePreview,
+  type ScientRichFenceAuthoringActions,
+  type ScientRichFenceSourceEditor,
+  useRichFenceContextMenu,
+} from "../presentation/RichFenceSourceActions";
 
 import {
   copyMermaidPng,
@@ -28,11 +34,18 @@ import {
   type RenderedMermaidDiagram,
 } from "./mermaidRuntime";
 import { useNearViewport } from "../presentation/useNearViewport";
-import { VisualCardDetails, VisualCardToolbar } from "../presentation/VisualCardToolbar";
+import {
+  VisualCardDetails,
+  VisualCardToolbar,
+  VisualCardMenuPopup,
+  VisualCardToolbarMenuItems,
+} from "../presentation/VisualCardToolbar";
 
 import "./scient-diagrams.css";
 
 interface MermaidDiagramCardProps {
+  readonly authoringActions?: ScientRichFenceAuthoringActions | undefined;
+  readonly sourceEditor?: ScientRichFenceSourceEditor | undefined;
   readonly source: string;
   readonly language: string;
   readonly fenceMeta?: string | undefined;
@@ -87,6 +100,8 @@ function DiagramActionButton({
 }
 
 export function MermaidDiagramCard({
+  authoringActions,
+  sourceEditor,
   fenceMeta,
   language,
   source,
@@ -112,7 +127,8 @@ export function MermaidDiagramCard({
     if (!isNearViewport) return;
     const generation = renderGenerationRef.current + 1;
     renderGenerationRef.current = generation;
-    setDiagramState({ status: "loading" });
+    // Keep an error's geometry while its source is corrected or retried.
+    setDiagramState((current) => (current.status === "error" ? current : { status: "loading" }));
 
     void renderMermaidDiagram(source, theme).then(
       (result) => {
@@ -178,6 +194,11 @@ export function MermaidDiagramCard({
     );
   }, [activeAction, showPersistentMessage, showTransientMessage, source]);
 
+  const handleContextMenu = useRichFenceContextMenu(authoringActions, handleCopySource);
+  const handleToggleSource = useCallback(() => {
+    setSourceVisible((visible) => !visible);
+  }, []);
+
   const readyResult = diagramState.status === "ready" ? diagramState.result : null;
 
   const handleCopyPng = useCallback(() => {
@@ -227,6 +248,7 @@ export function MermaidDiagramCard({
       data-markdown-copy={markdownCopy}
       data-scient-visual-card
       dir="ltr"
+      onContextMenu={handleContextMenu}
       role="figure"
     >
       <div className="flex flex-wrap items-center justify-end gap-2 px-2 pt-2">
@@ -242,20 +264,10 @@ export function MermaidDiagramCard({
               label="Expand diagram"
               onClick={() => setExpanded(true)}
             >
-              <ExpandIcon className="size-3" />
+              <Maximize2Icon className="size-3" strokeWidth={1.5} />
             </DiagramActionButton>
           ) : null}
-          <DiagramActionButton
-            disabled={activeAction != null}
-            label="Copy diagram source"
-            onClick={handleCopySource}
-          >
-            {actionMessage === "Source copied" ? (
-              <CheckIcon className="size-3" />
-            ) : (
-              <CopyIcon className="size-3" />
-            )}
-          </DiagramActionButton>
+
           <Menu>
             <Tooltip>
               <TooltipTrigger
@@ -277,12 +289,17 @@ export function MermaidDiagramCard({
               </TooltipTrigger>
               <TooltipPopup side="top">More diagram actions</TooltipPopup>
             </Tooltip>
-            <MenuPopup align="end" className="min-w-44">
+            <VisualCardMenuPopup align="end" className="min-w-52 max-w-[calc(100vw-2rem)]">
               <VisualCardDetails title={displayTitle} detail={readyResult?.diagramType} />
-              <MenuItem onClick={() => setSourceVisible((visible) => !visible)}>
-                <Code2Icon />
-                {sourceVisible ? "Hide source" : "Show source"}
+              <MenuItem disabled={activeAction != null} onClick={handleCopySource}>
+                {actionMessage === "Source copied" ? <CheckIcon /> : <CopyIcon />}
+                Copy source
               </MenuItem>
+              <RichFenceSourceMenuItem
+                authoringActions={authoringActions}
+                onToggleSource={handleToggleSource}
+                sourceVisible={sourceVisible}
+              />
               <MenuItem
                 disabled={readyResult == null || activeAction != null}
                 onClick={handleDownloadSvg}
@@ -304,7 +321,8 @@ export function MermaidDiagramCard({
                 <FileImageIcon />
                 {activeAction === "download-png" ? "Creating PNG…" : "Download PNG"}
               </MenuItem>
-            </MenuPopup>
+              <VisualCardToolbarMenuItems />
+            </VisualCardMenuPopup>
           </Menu>
         </VisualCardToolbar>
       </div>
@@ -340,9 +358,6 @@ export function MermaidDiagramCard({
               Retry
             </Button>
           </div>
-          <pre className="scient-mermaid-source max-h-72 overflow-auto rounded-md bg-background/70 p-3 text-xs leading-relaxed">
-            <code>{source}</code>
-          </pre>
         </div>
       ) : diagramState.status === "ready" ? (
         <div className="scient-mermaid-inline overflow-auto p-2">
@@ -354,13 +369,16 @@ export function MermaidDiagramCard({
         </div>
       ) : null}
 
-      {sourceVisible && diagramState.status !== "error" ? (
-        <div className="border-t border-border/60 bg-background/45 p-3">
-          <pre className="scient-mermaid-source max-h-72 overflow-auto text-xs leading-relaxed">
-            <code>{source}</code>
-          </pre>
-        </div>
-      ) : null}
+      <RichFenceSourcePreview
+        editor={sourceEditor}
+        visible={diagramState.status === "error" || sourceVisible || sourceEditor?.open === true}
+        source={source}
+        className={
+          sourceEditor || diagramState.status === "error"
+            ? "px-4 pb-4"
+            : "border-t border-border/60 bg-background/45 p-3"
+        }
+      />
 
       {readyResult != null ? (
         <MermaidDiagramDialog

@@ -223,6 +223,11 @@ import { cn, randomHex } from "~/lib/utils";
 import { shouldOpenInBrowserByDefault } from "~/scient/fileOpening/fileOpeningPolicy";
 import { useScientFileOpening } from "~/scient/fileOpening/useScientFileOpening";
 import {
+  useActivePendingSurfaceDeparture,
+  usePendingSurfaceDeparture,
+  usePendingSurfaceNavigationBlocker,
+} from "~/scient/fileSurfaces/usePendingSurfaceDeparture";
+import {
   scientComputeSurface,
   scientSourcePdfSurface,
   scientSourcesSurface,
@@ -2190,6 +2195,12 @@ function ChatViewContent(props: ChatViewProps) {
     },
     [activeWorkspaceKey],
   );
+  const runAfterPendingSurfaceSave = usePendingSurfaceDeparture(pendingFileSurfaceIds);
+  const runAfterPendingFileSave = useActivePendingSurfaceDeparture({
+    activeSurfaceId: activeRightPanelSurface?.id ?? null,
+    pendingSurfaceIds: pendingFileSurfaceIds,
+  });
+  usePendingSurfaceNavigationBlocker(pendingFileSurfaceIds);
   const configuredPreviewUrls = useMemo(
     () => getConfiguredPreviewUrls(activeProject?.scripts),
     [activeProject?.scripts],
@@ -3441,13 +3452,14 @@ function ChatViewContent(props: ChatViewProps) {
     if (!diffAvailable) {
       return;
     }
-    if (!diffOpen) {
-      onDiffPanelOpen?.();
-    }
-    if (activeThreadRef) {
+    if (!activeThreadRef) return;
+    runAfterPendingFileSave("diff", () => {
+      if (!diffOpen) {
+        onDiffPanelOpen?.();
+      }
       useRightPanelStore.getState().toggle(activeThreadRef, "diff");
-    }
-  }, [activeThreadRef, diffAvailable, diffOpen, onDiffPanelOpen]);
+    });
+  }, [activeThreadRef, diffAvailable, diffOpen, onDiffPanelOpen, runAfterPendingFileSave]);
 
   const envLocked = Boolean(
     activeThread &&
@@ -4017,37 +4029,49 @@ function ChatViewContent(props: ChatViewProps) {
   const createBrowserSurface = useCallback(
     (profileId?: string) => {
       if (!activeThreadRef) return;
-      void addBrowserSurface({
-        threadRef: activeThreadRef,
-        openPreview,
-        ...(profileId === undefined ? {} : { profileId }),
+      runAfterPendingFileSave(null, () => {
+        void addBrowserSurface({
+          threadRef: activeThreadRef,
+          openPreview,
+          ...(profileId === undefined ? {} : { profileId }),
+        });
       });
     },
-    [activeThreadRef, openPreview],
+    [activeThreadRef, openPreview, runAfterPendingFileSave],
   );
   const addDiffSurface = useCallback(() => {
     if (!activeThreadRef || !diffAvailable) return;
-    useRightPanelStore.getState().open(activeThreadRef, "diff");
-    onDiffPanelOpen?.();
-  }, [activeThreadRef, diffAvailable, onDiffPanelOpen]);
+    runAfterPendingFileSave("diff", () => {
+      useRightPanelStore.getState().open(activeThreadRef, "diff");
+      onDiffPanelOpen?.();
+    });
+  }, [activeThreadRef, diffAvailable, onDiffPanelOpen, runAfterPendingFileSave]);
   const addFilesSurface = useCallback(() => {
     if (!activeThreadRef || activeWorkspaceRoot === undefined) return;
-    useRightPanelStore.getState().open(activeThreadRef, "files");
-  }, [activeThreadRef, activeWorkspaceRoot]);
+    runAfterPendingFileSave("files", () => {
+      useRightPanelStore.getState().open(activeThreadRef, "files");
+    });
+  }, [activeThreadRef, activeWorkspaceRoot, runAfterPendingFileSave]);
   const addAgentsSurface = useCallback(() => {
     if (!activeThreadRef) return;
-    useRightPanelStore.getState().open(activeThreadRef, "agents");
-  }, [activeThreadRef]);
+    runAfterPendingFileSave("agents", () => {
+      useRightPanelStore.getState().open(activeThreadRef, "agents");
+    });
+  }, [activeThreadRef, runAfterPendingFileSave]);
   const addSourcesSurface = useCallback(() => {
     if (!activeThreadRef || !activeProject || activeWorkspaceRoot === undefined) return;
-    useRightPanelStore.getState().openScient(activeThreadRef, scientSourcesSurface());
-  }, [activeProject, activeThreadRef, activeWorkspaceRoot]);
+    const surface = scientSourcesSurface();
+    runAfterPendingFileSave(surface.id, () => {
+      useRightPanelStore.getState().openScient(activeThreadRef, surface);
+    });
+  }, [activeProject, activeThreadRef, activeWorkspaceRoot, runAfterPendingFileSave]);
   const addComputeSurface = useCallback(() => {
     if (!activeThreadRef || activeWorkspaceRoot === undefined) return;
-    useRightPanelStore
-      .getState()
-      .openScient(activeThreadRef, scientComputeSurface({ cwd: activeWorkspaceRoot }));
-  }, [activeThreadRef, activeWorkspaceRoot]);
+    const surface = scientComputeSurface({ cwd: activeWorkspaceRoot });
+    runAfterPendingFileSave(surface.id, () => {
+      useRightPanelStore.getState().openScient(activeThreadRef, surface);
+    });
+  }, [activeThreadRef, activeWorkspaceRoot, runAfterPendingFileSave]);
   const openScientSourcePdf = useCallback(
     (input: {
       readonly sourceId: string;
@@ -4055,11 +4079,14 @@ function ChatViewContent(props: ChatViewProps) {
       readonly fileName: string;
     }) => {
       if (!activeThreadRef) return;
-      useRightPanelStore.getState().openScient(activeThreadRef, scientSourcePdfSurface(input));
+      const surface = scientSourcePdfSurface(input);
+      runAfterPendingFileSave(surface.id, () => {
+        useRightPanelStore.getState().openScient(activeThreadRef, surface);
+      });
     },
-    [activeThreadRef],
+    [activeThreadRef, runAfterPendingFileSave],
   );
-  const openFileSourceSurface = useCallback(
+  const openFileSourceSurfaceNow = useCallback(
     (relativePath: string, line?: number) => {
       if (!activeThreadRef || activeWorkspaceRoot === undefined) return;
       useRightPanelStore
@@ -4072,6 +4099,27 @@ function ChatViewContent(props: ChatViewProps) {
         );
     },
     [activeThreadRef, activeWorkspaceRoot],
+  );
+  const openFileSurfaceNow = useScientFileOpening({
+    threadRef: activeThreadRef,
+    workspaceRoot: activeWorkspaceRoot ?? null,
+    openSource: openFileSourceSurfaceNow,
+  });
+  const openFileSourceSurface = useCallback(
+    (relativePath: string, line?: number) => {
+      runAfterPendingFileSave(`file:${relativePath}`, () => {
+        openFileSourceSurfaceNow(relativePath, line);
+      });
+    },
+    [openFileSourceSurfaceNow, runAfterPendingFileSave],
+  );
+  const openFileSurface = useCallback(
+    (relativePath: string) => {
+      runAfterPendingFileSave(`file:${relativePath}`, () => {
+        openFileSurfaceNow(relativePath);
+      });
+    },
+    [openFileSurfaceNow, runAfterPendingFileSave],
   );
   const handleHtmlPresentationRequestHandled = useCallback(
     (relativePath: string, request: HtmlFilePresentationRequest) => {
@@ -4091,11 +4139,6 @@ function ChatViewContent(props: ChatViewProps) {
     },
     [activeThreadRef],
   );
-  const openFileSurface = useScientFileOpening({
-    threadRef: activeThreadRef,
-    workspaceRoot: activeWorkspaceRoot ?? null,
-    openSource: openFileSourceSurface,
-  });
   // The thread's own change request, placed against the project it belongs to. Without a
   // project there is nothing to resolve it against, so the caller falls back to the browser.
   const persistedLinkedThreadPullRequest = isServerThread
@@ -4158,10 +4201,12 @@ function ChatViewContent(props: ChatViewProps) {
       const projectId = linkedThreadPullRequest?.projectId ?? activeProject?.id;
       const repository = linkedThreadPullRequest?.repository ?? activeProjectRepository;
       if (projectId === undefined || repository === null) return;
-      useRightPanelStore.getState().openPullRequest(activeThreadRef, {
-        projectId,
-        repository,
-        number,
+      runAfterPendingFileSave(null, () => {
+        useRightPanelStore.getState().openPullRequest(activeThreadRef, {
+          projectId,
+          repository,
+          number,
+        });
       });
     },
     [
@@ -4169,6 +4214,7 @@ function ChatViewContent(props: ChatViewProps) {
       activeProjectRepository,
       activeThreadRef,
       linkedThreadPullRequest,
+      runAfterPendingFileSave,
       supportsPullRequests,
     ],
   );
@@ -4239,13 +4285,21 @@ function ChatViewContent(props: ChatViewProps) {
       ) {
         return;
       }
-      useRightPanelStore.getState().openPullRequest(activeThreadRef, {
-        projectId: activeProject.id,
-        repository: activeProjectRepository,
-        number,
+      runAfterPendingFileSave(null, () => {
+        useRightPanelStore.getState().openPullRequest(activeThreadRef, {
+          projectId: activeProject.id,
+          repository: activeProjectRepository,
+          number,
+        });
       });
     },
-    [activeProject, activeProjectRepository, activeThreadRef, supportsPullRequests],
+    [
+      activeProject,
+      activeProjectRepository,
+      activeThreadRef,
+      runAfterPendingFileSave,
+      supportsPullRequests,
+    ],
   );
   const proactiveTurnObservationRef = useRef<{
     threadKey: string;
@@ -4361,34 +4415,47 @@ function ChatViewContent(props: ChatViewProps) {
   const togglePreviewPanel = useCallback(() => {
     if (!activeThreadRef || !isPreviewSupportedInRuntime()) return;
     if (previewPanelOpen) {
-      useRightPanelStore.getState().close(activeThreadRef);
+      runAfterPendingFileSave(null, () => useRightPanelStore.getState().close(activeThreadRef));
       return;
     }
     const activeTabId = activePreviewState.activeTabId;
     if (activeTabId) {
-      useRightPanelStore.getState().openBrowser(activeThreadRef, activeTabId);
+      runAfterPendingFileSave(null, () => {
+        useRightPanelStore.getState().openBrowser(activeThreadRef, activeTabId);
+      });
     } else {
       createBrowserSurface();
     }
-  }, [activePreviewState.activeTabId, activeThreadRef, createBrowserSurface, previewPanelOpen]);
+  }, [
+    activePreviewState.activeTabId,
+    activeThreadRef,
+    createBrowserSurface,
+    previewPanelOpen,
+    runAfterPendingFileSave,
+  ]);
   const closePreviewPanel = useCallback(() => {
-    if (activeThreadRef) {
+    if (!activeThreadRef) return;
+    runAfterPendingFileSave(null, () => {
       setMaximizedRightPanelThreadKey(null);
       useRightPanelStore.getState().close(activeThreadRef);
-    }
-  }, [activeThreadRef]);
+    });
+  }, [activeThreadRef, runAfterPendingFileSave]);
   const addTerminalSurface = useCallback(() => {
-    if (!activeThreadRef || !activeThreadId || activeTerminalTarget === null) return;
-    const terminalId = nextTerminalId(allocatableActiveTerminalIds);
-    useRightPanelStore.getState().openTerminal(activeThreadRef, terminalId);
-    setTerminalFocusRequestId((value) => value + 1);
-    void openTerminal({
-      environmentId: activeThreadRef.environmentId,
-      input: buildProjectThreadTerminalOpenInput({
-        target: activeTerminalTarget,
-        threadId: activeThreadId,
-        terminalId,
-      }),
+    if (!activeThreadRef || !activeThreadId || activeTerminalTarget === null) {
+      return;
+    }
+    runAfterPendingFileSave(null, () => {
+      const terminalId = nextTerminalId(allocatableActiveTerminalIds);
+      useRightPanelStore.getState().openTerminal(activeThreadRef, terminalId);
+      setTerminalFocusRequestId((value) => value + 1);
+      void openTerminal({
+        environmentId: activeThreadRef.environmentId,
+        input: buildProjectThreadTerminalOpenInput({
+          target: activeTerminalTarget,
+          threadId: activeThreadId,
+          terminalId,
+        }),
+      });
     });
   }, [
     activeTerminalTarget,
@@ -4396,6 +4463,7 @@ function ChatViewContent(props: ChatViewProps) {
     activeThreadRef,
     allocatableActiveTerminalIds,
     openTerminal,
+    runAfterPendingFileSave,
   ]);
   const splitPanelTerminal = useCallback(
     (direction: "horizontal" | "vertical" = "horizontal") => {
@@ -4480,18 +4548,20 @@ function ChatViewContent(props: ChatViewProps) {
   const activateRightPanelSurface = useCallback(
     (surface: RightPanelSurface) => {
       if (!activeThreadRef) return;
-      useRightPanelStore.getState().activateSurface(activeThreadRef, surface.id);
-      if (surface.kind === "preview" && surface.resourceId) {
-        setActivePreviewTab(activeThreadRef, surface.resourceId);
-      }
-      if (surface.kind === "terminal") {
-        setTerminalFocusRequestId((value) => value + 1);
-      }
-      if (surface.kind === "diff" && !diffOpen) {
-        onDiffPanelOpen?.();
-      }
+      runAfterPendingFileSave(surface.id, () => {
+        useRightPanelStore.getState().activateSurface(activeThreadRef, surface.id);
+        if (surface.kind === "preview" && surface.resourceId) {
+          setActivePreviewTab(activeThreadRef, surface.resourceId);
+        }
+        if (surface.kind === "terminal") {
+          setTerminalFocusRequestId((value) => value + 1);
+        }
+        if (surface.kind === "diff" && !diffOpen) {
+          onDiffPanelOpen?.();
+        }
+      });
     },
-    [activeThreadRef, diffOpen, onDiffPanelOpen],
+    [activeThreadRef, diffOpen, onDiffPanelOpen, runAfterPendingFileSave],
   );
   const toggleRightPanel = useCallback(() => {
     if (!activeThreadRef) return;
@@ -4584,25 +4654,28 @@ function ChatViewContent(props: ChatViewProps) {
   const closeRightPanelSurface = useCallback(
     (surface: RightPanelSurface) => {
       if (!activeThreadRef) return;
-      const finishClose = () => finishRightPanelSurfaceClose([surface]);
-      if (surface.kind === "preview") {
-        closeAfterAgentBrowserConfirmation([surface], finishClose);
-        return;
-      }
-      if (surface.kind !== "terminal") {
-        finishClose();
-        return;
-      }
-      const activeLabel =
-        activeTerminalLabelsById.get(surface.activeTerminalId) ??
-        getTerminalLabel(surface.activeTerminalId);
-      const otherLabels = surface.terminalIds
-        .filter((terminalId) => terminalId !== surface.activeTerminalId)
-        .map(
-          (terminalId) => activeTerminalLabelsById.get(terminalId) ?? getTerminalLabel(terminalId),
-        );
-      void confirmTerminalClose([activeLabel, ...otherLabels]).then((confirmed) => {
-        if (confirmed) finishClose();
+      runAfterPendingSurfaceSave([surface.id], () => {
+        const finishClose = () => finishRightPanelSurfaceClose([surface]);
+        if (surface.kind === "preview") {
+          closeAfterAgentBrowserConfirmation([surface], finishClose);
+          return;
+        }
+        if (surface.kind !== "terminal") {
+          finishClose();
+          return;
+        }
+        const activeLabel =
+          activeTerminalLabelsById.get(surface.activeTerminalId) ??
+          getTerminalLabel(surface.activeTerminalId);
+        const otherLabels = surface.terminalIds
+          .filter((terminalId) => terminalId !== surface.activeTerminalId)
+          .map(
+            (terminalId) =>
+              activeTerminalLabelsById.get(terminalId) ?? getTerminalLabel(terminalId),
+          );
+        void confirmTerminalClose([activeLabel, ...otherLabels]).then((confirmed) => {
+          if (confirmed) finishClose();
+        });
       });
     },
     [
@@ -4610,20 +4683,27 @@ function ChatViewContent(props: ChatViewProps) {
       activeTerminalLabelsById,
       closeAfterAgentBrowserConfirmation,
       finishRightPanelSurfaceClose,
+      runAfterPendingSurfaceSave,
     ],
   );
   const closeOtherRightPanelSurfaces = useCallback(
     (surface: RightPanelSurface) => {
       if (!activeThreadRef) return;
       const surfaces = rightPanelState.surfaces.filter((entry) => entry.id !== surface.id);
-      const finishClose = () => finishRightPanelSurfaceClose(surfaces);
-      closeAfterAgentBrowserConfirmation(surfaces, finishClose);
+      runAfterPendingSurfaceSave(
+        surfaces.map((entry) => entry.id),
+        () => {
+          const finishClose = () => finishRightPanelSurfaceClose(surfaces);
+          closeAfterAgentBrowserConfirmation(surfaces, finishClose);
+        },
+      );
     },
     [
       activeThreadRef,
       closeAfterAgentBrowserConfirmation,
       finishRightPanelSurfaceClose,
       rightPanelState.surfaces,
+      runAfterPendingSurfaceSave,
     ],
   );
   const closeRightPanelSurfacesToRight = useCallback(
@@ -4632,25 +4712,37 @@ function ChatViewContent(props: ChatViewProps) {
       const surfaceIndex = rightPanelState.surfaces.findIndex((entry) => entry.id === surface.id);
       if (surfaceIndex < 0) return;
       const surfaces = rightPanelState.surfaces.slice(surfaceIndex + 1);
-      const finishClose = () => finishRightPanelSurfaceClose(surfaces);
-      closeAfterAgentBrowserConfirmation(surfaces, finishClose);
+      runAfterPendingSurfaceSave(
+        surfaces.map((entry) => entry.id),
+        () => {
+          const finishClose = () => finishRightPanelSurfaceClose(surfaces);
+          closeAfterAgentBrowserConfirmation(surfaces, finishClose);
+        },
+      );
     },
     [
       activeThreadRef,
       closeAfterAgentBrowserConfirmation,
       finishRightPanelSurfaceClose,
       rightPanelState.surfaces,
+      runAfterPendingSurfaceSave,
     ],
   );
   const closeAllRightPanelSurfaces = useCallback(() => {
     if (!activeThreadRef) return;
-    const finishClose = () => finishRightPanelSurfaceClose(rightPanelState.surfaces);
-    closeAfterAgentBrowserConfirmation(rightPanelState.surfaces, finishClose);
+    runAfterPendingSurfaceSave(
+      rightPanelState.surfaces.map((surface) => surface.id),
+      () => {
+        const finishClose = () => finishRightPanelSurfaceClose(rightPanelState.surfaces);
+        closeAfterAgentBrowserConfirmation(rightPanelState.surfaces, finishClose);
+      },
+    );
   }, [
     activeThreadRef,
     closeAfterAgentBrowserConfirmation,
     finishRightPanelSurfaceClose,
     rightPanelState.surfaces,
+    runAfterPendingSurfaceSave,
   ]);
   const copyRightPanelFilePath = useCallback(
     (relativePath: string, format: FilePathCopyFormat) => {
@@ -8000,11 +8092,13 @@ function ChatViewContent(props: ChatViewProps) {
   const onOpenTurnDiff = useCallback(
     (turnId: TurnId, filePath?: string) => {
       if (!diffAvailable || !activeThreadRef) return;
-      useDiffPanelStore.getState().selectTurn(activeThreadRef, turnId, filePath);
-      useRightPanelStore.getState().open(activeThreadRef, "diff");
-      onDiffPanelOpen?.();
+      runAfterPendingFileSave("diff", () => {
+        useDiffPanelStore.getState().selectTurn(activeThreadRef, turnId, filePath);
+        useRightPanelStore.getState().open(activeThreadRef, "diff");
+        onDiffPanelOpen?.();
+      });
     },
-    [activeThreadRef, diffAvailable, onDiffPanelOpen],
+    [activeThreadRef, diffAvailable, onDiffPanelOpen, runAfterPendingFileSave],
   );
   // Both the Map and the revert handler are read from refs at call-time so
   // the callback reference is fully stable and never busts context identity.

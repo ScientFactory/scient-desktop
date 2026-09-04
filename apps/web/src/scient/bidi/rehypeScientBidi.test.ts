@@ -65,7 +65,7 @@ describe("rehypeScientBidi", () => {
     expect(elements[2]?.children?.[0]?.properties).toBeUndefined();
     expect(elements[2]?.children?.[1]?.properties).toBeUndefined();
     expect(elements[3]?.properties?.dir).toBe("rtl");
-    expect(elements[3]?.children?.[0]?.properties?.dir).toBe("rtl");
+    expect(elements[3]?.children?.[0]?.properties?.dir).toBe("ltr");
     expect(elements[3]?.children?.[1]?.properties?.dir).toBe("rtl");
     expect(elements[4]?.properties).toBeUndefined();
   });
@@ -219,7 +219,7 @@ describe("rehypeScientBidi", () => {
     expect(table.children?.[1]?.properties?.dir).toBe("ltr");
   });
 
-  it("keeps every normal cell in the aggregate table direction", () => {
+  it("uses the whole-table majority for structure and each cell for text flow", () => {
     const tree = {
       type: "root",
       children: [
@@ -247,6 +247,21 @@ describe("rehypeScientBidi", () => {
                     },
                   ],
                 },
+                {
+                  type: "element",
+                  tagName: "td",
+                  children: [{ type: "text", value: "English בתוך עברית נוספת" }],
+                },
+                {
+                  type: "element",
+                  tagName: "td",
+                  children: [{ type: "text", value: "English sentence with עברית" }],
+                },
+                {
+                  type: "element",
+                  tagName: "td",
+                  children: [{ type: "text", value: "123 — —" }],
+                },
               ],
             },
           ],
@@ -263,13 +278,16 @@ describe("rehypeScientBidi", () => {
       properties?: Record<string, unknown>;
     };
     const row = table.children?.[0];
-    expect(table.properties?.dir).toBe("rtl");
+    expect(table.properties?.dir).toBe("ltr");
     expect(row?.children?.[0]?.properties?.dir).toBe("rtl");
-    expect(row?.children?.[1]?.properties?.dir).toBe("rtl");
+    expect(row?.children?.[1]?.properties?.dir).toBe("ltr");
+    expect(row?.children?.[2]?.properties?.dir).toBe("rtl");
+    expect(row?.children?.[3]?.properties?.dir).toBe("ltr");
+    expect(row?.children?.[4]?.properties?.dir).toBe("ltr");
     const heading = row?.children?.[1]?.children?.[0] as {
       properties?: Record<string, unknown>;
     };
-    expect(heading.properties?.dir).toBe("rtl");
+    expect(heading.properties?.dir).toBe("ltr");
   });
 
   it("keeps a table nested in a list on its own aggregate direction", () => {
@@ -316,7 +334,7 @@ describe("rehypeScientBidi", () => {
     expect(table.children?.[0]?.properties?.dir).toBe("ltr");
   });
 
-  it("keeps explicit LTR authoritative for Hebrew table cells", () => {
+  it("keeps an explicit global LTR setting authoritative for the whole table", () => {
     const tree = {
       type: "root",
       children: [

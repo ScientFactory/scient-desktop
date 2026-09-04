@@ -7,7 +7,7 @@ import {
   LoaderCircle,
   RotateCw,
 } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
 
 import { PierreEntryIcon } from "~/components/chat/PierreEntryIcon";
 import {
@@ -39,6 +39,7 @@ interface FileBreadcrumbNavigatorProps {
   readonly projectName: string;
   readonly relativePath: string;
   readonly onOpenFile: (relativePath: string) => void;
+  readonly currentFileControl?: ReactNode;
 }
 
 function crumbBrowseLabel(crumb: FileBreadcrumb, projectName: string): string {
@@ -197,6 +198,7 @@ export function FileBreadcrumbNavigator({
   projectName,
   relativePath,
   onOpenFile,
+  currentFileControl,
 }: FileBreadcrumbNavigatorProps) {
   const [openCrumbPath, setOpenCrumbPath] = useState<string | null>(null);
   const breadcrumbs = useMemo(
@@ -223,14 +225,16 @@ export function FileBreadcrumbNavigator({
               <ChevronRight className="mx-1 size-3.5 shrink-0 text-muted-foreground/60" />
             ) : null}
             {currentFile ? (
-              <Tooltip>
-                <TooltipTrigger
-                  render={<span className="max-w-40 truncate font-medium text-foreground" />}
-                >
-                  {crumb.label}
-                </TooltipTrigger>
-                <TooltipPopup side="top">{crumb.path}</TooltipPopup>
-              </Tooltip>
+              (currentFileControl ?? (
+                <Tooltip>
+                  <TooltipTrigger
+                    render={<span className="max-w-40 truncate font-medium text-foreground" />}
+                  >
+                    {crumb.label}
+                  </TooltipTrigger>
+                  <TooltipPopup side="top">{crumb.path}</TooltipPopup>
+                </Tooltip>
+              ))
             ) : (
               <Menu
                 open={openCrumbPath === crumb.path}

@@ -165,6 +165,9 @@ import {
   ProjectReadFileError,
   ProjectReadFileInput,
   ProjectReadFileResult,
+  ProjectRenameFileError,
+  ProjectRenameFileInput,
+  ProjectRenameFileResult,
   ProjectFileWatchEvent,
   ProjectSubscribeFileChangesInput,
   ProjectSearchContentsError,
@@ -325,6 +328,7 @@ export const WS_METHODS = {
   projectsListDirectory: "projects.listDirectory",
   projectsListEntries: "projects.listEntries",
   projectsReadFile: "projects.readFile",
+  projectsRenameFile: "projects.renameFile",
   projectsSearchContents: "projects.searchContents",
   projectsSearchEntries: "projects.searchEntries",
   projectsWriteFile: "projects.writeFile",
@@ -1044,6 +1048,12 @@ export const WsProjectsWriteFileRpc = Rpc.make(WS_METHODS.projectsWriteFile, {
   error: Schema.Union([ProjectWriteFileError, EnvironmentAuthorizationError]),
 });
 
+export const WsProjectsRenameFileRpc = Rpc.make(WS_METHODS.projectsRenameFile, {
+  payload: ProjectRenameFileInput,
+  success: ProjectRenameFileResult,
+  error: Schema.Union([ProjectRenameFileError, EnvironmentAuthorizationError]),
+});
+
 export const WsProjectsSubscribeFileChangesRpc = Rpc.make(WS_METHODS.projectsSubscribeFileChanges, {
   payload: ProjectSubscribeFileChangesInput,
   success: ProjectFileWatchEvent,
@@ -1687,6 +1697,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsProjectsListDirectoryRpc,
   WsProjectsListEntriesRpc,
   WsProjectsReadFileRpc,
+  WsProjectsRenameFileRpc,
   WsProjectsSearchContentsRpc,
   WsProjectsSearchEntriesRpc,
   WsProjectsWriteFileRpc,

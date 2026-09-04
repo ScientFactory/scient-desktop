@@ -1,7 +1,9 @@
 import {
   normalizeRtlFlowArrows,
   resolveAggregateDirection,
+  resolveDominantDirection,
   resolveProseBlockDirection,
+  resolveTableCellDirection,
   type ContentDirection,
   type FixedContentDirection,
 } from "./contentDirection";
@@ -29,7 +31,8 @@ const DIRECTIONAL_BLOCK_TAGS = new Set([
 ]);
 const HEADING_TAGS = new Set(["h1", "h2", "h3", "h4", "h5", "h6"]);
 const LIST_TAGS = new Set(["ul", "ol"]);
-const LOCAL_DIRECTION_TAGS = new Set([...DIRECTIONAL_BLOCK_TAGS, "th", "td"]);
+const LOCAL_DIRECTION_TAGS = new Set(DIRECTIONAL_BLOCK_TAGS);
+const TABLE_CELL_TAGS = new Set(["th", "td"]);
 const NON_PROSE_TAGS = new Set(["a", "code", "math", "pre", "script", "style"]);
 
 /**
@@ -149,8 +152,8 @@ export function rehypeScientBidi(options: {
         const childFlowArrowEligible = flowArrowEligible && !NON_PROSE_TAGS.has(node.tagName);
         if (LIST_TAGS.has(node.tagName)) {
           const resolvedListDirection =
-            tableDirection ??
             inheritedDirection ??
+            tableDirection ??
             (options.requestedDirection && options.requestedDirection !== "auto"
               ? options.requestedDirection
               : resolveAggregateDirection(plainText(node), options.direction));
@@ -169,7 +172,7 @@ export function rehypeScientBidi(options: {
           const resolvedTableDirection =
             options.requestedDirection && options.requestedDirection !== "auto"
               ? options.requestedDirection
-              : resolveAggregateDirection(plainText(node), options.direction);
+              : resolveDominantDirection(plainText(node), options.direction);
           setDirection(node, resolvedTableDirection);
           processChildren(
             node,
@@ -179,16 +182,33 @@ export function rehypeScientBidi(options: {
             childFlowArrowEligible,
           );
           return;
+        } else if (TABLE_CELL_TAGS.has(node.tagName)) {
+          const cellDirection =
+            options.requestedDirection && options.requestedDirection !== "auto"
+              ? options.requestedDirection
+              : resolveTableCellDirection(
+                  plainText(node),
+                  inheritedDirection ?? tableDirection ?? options.direction,
+                );
+          setDirection(node, cellDirection);
+          processChildren(
+            node,
+            cellDirection,
+            tableDirection,
+            cellDirection,
+            childFlowArrowEligible,
+          );
+          return;
         } else if (HEADING_TAGS.has(node.tagName)) {
-          // A title belongs to the message, not to the language of its own
-          // words. A table remains the stronger structural boundary.
-          const headingDirection = tableDirection ?? options.direction;
+          // A title follows its enclosing message, list, or table-cell flow
+          // rather than switching from a short heading label alone.
+          const headingDirection = inheritedDirection ?? tableDirection ?? options.direction;
           setDirection(node, headingDirection);
           flowDirection = headingDirection;
         } else if (LOCAL_DIRECTION_TAGS.has(node.tagName)) {
           flowDirection =
-            tableDirection ??
             inheritedDirection ??
+            tableDirection ??
             resolveProseBlockDirection(plainText(node), options.direction);
           setDirection(node, flowDirection);
         }
