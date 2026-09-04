@@ -333,7 +333,7 @@ describe("rich Markdown compact-surface styles", () => {
       /\.scient-markdown-source-island:not\(\[data-scient-markdown-source-kind="html"\]\):is\([^}]*:focus-within[^}]*border-color:/su,
     );
     expect(cssSource).toMatch(
-      /\.scient-markdown-math-source:focus-visible \{[^}]*border-color: color-mix\(in oklab, var\(--muted-foreground\) 45%, var\(--border\)\)[^}]*outline: none/su,
+      /\.scient-markdown-math-source \{[^}]*border: 1px solid var\(--markdown-code-block-border, var\(--border\)\)[^}]*background: var\(--markdown-code-block-background[^}]*outline: none/su,
     );
     expect(cssSource).toMatch(
       /\.scient-markdown-document \.scient-markdown-math\.ProseMirror-selectednode \{\s*outline: none;/su,

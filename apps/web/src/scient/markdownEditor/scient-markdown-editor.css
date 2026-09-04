@@ -565,11 +565,6 @@
   color: var(--code-foreground, var(--foreground));
 }
 
-.scient-markdown-code-block[data-scient-markdown-rich-fence]
-  .scient-markdown-code-editor:focus-within {
-  border-color: color-mix(in oklab, var(--primary) 45%, var(--border));
-}
-
 .scient-markdown-code-block[data-scient-markdown-rich-fence] > .scient-markdown-code-editor {
   margin-block-start: 0.65rem;
 }
@@ -1267,11 +1262,11 @@ sup.scient-markdown-reference {
 
 .scient-markdown-math-source {
   min-width: 8rem;
-  border: 1px solid var(--border);
-  border-radius: 0.35rem;
-  background: var(--background);
+  border: 1px solid var(--markdown-code-block-border, var(--border));
+  border-radius: var(--radius);
+  background: var(--markdown-code-block-background, var(--code-background, var(--secondary)));
   padding: 0.35rem 0.5rem;
-  color: var(--foreground);
+  color: var(--code-foreground, var(--foreground));
   font-family: var(--font-mono);
   font-size: 0.8rem;
   line-height: 1.45;
@@ -1293,11 +1288,6 @@ textarea.scient-markdown-math-source {
 
 .scient-markdown-reference[data-scient-markdown-reference="citation"]
   .scient-markdown-reference-source:focus-visible {
-  outline: none;
-}
-
-.scient-markdown-math-source:focus-visible {
-  border-color: color-mix(in oklab, var(--muted-foreground) 45%, var(--border));
   outline: none;
 }
 
