@@ -374,6 +374,43 @@ describe("EnvironmentProviderSettings routing", () => {
     expect(visitElements(panel, isAddProviderButton)).toBeNull();
   });
 
+  it("selects another provider during an update and retains it across status refreshes", async () => {
+    let finishUpdate!: () => void;
+    commands.updateProvider.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          finishUpdate = () => resolve({ _tag: "Success" });
+        }),
+    );
+    atoms.providers = [provider(), missingAntigravityProvider()];
+    let panel = renderPanel();
+    const initialEditor = visitElements(panel, (element) => element.props.mode === "editor");
+    (initialEditor?.props.onRunUpdate as () => void)();
+
+    panel = renderPanel();
+    const antigravityRow = visitElements(
+      panel,
+      (element) => element.props.mode === "list" && element.props.instanceId === antigravityId,
+    );
+    (antigravityRow?.props.onSelect as () => void)();
+
+    for (const status of ["warning", "ready"] as const) {
+      atoms.providers = [{ ...provider(), status }, missingAntigravityProvider()];
+      panel = renderPanel();
+      expect(
+        visitElements(panel, (element) => element.props.mode === "editor")?.props.instanceId,
+      ).toBe(antigravityId);
+    }
+
+    finishUpdate();
+    await flushPromises();
+    panel = renderPanel();
+    expect(
+      visitElements(panel, (element) => element.props.mode === "editor")?.props.instanceId,
+    ).toBe(antigravityId);
+    expect(settingsState.updateSettings).not.toHaveBeenCalled();
+  });
+
   it("keeps the editable layout interactive when not read only", () => {
     atoms.providers = [provider()];
     const panel = renderPanel();
