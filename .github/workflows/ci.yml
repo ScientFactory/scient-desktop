@@ -63,18 +63,16 @@ jobs:
       - name: Verify preload bundle output
         run: node apps/desktop/scripts/verify-preload-bundle.mjs
 
-  # Everything except `t3` (apps/server). `--parallel` drops the package
-  # dependency ordering that `vp run` applies by default: these `test` tasks
-  # declare no `dependsOn` and resolve workspace deps from source, so ordering
-  # only bought us idle runners between dependency layers. The concurrency
-  # limit stays at the default 4 so peak load per runner is unchanged.
+  # Everything except `t3` (apps/server) and `@t3tools/web`, which have their
+  # own sharded jobs below. `--parallel` drops the package dependency ordering
+  # that `vp run` applies by default: these `test` tasks declare no `dependsOn`
+  # and resolve workspace deps from source, so ordering only bought us idle
+  # runners between dependency layers. The concurrency limit stays at the
+  # default 4 so peak load per runner is unchanged.
   test:
     name: Test
     runs-on: ubuntu-24.04
-    # Scient's suite is roughly three times upstream's (Scient-owned packages
-    # plus a larger web unit suite), and this runner has half the vCPUs of the
-    # official fleet, so the combined parallel run needs a wider ceiling than
-    # upstream's 10 minutes.
+    # Preserve the existing ceiling while measuring the web suite split.
     timeout-minutes: 20
     steps:
       - name: Checkout
@@ -102,8 +100,39 @@ jobs:
         run: |
           set -o pipefail
           vp run --parallel --concurrency-limit 4 --verbose --log grouped \
-            --filter '!t3' --filter '!@t3tools/monorepo' test \
+            --filter '!t3' --filter '!@t3tools/web' --filter '!@t3tools/monorepo' test \
             2>&1 | tee "${{ runner.temp }}/workspace-tests.log"
+
+  # Split the web unit suite across runners so it does not compete with
+  # other packages in `test`. Measure the speedup in CI; sharding does not
+  # replace deterministic synchronization in tests. These unit tests need
+  # neither the Electron binary nor libsecret.
+  test_web:
+    name: Test Web ${{ matrix.shard }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          sparse-checkout: |
+            /*
+            !/.repos/
+          sparse-checkout-cone-mode: false
+
+      - name: Setup Vite+
+        uses: voidzero-dev/setup-vp@v1
+        with:
+          node-version-file: package.json
+          cache: true
+          run-install: true
+
+      - name: Test
+        run: vp run --filter @t3tools/web test --shard ${{ matrix.shard }}/${{ strategy.job-total }}
 
   # apps/server sets `fileParallelism: false`, so its 239 files run strictly
   # one at a time. Sharding spreads them over separate runners instead of
