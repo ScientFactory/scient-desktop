@@ -455,39 +455,38 @@ export const makeWithOptions = (options?: { readonly startBackgroundRefresh?: bo
       const request = HttpClientRequest.get(MANAGED_RUNTIME_CATALOG_URL).pipe(
         etag === null ? (request_) => request_ : HttpClientRequest.setHeader("if-none-match", etag),
       );
-      const response = yield* httpClient.execute(request).pipe(
+      // One deadline covers headers and body consumption. Interrupting the
+      // client response also aborts its request, releasing the refresh lock.
+      const fetched = yield* Effect.gen(function* () {
+        const response = yield* httpClient.execute(request);
+        if (response.status === 304) return { response, data: null };
+        yield* HttpClientResponse.filterStatusOk(response);
+        const data = yield* response.text.pipe(
+          Effect.provideService(
+            HttpIncomingMessage.MaxBodySize,
+            FileSystem.Size(MAX_CATALOG_BYTES),
+          ),
+          Effect.flatMap(decodeBoundedCatalogJson),
+        );
+        return { response, data };
+      }).pipe(
         Effect.timeout(FETCH_TIMEOUT_MS),
         Effect.catchCause(() => Effect.succeed(null)),
       );
-      if (response === null) return catalog;
-      if (response.status === 304) {
+      if (fetched === null) return catalog;
+      if (fetched.data === null) {
         fetchedAtMs = now;
         yield* persistCache(now);
         return catalog;
       }
 
-      const fetched = yield* Effect.succeed(response).pipe(
-        Effect.flatMap(HttpClientResponse.filterStatusOk),
-        Effect.flatMap((response) =>
-          response.text.pipe(
-            Effect.provideService(
-              HttpIncomingMessage.MaxBodySize,
-              FileSystem.Size(MAX_CATALOG_BYTES),
-            ),
-          ),
-        ),
-        Effect.flatMap(decodeBoundedCatalogJson),
-        Effect.catchCause(() => Effect.succeed(null)),
-      );
-      if (fetched === null) return catalog;
-
       const previous = catalog;
-      const next = resolveFetchedManagedRuntimeCatalog(fetched, catalog);
+      const next = resolveFetchedManagedRuntimeCatalog(fetched.data, catalog);
       const changedProviders = managedProviders.filter(
         (provider) => previous.providers[provider]?.version !== next.providers[provider]?.version,
       );
       catalog = next;
-      etag = response.headers.etag?.trim() || null;
+      etag = fetched.response.headers.etag?.trim() || null;
       fetchedAtMs = now;
       yield* persistCache(now);
       if (changedProviders.length > 0) {

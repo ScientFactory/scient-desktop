@@ -12,10 +12,13 @@ import {
   type ManagedRuntimeTarget,
 } from "@scientfactory/provider-runtime";
 import { assert, describe, it } from "@effect/vitest";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Stream from "effect/Stream";
+import * as TestClock from "effect/testing/TestClock";
 import { HttpClient, HttpClientRequest, HttpClientResponse } from "effect/unstable/http";
 
 import * as ServerConfig from "../../config.ts";
@@ -337,6 +340,80 @@ describe("managed runtime catalog resolution", () => {
 });
 
 describe("ManagedRuntimeCatalog service", () => {
+  for (const stalledStage of ["headers", "body"] as const) {
+    it.effect(
+      `aborts stalled ${stalledStage}, preserves the cache, and allows a later refresh`,
+      () =>
+        Effect.gen(function* () {
+          const requested = yield* Deferred.make<void>();
+          const headersReceived = yield* Deferred.make<void>();
+          const requests: Array<string | undefined> = [];
+          let stalledSignal: AbortSignal | undefined;
+          const client = HttpClient.make((request, _url, signal) =>
+            Effect.gen(function* () {
+              requests.push(request.headers["if-none-match"]);
+              if (requests.length !== 2) {
+                return HttpClientResponse.fromWeb(
+                  request,
+                  Response.json(remoteCatalog(), { headers: { etag: '"good"' } }),
+                );
+              }
+              stalledSignal = signal;
+              yield* Deferred.succeed(requested, undefined);
+              if (stalledStage === "headers") return yield* Effect.never;
+              // The body gets only the time remaining after the headers arrive.
+              yield* Effect.sleep(6_000);
+              const body = new ReadableStream<Uint8Array>({
+                start(controller) {
+                  signal.addEventListener(
+                    "abort",
+                    () => controller.error(new Error("Request aborted")),
+                    { once: true },
+                  );
+                },
+              });
+              yield* Deferred.succeed(headersReceived, undefined);
+              return HttpClientResponse.fromWeb(
+                request,
+                new Response(body, { headers: { etag: '"incomplete"' } }),
+              );
+            }),
+          );
+          const service = yield* makeWithOptions({ startBackgroundRefresh: false }).pipe(
+            Effect.provideService(HttpClient.HttpClient, client),
+          );
+          const good = yield* service.refresh;
+          yield* TestClock.adjust(60 * 60_000);
+          const refresh = yield* Effect.forkChild(service.refresh);
+          yield* Deferred.await(requested);
+          if (stalledStage === "body") {
+            yield* TestClock.adjust(6_000);
+            yield* Deferred.await(headersReceived);
+            yield* TestClock.adjust(4_000);
+          } else {
+            yield* TestClock.adjust(10_000);
+          }
+          assert.deepStrictEqual(yield* Fiber.join(refresh), good);
+          assert.isTrue(stalledSignal?.aborted);
+          assert.deepStrictEqual(yield* service.current, good);
+          // The failed response must not poison the ETag or start a success TTL.
+          assert.deepStrictEqual(yield* service.refresh, good);
+          assert.strictEqual(requests.length, 2);
+          yield* TestClock.adjust(5 * 60_000);
+          assert.deepStrictEqual(yield* service.refresh, good);
+          assert.deepStrictEqual(requests, [undefined, '"good"', '"good"']);
+        }).pipe(
+          Effect.scoped,
+          Effect.provide(
+            serviceLayers({
+              prefix: `managed-runtime-catalog-stalled-${stalledStage}-test`,
+              response: () => Response.json(remoteCatalog()),
+            }),
+          ),
+        ),
+    );
+  }
+
   it.live("prefers a valid remote catalog and restores it from the atomic disk cache", () =>
     Effect.gen(function* () {
       let fetchCount = 0;
