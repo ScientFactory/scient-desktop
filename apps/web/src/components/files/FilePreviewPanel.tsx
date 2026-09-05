@@ -14,6 +14,7 @@ import {
 import { isWorkspaceVideoPreviewPath } from "@t3tools/shared/filePreview";
 import { Editor } from "@pierre/diffs/editor";
 import { EditProvider, File, type FileOptions, Virtualizer } from "@pierre/diffs/react";
+import { DiffWorkerPoolProvider } from "../DiffWorkerPoolProvider";
 import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
@@ -59,7 +60,6 @@ import { buildFileReviewComment } from "~/reviewCommentContext";
 import { assetEnvironment } from "~/state/assets";
 import { useEnvironmentHttpBaseUrl, usePrimaryEnvironmentId } from "~/state/environments";
 import { previewEnvironment } from "~/state/preview";
-import { projectEnvironment } from "~/state/projects";
 import { useAtomCommand } from "~/state/use-atom-command";
 import { useAtomQueryRunner } from "~/state/use-atom-query-runner";
 import {
@@ -116,10 +116,9 @@ import {
   shouldLoadFileAsText,
   shouldShowFileExplorer,
 } from "./filePreviewMode";
-import { FileSaveCoordinator } from "./fileSaveCoordinator";
+import { useFileSaveCoordinator } from "./useFileSaveCoordinator";
 import {
   clearProjectFileQueryData,
-  confirmProjectFileQueryData,
   getOptimisticProjectFileQueryData,
   refreshProjectEntriesQuery,
   setProjectFileQueryData,
@@ -157,7 +156,6 @@ interface FilePreviewPanelProps {
 const FILE_EXPLORER_STORAGE_KEY = "t3code.fileExplorerOpen";
 const RENDER_MARKDOWN_STORAGE_KEY = "t3code.renderMarkdown";
 const RENDER_BROWSER_FILE_STORAGE_KEY = "t3code.renderBrowserFile";
-const FILE_SAVE_DEBOUNCE_MS = 500;
 const FILE_LINK_REVEAL_ATTRIBUTE = "data-file-link-reveal";
 const FILE_ACTIVE_RANGE_ATTRIBUTE = "data-scient-active-range";
 const FILE_LINK_REVEAL_UNSAFE_CSS = `
@@ -248,29 +246,31 @@ function StaticTextFileSurface(props: {
   readonly wordWrap: boolean;
 }) {
   return (
-    <Virtualizer
-      className="file-preview-virtualizer min-h-0 flex-1 overflow-auto"
-      config={{ overscrollSize: 600, intersectionObserverMargin: 1200 }}
-    >
-      <File
-        file={{
-          name: props.relativePath,
-          contents: props.contents,
-          ...scientificSourceLanguageOverride(props.relativePath),
-          cacheKey: projectFileCacheKey(props.cwd, props.relativePath, props.contents),
-        }}
-        options={{
-          disableFileHeader: true,
-          overflow: props.wordWrap ? "wrap" : "scroll",
-          theme: resolveDiffThemeName(props.resolvedTheme),
-          preferredHighlighter: PREFERRED_HIGHLIGHTER,
-          themeType: props.resolvedTheme,
-          unsafeCSS: FILE_LINK_REVEAL_UNSAFE_CSS,
-          onPostRender: props.onPostRender,
-        }}
-        className="min-h-full"
-      />
-    </Virtualizer>
+    <DiffWorkerPoolProvider>
+      <Virtualizer
+        className="file-preview-virtualizer min-h-0 flex-1 overflow-auto"
+        config={{ overscrollSize: 600, intersectionObserverMargin: 1200 }}
+      >
+        <File
+          file={{
+            name: props.relativePath,
+            contents: props.contents,
+            ...scientificSourceLanguageOverride(props.relativePath),
+            cacheKey: projectFileCacheKey(props.cwd, props.relativePath, props.contents),
+          }}
+          options={{
+            disableFileHeader: true,
+            overflow: props.wordWrap ? "wrap" : "scroll",
+            theme: resolveDiffThemeName(props.resolvedTheme),
+            preferredHighlighter: PREFERRED_HIGHLIGHTER,
+            themeType: props.resolvedTheme,
+            unsafeCSS: FILE_LINK_REVEAL_UNSAFE_CSS,
+            onPostRender: props.onPostRender,
+          }}
+          className="min-h-full"
+        />
+      </Virtualizer>
+    </DiffWorkerPoolProvider>
   );
 }
 
@@ -802,80 +802,6 @@ interface FileSelectionOverride {
   range: SelectedLineRange | null;
 }
 
-function useFileSaveCoordinator({
-  environmentId,
-  cwd,
-  relativePath,
-  revision,
-  onPendingChange,
-  onSaveFailure,
-  onSaveConfirmed,
-  onSaveResolutionApplied,
-  saveResolution,
-}: Pick<
-  EditableFileSurfaceProps,
-  | "environmentId"
-  | "cwd"
-  | "relativePath"
-  | "revision"
-  | "onPendingChange"
-  | "onSaveFailure"
-  | "onSaveConfirmed"
-  | "onSaveResolutionApplied"
-  | "saveResolution"
->) {
-  const writeFile = useAtomCommand(projectEnvironment.writeFile);
-  const coordinator = useMemo(
-    () =>
-      new FileSaveCoordinator({
-        debounceMs: FILE_SAVE_DEBOUNCE_MS,
-        initialRevision: revision,
-        onPendingChange: (pending) => onPendingChange(relativePath, pending),
-        persist: (nextContents, expectedRevision) =>
-          writeFile({
-            environmentId,
-            input: { cwd, relativePath, contents: nextContents, expectedRevision },
-          }),
-        revisionFromResult: (result) => result.revision,
-        onConfirmed: (confirmedContents, result) => {
-          confirmProjectFileQueryData(
-            environmentId,
-            cwd,
-            relativePath,
-            confirmedContents,
-            result.revision,
-          );
-          onSaveConfirmed(relativePath, confirmedContents, result.revision);
-        },
-        onFailure: (_contents, result) =>
-          onSaveFailure(relativePath, squashAtomCommandFailure(result)),
-        onResolutionApplied: onSaveResolutionApplied,
-      }),
-    [
-      cwd,
-      environmentId,
-      onPendingChange,
-      onSaveConfirmed,
-      onSaveFailure,
-      onSaveResolutionApplied,
-      relativePath,
-      writeFile,
-    ],
-  );
-
-  useEffect(() => coordinator.syncConfirmedFileRevision(revision), [coordinator, revision]);
-  useEffect(() => {
-    if (saveResolution?.relativePath !== relativePath) return;
-    if (saveResolution.action === "discard") {
-      coordinator.discardPending(saveResolution.revision);
-    } else {
-      coordinator.retryPending(saveResolution.revision);
-    }
-  }, [coordinator, relativePath, saveResolution]);
-  useEffect(() => () => coordinator.dispose(), [coordinator]);
-  return coordinator;
-}
-
 export function EditableFileSurface(props: EditableFileSurfaceProps) {
   const coordinator = useFileSaveCoordinator(props);
   const onContentsChange = useCallback(
@@ -904,7 +830,6 @@ function EditableFileEditor({
   relativePath,
   composerDraftTarget,
   contents,
-  revision,
   resolvedTheme,
   revealRequestId,
   wordWrap,
@@ -1110,42 +1035,47 @@ function EditableFileEditor({
     ],
   );
 
-  const beginComment = useCallback((range: SelectedLineRange) => {
-    const { startLine, endLine } = normalizeFileCommentRange(range);
-    const draftEntry: FileCommentAnnotationEntry = {
-      id: nextFileCommentId(),
-      kind: "draft",
-      startLine,
-      endLine,
-      text: "",
-    };
-    setLineAnnotations((current) => {
-      const withoutDraft = current.flatMap((annotation) => {
-        const entries = annotation.metadata.entries.filter((entry) => entry.kind !== "draft");
-        return entries.length > 0 ? [{ ...annotation, metadata: { entries } }] : [];
+  const beginComment = useCallback(
+    (range: SelectedLineRange) => {
+      editor.setSelections([]);
+      editor.blur();
+      const { startLine, endLine } = normalizeFileCommentRange(range);
+      const draftEntry: FileCommentAnnotationEntry = {
+        id: nextFileCommentId(),
+        kind: "draft",
+        startLine,
+        endLine,
+        text: "",
+      };
+      setLineAnnotations((current) => {
+        const withoutDraft = current.flatMap((annotation) => {
+          const entries = annotation.metadata.entries.filter((entry) => entry.kind !== "draft");
+          return entries.length > 0 ? [{ ...annotation, metadata: { entries } }] : [];
+        });
+        const existingIndex = withoutDraft.findIndex(
+          (annotation) => annotation.lineNumber === endLine,
+        );
+        if (existingIndex < 0) {
+          return [
+            ...withoutDraft,
+            {
+              lineNumber: endLine,
+              metadata: { entries: [draftEntry] },
+            },
+          ];
+        }
+        return withoutDraft.map((annotation, index) =>
+          index === existingIndex
+            ? {
+                ...annotation,
+                metadata: { entries: [...annotation.metadata.entries, draftEntry] },
+              }
+            : annotation,
+        );
       });
-      const existingIndex = withoutDraft.findIndex(
-        (annotation) => annotation.lineNumber === endLine,
-      );
-      if (existingIndex < 0) {
-        return [
-          ...withoutDraft,
-          {
-            lineNumber: endLine,
-            metadata: { entries: [draftEntry] },
-          },
-        ];
-      }
-      return withoutDraft.map((annotation, index) =>
-        index === existingIndex
-          ? {
-              ...annotation,
-              metadata: { entries: [...annotation.metadata.entries, draftEntry] },
-            }
-          : annotation,
-      );
-    });
-  }, []);
+    },
+    [editor],
+  );
   const hasOpenCommentForm = lineAnnotations.some((annotation) =>
     annotation.metadata.entries.some((entry) => entry.kind === "draft"),
   );
@@ -1206,91 +1136,93 @@ function EditableFileEditor({
   );
 
   return (
-    <EditProvider editor={editor}>
-      <div
-        ref={surfaceRef}
-        className="flex min-h-0 flex-1"
-        onCompositionEnd={() =>
-          queueMicrotask(() =>
-            externalBindings.current.externalPersistence?.resumeExternalUpdates(),
-          )
-        }
-        onKeyDownCapture={(event) => {
-          if (
-            onRunShortcut === undefined ||
-            event.key !== "Enter" ||
-            (!event.metaKey && !event.ctrlKey) ||
-            event.altKey ||
-            event.shiftKey
-          ) {
-            return;
+    <DiffWorkerPoolProvider>
+      <EditProvider editor={editor}>
+        <div
+          ref={surfaceRef}
+          className="flex min-h-0 flex-1"
+          onCompositionEnd={() =>
+            queueMicrotask(() =>
+              externalBindings.current.externalPersistence?.resumeExternalUpdates(),
+            )
           }
-          event.preventDefault();
-          onRunShortcut(editor.getState().selections?.at(-1) ?? null);
-        }}
-      >
-        <Virtualizer
-          className="file-preview-virtualizer min-h-0 flex-1 overflow-auto"
-          config={{
-            overscrollSize: 600,
-            intersectionObserverMargin: 1200,
+          onKeyDownCapture={(event) => {
+            if (
+              onRunShortcut === undefined ||
+              event.key !== "Enter" ||
+              (!event.metaKey && !event.ctrlKey) ||
+              event.altKey ||
+              event.shiftKey
+            ) {
+              return;
+            }
+            event.preventDefault();
+            onRunShortcut(editor.getState().selections?.at(-1) ?? null);
           }}
         >
-          <File<FileCommentAnnotationGroup>
-            file={{
-              name: relativePath,
-              contents,
-              ...scientificSourceLanguageOverride(relativePath),
-              cacheKey: projectFileEditorCacheKey(
-                environmentId,
-                cwd,
-                relativePath,
+          <Virtualizer
+            className="file-preview-virtualizer min-h-0 flex-1 overflow-auto"
+            config={{
+              overscrollSize: 600,
+              intersectionObserverMargin: 1200,
+            }}
+          >
+            <File<FileCommentAnnotationGroup>
+              file={{
+                name: relativePath,
                 contents,
-                editor.getFile(),
-              ),
-            }}
-            options={{
-              disableFileHeader: true,
-              enableGutterUtility: renderEditorGutterAction !== undefined || !hasOpenCommentForm,
-              enableLineSelection: !hasOpenCommentForm,
-              ...(renderEditorGutterAction === undefined
-                ? { onGutterUtilityClick: handleGutterUtilityClick }
-                : {}),
-              onLineSelectionChange: setSelectedRange,
-              onLineSelectionEnd: handleLineSelectionEnd,
-              overflow: wordWrap ? "wrap" : "scroll",
-              theme: resolveDiffThemeName(resolvedTheme),
-              preferredHighlighter: PREFERRED_HIGHLIGHTER,
-              themeType: resolvedTheme,
-              unsafeCSS: FILE_LINK_REVEAL_UNSAFE_CSS,
-              onPostRender: handlePostRender,
-            }}
-            selectedLines={displayedRange}
-            lineAnnotations={lineAnnotations}
-            renderAnnotation={(annotation) => (
-              <div className="py-1">
-                {annotation.metadata.entries.map((entry) => (
-                  <DiffCommentAnnotation
-                    key={entry.id}
-                    kind={entry.kind}
-                    rangeLabel={formatFileCommentRange(entry.startLine, entry.endLine)}
-                    text={entry.text}
-                    onCancel={() => removeAnnotationEntry(entry.id)}
-                    onComment={(text) => submitAnnotationEntry(entry.id, text)}
-                    onDelete={() => removeAnnotationEntry(entry.id)}
-                  />
-                ))}
-              </div>
-            )}
-            {...(renderEditorGutterAction === undefined
-              ? {}
-              : { renderGutterUtility: renderEditorGutterAction })}
-            className="min-h-full"
-            contentEditable={!editingBlocked}
-          />
-        </Virtualizer>
-      </div>
-    </EditProvider>
+                ...scientificSourceLanguageOverride(relativePath),
+                cacheKey: projectFileEditorCacheKey(
+                  environmentId,
+                  cwd,
+                  relativePath,
+                  contents,
+                  editor.getFile(),
+                ),
+              }}
+              options={{
+                disableFileHeader: true,
+                enableGutterUtility: renderEditorGutterAction !== undefined || !hasOpenCommentForm,
+                enableLineSelection: !hasOpenCommentForm,
+                ...(renderEditorGutterAction === undefined
+                  ? { onGutterUtilityClick: handleGutterUtilityClick }
+                  : {}),
+                onLineSelectionChange: setSelectedRange,
+                onLineSelectionEnd: handleLineSelectionEnd,
+                overflow: wordWrap ? "wrap" : "scroll",
+                theme: resolveDiffThemeName(resolvedTheme),
+                preferredHighlighter: PREFERRED_HIGHLIGHTER,
+                themeType: resolvedTheme,
+                unsafeCSS: FILE_LINK_REVEAL_UNSAFE_CSS,
+                onPostRender: handlePostRender,
+              }}
+              selectedLines={displayedRange}
+              lineAnnotations={lineAnnotations}
+              renderAnnotation={(annotation) => (
+                <div className="py-1">
+                  {annotation.metadata.entries.map((entry) => (
+                    <DiffCommentAnnotation
+                      key={entry.id}
+                      kind={entry.kind}
+                      rangeLabel={formatFileCommentRange(entry.startLine, entry.endLine)}
+                      text={entry.text}
+                      onCancel={() => removeAnnotationEntry(entry.id)}
+                      onComment={(text) => submitAnnotationEntry(entry.id, text)}
+                      onDelete={() => removeAnnotationEntry(entry.id)}
+                    />
+                  ))}
+                </div>
+              )}
+              {...(renderEditorGutterAction === undefined
+                ? {}
+                : { renderGutterUtility: renderEditorGutterAction })}
+              className="min-h-full"
+              contentEditable={!editingBlocked}
+            />
+          </Virtualizer>
+        </div>
+      </EditProvider>
+    </DiffWorkerPoolProvider>
   );
 }
 

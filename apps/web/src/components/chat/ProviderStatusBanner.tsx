@@ -30,6 +30,15 @@ function shouldRenderProviderStatus(status: ServerProvider | null): status is Se
     status !== null &&
     status.status !== "ready" &&
     status.status !== "disabled" &&
+    // Saved Antigravity credentials are checked on session start, not by the
+    // passive health probe. Keep real lifecycle failures visible.
+    !(
+      status.driver === "antigravity" &&
+      status.installed &&
+      status.status === "warning" &&
+      status.auth.status === "unknown" &&
+      providerLifecycleFailureMessage(status) === null
+    ) &&
     !isExpectedAssistedLifecycleState(status)
   );
 }

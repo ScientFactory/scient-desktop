@@ -15,14 +15,40 @@ source could be read—are sent to the client.
 This page is separate from Scient product analytics and telemetry, and it does not query a provider
 billing API.
 
-Cost is an estimate with explicit provenance. Scient uses a cost reported in the transcript when one
-exists. Otherwise it prices a recognized model with the public LiteLLM model rate table. Tokens from
+Cost is an estimate with explicit provenance. A saved custom price takes precedence. Otherwise,
+Scient uses a cost reported in the transcript when one exists, or prices a recognized model with
+the public LiteLLM model rate table. Tokens from
 an unrecognized model remain in token totals but add no estimated cost. Scient refreshes the rate
 table at most daily and can use its cached copy offline; without either copy, affected records are
 shown as unpriced rather than guessed.
 
 A Grok turn appears only after the provider writes a completed usage record.
 Unfinished turns may not appear.
+
+On web and desktop, filter costs, tokens, and limits with the environment dropdown. All environments
+are initially selected. Results appear as each environment responds, with scanning status shown
+for those still loading.
+
+## Set custom model prices
+
+On web or desktop, open the environment dropdown on **Usage**, then choose **Model prices** to add,
+edit, or reset a model's estimated price. **Apply to** starts with your current Usage filter;
+choose all environments or select individual destinations. Enter the exact model ID and USD
+rates per million input and output tokens. You can enter any model ID, including models
+without public pricing.
+
+Cache read and cache write rates are optional and use the input rate when blank. Enter `0` for
+tokens that are free. Saved prices replace automatic pricing for all of that environment's
+history and are shared with clients connected to it. When environments have different prices,
+cells show **Mixed**. Edit rates directly in the table, then choose **Save changes** to apply all
+edited rows. Untouched cells keep each environment's rate. Select one environment to inspect its
+prices. **Reset to automatic** marks a model's override for removal when you save; you can undo
+it before saving.
+
+Each destination reports whether the change saved. Offline or unavailable environments are
+marked **Not saved**. Reconnect them and choose **Retry failed saves** to finish the same change
+without writing again to environments that already saved. Changes are not queued after you close
+the dialog.
 
 The **Limits** view shows how much of each subscription window you have used on Codex and Claude
 Code, per connected environment: the session and weekly windows, plus a per-model weekly window

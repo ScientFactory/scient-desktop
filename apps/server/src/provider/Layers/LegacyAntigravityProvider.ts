@@ -136,7 +136,7 @@ export function buildInitialAntigravityProviderSnapshot(
 }
 
 function antigravityModelsFromSettings(
-  customModels: ReadonlyArray<string> | undefined,
+  customModels: LegacyAntigravitySettings["customModels"],
   builtInModels: ReadonlyArray<ServerProviderModel> = [],
 ): ReadonlyArray<ServerProviderModel> {
   return providerModelsFromSettings(builtInModels, customModels ?? [], EMPTY_CAPABILITIES);

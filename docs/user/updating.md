@@ -37,11 +37,14 @@ If a connected environment uses a different server version, Scient shows the
 version warning above the composer and in **Settings → Connections**. Hiding
 the composer warning does not change either runtime.
 
-**Settings → General → Continue threads after server updates** is off by
-default. When enabled, an update resumes supported provider threads after the
-replacement server is ready. Providers with native promptless continuation use
-it; other providers receive a short instruction to continue where they left
-off. Terminal commands and other running work may still be interrupted.
+**Settings → General → Continue threads after restarts** is off by default.
+When enabled, supported active threads can resume after an update, crash, or machine restart.
+Scient must start again on that machine; this does not enable automatic startup. Threads without
+saved provider resume state need a new message, and terminal commands may still be interrupted.
+Changes apply to connected environments that support the setting. After an offline environment
+reconnects, use **Apply to all** to reconcile a different value; older servers need updating first.
+If you previously enabled continuation only for updates, enable this setting once to allow recovery
+without a connected client.
 
 The action depends on how that environment started:
 

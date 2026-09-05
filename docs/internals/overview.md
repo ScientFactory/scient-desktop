@@ -155,7 +155,7 @@ already dispatch.
 
 ## Related
 
-- [Workspace layout](./workspace-layout.md), [Glossary](./glossary.md)
+- [Workspace layout](../../AGENTS.md#where-code-lives), [Glossary](./glossary.md)
 - [Remote environments](./remote.md), [Server updates](./server-updates.md)
 - [Resource telemetry](./resource-telemetry.md)
 - [Scient conversation-fork architecture and T3 divergence](./scient-fork-divergence.md)

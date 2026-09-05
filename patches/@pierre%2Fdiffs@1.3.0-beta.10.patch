@@ -316,6 +316,46 @@ index 583f388a8f35584b2ad9ad68eae279e60844c284..6be424834cc210a1fd73c9c8e7897154
  		}
  	});
  	useIsometricEffect(() => {
+diff --git a/dist/renderers/FileRenderer.js b/dist/renderers/FileRenderer.js
+--- a/dist/renderers/FileRenderer.js
++++ b/dist/renderers/FileRenderer.js
+@@ -107,10 +107,10 @@
+ 			result: massiveFile ? void 0 : cache?.result,
+ 			renderRange: void 0
+ 		};
++		this.computedLang = file.lang ?? getFiletypeFromFileName(file.name);
+ 		if (this.workerManager?.isWorkingPool() === true) {
+ 			if (this.renderCache.result == null && !massiveFile) this.workerManager.highlightFileAST(this, file);
+ 		} else if (this.highlighter == null) {
+-			this.computedLang = file.lang ?? getFiletypeFromFileName(file.name);
+ 			this.initializeHighlighter();
+ 		}
+ 	}
+@@ -163,6 +163,8 @@
+ 		if (this.renderCache == null) return;
+ 		const { file, result } = this.renderCache;
+ 		if (result == null) return;
++		this.workerManager?.cleanUpTasks(this);
++		if (file.cacheKey != null) this.workerManager?.evictFileFromCache(file.cacheKey);
+ 		const lineCache = this.lineCache != null && isLineCacheForFile(this.lineCache, file) ? this.lineCache : void 0;
+ 		for (const [line, tokens] of dirtyLines) {
+ 			if (lineCache != null && line < lineCache.lines.length) {
+@@ -268,6 +270,7 @@
+ 		const forcePlainText = !hasContent || isFilePlainText(file) || isFileMassive(lines.length, this.getTokenizeMaxLength());
+ 		const newContent = !areFilesEqual(file, this.renderCache.file);
+ 		const newRenderRange = !areRenderRangesEqual(this.renderCache.renderRange, renderRange);
++		this.computedLang = file.lang ?? getFiletypeFromFileName(file.name);
+ 		if (this.workerManager?.isWorkingPool() === true) {
+ 			if (forcePlainText || this.renderCache.result == null || !this.renderCache.highlighted && (newContent || newRenderRange)) {
+ 				this.renderCache.file = file;
+@@ -278,7 +281,6 @@
+ 			}
+ 			if (!forcePlainText && hasContent && (!this.renderCache.highlighted || forceHighlight)) this.workerManager.highlightFileAST(this, file);
+ 		} else {
+-			this.computedLang = file.lang ?? getFiletypeFromFileName(file.name);
+ 			const hasThemes = this.highlighter != null && areThemesAttached(options.theme);
+ 			const hasLangs = this.highlighter != null && areLanguagesAttached(this.computedLang);
+ 			const canHighlight = !forcePlainText && hasLangs;
 diff --git a/package.json b/package.json
 index ff61c904594e4ea4bf101c620ec4b500133014e3..213b06a8161996dd921cbcff164a27aebeedcd8a 100644
 --- a/package.json

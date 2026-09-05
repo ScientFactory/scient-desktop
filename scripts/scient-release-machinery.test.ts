@@ -126,6 +126,16 @@ describe("Scient release machinery", () => {
       );
       assert(uses.length > 0, `${workflowName} must declare at least one action`);
       for (const action of uses) {
+        // This repository-local action is pinned by the release checkout itself.
+        // Keep the exception exact and prevent nested mutable action references.
+        if (action === "./.github/actions/setup-apt-mirrors") {
+          const localAction = NodeFS.readFileSync(
+            NodePath.join(import.meta.dirname, "../.github/actions/setup-apt-mirrors/action.yml"),
+            "utf8",
+          );
+          assert.notMatch(localAction, /^\s*(?:-\s+)?uses:/mu);
+          continue;
+        }
         assert.match(
           action ?? "",
           /@[0-9a-f]{40}$/u,

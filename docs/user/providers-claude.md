@@ -99,6 +99,11 @@ the rest of your environment stay as they are.
 
 ## Reduce Context Usage
 
+If Claude reaches a subscription usage limit mid-turn, the conversation shows the limit and the
+remaining wait when Claude reports a reset time. Claude may keep the turn open until the window
+reopens. Wait for that reset, or stop the turn and continue later; the warning timestamp indicates
+when its displayed wait began.
+
 In Settings, open your Claude provider and set **Auto-compact after** to a token count between
 `100000` and `1000000`. For example, `300000` compacts the conversation into a summary once it
 reaches about 300,000 tokens, without changing the model's context window. Leave the field

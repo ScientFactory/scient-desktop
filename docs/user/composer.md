@@ -85,6 +85,11 @@ when starting a thread or changing an existing thread's model.
 
 ## Model defaults
 
+For providers that support custom models, **Settings → Providers → Models** lets you give an
+unlisted model a display name and define its options. Only options supported by the integration
+affect turns; declaring an option does not add a new provider capability. Antigravity uses the
+account's catalog rather than custom model entries.
+
 Scient remembers the last provider, model, and model options you selected and reuses that
 selection for new threads. A model configured in a project's settings overrides the remembered
 selection for that project; resetting the project setting returns it to the remembered selection.
@@ -193,11 +198,18 @@ the peek, or focus **Show other notices** and press `Enter` or `Space`, to revea
 
 ## Prompt stash
 
+To recall text you already sent, press `ArrowUp` in an empty composer. Further presses go backward
+through loaded prompts in this thread; `ArrowDown` goes forward and clears the composer after the
+newest prompt. Recall restores text, not attachments or other context. A composer holding an
+attachment or picked element is not empty.
+
 Use the default shortcut, `Cmd+S` on macOS or `Ctrl+S` on Windows and Linux, to stash the current
 prompt and its attachments after uploads finish. Restore the entry later from the stash menu. A
 stash containing files belongs to the environment where those files were uploaded. The server keeps
 stashed files for 24 hours; after that, restore the prompt and use **Attach again** or remove the
 expired file before sending.
+
+With exactly one stash and an empty composer, the stash shortcut restores that entry directly.
 
 ## Voice input on iPhone
 
