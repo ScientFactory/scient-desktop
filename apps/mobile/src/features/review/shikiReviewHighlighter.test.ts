@@ -158,8 +158,20 @@ describe("highlightSourceFile", () => {
         .join(""),
     ).toBe(source);
     expect(highlighted.flat().some((token) => token.color !== null)).toBe(true);
+    const snippet = await highlighter.highlightCodeSnippet({
+      code: source,
+      language: "ts",
+      theme: "dark",
+    });
+    // Shiki's time budget can yield different token boundaries on cold and warm runs.
+    // Startup must preserve the source and produce highlighting in either case.
+    expect(snippet).toHaveLength(1);
     expect(
-      await highlighter.highlightCodeSnippet({ code: source, language: "ts", theme: "dark" }),
-    ).toEqual(highlighted);
+      snippet
+        .flat()
+        .map((token) => token.content)
+        .join(""),
+    ).toBe(source);
+    expect(snippet.flat().some((token) => token.color !== null)).toBe(true);
   });
 });
