@@ -1,3 +1,4 @@
+import { undo, redo } from "prosemirror-history";
 import type { Node as ProseMirrorNode } from "prosemirror-model";
 import { NodeSelection } from "prosemirror-state";
 import type { EditorView, NodeView } from "prosemirror-view";
@@ -197,6 +198,16 @@ class ScientRawBlockNodeView implements NodeView {
         editable: this.view.editable,
         language: kind,
         wordWrap: this.wrapped,
+        historyCommands: {
+          undo: () => {
+            if (this.view.editable) undo(this.view.state, this.view.dispatch);
+            return true;
+          },
+          redo: () => {
+            if (this.view.editable) redo(this.view.state, this.view.dispatch);
+            return true;
+          },
+        },
         onEscape: () => leaveAtomEditor(this.view, this.getPos, this.node),
         onUserCodeChange: (source) => this.replaceSource(source),
       });

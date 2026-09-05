@@ -1,10 +1,11 @@
-import { describe, expect, it } from "vite-plus/test";
+import { describe, expect, it, vi } from "vite-plus/test";
 
 import {
   createScientMarkdownProjection,
   serializeScientMarkdownProjection,
   withProjectedDocument,
 } from "./projection";
+import { scientMarkdownParser } from "./schema";
 import { ScientProseMirrorSession } from "./session";
 
 const SOURCE = [
@@ -591,5 +592,50 @@ describe("Scient ProseMirror projection", () => {
     expect(next).not.toBe(projection);
     expect(next.ledger).toBe(projection.ledger);
     expect(next.baselineDocument).toBe(projection.baselineDocument);
+  });
+});
+
+describe("incremental source projection", () => {
+  it.each(["x", "|", "*", "\\", "\n", "&", "[ref]", "😀", "  "])(
+    "reopens table row edits exactly as the live document: %s",
+    (replacement) => {
+      for (const text of ["Heading", "sample"]) {
+        const source =
+          "| Heading | B |\r\n| :--- | ---: |\r\n| sample | **value** |\r\n| sample | stable |\r\n";
+        const session = new ScientProseMirrorSession({ source, revision: "r1", mode: "write" });
+        let position: number | undefined;
+        session.state.doc.descendants((node, offset) => {
+          if (position === undefined && node.isText && node.text === text) position = offset + 2;
+        });
+        session.applyTransaction(
+          session.state.tr.insertText(replacement, position!, position!),
+          "user",
+        );
+        const reopened = createScientMarkdownProjection(session.session.draftSource).document;
+        const content = (value: unknown) =>
+          JSON.stringify(value, (key, item) =>
+            key === "sourceId" || key === "sourceCopyId" ? undefined : item,
+          );
+        expect(content(reopened.toJSON())).toBe(content(session.state.doc.toJSON()));
+        if (replacement === "x")
+          expect(session.session.draftSource).toBe(
+            source.replace(text, text.slice(0, 2) + "x" + text.slice(2)),
+          );
+      }
+    },
+  );
+
+  it("does not re-tokenize the complete reference document for unrelated prose edits", () => {
+    const source = "Ordinary prose.\n\nSee [reference].\n\n[reference]: https://example.org\n";
+    const session = new ScientProseMirrorSession({ source, revision: "r1", mode: "write" });
+    session.applyTransaction(session.state.tr.insertText("x", 1), "user");
+    const parse = vi.spyOn(scientMarkdownParser.tokenizer, "parse");
+    try {
+      session.applyTransaction(session.state.tr.insertText("y", 1), "user");
+      expect(parse.mock.calls.every(([input]) => !input.includes("[reference]:"))).toBe(true);
+      expect(session.session.draftSource).toContain("[reference]: https://example.org");
+    } finally {
+      parse.mockRestore();
+    }
   });
 });

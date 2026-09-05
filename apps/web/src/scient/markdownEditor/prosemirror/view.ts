@@ -427,8 +427,10 @@ export class ScientMarkdownEditorView {
     const wasEmpty = documentIsEmpty(this.editorView.state.doc);
     const state = this.session.applyTransaction(transaction, origin);
     this.editorView.updateState(state);
-    if (transaction.docChanged) this.refreshImageContexts();
-    this.refreshFootnoteNodeViews();
+    if (state.doc !== transaction.before) {
+      this.refreshImageContexts();
+      this.refreshFootnoteNodeViews();
+    }
     if (wasEmpty !== documentIsEmpty(state.doc)) {
       this.syncViewProps();
     }

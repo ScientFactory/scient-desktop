@@ -1,6 +1,5 @@
 // @vitest-environment happy-dom
 
-import { undo } from "@codemirror/commands";
 import { EditorView as CodeMirrorEditorView } from "@codemirror/view";
 import { act } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
@@ -155,7 +154,14 @@ describe("persistent Mermaid source editing", () => {
     expect(box.parentElement).toBe(parent);
     expect(host.querySelectorAll(".cm-editor")).toHaveLength(1);
     await act(() => {
-      expect(undo(editor)).toBe(true);
+      const event = new KeyboardEvent("keydown", {
+        key: "z",
+        ctrlKey: true,
+        bubbles: true,
+        cancelable: true,
+      });
+      editor.contentDOM.dispatchEvent(event);
+      expect(event.defaultPrevented).toBe(true);
     });
     expect(controller.session.session.draftSource).toBe(markdown(broken));
     await vi.waitFor(() =>

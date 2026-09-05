@@ -135,7 +135,7 @@ describe("raw Markdown source islands", () => {
     expect(state().selection.from).toBe(0);
     expect(dispatch).toHaveBeenCalledOnce();
 
-    createCodeEditor.mock.calls[0]![0].onUserCodeChange("---\ntitle: After\n---");
+    createCodeEditor.mock.calls[0]![0].onUserCodeChange("---\ntitle: After\n---", []);
     expect(state().doc.firstChild?.attrs.source).toBe("---\ntitle: After\n---");
     expect(
       nodeView.dom.querySelector(".scient-markdown-source-island-code-editor .cm-content"),
@@ -149,10 +149,10 @@ describe("raw Markdown source islands", () => {
     const { dispatch, nodeView, state } = fixture("yaml", "---\ntitle: Before\n---");
     const changeSource = createCodeEditor.mock.calls[0]![0].onUserCodeChange;
 
-    changeSource("---\ntitle: שלום\n---");
+    changeSource("---\ntitle: שלום\n---", []);
     expect(dispatch).toHaveBeenCalledOnce();
     expect(state().doc.firstChild?.attrs.source).toBe("---\ntitle: שלום\n---");
-    changeSource("---\ntitle: שלום\n---");
+    changeSource("---\ntitle: שלום\n---", []);
     expect(dispatch).toHaveBeenCalledOnce();
 
     nodeView.destroy?.();
@@ -161,7 +161,7 @@ describe("raw Markdown source islands", () => {
   it("does not project nested-editor input from a read-only view", () => {
     const { dispatch, nodeView, state } = fixture("html", "<!-- Before -->", undefined, false);
     expect(createCodeEditor.mock.calls[0]![0].editable).toBe(false);
-    createCodeEditor.mock.calls[0]![0].onUserCodeChange("<!-- After -->");
+    createCodeEditor.mock.calls[0]![0].onUserCodeChange("<!-- After -->", []);
     expect(dispatch).not.toHaveBeenCalled();
     expect(state().doc.firstChild?.attrs.source).toBe("<!-- Before -->");
 
