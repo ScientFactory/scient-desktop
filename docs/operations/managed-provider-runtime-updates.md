@@ -79,6 +79,9 @@ and revalidate at most hourly after a successful fetch. A failed attempt is
 eligible for retry after five minutes. The atomic disk cache and bundled catalog
 keep the provider screens available while offline. Disabling **Provider update
 checks** prevents network refresh; re-enabling it asks for an immediate refresh.
+Each network refresh has one ten-second deadline covering response headers and
+the catalog body. A stalled response is aborted and leaves the last good catalog
+and ETag intact; later refreshes remain eligible under the existing retry policy.
 
 When one provider entry changes, Scient recomputes only that provider's managed
 runtime summary. It does not reload provider processes, interrupt sessions,
