@@ -1,3 +1,4 @@
+import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
@@ -9,6 +10,7 @@ describe("durable atomic text replacement", () => {
   it.effect("flushes contents before rename, retains mode and cleans temporary files", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
+      const platform = yield* HostProcessPlatform;
       const directory = yield* fs.makeTempDirectoryScoped();
       const target = `${directory}/document.md`;
       const operations: string[] = [];
@@ -36,11 +38,9 @@ describe("durable atomic text replacement", () => {
       }).pipe(Effect.provideService(FileSystem.FileSystem, observed));
       expect(yield* fs.readFileString(target)).toBe("שלום 😀\n");
       expect(operations).toEqual(
-        process.platform === "win32"
-          ? ["file sync", "rename"]
-          : ["file sync", "rename", "directory sync"],
+        platform === "win32" ? ["file sync", "rename"] : ["file sync", "rename", "directory sync"],
       );
-      if (process.platform !== "win32") expect((yield* fs.stat(target)).mode & 0o777).toBe(0o600);
+      if (platform !== "win32") expect((yield* fs.stat(target)).mode & 0o777).toBe(0o600);
       expect(yield* fs.readDirectory(directory)).toEqual(["document.md"]);
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );

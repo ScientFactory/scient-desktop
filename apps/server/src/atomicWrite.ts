@@ -1,3 +1,4 @@
+import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
@@ -12,6 +13,7 @@ export const writeFileStringAtomically = (input: {
   Effect.scoped(
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
+      const platform = yield* HostProcessPlatform;
       const path = yield* Path.Path;
       const targetDirectory = path.dirname(input.filePath);
 
@@ -35,7 +37,7 @@ export const writeFileStringAtomically = (input: {
       yield* fs.rename(tempPath, input.filePath);
       // Windows does not support opening directory handles through this API.
       // On POSIX, persist the rename as well as the temporary file's contents.
-      if (input.durable && process.platform !== "win32") {
+      if (input.durable && platform !== "win32") {
         yield* Effect.scoped(
           Effect.gen(function* () {
             const directory = yield* fs.open(targetDirectory, { flag: "r" });
