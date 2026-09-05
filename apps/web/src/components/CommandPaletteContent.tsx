@@ -1,5 +1,11 @@
 import { ArrowDownIcon, ArrowUpIcon } from "lucide-react";
-import { type ComponentProps, type ReactNode, useLayoutEffect, useRef } from "react";
+import {
+  type ComponentProps,
+  type ReactNode,
+  useImperativeHandle,
+  useLayoutEffect,
+  useRef,
+} from "react";
 
 import { Command, CommandFooter, CommandInput, CommandPanel } from "./ui/command";
 import { Kbd, KbdGroup } from "./ui/kbd";
@@ -36,6 +42,9 @@ export function CommandPaletteContent({
   ...commandProps
 }: CommandPaletteContentProps) {
   const inputRef = useRef<HTMLInputElement>(null);
+  // Share the mounted input with caller keyboard/focus handlers without
+  // replacing the local ref used by upstream's autofocus behavior.
+  useImperativeHandle(inputProps.ref, () => inputRef.current!, []);
 
   // Direct-open flows replace the initial palette view after the dialog has
   // already moved focus. Reclaim it when the replacement input mounts so

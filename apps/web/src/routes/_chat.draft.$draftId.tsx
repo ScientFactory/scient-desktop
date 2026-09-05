@@ -2,6 +2,7 @@ import { scopeProjectRef } from "@t3tools/client-runtime/environment";
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useEffect } from "react";
 import ChatView from "../components/ChatView";
+import { ChatLoadingState } from "../components/ChatLoadingState";
 import { resolveDraftPromotionNavigationTarget } from "../components/ChatView.logic";
 import {
   DraftId,
@@ -95,7 +96,7 @@ function DraftChatThreadRouteView() {
   ]);
 
   if (!draftSession || projectUnavailable) {
-    return null;
+    return <ChatLoadingState />;
   }
 
   return (
