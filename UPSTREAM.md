@@ -22,21 +22,21 @@ revision remains literal ancestry of owned `main`; it is not merely a reviewed
 or observed tip.
 
 The current proposed T3 ancestry is recorded in
-[`docs/internals/2026-09-04-upstream-sync-5f878d2a.md`](docs/internals/2026-09-04-upstream-sync-5f878d2a.md)
-and in `upstream-state.json`. This refresh preserves all 102 official commits
-from `fff33f9e851912363c5b1f3ac65598be35eb5f0d` through
-`5f878d2a85807618a4c8571cdef5daa3124672d6`. It includes Antigravity ACP 1.1.1,
-live model updates, subscription limits, context compaction, browser-login import,
-Settings/composer improvements, and the associated Git, mobile, connection, and
-runtime fixes. Scient's assisted lifecycle, managed/system ownership, reasoning
-selector, models-first view, scientific features, and release authority remain.
-The incoming owned PR #231 was merged into main before the provider/Settings
-composition; canonical main and the candidate base both include it.
+[`docs/internals/2026-09-05-upstream-sync-2fa5ef4c.md`](docs/internals/2026-09-05-upstream-sync-2fa5ef4c.md)
+and in `upstream-state.json`. This refresh preserves all 150 official commits
+from `5f878d2a85807618a4c8571cdef5daa3124672d6` through
+`2fa5ef4c7bf3aafabe98392d25be7eb86847ce8f`. It includes chat/timeline performance,
+file-editor grammar and autosave lifecycle fixes, owner-verified external-provider
+updates, post-edit checkpoints, prompt history, progressive usage and price controls,
+and associated provider, Git, mobile, connection, and runtime fixes. Scient's
+assisted lifecycle, managed/system ownership, reasoning selector, scientific rich
+output, models-first view, privacy defaults, and release authority remain.
+The candidate starts from owned main `5fa81d99e3`, including PR #238.
 
-The history-preserving merge is `c927c346e0dc4e467634293e35fb89049270ef7a`.
+The history-preserving merge is `7dd0eb2fbe84152a9961de13c64a78de0b340b65`.
 Automated qualification passed; isolated-app interaction and human visual
 acceptance remain pending. The linked receipt states the platform limits and
-meaningful conflict decisions. The [preceding checkpoint](docs/internals/2026-09-03-upstream-sync-fff33f9e8.md)
+meaningful conflict decisions. The [preceding checkpoint](docs/internals/2026-09-04-upstream-sync-5f878d2a.md)
 remains in ancestry. This draft candidate does not claim to be merged into main.
 Later observed upstream tips do not move `integrationBase` by themselves, and
 publication remains a separate gate.
