@@ -581,6 +581,49 @@ it.layer(NodeServices.layer)("scient fork decider", (it) => {
     }),
   );
 
+  it.effect("does not retain later system messages or messages after the selected response", () =>
+    Effect.gen(function* () {
+      const origin = makeOriginThread();
+      const messages = [
+        ...origin.messages,
+        message({
+          id: "later-system",
+          role: "system",
+          text: "Future instructions",
+          turnId: null,
+          createdAt: NOW,
+        }),
+      ];
+      const events = yield* forkThreadForTest({
+        command: forkCommand({ sourceAssistantMessageId: A1 }),
+        readModel: makeReadModel({ origin: { ...origin, messages } }),
+      });
+      expect(
+        events
+          .filter((event) => event.type === "thread.message-sent")
+          .map((event) => event.payload.text),
+      ).toEqual(["first prompt", "first answer"]);
+    }),
+  );
+
+  it.effect(
+    "uses authoritative SQL message identity for historical messages without a turn id",
+    () =>
+      Effect.gen(function* () {
+        const origin = makeOriginThread();
+        const messages = origin.messages.map((message) =>
+          message.id === A1 ? { ...message, turnId: null } : message,
+        );
+        const events = yield* forkThreadForTest({
+          command: forkCommand({ sourceAssistantMessageId: A1 }),
+          readModel: makeReadModel({ origin: { ...origin, messages } }),
+        });
+        const copied = events.filter((event) => event.type === "thread.message-sent");
+        expect(copied.map((event) => event.payload.text)).toEqual(["first prompt", "first answer"]);
+        expect(copied[1]?.payload.turnId).not.toBeNull();
+      }),
+  );
+
   it.effect("forking from a user message retains only the prior completed boundary", () =>
     Effect.gen(function* () {
       const sourceAttachment = {

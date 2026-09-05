@@ -53,13 +53,16 @@ The fork lifecycle has three separate readiness milestones:
 1. **Server provisioning complete:** the durable fork workflow has created and
    verified the destination thread, retained transcript, attachments, and
    requested workspace substrate.
-2. **Thread visible in client state:** the destination thread's server detail has
-   reached the client store and is recognized as started.
-3. **Navigation complete:** the client has routed to the destination thread.
+2. **Route selected:** after the server receipt, the client opens the destination
+   route. The route may still be loading its authoritative detail subscription.
+3. **Thread visible:** the destination detail has reached the client store and
+   the route renders the conversation.
 
 These milestones must not be collapsed into a fixed delay or treated as
-interchangeable. Navigation is successful only after the first two milestones
-are true; the third is the final UI action.
+interchangeable. There is no five-second visibility deadline. An absent sidebar
+entry is not evidence that a thread is missing: only an explicit deletion from
+the detail subscription permits the missing-thread redirect. This also permits
+opening archived originals through the lineage marker.
 
 The clicked message ID is the public boundary. The server validates its role
 and durable projection, then resolves the completed conversation boundary and
@@ -114,27 +117,103 @@ Forking is a durable, restart-safe saga:
    retry idempotent. Startup recovery resumes `pending`, `provisioning`, and
    retryable `failed` records. The durable completion receipt also self-enqueues
    its lineage row, so a missed live wake-up cannot strand an accepted fork.
+   A repeated command with the same identity reuses its accepted receipt and
+   retries a failed provisioning record without a server restart. The worker
+   deduplicates queued/in-flight destination IDs, so live delivery and receipt
+   recovery do not accidentally retry the same failure twice.
 5. The reactor records `ready` only after every required substrate is verified.
-   The WebSocket command waits for this typed completion receipt.
+   The WebSocket command waits for this typed completion receipt. The serialized
+   command handler rejects turn starts before readiness, before persisting their
+   user message; background sends cannot write into a fork awaiting setup.
 6. The copied logical-boundary manifest records remapped turn and message IDs.
    It lets a fork be forked again directly, without walking ancestor threads or
    pretending copied transcript rows are provider-native turns.
 7. For a user-message fork, the web client prepares every authorized image,
    persists the complete unsent destination draft, and flushes storage before
-   issuing the server command. A rejected command removes that staged draft.
+   issuing the server command. Only a confirmed rejected or abandoned operation
+   removes that staged draft; an interrupted connection does not.
 8. On the first provider turn, the provider-neutral bootstrap injects only the
    immutable retained baseline and recent retained images. It reserves the
    exact outgoing message before the external send and records
    `pending` -> `sending` -> `completed`. A failed or interrupted send becomes
    `ambiguous`; Scient never silently re-injects context whose acceptance is
-   uncertain. A later completed assistant response can reconcile that state as
-   accepted.
+   uncertain. A completed assistant response before the next user request can
+   reconcile that attempt as accepted; unrelated later responses cannot.
 9. Terminal failures such as a disappeared origin attachment or an unavailable
    required worktree checkpoint delete the unusable target thread and record an
    `abandoned` lineage state. Transient failures remain retryable.
 
 The domain-event stream is only a wake-up signal. The lineage table remains the
 authority, so a restart or missed live event cannot lose the work.
+
+### Client operation identity and eligibility
+
+`orchestration.getForkOptions` is a read-authorized, capability-gated query
+(`threadForkRecovery`). It resolves either a specified user/assistant message
+or, when neither is supplied, the latest completed assistant boundary. It
+checks retained attachment availability and distinguishes an existing local
+workspace from a resolvable Git checkpoint. Both the preview and submission
+use this query; the decider and provisioning worker remain the final authority
+because dependencies can change after a preview.
+
+`forkAttempt.ts` journals the exact command, environment, destination, display
+title, and handoff milestones under `scient:fork-attempt:v1:` in client storage.
+The key includes environment, original thread, and fork entry point. A retry
+uses the saved command even if a caller supplies different options. No prompts,
+file bytes, or authorized asset URLs are duplicated into this journal; drafts
+remain in the existing composer store. Journal writes must succeed before
+dispatch. Origin-scoped in-memory ownership survives hook remounts, with Web
+Locks preventing concurrent operations in other tabs of the same profile.
+
+Fork dispatch errors carry an optional `forkDisposition`. `rejected` means a
+known command rejection; `abandoned` means terminal compensation; `failed`
+means provisioning is retryable; `pending`/`provisioning` mean work exists;
+`ready` proves completion. Missing evidence is `unknown`, never rejection.
+Transport errors without this field preserve both the command and draft.
+Once ready, retry only performs the client handoff and navigation. Optional
+panel continuity cannot turn a ready fork into a failed creation.
+
+After provisioning succeeds, the source dialog finishes its existing exit
+animation before the draft handoff and navigation. Base UI
+`onOpenChangeComplete(false)` owns this boundary; there is no fixed delay. The
+form stays unchanged during its exit. Leaving the source or unmounting cancels
+the pending navigation, while a navigation failure reopens the same retry form.
+
+Errors and retries stay inside the existing confirmation form. Title and
+workspace inputs are locked while resuming an unresolved operation. Navigating
+elsewhere or unmounting the hook does not cancel accepted server work and does
+not allow its completion to steal navigation. An unfinished client handoff is
+resumed from the same Fork action; deliberate new forks are possible after the
+previous handoff has completed.
+
+Automatic names remain server-allocated and custom titles remain authored
+command data. Renaming either thread never changes lineage identity. The
+marker links by environment and original thread ID, not by title. Provider
+selection remains the ordinary model-picker operation on a destination with
+no provider session. The provider-switch handoff moves the ordinary draft only
+when its prompt and attachment identity still match the captured SHA-256 fingerprint;
+changed drafts, queued messages, queue-edit drafts, and queue order remain in
+their original conversation. Forking emits no turn-start request.
+
+### History and workspace fidelity
+
+Retained messages are bounded by the selected assistant's position, including
+system messages: later system messages cannot leak into an earlier fork. A
+legacy message without a turn ID may use its authoritative SQL boundary's
+identity; a conflicting non-null turn ID still fails validation. Copied logical
+boundaries, rather than ancestor lookups, continue to own re-fork/revert history.
+
+Attachment copies publish by rename only after size verification. Retries can
+reuse a complete destination-owned attachment even if the original was removed
+after copying. Temporary `.part` files are cleaned on ordinary completion or
+failure and use the existing stale-partial sweep after a crash. A missing
+attachment is never silently omitted to make a fork appear successful.
+
+A local fork requires its actual workspace directory. If an original worktree
+was removed, an explicitly selected new-worktree fork may resolve the historical
+checkpoint from the owning project repository. It never falls back to another
+workspace for a local request. Provider initialization remains independent of
+Git availability for valid non-Git local workspaces.
 
 ## Scient-owned implementation
 
@@ -490,8 +569,8 @@ forking and would have increased every future upstream merge.
 - Right-panel continuity copies only safe descriptors. It never reuses a live
   terminal or browser session, never persists authorized URLs, and expires
   pending PDF remaps after seven days.
-- A transiently failed durable fork remains recoverable and is retried after
-  restart. A terminally impossible fork is compensated and never shown as a
+- A transiently failed durable fork remains recoverable and can be retried in
+  place or after restart. A terminally impossible fork is compensated and never shown as a
   usable thread.
 - Shared contracts, client runtime, and server behavior are mobile-ready. This
   change intentionally adds no mobile fork UI.

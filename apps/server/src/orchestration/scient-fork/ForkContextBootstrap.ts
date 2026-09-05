@@ -303,11 +303,15 @@ const make = Effect.gen(function* () {
         attemptMessageId === null
           ? -1
           : input.thread.messages.findIndex((message) => message.id === attemptMessageId);
+      const followingMessages = input.thread.messages.slice(attemptIndex + 1);
+      const nextRequestIndex = followingMessages.findIndex((message) => message.role === "user");
+      const attemptResponses =
+        nextRequestIndex < 0 ? followingMessages : followingMessages.slice(0, nextRequestIndex);
       const providerResponseExists =
         attemptIndex >= 0 &&
-        input.thread.messages
-          .slice(attemptIndex + 1)
-          .some((message) => message.role === "assistant" && message.streaming === false);
+        attemptResponses.some(
+          (message) => message.role === "assistant" && message.streaming === false,
+        );
       if (providerResponseExists) {
         const updatedAt = DateTime.formatIso(yield* DateTime.now);
         yield* sql`
@@ -336,7 +340,7 @@ const make = Effect.gen(function* () {
       return yield* new ScientForkContextBootstrapError({
         threadId: input.thread.id,
         detail:
-          "Scient cannot prove whether the retained fork context was accepted. To avoid duplicating the request, create a new fork and continue there.",
+          "The first request may have reached the provider, but its acknowledgement is missing. Scient will not send it twice. If its response appears, continue here; otherwise fork again from the last completed response to start an independent session.",
       });
     }
 

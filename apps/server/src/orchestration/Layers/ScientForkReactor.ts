@@ -32,6 +32,8 @@ import {
   type ScientForkWorkspaceStatus,
 } from "../scient-fork/forkRepository.ts";
 import { ScientForkCheckpointBaseline } from "../scient-fork/ForkCheckpointBaseline.ts";
+import { makeForkBoundaryResolver } from "../scient-fork/ForkBoundaryReadModel.ts";
+import { retainPrefixMessages } from "../scient-fork/forkDecider.ts";
 import {
   ScientForkAttachmentCopier,
   ScientForkAttachmentCopyError,
@@ -176,11 +178,19 @@ const make = Effect.gen(function* () {
     }
 
     const origin = context.value;
+    const originWorkspace = origin.worktreePath ?? origin.workspaceRoot;
+    const localAvailable = yield* checkpointBaseline.workspaceExists(originWorkspace);
+    if (payload.workspaceMode === "local" && !localAvailable) {
+      return yield* new ScientForkTerminalProvisioningError({
+        detail:
+          "The original workspace no longer exists. Restore it or choose New worktree when a saved checkpoint is available.",
+      });
+    }
     yield* attachmentCopier.copyAll({
       threadId: payload.newThreadId,
       copies: payload.attachmentCopies,
     });
-    const originCwd = origin.worktreePath ?? origin.workspaceRoot;
+    const originCwd = localAvailable ? originWorkspace : origin.workspaceRoot;
     const toRef = checkpointRefForThreadTurn(payload.newThreadId, 0);
     const sourceCheckpointTurnCount = payload.sourceCheckpointTurnCount;
     const fromRef =
@@ -332,7 +342,18 @@ const make = Effect.gen(function* () {
       }),
     );
 
-  const worker = yield* makeDrainableWorker(processForkSafely);
+  const queuedForks = new Set<string>();
+  const worker = yield* makeDrainableWorker((payload: ThreadForkedPayload) =>
+    processForkSafely(payload).pipe(
+      Effect.ensuring(Effect.sync(() => queuedForks.delete(payload.newThreadId))),
+    ),
+  );
+  const enqueue = (payload: ThreadForkedPayload) =>
+    Effect.gen(function* () {
+      if (queuedForks.has(payload.newThreadId)) return;
+      queuedForks.add(payload.newThreadId);
+      yield* worker.enqueue(payload);
+    });
 
   const start: ScientForkReactorShape["start"] = Effect.fn("startScientForkReactor")(function* () {
     // Subscribe first, then load durable work. If a fork lands between those
@@ -340,14 +361,14 @@ const make = Effect.gen(function* () {
     // second delivery a no-op.
     yield* forkParked(
       Stream.runForEach(orchestrationEngine.streamDomainEvents, (event) =>
-        event.type === "thread.forked" ? worker.enqueue(event.payload) : Effect.void,
+        event.type === "thread.forked" ? enqueue(event.payload) : Effect.void,
       ),
     );
     // A failed recovery query means the durable fork queue cannot be trusted.
     // Fail reactor startup instead of silently accepting forks that could be
     // stranded. The outer service lifecycle treats defects as fatal.
     const recoverable = yield* listRecoverableForks(sql).pipe(Effect.orDie);
-    yield* Effect.forEach(recoverable, worker.enqueue, { concurrency: 1, discard: true });
+    yield* Effect.forEach(recoverable, enqueue, { concurrency: 1, discard: true });
   });
 
   const readForkStatus = (threadId: ThreadForkedPayload["newThreadId"]) =>
@@ -367,12 +388,6 @@ const make = Effect.gen(function* () {
     const status = yield* readForkStatus(threadId);
     if (status?.status === "ready") {
       return true;
-    }
-    if (status?.status === "failed") {
-      return yield* new ScientForkCompletionError({
-        threadId,
-        detail: status.last_error ?? "Fork provisioning failed.",
-      });
     }
     if (status?.status === "abandoned") {
       return yield* new ScientForkCompletionError({
@@ -410,15 +425,145 @@ const make = Effect.gen(function* () {
       ),
     );
     if (recoverable !== null) {
-      yield* worker.enqueue(recoverable);
+      yield* enqueue(recoverable);
+    } else {
+      if (yield* resolveFinishedStatus(threadId)) {
+        yield* releaseCompletion(threadId, completion);
+        return;
+      }
     }
     return yield* Deferred.await(completion);
   });
+
+  const getDisposition: ScientForkReactorShape["getDisposition"] = (threadId) =>
+    readForkStatus(threadId).pipe(Effect.map((status) => status?.status ?? "unknown"));
+
+  const boundaryResolver = makeForkBoundaryResolver(sql);
+  const getOptions: ScientForkReactorShape["getOptions"] = Effect.fn("getScientForkOptions")(
+    function* (input) {
+      const unavailable = (reason: string) => ({
+        available: false,
+        localAvailable: false,
+        reason,
+        sourceAssistantMessageId: null,
+        sourceUserMessageId: null,
+        newWorktree: false,
+      });
+      const result = yield* Effect.gen(function* () {
+        if (
+          input.sourceAssistantMessageId !== undefined &&
+          input.sourceUserMessageId !== undefined
+        ) {
+          return unavailable("Choose one message to fork from.");
+        }
+        const originOption = yield* projectionSnapshotQuery.getThreadDetailById(
+          input.originThreadId,
+        );
+        if (Option.isNone(originOption) || originOption.value.deletedAt !== null) {
+          return unavailable("The original conversation is no longer available.");
+        }
+        const origin = originOption.value;
+        if (origin.projectId === null)
+          return unavailable(
+            "This older conversation has no project workspace and cannot be forked.",
+          );
+        const resolved = yield* boundaryResolver.resolve({
+          originThreadId: input.originThreadId,
+          threadCreatedAt: origin.createdAt,
+          ...(input.sourceAssistantMessageId === undefined
+            ? {}
+            : { sourceAssistantMessageId: input.sourceAssistantMessageId }),
+          ...(input.sourceUserMessageId === undefined
+            ? {}
+            : { sourceUserMessageId: input.sourceUserMessageId }),
+        });
+        const source = origin.messages.find(
+          (message) => message.id === resolved.forkPoint.messageId,
+        );
+        if (!source || source.streaming)
+          return unavailable(
+            "This message is still being written. Choose a completed response or a sent message.",
+          );
+        if (
+          resolved.forkPoint.kind === "user-message" &&
+          source.attachments?.some((attachment) => attachment.type !== "image")
+        ) {
+          return unavailable(
+            "Fork from the completed response to retain this message and its files. Editing a fork from a message with file attachments is not supported yet.",
+          );
+        }
+        const retained = resolved.boundaries.slice(
+          0,
+          resolved.boundaries.indexOf(resolved.selectedBoundary) + 1,
+        );
+        const prefix = retainPrefixMessages(
+          origin.messages,
+          retained,
+          new Set(
+            retained.flatMap((boundary) => (boundary.turnId === null ? [] : [boundary.turnId])),
+          ),
+        );
+        yield* attachmentCopier.checkSources({
+          threadId: origin.id,
+          attachments: prefix.messages.flatMap((message) => message.attachments ?? []),
+        });
+        const context = yield* projectionSnapshotQuery.getThreadCheckpointContext(origin.id);
+        if (Option.isNone(context))
+          return unavailable(
+            "The original conversation's workspace is unavailable. Restore its project before forking.",
+          );
+        const cwd = context.value.worktreePath ?? context.value.workspaceRoot;
+        const localAvailable = yield* checkpointBaseline.workspaceExists(cwd);
+        const checkpointCwd = localAvailable ? cwd : context.value.workspaceRoot;
+        const checkpoint = origin.checkpoints.find(
+          (checkpoint) =>
+            checkpoint.turnId === resolved.selectedBoundary.turnId && checkpoint.status === "ready",
+        );
+        const newWorktree =
+          checkpoint !== undefined &&
+          (yield* checkpointBaseline
+            .hasCheckpoint(
+              checkpointCwd,
+              checkpointRefForThreadTurn(origin.id, checkpoint.checkpointTurnCount),
+            )
+            .pipe(Effect.catch(() => Effect.succeed(false))));
+        return {
+          available: localAvailable || newWorktree,
+          localAvailable,
+          reason: localAvailable
+            ? null
+            : newWorktree
+              ? "The original worktree no longer exists. Choose New worktree to restore the saved checkpoint in an independent workspace."
+              : "The original workspace is unavailable. Restore its folder before forking.",
+          sourceAssistantMessageId:
+            resolved.forkPoint.kind === "assistant-response" ? resolved.forkPoint.messageId : null,
+          sourceUserMessageId:
+            resolved.forkPoint.kind === "user-message" ? resolved.forkPoint.messageId : null,
+          newWorktree,
+        };
+      }).pipe(
+        Effect.catch((error) =>
+          Effect.succeed(
+            unavailable(
+              error._tag === "ForkBoundaryResolutionError"
+                ? "This response did not finish successfully or its completion record is unavailable. Choose an earlier completed response or fork from a sent message."
+                : error instanceof Error
+                  ? error.message
+                  : "Unable to check this fork. Reconnect and try again.",
+            ),
+          ),
+        ),
+      );
+      return result;
+    },
+  );
 
   return {
     start,
     drain: worker.drain,
     awaitCompletion,
+    getDisposition,
+    getOptions,
   } satisfies ScientForkReactorShape;
 });
 

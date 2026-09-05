@@ -118,6 +118,7 @@ export const ExecutionEnvironmentCapabilities = Schema.Struct({
       servers, so clients keep the proposed fork title read-only and never
       send an override. */
   threadForkTitleOverride: Schema.optionalKey(Schema.Boolean),
+  threadForkRecovery: Schema.optionalKey(Schema.Boolean),
   /** Server persists a pull request reference on thread.meta.update. */
   threadPullRequestLinking: Schema.optionalKey(Schema.Boolean),
   /** The update path clients should offer for this server. Absent on

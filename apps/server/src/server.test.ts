@@ -1032,6 +1032,16 @@ const buildAppUnderTest = (options?: {
             start: () => Effect.void,
             drain: Effect.void,
             awaitCompletion: () => Effect.void,
+            getDisposition: () => Effect.succeed("unknown"),
+            getOptions: () =>
+              Effect.succeed({
+                available: false,
+                localAvailable: false,
+                reason: "No fixture boundary",
+                newWorktree: false,
+                sourceAssistantMessageId: null,
+                sourceUserMessageId: null,
+              }),
             ...options?.layers?.scientForkReactor,
           }),
         ),
@@ -6664,6 +6674,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
             dispatch: () => Effect.succeed({ sequence: 42 }),
           },
           scientForkReactor: {
+            getDisposition: () => Effect.succeed("failed"),
             awaitCompletion: () =>
               Effect.fail(
                 new ScientForkReactor.ScientForkCompletionError({
@@ -6692,6 +6703,40 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       assertTrue(result._tag === "Failure");
       assertTrue(result.failure._tag === "OrchestrationDispatchCommandError");
       assert.include(result.failure.message, "Fork workspace provisioning failed.");
+      assert.equal(result.failure.forkDisposition, "failed");
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
+  it.effect("returns authoritative fork options over the read-authorized RPC", () =>
+    Effect.gen(function* () {
+      const originThreadId = ThreadId.make("fork-options-origin");
+      const sourceAssistantMessageId = MessageId.make("fork-options-answer");
+      yield* buildAppUnderTest({
+        layers: {
+          scientForkReactor: {
+            getOptions: (input) => {
+              assert.equal(input.originThreadId, originThreadId);
+              assert.isUndefined(input.sourceAssistantMessageId);
+              return Effect.succeed({
+                available: true,
+                localAvailable: true,
+                reason: null,
+                newWorktree: false,
+                sourceAssistantMessageId,
+                sourceUserMessageId: null,
+              });
+            },
+          },
+        },
+      });
+      const wsUrl = yield* getWsServerUrl("/ws");
+      const result = yield* Effect.scoped(
+        withWsRpcClient(wsUrl, (client) =>
+          client[ORCHESTRATION_WS_METHODS.getForkOptions]({ originThreadId }),
+        ),
+      );
+      assert.equal(result.sourceAssistantMessageId, sourceAssistantMessageId);
+      assert.isTrue(result.localAvailable);
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 

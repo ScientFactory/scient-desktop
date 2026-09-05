@@ -127,7 +127,7 @@ describe("threadRoutes", () => {
     ).toBe("ready");
   });
 
-  it("distinguishes bootstrap loading from a missing thread", () => {
+  it("waits for authoritative detail when a new fork or archived source is absent from the sidebar", () => {
     expect(
       resolveThreadRouteRenderState({
         bootstrapComplete: false,
@@ -145,7 +145,7 @@ describe("threadRoutes", () => {
         serverThreadDetailDeleted: false,
         draftThreadExists: false,
       }),
-    ).toBe("missing");
+    ).toBe("loading");
   });
 
   it("redirects deleted shell-only threads", () => {

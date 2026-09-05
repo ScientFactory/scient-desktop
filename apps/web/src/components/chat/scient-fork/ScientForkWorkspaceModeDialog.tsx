@@ -6,7 +6,15 @@ import type {
 } from "@t3tools/contracts";
 import { deriveForkTitle } from "@t3tools/shared/scientForkTitle";
 import { SplitIcon } from "lucide-react";
-import { type FormEvent, useEffect, useId, useMemo, useRef, useState } from "react";
+import {
+  type FormEvent,
+  useEffect,
+  useId,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 
 import { useEnvironmentThreadShells } from "../../../state/entities";
 import { Button } from "../../ui/button";
@@ -78,6 +86,7 @@ function unavailableCopy(source: ScientForkSource, reason: ForkWorktreeUnavailab
 export interface ScientForkConfirmation {
   readonly workspaceMode: ForkWorkspaceMode;
   readonly titleOverride?: string;
+  readonly displayTitle?: string;
 }
 
 export type ScientForkSubmission =
@@ -90,8 +99,16 @@ interface ScientForkDialogProps {
   readonly titleOverrideSupported: boolean;
   readonly worktreeAvailability: ForkWorktreeAvailability;
   readonly onOpenChange: (open: boolean) => void;
-  readonly onConfirm: (confirmation: ScientForkConfirmation) => void;
+  readonly onConfirm: (
+    confirmation: ScientForkConfirmation,
+    beforeNavigate: () => Promise<boolean>,
+  ) => void | Promise<unknown>;
   readonly open: boolean;
+  readonly error?: string | null | undefined;
+  readonly checking?: boolean;
+  readonly locked?: boolean;
+  readonly retryTitle?: string | undefined;
+  readonly retryWorkspaceMode?: ForkWorkspaceMode | undefined;
 }
 
 interface ScientForkTitleOrigin {
@@ -105,7 +122,7 @@ interface ScientForkTitleOrigin {
 /**
  * Map ephemeral form state to the atomic fork command. An untouched proposal
  * remains server-allocated, while an edited title becomes an explicit
- * override. Unavailable worktree requests fail closed to the current workspace.
+ * override. Unavailable worktree requests are rejected without changing the selected mode.
  */
 export function resolveScientForkSubmission(input: {
   readonly titleDraft: string;
@@ -115,7 +132,7 @@ export function resolveScientForkSubmission(input: {
   readonly worktreeAvailability: ForkWorktreeAvailability;
 }): ScientForkSubmission {
   const trimmedTitle = input.titleDraft.trim();
-  if (trimmedTitle.length === 0) {
+  if (trimmedTitle.length === 0 || (input.newWorktree && !input.worktreeAvailability.available)) {
     return { ok: false };
   }
   const workspaceMode =
@@ -164,6 +181,11 @@ export function ScientForkWorkspaceModeDialog({
   onOpenChange,
   onConfirm,
   open,
+  error,
+  checking = false,
+  locked = false,
+  retryTitle,
+  retryWorkspaceMode,
 }: ScientForkDialogProps & {
   readonly proposedTitle: string;
 }) {
@@ -174,6 +196,17 @@ export function ScientForkWorkspaceModeDialog({
   const [titleEdited, setTitleEdited] = useState(false);
   const [newWorktree, setNewWorktree] = useState(false);
   const wasOpenRef = useRef(false);
+  const [closingForNavigation, setClosingForNavigation] = useState(false);
+  const finishClose = useRef<((completed: boolean) => void) | null>(null);
+  useLayoutEffect(() => {
+    if (!open) return;
+    return () => {
+      // Leaving the source while the card closes must release the operation
+      // without navigating back or leaving the origin locked.
+      finishClose.current?.(false);
+      finishClose.current = null;
+    };
+  }, [open]);
 
   useEffect(() => {
     if (open && !wasOpenRef.current) {
@@ -186,10 +219,16 @@ export function ScientForkWorkspaceModeDialog({
 
   // Follow live sibling-title changes only until the user edits the proposal.
   useEffect(() => {
-    if (open && !titleEdited) {
+    if (open && !titleEdited && !disabled && !locked) {
       setTitleDraft(proposedTitle);
     }
-  }, [open, proposedTitle, titleEdited]);
+  }, [open, proposedTitle, titleEdited, disabled, locked]);
+
+  const displayedTitle = locked && retryTitle !== undefined ? retryTitle : titleDraft;
+  const selectedNewWorktree =
+    locked && retryWorkspaceMode !== undefined
+      ? retryWorkspaceMode === "new-worktree"
+      : newWorktree;
 
   useEffect(() => {
     if (!open) return;
@@ -203,21 +242,41 @@ export function ScientForkWorkspaceModeDialog({
   }, [open, titleOverrideSupported]);
 
   const submission = resolveScientForkSubmission({
-    titleDraft,
+    titleDraft: displayedTitle,
     proposedTitle,
     titleOverrideSupported,
-    newWorktree,
+    newWorktree: selectedNewWorktree,
     worktreeAvailability,
   });
 
-  const handleSubmit = (event: FormEvent) => {
+  const handleSubmit = async (event: FormEvent) => {
     event.preventDefault();
-    if (disabled || !submission.ok) return;
-    onConfirm(submission.confirmation);
+    if (disabled || checking || !submission.ok) return;
+    try {
+      await onConfirm(
+        { ...submission.confirmation, displayTitle: displayedTitle },
+        () =>
+          new Promise<boolean>((resolve) => {
+            finishClose.current = resolve;
+            setClosingForNavigation(true);
+          }),
+      );
+    } finally {
+      // A failed navigation reopens the same form with its saved retry state.
+      setClosingForNavigation(false);
+    }
   };
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
+    <Dialog
+      open={open && !closingForNavigation}
+      onOpenChange={onOpenChange}
+      onOpenChangeComplete={(isOpen) => {
+        if (isOpen) return;
+        finishClose.current?.(true);
+        finishClose.current = null;
+      }}
+    >
       <DialogPopup
         className="max-w-[23rem] -translate-y-4"
         backdropClassName="!backdrop-blur-[0.5px]"
@@ -236,9 +295,9 @@ export function ScientForkWorkspaceModeDialog({
               <Input
                 id={`${formId}-title`}
                 ref={titleInputRef}
-                value={titleDraft}
+                value={displayedTitle}
                 unstyled
-                disabled={disabled || !titleOverrideSupported}
+                disabled={disabled || locked || !titleOverrideSupported}
                 aria-invalid={!submission.ok}
                 className="relative inline-flex h-9 w-full min-w-0 items-center rounded-md bg-muted/20 text-base text-foreground shadow-none ring-1 ring-foreground/50 transition-shadow [&>input]:px-2.5"
                 onChange={(event) => {
@@ -251,7 +310,7 @@ export function ScientForkWorkspaceModeDialog({
                   This server names new forks automatically. Update the server to choose a title
                   here.
                 </p>
-              ) : !submission.ok ? (
+              ) : displayedTitle.trim().length === 0 ? (
                 <p className="text-destructive text-xs">A title is required.</p>
               ) : null}
             </div>
@@ -266,11 +325,16 @@ export function ScientForkWorkspaceModeDialog({
               </span>
               <Switch
                 aria-label="New worktree"
-                checked={newWorktree && worktreeAvailability.available}
-                disabled={disabled || !worktreeAvailability.available}
+                checked={selectedNewWorktree}
+                disabled={disabled || locked || checking || !worktreeAvailability.available}
                 onCheckedChange={(checked) => setNewWorktree(Boolean(checked))}
               />
             </label>
+            {error ? (
+              <p role="alert" className="text-destructive text-xs leading-relaxed">
+                {error}
+              </p>
+            ) : null}
           </form>
         </DialogPanel>
         <DialogFooter className="px-5 py-3 max-sm:px-4" variant="bare">
@@ -282,8 +346,13 @@ export function ScientForkWorkspaceModeDialog({
           >
             Cancel
           </Button>
-          <Button form={formId} type="submit" size="sm" disabled={disabled || !submission.ok}>
-            {disabled ? "Forking…" : "Fork"}
+          <Button
+            form={formId}
+            type="submit"
+            size="sm"
+            disabled={disabled || checking || !submission.ok}
+          >
+            {disabled ? "Forking…" : checking ? "Checking…" : locked || error ? "Retry" : "Fork"}
           </Button>
         </DialogFooter>
       </DialogPopup>

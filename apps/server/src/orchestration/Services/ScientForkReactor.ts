@@ -14,7 +14,12 @@ import * as Context from "effect/Context";
 import type * as Effect from "effect/Effect";
 import type * as Scope from "effect/Scope";
 import * as Schema from "effect/Schema";
-import { ThreadId } from "@t3tools/contracts";
+import {
+  ThreadId,
+  type ForkDisposition,
+  type ForkOptions,
+  type GetForkOptionsInput,
+} from "@t3tools/contracts";
 
 export class ScientForkCompletionError extends Schema.TaggedErrorClass<ScientForkCompletionError>()(
   "ScientForkCompletionError",
@@ -49,6 +54,12 @@ export interface ScientForkReactorShape {
 
   /** Typed completion receipt used by the RPC acknowledgement gate and tests. */
   readonly awaitCompletion: (threadId: ThreadId) => Effect.Effect<void, ScientForkCompletionError>;
+  readonly getDisposition: (
+    threadId: ThreadId,
+  ) => Effect.Effect<ForkDisposition, ScientForkCompletionError>;
+  readonly getOptions: (
+    input: GetForkOptionsInput,
+  ) => Effect.Effect<ForkOptions, ScientForkCompletionError>;
 }
 
 /**

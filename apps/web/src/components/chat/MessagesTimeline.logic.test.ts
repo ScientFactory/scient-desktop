@@ -735,6 +735,18 @@ describe("resolveAssistantMessageCopyState", () => {
 });
 
 describe("deriveMessagesTimelineRows", () => {
+  it("keeps source navigation available for a fork of the first user message", () => {
+    const rows = deriveMessagesTimelineRows({
+      timelineEntries: [],
+      hasForkBaseline: true,
+      forkBaselineAssistantMessageId: null,
+      isWorking: false,
+      activeTurnStartedAt: null,
+      turnDiffSummaryByAssistantMessageId: new Map(),
+      revertTurnCountByUserMessageId: new Map(),
+    });
+    expect(rows).toEqual([{ kind: "fork-marker", id: "conversation-fork-marker" }]);
+  });
   it("allows a durable user message to be selected as a fork point", () => {
     const rows = deriveMessagesTimelineRows({
       timelineEntries: [
@@ -1210,7 +1222,7 @@ describe("deriveMessagesTimelineRows", () => {
       kind: "assistant-meta",
       message: { id: "assistant-final" },
       showAssistantCopyButton: true,
-      canForkConversation: true,
+      canForkConversation: undefined,
     });
     expect(rows.at(-3)).toMatchObject({
       kind: "message",

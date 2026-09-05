@@ -72,12 +72,14 @@ interface LineageRow {
 function makeCheckpointBaselineFake(
   forkBaselineCalls: Array<Parameters<ScientForkCheckpointBaselineShape["copy"]>[0]>,
   result = true,
+  overrides?: Partial<ScientForkCheckpointBaselineShape>,
 ) {
   return ScientForkCheckpointBaselineTest({
     copy: (input) =>
       Effect.sync(() => {
         forkBaselineCalls.push(input);
       }).pipe(Effect.as(result)),
+    ...overrides,
   });
 }
 
@@ -136,6 +138,7 @@ function makeHarnessLayer(
   createWorktreeCalls: Array<VcsCreateWorktreeInput>,
   baselineResult = true,
   attachmentCopierOverrides?: Partial<ScientForkAttachmentCopierShape>,
+  baselineOverrides?: Partial<ScientForkCheckpointBaselineShape>,
 ) {
   const orchestrationLayer = OrchestrationEngineLive.pipe(
     Layer.provide(OrchestrationProjectionSnapshotQueryLive),
@@ -157,7 +160,9 @@ function makeHarnessLayer(
   return ScientForkReactorLive.pipe(
     Layer.provideMerge(orchestrationLayer),
     Layer.provideMerge(projectionSnapshotLayer),
-    Layer.provideMerge(makeCheckpointBaselineFake(forkBaselineCalls, baselineResult)),
+    Layer.provideMerge(
+      makeCheckpointBaselineFake(forkBaselineCalls, baselineResult, baselineOverrides),
+    ),
     Layer.provideMerge(ScientForkAttachmentCopierTest(attachmentCopierOverrides)),
     Layer.provideMerge(makeGitWorkflowFake(NEW_WORKTREE_FIXTURE, createWorktreeCalls)),
     // Expose SqlClient (shared, memoized instance) so the test can read the
@@ -312,6 +317,209 @@ const readLineageRow = (sql: SqlClient.SqlClient) =>
   );
 
 describe("ScientForkReactor", () => {
+  it.live(
+    "can restore a removed origin worktree from the project checkpoint without substituting a local workspace",
+    () => {
+      const baselineCalls: Array<Parameters<ScientForkCheckpointBaselineShape["copy"]>[0]> = [];
+      const worktreeCalls: Array<VcsCreateWorktreeInput> = [];
+      return Effect.gen(function* () {
+        const reactor = yield* ScientForkReactor;
+        yield* seedOrigin();
+        const options = yield* reactor.getOptions({ originThreadId: ORIGIN });
+        expect(options.localAvailable).toBe(false);
+        expect(options.newWorktree).toBe(true);
+        expect(options.reason).toContain("original worktree");
+        yield* dispatchFork("new-worktree", "restore-worktree");
+        yield* reactor.awaitCompletion(NEW);
+        yield* reactor.drain;
+        expect(baselineCalls[0]?.cwd).toBe(WORKSPACE_ROOT);
+        expect(worktreeCalls[0]?.cwd).toBe(WORKSPACE_ROOT);
+      }).pipe(
+        Effect.provide(
+          makeHarnessLayer(baselineCalls, worktreeCalls, true, undefined, {
+            workspaceExists: (cwd) => Effect.succeed(cwd === WORKSPACE_ROOT),
+          }),
+        ),
+      );
+    },
+  );
+
+  it.live(
+    "rejects a send before provisioning without adding the user's message to a disposable fork",
+    () =>
+      Effect.gen(function* () {
+        const engine = yield* OrchestrationEngineService;
+        const query = yield* ProjectionSnapshotQuery;
+        yield* seedOrigin();
+        yield* dispatchFork("local", "pending-send-gate");
+        const result = yield* Effect.result(
+          engine.dispatch({
+            type: "thread.turn.start",
+            commandId: CommandId.make("early-send"),
+            threadId: NEW,
+            message: {
+              messageId: MessageId.make("early-message"),
+              role: "user",
+              text: "Keep my unsent draft",
+              attachments: [],
+            },
+            interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+            runtimeMode: "approval-required",
+            createdAt: CREATED_AT,
+          }),
+        );
+        expect(result._tag).toBe("Failure");
+        const detail = yield* query.getThreadDetailById(NEW);
+        expect(
+          Option.isSome(detail) &&
+            detail.value.messages.some((message) => message.id === "early-message"),
+        ).toBe(false);
+      }).pipe(Effect.provide(makeHarnessLayer([], []))),
+  );
+
+  it.live(
+    "preserves lineage and inherited history through renaming, changing providers, and reforking",
+    () =>
+      Effect.gen(function* () {
+        const { snapshotQuery } = yield* runForkScenario("local", "rename-provider-fork");
+        const engine = yield* OrchestrationEngineService;
+        const reactor = yield* ScientForkReactor;
+        const fork = Option.getOrThrow(yield* snapshotQuery.getThreadDetailById(NEW));
+        expect(fork.session).toBeNull();
+        const modelSelection = {
+          instanceId: ProviderInstanceId.make("my-other-provider"),
+          model: "chosen-model",
+        };
+        yield* engine.dispatch({
+          type: "thread.meta.update",
+          commandId: CommandId.make("rename-original"),
+          threadId: ORIGIN,
+          title: "Renamed original",
+        });
+        yield* engine.dispatch({
+          type: "thread.meta.update",
+          commandId: CommandId.make("rename-fork"),
+          threadId: NEW,
+          title: "Independent name",
+          modelSelection,
+        });
+        const renamed = Option.getOrThrow(yield* snapshotQuery.getThreadDetailById(NEW));
+        expect(renamed.forkLineage?.originThreadId).toBe(ORIGIN);
+        expect(renamed.modelSelection).toEqual(modelSelection);
+        expect(renamed.messages).toEqual(fork.messages);
+        expect(renamed.session).toBeNull();
+        const childId = ThreadId.make("fork-of-renamed-fork");
+        yield* engine.dispatch({
+          type: "thread.fork",
+          commandId: CommandId.make("refork-renamed"),
+          originThreadId: NEW,
+          newThreadId: childId,
+          sourceAssistantMessageId: renamed.forkLineage!.baselineAssistantMessageId!,
+          workspaceMode: "local",
+        });
+        yield* reactor.awaitCompletion(childId);
+        const child = Option.getOrThrow(yield* snapshotQuery.getThreadDetailById(childId));
+        expect(child.messages.map((message) => message.text)).toEqual(
+          fork.messages.map((message) => message.text),
+        );
+        expect(child.modelSelection).toEqual(modelSelection);
+        expect(child.session).toBeNull();
+        expect(child.forkLineage?.originThreadId).toBe(NEW);
+        expect(Option.getOrThrow(yield* snapshotQuery.getThreadDetailById(ORIGIN)).title).toBe(
+          "Renamed original",
+        );
+      }).pipe(Effect.provide(makeHarnessLayer([], []))),
+  );
+
+  it.live(
+    "checks fork eligibility against durable turn state and resolves user forks separately",
+    () =>
+      Effect.gen(function* () {
+        const reactor = yield* ScientForkReactor;
+        const sql = yield* SqlClient.SqlClient;
+        yield* seedOrigin();
+        const completed = yield* reactor.getOptions({ originThreadId: ORIGIN });
+        expect(completed.available).toBe(true);
+        expect(completed.sourceAssistantMessageId).toBe(SOURCE_ASSISTANT_MESSAGE_ID);
+        yield* sql`UPDATE projection_turns SET state = 'interrupted' WHERE thread_id = ${ORIGIN}`;
+        const interrupted = yield* reactor.getOptions({
+          originThreadId: ORIGIN,
+          sourceAssistantMessageId: SOURCE_ASSISTANT_MESSAGE_ID,
+        });
+        expect(interrupted.available).toBe(false);
+        expect(interrupted.reason).toContain("did not finish");
+        const request = yield* reactor.getOptions({
+          originThreadId: ORIGIN,
+          sourceUserMessageId: SOURCE_USER_MESSAGE_ID,
+        });
+        expect(request.available).toBe(true);
+        expect(request.newWorktree).toBe(false);
+      }).pipe(Effect.provide(makeHarnessLayer([], []))),
+  );
+
+  it.live("retries a transient provisioning failure in place without a server restart", () => {
+    let attempts = 0;
+    return Effect.gen(function* () {
+      const reactor = yield* ScientForkReactor;
+      const sql = yield* SqlClient.SqlClient;
+      yield* seedOrigin();
+      yield* dispatchFork("local", "retry-same-fork");
+      const first = yield* Effect.result(reactor.awaitCompletion(NEW));
+      expect(first._tag).toBe("Failure");
+      yield* reactor.drain;
+      expect(yield* reactor.getDisposition(NEW)).toBe("failed");
+      yield* dispatchFork("local", "retry-same-fork");
+      yield* reactor.awaitCompletion(NEW);
+      yield* reactor.drain;
+      expect(yield* reactor.getDisposition(NEW)).toBe("ready");
+      expect((yield* readLineageRow(sql))?.attempt_count).toBe(2);
+      expect(attempts).toBe(2);
+    }).pipe(
+      Effect.provide(
+        makeHarnessLayer([], [], true, {
+          copyAll: ({ threadId }) =>
+            Effect.suspend(() => {
+              attempts++;
+              return attempts === 1
+                ? Effect.fail(
+                    new ScientForkAttachmentCopyError({
+                      threadId,
+                      reason: "target-write-failed",
+                      detail: "Disk temporarily unavailable",
+                    }),
+                  )
+                : Effect.void;
+            }),
+        }),
+      ),
+    );
+  });
+
+  it.live("reports missing history dependencies before creating a destination", () =>
+    Effect.gen(function* () {
+      const reactor = yield* ScientForkReactor;
+      const sql = yield* SqlClient.SqlClient;
+      yield* seedOrigin();
+      const options = yield* reactor.getOptions({ originThreadId: ORIGIN });
+      expect(options.available).toBe(false);
+      expect(options.reason).toContain("Unavailable evidence.png");
+      expect(yield* readLineageRow(sql)).toBeUndefined();
+    }).pipe(
+      Effect.provide(
+        makeHarnessLayer([], [], true, {
+          checkSources: ({ threadId }) =>
+            Effect.fail(
+              new ScientForkAttachmentCopyError({
+                threadId,
+                reason: "source-unavailable",
+                detail: "Unavailable evidence.png",
+              }),
+            ),
+        }),
+      ),
+    ),
+  );
+
   it.live("provisions a shared-worktree baseline for a local fork", () => {
     const forkBaselineCalls: Array<Parameters<ScientForkCheckpointBaselineShape["copy"]>[0]> = [];
     const createWorktreeCalls: Array<VcsCreateWorktreeInput> = [];

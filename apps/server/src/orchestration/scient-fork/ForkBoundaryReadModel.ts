@@ -290,7 +290,12 @@ export function makeForkBoundaryResolver(sql: SqlClient.SqlClient) {
       input.threadCreatedAt,
       copiedBoundaryRow._tag === "Some" ? copiedBoundaryRow.value.copiedBoundaries : [],
     );
-    const sourceAssistantMessageId = input.sourceAssistantMessageId;
+    const sourceAssistantMessageId =
+      input.sourceAssistantMessageId ??
+      (input.sourceUserMessageId === undefined
+        ? (boundaries.findLast((boundary) => boundary.assistantMessageId !== null)
+            ?.assistantMessageId ?? undefined)
+        : undefined);
     const sourceUserMessageId = input.sourceUserMessageId;
     const resolved =
       sourceAssistantMessageId !== undefined
