@@ -148,6 +148,12 @@ Verified with repository Node 24.19.0 and pnpm 11.10.0:
 - Literal-parent provenance and whitespace checks passed; integration state moved
   only after the successful final server result.
 
+Hosted CI subsequently caught an omitted classification for the extracted
+`useFileSaveCoordinator.ts` mount. Local seam checks had validated the manifest
+without the PR diff. The hook is now classified as an upstream mount carrying
+revision-checked writes, and the analysis/LaTeX checks were rerun with explicit
+`--base`, `--head`, and `--upstream-ref` arguments, matching the hosted gate.
+
 An earlier concurrent web run exceeded an existing one-second Mermaid grammar
 test wait under load. The unchanged focused test and the full web suite passed
 with bounded concurrency. No assertion or timeout was weakened. Final workspace

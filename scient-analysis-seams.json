@@ -157,6 +157,11 @@
       "purpose": "Preserve dirty buffers across conditional-write conflicts."
     },
     {
+      "path": "apps/web/src/components/files/useFileSaveCoordinator.ts",
+      "anchor": "expectedRevision",
+      "purpose": "Compose the upstream save hook with Scient revision-checked writes and explicit conflict recovery."
+    },
+    {
       "path": "apps/web/src/components/files/projectFilesQueryState.ts",
       "anchor": "revision",
       "purpose": "Carry authoritative file revisions through the shared file-query projection."
