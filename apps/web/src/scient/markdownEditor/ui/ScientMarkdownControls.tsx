@@ -309,7 +309,7 @@ function StyleMenu({
     <DockMenu
       label={`Style: ${styleMenuLabel(snapshot)}`}
       icon={styleTriggerIcon(snapshot)}
-      popupClassName="w-50 overflow-hidden p-0 [&>div]:px-0 [&_[data-slot=menu-radio-item]]:rounded-none [&_[data-slot=menu-radio-item]]:px-3"
+      popupClassName="w-50 p-0 [&>div]:px-0.5 [&_[data-slot=menu-radio-item]]:px-2.5"
     >
       <StyleMenuItems controller={controller} snapshot={snapshot} />
     </DockMenu>
