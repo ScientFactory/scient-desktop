@@ -461,3 +461,113 @@ describe("MarkdownPersistenceRegistry", () => {
     }
   });
 });
+
+describe("Markdown checkpoint admission", () => {
+  it.each([
+    ["A", "B", "B", false],
+    ["B", "B", "B", false],
+    ["C", "B", "B", true],
+    ["C", "A", "A", true],
+  ])("recovers draft against fresh disk %s", async (disk, draft, expected, conflict) => {
+    const checkpoint = {
+      token: "checkpoint",
+      baselineSource: "A",
+      baselineRevision: "rA",
+      draftSource: draft,
+    };
+    const store = { read: vi.fn(async () => checkpoint), replace: vi.fn(async () => true) };
+    const write = vi.fn(async () => ({ revision: "written" }));
+    const registry = new MarkdownPersistenceRegistry({
+      checkpointStore: store,
+      createTransport: () => ({
+        read: async () => ({ source: disk, revision: `r${disk}` }),
+        write,
+        classifyFailure: () => "terminal",
+        subscribe: () => () => {},
+        project: () => {},
+      }),
+    });
+    vi.useFakeTimers();
+    try {
+      const lease = await registry.open(target);
+      expect(lease.getSnapshot().draftSource).toBe(expected);
+      expect(lease.getSnapshot().conflict !== null).toBe(conflict);
+      expect(lease.getSnapshot().pending).toBe(conflict || draft !== disk);
+      expect(write).not.toHaveBeenCalled();
+      if (conflict) {
+        await vi.advanceTimersByTimeAsync(3000);
+        expect(write).not.toHaveBeenCalled();
+      }
+      lease.release();
+    } finally {
+      vi.clearAllTimers();
+      vi.useRealTimers();
+    }
+  });
+});
+
+it("recovers an undo that followed an ambiguously completed publication", async () => {
+  vi.useFakeTimers();
+  try {
+    const registry = new MarkdownPersistenceRegistry({
+      checkpointStore: {
+        read: async () => ({
+          token: "one",
+          baselineSource: "A",
+          baselineRevision: "rA",
+          draftSource: "A",
+          publicationSource: "B",
+        }),
+        replace: async () => true,
+      },
+      createTransport: () => ({
+        read: async () => ({ source: "B", revision: "rB" }),
+        write: async () => ({ revision: "rA2" }),
+        classifyFailure: () => "terminal",
+        subscribe: () => () => {},
+        project: () => {},
+      }),
+    });
+    const lease = await registry.open(target);
+    expect(lease.getSnapshot()).toMatchObject({
+      baselineSource: "B",
+      draftSource: "A",
+      pending: true,
+      conflict: null,
+    });
+    lease.release();
+  } finally {
+    vi.clearAllTimers();
+    vi.useRealTimers();
+  }
+});
+
+it("keeps file admission available when optional recovery storage is unavailable", async () => {
+  vi.useFakeTimers();
+  const logged = vi.spyOn(console, "error").mockImplementation(() => {});
+  try {
+    const registry = new MarkdownPersistenceRegistry({
+      checkpointStore: {
+        read: async () => {
+          throw new Error("storage unavailable");
+        },
+        replace: async () => true,
+      },
+      createTransport: () => ({
+        read: async () => ({ source: "disk", revision: "r1" }),
+        write: async () => ({ revision: "r2" }),
+        classifyFailure: () => "terminal",
+        subscribe: () => () => {},
+        project: () => {},
+      }),
+    });
+    const lease = await registry.open(target);
+    expect(lease.getSnapshot().draftSource).toBe("disk");
+    expect(logged).toHaveBeenCalledOnce();
+    lease.release();
+  } finally {
+    logged.mockRestore();
+    vi.clearAllTimers();
+    vi.useRealTimers();
+  }
+});

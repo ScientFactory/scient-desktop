@@ -751,13 +751,18 @@ function tableCellMarkdown(cell: ProseMirrorNode): string {
   const paragraph = paragraphType.create(null, cell.content);
   const document = scientMarkdownSchema.topNodeType.createAndFill(null, [paragraph]);
   if (!document) throw new Error("Unable to serialize a Markdown table cell.");
-  return tableCellSerializer
-    .serialize(document)
-    .replace(
-      /(\\*)\|/gu,
-      (_match, escapes: string) => `${escapes}${escapes.length % 2 === 0 ? "\\" : ""}|`,
-    )
-    .replace(/^ +| +$/gu, (spaces) => "&#32;".repeat(spaces.length));
+  return (
+    tableCellSerializer
+      .serialize(document)
+      // Literal line endings in a cell must not create a new Markdown table row.
+      .replace(/\r/gu, "&#13;")
+      .replace(/\n/gu, "&#10;")
+      .replace(
+        /(\\*)\|/gu,
+        (_match, escapes: string) => `${escapes}${escapes.length % 2 === 0 ? "\\" : ""}|`,
+      )
+      .replace(/^ +| +$/gu, (spaces) => "&#32;".repeat(spaces.length))
+  );
 }
 
 function tableDelimiter(alignment: unknown): string {

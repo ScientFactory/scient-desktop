@@ -757,6 +757,7 @@ describe("ScientMarkdownEditorView", () => {
     const renderedBefore = renderedEquation!.outerHTML;
     const equation = view.state.doc.firstChild;
     expect(equation?.type.name).toBe("display_math");
+    vi.useFakeTimers();
     await act(async () => {
       view.dispatch(
         view.state.tr.setNodeMarkup(0, undefined, {
@@ -764,6 +765,7 @@ describe("ScientMarkdownEditorView", () => {
           tex: "\\frac{",
         }),
       );
+      await vi.advanceTimersByTimeAsync(100);
       await getScientKatexRuntimePromise();
     });
     expect(
@@ -1092,6 +1094,48 @@ describe("ScientMarkdownEditorView", () => {
     expect(controller.session.session.draftSource).toBe(sourceBefore);
   });
 
+  it.each(["```text\noriginal\n```\n", "<div>original</div>\n"])(
+    "uses document history for embedded source without recording undo as an edit: %s",
+    (source) => {
+      const controller = new ScientMarkdownEditorView({
+        source,
+        revision: "r1",
+        mode: "write",
+        ariaLabel: "History test",
+      });
+      const host = document.createElement("div");
+      document.body.append(host);
+      mounted.push(controller);
+      const outer = controller.mount(host);
+      const surface = host.querySelector<HTMLElement>(".cm-editor")!;
+      const nested = CodeMirrorEditorView.findFromDOM(surface)!;
+      nested.dispatch({ changes: { from: 0, insert: "changed " } });
+      const changed = controller.session.session.draftSource;
+      expect(changed).not.toBe(source);
+      controller.setMode("read");
+      nested.contentDOM.dispatchEvent(
+        new KeyboardEvent("keydown", { key: "z", ctrlKey: true, bubbles: true, cancelable: true }),
+      );
+      expect(controller.session.session.draftSource).toBe(changed);
+      controller.setMode("write");
+      vi.useFakeTimers({ toFake: ["Date"] });
+      vi.setSystemTime(Date.now() + 1000);
+      nested.contentDOM.dispatchEvent(
+        new KeyboardEvent("keydown", { key: "z", ctrlKey: true, bubbles: true, cancelable: true }),
+      );
+      expect(controller.session.session.draftSource).toBe(source);
+      expect(controller.execute("undo")).toBe(false);
+      expect(controller.execute("redo")).toBe(true);
+      expect(controller.session.session.draftSource).toBe(changed);
+      expect(host.querySelector(".cm-editor")).toBe(surface);
+      expect(nested.state.doc.toString()).toBe(
+        outer.state.doc.firstChild?.type.name === "raw_block"
+          ? outer.state.doc.firstChild.attrs.source
+          : outer.state.doc.firstChild?.textContent,
+      );
+    },
+  );
+
   it("keeps one plain-code surface across selection, appearance, and mode changes", async () => {
     const onUserSourceChange = vi.fn();
     const controller = new ScientMarkdownEditorView({
@@ -1203,6 +1247,7 @@ describe("ScientMarkdownEditorView", () => {
     // happy-dom does not calculate intersections. Exercise the supported
     // no-observer fallback so this mounted fence can validate its live source.
     vi.stubGlobal("IntersectionObserver", undefined);
+    vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
     const controller = new ScientMarkdownEditorView({
       source: '```plotly\n{"data":[{"x":[1],"y":[2]}]}\n```\n',
       revision: "sha256:before",
@@ -1213,22 +1258,26 @@ describe("ScientMarkdownEditorView", () => {
     const host = document.createElement("div");
     document.body.append(host);
     mounted.push(controller);
-    const view = controller.mount(host);
-
-    await vi.waitFor(() => {
-      expect(view.dom.querySelector("[data-scient-rich-fence-validity='valid']")).not.toBeNull();
+    let view!: EditorView;
+    await act(() => {
+      view = controller.mount(host);
     });
+    const preview = view.dom.querySelector("[data-scient-rich-fence-validity='valid']");
+    expect(preview).not.toBeNull();
     const codeBlock = view.state.doc.firstChild;
     expect(codeBlock?.type.name).toBe("code_block");
-    view.dispatch(
-      view.state.tr.replaceWith(1, codeBlock!.nodeSize - 1, view.state.schema.text('{"data":[')),
-    );
-
-    await vi.waitFor(() => {
-      const retained = view.dom.querySelector("[data-scient-rich-fence-source-state='retained']");
-      expect(retained).not.toBeNull();
-      expect(retained?.textContent).toContain("Preview kept at the last valid version.");
+    // Flush the NodeView's React root and async validation together. A DOM
+    // polling deadline can expire before React commits on a busy CI runner.
+    await act(() => {
+      view.dispatch(
+        view.state.tr.replaceWith(1, codeBlock!.nodeSize - 1, view.state.schema.text('{"data":[')),
+      );
     });
+    const retained = view.dom.querySelector("[data-scient-rich-fence-source-state='retained']");
+    expect(retained).toBe(preview);
+    expect(retained?.getAttribute("data-scient-rich-fence-validity")).toBe("invalid");
+    expect(retained?.textContent).toContain("Preview kept at the last valid version.");
+    expect(view.state.doc.firstChild?.textContent).toBe('{"data":[');
   });
 
   it("inserts an uploaded image only after the server returns its portable path", async () => {

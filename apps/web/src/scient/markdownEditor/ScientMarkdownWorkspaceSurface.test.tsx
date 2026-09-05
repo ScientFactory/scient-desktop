@@ -1606,7 +1606,7 @@ describe("ScientMarkdownWorkspaceSurface", () => {
       });
       codeEditor.focus();
       const sourceBeforeCodeKeys = controller.session.session.draftSource;
-      for (const key of ["a", "z", "c", "x", "v", "b"] as const) {
+      for (const key of ["a", "c", "x", "v", "b"] as const) {
         await act(() =>
           codeEditor.dispatchEvent(
             new KeyboardEvent("keydown", {
@@ -1620,6 +1620,29 @@ describe("ScientMarkdownWorkspaceSurface", () => {
         );
       }
       expect(sidebarToggle).not.toHaveBeenCalled();
+      expect(controller.session.session.draftSource).toBe(sourceBeforeCodeKeys);
+      // Embedded code shares document undo, while other nested shortcuts remain local.
+      await act(() =>
+        codeEditor.dispatchEvent(
+          new KeyboardEvent("keydown", {
+            key: "z",
+            ctrlKey: true,
+            bubbles: true,
+            cancelable: true,
+          }),
+        ),
+      );
+      expect(controller.session.session.draftSource).not.toBe(sourceBeforeCodeKeys);
+      await act(() =>
+        codeEditor.dispatchEvent(
+          new KeyboardEvent("keydown", {
+            key: "y",
+            ctrlKey: true,
+            bubbles: true,
+            cancelable: true,
+          }),
+        ),
+      );
       expect(controller.session.session.draftSource).toBe(sourceBeforeCodeKeys);
       const nestedCodeLink = new KeyboardEvent("keydown", {
         key: "k",

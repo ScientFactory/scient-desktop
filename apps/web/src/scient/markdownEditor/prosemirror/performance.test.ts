@@ -111,6 +111,29 @@ describe("Scient Markdown performance qualification", () => {
     expect(typingP95Ms).toBeLessThan(strictQualification ? 32 : 128);
   });
 
+  it.each(["table", "references"])("bounds typing work for a 100 KiB %s document", (kind) => {
+    let source = kind === "table" ? "| A | B |\n| --- | --- |\n" : "";
+    for (let index = 0; source.length < 100 * 1024; index++) {
+      source +=
+        kind === "table"
+          ? `| sample ${index} | stable measurement **2.40** and detailed text |\n`
+          : `Paragraph ${index}: stable measurement **2.40** and detailed text.\n\n`;
+    }
+    if (kind === "references") source += "[reference]: https://example.org\n";
+    const session = new ScientProseMirrorSession({ source, revision: "r1", mode: "write" });
+    let position: number | undefined;
+    session.state.doc.descendants((node, offset) => {
+      if (position === undefined && node.isText) position = offset;
+    });
+    const durations: number[] = [];
+    for (let index = 0; index < 30; index++) {
+      const start = performance.now();
+      session.applyTransaction(session.state.tr.insertText("x", position!, position!), "user");
+      durations.push(performance.now() - start);
+    }
+    expect(percentile(durations, 0.95)).toBeLessThan(strictQualification ? 16 : 64);
+  });
+
   it("keeps a code-dense document on persistent surfaces across presentation changes", () => {
     const source = Array.from(
       { length: 64 },

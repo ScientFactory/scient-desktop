@@ -1,3 +1,4 @@
+import { undo, redo } from "prosemirror-history";
 import type { Node as ProseMirrorNode } from "prosemirror-model";
 import { NodeSelection } from "prosemirror-state";
 import type { EditorView, NodeView } from "prosemirror-view";
@@ -17,6 +18,7 @@ import { extractFenceTitle } from "~/scient/presentation/CodeBlockTitle";
 import { leaveAtomEditor } from "../prosemirror/safeSelection";
 import {
   createScientNestedCodeEditor,
+  type ScientCodeChange,
   type ScientNestedCodeEditor,
   type ScientNestedCodeEditorRegistrar,
 } from "./codeMirrorCodeEditor";
@@ -292,8 +294,18 @@ class ScientCodeBlockNodeView implements NodeView {
         editable: this.view.editable,
         language: codeLanguage(this.node),
         wordWrap: this.wrapped,
+        historyCommands: {
+          undo: () => {
+            if (this.view.editable) undo(this.view.state, this.view.dispatch);
+            return true;
+          },
+          redo: () => {
+            if (this.view.editable) redo(this.view.state, this.view.dispatch);
+            return true;
+          },
+        },
         onEscape: () => leaveAtomEditor(this.view, this.getPos, this.node),
-        onUserCodeChange: (code) => this.replaceCode(code),
+        onUserCodeChange: (code, changes) => this.replaceCode(code, changes),
       });
       let unregister: (() => void) | undefined;
       try {
@@ -334,16 +346,21 @@ class ScientCodeBlockNodeView implements NodeView {
     if (focus && this.view.editable) editor.focus();
   }
 
-  private replaceCode(code: string): void {
+  private replaceCode(code: string, changes: readonly ScientCodeChange[]): void {
+    if (!this.view.editable) return;
     const position = this.getPos();
     if (position === undefined || code === this.node.textContent) return;
-    this.view.dispatch(
-      this.view.state.tr.replaceWith(
-        position + 1,
-        position + 1 + this.node.content.size,
-        code.length > 0 ? this.node.type.schema.text(code) : [],
-      ),
-    );
+    const transaction = this.view.state.tr;
+    // CodeMirror ranges refer to the old document. Apply from the end so each
+    // ProseMirror step retains precise positions for history and source mapping.
+    for (const change of [...changes].reverse()) {
+      transaction.replaceWith(
+        position + 1 + change.from,
+        position + 1 + change.to,
+        change.insert ? this.node.type.schema.text(change.insert) : [],
+      );
+    }
+    this.view.dispatch(transaction);
   }
 
   private render(focusEditor = false): void {

@@ -113,6 +113,12 @@ function editorThemeFor(root: HTMLElement) {
   return root.classList.contains("dark") ? darkEditorTheme : lightEditorTheme;
 }
 
+export interface ScientCodeChange {
+  readonly from: number;
+  readonly to: number;
+  readonly insert: string;
+}
+
 export interface ScientNestedCodeEditor {
   readonly focus: () => void;
   readonly refreshAppearance: () => void;
@@ -131,7 +137,8 @@ export function createScientNestedCodeEditor(input: {
   readonly editable: boolean;
   readonly language: string;
   readonly wordWrap?: boolean;
-  readonly onUserCodeChange: (code: string) => void;
+  readonly historyCommands?: { readonly undo: () => boolean; readonly redo: () => boolean };
+  readonly onUserCodeChange: (code: string, changes: readonly ScientCodeChange[]) => void;
   readonly onEscape: () => void;
 }): ScientNestedCodeEditor {
   const languageCompartment = new Compartment();
@@ -154,7 +161,7 @@ export function createScientNestedCodeEditor(input: {
       doc: input.code,
       extensions: [
         highlightSpecialChars(),
-        history(),
+        input.historyCommands ? [] : history(),
         drawSelection(),
         bracketMatching(),
         syntaxHighlighting(lightHighlightStyle),
@@ -181,7 +188,13 @@ export function createScientNestedCodeEditor(input: {
             },
           },
           ...defaultKeymap,
-          ...historyKeymap,
+          ...(input.historyCommands
+            ? [
+                { key: "Mod-z", run: input.historyCommands.undo },
+                { key: "Mod-Shift-z", run: input.historyCommands.redo },
+                { key: "Mod-y", run: input.historyCommands.redo },
+              ]
+            : historyKeymap),
           indentWithTab,
         ]),
         EditorView.updateListener.of((update) => {
@@ -193,7 +206,11 @@ export function createScientNestedCodeEditor(input: {
           ) {
             return;
           }
-          input.onUserCodeChange(update.state.doc.toString());
+          const changes: ScientCodeChange[] = [];
+          update.changes.iterChanges((from, to, _fromB, _toB, inserted) => {
+            changes.push({ from, to, insert: inserted.toString() });
+          });
+          input.onUserCodeChange(update.state.doc.toString(), changes);
         }),
       ],
     }),
@@ -260,9 +277,20 @@ export function createScientNestedCodeEditor(input: {
     },
     replaceExternalCode: (code, nextLanguage = language) => {
       configureLanguage(nextLanguage);
-      if (code === view.state.doc.toString()) return;
+      const before = view.state.doc.toString();
+      if (code === before) return;
+      // Preserve the nested selection outside the changed range on outer undo,
+      // redo and external updates instead of replacing its entire document.
+      let from = 0;
+      while (from < before.length && from < code.length && before[from] === code[from]) from++;
+      let to = before.length;
+      let end = code.length;
+      while (to > from && end > from && before[to - 1] === code[end - 1]) {
+        to--;
+        end--;
+      }
       view.dispatch({
-        changes: { from: 0, to: view.state.doc.length, insert: code },
+        changes: { from, to, insert: code.slice(from, end) },
         annotations: [externalCodeAnnotation.of(true), Transaction.addToHistory.of(false)],
       });
     },

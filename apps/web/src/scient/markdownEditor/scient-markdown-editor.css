@@ -61,7 +61,7 @@
   border: 1px solid var(--border);
   border-radius: 0.55rem;
   background: var(--popover);
-  padding: 0.25rem;
+  padding: 0.125rem 0.25rem;
   box-shadow: 0 0.5rem 1.5rem color-mix(in oklab, black 14%, transparent);
   scrollbar-width: none;
 }

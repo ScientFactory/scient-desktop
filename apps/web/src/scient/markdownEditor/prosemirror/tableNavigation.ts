@@ -2,7 +2,19 @@ import { Selection, TextSelection, type Command } from "prosemirror-state";
 import { CellSelection, cellAround, inSameTable, nextCell } from "prosemirror-tables";
 import type { EditorView } from "prosemirror-view";
 
+import { runScientMarkdownCommand } from "./commands";
+
 type ArrowDirection = "left" | "right" | "up" | "down";
+
+/** Inline-only GFM cells use a line break instead of splitting into paragraphs. */
+export const inlineTableEnter: Command = (state, dispatch, view) => {
+  const { selection } = state;
+  if (!view?.editable || !(selection instanceof TextSelection)) return false;
+  if (!selection.$from.sameParent(selection.$to)) return false;
+  const role = selection.$from.parent.type.spec.tableRole;
+  if (role !== "cell" && role !== "header_cell") return false;
+  return runScientMarkdownCommand("hard-break", state, dispatch);
+};
 
 /**
  * GFM cells are textblocks themselves (inline*), not paragraph containers.

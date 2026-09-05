@@ -156,6 +156,7 @@ function comparableAttrs(node: ProseMirrorNode): string {
 }
 
 function hasSameProjectedContent(before: ProseMirrorNode, after: ProseMirrorNode): boolean {
+  if (before === after) return true;
   if (
     before.type !== after.type ||
     comparableAttrs(before) !== comparableAttrs(after) ||
@@ -170,15 +171,19 @@ function hasSameProjectedContent(before: ProseMirrorNode, after: ProseMirrorNode
   return true;
 }
 
-function textStructure(node: ProseMirrorNode): string {
-  if (node.isText) {
-    return `text:${node.marks
-      .map((mark) => `${mark.type.name}:${JSON.stringify(mark.attrs)}`)
-      .join(",")}`;
+function sameTextStructure(before: ProseMirrorNode, after: ProseMirrorNode): boolean {
+  if (before === after) return true;
+  if (
+    before.type !== after.type ||
+    before.childCount !== after.childCount ||
+    comparableAttrs(before) !== comparableAttrs(after) ||
+    JSON.stringify(before.marks) !== JSON.stringify(after.marks)
+  )
+    return false;
+  for (let index = 0; index < before.childCount; index++) {
+    if (!sameTextStructure(before.child(index), after.child(index))) return false;
   }
-  const children: string[] = [];
-  node.forEach((child) => children.push(textStructure(child)));
-  return `${node.type.name}:${comparableAttrs(node)}[${children.join("|")}]`;
+  return true;
 }
 
 function textDifference(before: string, after: string) {
@@ -210,6 +215,55 @@ function previousCodePointStart(value: string, end: number): number {
   return end - 1;
 }
 
+/** Validate one table row in its original header/alignment context.
+ * Multiline and structural edits retain whole-block validation. */
+function hasSamePatchedTableRow(
+  block: MarkdownSourceBlock,
+  baseline: ProseMirrorNode,
+  next: ProseMirrorNode,
+  patched: string,
+  start: number,
+  end: number,
+  environment: MarkdownParseEnvironment,
+): boolean {
+  if (
+    baseline.type.name !== "table" ||
+    next.type !== baseline.type ||
+    baseline.childCount !== next.childCount ||
+    comparableAttrs(baseline) !== comparableAttrs(next)
+  )
+    return false;
+  const beforeLines = block.source.split(/\r?\n/u);
+  const afterLines = patched.split(/\r?\n/u);
+  if (beforeLines.at(-1) === "") beforeLines.pop();
+  if (afterLines.at(-1) === "") afterLines.pop();
+  if (beforeLines.length !== baseline.childCount + 1 || afterLines.length !== beforeLines.length)
+    return false;
+  const line = block.source.slice(0, start).split("\n").length - 1;
+  if (line === 1 || block.source.slice(start, end).includes("\n")) return false;
+  if (!beforeLines.every((value, index) => index === line || value === afterLines[index]))
+    return false;
+  const row = line === 0 ? 0 : line - 1;
+  for (let index = 0; index < baseline.childCount; index++) {
+    if (index !== row && !hasSameProjectedContent(baseline.child(index), next.child(index)))
+      return false;
+  }
+  const fragment = parseWithContext(
+    (line === 0 ? afterLines.slice(0, 2) : [afterLines[0], afterLines[1], afterLines[line]]).join(
+      "\n",
+    ),
+    environment,
+  );
+  const table = fragment.firstChild;
+  return (
+    fragment.childCount === 1 &&
+    table?.type === next.type &&
+    table.childCount === (line === 0 ? 1 : 2) &&
+    hasSameProjectedContent(table.child(0), next.child(0)) &&
+    hasSameProjectedContent(table.child(line === 0 ? 0 : 1), next.child(row))
+  );
+}
+
 /**
  * Preserve list markers, table spacing, emphasis delimiters, and other local
  * syntax when an edit changes only text inside one exact mdast text span.
@@ -229,7 +283,7 @@ function minimallyPatchedTextBlock(
   // the conservative unique-span fallback below.
   const logicalOffsetsAligned = block.logicalText.replace(/\n/gu, " ") === baseline.textContent;
   if (baseline.textContent === next.textContent) return null;
-  if (textStructure(baseline) !== textStructure(next)) return null;
+  if (!sameTextStructure(baseline, next)) return null;
   // Concatenated text cannot locate an edit among identical cells/items.
   // Follow corresponding text nodes before calculating a narrow local diff.
   let offset = 0;
@@ -316,6 +370,18 @@ function minimallyPatchedTextBlock(
     ]);
     // A literal keystroke can introduce Markdown syntax. Only reuse a narrow
     // patch when reopening it means exactly the same thing as the live node.
+    if (
+      hasSamePatchedTableRow(
+        block,
+        baseline,
+        next,
+        patched,
+        sourceStart - block.start,
+        sourceEnd - block.start,
+        environment,
+      )
+    )
+      return patched;
     const parsed = parseWithContext(patched, environment);
     return parsed.childCount === 1 && hasSameProjectedContent(parsed.child(0), next)
       ? patched
@@ -335,6 +401,46 @@ function inferredSeparator(
   return ledger.hasFinalLineEnding ? ledger.lineEnding : "";
 }
 
+interface ProjectionCache {
+  readonly ledger: MarkdownSourceLedger;
+  readonly environment: MarkdownParseEnvironment;
+  readonly blockById: ReadonlyMap<string, MarkdownSourceBlock>;
+  readonly baselineById: ReadonlyMap<string, ProseMirrorNode>;
+  readonly originalSuccessorById: ReadonlyMap<string, string | null>;
+  readonly sources: WeakMap<
+    ProseMirrorNode,
+    { readonly original: MarkdownSourceBlock | undefined; readonly source: string }
+  >;
+  referenceSources?: readonly string[];
+}
+
+// The source baseline is stable across local edits and saves. Weak ownership
+// lets document/history collection reclaim both derived output and indexes.
+const projectionCaches = new WeakMap<ProseMirrorNode, ProjectionCache>();
+function projectionCache(projection: ScientMarkdownProjection): ProjectionCache {
+  const existing = projectionCaches.get(projection.baselineDocument);
+  if (
+    existing?.ledger === projection.ledger &&
+    existing.environment === projection.parseEnvironment
+  )
+    return existing;
+  const cache: ProjectionCache = {
+    ledger: projection.ledger,
+    environment: projection.parseEnvironment,
+    blockById: new Map(projection.ledger.blocks.map((block) => [block.id, block])),
+    baselineById: topLevelNodesBySourceId(projection.baselineDocument),
+    originalSuccessorById: new Map(
+      projection.ledger.blocks.map((block, index) => [
+        block.id,
+        projection.ledger.blocks[index + 1]?.id ?? null,
+      ]),
+    ),
+    sources: new WeakMap(),
+  };
+  projectionCaches.set(projection.baselineDocument, cache);
+  return cache;
+}
+
 /**
  * Project a changed ProseMirror document back to Markdown. Nodes that still
  * equal their parsed baseline reuse exact source and trivia. Only nodes
@@ -344,12 +450,8 @@ export function projectScientMarkdownSource(
   projection: ScientMarkdownProjection,
   document: ProseMirrorNode,
 ): ScientMarkdownProjectedSource {
-  const blockById = new Map(projection.ledger.blocks.map((block) => [block.id, block]));
-  const originalSuccessorById = new Map<string, string | null>();
-  projection.ledger.blocks.forEach((block, index) => {
-    originalSuccessorById.set(block.id, projection.ledger.blocks[index + 1]?.id ?? null);
-  });
-  const baselineById = topLevelNodesBySourceId(projection.baselineDocument);
+  const cache = projectionCache(projection);
+  const { blockById, baselineById, originalSuccessorById } = cache;
   const consumedIds = new Set<string>();
   const nodes: ProseMirrorNode[] = [];
   document.forEach((node) => nodes.push(node));
@@ -366,18 +468,24 @@ export function projectScientMarkdownSource(
     const baseline = baselineId === null ? undefined : baselineById.get(baselineId);
     if (directOriginal && sourceId !== null) consumedIds.add(sourceId);
 
+    const cached = cache.sources.get(node);
     const sourceUnchanged =
-      directOriginal && baseline
-        ? baseline.eq(node)
-        : original && baseline
-          ? hasSameProjectedContent(baseline, node)
-          : false;
+      cached?.original === original && cached !== undefined
+        ? false
+        : directOriginal && baseline
+          ? baseline.eq(node)
+          : original && baseline
+            ? hasSameProjectedContent(baseline, node)
+            : false;
     const source =
-      sourceUnchanged && original
-        ? original.source
-        : ((original && baseline
-            ? minimallyPatchedTextBlock(original, baseline, node, projection.parseEnvironment)
-            : null) ?? serializeNode(node, projection.ledger.lineEnding));
+      cached?.original === original && cached !== undefined
+        ? cached.source
+        : sourceUnchanged && original
+          ? original.source
+          : ((original && baseline
+              ? minimallyPatchedTextBlock(original, baseline, node, projection.parseEnvironment)
+              : null) ?? serializeNode(node, projection.ledger.lineEnding));
+    cache.sources.set(node, { original, source });
     const from = output.length;
     output += source;
     blockRanges.push({ from, to: from + source.length });
@@ -419,6 +527,24 @@ export function refreshScientMarkdownReferences(
     )
   )
     return null;
+  const cache = projectionCache(projection);
+  // A definition requires an opening bracket. Keep the ordered source of all
+  // bracket-bearing blocks plus every raw block (which could swallow following
+  // definitions with an unfinished HTML comment or fence),
+  // so edits elsewhere cannot invalidate reference context. This deliberately
+  // over-invalidates ambiguous syntax instead of guessing at definition rules.
+  const referenceSources = projected.blockRanges
+    .map(({ from, to }) => projected.source.slice(from, to))
+    .filter(
+      (source, index) => source.includes("[") || document.child(index).type.name === "raw_block",
+    );
+  const previous = cache.referenceSources;
+  if (
+    previous?.length === referenceSources.length &&
+    previous.every((source, index) => source === referenceSources[index])
+  )
+    return null;
+  cache.referenceSources = referenceSources;
   const environment: MarkdownParseEnvironment = {};
   scientMarkdownParser.tokenizer.parse(projected.source, environment);
   const before = projection.parseEnvironment.references ?? {};

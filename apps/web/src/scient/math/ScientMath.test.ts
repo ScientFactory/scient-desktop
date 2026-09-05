@@ -1,9 +1,14 @@
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
-import { describe, expect, it } from "vite-plus/test";
+import { describe, expect, it, vi } from "vite-plus/test";
 
 import { renderScientTexToHtml } from "./katexRuntime";
-import { getScientKatexRuntimePromise, ScientDisplayMath, ScientInlineMath } from "./ScientMath";
+import {
+  getScientKatexRuntimePromise,
+  renderCachedScientMath,
+  ScientDisplayMath,
+  ScientInlineMath,
+} from "./ScientMath";
 
 describe("renderScientTexToHtml", () => {
   it("renders KaTeX markup for both modes", () => {
@@ -51,3 +56,16 @@ describe("math components", () => {
     expect(display).toContain("data-markdown-copy");
   });
 });
+
+it.each(["x_{cache_unique}", "\\badcmd_{cache_unique}"])(
+  "shares valid and failed validation with presentation: %s",
+  (tex) => {
+    const render = vi.fn(renderScientTexToHtml);
+    const runtime = { renderScientTexToHtml: render };
+    const html = renderCachedScientMath(runtime, tex, true);
+    expect(renderCachedScientMath(runtime, tex, true)).toBe(html);
+    const output = renderToStaticMarkup(createElement(ScientDisplayMath, { tex }));
+    expect(output).toContain(html === null ? "badcmd" : "katex");
+    expect(render).toHaveBeenCalledOnce();
+  },
+);

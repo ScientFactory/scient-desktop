@@ -1,4 +1,4 @@
-import { Suspense, use, useEffect, useMemo } from "react";
+import { Suspense, use, useMemo } from "react";
 
 import { RenderErrorBoundary } from "~/components/RenderErrorBoundary";
 import { LRUCache } from "~/lib/lruCache";
@@ -15,10 +15,27 @@ export function getScientKatexRuntimePromise() {
 
 const MAX_MATH_CACHE_ENTRIES = 500;
 const MAX_MATH_CACHE_MEMORY_BYTES = 5 * 1024 * 1024;
-const renderedMathCache = new LRUCache<string>(MAX_MATH_CACHE_ENTRIES, MAX_MATH_CACHE_MEMORY_BYTES);
+const renderedMathCache = new LRUCache<{ readonly html: string | null }>(
+  MAX_MATH_CACHE_ENTRIES,
+  MAX_MATH_CACHE_MEMORY_BYTES,
+);
 
 function estimateRenderedMathSize(html: string, tex: string): number {
   return Math.max(html.length * 2, tex.length * 3);
+}
+
+/** Shared by editor validation and presentation within the existing bounded cache. */
+export function renderCachedScientMath(
+  runtime: typeof import("./katexRuntime"),
+  tex: string,
+  displayMode: boolean,
+): string | null {
+  const key = `${displayMode}:${tex}`;
+  const cached = renderedMathCache.get(key);
+  if (cached !== null) return cached.html;
+  const html = runtime.renderScientTexToHtml(tex, displayMode);
+  renderedMathCache.set(key, { html }, estimateRenderedMathSize(html ?? "", tex));
+  return html;
 }
 
 /**
@@ -68,24 +85,17 @@ function ScientMathHtml({
   );
 }
 
-interface UncachedScientMathProps extends ScientMathProps {
-  cacheKey: string;
-}
-
-function UncachedScientMath({ cacheKey, displayMode, isStreaming, tex }: UncachedScientMathProps) {
-  const { renderScientTexToHtml } = use(getScientKatexRuntimePromise());
+function UncachedScientMath({ displayMode, isStreaming, tex }: ScientMathProps) {
+  const runtime = use(getScientKatexRuntimePromise());
+  // Streaming prefixes stay outside the cache. Settled math, including failed
+  // parses, shares one bounded result with editor validation.
   const html = useMemo(
-    () => renderScientTexToHtml(tex, displayMode),
-    [displayMode, renderScientTexToHtml, tex],
+    () =>
+      isStreaming
+        ? runtime.renderScientTexToHtml(tex, displayMode)
+        : renderCachedScientMath(runtime, tex, displayMode),
+    [displayMode, isStreaming, runtime, tex],
   );
-
-  // A streaming message re-renders per token, so an unclosed block's growing
-  // prefixes would each occupy an entry; only settled math is worth caching.
-  useEffect(() => {
-    if (html !== null && !isStreaming) {
-      renderedMathCache.set(cacheKey, html, estimateRenderedMathSize(html, tex));
-    }
-  }, [cacheKey, html, isStreaming, tex]);
 
   if (html === null) {
     return <ScientMathLiteral tex={tex} displayMode={displayMode} />;
@@ -99,18 +109,17 @@ function ScientMath({ displayMode, isStreaming, tex }: ScientMathProps) {
   const cacheKey = `${displayMode}:${tex}`;
   const cachedHtml = isStreaming ? null : renderedMathCache.get(cacheKey);
   if (cachedHtml != null) {
-    return <ScientMathHtml html={cachedHtml} tex={tex} displayMode={displayMode} />;
+    return cachedHtml.html === null ? (
+      literal
+    ) : (
+      <ScientMathHtml html={cachedHtml.html} tex={tex} displayMode={displayMode} />
+    );
   }
 
   return (
     <RenderErrorBoundary fallback={literal}>
       <Suspense fallback={literal}>
-        <UncachedScientMath
-          cacheKey={cacheKey}
-          displayMode={displayMode}
-          isStreaming={isStreaming}
-          tex={tex}
-        />
+        <UncachedScientMath displayMode={displayMode} isStreaming={isStreaming} tex={tex} />
       </Suspense>
     </RenderErrorBoundary>
   );

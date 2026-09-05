@@ -111,7 +111,9 @@ describe("Scient nested code editor", () => {
     expect(onUserCodeChange).not.toHaveBeenCalled();
     expect(undo(view)).toBe(true);
     expect(view.state.doc.toString()).toBe("before");
-    expect(onUserCodeChange).toHaveBeenCalledExactlyOnceWith("before");
+    expect(onUserCodeChange).toHaveBeenCalledExactlyOnceWith("before", [
+      { from: 6, to: 12, insert: "" },
+    ]);
   });
 
   it("keeps a source-specific accessible name when its language changes", () => {
@@ -184,6 +186,9 @@ describe("Scient nested code editor", () => {
       [...parent.querySelectorAll<HTMLElement>(".cm-line span")].find(
         (span) => span.textContent === "flowchart",
       )?.style.color;
+    // Await the actual lazy module, rather than racing its import against the
+    // short polling default when the complete suite saturates the runner.
+    await import("./mermaidCodeHighlighting");
     await vi.waitFor(() => expect(keywordColor()).toBeTruthy());
     const lightColor = keywordColor();
     expect(onUserCodeChange).not.toHaveBeenCalled();

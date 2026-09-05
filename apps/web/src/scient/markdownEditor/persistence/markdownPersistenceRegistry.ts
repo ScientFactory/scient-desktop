@@ -1,5 +1,7 @@
 import {
   MarkdownPersistenceCoordinator,
+  reconcileMarkdown,
+  type MarkdownExternalConflict,
   type MarkdownPersistenceSnapshot,
   type PrepareMarkdownExternalUpdate,
 } from "@scientfactory/scient-markdown";
@@ -11,6 +13,13 @@ import {
   type MarkdownPersistenceTarget,
   type MarkdownPersistenceTransport,
 } from "./markdownPersistenceTransport";
+
+import {
+  indexedDbMarkdownDrafts,
+  MarkdownDraftCheckpointWriter,
+  type MarkdownDraftCheckpoint,
+  type MarkdownDraftCheckpointStore,
+} from "./markdownDraftCheckpoint";
 
 export type { MarkdownPersistenceTarget } from "./markdownPersistenceTransport";
 
@@ -44,6 +53,7 @@ interface RegistryEntry {
   readonly leases: Set<object>;
   readonly projections: Map<object, PrepareMarkdownExternalUpdate>;
   readonly unsubscribe: () => void;
+  readonly checkpoint: MarkdownDraftCheckpointWriter | undefined;
   stopWatching: (() => void) | undefined;
   lastUsed: number;
   evictionTimer: ReturnType<typeof setTimeout> | undefined;
@@ -53,7 +63,11 @@ export class MarkdownPersistenceRegistry {
   private readonly entries = new Map<string, RegistryEntry>();
   private readonly initializing = new Map<
     string,
-    Promise<{ initial: ProjectReadFileResult; transport: MarkdownPersistenceTransport }>
+    Promise<{
+      initial: ProjectReadFileResult;
+      transport: MarkdownPersistenceTransport;
+      checkpoint: MarkdownDraftCheckpoint | undefined;
+    }>
   >();
   private readonly listeners = new Set<() => void>();
   private state: readonly MarkdownPersistenceRegistryState[] = [];
@@ -63,6 +77,7 @@ export class MarkdownPersistenceRegistry {
       readonly createTransport?: (
         target: MarkdownPersistenceTarget,
       ) => MarkdownPersistenceTransport;
+      readonly checkpointStore?: MarkdownDraftCheckpointStore;
       readonly cleanTtlMs?: number;
       readonly cleanLimit?: number;
       readonly debounceMs?: number;
@@ -88,7 +103,13 @@ export class MarkdownPersistenceRegistry {
         const transport = (this.options.createTransport ?? createMarkdownPersistenceTransport)(
           target,
         );
-        opening = transport.read().then((disk) => {
+        opening = Promise.all([
+          transport.read(),
+          this.options.checkpointStore?.read(key).catch((error: unknown) => {
+            console.error("Markdown recovery checkpoint could not be loaded:", error);
+            return undefined;
+          }),
+        ]).then(([disk, checkpoint]) => {
           if (disk.truncated || disk.readOnly) {
             throw new Error(
               disk.truncated
@@ -105,15 +126,44 @@ export class MarkdownPersistenceRegistry {
               truncated: false,
             },
             transport,
+            checkpoint,
           };
         });
         this.initializing.set(key, opening);
       }
       try {
-        const { initial, transport } = await opening;
+        const { initial, transport, checkpoint } = await opening;
         // Creating the entry and acquiring its first lease are synchronous.
         // No clean-limit sweep can observe an unleased bootstrap entry.
-        if (!this.entries.has(key)) this.createEntry(target, initial, undefined, transport);
+        if (!this.entries.has(key)) {
+          let baseline = initial;
+          let draft: string | undefined;
+          let conflict: MarkdownExternalConflict | undefined;
+          if (checkpoint && checkpoint.draftSource !== initial.contents) {
+            const combined =
+              checkpoint.baselineSource === initial.contents ||
+              checkpoint.publicationSource === initial.contents
+                ? checkpoint.draftSource
+                : checkpoint.baselineSource === checkpoint.draftSource
+                  ? undefined
+                  : reconcileMarkdown(
+                      checkpoint.baselineSource,
+                      checkpoint.draftSource,
+                      initial.contents,
+                    )?.source;
+            if (combined !== undefined) draft = combined;
+            else {
+              baseline = {
+                ...initial,
+                contents: checkpoint.baselineSource,
+                revision: checkpoint.baselineRevision,
+              };
+              draft = checkpoint.draftSource;
+              conflict = { externalSource: initial.contents, externalRevision: initial.revision };
+            }
+          }
+          this.createEntry(target, baseline, draft, transport, checkpoint, conflict);
+        }
         return this.acquire(target, null)!;
       } finally {
         if (this.initializing.get(key) === opening) this.initializing.delete(key);
@@ -129,9 +179,12 @@ export class MarkdownPersistenceRegistry {
     initial: ProjectReadFileResult,
     draftSource?: string,
     transport = (this.options.createTransport ?? createMarkdownPersistenceTransport)(target),
+    checkpoint?: MarkdownDraftCheckpoint,
+    initialConflict?: MarkdownExternalConflict,
   ): RegistryEntry {
     const projections = new Map<object, PrepareMarkdownExternalUpdate>();
     const coordinator = new MarkdownPersistenceCoordinator({
+      ...(initialConflict === undefined ? {} : { initialConflict }),
       source: initial.contents,
       revision: initial.revision,
       ...(draftSource === undefined ? {} : { draftSource }),
@@ -155,6 +208,13 @@ export class MarkdownPersistenceRegistry {
       leases: new Set(),
       projections,
       unsubscribe: coordinator.subscribe(() => this.changed(entry)),
+      checkpoint: this.options.checkpointStore
+        ? new MarkdownDraftCheckpointWriter(
+            projectFileOperationKey(target),
+            this.options.checkpointStore,
+            checkpoint,
+          )
+        : undefined,
       stopWatching: undefined,
       lastUsed: Date.now(),
       evictionTimer: undefined,
@@ -255,6 +315,7 @@ export class MarkdownPersistenceRegistry {
   private changed(entry: RegistryEntry): void {
     if (this.entries.get(projectFileOperationKey(entry.target)) !== entry) return;
     const snapshot = entry.coordinator.getSnapshot();
+    entry.checkpoint?.update(snapshot);
     try {
       entry.transport.project(snapshot);
     } catch (error) {
@@ -295,6 +356,9 @@ export class MarkdownPersistenceRegistry {
       }
     }
     this.publish();
+    // A retained entry cannot add to the clean eviction pool. Avoid scanning
+    // and sorting all open documents on every keystroke.
+    if (retain) return;
     const clean = [...this.entries.values()]
       .filter((candidate) => {
         const value = candidate.coordinator.getSnapshot();
@@ -371,4 +435,6 @@ const registryKey = Symbol.for("scient.markdown-persistence-registry.v1");
 const renderer = globalThis as typeof globalThis & { [registryKey]?: MarkdownPersistenceRegistry };
 /** HMR and view remounts keep the same owner and the same scheduled transport lane. */
 export const markdownPersistenceRegistry = (renderer[registryKey] ??=
-  new MarkdownPersistenceRegistry());
+  new MarkdownPersistenceRegistry(
+    typeof indexedDB === "undefined" ? {} : { checkpointStore: indexedDbMarkdownDrafts },
+  ));

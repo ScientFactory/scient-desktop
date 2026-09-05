@@ -325,7 +325,9 @@ editor's editability. Plotly and Vega-Lite retain their explicit source action b
 chart gestures stay renderer-owned. Read-only documents do not receive authoring actions.
 
 GFM table cells contain inline content directly. The Scient table-navigation adapter handles
-only cell-edge arrows, since the upstream table handler expects a paragraph inside each cell.
+cell-edge arrows, since the upstream table handler expects a paragraph inside each cell.
+Enter inserts a hard break within the current cell using the existing `<br>` serialization;
+it does not create a paragraph or another table row. Shift-Enter keeps the same line-break behavior.
 It reuses ProseMirror's boundary detection, table map, selections, and caret scrolling; movement
 within a cell stays native. Row nodes disallow gap cursors between cells; gap cursors remain
 available outside the table. Arrow navigation must not mutate source, recreate the table, or
@@ -407,10 +409,34 @@ Departure guards remain in place: quick departures are silent; a slow requested 
 say “Finishing your changes.” A verified problem cancels the requested action, so resolving it
 later cannot unexpectedly navigate or close the document.
 
-These guarantees are renderer-local plus the existing server-process mutation lock. They do not
-provide cross-process filesystem CAS, general collaborative editing, historical ABA detection, fsync, or a
-durable draft journal. A hard crash or power loss can still lose edits not yet on disk. No UI
-claims otherwise; app/window/file departure remains guarded while local publication is pending.
+These guarantees remain renderer-local plus the existing server-process mutation lock. They do
+not provide cross-process filesystem CAS, general collaborative editing, or historical ABA
+detection. App/window/file departure remains guarded while publication is pending.
+
+A small IndexedDB checkpoint keeps the latest pending source, baseline revision/source and
+owned publication attempt per environment/workspace/file. It is a recovery copy, never another
+file writer or evidence of a successful save. Writes coalesce behind a 200 ms leading deadline;
+there is no periodic idle work. Admission compares the checkpoint with an uncached file read:
+already-published bytes need no recovery, unchanged/known-published baselines resume the draft,
+and independent changes use the existing conservative merge. Ambiguous changes open the
+existing conflict flow with both versions intact, before any file write can start.
+
+Checkpoint replacement and removal compare a unique token in one IndexedDB transaction. An
+old acknowledgement cannot erase another editor's checkpoint. A competing owner stops replacing
+that checkpoint rather than overwriting it; this is one latest recovery copy per file, not
+multi-window collaborative history. Storage is capped at 32 files and 4 MiB of UTF-16 source per
+record (including the pending publication). Capacity, quota or storage failures preserve existing
+checkpoints and are diagnostic errors; they do not acknowledge or block ordinary file saves.
+Checkpoint storage uses the current app/browser origin and follows its normal storage lifecycle.
+It does not copy live profiles or send drafts to a hosted service.
+
+Workspace file saves request durability from the shared atomic text writer. It flushes the
+temporary file before replacement, then flushes the
+containing directory on POSIX where supported. Windows retains file flush plus atomic rename;
+its directory handles are not supported by this API. Regenerable caches keep the existing
+atomic-only path so frequent cache updates do not incur filesystem flushes. I/O failures are propagated, and only
+unsupported directory-flush errors are exempt. This is not a guarantee against every filesystem,
+OS or hardware failure. A crash before a checkpoint commits can still lose the newest keystrokes.
 
 Controller callbacks forward to current host bindings without remounting the rich editor. The
 file adapter keys controller ownership by environment, workspace root, and relative path. The
@@ -743,9 +769,37 @@ tests are necessary but do not replace proportional review in the real web/deskt
 | Upstream isolation         | changed-path audit, seam tests, current-main rebase, overlap report            |
 | Ownability                 | license inventory, no hosted dependency, offline runtime exercise              |
 
+## Incremental work and embedded history
+
+The projection baseline and source ledger remain paired across saves. Baseline indexes and
+serialized block output are weakly owned by immutable ProseMirror nodes; editing one block does
+not reserialize other previously edited blocks. Reference context is refreshed only when the
+ordered source of bracket-bearing blocks or raw source changes. This includes raw source, lists and quotes,
+and deliberately over-invalidates ambiguous syntax. It retains the full document parser whenever
+context could have changed.
+
+A one-row table text patch is validated by parsing that row in its original header/alignment
+context and comparing the complete resulting row, with every other row unchanged. Multiline,
+structural or ambiguous changes retain the whole-block validation/serializer fallback. Source
+fidelity is still checked before accepting a patch; there is no unchecked Markdown fast path.
+
+Embedded CodeMirror editors forward precise change ranges and route undo/redo to ProseMirror's
+single document history. Standalone nested editors still have their own history. Incoming changes
+use a bounded text replacement so unaffected selection and the persistent surface survive.
+Native caption and math source fields keep their existing editing behavior.
+
+Selection-only transactions do not refresh document-wide footnote/image contexts. Retained
+persistence entries do not scan/sort the clean eviction pool on every keystroke. Math validation
+and presentation share the bounded HTML cache; edits coalesce for 100 ms, and obsolete or
+destroyed work is rejected before calling KaTeX. Existing chart near-viewport activation and
+latest-request scheduling remain in place. This pass does not introduce full editor virtualization
+or promise that every offscreen math node is unmounted.
+
 ## Performance budgets
 
-Budgets are qualification thresholds, not aspirations:
+These are qualification targets. Unit timing covers editing/projection work; first-viewport
+painting, CPU-throttled interaction and physical lower-performance machines require separate
+runtime evidence:
 
 - Rich editor code is absent from the initial chat bundle and loaded on demand.
 - Formatting-dock expansion does not remount or reparse the document and settles in one animation
@@ -753,10 +807,16 @@ Budgets are qualification thresholds, not aspirations:
 - Typing p95 stays below 16 ms for a 100 KiB representative document and below 32 ms for 500 KiB.
 - Opening a 100 KiB document reaches an interactive first viewport within 250 ms on the
   qualification Mac after the lazy chunk is available.
-- Long documents use viewport-aware decorations and defer heavy math/diagram work outside the
-  active region.
+- Heavy diagram activation remains near-viewport gated. Full math viewport deferral must preserve
+  layout and focus before it can be qualified.
 - Inactive Plotly and Mermaid nodes do not continuously animate or repaint.
 - Repeated presentation switches and file changes show no unbounded listener, DOM, or heap growth.
+
+Run `SCIENT_MARKDOWN_PERF_STRICT=1 pnpm exec vp test run --project unit
+src/scient/markdownEditor/prosemirror/performance.test.ts` from `apps/web` in an isolated,
+otherwise idle qualification run. The normal parallel suite uses wider timing ceilings to detect
+algorithmic regressions without treating runner contention as interaction latency. The fixtures
+cover 100/500 KiB documents, references, large tables and stable embedded-code surfaces.
 
 ## Change acceptance
 

@@ -5,6 +5,7 @@ import type { EditorView, NodeView } from "prosemirror-view";
 
 import {
   getScientKatexRuntimePromise,
+  renderCachedScientMath,
   ScientDisplayMath,
   ScientInlineMath,
 } from "~/scient/math/ScientMath";
@@ -24,9 +25,9 @@ class ScientMathNodeView implements NodeView {
   private node: ProseMirrorNode;
   private destroyed = false;
   private validationVersion = 0;
-  private lastValidVersion = 0;
   private lastValidTex: string | null = null;
-  private currentValidity: boolean | null = null;
+  private renderedTex: string | undefined;
+  private validationTimer: ReturnType<typeof setTimeout> | undefined;
 
   constructor(
     node: ProseMirrorNode,
@@ -105,6 +106,7 @@ class ScientMathNodeView implements NodeView {
   destroy(): void {
     this.destroyed = true;
     this.validationVersion += 1;
+    clearTimeout(this.validationTimer);
     this.renderHost.removeEventListener("click", this.handleRenderClick);
     this.sourceEditor.removeEventListener("input", this.handleInput);
     this.sourceEditor.removeEventListener("compositionend", this.handleInput);
@@ -175,35 +177,36 @@ class ScientMathNodeView implements NodeView {
   private render(): void {
     const tex = String(this.node.attrs.tex);
     if (this.sourceEditor !== document.activeElement) this.sourceEditor.value = tex;
+    if (this.renderedTex === tex) return;
+    const initial = this.renderedTex === undefined;
+    this.renderedTex = tex;
+    clearTimeout(this.validationTimer);
     const version = ++this.validationVersion;
-    this.currentValidity = null;
     this.dom.setAttribute("data-scient-markdown-math-validity", "pending");
-    this.renderPreview(
-      this.lastValidTex ?? tex,
-      this.lastValidTex !== null && this.lastValidTex !== tex,
-    );
+    if (this.lastValidTex !== null)
+      this.renderPreview(this.lastValidTex, this.lastValidTex !== tex);
+    else if (initial) this.renderPreview(tex, false);
     const display = this.isDisplay(this.node);
-    void getScientKatexRuntimePromise()
-      .then(({ renderScientTexToHtml }) => renderScientTexToHtml(tex, display))
-      .then((html) => {
-        if (this.destroyed) return;
-        if (html !== null) {
-          if (version >= this.lastValidVersion) {
-            this.lastValidVersion = version;
+    const validate = () => {
+      void getScientKatexRuntimePromise()
+        .then((runtime) => {
+          if (this.destroyed || version !== this.validationVersion) return undefined;
+          return renderCachedScientMath(runtime, tex, display);
+        })
+        .then((html) => {
+          if (this.destroyed || html === undefined || version !== this.validationVersion) return;
+          if (html !== null) {
             this.lastValidTex = tex;
-          }
-          if (version === this.validationVersion) {
-            this.currentValidity = true;
             this.dom.setAttribute("data-scient-markdown-math-validity", "valid");
             this.renderPreview(tex, false);
-          } else if (this.currentValidity === false && this.lastValidTex !== null) {
-            this.renderPreview(this.lastValidTex, true);
+            return;
           }
-          return;
-        }
-        this.settleInvalid(version, tex);
-      })
-      .catch(() => this.settleInvalid(version, tex));
+          this.settleInvalid(version, tex);
+        })
+        .catch(() => this.settleInvalid(version, tex));
+    };
+    if (initial) validate();
+    else this.validationTimer = setTimeout(validate, 100);
   }
 
   private showSourceEditor(): void {
@@ -213,7 +216,6 @@ class ScientMathNodeView implements NodeView {
 
   private settleInvalid(version: number, tex: string): void {
     if (this.destroyed || version !== this.validationVersion) return;
-    this.currentValidity = false;
     this.dom.setAttribute("data-scient-markdown-math-validity", "invalid");
     this.renderPreview(this.lastValidTex ?? tex, this.lastValidTex !== null);
   }
