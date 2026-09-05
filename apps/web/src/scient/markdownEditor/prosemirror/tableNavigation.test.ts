@@ -7,11 +7,12 @@ import { EditorView } from "prosemirror-view";
 import { CellSelection, mergeCells } from "prosemirror-tables";
 
 import { ScientMarkdownEditorView } from "./view";
-import { inlineTableArrow } from "./tableNavigation";
+import { inlineTableArrow, inlineTableEnter } from "./tableNavigation";
+import { ScientProseMirrorSession } from "./session";
 
 const TABLE = "| Alpha | Beta |\n| --- | --- |\n| Gamma | Delta |\n| Epsilon | Zeta |\n";
 
-describe("inline GFM table arrow navigation", () => {
+describe("inline GFM table keyboard behavior", () => {
   const controllers: ScientMarkdownEditorView[] = [];
   afterEach(() => {
     controllers.splice(0).forEach((controller) => controller.destroy());
@@ -49,6 +50,67 @@ describe("inline GFM table arrow navigation", () => {
       );
     return { controller, view, cells, move, key, atEdge, onUserSourceChange };
   }
+
+  it.each([0, 2])(
+    "inserts a single line break in cell %s and preserves it through save and undo",
+    (index) => {
+      const { controller, view, cells, move, key } = mount(TABLE);
+      const original = view.state.doc;
+      const text = index === 0 ? "Alpha" : "Gamma";
+      move(cells[index]!.start + 2);
+      expect(key("Enter")).toBe(true);
+      expect(view.state.selection.head).toBe(cells[index]!.start + 3);
+      expect(view.state.selection.$head.parent.child(1).type.name).toBe("hard_break");
+      const saved = controller.session.session.draftSource;
+      expect(saved).toContain(`${text.slice(0, 2)}<br>${text.slice(2)}`);
+      const reopened = new ScientProseMirrorSession({ source: saved, revision: "r1" });
+      expect(reopened.state.doc.firstChild!.content.eq(view.state.doc.firstChild!.content)).toBe(
+        true,
+      );
+      expect(controller.execute("undo")).toBe(true);
+      expect(view.state.doc.eq(original)).toBe(true);
+      expect(controller.execute("redo")).toBe(true);
+      expect(controller.session.session.draftSource).toBe(saved);
+    },
+  );
+
+  it("replaces selected text with a line break and keeps Shift-Enter in the same cell", () => {
+    const { view, cells, key } = mount(TABLE);
+    view.dispatch(
+      view.state.tr.setSelection(
+        TextSelection.create(view.state.doc, cells[2]!.start + 1, cells[2]!.end - 1),
+      ),
+    );
+    expect(key("Enter")).toBe(true);
+    expect(view.state.selection.$head.parent.textContent).toBe("Ga");
+    expect(key("Enter", { shiftKey: true })).toBe(true);
+    expect(view.state.selection.$head.parent.childCount).toBe(4);
+    expect(view.state.selection.$head.parent.child(2).type.name).toBe("hard_break");
+    expect(view.state.doc.firstChild!.childCount).toBe(3);
+  });
+
+  it("limits plain Enter line breaks to editable text within a single cell", () => {
+    const { controller, view, cells, move } = mount();
+    move(2);
+    expect(inlineTableEnter(view.state, view.dispatch, view)).toBe(false);
+    view.dispatch(
+      view.state.tr.setSelection(
+        CellSelection.create(view.state.doc, cells[2]!.pos, cells[3]!.pos),
+      ),
+    );
+    expect(inlineTableEnter(view.state, view.dispatch, view)).toBe(false);
+    view.dispatch(
+      view.state.tr.setSelection(
+        TextSelection.create(view.state.doc, cells[2]!.start, cells[3]!.end),
+      ),
+    );
+    expect(inlineTableEnter(view.state, view.dispatch, view)).toBe(false);
+    move(cells[2]!.start);
+    controller.setMode("read");
+    const original = view.state.doc;
+    expect(inlineTableEnter(view.state, view.dispatch, view)).toBe(false);
+    expect(view.state.doc).toBe(original);
+  });
 
   it("moves Up/Down to the adjacent row in the same column without changing the table", () => {
     const { controller, view, cells, move, key, onUserSourceChange } = mount();

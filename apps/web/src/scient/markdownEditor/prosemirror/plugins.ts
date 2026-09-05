@@ -27,7 +27,7 @@ import { imageUploadPlugin } from "./imageUploads";
 import { imageFigurePlugin } from "./imageFigures";
 import { scientMarkdownOutlinePlugin } from "./outline";
 import { scientMarkdownSearchPlugin } from "./search";
-import { inlineTableArrow } from "./tableNavigation";
+import { inlineTableArrow, inlineTableEnter } from "./tableNavigation";
 import { markdownTablePlugin } from "./tables";
 import {
   SCIENT_MARKDOWN_COMMAND_SHORTCUTS,
@@ -72,6 +72,7 @@ function buildKeyBindings(): Readonly<Record<string, Command>> {
     "Shift-ArrowUp": inlineTableArrow("up", true),
     "Shift-ArrowDown": inlineTableArrow("down", true),
     Enter: chainCommands(
+      inlineTableEnter,
       splitListItem(listItem),
       newlineInCode,
       createParagraphNear,

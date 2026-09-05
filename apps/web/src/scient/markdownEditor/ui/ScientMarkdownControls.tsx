@@ -309,8 +309,7 @@ function StyleMenu({
     <DockMenu
       label={`Style: ${styleMenuLabel(snapshot)}`}
       icon={styleTriggerIcon(snapshot)}
-      groupLabel="Style"
-      popupClassName="w-52"
+      popupClassName="w-50 p-0"
     >
       <StyleMenuItems controller={controller} snapshot={snapshot} />
     </DockMenu>

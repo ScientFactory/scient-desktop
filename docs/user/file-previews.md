@@ -61,6 +61,8 @@ relocate an already open file automatically.
   preference. A link to a specific Markdown line opens source so the requested
   line can be shown. Relative image paths resolve from the Markdown file's
   folder, including nested folders; inline sizes and alignment are preserved.
+- In an editable table cell, **Enter** starts a new line in the same cell without
+  paragraph spacing. **Tab** and **Shift-Tab** move between cells.
 - Code blocks and HTML/YAML/TOML source boxes stay directly editable and offer
   **Wrap lines** and **Copy code** in their headers, matching chat. Wrapping
   follows **Settings → Word wrap**, which defaults on. A block's wrap button

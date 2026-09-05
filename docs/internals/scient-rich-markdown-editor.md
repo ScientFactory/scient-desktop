@@ -325,7 +325,9 @@ editor's editability. Plotly and Vega-Lite retain their explicit source action b
 chart gestures stay renderer-owned. Read-only documents do not receive authoring actions.
 
 GFM table cells contain inline content directly. The Scient table-navigation adapter handles
-only cell-edge arrows, since the upstream table handler expects a paragraph inside each cell.
+cell-edge arrows, since the upstream table handler expects a paragraph inside each cell.
+Enter inserts a hard break within the current cell using the existing `<br>` serialization;
+it does not create a paragraph or another table row. Shift-Enter keeps the same line-break behavior.
 It reuses ProseMirror's boundary detection, table map, selections, and caret scrolling; movement
 within a cell stays native. Row nodes disallow gap cursors between cells; gap cursors remain
 available outside the table. Arrow navigation must not mutate source, recreate the table, or
