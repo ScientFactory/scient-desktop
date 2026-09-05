@@ -44,6 +44,12 @@ copy returns eligible instances to the healthy system runtime.
 Runtime controls always apply to the machine running the Scient server. A remote browser controls
 that environment; it does not install or remove provider software on the device displaying the UI.
 
+For system or custom installations, an executable update action is available only when Scient can
+verify which installer owns that binary. Otherwise the version notice remains informational and
+you update it with the original installer. Scient rechecks ownership before running an update;
+it does not guess a package manager from whichever command happens to be on your PATH. This is
+separate from the verified private-runtime actions below.
+
 ## What each action changes
 
 | Action   | What it does                                                             | What it preserves                                                               |

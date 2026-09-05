@@ -105,14 +105,7 @@ describe("ssh tunnel scripts", () => {
 
     assert.include(script, "T3_NODE_SCRIPT_PATH=''");
     assert.include(script, 'exec t3 "$@"');
-    assert.include(
-      script,
-      "exec npx --yes --allow-scripts='node-pty@1.1.0,msgpackr-extract@3.0.4' --package 't3@latest' t3 \"$@\"",
-    );
-    assert.include(
-      script,
-      "exec npm exec --yes --allow-scripts='node-pty@1.1.0,msgpackr-extract@3.0.4' --package 't3@latest' -- t3 \"$@\"",
-    );
+    assert.include(script, 'exec "$T3_CLI_PATH" "$@"');
     assert.include(script, "could not install 't3@latest'");
     assert.include(
       script,
@@ -159,12 +152,9 @@ describe("ssh tunnel scripts", () => {
     );
     assert.include(
       script,
-      "exec npx --yes --allow-scripts='node-pty@1.1.0,msgpackr-extract@3.0.4' --package 't3@nightly; touch /tmp/t3-owned' t3 \"$@\"",
+      "require_installed_t3_cli npm exec --yes --allow-scripts='node-pty@1.1.0,msgpackr-extract@3.0.4' --package 't3@nightly; touch /tmp/t3-owned'",
     );
-    assert.include(
-      script,
-      "exec npm exec --yes --allow-scripts='node-pty@1.1.0,msgpackr-extract@3.0.4' --package 't3@nightly; touch /tmp/t3-owned' -- t3 \"$@\"",
-    );
+    assert.include(script, 'exec "$T3_CLI_PATH" "$@"');
     assert.notInclude(script, "exec npx --yes t3@nightly; touch /tmp/t3-owned");
   });
 

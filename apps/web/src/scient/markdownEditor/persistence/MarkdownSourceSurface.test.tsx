@@ -47,6 +47,11 @@ vi.mock("@pierre/diffs/react", async (importOriginal) => {
     Virtualizer: ({ children }: { children: ReactNode }) => children,
   };
 });
+// happy-dom cannot construct Vite's browser workers. Keep the real File/Editor
+// on Pierre's main-thread renderer; browser worker rendering requires integrated client review.
+vi.mock("~/components/DiffWorkerPoolProvider", () => ({
+  DiffWorkerPoolProvider: ({ children }: { children?: ReactNode }) => children,
+}));
 vi.mock("~/composerDraftStore", () => ({
   useComposerDraftStore: (
     select: (value: {

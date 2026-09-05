@@ -434,12 +434,15 @@ jobs:
           $setupExe = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\setup.exe"
           $process = Start-Process -FilePath $setupExe `
             -ArgumentList "modify", "--installPath", "`"$installPath`"", "--add", `
-            "Microsoft.VisualStudio.Component.VC.Tools.x86.x64.Spectre", "--quiet", "--norestart" `
+            "Microsoft.VisualStudio.Component.VC.Runtimes.x86.x64.Spectre", "--quiet", "--norestart" `
             -Wait -PassThru -NoNewWindow
           if ($null -eq $process -or $process.ExitCode -ne 0) {
             $code = if ($null -ne $process) { $process.ExitCode } else { 1 }
             throw "Visual Studio Installer failed with exit code $code"
           }
+
+      - uses: ./.github/actions/setup-apt-mirrors
+        if: matrix.platform == 'linux'
 
       - name: Install Linux desktop build libraries
         if: matrix.platform == 'linux'

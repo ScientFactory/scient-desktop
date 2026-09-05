@@ -415,8 +415,10 @@ describe("ThreadSettlementReactor", () => {
         const mergedThreadSettled = yield* Deferred.make<void>();
         const branchLookupCount = yield* Ref.make(0);
         const fixture = yield* makeHarness({
+          settings: { ...DEFAULT_SERVER_SETTINGS, sidebarAutoSettleOnMerge: true },
           snapshot: makeSnapshot([
             makeThread("merged-in-app", {
+              latestUserMessageAt: "2026-08-27T00:00:00.000Z",
               linkedPullRequest: {
                 projectId: PROJECT_ID,
                 repository: "owner/repository",
@@ -424,7 +426,10 @@ describe("ThreadSettlementReactor", () => {
                 url: "https://example.test/owner/repository/pull/42",
               },
             }),
-            makeThread("slow-periodic-lookup", { branch: "another-feature" }),
+            makeThread("slow-periodic-lookup", {
+              branch: "another-feature",
+              latestUserMessageAt: "2026-08-27T00:00:00.000Z",
+            }),
           ]),
           branchPullRequest: () =>
             Ref.updateAndGet(branchLookupCount, (count) => count + 1).pipe(
@@ -469,7 +474,13 @@ describe("ThreadSettlementReactor", () => {
           const state = yield* Ref.make<"open" | "merged">("open");
           const mergedThreadSettled = yield* Deferred.make<void>();
           const fixture = yield* makeHarness({
-            snapshot: makeSnapshot([makeThread("branch-thread", { branch: "saved-feature" })]),
+            settings: { ...DEFAULT_SERVER_SETTINGS, sidebarAutoSettleOnMerge: true },
+            snapshot: makeSnapshot([
+              makeThread("branch-thread", {
+                branch: "saved-feature",
+                latestUserMessageAt: "2026-08-27T00:00:00.000Z",
+              }),
+            ]),
             branchPullRequest: () =>
               Ref.get(state).pipe(
                 Effect.map((pullRequestState) => ({ state: pullRequestState, updatedAt: NOW })),
@@ -498,6 +509,40 @@ describe("ThreadSettlementReactor", () => {
       ),
   );
 
+  it.effect("a merge respects Scient's default opt-out for automatic settlement", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        yield* TestClock.setTime(Date.parse(NOW));
+        const state = yield* Ref.make<"open" | "merged">("open");
+        const fixture = yield* makeHarness({
+          snapshot: makeSnapshot([
+            makeThread("merge-opt-out", {
+              branch: "saved-feature",
+              latestUserMessageAt: "2026-08-27T00:00:00.000Z",
+            }),
+          ]),
+          branchPullRequest: () =>
+            Ref.get(state).pipe(
+              Effect.map((pullRequestState) => ({ state: pullRequestState, updatedAt: NOW })),
+            ),
+        });
+
+        yield* Effect.gen(function* () {
+          const reactor = yield* ThreadSettlementReactor.ThreadSettlementReactor;
+          yield* startHarness(reactor, fixture.activation, fixture.snapshotReads);
+          yield* Ref.set(state, "merged");
+          yield* fixture.publishMerge;
+          yield* Queue.take(fixture.snapshotReads);
+          yield* reactor.drain;
+
+          assert.strictEqual(DEFAULT_SERVER_SETTINGS.sidebarAutoSettleOnMerge, false);
+          assert.strictEqual((yield* Ref.get(fixture.branchCalls)).length, 2);
+          assert.deepStrictEqual(yield* Ref.get(fixture.commands), []);
+        }).pipe(Effect.provide(fixture.layer));
+      }),
+    ),
+  );
+
   it.effect("a merge does not settle threads linked to an unrelated pull request", () =>
     Effect.scoped(
       Effect.gen(function* () {
@@ -507,8 +552,10 @@ describe("ThreadSettlementReactor", () => {
         const releaseMergeLookup = yield* Deferred.make<void>();
         const lookupCount = yield* Ref.make(0);
         const fixture = yield* makeHarness({
+          settings: { ...DEFAULT_SERVER_SETTINGS, sidebarAutoSettleOnMerge: true },
           snapshot: makeSnapshot([
             makeThread("merged-in-app", {
+              latestUserMessageAt: "2026-08-27T00:00:00.000Z",
               linkedPullRequest: {
                 projectId: PROJECT_ID,
                 repository: "owner/repository",
@@ -517,6 +564,7 @@ describe("ThreadSettlementReactor", () => {
               },
             }),
             makeThread("unrelated-linked", {
+              latestUserMessageAt: "2026-08-27T00:00:00.000Z",
               linkedPullRequest: {
                 projectId: PROJECT_ID,
                 repository: "owner/repository",
@@ -692,7 +740,10 @@ describe("ThreadSettlementReactor", () => {
         const fixture = yield* makeHarness({
           snapshot: makeSnapshot(
             [
-              makeThread("missing-own-project", { linkedPullRequest }),
+              makeThread("missing-own-project", {
+                latestUserMessageAt: "2026-08-27T00:00:00.000Z",
+                linkedPullRequest,
+              }),
               makeThread("missing-branch-project", { branch: "saved-feature" }),
             ],
             [makeProject(LINKED_PROJECT_ID, "/workspace/linked")],

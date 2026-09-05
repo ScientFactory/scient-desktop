@@ -401,6 +401,15 @@ by default for other uses and lets the user hide or reveal the email. These defa
 
 ## Model manifest
 
+External runtime maintenance uses T3's ownership resolver in
+`apps/server/src/provider/providerMaintenance.ts`. It proves the resolved binary's installer,
+pins npm's owning prefix, and uses Homebrew's available version rather than npm's version for a
+Homebrew install. Unproven ownership stays manual-only. Resolution is cached per instance and
+revalidated immediately before mutation; the runner verifies the installed version afterward.
+Scient-managed paths remain manual-only at this generic boundary: their separate runtime actions
+own discovery, verification, activation, leases, and rollback. Never send a managed binary through
+an inferred system-package update command.
+
 The model picker's legacy section is driven by `apps/server/src/provider/model-manifest.json`, which
 lists the current (non-legacy) model slugs per driver kind. The `ModelManifest` service
 (`apps/server/src/provider/ModelManifest.ts`) refreshes that policy from the same file on Scient's

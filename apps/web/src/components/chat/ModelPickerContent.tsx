@@ -9,6 +9,7 @@ import {
   type ResolvedKeybindingsConfig,
 } from "@t3tools/contracts";
 import { resolveSelectableModel } from "@t3tools/shared/model";
+import { useAtomValue } from "@effect/atom-react";
 import { LegendList, type LegendListRef } from "@legendapp/list/react";
 import {
   memo,
@@ -41,6 +42,8 @@ import {
   ComboboxListVirtualized,
 } from "../ui/combobox";
 import { ModelEsque } from "./providerIconUtils";
+import { isCommandPaletteOpen } from "../../commandPaletteBus";
+import { primaryServerKeybindingsAtom } from "../../state/server";
 import {
   modelPickerJumpCommandForIndex,
   modelPickerJumpIndexFromCommand,
@@ -338,10 +341,8 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
           : [],
       ),
   );
-  const keybindings = useMemo<ResolvedKeybindingsConfig>(
-    () => providedKeybindings ?? [],
-    [providedKeybindings],
-  );
+  const serverKeybindings = useAtomValue(primaryServerKeybindingsAtom);
+  const keybindings = providedKeybindings ?? serverKeybindings;
   const updateSettings = useUpdateClientSettings();
 
   const focusSearchInput = useCallback(() => {
@@ -847,7 +848,7 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
 
   useEffect(() => {
     const onWindowKeyDown = (event: globalThis.KeyboardEvent) => {
-      if (event.defaultPrevented || event.repeat) {
+      if (event.defaultPrevented || event.repeat || isCommandPaletteOpen()) {
         return;
       }
 
@@ -859,6 +860,8 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
       if (jumpIndex === null) {
         return;
       }
+      event.preventDefault();
+      event.stopPropagation();
 
       const targetModelKey = modelJumpModelKeys[jumpIndex];
       if (!targetModelKey) {
@@ -868,8 +871,6 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
       if (!model) {
         return;
       }
-      event.preventDefault();
-      event.stopPropagation();
       handleModelSelect(model.slug, model.instanceId);
     };
 

@@ -173,10 +173,13 @@ const makeHarness = Effect.fn("ProviderRegistryTransientState.makeHarness")(func
     displayName: undefined,
     enabled: true,
     snapshot: {
-      maintenanceCapabilities: makeManualOnlyProviderMaintenanceCapabilities({
-        provider: DRIVER,
-        packageName: null,
-      }),
+      resolveMaintenance: () =>
+        Effect.succeed(
+          makeManualOnlyProviderMaintenanceCapabilities({
+            provider: DRIVER,
+            packageName: null,
+          }),
+        ),
       getSnapshot: Ref.get(snapshotRef),
       applyUsageLimits: () => Effect.void,
       refresh: Effect.gen(function* () {
