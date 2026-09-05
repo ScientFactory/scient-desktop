@@ -51,6 +51,9 @@ describe("project chat code readiness", () => {
     const loading = preloadProjectChat(f.router).then(() => {
       ready = true;
     });
+    // Submitting while the speculative browse preload is still pending
+    // must reuse it, not start another download or navigate early.
+    const submission = preloadProjectChat(f.router);
     expect(f.draftPreload).toHaveBeenCalledOnce();
     expect(f.threadPreload).toHaveBeenCalledOnce();
     f.draft.resolve();
@@ -58,6 +61,7 @@ describe("project chat code readiness", () => {
     expect(ready).toBe(false);
     f.thread.resolve();
     await loading;
+    await submission;
     await preloadProjectChat(f.router);
     expect(f.loader).not.toHaveBeenCalled();
     expect(f.router.history.location.pathname).toBe("/");

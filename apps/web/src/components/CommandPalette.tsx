@@ -1382,6 +1382,9 @@ function OpenCommandPaletteDialog(props: {
 
   const startAddProjectBrowse = useCallback(
     async (environmentId: EnvironmentId): Promise<void> => {
+      // Warm code while the user browses, without blocking the picker or
+      // surfacing speculative failures. Submission still checks readiness.
+      void settlePromise(() => preloadProjectChat(router));
       const initialQuery = getAddProjectInitialQueryForEnvironment(environmentId);
       const initialBrowsePath = getBrowseDirectoryPath(initialQuery);
       const browseCwd = getBrowseCwdForEnvironment(environmentId);
@@ -1409,6 +1412,7 @@ function OpenCommandPaletteDialog(props: {
       getBrowseCwdForEnvironment,
       prefetchBrowsePath,
       pushPaletteView,
+      router,
     ],
   );
 
