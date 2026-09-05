@@ -830,6 +830,7 @@ export const make = Effect.gen(function* () {
         });
         yield* writeFileStringAtomically({
           filePath: writeTargetPath,
+          durable: true,
           contents: input.contents,
           mode: existingMode,
         }).pipe(

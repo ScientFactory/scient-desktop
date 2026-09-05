@@ -1,7 +1,11 @@
 // @effect-diagnostics globalTimers:off -- Framework-neutral persistence lane with an injected transport and deterministic timer tests.
 // @effect-diagnostics globalDate:off -- Elapsed debounce deadlines share the timer clock, virtualized in deterministic tests.
 // @effect-diagnostics globalConsole:off -- Observer defects must not interrupt publication bookkeeping.
-import type { MarkdownDocumentSession, MarkdownSaveIntent } from "./session.ts";
+import type {
+  MarkdownDocumentSession,
+  MarkdownSaveIntent,
+  MarkdownExternalConflict,
+} from "./session.ts";
 import { reconcileMarkdown, type MarkdownReconciliation } from "./reconciliation.ts";
 
 export interface MarkdownExternalUpdate extends MarkdownReconciliation {
@@ -30,6 +34,7 @@ export interface MarkdownPersistenceOptions {
   readonly source: string;
   readonly revision: string;
   readonly draftSource?: string;
+  readonly initialConflict?: MarkdownExternalConflict;
   readonly write: (intent: MarkdownSaveIntent) => Promise<{ readonly revision: string }>;
   /** Must begin after earlier writes for this file have settled, without a query cache. */
   readonly read: () => Promise<MarkdownPersistenceReadResult>;
@@ -42,6 +47,8 @@ export interface MarkdownPersistenceOptions {
 
 export interface MarkdownPersistenceSnapshot extends MarkdownDocumentSession {
   readonly transitionVersion: number;
+  /** Exact owned attempt, retained while its publication may be ambiguous. */
+  readonly publicationSource: string | null;
   /** Includes an ambiguous attempt even if the user has undone back to the old baseline. */
   readonly pending: boolean;
   readonly inFlight: boolean;
@@ -123,9 +130,10 @@ export class MarkdownPersistenceCoordinator {
       draftSource,
       editVersion: draftSource === options.source ? 0 : 1,
       confirmedEditVersion: 0,
-      conflict: null,
+      conflict: options.initialConflict ?? null,
       transitionVersion: 0,
-      pending: draftSource !== options.source,
+      publicationSource: null,
+      pending: draftSource !== options.source || options.initialConflict !== undefined,
       inFlight: false,
       reading: false,
       retrying: false,
@@ -311,6 +319,7 @@ export class MarkdownPersistenceCoordinator {
     this.snapshot = {
       ...this.snapshot,
       pending,
+      publicationSource: this.writeOperation?.intent.source ?? this.ambiguousIntent?.source ?? null,
       editingBlocked: this.renameHold !== null,
       inFlight: this.writeOperation !== null,
       reading: this.readOperation !== null || this.readRequest !== null,
