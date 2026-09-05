@@ -134,6 +134,41 @@ import { useNewThreadHandler } from "./useHandleNewThread";
 
 describe("useNewThreadHandler", () => {
   it.each([
+    null,
+    {
+      draftId: "draft-existing",
+      environmentId: "environment-ssh",
+      promotedTo: null,
+      threadId: "thread-existing",
+    },
+  ])("hands off after preparation but before deferred navigation (%s)", async (draft) => {
+    testState.reset(draft);
+    let completeNavigation!: () => void;
+    const navigation = new Promise<void>((resolve) => {
+      completeNavigation = resolve;
+    });
+    let markNavigationStarted!: () => void;
+    const navigationStarted = new Promise<void>((resolve) => {
+      markNavigationStarted = resolve;
+    });
+    const ready = vi.fn();
+    testState.router.navigate.mockImplementationOnce(async () => {
+      expect(ready).toHaveBeenCalledOnce();
+      markNavigationStarted();
+      await navigation;
+    });
+    const pending = useNewThreadHandler()(
+      { environmentId: "environment-ssh", projectId: "project-remote" } as never,
+      { onNavigationReady: ready },
+    );
+    expect(ready).not.toHaveBeenCalled();
+    testState.completeProjectFileRead(null);
+    await navigationStarted;
+    expect(testState.router.navigate).toHaveBeenCalledOnce();
+    completeNavigation();
+    expect(await pending).not.toBeNull();
+  });
+  it.each([
     ["new", null],
     [
       "reusable",

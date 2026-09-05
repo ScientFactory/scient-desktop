@@ -100,6 +100,8 @@ export function useNewThreadHandler() {
         navigationKind?: "automatic";
         /** A caller may claim ownership before its own asynchronous preparation. */
         navigationIntent?: NewThreadNavigationIntent;
+        /** Close the initiating surface once preparation is done, before navigation waits. */
+        onNavigationReady?: () => void;
       },
       // Which draft the thread ended up in, so a caller that has something to put in it — a
       // prepared checkout, a task to write — addresses that one rather than looking the project
@@ -387,9 +389,11 @@ export function useNewThreadHandler() {
             routeTargetAfterWrites?.kind === "draft" &&
             routeTargetAfterWrites.draftId === emptyStoredDraftThread.draftId
           ) {
+            options?.onNavigationReady?.();
             return opened;
           }
           if (!canCommitNavigation()) return null;
+          options?.onNavigationReady?.();
           await router.navigate({
             to: "/draft/$draftId",
             params: { draftId: emptyStoredDraftThread.draftId },
@@ -423,6 +427,7 @@ export function useNewThreadHandler() {
           interactionMode: latestActiveDraftThread.interactionMode,
           ...pickExplicitWorkspaceOptions(options),
         });
+        options?.onNavigationReady?.();
         return Promise.resolve({
           draftId: currentRouteTarget.draftId,
           threadId: latestActiveDraftThread.threadId,
@@ -466,6 +471,7 @@ export function useNewThreadHandler() {
           });
           carryComposerContentTo(racedDraft.draftId);
           if (!canCommitNavigation()) return null;
+          options?.onNavigationReady?.();
           await router.navigate({
             to: "/draft/$draftId",
             params: { draftId: racedDraft.draftId },
@@ -498,6 +504,7 @@ export function useNewThreadHandler() {
         carryComposerContentTo(draftId);
 
         if (!canCommitNavigation()) return null;
+        options?.onNavigationReady?.();
         await router.navigate({
           to: "/draft/$draftId",
           params: { draftId },

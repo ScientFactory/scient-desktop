@@ -111,6 +111,7 @@ export function useScientProjectInitialization() {
       readonly environmentId: EnvironmentId;
       readonly prepared: PreparedConnection | null;
       readonly root: string;
+      readonly isCurrent?: () => boolean;
     }): Promise<{ readonly root: string; readonly initialize: boolean } | null> => {
       const prepared = input.prepared ?? readPreparedConnection(input.environmentId);
       if (prepared === null) {
@@ -125,17 +126,19 @@ export function useScientProjectInitialization() {
 
       try {
         const nextInspection = await inspectScientProjectForOpening(prepared, input.root);
+        if (input.isCurrent?.() === false) return null;
         if (nextInspection.state === "initialized") {
           return { root: nextInspection.root, initialize: false };
         }
 
         const decision = await requestDecision(nextInspection);
-        if (decision === "cancel") return null;
+        if (decision === "cancel" || input.isCurrent?.() === false) return null;
         return {
           root: nextInspection.root,
           initialize: decision === "initialize",
         };
       } catch (error) {
+        if (input.isCurrent?.() === false) return null;
         toastManager.add({
           type: "warning",
           title: "Scient project setup could not be checked",
