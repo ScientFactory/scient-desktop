@@ -1247,6 +1247,7 @@ describe("ScientMarkdownEditorView", () => {
     // happy-dom does not calculate intersections. Exercise the supported
     // no-observer fallback so this mounted fence can validate its live source.
     vi.stubGlobal("IntersectionObserver", undefined);
+    vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
     const controller = new ScientMarkdownEditorView({
       source: '```plotly\n{"data":[{"x":[1],"y":[2]}]}\n```\n',
       revision: "sha256:before",
@@ -1257,22 +1258,26 @@ describe("ScientMarkdownEditorView", () => {
     const host = document.createElement("div");
     document.body.append(host);
     mounted.push(controller);
-    const view = controller.mount(host);
-
-    await vi.waitFor(() => {
-      expect(view.dom.querySelector("[data-scient-rich-fence-validity='valid']")).not.toBeNull();
+    let view!: EditorView;
+    await act(() => {
+      view = controller.mount(host);
     });
+    const preview = view.dom.querySelector("[data-scient-rich-fence-validity='valid']");
+    expect(preview).not.toBeNull();
     const codeBlock = view.state.doc.firstChild;
     expect(codeBlock?.type.name).toBe("code_block");
-    view.dispatch(
-      view.state.tr.replaceWith(1, codeBlock!.nodeSize - 1, view.state.schema.text('{"data":[')),
-    );
-
-    await vi.waitFor(() => {
-      const retained = view.dom.querySelector("[data-scient-rich-fence-source-state='retained']");
-      expect(retained).not.toBeNull();
-      expect(retained?.textContent).toContain("Preview kept at the last valid version.");
+    // Flush the NodeView's React root and async validation together. A DOM
+    // polling deadline can expire before React commits on a busy CI runner.
+    await act(() => {
+      view.dispatch(
+        view.state.tr.replaceWith(1, codeBlock!.nodeSize - 1, view.state.schema.text('{"data":[')),
+      );
     });
+    const retained = view.dom.querySelector("[data-scient-rich-fence-source-state='retained']");
+    expect(retained).toBe(preview);
+    expect(retained?.getAttribute("data-scient-rich-fence-validity")).toBe("invalid");
+    expect(retained?.textContent).toContain("Preview kept at the last valid version.");
+    expect(view.state.doc.firstChild?.textContent).toBe('{"data":[');
   });
 
   it("inserts an uploaded image only after the server returns its portable path", async () => {
