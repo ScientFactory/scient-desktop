@@ -2,6 +2,7 @@ import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useEffect } from "react";
 
 import ChatView from "../components/ChatView";
+import { ChatLoadingState } from "../components/ChatLoadingState";
 import { threadHasStarted } from "../components/ChatView.logic";
 import { finalizePromotedDraftThreadByRef, useComposerDraftStore } from "../composerDraftStore";
 import { resolveThreadRouteRef, resolveThreadRouteRenderState } from "../threadRoutes";
@@ -76,6 +77,10 @@ function ChatThreadRouteView() {
 
   if (!threadRef) {
     return null;
+  }
+
+  if (renderState === "loading" && serverThreadShell === null) {
+    return <ChatLoadingState />;
   }
 
   return (

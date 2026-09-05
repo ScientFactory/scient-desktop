@@ -105,6 +105,7 @@ import {
   type NewThreadNavigationIntent,
 } from "../lib/newThreadNavigationIntent";
 import { waitForProjectProjection } from "../lib/projectProjection";
+import { preloadProjectChat } from "../lib/preloadProjectChat";
 import { type ScientProjectInitializationDecision } from "../lib/scientProjectInitialization";
 import {
   appendBrowsePathSegment,
@@ -1967,6 +1968,9 @@ function OpenCommandPaletteDialog(props: {
       let cwd = resolveProjectPathForDispatch(rawCwd, input.currentProjectCwd);
       if (cwd.length === 0) return;
 
+      // Start independent code loading now; keep the current screen and picker
+      // available until both preparation and the destination code are ready.
+      const chatCode = settlePromise(() => preloadProjectChat(router));
       const projectPreparation = await prepareScientProjectForOpening({
         environmentId: input.environmentId,
         prepared: input.prepared,
@@ -1974,6 +1978,11 @@ function OpenCommandPaletteDialog(props: {
         isCurrent: canCommitNavigation,
       });
       if (projectPreparation === null || !canCommitNavigation()) return;
+      const chatCodeResult = await chatCode;
+      if (!canCommitNavigation()) return;
+      if (chatCodeResult._tag === "Failure") {
+        throw squashAtomCommandFailure(chatCodeResult);
+      }
       // The server owns filesystem identity. Use its canonical root for both
       // the host project record and the optional Scient initialization.
       cwd = projectPreparation.root;
@@ -2119,6 +2128,7 @@ function OpenCommandPaletteDialog(props: {
       prepareScientProjectForOpening,
       resolveProjectInitializationDecision,
       clientSettings.sidebarThreadSortOrder,
+      router,
     ],
   );
 

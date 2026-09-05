@@ -19,6 +19,7 @@ import { useEnvironments } from "../state/environments";
 import { APP_DISPLAY_NAME } from "~/branding";
 import { hasCloudPublicConfig } from "~/cloud/publicConfig";
 import { ScientGettingStartedGate } from "~/scient/onboarding/ScientGettingStartedGate";
+import { ChatLoadingState } from "../components/ChatLoadingState";
 
 function ChatIndexRouteView() {
   const { authGateState } = Route.useRouteContext();
@@ -67,7 +68,7 @@ function IndexDraftLanding() {
   }, [handleNewThread, mostRecentProject, startState.retryRequest]);
 
   if (!bootstrapped) {
-    return null;
+    return <ChatLoadingState />;
   }
   if (mostRecentProject !== null) {
     return startState.failed ? (
@@ -79,7 +80,9 @@ function IndexDraftLanding() {
           }));
         }}
       />
-    ) : null;
+    ) : (
+      <ChatLoadingState />
+    );
   }
   return <NoProjectsHero />;
 }
