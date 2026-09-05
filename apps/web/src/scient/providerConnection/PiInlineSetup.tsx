@@ -2,6 +2,7 @@ import type { EnvironmentId, ServerProvider } from "@t3tools/contracts";
 import { PiIcon } from "../../components/Icons";
 import { AssistedSetupFrame, AssistedSetupStatus } from "./AssistedProviderSetup";
 import { ProviderRuntimeSection } from "./ProviderRuntimeSection";
+import { providerSettingsLifecyclePresentation } from "./providerSettingsLifecyclePresentation";
 
 /** Pi has a managed runtime, but no single provider-owned account flow. */
 export function PiInlineSetup(props: {
@@ -11,6 +12,8 @@ export function PiInlineSetup(props: {
   readonly managedRuntimePresentedExternally?: boolean;
   readonly onRepairSucceeded?: () => void;
 }) {
+  const presentation = providerSettingsLifecyclePresentation(props.provider, props.displayName);
+  const showModelSetup = presentation.kind === "manual";
   return (
     <>
       {!props.managedRuntimePresentedExternally ? (
@@ -24,17 +27,23 @@ export function PiInlineSetup(props: {
           }}
         />
       ) : null}
-      <AssistedSetupFrame>
-        <AssistedSetupStatus
-          icon={<PiIcon className="size-5 text-primary" />}
-          title={
-            props.provider.status === "ready" && props.provider.models.length > 0
-              ? "Pi models available"
-              : "Configure Pi models"
-          }
-          body="Configure API keys or complete a supported /login flow in Pi on the server machine, then refresh. Pi owns those credentials; there is no single Pi account sign-in here. Full access only; no native sandbox."
-        />
-      </AssistedSetupFrame>
+      {showModelSetup ? (
+        <AssistedSetupFrame>
+          <AssistedSetupStatus
+            icon={<PiIcon className="size-5 text-primary" />}
+            title={
+              props.provider.status === "error"
+                ? "Could not load Pi models"
+                : "Connect a model provider"
+            }
+            body={
+              props.provider.status === "error"
+                ? (props.provider.message ?? "Refresh to try again.")
+                : "Run /login in Pi on the server to sign in or add an API key, then refresh models."
+            }
+          />
+        </AssistedSetupFrame>
+      ) : null}
     </>
   );
 }
