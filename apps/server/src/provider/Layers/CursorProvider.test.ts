@@ -438,11 +438,12 @@ describe("Cursor skills", () => {
         yield* fileSystem.symlink(path.join(library, "shared-review"), path.join(root, "review"));
 
         const skills = yield* discoverCursorSkills(workspace, { HOME: userHome });
+        const canonicalRoot = yield* fileSystem.realPath(root);
         expect(skills).toEqual([
           {
             name: "review",
             description: "shared",
-            path: path.join(root, "review", "SKILL.md"),
+            path: path.join(canonicalRoot, "review", "SKILL.md"),
             scope: "project",
             enabled: true,
           },

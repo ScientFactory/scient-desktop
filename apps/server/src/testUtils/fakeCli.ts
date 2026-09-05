@@ -49,18 +49,26 @@ export function writeFakeCli(options: FakeCliOptions): string {
     const launcherPath = NodePath.join(options.directory, `${options.name}.cmd`);
     NodeFS.writeFileSync(
       launcherPath,
-      ["@echo off", `node "%~dp0${options.name}-stub.mjs" %*`, "exit /b %ERRORLEVEL%", ""].join(
-        "\r\n",
-      ),
+      [
+        "@echo off",
+        `"${process.execPath.replaceAll("%", "%%")}" "%~dp0${options.name}-stub.mjs" %*`,
+        "exit /b %ERRORLEVEL%",
+        "",
+      ].join("\r\n"),
       "utf8",
     );
     return launcherPath;
   }
 
   const launcherPath = NodePath.join(options.directory, options.name);
+  // Tests may deliberately pass an isolated environment without PATH. Use the
+  // test runner's Node and the exact stub path, not ambient node/dirname tools.
+  const quoteShell = (value: string) => `'${value.replaceAll("'", "'\"'\"'")}'`;
   NodeFS.writeFileSync(
     launcherPath,
-    ["#!/bin/sh", `exec node "$(dirname "$0")/${options.name}-stub.mjs" "$@"`, ""].join("\n"),
+    ["#!/bin/sh", `exec ${quoteShell(process.execPath)} ${quoteShell(stubPath)} "$@"`, ""].join(
+      "\n",
+    ),
     "utf8",
   );
   NodeFS.chmodSync(launcherPath, 0o755);
