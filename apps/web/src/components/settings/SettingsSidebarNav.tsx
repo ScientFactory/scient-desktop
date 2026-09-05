@@ -14,6 +14,7 @@ import {
   ArchiveIcon,
   BlocksIcon,
   BotIcon,
+  ChevronRightIcon,
   GitBranchIcon,
   KeyboardIcon,
   Layers3Icon,
@@ -38,6 +39,7 @@ import {
   SidebarFooter,
   SidebarGroup,
   SidebarMenu,
+  SidebarMenuAction,
   SidebarMenuButton,
   SidebarMenuItem,
   SidebarMenuSub,
@@ -131,15 +133,17 @@ function SettingsSectionIcon({ to }: { to: SettingsPath }) {
 }
 
 function SettingsSubmenuCollapse({
+  id,
   open,
   children,
 }: {
+  readonly id: string;
   readonly open: boolean;
   readonly children: ReactNode;
 }) {
   return (
     <Collapsible open={open}>
-      <CollapsiblePanel className="duration-150 ease-out motion-reduce:transition-none">
+      <CollapsiblePanel id={id} className="duration-150 ease-out motion-reduce:transition-none">
         {children}
       </CollapsiblePanel>
     </Collapsible>
@@ -156,6 +160,7 @@ export function SettingsSidebarNav({ pathname }: { pathname: string }) {
   const searchInputRef = useRef<HTMLInputElement>(null);
   const [query, setQuery] = useState("");
   const [activeResultIndex, setActiveResultIndex] = useState(0);
+  const [expandedSettingsPath, setExpandedSettingsPath] = useState<SettingsPath | null>(null);
   const [sectionVisibility, setSectionVisibility] = useState<SettingsSectionVisibilityState | null>(
     null,
   );
@@ -418,6 +423,10 @@ export function SettingsSidebarNav({ pathname }: { pathname: string }) {
                   const Icon = item.icon;
                   const pageSections = SETTINGS_PAGE_SECTIONS[item.to];
                   const isActive = activeSettingsPath === item.to;
+                  const pageSectionsId = `settings-page-sections-${item.to.slice(
+                    "/settings/".length,
+                  )}`;
+                  const pageSectionsExpanded = isActive && expandedSettingsPath === item.to;
                   return (
                     <SidebarMenuItem key={item.to}>
                       <SidebarMenuButton
@@ -427,8 +436,28 @@ export function SettingsSidebarNav({ pathname }: { pathname: string }) {
                         <Icon />
                         <span className="truncate">{item.label}</span>
                       </SidebarMenuButton>
+                      {isActive && pageSections ? (
+                        <SidebarMenuAction
+                          type="button"
+                          aria-label={`${pageSectionsExpanded ? "Hide" : "Show"} ${item.label} sections`}
+                          aria-expanded={pageSectionsExpanded}
+                          aria-controls={pageSectionsId}
+                          onClick={() => {
+                            setExpandedSettingsPath((currentPath) =>
+                              currentPath === item.to ? null : item.to,
+                            );
+                          }}
+                        >
+                          <ChevronRightIcon
+                            className={cn(
+                              "size-3.5 transition-transform duration-150 motion-reduce:transition-none",
+                              pageSectionsExpanded && "rotate-90",
+                            )}
+                          />
+                        </SidebarMenuAction>
+                      ) : null}
                       {pageSections ? (
-                        <SettingsSubmenuCollapse open={isActive}>
+                        <SettingsSubmenuCollapse id={pageSectionsId} open={pageSectionsExpanded}>
                           <SidebarMenuSub className="border-l-0">
                             {pageSections.map((section) => (
                               <SidebarMenuSubItem key={section.targetId}>
