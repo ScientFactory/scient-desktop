@@ -107,6 +107,12 @@ implementation details, internal project names, or unverified claims into the
 catalog. Do not use `Also included` to summarize or repeat dedicated
 paragraphs.
 
+For 0.6.12, Yaacov explicitly approved repeating the user-facing 0.6.11
+improvements in the current note because many users may not have seen the
+previous release note yet. The 0.6.12 note adds only the concise Gemini
+provider hotfix line; its release must still wait until that fix is implemented
+and verified. Platform-specific installer warnings are not part of the note.
+
 ## Relationship to the release flow
 
 This feature owns the in-app catalog, validation primitives, seen-state

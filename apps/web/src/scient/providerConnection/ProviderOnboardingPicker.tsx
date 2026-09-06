@@ -4,6 +4,7 @@ import { BlocksIcon, ChevronRightIcon, SearchIcon, SettingsIcon } from "lucide-r
 import { useCallback, useEffect, useMemo, useState } from "react";
 
 import { ComposerControl, ComposerControlChevron } from "../../components/chat/ComposerControl";
+import { composerFloatingLayerProps } from "../../components/chat/composerEventScope";
 import { DRIVER_OPTIONS } from "../../components/settings/providerDriverMeta";
 import { Button } from "../../components/ui/button";
 import { Popover, PopoverPopup, PopoverTrigger } from "../../components/ui/popover";
@@ -187,6 +188,7 @@ export function ProviderOnboardingPicker(props: {
           <ComposerControlChevron />
         </PopoverTrigger>
         <PopoverPopup
+          {...composerFloatingLayerProps}
           align="start"
           className="border-0 bg-transparent p-0 shadow-none before:hidden [-webkit-backdrop-filter:none]! [--viewport-inline-padding:0] [backdrop-filter:none]!"
           viewportClassName="rounded-lg !overflow-hidden p-0"
