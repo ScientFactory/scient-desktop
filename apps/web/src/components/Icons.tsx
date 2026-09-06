@@ -708,7 +708,7 @@ export const ACPRegistryIcon: Icon = ({ className, ...props }) => (
   </svg>
 );
 
-export const PiAgentIcon: Icon = ({ className, ...props }) => (
+export const PiIcon: Icon = ({ className, ...props }) => (
   <svg {...props} viewBox="0 0 800 800" className={cn("fill-none", className)}>
     <rect width="800" height="800" rx="160" fill="#000" />
     <path
@@ -719,6 +719,3 @@ export const PiAgentIcon: Icon = ({ className, ...props }) => (
     <path fill="#fff" d="M517.36 400H634.72V634.72H517.36Z" />
   </svg>
 );
-
-/** Product-facing alias for the implemented Pi provider. */
-export const PiIcon = PiAgentIcon;

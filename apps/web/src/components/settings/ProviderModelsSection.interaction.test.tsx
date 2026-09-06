@@ -83,7 +83,9 @@ describe("provider-native model catalogs", () => {
         new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true }),
       ),
     );
-    expect(callbacks.onChange).toHaveBeenCalledWith(["custom/model"]);
+    expect(callbacks.onChange).toHaveBeenCalledWith([
+      { slug: "custom/model", name: "custom/model", capabilities: null },
+    ]);
     expect(container.querySelector('input[id$="-custom-model"]')).toBeNull();
   });
 });
