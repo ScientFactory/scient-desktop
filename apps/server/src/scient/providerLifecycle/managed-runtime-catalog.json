@@ -479,6 +479,22 @@
           "size": 140810568
         }
       }
+    },
+    "pi": {
+      "contractRevision": 1,
+      "channel": "stable",
+      "version": "0.85.1",
+      "artifacts": {
+        "darwin-arm64": {
+          "artifactName": "pi-darwin-arm64.tar.gz",
+          "url": "https://github.com/earendil-works/pi/releases/download/v0.85.1/pi-darwin-arm64.tar.gz",
+          "checksum": {
+            "algorithm": "sha256",
+            "digest": "d5f70e3c0cf7398eac239fd0261ee074d98b7ba7f6b43fe3617f052ed5b79d06"
+          },
+          "size": 31035676
+        }
+      }
     }
   }
 }
