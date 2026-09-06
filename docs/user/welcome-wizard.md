@@ -1,8 +1,8 @@
 # Import projects and conversations
 
-Open **Import projects and conversations** directly under **Settings → Getting Started**,
-or choose it on the final **Start working** step of onboarding. It is optional: **Add project**
-continues to work as before. Import checks the primary machine only after you open it.
+Choose **Import projects and conversations** on the final **Start working** step of onboarding.
+It is optional: **Add project** continues to work as before. Import checks the primary machine
+only after you open it.
 
 Scient finds directories that Claude Code or Codex has used. The default
 selection includes projects active within the last 30 days. Select **Choose**

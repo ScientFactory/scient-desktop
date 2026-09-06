@@ -280,6 +280,18 @@ describe("ClientSettings browser recording frame rate", () => {
   });
 });
 
+describe("ClientSettings browser link target", () => {
+  it("keeps links in Scient by default", () => {
+    expect(DEFAULT_CLIENT_SETTINGS.browserLinkTarget).toBe("app");
+    expect(decodeClientSettings({}).browserLinkTarget).toBe("app");
+  });
+
+  it.each(["app", "system"] as const)("preserves an explicit %s preference", (target) => {
+    expect(decodeClientSettings({ browserLinkTarget: target }).browserLinkTarget).toBe(target);
+    expect(decodeClientSettingsPatch({ browserLinkTarget: target }).browserLinkTarget).toBe(target);
+  });
+});
+
 describe("ClientSettings glass opacity", () => {
   it("defaults to a readable translucent surface", () => {
     expect(decodeClientSettings({}).glassOpacity).toBe(80);
