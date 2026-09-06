@@ -3,7 +3,7 @@
 - Status: Active
 - Owner: Yaacov
 - Created: 2026-08-09
-- Last updated: 2026-08-29
+- Last updated: 2026-09-06
 - Purpose: Define the reusable in-app release-note system and its release boundary.
 - Document type: Current implementation
 
@@ -34,17 +34,31 @@ component at the nearest equivalent footer seam.
 
 ## Content contract
 
-Each release-note entry contains:
+The current release-note format contains:
 
 - the exact semantic application version that owns the note;
 - an ISO calendar publication date;
-- a short kicker, headline, and summary; and
-- one to five stable, uniquely identified user-facing highlights.
+- one short headline;
+- one to seven stable, uniquely identified paragraphs for the main user-facing
+  improvements; and
+- one required, unnumbered final `Also included` paragraph for smaller
+  improvements that do not have a dedicated paragraph above.
+
+`Also included` is not a recap of the main paragraphs. Do not repeat their
+content there. The complete visible note is limited to 1,600 characters. A
+headline is limited to 80 characters, paragraph titles to 72, paragraph bodies
+to 240, and `Also included` to 320. These bounds keep the note readable while
+leaving enough room for a release with several meaningful improvements.
+
+Published notes from before this format retain their original kicker and
+summary so release history remains unchanged.
 
 The current installed version must match a catalog entry exactly before that
 entry can appear. The catalog validator rejects invalid versions and dates,
 duplicate versions, empty copy, excessive highlights, and duplicate highlight
-identifiers.
+identifiers. The dialog header and footer remain fixed; the shared dialog panel
+scrolls the release body within a bounded height when its paragraphs need more
+room.
 
 ## Lifecycle
 
@@ -75,9 +89,8 @@ the exact release candidate and its user-facing communication are approved:
 {
   version: "<exact application version>",
   publishedAt: "<YYYY-MM-DD>",
-  kicker: "<short release theme>",
+  format: "paragraphs",
   headline: "<plain-language user outcome>",
-  summary: "<one concise explanation>",
   highlights: [
     {
       id: "<stable-id>",
@@ -85,12 +98,14 @@ the exact release candidate and its user-facing communication are approved:
       description: "<what changed for the user>",
     },
   ],
+  alsoIncluded: "<smaller improvements not covered above>",
 }
 ```
 
 Keep the copy product-centered and concise. Do not paste commit messages,
 implementation details, internal project names, or unverified claims into the
-catalog.
+catalog. Do not use `Also included` to summarize or repeat dedicated
+paragraphs.
 
 ## Relationship to the release flow
 

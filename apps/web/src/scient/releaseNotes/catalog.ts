@@ -9,6 +9,52 @@ import type { ScientReleaseNote } from "./model";
  */
 export const SCIENT_RELEASE_NOTES = [
   {
+    version: "0.6.11",
+    publishedAt: "2026-09-06",
+    format: "paragraphs",
+    headline: "More AI choices. Smoother work.",
+    highlights: [
+      {
+        id: "bring-your-own-models",
+        title: "Bring your own models",
+        description:
+          "Connect your own API keys or local models to Pi and Droid. Save a connection once and reuse it across models.",
+      },
+      {
+        id: "pi-available",
+        title: "Pi is now available",
+        description:
+          "Pi is a lightweight, extensible coding agent that supports multiple model providers. You can now use it directly in Scient.",
+      },
+      {
+        id: "continue-existing-conversations",
+        title: "Continue your Codex and Claude conversations in Scient",
+        description:
+          "Import recent projects and conversations through Getting Started, then pick up where you left off.",
+      },
+      {
+        id: "project-preferences",
+        title: "Set your preferences once",
+        description:
+          "Choose defaults across your projects, with individual adjustments whenever a project needs something different.",
+      },
+      {
+        id: "smoother-markdown-editing",
+        title: "Smoother Markdown editing",
+        description:
+          "Large documents respond faster, tables are easier to edit, and recovery of unsaved changes is improved.",
+      },
+      {
+        id: "faster-more-reliable-work",
+        title: "Faster, more reliable work",
+        description:
+          "Improvements across project opening, conversation forks, provider update checks, and chat make everyday work in Scient smoother and more dependable.",
+      },
+    ],
+    alsoIncluded:
+      "Clearer remaining AI allowances, cleaner Settings controls, and better handling of your selected panel so automatic previews do not interrupt what you are viewing.",
+  },
+  {
     version: "0.6.10",
     publishedAt: "2026-09-04",
     kicker: "Direct Markdown editing and a smoother research workflow",
