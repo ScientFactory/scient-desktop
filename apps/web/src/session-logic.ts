@@ -897,6 +897,10 @@ export function deriveWorkLogEntries(
   for (const activity of ordered) {
     if (activity.tone !== "error" && isWorktreeSetupActivity(activity.kind)) continue;
     if (activity.kind === "tool.started") continue;
+    // Hide configuration notices persisted by older builds without rewriting history.
+    if (activity.kind === "reasoning.applied") continue;
+    // This persisted receipt drives the single, quiet notice above the composer.
+    if (activity.kind === "turn.truncated") continue;
     // Agent task.started rows are CTA seeds: they carry the true spawn turn,
     // which is the batch key (completions of background subagents arrive
     // under later synthetic turns and must not start new batches). They

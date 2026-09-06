@@ -1,5 +1,6 @@
 import type { EnvironmentId, ServerProvider } from "@t3tools/contracts";
 import { PiIcon } from "../../components/Icons";
+import { ConnectModelsButton } from "./ConnectModelsButton";
 import { AssistedSetupFrame, AssistedSetupStatus } from "./AssistedProviderSetup";
 import { ProviderRuntimeSection } from "./ProviderRuntimeSection";
 import { providerSettingsLifecyclePresentation } from "./providerSettingsLifecyclePresentation";
@@ -39,10 +40,16 @@ export function PiInlineSetup(props: {
             body={
               props.provider.status === "error"
                 ? (props.provider.message ?? "Refresh to try again.")
-                : "Run /login in Pi on the server to sign in or add an API key, then refresh models."
+                : "Add a custom model, or use /login in Pi for a supported subscription."
             }
           />
         </AssistedSetupFrame>
+      ) : null}
+      {props.provider.installed && !props.provider.probePending ? (
+        <ConnectModelsButton
+          environmentId={props.environmentId}
+          instanceId={props.provider.instanceId}
+        />
       ) : null}
     </>
   );

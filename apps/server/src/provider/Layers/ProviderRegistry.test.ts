@@ -333,6 +333,7 @@ function makeMutableServerSettingsService(
 
     return {
       start: Effect.void,
+      ...ServerSettingsModule.customModelsTestMethods,
       ready: Effect.void,
       getSettings: Ref.get(settingsRef),
       updateSettings: (patch) =>

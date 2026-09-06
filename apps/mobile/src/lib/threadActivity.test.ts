@@ -668,6 +668,39 @@ describe("buildThreadFeed", () => {
     ]);
   });
 
+  it("keeps persisted truncation visible in the mobile work log after reload", () => {
+    const thread = makeThread({
+      id: ThreadId.make("truncated"),
+      projectId: ProjectId.make("project"),
+      title: "Truncated response",
+      activities: [
+        makeActivity({
+          id: EventId.make("truncated"),
+          kind: "turn.truncated",
+          createdAt: "2026-09-06T00:00:00.000Z",
+          tone: "info",
+          summary: "Response stopped at a token limit.",
+          turnId: TurnId.make("turn"),
+        }),
+      ],
+    });
+    for (const snapshot of [thread, structuredClone(thread)]) {
+      const presented = deriveThreadFeedPresentation(
+        buildThreadFeed(snapshot),
+        null,
+        new Set([TurnId.make("turn")]),
+      );
+      expect(presented).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            type: "work-toggle",
+            summary: "Response stopped at a token limit.",
+          }),
+        ]),
+      );
+    }
+  });
+
   it("keeps long Claude commands expandable without repeating them in full detail", () => {
     const command = `printf 'first line\nsecond line'\n&& printf done`;
     const thread = makeThread({

@@ -126,12 +126,16 @@ export const checkPiProviderStatus = Effect.fn("checkPiProviderStatus")(function
           SCIENT_PI_AWARENESS: undefined,
         },
       });
-      return yield* Effect.all({
+      const result = yield* Effect.all({
         version: Effect.succeed(client.version ?? null),
         inventory: client.getAvailableModels(),
         state: client.getState(),
         commands: client.getCommands(),
       });
+      return {
+        ...result,
+        modelConnections: client.assessModelConnections?.(result.inventory.models),
+      };
     }),
   ).pipe(Effect.exit);
   if (discovery._tag === "Failure") {
@@ -156,6 +160,10 @@ export const checkPiProviderStatus = Effect.fn("checkPiProviderStatus")(function
       id: model.id,
       name: model.name?.trim() || model.id,
       ...(model.reasoning === undefined ? {} : { reasoning: model.reasoning }),
+      ...(model.reasoningMetadata ? { reasoningMetadata: model.reasoningMetadata } : {}),
+      ...(model.defaultReasoningLevel
+        ? { defaultReasoningLevel: model.defaultReasoningLevel }
+        : {}),
       ...(model.thinkingLevelMap ? { thinkingLevelMap: model.thinkingLevelMap } : {}),
     })),
     discovery.value.state.model
@@ -174,6 +182,7 @@ export const checkPiProviderStatus = Effect.fn("checkPiProviderStatus")(function
     enabled: true,
     checkedAt,
     models: models(settings, discovered),
+    modelConnections: discovery.value.modelConnections,
     slashCommands: commands.slashCommands,
     skills: commands.skills,
     probe: {

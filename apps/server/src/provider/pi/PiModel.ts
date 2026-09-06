@@ -1,4 +1,5 @@
-import type { ServerProviderModel } from "@t3tools/contracts";
+import type { ModelReasoningMetadata, ServerProviderModel } from "@t3tools/contracts";
+import { preferredReasoningLevel } from "@t3tools/shared/model";
 
 import type { PiThinkingLevel } from "./PiRpcSchema.ts";
 
@@ -7,6 +8,8 @@ export interface PiDiscoveredModel {
   readonly id: string;
   readonly name: string;
   readonly reasoning?: boolean;
+  readonly reasoningMetadata?: ModelReasoningMetadata | undefined;
+  readonly defaultReasoningLevel?: string | undefined;
   readonly thinkingLevelMap?: Readonly<Record<string, string | number | null>> | undefined;
   readonly thinkingLevels?: ReadonlyArray<string>;
 }
@@ -49,13 +52,16 @@ export function piDiscoveredModelToServerProviderModel(
 ): ServerProviderModel | undefined {
   const slug = encodePiModelSlug(model.provider, model.id);
   if (!slug || !validSegment(model.name)) return undefined;
-  const thinkingLevels =
-    model.thinkingLevels?.filter(validSegment) ?? piSupportedThinkingLevels(model);
+  const supportedLevels = model.reasoningMetadata
+    ? model.reasoningMetadata.levels
+    : (model.thinkingLevels?.filter(validSegment) ?? piSupportedThinkingLevels(model));
+  const thinkingLevels = supportedLevels.filter((level) => level !== "off" && level !== "none");
+  const selectedDefault = preferredReasoningLevel(
+    thinkingLevels,
+    model.reasoningMetadata?.defaultLevel,
+    model.defaultReasoningLevel,
+  );
   const isDefault = defaults?.provider === model.provider && defaults.modelId === model.id;
-  const defaultThinkingLevel =
-    defaults?.thinkingLevel && thinkingLevels.includes(defaults.thinkingLevel)
-      ? defaults.thinkingLevel
-      : undefined;
   return {
     slug,
     name: model.name,
@@ -63,7 +69,7 @@ export function piDiscoveredModelToServerProviderModel(
     isCustom: false,
     ...(isDefault ? { isDefault: true } : {}),
     capabilities:
-      thinkingLevels.length === 0
+      thinkingLevels.length === 0 && !model.reasoningMetadata
         ? null
         : {
             optionDescriptors: [
@@ -71,8 +77,19 @@ export function piDiscoveredModelToServerProviderModel(
                 id: "thinkingLevel",
                 label: "Thinking level",
                 type: "select",
-                options: thinkingLevels.map((level) => ({ id: level, label: level })),
-                ...(defaultThinkingLevel ? { currentValue: defaultThinkingLevel } : {}),
+                strictSelection: true,
+                concreteReasoning: true,
+                emptySelectionLabel: "Reasoning",
+                options: [
+                  ...thinkingLevels.map((level) => ({
+                    id: level,
+                    label:
+                      level === "xhigh"
+                        ? "Extra-high"
+                        : level.charAt(0).toUpperCase() + level.slice(1),
+                    ...(level === selectedDefault ? { isDefault: true } : {}),
+                  })),
+                ],
               },
             ],
           },

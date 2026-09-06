@@ -32,6 +32,57 @@ const mockRuntimeOptions = {
 } satisfies AcpSessionRuntime.AcpSessionRuntimeOptions;
 
 describe("AcpSessionRuntime", () => {
+  it.effect("confirmed requests accept full snapshots and propagate model rejections", () =>
+    Effect.gen(function* () {
+      for (const rejected of [false, true]) {
+        const runtime = yield* AcpSessionRuntime.make({
+          ...mockRuntimeOptions,
+          configOptionTransport: "request-confirmed",
+          spawn: {
+            ...mockRuntimeOptions.spawn,
+            env: rejected ? { T3_ACP_FAIL_SET_CONFIG_OPTION: "1" } : {},
+          },
+        });
+        yield* runtime.start();
+        const before = yield* runtime.getConfigOptions;
+        const result = yield* Effect.result(runtime.setModel("composer-2"));
+        if (rejected) {
+          expect(result._tag).toBe("Failure");
+          expect(yield* runtime.getConfigOptions).toEqual(before);
+        } else {
+          expect(result._tag).toBe("Success");
+          expect(
+            (yield* runtime.getConfigOptions).find((option) => option.id === "model")?.currentValue,
+          ).toBe("composer-2");
+        }
+      }
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("does not invent a confirmed model from an empty acknowledgement", () =>
+    Effect.gen(function* () {
+      const started = yield* Deferred.make<void>();
+      const runtime = yield* AcpSessionRuntime.make({
+        ...mockRuntimeOptions,
+        configOptionTransport: "request-confirmed",
+        configOptionSettleTimeout: "1 second",
+        spawn: { ...mockRuntimeOptions.spawn, env: { T3_ACP_DROID_EMPTY_CONFIG_RESPONSE: "1" } },
+        requestLogger: (event) =>
+          event.method === "session/set_config_option" && event.status === "started"
+            ? Deferred.succeed(started, undefined).pipe(Effect.asVoid)
+            : Effect.void,
+      });
+      yield* runtime.start();
+      const before = yield* runtime.getConfigOptions;
+      const pending = yield* Effect.result(runtime.setModel("composer-2")).pipe(Effect.forkChild);
+      yield* Deferred.await(started);
+      yield* TestClock.adjust("2 seconds");
+      const result = yield* Fiber.join(pending);
+      expect(result._tag).toBe("Failure");
+      expect(yield* runtime.getConfigOptions).toEqual(before);
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
   it.effect("initializes without authenticating or creating a session", () => {
     const requestEvents: Array<AcpSessionRuntime.AcpSessionRequestLogEvent> = [];
     return Effect.gen(function* () {
@@ -1044,41 +1095,43 @@ describe("AcpSessionRuntime", () => {
       ),
   );
 
-  it.effect("confirms a notification-transport config write when the agent never responds", () =>
-    Effect.gen(function* () {
-      const runtime = yield* AcpSessionRuntime.AcpSessionRuntime;
-      yield* runtime.start();
+  it.effect(
+    "confirms a requested config write when the agent publishes an update but never responds",
+    () =>
+      Effect.gen(function* () {
+        const runtime = yield* AcpSessionRuntime.AcpSessionRuntime;
+        yield* runtime.start();
 
-      // Factory Droid 0.200.0 publishes the authoritative update but leaves
-      // the JSON-RPC request pending forever. Notification transport avoids
-      // creating that pending request and completes only after this state is
-      // observed locally.
-      yield* runtime.setModel("gpt-5.4");
-      const modelOption = (yield* runtime.getConfigOptions).find((option) => option.id === "model");
-      expect(modelOption?.currentValue).toBe("gpt-5.4");
-    }).pipe(
-      Effect.provide(
-        AcpSessionRuntime.layer({
-          spawn: {
-            command: mockAgentCommand,
-            args: mockAgentArgs,
-            env: {
-              T3_ACP_DROID_ASYNC_CONFIG_REFRESH: "1",
-              T3_ACP_DROID_DROP_CONFIG_RESPONSE: "1",
+        // Only request handlers are registered: a notification would be ignored.
+        yield* runtime.setModel("gpt-5.4");
+        const modelOption = (yield* runtime.getConfigOptions).find(
+          (option) => option.id === "model",
+        );
+        expect(modelOption?.currentValue).toBe("gpt-5.4");
+      }).pipe(
+        Effect.provide(
+          AcpSessionRuntime.layer({
+            spawn: {
+              command: mockAgentCommand,
+              args: mockAgentArgs,
+              env: {
+                T3_ACP_DROID_ASYNC_CONFIG_REFRESH: "1",
+                T3_ACP_DROID_DROP_CONFIG_RESPONSE: "1",
+              },
             },
-          },
-          cwd: process.cwd(),
-          clientCapabilities: {
-            _meta: { parameterizedModelPicker: true },
-          },
-          clientInfo: { name: "t3-test", version: "0.0.0" },
-          authMethodId: "test",
-          configOptionTransport: (configId) => (configId === "model" ? "notification" : "request"),
-        }),
+            cwd: process.cwd(),
+            clientCapabilities: {
+              _meta: { parameterizedModelPicker: true },
+            },
+            clientInfo: { name: "t3-test", version: "0.0.0" },
+            authMethodId: "test",
+            configOptionTransport: (configId) =>
+              configId === "model" ? "request-confirmed" : "request",
+          }),
+        ),
+        Effect.scoped,
+        Effect.provide(NodeServices.layer),
       ),
-      Effect.scoped,
-      Effect.provide(NodeServices.layer),
-    ),
   );
 
   it.effect("tracks a successful config write when the agent returns an empty response", () =>

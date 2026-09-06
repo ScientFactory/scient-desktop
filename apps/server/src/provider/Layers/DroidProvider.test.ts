@@ -5,14 +5,142 @@ import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import { DroidSettings } from "@t3tools/contracts";
+import { AcpRequestError } from "effect-acp/errors";
+import type { DroidAcpRuntime, DroidAcpRuntimeFactory } from "../acp/DroidAcpSupport.ts";
 
 import {
   buildInitialDroidProviderSnapshot,
   checkDroidProviderStatus,
+  checkDroidProviderStatusWithCapabilities,
   isDroidAuthenticationRequiredError,
 } from "./DroidProvider.ts";
 
 const decodeDroidSettings = Schema.decodeSync(DroidSettings);
+
+const modelCatalog = [
+  { value: "native-model", name: "Native model" },
+  { value: "custom:personal-model", name: "Personal BYOK" },
+  { value: "custom:scient-fixture", name: "Scient BYOK" },
+];
+
+// Only the ACP boundary is simulated: exercise the real status probe, catalog
+// mapping without accounts or inference requests.
+const catalogRuntime = (catalog = modelCatalog, failSelection = false) => {
+  let currentValue = "native-model";
+  const selections: string[] = [];
+  const options = () => [
+    {
+      id: "model",
+      name: "Model",
+      category: "model" as const,
+      type: "select" as const,
+      currentValue,
+      options: catalog,
+    },
+  ];
+  const initializeResult = { protocolVersion: 1, agentCapabilities: {} };
+  const runtime = {
+    initialize: () => Effect.succeed(initializeResult),
+    start: () =>
+      Effect.succeed({
+        sessionId: "fixture",
+        initializeResult,
+        sessionSetupResult: { sessionId: "fixture", configOptions: options() },
+      }),
+    getConfigOptions: Effect.sync(options),
+    setModel: (slug: string) =>
+      Effect.gen(function* () {
+        selections.push(slug);
+        if (failSelection && slug === "custom:personal-model")
+          return yield* new AcpRequestError({ code: -32602, errorMessage: "Ladder unavailable" });
+        currentValue = slug;
+      }),
+  } as unknown as DroidAcpRuntime;
+  return {
+    makeRuntime: (() => Effect.succeed(runtime)) satisfies DroidAcpRuntimeFactory,
+    selections,
+  };
+};
+
+const versionOnlyDroid = Effect.gen(function* () {
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const dir = yield* fs.makeTempDirectoryScoped({ prefix: "scient-droid-catalog-" });
+  const binaryPath = path.join(dir, "droid");
+  yield* fs.writeFileString(binaryPath, '#!/bin/sh\nprintf "droid-cli 0.0.99\\n"\n');
+  yield* fs.chmod(binaryPath, 0o755);
+  return binaryPath;
+});
+
+it.layer(NodeServices.layer)("Droid catalog ownership", (it) => {
+  it.effect("keeps native and Scient BYOK discovery distinct from legacy custom entries", () =>
+    Effect.gen(function* () {
+      const binaryPath = yield* versionOnlyDroid;
+      const fixture = catalogRuntime();
+      const { snapshot } = yield* checkDroidProviderStatusWithCapabilities(
+        decodeDroidSettings({
+          enabled: true,
+          binaryPath,
+          customModels: ["custom:scient-fixture", "manual-only"],
+        }),
+        {},
+        fixture.makeRuntime,
+      );
+      expect(snapshot.status).toBe("ready");
+      expect(snapshot.models.map(({ slug, isCustom }) => ({ slug, isCustom }))).toEqual(
+        modelCatalog.map(({ value }) => ({ slug: value, isCustom: false })),
+      );
+      expect(snapshot.models[2]?.name).toBe("Scient BYOK");
+      const pending = yield* buildInitialDroidProviderSnapshot(
+        decodeDroidSettings({ customModels: ["manual-only"] }),
+      );
+      expect(pending.models[0]?.isCustom).toBe(true);
+      expect(snapshot.models.slice(0, 3).every((model) => model.capabilities !== null)).toBe(true);
+      expect(fixture.selections.at(-1)).toBe("native-model");
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("retains the entire discovered catalog when a model's ladder cannot be read", () =>
+    Effect.gen(function* () {
+      const fixture = catalogRuntime(modelCatalog, true);
+      const { snapshot } = yield* checkDroidProviderStatusWithCapabilities(
+        decodeDroidSettings({ enabled: true, binaryPath: yield* versionOnlyDroid }),
+        {},
+        fixture.makeRuntime,
+      );
+      expect(snapshot.models.map((model) => model.slug)).toEqual(
+        modelCatalog.map((model) => model.value),
+      );
+      expect(snapshot.models.every((model) => !model.isCustom)).toBe(true);
+      expect(snapshot.models[1]?.capabilities).toBeNull();
+      expect(fixture.selections.at(-1)).toBe("native-model");
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("a fresh discovery removes detached models and uses current names", () =>
+    Effect.gen(function* () {
+      const settings = decodeDroidSettings({ enabled: true, binaryPath: yield* versionOnlyDroid });
+      const before = yield* checkDroidProviderStatusWithCapabilities(
+        settings,
+        {},
+        catalogRuntime().makeRuntime,
+      );
+      const next = modelCatalog
+        .slice(0, 2)
+        .map((model) => ({ ...model, name: `${model.name} updated` }));
+      const after = yield* checkDroidProviderStatusWithCapabilities(
+        settings,
+        {},
+        catalogRuntime(next).makeRuntime,
+      );
+      expect(before.snapshot.models).toHaveLength(3);
+      expect(after.snapshot.models.map((model) => model.slug)).toEqual(
+        next.map((model) => model.value),
+      );
+      expect(after.snapshot.models[1]?.name).toBe("Personal BYOK updated");
+    }).pipe(Effect.scoped),
+  );
+});
 describe("buildInitialDroidProviderSnapshot", () => {
   it.effect("returns a disabled snapshot when settings.enabled is false", () =>
     Effect.gen(function* () {

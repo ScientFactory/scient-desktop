@@ -402,12 +402,16 @@ installation remains pinned to the qualified 0.84.4 archive.
   Tool discovery failure prevents silently starting a session without the bridge. Terminal-only Pi
   UI APIs are not emulated.
 - `provider/Layers/PiProvider.ts` discovers models, thinking options, native skills and templates
-  passively with extensions/tools/context disabled. Authentication remains model-specific and
+  passively with user extensions/tools/context disabled. Scient's explicitly supplied model-registration
+  extension remains available. Authentication remains model-specific and
   unknown until exercised. The driver's shared `snapshotForCwd` hook discovers workspace-local
   resources without overriding Pi's project-trust policy. Live execution verifies the selected
   model and thinking level, including image support when steering.
-- `textGeneration/PiTextGeneration.ts` uses ephemeral, tool-free and extension-free sessions for
+- `textGeneration/PiTextGeneration.ts` uses ephemeral, tool-free sessions with user extensions disabled for
   internal structured-output helpers, without Scient MCP credentials or project instructions.
+- `provider/pi/PiCustomModels.ts` supplies the same custom-model registration to discovery, chat,
+  and background generation. See [Custom model connections](./custom-models.md) for ownership,
+  credential handling, update semantics, and qualification limits.
 - `scient/providerLifecycle/PiManagedRuntimeActions.ts` and the shared runtime package own private
   installation/repair/removal. The bundled SHA-256-pinned macOS ARM64 archive is the only managed
   target currently qualified. `supportedRuntimeModes` restricts clients to explicit Full access;

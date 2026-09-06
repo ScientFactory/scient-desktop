@@ -38,10 +38,11 @@ import {
   discoverDroidModels,
   droidAccountCapabilitiesFromInitializeResult,
   hasDroidApiKeyEnvironment,
-  isDroidCustomModelId,
   makeDroidAcpRuntime,
   resolveDroidCliBinaryPath,
   type DroidAccountCapabilities,
+  type DroidAcpRuntimeFactory,
+  type DroidAcpRuntime,
 } from "../acp/DroidAcpSupport.ts";
 
 const DROID_PRESENTATION = {
@@ -119,12 +120,15 @@ function droidModelsFromSettings(
  */
 function buildDroidDiscoveredModelsFromConfigOptions(
   configOptions: ReadonlyArray<EffectAcpSchema.SessionConfigOption> | null | undefined,
+  getReasoningMetadata?: DroidAcpRuntime["getReasoningMetadata"],
+  getDefaultReasoningLevel?: DroidAcpRuntime["getDefaultReasoningLevel"],
 ): ReadonlyArray<ServerProviderModel> {
   const discovered = buildDroidModelsFromConfigOptions(configOptions);
   if (discovered.length === 0) {
     return [];
   }
   return discovered.map((model): ServerProviderModel => {
+    const metadata = getReasoningMetadata?.(model.slug);
     // A snapshot only ever carries the *selected* model's effort ladder.
     // Assigning it to every catalog entry would advertise invalid choices
     // for the other models (Droid validates effort per model), so unknown
@@ -132,13 +136,19 @@ function buildDroidDiscoveredModelsFromConfigOptions(
     return {
       slug: model.slug,
       name: model.name || model.slug,
-      isCustom: isDroidCustomModelId(model.slug),
+      // Native discovery owns this row, including native and Scient-injected
+      // BYOK models. isCustom is reserved for legacy config.customModels rows
+      // that clients rebuild from settings, not Droid's `custom:` id syntax.
+      isCustom: false,
       ...(model.providerCostLabel ? { providerCostLabel: model.providerCostLabel } : {}),
-      capabilities: !model.capabilitiesObserved
-        ? null
-        : model.efforts.length > 0
-          ? buildDroidCapabilitiesFromEfforts(model.efforts)
-          : EMPTY_CAPABILITIES,
+      capabilities:
+        !model.capabilitiesObserved && metadata === undefined
+          ? null
+          : buildDroidCapabilitiesFromEfforts(
+              model.efforts,
+              metadata,
+              getDefaultReasoningLevel?.(model.slug),
+            ),
     };
   });
 }
@@ -173,6 +183,7 @@ export function isDroidAuthenticationRequiredError(error: unknown): boolean {
 }
 
 interface DroidAcpProbeOutcome {
+  readonly modelConnections?: ServerProviderDraft["modelConnections"];
   readonly authentication: "authenticated" | "unauthenticated";
   readonly models: ReadonlyArray<ServerProviderModel>;
   readonly accountCapabilities: DroidAccountCapabilities;
@@ -189,10 +200,14 @@ const DROID_PROBE_CLIENT_CAPABILITIES = {
   },
 } satisfies NonNullable<EffectAcpSchema.InitializeRequest["clientCapabilities"]>;
 
-const makeDroidAcpProbeRuntime = (droidSettings: DroidSettings, environment: NodeJS.ProcessEnv) =>
+const makeDroidAcpProbeRuntime = (
+  droidSettings: DroidSettings,
+  environment: NodeJS.ProcessEnv,
+  makeAcpRuntime: DroidAcpRuntimeFactory,
+) =>
   Effect.gen(function* () {
     const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
-    return yield* makeDroidAcpRuntime({
+    return yield* makeAcpRuntime({
       droidSettings,
       environment,
       childProcessSpawner,
@@ -215,6 +230,7 @@ const makeDroidAcpProbeRuntime = (droidSettings: DroidSettings, environment: Nod
 const probeAndDiscoverDroidViaAcp = (
   droidSettings: DroidSettings,
   environment: NodeJS.ProcessEnv = process.env,
+  makeAcpRuntime: DroidAcpRuntimeFactory = makeDroidAcpRuntime,
 ): Effect.Effect<
   DroidAcpProbeOutcome,
   never,
@@ -226,7 +242,7 @@ const probeAndDiscoverDroidViaAcp = (
       // A spawn/construction failure is an environment defect, not an
       // authentication signal — route it to the defect channel so the probe
       // reports a generic error instead of "unauthenticated".
-      const acp = yield* makeDroidAcpProbeRuntime(droidSettings, environment).pipe(
+      const acp = yield* makeDroidAcpProbeRuntime(droidSettings, environment, makeAcpRuntime).pipe(
         Effect.catch((error) => Effect.die(error)),
       );
       const initializeResult = yield* acp
@@ -253,7 +269,9 @@ const probeAndDiscoverDroidViaAcp = (
       }
 
       const baseModels = buildDroidDiscoveredModelsFromConfigOptions(
-        started.sessionSetupResult.configOptions,
+        yield* acp.getConfigOptions,
+        acp.getReasoningMetadata,
+        acp.getDefaultReasoningLevel,
       );
       // Best-effort per-model ladder walk; never fails the probe. Success is
       // a `Some` of models; timeout, defect, or error all collapse to `None`.
@@ -268,6 +286,7 @@ const probeAndDiscoverDroidViaAcp = (
         return {
           authentication: "authenticated",
           models: baseModels,
+          modelConnections: acp.assessModelConnections?.(baseModels),
           accountCapabilities,
         } satisfies DroidAcpProbeOutcome;
       }
@@ -276,16 +295,20 @@ const probeAndDiscoverDroidViaAcp = (
       return {
         authentication: "authenticated",
         accountCapabilities,
+        modelConnections: acp.assessModelConnections?.(baseModels),
         models: baseModels.map((model) => {
           const walked = walkedBySlug.get(model.slug);
+          const metadata = acp.getReasoningMetadata?.(model.slug);
           return {
             ...model,
             capabilities:
-              walked === undefined || !walked.capabilitiesObserved
+              (walked === undefined || !walked.capabilitiesObserved) && metadata === undefined
                 ? null
-                : walked.efforts.length > 0
-                  ? buildDroidCapabilitiesFromEfforts(walked.efforts)
-                  : EMPTY_CAPABILITIES,
+                : buildDroidCapabilitiesFromEfforts(
+                    walked?.efforts ?? [],
+                    metadata,
+                    acp.getDefaultReasoningLevel?.(model.slug),
+                  ),
           };
         }),
       } satisfies DroidAcpProbeOutcome;
@@ -325,6 +348,7 @@ export const checkDroidProviderStatusWithCapabilities = Effect.fn(
 )(function* (
   droidSettings: DroidSettings,
   environment: NodeJS.ProcessEnv = process.env,
+  makeAcpRuntime: DroidAcpRuntimeFactory = makeDroidAcpRuntime,
 ): Effect.fn.Return<
   DroidProviderStatusResult,
   never,
@@ -426,10 +450,11 @@ export const checkDroidProviderStatusWithCapabilities = Effect.fn(
     );
   }
 
-  const probeExit = yield* probeAndDiscoverDroidViaAcp(droidSettings, environment).pipe(
-    Effect.timeoutOption(DROID_ACP_AUTH_DISCOVERY_TIMEOUT_MS),
-    Effect.exit,
-  );
+  const probeExit = yield* probeAndDiscoverDroidViaAcp(
+    droidSettings,
+    environment,
+    makeAcpRuntime,
+  ).pipe(Effect.timeoutOption(DROID_ACP_AUTH_DISCOVERY_TIMEOUT_MS), Effect.exit);
   if (Exit.isFailure(probeExit)) {
     yield* Effect.logWarning("Droid ACP auth/model probe failed", {
       errorTag: causeErrorTag(probeExit.cause),
@@ -497,6 +522,7 @@ export const checkDroidProviderStatusWithCapabilities = Effect.fn(
         enabled: droidSettings.enabled,
         checkedAt,
         models: fallbackModels,
+        modelConnections: probeOutcome.modelConnections,
         probe: {
           installed: true,
           version,
@@ -515,6 +541,7 @@ export const checkDroidProviderStatusWithCapabilities = Effect.fn(
       enabled: droidSettings.enabled,
       checkedAt,
       models: probeOutcome.models,
+      modelConnections: probeOutcome.modelConnections,
       probe: {
         installed: true,
         version,

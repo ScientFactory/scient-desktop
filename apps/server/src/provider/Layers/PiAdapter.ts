@@ -45,14 +45,16 @@ import {
   type ProviderAdapterError,
 } from "../Errors.ts";
 import { decodePiModelSlug } from "../pi/PiModel.ts";
+import { applyPiModelSelection } from "../pi/PiModelSelection.ts";
 import {
   makePiRpcClient,
   PiRpcCommandError,
+  PiRpcConfigurationError,
   type PiRpcClient,
   type PiRpcError,
   type PiRpcSpawnOptions,
 } from "../pi/PiRpcClient.ts";
-import { PiThinkingLevel, type PiRpcEvent } from "../pi/PiRpcSchema.ts";
+import type { PiRpcEvent } from "../pi/PiRpcSchema.ts";
 import {
   allocateFreshPiSessionFile,
   cleanupFreshPiSessionFile,
@@ -65,8 +67,8 @@ import type { ProviderAdapterShape } from "../Services/ProviderAdapter.ts";
 
 const PROVIDER = ProviderDriverKind.make("pi");
 const isPiRpcCommandError = Schema.is(PiRpcCommandError);
+const isPiRpcConfigurationError = Schema.is(PiRpcConfigurationError);
 const decodeCursor = Schema.decodeUnknownEffect(PiSessionCursor);
-const decodeThinking = Schema.decodeUnknownEffect(PiThinkingLevel);
 
 export type PiRpcClientFactory = (
   options: PiRpcSpawnOptions,
@@ -545,7 +547,11 @@ export const makePiAdapter = Effect.fn("makePiAdapter")(function* (options: PiAd
     const completedEvent = {
       type: "turn.completed",
       ...(yield* base(ctx, turn)),
-      payload: { state: "failed", errorMessage: message },
+      payload: {
+        state: "failed",
+        errorMessage: message,
+        ...(turn.lastStopReason ? { stopReason: turn.lastStopReason } : {}),
+      },
     } as const;
     return yield* publishTerminal(
       ctx,
@@ -823,6 +829,8 @@ export const makePiAdapter = Effect.fn("makePiAdapter")(function* (options: PiAd
       }
       // Stop can run independently while the optional stats request is in flight.
       if (ctx.activeTurn !== turn || turn.terminal || ctx.closing || ctx.stopped) return;
+      // Native compaction/retry may recover a length stop before agent_settled.
+      // A final length stop completes execution, retaining the native truncation reason.
       if (turn.lastStopReason === "error") {
         const published = yield* failActive(
           ctx,
@@ -869,7 +877,12 @@ export const makePiAdapter = Effect.fn("makePiAdapter")(function* (options: PiAd
             turn.interruptRequested || turn.lastStopReason === "aborted"
               ? "interrupted"
               : "completed",
-          stopReason: turn.interruptRequested || turn.lastStopReason === "aborted" ? "abort" : null,
+          stopReason:
+            turn.interruptRequested || turn.lastStopReason === "aborted"
+              ? "abort"
+              : turn.lastStopReason === "length"
+                ? "length"
+                : null,
         },
         raw: raw(native),
       });
@@ -1279,45 +1292,23 @@ export const makePiAdapter = Effect.fn("makePiAdapter")(function* (options: PiAd
             ),
           };
         }
-        const available = yield* ctx.client
-          .getAvailableModels()
-          .pipe(Effect.mapError((cause) => request("get_available_models", cause)));
-        if (
-          !available.models.some((m) => m.provider === parsed.provider && m.id === parsed.modelId)
-        )
-          return yield* validation("sendTurn", "Selected Pi model is not currently available.");
-        yield* ctx.client
-          .setModel(parsed.provider, parsed.modelId)
-          .pipe(Effect.mapError((cause) => request("set_model", cause)));
+        // set_model validates availability after refreshing custom configuration.
+        // A separate inventory request would refresh the same configuration twice.
         const thinking = getModelSelectionStringOptionValue(selection, "thinkingLevel");
-        if (thinking !== undefined) {
-          const level = yield* decodeThinking(thinking).pipe(
-            Effect.mapError((cause) => validation("sendTurn", "Invalid Pi thinking level.", cause)),
-          );
-          const supported = yield* ctx.client
-            .getThinkingLevels()
-            .pipe(Effect.mapError((cause) => request("get_available_thinking_levels", cause)));
-          if (!supported.levels.includes(level))
-            return yield* validation(
-              "sendTurn",
-              "Selected thinking level is not supported by this Pi model.",
-            );
-          yield* ctx.client
-            .setThinkingLevel(level)
-            .pipe(Effect.mapError((cause) => request("set_thinking_level", cause)));
-        }
-        const effective = yield* ctx.client
-          .getState()
-          .pipe(Effect.mapError((cause) => request("get_state", cause)));
-        if (
-          effective.model?.provider !== parsed.provider ||
-          effective.model.id !== parsed.modelId ||
-          (thinking !== undefined && effective.thinkingLevel !== thinking)
-        )
-          return yield* validation(
-            "sendTurn",
-            "Pi did not apply the requested model or thinking level.",
-          );
+        const { state: effective, confirmedThinkingLevel } = yield* applyPiModelSelection(
+          ctx.client,
+          parsed,
+          thinking,
+          {
+            messageCount: before.messageCount,
+          },
+        ).pipe(
+          Effect.mapError((cause) =>
+            cause.kind === "validation"
+              ? validation("sendTurn", cause.detail, cause)
+              : request(cause.command, cause.cause ?? cause),
+          ),
+        );
         if (!piStateMatchesCursor(effective, ctx.cursor)) {
           yield* close(ctx);
           return yield* validation(
@@ -1343,7 +1334,7 @@ export const makePiAdapter = Effect.fn("makePiAdapter")(function* (options: PiAd
           });
         const turn = yield* beginTurn(ctx, {
           model: selection!.model,
-          ...(thinking ? { effort: thinking } : {}),
+          ...(confirmedThinkingLevel !== undefined ? { effort: confirmedThinkingLevel } : {}),
         });
         createdTurn = turn;
         observedTurn = turn;
@@ -1359,7 +1350,8 @@ export const makePiAdapter = Effect.fn("makePiAdapter")(function* (options: PiAd
           return yield* Effect.interrupt;
         }
         if (Result.isFailure(prompted)) {
-          const reusable = isPiRpcCommandError(prompted.failure);
+          const reusable =
+            isPiRpcCommandError(prompted.failure) || isPiRpcConfigurationError(prompted.failure);
           yield* failActive(ctx, "Pi prompt failed.", undefined, !reusable);
           if (!reusable) yield* close(ctx);
           return yield* request("prompt", prompted.failure);
@@ -1445,7 +1437,8 @@ export const makePiAdapter = Effect.fn("makePiAdapter")(function* (options: PiAd
       // thread lock, so responses must use Pi's own serialized RPC writer.
       const ctx = yield* requireSession(threadId);
       const pending = ctx.pendingUserInputs.get(requestId);
-      if (!pending) return yield* request("extension_ui_response", "Unknown Pi input request.");
+      if (!pending)
+        return yield* request("extension_ui_response", "This question is no longer active.");
       const rawAnswer = answers[pending.questionId];
       const answerValue =
         Array.isArray(rawAnswer) && rawAnswer.length === 1 ? rawAnswer[0] : rawAnswer;
@@ -1457,7 +1450,7 @@ export const makePiAdapter = Effect.fn("makePiAdapter")(function* (options: PiAd
         pending.method === "confirm" ? { confirmed: answer === "true" } : { value: answer };
       const resolved = yield* resolveExtensionInput(ctx, requestId, pending, answers, response);
       if (!resolved)
-        return yield* request("extension_ui_response", "Pi input request already resolved.");
+        return yield* request("extension_ui_response", "This question is no longer active.");
     });
   const stopSession = (threadId: ThreadId) =>
     Effect.suspend(() =>

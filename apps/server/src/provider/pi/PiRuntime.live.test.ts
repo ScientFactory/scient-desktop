@@ -449,6 +449,7 @@ it.effect.skipIf(!binary)(
           let body = "";
           for await (const chunk of request) body += String(chunk);
           requests.push(body);
+          const exhausted = requests.length === 15;
           if (requests.length === 13) {
             response.writeHead(400, { "content-type": "application/json" });
             response.end(
@@ -468,7 +469,7 @@ it.effect.skipIf(!binary)(
           );
           const finish = () =>
             response.end(
-              `data: ${JSON.stringify({ id: "test", object: "chat.completion.chunk", model: "synthetic", choices: [{ index: 0, delta: {}, finish_reason: "stop" }], usage: { prompt_tokens: 10, completion_tokens: 8, total_tokens: 18 } })}\n\ndata: [DONE]\n\n`,
+              `data: ${JSON.stringify({ id: "test", object: "chat.completion.chunk", model: "synthetic", choices: [{ index: 0, delta: {}, finish_reason: exhausted ? "length" : "stop" }], usage: { prompt_tokens: 10, completion_tokens: exhausted ? 1024 : 8, total_tokens: exhausted ? 1034 : 18 } })}\n\ndata: [DONE]\n\n`,
             );
           // A deterministic network gate: finish only after Scient has consumed
           // both native delta kinds, not after an arbitrary timer.
@@ -541,7 +542,7 @@ it.effect.skipIf(!binary)(
           },
         });
         yield* adapter.startSession({ threadId, cwd: root, runtimeMode: "full-access" });
-        for (let turn = 0; turn < 14; turn++) {
+        for (let turn = 0; turn < 16; turn++) {
           const textReceived = yield* Deferred.make<void>();
           const reasoningReceived = yield* Deferred.make<void>();
           let completedBeforeRelease = false;
@@ -585,6 +586,10 @@ it.effect.skipIf(!binary)(
           expect(completed).toHaveLength(1);
           expect(completed[0]?.turnId).toBe(accepted.turnId);
           expect(completed[0]?.payload.state).toBe(turn === 12 ? "failed" : "completed");
+          if (turn === 14) {
+            expect(completed[0]?.payload.stopReason).toBe("length");
+            expect(events.some((event) => event.type === "runtime.error")).toBe(false);
+          }
           if (turn !== 12)
             expect(
               events
@@ -623,7 +628,9 @@ it.effect.skipIf(!binary)(
             .map((event) => event.turnId)
             .sort(),
         ).toEqual(sent.map((turn) => turn.turnId).sort());
-        expect(requests).toHaveLength(18);
+        expect(requests).toHaveLength(20);
+        const firstRequest = decodeRecord(requests[0]!);
+        expect(firstRequest.max_tokens ?? firstRequest.max_completion_tokens).toBe(1024);
         expect(requests[0]).toContain("Scient");
         expect(requests[1]).toContain("Native prompt sentinel: exact arguments");
         expect(requests[2]).toContain("Native skill sentinel.");

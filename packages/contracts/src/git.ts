@@ -358,6 +358,7 @@ export class TextGenerationError extends Schema.TaggedErrorClass<TextGenerationE
   {
     operation: Schema.String,
     detail: Schema.String,
+    errorReason: Schema.optional(Schema.Literal("token_limit")),
     cause: Schema.optional(Schema.Defect()),
   },
 ) {

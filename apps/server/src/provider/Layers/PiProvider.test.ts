@@ -93,7 +93,8 @@ it.effect("maps Pi RPC inventory into selectable models", () =>
     assert.equal(snapshot.models[0]?.name, "GPT Five");
     assert.equal(snapshot.models[0]?.isDefault, true);
     assert.equal(snapshot.models[0]?.capabilities?.optionDescriptors?.[0]?.id, "thinkingLevel");
-    assert.equal(snapshot.models[0]?.capabilities?.optionDescriptors?.[0]?.currentValue, "medium");
+    // Discovery's session preference is not an existing conversation's applied state.
+    assert.equal(snapshot.models[0]?.capabilities?.optionDescriptors?.[0]?.currentValue, undefined);
     assert.deepEqual(snapshot.slashCommands, [
       { name: "subagents", description: "List subagents" },
       { name: "skill:review", description: "Review changes" },

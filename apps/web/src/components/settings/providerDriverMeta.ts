@@ -91,6 +91,7 @@ const PROVIDER_CLIENT_DEFINITIONS_UNORDERED: readonly ProviderClientDefinition[]
     icon: DroidIcon,
     badgeLabel: "Early Access",
     settingsSchema: DroidSettings,
+    supportsCustomModels: false,
   },
   {
     value: ProviderDriverKind.make("opencode"),

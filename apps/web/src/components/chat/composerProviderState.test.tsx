@@ -19,6 +19,81 @@ import {
 const PROVIDER: ProviderDriverKind = ProviderDriverKind.make("codex");
 const MODEL = "test-model";
 
+it.each(["medium", "off", "default", "invalid", "low", "high", "max"])(
+  "resolves GLM's saved %s to a supported displayed and dispatched level",
+  (saved) => {
+    const state = getComposerProviderState({
+      provider: ProviderDriverKind.make("pi"),
+      model: MODEL,
+      models: [
+        {
+          slug: MODEL,
+          name: "GLM",
+          isCustom: false,
+          capabilities: {
+            optionDescriptors: [
+              {
+                id: "thinkingLevel",
+                label: "Reasoning",
+                type: "select",
+                strictSelection: true,
+                concreteReasoning: true,
+                options: [
+                  { id: "low", label: "Low" },
+                  { id: "high", label: "High" },
+                  { id: "max", label: "Max", isDefault: true },
+                ],
+              },
+            ],
+          },
+        },
+      ],
+      modelOptions: [{ id: "thinkingLevel", value: saved }],
+      planModeEnabled: false,
+    });
+    const expected = saved === "low" || saved === "high" ? saved : "max";
+    expect(state.promptEffort).toBe(expected);
+    expect(state.modelOptionsForDispatch).toEqual([{ id: "thinkingLevel", value: expected }]);
+  },
+);
+
+it.each([undefined, "off", "none", "default", "inherited", "medium", "high", "max"])(
+  "shows and dispatches the same concrete reasoning level for saved %s",
+  (saved) => {
+    const descriptors: ProviderOptionDescriptor[] = [
+      {
+        id: "thinkingLevel",
+        label: "Thinking level",
+        type: "select",
+        strictSelection: true,
+        concreteReasoning: true,
+        options: [
+          { id: "medium", label: "Medium", isDefault: true },
+          { id: "high", label: "High" },
+          { id: "max", label: "Max" },
+        ],
+      },
+    ];
+    const state = getComposerProviderState({
+      provider: ProviderDriverKind.make("pi"),
+      model: MODEL,
+      models: [
+        {
+          slug: MODEL,
+          name: MODEL,
+          isCustom: false,
+          capabilities: { optionDescriptors: descriptors },
+        },
+      ],
+      modelOptions: saved === undefined ? undefined : [{ id: "thinkingLevel", value: saved }],
+      planModeEnabled: false,
+    });
+    const expected = saved === "high" || saved === "max" ? saved : "medium";
+    expect(state.promptEffort).toBe(expected);
+    expect(state.modelOptionsForDispatch).toEqual([{ id: "thinkingLevel", value: expected }]);
+  },
+);
+
 it("does not dispatch a synthetic reasoning option for native Antigravity variants", () => {
   const provider = ProviderDriverKind.make("antigravity");
   const models = ["High", "Medium", "Low"].map((level) => ({
@@ -83,6 +158,73 @@ const ULTRATHINK_FRAME_CLASSES = {
 } as const;
 
 describe("getComposerProviderState", () => {
+  it.each(["medium", "default"])("preserves explicit Pi thinking choice %s", (value) => {
+    const state = getComposerProviderState({
+      provider: ProviderDriverKind.make("pi"),
+      model: MODEL,
+      models: modelWith([
+        {
+          id: "thinking",
+          label: "Reasoning",
+          type: "select",
+          strictSelection: true,
+          options: [
+            { id: "default", label: "Default (Medium)", isDefault: true },
+            { id: "medium", label: "Medium" },
+          ],
+        },
+      ]),
+      modelOptions: selections(["thinking", value]),
+      planModeEnabled: false,
+    });
+    expect(state.modelOptionsForDispatch).toEqual(selections(["thinking", value]));
+  });
+
+  it.each([true, false])(
+    "preserves invalid Pi thinking for server validation (empty: %s)",
+    (empty) => {
+      const state = getComposerProviderState({
+        provider: ProviderDriverKind.make("pi"),
+        model: MODEL,
+        models: modelWith([
+          {
+            id: "thinking",
+            label: "Reasoning",
+            type: "select",
+            strictSelection: true,
+            options: empty ? [] : [{ id: "default", label: "Default (Medium)", isDefault: true }],
+          },
+        ]),
+        modelOptions: selections(["thinking", "max"]),
+        planModeEnabled: false,
+      });
+      expect(state.modelOptionsForDispatch).toEqual(selections(["thinking", "max"]));
+    },
+  );
+
+  it.each([true, false])(
+    "does not dispatch an implicit Pi thinking default (empty: %s)",
+    (empty) => {
+      const state = getComposerProviderState({
+        provider: ProviderDriverKind.make("pi"),
+        model: MODEL,
+        models: modelWith([
+          {
+            id: "thinking",
+            label: "Reasoning",
+            type: "select",
+            strictSelection: true,
+            options: empty ? [] : [{ id: "default", label: "Default (Medium)", isDefault: true }],
+          },
+        ]),
+        modelOptions: undefined,
+        planModeEnabled: false,
+      });
+      expect(state.modelOptionsForDispatch).toBeUndefined();
+      if (empty) expect(state.promptEffort).toBeNull();
+    },
+  );
+
   it("derives a stable prompt injection state for ordinary prompt edits", () => {
     expect(getComposerPromptInjectionState("Investigate this failure")).toBe("none");
     expect(getComposerPromptInjectionState("Ultrathink:\nInvestigate this failure")).toBe(

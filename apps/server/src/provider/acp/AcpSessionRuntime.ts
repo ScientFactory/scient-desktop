@@ -80,6 +80,10 @@ export interface AcpSpawnInput {
 }
 
 export interface AcpSessionRuntimeOptions {
+  /** Provider-specific correction of incomplete advertised controls, also used for validation. */
+  readonly resolveConfigOptions?: (
+    configOptions: ReadonlyArray<EffectAcpSchema.SessionConfigOption>,
+  ) => ReadonlyArray<EffectAcpSchema.SessionConfigOption>;
   readonly spawn: AcpSpawnInput;
   readonly cwd: string;
   readonly resumeSessionId?: string;
@@ -105,17 +109,15 @@ export interface AcpSessionRuntimeOptions {
    */
   readonly authenticateMeta?: { readonly [key: string]: unknown };
   /**
-   * ACP normally models `session/set_config_option` as request/response. A few
-   * agents apply particular option writes and publish the updated inventory,
-   * but never complete the request. Those options use notification transport;
-   * Scient then waits for the authoritative `config_option_update`. A resolver
-   * keeps compatibility scoped to the affected option instead of weakening
-   * every config write for that agent.
+   * Always send config writes as requests. `request-confirmed` also requires
+   * the selected value in an authoritative response or config_option_update;
+   * an empty acknowledgement alone cannot provide a model's new option ladder.
+   * An update can complete a write even when the agent leaves its response pending.
    */
   readonly configOptionTransport?:
     | "request"
-    | "notification"
-    | ((configId: string) => "request" | "notification");
+    | "request-confirmed"
+    | ((configId: string) => "request" | "request-confirmed");
   readonly configOptionSettleTimeout?: Duration.Input;
   readonly mcpServers?: ReadonlyArray<EffectAcpSchema.McpServer>;
   /** Extra workspace roots the agent may read and write besides `cwd`. */
@@ -631,8 +633,9 @@ export const make = (
       value: string | boolean,
     ): Effect.Effect<void, EffectAcpErrors.AcpError> =>
       Effect.gen(function* () {
+        const snapshot = yield* SubscriptionRef.get(configOptionsRef);
         const configOption = findSessionConfigOption(
-          yield* SubscriptionRef.get(configOptionsRef),
+          options.resolveConfigOptions?.(snapshot) ?? snapshot,
           configId,
         );
         if (!configOption) {
@@ -800,13 +803,23 @@ export const make = (
                 typeof options.configOptionTransport === "function"
                   ? options.configOptionTransport(configId)
                   : (options.configOptionTransport ?? "request");
-              if (configOptionTransport === "notification") {
+              if (configOptionTransport === "request-confirmed") {
                 return runLoggedRequest(
                   "session/set_config_option",
                   requestPayload,
-                  acp.raw
-                    .notify("session/set_config_option", requestPayload)
-                    .pipe(Effect.flatMap(() => waitForConfigOptionValue(configId, value))),
+                  Effect.raceFirst(
+                    acp.agent.setSessionConfigOption(requestPayload).pipe(
+                      Effect.tap((response) =>
+                        response.configOptions
+                          ? applySetConfigOptionResponse(response, configOptions, configId, value)
+                          : Effect.void,
+                      ),
+                      // Let the subscription confirm the value. Rejections still
+                      // fail immediately, and empty acknowledgements do not invent state.
+                      Effect.flatMap(() => Effect.never),
+                    ),
+                    waitForConfigOptionValue(configId, value),
+                  ),
                 ).pipe(
                   Effect.map(
                     (configOptions) =>
@@ -1161,7 +1174,11 @@ export const make = (
       getEvents: () => Stream.fromQueue(eventQueue),
       drainEvents,
       getModeState: Ref.get(modeStateRef),
-      getConfigOptions: SubscriptionRef.get(configOptionsRef),
+      getConfigOptions: SubscriptionRef.get(configOptionsRef).pipe(
+        Effect.map(
+          (configOptions) => options.resolveConfigOptions?.(configOptions) ?? configOptions,
+        ),
+      ),
       prompt: (payload, promptOptions?) =>
         promptSerializationSemaphore.withPermit(
           Effect.acquireUseRelease(

@@ -1,8 +1,8 @@
 # Pi in Scient
 
 Pi is a coding-agent runtime that can use several model providers. Scient connects to the official
-Pi RPC interface; it does not run Pi through an ACP wrapper. Pi owns its model configuration,
-credentials, extensions, and native skills.
+Pi RPC interface; it does not run Pi through an ACP wrapper. Native Pi configuration, credentials,
+extensions, and skills remain Pi-owned. Models added through Scient use separate Scient-managed connections.
 
 ## Setup
 
@@ -16,26 +16,56 @@ tested against Pi 0.84.4 and 0.85.0 and requires 0.84.4 or newer. The managed ru
 the qualified 0.84.4 archive. Other operating-system targets require a separately installed runtime;
 Scient does not currently offer a qualified managed Pi build for those targets.
 
-Configure models and API keys, or complete Pi's supported `/login` flow, in Pi itself on the machine
-running Scient. Refresh the provider catalog afterward. There is no universal **Sign in to Pi** or
+Use **Settings > Custom models > Add model**, or **Connect models** in Pi's setup:
+
+1. Choose a service or a local/custom endpoint, then enter its exact model ID and API key (optional for a keyless endpoint).
+2. Select the Pi agents under **Use with**, then save. Reuse a saved connection to add another model with the same key.
+3. Choose **Test** to send a small request through Pi. API charges may apply. A passing test verifies
+   a basic response for that configuration, not tool quality, image support, or future quota.
+
+Connection settings and keys are shared by their models. Edit a model to change its agent access,
+name, limits, or capabilities; advanced options also expose the connection's endpoint and key removal.
+New hosted models use **Automatic** model settings. Pi uses its native definition for an exact known
+model; where unavailable, Scient can use verified service metadata. Existing saved limits stay unchanged:
+edit the model and select **Automatic** to replace them. Unknown or local deployments may need
+**Configure manually**, with limits supported by that deployment.
+Capabilities are checked when you save; Scient does not refresh them during a conversation.
+The connection's **Manage** action also lets you rename it, replace/remove its saved key, or delete it.
+Deleting a model keeps its connection and key; deleting a connection removes both and detaches all its models.
+
+If a saved key is missing or unreadable, only that connection's models become unavailable. Use
+**Test** for the setup error, then use **Manage** to re-enter the connection's key.
+Connection setup and testing are available in desktop and web, not yet in the mobile app.
+
+You can still configure models and API keys, or complete Pi's supported `/login` flow, in Pi itself
+on the execution machine. Refresh the provider catalog afterward. There is no universal **Sign in to Pi** or
 **Sign out of Pi** action: individual model providers can use unrelated credentials. A model appearing
 in the catalog confirms discovery, not successful authentication or available quota.
 
 For a separate Pi profile, set `PI_CODING_AGENT_DIR` in this provider instance's environment settings.
-Scient does not copy your credentials into a second store. A customized Pi-based product or private
+Scient does not import or overwrite that profile's credentials. Scient-added keys are stored separately
+in the execution environment's restricted-permission secret store, not in ordinary settings or Pi's
+configuration. They are not encrypted by an OS keychain. Only selected agents receive access; use
+trusted endpoints, and HTTPS for hosted APIs. A customized Pi-based product or private
 wrapper is not automatically compatible with this stock-Pi integration.
 
 ### Local models
 
-Run the downloaded model in a local server compatible with an API Pi supports, then add that
-server's endpoint and exact model ID to the Pi profile's `models.json` (normally
-`~/.pi/agent/models.json`, or inside `PI_CODING_AGENT_DIR`). Refresh Pi's provider catalog in Scient
-and select the model in a new conversation. Follow Pi's
+Run the downloaded model in a compatible server, then choose **Local / custom endpoint** in Scient
+and enter its base URL and exact model ID. Leave the API key empty for a keyless server.
+The URL is resolved on the execution environment: `localhost` means the machine running Pi, not
+necessarily the machine displaying Scient.
+
+Alternatively, continue using the Pi profile's `models.json`. Follow Pi's
 [custom-model configuration](https://github.com/earendil-works/pi/blob/main/packages/coding-agent/docs/models.md),
 including its placeholder-key requirement for keyless local servers.
 
-Scient's model list lets you favorite, hide, and order discovered models. Define new models in
-Pi's configuration, not as custom model entries in Scient Settings.
+Scient's provider model list lets you favorite, hide, and order available models. Changes to
+Scient custom connections apply to new sessions and before the next ordinary turn of an existing
+session; they do not change an already-running request.
+
+If a response stops at its token limit, Scient keeps the partial answer and shows a quiet notice.
+You can send a follow-up to continue; queued messages proceed normally without an automatic retry.
 
 Scient runs the Pi agent, not the model server: importing model weights and starting/managing a
 local inference server are not built into this integration. Model discovery does not establish
@@ -53,6 +83,10 @@ failures, available thinking levels, and Pi's reported context usage. Pi's nativ
 deltas are translated into runtime events; a separate reasoning transcript is not displayed by the
 current shared conversation UI. You can change models between turns. Images require an
 image-capable model; other attached files are supplied as local paths for Pi's tools to inspect.
+
+If a response exhausts its token allowance and Pi cannot recover automatically, Scient keeps any
+partial answer and shows a dismissible notice above the composer. Continue the conversation or adjust
+the model limits; queued messages wait for recovery rather than advancing past an incomplete answer.
 
 Steering sends another message into the current turn. **Stop** cancels pending work and closes that
 thread's Pi process. The next turn resumes its exact private session file. Scient deliberately rejects

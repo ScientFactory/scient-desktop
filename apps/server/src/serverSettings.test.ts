@@ -1,6 +1,7 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import {
   DEFAULT_SERVER_SETTINGS,
+  type CustomModel,
   ProviderDriverKind,
   ProviderInstanceId,
   resolveProviderInstanceEnabled,
@@ -10,6 +11,9 @@ import {
 import { createModelSelection } from "@t3tools/shared/model";
 import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
+import * as Deferred from "effect/Deferred";
+import * as Fiber from "effect/Fiber";
+import { vi } from "vite-plus/test";
 import * as Duration from "effect/Duration";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
@@ -17,6 +21,9 @@ import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as PlatformError from "effect/PlatformError";
 import * as Schema from "effect/Schema";
+import * as Redacted from "effect/Redacted";
+import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import { customModelSecretName } from "./customModels.ts";
 import * as Stream from "effect/Stream";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 import * as ServerSecretStore from "./auth/ServerSecretStore.ts";
@@ -27,10 +34,12 @@ import { resolveProviderInstanceTerminalEnvironment } from "./terminal/Manager.t
 
 const decodeSettingsPatch = Schema.decodeUnknownEffect(ServerSettingsPatch);
 const decodeServerSettings = Schema.decodeUnknownEffect(ServerSettings);
+const decodeSettingsJson = Schema.decodeUnknownEffect(Schema.fromJsonString(ServerSettings));
+const encodeSettingsJson = Schema.encodeEffect(Schema.fromJsonString(ServerSettings));
 
-const makeServerSettingsLayer = () =>
+const makeServerSettingsLayer = (secretLayer = ServerSecretStore.layer) =>
   ServerSettingsModule.layer.pipe(
-    Layer.provide(ServerSecretStore.layer),
+    Layer.provide(secretLayer),
     Layer.provideMerge(Layer.fresh(SqlitePersistenceMemory)),
     Layer.provideMerge(
       Layer.fresh(
@@ -75,6 +84,407 @@ const recordProviderUsage = (provider: string, instanceId: string | null = provi
   });
 
 it.layer(NodeServices.layer)("server settings", (it) => {
+  const modelConnection = {
+    id: "metadata",
+    name: "OpenRouter",
+    protocol: "openai-completions" as const,
+    baseUrl: "https://openrouter.ai/api/v1",
+    models: [
+      {
+        id: "model",
+        modelId: "vendor/test",
+        name: "Test",
+        configurationMode: "automatic" as const,
+        images: false,
+        reasoning: false,
+        instanceIds: [ProviderInstanceId.make("pi")],
+      },
+    ],
+  };
+  const modelResponse = (images = false) =>
+    Response.json({
+      data: [
+        {
+          id: "vendor/test",
+          context_length: 200000,
+          top_provider: { max_completion_tokens: 32000 },
+          architecture: { input_modalities: images ? ["text", "image"] : ["text"] },
+          reasoning: { supported_efforts: ["high"] },
+        },
+      ],
+    });
+
+  it.effect("persists setup evidence once; settings and runtime reads never fetch metadata", () =>
+    Effect.gen(function* () {
+      const fetch = yield* Effect.acquireRelease(
+        Effect.sync(() =>
+          vi.spyOn(globalThis, "fetch").mockImplementation(async () => modelResponse()),
+        ),
+        (spy) => Effect.sync(() => spy.mockRestore()),
+      );
+      yield* Effect.gen(function* () {
+        const service = yield* ServerSettingsModule.ServerSettingsService;
+        const config = yield* ServerConfig.ServerConfig;
+        const fs = yield* FileSystem.FileSystem;
+        const saved = yield* service.saveCustomModel({
+          revision: 0,
+          connection: modelConnection,
+          apiKey: Redacted.make("fixture-key"),
+        });
+        assert.equal(fetch.mock.calls.length, 1);
+        assert.equal(saved.connections[0]?.models[0]?.reasoningMetadata?.contextWindow, 200000);
+        assert.equal(saved.connections[0]?.models[0]?.contextWindow, undefined);
+        fetch.mockImplementation(async () => {
+          throw new Error("Unexpected hot-path lookup");
+        });
+        for (let n = 0; n < 3; n++) {
+          assert.deepEqual((yield* service.getSettings).customModels, saved);
+          const resolved = yield* service.resolveCustomModels(ProviderInstanceId.make("pi"));
+          assert.deepEqual(resolved[0]?.models, saved.connections[0]?.models);
+        }
+        const persisted = yield* decodeSettingsJson(yield* fs.readFileString(config.settingsPath));
+        assert.deepEqual(persisted.customModels, saved);
+        assert.equal(fetch.mock.calls.length, 1);
+      }).pipe(Effect.provide(makeServerSettingsLayer()));
+    }).pipe(Effect.scoped),
+  );
+
+  for (const scenario of ["automatic", "overrides", "legacy"] as const) {
+    it.effect(`restores ${scenario} model capabilities after a settings-service restart`, () =>
+      Effect.gen(function* () {
+        const fetch = yield* Effect.acquireRelease(
+          Effect.sync(() =>
+            vi.spyOn(globalThis, "fetch").mockImplementation(async () => modelResponse(true)),
+          ),
+          (spy) => Effect.sync(() => spy.mockRestore()),
+        );
+        const model: CustomModel = {
+          ...modelConnection.models[0]!,
+          ...(scenario === "automatic"
+            ? { imageInput: "automatic" as const }
+            : {
+                configurationMode: "manual" as const,
+                contextWindow: 64000,
+                maxOutputTokens: 8000,
+                images: true,
+                reasoning: true,
+                ...(scenario === "overrides"
+                  ? {
+                      imageInput: "enabled" as const,
+                      reasoningOverride: { supported: true, levels: ["high" as const] },
+                      defaultReasoningLevel: "high" as const,
+                    }
+                  : {}),
+              }),
+        };
+        // Keep only the synthetic filesystem alive across two independent service scopes.
+        yield* Effect.gen(function* () {
+          const settingsLayer = () =>
+            Layer.fresh(ServerSettingsModule.layer).pipe(
+              Layer.provide(ServerSecretStore.layer),
+              Layer.provide(Layer.fresh(SqlitePersistenceMemory)),
+            );
+          let saved = yield* Effect.gen(function* () {
+            const service = yield* ServerSettingsModule.ServerSettingsService;
+            return yield* service.saveCustomModel({
+              revision: 0,
+              connection: {
+                ...modelConnection,
+                ...(scenario === "legacy" ? { baseUrl: "http://127.0.0.1:12345/v1" } : {}),
+                models: [model],
+              },
+              apiKey: Redacted.make("restart-fixture-key"),
+            });
+          }).pipe(Effect.provide(settingsLayer()), Effect.scoped);
+          const lookupCount = fetch.mock.calls.length;
+          assert.equal(lookupCount, scenario === "automatic" ? 1 : 0);
+          if (scenario === "legacy") {
+            // Emulate a pre-metadata settings file, not today's save-time enrichment.
+            saved = {
+              ...saved,
+              connections: saved.connections.map((connection) => ({
+                ...connection,
+                models: connection.models.map(
+                  ({ configurationMode: _mode, reasoningMetadata: _metadata, ...legacy }) => legacy,
+                ),
+              })),
+            };
+            const fs = yield* FileSystem.FileSystem;
+            const config = yield* ServerConfig.ServerConfig;
+            const settings = yield* decodeSettingsJson(
+              yield* fs.readFileString(config.settingsPath),
+            );
+            yield* fs.writeFileString(
+              config.settingsPath,
+              yield* encodeSettingsJson({
+                ...settings,
+                customModels: saved,
+              }),
+            );
+          }
+          const savedModel = saved.connections[0]!.models[0]!;
+          if (scenario === "automatic") {
+            assert.equal(savedModel.reasoningMetadata?.contextWindow, 200000);
+            assert.deepEqual(savedModel.reasoningMetadata?.levels, ["high"]);
+            assert.equal(savedModel.reasoningMetadata?.images, true);
+          } else if (scenario === "overrides") {
+            assert.equal(savedModel.imageInput, "enabled");
+            assert.deepEqual(savedModel.reasoningOverride, model.reasoningOverride);
+            assert.equal(savedModel.defaultReasoningLevel, "high");
+          } else {
+            assert.equal(savedModel.reasoningMetadata, undefined);
+            assert.equal(savedModel.configurationMode, undefined);
+            assert.equal(savedModel.imageInput, undefined);
+          }
+          fetch.mockImplementation(async () => {
+            throw new Error("Restart must not fetch metadata");
+          });
+          yield* Effect.gen(function* () {
+            const service = yield* ServerSettingsModule.ServerSettingsService;
+            assert.deepEqual((yield* service.getSettings).customModels, saved);
+            const resolved = yield* service.resolveCustomModels(ProviderInstanceId.make("pi"));
+            assert.equal(resolved.length, 1);
+            assert.deepEqual(resolved[0]!.models, saved.connections[0]!.models);
+            assert.equal(fetch.mock.calls.length, lookupCount);
+          }).pipe(Effect.provide(settingsLayer()), Effect.scoped);
+        }).pipe(
+          Effect.provide(
+            ServerConfig.layerTest(process.cwd(), { prefix: "t3code-settings-restart-test-" }),
+          ),
+        );
+      }).pipe(Effect.scoped),
+    );
+  }
+
+  it.effect(
+    "explicit model recheck bypasses cached evidence without rotating keys or manual intent",
+    () =>
+      Effect.gen(function* () {
+        const fetch = yield* Effect.acquireRelease(
+          Effect.sync(() =>
+            vi.spyOn(globalThis, "fetch").mockImplementation(async () => modelResponse()),
+          ),
+          (spy) => Effect.sync(() => spy.mockRestore()),
+        );
+        yield* Effect.gen(function* () {
+          const service = yield* ServerSettingsModule.ServerSettingsService;
+          const saved = yield* service.saveCustomModel({
+            revision: 0,
+            connection: {
+              ...modelConnection,
+              models: [
+                {
+                  ...modelConnection.models[0]!,
+                  configurationMode: "manual",
+                  contextWindow: 100000,
+                  maxOutputTokens: 8192,
+                  defaultReasoningLevel: "high",
+                },
+              ],
+            },
+            apiKey: Redacted.make("fixture-recheck-key"),
+          });
+          const original = saved.connections[0]!;
+          const rechecked = yield* service.saveCustomModel({
+            revision: saved.revision,
+            connection: original,
+            refreshModelId: "model",
+          });
+          assert.equal(fetch.mock.calls.length, 2);
+          assert.equal(rechecked.connections[0]!.credentialId, original.credentialId);
+          assert.equal(rechecked.connections[0]!.id, original.id);
+          const { reasoningMetadata: refreshedEvidence, ...refreshedModel } =
+            rechecked.connections[0]!.models[0]!;
+          const { reasoningMetadata: originalEvidence, ...originalModel } = original.models[0]!;
+          assert.deepEqual(refreshedModel, originalModel);
+          assert.equal(refreshedEvidence?.contextWindow, originalEvidence?.contextWindow);
+          assert.equal(
+            Redacted.value(
+              (yield* service.resolveCustomModels(ProviderInstanceId.make("pi")))[0]!.apiKey!,
+            ),
+            "fixture-recheck-key",
+          );
+          fetch.mockImplementation(async () => {
+            throw new Error("Synthetic unavailable endpoint");
+          });
+          const retained = yield* service.saveCustomModel({
+            revision: rechecked.revision,
+            connection: rechecked.connections[0]!,
+            refreshModelId: "model",
+          });
+          assert.equal(retained.connections[0]!.models[0]!.contextWindow, 100000);
+          assert.equal(
+            retained.connections[0]!.models[0]!.reasoningMetadata?.contextWindow,
+            200000,
+          );
+          assert.equal(retained.connections[0]!.models[0]!.reasoningMetadata?.stale, true);
+          assert.equal(retained.connections[0]!.credentialId, original.credentialId);
+        }).pipe(Effect.provide(makeServerSettingsLayer()));
+      }).pipe(Effect.scoped),
+  );
+
+  for (const action of ["rotate", "remove"] as const) {
+    it.effect(`keeps an in-progress credential read coherent during ${action}`, () =>
+      Effect.gen(function* () {
+        const entered = yield* Deferred.make<void>();
+        const release = yield* Deferred.make<void>();
+        const writeStarted = yield* Deferred.make<void>();
+        let blockNextRead = false;
+        const secretLayer = Layer.effect(
+          ServerSecretStore.ServerSecretStore,
+          Effect.gen(function* () {
+            const store = yield* ServerSecretStore.ServerSecretStore;
+            return {
+              ...store,
+              get: (name: string) =>
+                Effect.gen(function* () {
+                  if (blockNextRead && name.startsWith("custom-model-")) {
+                    blockNextRead = false;
+                    yield* Deferred.succeed(entered, undefined);
+                    yield* Deferred.await(release);
+                  }
+                  return yield* store.get(name);
+                }),
+            };
+          }),
+        ).pipe(Layer.provide(ServerSecretStore.layer));
+        yield* Effect.gen(function* () {
+          const service = yield* ServerSettingsModule.ServerSettingsService;
+          const connection = { ...modelConnection, baseUrl: "https://example.test/v1" };
+          const saved = yield* service.saveCustomModel({
+            revision: 0,
+            connection,
+            apiKey: Redacted.make("first-synthetic-key"),
+          });
+          blockNextRead = true;
+          const reading = yield* service
+            .resolveCustomModels(ProviderInstanceId.make("pi"))
+            .pipe(Effect.forkChild);
+          yield* Deferred.await(entered);
+          const writing = yield* Deferred.succeed(writeStarted, undefined).pipe(
+            Effect.andThen(
+              action === "rotate"
+                ? service.saveCustomModel({
+                    revision: saved.revision,
+                    connection,
+                    apiKey: Redacted.make("second-synthetic-key"),
+                  })
+                : service.removeCustomModel({
+                    revision: saved.revision,
+                    connectionId: connection.id,
+                  }),
+            ),
+            Effect.forkChild,
+          );
+          yield* Deferred.await(writeStarted);
+          yield* Deferred.succeed(release, undefined);
+          const original = (yield* Fiber.join(reading))[0]!;
+          assert.equal(original.credentialError, undefined);
+          assert.equal(Redacted.value(original.apiKey!), "first-synthetic-key");
+          yield* Fiber.join(writing);
+          const next = yield* service.resolveCustomModels(ProviderInstanceId.make("pi"));
+          if (action === "remove") assert.isEmpty(next);
+          else assert.equal(Redacted.value(next[0]!.apiKey!), "second-synthetic-key");
+        }).pipe(Effect.provide(makeServerSettingsLayer(secretLayer)));
+      }).pipe(Effect.scoped),
+    );
+  }
+
+  it.effect(
+    "does not hold the write lock during lookup and rejects a stale result without storing its key",
+    () =>
+      Effect.gen(function* () {
+        const requested = Promise.withResolvers<void>();
+        const response = Promise.withResolvers<Response>();
+        yield* Effect.acquireRelease(
+          Effect.sync(() =>
+            vi.spyOn(globalThis, "fetch").mockImplementation(() => {
+              requested.resolve();
+              return response.promise;
+            }),
+          ),
+          (spy) =>
+            Effect.sync(() => {
+              response.resolve(modelResponse());
+              spy.mockRestore();
+            }),
+        );
+        yield* Effect.gen(function* () {
+          const service = yield* ServerSettingsModule.ServerSettingsService;
+          const config = yield* ServerConfig.ServerConfig;
+          const fs = yield* FileSystem.FileSystem;
+          const saving = yield* service
+            .saveCustomModel({
+              revision: 0,
+              connection: modelConnection,
+              apiKey: Redacted.make("never-stored"),
+            })
+            .pipe(Effect.result, Effect.forkChild);
+          yield* Effect.promise(() => requested.promise);
+          assert.equal((yield* service.getSettings).customModels.revision, 0);
+          yield* service.saveCustomModel({
+            revision: 0,
+            connection: { ...modelConnection, id: "other", models: [] },
+          });
+          response.resolve(modelResponse());
+          const result = yield* Fiber.join(saving);
+          assert.equal(result._tag, "Failure");
+          if (result._tag === "Failure") assert.include(result.failure.message, "changed");
+          const saved = (yield* service.getSettings).customModels;
+          assert.deepEqual(
+            saved.connections.map((connection) => connection.id),
+            ["other"],
+          );
+          const names = yield* fs
+            .readDirectory(config.secretsDir)
+            .pipe(Effect.catch(() => Effect.succeed([])));
+          assert.isEmpty(names.filter((name) => name.startsWith("custom-model-")));
+        }).pipe(Effect.provide(makeServerSettingsLayer()));
+      }).pipe(Effect.scoped),
+  );
+  it.effect("serializes concurrent custom-model edits and persists credentials separately", () =>
+    Effect.gen(function* () {
+      const service = yield* ServerSettingsModule.ServerSettingsService;
+      const config = yield* ServerConfig.ServerConfig;
+      const fs = yield* FileSystem.FileSystem;
+      const connection = {
+        id: "fixture",
+        name: "Test",
+        protocol: "openai-completions" as const,
+        baseUrl: "https://example.test/v1",
+        models: [],
+      };
+      const outcomes = yield* Effect.all(
+        [
+          service
+            .saveCustomModel({ revision: 0, connection, apiKey: Redacted.make("first-secret") })
+            .pipe(Effect.exit),
+          service
+            .saveCustomModel({ revision: 0, connection, apiKey: Redacted.make("second-secret") })
+            .pipe(Effect.exit),
+        ],
+        { concurrency: "unbounded" },
+      );
+      assert.equal(outcomes.filter((outcome) => outcome._tag === "Success").length, 1);
+      const saved = (yield* service.getSettings).customModels;
+      assert.equal(saved.revision, 1);
+      const raw = yield* fs.readFileString(config.settingsPath);
+      assert.notInclude(raw, "first-secret");
+      assert.notInclude(raw, "second-secret");
+      const keyFile =
+        config.secretsDir +
+        "/" +
+        customModelSecretName(saved.connections[0]!.credentialId!) +
+        ".bin";
+      const stat = yield* fs.stat(keyFile);
+      if ((yield* HostProcessPlatform) !== "win32") assert.equal(stat.mode & 0o777, 0o600);
+      yield* service.updateSettings({ enableProviderUpdateChecks: false });
+      assert.deepEqual((yield* service.getSettings).customModels, saved);
+      yield* service.removeCustomModel({ revision: 1, connectionId: "fixture" });
+      assert.equal(yield* fs.exists(keyFile), false);
+      assert.deepEqual((yield* service.getSettings).customModels, { revision: 2, connections: [] });
+    }).pipe(Effect.provide(makeServerSettingsLayer())),
+  );
   it.effect("preserves context when reading a provider environment secret fails", () => {
     const platformCause = PlatformError.systemError({
       _tag: "PermissionDenied",

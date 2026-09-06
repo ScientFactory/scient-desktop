@@ -1,4 +1,11 @@
 import * as Schema from "effect/Schema";
+import {
+  CustomModelSaveInput,
+  CustomModelRemoveInput,
+  CustomModelTestInput,
+  CustomModelsSettings,
+  CustomModelError,
+} from "./customModels.ts";
 import * as Rpc from "effect/unstable/rpc/Rpc";
 import * as RpcGroup from "effect/unstable/rpc/RpcGroup";
 import {
@@ -465,6 +472,9 @@ export const WS_METHODS = {
   serverUpsertKeybinding: "server.upsertKeybinding",
   serverRemoveKeybinding: "server.removeKeybinding",
   serverGetSettings: "server.getSettings",
+  serverSaveCustomModel: "server.saveCustomModel",
+  serverRemoveCustomModel: "server.removeCustomModel",
+  serverTestCustomModel: "server.testCustomModel",
   serverUpdateSettings: "server.updateSettings",
   serverDiscoverSourceControl: "server.discoverSourceControl",
   serverGetTraceDiagnostics: "server.getTraceDiagnostics",
@@ -712,10 +722,26 @@ const WsServerGetSettingsRpc = Rpc.make(WS_METHODS.serverGetSettings, {
   error: Schema.Union([ServerSettingsError, EnvironmentAuthorizationError]),
 });
 
+const WsServerSaveCustomModelRpc = Rpc.make(WS_METHODS.serverSaveCustomModel, {
+  payload: CustomModelSaveInput,
+  success: CustomModelsSettings,
+  error: Schema.Union([CustomModelError, EnvironmentAuthorizationError]),
+});
+const WsServerRemoveCustomModelRpc = Rpc.make(WS_METHODS.serverRemoveCustomModel, {
+  payload: CustomModelRemoveInput,
+  success: CustomModelsSettings,
+  error: Schema.Union([CustomModelError, EnvironmentAuthorizationError]),
+});
+
 const WsServerUpdateSettingsRpc = Rpc.make(WS_METHODS.serverUpdateSettings, {
   payload: Schema.Struct({ patch: ServerSettingsPatch }),
   success: ServerSettings,
   error: Schema.Union([ServerSettingsError, EnvironmentAuthorizationError]),
+});
+const WsServerTestCustomModelRpc = Rpc.make(WS_METHODS.serverTestCustomModel, {
+  payload: CustomModelTestInput,
+  success: Schema.Struct({ revision: Schema.Int }),
+  error: Schema.Union([CustomModelError, EnvironmentAuthorizationError]),
 });
 
 const WsVoiceCorrectTranscriptRpc = Rpc.make(WS_METHODS.voiceCorrectTranscript, {
@@ -1653,6 +1679,9 @@ export const WsRpcGroup = RpcGroup.make(
   WsServerUpsertKeybindingRpc,
   WsServerRemoveKeybindingRpc,
   WsServerGetSettingsRpc,
+  WsServerSaveCustomModelRpc,
+  WsServerRemoveCustomModelRpc,
+  WsServerTestCustomModelRpc,
   WsServerUpdateSettingsRpc,
   WsVoiceCorrectTranscriptRpc,
   WsSkillsListRpc,

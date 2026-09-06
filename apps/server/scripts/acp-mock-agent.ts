@@ -4,6 +4,7 @@ import * as NodeFS from "node:fs";
 
 import * as Effect from "effect/Effect";
 import * as Deferred from "effect/Deferred";
+import * as Schema from "effect/Schema";
 
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as NodeRuntime from "@effect/platform-node/NodeRuntime";
@@ -64,8 +65,27 @@ const failSetConfigOption = process.env.T3_ACP_FAIL_SET_CONFIG_OPTION === "1";
 const exitOnSetConfigOption = process.env.T3_ACP_EXIT_ON_SET_CONFIG_OPTION === "1";
 // Droid-style async config refresh: publish the new inventory through a
 // `config_option_update`. The optional drop flag additionally leaves the
-// request pending, reproducing @factory/cli 0.200.0's exact wire behavior.
+// request pending to cover older Droid builds that applied a request without
+// responding. Current Droid model writes still require a JSON-RPC request.
 const droidAsyncConfigRefresh = process.env.T3_ACP_DROID_ASYNC_CONFIG_REFRESH === "1";
+// Droid's process-scoped settings overlay augments (does not replace) native models.
+const settingsArg = process.argv.indexOf("--settings");
+const overlayModels =
+  settingsArg < 0
+    ? []
+    : Schema.decodeSync(
+        Schema.fromJsonString(
+          Schema.Struct({
+            customModels: Schema.Array(
+              Schema.Struct({ id: Schema.String, displayName: Schema.String }),
+            ),
+          }),
+        ),
+      )(NodeFS.readFileSync(process.argv[settingsArg + 1]!, "utf8")).customModels;
+const overlayModelOptions = overlayModels.map((model) => ({
+  value: model.id,
+  name: model.displayName,
+}));
 const droidDropsConfigResponse = process.env.T3_ACP_DROID_DROP_CONFIG_RESPONSE === "1";
 const droidReturnsEmptyConfigResponse = process.env.T3_ACP_DROID_EMPTY_CONFIG_RESPONSE === "1";
 const promptResponseText = process.env.T3_ACP_PROMPT_RESPONSE_TEXT;
@@ -185,6 +205,7 @@ function configOptions(): ReadonlyArray<AcpSchema.SessionConfigOption> {
           },
           { value: "claude-opus-4-6", name: "Opus 4.6" },
           { value: "custom:Ox-Alpha-0", name: "Ox Alpha" },
+          ...overlayModelOptions,
         ],
       },
     ];
@@ -285,6 +306,7 @@ function configOptions(): ReadonlyArray<AcpSchema.SessionConfigOption> {
       { value: "composer-2[fast=true]", name: "Composer 2 Fast" },
       { value: "gpt-5.3-codex[reasoning=medium,fast=false]", name: "Codex 5.3" },
       { value: "custom:Ox-Alpha-0", name: "Ox Alpha" },
+      ...overlayModelOptions,
     ],
   };
   return currentModelId === "custom:Ox-Alpha-0"
@@ -657,9 +679,8 @@ const program = Effect.gen(function* () {
     Effect.gen(function* () {
       yield* applySessionConfigOption(request);
       if (droidDropsConfigResponse) {
-        // Factory Droid 0.200.0 never completes this request after publishing
-        // the authoritative update. Keep the handler pending to reproduce
-        // that wire behavior in the notification-transport regression test.
+        // Some older agents publish an authoritative update without completing
+        // the request. Confirmation must tolerate that without using notifications.
         return yield* Effect.never;
       }
       if (droidAsyncConfigRefresh) {
@@ -679,15 +700,6 @@ const program = Effect.gen(function* () {
         configOptions: configOptions(),
       };
     }),
-  );
-
-  // Factory Droid also accepts this normally request-shaped method as a
-  // JSON-RPC notification. The real compatibility path uses that form so it
-  // cannot be wedged by Droid's missing response.
-  yield* agent.handleExtNotification(
-    "session/set_config_option",
-    AcpSchema.SetSessionConfigOptionRequest,
-    applySessionConfigOption,
   );
 
   yield* agent.handleCancel(({ sessionId }) =>
@@ -762,6 +774,23 @@ const program = Effect.gen(function* () {
 
       if (failPrompt) {
         return yield* AcpError.AcpRequestError.internalError("Mock prompt failure");
+      }
+
+      if (
+        process.env.T3_ACP_TOKEN_LIMIT === "1" ||
+        (process.env.T3_ACP_TOKEN_LIMIT_FIRST === "1" && promptCount === 1)
+      ) {
+        yield* agent.client.sessionUpdate({
+          sessionId: requestedSessionId,
+          update: {
+            sessionUpdate: "agent_message_chunk",
+            content: {
+              type: "text",
+              text: process.env.T3_ACP_TOKEN_LIMIT_TEXT ?? promptResponseText ?? "",
+            },
+          },
+        });
+        return { stopReason: "max_tokens" };
       }
 
       if (emitElicitation) {

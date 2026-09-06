@@ -1,6 +1,10 @@
 "use client";
 
 import { ArrowDownIcon, ArrowUpIcon, PencilIcon, PlusIcon, StarIcon, XIcon } from "lucide-react";
+import {
+  getDroidModelSection,
+  groupDroidModelRows,
+} from "@t3tools/client-runtime/droid-model-presentation";
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
   ProviderDriverKind,
@@ -17,6 +21,7 @@ import { Input } from "../ui/input";
 import { Switch } from "../ui/switch";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { CustomModelEditor } from "./CustomModelEditor";
+import { ModelListDisclosureContent } from "../chat/ModelListDisclosureContent";
 
 /**
  * Placeholder text for the "add a custom model" input, keyed by driver
@@ -74,13 +79,14 @@ function describeModelCapabilities(model: ServerProviderModel): string[] {
  * `modelOrder`.
  */
 export function groupModelsForDisplay<
-  T extends { readonly slug: string; readonly isCustom: boolean },
+  T extends { readonly slug: string; readonly name: string; readonly isCustom: boolean },
 >(
   models: ReadonlyArray<T>,
   options: {
     readonly favoriteModels: ReadonlySet<string>;
     readonly hiddenModels: ReadonlySet<string>;
     readonly modelOrder: ReadonlyArray<string>;
+    readonly driverKind?: ProviderDriverKind | null;
   },
 ): T[] {
   const ordered = sortModelsForProviderInstance(models, {
@@ -89,9 +95,13 @@ export function groupModelsForDisplay<
     modelOrder: options.modelOrder,
   });
   const isHidden = (model: T) => !model.isCustom && options.hiddenModels.has(model.slug);
+  const visible = ordered.filter(
+    (model) => !options.favoriteModels.has(model.slug) && !isHidden(model),
+  );
+  const droid = options.driverKind === "droid" ? groupDroidModelRows(visible) : null;
   return [
     ...ordered.filter((model) => options.favoriteModels.has(model.slug)),
-    ...ordered.filter((model) => !options.favoriteModels.has(model.slug) && !isHidden(model)),
+    ...(droid ? [...droid.models, ...droid.custom, ...droid.more] : visible),
     ...ordered.filter((model) => !options.favoriteModels.has(model.slug) && isHidden(model)),
   ];
 }
@@ -161,6 +171,7 @@ export function ProviderModelsSection({
   const [input, setInput] = useState("");
   const [isAdding, setIsAdding] = useState(false);
   const [filter, setFilter] = useState("");
+  const [expandedMore, setExpandedMore] = useState(false);
   const [error, setError] = useState<string | null>(null);
   // Slug of the custom model whose inline editor is open, if any.
   const [editingSlug, setEditingSlug] = useState<string | null>(null);
@@ -175,8 +186,9 @@ export function ProviderModelsSection({
         favoriteModels: favoriteModelSet,
         hiddenModels: hiddenModelSet,
         modelOrder,
+        driverKind,
       }),
-    [favoriteModelSet, hiddenModelSet, modelOrder, models],
+    [driverKind, favoriteModelSet, hiddenModelSet, modelOrder, models],
   );
   const favoriteCount = displayModels.filter((model) => favoriteModelSet.has(model.slug)).length;
   const hiddenCount = displayModels.filter(
@@ -278,7 +290,10 @@ export function ProviderModelsSection({
       ? "favorite"
       : !model.isCustom && hiddenModelSet.has(model.slug)
         ? "hidden"
-        : "visible";
+        : driverKind === "droid" && getDroidModelSection(model) !== "models"
+          ? getDroidModelSection(model)
+          : "visible";
+  const moreCount = displayModels.filter((model) => groupOf(model) === "more").length;
   const handleMove = (slug: string, direction: -1 | 1) => {
     const index = displayModels.findIndex((model) => model.slug === slug);
     const nextIndex = index + direction;
@@ -532,13 +547,33 @@ export function ProviderModelsSection({
               {startsGroup && favoriteCount > 0 && group === "favorite"
                 ? groupLabel("Favorites", index === 0)
                 : null}
-              {startsGroup && favoriteCount > 0 && group === "visible"
-                ? groupLabel("All", index === 0)
+              {startsGroup && (favoriteCount > 0 || driverKind === "droid") && group === "visible"
+                ? groupLabel(driverKind === "droid" ? "Models" : "All", index === 0)
                 : null}
+              {startsGroup && group === "custom" ? groupLabel("Custom models", index === 0) : null}
+              {startsGroup && group === "more" ? (
+                isFiltering ? (
+                  groupLabel("More models", index === 0)
+                ) : (
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="group mt-3 h-auto w-full cursor-pointer justify-start gap-3 rounded-md px-2 py-2 sm:h-auto"
+                    aria-expanded={expandedMore}
+                    onClick={() => setExpandedMore((value) => !value)}
+                  >
+                    <ModelListDisclosureContent
+                      label="More models"
+                      count={moreCount}
+                      expanded={expandedMore}
+                    />
+                  </Button>
+                )
+              ) : null}
               {startsGroup && group === "hidden"
                 ? groupLabel("Hidden from picker", index === 0)
                 : null}
-              {renderRow(model)}
+              {group !== "more" || expandedMore || isFiltering ? renderRow(model) : null}
               {editingEntry ? (
                 <CustomModelEditor
                   key={`${instanceId}:${model.slug}:editor`}
