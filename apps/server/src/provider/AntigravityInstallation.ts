@@ -30,6 +30,7 @@ import * as NodeFSP from "node:fs/promises";
 import type * as NodeStream from "node:stream";
 import * as Yauzl from "yauzl";
 
+import { makeInstallerFilesystem } from "./runtimeFilesystem.ts";
 import { ServerConfig } from "../config.ts";
 import { writeFileStringAtomically } from "../atomicWrite.ts";
 import { ManagedRuntimeCatalog } from "../scient/providerLifecycle/ManagedRuntimeCatalog.ts";
@@ -309,6 +310,7 @@ export const makeAntigravityInstallation = Effect.fn("AntigravityInstallation.ma
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const serviceScope = yield* Effect.scope;
   const platform = yield* HostProcessPlatform;
+  const installerFs = makeInstallerFilesystem(fs, platform);
   const arch = yield* HostProcessArchitecture;
   const environment = yield* HostProcessEnvironment;
   const releaseAsset =
@@ -514,7 +516,7 @@ export const makeAntigravityInstallation = Effect.fn("AntigravityInstallation.ma
     options.validate ??
     Effect.fn("AntigravityInstallation.validate")(
       function* (executable: AntigravityExecutable, expectedVersion: string) {
-        const profileDirectory = yield* fs.makeTempDirectoryScoped({
+        const profileDirectory = yield* installerFs.makeTempDirectoryScoped({
           prefix: "t3-antigravity-validate-",
         });
         const profile = yield* prepareAntigravityProfile({
@@ -658,7 +660,7 @@ export const makeAntigravityInstallation = Effect.fn("AntigravityInstallation.ma
           `Antigravity needs at least ${Math.ceil(required / 1024 / 1024)} MiB of free space to install.`,
         );
       }
-      const staging = yield* fs.makeTempDirectoryScoped({
+      const staging = yield* installerFs.makeTempDirectoryScoped({
         directory: versionsDirectory,
         prefix: ".install-",
       });
@@ -831,16 +833,14 @@ export const makeAntigravityInstallation = Effect.fn("AntigravityInstallation.ma
               prefix: ".repair-",
             });
             const backup = path.join(backupRoot, "runtime");
-            yield* fs
+            yield* installerFs
               .rename(destination, backup)
-              .pipe(
-                Effect.tapError(() =>
-                  fs.remove(backupRoot, { recursive: true, force: true }).pipe(Effect.ignore),
-                ),
-              );
-            const published = yield* fs.rename(pairDirectory, destination).pipe(Effect.result);
+              .pipe(Effect.tapError(() => installerFs.remove(backupRoot).pipe(Effect.ignore)));
+            const published = yield* installerFs
+              .rename(pairDirectory, destination)
+              .pipe(Effect.result);
             if (published._tag === "Failure") {
-              const restored = yield* fs.rename(backup, destination).pipe(Effect.result);
+              const restored = yield* installerFs.rename(backup, destination).pipe(Effect.result);
               if (restored._tag === "Failure") {
                 return yield* installationError(
                   "repair",
@@ -848,18 +848,18 @@ export const makeAntigravityInstallation = Effect.fn("AntigravityInstallation.ma
                   restored.failure,
                 );
               }
-              yield* fs.remove(backupRoot, { recursive: true, force: true }).pipe(Effect.ignore);
+              yield* installerFs.remove(backupRoot).pipe(Effect.ignore);
               return yield* installationError(
                 "repair",
                 "Could not replace the runtime. The previous copy was restored.",
                 published.failure,
               );
             }
-            yield* fs.remove(backupRoot, { recursive: true, force: true }).pipe(Effect.ignore);
+            yield* installerFs.remove(backupRoot).pipe(Effect.ignore);
           }).pipe(Effect.uninterruptible),
         );
       } else
-        yield* fs.rename(pairDirectory, destination).pipe(
+        yield* installerFs.rename(pairDirectory, destination).pipe(
           Effect.catch((cause) =>
             completedRelease(asset.sha256).pipe(
               Effect.flatMap((existing) =>
@@ -1042,7 +1042,7 @@ export const makeAntigravityInstallation = Effect.fn("AntigravityInstallation.ma
               }
             }
           }
-          yield* fs.remove(managedDirectory, { recursive: true, force: true });
+          yield* installerFs.remove(managedDirectory);
           yield* SubscriptionRef.update(
             state,
             (current) =>

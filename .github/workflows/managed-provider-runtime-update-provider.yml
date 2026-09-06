@@ -140,9 +140,16 @@ jobs:
 
       - name: Qualify the official ACP executable and harness through the app installer
         if: inputs.provider == 'antigravityAcp'
-        run: >-
-          node apps/server/scripts/qualify-antigravity-acp-catalog.ts
-          --catalog "${{ runner.temp }}/managed-runtime-catalog-candidate/managed-runtime-catalog.json"
+        shell: bash
+        env:
+          QUALIFICATION_RUNS: ${{ !inputs.publish && runner.os == 'Windows' && '5' || '1' }}
+        run: |
+          set -euo pipefail
+          for ((attempt = 1; attempt <= QUALIFICATION_RUNS; attempt++)); do
+            echo "Qualification $attempt/$QUALIFICATION_RUNS"
+            node apps/server/scripts/qualify-antigravity-acp-catalog.ts \
+              --catalog "$RUNNER_TEMP/managed-runtime-catalog-candidate/managed-runtime-catalog.json"
+          done
 
   publish:
     name: Publish qualified ${{ inputs.provider }} release
@@ -213,6 +220,7 @@ jobs:
             apps/server/src/scient/providerLifecycle/ManagedRuntimeCatalog.ts \
             apps/server/src/scient/providerLifecycle/bundled-managed-runtime-catalog.json \
             apps/server/src/provider/AntigravityInstallation.ts \
+            apps/server/src/provider/runtimeFilesystem.ts \
             apps/server/src/provider/antigravityRelease.ts \
             apps/server/src/provider/antigravityAuthSupport.ts \
             apps/server/src/provider/acp \

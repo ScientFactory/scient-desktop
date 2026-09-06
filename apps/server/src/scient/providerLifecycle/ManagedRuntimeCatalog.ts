@@ -6,6 +6,7 @@
  * into the app and is re-applied by `hydrateManagedRuntimeArtifact`.
  */
 import {
+  MANAGED_RUNTIME_CATALOG_PROVIDERS as managedProviders,
   compareManagedRuntimeVersions,
   hydrateManagedRuntimeArtifact,
   managedRuntimeTargetKey,
@@ -117,17 +118,6 @@ const decodeBoundedJsonText = Schema.decodeUnknownEffect(
 export const BUNDLED_MANAGED_RUNTIME_CATALOG: ManagedRuntimeCatalogData = Schema.decodeUnknownSync(
   ManagedRuntimeCatalogDataSchema,
 )(bundledCatalogJson);
-
-const managedProviders: ReadonlyArray<ManagedRuntimeCatalogProvider> = [
-  "codex",
-  "claudeAgent",
-  "antigravity",
-  "antigravityAcp",
-  "cursor",
-  "droid",
-  "grok",
-  "pi",
-];
 
 /**
  * Merges only strictly newer provider releases. Missing entries, downgrades,

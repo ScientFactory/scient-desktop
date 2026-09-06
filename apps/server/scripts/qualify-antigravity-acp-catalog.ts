@@ -9,6 +9,7 @@ import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import { FetchHttpClient } from "effect/unstable/http";
 
+import { makeInstallerFilesystem } from "../src/provider/runtimeFilesystem.ts";
 import { makeAntigravityInstallation } from "../src/provider/AntigravityInstallation.ts";
 import { ManagedRuntimeCatalogDataSchema } from "../src/scient/providerLifecycle/ManagedRuntimeCatalog.ts";
 
@@ -39,7 +40,7 @@ const main = Effect.gen(function* () {
   const arch = yield* HostProcessArchitecture;
   const asset = resolveAntigravityAcpCatalogAsset(catalog, platform, arch);
   if (!asset) return yield* fail(`No approved Antigravity ACP artifact for ${platform}-${arch}.`);
-  const baseDir = yield* fs.makeTempDirectoryScoped({
+  const baseDir = yield* makeInstallerFilesystem(fs, platform).makeTempDirectoryScoped({
     prefix: "scient-antigravity-acp-qualification-",
   });
   const installation = yield* makeAntigravityInstallation({ baseDir, releaseAsset: asset });

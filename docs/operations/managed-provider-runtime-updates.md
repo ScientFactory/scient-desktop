@@ -31,18 +31,22 @@ widen an allowed host or path family, or increase a support tier.
 
 `managed-provider-runtime-updates.yml` runs every two hours and may also be
 started manually. It invokes `managed-provider-runtime-update-provider.yml`
-once for each of Codex, Claude, legacy Antigravity, official Antigravity ACP, Cursor, Droid, and
-Grok. The seven release-family runs are intentionally independent:
+once for each of Codex, Claude, legacy Antigravity, official Antigravity ACP, Cursor, Droid,
+Grok, and Pi. The eight release-family runs are intentionally independent:
 
 1. Read the latest generated catalog, or the bundled catalog before the branch
    exists.
 2. Read only that provider's official stable pointer.
+   Droid uses Factory's native `factory-cli/LATEST` download channel, not the
+   independently maintained changelog RSS. Pi uses the official `earendil-works/pi`
+   stable GitHub release.
 3. If the version is newer, collect complete immutable metadata for every
    app-approved target.
 4. Exercise the normal managed-runtime engine on hosted macOS Apple-silicon,
    macOS Intel, Linux x64/ARM64, and Windows x64/ARM64 runners. Each runner downloads,
    verifies, materializes, checks package contents, smoke-tests, activates, and
    removes its native artifact in a temporary private root.
+   Pi qualifies only Apple-silicon macOS, its sole app-approved managed target.
    Official Antigravity ACP uses T3's paired-executable installer instead of the generic
    runtime engine. Its five runners cover Apple-silicon macOS, Linux x64/ARM64, and Windows
    x64/ARM64; no ACP artifact exists for Intel macOS. Its qualification initializes the
@@ -66,11 +70,24 @@ downgrade, a same-version repack, or a publication race leaves the current
 catalog untouched. The workflow never force-pushes and never opens a catalog PR,
 so an unrelated monorepo test cannot suppress a qualified provider update.
 
+An older feed may omit an app-approved family, such as subsequently added ACP or Pi. Validation
+preserves those omissions so other providers can continue independently. Discovery
+uses that family's bundled policy baseline, but collects and qualifies the official
+release even if its version matches the bundle. Only that family's successful
+publication adds it to the feed; no unrelated provider run seeds unqualified entries.
+The runtime package owns the shared release-family list. A workflow contract test
+keeps the scheduled matrix and manual choices aligned with that list.
+
 Before a Scient app release, snapshot the latest **qualified** generated catalog into
 `apps/server/src/scient/providerLifecycle/bundled-managed-runtime-catalog.json`
 and run its focused policy tests. Live update
 availability does not wait for this snapshot, but it keeps a newly installed app
 close to the current qualified floor before its first network refresh.
+
+A bundled version must not bypass native qualification: a failed feed publication does
+not withdraw an artifact already present in the bundle. Qualify the exact bundled
+candidate with the intended installer before shipping; if it fails, hold that release
+or retain the last qualified provider entry as a whole (do not mix artifact versions).
 
 ## App behavior
 
@@ -97,6 +114,16 @@ receipt is not downgraded. ACP rejects an older offer when its installed registr
 receipt is newer, rather than guessing missing archive metadata. Repair does not revoke credentials or modify external installs.
 Removal uses only local state and does not depend on a current download offer.
 
+On Windows, installer-owned directory moves and removal tolerate transient file locks
+with bounded backoff (up to fifteen seconds per operation). The first attempt is
+immediate; permanent failures remain failures. Activation retries never deliberately
+overwrite a destination that appeared during the wait. Cancellation stops activation
+retries, while restoration/cleanup keeps its own bounded opportunity to finish.
+The activation journal and backup remain available if restoration cannot complete.
+ACP scoped cleanup preserves both the original operation failure and a cleanup failure;
+qualification cleanup does likewise. These are filesystem retries, not repeated
+downloads or CI attempts that discard failed runs.
+
 ## Credentials and branch authority
 
 The existing release GitHub App needs only repository **Contents: read and
@@ -113,7 +140,7 @@ runs again, previously published releases may remain unavailable to fresh apps.
 
 ## Operating and recovery
 
-- Open **Actions > Promote managed provider runtime updates** to inspect the seven
+- Open **Actions > Promote managed provider runtime updates** to inspect the eight
   release-family results or start a manual run.
 - Open the failed provider's reusable-workflow run to identify whether stable
   discovery, metadata collection, a native runner, or publication failed.

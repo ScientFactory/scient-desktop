@@ -101,3 +101,4 @@ message.
   macOS/Linux standalone installations when you choose **Update**. Other installations remain
   manual-only. Native update restrictions are respected. Repair and remove affect only Scient's
   app-private runtime.
+  Native version checks use Factory's download release channel, not its changelog.
