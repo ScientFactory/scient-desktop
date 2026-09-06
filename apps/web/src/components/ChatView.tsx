@@ -9191,6 +9191,7 @@ function ChatViewContent(props: ChatViewProps) {
         >
           <RightPanelTabs
             mode="sheet"
+            open={rightPanelOpen}
             // Same effective inset as the closed-state titlebar controls
             // (pr-3 in the tab bar plus this pixel equals the absolute
             // right inset plus mr-px), so the cluster does not creep when

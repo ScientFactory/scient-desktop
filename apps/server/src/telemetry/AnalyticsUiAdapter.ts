@@ -28,6 +28,20 @@ export function makeAnalyticsUiAdapter(analytics: AnalyticsService["Service"]) {
   );
 
   const record = Effect.fn("AnalyticsUiAdapter.record")(function* (event: ScientAnalyticsUiEvent) {
+    if (
+      event.name === "panel.viewed" ||
+      event.name === "settings.viewed" ||
+      event.name === "usage.viewed" ||
+      event.name === "feature.viewed" ||
+      event.name === "usage.availability"
+    ) {
+      const current = yield* status;
+      if (
+        event.collectionContext === undefined ||
+        event.collectionContext !== current.collectionContext
+      )
+        return { accepted: false } as const;
+    }
     if (event.name.startsWith("scient.operation.")) {
       const current = yield* status;
       if (

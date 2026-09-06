@@ -43,6 +43,35 @@ afterEach(() => {
 });
 
 describe("AnalyticsOutbox", () => {
+  it("preserves numeric insight events and retry identity across restart without duplicating", () => {
+    const path = fixturePath();
+    const normalized = normalizeInheritedEvent(
+      "provider.turn.usage",
+      {
+        provider: "codex",
+        usageStatus: "complete",
+        inputTokens: 12345,
+        outputTokens: 678,
+        cachedInputTokens: 200,
+      },
+      { appVersion: "0.6.10", buildChannel: "stable" },
+    )!;
+    const usage = { ...event("provider.turn.usage"), properties: normalized.properties };
+    const first = new AnalyticsOutbox(path);
+    expect(first.enqueue(usage)).toBe(true);
+    expect(first.enqueue(usage)).toBe(false);
+    first.markFailed([usage.id], "network", 0);
+    first.close();
+    const reopened = new AnalyticsOutbox(path);
+    const pending = reopened.pending(50, Date.now());
+    expect(pending).toHaveLength(1);
+    expect(pending[0]).toMatchObject({
+      id: usage.id,
+      attemptCount: 1,
+      properties: { inputTokens: 12345, outputTokens: 678, cachedInputTokens: 200 },
+    });
+    reopened.close();
+  });
   it("writes a coalesced batch transaction and delivers critical events first", () => {
     const outbox = new AnalyticsOutbox(fixturePath());
     const events = [event("surface.opened"), event("app.health"), event("project.opened")];

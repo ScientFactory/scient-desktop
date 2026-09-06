@@ -111,6 +111,7 @@ export interface ProviderServiceLiveOptions {
 }
 
 interface TurnAnalyticsMetadata {
+  readonly collectionEpoch?: number;
   readonly requestId: number;
   readonly provider: ProviderDriverKind;
   readonly startedAtMs: number;
@@ -387,8 +388,23 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
       state.sessions.delete(input.sessionKey);
     }
 
+    const terminal = { ...input.completion.terminalProperties };
+    if (!metadata) {
+      // A terminal without its start cannot establish a consent-covered token
+      // interval (including bounded-map eviction). Keep coverage, not totals.
+      for (const key of [
+        "inputTokens",
+        "outputTokens",
+        "cachedInputTokens",
+        "cacheCreationTokens",
+        "reasoningTokens",
+      ])
+        delete terminal[key];
+      terminal.usageStatus = "unavailable";
+    }
     return {
-      ...input.completion.terminalProperties,
+      ...terminal,
+      collectionEpoch: metadata ? metadata.collectionEpoch : terminal.collectionEpoch,
       ...(metadata?.model ? { model: metadata.model } : {}),
       ...(metadata?.effort ? { effort: metadata.effort } : {}),
       ...(metadata?.interactionMode ? { interactionMode: metadata.interactionMode } : {}),
@@ -403,9 +419,22 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
   const recordCompletedTurnProperties = (
     properties: ReadonlyArray<Readonly<Record<string, unknown>>>,
   ) =>
-    Effect.forEach(properties, (entry) => analytics.record("provider.turn.completed", entry), {
-      discard: true,
-    });
+    Effect.forEach(
+      properties,
+      (entry) =>
+        Effect.gen(function* () {
+          const { collectionEpoch, ...properties } = entry;
+          if (
+            collectionEpoch === undefined ||
+            collectionEpoch !== (yield* analytics.collectionEpoch)
+          )
+            return;
+          yield* analytics.record("provider.turn.completed", properties);
+        }),
+      {
+        discard: true,
+      },
+    );
 
   const clearTurnAnalyticsSession = (providerInstanceId: ProviderInstanceId, threadId: ThreadId) =>
     Effect.gen(function* () {
@@ -434,6 +463,12 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
     readonly runtimeMode: string | undefined;
   }) {
     const startedAtMs = DateTime.toEpochMillis(yield* DateTime.now);
+    const analyticsStatus = yield* analytics.status;
+    const collectionEpoch =
+      analyticsStatus.available &&
+      (analyticsStatus.consent === "product" || analyticsStatus.consent === "diagnostic")
+        ? yield* analytics.collectionEpoch
+        : undefined;
     turnAnalyticsRequestId += 1;
     const requestId = turnAnalyticsRequestId;
     const effort = turnEffort(input.modelSelection);
@@ -445,6 +480,7 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
         deferredCompletionsByTurnId: new Map(),
       };
       const metadata: TurnAnalyticsMetadata = {
+        ...(collectionEpoch === undefined ? {} : { collectionEpoch }),
         provider: input.provider,
         startedAtMs,
         mixedModels: false,
@@ -569,6 +605,12 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
   ) {
     if (!event.turnId) return;
     const observedAtMs = DateTime.toEpochMillis(yield* DateTime.now);
+    const analyticsStatus = yield* analytics.status;
+    const collectionEpoch =
+      analyticsStatus.available &&
+      (analyticsStatus.consent === "product" || analyticsStatus.consent === "diagnostic")
+        ? yield* analytics.collectionEpoch
+        : undefined;
     yield* Ref.update(turnAnalytics, (state) => {
       const completionKey = turnAnalyticsCompletionKey(
         source.instanceId,
@@ -590,6 +632,7 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
       const current = session.activeByTurnId.get(String(event.turnId));
       const metadata: TurnAnalyticsMetadata = {
         ...(current?.metadata ?? {
+          ...(collectionEpoch === undefined ? {} : { collectionEpoch }),
           requestId: ++turnAnalyticsRequestId,
           provider: source.provider,
           startedAtMs: observedAtMs,
@@ -641,6 +684,12 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
   ) {
     if (!event.turnId) return;
     const completedAtMs = DateTime.toEpochMillis(yield* DateTime.now);
+    const analyticsStatus = yield* analytics.status;
+    const collectionEpoch =
+      analyticsStatus.available &&
+      (analyticsStatus.consent === "product" || analyticsStatus.consent === "diagnostic")
+        ? yield* analytics.collectionEpoch
+        : undefined;
     const tokenUsage = event.payload.tokenUsage;
     const completion: DeferredTurnAnalyticsCompletion = {
       completionKey: turnAnalyticsCompletionKey(
@@ -650,6 +699,7 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
       ),
       completedAtMs,
       terminalProperties: {
+        collectionEpoch,
         provider: source.provider,
         terminalStatus:
           event.type === "turn.completed"

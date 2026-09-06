@@ -11,7 +11,7 @@ import type {
   ScientAnalyticsUiEvent,
   EnvironmentId,
 } from "@t3tools/contracts";
-import { useCallback, useEffect } from "react";
+import { useCallback, useEffect, useEffectEvent } from "react";
 import * as Option from "effect/Option";
 
 import { runtime } from "../../lib/runtime";
@@ -28,6 +28,27 @@ const gate = createAnalyticsClientGate<PreparedConnection>({
   record: (prepared, event) =>
     runtime.runPromise(recordEnvironmentScientAnalyticsEvent({ prepared, event })),
 });
+
+/** Observe current view after consent discovery, not historical clicks. */
+export function useScientAnalyticsView(
+  event: ScientAnalyticsUiEvent | null,
+  explicitEnvironmentId?: EnvironmentId | null,
+) {
+  const primary = usePrimaryEnvironmentId();
+  const environmentId = explicitEnvironmentId === undefined ? primary : explicitEnvironmentId;
+  const prepared = usePreparedConnection(environmentId);
+  const key = JSON.stringify(event);
+  const read = useEffectEvent(() => (document.visibilityState === "hidden" ? null : event));
+  useEffect(() => {
+    if (Option.isNone(prepared)) return;
+    const observation = gate.observeView(prepared.value, () => read());
+    document.addEventListener("visibilitychange", observation.refresh);
+    return () => {
+      observation.dispose();
+      document.removeEventListener("visibilitychange", observation.refresh);
+    };
+  }, [prepared, key]);
+}
 
 export function beginScientUiOperation(
   environmentId: EnvironmentId,

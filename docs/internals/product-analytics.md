@@ -61,7 +61,7 @@ protections below. Final copy and layout require human review before activation.
 
 `contract.ts` normalizes raw call-site values. `wireContract.ts` is the strict
 persisted/wire validator; the website gateway consumes its generated copy.
-Revision 2 has 45 registered names, while the envelope remains schema version 1.
+Revision 3 adds product insight signals while the envelope remains schema version 1.
 Legacy events may omit `contractRevision`; new events carry the bounded revision.
 Unrecognized/custom model and build labels become safe categories, not raw text.
 
@@ -71,8 +71,8 @@ registered event. Regenerate and compare both repositories from the desktop root
 ```sh
 node packages/scient-analytics/src/generateConformance.ts \
   --wire=/absolute/website/workers/events/src/eventContract.ts \
-  packages/scient-analytics/fixtures/contract-v2.json \
-  /absolute/website/workers/events/fixtures/contract-v2.json
+  packages/scient-analytics/fixtures/contract-v3.json \
+  /absolute/website/workers/events/fixtures/contract-v3.json
 # Repeat with --check to verify exact source/corpus parity without writing.
 ```
 
@@ -129,6 +129,58 @@ These are implementation bounds, not a claim of zero CPU cost or universally
 measured performance on every supported platform.
 
 ## Instrumentation and honest coverage
+
+### Product insights (revision 3)
+
+`panel.viewed`, `settings.viewed`, `feature.viewed` and `usage.viewed` measure
+visible category entries, not clicks, dwell time or successful work. Consecutive
+identical categories are coalesced while mounted; reopening or returning from a
+hidden document can create a new observation. A visible restored panel qualifies,
+background tabs do not. Actor is deliberately not inferred. Settings paths map
+to fixed sections; nested project/provider identifiers and search text never
+leave the client. Global Settings/Usage observations belong to the primary
+environment; panel observations belong to the panel's environment.
+
+The view observer reads current visibility after coalesced consent discovery;
+leaving before discovery does not replay the abandoned view. At most 16 view
+observers are retained per connection. These events carry the existing ephemeral
+collection context and are rejected after consent changes/deletion. They use the
+existing bounded transport, not a clickstream SDK, scan, poller or shutdown-only
+summary. `usage.refresh.requested` is an explicit refresh request, not success;
+`usage.availability` describes a settled non-Limits view's summary availability,
+not completeness of all token reporting. Limits sources retain separate coverage.
+
+`provider.turn.usage` uses ProviderService's existing instance-aware completion
+and model association. Its upstream `provider.turn.completed` input is mapped to
+usage, never a second successful outcome. Counts are normalized main-agent
+input/output, optional cache read/write and reasoning subsets, with
+complete/partial/unavailable status. Each count is an integer from 0 to one
+billion; invalid values are omitted rather than clamped. Unknown counts are not
+zero. Cache and reasoning are already included in input/output and must not be
+added again. Private or mixed model labels become `other`; absent labels remain
+`unknown`. No transcript scan, raw usage object, cost estimate or subagent total
+is exported. Product consent must cover the observed turn interval; epoch
+changes suppress deferred totals. Missing/evicted starts emit unavailable usage
+rather than attributing an unproven interval. Terminal failures/stops can consume
+tokens but usage remains Product-class, separate from Essential failures.
+
+Existing provider discovery/readiness events mean observed ready, not a current
+signed-in account inventory; existing sent-turn events measure attempted model
+use and attachment-count buckets. Existing voice/import/compute/export outcomes
+remain their authoritative measurements. This pass does not add generic error
+capture, arbitrary preference values, precise attention tracking, or reconstruct
+unreported history. Offline/retry durability starts at local outbox acceptance;
+renderer disconnects, queue caps, expiry and abrupt termination can still lose
+observations. Never promise lossless telemetry at the expense of product work.
+
+The gateway report `analytics:insights` and prepared PostHog insights use
+revision-3 Product participants, complete reporting days, distinct installation
+profiles and event-ID deduplication. Repeated use means at least two distinct
+days, not runtime sessions. The observed population is not feature eligibility
+or all users. D1 is UTC; qualify the PostHog project timezone before comparing.
+Deploy the generated validator before releasing these producers. No deployment,
+activation, dashboard installation or platform-wide performance proof follows
+from the source implementation alone.
 
 | Source owner                           | Observed meaning                                                                                                       | Important limit                                                                                            |
 | -------------------------------------- | ---------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------- |
@@ -348,7 +400,7 @@ adds a reviewed, privacy-bounded contract for them.
 
 ## Privacy invariants
 
-Analytics must never include prompts, responses, file contents or paths, URLs, tokens, email
+Analytics must never include prompts, responses, file contents or paths, URLs, credential tokens, email
 addresses, provider account identifiers, or user-assigned device names. Provider and model values
 are normalized into bounded families; unrecognized values collapse to safe categories. New inherited
 instrumentation is not automatically authorized by appearing in upstream code: it must either map to

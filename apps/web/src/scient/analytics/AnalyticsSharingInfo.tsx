@@ -13,9 +13,9 @@ export function AnalyticsSharingInfo({ consent }: { consent: ScientAnalyticsCons
         <PopoverTitle className="text-sm">What’s shared?</PopoverTitle>
         <div className="mt-3 space-y-3 text-xs leading-relaxed text-muted-foreground">
           <p>
-            Share which features you use, whether operations succeed or fail, basic performance
-            information, and counters that help check analytics delivery. Turn sharing off in
-            Settings to stop sending analytics.
+            Share which features and provider/model categories you use, reported token counts,
+            whether operations succeed or fail, basic performance information, and counters that
+            help check analytics delivery. Turn sharing off in Settings to stop sending analytics.
           </p>
           {consent === "essential" || consent === "product" ? (
             <p>

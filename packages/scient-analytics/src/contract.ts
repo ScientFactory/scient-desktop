@@ -1,6 +1,8 @@
 export const ANALYTICS_SCHEMA_VERSION = 1 as const;
 export const ANALYTICS_SOURCE = "desktop" as const;
-export const ANALYTICS_CONTRACT_REVISION = "2" as const;
+import { EVENT_DEFINITIONS } from "./wireContract.ts";
+
+export const ANALYTICS_CONTRACT_REVISION = "3" as const;
 
 export const ANALYTICS_EVENT_NAMES = [
   "app.session.started",
@@ -42,6 +44,13 @@ export const ANALYTICS_EVENT_NAMES = [
   "voice.transcription.failed",
   "voice.transcription.cancelled",
   "surface.opened",
+  "panel.viewed",
+  "settings.viewed",
+  "usage.viewed",
+  "usage.refresh.requested",
+  "usage.availability",
+  "feature.viewed",
+  "provider.turn.usage",
   "setting.changed",
   "scient.operation.started",
   "scient.operation.completed",
@@ -64,7 +73,7 @@ export interface AnalyticsEvent {
   readonly occurred_at: string;
   readonly privacy_level: EventPrivacyLevel;
   readonly consent_level: EventPrivacyLevel;
-  readonly properties: Readonly<Record<string, boolean | string>>;
+  readonly properties: Readonly<Record<string, boolean | string | number>>;
 }
 
 export interface AnalyticsBatch {
@@ -82,7 +91,7 @@ export interface NormalizedEvent {
   readonly name: string;
   readonly privacyLevel: EventPrivacyLevel;
   readonly priority: AnalyticsPriority;
-  readonly properties: Readonly<Record<string, boolean | string>>;
+  readonly properties: Readonly<Record<string, boolean | string | number>>;
 }
 
 const PROVIDERS = new Set([
@@ -294,6 +303,10 @@ const KNOWN_MODEL_KEYS = new Set([
   "gpt-5.6-sol",
   "gpt-5.6-terra",
   "grok-build",
+  "gemini-3.1-pro",
+  "gemini-3.7-flash",
+  "gemini-3.7-pro",
+  "gemini-3.8-flash",
   "openai/gpt-5",
 ]);
 
@@ -392,7 +405,13 @@ function modelFamily(provider: string, model: unknown): string {
 export function modelKey(model: unknown): string {
   if (typeof model !== "string") return "unknown";
   const normalized = model.trim().toLowerCase();
-  const withoutPinnedVersion = normalized.replace(/-(?:20\d{6,8})$/u, "");
+  if (KNOWN_MODEL_KEYS.has(normalized)) return normalized;
+  // Strip only known public namespaces; the result still must be allowlisted.
+  const publicSlug = normalized.replace(/^(?:openai|anthropic|google)\//u, "");
+  const withoutPinnedVersion = publicSlug.replace(/-(?:20\d{6,8})$/u, "");
+  const geminiVariant = withoutPinnedVersion.replace(/-(?:high|medium|low)$/u, "");
+  if (geminiVariant.startsWith("gemini-") && KNOWN_MODEL_KEYS.has(geminiVariant))
+    return geminiVariant;
   const canonical =
     MODEL_KEY_ALIASES[normalized] ??
     MODEL_KEY_ALIASES[withoutPinnedVersion] ??
@@ -640,10 +659,95 @@ function normalizeEvent(
           hasInput: normalizedBoolean(property(input, "hasInput")),
         },
       };
+    case "usage.refresh.requested": {
+      return { name, privacyLevel: "product", priority: "core", properties: {} };
+    }
+    case "panel.viewed":
+    case "settings.viewed":
+    case "usage.viewed":
+    case "usage.availability":
+    case "feature.viewed": {
+      const properties: Record<string, string> = {};
+      for (const [key, rule] of Object.entries(EVENT_DEFINITIONS[name].properties)) {
+        properties[key] = normalizedEnum(property(input, key), new Set(rule.values), "other");
+      }
+      return { name, privacyLevel: "product", priority: "core", properties };
+    }
+    case "provider.turn.usage": {
+      const properties: Record<string, string | boolean | number> = {
+        provider,
+        modelKey:
+          property(input, "mixedModels") === true ? "other" : modelKey(property(input, "model")),
+        terminalStatus:
+          normalizedEnum(
+            property(input, "terminalStatus"),
+            new Set(["cancelled", "interrupted"]),
+            "other",
+          ) !== "other"
+            ? "stopped"
+            : normalizedEnum(
+                property(input, "terminalStatus"),
+                new Set(["completed", "failed", "stopped"]),
+                "other",
+              ),
+        usageStatus: normalizedEnum(
+          property(input, "usageStatus"),
+          new Set(["complete", "partial", "unavailable"]),
+          "unavailable",
+        ),
+        usageScope: "main_agent",
+      };
+      if (typeof property(input, "hasSubagents") === "boolean")
+        properties.hasSubagents = property(input, "hasSubagents") as boolean;
+      for (const key of [
+        "inputTokens",
+        "outputTokens",
+        "cachedInputTokens",
+        "cacheCreationTokens",
+        "reasoningTokens",
+      ]) {
+        const value = property(input, key);
+        if (
+          typeof value === "number" &&
+          Number.isSafeInteger(value) &&
+          value >= 0 &&
+          value <= 1_000_000_000
+        )
+          properties[key] = value;
+      }
+      for (const [subset, total] of [
+        ["cachedInputTokens", "inputTokens"],
+        ["cacheCreationTokens", "inputTokens"],
+        ["reasoningTokens", "outputTokens"],
+      ] as const) {
+        if (
+          typeof properties[subset] === "number" &&
+          typeof properties[total] === "number" &&
+          properties[subset] > properties[total]
+        )
+          delete properties[subset];
+      }
+      if (
+        properties.usageStatus === "complete" &&
+        (properties.inputTokens === undefined || properties.outputTokens === undefined)
+      )
+        properties.usageStatus = "partial";
+      const hasCounts = [
+        "inputTokens",
+        "outputTokens",
+        "cachedInputTokens",
+        "cacheCreationTokens",
+        "reasoningTokens",
+      ].some((key) => properties[key] !== undefined);
+      if (!hasCounts) properties.usageStatus = "unavailable";
+      else if (properties.usageStatus === "unavailable") properties.usageStatus = "partial";
+      return { name, privacyLevel: "product", priority: "core", properties };
+    }
     case "provider.turn.completed":
-      // Upstream uses this name for all terminal statuses. Scient's semantic
-      // observer owns completed/failed/stopped outcomes; do not count both paths.
-      if (property(input, "terminalStatus") !== undefined) return null;
+      // Keep outcomes owned by the semantic observer; reuse upstream's
+      // instance-aware terminal/model association only for product usage.
+      if (property(input, "terminalStatus") !== undefined)
+        return normalizeEvent("provider.turn.usage", input, context);
       return {
         name,
         privacyLevel: "product",

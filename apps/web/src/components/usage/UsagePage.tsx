@@ -1,4 +1,5 @@
 import { RefreshIcon } from "~/components/ui/refresh-icon";
+import { useRecordScientAnalytics, useScientAnalyticsView } from "~/scient/analytics/client";
 import { useAtomValue } from "@effect/atom-react";
 import {
   USAGE_CONTRACT_VERSION,
@@ -108,12 +109,38 @@ export function UsagePage() {
   const [selectedEnvironmentIds, setSelectedEnvironmentIds] =
     useState<ReadonlySet<EnvironmentId> | null>(null);
   const { days: windowDays, window } = windowSelection;
+  const recordAnalytics = useRecordScientAnalytics();
+  useScientAnalyticsView({
+    name: "usage.viewed",
+    properties: {
+      metric,
+      window: String(windowDays),
+      breakdown: showingLimits ? "other" : breakdown,
+    },
+  });
   const isPast24Hours = windowDays === 1;
   const { merged, environments, selectedEnvironments, isPending, isPartial, refresh } = useUsage(
     window,
     selectedEnvironmentIds,
   );
   const presentations = useAtomValue(environmentPresentations.presentationsAtom);
+  useScientAnalyticsView(
+    showingLimits ||
+      isPending ||
+      isRefreshing ||
+      selectedEnvironments.some((entry) => entry.isPending)
+      ? null
+      : {
+          name: "usage.availability",
+          properties: {
+            state: !selectedEnvironments.some((entry) => entry.summary !== null)
+              ? "unavailable"
+              : selectedEnvironments.some((entry) => entry.error !== null || entry.summary === null)
+                ? "partial"
+                : "available",
+          },
+        },
+  );
   const refreshProviders = useAtomCommand(serverEnvironment.refreshProviders, {
     reportFailure: false,
   });
@@ -164,6 +191,7 @@ export function UsagePage() {
   };
   const refreshWindow = () => {
     if (refreshingRef.current) return;
+    recordAnalytics({ name: "usage.refresh.requested", properties: {} });
 
     if (showingLimits) {
       refreshingRef.current = true;

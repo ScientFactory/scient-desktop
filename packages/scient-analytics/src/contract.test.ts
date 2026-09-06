@@ -16,7 +16,17 @@ describe("Scient analytics contract", () => {
           { provider: "pi", terminalStatus },
           context,
         ),
-      ).toBeNull();
+      ).toMatchObject({
+        name: "provider.turn.usage",
+        privacyLevel: "product",
+        properties: {
+          terminalStatus:
+            terminalStatus === "cancelled" || terminalStatus === "interrupted"
+              ? "stopped"
+              : terminalStatus,
+          usageStatus: "unavailable",
+        },
+      });
     }
     expect(
       normalizeInheritedEvent("provider.turn.completed", { provider: "pi" }, context)?.name,
@@ -105,7 +115,7 @@ describe("Scient analytics contract", () => {
     expect(surface?.properties).toEqual({
       surface: "settings",
       ...context,
-      contractRevision: "2",
+      contractRevision: "3",
     });
   });
 

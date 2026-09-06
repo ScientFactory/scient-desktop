@@ -1,6 +1,7 @@
 "use client";
 
 import { scopeProjectRef, scopeThreadRef } from "@t3tools/client-runtime/environment";
+import { useScientAnalyticsView } from "~/scient/analytics/client";
 import {
   canCreateProjectInEnvironment,
   getCloneDestinationBrowsePath,
@@ -428,6 +429,21 @@ export function CommandPalette({ children }: { children: ReactNode }) {
     openIntent: null,
   });
   const setOpen = useCallback((open: boolean) => dispatch({ _tag: "SetOpen", open }), []);
+  useScientAnalyticsView(
+    state.open
+      ? {
+          name: "feature.viewed",
+          properties: {
+            feature:
+              state.openIntent?.kind === "add-project"
+                ? "project-picker"
+                : state.openIntent?.kind === "new-thread-in"
+                  ? "new-thread"
+                  : "search",
+          },
+        }
+      : null,
+  );
   const toggleMode = useCallback(
     (mode: SearchOverlayMode) => dispatch({ _tag: "ToggleMode", mode }),
     [],
