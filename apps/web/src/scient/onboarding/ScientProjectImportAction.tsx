@@ -1,4 +1,5 @@
 import type { ScopedProjectRef } from "@t3tools/contracts";
+import { ArrowRightIcon } from "lucide-react";
 import { lazy, Suspense, useCallback, useState } from "react";
 
 import { resolvePrimaryOperateAccess } from "../../providerOperateAccess";
@@ -62,9 +63,10 @@ export function ScientProjectImportAction({ onImported }: { readonly onImported?
         onClick={() => setOpen(true)}
         size="sm"
         type="button"
-        variant="outline"
+        variant="ghost-muted"
       >
         Import projects and conversations
+        <ArrowRightIcon aria-hidden className="size-3.5 text-muted-foreground" />
       </Button>
       {open ? (
         <Dialog
