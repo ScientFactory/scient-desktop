@@ -72,44 +72,57 @@ describe("ManagedRuntimeCatalogReconciler", () => {
       }),
   );
 
-  it.effect("publishes a newly available managed update without reloading the provider", () =>
-    Effect.gen(function* () {
-      const publications = yield* Ref.make<
-        ReadonlyArray<{
-          readonly runtime: ProviderRuntimeSummary | null;
-          readonly preserveOperation?: boolean;
-        }>
-      >([]);
-      const actions: ProviderManagedRuntimeActions = {
-        getSummary: Effect.succeed(updateRuntime),
-        plan: () => Effect.die("plan must not run during catalog reconciliation"),
-        run: () => Effect.die("runtime mutation must not run during catalog reconciliation"),
-      };
-      const base = makeProviderRegistryMock([provider]);
-      const registry = ProviderRegistry.of({
-        ...base,
-        getProviderManagedRuntimeActionsForInstance: () => Effect.succeed(actions),
-        setProviderManagedRuntimeSummary: (input) =>
-          Ref.update(publications, (current) => [
-            ...current,
-            {
-              runtime: input.runtime,
-              ...(input.preserveOperation === undefined
-                ? {}
-                : { preserveOperation: input.preserveOperation }),
-            },
-          ]).pipe(Effect.as([provider])),
-      });
+  for (const driver of [
+    "codex",
+    "claudeAgent",
+    "antigravity",
+    "cursor",
+    "droid",
+    "grok",
+    "pi",
+  ] as const) {
+    it.effect(
+      `publishes a newly available ${driver} managed update without reloading the provider`,
+      () =>
+        Effect.gen(function* () {
+          const publications = yield* Ref.make<
+            ReadonlyArray<{
+              readonly runtime: ProviderRuntimeSummary | null;
+              readonly preserveOperation?: boolean;
+            }>
+          >([]);
+          const actions: ProviderManagedRuntimeActions = {
+            getSummary: Effect.succeed(updateRuntime),
+            plan: () => Effect.die("plan must not run during catalog reconciliation"),
+            run: () => Effect.die("runtime mutation must not run during catalog reconciliation"),
+          };
+          const selectedProvider = { ...provider, driver: ProviderDriverKind.make(driver) };
+          const base = makeProviderRegistryMock([selectedProvider]);
+          const registry = ProviderRegistry.of({
+            ...base,
+            getProviderManagedRuntimeActionsForInstance: () => Effect.succeed(actions),
+            setProviderManagedRuntimeSummary: (input) =>
+              Ref.update(publications, (current) => [
+                ...current,
+                {
+                  runtime: input.runtime,
+                  ...(input.preserveOperation === undefined
+                    ? {}
+                    : { preserveOperation: input.preserveOperation }),
+                },
+              ]).pipe(Effect.as([provider])),
+          });
 
-      yield* reconcileManagedRuntimeProviders(["codex"]).pipe(
-        Effect.provideService(ProviderRegistry, registry),
-      );
+          yield* reconcileManagedRuntimeProviders([driver]).pipe(
+            Effect.provideService(ProviderRegistry, registry),
+          );
 
-      assert.deepStrictEqual(yield* Ref.get(publications), [
-        { runtime: updateRuntime, preserveOperation: true },
-      ]);
-    }),
-  );
+          assert.deepStrictEqual(yield* Ref.get(publications), [
+            { runtime: updateRuntime, preserveOperation: true },
+          ]);
+        }),
+    );
+  }
 
   it.effect("does not probe providers whose catalog entry did not change", () =>
     Effect.gen(function* () {

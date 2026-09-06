@@ -31,18 +31,22 @@ widen an allowed host or path family, or increase a support tier.
 
 `managed-provider-runtime-updates.yml` runs every two hours and may also be
 started manually. It invokes `managed-provider-runtime-update-provider.yml`
-once for each of Codex, Claude, legacy Antigravity, official Antigravity ACP, Cursor, Droid, and
-Grok. The seven release-family runs are intentionally independent:
+once for each of Codex, Claude, legacy Antigravity, official Antigravity ACP, Cursor, Droid,
+Grok, and Pi. The eight release-family runs are intentionally independent:
 
 1. Read the latest generated catalog, or the bundled catalog before the branch
    exists.
 2. Read only that provider's official stable pointer.
+   Droid uses Factory's native `factory-cli/LATEST` download channel, not the
+   independently maintained changelog RSS. Pi uses the official `earendil-works/pi`
+   stable GitHub release.
 3. If the version is newer, collect complete immutable metadata for every
    app-approved target.
 4. Exercise the normal managed-runtime engine on hosted macOS Apple-silicon,
    macOS Intel, Linux x64/ARM64, and Windows x64/ARM64 runners. Each runner downloads,
    verifies, materializes, checks package contents, smoke-tests, activates, and
    removes its native artifact in a temporary private root.
+   Pi qualifies only Apple-silicon macOS, its sole app-approved managed target.
    Official Antigravity ACP uses T3's paired-executable installer instead of the generic
    runtime engine. Its five runners cover Apple-silicon macOS, Linux x64/ARM64, and Windows
    x64/ARM64; no ACP artifact exists for Intel macOS. Its qualification initializes the
@@ -65,6 +69,12 @@ providers. Failed discovery, incomplete metadata, a failed native check, a
 downgrade, a same-version repack, or a publication race leaves the current
 catalog untouched. The workflow never force-pushes and never opens a catalog PR,
 so an unrelated monorepo test cannot suppress a qualified provider update.
+
+An older feed may omit the subsequently added ACP and Pi families. Validation
+preserves those omissions so other providers can continue independently. Discovery
+uses that family's bundled policy baseline, but collects and qualifies the official
+release even if its version matches the bundle. Only that family's successful
+publication adds it to the feed; no unrelated provider run seeds unqualified entries.
 
 Before a Scient app release, snapshot the latest **qualified** generated catalog into
 `apps/server/src/scient/providerLifecycle/bundled-managed-runtime-catalog.json`
@@ -113,7 +123,7 @@ runs again, previously published releases may remain unavailable to fresh apps.
 
 ## Operating and recovery
 
-- Open **Actions > Promote managed provider runtime updates** to inspect the seven
+- Open **Actions > Promote managed provider runtime updates** to inspect the eight
   release-family results or start a manual run.
 - Open the failed provider's reusable-workflow run to identify whether stable
   discovery, metadata collection, a native runner, or publication failed.

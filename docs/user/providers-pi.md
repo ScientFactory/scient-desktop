@@ -13,6 +13,9 @@ remove affect only that private runtime, not your system installation or Pi cred
 For recognized system package installations, Scient can check for updates and run the owning
 package manager when you choose **Update**. Extensions are not updated. Unrecognized installations
 remain manual-only; use the tool that installed Pi.
+The obsolete `@mariozechner/pi-coding-agent` package cannot reach the minimum supported
+version and remains manual-only. Install the current official Pi package yourself;
+Scient does not silently migrate an existing installation.
 
 Alternatively, install Pi using its [official instructions](https://github.com/earendil-works/pi),
 then configure its executable path if `pi` is not on the Scient server's `PATH`. The integration is

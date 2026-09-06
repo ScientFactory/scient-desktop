@@ -19,6 +19,7 @@ const allManagedProviders: ReadonlyArray<ManagedRuntimeCatalogProvider> = [
   "cursor",
   "droid",
   "grok",
+  "pi",
 ];
 
 export function catalogProviderForDriver(
@@ -27,7 +28,7 @@ export function catalogProviderForDriver(
   switch (driver) {
     case "codex":
       return "codex";
-    case "claude":
+    case "claudeAgent":
       return "claudeAgent";
     case "antigravity":
       return "antigravity";
@@ -37,6 +38,8 @@ export function catalogProviderForDriver(
       return "droid";
     case "grok":
       return "grok";
+    case "pi":
+      return "pi";
     default:
       return undefined;
   }

@@ -7,7 +7,7 @@ import {
 import {
   mergeQualifiedManagedRuntimeProvider,
   parseCursorInstallerVersion,
-  parseDroidRssVersion,
+  parseDroidStableVersion,
   parseGrokStableVersion,
   refreshManagedRuntimeCatalog,
   refreshManagedRuntimeProvider,
@@ -95,8 +95,8 @@ function stableChannelFetch(codexVersion = "0.150.1") {
         'DOWNLOAD_URL="https://downloads.cursor.com/lab/2026.08.25-3e8eec8/${OS}/${ARCH}/agent-cli-package.tar.gz"',
       );
     }
-    if (url === "https://docs.factory.ai/changelog/rss.xml") {
-      return new Response("<title><![CDATA[CLI v0.208.1: fixes]]></title>");
+    if (url === "https://downloads.factory.ai/factory-cli/LATEST") {
+      return new Response("0.208.1\n");
     }
     if (url === "https://x.ai/cli/stable") return new Response("1.0.13");
     if (
@@ -146,13 +146,104 @@ describe("managed runtime release discovery", () => {
     ).toThrow(/unambiguous/u);
   });
 
-  it("extracts the latest Droid CLI entry rather than a desktop-only release", () => {
+  it("reads the native Droid stable pointer and rejects changelog text", () => {
+    expect(parseDroidStableVersion("0.213.0\n")).toBe("0.213.0");
+    expect(() => parseDroidStableVersion("<title>CLI v0.209.0</title>")).toThrow(/Droid/u);
+  });
+
+  it("allows an older feed without Pi without seeding or blocking other providers", async () => {
+    const { pi: _pi, ...providers } = bundledCatalogJson.providers;
+    const legacy = validateManagedRuntimeCatalog({ ...bundledCatalogJson, providers });
+    expect(legacy.providers.pi).toBeUndefined();
+    const { fetch_, requested } = stableChannelFetch(providers.codex.version);
+    const result = await refreshManagedRuntimeProvider(legacy, "codex", fetch_);
+    expect(result.changedProviders).toEqual([]);
+    expect(result.catalog.providers.pi).toBeUndefined();
+    expect(requested).toEqual(["https://releases.openai.com/codex/channels/latest"]);
+    const promoted = mergeQualifiedManagedRuntimeProvider({
+      current: legacy,
+      candidate: legacy,
+      provider: "codex",
+    });
+    expect(promoted.providers.pi).toBeUndefined();
     expect(
-      parseDroidRssVersion(
-        "<title><![CDATA[Factory notes]]></title><title><![CDATA[CLI v0.208.1, Desktop v0.165.1: fixes]]></title>",
-      ),
-    ).toBe("0.208.1");
-    expect(() => parseDroidRssVersion("<title>Desktop v1.0.0</title>")).toThrow(/Droid/u);
+      mergeQualifiedManagedRuntimeProvider({
+        current: legacy,
+        candidate: validateManagedRuntimeCatalog(bundledCatalogJson),
+        provider: "pi",
+      }).providers.pi,
+    ).toEqual(bundledCatalogJson.providers.pi);
+  });
+
+  it("still rejects a missing established provider or a malformed Pi entry", () => {
+    const { codex: _codex, ...providers } = bundledCatalogJson.providers;
+    expect(() => validateManagedRuntimeCatalog({ ...bundledCatalogJson, providers })).toThrow(
+      /codex/u,
+    );
+    expect(() =>
+      validateManagedRuntimeCatalog({
+        ...bundledCatalogJson,
+        providers: { ...bundledCatalogJson.providers, pi: {} },
+      }),
+    ).toThrow(/pi/u);
+  });
+
+  it.each([false, true])("discovers missing Pi before qualification (newer=%s)", async (newer) => {
+    const { pi, ...providers } = bundledCatalogJson.providers;
+    const legacy = validateManagedRuntimeCatalog({ ...bundledCatalogJson, providers });
+    const version = newer ? nextPatch(pi.version) : pi.version;
+    const artifact = pi.artifacts["darwin-arm64"];
+    const url = artifact.url.replace(`/v${pi.version}/`, `/v${version}/`);
+    const requested: string[] = [];
+    const result = await refreshManagedRuntimeProvider(legacy, "pi", async (input, init) => {
+      requested.push(input.toString());
+      if (input.toString() === "https://api.github.com/repos/earendil-works/pi/releases/latest") {
+        return Response.json({
+          tag_name: `v${version}`,
+          draft: false,
+          prerelease: false,
+          assets: [
+            {
+              name: artifact.artifactName,
+              browser_download_url: url,
+              digest: `sha256:${artifact.checksum.digest}`,
+            },
+          ],
+        });
+      }
+      expect(input.toString()).toBe(url);
+      expect(init?.method).toBe("HEAD");
+      return new Response(null, { headers: { "content-length": String(artifact.size) } });
+    });
+    expect(result.changedProviders).toEqual(["pi"]);
+    expect(result.catalog.providers.pi?.version).toBe(version);
+    expect(Object.keys(result.catalog.providers.pi!.artifacts)).toEqual(["darwin-arm64"]);
+    expect(requested).toHaveLength(3);
+    expect(legacy.providers.pi).toBeUndefined();
+    const promoted = mergeQualifiedManagedRuntimeProvider({
+      current: legacy,
+      candidate: result.catalog,
+      provider: "pi",
+    });
+    expect(promoted.providers.pi?.version).toBe(version);
+    expect(promoted.providers.codex).toEqual(legacy.providers.codex);
+  });
+
+  it("discovers every existing Droid target from its native channel", async () => {
+    const current = validateManagedRuntimeCatalog(bundledCatalogJson);
+    const version = nextPatch(current.providers.droid!.version);
+    const result = await refreshManagedRuntimeProvider(current, "droid", async (input, init) => {
+      const url = input.toString();
+      if (url === "https://downloads.factory.ai/factory-cli/LATEST")
+        return new Response(`${version}\n`);
+      expect(url).toContain(`/factory-cli/releases/${version}/`);
+      if (url.endsWith(".sha256")) return new Response("a".repeat(64));
+      expect(init?.method).toBe("HEAD");
+      return new Response(null, { headers: { "content-length": "100000000" } });
+    });
+    expect(result.changedProviders).toEqual(["droid"]);
+    expect(result.catalog.providers.droid?.version).toBe(version);
+    expect(Object.keys(result.catalog.providers.droid!.artifacts)).toHaveLength(6);
   });
 
   it("accepts only a strict Grok stable version", () => {

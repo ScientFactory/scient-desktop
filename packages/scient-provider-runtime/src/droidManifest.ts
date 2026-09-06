@@ -1,6 +1,14 @@
 import type { ManagedRuntimeArtifact } from "./managedRuntimeArtifact.ts";
 import type { ManagedRuntimeTarget } from "./target.ts";
 
+export const DROID_LATEST_VERSION_URL = "https://downloads.factory.ai/factory-cli/LATEST";
+
+/** Factory's installer channel is a single stable version, not its changelog RSS. */
+export function parseDroidReleaseVersion(source: string): string | null {
+  const version = source.trim();
+  return /^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$/u.test(version) ? version : null;
+}
+
 const VERSION = "0.203.0";
 const RELEASE_BASE = `https://downloads.factory.ai/factory-cli/releases/${VERSION}`;
 const ALLOWED_HOSTS = ["downloads.factory.ai"] as const;
