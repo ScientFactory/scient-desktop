@@ -27,6 +27,7 @@ import * as Ndjson from "effect/unstable/encoding/Ndjson";
 
 import { ServerConfig } from "../config.ts";
 import { ServerSettingsService } from "../serverSettings.ts";
+import { AnalyticsService } from "../telemetry/AnalyticsService.ts";
 import { subscribeBeforeSnapshotWithoutMutex } from "../utils/subscribeBeforeSnapshot.ts";
 
 const INITIAL_SAMPLE_DEADLINE_MS = 90_000;
@@ -330,6 +331,7 @@ export function requireDesktopTelemetryWriteProgress(
 export const make = Effect.fn("resourceTelemetry.desktopTelemetryReceiver.make")(function* () {
   const config = yield* ServerConfig;
   const serverSettings = yield* ServerSettingsService;
+  const analytics = yield* Effect.serviceOption(AnalyticsService);
   const latest = yield* Ref.make(Option.none<DesktopHostTelemetrySnapshot>());
   const receiverStartedAt = yield* DateTime.now;
   const lastContactAtMs = yield* Ref.make(
@@ -536,6 +538,22 @@ export const make = Effect.fn("resourceTelemetry.desktopTelemetryReceiver.make")
           );
         }
 
+        if (message.type === "scientAppHealth") {
+          return recordContact.pipe(
+            Effect.andThen(
+              Option.isSome(analytics)
+                ? analytics.value
+                    .record("app.health", {
+                      component: message.component,
+                      operation: "termination",
+                      outcome: "abnormal",
+                      failureClass: message.failureClass,
+                    })
+                    .pipe(Effect.ignoreCause())
+                : Effect.void,
+            ),
+          );
+        }
         const sampledAt = DateTime.makeUnsafe(message.sampledAtUnixMs);
         return snapshotMutex.withPermits(1)(
           recordContact.pipe(

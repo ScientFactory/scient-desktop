@@ -31,7 +31,29 @@ const AnalyticsEnvConfig = Config.all({
   buildChannel: Config.string("SCIENT_ANALYTICS_BUILD_CHANNEL").pipe(
     Config.withDefault("development"),
   ),
+  appVersion: Config.string("SCIENT_ANALYTICS_APP_VERSION").pipe(
+    Config.withDefault(packageJson.version),
+  ),
+  testEndpoint: Config.string("SCIENT_ANALYTICS_TEST_ENDPOINT").pipe(Config.withDefault("")),
 });
+
+/** Explicit local qualification only; never an alternate third-party telemetry host. */
+export function localAnalyticsTestEndpoint(value: string): string | undefined {
+  if (!value) return undefined;
+  const url = new URL(value);
+  if (
+    url.protocol !== "http:" ||
+    !["127.0.0.1", "[::1]"].includes(url.hostname) ||
+    url.username ||
+    url.password ||
+    url.pathname !== "/v1/events" ||
+    url.search ||
+    url.hash
+  ) {
+    throw new Error("Analytics test endpoint must be a loopback ingestion endpoint");
+  }
+  return url.href;
+}
 
 export interface AnalyticsStatus {
   readonly available: boolean;
@@ -89,12 +111,12 @@ async function readStoredConsent(path: string): Promise<AnalyticsConsent | null>
       !("consent" in parsed) ||
       typeof parsed.consent !== "string"
     ) {
-      return null;
+      return "off";
     }
-    return AnalyticsConsent.find((candidate) => candidate === parsed.consent) ?? null;
+    return AnalyticsConsent.find((candidate) => candidate === parsed.consent) ?? "off";
   } catch (error) {
     if (error instanceof Error && "code" in error && error.code === "ENOENT") return null;
-    return null;
+    return "off";
   }
 }
 
@@ -121,6 +143,9 @@ export class AnalyticsService extends Context.Service<
     /** Read the current local consent state and master availability gate. */
     readonly status: Effect.Effect<AnalyticsStatus>;
 
+    /** Internal observer fence; never part of a wire event or public identity. */
+    readonly collectionEpoch: Effect.Effect<number>;
+
     /** Persist and apply a new local consent level before accepting later events. */
     readonly setConsent: (consent: AnalyticsConsent) => Effect.Effect<AnalyticsStatus>;
 
@@ -135,6 +160,7 @@ export class AnalyticsService extends Context.Service<
       record: () => Effect.void,
       flush: Effect.void,
       status: Effect.succeed({ available: false, consent: "off" }),
+      collectionEpoch: Effect.succeed(0),
       setConsent: () => Effect.succeed({ available: false, consent: "off" }),
       deleteData: Effect.succeed(false),
     }),
@@ -144,6 +170,16 @@ export class AnalyticsService extends Context.Service<
 
 export const make = Effect.gen(function* () {
   const analyticsConfig = yield* AnalyticsEnvConfig;
+  if (!analyticsConfig.enabled) {
+    return AnalyticsService.of({
+      record: () => Effect.void,
+      flush: Effect.void,
+      status: Effect.succeed({ available: false, consent: "off" }),
+      collectionEpoch: Effect.succeed(0),
+      setConsent: () => Effect.succeed({ available: false, consent: "off" }),
+      deleteData: Effect.succeed(false),
+    });
+  }
   const serverConfig = yield* ServerConfig.ServerConfig;
   const outboxPath = NodePath.join(serverConfig.stateDir, "analytics", "outbox.sqlite");
   const preferencePath = NodePath.join(serverConfig.stateDir, "analytics", "preferences.json");
@@ -157,14 +193,19 @@ export const make = Effect.gen(function* () {
     yield* Effect.logWarning("Invalid Scient analytics consent; analytics remains off");
   }
 
-  const createRuntime = (runtimeConsent: AnalyticsConsent) =>
+  const createRuntime = (
+    runtimeConsent: AnalyticsConsent,
+    purpose: "collection" | "deletion" = "collection",
+  ) =>
     createAnalyticsRuntime({
       enabled: analyticsConfig.enabled,
       consent: runtimeConsent,
       outboxPath,
-      appVersion: packageJson.version,
+      appVersion: analyticsConfig.appVersion,
       buildChannel: parseBuildChannel(analyticsConfig.buildChannel),
       workerUrl: packagedAnalyticsWorkerUrl(),
+      purpose,
+      endpoint: localAnalyticsTestEndpoint(analyticsConfig.testEndpoint),
     });
 
   const runtimeHolder: { current: AnalyticsRuntime } = {
@@ -214,6 +255,7 @@ export const make = Effect.gen(function* () {
   recordSessionStarted(runtimeHolder.current, sessionStartedAt);
 
   let controlInProgress = false;
+  let collectionEpoch = 0;
 
   const record: AnalyticsService["Service"]["record"] = (event, properties) =>
     Effect.try({
@@ -230,10 +272,6 @@ export const make = Effect.gen(function* () {
   }).pipe(
     Effect.catch(() => Effect.logWarning("Scient analytics delivery attempt failed")),
     Effect.asVoid,
-  );
-
-  yield* Effect.forever(Effect.sleep("30 seconds").pipe(Effect.andThen(flush))).pipe(
-    Effect.forkScoped,
   );
 
   let controlQueue: Promise<void> = Promise.resolve();
@@ -259,11 +297,15 @@ export const make = Effect.gen(function* () {
           serializeControl(async () => {
             if (!analyticsConfig.enabled) return { available: false, consent: "off" } as const;
             controlInProgress = true;
+            collectionEpoch += 1;
             const previousConsent = consent;
             const previousRuntime = runtimeHolder.current;
             let candidateRuntime: AnalyticsRuntime | null = null;
             try {
-              if (nextConsent === previousConsent) {
+              if (
+                nextConsent === previousConsent &&
+                (nextConsent === "off" || previousRuntime.enabled)
+              ) {
                 await writeStoredConsent(preferencePath, nextConsent);
                 return { available: true, consent } as const;
               }
@@ -289,6 +331,7 @@ export const make = Effect.gen(function* () {
               }
               return { available: true, consent } as const;
             } finally {
+              collectionEpoch += 1;
               controlInProgress = false;
             }
           }),
@@ -306,15 +349,17 @@ export const make = Effect.gen(function* () {
         serializeControl(async () => {
           if (!analyticsConfig.enabled) return false;
           controlInProgress = true;
+          collectionEpoch += 1;
           try {
             const temporaryRuntime = runtimeHolder.current.enabled
               ? null
-              : createRuntime("essential");
+              : createRuntime("off", "deletion");
             const deletionRuntime = temporaryRuntime ?? runtimeHolder.current;
             try {
               const deleted = await deletionRuntime.deleteData();
-              if (deleted && !temporaryRuntime) {
+              if (deleted) {
                 await deletionRuntime.close();
+                if (temporaryRuntime) await runtimeHolder.current.close();
                 try {
                   const replacementRuntime = createRuntime(consent);
                   runtimeHolder.current = replacementRuntime;
@@ -328,6 +373,7 @@ export const make = Effect.gen(function* () {
               if (temporaryRuntime) await temporaryRuntime.close();
             }
           } finally {
+            collectionEpoch += 1;
             controlInProgress = false;
           }
         }),
@@ -341,7 +387,14 @@ export const make = Effect.gen(function* () {
     ),
   );
 
-  return AnalyticsService.of({ record, flush, status, setConsent, deleteData });
+  return AnalyticsService.of({
+    record,
+    flush,
+    status,
+    setConsent,
+    deleteData,
+    collectionEpoch: Effect.sync(() => collectionEpoch),
+  });
 });
 
 export const layer = Layer.effect(AnalyticsService, make);

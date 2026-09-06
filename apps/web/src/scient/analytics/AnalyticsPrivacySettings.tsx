@@ -77,7 +77,7 @@ export function AnalyticsPrivacySettings() {
       toastManager.add({
         type: "error",
         title: "Analytics preference was not saved",
-        description: "Your previous privacy setting is still active.",
+        description: "Your new choice could not be confirmed. Please try again.",
       });
     } finally {
       setPending(false);
@@ -92,7 +92,7 @@ export function AnalyticsPrivacySettings() {
     const confirmed = await (api ?? ensureLocalApi()).dialogs.confirm(
       [
         "Delete Scient analytics data?",
-        "Scient will request deletion of this installation's analytics data and replace its anonymous identifier.",
+        "Scient will request deletion of this installation's analytics data and replace its random analytics identifier.",
       ].join("\n"),
     );
     if (!confirmed) return;
@@ -102,14 +102,14 @@ export function AnalyticsPrivacySettings() {
       toastManager.add({
         type: "success",
         title: "Analytics deletion requested",
-        description: "Local analytics data was cleared and the anonymous identifier was replaced.",
+        description: "Local analytics data was cleared and the analytics identifier was replaced.",
       });
     } catch {
       toastManager.add({
         type: "error",
         title: "Analytics data was not deleted",
         description:
-          "Nothing was cleared locally because the deletion gateway did not acknowledge the request.",
+          "Deletion could not be confirmed. Please try again; an accepted request may still be processing.",
       });
     } finally {
       setPending(false);
@@ -119,8 +119,8 @@ export function AnalyticsPrivacySettings() {
   return (
     <SettingsSection id="scient-analytics" title="Privacy and analytics">
       <SettingsRow
-        title="Share anonymous usage data"
-        description="Choose whether Scient may send bounded product and reliability events. Prompts, responses, files, paths, URLs, credentials, and provider account identities are never collected."
+        title="Analytics sharing"
+        description="Choose whether Scient may send bounded product and reliability events using a random installation identifier. Prompts, responses, files, paths, URLs, credentials, and provider account identities are never collected."
         control={
           <Select
             value={status.consent}
@@ -145,7 +145,7 @@ export function AnalyticsPrivacySettings() {
       />
       <SettingsRow
         title="Delete analytics data"
-        description="Request deletion for this anonymous installation and rotate its local analytics identity."
+        description="Request deletion for this installation and reset its local analytics identifier."
         control={
           <Button size="xs" variant="outline" disabled={pending} onClick={() => void deleteData()}>
             Delete data

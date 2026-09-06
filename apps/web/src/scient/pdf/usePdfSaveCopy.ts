@@ -9,6 +9,7 @@ import { useEnvironmentHttpBaseUrl } from "~/state/environments";
 import { useAtomQueryRunner } from "~/state/use-atom-query-runner";
 
 import { pdfSourceAssetResource, saveResolvedPdfCopy } from "./pdfSource";
+import { observePdfCopy } from "./pdfCopyAnalytics";
 
 export function usePdfSaveCopy(environmentId: EnvironmentId) {
   const httpBaseUrl = useEnvironmentHttpBaseUrl(environmentId);
@@ -17,29 +18,30 @@ export function usePdfSaveCopy(environmentId: EnvironmentId) {
   });
 
   return useCallback(
-    async (source: PdfSourceDescriptor): Promise<AssetCopyResult> => {
-      if (String(source.authority) !== String(environmentId)) {
-        throw new Error("The PDF belongs to a different environment.");
-      }
-      if (httpBaseUrl === null) {
-        throw new Error("The environment connection is unavailable.");
-      }
+    (source: PdfSourceDescriptor): Promise<AssetCopyResult> =>
+      observePdfCopy(environmentId, async () => {
+        if (String(source.authority) !== String(environmentId)) {
+          throw new Error("The PDF belongs to a different environment.");
+        }
+        if (httpBaseUrl === null) {
+          throw new Error("The environment connection is unavailable.");
+        }
 
-      const issued = await createAssetUrl({
-        environmentId,
-        input: { resource: pdfSourceAssetResource(source) },
-      });
-      if (issued._tag === "Failure") throw squashAtomCommandFailure(issued);
+        const issued = await createAssetUrl({
+          environmentId,
+          input: { resource: pdfSourceAssetResource(source) },
+        });
+        if (issued._tag === "Failure") throw squashAtomCommandFailure(issued);
 
-      const url = resolveAssetUrl(httpBaseUrl, issued.value.relativeUrl);
-      if (url === null) throw new Error("The environment returned an invalid PDF URL.");
+        const url = resolveAssetUrl(httpBaseUrl, issued.value.relativeUrl);
+        if (url === null) throw new Error("The environment returned an invalid PDF URL.");
 
-      return saveResolvedPdfCopy(source, {
-        url,
-        expiresAt: issued.value.expiresAt,
-        refresh: () => undefined,
-      });
-    },
+        return saveResolvedPdfCopy(source, {
+          url,
+          expiresAt: issued.value.expiresAt,
+          refresh: () => undefined,
+        });
+      }),
     [createAssetUrl, environmentId, httpBaseUrl],
   );
 }

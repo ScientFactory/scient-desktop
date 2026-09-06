@@ -1,5 +1,6 @@
 import {
   DesktopHostTelemetryMessage,
+  type DesktopAppHealthReport,
   type DesktopHostTelemetrySnapshot,
   type DesktopTelemetryControlMessage,
   type DesktopTelemetryCancelDesktopUpdate,
@@ -73,6 +74,7 @@ export class DesktopTelemetryPublisher extends Context.Service<
         to backends that attach later (including the one spawned after a
         relaunch). */
     readonly publishUpdateReport: (report: DesktopUpdateStatusReport) => Effect.Effect<void>;
+    readonly publishHealth: (report: DesktopAppHealthReport) => Effect.Effect<void>;
     /** Update requests received over the control channel. Single consumer. */
     readonly updateRequests: Stream.Stream<DesktopTelemetryRequestDesktopUpdate>;
     readonly updateCommits: Stream.Stream<DesktopTelemetryCommitDesktopUpdate>;
@@ -174,6 +176,7 @@ export const make = Effect.fn("desktop.telemetryPublisher.make")(function* () {
   const sequence = yield* Ref.make(0);
   const latestUpdateReport = yield* Ref.make(Option.none<DesktopUpdateStatusReport>());
   const updateReportChanges = yield* PubSub.sliding<DesktopUpdateStatusReport>(16);
+  const appHealthChanges = yield* PubSub.sliding<DesktopAppHealthReport>(16);
   const updateRequestQueue = yield* Queue.unbounded<DesktopTelemetryRequestDesktopUpdate>();
   const updateCommitQueue = yield* Queue.unbounded<DesktopTelemetryCommitDesktopUpdate>();
   const updateCancellationQueue = yield* Queue.unbounded<DesktopTelemetryCancelDesktopUpdate>();
@@ -399,7 +402,7 @@ export const make = Effect.fn("desktop.telemetryPublisher.make")(function* () {
       type: "desktopTelemetryHello",
       electronPid: process.pid,
     } as const),
-    Stream.merge(snapshots, updateReports),
+    Stream.merge(Stream.merge(snapshots, updateReports), Stream.fromPubSub(appHealthChanges)),
   ).pipe(Stream.map((message) => textEncoder.encode(`${encodeMessage(message)}\n`)));
 
   const publishUpdateReport: DesktopTelemetryPublisher["Service"]["publishUpdateReport"] = (
@@ -418,6 +421,7 @@ export const make = Effect.fn("desktop.telemetryPublisher.make")(function* () {
     handleControlForSource,
     removeControlSource,
     publishUpdateReport,
+    publishHealth: (report) => PubSub.publish(appHealthChanges, report).pipe(Effect.asVoid),
     updateRequests: Stream.fromQueue(updateRequestQueue),
     updateCommits: Stream.fromQueue(updateCommitQueue),
     updateCancellations: Stream.fromQueue(updateCancellationQueue),

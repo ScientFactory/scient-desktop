@@ -21,6 +21,10 @@ import * as DesktopAppSettings from "../settings/DesktopAppSettings.ts";
 import * as DesktopWslEnvironment from "../wsl/DesktopWslEnvironment.ts";
 import { SCIENT_DESKTOP_IDENTITY } from "@t3tools/shared/scientDesktopIdentity";
 import * as DesktopWslServerTree from "../wsl/DesktopWslServerTree.ts";
+import {
+  scientAnalyticsMetadata,
+  SCIENT_ANALYTICS_METADATA_ENV_NAMES,
+} from "./scientAnalyticsMetadata.ts";
 
 export class DesktopBackendObservabilitySettingsReadError extends Schema.TaggedErrorClass<DesktopBackendObservabilitySettingsReadError>()(
   "DesktopBackendObservabilitySettingsReadError",
@@ -76,6 +80,7 @@ const emptyBackendObservabilitySettings: BackendObservabilitySettings = {
 };
 
 const DESKTOP_BACKEND_ENV_NAMES = [
+  ...SCIENT_ANALYTICS_METADATA_ENV_NAMES,
   "T3CODE_HOME",
   "SCIENT_NEXT_HOME",
   "T3CODE_PORT",
@@ -97,6 +102,7 @@ const DESKTOP_BACKEND_ENV_NAMES = [
 // URL-shaped values (colons / slashes) is unreliable.
 const WSL_FORWARDED_ENV_NAMES = ["OPENAI_API_KEY", "ANTHROPIC_API_KEY"] as const;
 const WSL_CANDIDATE_ENV_NAMES = [
+  ...SCIENT_ANALYTICS_METADATA_ENV_NAMES,
   "T3CODE_HOME",
   "SCIENT_NEXT_HOME",
   "SCIENT_NEXT_DEVELOPMENT_STATE",
@@ -572,6 +578,7 @@ const resolvePrimaryStartConfig = Effect.fn("desktop.backendConfiguration.resolv
       cwd: environment.backendCwd,
       env: {
         ...backendChildEnvPatch(),
+        ...scientAnalyticsMetadata(environment, process.env.SCIENT_ANALYTICS_ENABLED),
         ELECTRON_RUN_AS_NODE: "1",
         // Keep the server's derived state directory identical to the
         // desktop-owned data directory. The server still understands
@@ -747,6 +754,7 @@ const resolveWslStartConfig = Effect.fn("desktop.backendConfiguration.resolveWsl
       ...parentEnvWithoutDesktopHome,
       ...backendChildEnvPatch(),
       ...forwardedEnv,
+      ...scientAnalyticsMetadata(environment, process.env.SCIENT_ANALYTICS_ENABLED),
       // Keep WSL state on the Linux filesystem and outside any installed T3
       // home. The server expands this POSIX path against the distro HOME.
       T3CODE_HOME: "~/.scient-next",

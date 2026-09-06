@@ -282,10 +282,20 @@ export const DesktopUpdateStatusReport = Schema.Struct({
 });
 export type DesktopUpdateStatusReport = typeof DesktopUpdateStatusReport.Type;
 
+/** Bounded health signal on the existing local pipe, never a raw crash report. */
+export const DesktopAppHealthReport = Schema.Struct({
+  version: Schema.Literal(1),
+  type: Schema.Literal("scientAppHealth"),
+  component: Schema.Literals(["renderer", "desktop"]),
+  failureClass: Schema.Literals(["process-crash", "resource-exhaustion", "unknown"]),
+});
+export type DesktopAppHealthReport = typeof DesktopAppHealthReport.Type;
+
 export const DesktopHostTelemetryMessage = Schema.Union([
   DesktopHostTelemetryHello,
   DesktopHostTelemetrySnapshot,
   DesktopUpdateStatusReport,
+  DesktopAppHealthReport,
 ]);
 export type DesktopHostTelemetryMessage = typeof DesktopHostTelemetryMessage.Type;
 

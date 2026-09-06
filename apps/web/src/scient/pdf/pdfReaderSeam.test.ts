@@ -21,7 +21,8 @@ describe("Scient PDF reader source seam", () => {
 
     expect(sourceActions).toContain("documents.saveAssetCopy({");
     expect(sourceActions).not.toContain('document.createElement("a")');
-    expect(readerSource).toContain("await props.actions.saveCopy(");
+    expect(readerSource).toContain("await observePdfCopy(");
+    expect(readerSource).toContain("props.actions.saveCopy(");
     expect(readerSource).toContain("disabled={savingCopy}");
   });
 

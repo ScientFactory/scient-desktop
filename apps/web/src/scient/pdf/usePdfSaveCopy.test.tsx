@@ -15,7 +15,10 @@ const mocks = vi.hoisted(() => ({
   createAssetUrl: vi.fn(),
   httpBaseUrl: "https://environment.scient.test/base/" as string | null,
   saveAssetCopy: vi.fn(),
+  finishAnalytics: vi.fn(),
 }));
+
+vi.mock("../analytics/client", () => ({ beginScientUiOperation: () => mocks.finishAnalytics }));
 
 vi.mock("~/localApi", () => ({
   ensureLocalApi: () => ({ documents: { saveAssetCopy: mocks.saveAssetCopy } }),
@@ -58,6 +61,7 @@ describe("usePdfSaveCopy", () => {
     mocks.httpBaseUrl = "https://environment.scient.test/base/";
     mocks.createAssetUrl.mockReset();
     mocks.saveAssetCopy.mockReset();
+    mocks.finishAnalytics.mockReset();
     mocks.createAssetUrl.mockResolvedValue({
       _tag: "Success",
       value: {
@@ -90,6 +94,7 @@ describe("usePdfSaveCopy", () => {
       url: "https://environment.scient.test/api/assets/signed-token/report.pdf",
       suggestedFileName: "Report.pdf",
     });
+    expect(mocks.finishAnalytics).toHaveBeenCalledExactlyOnceWith("completed");
   });
 
   it("fails before opening a Save dialog when the environment is disconnected", async () => {
@@ -99,6 +104,7 @@ describe("usePdfSaveCopy", () => {
     await expect(saveCopy?.(source)).rejects.toThrow("environment connection is unavailable");
     expect(mocks.createAssetUrl).not.toHaveBeenCalled();
     expect(mocks.saveAssetCopy).not.toHaveBeenCalled();
+    expect(mocks.finishAnalytics).toHaveBeenCalledExactlyOnceWith("failed");
   });
 
   it("does not authorize a source through the wrong environment connection", async () => {

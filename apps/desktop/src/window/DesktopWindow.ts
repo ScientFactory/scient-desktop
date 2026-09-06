@@ -28,6 +28,7 @@ import * as DesktopAppSettings from "../settings/DesktopAppSettings.ts";
 import * as DesktopClientSettings from "../settings/DesktopClientSettings.ts";
 import * as ElectronApp from "../electron/ElectronApp.ts";
 import { makeQuitShortcutHandler } from "./QuitHold.ts";
+import { DesktopTelemetryPublisher } from "../telemetry/DesktopTelemetryPublisher.ts";
 
 const TITLEBAR_HEIGHT = 40;
 const TITLEBAR_COLOR = "#01000000"; // #00000000 does not work correctly on Linux
@@ -289,6 +290,7 @@ export const make = Effect.gen(function* () {
   const desktopSettings = yield* DesktopAppSettings.DesktopAppSettings;
   const clientSettings = yield* DesktopClientSettings.DesktopClientSettings;
   const electronApp = yield* ElectronApp.ElectronApp;
+  const telemetry = yield* Effect.serviceOption(DesktopTelemetryPublisher);
   // Window-side latch for the primary backend's readiness. Set by
   // handleBackendReady (driven by the pool's onReady callback), cleared
   // by handleBackendNotReady (driven by onShutdown). Only consumed by
@@ -710,6 +712,18 @@ export const make = Effect.gen(function* () {
         details.reason === "crashed" ||
         details.reason === "oom" ||
         details.reason === "abnormal-exit";
+      if (recoverable && Option.isSome(telemetry)) {
+        runFork(
+          telemetry.value
+            .publishHealth({
+              version: 1,
+              type: "scientAppHealth",
+              component: "renderer",
+              failureClass: details.reason === "oom" ? "resource-exhaustion" : "process-crash",
+            })
+            .pipe(Effect.ignoreCause()),
+        );
+      }
       // Long sessions can OOM the renderer (V8 heap exhaustion from
       // accumulated thread state). Without a reload the user is left staring
       // at a dead white window while agents keep running invisibly, so

@@ -47,6 +47,7 @@ import { MENU_ACTION_CHANNEL, WINDOW_FULLSCREEN_STATE_CHANNEL } from "../ipc/cha
 import * as DesktopServerExposure from "../backend/DesktopServerExposure.ts";
 import * as DesktopWindow from "./DesktopWindow.ts";
 import * as PreviewManager from "../preview/Manager.ts";
+import { DesktopTelemetryPublisher } from "../telemetry/DesktopTelemetryPublisher.ts";
 
 const environmentInput = {
   dirname: "/repo/apps/desktop/dist-electron",
@@ -209,6 +210,7 @@ function makeTestLayer(input: {
   ) => Effect.Effect<void>;
   readonly openedExternalUrls?: unknown[];
   readonly previewZoomReapplies?: number[];
+  readonly healthReports?: unknown[];
 }) {
   let desktopSettings = input.desktopSettings ?? DesktopAppSettings.DEFAULT_DESKTOP_SETTINGS;
   const desktopAppSettingsLayer = Layer.succeed(DesktopAppSettings.DesktopAppSettings, {
@@ -268,6 +270,12 @@ function makeTestLayer(input: {
     Layer.provide(
       Layer.mergeAll(
         desktopAssetsLayer,
+        Layer.mock(DesktopTelemetryPublisher)({
+          publishHealth: (report) =>
+            Effect.sync(() => {
+              input.healthReports?.push(report);
+            }),
+        }),
         desktopEnvironmentLayer,
         desktopAppSettingsLayer,
         desktopClientSettingsLayer,
@@ -491,6 +499,37 @@ describe("DesktopWindow", () => {
         assert.equal(fakeWindow.openDevTools.mock.calls.length, 1);
       }).pipe(Effect.provide(layer));
     }),
+  );
+
+  it.effect(
+    "reports bounded renderer failures without reporting clean exits or private details",
+    () =>
+      Effect.gen(function* () {
+        const fakeWindow = makeFakeBrowserWindow();
+        const healthReports: unknown[] = [];
+        const layer = makeTestLayer({
+          window: fakeWindow.window,
+          healthReports,
+          createCount: yield* Ref.make(0),
+          mainWindow: yield* Ref.make<Option.Option<Electron.BrowserWindow>>(Option.none()),
+        });
+        yield* Effect.gen(function* () {
+          const window = yield* DesktopWindow.DesktopWindow;
+          yield* window.handleBackendReady(new URL("http://127.0.0.1:3773"));
+          const gone = fakeWindow.webContentsListeners.get("render-process-gone")!;
+          gone({}, { reason: "clean-exit", exitCode: 0 });
+          gone({}, { reason: "oom", exitCode: 137, detail: "/private/file" });
+          yield* Effect.yieldNow;
+          assert.deepEqual(healthReports, [
+            {
+              version: 1,
+              type: "scientAppHealth",
+              component: "renderer",
+              failureClass: "resource-exhaustion",
+            },
+          ]);
+        }).pipe(Effect.provide(layer));
+      }),
   );
 
   it.effect("blocks only repeated Cmd+W input before it reaches the native window menu", () =>

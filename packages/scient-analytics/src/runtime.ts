@@ -12,6 +12,7 @@ import {
 import type {
   AnalyticsEventDraft,
   AnalyticsWorkerCommand,
+  AnalyticsWorkerInput,
   AnalyticsWorkerResponse,
 } from "./workerProtocol.ts";
 
@@ -37,6 +38,8 @@ export interface AnalyticsRuntimeOptions extends NormalizationContext {
   readonly workerUrl?: URL;
   readonly now?: () => Date;
   readonly randomUUID?: () => string;
+  /** A user-requested deletion may authenticate while collection stays off. */
+  readonly purpose?: "collection" | "deletion";
 }
 
 export interface AnalyticsRuntime {
@@ -76,7 +79,10 @@ function waitForCondition(satisfied: () => boolean, deadline: number): Promise<v
 }
 
 export function createAnalyticsRuntime(options: AnalyticsRuntimeOptions): AnalyticsRuntime {
-  if (!options.enabled || options.consent === "off") return disabledRuntime();
+  const purpose = options.purpose ?? "collection";
+  if (!options.enabled || (options.consent === "off" && purpose !== "deletion")) {
+    return disabledRuntime();
+  }
 
   const now = options.now ?? (() => new Date());
   const randomUUID = options.randomUUID ?? NodeCrypto.randomUUID;
@@ -87,7 +93,9 @@ export function createAnalyticsRuntime(options: AnalyticsRuntimeOptions): Analyt
       workerData: {
         outboxPath: options.outboxPath,
         endpoint: options.endpoint ?? DEFAULT_ENDPOINT,
-      },
+        consent: options.consent,
+        purpose,
+      } satisfies AnalyticsWorkerInput,
     },
   );
   worker.unref();
@@ -105,7 +113,7 @@ export function createAnalyticsRuntime(options: AnalyticsRuntimeOptions): Analyt
   const requests = new Map<
     number,
     {
-      readonly resolve: (value: number) => void;
+      readonly resolve: (value: number | null) => void;
       readonly timer: ReturnType<typeof setTimeout>;
     }
   >();
@@ -116,7 +124,7 @@ export function createAnalyticsRuntime(options: AnalyticsRuntimeOptions): Analyt
   const settleRequests = () => {
     for (const request of requests.values()) {
       clearTimeout(request.timer);
-      request.resolve(0);
+      request.resolve(null);
     }
     requests.clear();
   };
@@ -147,7 +155,7 @@ export function createAnalyticsRuntime(options: AnalyticsRuntimeOptions): Analyt
   };
 
   const drain = () => {
-    if (!ready || !available || closed) return;
+    if (!ready || !available || closed || deleting) return;
     if (writeTimer !== null) {
       clearTimeout(writeTimer);
       writeTimer = null;
@@ -172,20 +180,20 @@ export function createAnalyticsRuntime(options: AnalyticsRuntimeOptions): Analyt
   const request = (
     command: (requestId: number) => AnalyticsWorkerCommand,
     timeoutMs = CONTROL_TIMEOUT_MS,
-  ): Promise<number> => {
-    if (!available) return Promise.resolve(0);
+  ): Promise<number | null> => {
+    if (!available) return Promise.resolve(null);
     const requestId = nextRequestId++;
     return new Promise((resolve) => {
       const timer = setTimeout(() => {
         requests.delete(requestId);
-        resolve(0);
+        resolve(null);
       }, timeoutMs);
       timer.unref();
       requests.set(requestId, { resolve, timer });
       if (!post(command(requestId))) {
         clearTimeout(timer);
         requests.delete(requestId);
-        resolve(0);
+        resolve(null);
       }
     });
   };
@@ -195,6 +203,13 @@ export function createAnalyticsRuntime(options: AnalyticsRuntimeOptions): Analyt
       case "ready":
         ready = true;
         drain();
+        return;
+      case "diagnostics":
+        record("app.diagnostics", {
+          queuedCount: response.queuedCount,
+          retryCount: response.retryCount,
+          deliveryClass: response.deliveryClass,
+        });
         return;
       case "persisted":
         inFlight.delete(response.batchId);
@@ -235,7 +250,9 @@ export function createAnalyticsRuntime(options: AnalyticsRuntimeOptions): Analyt
   };
 
   const record: AnalyticsRuntime["record"] = (name, properties) => {
-    if (closed || deleting || !available || consent === "off") return false;
+    if (closed || deleting || !available || consent === "off" || purpose === "deletion") {
+      return false;
+    }
     const normalized = normalizeInheritedEvent(name, properties, options);
     if (!normalized || !consentAllows(consent, normalized.privacyLevel)) return false;
     const accepted = admit({
@@ -257,14 +274,16 @@ export function createAnalyticsRuntime(options: AnalyticsRuntimeOptions): Analyt
   };
 
   return {
-    enabled: true,
+    get enabled() {
+      return available && !closed;
+    },
     record,
     flush: async () => {
-      if (closed || !available) return 0;
+      if (closed || deleting || !available || consent === "off" || purpose === "deletion") return 0;
       await waitForCondition(() => ready || !available, Date.now() + CONTROL_TIMEOUT_MS);
       if (!ready || !available) return 0;
       drain();
-      return request((requestId) => ({ type: "flush", requestId }));
+      return (await request((requestId) => ({ type: "flush", requestId }))) ?? 0;
     },
     setConsent: async (nextConsent) => {
       consent = nextConsent;
@@ -276,25 +295,29 @@ export function createAnalyticsRuntime(options: AnalyticsRuntimeOptions): Analyt
           purged += 1;
         }
       }
-      if (!available) return purged;
-      await waitForCondition(() => ready || !available, Date.now() + CONTROL_TIMEOUT_MS);
-      if (!ready || !available) return purged;
+      // Worker messages queue even before startup. Never silently leave a
+      // higher persisted consent active because readiness was slow.
+      const acknowledged = await request((requestId) => ({
+        type: "set-consent",
+        requestId,
+        consent: nextConsent,
+      }));
+      if (acknowledged === null) {
+        disable();
+        await worker.terminate().catch(() => undefined);
+        throw new Error("Analytics consent was not acknowledged");
+      }
       drain();
-      return (
-        purged +
-        (await request((requestId) => ({
-          type: "set-consent",
-          requestId,
-          consent: nextConsent,
-        })))
-      );
+      return purged + acknowledged;
     },
     pendingCount: async () => {
       if (closed || !available) return bufferedCount();
       await waitForCondition(() => ready || !available, Date.now() + CONTROL_TIMEOUT_MS);
       if (!ready || !available) return bufferedCount();
       drain();
-      return queue.length + (await request((requestId) => ({ type: "pending-count", requestId })));
+      return (
+        queue.length + ((await request((requestId) => ({ type: "pending-count", requestId }))) ?? 0)
+      );
     },
     deleteData: async () => {
       if (closed || deleting || !available) return false;
@@ -302,12 +325,22 @@ export function createAnalyticsRuntime(options: AnalyticsRuntimeOptions): Analyt
       try {
         await waitForCondition(() => ready || !available, Date.now() + CONTROL_TIMEOUT_MS);
         if (!ready || !available) return false;
-        drain();
-        const deleted = (await request((requestId) => ({ type: "delete-data", requestId }))) === 1;
+        // Already-posted enqueues precede deletion on the worker's message port.
+        // Hold all remaining batches until its result, including persisted ACKs.
+        const result = await request((requestId) => ({ type: "delete-data", requestId }));
+        if (result === null) {
+          // An ambiguous response may follow identity rotation; never replay the
+          // old memory buffer under that identity.
+          disable();
+          await worker.terminate().catch(() => undefined);
+          return false;
+        }
+        const deleted = result === 1;
         if (deleted) queue.length = 0;
         return deleted;
       } finally {
         deleting = false;
+        drain();
       }
     },
     close: async () => {

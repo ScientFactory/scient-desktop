@@ -1,5 +1,7 @@
 export {
   ANALYTICS_SCHEMA_VERSION,
+  ANALYTICS_EVENT_NAMES,
+  ANALYTICS_CONTRACT_REVISION,
   ANALYTICS_SOURCE,
   AnalyticsConsent,
   AnalyticsPriority,
@@ -19,3 +21,4 @@ export {
   type AnalyticsRuntime,
   type AnalyticsRuntimeOptions,
 } from "./runtime.ts";
+export type { AnalyticsWorkerInput } from "./workerProtocol.ts";

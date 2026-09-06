@@ -20,6 +20,7 @@ import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 
 import { issueAssetUrl } from "../../../assets/AssetAccess.ts";
+import { observeAnalyticsEffect } from "../../../telemetry/OperationAnalytics.ts";
 import * as GeneratedDocumentStore from "../../../scient/documentArtifacts/GeneratedDocumentStore.ts";
 import * as PreviewAutomationBroker from "../../PreviewAutomationBroker.ts";
 import { buildScientLatexForInvocation } from "./latexHandler.ts";
@@ -363,7 +364,11 @@ export const buildScientPdfForInvocation = Effect.fn("ScientPdfBuild.build")(fun
 });
 
 const handlers = {
-  scient_pdf_build: buildScientPdfForInvocation,
+  scient_pdf_build: (input) =>
+    observeAnalyticsEffect(buildScientPdfForInvocation(input), {
+      kind: "pdf-export",
+      trigger: "agent",
+    }),
   scient_latex_build: (input) => buildScientLatexForInvocation(input),
 } satisfies Parameters<typeof ScientDocumentsToolkit.toLayer>[0];
 

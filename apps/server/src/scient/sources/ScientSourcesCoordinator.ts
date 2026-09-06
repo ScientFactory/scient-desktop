@@ -1,5 +1,6 @@
 import * as NodeCrypto from "node:crypto";
 
+import { observeSourceImport, type SourceImportObserver } from "./SourceImportObservation.ts";
 import { enrichScientSourceCandidate } from "./SourceMetadataEnricher.ts";
 import {
   discardLocalPdfImportMaterial,
@@ -168,33 +169,42 @@ export async function updateSourceReview(input: Parameters<typeof updateScientSo
   return updateScientSourceReview(input);
 }
 
-export async function addAgentSource(input: {
-  readonly root: string;
-  readonly candidate: ScientSourceCandidate;
-  readonly allowPossibleMetadataMatch?: boolean;
-  readonly enrich?: boolean;
-  readonly pdfPath?: string;
-  readonly pdfFileName?: string;
-  readonly expectedPdf?: { readonly sha256: string; readonly byteLength: number };
-}) {
-  const candidate = input.enrich
-    ? await enrichScientSourceCandidate(input.candidate)
-    : input.candidate;
-  const candidateWithPdfName =
-    input.pdfPath && input.pdfFileName
-      ? { ...candidate, pdfFileName: input.pdfFileName }
-      : candidate;
-  return importScientSource({
-    root: input.root,
-    operationId: `agent_${NodeCrypto.randomUUID()}`,
-    candidate: candidateWithPdfName,
-    actor: "agent",
-    intake: input.pdfPath ? "local-pdf" : "identifier",
-    review: "pending",
-    allowPossibleMetadataMatch: input.allowPossibleMetadataMatch ?? false,
-    ...(input.pdfPath ? { pdfPath: input.pdfPath } : {}),
-    ...(input.expectedPdf ? { expectedPdf: input.expectedPdf } : {}),
-  });
+export async function addAgentSource(
+  input: {
+    readonly root: string;
+    readonly candidate: ScientSourceCandidate;
+    readonly allowPossibleMetadataMatch?: boolean;
+    readonly enrich?: boolean;
+    readonly pdfPath?: string;
+    readonly pdfFileName?: string;
+    readonly expectedPdf?: { readonly sha256: string; readonly byteLength: number };
+  },
+  observer?: SourceImportObserver,
+) {
+  return observeSourceImport(
+    observer,
+    async () => {
+      const candidate = input.enrich
+        ? await enrichScientSourceCandidate(input.candidate)
+        : input.candidate;
+      const candidateWithPdfName =
+        input.pdfPath && input.pdfFileName
+          ? { ...candidate, pdfFileName: input.pdfFileName }
+          : candidate;
+      return importScientSource({
+        root: input.root,
+        operationId: `agent_${NodeCrypto.randomUUID()}`,
+        candidate: candidateWithPdfName,
+        actor: "agent",
+        intake: input.pdfPath ? "local-pdf" : "identifier",
+        review: "pending",
+        allowPossibleMetadataMatch: input.allowPossibleMetadataMatch ?? false,
+        ...(input.pdfPath ? { pdfPath: input.pdfPath } : {}),
+        ...(input.expectedPdf ? { expectedPdf: input.expectedPdf } : {}),
+      });
+    },
+    (result) => (result.outcome === "imported" ? "imported" : "skipped"),
+  );
 }
 
 export async function prepareAgentProjectPdf(input: {
@@ -638,10 +648,13 @@ export async function discardLocalPdfSources(input: {
   return { discarded: keys.length };
 }
 
-export async function advanceSourceImport(input: {
-  readonly root: string;
-  readonly operationId: string;
-}) {
+export async function advanceSourceImport(
+  input: {
+    readonly root: string;
+    readonly operationId: string;
+  },
+  observer?: SourceImportObserver,
+) {
   const root = await canonicalizeScientSourceRoot(input.root);
   return withOperationLane(`${root}\0${input.operationId}`, async () => {
     const operation = await readSourceImportOperation(root, input.operationId);
@@ -650,21 +663,27 @@ export async function advanceSourceImport(input: {
     const pending = operation.items.find((item) => item.state === "pending");
     if (!pending) return operation;
     try {
-      const { candidate, pdfPath, expectedPdf } =
-        operation.adapter === "zotero"
-          ? { ...(await getZoteroImportMaterial(pending.itemKey)), expectedPdf: undefined }
-          : await getLocalPdfImportMaterial(root, pending.itemKey);
-      const result = await importScientSourceOperationItem({
-        root,
-        operationId: input.operationId,
-        candidate,
-        actor: operation.actor,
-        intake: operation.intake,
-        review: operation.actor === "agent" ? "pending" : "none",
-        ...(pdfPath ? { pdfPath } : {}),
-        ...(expectedPdf ? { expectedPdf } : {}),
-        allowPossibleMetadataMatch: pending.allowPossibleMetadataMatch ?? false,
-      });
+      const result = await observeSourceImport(
+        observer,
+        async () => {
+          const { candidate, pdfPath, expectedPdf } =
+            operation.adapter === "zotero"
+              ? { ...(await getZoteroImportMaterial(pending.itemKey)), expectedPdf: undefined }
+              : await getLocalPdfImportMaterial(root, pending.itemKey);
+          return importScientSourceOperationItem({
+            root,
+            operationId: input.operationId,
+            candidate,
+            actor: operation.actor,
+            intake: operation.intake,
+            review: operation.actor === "agent" ? "pending" : "none",
+            ...(pdfPath ? { pdfPath } : {}),
+            ...(expectedPdf ? { expectedPdf } : {}),
+            allowPossibleMetadataMatch: pending.allowPossibleMetadataMatch ?? false,
+          });
+        },
+        (result) => (result.outcome === "imported" ? "imported" : "skipped"),
+      );
       const updated = await updateSourceImportOperationItem({
         root,
         operationId: input.operationId,

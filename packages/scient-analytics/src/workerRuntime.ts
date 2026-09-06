@@ -5,15 +5,59 @@ import type * as NodeWorkerThreads from "node:worker_threads";
 import {
   ANALYTICS_SCHEMA_VERSION,
   ANALYTICS_SOURCE,
+  consentAllows,
   type AnalyticsBatch,
   type AnalyticsEvent,
 } from "./contract.ts";
 import { AnalyticsOutbox } from "./outbox.ts";
-import type { AnalyticsWorkerCommand, AnalyticsWorkerResponse } from "./workerProtocol.ts";
+import type {
+  AnalyticsWorkerCommand,
+  AnalyticsWorkerInput,
+  AnalyticsWorkerResponse,
+} from "./workerProtocol.ts";
 
 const BATCH_SIZE = 50;
 const REQUEST_TIMEOUT_MS = 3_000;
 const MAX_RETRY_MS = 30 * 60 * 1_000;
+const FLUSH_INTERVAL_MS = 30_000;
+const MAX_ACKNOWLEDGEMENT_BYTES = 1_024;
+
+async function acknowledgement(response: Response): Promise<unknown> {
+  const reader = response.body?.getReader();
+  if (!reader) throw new DeliveryFailure("invalid-acknowledgement");
+  const chunks: Uint8Array[] = [];
+  let length = 0;
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      length += value.byteLength;
+      if (length > MAX_ACKNOWLEDGEMENT_BYTES) {
+        throw new DeliveryFailure("invalid-acknowledgement");
+      }
+      chunks.push(value);
+    }
+    const bytes = new Uint8Array(length);
+    let offset = 0;
+    for (const chunk of chunks) {
+      bytes.set(chunk, offset);
+      offset += chunk.byteLength;
+    }
+    const value: unknown = JSON.parse(new TextDecoder().decode(bytes));
+    return value;
+  } catch {
+    throw new DeliveryFailure("invalid-acknowledgement");
+  } finally {
+    await reader.cancel().catch(() => undefined);
+    reader.releaseLock();
+  }
+}
+
+function acceptedValue(value: unknown): unknown {
+  return typeof value === "object" && value !== null && "accepted" in value
+    ? value.accepted
+    : undefined;
+}
 
 class DeliveryFailure extends Error {
   readonly errorClass: string;
@@ -30,17 +74,18 @@ function deliveryErrorClass(error: unknown): string {
   return "network";
 }
 
-export function startAnalyticsWorker(input: {
-  readonly port: NodeWorkerThreads.MessagePort;
-  readonly outboxPath: string;
-  readonly endpoint: string;
-}): void {
+export function startAnalyticsWorker(
+  input: AnalyticsWorkerInput & {
+    readonly port: NodeWorkerThreads.MessagePort;
+  },
+): void {
   // oxlint-disable-next-line unicorn/require-post-message-target-origin -- Node MessagePort postMessage has no targetOrigin parameter.
   const post = (response: AnalyticsWorkerResponse) => input.port.postMessage(response);
   let outbox: AnalyticsOutbox;
 
   try {
     outbox = new AnalyticsOutbox(input.outboxPath);
+    if (input.purpose === "collection") outbox.purgeAbove(input.consent);
   } catch {
     post({ type: "fatal", errorClass: "initialization" });
     input.port.close();
@@ -60,14 +105,45 @@ export function startAnalyticsWorker(input: {
     }
     return { id, token } as const;
   };
-  let installation = ensureInstallationIdentity();
+  let installation: ReturnType<typeof ensureInstallationIdentity>;
+  try {
+    installation = ensureInstallationIdentity();
+  } catch {
+    outbox.close();
+    post({ type: "fatal", errorClass: "initialization" });
+    input.port.close();
+    return;
+  }
 
   let closed = false;
+  let consent = input.consent;
+  let controlsPending = 0;
+  let controlQueue: Promise<void> = Promise.resolve();
+  let flushTimer: ReturnType<typeof setTimeout> | null = null;
   let activeFlush: Promise<number> | null = null;
   let activeAbortController: AbortController | null = null;
+  let lastDiagnosticsAt = 0;
+
+  const stopScheduledFlush = () => {
+    if (flushTimer === null) return;
+    clearTimeout(flushTimer);
+    flushTimer = null;
+  };
+
+  const canDeliver = () =>
+    !closed && controlsPending === 0 && consent !== "off" && input.purpose === "collection";
+
+  const scheduleFlush = () => {
+    if (!canDeliver() || flushTimer !== null || outbox.size() === 0) return;
+    flushTimer = setTimeout(() => {
+      flushTimer = null;
+      void flush().catch(failRuntime);
+    }, FLUSH_INTERVAL_MS);
+    flushTimer.unref();
+  };
 
   const flush = (): Promise<number> => {
-    if (closed) return Promise.resolve(0);
+    if (!canDeliver()) return Promise.resolve(0);
     if (activeFlush !== null) return activeFlush;
 
     const operation = (async () => {
@@ -82,8 +158,13 @@ export function startAnalyticsWorker(input: {
       };
 
       const controller = new AbortController();
+      let deliveryClass: "delivered" | "timeout" | "network" | "rejected" = "delivered";
       activeAbortController = controller;
-      const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+      let timedOut = false;
+      const timeout = setTimeout(() => {
+        timedOut = true;
+        controller.abort();
+      }, REQUEST_TIMEOUT_MS);
       timeout.unref();
       try {
         const response = await fetch(input.endpoint, {
@@ -94,34 +175,54 @@ export function startAnalyticsWorker(input: {
           },
           body: JSON.stringify(batch),
           signal: controller.signal,
+          redirect: "error",
         });
         if (!response.ok) throw new DeliveryFailure(`http-${response.status}`);
-        const body = (await response.json().catch(() => {
-          throw new DeliveryFailure("invalid-acknowledgement");
-        })) as { readonly accepted?: unknown };
-        if (body.accepted !== events.length) {
+        if (acceptedValue(await acknowledgement(response)) !== events.length) {
           throw new DeliveryFailure("invalid-acknowledgement");
         }
         outbox.remove(events.map((event) => event.id));
         return events.length;
       } catch (error) {
-        if (closed && controller.signal.aborted) return 0;
+        if (controller.signal.aborted && !timedOut) return 0;
+        deliveryClass = timedOut
+          ? "timeout"
+          : error instanceof DeliveryFailure
+            ? "rejected"
+            : "network";
         const attempt = Math.max(...events.map((event) => event.attemptCount)) + 1;
         const retryDelay = Math.min(MAX_RETRY_MS, 5_000 * 2 ** Math.min(attempt - 1, 8));
         outbox.markFailed(
           events.map((event) => event.id),
-          deliveryErrorClass(error),
+          timedOut ? "timeout" : deliveryErrorClass(error),
           Date.now() + retryDelay,
         );
         return 0;
       } finally {
         clearTimeout(timeout);
         activeAbortController = null;
+        const timestamp = Date.now();
+        if (
+          canDeliver() &&
+          consentAllows(consent, "diagnostic") &&
+          timestamp - lastDiagnosticsAt >= 60_000 &&
+          events.some((event) => event.name !== "app.diagnostics")
+        ) {
+          lastDiagnosticsAt = timestamp;
+          // Do not report diagnostic-only delivery: that would perpetuate its own queue.
+          post({
+            type: "diagnostics",
+            queuedCount: outbox.size(),
+            retryCount: Math.max(...events.map((event) => event.attemptCount)),
+            deliveryClass,
+          });
+        }
       }
     })();
 
     activeFlush = operation.finally(() => {
       activeFlush = null;
+      scheduleFlush();
     });
     return activeFlush;
   };
@@ -129,6 +230,7 @@ export function startAnalyticsWorker(input: {
   const failRuntime = () => {
     if (closed) return;
     closed = true;
+    stopScheduledFlush();
     activeAbortController?.abort();
     try {
       outbox.close();
@@ -139,22 +241,47 @@ export function startAnalyticsWorker(input: {
     input.port.close();
   };
 
+  const control = (requestId: number, operation: () => Promise<number>) => {
+    controlsPending += 1;
+    stopScheduledFlush();
+    activeAbortController?.abort();
+    controlQueue = controlQueue
+      .then(async () => {
+        await activeFlush;
+        if (closed) return;
+        const value = await operation();
+        post({ type: "result", requestId, value });
+      })
+      .catch(failRuntime)
+      .finally(() => {
+        controlsPending -= 1;
+        scheduleFlush();
+      });
+  };
+
   input.port.on("message", (command: AnalyticsWorkerCommand) => {
     if (closed && command.type !== "close") return;
     try {
       switch (command.type) {
         case "enqueue": {
-          const events: AnalyticsEvent[] = command.events.map(
-            ({ priority: _priority, ...event }) => ({
-              ...event,
-              distinct_id: installation.id,
-            }),
-          );
+          const allowed =
+            input.purpose === "collection"
+              ? command.events.filter((event) => consentAllows(consent, event.privacy_level))
+              : [];
+          const events: AnalyticsEvent[] = allowed.map(({ priority: _priority, ...event }) => ({
+            ...event,
+            distinct_id: installation.id,
+            consent_level:
+              consent !== "off" && !consentAllows(consent, event.consent_level)
+                ? consent
+                : event.consent_level,
+          }));
           const accepted = outbox.enqueueBatch(
             events,
-            command.events.map((event) => event.priority),
+            allowed.map((event) => event.priority),
           );
           post({ type: "persisted", batchId: command.batchId, accepted });
+          scheduleFlush();
           return;
         }
         case "flush": {
@@ -164,8 +291,8 @@ export function startAnalyticsWorker(input: {
           return;
         }
         case "set-consent": {
-          const value = outbox.purgeAbove(command.consent);
-          post({ type: "result", requestId: command.requestId, value });
+          consent = command.consent;
+          control(command.requestId, async () => outbox.purgeAbove(command.consent));
           return;
         }
         case "pending-count": {
@@ -174,10 +301,9 @@ export function startAnalyticsWorker(input: {
         }
         case "delete-data": {
           const deletionUrl = new URL("/v1/installations/delete", input.endpoint);
-          activeAbortController?.abort();
-          void (activeFlush ?? Promise.resolve(0))
-            .then(() =>
-              fetch(deletionUrl, {
+          control(command.requestId, async () => {
+            try {
+              const response = await fetch(deletionUrl, {
                 method: "POST",
                 headers: {
                   "Content-Type": "application/json",
@@ -185,30 +311,30 @@ export function startAnalyticsWorker(input: {
                 },
                 body: JSON.stringify({ schema_version: 1, installation_id: installation.id }),
                 signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
-              }),
-            )
-            .then(async (response) => {
+                redirect: "error",
+              });
               if (!response.ok) return 0;
-              const acknowledgement = (await response.json().catch(() => null)) as {
-                readonly accepted?: unknown;
-              } | null;
-              if (acknowledgement?.accepted !== true) return 0;
+              if (acceptedValue(await acknowledgement(response)) !== true) return 0;
               outbox.reset();
               installation = ensureInstallationIdentity();
               return 1;
-            })
-            .catch(() => 0)
-            .then((value) => post({ type: "result", requestId: command.requestId, value }));
+            } catch {
+              return 0;
+            }
+          });
           return;
         }
         case "close": {
           closed = true;
+          stopScheduledFlush();
           activeAbortController?.abort();
-          void (activeFlush ?? Promise.resolve(0)).finally(() => {
-            outbox.close();
-            post({ type: "result", requestId: command.requestId, value: 0 });
-            input.port.close();
-          });
+          void Promise.all([activeFlush, controlQueue])
+            .then(() => {
+              outbox.close();
+              post({ type: "result", requestId: command.requestId, value: 0 });
+              input.port.close();
+            })
+            .catch(() => input.port.close());
           return;
         }
       }
@@ -219,4 +345,5 @@ export function startAnalyticsWorker(input: {
 
   input.port.start();
   post({ type: "ready" });
+  scheduleFlush();
 }

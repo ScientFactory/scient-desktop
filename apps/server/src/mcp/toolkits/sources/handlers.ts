@@ -15,6 +15,7 @@ import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 
 import * as ProjectionSnapshotQuery from "../../../orchestration/Services/ProjectionSnapshotQuery.ts";
+import { makeSourceImportAnalytics } from "../../../telemetry/SourceImportAnalytics.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
 import {
   ScientSourcesToolError,
@@ -489,20 +490,24 @@ export const addScientSourceForInvocation = Effect.fn("ScientSourcesToolkit.add"
       review: "none" as const,
     };
   }
+  const observeImport = yield* makeSourceImportAnalytics("agent");
   const result = yield* attempt(() =>
-    addAgentSource({
-      root,
-      candidate,
-      enrich: input.enrich ?? false,
-      allowPossibleMetadataMatch: input.allowPossibleMetadataMatch ?? false,
-      ...(resolvedPdf
-        ? {
-            pdfPath: resolvedPdf.absolutePath,
-            pdfFileName: resolvedPdf.fileName,
-            ...(preparedPdf ? { expectedPdf: preparedPdf.expectedPdf } : {}),
-          }
-        : {}),
-    }),
+    addAgentSource(
+      {
+        root,
+        candidate,
+        enrich: input.enrich ?? false,
+        allowPossibleMetadataMatch: input.allowPossibleMetadataMatch ?? false,
+        ...(resolvedPdf
+          ? {
+              pdfPath: resolvedPdf.absolutePath,
+              pdfFileName: resolvedPdf.fileName,
+              ...(preparedPdf ? { expectedPdf: preparedPdf.expectedPdf } : {}),
+            }
+          : {}),
+      },
+      observeImport,
+    ),
   );
   const duplicateSourceId =
     result.record?.sourceId ?? result.duplicate.matchingSourceIds[0] ?? null;

@@ -166,6 +166,7 @@ const desktopPreviewLayer = PreviewManager.layer.pipe(
 );
 
 const desktopWindowLayer = DesktopWindow.layer.pipe(
+  Layer.provideMerge(DesktopTelemetryPublisher.layer),
   Layer.provideMerge(desktopServerExposureLayer),
   Layer.provideMerge(desktopPreviewLayer),
 );
@@ -184,7 +185,6 @@ const desktopBackendLayer = DesktopBackendPool.layer.pipe(
   Layer.provideMerge(DesktopBackendConfiguration.layer),
   Layer.provideMerge(DesktopWslEnvironment.layer),
   Layer.provideMerge(DesktopWslServerTree.layer),
-  Layer.provideMerge(DesktopTelemetryPublisher.layer),
   Layer.provideMerge(desktopWindowLayer),
 );
 
