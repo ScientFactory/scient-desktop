@@ -84,6 +84,11 @@ and run its focused policy tests. Live update
 availability does not wait for this snapshot, but it keeps a newly installed app
 close to the current qualified floor before its first network refresh.
 
+A bundled version must not bypass native qualification: a failed feed publication does
+not withdraw an artifact already present in the bundle. Qualify the exact bundled
+candidate with the intended installer before shipping; if it fails, hold that release
+or retain the last qualified provider entry as a whole (do not mix artifact versions).
+
 ## App behavior
 
 Released apps start a non-blocking catalog refresh with the server, use ETags,
@@ -108,6 +113,16 @@ cannot be refreshed, the last good catalog/bundle is used; a compatible newer in
 receipt is not downgraded. ACP rejects an older offer when its installed registry
 receipt is newer, rather than guessing missing archive metadata. Repair does not revoke credentials or modify external installs.
 Removal uses only local state and does not depend on a current download offer.
+
+On Windows, installer-owned directory moves and removal tolerate transient file locks
+with bounded backoff (up to fifteen seconds per operation). The first attempt is
+immediate; permanent failures remain failures. Activation retries never deliberately
+overwrite a destination that appeared during the wait. Cancellation stops activation
+retries, while restoration/cleanup keeps its own bounded opportunity to finish.
+The activation journal and backup remain available if restoration cannot complete.
+ACP scoped cleanup preserves both the original operation failure and a cleanup failure;
+qualification cleanup does likewise. These are filesystem retries, not repeated
+downloads or CI attempts that discard failed runs.
 
 ## Credentials and branch authority
 

@@ -7,6 +7,7 @@ import JSZip from "jszip";
 import { afterEach, describe, expect, it } from "vite-plus/test";
 
 import type { ManagedRuntimeArtifact } from "./managedRuntimeArtifact.ts";
+import { makeRuntimeFilesystem } from "./runtimeFilesystem.ts";
 import {
   ManagedProviderRuntime,
   managedRuntimeSmokeEnvironment,
@@ -51,6 +52,7 @@ async function makeRuntime(
     readonly smokeFailsAtCall?: number;
     readonly stateCommitFailsAtCall?: number;
     readonly onSmoke?: () => void;
+    readonly filesystem?: ManagedProviderRuntimeDependencies["filesystem"];
   } = {},
 ) {
   const root = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "scient-provider-runtime-"));
@@ -62,6 +64,7 @@ async function makeRuntime(
   let smokeCalls = 0;
   let stateCommitCalls = 0;
   const dependencies: Partial<ManagedProviderRuntimeDependencies> = {
+    ...(input.filesystem ? { filesystem: input.filesystem } : {}),
     now: () => now++,
     download: async ({ destination }) => {
       events.push("download");
@@ -160,6 +163,90 @@ describe("managed provider runtime smoke environment", () => {
 });
 
 describe("ManagedProviderRuntime contract", () => {
+  it("recovers an activation lock without repeating download or smoke", async () => {
+    let moves = 0;
+    const filesystem = makeRuntimeFilesystem({
+      platform: "win32",
+      sleep: async () => {},
+      rename: async (from, to) => {
+        if (NodePath.basename(from) === "payload" && moves++ < 2) {
+          throw Object.assign(new Error("locked"), { code: "EPERM" });
+        }
+        await NodeFSP.rename(from, to);
+      },
+    });
+    const { runtime, events } = await makeRuntime({ filesystem });
+    expect((await install(runtime, artifact("1.0.0"))).installed).toBe(true);
+    expect(events).toEqual(["download", "verify", "materialize", "smoke", "commit"]);
+    expect(moves).toBe(3);
+  });
+
+  it("restores a repair backup after cancellation during activation backoff", async () => {
+    const controller = new AbortController();
+    let shouldLock = false;
+    let restoreAttempts = 0;
+    const filesystem = makeRuntimeFilesystem({
+      platform: "win32",
+      sleep: async () => {
+        controller.abort();
+      },
+      rename: async (from, to) => {
+        if (shouldLock && NodePath.basename(from) === "payload") {
+          throw Object.assign(new Error("locked candidate"), { code: "EPERM" });
+        }
+        if (from.includes(".replaced-") && restoreAttempts++ === 0) {
+          throw Object.assign(new Error("locked backup"), { code: "EPERM" });
+        }
+        await NodeFSP.rename(from, to);
+      },
+    });
+    const { runtime, root } = await makeRuntime({ filesystem });
+    const recipe = artifact("1.0.0");
+    await install(runtime, recipe);
+    shouldLock = true;
+    await expect(install(runtime, recipe, controller.signal)).rejects.toMatchObject({
+      name: "AbortError",
+    });
+    expect(await NodeFSP.readFile(runtime.launchPath(recipe), "utf8")).toBe("install 1");
+    expect((await runtime.status(recipe)).installed).toBe(true);
+    expect(restoreAttempts).toBe(2);
+    await expect(NodeFSP.access(activationPath(root))).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
+  it("retains the old state and backup journal if activation and restoration both stay locked", async () => {
+    let now = 0;
+    let shouldLock = false;
+    const locked = Object.assign(new Error("permanent lock"), { code: "EPERM" });
+    const filesystem = makeRuntimeFilesystem({
+      platform: "win32",
+      now: () => now,
+      sleep: async (ms) => {
+        now += ms;
+      },
+      rename: async (from, to) => {
+        if (shouldLock && (NodePath.basename(from) === "payload" || from.includes(".replaced-")))
+          throw locked;
+        await NodeFSP.rename(from, to);
+      },
+    });
+    const { runtime, root } = await makeRuntime({ filesystem });
+    const recipe = artifact("1.0.0");
+    await install(runtime, recipe);
+    const originalState = await NodeFSP.readFile(statePath(root), "utf8");
+    shouldLock = true;
+    await expect(install(runtime, recipe)).rejects.toThrow("could not be restored");
+    expect(await NodeFSP.readFile(statePath(root), "utf8")).toBe(originalState);
+    const journal = JSON.parse(await NodeFSP.readFile(activationPath(root), "utf8"));
+    expect(
+      await NodeFSP.readFile(
+        NodePath.join(privateRoot(root), journal.replacedRelativePath, "provider"),
+        "utf8",
+      ),
+    ).toBe("install 1");
+    shouldLock = false;
+    await runtime.reconcile(recipe);
+    expect((await runtime.status(recipe)).installed).toBe(true);
+  });
   it("runs the reviewed install stages in order before recording activation", async () => {
     const { root, runtime, events } = await makeRuntime();
     const stages: string[] = [];
