@@ -113,7 +113,7 @@ Do not ask again when the conversation already provides it.
 
 - `origin` is `ScientFactory/scient-desktop`.
   `upstream` is the official `pingdotgg/t3code` repository and must remain
-  fetch-only with push URL `DISABLED`. Never add Synara as a remote.
+  fetch-only with push URL `DISABLED`.
 - No direct product commits to `main`. Commit, push, merge, and release according
   to the authorized workflow.
 - Open PRs only when requested or already authorized by the conversation's
