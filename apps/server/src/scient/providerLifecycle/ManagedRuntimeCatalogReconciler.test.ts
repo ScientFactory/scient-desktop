@@ -6,12 +6,26 @@ import {
   type ServerProvider,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
+import * as Deferred from "effect/Deferred";
+import * as Layer from "effect/Layer";
 import * as Ref from "effect/Ref";
+import { MANAGED_RUNTIME_CATALOG_PROVIDERS } from "@scientfactory/provider-runtime";
+import { CodexDriver } from "../../provider/Drivers/CodexDriver.ts";
+import { ClaudeDriver } from "../../provider/Drivers/ClaudeDriver.ts";
+import { AntigravityDriver } from "../../provider/Drivers/AntigravityDriver.ts";
+import { CursorDriver } from "../../provider/Drivers/CursorDriver.ts";
+import { DroidDriver } from "../../provider/Drivers/DroidDriver.ts";
+import { GrokDriver } from "../../provider/Drivers/GrokDriver.ts";
+import { PiDriver } from "../../provider/Drivers/PiDriver.ts";
 
 import type { ProviderManagedRuntimeActions } from "../../provider/ProviderDriver.ts";
 import { ProviderRegistry } from "../../provider/Services/ProviderRegistry.ts";
 import { makeProviderRegistryMock } from "../../provider/testUtils/providerRegistryMock.ts";
-import { reconcileManagedRuntimeProviders } from "./ManagedRuntimeCatalogReconciler.ts";
+import {
+  catalogProviderForDriver,
+  layer,
+  reconcileManagedRuntimeProviders,
+} from "./ManagedRuntimeCatalogReconciler.ts";
 
 const INSTANCE = ProviderInstanceId.make("codex");
 const currentRuntime: ProviderRuntimeSummary = {
@@ -49,6 +63,50 @@ const provider: ServerProvider = {
 };
 
 describe("ManagedRuntimeCatalogReconciler", () => {
+  it("maps actual managed drivers to every non-ACP catalog key", () => {
+    const drivers = [
+      CodexDriver,
+      ClaudeDriver,
+      AntigravityDriver,
+      CursorDriver,
+      DroidDriver,
+      GrokDriver,
+      PiDriver,
+    ];
+    assert.deepStrictEqual(
+      drivers.map((driver) => catalogProviderForDriver(driver.driverKind)),
+      MANAGED_RUNTIME_CATALOG_PROVIDERS.filter((provider) => provider !== "antigravityAcp"),
+    );
+    assert.isUndefined(catalogProviderForDriver(ProviderDriverKind.make("opencode")));
+    assert.isUndefined(catalogProviderForDriver(ProviderDriverKind.make("antigravityAcp")));
+  });
+  it.effect("reconciles Claude and Pi at startup even without a new catalog event", () =>
+    Effect.gen(function* () {
+      const instances = ["claudeAgent", "pi"].map((driver) => ({
+        ...provider,
+        instanceId: ProviderInstanceId.make(`${driver}-managed`),
+        driver: ProviderDriverKind.make(driver),
+      }));
+      const finished = yield* Deferred.make<void>();
+      const calls: ProviderInstanceId[] = [];
+      const registry = ProviderRegistry.of({
+        ...makeProviderRegistryMock(instances),
+        getProviderManagedRuntimeActionsForInstance: (id) =>
+          Effect.gen(function* () {
+            calls.push(id);
+            if (calls.length === instances.length) yield* Deferred.succeed(finished, undefined);
+            return undefined;
+          }),
+      });
+      yield* Layer.build(layer.pipe(Layer.provide(Layer.succeed(ProviderRegistry, registry))));
+      yield* Deferred.await(finished);
+      assert.deepStrictEqual(
+        calls,
+        instances.map((instance) => instance.instanceId),
+      );
+    }).pipe(Effect.scoped),
+  );
+
   it.effect(
     "refreshes Antigravity when its separate ACP catalog changes without probing other providers",
     () =>
@@ -72,15 +130,9 @@ describe("ManagedRuntimeCatalogReconciler", () => {
       }),
   );
 
-  for (const driver of [
-    "codex",
-    "claudeAgent",
-    "antigravity",
-    "cursor",
-    "droid",
-    "grok",
-    "pi",
-  ] as const) {
+  for (const driver of MANAGED_RUNTIME_CATALOG_PROVIDERS.filter(
+    (provider) => provider !== "antigravityAcp",
+  )) {
     it.effect(
       `publishes a newly available ${driver} managed update without reloading the provider`,
       () =>

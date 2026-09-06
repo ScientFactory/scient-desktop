@@ -70,11 +70,13 @@ downgrade, a same-version repack, or a publication race leaves the current
 catalog untouched. The workflow never force-pushes and never opens a catalog PR,
 so an unrelated monorepo test cannot suppress a qualified provider update.
 
-An older feed may omit the subsequently added ACP and Pi families. Validation
+An older feed may omit an app-approved family, such as subsequently added ACP or Pi. Validation
 preserves those omissions so other providers can continue independently. Discovery
 uses that family's bundled policy baseline, but collects and qualifies the official
 release even if its version matches the bundle. Only that family's successful
 publication adds it to the feed; no unrelated provider run seeds unqualified entries.
+The runtime package owns the shared release-family list. A workflow contract test
+keeps the scheduled matrix and manual choices aligned with that list.
 
 Before a Scient app release, snapshot the latest **qualified** generated catalog into
 `apps/server/src/scient/providerLifecycle/bundled-managed-runtime-catalog.json`

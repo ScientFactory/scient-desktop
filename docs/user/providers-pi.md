@@ -19,8 +19,8 @@ Scient does not silently migrate an existing installation.
 
 Alternatively, install Pi using its [official instructions](https://github.com/earendil-works/pi),
 then configure its executable path if `pi` is not on the Scient server's `PATH`. The integration is
-tested against Pi 0.84.4 and 0.85.0 and requires 0.84.4 or newer. The managed runtime remains pinned to
-the qualified 0.84.4 archive. Other operating-system targets require a separately installed runtime;
+tested against Pi 0.84.4 and 0.85.0 and requires 0.84.4 or newer. The managed installer offers
+qualified native releases through Scient's update catalog. Other operating-system targets require a separately installed runtime;
 Scient does not currently offer a qualified managed Pi build for those targets.
 
 Use **Settings > Custom models > Add model**, or **Connect models** in Pi's setup:

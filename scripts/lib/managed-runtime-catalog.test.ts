@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vite-plus/test";
 import {
   ANTIGRAVITY_ACP_TARGETS,
+  MANAGED_RUNTIME_CATALOG_PROVIDERS,
   antigravityAcpExecutableNames,
 } from "@scientfactory/provider-runtime";
 
@@ -115,6 +116,7 @@ function stableChannelFetch(codexVersion = "0.150.1") {
 describe("managed runtime release discovery", () => {
   it("validates the generated catalog against every app-owned provider target", () => {
     const catalog = validateManagedRuntimeCatalog(bundledCatalogJson);
+    expect(Object.keys(catalog.providers)).toEqual([...MANAGED_RUNTIME_CATALOG_PROVIDERS]);
     expect(catalog.providers.codex?.version).toBe(bundledCatalogJson.providers.codex.version);
     expect(() =>
       validateManagedRuntimeCatalog({
@@ -175,17 +177,33 @@ describe("managed runtime release discovery", () => {
     ).toEqual(bundledCatalogJson.providers.pi);
   });
 
-  it("still rejects a missing established provider or a malformed Pi entry", () => {
-    const { codex: _codex, ...providers } = bundledCatalogJson.providers;
-    expect(() => validateManagedRuntimeCatalog({ ...bundledCatalogJson, providers })).toThrow(
-      /codex/u,
-    );
+  it.each(MANAGED_RUNTIME_CATALOG_PROVIDERS)(
+    "bootstraps only the qualified missing %s entry",
+    (provider) => {
+      const current = validateManagedRuntimeCatalog(bundledCatalogJson);
+      const providers = { ...current.providers };
+      delete providers[provider];
+      const legacy = validateManagedRuntimeCatalog({ ...current, providers });
+      expect(legacy.providers[provider]).toBeUndefined();
+      expect(
+        mergeQualifiedManagedRuntimeProvider({ current: legacy, candidate: current, provider }),
+      ).toEqual(current);
+    },
+  );
+
+  it("still rejects malformed or unapproved provider entries", () => {
     expect(() =>
       validateManagedRuntimeCatalog({
         ...bundledCatalogJson,
         providers: { ...bundledCatalogJson.providers, pi: {} },
       }),
     ).toThrow(/pi/u);
+    expect(() =>
+      validateManagedRuntimeCatalog({
+        ...bundledCatalogJson,
+        providers: { ...bundledCatalogJson.providers, unapproved: bundledCatalogJson.providers.pi },
+      }),
+    ).toThrow(/unknown providers/u);
   });
 
   it.each([false, true])("discovers missing Pi before qualification (newer=%s)", async (newer) => {
@@ -380,5 +398,18 @@ describe("managed runtime release discovery", () => {
       /moved backwards/u,
     );
     expect(requested).toEqual(["https://releases.openai.com/codex/channels/latest"]);
+  });
+
+  it("rejects a missing family's release below its bundled baseline before collecting artifacts", async () => {
+    const current = validateManagedRuntimeCatalog(bundledCatalogJson);
+    const { pi: _pi, ...providers } = current.providers;
+    let requests = 0;
+    await expect(
+      refreshManagedRuntimeProvider({ ...current, providers }, "pi", async () => {
+        requests++;
+        return Response.json({ tag_name: "v0.1.0", draft: false, prerelease: false });
+      }),
+    ).rejects.toThrow(/moved backwards/u);
+    expect(requests).toBe(1);
   });
 });
