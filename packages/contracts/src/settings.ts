@@ -206,12 +206,13 @@ export type BrowserRecordingFrameRate = typeof BrowserRecordingFrameRate.Type;
 export const DEFAULT_BROWSER_RECORDING_FRAME_RATE: BrowserRecordingFrameRate = 30;
 /**
  * Where a clicked link goes: the OS default browser, or a tab in the in-app
- * browser beside the thread. "system" is the default because that is what
- * every link did before the setting existed.
+ * browser beside the thread. Keep links in Scient by default so users retain
+ * their working context; the modifier and explicit preference still allow the
+ * system browser.
  */
 export const BrowserLinkTarget = Schema.Literals(["system", "app"]);
 export type BrowserLinkTarget = typeof BrowserLinkTarget.Type;
-export const DEFAULT_BROWSER_LINK_TARGET: BrowserLinkTarget = "system";
+export const DEFAULT_BROWSER_LINK_TARGET: BrowserLinkTarget = "app";
 
 export const LoadBalancingWeights = Schema.Record(
   TrimmedNonEmptyString,

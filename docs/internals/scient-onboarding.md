@@ -18,7 +18,8 @@ Already-satisfied steps are omitted when the journey starts, then that short jou
 Back remains predictable while readiness changes. **Skip** stays visible on every step, dismissal is
 durable, and existing users with a project or thread are completed silently rather than interrupted.
 Settings → Getting Started provides a manual replay route without resetting provider or project
-state, and a direct import action that does not repeat setup.
+state. Project import remains inside the onboarding journey rather than appearing as a duplicate
+action on the General settings page.
 
 The hosted static environment-connection flow remains authoritative and runs before this gate. The
 getting-started flow begins only after the primary environment, entity shell, session permission,
@@ -30,9 +31,9 @@ getting-started page. Hosted clients retain upstream's connection wizard. An uns
 
 ## Optional project import
 
-Both local entry points use `ScientProjectImportAction`, which lazily mounts the upstream
-`ProjectImportStep` only after an explicit click. Merely opening Settings or reaching the final
-onboarding step does not scan history. The Add Project menu is unchanged.
+The final onboarding step uses `ScientProjectImportAction`, which lazily mounts the upstream
+`ProjectImportStep` only after an explicit click. Merely reaching the final onboarding step does
+not scan history. The Add Project menu is unchanged.
 
 The import step is extracted from T3's wizard, not reimplemented: it uses the same scanner,
 project-creation commands, session importer, bounded reads, deduplication, and partial-failure

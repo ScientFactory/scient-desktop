@@ -174,6 +174,7 @@ describe("ProviderCommandReactor", () => {
     readonly threadModelSelection?: ModelSelection;
     readonly sessionModelSwitch?: "unsupported" | "in-session";
     readonly requiresNewThreadForModelChange?: boolean;
+    readonly forkLineage?: boolean;
     readonly unreadableHistory?: boolean;
     readonly titleRegenerationCompletionDispatchFailures?: number;
     readonly titleRegenerationBeforeStart?: "one" | "two";
@@ -507,6 +508,46 @@ describe("ProviderCommandReactor", () => {
         createdAt: now,
       }),
     );
+    if (input?.forkLineage === true) {
+      await runtime.runPromise(
+        Effect.gen(function* () {
+          const sql = yield* SqlClient.SqlClient;
+          yield* sql`
+            INSERT INTO scient_thread_lineage (
+              thread_id,
+              forked_from_thread_id,
+              fork_point_turn_count,
+              baseline_assistant_message_id,
+              workspace_mode,
+              provider_mode,
+              provider_bootstrap_status,
+              fidelity_mode,
+              status,
+              checkpoint_status,
+              workspace_status,
+              attempt_count,
+              created_at,
+              updated_at
+            ) VALUES (
+              'thread-1',
+              'origin-thread',
+              1,
+              'origin-assistant-message',
+              'local',
+              'transcript-bootstrap',
+              'pending',
+              'transcript-bootstrap',
+              'ready',
+              'ready',
+              'shared',
+              0,
+              ${now},
+              ${now}
+            )
+          `;
+        }),
+      );
+    }
     await Effect.runPromise(
       engine.dispatch({
         type: "thread.create",
@@ -904,6 +945,7 @@ describe("ProviderCommandReactor", () => {
       }),
     );
     const harness = await createHarness({
+      forkLineage: true,
       forkContextBootstrap: { prepareTurn, beginAttempt, markAccepted },
       sendTurnEffect: () =>
         Effect.sync(() => {
@@ -947,6 +989,7 @@ describe("ProviderCommandReactor", () => {
       () => Effect.void,
     );
     const harness = await createHarness({
+      forkLineage: true,
       forkContextBootstrap: {
         prepareTurn: (input) =>
           Effect.succeed({
@@ -1032,6 +1075,48 @@ describe("ProviderCommandReactor", () => {
         threadId: ThreadId.make("thread-1"),
         input: "Start after activation",
       });
+    }),
+  );
+
+  effectIt.effect("starts a turn and generates its title without loading old message bodies", () =>
+    Effect.gen(function* () {
+      const started = yield* Deferred.make<void>();
+      const titleGenerated = yield* Deferred.make<void>();
+      const harness = yield* Effect.promise(() =>
+        createHarness({
+          unreadableHistory: true,
+          startSessionEffect: (session) =>
+            Deferred.succeed(started, undefined).pipe(Effect.as(session)),
+        }),
+      );
+      harness.generateThreadTitle.mockReturnValue(
+        Deferred.succeed(titleGenerated, undefined).pipe(Effect.as({ title: "Generated title" })),
+      );
+      yield* harness.engine.dispatch({
+        type: "thread.turn.start",
+        commandId: CommandId.make("cmd-turn-start-with-old-history"),
+        threadId: ThreadId.make("thread-1"),
+        message: {
+          messageId: MessageId.make("message-turn-start-with-old-history"),
+          role: "user",
+          text: "Use the current message",
+          attachments: [],
+        },
+        titleSeed: "Thread",
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        runtimeMode: "approval-required",
+        createdAt: "2026-01-01T00:00:01.000Z",
+      });
+      yield* Deferred.await(started);
+      yield* Deferred.await(titleGenerated);
+      yield* Effect.promise(() => harness.drain());
+
+      expect(harness.sendTurn).toHaveBeenCalledWith(
+        expect.objectContaining({ input: "Use the current message" }),
+      );
+      expect(harness.generateThreadTitle).toHaveBeenCalledWith(
+        expect.objectContaining({ message: "Use the current message" }),
+      );
     }),
   );
 

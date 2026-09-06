@@ -1191,12 +1191,15 @@ const make = Effect.gen(function* () {
       return;
     }
 
-    const thread = yield* resolveThreadDetail(event.payload.threadId);
+    const thread = yield* resolveThreadShell(event.payload.threadId);
     if (!thread) {
       return;
     }
-    const message = thread.messages.find((entry) => entry.id === event.payload.messageId);
-    if (!message || message.role !== "user") {
+    const turnStart = yield* projectionSnapshotQuery.getTurnStartMessage({
+      threadId: thread.id,
+      messageId: event.payload.messageId,
+    });
+    if (Option.isNone(turnStart) || turnStart.value.message.role !== "user") {
       yield* appendProviderFailureActivity({
         threadId: event.payload.threadId,
         kind: "provider.turn.start.failed",
@@ -1208,6 +1211,7 @@ const make = Effect.gen(function* () {
       });
       return;
     }
+    const { message, hasOtherUserMessages } = turnStart.value;
     const appendTurnStartFailure = (summary: string, detail: string) =>
       appendProviderFailureActivity({
         threadId: event.payload.threadId,
@@ -1300,10 +1304,7 @@ const make = Effect.gen(function* () {
     yield* ensureThreadWorktree(thread);
 
     const isCompactCommand = isCompactCommandMessage(message);
-    const nonCompactUserMessageCount = thread.messages.filter(
-      (entry) => entry.role === "user" && !isCompactCommandMessage(entry),
-    ).length;
-    if (nonCompactUserMessageCount === 1 && !isCompactCommand) {
+    if (!hasOtherUserMessages && !isCompactCommand) {
       const project = yield* resolveProject(thread.projectId);
       const generationCwd =
         resolveThreadWorkspaceCwd({
@@ -1374,7 +1375,7 @@ const make = Effect.gen(function* () {
         ),
       );
     if (isCompactCommand) {
-      if (nonCompactUserMessageCount === 0) {
+      if (!hasOtherUserMessages) {
         return yield* appendTurnStartFailure(
           "Context compaction failed",
           "Context compaction requires an existing conversation.",
@@ -1425,30 +1426,55 @@ const make = Effect.gen(function* () {
       );
     }
 
-    const preparedTurn = yield* scientForkContextBootstrap
-      .prepareTurn({
-        thread,
-        currentMessageId: message.id,
-        messageText: message.text,
-        attachments: message.attachments ?? [],
-      })
-      .pipe(
-        Effect.mapError(
-          (error) =>
-            new ProviderAdapterRequestError({
-              provider: providerErrorLabelFromInstanceHint({
-                modelSelectionInstanceId:
-                  event.payload.modelSelection?.instanceId ?? thread.modelSelection.instanceId,
-                sessionProvider: thread.session?.providerName ?? undefined,
-              }),
-              method: "thread.turn.start",
-              detail: error.detail,
-              cause: error,
-            }),
-        ),
-        Effect.map(Option.some),
-        Effect.catchCause((cause) => handleTurnStartFailure(cause).pipe(Effect.as(Option.none()))),
-      );
+    const preparedTurn = yield* (
+      thread.forkLineage == null
+        ? Effect.succeed({
+            input: message.text,
+            attachments: message.attachments ?? [],
+            bootstrapPending: false,
+            omittedMessageCount: 0,
+            omittedAttachmentCount: 0,
+          })
+        : Effect.gen(function* () {
+            const threadDetail = yield* resolveThreadDetail(thread.id);
+            if (!threadDetail) {
+              return yield* new ProviderAdapterRequestError({
+                provider: providerErrorLabelFromInstanceHint({
+                  modelSelectionInstanceId:
+                    event.payload.modelSelection?.instanceId ?? thread.modelSelection.instanceId,
+                  sessionProvider: thread.session?.providerName ?? undefined,
+                }),
+                method: "thread.turn.start",
+                detail: "The forked conversation is unavailable.",
+              });
+            }
+            return yield* scientForkContextBootstrap.prepareTurn({
+              thread: threadDetail,
+              currentMessageId: message.id,
+              messageText: message.text,
+              attachments: message.attachments ?? [],
+            });
+          })
+    ).pipe(
+      Effect.mapError((error) => {
+        const detail =
+          "detail" in error && typeof error.detail === "string"
+            ? error.detail
+            : "Unable to load the forked thread.";
+        return new ProviderAdapterRequestError({
+          provider: providerErrorLabelFromInstanceHint({
+            modelSelectionInstanceId:
+              event.payload.modelSelection?.instanceId ?? thread.modelSelection.instanceId,
+            sessionProvider: thread.session?.providerName ?? undefined,
+          }),
+          method: "thread.turn.start",
+          detail,
+          cause: error,
+        });
+      }),
+      Effect.map(Option.some),
+      Effect.catchCause((cause) => handleTurnStartFailure(cause).pipe(Effect.as(Option.none()))),
+    );
 
     if (Option.isNone(preparedTurn)) {
       return;

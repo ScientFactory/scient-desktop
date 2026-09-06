@@ -26,6 +26,7 @@ describe("Scient getting-started host seams", () => {
     expect(route).toContain('<ScientGettingStartedFlow mode="manual" />');
     expect(settingsRow.indexOf("<Link")).toBeLessThan(settingsRow.indexOf("<SettingsRow"));
     expect(settingsRow).toContain('to="/getting-started"');
+    expect(settingsRow).not.toContain("ScientProjectImportAction");
     expect(settingsRow).not.toContain("<Button");
   });
 

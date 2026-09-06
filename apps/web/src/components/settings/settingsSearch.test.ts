@@ -4,6 +4,7 @@ import {
   filterAvailableSettingsSearchItems,
   searchableSetting,
   searchSettings,
+  SETTINGS_SECTION_LABELS,
   SETTINGS_SEARCH_ITEMS,
   type SettingsSearchItem,
 } from "./settingsSearch";
@@ -38,6 +39,17 @@ const ITEMS: ReadonlyArray<SettingsSearchItem> = [
     to: "/settings/general",
   },
 ];
+
+describe("settings sidebar order", () => {
+  it("keeps integrations prominent and keybindings below scientific computing", () => {
+    const paths = Object.keys(SETTINGS_SECTION_LABELS);
+
+    expect(paths.indexOf("/settings/integrations")).toBe(paths.indexOf("/settings/projects") + 1);
+    expect(paths.indexOf("/settings/keybindings")).toBe(
+      paths.indexOf("/settings/scientific-computing") + 1,
+    );
+  });
+});
 
 describe("searchSettings", () => {
   it("matches titles, sections, and remembered setting details", () => {

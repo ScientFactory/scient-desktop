@@ -268,7 +268,7 @@ describe("getChangedBrowserSettingLabels", () => {
         browserDefaultZoomFactor: 1.5,
         browserDefaultAppearance: "dark",
         browserRecordingFrameRate: 60,
-        browserLinkTarget: "app",
+        browserLinkTarget: "system",
         browserAutoShowFloatingPreview: !DEFAULT_UNIFIED_SETTINGS.browserAutoShowFloatingPreview,
       }),
     ).toEqual([
