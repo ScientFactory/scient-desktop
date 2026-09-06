@@ -8,6 +8,7 @@ import {
   ClaudeSettings,
   DEFAULT_CLIENT_SETTINGS,
   DEFAULT_SERVER_SETTINGS,
+  DEFAULT_UNIFIED_SETTINGS,
   resolveProviderInstanceEnabled,
   ServerSettings,
   ServerSettingsPatch,
@@ -421,18 +422,34 @@ describe("ClientSettings context window meter", () => {
 });
 
 describe("ClientSettings composer collapse", () => {
-  it("collapses on blur and scroll by default and accepts opting out of each", () => {
-    const defaults = decodeClientSettings({});
-    expect(defaults.composerCollapseOnBlur).toBe(true);
-    expect(defaults.composerCollapseOnScroll).toBe(true);
+  it("defaults to Never for missing settings and shared reset defaults", () => {
+    for (const defaults of [
+      decodeClientSettings({}),
+      DEFAULT_CLIENT_SETTINGS,
+      DEFAULT_UNIFIED_SETTINGS,
+    ]) {
+      expect(defaults.composerCollapseOnBlur).toBe(false);
+      expect(defaults.composerCollapseOnScroll).toBe(false);
+    }
+    expect(decodeClientSettings({ composerCollapseOnBlur: true }).composerCollapseOnScroll).toBe(
+      false,
+    );
+    expect(decodeClientSettings({ composerCollapseOnScroll: true }).composerCollapseOnBlur).toBe(
+      false,
+    );
+  });
 
-    const blurOff = decodeClientSettings({ composerCollapseOnBlur: false });
-    expect(blurOff.composerCollapseOnBlur).toBe(false);
-    expect(blurOff.composerCollapseOnScroll).toBe(true);
-
-    expect(
-      decodeClientSettingsPatch({ composerCollapseOnScroll: false }).composerCollapseOnScroll,
-    ).toBe(false);
+  it.each([
+    [false, false],
+    [true, false],
+    [false, true],
+    [true, true],
+  ])("preserves saved blur=%s and scroll=%s choices through reload and patches", (blur, scroll) => {
+    const saved = { composerCollapseOnBlur: blur, composerCollapseOnScroll: scroll };
+    expect(decodeClientSettings(encodeClientSettings(decodeClientSettings(saved)))).toMatchObject(
+      saved,
+    );
+    expect(decodeClientSettingsPatch(saved)).toEqual(saved);
   });
 });
 

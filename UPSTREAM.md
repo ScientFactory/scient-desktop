@@ -465,6 +465,12 @@ four tokens in `apps/web/src/scient/typography/profile.css`; do not spread those
 overrides across inherited components during upstream conflict resolution. See
 [Scient typography profile](docs/internals/scient-typography.md).
 
+Composer collapse is opt-in in Scient: both `composerCollapseOnBlur` and
+`composerCollapseOnScroll` default to `false` (Settings shows **Never**).
+Preserve saved choices and T3's optional collapse behavior, including the shared
+focus-scope marker on Scient's provider onboarding popup. Keep this divergence
+at the shared settings defaults rather than disabling the collapse implementation.
+
 LaTeX compilation is isolated under `apps/server/src/scient/latex` and
 `apps/web/src/scient/latex`, with `packages/contracts/src/scientLatex.ts` and
 `packages/client-runtime/src/state/scientLatexHttp.ts` as the two owned files
