@@ -2,11 +2,12 @@
 
 import { act } from "react";
 import { createRoot } from "react-dom/client";
-import { afterEach, describe, expect, it } from "vite-plus/test";
+import { afterAll, afterEach, describe, expect, it, vi } from "vite-plus/test";
 
 import { Dialog, DialogPortal, DialogViewport } from "./dialog";
 
-globalThis.IS_REACT_ACT_ENVIRONMENT = true;
+vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+afterAll(() => vi.unstubAllGlobals());
 
 const host = document.createElement("div");
 document.body.append(host);
