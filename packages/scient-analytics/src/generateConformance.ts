@@ -5,7 +5,7 @@ import * as NodeURL from "node:url";
 
 import { buildAnalyticsConformanceFixture } from "./conformance.ts";
 
-const defaultPath = NodeURL.fileURLToPath(new URL("../fixtures/contract-v2.json", import.meta.url));
+const defaultPath = NodeURL.fileURLToPath(new URL("../fixtures/contract-v3.json", import.meta.url));
 const args = process.argv.slice(2);
 const check = args.includes("--check");
 const wireArgument = args.find((arg) => arg.startsWith("--wire="));

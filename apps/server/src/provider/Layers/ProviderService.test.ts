@@ -348,7 +348,10 @@ interface RecordedAnalyticsEvent {
 
 function makeRecordingAnalytics() {
   const events: Array<RecordedAnalyticsEvent> = [];
+  let epoch = 1;
   const layer = Layer.mock(AnalyticsService.AnalyticsService)({
+    status: Effect.succeed({ available: true, consent: "product" as const }),
+    collectionEpoch: Effect.sync(() => epoch),
     record: (event, properties) =>
       Effect.sync(() => {
         events.push({ event, ...(properties ? { properties } : {}) });
@@ -360,6 +363,10 @@ function makeRecordingAnalytics() {
     layer,
     reset: () => {
       events.length = 0;
+      epoch = 1;
+    },
+    changeEpoch: () => {
+      epoch += 1;
     },
     eventsByName: (event: string) => events.filter((entry) => entry.event === event),
   };
@@ -4168,6 +4175,46 @@ turnAnalytics.layer("ProviderServiceLive turn analytics", (it) => {
           hasSubagents: false,
         });
       }
+    }),
+  );
+
+  it.effect("does not export turn usage across a collection epoch change", () =>
+    Effect.gen(function* () {
+      recordedTurnAnalytics.reset();
+      const provider = yield* ProviderService.ProviderService;
+      const threadId = asThreadId("thread-turn-analytics-consent-change");
+      yield* provider.startSession(threadId, {
+        provider: CODEX_DRIVER,
+        providerInstanceId: codexInstanceId,
+        threadId,
+        runtimeMode: "approval-required",
+      });
+      const turn = yield* provider.sendTurn({ threadId, input: "test", attachments: [] });
+      recordedTurnAnalytics.changeEpoch();
+      const received = yield* Stream.take(provider.streamEvents, 1).pipe(
+        Stream.runDrain,
+        Effect.forkChild,
+      );
+      yield* Effect.yieldNow;
+      primaryAnalyticsCodex.emit({
+        type: "turn.aborted",
+        eventId: asEventId("evt-consent-change"),
+        provider: CODEX_DRIVER,
+        createdAt: "2026-01-01T00:00:00.000Z",
+        threadId,
+        turnId: turn.turnId,
+        payload: {
+          reason: "Interrupted",
+          tokenUsage: {
+            usageStatus: "partial",
+            usageScope: "main_agent",
+            inputTokens: 120,
+            outputTokens: 30,
+          },
+        },
+      });
+      yield* Fiber.join(received);
+      assert.equal(recordedTurnAnalytics.eventsByName("provider.turn.completed").length, 0);
     }),
   );
 

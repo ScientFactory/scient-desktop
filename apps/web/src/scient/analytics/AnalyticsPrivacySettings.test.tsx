@@ -178,7 +178,10 @@ describe("analytics sharing controls", () => {
     await render();
     await details();
     const dialog = document.querySelector('[role="dialog"]');
-    expect(dialog?.textContent).toContain("Share which features you use");
+    expect(dialog?.textContent).toContain(
+      "Share which features and provider/model categories you use",
+    );
+    expect(dialog?.textContent).toContain("reported token counts");
     expect(dialog?.querySelector("dl")).toBeNull();
     expect(dialog?.textContent).toContain(
       "Analytics never includes prompts, responses, file contents",

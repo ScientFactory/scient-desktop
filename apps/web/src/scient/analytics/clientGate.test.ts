@@ -11,6 +11,81 @@ const tick = async () => {
 };
 
 describe("UI analytics gate", () => {
+  it("observes only the current visible view after discovery, with no historic replay", async () => {
+    let resolve!: (status: ScientAnalyticsStatus) => void;
+    const record = vi.fn(async () => undefined);
+    const gate = createAnalyticsClientGate({
+      status: () =>
+        new Promise<ScientAnalyticsStatus>((done) => {
+          resolve = done;
+        }),
+      record,
+    });
+    const connection = {};
+    let visible = true;
+    const view = gate.observeView(connection, () =>
+      visible ? { name: "panel.viewed", properties: { category: "browser" } } : null,
+    );
+    await tick();
+    visible = false;
+    resolve({ available: true, consent: "product", collectionContext: "first" });
+    await tick();
+    expect(record).not.toHaveBeenCalled();
+    visible = true;
+    view.refresh();
+    view.refresh();
+    await tick();
+    expect(record).toHaveBeenCalledOnce();
+    gate.beginControl(connection);
+    gate.endControl(connection, { available: true, consent: "off" });
+    gate.beginControl(connection);
+    gate.endControl(connection, {
+      available: true,
+      consent: "product",
+      collectionContext: "second",
+    });
+    await tick();
+    expect(record).toHaveBeenCalledTimes(2);
+    expect(record.mock.calls[1]).toEqual([
+      connection,
+      { name: "panel.viewed", properties: { category: "browser" }, collectionContext: "second" },
+    ]);
+    view.dispose();
+  });
+  it("does not send views disposed before discovery or strict-mode effect restart", async () => {
+    const record = vi.fn(async () => undefined);
+    const status = vi.fn(async () => ({
+      available: true,
+      consent: "product" as const,
+      collectionContext: "current",
+    }));
+    const gate = createAnalyticsClientGate({ status, record });
+    const connection = {};
+    gate.observeView(connection, () => event).dispose();
+    const active = gate.observeView(connection, () => event);
+    await tick();
+    expect(record).toHaveBeenCalledOnce();
+    active.dispose();
+  });
+  it("does no event work for Off or Essential views and bounds observers", async () => {
+    for (const consent of ["off", "essential"] as const) {
+      const record = vi.fn(async () => undefined);
+      const gate = createAnalyticsClientGate({
+        status: async () => ({ available: true, consent, collectionContext: "current" }),
+        record,
+      });
+      const connection = {};
+      const views = Array.from({ length: 100 }, () =>
+        gate.observeView(connection, () => ({
+          name: "settings.viewed",
+          properties: { section: "general" },
+        })),
+      );
+      await tick();
+      expect(record).not.toHaveBeenCalled();
+      for (const view of views) view.dispose();
+    }
+  });
   it("coalesces discovery and does no per-event HTTP work while Off", async () => {
     const status = vi.fn(async (): Promise<ScientAnalyticsStatus> => ({
       available: true,

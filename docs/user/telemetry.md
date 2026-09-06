@@ -8,8 +8,10 @@ Where analytics are deliberately enabled, Scient accepts only its registered eve
 properties, subject to the configured consent level. Prompts, responses, file contents, credentials,
 and raw provider events are not accepted as product analytics.
 
-Product analytics are separate from the usage totals shown inside the app and from local resource
-diagnostics. Seeing those totals does not mean they are being uploaded.
+Product analytics can include reported token counts for work performed through
+Scient, provider/model categories, and which features or Settings sections you
+visit. They do not upload the Usage page's broader local transcript history or
+private custom model names. Missing provider counts stay unknown.
 
 Use **Share usage and reliability** in Settings → General → Privacy and analytics
 to turn sharing off or on. Sharing covers feature usage, reliability and

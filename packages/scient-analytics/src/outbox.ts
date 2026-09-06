@@ -220,7 +220,10 @@ export class AnalyticsOutbox {
           parsed === null ||
           Array.isArray(parsed) ||
           Object.values(parsed).some(
-            (value) => typeof value !== "boolean" && typeof value !== "string",
+            (value) =>
+              typeof value !== "boolean" &&
+              typeof value !== "string" &&
+              !(typeof value === "number" && Number.isSafeInteger(value)),
           )
         ) {
           throw new Error("invalid-properties");
@@ -247,7 +250,7 @@ export class AnalyticsOutbox {
           occurred_at: row.occurred_at,
           privacy_level: row.privacy_level,
           consent_level: row.consent_level,
-          properties: parsed as Readonly<Record<string, boolean | string>>,
+          properties: parsed as Readonly<Record<string, boolean | string | number>>,
           attemptCount: row.attempt_count,
           priority: analyticsPriority(row.priority),
         });

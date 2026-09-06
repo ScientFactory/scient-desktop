@@ -1,5 +1,5 @@
 import { describe, expect, it } from "@effect/vitest";
-import fixture from "../fixtures/contract-v2.json" with { type: "json" };
+import fixture from "../fixtures/contract-v3.json" with { type: "json" };
 import { buildAnalyticsConformanceFixture } from "./conformance.ts";
 import { ANALYTICS_EVENT_NAMES, consentAllows, normalizeInheritedEvent } from "./contract.ts";
 import { eventContractViolation } from "./wireContract.ts";

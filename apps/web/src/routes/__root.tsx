@@ -23,6 +23,7 @@ import { SshPasswordPromptDialog } from "../components/desktop/SshPasswordPrompt
 import { DesktopAppActivationCoordinator } from "../components/desktop/DesktopAppActivationCoordinator";
 import { ProviderUpdateLaunchNotification } from "../components/ProviderUpdateLaunchNotification";
 import { AnalyticsSharingNotice } from "../scient/analytics/AnalyticsSharingNotice";
+import { SettingsAnalyticsObserver } from "../scient/analytics/SettingsAnalyticsObserver";
 import { SlowRpcRequestToastCoordinator } from "../components/SlowRpcRequestToastCoordinator";
 import { ThemeEditorHost } from "../components/settings/ThemeEditorHost";
 import { useCopyToClipboard } from "../hooks/useCopyToClipboard";
@@ -180,6 +181,7 @@ function RootRouteView() {
           {primaryEnvironmentAuthenticated ? <PlanAgentSelectionHeal /> : null}
           {primaryEnvironmentAuthenticated ? <ProviderUpdateLaunchNotification /> : null}
           {primaryEnvironmentAuthenticated ? <AnalyticsSharingNotice /> : null}
+          {primaryEnvironmentAuthenticated ? <SettingsAnalyticsObserver /> : null}
           {appShell}
           {/* Above the router: a theme draft is judged by walking the app, so the
               editor has to survive navigation away from settings. */}

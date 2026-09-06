@@ -24,6 +24,7 @@ export function createAnalyticsClientGate<Connection extends object>(transport: 
     generation: number;
     inFlight: number;
     surfaces: Set<string>;
+    views: Set<() => void>;
   };
   const states = new WeakMap<Connection, State>();
   const now = transport.now ?? Date.now;
@@ -39,6 +40,7 @@ export function createAnalyticsClientGate<Connection extends object>(transport: 
         generation: 0,
         inFlight: 0,
         surfaces: new Set(),
+        views: new Set(),
       };
       states.set(connection, state);
     }
@@ -56,6 +58,7 @@ export function createAnalyticsClientGate<Connection extends object>(transport: 
     state.status = status;
     state.checkedAt = now();
     state.retryStatusAt = null;
+    for (const view of state.views) view();
   };
   const readStatus = async (connection: Connection) => {
     const state = stateFor(connection);
@@ -137,6 +140,40 @@ export function createAnalyticsClientGate<Connection extends object>(transport: 
     return true;
   };
   return {
+    observeView(connection: Connection, read: () => ScientAnalyticsUiEvent | null) {
+      const state = stateFor(connection);
+      let reportedContext: string | undefined;
+      let disposed = false;
+      const refresh = () => {
+        if (disposed) return;
+        const event = read();
+        if (event === null) {
+          reportedContext = undefined;
+          return;
+        }
+        const ready = readyState(connection);
+        const context = ready?.status?.collectionContext;
+        if (
+          ready &&
+          context !== undefined &&
+          reportedContext !== context &&
+          enqueue(connection, ready, { ...event, collectionContext: context })
+        )
+          reportedContext = context;
+      };
+      // Only current visible state is read after discovery; never replay an
+      // action or a screen the user has already left. Bound retained observers.
+      if (state.views.size >= 16) return { refresh: () => {}, dispose: () => {} };
+      state.views.add(refresh);
+      void Promise.resolve().then(refresh);
+      return {
+        refresh,
+        dispose: () => {
+          disposed = true;
+          state.views.delete(refresh);
+        },
+      };
+    },
     readStatus,
     prime(connection: Connection) {
       if (stateFor(connection).status === null) prime(connection);

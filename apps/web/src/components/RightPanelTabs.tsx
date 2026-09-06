@@ -62,6 +62,8 @@ import { useEnvironmentQuery } from "~/state/query";
 import { COLLAPSED_SIDEBAR_TITLEBAR_INSET_CLASS } from "~/workspaceTitlebar";
 import { ScientRightPanelSurfaceIcon } from "~/scient/rightPanel/ScientRightPanelSurfaceIcon";
 import { scientRightPanelSurfaceTitle } from "~/scient/rightPanel/surfaces";
+import { useScientAnalyticsView } from "~/scient/analytics/client";
+import { panelCategory } from "~/scient/analytics/viewCategories";
 
 import { PreviewPanelShell, type PreviewPanelMode } from "./preview/PreviewPanelShell";
 import { FaviconImage } from "./preview/PreviewFaviconIcon";
@@ -803,6 +805,18 @@ function PullRequestSurfaceIcon({
 }
 
 export function RightPanelTabs(props: RightPanelTabsProps) {
+  const analyticsSurface =
+    props.open === false
+      ? undefined
+      : props.surfaces.find((surface) => surface.id === props.activeSurfaceId);
+  useScientAnalyticsView(
+    analyticsSurface
+      ? { name: "panel.viewed", properties: { category: panelCategory(analyticsSurface) } }
+      : null,
+    analyticsSurface?.kind === "pull-request" && analyticsSurface.environmentId
+      ? (analyticsSurface.environmentId as EnvironmentId)
+      : props.environmentId,
+  );
   const ownsDesktopTitleBar = isElectron && props.mode === "inline";
   const browserProfiles = useBrowserDefaults().profiles;
   const { resolvedTheme } = useTheme();

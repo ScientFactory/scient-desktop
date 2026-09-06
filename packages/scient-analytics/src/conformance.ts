@@ -8,6 +8,18 @@ import {
 const context = { appVersion: "0.6.8", buildChannel: "stable" } as const;
 const representativeProperties = {
   provider: "antigravity",
+  usageStatus: "complete",
+  inputTokens: 1500,
+  outputTokens: 100,
+  cachedInputTokens: 500,
+  reasoningTokens: 50,
+  hasSubagents: false,
+  category: "browser",
+  section: "providers",
+  feature: "search",
+  metric: "tokens",
+  window: "7",
+  breakdown: "model",
   model: "gpt-5.6-sol",
   runtimeMode: "full-access",
   interactionMode: "plan",
