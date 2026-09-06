@@ -3,8 +3,10 @@
 Scient has a first-party analytics contract, outbox, worker, and privacy UI.
 Recognized packaged release builds make the feature available through
 `SCIENT_ANALYTICS_ENABLED=true`; development and unknown-channel builds stay
-disabled. Consent still defaults to `off`, and saved choices are preserved.
-Availability is not opt-in: Off creates no collection worker and sends nothing.
+disabled. When available, an absent saved preference and absent environment
+override default to `diagnostic` (usage, reliability and delivery counters).
+Saved choices, including Off, remain authoritative; malformed or unreadable
+preferences fail closed. Off creates no collection worker and sends nothing.
 Native and WSL backend configuration receive the same bounded release metadata.
 An explicit `SCIENT_ANALYTICS_ENABLED=false` remains an operator kill switch.
 For isolated manual QA, `SCIENT_ANALYTICS_ENABLED=true` can expose the controls
@@ -27,10 +29,33 @@ uses only Scient's first-party gateway, and failures cannot block normal product
 Settings privacy surface can change consent and request deletion of the installation's analytics
 data and random installation identifier.
 
-The settings copy describes a random installation identifier, not anonymous
-people or unlinked events. Its choice, confirmation and reset flow are
-unchanged; persistent pseudonyms still require the consent/deletion protections
-below. Final copy and layout require human review before activation.
+Settings exposes one “Share usage and reliability” switch. An explicit on action
+selects `diagnostic`; off selects `off`. The wire levels and event classifications
+remain unchanged. Saved `essential` and `product` choices display as on without
+upgrading them; the information panel explains the narrower choice.
+
+The notification is implemented but disabled by default at its component boundary
+pending an approved audience and timing policy. This gate does not change analytics
+availability, sharing preferences or Settings. The prepared behavior below is
+covered by tests with the notification explicitly enabled; normal app mounting
+does not read notification status, register its listeners or create a toast.
+
+When enabled, a nonblocking notice appears after authenticated status confirms
+sharing is on. It offers the same “What’s shared?” component as Settings and
+“Review in settings”, linking directly to the privacy section. Once shown, leaving
+the current screen, switching away from the window, hiding the document, explicit
+dismissal or using the settings action dismisses it. Dismissal is remembered per
+client profile, environment and notice version, independently of consent.
+Unmount/disconnect cleanup alone is not dismissal; failed or stale status reads
+never claim sharing is on. There is no polling or blocking startup.
+The notice is disclosure, not a consent gate or acknowledgement
+that delays collection. Clearing client storage can make it appear again.
+
+The “What’s shared?” panel exposes the explanation for keyboard and touch users,
+plus exclusions,
+retention, deletion and the random installation identifier. Persistent pseudonyms
+are not anonymous people or unlinked events and still require the consent/deletion
+protections below. Final copy and layout require human review before activation.
 
 ## Contract and delivery
 

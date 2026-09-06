@@ -27,7 +27,7 @@ import * as ServerConfig from "../config.ts";
 
 const AnalyticsEnvConfig = Config.all({
   enabled: Config.boolean("SCIENT_ANALYTICS_ENABLED").pipe(Config.withDefault(false)),
-  consent: Config.string("SCIENT_ANALYTICS_CONSENT").pipe(Config.withDefault("off")),
+  consent: Config.string("SCIENT_ANALYTICS_CONSENT").pipe(Config.withDefault("diagnostic")),
   buildChannel: Config.string("SCIENT_ANALYTICS_BUILD_CHANNEL").pipe(
     Config.withDefault("development"),
   ),
@@ -189,7 +189,7 @@ export const make = Effect.gen(function* () {
   let consent = storedConsent ?? parseConsent(analyticsConfig.consent);
   let sessionStartedAt = yield* Clock.currentTimeMillis;
 
-  if (analyticsConfig.enabled && consent === "off" && analyticsConfig.consent !== "off") {
+  if (storedConsent === null && consent === "off" && analyticsConfig.consent !== "off") {
     yield* Effect.logWarning("Invalid Scient analytics consent; analytics remains off");
   }
 
