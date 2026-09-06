@@ -90,8 +90,8 @@ Every alignment explicitly reviews:
 
 - Scient product labels, icons, protocols, package identity, and retained compatibility names;
 - `scient-next` state roots, client persistence partitions, and migration history;
-- General Chat/projectless behavior, conversation forks, queue/steer semantics, Skills, Sources,
-  voice, analysis, compute, PDF, LaTeX, rich chat, and content direction;
+- retired projectless-thread cleanup and historical decoding, conversation forks, queue/steer
+  semantics, Skills, Sources, voice, analysis, compute, PDF, LaTeX, rich chat, and content direction;
 - provider inventory, model selection, agent awareness, system-installed and Scient-managed runtime
   paths, assisted sign-in/install/repair/update/remove/sign-out capabilities, and passive-probe safety;
 - browser/preview authorization, file and attachment schemas, asset access, and old-client replay;
