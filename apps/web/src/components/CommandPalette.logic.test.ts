@@ -2,13 +2,12 @@ import { describe, expect, it, vi } from "vite-plus/test";
 import { EnvironmentId, ProjectId, ProviderInstanceId, ThreadId } from "@t3tools/contracts";
 import type { Thread } from "../types";
 import {
-  browseInputEndPaddingClass,
   buildBrowseGroups,
+  browseInputEndPaddingClass,
   buildThreadActionItems,
   enumerateCommandPaletteItems,
   filterPinnedBrowseEntries,
   filterCommandPaletteGroups,
-  normalizeSearchText,
   reduceCommandPaletteUiState,
   isKeyboardBrowseHighlight,
   resolveBrowseEnterAction,
@@ -190,7 +189,6 @@ describe("browseInputEndPaddingClass", () => {
     ).toContain("pe-24");
   });
 });
-
 describe("reduceCommandPaletteUiState", () => {
   const closedState = { open: false, mode: "command", openIntent: null } as const;
 
@@ -499,10 +497,33 @@ describe("buildThreadActionItems", () => {
   });
 
   it("normalizes case independently of the host locale", () => {
-    const localeLowerCase = vi.spyOn(String.prototype, "toLocaleLowerCase").mockReturnValue("gıt");
+    const toLocaleLowerCase = String.prototype.toLocaleLowerCase;
+    const localeLowerCase = vi
+      .spyOn(String.prototype, "toLocaleLowerCase")
+      .mockImplementation(function (this: string) {
+        return toLocaleLowerCase.call(this, "tr");
+      });
     try {
-      expect(normalizeSearchText("GIT")).toBe("git");
-      expect(localeLowerCase).not.toHaveBeenCalled();
+      const groups = filterCommandPaletteGroups({
+        activeGroups: [],
+        query: "GIT",
+        isInSubmenu: false,
+        projectSearchItems: [],
+        threadSearchItems: [],
+        settingsSearchItems: [
+          {
+            kind: "action",
+            value: "setting:version-control",
+            title: "Version control",
+            searchTerms: ["git"],
+            icon: null,
+            run: async () => undefined,
+          },
+        ],
+      });
+      expect(groups.flatMap((group) => group.items.map((item) => item.value))).toEqual([
+        "setting:version-control",
+      ]);
     } finally {
       localeLowerCase.mockRestore();
     }

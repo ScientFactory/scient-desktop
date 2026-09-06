@@ -4,7 +4,7 @@ import { BlocksIcon, ChevronRightIcon, SearchIcon, SettingsIcon } from "lucide-r
 import { useCallback, useEffect, useMemo, useState } from "react";
 
 import { ComposerControl, ComposerControlChevron } from "../../components/chat/ComposerControl";
-import { PROVIDER_CLIENT_DEFINITIONS } from "../../components/settings/providerDriverMeta";
+import { DRIVER_OPTIONS } from "../../components/settings/providerDriverMeta";
 import { Button } from "../../components/ui/button";
 import { Popover, PopoverPopup, PopoverTrigger } from "../../components/ui/popover";
 import { ScientTooltip } from "../presentation/ScientTooltip";
@@ -98,19 +98,17 @@ export function ProviderOnboardingPicker(props: {
     return entries;
   }, [props.instanceEntries]);
   const normalizedQuery = query.trim().toLocaleLowerCase();
-  const visibleDefinitions = PROVIDER_CLIENT_DEFINITIONS.filter((definition) =>
+  const visibleDefinitions = DRIVER_OPTIONS.filter((definition) =>
     definition.label.toLocaleLowerCase().includes(normalizedQuery),
   );
-  const previewDefinitions = PROVIDER_CLIENT_DEFINITIONS.slice(0, 3);
-  const selectedDefinition = PROVIDER_CLIENT_DEFINITIONS.find(
+  const previewDefinitions = DRIVER_OPTIONS.slice(0, 3);
+  const selectedDefinition = DRIVER_OPTIONS.find(
     (definition) => definition.value === selectedDriver,
   );
   const selectedEntry = selectedDriver ? entriesByDriver.get(selectedDriver) : undefined;
   const showHome = selectedDefinition === undefined || normalizedQuery.length > 0;
   const reconnectDefinition = reconnectEntry
-    ? PROVIDER_CLIENT_DEFINITIONS.find(
-        (definition) => definition.value === reconnectEntry.driverKind,
-      )
+    ? DRIVER_OPTIONS.find((definition) => definition.value === reconnectEntry.driverKind)
     : undefined;
   const TriggerIcon = reconnectDefinition?.icon ?? BlocksIcon;
   const triggerLabel = reconnectEntry
@@ -213,7 +211,7 @@ export function ProviderOnboardingPicker(props: {
               />
               <div aria-hidden className="my-1 border-b border-border/70" />
               <div className="flex flex-col gap-1">
-                {PROVIDER_CLIENT_DEFINITIONS.map((definition) => (
+                {DRIVER_OPTIONS.map((definition) => (
                   <RailButton
                     key={definition.value}
                     active={!showHome && definition.value === selectedDriver}
@@ -363,7 +361,7 @@ export function ProviderLifecycleSetupSurface(props: {
 
 function RailButton(props: {
   readonly active: boolean;
-  readonly icon: (typeof PROVIDER_CLIENT_DEFINITIONS)[number]["icon"];
+  readonly icon: (typeof DRIVER_OPTIONS)[number]["icon"];
   readonly label: string;
   readonly onClick: () => void;
 }) {

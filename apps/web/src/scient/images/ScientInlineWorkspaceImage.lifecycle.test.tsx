@@ -1,6 +1,6 @@
 // @vitest-environment happy-dom
 
-import { EnvironmentId, ThreadId } from "@t3tools/contracts";
+import { EnvironmentId, ThreadId, type AssetImageDimensions } from "@t3tools/contracts";
 import { act } from "react";
 import { createRoot } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
@@ -8,13 +8,20 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test"
 const asset = vi.hoisted(() => ({
   url: "https://signed.test/initial",
   failed: false,
+  dimensions: undefined as AssetImageDimensions | undefined,
   refresh: vi.fn(),
 }));
 vi.mock("~/assets/assetUrls", () => ({
   useAssetUrlState: () =>
     asset.failed
       ? { _tag: "Failure", refresh: asset.refresh }
-      : { _tag: "Success", url: asset.url, expiresAt: 0, refresh: asset.refresh },
+      : {
+          _tag: "Success",
+          url: asset.url,
+          imageDimensions: asset.dimensions,
+          expiresAt: 0,
+          refresh: asset.refresh,
+        },
 }));
 vi.mock("~/components/media/MediaActions", () => ({
   useMediaActionUrl: () => async () => asset.url,
@@ -27,6 +34,7 @@ beforeEach(() => {
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
   asset.url = "https://signed.test/initial";
   asset.failed = false;
+  asset.dimensions = undefined;
   asset.refresh.mockClear();
 });
 afterEach(async () => {
@@ -79,6 +87,7 @@ describe("workspace file image display lifetime", () => {
   });
 
   it("retains loaded pixels through capability refresh/failure and resets only on retry or source identity", async () => {
+    asset.dimensions = { width: 720, height: 1400 };
     const host = document.createElement("div");
     document.body.append(host);
     const root = createRoot(host);
@@ -111,11 +120,17 @@ describe("workspace file image display lifetime", () => {
       );
     await render();
     const original = host.querySelector<HTMLImageElement>("img")!;
+    const imageFrame = () => host.querySelector<HTMLElement>("[data-scient-visual-card]")!;
+    expect(imageFrame().style.aspectRatio).toBe("720 / 1400");
+    expect(original.width).toBe(720);
+    expect(original.height).toBe(1400);
     await act(() => original.dispatchEvent(new Event("load")));
     asset.url = "https://signed.test/byte-action-token";
+    asset.dimensions = { width: 1400, height: 720 };
     await render();
     expect(host.querySelector("img")).toBe(original);
     expect(original.src).toBe("https://signed.test/initial");
+    expect(imageFrame().style.aspectRatio).toBe("720 / 1400");
     expect(host.textContent).not.toContain("Loading image…");
     asset.failed = true;
     await render();
@@ -135,6 +150,7 @@ describe("workspace file image display lifetime", () => {
     const retried = host.querySelector<HTMLImageElement>("img")!;
     expect(retried).not.toBe(original);
     expect(retried.src).toBe("https://signed.test/retry-token");
+    expect(imageFrame().style.aspectRatio).toBe("1400 / 720");
     expect(asset.refresh).toHaveBeenCalledOnce();
     await act(() => retried.dispatchEvent(new Event("load")));
     await render("thread-b", "#detail");

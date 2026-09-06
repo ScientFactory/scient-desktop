@@ -105,6 +105,16 @@ Changing the level selects Google's corresponding model variant; it does not
 change your account or installation. Saved favorites keep their exact model
 and reasoning level, so their labels still include the level.
 
+Skills for every project go in `~/.gemini/config/skills` or
+`~/.gemini/antigravity-cli/skills`. Antigravity does not read `~/.agents/skills`,
+so a skill there only appears when the project itself is your home directory.
+
+Antigravity accepts images, PDFs, text files, and supported audio formats directly.
+Its limits are 1 MiB per text file, 10 MiB per image, 20 MiB per audio clip, and
+50 MiB total attachments per message. Unsupported formats are rejected. These
+limits can be lower than the general upload limit; uploading a file does not
+mean this provider can use it.
+
 Use Antigravity's native `/plan` command to request a plan. Scient's separate
 Plan mode control is unavailable when the protocol cannot support it.
 
@@ -141,6 +151,13 @@ instances can use different accounts on one environment.
 | Disable Antigravity         | Stops that instance's sessions; keeps credentials, runtime, threads, and files.                                    |
 | Sign out or disconnect      | Stops that instance's sessions and clears its official ACP profile credentials; keeps runtime, threads, and files. |
 | Remove managed installation | Removes only Scient's shared ACP runtime; keeps account profiles, threads, files, and external installations.      |
+
+A server restart keeps your Google sign-in. The provider shows the saved account
+until a session, a refresh, or a sign-out reports something new.
+
+To check access and reload models, use **Refresh provider status** in web or desktop
+provider settings, or **Refresh models** in mobile thread settings. If asked to
+sign in again, use setup on web or desktop.
 
 Legacy `agy` credentials use the older provider-owned credential store and are
 kept for legacy-session compatibility. Removing the ACP runtime does not erase

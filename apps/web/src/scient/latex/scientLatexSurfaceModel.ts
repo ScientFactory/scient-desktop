@@ -43,7 +43,7 @@ const LATEX_SPLIT_BOUNDS = {
 
 export const LATEX_TOOLCHAIN_MISSING_TITLE = "No LaTeX toolchain found";
 export const LATEX_TOOLCHAIN_MISSING_HINT = "Install TeX Live, MiKTeX, or Tectonic to build PDFs.";
-export const LATEX_INSTALLING_LABEL = "Installing TinyTeX…";
+const LATEX_INSTALLING_LABEL = "Installing TinyTeX…";
 
 /** Past this many names the count says more than the list the strip can show. */
 const MAX_NAMED_INSTALLING_PACKAGES = 2;
@@ -61,7 +61,7 @@ const MAX_NAMED_FIRST_BUILD_PACKAGES = 6;
  * leads with how many there are, because the strip is one line and the tail of
  * it is the first thing an ellipsis takes.
  */
-export function latexInstallingPackagesLabel(packages: ReadonlyArray<string>): string {
+function latexInstallingPackagesLabel(packages: ReadonlyArray<string>): string {
   if (packages.length <= MAX_NAMED_INSTALLING_PACKAGES) {
     return `Installing LaTeX packages: ${packages.join(", ")}…`;
   }
@@ -77,7 +77,7 @@ export function latexInstallingPackagesLabel(packages: ReadonlyArray<string>): s
  * so is the difference between a reader waiting and a reader deciding the app
  * has hung; every later build is fast, and says the ordinary thing.
  */
-export function latexFirstBuildInstallingLabel(packages: ReadonlyArray<string>): string {
+function latexFirstBuildInstallingLabel(packages: ReadonlyArray<string>): string {
   const named =
     packages.length <= MAX_NAMED_FIRST_BUILD_PACKAGES
       ? packages.join(", ")

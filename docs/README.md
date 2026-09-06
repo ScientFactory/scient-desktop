@@ -18,6 +18,7 @@ require a cosmetic folder migration.
 
 - [Install and first run](./user/install.md)
 - [Getting started](./user/getting-started.md)
+- [Import projects and conversations](./user/welcome-wizard.md)
 - [Starting a project](./user/projects.md)
 - [Message Scient](./user/composer.md)
 - [Providers and assisted setup](./user/providers.md)

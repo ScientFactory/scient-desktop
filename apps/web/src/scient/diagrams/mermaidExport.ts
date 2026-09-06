@@ -37,7 +37,7 @@ export function prepareSvgForExport(svg: string, theme: MermaidTheme): string {
   );
 }
 
-export function downloadBlob(blob: Blob, fileName: string): void {
+function downloadBlob(blob: Blob, fileName: string): void {
   downloadPresentationBlob(blob, fileName);
 }
 
@@ -112,7 +112,7 @@ function canvasToPngBlob(canvas: HTMLCanvasElement): Promise<Blob> {
   });
 }
 
-export async function mermaidSvgToPngBlob(svg: string, theme: MermaidTheme): Promise<Blob> {
+async function mermaidSvgToPngBlob(svg: string, theme: MermaidTheme): Promise<Blob> {
   const prepared = prepareSvgForExport(svg, theme);
   const dimensions = parseSvgDimensions(prepared);
   const image = await loadSvgImage(prepared);

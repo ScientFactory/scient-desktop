@@ -19,12 +19,14 @@ export function resolveScientOnboardingEntry(input: {
   readonly primaryEnvironmentReady: boolean;
   readonly operateAccess: "granted" | "denied" | "pending";
   readonly hasExistingActivity: boolean;
+  /** Keep an open flow alive while its import creates the first project. */
+  readonly presentationActive?: boolean;
 }): ScientOnboardingEntryDecision {
   if (input.status === "dismissed" || input.status === "completed") return "bypass";
   if (!input.shellBootstrapped || !input.primaryEnvironmentReady) return "wait";
   if (input.operateAccess === "pending") return "wait";
   if (input.operateAccess === "denied") return "bypass";
-  if (input.hasExistingActivity) return "complete-silently";
+  if (input.hasExistingActivity && !input.presentationActive) return "complete-silently";
   return "present";
 }
 

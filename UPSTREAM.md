@@ -22,22 +22,22 @@ revision remains literal ancestry of owned `main`; it is not merely a reviewed
 or observed tip.
 
 The current proposed T3 ancestry is recorded in
-[`docs/internals/2026-09-05-upstream-sync-2fa5ef4c.md`](docs/internals/2026-09-05-upstream-sync-2fa5ef4c.md)
-and in `upstream-state.json`. This refresh preserves all 150 official commits
-from `5f878d2a85807618a4c8571cdef5daa3124672d6` through
-`2fa5ef4c7bf3aafabe98392d25be7eb86847ce8f`. It includes chat/timeline performance,
-file-editor grammar and autosave lifecycle fixes, owner-verified external-provider
-updates, post-edit checkpoints, prompt history, progressive usage and price controls,
-and associated provider, Git, mobile, connection, and runtime fixes. Scient's
-assisted lifecycle, managed/system ownership, reasoning selector, scientific rich
-output, models-first view, privacy defaults, and release authority remain.
-The candidate starts from owned main `5fa81d99e3`, including PR #238.
+[`docs/internals/2026-09-06-upstream-sync-272d6d74.md`](docs/internals/2026-09-06-upstream-sync-272d6d74.md)
+and in `upstream-state.json`. This refresh preserves all 188 official commits
+from `2fa5ef4c7bf3aafabe98392d25be7eb86847ce8f` through
+`272d6d747ef214f50dbd9d0051120de12ffa3591`. It includes project defaults and
+scoped overrides, optional CLI project/history import, connected-machine thread
+balancing, remaining quota and /usage-limits, stable image frames, provider/session
+fixes, and unused-code checks. Scient's assisted lifecycle, managed/system ownership,
+reasoning selector, scientific rich output, models-first view, private preferences,
+and release authority remain. The candidate starts from owned main `9d823d659f`.
 
-The history-preserving merge is `7dd0eb2fbe84152a9961de13c64a78de0b340b65`.
+The history-preserving merge is `42692796725e42feaef8b535fc1ddf3fe35e17d9`.
 Automated qualification passed; isolated-app interaction and human visual
 acceptance remain pending. The linked receipt states the platform limits and
-meaningful conflict decisions. The [preceding checkpoint](docs/internals/2026-09-04-upstream-sync-5f878d2a.md)
-remains in ancestry. This draft candidate does not claim to be merged into main.
+meaningful conflict decisions, including the approved optional import placement
+and preservation of Scient onboarding. The [preceding checkpoint](docs/internals/2026-09-05-upstream-sync-2fa5ef4c.md)
+remains in ancestry. This local candidate does not claim to be pushed or merged into main.
 Later observed upstream tips do not move `integrationBase` by themselves, and
 publication remains a separate gate.
 

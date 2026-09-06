@@ -1,6 +1,6 @@
 // Plotly may allocate multiple contexts for one graph. Two live figures leave
 // headroom for Chromium's compositor and other scientific render surfaces.
-export const MAX_ACTIVE_PLOTLY_WEBGL_FIGURES = 2;
+const MAX_ACTIVE_PLOTLY_WEBGL_FIGURES = 2;
 
 interface PlotlyWebGlActivityLease {
   readonly activate: () => void;

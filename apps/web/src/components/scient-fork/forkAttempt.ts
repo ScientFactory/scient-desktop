@@ -36,7 +36,7 @@ export function forkAttemptKey(environmentId: string, originId: string, source: 
   return JSON.stringify([environmentId, originId, source]);
 }
 
-export function forkErrorDisposition(error: unknown): ForkDisposition {
+function forkErrorDisposition(error: unknown): ForkDisposition {
   const disposition =
     typeof error === "object" && error !== null && "forkDisposition" in error
       ? error.forkDisposition

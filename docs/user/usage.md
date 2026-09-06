@@ -50,25 +50,35 @@ marked **Not saved**. Reconnect them and choose **Retry failed saves** to finish
 without writing again to environments that already saved. Changes are not queued after you close
 the dialog.
 
-The **Limits** view shows how much of each subscription window you have used on Codex and Claude
-Code, per connected environment: the session and weekly windows, plus a per-model weekly window
-such as Fable when your plan has one. Each window is a bar from the moment it opened to its reset,
-filled by the share of quota spent; a thin line marks how far into the window you are, which is
-also where even spending would have put the fill, and the icon beside the label says whether you
-are ahead of, on, or under that pace. Hover a bar for the exact reset time. Limits refresh on the
-provider health-check interval and update live while a turn runs. API-key accounts have no
-subscription windows and say so; that includes a Claude Code that reaches Anthropic through a proxy
-via `ANTHROPIC_AUTH_TOKEN`, since the CLI then treats itself as an API-key client.
+## Check subscription limits
 
-If you pool accounts behind a CLIProxyAPI hub, open **Settings → Providers → Usage providers**
-and choose **Add hub**. Select the device that should connect to the hub; its accounts appear on
-the Limits view. Remove hubs from the same settings section. Each limits row shows its provider
-and instance name, or a small _CLI Proxy_ label for
-hub accounts. When a connected provider reports limits for the same provider and email, its row
-replaces the hub copy, keeping details such as banked reset credits. The hub copy remains visible
-if the connected provider cannot report limits. Enter the hub's URL and management key; the key
-is stored on the server and never sent back to a client. Emails are blurred until clicked, as in
-provider settings.
+**Usage → Limits** shows how much quota is left in each window and when it resets, for Codex and
+Claude subscriptions. For windows with timing data, each bar also marks how much of the window is
+left, so you can judge your pace before the next reset.
+
+If a window looks stale, refresh Limits to re-check every provider and hub.
+
+Pick `/usage-limits` from the composer's command menu, or send it as a message, to check the
+current model's limits without leaving the conversation. The result opens above the composer and
+closes when you dismiss it or send your next message. It uses the same snapshot as **Usage → Limits**, so it does not run the agent or refresh
+anything. The command is offered only for providers that appear under **Usage → Limits**.
+
+API-key accounts may not report subscription limits. This also applies to Claude connections
+using a proxy through `ANTHROPIC_AUTH_TOKEN`.
+
+## Connect a CLIProxyAPI hub
+
+To see pooled accounts, open **Settings → Providers → Usage providers → Add hub**. Choose the
+environment that will connect to the hub and enter its URL and management key.
+
+The accounts appear under **Usage → Limits**. This connection supplies usage information; configure
+the provider separately to send agent requests through the hub. Remove the hub from the same
+settings section when you no longer need it.
+
+If a directly connected provider reports limits for the same provider and email, its row replaces
+the hub copy and retains details such as banked reset credits. The hub remains visible when the
+provider cannot report limits. Management keys stay on the server and are not returned to clients.
+Account emails follow your privacy setting.
 
 Use **Past 24h** for an hourly chart covering the exact rolling 24-hour period. The **7 days**,
 **30 days**, and **90 days** ranges use daily resolution. Cost and token toggles update both the

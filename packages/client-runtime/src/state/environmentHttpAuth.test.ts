@@ -34,6 +34,8 @@ import {
 import { fetchEnvironmentSessionState } from "./session.ts";
 import { fetchEnvironmentShellSnapshot } from "./shellSnapshotHttp.ts";
 import { fetchEnvironmentThreadSnapshot } from "./threadSnapshotHttp.ts";
+import { listEnvironmentScientThreadQueue } from "./scientThreadQueueHttp.ts";
+import { uploadEnvironmentMarkdownImage } from "./scientMarkdownHttp.ts";
 
 const TARGET = new RelayConnectionTarget({
   environmentId: EnvironmentId.make("environment-1"),
@@ -179,6 +181,49 @@ const LOADERS: ReadonlyArray<{
   >;
 }> = [
   {
+    name: "Scient thread queue",
+    method: "POST",
+    path: "/api/scient/thread-queue/v2/list",
+    response: { threadId: THREAD.thread.id, revision: 1, items: [] },
+    load: (input: HttpInput) =>
+      listEnvironmentScientThreadQueue({
+        prepared: input.prepared,
+        threadId: THREAD.thread.id,
+      }).pipe(
+        Effect.provideService(ManagedRelayDpopSigner, Option.getOrThrow(input.signer)),
+        Effect.provideService(
+          RemoteEnvironmentAuthorization,
+          Option.getOrThrow(input.remoteAuthorization),
+        ),
+      ),
+  },
+  {
+    name: "Scient Markdown image upload",
+    method: "POST",
+    path: "/api/scient/markdown/images/upload",
+    response: {
+      relativePath: "assets/figure.png",
+      markdownSource: "assets/figure.png",
+      mediaType: "image/png",
+      byteLength: 3,
+      revision: "image-revision",
+    },
+    load: (input: HttpInput) =>
+      uploadEnvironmentMarkdownImage({
+        prepared: input.prepared,
+        cwd: "/workspace",
+        documentRelativePath: "notes.md",
+        file: new Blob(["png"], { type: "image/png" }),
+        fileName: "figure.png",
+      }).pipe(
+        Effect.provideService(ManagedRelayDpopSigner, Option.getOrThrow(input.signer)),
+        Effect.provideService(
+          RemoteEnvironmentAuthorization,
+          Option.getOrThrow(input.remoteAuthorization),
+        ),
+      ),
+  },
+  {
     name: "PR diff",
     method: "POST",
     path: "/api/pull-requests/diff",
@@ -214,6 +259,39 @@ const LOADERS: ReadonlyArray<{
 ];
 
 describe("authenticated environment HTTP requests", () => {
+  it.effect.each(LOADERS.filter((loader) => loader.name.startsWith("Scient ")))(
+    "retries $name once after credential rejection without losing the payload",
+    (loader) =>
+      Effect.gen(function* () {
+        const harness = makeHarness((attempt) =>
+          attempt === 1 ? credentialRejectedResponse() : Response.json(loader.response),
+        );
+        const result = yield* loader.load(harness.input).pipe(Effect.provide(harness.httpLayer));
+        expect(result).toEqual(loader.response);
+        expect(harness.calls.map((call) => call.url)).toEqual([
+          CURRENT_ORIGIN + loader.path,
+          RENEWED_ORIGIN + loader.path,
+        ]);
+        expect(harness.authorizations).toEqual([
+          { expectedEnvironmentId: TARGET.environmentId },
+          { expectedEnvironmentId: TARGET.environmentId, rejectedAccessToken: "current-token" },
+        ]);
+        for (const call of harness.calls) {
+          if (loader.name === "Scient thread queue") {
+            expect(yield* Effect.promise(() => new Response(call.init.body).json())).toEqual({
+              threadId: THREAD.thread.id,
+            });
+          } else {
+            const form = call.init.body as FormData;
+            expect(form.get("cwd")).toBe("/workspace");
+            expect(form.get("documentRelativePath")).toBe("notes.md");
+            expect(form.get("file")).toBeInstanceOf(Blob);
+            expect(yield* Effect.promise(() => (form.get("file") as Blob).text())).toBe("png");
+          }
+        }
+      }),
+  );
+
   it.effect.each(LOADERS)("uses current relay authorization and endpoint for $name", (loader) =>
     Effect.gen(function* () {
       const harness = makeHarness(() => Response.json(loader.response));

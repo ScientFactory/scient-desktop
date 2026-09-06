@@ -44,7 +44,7 @@ export function ScientReleaseNotes() {
   );
 }
 
-export function ScientReleaseNotesCard({
+function ScientReleaseNotesCard({
   release,
   onDismiss,
   onOpen,
@@ -91,7 +91,7 @@ export function ScientReleaseNotesCard({
   );
 }
 
-export function ScientReleaseNotesDialog({
+function ScientReleaseNotesDialog({
   current,
   history,
   open,

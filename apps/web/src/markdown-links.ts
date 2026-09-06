@@ -2,7 +2,6 @@ import {
   fileBasename,
   formatFilePathPosition,
   inlineCodeFilePathCandidate,
-  isConventionalFilePosition,
   isRelativeFilePath,
   normalizeMarkdownLinkDestination,
   parseFileUrlHref,
@@ -96,19 +95,7 @@ export function resolveInlineCodeFileLinkMeta(
   const candidate = inlineCodeFilePathCandidate(codeText);
   if (candidate === null) return null;
 
-  const resolved = resolveMarkdownFileLinkMeta(candidate, cwd, workspaceRoot, baseDir);
-  if (resolved) return resolved;
-
-  // `Makefile:12` is path-shaped in an inline span even though the generic
-  // markdown-link parser rejects ambiguous extensionless prose.
-  if (baseDir && isConventionalFilePosition(candidate)) {
-    return buildFileLinkMetaFromTarget(
-      resolvePathLinkTarget(candidate, baseDir),
-      cwd,
-      workspaceRoot,
-    );
-  }
-  return null;
+  return resolveMarkdownFileLinkMeta(candidate, cwd, workspaceRoot, baseDir);
 }
 
 export function resolveMarkdownFileLinkMeta(

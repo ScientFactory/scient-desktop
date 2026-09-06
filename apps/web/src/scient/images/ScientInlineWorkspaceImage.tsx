@@ -10,7 +10,7 @@ import {
   RefreshCwIcon,
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import type { ScopedThreadRef } from "@t3tools/contracts";
+import type { AssetImageDimensions, ScopedThreadRef } from "@t3tools/contracts";
 
 import { useAssetUrlState } from "~/assets/assetUrls";
 import { PreviewImageSurface } from "~/components/preview/PreviewImageSurface";
@@ -334,6 +334,7 @@ export function ScientInlineWorkspaceImage(props: {
   const [retainedDisplay, setRetainedDisplay] = useState<{
     readonly identity: string;
     readonly url: string;
+    readonly dimensions?: AssetImageDimensions | undefined;
   } | null>(null);
   const [displayAttempt, setDisplayAttempt] = useState(0);
   const displayIdentity = JSON.stringify([
@@ -365,6 +366,13 @@ export function ScientInlineWorkspaceImage(props: {
       : null;
   const url =
     retained?.url ?? (asset._tag === "Success" ? asset.url + (props.srcFragment ?? "") : null);
+  // Reserve the same box before decoding as after it. Keep metadata paired with
+  // the retained file revision so a refresh cannot resize the previous image.
+  const dimensions = retained
+    ? retained.dimensions
+    : asset._tag === "Success"
+      ? asset.imageDimensions
+      : undefined;
   const loadFailed =
     (asset._tag === "Failure" && retained === null) || (url != null && failedUrl === url);
   const loaded =
@@ -584,10 +592,20 @@ export function ScientInlineWorkspaceImage(props: {
         className={cn(
           props.filePresentation
             ? "relative block max-w-full rounded-lg"
-            : "relative block min-h-10 min-w-28 max-w-full overflow-hidden rounded-lg",
-          !loaded && "min-h-44 w-80",
+            : "relative block max-w-full overflow-hidden rounded-lg",
+          !props.filePresentation && !dimensions && "min-h-10 min-w-28",
+          !loaded && !dimensions && "min-h-44 w-80",
           BACKGROUND_CLASS[background],
         )}
+        style={
+          dimensions
+            ? {
+                width: dimensions.width,
+                aspectRatio: `${dimensions.width} / ${dimensions.height}`,
+                maxWidth: `min(100%, ${(32 * dimensions.width) / dimensions.height}rem)`,
+              }
+            : undefined
+        }
       >
         {props.filePresentation ? (
           <ScientImageControls
@@ -670,13 +688,16 @@ export function ScientInlineWorkspaceImage(props: {
               crossOrigin="anonymous"
               decoding="async"
               draggable={false}
+              width={dimensions?.width}
+              height={dimensions?.height}
               loading="lazy"
               onError={handleImageError}
               onLoad={() => {
                 autoRetriedRef.current = null;
                 setFailedUrl(null);
                 setLoadedUrl(url);
-                if (props.filePresentation) setRetainedDisplay({ identity: displayIdentity, url });
+                if (props.filePresentation)
+                  setRetainedDisplay({ identity: displayIdentity, url, dimensions });
               }}
               src={url}
             />

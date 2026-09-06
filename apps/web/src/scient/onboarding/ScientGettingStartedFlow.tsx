@@ -3,7 +3,7 @@ import { useNavigate } from "@tanstack/react-router";
 import { useCallback, useEffect, useMemo, useState } from "react";
 
 import { openCommandPalette } from "../../commandPaletteBus";
-import { PROVIDER_CLIENT_DEFINITIONS } from "../../components/settings/providerDriverMeta";
+import { DRIVER_OPTIONS } from "../../components/settings/providerDriverMeta";
 import { resolvePrimaryOperateAccess } from "../../components/settings/ProviderSettingsPanel.logic";
 import { usePrimarySessionState } from "../../environments/primary";
 import {
@@ -30,6 +30,7 @@ import {
   type GettingStartedProviderChoice,
 } from "./ScientGettingStartedView";
 import { useScientOnboardingStorage } from "./storage";
+import { ScientProjectImportAction } from "./ScientProjectImportAction";
 
 const PRIMARY_ONBOARDING_PROVIDER_COUNT = 3;
 
@@ -96,7 +97,7 @@ export function ScientGettingStartedFlow(props: { readonly mode: "automatic" | "
   }, [instanceEntries]);
   const choices = useMemo<ReadonlyArray<GettingStartedProviderChoice>>(
     () =>
-      PROVIDER_CLIENT_DEFINITIONS.slice(0, PRIMARY_ONBOARDING_PROVIDER_COUNT).map((definition) => {
+      DRIVER_OPTIONS.slice(0, PRIMARY_ONBOARDING_PROVIDER_COUNT).map((definition) => {
         const entry = entryByDriver.get(definition.value) ?? null;
         return {
           driverKind: definition.value,
@@ -232,7 +233,10 @@ export function ScientGettingStartedFlow(props: { readonly mode: "automatic" | "
           workKinds={workKinds}
         />
       ) : (
-        <GettingStartedStartStep onAddProject={addProject} />
+        <GettingStartedStartStep
+          onAddProject={addProject}
+          importAction={<ScientProjectImportAction onImported={completeOnboarding} />}
+        />
       )}
     </ScientGettingStartedShell>
   );

@@ -1,6 +1,6 @@
 const VOICE_OPERATION_FAILED_MESSAGE = "Voice operation failed. Try again.";
 
-export function sanitizeVoiceErrorMessage(message: string): string {
+function sanitizeVoiceErrorMessage(message: string): string {
   return message
     .replace(/\n\s*at\s+[\s\S]*$/u, "")
     .replace(/^Error invoking remote method '[^']*':\s*/u, "")

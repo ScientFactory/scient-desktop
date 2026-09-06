@@ -2,7 +2,7 @@ import { videoMimeType } from "./video.ts";
 
 export const WORKSPACE_BROWSER_PREVIEW_EXTENSIONS = [".htm", ".html", ".pdf"] as const;
 
-export const WORKSPACE_PDF_PREVIEW_EXTENSIONS = [".pdf"] as const;
+const WORKSPACE_PDF_PREVIEW_EXTENSIONS = [".pdf"] as const;
 
 export const WORKSPACE_IMAGE_PREVIEW_EXTENSIONS = [
   ".avif",

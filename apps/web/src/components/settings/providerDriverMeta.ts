@@ -95,11 +95,11 @@ const PROVIDER_CLIENT_DEFINITIONS_UNORDERED: readonly ProviderClientDefinition[]
   },
 ];
 
-export const PROVIDER_CLIENT_DEFINITIONS = PROVIDER_CLIENT_DEFINITIONS_UNORDERED.toSorted(
-  (left, right) => compareProviderDriverKinds(left.value, right.value),
+const PROVIDER_CLIENT_DEFINITIONS = PROVIDER_CLIENT_DEFINITIONS_UNORDERED.toSorted((left, right) =>
+  compareProviderDriverKinds(left.value, right.value),
 );
 
-export const PROVIDER_CLIENT_DEFINITION_BY_VALUE: Partial<
+const PROVIDER_CLIENT_DEFINITION_BY_VALUE: Partial<
   Record<ProviderDriverKind, ProviderClientDefinition>
 > = Object.fromEntries(
   PROVIDER_CLIENT_DEFINITIONS.map((definition) => [definition.value, definition]),

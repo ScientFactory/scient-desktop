@@ -1,5 +1,5 @@
 import {
-  compareRankedSearchResults,
+  insertRankedSearchResult,
   normalizeSearchQuery,
   scoreQueryMatch,
   type RankedSearchResult,
@@ -9,7 +9,7 @@ import * as Schema from "effect/Schema";
 import { isScientMarkdownDocumentPath } from "./markdownDocumentPaths";
 
 export const WIKI_LINK_RECENT_LIMIT = 6;
-export const WIKI_LINK_PICKER_RESULT_LIMIT = 50;
+const WIKI_LINK_PICKER_RESULT_LIMIT = 50;
 
 export const WikiLinkRecentPaths = Schema.Array(Schema.String);
 
@@ -163,15 +163,18 @@ export function buildWikiLinkPickerSections(input: {
     const score = candidateSearchScore(candidate, query);
     if (score === null) continue;
     const recency = recentOrder.get(candidate.path);
-    ranked.push({
-      item: candidate,
-      score,
-      tieBreaker:
-        recency === undefined
-          ? `1:${candidate.path}`
-          : `0:${recency.toString().padStart(2, "0")}:${candidate.path}`,
-    });
+    insertRankedSearchResult(
+      ranked,
+      {
+        item: candidate,
+        score,
+        tieBreaker:
+          recency === undefined
+            ? `1:${candidate.path}`
+            : `0:${recency.toString().padStart(2, "0")}:${candidate.path}`,
+      },
+      limit,
+    );
   }
-  ranked.sort(compareRankedSearchResults);
-  return { recent: [], results: ranked.slice(0, limit).map(({ item }) => item) };
+  return { recent: [], results: ranked.map(({ item }) => item) };
 }

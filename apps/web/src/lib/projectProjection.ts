@@ -3,7 +3,7 @@ import type { ScopedProjectRef } from "@t3tools/contracts";
 import { appAtomRegistry } from "../rpc/atomRegistry";
 import { environmentProjects } from "../state/projects";
 
-export const PROJECT_PROJECTION_WAIT_TIMEOUT_MS = 5_000;
+const PROJECT_PROJECTION_WAIT_TIMEOUT_MS = 5_000;
 
 interface ProjectionSource<T> {
   readonly read: () => T;

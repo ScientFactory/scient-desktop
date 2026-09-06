@@ -55,7 +55,7 @@ const CREDENTIAL_PHASE_LABELS: Record<ProviderAuthState["phase"], string> = {
 };
 
 /** Read the configured method from the instance config. Unknown values fall back to personal. */
-export function readAntigravityAuthMethod(config: unknown): AntigravityAuthMethod {
+function readAntigravityAuthMethod(config: unknown): AntigravityAuthMethod {
   const value =
     config !== null && typeof config === "object" && "authMethod" in config
       ? config.authMethod

@@ -1,5 +1,4 @@
 export {
-  copyPngBlobToClipboard,
   copyStaticImage,
   downloadStaticImage,
   staticImageCopyDimensions,
