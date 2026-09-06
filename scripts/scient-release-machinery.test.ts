@@ -162,6 +162,24 @@ describe("Scient release machinery", () => {
     assert.include(workflow, "Publication requires signed macOS artifacts:");
   });
 
+  it("uses the temporary keychain password when granting macOS signing access", () => {
+    const workspace = NodeFS.readFileSync(
+      NodePath.join(import.meta.dirname, "../pnpm-workspace.yaml"),
+      "utf8",
+    );
+    const patch = NodeFS.readFileSync(
+      NodePath.join(import.meta.dirname, "../patches/app-builder-lib@26.15.6.patch"),
+      "utf8",
+    );
+
+    assert.include(workspace, "app-builder-lib@26.15.6: patches/app-builder-lib@26.15.6.patch");
+    assert.include(patch, "importCerts(keychainFile, certPaths, cscPasswords, keychainPassword)");
+    assert.include(
+      patch,
+      '"set-key-partition-list", "-S", "apple-tool:,apple:", "-s", "-k", keychainPassword',
+    );
+  });
+
   it("pins Bash for every package-version alignment step", () => {
     const workflow = NodeFS.readFileSync(
       NodePath.join(import.meta.dirname, "../.github/workflows/release.yml"),
