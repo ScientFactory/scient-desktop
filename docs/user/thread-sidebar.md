@@ -62,6 +62,15 @@ The main sidebar, right panel, and terminal drawer open and close immediately by
 The duration can be set up to 400 ms. Clicking the preview replays all three panel transitions; at
 0 ms, it snaps between the same open and closed states.
 
+The server finds the PR for each unsettled thread's saved branch, even when your
+apps are closed. Settled threads keep their saved links. Update the server if
+automatic branch links do not appear.
+
+On web and desktop, right-click a pull request link in a thread and choose
+**Link to thread** to select a different PR. Use **Unlink from thread** on the
+same link to return to the branch PR, if one exists.
+The linked pull request participates in automatic settlement.
+
 ## Environment icons
 
 When you are connected to more than one environment, every thread that lives somewhere other than

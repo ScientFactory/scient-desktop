@@ -354,13 +354,6 @@ function ThreadNavigationSidebarPane(
           }),
     [threadListV2Enabled, groups, groupDisplayStates, hasSearchQuery],
   );
-  const projectCwdByKey = useMemo(() => {
-    const map = new Map<string, string>();
-    for (const project of projects) {
-      map.set(scopedProjectKey(project.environmentId, project.id), project.workspaceRoot);
-    }
-    return map;
-  }, [projects]);
   const projectByKey = useMemo(() => {
     const map = new Map<string, EnvironmentProject>();
     for (const project of projects) {
@@ -743,7 +736,6 @@ function ThreadNavigationSidebarPane(
     () => ({
       selectedThreadKey: props.selectedThreadKey ?? "",
       projectByKey,
-      projectCwdByKey,
       projectTitleByProjectKey,
       savedConnectionsById,
       serverConfigs,
@@ -753,7 +745,6 @@ function ThreadNavigationSidebarPane(
     [
       props.selectedThreadKey,
       projectByKey,
-      projectCwdByKey,
       projectTitleByProjectKey,
       savedConnectionsById,
       serverConfigs,
@@ -916,7 +907,6 @@ function ThreadNavigationSidebarPane(
               onPinThread={pinThread}
               onUnpinThread={unpinThread}
               onMovePinnedThread={movePinnedThread}
-              projectCwd={projectCwdByKey.get(scopeKey) ?? null}
               onSwipeableClose={handleSwipeableClose}
               onSwipeableWillOpen={handleSwipeableWillOpen}
               simultaneousSwipeGesture={sidebarScrollGesture}
@@ -1003,10 +993,6 @@ function ThreadNavigationSidebarPane(
                 savedConnectionsById[thread.environmentId]?.environmentLabel ?? null
               }
               environmentMachine={machineByEnvironmentId.get(thread.environmentId)}
-              projectCwd={
-                projectCwdByKey.get(scopedProjectKey(thread.environmentId, thread.projectId)) ??
-                null
-              }
               isLast={item.isLast}
               searchMatch={threadSearchMatchByKey.get(
                 threadSearchMatchKey({
@@ -1057,7 +1043,6 @@ function ThreadNavigationSidebarPane(
       pinThread,
       pinningEnvironmentIds,
       projectByKey,
-      projectCwdByKey,
       projectTitleByProjectKey,
       regenerateThreadTitle,
       props.onNewThreadInProject,
