@@ -1,4 +1,4 @@
-import { RefreshCwIcon } from "lucide-react";
+import { RefreshCwIcon, SigmaIcon } from "lucide-react";
 import { useEffect, useState } from "react";
 import type {
   ComputeLanguageRuntimeInspection,
@@ -18,7 +18,6 @@ import {
   SettingsRow,
   SettingsSection,
 } from "~/components/settings/settingsLayout";
-import { searchableSetting } from "~/components/settings/settingsSearch";
 
 function readinessLabel(language: ComputeLanguageRuntimeInspection, enabled: boolean): string {
   if (!enabled) return "Disabled";
@@ -190,34 +189,47 @@ export function ScientificComputingSettings() {
       <SettingsSection
         id="scientific-computing"
         title="Scientific Computing"
+        icon={<SigmaIcon className="size-4 text-muted-foreground" />}
+        variant="plain"
         headerAction={
           <span className="text-xs text-muted-foreground">
             {primaryEnvironment?.label ?? "No server selected"}
           </span>
         }
       >
-        <SettingsRow
-          {...searchableSetting("scientific-computing")}
-          title="Optional runtimes"
-          description="Choose only the languages you use. Scient discovers existing runtimes; it does not download packages, activate licenses, or change your environment. Executed code has this server environment's filesystem and network access and is not sandboxed."
-          status={runtimes.error}
-        />
-        {(runtimes.data?.languages ?? []).map((language) => {
-          const preference = preferences.languages[language.descriptor.languageId] ?? {
-            enabled: false,
-            executable: "",
-          };
-          return (
-            <LanguageSettingsRow
-              key={language.descriptor.languageId}
-              language={language}
-              preference={preference}
-              onChange={(next) => updateLanguage(language.descriptor.languageId, next)}
-              onRefresh={() => void handleRefresh()}
-              refreshing={runtimes.isPending || refreshing}
-            />
-          );
-        })}
+        <div className="space-y-3">
+          <div className="rounded-xl border border-border/60 bg-card/40 shadow-xs/5 [&>*+*]:border-t [&>*+*]:border-border/50 [&>[data-slot=settings-row]]:rounded-none">
+            {(runtimes.data?.languages ?? []).map((language) => {
+              const preference = preferences.languages[language.descriptor.languageId] ?? {
+                enabled: false,
+                executable: "",
+              };
+              return (
+                <LanguageSettingsRow
+                  key={language.descriptor.languageId}
+                  language={language}
+                  preference={preference}
+                  onChange={(next) => updateLanguage(language.descriptor.languageId, next)}
+                  onRefresh={() => void handleRefresh()}
+                  refreshing={runtimes.isPending || refreshing}
+                />
+              );
+            })}
+            {runtimes.error ? (
+              <p className="px-4 py-3 text-xs text-destructive" role="alert">
+                {runtimes.error}
+              </p>
+            ) : null}
+          </div>
+          <div className="mx-auto w-full max-w-xl rounded-xl border border-dashed border-border/60 bg-muted/15 px-4 py-5 text-center">
+            <p className="text-sm font-medium text-foreground/85">
+              More scientific tools are coming soon
+            </p>
+            <p className="mt-1 text-xs text-muted-foreground/80">
+              Additional languages and purpose-built scientific workflows are on the way.
+            </p>
+          </div>
+        </div>
       </SettingsSection>
     </SettingsPageContainer>
   );
