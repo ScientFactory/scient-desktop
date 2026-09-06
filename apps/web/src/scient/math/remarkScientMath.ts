@@ -15,7 +15,7 @@ export const remarkScientMath = [remarkMath, { singleDollarTextMath: false }] sa
 >[number];
 
 /** TeX longer than this is not typeset; the literal source is shown instead. */
-export const MAX_SCIENT_TEX_LENGTH = 1000;
+const MAX_SCIENT_TEX_LENGTH = 1000;
 
 const MATH_CODE_CLASS_NAME = "language-math";
 

@@ -17,14 +17,14 @@ export type ScientSourcesImportOutcome = {
   readonly counts: ScientSourcesImportCounts;
 };
 
-export const EMPTY_IMPORT_COUNTS: ScientSourcesImportCounts = {
+const EMPTY_IMPORT_COUNTS: ScientSourcesImportCounts = {
   imported: 0,
   alreadyPresent: 0,
   reviewRequired: 0,
   failed: 0,
 };
 
-export function isExactSourceDuplicate(kind: ScientSourceDuplicateKind): boolean {
+function isExactSourceDuplicate(kind: ScientSourceDuplicateKind): boolean {
   return kind === "same-origin" || kind === "same-identifier" || kind === "same-pdf";
 }
 

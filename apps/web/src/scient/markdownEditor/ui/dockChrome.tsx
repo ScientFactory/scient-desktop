@@ -452,10 +452,7 @@ export function DockOverflowRow(props: {
  * Expands or collapses the dock's formatting controls. The collapsed handle
  * carries a label so the bar never reads as empty chrome.
  */
-export function DockCollapseHandle(props: {
-  readonly expanded: boolean;
-  readonly onToggle: () => void;
-}) {
+function DockCollapseHandle(props: { readonly expanded: boolean; readonly onToggle: () => void }) {
   const label = props.expanded ? "Hide formatting tools" : "Show formatting tools";
   return (
     <Tooltip>

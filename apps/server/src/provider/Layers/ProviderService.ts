@@ -32,6 +32,7 @@ import {
 import { expandAssistantCitationsForProvider } from "@t3tools/shared/assistantCitations";
 import { causeErrorTag } from "@t3tools/shared/observability";
 import { getModelSelectionStringOptionValue } from "@t3tools/shared/model";
+import { resolveProjectAgentBrowserAccess } from "@t3tools/shared/serverSettings";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
@@ -76,6 +77,7 @@ import * as ServerSettings from "../../serverSettings.ts";
 import * as ScientSkillSession from "../../scient/skills/ScientSkillSession.ts";
 import { prepareScientSkillTurn } from "../../scient/skills/ScientSkillInvocation.ts";
 import { scientToolProjectionForProvider } from "../ScientToolProjection.ts";
+import * as ProjectionSnapshotQuery from "../../orchestration/Services/ProjectionSnapshotQuery.ts";
 const isModelSelection = Schema.is(ModelSelection);
 
 interface PendingCompaction {
@@ -327,6 +329,9 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
   const directory = yield* ProviderSessionDirectory.ProviderSessionDirectory;
   const serverSettings = yield* ServerSettings.ServerSettingsService;
   const skillSessionPlanner = yield* ScientSkillSession.ScientSkillSessionPlanner;
+  const projectionQuery = yield* Effect.serviceOption(
+    ProjectionSnapshotQuery.ProjectionSnapshotQuery,
+  );
   const issueMcpCredential =
     options?.issueMcpCredential ?? McpSessionRegistry.issueActiveMcpCredential;
   const replaceMcpSkillScope =
@@ -713,8 +718,21 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
    * read. The baseline project capabilities are intentionally independent of
    * this preference.
    */
-  const agentBrowserAccessEnabled = serverSettings.getSettings.pipe(
-    Effect.map((settings) => settings.enableAgentBrowserAccess),
+  const agentBrowserAccessEnabled = Effect.fn("ProviderService.agentBrowserAccessEnabled")(
+    function* (threadId: ThreadId) {
+      const settings = yield* serverSettings.getSettings;
+      if (Object.keys(settings.projectAgentBrowserAccessOverrides).length === 0) {
+        return settings.enableAgentBrowserAccess;
+      }
+      // Provider-only runtimes may omit orchestration. An unresolved project
+      // must not bypass an explicit browser override.
+      if (Option.isNone(projectionQuery)) return false;
+      const thread = yield* projectionQuery.value.getThreadShellById(threadId);
+      if (Option.isNone(thread)) return false;
+      return thread.value.projectId === null
+        ? settings.enableAgentBrowserAccess
+        : resolveProjectAgentBrowserAccess(settings, thread.value.projectId);
+    },
     Effect.catch((cause) =>
       Effect.logWarning(
         "Could not read server settings; withholding agent browser access for this session.",
@@ -729,7 +747,7 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
     provider: ProviderDriverKind,
   ) =>
     Effect.gen(function* () {
-      const browserAccessEnabled = yield* agentBrowserAccessEnabled;
+      const browserAccessEnabled = yield* agentBrowserAccessEnabled(threadId);
       const supportsScientSkills =
         ScientSkillSession.scientSkillDeliveryForProvider(provider) === "mcp";
       const capabilities = new Set<McpCapability>([

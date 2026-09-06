@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react";
 
 import { plotlyWebGlActivityPool } from "./plotlyWebGlActivityPool";
 
-export const PLOTLY_WEBGL_RELEASE_DELAY_MS = 1_500;
+const PLOTLY_WEBGL_RELEASE_DELAY_MS = 1_500;
 
 export function plotlyViewportDecision(input: {
   readonly everActivated: boolean;

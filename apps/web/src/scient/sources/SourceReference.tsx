@@ -34,7 +34,7 @@ function referenceStyleStorageKey(projectId: string): string {
 
 let citationModulePromise: Promise<CitationModule> | null = null;
 
-export function loadCitationModule(): Promise<CitationModule> {
+function loadCitationModule(): Promise<CitationModule> {
   citationModulePromise ??= import("@scientfactory/scient-citations");
   return citationModulePromise;
 }

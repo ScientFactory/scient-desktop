@@ -34,6 +34,7 @@ import { ServerConfig } from "../../config.ts";
 import { makeClaudeConnectionActions } from "../../scient/providerLifecycle/ClaudeConnectionActions.ts";
 import { makeClaudeManagedRuntimeResolution } from "../../scient/providerLifecycle/ClaudeManagedRuntimeActions.ts";
 import { makeClaudeVoiceTranscriptCorrection } from "../../scient/voice/ClaudeVoiceTranscriptCorrection.ts";
+import { expandHomePath } from "../../pathExpansion.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
 import { ProviderDriverError } from "../Errors.ts";
 import { makeClaudeAdapter } from "../Layers/ClaudeAdapter.ts";
@@ -196,7 +197,7 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv> = {
       const effectiveConfig = {
         ...config,
         enabled,
-        binaryPath: managedRuntime.effectiveBinaryPath,
+        binaryPath: expandHomePath(managedRuntime.effectiveBinaryPath),
       } satisfies ClaudeSettings;
       const effectiveProcessEnv = managedRuntime.usesManagedPath
         ? { ...processEnv, DISABLE_UPDATES: "1" }

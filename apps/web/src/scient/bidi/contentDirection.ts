@@ -1,6 +1,5 @@
 import { DEFAULT_CONTENT_DIRECTION, type ContentDirection } from "@t3tools/contracts/settings";
 
-export { DEFAULT_CONTENT_DIRECTION } from "@t3tools/contracts/settings";
 export type { ContentDirection } from "@t3tools/contracts/settings";
 export type FixedContentDirection = Exclude<ContentDirection, "auto">;
 
@@ -33,11 +32,11 @@ export interface RtlFlowArrowSpan {
   readonly start: number;
 }
 
-export function isFixedContentDirection(direction: ContentDirection): direction is "rtl" | "ltr" {
+function isFixedContentDirection(direction: ContentDirection): direction is "rtl" | "ltr" {
   return direction !== "auto";
 }
 
-export function isPlainTextFence(language: string, fenceTitle: string | null): boolean {
+function isPlainTextFence(language: string, fenceTitle: string | null): boolean {
   return fenceTitle === null && PLAIN_TEXT_FENCE_LANGUAGES.has(language.toLowerCase());
 }
 

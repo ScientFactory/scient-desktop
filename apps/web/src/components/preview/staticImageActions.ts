@@ -31,7 +31,7 @@ export function staticImageCopyDimensions(
   };
 }
 
-export async function fetchImageBlob(url: string): Promise<Blob> {
+async function fetchImageBlob(url: string): Promise<Blob> {
   // User actions must read fresh authorized bytes instead of reusing an
   // opaque response that may have been cached by a previous <img> request.
   const response = await fetch(url, { cache: "no-store", mode: "cors" });

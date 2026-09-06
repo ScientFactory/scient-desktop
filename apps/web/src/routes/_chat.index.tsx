@@ -1,6 +1,7 @@
+import { RefreshIcon } from "~/components/ui/refresh-icon";
 import { scopeProjectRef } from "@t3tools/client-runtime/environment";
 import { createFileRoute, Link } from "@tanstack/react-router";
-import { LinkIcon, PlusIcon, RotateCcwIcon } from "lucide-react";
+import { LinkIcon, PlusIcon } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { openCommandPalette } from "../commandPaletteBus";
@@ -23,10 +24,11 @@ import { ChatLoadingState } from "../components/ChatLoadingState";
 
 function ChatIndexRouteView() {
   const { authGateState } = Route.useRouteContext();
-  const { environments } = useEnvironments();
+  const { environments, isReady } = useEnvironments();
 
-  if (authGateState.status === "hosted-static" && environments.length === 0) {
-    return <HostedStaticOnboardingState />;
+  if (authGateState.status === "hosted-static") {
+    if (!isReady) return null;
+    if (environments.length === 0) return <HostedStaticOnboardingState />;
   }
 
   return <ScientGettingStartedGate fallback={<IndexDraftLanding />} />;
@@ -84,6 +86,7 @@ function IndexDraftLanding() {
       <ChatLoadingState />
     );
   }
+  // ScientGettingStartedGate owns the optional local setup before this fallback.
   return <NoProjectsHero />;
 }
 
@@ -98,7 +101,7 @@ function DraftStartError({ onRetry }: { readonly onRetry: () => void }) {
           </EmptyDescription>
           <div className="mt-5 flex justify-center">
             <Button size="sm" onClick={onRetry}>
-              <RotateCcwIcon className="size-4" />
+              <RefreshIcon className="size-4" />
               Try again
             </Button>
           </div>

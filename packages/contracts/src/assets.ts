@@ -108,6 +108,12 @@ export const AssetCreateUrlInput = Schema.Struct({
 });
 export type AssetCreateUrlInput = typeof AssetCreateUrlInput.Type;
 
+export const AssetImageDimensions = Schema.Struct({
+  width: NonNegativeInt.check(Schema.isGreaterThanOrEqualTo(1)),
+  height: NonNegativeInt.check(Schema.isGreaterThanOrEqualTo(1)),
+});
+export type AssetImageDimensions = typeof AssetImageDimensions.Type;
+
 export const AssetCreateUrlResult = Schema.Struct({
   // Environment-file claims contain the canonical path in their signed token.
   // The URL can therefore be longer than the path itself after JSON/base64url
@@ -117,6 +123,8 @@ export const AssetCreateUrlResult = Schema.Struct({
   sourcePath: Schema.optional(
     TrimmedNonEmptyString.check(Schema.isMaxLength(ENVIRONMENT_ASSET_PATH_MAX_LENGTH)),
   ),
+  /** Pixel size read from the image header, so a client can reserve the exact box before the bytes arrive. */
+  imageDimensions: Schema.optional(AssetImageDimensions),
 });
 export type AssetCreateUrlResult = typeof AssetCreateUrlResult.Type;
 

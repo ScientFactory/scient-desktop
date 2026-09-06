@@ -20,6 +20,6 @@ export function getVoiceBridge(): VoiceTranscriptionClient | null {
 }
 
 /** Whether local voice dictation is available in this runtime. */
-export function isVoiceSupported(): boolean {
+function isVoiceSupported(): boolean {
   return getVoiceBridge() !== null;
 }

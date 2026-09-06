@@ -14,7 +14,7 @@ type ImageUploadMeta =
     }
   | { readonly action: "remove"; readonly id: string };
 
-export const imageUploadPluginKey = new PluginKey<ImageUploadState>("scientMarkdownImageUploads");
+const imageUploadPluginKey = new PluginKey<ImageUploadState>("scientMarkdownImageUploads");
 
 function uploadWidget(position: number, id: string, fileName: string): Decoration {
   return Decoration.widget(

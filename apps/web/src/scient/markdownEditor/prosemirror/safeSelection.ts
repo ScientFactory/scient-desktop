@@ -68,7 +68,7 @@ export function leaveAtomEditor(
 }
 
 /** Move the outer editor caret to one requested document side of an inline atom. */
-export function moveSelectionBesideAtom(
+function moveSelectionBesideAtom(
   view: EditorView,
   getPos: () => number | undefined,
   node: ProseMirrorNode,
@@ -86,7 +86,7 @@ export function moveSelectionBesideAtom(
 }
 
 /** Remove an empty inline atom through its nested field without trapping focus. */
-export function deleteAtomFromEditor(
+function deleteAtomFromEditor(
   view: EditorView,
   getPos: () => number | undefined,
   node: ProseMirrorNode,

@@ -93,7 +93,7 @@ export function ScientGettingStartedShell(props: {
   );
 }
 
-export function GettingStartedStepHeading(props: {
+function GettingStartedStepHeading(props: {
   readonly title: string;
   readonly description: string;
 }) {
@@ -300,7 +300,10 @@ export function GettingStartedPreferencesStep(props: {
   );
 }
 
-export function GettingStartedStartStep(props: { readonly onAddProject: () => void }) {
+export function GettingStartedStartStep(props: {
+  readonly onAddProject: () => void;
+  readonly importAction?: React.ReactNode;
+}) {
   return (
     <div>
       <GettingStartedStepHeading
@@ -311,6 +314,7 @@ export function GettingStartedStartStep(props: { readonly onAddProject: () => vo
         <Button onClick={props.onAddProject} size="sm" type="button">
           <PlusIcon aria-hidden /> Add project
         </Button>
+        {props.importAction}
       </div>
     </div>
   );

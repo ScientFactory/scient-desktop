@@ -62,7 +62,7 @@ import {
 import { mergeProviderInstanceEnvironment } from "../ProviderInstanceEnvironment.ts";
 import { resolveAntigravityReleaseAsset } from "../antigravityRelease.ts";
 import { withInstanceIdentity } from "./instanceIdentity.ts";
-import { discoverAntigravitySkills } from "./AntigravitySkills.ts";
+import { discoverAntigravitySkills, resolveAntigravityUserHome } from "./AntigravitySkills.ts";
 import {
   LegacyAntigravityDriver,
   type LegacyAntigravityDriverEnv,
@@ -138,6 +138,7 @@ export const AntigravityDriver: ProviderDriver<AntigravitySettings, AntigravityD
       };
       const authConfigIssue = antigravityAuthConfigIssue(auth);
       const processEnvironment = mergeProviderInstanceEnvironment(environment);
+      const userHome = resolveAntigravityUserHome(yield* HostProcessPlatform, processEnvironment);
       const profileDirectory = resolveAntigravityProfileDirectory(
         serverConfig.stateDir,
         instanceId,
@@ -250,6 +251,7 @@ export const AntigravityDriver: ProviderDriver<AntigravitySettings, AntigravityD
           profileDirectory,
           baseEnv: processEnvironment,
           auth,
+          userHome,
         }).pipe(
           Effect.provideService(FileSystem.FileSystem, fileSystem),
           Effect.provideService(Path.Path, path),
@@ -521,7 +523,7 @@ export const AntigravityDriver: ProviderDriver<AntigravitySettings, AntigravityD
         snapshotForCwd: (cwd) =>
           !enabled
             ? provider.snapshot.getSnapshot
-            : discoverAntigravitySkills({ cwd, profileDirectory }).pipe(
+            : discoverAntigravitySkills({ cwd, userHome }).pipe(
                 Effect.provideService(FileSystem.FileSystem, fileSystem),
                 Effect.provideService(Path.Path, path),
                 Effect.flatMap((skills) => provider.snapshotForCwd(cwd, skills)),

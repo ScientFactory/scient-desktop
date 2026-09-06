@@ -43,6 +43,7 @@ import {
 import {
   buildInitialCursorProviderSnapshot,
   checkCursorProviderStatus,
+  makeCursorModelDiscovery,
   enrichCursorSnapshot,
 } from "../Layers/CursorProvider.ts";
 import { ProviderEventLoggers } from "../Layers/ProviderEventLoggers.ts";
@@ -218,7 +219,12 @@ export const CursorDriver: ProviderDriver<CursorSettings, CursorDriverEnv> = {
         ? withCursorSessionShutdown(providerConnectionActions, adapter.stopAll())
         : undefined;
 
-      const checkProvider = checkCursorProviderStatus(effectiveConfig, effectiveProcessEnv).pipe(
+      const discoverModels = yield* makeCursorModelDiscovery(effectiveConfig, effectiveProcessEnv);
+      const checkProvider = checkCursorProviderStatus(
+        effectiveConfig,
+        effectiveProcessEnv,
+        discoverModels,
+      ).pipe(
         Effect.map(stampIdentity),
         Effect.provideService(Crypto.Crypto, crypto),
         Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),

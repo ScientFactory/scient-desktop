@@ -12,7 +12,6 @@ describe("buildRuntimeInstructions", () => {
       expect(instructions).not.toContain("undefined");
     },
   );
-
   it("keeps known model and effort metadata on one line", () => {
     expect(
       buildRuntimeInstructions({

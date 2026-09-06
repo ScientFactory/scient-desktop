@@ -14,7 +14,7 @@ export const PYTHON_COMPUTE_SPLIT_LAYOUT_STORAGE_KEY = "scient.pythonComputeSpli
 export const PYTHON_COMPUTE_VIEWS = ["code", "split", "results"] as const;
 export type PythonComputeView = (typeof PYTHON_COMPUTE_VIEWS)[number];
 
-export const PYTHON_COMPUTE_SPLIT_LAYOUTS = ["side-by-side", "stacked"] as const;
+const PYTHON_COMPUTE_SPLIT_LAYOUTS = ["side-by-side", "stacked"] as const;
 export type PythonComputeSplitLayout = (typeof PYTHON_COMPUTE_SPLIT_LAYOUTS)[number];
 
 export const PYTHON_COMPUTE_VIEW_LABELS: Readonly<Record<PythonComputeView, string>> = {
@@ -23,7 +23,7 @@ export const PYTHON_COMPUTE_VIEW_LABELS: Readonly<Record<PythonComputeView, stri
   results: "Results",
 };
 
-export const DEFAULT_PYTHON_COMPUTE_VIEW: PythonComputeView = "code";
+const DEFAULT_PYTHON_COMPUTE_VIEW: PythonComputeView = "code";
 export const DEFAULT_PYTHON_COMPUTE_SPLIT_LAYOUT: PythonComputeSplitLayout = "side-by-side";
 export const DEFAULT_PYTHON_COMPUTE_SPLIT = 0.5;
 export const MIN_PYTHON_COMPUTE_SPLIT = 0.2;

@@ -24,7 +24,7 @@ import {
   type ProjectScriptPreviewRequest,
 } from "./projectScriptAutoPreview";
 
-export const PROJECT_SCRIPT_PREVIEW_START_TIMEOUT_MS = 60_000;
+const PROJECT_SCRIPT_PREVIEW_START_TIMEOUT_MS = 60_000;
 
 interface PendingProjectScriptPreview {
   readonly id: number;

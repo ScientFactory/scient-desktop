@@ -11,7 +11,7 @@ export interface ScientMarkdownOutlineState {
   readonly items: ReadonlyArray<ScientMarkdownOutlineItem>;
 }
 
-export const scientMarkdownOutlinePluginKey = new PluginKey<ScientMarkdownOutlineState>(
+const scientMarkdownOutlinePluginKey = new PluginKey<ScientMarkdownOutlineState>(
   "scientMarkdownOutline",
 );
 

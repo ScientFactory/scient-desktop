@@ -12,6 +12,16 @@
   ],
   "upstreamMounts": [
     {
+      "path": "apps/web/src/routes/__root.tsx",
+      "anchor": "ScientGettingStartedGate",
+      "purpose": "Keep local assisted setup out of the hosted first-run wizard."
+    },
+    {
+      "path": "apps/web/src/routes/welcome.tsx",
+      "anchor": "/getting-started",
+      "purpose": "Direct local welcome links to the existing Scient setup flow."
+    },
+    {
       "path": "apps/web/src/routes/_chat.index.tsx",
       "anchor": "ScientGettingStartedGate",
       "purpose": "Offer the first-run flow only after the existing hosted environment gate."

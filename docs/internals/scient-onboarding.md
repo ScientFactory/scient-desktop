@@ -11,16 +11,43 @@ The automatic flow has at most three steps:
 1. **Choose an AI** appears only when no provider instance is canonically ready. It reuses the
    provider registry, readiness projection, permissions, and lifecycle setup surfaces.
 2. **Preferences** stores optional local work kinds and a custom answer when **Other** is selected.
-3. **Start working** hands off to the existing Add Project command.
+3. **Start working** hands off to the existing Add Project command, or optionally opens
+   **Import projects and conversations**.
 
 Already-satisfied steps are omitted when the journey starts, then that short journey stays stable so
 Back remains predictable while readiness changes. **Skip** stays visible on every step, dismissal is
 durable, and existing users with a project or thread are completed silently rather than interrupted.
-Settings provides a manual replay route without resetting provider or project state.
+Settings → Getting Started provides a manual replay route without resetting provider or project
+state, and a direct import action that does not repeat setup.
 
 The hosted static environment-connection flow remains authoritative and runs before this gate. The
 getting-started flow begins only after the primary environment, entity shell, session permission,
 and server config are ready.
+
+Local clients bypass T3's additional first-run gate and route `/welcome` to Scient's manual
+getting-started page. Hosted clients retain upstream's connection wizard. An unset upstream
+`onboardingCompletedAt` flag must not restart a dismissed or completed Scient setup.
+
+## Optional project import
+
+Both local entry points use `ScientProjectImportAction`, which lazily mounts the upstream
+`ProjectImportStep` only after an explicit click. Merely opening Settings or reaching the final
+onboarding step does not scan history. The Add Project menu is unchanged.
+
+The import step is extracted from T3's wizard, not reimplemented: it uses the same scanner,
+project-creation commands, session importer, bounded reads, deduplication, and partial-failure
+retry behavior. T3's hosted wizard uses that same component. Scient's wrapper supplies the
+primary machine, existing operate permission, modal dismissal, and normal project navigation.
+During an import the modal cannot be dismissed; losing permission unmounts the importer and
+prevents it from starting further work. An in-flight command may already have completed on the
+server. Existing project and history state remains authoritative.
+
+An active onboarding presentation stays mounted when an imported project arrives in the shell;
+it completes only after navigation succeeds or the user skips setup. Closing import without
+importing does not complete onboarding. On a later launch, existing work still bypasses setup.
+No provider is installed, signed in, or enabled by this import wrapper.
+
+The [user guide](../user/welcome-wizard.md) describes history bounds and omitted content.
 
 ## State and authority
 
@@ -51,8 +78,10 @@ states. A placeholder download step would create a false product promise.
 
 ## Upstream boundary
 
-Implementation lives under `apps/web/src/scient/onboarding`. The inherited T3 surface has three
-narrow mounts: the empty chat route, General settings, and generated route tree.
+Scient presentation lives under `apps/web/src/scient/onboarding`. Narrow mounts cover the empty
+chat route, General settings, generated route tree, local first-run bypass, and the direct
+`/welcome` redirect. Shared import presentation remains under `components/onboarding`, with
+T3's existing backend and client commands.
 [`scient-onboarding-seams.json`](../../scient-onboarding-seams.json) records those boundaries. Run:
 
 ```bash

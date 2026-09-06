@@ -9,7 +9,7 @@ import { scopedThreadKey } from "@t3tools/client-runtime/environment";
 import { isLoopbackHost, normalizePreviewUrl } from "@t3tools/shared/preview";
 
 import { resolveDiscoveredServerUrl } from "~/browser/browserTargetResolver";
-import type { OpenPreviewMutation } from "~/browser/openFileInPreview";
+import type { OpenPreviewMutation, BrowserSettingsReadError } from "~/browser/openFileInPreview";
 import { recordVisitForThread } from "~/browserHistoryStore";
 import { useRightPanelStore } from "~/rightPanelStore";
 
@@ -148,7 +148,7 @@ export async function openProjectScriptPreview<E>(input: {
   readonly threadRef: ScopedThreadRef;
   readonly request: ProjectScriptPreviewRequest;
   readonly openPreview: OpenPreviewMutation<E>;
-}): Promise<AtomCommandResult<PreviewSessionSnapshot, E>> {
+}): Promise<AtomCommandResult<PreviewSessionSnapshot, E | BrowserSettingsReadError>> {
   const result = await openPreviewSession({
     openPreview: input.openPreview,
     threadRef: input.threadRef,

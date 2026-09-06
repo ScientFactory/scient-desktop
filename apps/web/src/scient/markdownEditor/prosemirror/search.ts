@@ -28,7 +28,7 @@ type SearchMeta =
   | { readonly action: "navigate"; readonly direction: -1 | 1 }
   | { readonly action: "clear" };
 
-export const scientMarkdownSearchPluginKey = new PluginKey<ScientMarkdownSearchState>(
+const scientMarkdownSearchPluginKey = new PluginKey<ScientMarkdownSearchState>(
   "scientMarkdownSearch",
 );
 

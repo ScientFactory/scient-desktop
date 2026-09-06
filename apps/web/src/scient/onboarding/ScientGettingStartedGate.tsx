@@ -1,5 +1,5 @@
 import { useAtomValue } from "@effect/atom-react";
-import { useEffect, type ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 
 import { resolvePrimaryOperateAccess } from "../../components/settings/ProviderSettingsPanel.logic";
 import { usePrimarySessionState } from "../../environments/primary";
@@ -22,6 +22,7 @@ export function ScientGettingStartedGate(props: { readonly fallback: ReactNode }
   const primaryServerConfig = useAtomValue(primaryServerConfigAtom);
   const sessionState = usePrimarySessionState();
   const { state, complete } = useScientOnboardingStorage();
+  const [presentationActive, setPresentationActive] = useState(false);
   const operateAccess = resolvePrimaryOperateAccess({
     isPrimary: true,
     hasDesktopBridge: typeof window !== "undefined" && Boolean(window.desktopBridge),
@@ -35,9 +36,11 @@ export function ScientGettingStartedGate(props: { readonly fallback: ReactNode }
     primaryEnvironmentReady: primaryEnvironmentId !== null && primaryServerConfig !== null,
     operateAccess,
     hasExistingActivity: projects.length > 0 || threads.length > 0,
+    presentationActive,
   });
 
   useEffect(() => {
+    if (decision === "present") setPresentationActive(true);
     if (decision === "complete-silently") complete();
   }, [complete, decision]);
 

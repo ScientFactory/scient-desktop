@@ -98,7 +98,7 @@ export const DEFAULT_SCIENT_MARKDOWN_TABLE_DIMENSIONS = {
 
 export const MAX_SCIENT_MARKDOWN_TABLE_INSERT_DIMENSION = 15;
 
-export const SCIENT_MARKDOWN_SLASH_COMMANDS: ReadonlyArray<ScientSlashCommandItem> = [
+const SCIENT_MARKDOWN_SLASH_COMMANDS: ReadonlyArray<ScientSlashCommandItem> = [
   { command: "paragraph", label: "Text", keywords: "paragraph body" },
   { command: "heading-1", label: "Heading 1", keywords: "title h1" },
   { command: "heading-2", label: "Heading 2", keywords: "section h2" },

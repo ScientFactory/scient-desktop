@@ -59,7 +59,7 @@ interface ImageTarget {
 }
 
 /** Images stay inline schema nodes; only an isolated, unlinked paragraph image is a figure. */
-export function isStandaloneMarkdownImage(
+function isStandaloneMarkdownImage(
   view: EditorView,
   position: number | undefined,
   node: ProseMirrorNode,

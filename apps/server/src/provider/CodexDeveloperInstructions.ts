@@ -4,7 +4,7 @@ import { buildRuntimeInstructions } from "./RuntimeInstructions.ts";
 import type { McpCapability } from "../mcp/McpInvocationContext.ts";
 import { buildScientAwareness } from "./ScientAwareness.ts";
 
-export const codexPlanModeDeveloperInstructions = (
+const codexPlanModeDeveloperInstructions = (
   capabilities?: ReadonlySet<McpCapability>,
 ): string => `<collaboration_mode># Plan Mode (Conversational)
 
@@ -138,7 +138,7 @@ If the user stays in Plan mode and asks for revisions after a prior \`<proposed_
 
 ${buildScientAwareness(capabilities)}`;
 
-export const codexDefaultModeDeveloperInstructions = (
+const codexDefaultModeDeveloperInstructions = (
   capabilities?: ReadonlySet<McpCapability>,
 ): string => `<collaboration_mode># Collaboration Mode: Default
 

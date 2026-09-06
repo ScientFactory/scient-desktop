@@ -25,6 +25,11 @@ save a few optional local preferences, and add your first project. You can skip
 it at any time. To reopen it later, use **Settings → General → Getting
 started**.
 
+You can also **Import projects and conversations** directly from that settings
+section or from the final setup step. This optional action finds existing Claude
+Code and Codex projects; it does not replace **Add project**.
+See [Import projects and conversations](welcome-wizard.md) for selection and history limits.
+
 Provider installation and sign-in use the same provider-owned account flows
 available elsewhere in Scient. Work preferences and an optional custom answer
 are saved only on the current device.
