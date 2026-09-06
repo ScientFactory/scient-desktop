@@ -3,6 +3,11 @@ import {
   withUsageLimitsCommands,
 } from "@t3tools/shared/usageLimits";
 import * as Cause from "effect/Cause";
+import { CustomModelError, supportsModelConnections } from "@t3tools/contracts";
+import { createModelSelection } from "@t3tools/shared/model";
+import { customModelProviderId } from "./customModels.ts";
+import { droidCustomModelId } from "./provider/droid/DroidCustomModels.ts";
+import { encodePiModelSlug } from "./provider/pi/PiModel.ts";
 import * as Crypto from "effect/Crypto";
 import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
@@ -2311,6 +2316,65 @@ const makeWsRpcLayer = (
             {
               "rpc.aggregate": "server",
             },
+          ),
+        [WS_METHODS.serverSaveCustomModel]: (input) => serverSettings.saveCustomModel(input),
+        [WS_METHODS.serverRemoveCustomModel]: (input) => serverSettings.removeCustomModel(input),
+        [WS_METHODS.serverTestCustomModel]: (input) =>
+          Effect.gen(function* () {
+            const settings = yield* serverSettings.getSettings;
+            if (settings.customModels.revision !== input.revision)
+              return yield* new CustomModelError({
+                message: "Custom models changed. Test the updated configuration.",
+              });
+            const connection = settings.customModels.connections.find(
+              (c) => c.id === input.connectionId,
+            );
+            const model = connection?.models.find((m) => m.id === input.modelId);
+            const instance = yield* providerInstances.getInstance(input.instanceId);
+            if (
+              !connection ||
+              !model ||
+              !model.instanceIds.includes(input.instanceId) ||
+              !instance?.enabled ||
+              !supportsModelConnections(instance.driverKind, connection.protocol)
+            )
+              return yield* new CustomModelError({
+                message: "Connect this model to an enabled Pi or Droid agent first.",
+              });
+            const resolved = yield* serverSettings.resolveCustomModels(input.instanceId);
+            const credentialError = resolved.find((c) => c.id === connection.id)?.credentialError;
+            if (credentialError !== undefined)
+              return yield* new CustomModelError({ message: credentialError });
+            const slug =
+              instance.driverKind === "droid"
+                ? droidCustomModelId(connection.id, model.id)
+                : encodePiModelSlug(customModelProviderId(connection.id), model.modelId);
+            if (!slug) return yield* new CustomModelError({ message: "Invalid model ID." });
+            yield* instance.textGeneration
+              .generateThreadTitle({
+                cwd: config.cwd,
+                message: "Connection test",
+                modelSelection: createModelSelection(input.instanceId, slug),
+              })
+              .pipe(
+                Effect.timeout("45 seconds"),
+                Effect.mapError(
+                  () =>
+                    new CustomModelError({
+                      message: `${instance.driverKind === "droid" ? "Droid" : "Pi"} could not use this model. Check the key, model ID and model settings.`,
+                    }),
+                ),
+              );
+            const latest = yield* serverSettings.getSettings;
+            if (latest.customModels.revision !== input.revision)
+              return yield* new CustomModelError({
+                message: "Custom models changed during the test. Test again.",
+              });
+            return { revision: input.revision };
+          }).pipe(
+            Effect.catchTag("ServerSettingsError", () =>
+              Effect.fail(new CustomModelError({ message: "Could not read custom models." })),
+            ),
           ),
         [WS_METHODS.serverUpdateSettings]: ({ patch }) =>
           observeRpcEffect(

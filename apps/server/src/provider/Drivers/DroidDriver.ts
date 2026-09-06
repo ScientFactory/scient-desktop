@@ -1,15 +1,22 @@
-import { DroidSettings, ProviderDriverKind, type ServerProvider } from "@t3tools/contracts";
+import {
+  DroidSettings,
+  ProviderDriverKind,
+  type ServerProvider,
+  type ServerSettings,
+} from "@t3tools/contracts";
 import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
+import * as Stream from "effect/Stream";
 import { HttpClient } from "effect/unstable/http";
 import { ChildProcessSpawner } from "effect/unstable/process";
 
 import * as BackgroundPolicy from "../../background/BackgroundPolicy.ts";
 import { ServerConfig } from "../../config.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
+import { customModelDiscoverySnapshot } from "../../customModelCapabilities.ts";
 import { makeDroidTextGeneration } from "../../textGeneration/DroidTextGeneration.ts";
 import { ProviderDriverError } from "../Errors.ts";
 import { makeDroidAdapter } from "../Layers/DroidAdapter.ts";
@@ -30,7 +37,6 @@ import { mergeProviderInstanceEnvironment } from "../ProviderInstanceEnvironment
 import { makeManualOnlyProviderMaintenanceCapabilities } from "../providerMaintenance.ts";
 import {
   haveProviderSnapshotSettingsChanged,
-  makeProviderSnapshotSettingsSource,
   type ProviderSnapshotSettings,
 } from "../providerUpdateSettings.ts";
 import {
@@ -43,6 +49,7 @@ import {
   withDroidSessionShutdown,
 } from "../../scient/providerLifecycle/DroidConnectionActions.ts";
 import { makeDroidManagedRuntimeResolution } from "../../scient/providerLifecycle/DroidManagedRuntimeActions.ts";
+import { makeDroidCustomModelsRuntimeFactory } from "../droid/DroidCustomModels.ts";
 
 const decodeDroidSettings = Schema.decodeSync(DroidSettings);
 
@@ -144,13 +151,19 @@ export const DroidDriver: ProviderDriver<DroidSettings, DroidDriverEnv> = {
         runtime: managedRuntime.summary,
         assistedAccountActionsAllowed,
       });
+      const makeAcpRuntime = yield* makeDroidCustomModelsRuntimeFactory(serverSettings, instanceId);
 
       const adapter = yield* makeDroidAdapter(effectiveConfig, {
         environment: processEnv,
         ...(eventLoggers.native ? { nativeEventLogger: eventLoggers.native } : {}),
         instanceId,
+        makeAcpRuntime,
       });
-      const textGeneration = yield* makeDroidTextGeneration(effectiveConfig, processEnv);
+      const textGeneration = yield* makeDroidTextGeneration(
+        effectiveConfig,
+        processEnv,
+        makeAcpRuntime,
+      );
       const connectionActions = !assistedAccountActionsAllowed
         ? undefined
         : withDroidSessionShutdown(
@@ -165,6 +178,7 @@ export const DroidDriver: ProviderDriver<DroidSettings, DroidDriverEnv> = {
       const checkProvider = checkDroidProviderStatusWithCapabilities(
         effectiveConfig,
         processEnv,
+        makeAcpRuntime,
       ).pipe(
         Effect.map(({ snapshot: checkedSnapshot, accountCapabilities }) =>
           stampIdentity(checkedSnapshot, accountCapabilities),
@@ -173,8 +187,20 @@ export const DroidDriver: ProviderDriver<DroidSettings, DroidDriverEnv> = {
         Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
       );
 
-      const snapshotSettings = makeProviderSnapshotSettingsSource(effectiveConfig, serverSettings);
-      const snapshot = yield* makeManagedServerProvider<ProviderSnapshotSettings<DroidSettings>>({
+      const mapSettings = (settings: ServerSettings) => ({
+        provider: effectiveConfig,
+        enableProviderUpdateChecks: settings.enableProviderUpdateChecks,
+        customModels: customModelDiscoverySnapshot(settings.customModels.connections, instanceId),
+      });
+      const snapshotSettings = {
+        getSettings: serverSettings.getSettings.pipe(Effect.map(mapSettings)),
+        streamSettings: serverSettings.streamChanges.pipe(Stream.map(mapSettings)),
+      };
+      const snapshot = yield* makeManagedServerProvider<
+        ProviderSnapshotSettings<DroidSettings> & {
+          customModels: ReturnType<typeof customModelDiscoverySnapshot>;
+        }
+      >({
         resolveMaintenance: () => Effect.succeed(MAINTENANCE_CAPABILITIES),
         getSettings: snapshotSettings.getSettings,
         streamSettings: snapshotSettings.streamSettings,

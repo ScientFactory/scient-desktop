@@ -270,6 +270,7 @@ const MANAGED_RUNTIME_PROVIDERS = new Set([
   "cursor",
   "droid",
   "grok",
+  "pi",
 ]);
 
 function decodeArtifactReceipt(value: unknown): ManagedRuntimeArtifactReceipt | undefined {

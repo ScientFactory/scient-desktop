@@ -284,61 +284,61 @@
     "droid": {
       "contractRevision": 1,
       "channel": "stable",
-      "version": "0.209.0",
+      "version": "0.213.0",
       "artifacts": {
         "darwin-arm64": {
           "artifactName": "droid",
-          "url": "https://downloads.factory.ai/factory-cli/releases/0.209.0/darwin/arm64/droid",
+          "url": "https://downloads.factory.ai/factory-cli/releases/0.213.0/darwin/arm64/droid",
           "checksum": {
             "algorithm": "sha256",
-            "digest": "73945d3090be4b32370de902b5ac8b7f70f8693fb8412ddcfb5e9f51bb585e2b"
+            "digest": "c7e3282165c2acb8180471ecae2b24ba1fe2592a6d54b291450ef217f65c6e7c"
           },
-          "size": 264399920
+          "size": 267273008
         },
         "darwin-x64": {
           "artifactName": "droid",
-          "url": "https://downloads.factory.ai/factory-cli/releases/0.209.0/darwin/x64-baseline/droid",
+          "url": "https://downloads.factory.ai/factory-cli/releases/0.213.0/darwin/x64-baseline/droid",
           "checksum": {
             "algorithm": "sha256",
-            "digest": "603d8548082885b988d9aab7e5bd6979a1635b1fed9185d8f9c40dbc06e95708"
+            "digest": "fad8ca21bb2a36f70910569709bd7a62a1bc831f0965a335c6b03bf3688d7642"
           },
-          "size": 278892192
+          "size": 281864352
         },
         "linux-arm64-glibc": {
           "artifactName": "droid",
-          "url": "https://downloads.factory.ai/factory-cli/releases/0.209.0/linux/arm64/droid",
+          "url": "https://downloads.factory.ai/factory-cli/releases/0.213.0/linux/arm64/droid",
           "checksum": {
             "algorithm": "sha256",
-            "digest": "12575349464ae946cfcbf44f124fc1b0d584ae1dec8ed9b3bfb44b5276495af8"
+            "digest": "bf0a7988c4d4ae867cfc285897ca9e3e5805fa5a305c6fe447c37c404fc75d7c"
           },
-          "size": 300460176
+          "size": 303409296
         },
         "linux-x64-glibc": {
           "artifactName": "droid",
-          "url": "https://downloads.factory.ai/factory-cli/releases/0.209.0/linux/x64-baseline/droid",
+          "url": "https://downloads.factory.ai/factory-cli/releases/0.213.0/linux/x64-baseline/droid",
           "checksum": {
             "algorithm": "sha256",
-            "digest": "1f497b85fc62961bf8fc86f88dffe50abc67d724b767070624c6d2aadb3491e5"
+            "digest": "6c76a51cb7166bc771f9c3f4470a604ab7ef65a5dac19c9305cd4b66ef8e0b99"
           },
-          "size": 303261824
+          "size": 306215040
         },
         "win32-arm64": {
           "artifactName": "droid.exe",
-          "url": "https://downloads.factory.ai/factory-cli/releases/0.209.0/windows/arm64/droid.exe",
+          "url": "https://downloads.factory.ai/factory-cli/releases/0.213.0/windows/arm64/droid.exe",
           "checksum": {
             "algorithm": "sha256",
-            "digest": "e09b26af6622e1c30c749a1eec66401dec70a936d06f896755a1ae25f5b7ec40"
+            "digest": "1166cbd14c67ccd3655c8f93a44dab00a50d25a188977994ea52e5416e33f48e"
           },
-          "size": 158129376
+          "size": 158798560
         },
         "win32-x64": {
           "artifactName": "droid.exe",
-          "url": "https://downloads.factory.ai/factory-cli/releases/0.209.0/windows/x64-baseline/droid.exe",
+          "url": "https://downloads.factory.ai/factory-cli/releases/0.213.0/windows/x64-baseline/droid.exe",
           "checksum": {
             "algorithm": "sha256",
-            "digest": "3d5f77759a99ed1327a9d606465bcc121c6e686f56db736d7c7862b33fcbbaa1"
+            "digest": "53e18992dc1b034dcda1c3fa15bb4858cd86caaf4260f9525a84dc53a5b10700"
           },
-          "size": 300768992
+          "size": 303632608
         }
       }
     },
@@ -477,6 +477,22 @@
             "executableBytes": 435075816,
             "harnessBytes": 122455704
           }
+        }
+      }
+    },
+    "pi": {
+      "contractRevision": 1,
+      "channel": "stable",
+      "version": "0.84.4",
+      "artifacts": {
+        "darwin-arm64": {
+          "artifactName": "pi-darwin-arm64.tar.gz",
+          "url": "https://github.com/earendil-works/pi/releases/download/v0.84.4/pi-darwin-arm64.tar.gz",
+          "checksum": {
+            "algorithm": "sha256",
+            "digest": "c68e3ac4d05b4e282aaab2e6c76f161d3e9e68f19a22e38913cbfaadb6c800f0"
+          },
+          "size": 30928407
         }
       }
     }

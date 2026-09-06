@@ -141,7 +141,9 @@ export function providerSettingsLifecyclePresentation(
       detail:
         provider.driver === "codex"
           ? "Install Codex to connect your ChatGPT account."
-          : `Install ${displayName} to connect your account.`,
+          : provider.driver === "pi"
+            ? "Install Pi, then configure its model providers."
+            : `Install ${displayName} to connect your account.`,
       ...(canInstall
         ? action({ kind: "runtime", label: "Install", runtimeAction: "install" })
         : action({ kind: "manage", label: "Manage" })),
@@ -182,6 +184,16 @@ export function providerSettingsLifecyclePresentation(
     };
   }
 
+  if (provider.driver === "pi") {
+    const discovered = provider.status === "ready" && provider.models.length > 0;
+    return {
+      kind: discovered ? "ready" : "manual",
+      statusLabel: discovered ? "Models available" : "Configure Pi",
+      detail: provider.message ?? "Connect a custom model or configure a provider in Pi.",
+      ...action({ kind: "manage", label: "Manage" }),
+      busy: false,
+    };
+  }
   if (provider.auth.status === "authenticated" || provider.auth.required === false) {
     if (provider.status !== "ready" || provider.models.length === 0) {
       return {

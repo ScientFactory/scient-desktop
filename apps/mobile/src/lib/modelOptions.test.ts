@@ -15,6 +15,27 @@ import {
 } from "./modelOptions";
 
 describe("mobile model options", () => {
+  it.each(["droid", "pi"])(
+    "consumes %s discovered connections without legacy model settings",
+    (driver) => {
+      const slug = driver === "droid" ? "custom:scient-fixture" : "scient_fixture/model";
+      const provider = {
+        instanceId: driver,
+        driver,
+        enabled: true,
+        installed: true,
+        auth: { status: "authenticated" },
+        models: [{ slug, name: "Connected model", isCustom: false, capabilities: null }],
+      };
+      const config = { providers: [provider] } as unknown as ServerConfig;
+      expect(buildModelOptions(config, null).map((option) => option.selection)).toEqual([
+        { instanceId: driver, model: slug },
+      ]);
+      provider.models = [];
+      expect(buildModelOptions(config, null)).toEqual([]);
+    },
+  );
+
   it("groups the picker but preserves native selections and rebuilds controls from the account catalog", () => {
     const provider = {
       instanceId: "google_work",

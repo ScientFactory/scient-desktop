@@ -8,6 +8,7 @@ import {
 } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 import { resolveWorkEntryToolPresentation } from "@t3tools/client-runtime/work-log/presentation";
+import { buildPendingUserInputAnswers } from "./pendingUserInput";
 
 import {
   createMessageAttachmentPreviewProjector,

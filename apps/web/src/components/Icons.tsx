@@ -495,6 +495,13 @@ export const OpenAI: Icon = ({ className, ...props }) => (
   </svg>
 );
 
+/** Official OpenRouter mark, rendered in the surrounding text color. */
+export const OpenRouterIcon: Icon = (props) => (
+  <svg {...props} viewBox="0 0 401.4 293.7" fill="currentColor">
+    <path d="M303.9475 17.19926c42.79734 0 77.48933 34.69327 77.48933 77.48933s-34.69199 77.48933-77.48933 77.48933l76.86166 76.86244c9.76367 9.76313 2.84903 26.45667-10.95697 26.45667H148.96884c-71.32686 0-129.14889-57.82202-129.14889-129.14889S77.64197 17.19926 148.96884 17.19926H303.9475ZM148.96884 68.85881c-42.79607 0-77.48933 34.69327-77.48933 77.48933s34.69327 77.48933 77.48933 77.48933 77.48933-34.69327 77.48933-77.48933-34.69327-77.48933-77.48933-77.48933Z" />
+  </svg>
+);
+
 /** Official Factory Droid mark (carried over from the prior Scient app). */
 export const DroidIcon: Icon = (props) => (
   <svg {...props} viewBox="0 0 67 65" fill="none" xmlns="http://www.w3.org/2000/svg">
@@ -708,7 +715,7 @@ export const ACPRegistryIcon: Icon = ({ className, ...props }) => (
   </svg>
 );
 
-export const PiAgentIcon: Icon = ({ className, ...props }) => (
+export const PiIcon: Icon = ({ className, ...props }) => (
   <svg {...props} viewBox="0 0 800 800" className={cn("fill-none", className)}>
     <rect width="800" height="800" rx="160" fill="#000" />
     <path

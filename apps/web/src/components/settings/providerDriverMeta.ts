@@ -6,6 +6,7 @@ import {
   DroidSettings,
   GrokSettings,
   OpenCodeSettings,
+  PiSettings,
   compareProviderDriverKinds,
   ProviderDriverKind,
 } from "@t3tools/contracts";
@@ -19,6 +20,7 @@ import {
   type Icon,
   OpenAI,
   OpenCodeIcon,
+  PiIcon,
 } from "../Icons";
 
 type ProviderSettingsSchema = {
@@ -36,6 +38,8 @@ export interface ProviderClientDefinition {
   readonly label: string;
   readonly icon: Icon;
   readonly settingsSchema: ProviderSettingsSchema;
+  /** False when model definitions must come from the native provider catalog. */
+  readonly supportsCustomModels?: boolean;
   /**
    * Optional short label rendered as a `variant="warning"` badge next to
    * the instance title. Used to flag drivers that still ship under an
@@ -47,6 +51,14 @@ export interface ProviderClientDefinition {
 }
 
 const PROVIDER_CLIENT_DEFINITIONS_UNORDERED: readonly ProviderClientDefinition[] = [
+  {
+    value: ProviderDriverKind.make("pi"),
+    label: "Pi",
+    icon: PiIcon,
+    badgeLabel: "Early Access",
+    settingsSchema: PiSettings,
+    supportsCustomModels: false,
+  },
   {
     value: ProviderDriverKind.make("codex"),
     label: "Codex",
@@ -79,6 +91,7 @@ const PROVIDER_CLIENT_DEFINITIONS_UNORDERED: readonly ProviderClientDefinition[]
     icon: DroidIcon,
     badgeLabel: "Early Access",
     settingsSchema: DroidSettings,
+    supportsCustomModels: false,
   },
   {
     value: ProviderDriverKind.make("opencode"),
@@ -92,6 +105,7 @@ const PROVIDER_CLIENT_DEFINITIONS_UNORDERED: readonly ProviderClientDefinition[]
     icon: AntigravityIcon,
     badgeLabel: "Early Access",
     settingsSchema: AntigravitySettings,
+    supportsCustomModels: false,
   },
 ];
 

@@ -47,6 +47,20 @@ terminal-automation fallback.
 
 ## Models and reasoning effort
 
+To use your own API key or local endpoint, open **Settings > Custom models**, add the model,
+and select **Droid** under **Use with**. **Connect models** in Droid setup opens the same flow.
+Reuse a saved connection to add another model without entering its key again. Your Factory
+account connection and model-service credentials are separate.
+
+Automatic settings use verified limits when available and otherwise leave Droid's optional limits
+at its own defaults. These are not unlimited. Use manual settings for a specific endpoint capacity.
+**Test** sends a small request through the chosen agent; API charges may apply. If a model is absent,
+check the agent, exact model ID and API format, then use **Check again** or edit its configuration.
+
+Removing a loaded model or replacing its key stops affected agent processes; the next message
+reconnects. Adding a model does not interrupt a running reply. Scient does not modify your personal
+Factory settings or import their credentials.
+
 Droid reports its available models and reasoning-effort choices to Scient. You
 can change either within an existing thread; the change applies before the next
 message. A model may also show the Factory token-cost label reported by Droid,

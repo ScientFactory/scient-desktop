@@ -232,6 +232,7 @@ import ThreadTerminalDrawer from "./ThreadTerminalDrawer";
 import {
   AlarmClockIcon,
   CheckCircle2Icon,
+  InfoIcon,
   ChevronDownIcon,
   GitBranchIcon,
   Minimize2Icon,
@@ -392,6 +393,8 @@ import {
 import {
   dismissThreadErrorBannerForSession,
   getThreadErrorBannerKey,
+  isTokenLimitError as isTokenLimitThreadError,
+  getTruncationNoticeKey,
   isThreadErrorBannerDismissedForSession,
   shouldShowThreadErrorBanner,
   ThreadErrorBanner,
@@ -1950,7 +1953,11 @@ function ChatViewContent(props: ChatViewProps) {
   // keeps its error in session.lastError, so clearing the local shadow would
   // just fall through to the persisted one. Mask the current error until a
   // different error arrives, mirroring the provider status banner.
-  const threadErrorBannerKey = getThreadErrorBannerKey(routeThreadKey, threadError);
+  const threadErrorBannerKey = getThreadErrorBannerKey(
+    routeThreadKey,
+    threadError,
+    activeThread?.latestTurn?.turnId,
+  );
   const visibleThreadError = shouldShowThreadErrorBanner(
     routeThreadKey,
     threadError,
@@ -1958,6 +1965,29 @@ function ChatViewContent(props: ChatViewProps) {
   )
     ? threadError
     : null;
+  const isTokenLimitError = isTokenLimitThreadError(visibleThreadError);
+  const truncationNoticeKey = useMemo(
+    () =>
+      getTruncationNoticeKey(
+        routeThreadKey,
+        activeThread?.activities ?? EMPTY_ACTIVITIES,
+        activeThread?.latestTurn?.turnId,
+        activeThread?.session?.status,
+      ),
+    [
+      routeThreadKey,
+      activeThread?.activities,
+      activeThread?.latestTurn?.turnId,
+      activeThread?.session?.status,
+    ],
+  );
+  const tokenLimitNoticeKey =
+    truncationNoticeKey ?? (isTokenLimitError ? threadErrorBannerKey : null);
+  const hasTokenLimitNotice =
+    tokenLimitNoticeKey !== null &&
+    !isThreadErrorBannerDismissedForSession(tokenLimitNoticeKey) &&
+    activeThread?.session?.status !== "running" &&
+    activeThread?.session?.status !== "starting";
   // Dismissing only mutates the session-scoped mask set, which does not
   // trigger a render on its own; setThreadError(null) can also bail when the
   // local shadow is already empty and the banner is driven purely by
@@ -3509,7 +3539,8 @@ function ChatViewContent(props: ChatViewProps) {
   )
     ? activeProviderStatus
     : null;
-  const hasTimelineTopBanner = Boolean(visibleThreadError) || visibleProviderStatus !== null;
+  const hasTimelineTopBanner =
+    (Boolean(visibleThreadError) && !isTokenLimitError) || visibleProviderStatus !== null;
   const activeProjectCwd = activeProject?.workspaceRoot ?? null;
   const activeThreadWorktreePath = activeThread?.worktreePath ?? null;
   const activeWorkspaceRoot = resolveThreadWorkspaceRoot({
@@ -6114,6 +6145,22 @@ function ChatViewContent(props: ChatViewProps) {
     void handleSwitchCheckoutToThread();
   }, [gitStatusQuery.data?.hasWorkingTreeChanges, handleSwitchCheckoutToThread]);
   const composerBannerItems = useMemo<ComposerBannerStackItem[]>(() => {
+    const tokenLimitItems: ComposerBannerStackItem[] = hasTokenLimitNotice
+      ? [
+          {
+            id: `token-limit:${tokenLimitNoticeKey}`,
+            variant: "info",
+            priority: "urgent",
+            icon: <InfoIcon />,
+            title: "Response stopped at a token limit.",
+            dismissLabel: "Dismiss token limit notice",
+            onDismiss: () => {
+              dismissThreadErrorBannerForSession(tokenLimitNoticeKey);
+              setThreadErrorBannerDismissTick((tick) => tick + 1);
+            },
+          },
+        ]
+      : [];
     const backgroundLivenessItems =
       backgroundLivenessBannerItem === null ? [] : [backgroundLivenessBannerItem];
     const resumeCompactionItems =
@@ -6126,6 +6173,7 @@ function ChatViewContent(props: ChatViewProps) {
       return [
         ...usageLimitsItems,
         ...systemComposerBannerItems,
+        ...tokenLimitItems,
         ...backgroundLivenessItems,
         ...resumeCompactionItems,
         ...wokeThreadItems,
@@ -6135,6 +6183,7 @@ function ChatViewContent(props: ChatViewProps) {
     return [
       ...usageLimitsItems,
       ...systemComposerBannerItems,
+      ...tokenLimitItems,
       ...backgroundLivenessItems,
       ...resumeCompactionItems,
       ...wokeThreadItems,
@@ -6181,6 +6230,8 @@ function ChatViewContent(props: ChatViewProps) {
   }, [
     activeBranchMismatchKey,
     backgroundLivenessBannerItem,
+    hasTokenLimitNotice,
+    tokenLimitNoticeKey,
     handleRestoreThreadBranch,
     isRestoringThreadBranch,
     localCheckoutBranchMismatch,
@@ -8655,7 +8706,7 @@ function ChatViewContent(props: ChatViewProps) {
                 onOpenProviderSetup={openProviderSetup}
               />
               <ThreadErrorBanner
-                error={visibleThreadError}
+                error={isTokenLimitError ? null : visibleThreadError}
                 onDismiss={() => {
                   setThreadError(activeThread.id, null);
                   dismissThreadErrorBannerForSession(threadErrorBannerKey);

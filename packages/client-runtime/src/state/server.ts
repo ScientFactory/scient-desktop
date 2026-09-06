@@ -1086,6 +1086,21 @@ export function createServerEnvironmentAtoms<R, E>(
         key: ({ environmentId, input }) => JSON.stringify([environmentId, input.instanceId]),
       },
     }),
+    saveCustomModel: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:server:save-custom-model",
+      tag: WS_METHODS.serverSaveCustomModel,
+      concurrency: { mode: "singleFlight", key: ({ environmentId }) => environmentId },
+    }),
+    removeCustomModel: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:server:remove-custom-model",
+      tag: WS_METHODS.serverRemoveCustomModel,
+      concurrency: { mode: "singleFlight", key: ({ environmentId }) => environmentId },
+    }),
+    testCustomModel: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:server:test-custom-model",
+      tag: WS_METHODS.serverTestCustomModel,
+      concurrency: { mode: "singleFlight", key: ({ environmentId }) => environmentId },
+    }),
     cancelProviderConnection: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:server:cancel-provider-connection",
       tag: WS_METHODS.serverCancelProviderConnection,

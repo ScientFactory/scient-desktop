@@ -1,5 +1,11 @@
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
+import type { ModelReasoningMetadata } from "@t3tools/contracts";
+import {
+  getProviderOptionDescriptors,
+  getProviderOptionCurrentLabel,
+  buildExplicitProviderOptionSelectionsFromDescriptors,
+} from "@t3tools/shared/model";
 
 import {
   applyDroidModelAndEffort,
@@ -22,6 +28,7 @@ const makeRuntime = (overrides?: {
 }) => {
   const calls: Array<{ readonly op: string; readonly arg: unknown }> = [];
   let currentModel = "auto";
+  let appliedEffort: string | undefined;
   const runtime = {
     setModel: (modelId: string) =>
       Effect.sync(() => {
@@ -54,17 +61,77 @@ const makeRuntime = (overrides?: {
             ],
           },
         ] as never),
+    ).pipe(
+      Effect.map((options) =>
+        (options ?? []).map((option) =>
+          option.type === "select" &&
+          option.id === "reasoning_effort" &&
+          appliedEffort !== undefined
+            ? { ...option, currentValue: appliedEffort }
+            : option,
+        ),
+      ),
     ),
     setConfigOption: (configId: string, value: string) =>
       Effect.sync(() => {
         calls.push({ op: "setConfigOption", arg: { configId, value } });
         if (configId === "model") currentModel = value;
+        if (configId === "reasoning_effort") appliedEffort = value;
       }),
   };
   return { runtime, calls };
 };
 
 describe("resolveDroidCliBinaryPath", () => {
+  it.effect("applies a supported preference only when no effort was explicitly selected", () =>
+    Effect.gen(function* () {
+      const { runtime, calls } = makeRuntime();
+      const managed = {
+        ...runtime,
+        getReasoningMetadata: () => ({
+          status: "known" as const,
+          source: "provider" as const,
+          stale: false,
+          checkedAt: "2026-09-06T00:00:00Z",
+          supported: true,
+          levels: ["high"] as const,
+          defaultLevel: "high" as const,
+        }),
+        getDefaultReasoningLevel: () => "high",
+      };
+      yield* applyDroidModelAndEffort({
+        runtime: managed,
+        requestedModel: undefined,
+        requestedEffort: undefined,
+      });
+      expect(calls).toContainEqual({
+        op: "setConfigOption",
+        arg: { configId: "reasoning_effort", value: "high" },
+      });
+    }),
+  );
+  it("changes only the default badge, not Droid's available efforts", () => {
+    const metadata: ModelReasoningMetadata = {
+      status: "known",
+      source: "provider",
+      checkedAt: "2026-09-06T00:00:00Z",
+      stale: false,
+      supported: true,
+      levels: ["low", "medium", "high"],
+      defaultLevel: "medium",
+    };
+    const efforts = ["low", "medium", "high"].map((value) => ({ value, label: value }));
+    const options = buildDroidCapabilitiesFromEfforts(efforts, metadata, "high")
+      .optionDescriptors?.[0];
+    expect(options?.type === "select" && options.options.map((o) => o.id)).toEqual([
+      "low",
+      "medium",
+      "high",
+    ]);
+    expect(
+      options?.type === "select" && options.options.filter((o) => o.isDefault).map((o) => o.id),
+    ).toEqual(["high"]);
+  });
   it("uses the configured path or the PATH-resolved droid command", () => {
     expect(resolveDroidCliBinaryPath("/opt/droid")).toBe("/opt/droid");
     expect(resolveDroidCliBinaryPath("  /opt/droid  ")).toBe("/opt/droid");
@@ -93,6 +160,18 @@ describe("buildDroidAcpSpawnInput", () => {
       args: ["exec", "--output-format", "acp", "--append-system-prompt", "exact awareness"],
       cwd: "/tmp/project",
     });
+  });
+
+  it("places a runtime settings overlay before the exec subcommand", () => {
+    expect(
+      buildDroidAcpSpawnInput(
+        undefined,
+        "/tmp/project",
+        undefined,
+        undefined,
+        "/tmp/scient-droid/settings.json",
+      ).args,
+    ).toEqual(["--settings", "/tmp/scient-droid/settings.json", "exec", "--output-format", "acp"]);
   });
 });
 
@@ -247,6 +326,187 @@ describe("config-option parsing", () => {
 });
 
 describe("composer capability + effort extraction", () => {
+  const known: ModelReasoningMetadata = {
+    status: "known",
+    supported: true,
+    levels: ["high", "max"],
+    defaultLevel: "max",
+    source: "provider",
+    checkedAt: "2026-09-06T00:00:00Z",
+    stale: true,
+  };
+  it("intersects stale known evidence exactly without inventing levels or defaults", () => {
+    const result = buildDroidCapabilitiesFromEfforts(
+      [
+        { value: "none", label: "None", isDefault: true },
+        { value: "high", label: "High" },
+        { value: "xhigh", label: "Extra High" },
+      ],
+      known,
+    );
+    expect(result.optionDescriptors).toEqual([
+      expect.objectContaining({
+        id: "reasoningEffort",
+        label: "Reasoning",
+        type: "select",
+        strictSelection: true,
+        concreteReasoning: true,
+        options: [{ id: "high", label: "High", isDefault: true }],
+      }),
+    ]);
+  });
+  it("labels unknown choices as runtime only and drops unsupported controls", () => {
+    const efforts = [{ value: "high", label: "High", isDefault: true }];
+    expect(buildDroidCapabilitiesFromEfforts(efforts, null).optionDescriptors).toEqual([
+      expect.objectContaining({
+        id: "reasoningEffort",
+        label: "Reasoning",
+        type: "select",
+        strictSelection: true,
+        options: [{ id: "high", label: "High", isDefault: true }],
+      }),
+    ]);
+    expect(
+      buildDroidCapabilitiesFromEfforts(efforts, { ...known, supported: false, levels: [] })
+        .optionDescriptors,
+    ).toEqual([
+      expect.objectContaining({
+        strictSelection: true,
+        emptySelectionLabel: "Reasoning",
+        options: [],
+      }),
+    ]);
+  });
+  it("does not dispatch stale efforts when a managed model has no reasoning choices", () => {
+    for (const metadata of [null, { ...known, supported: false, levels: [] }]) {
+      const caps = buildDroidCapabilitiesFromEfforts([], metadata);
+      const selections = [{ id: "reasoningEffort", value: "high" }];
+      const descriptors = getProviderOptionDescriptors({ caps, selections });
+      expect(getProviderOptionCurrentLabel(descriptors[0])).toBe("Reasoning");
+      expect(
+        buildExplicitProviderOptionSelectionsFromDescriptors(descriptors, selections),
+      ).toBeUndefined();
+      const empty = getProviderOptionDescriptors({ caps });
+      expect(getProviderOptionCurrentLabel(empty[0])).toBe("Reasoning");
+      expect(
+        buildExplicitProviderOptionSelectionsFromDescriptors(empty, undefined),
+      ).toBeUndefined();
+    }
+    expect(buildDroidCapabilitiesFromEfforts([]).optionDescriptors).toEqual([]);
+  });
+  it.effect("keeps manual and budget-only unknown metadata as runtime-only controls", () =>
+    Effect.gen(function* () {
+      for (const source of ["manual", "provider"] as const) {
+        const metadata: ModelReasoningMetadata = {
+          ...known,
+          status: "unknown",
+          source,
+          supported: true,
+          levels: [],
+          mode: "budget",
+        };
+        expect(
+          buildDroidCapabilitiesFromEfforts(
+            [{ value: "high", label: "High", isDefault: true }],
+            metadata,
+          ).optionDescriptors,
+        ).toEqual([
+          expect.objectContaining({
+            id: "reasoningEffort",
+            label: "Reasoning",
+            type: "select",
+            strictSelection: true,
+            concreteReasoning: true,
+            options: [{ id: "high", label: "High", isDefault: true }],
+          }),
+        ]);
+        const { runtime } = makeRuntime();
+        for (const requestedEffort of [undefined, "high"]) {
+          yield* applyDroidModelAndEffort({
+            runtime: { ...runtime, getReasoningMetadata: () => metadata },
+            requestedModel: undefined,
+            requestedEffort,
+          });
+        }
+        expect(metadata.supported).toBe(true);
+      }
+    }),
+  );
+  it.effect("rejects a managed effort write when the runtime silently retains another value", () =>
+    Effect.gen(function* () {
+      const { runtime } = makeRuntime();
+      const result = yield* Effect.exit(
+        applyDroidModelAndEffort({
+          runtime: {
+            ...runtime,
+            getReasoningMetadata: () => known,
+            setConfigOption: () => Effect.void,
+          },
+          requestedModel: undefined,
+          requestedEffort: "high",
+        }),
+      );
+      expect(result._tag).toBe("Failure");
+    }),
+  );
+  it.effect("rejects explicit and inherited conflicts without remapping Droid sentinels", () =>
+    Effect.gen(function* () {
+      for (const requestedEffort of [undefined, "none", "max"]) {
+        const { runtime, calls } = makeRuntime();
+        const result = yield* Effect.exit(
+          applyDroidModelAndEffort({
+            runtime: { ...runtime, getReasoningMetadata: () => known },
+            requestedModel: undefined,
+            requestedEffort,
+          }),
+        );
+        expect(result._tag).toBe("Failure");
+        expect(calls).toEqual([]);
+      }
+      const { runtime, calls } = makeRuntime();
+      yield* applyDroidModelAndEffort({
+        runtime: { ...runtime, getReasoningMetadata: () => known },
+        requestedModel: undefined,
+        requestedEffort: "high",
+      });
+      expect(calls).toEqual([
+        { op: "setConfigOption", arg: { configId: "reasoning_effort", value: "high" } },
+      ]);
+      yield* applyDroidModelAndEffort({
+        runtime: { ...runtime, getReasoningMetadata: () => null },
+        requestedModel: undefined,
+        requestedEffort: undefined,
+      });
+    }),
+  );
+  it.effect(
+    "allows implicit no-effort for nonreasoning models but rejects every explicit effort",
+    () =>
+      Effect.gen(function* () {
+        const { runtime, calls } = makeRuntime();
+        const managed = {
+          ...runtime,
+          getReasoningMetadata: () => ({ ...known, supported: false, levels: [] }),
+        };
+        yield* applyDroidModelAndEffort({
+          runtime: managed,
+          requestedModel: undefined,
+          requestedEffort: undefined,
+        });
+        for (const requestedEffort of ["none", "off", "high"]) {
+          expect(
+            (yield* Effect.exit(
+              applyDroidModelAndEffort({
+                runtime: managed,
+                requestedModel: undefined,
+                requestedEffort,
+              }),
+            ))._tag,
+          ).toBe("Failure");
+        }
+        expect(calls).toEqual([]);
+      }),
+  );
   it("maps an effort ladder into a single reasoningEffort select descriptor", () => {
     const capabilities = buildDroidCapabilitiesFromEfforts([
       { value: "none", label: "None" },

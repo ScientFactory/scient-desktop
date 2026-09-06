@@ -39,6 +39,7 @@ import * as Predicate from "effect/Predicate";
 import * as Stream from "effect/Stream";
 import { makeDrainableWorker } from "@t3tools/shared/DrainableWorker";
 import { formatTokens } from "@t3tools/shared/usageFormat";
+import { MODEL_TOKEN_LIMIT_MESSAGE } from "@t3tools/shared/model";
 
 import { ProviderService } from "../../provider/Services/ProviderService.ts";
 import { ProviderRegistry } from "../../provider/Services/ProviderRegistry.ts";
@@ -410,6 +411,25 @@ export function runtimeEventToActivities(
       : {};
   })();
   switch (event.type) {
+    case "turn.completed":
+      return event.payload.state === "completed" &&
+        (event.payload.stopReason === "length" || event.payload.stopReason === "max_tokens")
+        ? [
+            {
+              id: event.eventId,
+              createdAt: event.createdAt,
+              tone: "info",
+              kind: "turn.truncated",
+              summary: MODEL_TOKEN_LIMIT_MESSAGE,
+              payload: { stopReason: event.payload.stopReason },
+              turnId: toTurnId(event.turnId) ?? null,
+              ...maybeSequence,
+            },
+          ]
+        : [];
+    case "turn.started":
+      // Runtime configuration is internal state, not assistant/tool activity.
+      return [];
     case "request.opened": {
       if (event.payload.requestType === "tool_user_input") {
         return [];

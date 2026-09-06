@@ -134,6 +134,62 @@ describe("pending user input answers", () => {
     ]);
   });
 
+  it.each(["Synthetic text only", "Submit a complete replacement:\nInitial text"])(
+    "keeps text-only questions answerable and removes them on resolution: %s",
+    (questionText) => {
+      const question = {
+        id: "pi-text-answer",
+        header: "Pi input",
+        question: questionText,
+        options: [],
+        multiSelect: false,
+      };
+      const requested = makeActivity({
+        id: EventId.make("pi-text-requested"),
+        kind: "user-input.requested",
+        summary: "User input requested",
+        createdAt: "2026-08-31T00:00:00.000Z",
+        payload: { requestId: "pi-text", questions: [question] },
+      });
+      const pending = derivePendingRequests([requested]).userInputs;
+      expect(pending).toHaveLength(1);
+      expect(pending[0]?.questions).toEqual([question]);
+      const questions = pending[0]!.questions;
+      expect(buildPendingUserInputAnswers(questions, {})).toBeNull();
+      const answers = buildPendingUserInputAnswers(questions, {
+        "pi-text-answer": { customAnswer: "שלום π\nSecond line" },
+      });
+      expect(answers).toEqual({ "pi-text-answer": "שלום π\nSecond line" });
+      const resolved = makeActivity({
+        id: EventId.make("pi-text-resolved"),
+        kind: "user-input.resolved",
+        summary: "User input submitted",
+        createdAt: "2026-08-31T00:00:01.000Z",
+        payload: { requestId: "pi-text", answers },
+      });
+      expect(derivePendingRequests([requested, resolved]).userInputs).toEqual([]);
+    },
+  );
+
+  it("does not turn malformed choice options into a text-only question", () => {
+    expect(
+      derivePendingRequests([
+        makeActivity({
+          id: EventId.make("bad-options"),
+          kind: "user-input.requested",
+          summary: "User input requested",
+          createdAt: "2026-08-31T00:00:00.000Z",
+          payload: {
+            requestId: "bad-options",
+            questions: [
+              { id: "q", header: "Input", question: "Choose", options: [null, { label: 1 }] },
+            ],
+          },
+        }),
+      ]).userInputs,
+    ).toEqual([]);
+  });
+
   it("replaces single-select options and toggles multi-select options", () => {
     expect(
       togglePendingUserInputOptionSelection(
@@ -494,6 +550,39 @@ describe("buildThreadFeed", () => {
         activities: [{ summary: "Compacted context 899K → 19K tokens" }],
       },
     ]);
+  });
+
+  it("keeps persisted truncation visible in the mobile work log after reload", () => {
+    const thread = makeThread({
+      id: ThreadId.make("truncated"),
+      projectId: ProjectId.make("project"),
+      title: "Truncated response",
+      activities: [
+        makeActivity({
+          id: EventId.make("truncated"),
+          kind: "turn.truncated",
+          createdAt: "2026-09-06T00:00:00.000Z",
+          tone: "info",
+          summary: "Response stopped at a token limit.",
+          turnId: TurnId.make("turn"),
+        }),
+      ],
+    });
+    for (const snapshot of [thread, structuredClone(thread)]) {
+      const presented = deriveThreadFeedPresentation(
+        buildThreadFeed(snapshot),
+        null,
+        new Set([TurnId.make("turn")]),
+      );
+      expect(presented).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            type: "work-toggle",
+            summary: "Response stopped at a token limit.",
+          }),
+        ]),
+      );
+    }
   });
 
   it("keeps long Claude commands expandable without repeating them in full detail", () => {

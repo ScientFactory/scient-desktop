@@ -113,7 +113,7 @@ function driverKindLabel(driverKind: ProviderDriverKind): string {
 
 /**
  * Whether an instance's icon carries the account badge: accent color set, or
- * several instances sharing a driver so the brand glyph alone is ambiguous.
+ * several enabled instances sharing a driver so the brand glyph alone is ambiguous.
  * Shared by the composer trigger, the picker rail, and sidebar rows.
  */
 export function shouldShowInstanceBadge(
@@ -123,7 +123,9 @@ export function shouldShowInstanceBadge(
   if (entry.accentColor) return true;
   let sharedDriverCount = 0;
   for (const candidate of entries) {
-    if (candidate.driverKind === entry.driverKind && ++sharedDriverCount > 1) return true;
+    if (candidate.enabled && candidate.driverKind === entry.driverKind && ++sharedDriverCount > 1) {
+      return true;
+    }
   }
   return false;
 }

@@ -285,6 +285,25 @@ describe("pending questions", () => {
     expect(derivePendingRequests(activities).userInputs[0]?.questions).toEqual([question]);
   });
 
+  it("does not turn a malformed choice list into a free-text question", () => {
+    const requested = makeActivity({
+      kind: "user-input.requested",
+      payload: {
+        requestId: "malformed-choice",
+        questions: [
+          {
+            id: "choice",
+            header: "Choice",
+            question: "Choose a result",
+            options: [null, { label: 1 }],
+          },
+        ],
+      },
+    });
+
+    expect(derivePendingRequests([requested]).userInputs).toEqual([]);
+  });
+
   it("preserves native choice values and the custom-answer restriction", () => {
     const question = {
       id: "interaction-result",

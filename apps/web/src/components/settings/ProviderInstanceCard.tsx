@@ -498,7 +498,9 @@ export function ProviderInstanceCard({
     ? instance.driver
     : null;
   const customModels =
-    instance.driver === "antigravity" ? [] : readConfigCustomModels(instance.config);
+    driverOption?.supportsCustomModels === false || instance.driver === "antigravity"
+      ? []
+      : readConfigCustomModels(instance.config);
   // Server-returned models may lag behind settings writes. Treat probe
   // models as the source for built-ins only; custom rows come directly
   // from the current instance config so add/remove reflects immediately.
@@ -591,7 +593,7 @@ export function ProviderInstanceCard({
   ) : null;
 
   const statusHeadline =
-    statusKey === "error" && connectionPresentation.kind === "manual"
+    statusKey === "disabled" || (statusKey === "error" && connectionPresentation.kind === "manual")
       ? summary.headline
       : (connectionPresentation.statusLabel ?? summary.headline);
 
@@ -600,30 +602,38 @@ export function ProviderInstanceCard({
     statusKey === "warning" || statusKey === "error" ? (
       <span className={cn("size-1.5 shrink-0 rounded-full", statusStyle.dot)} aria-hidden />
     ) : null;
-  // Trouble states carry the server's explanation (a failed probe, a shadow
-  // home entry that is not a symlink, a missing binary). Show it wherever the
-  // headline shows so the user can act without opening the editor.
+  // Pi's model inventory lives in the Models tab. Keep routine setup copy out
+  // of its header, but preserve failed probes and runtime recovery details.
+  const quietPiStatus =
+    enabled &&
+    instance.driver === "pi" &&
+    (connectionPresentation.kind === "ready" ||
+      (connectionPresentation.kind === "attention" && statusKey === "ready") ||
+      (connectionPresentation.kind === "manual" && statusKey !== "error") ||
+      (connectionPresentation.kind === "not-installed" &&
+        liveProvider?.connection?.runtime?.actions.includes("install")));
+  const statusDetail = quietPiStatus ? null : summary.detail;
+  const showStatus = !(quietPiStatus && connectionPresentation.kind === "ready");
   const needsAttention = statusKey === "warning" || statusKey === "error";
-  const editorStatusNode =
-    isAuthenticated && authEmail ? (
-      <>
-        {needsAttention ? statusDotNode : null}
-        <span>Authenticated as</span>
-        <ProviderAuthEmail email={authEmail} />
-        {authLabel ? <span>· {authLabel}</span> : null}
-        {summary.detail ? (
-          <span className="min-w-0 [overflow-wrap:anywhere]">· {summary.detail}</span>
-        ) : null}
-      </>
-    ) : (
-      <>
-        {statusDotNode}
-        <span>{statusHeadline}</span>
-        {summary.detail ? (
-          <span className="min-w-0 [overflow-wrap:anywhere]">· {summary.detail}</span>
-        ) : null}
-      </>
-    );
+  const editorStatusNode = !showStatus ? null : isAuthenticated && authEmail ? (
+    <>
+      {needsAttention ? statusDotNode : null}
+      <span>Authenticated as</span>
+      <ProviderAuthEmail email={authEmail} />
+      {authLabel ? <span>· {authLabel}</span> : null}
+      {statusDetail ? (
+        <span className="min-w-0 [overflow-wrap:anywhere]">· {statusDetail}</span>
+      ) : null}
+    </>
+  ) : (
+    <>
+      {statusDotNode}
+      <span>{statusHeadline}</span>
+      {statusDetail ? (
+        <span className="min-w-0 [overflow-wrap:anywhere]">· {statusDetail}</span>
+      ) : null}
+    </>
+  );
   if (mode === "list") {
     return (
       <div
@@ -688,15 +698,17 @@ export function ProviderInstanceCard({
                 )
               ) : null}
             </span>
-            <span className="mt-0.5 flex items-start gap-1.5 text-[13px] leading-[1.45] text-muted-foreground/80">
-              {statusDotNode ? (
-                <span className="flex h-[1.45em] shrink-0 items-center">{statusDotNode}</span>
-              ) : null}
-              <span className="line-clamp-2 [overflow-wrap:anywhere]">
-                {statusHeadline}
-                {needsAttention && summary.detail ? ` · ${summary.detail}` : null}
+            {showStatus ? (
+              <span className="mt-0.5 flex items-start gap-1.5 text-[13px] leading-[1.45] text-muted-foreground/80">
+                {statusDotNode ? (
+                  <span className="flex h-[1.45em] shrink-0 items-center">{statusDotNode}</span>
+                ) : null}
+                <span className="line-clamp-2 [overflow-wrap:anywhere]">
+                  {statusHeadline}
+                  {needsAttention && statusDetail ? ` · ${statusDetail}` : null}
+                </span>
               </span>
-            </span>
+            ) : null}
           </span>
         </div>
         <span className="flex h-5 shrink-0 items-center">
@@ -986,6 +998,7 @@ export function ProviderInstanceCard({
               <ProviderModelsSection
                 instanceId={instanceId}
                 driverKind={driverKind}
+                supportsCustomModels={driverOption.supportsCustomModels !== false}
                 models={modelsForDisplay}
                 customModels={customModels}
                 hiddenModels={hiddenModels}

@@ -67,7 +67,14 @@ function parseQuestions(value: unknown): UserInputQuestion[] {
   return value.flatMap((question) => {
     if (!Predicate.isObject(question) || !Array.isArray(question.options)) return [];
     const options = question.options.filter(isQuestionOption);
-    if (options.length === 0 && question.allowCustomAnswer === false) return [];
+    // A malformed choice list must not silently become a free-text question.
+    // An intentionally empty list remains valid unless custom answers are forbidden.
+    if (
+      options.length === 0 &&
+      (question.options.length > 0 || question.allowCustomAnswer === false)
+    ) {
+      return [];
+    }
     const parsed = decodeQuestion({
       id: question.id,
       header: question.header,

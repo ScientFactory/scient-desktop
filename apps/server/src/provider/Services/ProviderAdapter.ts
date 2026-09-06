@@ -27,6 +27,12 @@ import type * as Stream from "effect/Stream";
 
 export type ProviderSessionModelSwitchMode = "in-session" | "unsupported";
 
+export type ProviderAdapterSendTurnInput = ProviderSendTurnInput & {
+  /** Server-owned user text before model-directed attachment/skill augmentation.
+   * Native commands may need their exact arguments; never decoded from client input. */
+  readonly originalInput?: string;
+};
+
 /**
  * How ProviderService runs manual context compaction for an adapter.
  * Native adapters expose a start call and must emit a compacted thread state
@@ -82,7 +88,7 @@ export interface ProviderAdapterShape<TError> {
    * Send a turn to an active provider session.
    */
   readonly sendTurn: (
-    input: ProviderSendTurnInput,
+    input: ProviderAdapterSendTurnInput,
   ) => Effect.Effect<ProviderTurnStartResult, TError>;
 
   /** Omitted when this adapter does not support manual context compaction. */

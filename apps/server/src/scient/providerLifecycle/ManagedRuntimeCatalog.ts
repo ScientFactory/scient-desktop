@@ -126,6 +126,7 @@ const managedProviders: ReadonlyArray<ManagedRuntimeCatalogProvider> = [
   "cursor",
   "droid",
   "grok",
+  "pi",
 ];
 
 /**

@@ -49,6 +49,7 @@ vi.mock("./CodexInlineSetup", () => ({ CodexInlineSetup: inlineSetup("Codex") })
 vi.mock("./CursorInlineSetup", () => ({ CursorInlineSetup: inlineSetup("Cursor") }));
 vi.mock("./DroidInlineSetup", () => ({ DroidInlineSetup: inlineSetup("Droid") }));
 vi.mock("./GrokInlineSetup", () => ({ GrokInlineSetup: inlineSetup("Grok") }));
+vi.mock("./PiInlineSetup", () => ({ PiInlineSetup: inlineSetup("Pi") }));
 
 import {
   AssistedProviderSetupHost,
@@ -74,6 +75,11 @@ function provider(driver: string, displayName: string): ServerProvider {
 }
 
 describe("AssistedProviderSetupHost", () => {
+  it("makes Pi runtime management reachable from settings and composer", () => {
+    const driver = ProviderDriverKind.make("pi");
+    expect(supportsAssistedProviderSetupSurface(driver, "composer")).toBe(true);
+    expect(supportsAssistedProviderSetupSurface(driver, "management")).toBe(true);
+  });
   beforeEach(() => {
     controllerFactory.mockClear();
     controller.disconnect.mockReset();

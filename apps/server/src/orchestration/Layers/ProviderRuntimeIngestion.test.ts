@@ -1,5 +1,6 @@
 // @effect-diagnostics nodeBuiltinImport:off
 import * as NodeFS from "node:fs";
+import { MODEL_TOKEN_LIMIT_MESSAGE } from "@t3tools/shared/model";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 import * as NodeChildProcess from "node:child_process";
@@ -57,7 +58,10 @@ import { OrchestrationProjectionPipelineLive } from "./ProjectionPipeline.ts";
 import { OrchestrationProjectionSnapshotQueryLive } from "./ProjectionSnapshotQuery.ts";
 import * as ThreadBackgroundLiveness from "../ThreadBackgroundLiveness.ts";
 import * as ThreadPlanProgress from "../ThreadPlanProgress.ts";
-import { ProviderRuntimeIngestionLive } from "./ProviderRuntimeIngestion.ts";
+import {
+  ProviderRuntimeIngestionLive,
+  runtimeEventToActivities,
+} from "./ProviderRuntimeIngestion.ts";
 import { DEFAULT_THREAD_TITLE } from "../threadTitles.ts";
 import { OrchestrationEngineService } from "../Services/OrchestrationEngine.ts";
 import { ProviderRuntimeIngestionService } from "../Services/ProviderRuntimeIngestion.ts";
@@ -79,6 +83,51 @@ const asEventId = (value: string): EventId => EventId.make(value);
 const asMessageId = (value: string): MessageId => MessageId.make(value);
 const asThreadId = (value: string): ThreadId => ThreadId.make(value);
 const asTurnId = (value: string): TurnId => TurnId.make(value);
+
+const confirmedPiReasoningEvent = {
+  type: "turn.started",
+  eventId: asEventId("pi-confirmed-reasoning"),
+  provider: ProviderDriverKind.make("pi"),
+  threadId: asThreadId("thread-1"),
+  turnId: asTurnId("pi-confirmed-turn"),
+  createdAt: "2026-01-01T00:00:00.000Z",
+  payload: { effort: "high" },
+  raw: {
+    source: "pi.rpc.notification",
+    method: "get_state",
+    payload: { effortConfirmed: true, thinkingSource: "explicit" },
+  },
+} satisfies ProviderRuntimeEvent;
+
+describe("Pi confirmed reasoning activity", () => {
+  it("does not turn reasoning configuration into visible chat activity", () => {
+    expect(runtimeEventToActivities(confirmedPiReasoningEvent)).toEqual([]);
+  });
+  it.each(["codex", "droid", "claudeAgent"])("never confirms reasoning for %s", (provider) => {
+    expect(
+      runtimeEventToActivities({
+        ...confirmedPiReasoningEvent,
+        provider: ProviderDriverKind.make(provider),
+      }),
+    ).toEqual([]);
+  });
+  it("ignores absent confirmation, effort, turn identity, or runtime provenance", () => {
+    for (const event of [
+      { ...confirmedPiReasoningEvent, payload: {} },
+      { ...confirmedPiReasoningEvent, turnId: undefined },
+      { ...confirmedPiReasoningEvent, raw: undefined },
+      {
+        ...confirmedPiReasoningEvent,
+        raw: { ...confirmedPiReasoningEvent.raw, method: "set_thinking_level" },
+      },
+      {
+        ...confirmedPiReasoningEvent,
+        raw: { ...confirmedPiReasoningEvent.raw, payload: { effortConfirmed: false } },
+      },
+    ])
+      expect(runtimeEventToActivities(event)).toEqual([]);
+  });
+});
 
 type LegacyProviderRuntimeEvent = {
   readonly type: string;
@@ -453,6 +502,96 @@ describe("ProviderRuntimeIngestion", () => {
     };
   }
 
+  it.each(["pi", "droid"])(
+    "persists %s truncation and partial output without failing the queue",
+    async (provider) => {
+      const harness = await createHarness();
+      const base = {
+        provider: ProviderDriverKind.make(provider),
+        threadId: asThreadId("thread-1"),
+        createdAt: "2026-01-01T00:00:00.000Z",
+        turnId: asTurnId("turn-limit"),
+      };
+      await harness.emitAndDrain([
+        { ...base, type: "turn.started", eventId: asEventId("limit-start") },
+        {
+          ...base,
+          type: "item.completed",
+          eventId: asEventId("limit-tool"),
+          itemId: asItemId("completed-tool"),
+          payload: {
+            itemType: "command_execution",
+            status: "completed",
+            title: "Read file",
+            detail: "Useful tool output",
+          },
+        },
+        {
+          ...base,
+          type: "content.delta",
+          eventId: asEventId("limit-partial"),
+          payload: { streamKind: "assistant_text", delta: "Useful partial answer" },
+        },
+        {
+          ...base,
+          type: "turn.completed",
+          eventId: asEventId("limit-end"),
+          payload: {
+            state: "completed",
+            stopReason: provider === "pi" ? "length" : "max_tokens",
+          },
+        },
+      ]);
+      expect(await harness.readQueueFinalization("turn-limit")).toEqual({
+        answer_done: 1,
+        successful: 1,
+      });
+      expect((await harness.readThreadShell()).session?.lastError).toBeNull();
+      const persisted = (await harness.readModel()).threads.find(
+        (thread) => thread.id === base.threadId,
+      );
+      expect(persisted?.session?.status).toBe("ready");
+      expect(
+        persisted?.activities.filter((activity) => activity.kind === "turn.truncated"),
+      ).toMatchObject([
+        {
+          tone: "info",
+          summary: MODEL_TOKEN_LIMIT_MESSAGE,
+          turnId: base.turnId,
+          payload: { stopReason: provider === "pi" ? "length" : "max_tokens" },
+        },
+      ]);
+      expect(persisted?.activities.some((activity) => activity.tone === "error")).toBe(false);
+      expect(
+        persisted?.activities.find((activity) => activity.kind === "tool.completed"),
+      ).toMatchObject({
+        turnId: base.turnId,
+        payload: { status: "completed", detail: "Useful tool output" },
+      });
+      expect(
+        persisted?.messages.some(
+          (message) => message.text === "Useful partial answer" && !message.streaming,
+        ),
+      ).toBe(true);
+      await harness.emitAndDrain([
+        {
+          ...base,
+          turnId: asTurnId("turn-recovery"),
+          type: "turn.started",
+          eventId: asEventId("limit-recovery"),
+        },
+        {
+          ...base,
+          turnId: asTurnId("turn-recovery"),
+          type: "turn.completed",
+          eventId: asEventId("limit-recovered"),
+          payload: { state: "completed" },
+        },
+      ]);
+      expect((await harness.readThreadShell()).session?.lastError).toBeNull();
+    },
+  );
+
   it("signals the queue answer barrier for an aborted turn", async () => {
     const harness = await createHarness();
     const now = "2026-01-01T00:00:00.000Z";
@@ -523,6 +662,19 @@ describe("ProviderRuntimeIngestion", () => {
       (entry) => entry.session?.activeTurnId === "turn-active",
     );
     expect(thread.session?.activeTurnId).toBe("turn-active");
+  });
+
+  it("starts Pi turns without adding reasoning confirmation activity", async () => {
+    const harness = await createHarness();
+    await harness.emitAndDrain([confirmedPiReasoningEvent]);
+    const thread = await waitForThread(
+      harness.readModel,
+      (entry) => entry.session?.activeTurnId === confirmedPiReasoningEvent.turnId,
+    );
+    expect(thread.session?.activeTurnId).toBe(confirmedPiReasoningEvent.turnId);
+    expect(
+      thread.activities.find((activity) => activity.kind === "reasoning.applied"),
+    ).toBeUndefined();
   });
 
   it("maps turn started/completed events into thread session updates", async () => {

@@ -169,7 +169,8 @@ function getSelectedTraits(
         });
   const selectDescriptors = descriptors.filter(
     (descriptor): descriptor is Extract<ProviderOptionDescriptor, { type: "select" }> =>
-      descriptor.type === "select",
+      descriptor.type === "select" &&
+      (!descriptor.concreteReasoning || descriptor.options.length > 0),
   );
   const booleanDescriptors = descriptors.filter(
     (descriptor): descriptor is Extract<ProviderOptionDescriptor, { type: "boolean" }> =>
@@ -430,7 +431,7 @@ export const TraitsMenuContent = memo(function TraitsMenuContentImpl({
                   <MenuRadioItem
                     key={option.id}
                     value={option.id}
-                    hideIndicator
+                    hideIndicator={!descriptor.concreteReasoning}
                     // Base UI keeps radio menus open by default. Close on pick so
                     // the traits menu behaves like the model picker.
                     closeOnClick

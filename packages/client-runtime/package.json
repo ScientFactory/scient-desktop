@@ -3,6 +3,10 @@
   "private": true,
   "type": "module",
   "exports": {
+    "./droid-model-presentation": {
+      "types": "./src/droidModelPresentation.ts",
+      "default": "./src/droidModelPresentation.ts"
+    },
     "./antigravity-model-presentation": {
       "types": "./src/antigravityModelPresentation.ts",
       "default": "./src/antigravityModelPresentation.ts"

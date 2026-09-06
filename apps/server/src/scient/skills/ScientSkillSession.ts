@@ -25,6 +25,7 @@ export const SCIENT_SKILL_DELIVERY = {
   droid: "mcp",
   grok: "mcp",
   opencode: "mcp",
+  pi: "mcp",
 } as const;
 
 /** Unknown future drivers fail closed until their transport is reviewed. */

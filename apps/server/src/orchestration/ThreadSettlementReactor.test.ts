@@ -31,7 +31,7 @@ import {
   type PullRequestMergeEvent,
 } from "../pullRequest/PullRequestService.ts";
 import { ServerActivation } from "../serverActivation.ts";
-import { ServerSettingsService } from "../serverSettings.ts";
+import { ServerSettingsService, customModelsTestMethods } from "../serverSettings.ts";
 import { OrchestrationCommandInvariantError } from "./Errors.ts";
 import {
   OrchestrationEngineService,
@@ -224,6 +224,7 @@ const makeHarness = Effect.fn("makeThreadSettlementHarness")(function* (options:
   };
 
   const serverSettings = ServerSettingsService.of({
+    ...customModelsTestMethods,
     start: Effect.void,
     ready: Effect.void,
     getSettings: Ref.get(settings),

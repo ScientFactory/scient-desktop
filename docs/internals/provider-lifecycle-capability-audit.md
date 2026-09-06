@@ -85,6 +85,59 @@ provider, state, operating system, or architecture is implied to be live-qualifi
 every system-to-managed row remains **code-confirmed** until its corresponding live scenario and
 platform are recorded.
 
+## Pi qualification addition — 2026-08-31
+
+This addition records the Pi candidate on `codex/pi-provider-20260831`, based on
+`6e608aadf29ad083c46c8552fea6a1ce4b4e7554`; it does not requalify the historical rows below.
+
+- **Code-confirmed:** disabled by default; native RPC, multiple instances, custom/system/private
+  runtimes, and the existing shared managed install/update/repair/remove and explicit system-to-managed
+  switch. Managed acquisition is restricted to local desktop macOS ARM64 with the qualified catalog.
+  External runtime updates remain manual. No universal Pi account login/logout is advertised.
+- **Automated native evidence:** official Pi 0.84.4 download/checksum/extraction/smoke/activation/removal
+  passed on macOS ARM64. Isolated native tests exercise model discovery, synthetic local-model turns,
+  Scient MCP tool calls and structured errors, exact private-session resume, concurrent turns,
+  native questions, native skill/template expansion, and pre-completion text/reasoning deltas.
+- **Bounded live-app evidence:** isolated synthetic-state Settings enablement, model discovery,
+  runtime presentation, Full access selection, model/thinking changes, Scient `preview_status`, and
+  native file read were exercised. Follow-up native passes verified all four question types,
+  including a multiline Hebrew/English editor replacement; native-question Stop and reopen;
+  exact private-session resume; generation Stop; model-error recovery; steering within one turn;
+  and compact thinking/access controls with restoration to the expanded layout. The passes exposed
+  and regression-tested native-command augmentation, free-text question filtering, and cancellation
+  misclassification defects before repeating these checks on the repaired candidate.
+- **Intentional boundaries:** Pi has no Scient-enforced sandbox; supported runtime modes are explicit
+  Full access only. Native credentials and local inference servers remain Pi/user-owned. Shared
+  conversation buffering and question-control limitations remain unchanged; see
+  [Pi in Scient](../user/providers-pi.md) for the supported behavior and partial editor presentation.
+- **Additional branch implementation, not yet merged or visually accepted:** reusable Scient custom
+  connections now provide API-key and keyless endpoint setup with explicit Pi-instance attachments.
+  Native profile credentials are not imported. See [Custom model connections](./custom-models.md)
+  for automated evidence and remaining qualification boundaries.
+- **Not qualified:** hosted credentials/entitlement, actual downloaded local-model quality, GUI
+  install/remove and system-to-managed handoff, packaged release, real mobile device, or other
+  operating-system/architecture targets. Switching an already-supervised draft to Pi was not
+  visually exercised in the Pi-only fixture; unsupported-mode refusal has automated coverage, and
+  both live access menus showed Full access only. Native/headless evidence does not promote these
+  remaining cases to live-app acceptance.
+
+### Main alignment and follow-up — 2026-09-05
+
+The candidate was realigned with merged Scient main
+`0b33fabfb97a009651ccc78bb3be944e50cb84aa`. Native protocol tests passed against official
+Pi 0.84.4 and 0.85.0, including workspace-local discovery without extension execution; the
+managed catalog remains pinned to 0.84.4. Follow-up fixes preserve exact native selection values,
+bound session-header reads, reject directory-segment instance IDs and unsupported image steering,
+and suppress unsupported rollback
+and Scient-side custom-model entry controls. Existing catalog curation remains available.
+
+The isolated desktop pass repeated Scient tool calls, native file reads, all four question types,
+generation Stop, exact-session continuation, model-error recovery, and model/thinking selection.
+After a fresh backend restart, desktop checks also verified image delivery to the synthetic model
+endpoint, generic-file attachment paths, queued-message steering through completion, native model
+favorites, and the corrected model-entry/runtime-management presentation. Hosted models and the
+other unqualified cases above remain separate acceptance gates.
+
 ## Lifecycle dimensions
 
 Provider parity should be evaluated across independent dimensions rather than one generic connected

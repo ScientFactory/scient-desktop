@@ -19,6 +19,37 @@ function makeCommandActivity(
 }
 
 describe("deriveWorkLogEntries command output", () => {
+  it("does not duplicate the composer truncation notice in the work log", () => {
+    const tool = makeCommandActivity("completed-tool", { title: "Command" });
+    expect(
+      deriveWorkLogEntries([
+        tool,
+        {
+          ...tool,
+          id: EventId.make("truncated"),
+          kind: "turn.truncated",
+          tone: "info",
+          summary: "Response stopped at a token limit.",
+          payload: { stopReason: "length" },
+        },
+      ]),
+    ).toEqual(deriveWorkLogEntries([tool]));
+  });
+  it("hides old reasoning confirmation notices without hiding real tool calls", () => {
+    const tool = makeCommandActivity("real-command", { title: "Command" });
+    expect(
+      deriveWorkLogEntries([
+        {
+          ...tool,
+          id: EventId.make("old-reasoning"),
+          kind: "reasoning.applied",
+          summary: "Pi confirmed reasoning: Medium",
+          tone: "info",
+        },
+        tool,
+      ]),
+    ).toEqual(deriveWorkLogEntries([tool]));
+  });
   it("uses Codex aggregated output instead of repeating the command", () => {
     const [entry] = deriveWorkLogEntries([
       makeCommandActivity("codex-command", {
