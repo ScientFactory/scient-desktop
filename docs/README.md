@@ -5,6 +5,11 @@ Some internal documents retain inherited T3 terminology where it describes the
 host platform or historical ancestry; that terminology is not product identity
 or release authority.
 
+Related documentation also lives in the separate
+[Scient repository](https://github.com/ScientFactory/Scient/blob/main/docs/README.md).
+Topics may span repositories; follow the relevant documents and their ownership
+or supersession links rather than assuming either repository contains all guidance.
+
 The logical roles are Help, Capabilities, Architecture, Development,
 Operations, Upstream, and Records. They map to the real compatibility paths
 below: `docs/user/` is the authored Help source for public Scient Docs;

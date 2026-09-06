@@ -23,12 +23,29 @@ See the [mobile README](../../apps/mobile/README.md) for native builds and Metro
 Flags go directly after the task name, for example `vp run dev --home-dir /tmp/t3code-dev`.
 Add `--browser` to open a browser automatically.
 
+### Stopping a manually launched process
+
+For a foreground dev runner, use Ctrl-C in its owning terminal. For a background
+run, use its retained terminal session or the runner PID recorded when it started.
+Confirm that PID still belongs to the same run before sending SIGTERM.
+For an orphaned process, inspect the listening port, command, working directory,
+and parent process together before stopping it. On macOS, `lsof -nP -iTCP:<port> -sTCP:LISTEN`
+can identify a listener, but a port or worktree match alone does not establish
+ownership. Never pipe a process search into a kill command. Managed Electron
+candidates use the [local dev app stop command](./local-dev-app.md) instead.
+
 ### State and ports
 
 Scient candidate apps use their worktree-owned `.scient-next` state. The stable development
 launcher has a separate identity and state root; see the local dev app runbook before launching.
 Never read or copy live Scient or T3 data into a candidate. Use synthetic fixtures, and confirm
 the actual state root in the dev-runner output before testing.
+
+For `vp run dev`, a nonblank `--home-dir` takes precedence over the linked worktree's
+`.scient-next` directory; outside a linked worktree, the fallback is `~/.scient-next`.
+The runner sets `SCIENT_NEXT_HOME` and the compatibility variable `T3CODE_HOME` for
+its children from that resolved path, rather than inheriting ambient home overrides.
+This is the dev runner's precedence, not a rule for every server or desktop entry point.
 
 Read ports from the `[dev-runner]` output. Worktrees derive stable preferences from their paths,
 but occupied ports can shift them. `T3CODE_PORT_OFFSET` or `T3CODE_DEV_INSTANCE` can select a
@@ -54,6 +71,26 @@ when changing this setup:
 
 The workarounds live in the [web entry](../../apps/web/src/bootstrap.ts) and
 [Tailwind plugin](../../apps/web/vite/tailwind.ts).
+
+### Replacing a consumed or expired pairing URL
+
+From the repository root, mint a fresh link for the already-running test server:
+
+```sh
+node apps/server/src/bin.ts pair --base-dir "/absolute/path/to/the-running-test-profile"
+```
+
+Replace the placeholder with the exact `baseDir` from that run's output, not an
+assumed `userdata/` subdirectory or an installed app's profile. The explicit path
+avoids automatic discovery selecting another environment. This creates a credential;
+use it only for the test environment you are authorized to access. Give the intended
+tester the complete URL without consuming it in another browser first.
+
+The `pair` command grants standard client scopes, not the administrative scopes
+needed to manage access in Settings → Connections. It does not replace an
+administrative session. See the [remote-access guide](../user/remote-access.md)
+for creating scoped links from an existing authorized session. For remote testing,
+the URL's origin must also be reachable from the tester's device.
 
 ## Checks
 
