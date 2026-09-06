@@ -1,6 +1,7 @@
-import type {
-  ManagedRuntimeProvider,
-  ManagedRuntimeCatalogProvider,
+import {
+  MANAGED_RUNTIME_CATALOG_PROVIDERS,
+  type ManagedRuntimeProvider,
+  type ManagedRuntimeCatalogProvider,
 } from "@scientfactory/provider-runtime";
 import type { ProviderDriverKind } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
@@ -11,35 +12,15 @@ import * as Stream from "effect/Stream";
 import { ProviderRegistry } from "../../provider/Services/ProviderRegistry.ts";
 import { ManagedRuntimeCatalog } from "./ManagedRuntimeCatalog.ts";
 
-const allManagedProviders: ReadonlyArray<ManagedRuntimeCatalogProvider> = [
-  "codex",
-  "claudeAgent",
-  "antigravity",
-  "antigravityAcp",
-  "cursor",
-  "droid",
-  "grok",
-];
-
 export function catalogProviderForDriver(
   driver: ProviderDriverKind,
 ): ManagedRuntimeProvider | undefined {
-  switch (driver) {
-    case "codex":
-      return "codex";
-    case "claude":
-      return "claudeAgent";
-    case "antigravity":
-      return "antigravity";
-    case "cursor":
-      return "cursor";
-    case "droid":
-      return "droid";
-    case "grok":
-      return "grok";
-    default:
-      return undefined;
-  }
+  // Managed drivers use their catalog key. ACP is a separate release family
+  // of the Antigravity driver, handled by the change filter below.
+  return MANAGED_RUNTIME_CATALOG_PROVIDERS.find(
+    (provider): provider is ManagedRuntimeProvider =>
+      provider !== "antigravityAcp" && provider === driver,
+  );
 }
 
 /**
@@ -105,6 +86,8 @@ export const layer = Layer.effectDiscard(
     // The catalog refresh fiber may have completed before this layer acquired
     // its subscription. Reconcile once in the background to close that startup
     // window without delaying HTTP or provider readiness.
-    yield* reconcileManagedRuntimeProviders(allManagedProviders).pipe(Effect.forkScoped);
+    yield* reconcileManagedRuntimeProviders(MANAGED_RUNTIME_CATALOG_PROVIDERS).pipe(
+      Effect.forkScoped,
+    );
   }),
 );

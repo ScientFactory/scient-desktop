@@ -1,4 +1,8 @@
 import { expect, it } from "@effect/vitest";
+import {
+  DROID_LATEST_VERSION_URL,
+  parseDroidReleaseVersion,
+} from "@scientfactory/provider-runtime";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as Effect from "effect/Effect";
 import { HttpClient, HttpClientResponse } from "effect/unstable/http";
@@ -7,12 +11,7 @@ import {
   ProviderVersionCache,
   type ProviderMaintenanceResolutionContext,
 } from "./providerMaintenance.ts";
-import {
-  droidMaintenance,
-  piMaintenance,
-  parseDroidReleaseVersion,
-  withDroidReleaseVersion,
-} from "./piDroidMaintenance.ts";
+import { droidMaintenance, piMaintenance, withDroidReleaseVersion } from "./piDroidMaintenance.ts";
 
 const context = (path: string): ProviderMaintenanceResolutionContext => ({
   binaryPath: path,
@@ -38,8 +37,8 @@ it.layer(NodeServices.layer)("Pi/Droid maintenance", (it) => {
       const result = yield* piMaintenance.resolve(
         context("/opt/custom/lib/node_modules/@mariozechner/pi-coding-agent/dist/cli.js"),
       );
-      expect(result.packageName).toBe("@mariozechner/pi-coding-agent");
-      expect(result.update?.args).toContain("@mariozechner/pi-coding-agent@latest");
+      expect(result.packageName).toBe("@earendil-works/pi-coding-agent");
+      expect(result.update).toBeNull();
     }),
   );
   it.effect("leaves unknown Pi installations manual-only", () =>
@@ -96,12 +95,8 @@ it.layer(NodeServices.layer)("Pi/Droid maintenance", (it) => {
       let requests = 0;
       const client = HttpClient.make((request) => {
         requests++;
-        return Effect.succeed(
-          HttpClientResponse.fromWeb(
-            request,
-            new Response("<title><![CDATA[Droid CLI v0.214.0]]></title>"),
-          ),
-        );
+        expect(request.url).toBe(DROID_LATEST_VERSION_URL);
+        return Effect.succeed(HttpClientResponse.fromWeb(request, new Response("0.214.0\n")));
       });
       yield* Effect.gen(function* () {
         yield* withDroidReleaseVersion(capabilities, false);
@@ -144,6 +139,17 @@ it.layer(NodeServices.layer)("Pi/Droid maintenance", (it) => {
   );
 });
 
-it("does not infer a release from unrelated feed text", () => {
-  expect(parseDroidReleaseVersion("<title>App v99.0.0</title>")).toBeNull();
+it("accepts only a single stable Droid release version", () => {
+  expect(parseDroidReleaseVersion("0.214.0\n")).toBe("0.214.0");
+  for (const invalid of [
+    "",
+    "latest",
+    "0.214",
+    "01.2.3",
+    "0.214.0-beta.1",
+    "0.214.0\n0.215.0",
+    "<title>App v99.0.0</title>",
+  ]) {
+    expect(parseDroidReleaseVersion(invalid)).toBeNull();
+  }
 });

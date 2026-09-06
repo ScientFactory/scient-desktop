@@ -25,6 +25,8 @@
         "src/pdf-validation-worker.ts!",
         "scripts/cli.ts",
         "scripts/agy-stream-mock.ts",
+        // Invoked inside the native-qualification workflow's repetition loop.
+        "scripts/qualify-antigravity-acp-catalog.ts",
         "src/provider/testFixtures/*.mjs",
       ],
       // Native msgpack acceleration and the Vite+ web build prerequisite.

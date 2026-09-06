@@ -3,6 +3,9 @@ import * as NodeCrypto from "node:crypto";
 
 import {
   ANTIGRAVITY_ACP_TARGETS,
+  MANAGED_RUNTIME_CATALOG_PROVIDERS as managedRuntimeProviders,
+  DROID_LATEST_VERSION_URL,
+  parseDroidReleaseVersion,
   antigravityAcpExecutableNames,
   resolveAntigravityAcpCatalogAsset,
   hydrateManagedRuntimeArtifact,
@@ -89,17 +92,6 @@ const policyResolvers: Readonly<Record<ManagedRuntimeProvider, PolicyResolver>> 
   grok: resolveReviewedGrokArtifact,
   pi: resolveReviewedPiArtifact,
 };
-
-export const managedRuntimeProviders: ReadonlyArray<ManagedRuntimeCatalogProvider> = [
-  "codex",
-  "claudeAgent",
-  "antigravity",
-  "antigravityAcp",
-  "cursor",
-  "droid",
-  "grok",
-  "pi",
-];
 
 export function isManagedRuntimeProvider(value: string): value is ManagedRuntimeCatalogProvider {
   return managedRuntimeProviders.some((provider) => provider === value);
@@ -314,8 +306,9 @@ export function validateManagedRuntimeCatalog(input: unknown): ManagedRuntimeCat
     Record<ManagedRuntimeCatalogProvider, ManagedRuntimeCatalogProviderData>
   > = {};
   for (const provider of managedRuntimeProviders) {
-    // An older published feed remains valid while the new family is first qualified.
-    if (provider === "antigravityAcp" && rawProviders[provider] === undefined) continue;
+    // A feed can predate an app-approved family. Keep it absent until that
+    // family's own discovery and native qualification succeed.
+    if (rawProviders[provider] === undefined) continue;
     const rawRelease = record(rawProviders[provider], `Managed runtime catalog ${provider}`);
     if (rawRelease.contractRevision !== CONTRACT_REVISION) {
       throw new Error(`${provider} has an unsupported managed runtime contract revision.`);
@@ -409,13 +402,10 @@ export function parseCursorInstallerVersion(source: string): string {
   return strictVersion(unique[0], "Cursor installer");
 }
 
-export function parseDroidRssVersion(source: string): string {
-  const match = /<title><!\[CDATA\[[^\]]*\bCLI v([0-9]+(?:\.[0-9]+)+(?:-[0-9A-Za-z._]+)?)/u.exec(
-    source,
-  );
-  if (!match?.[1])
-    throw new Error("Factory release feed did not expose a stable Droid CLI version.");
-  return strictVersion(match[1], "Factory release feed");
+export function parseDroidStableVersion(source: string): string {
+  const version = parseDroidReleaseVersion(source);
+  if (!version) throw new Error("Factory release feed did not expose a stable Droid CLI version.");
+  return strictVersion(version, "Factory release feed");
 }
 
 export function parseGrokStableVersion(source: string): string {
@@ -597,9 +587,7 @@ async function discoverCursor(fetch_: Fetch): Promise<ManagedRuntimeCatalogProvi
 }
 
 async function discoverDroid(fetch_: Fetch): Promise<ManagedRuntimeCatalogProviderData> {
-  const version = parseDroidRssVersion(
-    await metadataText(fetch_, "https://docs.factory.ai/changelog/rss.xml"),
-  );
+  const version = parseDroidStableVersion(await metadataText(fetch_, DROID_LATEST_VERSION_URL));
   const entries = await mapConcurrent(policyEntries("droid"), 4, async ({ key, policy }) => {
     const current = new URL(policy.url);
     current.pathname = current.pathname.replace(
@@ -768,6 +756,17 @@ export async function refreshManagedRuntimeCatalog(
   return { catalog, changedProviders };
 }
 
+function existingOrBundledRelease(
+  catalog: ManagedRuntimeCatalogData,
+  provider: ManagedRuntimeCatalogProvider,
+): ManagedRuntimeCatalogProviderData {
+  const release =
+    catalog.providers[provider] ??
+    validateManagedRuntimeCatalog(bundledCatalogJson).providers[provider];
+  if (!release) throw new Error(`Managed runtime catalog is missing ${provider}.`);
+  return release;
+}
+
 /** Discover one provider independently so a broken channel cannot block the other providers. */
 export async function refreshManagedRuntimeProvider(
   current: ManagedRuntimeCatalogData,
@@ -778,15 +777,11 @@ export async function refreshManagedRuntimeProvider(
   if (current.schemaVersion !== 1) {
     throw new Error("Managed runtime catalog schema is unsupported.");
   }
-  const existing =
-    current.providers[provider] ??
-    (provider === "antigravityAcp"
-      ? validateManagedRuntimeCatalog(bundledCatalogJson).providers.antigravityAcp
-      : undefined);
-  if (!existing) throw new Error(`Managed runtime catalog is missing ${provider}.`);
+  const existing = existingOrBundledRelease(current, provider);
   report(`Checking ${provider} stable channel.`);
   const latestVersion = await discoverLatestVersion(provider, fetch_);
-  if (current.providers[provider] && !releaseChanged(provider, existing, latestVersion)) {
+  const changed = releaseChanged(provider, existing, latestVersion);
+  if (current.providers[provider] && !changed) {
     report(`${provider} is already current at ${latestVersion}.`);
     return { catalog: current, changedProviders: [] };
   }
@@ -815,11 +810,9 @@ export function mergeQualifiedManagedRuntimeProvider(input: {
   readonly candidate: ManagedRuntimeCatalogData;
   readonly provider: ManagedRuntimeCatalogProvider;
 }): ManagedRuntimeCatalogData {
-  const currentRelease =
-    input.current.providers[input.provider] ??
-    (input.provider === "antigravityAcp" ? bundledCatalogJson.providers.antigravityAcp : undefined);
+  const currentRelease = existingOrBundledRelease(input.current, input.provider);
   const candidateRelease = input.candidate.providers[input.provider];
-  if (!currentRelease || !candidateRelease) {
+  if (!candidateRelease) {
     throw new Error(`Managed runtime catalog is missing ${input.provider}.`);
   }
   if (currentRelease.version === candidateRelease.version) {
@@ -898,9 +891,7 @@ async function discoverLatestVersion(
     case "cursor":
       return parseCursorInstallerVersion(await metadataText(fetch_, "https://cursor.com/install"));
     case "droid":
-      return parseDroidRssVersion(
-        await metadataText(fetch_, "https://docs.factory.ai/changelog/rss.xml"),
-      );
+      return parseDroidStableVersion(await metadataText(fetch_, DROID_LATEST_VERSION_URL));
     case "grok":
       return parseGrokStableVersion(await metadataText(fetch_, "https://x.ai/cli/stable"));
     case "pi": {

@@ -16,6 +16,7 @@ import {
   detectManagedRuntimeTarget,
   hydrateManagedRuntimeArtifact,
   managedRuntimeTargetKey,
+  runtimeFilesystem,
   resolveReviewedAntigravityArtifact,
   resolveReviewedClaudeArtifact,
   resolveReviewedCodexArtifact,
@@ -126,6 +127,7 @@ if (!artifact) throw new Error(`${provider} ${targetKey} violates app-owned runt
 const root = await NodeFSP.mkdtemp(
   NodePath.join(NodeOS.tmpdir(), `scient-${provider}-qualification-`),
 );
+let qualificationFailure: unknown;
 try {
   const runtime = factory.runtime(root);
   await runtime.install({ artifact, signal: AbortSignal.timeout(15 * 60_000) });
@@ -148,6 +150,17 @@ try {
   process.stdout.write(
     `${provider} ${artifact.version} passed native ${targetKey} qualification.\n`,
   );
+} catch (cause) {
+  qualificationFailure = cause;
+  throw cause;
 } finally {
-  await NodeFSP.rm(root, { recursive: true, force: true });
+  await runtimeFilesystem.remove(root).catch((cleanupFailure: unknown) => {
+    if (qualificationFailure !== undefined) {
+      throw new AggregateError(
+        [qualificationFailure, cleanupFailure],
+        "Runtime qualification and cleanup both failed.",
+      );
+    }
+    throw cleanupFailure;
+  });
 }

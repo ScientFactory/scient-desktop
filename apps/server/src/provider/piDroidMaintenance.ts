@@ -1,10 +1,15 @@
 import { ProviderDriverKind } from "@t3tools/contracts";
+import {
+  DROID_LATEST_VERSION_URL,
+  parseDroidReleaseVersion,
+} from "@scientfactory/provider-runtime";
 import * as Effect from "effect/Effect";
 import * as DateTime from "effect/DateTime";
 import { HttpClient } from "effect/unstable/http";
 import { collectUint8StreamText } from "../stream/collectUint8StreamText.ts";
 import {
   makeManualOnlyProviderMaintenanceCapabilities,
+  makePackageManagedProviderMaintenanceResolver,
   makeProviderMaintenanceCapabilities,
   ProviderVersionCache,
   resolvePackageManagedProviderMaintenance,
@@ -13,26 +18,13 @@ import {
 } from "./providerMaintenance.ts";
 
 const PI_PACKAGE = "@earendil-works/pi-coding-agent";
-const LEGACY_PI_PACKAGE = "@mariozechner/pi-coding-agent";
-
-export const piMaintenance: ProviderMaintenanceCapabilitiesResolver = {
-  resolve: (context) => {
-    // Keep an existing legacy package on its own release channel.
-    const packageName = context?.realCommandPath
-      .replaceAll("\\", "/")
-      .includes(`/node_modules/${LEGACY_PI_PACKAGE}/`)
-      ? LEGACY_PI_PACKAGE
-      : PI_PACKAGE;
-    return resolvePackageManagedProviderMaintenance(
-      {
-        provider: ProviderDriverKind.make("pi"),
-        npmPackageName: packageName,
-        nativeUpdate: null,
-      },
-      context,
-    );
-  },
-};
+// The legacy package cannot reach Scient's minimum supported Pi version.
+// Unknown/legacy ownership remains manual-only; never silently migrate it.
+export const piMaintenance = makePackageManagedProviderMaintenanceResolver({
+  provider: ProviderDriverKind.make("pi"),
+  npmPackageName: PI_PACKAGE,
+  nativeUpdate: null,
+});
 
 export const droidMaintenance: ProviderMaintenanceCapabilitiesResolver = {
   resolve: Effect.fn("droidMaintenance.resolve")(function* (context) {
@@ -72,13 +64,6 @@ export const droidMaintenance: ProviderMaintenanceCapabilitiesResolver = {
   }),
 };
 
-export function parseDroidReleaseVersion(source: string): string | null {
-  return (
-    /<title><!\[CDATA\[[^\]]*\bCLI v([0-9]+(?:\.[0-9]+)+(?:-[0-9A-Za-z._]+)?)/u.exec(source)?.[1] ??
-    null
-  );
-}
-
 /** Native releases use Factory's channel, not npm's independently published version. */
 export const withDroidReleaseVersion = Effect.fn("withDroidReleaseVersion")(function* (
   capabilities: ProviderMaintenanceCapabilities,
@@ -86,7 +71,7 @@ export const withDroidReleaseVersion = Effect.fn("withDroidReleaseVersion")(func
 ) {
   if (!enabled || !capabilities.update?.lockKey.startsWith("droid-native:")) return capabilities;
   const cache = yield* ProviderVersionCache;
-  const key = "https://docs.factory.ai/changelog/rss.xml";
+  const key = DROID_LATEST_VERSION_URL;
   const now = DateTime.toEpochMillis(yield* DateTime.now);
   const cached = cache.get(key);
   if (cached && cached.expiresAt > now) return { ...capabilities, latestVersion: cached.version };

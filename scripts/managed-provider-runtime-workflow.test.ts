@@ -4,6 +4,7 @@ import * as NodePath from "node:path";
 
 import { describe, expect, it } from "vite-plus/test";
 import { parse } from "yaml";
+import { MANAGED_RUNTIME_CATALOG_PROVIDERS } from "@scientfactory/provider-runtime";
 
 function workflow(name: string) {
   return parse(
@@ -12,6 +13,19 @@ function workflow(name: string) {
 }
 
 describe("managed provider runtime update workflow", () => {
+  it("checks exactly the app-approved release families in both dispatch and the schedule", () => {
+    const caller = workflow("managed-provider-runtime-updates.yml");
+    expect(caller.on.workflow_dispatch.inputs.provider.options).toEqual([
+      "all",
+      ...MANAGED_RUNTIME_CATALOG_PROVIDERS,
+    ]);
+    const defaultMatrix = /\|\|\s*'(\[[^']+\])'/u.exec(
+      caller.jobs.provider.strategy.matrix.provider,
+    )?.[1];
+    expect(defaultMatrix).toBeDefined();
+    expect(JSON.parse(defaultMatrix!)).toEqual(MANAGED_RUNTIME_CATALOG_PROVIDERS);
+  });
+
   it("keeps ACP on its own native installer and uses the provisioned package manager", () => {
     const caller = workflow("managed-provider-runtime-updates.yml");
     const reusable = workflow("managed-provider-runtime-update-provider.yml");

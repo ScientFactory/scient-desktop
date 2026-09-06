@@ -4,219 +4,219 @@
     "codex": {
       "contractRevision": 1,
       "channel": "stable",
-      "version": "0.153.2",
+      "version": "0.153.4",
       "artifacts": {
         "darwin-arm64": {
           "artifactName": "codex-package-aarch64-apple-darwin.tar.gz",
-          "url": "https://github.com/openai/codex/releases/download/rust-v0.153.2/codex-package-aarch64-apple-darwin.tar.gz",
+          "url": "https://github.com/openai/codex/releases/download/rust-v0.153.4/codex-package-aarch64-apple-darwin.tar.gz",
           "checksum": {
             "algorithm": "sha256",
-            "digest": "287e2dd0a9bbfb58581b0a9150399458b4f094ea42caf02860f1e8cb5a202a0b"
+            "digest": "35438da1fbf7a6db7ddb3bcec84448fa6015ba188461472a97d9d1da7d9c4353"
           },
-          "size": 111555208
+          "size": 111554884
         },
         "darwin-x64": {
           "artifactName": "codex-package-x86_64-apple-darwin.tar.gz",
-          "url": "https://github.com/openai/codex/releases/download/rust-v0.153.2/codex-package-x86_64-apple-darwin.tar.gz",
+          "url": "https://github.com/openai/codex/releases/download/rust-v0.153.4/codex-package-x86_64-apple-darwin.tar.gz",
           "checksum": {
             "algorithm": "sha256",
-            "digest": "6e3876e7f4edff2e3dee545e1d3b2334866791a8dfce7e25789bf6799355a4ea"
+            "digest": "3ee638d7155c856ef31f3f4a85cb2195de1939962d3924c935b24f0514564a3d"
           },
-          "size": 121035390
+          "size": 121093282
         },
         "linux-arm64-glibc": {
           "artifactName": "codex-package-aarch64-unknown-linux-musl.tar.gz",
-          "url": "https://github.com/openai/codex/releases/download/rust-v0.153.2/codex-package-aarch64-unknown-linux-musl.tar.gz",
+          "url": "https://github.com/openai/codex/releases/download/rust-v0.153.4/codex-package-aarch64-unknown-linux-musl.tar.gz",
           "checksum": {
             "algorithm": "sha256",
-            "digest": "a3bfaf4b62fcb17e0a0338dfe0502413ddce0ab1b39028679390539c45d2c6e3"
+            "digest": "fc395cb043a1093ab0db34f44aba3199bfaa9ce640cd9be7fd588f44b0da64a4"
           },
-          "size": 117212564
+          "size": 117238842
         },
         "linux-arm64-musl": {
           "artifactName": "codex-package-aarch64-unknown-linux-musl.tar.gz",
-          "url": "https://github.com/openai/codex/releases/download/rust-v0.153.2/codex-package-aarch64-unknown-linux-musl.tar.gz",
+          "url": "https://github.com/openai/codex/releases/download/rust-v0.153.4/codex-package-aarch64-unknown-linux-musl.tar.gz",
           "checksum": {
             "algorithm": "sha256",
-            "digest": "a3bfaf4b62fcb17e0a0338dfe0502413ddce0ab1b39028679390539c45d2c6e3"
+            "digest": "fc395cb043a1093ab0db34f44aba3199bfaa9ce640cd9be7fd588f44b0da64a4"
           },
-          "size": 117212564
+          "size": 117238842
         },
         "linux-x64-glibc": {
           "artifactName": "codex-package-x86_64-unknown-linux-musl.tar.gz",
-          "url": "https://github.com/openai/codex/releases/download/rust-v0.153.2/codex-package-x86_64-unknown-linux-musl.tar.gz",
+          "url": "https://github.com/openai/codex/releases/download/rust-v0.153.4/codex-package-x86_64-unknown-linux-musl.tar.gz",
           "checksum": {
             "algorithm": "sha256",
-            "digest": "e10fa0cee78e9f0bd395880f03fd4fd227d903ca7af649bbc08d1649101e9225"
+            "digest": "a822187e1a2420c61c5926721bfbd878701ed95547c9bb0d4de4498a16ba1821"
           },
-          "size": 126184860
+          "size": 126196303
         },
         "linux-x64-musl": {
           "artifactName": "codex-package-x86_64-unknown-linux-musl.tar.gz",
-          "url": "https://github.com/openai/codex/releases/download/rust-v0.153.2/codex-package-x86_64-unknown-linux-musl.tar.gz",
+          "url": "https://github.com/openai/codex/releases/download/rust-v0.153.4/codex-package-x86_64-unknown-linux-musl.tar.gz",
           "checksum": {
             "algorithm": "sha256",
-            "digest": "e10fa0cee78e9f0bd395880f03fd4fd227d903ca7af649bbc08d1649101e9225"
+            "digest": "a822187e1a2420c61c5926721bfbd878701ed95547c9bb0d4de4498a16ba1821"
           },
-          "size": 126184860
+          "size": 126196303
         },
         "win32-arm64": {
           "artifactName": "codex-package-aarch64-pc-windows-msvc.tar.gz",
-          "url": "https://github.com/openai/codex/releases/download/rust-v0.153.2/codex-package-aarch64-pc-windows-msvc.tar.gz",
+          "url": "https://github.com/openai/codex/releases/download/rust-v0.153.4/codex-package-aarch64-pc-windows-msvc.tar.gz",
           "checksum": {
             "algorithm": "sha256",
-            "digest": "a1958a6e01f1be57427d16988c4949eadb02112a8dba1ca2fbbb37eb7517c395"
+            "digest": "ac51b1a5932e07dffcaa6e98f4801f13b25192094739b732fc8b40ddb41bbda2"
           },
-          "size": 126106985
+          "size": 126141441
         },
         "win32-x64": {
           "artifactName": "codex-package-x86_64-pc-windows-msvc.tar.gz",
-          "url": "https://github.com/openai/codex/releases/download/rust-v0.153.2/codex-package-x86_64-pc-windows-msvc.tar.gz",
+          "url": "https://github.com/openai/codex/releases/download/rust-v0.153.4/codex-package-x86_64-pc-windows-msvc.tar.gz",
           "checksum": {
             "algorithm": "sha256",
-            "digest": "eaa00e30f3c1a2b5ca8263960f340a8e5d06fb705de09716f9a2bc42eceef437"
+            "digest": "a6ef3442cb12766a88b39311d79244289e4f9763e2c53ff4fbebc2cb653cc5f3"
           },
-          "size": 136067003
+          "size": 136067504
         }
       }
     },
     "claudeAgent": {
       "contractRevision": 1,
       "channel": "stable",
-      "version": "2.1.260",
+      "version": "2.1.263",
       "artifacts": {
         "darwin-arm64": {
-          "artifactName": "claude-2.1.260-darwin-arm64",
-          "url": "https://downloads.claude.ai/claude-code-releases/2.1.260/darwin-arm64/claude",
+          "artifactName": "claude-2.1.263-darwin-arm64",
+          "url": "https://downloads.claude.ai/claude-code-releases/2.1.263/darwin-arm64/claude",
           "checksum": {
             "algorithm": "sha256",
-            "digest": "3c269f66801028823e24a63ced9fdd3988cb86cf85fccd9f03f87e463b9d3e3c"
+            "digest": "ef5d2909c8af49f31ab6d5487e90316777bc2fac170adfe8160716caa8aaf4f9"
           },
-          "size": 198289440
+          "size": 199257984
         },
         "darwin-x64": {
-          "artifactName": "claude-2.1.260-darwin-x64",
-          "url": "https://downloads.claude.ai/claude-code-releases/2.1.260/darwin-x64/claude",
+          "artifactName": "claude-2.1.263-darwin-x64",
+          "url": "https://downloads.claude.ai/claude-code-releases/2.1.263/darwin-x64/claude",
           "checksum": {
             "algorithm": "sha256",
-            "digest": "2d791b1bff2bc36419de09e1f2226c076b40b0717ee43108928938f622ea9b77"
+            "digest": "a94a8b229fa85c3a316c6b4a35e0aa22bec1aabbd3d1422826ce1d10ddc88751"
           },
-          "size": 207051744
+          "size": 208025952
         },
         "linux-arm64-glibc": {
-          "artifactName": "claude-2.1.260-linux-arm64",
-          "url": "https://downloads.claude.ai/claude-code-releases/2.1.260/linux-arm64/claude",
+          "artifactName": "claude-2.1.263-linux-arm64",
+          "url": "https://downloads.claude.ai/claude-code-releases/2.1.263/linux-arm64/claude",
           "checksum": {
             "algorithm": "sha256",
-            "digest": "9811afb5f97224c2c5d3d0ee1e8c316117d298d5ec3e095d5ff0c1dd0e889ca5"
+            "digest": "7d25d7c8ae6c6e009cc7dae4e817f674179fd31fb7761bcd56fee4c2902b4c03"
           },
-          "size": 214228392
+          "size": 215211432
         },
         "linux-arm64-musl": {
-          "artifactName": "claude-2.1.260-linux-arm64-musl",
-          "url": "https://downloads.claude.ai/claude-code-releases/2.1.260/linux-arm64-musl/claude",
+          "artifactName": "claude-2.1.263-linux-arm64-musl",
+          "url": "https://downloads.claude.ai/claude-code-releases/2.1.263/linux-arm64-musl/claude",
           "checksum": {
             "algorithm": "sha256",
-            "digest": "414fea0ef7bf774b7b1d1a42635ce176b6fc5ec80912303557307f1e04aca621"
+            "digest": "9b02e81a61d54bef3e6d190b6f2f6c4a9c31e6e068468f79d520d5ffff6b0e42"
           },
-          "size": 207173272
+          "size": 208156312
         },
         "linux-x64-glibc": {
-          "artifactName": "claude-2.1.260-linux-x64",
-          "url": "https://downloads.claude.ai/claude-code-releases/2.1.260/linux-x64/claude",
+          "artifactName": "claude-2.1.263-linux-x64",
+          "url": "https://downloads.claude.ai/claude-code-releases/2.1.263/linux-x64/claude",
           "checksum": {
             "algorithm": "sha256",
-            "digest": "7a2fdc74b6836ea3d183f665b869f0ee3baebc9713cbebffe5838da4ea7bd82e"
+            "digest": "26d020351e8112f4006790f3cfce43b4c9df0c1bb1d0e542364d64151b81d5ba"
           },
-          "size": 214687216
+          "size": 215662064
         },
         "linux-x64-musl": {
-          "artifactName": "claude-2.1.260-linux-x64-musl",
-          "url": "https://downloads.claude.ai/claude-code-releases/2.1.260/linux-x64-musl/claude",
+          "artifactName": "claude-2.1.263-linux-x64-musl",
+          "url": "https://downloads.claude.ai/claude-code-releases/2.1.263/linux-x64-musl/claude",
           "checksum": {
             "algorithm": "sha256",
-            "digest": "08a7ca9c07d88af26d3ea53ed59a27bf74d8827b2f3e01d329f1fd2ae42ceaaa"
+            "digest": "b9c407e36847bcb24b953b1390f240c840ae6c99e10a76475d2fadc5d5c4adca"
           },
-          "size": 208703440
+          "size": 209678288
         },
         "win32-arm64": {
-          "artifactName": "claude-2.1.260-win32-arm64",
-          "url": "https://downloads.claude.ai/claude-code-releases/2.1.260/win32-arm64/claude.exe",
+          "artifactName": "claude-2.1.263-win32-arm64",
+          "url": "https://downloads.claude.ai/claude-code-releases/2.1.263/win32-arm64/claude.exe",
           "checksum": {
             "algorithm": "sha256",
-            "digest": "40c1dfef976a6c4df772c75d73cb313773d3bbfcb8ce8d05fd2965afec3718b5"
+            "digest": "2ca14d6f61a39c3ad5d72424f4e347d5a570a58036ab1afe14c5e3eb668e9540"
           },
-          "size": 208821920
+          "size": 209795744
         },
         "win32-x64": {
-          "artifactName": "claude-2.1.260-win32-x64",
-          "url": "https://downloads.claude.ai/claude-code-releases/2.1.260/win32-x64/claude.exe",
+          "artifactName": "claude-2.1.263-win32-x64",
+          "url": "https://downloads.claude.ai/claude-code-releases/2.1.263/win32-x64/claude.exe",
           "checksum": {
             "algorithm": "sha256",
-            "digest": "ab5fe6cb800a9faf3df1cc0f6bcb71f097296b302a16b576ca906446a22fea71"
+            "digest": "0b35df94c1307004f07b738390bfef8dfca5e9af29aaf6517f305bf086b95b03"
           },
-          "size": 217771680
+          "size": 218746016
         }
       }
     },
     "antigravity": {
       "contractRevision": 1,
       "channel": "stable",
-      "version": "1.1.26",
+      "version": "1.1.27",
       "artifacts": {
         "darwin-arm64": {
           "artifactName": "cli_mac_arm64.tar.gz",
-          "url": "https://storage.googleapis.com/antigravity-public/antigravity-cli/1.1.26-5550154686791680/darwin-arm/cli_mac_arm64.tar.gz",
+          "url": "https://storage.googleapis.com/antigravity-public/antigravity-cli/1.1.27-5211191891591168/darwin-arm/cli_mac_arm64.tar.gz",
           "checksum": {
             "algorithm": "sha512",
-            "digest": "89027c600c700fba831baf43843626b49e7a16afd5e7ffb682441b1bf2894fe21e6b2314e601501e569554e94190976fa984a5f68271ab04e2ee7074f9b6f599"
+            "digest": "cd627f798e059f84a88bfe21dbde54cc5262e2d93d1943f120eb4b386823f4a1f7c4a57d4d0f876557709b6061a4c02f1fc13157f0047c5df6f300afa471e411"
           },
-          "size": 49101159
+          "size": 49187973
         },
         "darwin-x64": {
           "artifactName": "cli_mac_x64.tar.gz",
-          "url": "https://storage.googleapis.com/antigravity-public/antigravity-cli/1.1.26-5550154686791680/darwin-x64/cli_mac_x64.tar.gz",
+          "url": "https://storage.googleapis.com/antigravity-public/antigravity-cli/1.1.27-5211191891591168/darwin-x64/cli_mac_x64.tar.gz",
           "checksum": {
             "algorithm": "sha512",
-            "digest": "d4b80f4c05eef14cd660f5a29a4a700e2d97b02af1ccddba2450136d9d4712606b09254610fecd6761178998cac1e9d3559b26fe0cfb335f44b0efb8c099fda7"
+            "digest": "a2db814cf7ee3a50442caf0907a470fa2073d6d8bd6cd1039fac2022b0abb4a15a75b70191a0cdbc08183907bfac23b3f9a4bada994552c34e9b9ff806378bca"
           },
-          "size": 53962348
+          "size": 54061138
         },
         "linux-arm64-glibc": {
           "artifactName": "cli_linux_arm64.tar.gz",
-          "url": "https://storage.googleapis.com/antigravity-public/antigravity-cli/1.1.26-5550154686791680/linux-arm/cli_linux_arm64.tar.gz",
+          "url": "https://storage.googleapis.com/antigravity-public/antigravity-cli/1.1.27-5211191891591168/linux-arm/cli_linux_arm64.tar.gz",
           "checksum": {
             "algorithm": "sha512",
-            "digest": "332dddb06ab4d901a44cfd4b9b358848230e64a64515a8e79b03822348adac9ce92d54cb4fc5119ef075edfba922820c926dfddf82d3a49f4ecdb6e6704dfc75"
+            "digest": "ed45f6930785aa4b42f14e07ace1c9d91a94fb76e760f54acbd7d3d3951e1f957fd456a0dae2a3124dd9a3b689bf7afb7c9303a3e4ba95037fc10063424d9bf9"
           },
-          "size": 53148160
+          "size": 53241342
         },
         "linux-x64-glibc": {
           "artifactName": "cli_linux_x64.tar.gz",
-          "url": "https://storage.googleapis.com/antigravity-public/antigravity-cli/1.1.26-5550154686791680/linux-x64/cli_linux_x64.tar.gz",
+          "url": "https://storage.googleapis.com/antigravity-public/antigravity-cli/1.1.27-5211191891591168/linux-x64/cli_linux_x64.tar.gz",
           "checksum": {
             "algorithm": "sha512",
-            "digest": "80f2e7bf1fe0833487975b320b07176b82dd2cc2043b8acb4201b37b86d604af50718400b58af0f41adc68b389640f6ff95362da87a9ef1682b34258e83110b2"
+            "digest": "793d4b9ea2c08d9a7e50bafa02cfc8c19424bd60d6e83f91408d45f9c6d4ce79a5d576fede5bef164d823abf84f81359a14b4ca665952c47b0a7cfd743bb69c0"
           },
-          "size": 56691683
+          "size": 56789301
         },
         "win32-arm64": {
           "artifactName": "cli_windows_arm64.exe",
-          "url": "https://storage.googleapis.com/antigravity-public/antigravity-cli/1.1.26-5550154686791680/windows-arm/cli_windows_arm64.exe",
+          "url": "https://storage.googleapis.com/antigravity-public/antigravity-cli/1.1.27-5211191891591168/windows-arm/cli_windows_arm64.exe",
           "checksum": {
             "algorithm": "sha512",
-            "digest": "3f831cc141ccc2956540c606e917b4c3e5b593629d57eee08f110c9442180cae3065d97ebeea24a06b09947780bae7c621cc351447cd821001554d24788528c5"
+            "digest": "6d290388d41c84aa83bdd6a94f8c5ad177fcefa659daa55ee6953df475001219ec8245c0d9ceeb2432449b5abbc8793b0d5dbdc54f2930a48de5a5ba79caec5b"
           },
-          "size": 178798232
+          "size": 179063448
         },
         "win32-x64": {
           "artifactName": "cli_windows_x64.exe",
-          "url": "https://storage.googleapis.com/antigravity-public/antigravity-cli/1.1.26-5550154686791680/windows-x64/cli_windows_x64.exe",
+          "url": "https://storage.googleapis.com/antigravity-public/antigravity-cli/1.1.27-5211191891591168/windows-x64/cli_windows_x64.exe",
           "checksum": {
             "algorithm": "sha512",
-            "digest": "ce5b88cb4a9016a3c8834b26c4148ab666064fb28101431d79d072965fffaf2a0db2cc632447cd7b1deca60c95e5e33b1c1e4c43b3d2e47a7070c00fc7655d34"
+            "digest": "85b4fb9cb6c2235142d02d869fbf7b0a8a4b0ca0d0994dd1948b58cacb9f69f59d337d9808298b8c2054f604c6849fea977d17b898e9662168cc7fc870f8aa3c"
           },
-          "size": 189194904
+          "size": 189485208
         }
       }
     },
@@ -483,16 +483,16 @@
     "pi": {
       "contractRevision": 1,
       "channel": "stable",
-      "version": "0.84.4",
+      "version": "0.85.1",
       "artifacts": {
         "darwin-arm64": {
           "artifactName": "pi-darwin-arm64.tar.gz",
-          "url": "https://github.com/earendil-works/pi/releases/download/v0.84.4/pi-darwin-arm64.tar.gz",
+          "url": "https://github.com/earendil-works/pi/releases/download/v0.85.1/pi-darwin-arm64.tar.gz",
           "checksum": {
             "algorithm": "sha256",
-            "digest": "c68e3ac4d05b4e282aaab2e6c76f161d3e9e68f19a22e38913cbfaadb6c800f0"
+            "digest": "d5f70e3c0cf7398eac239fd0261ee074d98b7ba7f6b43fe3617f052ed5b79d06"
           },
-          "size": 30928407
+          "size": 31035676
         }
       }
     }

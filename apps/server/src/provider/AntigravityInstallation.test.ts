@@ -161,6 +161,17 @@ const makeHarness = Effect.fn("test.makeAntigravityInstallation")(function* (
   const installationFs = options.fileSystem ?? fs;
   const trackedFs = FileSystem.FileSystem.of({
     ...installationFs,
+    // Windows staging uses explicit scoped removal so it can retry executable locks.
+    remove: (directory, settings) =>
+      installationFs
+        .remove(directory, settings)
+        .pipe(
+          Effect.tap(() =>
+            path.basename(directory).startsWith(".install-")
+              ? Deferred.succeed(stagingReleased, undefined)
+              : Effect.void,
+          ),
+        ),
     makeTempDirectoryScoped: (settings) =>
       settings?.prefix === ".install-"
         ? Effect.acquireRelease(installationFs.makeTempDirectory(settings), (directory) =>

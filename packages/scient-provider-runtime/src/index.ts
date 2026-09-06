@@ -17,4 +17,5 @@ export * from "./managedGrokRuntime.ts";
 export * from "./managedDroidRuntime.ts";
 export * from "./managedCursorRuntime.ts";
 export * from "./runtimeFiles.ts";
+export * from "./runtimeFilesystem.ts";
 export * from "./target.ts";
