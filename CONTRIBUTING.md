@@ -2,12 +2,11 @@
 
 ## Scient repository boundary
 
-This public repository is the active source for released Scient Desktop. The
-product, safety, release, and verification rules in [AGENTS.md](AGENTS.md)
-govern contributions before the inherited T3 guidance below. Public visibility
-does not make every product direction or release operation open: scientific
-features, legacy-data migration, cloud/mobile enablement, signing, releases,
-and distribution still require their owning product or operational decision.
+This public repository is the active source for released Scient Desktop.
+Contributions follow Scient's product, safety, release, and verification rules
+in [AGENTS.md](AGENTS.md). Public visibility does not authorize changes to product
+direction, live-data migration, cloud/mobile enablement, signing, releases, or
+distribution.
 
 All candidate changes use short-lived branches and draft pull requests. T3
 upstream merges use dedicated branches and must remain separate from Scient

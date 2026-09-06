@@ -36,7 +36,12 @@ Bundle or package presence proves the correct variant, not native compatibility.
 
 ## Start one disposable T3 environment
 
-Run backend commands from the repository root. Use the ignored, worktree-local `.t3` directory or create a fresh directory with the host OS's temporary-directory mechanism. An explicit base directory stores state in `<base-dir>/userdata`; never point testing at shared `~/.t3` state.
+Run backend commands from the repository root. Create a fresh temporary base directory
+for this test and use its absolute path consistently below. Do not use live Scient
+or T3 profiles. The direct `serve` command below uses `<base-dir>/userdata`;
+other launch paths may differ. For `vp run dev`, follow the
+[development runbook](../../../docs/operations/development.md#state-and-ports)
+and confirm the resolved runtime paths instead of assuming this layout.
 
 Seed a small number of meaningful Git projects before starting the backend:
 
@@ -164,13 +169,13 @@ Android does not use serve-sim. Use a browser-compatible Android mirror when the
 
 ## Verify and clean up
 
-Exercise only the affected flow on one representative device unless the change specifically concerns platform, OS version, or screen size. Before finishing:
+Exercise only the affected flow on one representative device unless the change specifically concerns platform, OS version, or screen size. Preserve the environment while human review or further iteration is pending. Verify the result now; perform teardown steps 3–6 only when the testing loop is finished:
 
 1. Confirm the app connected to the intended disposable environment instead of merely rendering an empty disconnected state.
 2. Capture the relevant final state.
 3. Remove the disposable environment from T3 Code Dev.
 4. Remove any `adb reverse` rule created for this test with `adb -s <emulator-serial> reverse --remove tcp:<metro-port>`.
-5. Stop only the serve-sim, Metro, backend, emulator, and log processes started by this test.
+5. Stop only the serve-sim, Metro, backend, emulator, and log processes started by this test, following the [process-stopping guidance](../../../docs/operations/development.md#stopping-a-manually-launched-process).
 6. Remove only base directories and temporary Git repositories deliberately created for this test. Preserve them when they contain useful reproduction evidence.
 
 Keep local verification focused. Do not turn this workflow into a full repository test run.

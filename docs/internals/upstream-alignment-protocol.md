@@ -74,6 +74,10 @@ Classify each overlap before resolving it:
 - **Scient-owned policy:** retain the existing Scient decision and its guard.
   Distinguish an approved product decision from an implementation limitation or an earlier agent's
   assumption; existing code or a historical receipt alone does not establish user intent.
+  `AGENTS.md` is Scient-owned policy. Review upstream changes to it even when Git
+  merges them without conflicts. Incorporate applicable technical guidance without
+  restoring upstream team authority, contradictory instructions, or duplicated
+  procedures.
 - **Composition:** preserve both behaviors at the narrowest stable seam.
 - **Incompatible rollout:** keep the underlying compatible machinery when useful, but gate the
   capability and command path until every required surface is safe.

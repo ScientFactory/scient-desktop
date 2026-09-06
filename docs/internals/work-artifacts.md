@@ -32,7 +32,7 @@ Create a new durable document only when all of these are true:
 
 Track active maintainer work in its GitHub issue or project item. The tracking item should state the outcome, constraints, and acceptance criteria, then link the pull requests that implement it. Split large efforts into one durable specification and small work items that can each close independently.
 
-Close completed items. Update or delete invalidated work before starting the next implementation session. External proposals follow [CONTRIBUTING.md](../../CONTRIBUTING.md) and belong in Ideas discussions rather than issues.
+Close completed items. Update or delete invalidated work before starting the next implementation session. External proposals follow [CONTRIBUTING.md](../../CONTRIBUTING.md#issues-first): open an issue before proposing a non-trivial change.
 
 ## Temporary work stays temporary
 
