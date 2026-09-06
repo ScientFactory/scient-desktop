@@ -281,17 +281,39 @@ describe("Scient release machinery", () => {
     assert.equal(
       renderScientReleaseNotesMarkdown({
         version: "0.6.0",
+        publishedAt: "2026-08-01",
         kicker: "The new Scient foundation",
         headline: "A faster, clearer Scient",
         summary: "Scient now runs on its new maintained desktop foundation.",
         highlights: [
           {
+            id: "easier-setup",
             title: "Easier setup",
             description: "Connect an existing AI subscription from the composer.",
           },
         ],
       }),
       "# A faster, clearer Scient\n\n**The new Scient foundation**\n\nScient now runs on its new maintained desktop foundation.\n\n## Highlights\n\n- **Easier setup** — Connect an existing AI subscription from the composer.\n",
+    );
+  });
+
+  it("renders paragraph-format notes without requiring legacy copy", () => {
+    assert.equal(
+      renderScientReleaseNotesMarkdown({
+        version: "0.6.11",
+        publishedAt: "2026-09-06",
+        format: "paragraphs",
+        headline: "More AI choices. Smoother work.",
+        highlights: [
+          {
+            id: "bring-your-own-models",
+            title: "Bring your own models",
+            description: "Connect your own API keys or local models to Pi and Droid.",
+          },
+        ],
+        alsoIncluded: "Clearer Settings controls and more reliable provider update checks.",
+      }),
+      "# More AI choices. Smoother work.\n\n## Highlights\n\n- **Bring your own models** — Connect your own API keys or local models to Pi and Droid.\n\n## Also included\n\nClearer Settings controls and more reliable provider update checks.\n",
     );
   });
 
