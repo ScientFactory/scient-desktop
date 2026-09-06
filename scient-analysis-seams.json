@@ -17,6 +17,7 @@
     "packages/scient-execution"
   ],
   "ownedFiles": [
+    "apps/server/src/telemetry/ComputeOutputAnalytics.ts",
     "apps/server/src/orchestration/scient-fork/migrations/005_AnalysisRunIndex.ts",
     "apps/server/src/orchestration/scient-fork/migrations/006_AnalysisRunProjectionState.ts",
     "apps/server/src/orchestration/scient-fork/migrations/007_AnalysisRunStorageStatus.ts",
