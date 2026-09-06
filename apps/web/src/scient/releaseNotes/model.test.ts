@@ -196,3 +196,28 @@ describe("validateScientReleaseNotesCatalog", () => {
     );
   });
 });
+
+describe("Scient 0.6.12 release-note decision", () => {
+  it("keeps the hotfix concise while carrying the approved 0.6.11 highlights", () => {
+    const note = SCIENT_RELEASE_NOTES.find(({ version }) => version === "0.6.12") as
+      | ScientReleaseNote
+      | undefined;
+    if (!note || note.format !== "paragraphs")
+      throw new Error("Expected the 0.6.12 paragraph note.");
+    expect(note.highlights[0]).toEqual({
+      id: "gemini-model-discovery-hotfix",
+      title: "Gemini model discovery hotfix",
+      description: "Fixed Gemini model discovery for the Antigravity provider.",
+    });
+    expect(note.highlights.slice(1).map(({ title }) => title)).toEqual([
+      "Bring your own models",
+      "Pi is now available",
+      "Continue your Codex and Claude conversations in Scient",
+      "Set your preferences once",
+      "Smoother Markdown editing",
+      "Faster, more reliable work",
+    ]);
+    expect(note.alsoIncluded).toContain("originally released in Scient 0.6.11");
+    expect(note.alsoIncluded).not.toContain("Windows");
+  });
+});
