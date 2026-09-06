@@ -189,8 +189,7 @@ export function providerSettingsLifecyclePresentation(
     return {
       kind: discovered ? "ready" : "manual",
       statusLabel: discovered ? "Models available" : "Configure Pi",
-      detail:
-        provider.message ?? "Pi owns model-specific credentials. Refresh after configuring Pi.",
+      detail: provider.message ?? "Connect a custom model or configure a provider in Pi.",
       ...action({ kind: "manage", label: "Manage" }),
       busy: false,
     };

@@ -29,6 +29,7 @@ import {
   buildDroidModelsFromConfigOptions,
   resolveDroidAutonomyModeId,
   resolveDroidCliBinaryPath,
+  makeDroidAcpRuntime,
 } from "../acp/DroidAcpSupport.ts";
 
 const decodeDroidSettings = Schema.decodeSync(DroidSettings);
@@ -63,6 +64,256 @@ const droidAdapterTestLayer = ServerConfig.layerTest(process.cwd(), {
 
 const makeTestAdapter = (binaryPath: string, options?: Parameters<typeof makeDroidAdapter>[1]) =>
   makeDroidAdapter(decodeDroidSettings({ binaryPath }), options).pipe(Effect.orDie);
+
+it.effect("rejects images for a loaded text-only custom model before prompting", () =>
+  Effect.gen(function* () {
+    const wrapperPath = yield* Effect.promise(() => makeMockDroidWrapper());
+    yield* Effect.addFinalizer(() =>
+      Effect.promise(() =>
+        NodeFSP.rm(NodePath.dirname(wrapperPath), { recursive: true, force: true }),
+      ),
+    );
+    let prompts = 0;
+    const adapter = yield* makeTestAdapter(wrapperPath, {
+      makeAcpRuntime: (input) =>
+        Effect.gen(function* () {
+          const runtime = yield* makeDroidAcpRuntime(input);
+          return {
+            ...runtime,
+            getImageSupport: () => false,
+            prompt: (...args: Parameters<typeof runtime.prompt>) =>
+              Effect.gen(function* () {
+                prompts++;
+                return yield* runtime.prompt(...args);
+              }),
+          };
+        }),
+    });
+    const threadId = ThreadId.make("droid-text-only-image");
+    yield* adapter.startSession({
+      threadId,
+      cwd: process.cwd(),
+      runtimeMode: "full-access",
+      modelSelection: { instanceId: ProviderInstanceId.make("droid"), model: "custom:Ox-Alpha-0" },
+    });
+    const result = yield* adapter
+      .sendTurn({
+        threadId,
+        input: "read image",
+        attachments: [
+          { type: "image", id: "not-read", name: "image.png", mimeType: "image/png", sizeBytes: 1 },
+        ],
+      })
+      .pipe(Effect.result);
+    assert.equal(result._tag, "Failure");
+    if (result._tag === "Failure")
+      assert.match(result.failure.message, /does not advertise image support/);
+    assert.equal(prompts, 0);
+  }).pipe(Effect.scoped, Effect.provide(droidAdapterTestLayer)),
+);
+
+it.effect("preserves explicit and inherited conversation effort over the saved model default", () =>
+  Effect.gen(function* () {
+    const wrapperPath = yield* Effect.promise(() => makeMockDroidWrapper());
+    yield* Effect.addFinalizer(() =>
+      Effect.promise(() =>
+        NodeFSP.rm(NodePath.dirname(wrapperPath), { recursive: true, force: true }),
+      ),
+    );
+    const sentEfforts: unknown[] = [];
+    const adapter = yield* makeTestAdapter(wrapperPath, {
+      makeAcpRuntime: (input) =>
+        Effect.gen(function* () {
+          const runtime = yield* makeDroidAcpRuntime(input);
+          return {
+            ...runtime,
+            getReasoningMetadata: () => ({
+              status: "known" as const,
+              supported: true,
+              levels: ["low", "medium", "high"] as const,
+              defaultLevel: "medium" as const,
+            }),
+            getDefaultReasoningLevel: () => "high",
+            prompt: (...args: Parameters<typeof runtime.prompt>) =>
+              Effect.gen(function* () {
+                const options = yield* runtime.getConfigOptions;
+                sentEfforts.push(
+                  options.find((option) => option.id === "reasoning_effort")?.currentValue,
+                );
+                return yield* runtime.prompt(...args);
+              }),
+          };
+        }),
+    });
+    const threadId = ThreadId.make("droid-default-does-not-overwrite-choice");
+    const selection = { instanceId: ProviderInstanceId.make("droid"), model: "custom:Ox-Alpha-0" };
+    yield* adapter.startSession({
+      threadId,
+      cwd: process.cwd(),
+      runtimeMode: "full-access",
+      modelSelection: selection,
+    });
+    for (const effort of ["low", "low", "medium", undefined]) {
+      const completed = yield* adapter.streamEvents.pipe(
+        Stream.takeUntil((event) => event.type === "turn.completed"),
+        Stream.runCollect,
+        Effect.forkChild,
+      );
+      yield* adapter.sendTurn({
+        threadId,
+        input: "hello",
+        attachments: [],
+        ...(effort
+          ? {
+              modelSelection: { ...selection, options: [{ id: "reasoningEffort", value: effort }] },
+            }
+          : {}),
+      });
+      const events = yield* Fiber.join(completed);
+      assert.equal(
+        events.find((event) => event.type === "turn.completed")?.payload.state,
+        "completed",
+      );
+    }
+    assert.deepEqual(sentEfforts, ["low", "low", "medium", "medium"]);
+  }).pipe(Effect.scoped, Effect.provide(droidAdapterTestLayer)),
+);
+
+it.effect("rejects inherited metadata conflicts before prompting an unchanged model", () =>
+  Effect.gen(function* () {
+    const wrapperPath = yield* Effect.promise(() => makeMockDroidWrapper());
+    yield* Effect.addFinalizer(() =>
+      Effect.promise(() =>
+        NodeFSP.rm(NodePath.dirname(wrapperPath), { recursive: true, force: true }),
+      ),
+    );
+    let known = false;
+    let prompts = 0;
+    const adapter = yield* makeTestAdapter(wrapperPath, {
+      makeAcpRuntime: (input) =>
+        Effect.gen(function* () {
+          const runtime = yield* makeDroidAcpRuntime(input);
+          return {
+            ...runtime,
+            getReasoningMetadata: () =>
+              known
+                ? {
+                    status: "known" as const,
+                    supported: true,
+                    levels: ["high" as const],
+                    source: "provider" as const,
+                    checkedAt: "2026-09-06T00:00:00Z",
+                    stale: true,
+                  }
+                : null,
+            prompt: (...args: Parameters<typeof runtime.prompt>) => {
+              prompts += 1;
+              return runtime.prompt(...args);
+            },
+          };
+        }),
+    });
+    const threadId = ThreadId.make("droid-inherited-metadata-conflict");
+    yield* adapter.startSession({
+      threadId,
+      cwd: process.cwd(),
+      runtimeMode: "full-access",
+      modelSelection: { instanceId: ProviderInstanceId.make("droid"), model: "custom:Ox-Alpha-0" },
+    });
+    known = true;
+    const result = yield* Effect.exit(
+      adapter.sendTurn({ threadId, input: "hello", attachments: [] }),
+    );
+    assert.equal(result._tag, "Failure");
+    assert.equal(prompts, 0);
+  }).pipe(Effect.scoped, Effect.provide(droidAdapterTestLayer)),
+);
+
+for (const partial of ["", "Preserved partial answer"]) {
+  it.effect(
+    `reports a token limit and recovers on the same Droid session (${partial || "empty"})`,
+    () =>
+      Effect.gen(function* () {
+        const wrapperPath = yield* Effect.promise(() =>
+          makeMockDroidWrapper({
+            T3_ACP_TOKEN_LIMIT_FIRST: "1",
+            T3_ACP_TOKEN_LIMIT_TEXT: partial,
+          }),
+        );
+        yield* Effect.addFinalizer(() =>
+          Effect.promise(() =>
+            NodeFSP.rm(NodePath.dirname(wrapperPath), { recursive: true, force: true }),
+          ),
+        );
+        const adapter = yield* makeTestAdapter(wrapperPath);
+        const threadId = ThreadId.make("droid-token-limit");
+        yield* adapter.startSession({ threadId, cwd: process.cwd(), runtimeMode: "full-access" });
+        for (const limited of [true, false]) {
+          const collected = yield* adapter.streamEvents.pipe(
+            Stream.takeUntil((event) => event.type === "turn.completed"),
+            Stream.runCollect,
+            Effect.forkChild,
+          );
+          yield* adapter.sendTurn({
+            threadId,
+            input: limited ? `token-limit:${partial}` : "recover",
+            attachments: [],
+          });
+          const events = Array.from(yield* Fiber.join(collected));
+          const terminal = events.find((event) => event.type === "turn.completed");
+          assert.equal(terminal?.payload.state, "completed");
+          assert.equal(terminal?.payload.stopReason, limited ? "max_tokens" : "end_turn");
+          assert.equal(
+            events.some((event) => event.type === "runtime.error"),
+            false,
+          );
+          assert.equal(events.filter((event) => event.type === "turn.completed").length, 1);
+          assert.equal(
+            events
+              .flatMap((event) =>
+                event.type === "content.delta" && event.payload.streamKind === "assistant_text"
+                  ? [event.payload.delta]
+                  : [],
+              )
+              .join(""),
+            limited ? partial : "hello from mock",
+          );
+          const session = (yield* adapter.listSessions()).find(
+            (session) => session.threadId === threadId,
+          );
+          assert.equal(session?.status, "ready");
+          assert.isUndefined(session?.activeTurnId);
+        }
+      }).pipe(Effect.scoped, Effect.provide(droidAdapterTestLayer)),
+  );
+}
+
+it.effect(
+  "excludes a retired model runtime from reusable sessions and cold-starts its replacement",
+  () =>
+    Effect.gen(function* () {
+      const wrapperPath = yield* Effect.promise(() => makeMockDroidWrapper());
+      let generation = 0;
+      const adapter = yield* makeTestAdapter(wrapperPath, {
+        makeAcpRuntime: (input) =>
+          Effect.gen(function* () {
+            const startedGeneration = generation;
+            const runtime = yield* makeDroidAcpRuntime(input);
+            return { ...runtime, isConfigurationCurrent: () => generation === startedGeneration };
+          }),
+      });
+      const threadId = ThreadId.make("droid-retired-custom-model");
+      const input = { threadId, cwd: process.cwd(), runtimeMode: "full-access" as const };
+      const original = yield* adapter.startSession(input);
+      assert.isTrue(yield* adapter.hasSession(threadId));
+      generation++;
+      assert.isFalse(yield* adapter.hasSession(threadId));
+      assert.isEmpty(yield* adapter.listSessions());
+      yield* adapter.startSession({ ...input, resumeCursor: original.resumeCursor });
+      assert.isTrue(yield* adapter.hasSession(threadId));
+      yield* adapter.sendTurn({ threadId, input: "hello again", attachments: [] });
+    }).pipe(Effect.scoped, Effect.provide(droidAdapterTestLayer)),
+);
 
 it("maps runtime modes onto Droid's graduated autonomy ladder", () => {
   assert.equal(resolveDroidAutonomyModeId("approval-required"), "normal");

@@ -81,6 +81,28 @@ function readJsonRpcRequests(
 }
 
 it.layer(DroidTextGenerationTestLayer)("DroidTextGeneration", (it) => {
+  for (const output of ["", '{"title":"Parseable but incomplete"}']) {
+    it.effect(`rejects token-limited background output (${output || "empty"})`, () =>
+      withFakeAcpDroid(
+        {
+          T3_ACP_DROID_ASYNC_CONFIG_REFRESH: "1",
+          T3_ACP_TOKEN_LIMIT: "1",
+          T3_ACP_PROMPT_RESPONSE_TEXT: output,
+        },
+        (textGeneration) =>
+          Effect.gen(function* () {
+            const error = yield* Effect.flip(
+              textGeneration.generateThreadTitle({
+                cwd: process.cwd(),
+                message: "test",
+                modelSelection: createModelSelection(ProviderInstanceId.make("droid"), "default"),
+              }),
+            );
+            expect(error.errorReason).toBe("token_limit");
+          }),
+      ),
+    );
+  }
   it.effect("spawns droid exec --output-format acp and applies the requested model first", () => {
     const requestLogDir = NodeFS.mkdtempSync(
       NodePath.join(NodeOS.tmpdir(), "t3code-droid-text-log-"),

@@ -13,6 +13,8 @@ import * as Schema from "effect/Schema";
 
 const DEFAULT_PROVIDER_DRIVER_KIND = ProviderDriverKind.make("codex");
 
+export const MODEL_TOKEN_LIMIT_MESSAGE = "Response stopped at a token limit.";
+
 export interface SelectableModelOption {
   slug: string;
   name: string;
@@ -77,6 +79,20 @@ function resolveDescriptorChoiceValue(
   raw: string | null | undefined,
 ): string | undefined {
   const trimmed = trimOrNull(raw);
+  if (
+    descriptor.concreteReasoning &&
+    (!trimmed ||
+      ["off", "none", "default", "inherited"].includes(trimmed) ||
+      !descriptor.options.some((option) => option.id === trimmed))
+  ) {
+    return preferredReasoningLevel(
+      descriptor.options.map((option) => option.id),
+      descriptor.options.find((option) => option.isDefault)?.id,
+    );
+  }
+  if (descriptor.strictSelection && trimmed) {
+    return trimmed;
+  }
   if (!trimmed) {
     return descriptor.currentValue ?? descriptor.options.find((option) => option.isDefault)?.id;
   }
@@ -183,9 +199,12 @@ export function getProviderOptionCurrentLabel(
   }
   const currentValue = getProviderOptionCurrentValue(descriptor);
   if (typeof currentValue !== "string") {
-    return undefined;
+    return descriptor.strictSelection ? (descriptor.emptySelectionLabel ?? "Default") : undefined;
   }
-  return descriptor.options.find((option) => option.id === currentValue)?.label;
+  return (
+    descriptor.options.find((option) => option.id === currentValue)?.label ??
+    (descriptor.strictSelection ? `${currentValue} unavailable` : undefined)
+  );
 }
 
 export function buildProviderOptionSelectionsFromDescriptors(
@@ -211,14 +230,34 @@ export function buildExplicitProviderOptionSelectionsFromDescriptors(
   descriptors: ReadonlyArray<ProviderOptionDescriptor> | null | undefined,
   selections: ReadonlyArray<ProviderOptionSelection> | null | undefined,
 ): Array<ProviderOptionSelection> | undefined {
-  if (!selections || selections.length === 0) {
-    return undefined;
+  const explicitIds = new Set((selections ?? []).map((selection) => selection.id));
+  for (const descriptor of descriptors ?? []) {
+    if (descriptor.type === "select" && descriptor.concreteReasoning)
+      explicitIds.add(descriptor.id);
   }
-  const explicitIds = new Set(selections.map((selection) => selection.id));
   const normalized = buildProviderOptionSelectionsFromDescriptors(descriptors)?.filter(
     (selection) => explicitIds.has(selection.id),
   );
   return normalized && normalized.length > 0 ? normalized : undefined;
+}
+
+/** A product default for the next request, never a claim about an already-running session. */
+export function preferredReasoningLevel(
+  levels: ReadonlyArray<string>,
+  preferred?: string,
+  userPreference?: string,
+): string | undefined {
+  const available = levels.filter(
+    (level) => !["off", "none", "default", "inherited"].includes(level),
+  );
+  return (
+    (userPreference && available.includes(userPreference) ? userPreference : undefined) ??
+    (preferred && available.includes(preferred) ? preferred : undefined) ??
+    ["medium", "high", "low", "xhigh", "max", "minimal"].find((level) =>
+      available.includes(level),
+    ) ??
+    available[0]
+  );
 }
 
 export function isClaudeUltrathinkPrompt(text: string | null | undefined): boolean {

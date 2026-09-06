@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vite-plus/test";
-import type { ServerProviderModel } from "@t3tools/contracts";
+import { ProviderDriverKind, type ServerProviderModel } from "@t3tools/contracts";
 
 import { groupModelsForDisplay } from "./ProviderModelsSection";
 
@@ -8,6 +8,31 @@ function model(slug: string, isCustom = false): ServerProviderModel {
 }
 
 describe("groupModelsForDisplay", () => {
+  it("separates Droid models without treating BYOK as a legacy editable slug", () => {
+    const models = [
+      model("gpt-5.5"),
+      model("custom:scient-test"),
+      model("claude-opus-5"),
+      model("gpt-5.4"),
+      model("custom:personal-0"),
+      model("gpt-5.3-codex"),
+    ];
+    const display = groupModelsForDisplay(models, {
+      driverKind: ProviderDriverKind.make("droid"),
+      favoriteModels: new Set(["gpt-5.4"]),
+      hiddenModels: new Set(["gpt-5.3-codex"]),
+      modelOrder: ["custom:personal-0", "custom:scient-test"],
+    });
+    expect(display.map((entry) => entry.slug)).toEqual([
+      "gpt-5.4",
+      "claude-opus-5",
+      "custom:personal-0",
+      "custom:scient-test",
+      "gpt-5.5",
+      "gpt-5.3-codex",
+    ]);
+    expect(display.every((entry) => !entry.isCustom)).toBe(true);
+  });
   it("lists favorites first, then visible models in user order, then hidden ones", () => {
     const models = [model("a"), model("b"), model("c"), model("d"), model("custom", true)];
 

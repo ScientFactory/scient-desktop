@@ -1412,6 +1412,21 @@ describe("ProviderCommandReactor", () => {
         }),
       );
       const now = "2026-01-01T00:00:00.000Z";
+      yield* harness.engine.dispatch({
+        type: "thread.session.set",
+        commandId: CommandId.make("seed-prior-token-error"),
+        threadId: ThreadId.make("thread-1"),
+        createdAt: now,
+        session: {
+          threadId: ThreadId.make("thread-1"),
+          status: "error",
+          providerName: "codex",
+          runtimeMode: "approval-required",
+          activeTurnId: null,
+          lastError: "Response stopped at a token limit.",
+          updatedAt: now,
+        },
+      });
 
       yield* harness.engine.dispatch({
         type: "thread.turn.start",
@@ -1432,8 +1447,9 @@ describe("ProviderCommandReactor", () => {
         waitFor(async () => {
           const readModel = await harness.readModel();
           return (
-            readModel.threads.find((entry) => entry.id === ThreadId.make("thread-1"))?.session
-              ?.status === "error"
+            readModel.threads
+              .find((entry) => entry.id === ThreadId.make("thread-1"))
+              ?.session?.lastError?.includes("deterministic startup failure") === true
           );
         }),
       );

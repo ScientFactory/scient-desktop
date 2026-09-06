@@ -10,6 +10,9 @@ import { describe, expect, it, vi } from "vite-plus/test";
 vi.mock("./ProviderRuntimeSection", () => ({
   ProviderRuntimeSection: () => <div>Runtime controls</div>,
 }));
+vi.mock("./ConnectModelsButton", () => ({
+  ConnectModelsButton: () => <button>Connect models</button>,
+}));
 
 import { PiInlineSetup } from "./PiInlineSetup";
 
@@ -49,7 +52,8 @@ describe("PiInlineSetup", () => {
   it("gives one actionable instruction when installed without models", () => {
     const markup = render(provider);
     expect(markup).toContain("Connect a model provider");
-    expect(markup).toContain("Run /login in Pi on the server");
+    expect(markup).toContain("Add a custom model");
+    expect(markup).toContain("Connect models");
     expect(markup).not.toContain("no single Pi account");
     expect(markup).not.toContain("sandbox");
   });
@@ -63,7 +67,7 @@ describe("PiInlineSetup", () => {
       },
       true,
     );
-    expect(markup).toBe("");
+    expect(markup).toBe("<button>Connect models</button>");
   });
 
   it("preserves model discovery failures instead of suggesting login", () => {

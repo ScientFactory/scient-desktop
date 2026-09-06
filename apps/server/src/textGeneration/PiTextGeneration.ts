@@ -1,6 +1,9 @@
 import { TextGenerationError, type ModelSelection, type PiSettings } from "@t3tools/contracts";
 import { sanitizeBranchFragment, sanitizeFeatureBranchName } from "@t3tools/shared/git";
-import { getModelSelectionStringOptionValue } from "@t3tools/shared/model";
+import {
+  getModelSelectionStringOptionValue,
+  MODEL_TOKEN_LIMIT_MESSAGE,
+} from "@t3tools/shared/model";
 import { extractJsonObject } from "@t3tools/shared/schemaJson";
 import * as Cause from "effect/Cause";
 import * as Deferred from "effect/Deferred";
@@ -13,13 +16,13 @@ import * as Stream from "effect/Stream";
 import { ChildProcessSpawner } from "effect/unstable/process";
 
 import { decodePiModelSlug } from "../provider/pi/PiModel.ts";
+import { applyPiModelSelection } from "../provider/pi/PiModelSelection.ts";
 import {
   makePiRpcClient,
   type PiRpcClient,
   type PiRpcError,
   type PiRpcSpawnOptions,
 } from "../provider/pi/PiRpcClient.ts";
-import { PiThinkingLevel } from "../provider/pi/PiRpcSchema.ts";
 import {
   buildBranchNamePrompt,
   buildCommitMessagePrompt,
@@ -53,7 +56,6 @@ export interface PiTextGenerationOptions {
 }
 
 const isRecord = Schema.is(Schema.Record(Schema.String, Schema.Unknown));
-const decodeThinking = Schema.decodeUnknownEffect(PiThinkingLevel);
 
 const assistantText = (message: Record<string, unknown>): string | undefined => {
   if (message.role !== "assistant") return undefined;
@@ -118,6 +120,7 @@ export const makePiTextGeneration = Effect.fn("makePiTextGeneration")(function* 
         );
         const output = yield* Ref.make("");
         const currentDeltas = yield* Ref.make("");
+        const outputExhausted = yield* Ref.make(false);
         const settled = yield* Deferred.make<void, TextGenerationError>();
         yield* client.events.pipe(
           Stream.runForEach((native) => {
@@ -132,7 +135,20 @@ export const makePiTextGeneration = Effect.fn("makePiTextGeneration")(function* 
               ).pipe(Effect.asVoid);
             const event = native as Record<string, unknown>;
             if (event.type === "agent_settled")
-              return Deferred.succeed(settled, undefined).pipe(Effect.asVoid);
+              return Effect.gen(function* () {
+                if (yield* Ref.get(outputExhausted)) {
+                  yield* Deferred.fail(
+                    settled,
+                    new TextGenerationError({
+                      operation: input.operation,
+                      detail: MODEL_TOKEN_LIMIT_MESSAGE,
+                      errorReason: "token_limit",
+                    }),
+                  );
+                } else {
+                  yield* Deferred.succeed(settled, undefined);
+                }
+              });
             if (event.type === "message_start") return Ref.set(currentDeltas, "");
             if (event.type === "message_end") {
               const message = isRecord(event.message) ? event.message : undefined;
@@ -147,6 +163,7 @@ export const makePiTextGeneration = Effect.fn("makePiTextGeneration")(function* 
                   }),
                 ).pipe(Effect.asVoid);
               return Effect.gen(function* () {
+                yield* Ref.set(outputExhausted, stopReason === "length");
                 const completed = assistantText(message) ?? (yield* Ref.get(currentDeltas));
                 yield* Ref.set(output, completed);
                 yield* Ref.set(currentDeltas, "");
@@ -189,12 +206,21 @@ export const makePiTextGeneration = Effect.fn("makePiTextGeneration")(function* 
           Effect.asVoid,
           Effect.forkScoped,
         );
-        yield* client.setModel(selected.provider, selected.modelId);
         const thinking = getModelSelectionStringOptionValue(input.modelSelection, "thinkingLevel");
-        if (thinking !== undefined) {
-          const level = yield* decodeThinking(thinking);
-          yield* client.setThinkingLevel(level);
-        }
+        const before = yield* client.getState();
+        yield* applyPiModelSelection(client, selected, thinking, {
+          // --no-session starts a fresh background conversation.
+          messageCount: before.messageCount ?? 0,
+        }).pipe(
+          Effect.mapError(
+            (cause) =>
+              new TextGenerationError({
+                operation: input.operation,
+                detail: cause.detail,
+                cause,
+              }),
+          ),
+        );
         yield* client.prompt(input.prompt);
         yield* Deferred.await(settled);
         const raw = (yield* Ref.get(output)).trim();

@@ -7,6 +7,7 @@ export type SettingsPath =
   | "/settings/appearance"
   | "/settings/keybindings"
   | "/settings/providers"
+  | "/settings/custom-models"
   | "/settings/voice"
   | "/settings/skills"
   | "/settings/integrations"
@@ -56,6 +57,7 @@ export const SETTINGS_SECTION_LABELS: Readonly<Record<SettingsPath, string>> = {
   "/settings/projects": "Projects",
   "/settings/keybindings": "Keybindings",
   "/settings/providers": "Providers",
+  "/settings/custom-models": "Custom models",
   "/settings/voice": "Voice",
   "/settings/skills": "Skills",
   "/settings/integrations": "Integrations",
@@ -71,6 +73,13 @@ export const SETTINGS_SECTION_LABELS: Readonly<Record<SettingsPath, string>> = {
  * that may not be mounted point at their nearest stable section instead.
  */
 export const SETTINGS_SEARCH_ITEMS = [
+  {
+    id: "custom-models",
+    title: "Custom models",
+    to: "/settings/custom-models",
+    searchTerms: ["API key", "BYOK", "local model", "endpoint", "Pi"],
+    providerSettingsOnly: true,
+  },
   {
     id: "scientific-computing",
     title: "Scientific Computing",

@@ -26,7 +26,6 @@ export function resolveReviewedPiArtifact(
     smokeEnvironment: { PI_TELEMETRY: "0", PI_SKIP_VERSION_CHECK: "1", PI_OFFLINE: "1" },
     catalogRevision: `pi:0.84.4:darwin-arm64:${digest}`,
     supportTier: "fully_assisted",
-    supportMessage:
-      "Scient can install this qualified official Pi runtime privately. Model credentials are configured with Pi.",
+    supportMessage: "Scient can install Pi privately. Connect models after installation.",
   };
 }

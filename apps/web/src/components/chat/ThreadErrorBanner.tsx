@@ -1,11 +1,24 @@
 import { memo } from "react";
+import type { OrchestrationThreadActivity } from "@t3tools/contracts";
+import { MODEL_TOKEN_LIMIT_MESSAGE } from "@t3tools/shared/model";
 import { Alert, AlertAction, AlertDescription } from "../ui/alert";
 import { Button } from "../ui/button";
 import { CircleAlertIcon, XIcon } from "lucide-react";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 
-export function getThreadErrorBannerKey(threadKey: string, error: string | null): string | null {
-  return error === null ? null : `${threadKey}\u0000${error}`;
+export function isTokenLimitError(error: string | null): boolean {
+  if (error === null) return false;
+  return error === MODEL_TOKEN_LIMIT_MESSAGE;
+}
+
+export function getThreadErrorBannerKey(
+  threadKey: string,
+  error: string | null,
+  turnId?: string | null,
+): string | null {
+  if (error === null) return null;
+  const occurrence = isTokenLimitError(error) && turnId ? `\u0000${turnId}` : "";
+  return `${threadKey}\u0000${error}${occurrence}`;
 }
 
 export function shouldShowThreadErrorBanner(
@@ -14,6 +27,20 @@ export function shouldShowThreadErrorBanner(
   isDismissed: boolean,
 ): boolean {
   return getThreadErrorBannerKey(threadKey, error) !== null && !isDismissed;
+}
+
+/** A new turn supersedes the notice; persisted activity makes reloads deterministic. */
+export function getTruncationNoticeKey(
+  threadKey: string,
+  activities: ReadonlyArray<Pick<OrchestrationThreadActivity, "id" | "kind" | "turnId">>,
+  turnId: string | null | undefined,
+  status: string | undefined,
+): string | null {
+  if (!turnId || status === "running" || status === "starting") return null;
+  const activity = activities.findLast(
+    (entry) => entry.kind === "turn.truncated" && entry.turnId === turnId,
+  );
+  return activity ? `${threadKey}\u0000truncation\u0000${activity.id}` : null;
 }
 
 // Session-scoped (module-level so it survives ChatView remounts, e.g. route

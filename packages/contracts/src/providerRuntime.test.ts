@@ -10,6 +10,26 @@ import {
 const decodeRuntimeEvent = Schema.decodeUnknownSync(ProviderRuntimeEvent);
 
 describe("ProviderRuntimeEvent", () => {
+  it("round-trips truncation stop reasons without changing legacy events", () => {
+    const base = {
+      type: "turn.completed",
+      eventId: "token-limit",
+      provider: "droid",
+      threadId: "thread",
+      turnId: "turn",
+      createdAt: "2026-09-06T00:00:00.000Z",
+      payload: { state: "failed", errorMessage: "Any wording" },
+    };
+    for (const payload of [
+      base.payload,
+      { state: "completed", stopReason: "length" },
+      { state: "completed", stopReason: "max_tokens" },
+    ]) {
+      const event = decodeRuntimeEvent({ ...base, payload });
+      expect(decodeRuntimeEvent(Schema.encodeSync(ProviderRuntimeEvent)(event))).toEqual(event);
+      expect(event.payload).toEqual(payload);
+    }
+  });
   it("includes every runtime event in the public event type", () => {
     expectTypeOf<ProviderRuntimeEvent["type"]>().toEqualTypeOf<ProviderRuntimeEventType>();
   });

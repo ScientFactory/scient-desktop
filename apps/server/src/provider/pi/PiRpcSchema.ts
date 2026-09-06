@@ -1,4 +1,5 @@
 import * as Schema from "effect/Schema";
+import { ModelReasoningMetadata } from "@t3tools/contracts";
 
 export const PiThinkingLevel = Schema.Literals([
   "off",
@@ -17,6 +18,8 @@ export const PiRpcModel = Schema.Struct({
   provider: Schema.String,
   api: Schema.optional(Schema.String),
   reasoning: Schema.optional(Schema.Boolean),
+  reasoningMetadata: Schema.optional(ModelReasoningMetadata),
+  defaultReasoningLevel: Schema.optional(PiThinkingLevel),
   thinkingLevelMap: Schema.optional(
     Schema.Record(Schema.String, Schema.NullOr(Schema.Union([Schema.String, Schema.Number]))),
   ),

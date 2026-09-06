@@ -3,6 +3,10 @@ import {
   groupAntigravityModelRows,
 } from "@t3tools/client-runtime/antigravity-model-presentation";
 import {
+  getDroidModelSection,
+  groupDroidModelRows,
+} from "@t3tools/client-runtime/droid-model-presentation";
+import {
   ANTIGRAVITY_DEFAULT_MODEL,
   type ProviderInstanceId,
   type ProviderDriverKind,
@@ -21,7 +25,8 @@ import {
   useRef,
   type ReactNode,
 } from "react";
-import { ChevronRightIcon, DownloadIcon, Loader2Icon, SearchIcon, SplitIcon } from "lucide-react";
+import { DownloadIcon, Loader2Icon, SearchIcon, SplitIcon } from "lucide-react";
+import { ModelListDisclosureContent } from "./ModelListDisclosureContent";
 import { ModelListRow } from "./ModelListRow";
 import { ProviderInstanceIcon } from "./ProviderInstanceIcon";
 import { ModelPickerSidebar } from "./ModelPickerSidebar";
@@ -336,7 +341,13 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
       new Set<ProviderInstanceId>(
         modelOptionsByInstance
           .get(props.activeInstanceId)
-          ?.some((model) => model.slug === activeModelSlug && model.isLegacy)
+          ?.some(
+            (model) =>
+              model.slug === activeModelSlug &&
+              (activeEntry?.driverKind === "droid"
+                ? getDroidModelSection(model) === "more"
+                : model.isLegacy),
+          )
           ? [props.activeInstanceId]
           : [],
       ),
@@ -670,12 +681,25 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
     activeModelSlug,
   ]);
 
+  const droidGroups = useMemo(() => {
+    if (
+      isSearching ||
+      selectedInstanceId === "favorites" ||
+      instanceEntries.find((entry) => entry.instanceId === selectedInstanceId)?.driverKind !==
+        "droid"
+    )
+      return null;
+    return groupDroidModelRows(filteredModels);
+  }, [isSearching, selectedInstanceId, instanceEntries, filteredModels]);
+
   const legacySection = useMemo(() => {
     if (isSearching || selectedInstanceId === "favorites") {
       return null;
     }
-    const currentModels = filteredModels.filter((model) => !model.isLegacy);
-    const legacyModels = filteredModels.filter((model) => model.isLegacy);
+    const currentModels = droidGroups
+      ? [...droidGroups.models, ...droidGroups.custom]
+      : filteredModels.filter((model) => !model.isLegacy);
+    const legacyModels = droidGroups?.more ?? filteredModels.filter((model) => model.isLegacy);
     if (legacyModels.length === 0) {
       return null;
     }
@@ -685,17 +709,17 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
       legacyModels,
       isExpanded: expandedLegacyInstances.has(selectedInstanceId),
     };
-  }, [expandedLegacyInstances, filteredModels, isSearching, selectedInstanceId]);
+  }, [droidGroups, expandedLegacyInstances, filteredModels, isSearching, selectedInstanceId]);
 
   const visibleModels = useMemo(() => {
     if (!legacySection) {
-      return filteredModels;
+      return droidGroups ? [...droidGroups.models, ...droidGroups.custom] : filteredModels;
     }
     return [
       ...legacySection.currentModels,
       ...(legacySection.isExpanded ? legacySection.legacyModels : []),
     ];
-  }, [filteredModels, legacySection]);
+  }, [droidGroups, filteredModels, legacySection]);
 
   const toggleLegacySection = useCallback((instanceId: ProviderInstanceId) => {
     setExpandedLegacyInstances((expanded) => {
@@ -781,7 +805,9 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
       ...flatModels.map((model) => modelPickerModelKey(model.instanceId, model.slug)),
       ...new Set(
         flatModels
-          .filter((model) => model.isLegacy)
+          .filter((model) =>
+            model.driverKind === "droid" ? getDroidModelSection(model) === "more" : model.isLegacy,
+          )
           .map((model) => modelPickerLegacySectionKey(model.instanceId)),
       ),
     ],
@@ -1036,17 +1062,10 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
                           className="group w-full cursor-pointer rounded-md px-2 py-2"
                           contentClassName="flex w-full items-center gap-3"
                         >
-                          <div className="min-w-0 flex-1 text-left">
-                            <div className="text-xs font-medium leading-snug">Legacy models</div>
-                            <div className="mt-1 text-xs font-normal leading-snug text-muted-foreground/70">
-                              {legacySection.legacyModels.length} models
-                            </div>
-                          </div>
-                          <ChevronRightIcon
-                            className={cn(
-                              "size-4 transition-transform",
-                              legacySection.isExpanded && "rotate-90",
-                            )}
+                          <ModelListDisclosureContent
+                            label={droidGroups ? "More models" : "Legacy models"}
+                            count={legacySection.legacyModels.length}
+                            expanded={legacySection.isExpanded}
                           />
                         </ComboboxItem>
                       );
@@ -1058,27 +1077,34 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
                     const disabledReason =
                       getModelDisabledReason?.(model.instanceId, model.slug) ?? null;
                     return (
-                      <ModelListRow
-                        key={modelKey}
-                        index={index}
-                        model={model}
-                        instanceId={model.instanceId}
-                        driverKind={model.driverKind}
-                        providerDisplayName={model.instanceDisplayName}
-                        providerAccentColor={model.instanceAccentColor}
-                        isFavorite={favoritesSet.has(
-                          providerModelKey(model.instanceId, model.slug),
-                        )}
-                        isSelected={modelKey === activeModelKey}
-                        showProvider
-                        preferShortName={!isLocked}
-                        useTriggerLabel={false}
-                        showNewBadge={model.badge === "new"}
-                        unavailable={model.isUnavailable === true}
-                        jumpLabel={modelJumpLabelByKey.get(modelKey) ?? null}
-                        disabledReason={disabledReason}
-                        onToggleFavorite={() => toggleFavorite(model.instanceId, model.slug)}
-                      />
+                      <div>
+                        {droidGroups?.custom[0] === model ? (
+                          <div className="px-2 pt-3 pb-1 text-[11px] text-muted-foreground">
+                            Custom models
+                          </div>
+                        ) : null}
+                        <ModelListRow
+                          key={modelKey}
+                          index={index}
+                          model={model}
+                          instanceId={model.instanceId}
+                          driverKind={model.driverKind}
+                          providerDisplayName={model.instanceDisplayName}
+                          providerAccentColor={model.instanceAccentColor}
+                          isFavorite={favoritesSet.has(
+                            providerModelKey(model.instanceId, model.slug),
+                          )}
+                          isSelected={modelKey === activeModelKey}
+                          showProvider
+                          preferShortName={!isLocked}
+                          useTriggerLabel={false}
+                          showNewBadge={model.badge === "new"}
+                          unavailable={model.isUnavailable === true}
+                          jumpLabel={modelJumpLabelByKey.get(modelKey) ?? null}
+                          disabledReason={disabledReason}
+                          onToggleFavorite={() => toggleFavorite(model.instanceId, model.slug)}
+                        />
+                      </div>
                     );
                   }}
                   estimatedItemSize={52}

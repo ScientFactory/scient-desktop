@@ -15,6 +15,7 @@ import { describe, expect, vi } from "vite-plus/test";
 import type { ProviderRegistryShape } from "../../provider/Services/ProviderRegistry.ts";
 import { makeProviderRegistryMock } from "../../provider/testUtils/providerRegistryMock.ts";
 import type { ServerSettingsService } from "../../serverSettings.ts";
+import { customModelsTestMethods } from "../../serverSettings.ts";
 import { makeVoiceTranscriptCorrection } from "./VoiceTranscriptCorrection.ts";
 import type { ProviderVoiceTranscriptCorrection } from "../../provider/ProviderDriver.ts";
 
@@ -46,6 +47,7 @@ function settings(): ServerSettingsService["Service"] {
   };
   return {
     start: Effect.void,
+    ...customModelsTestMethods,
     ready: Effect.void,
     getSettings: Effect.succeed(current),
     updateSettings: () => Effect.succeed(current),

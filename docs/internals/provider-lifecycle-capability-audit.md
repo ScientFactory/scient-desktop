@@ -110,6 +110,10 @@ This addition records the Pi candidate on `codex/pi-provider-20260831`, based on
   Full access only. Native credentials and local inference servers remain Pi/user-owned. Shared
   conversation buffering and question-control limitations remain unchanged; see
   [Pi in Scient](../user/providers-pi.md) for the supported behavior and partial editor presentation.
+- **Additional branch implementation, not yet merged or visually accepted:** reusable Scient custom
+  connections now provide API-key and keyless endpoint setup with explicit Pi-instance attachments.
+  Native profile credentials are not imported. See [Custom model connections](./custom-models.md)
+  for automated evidence and remaining qualification boundaries.
 - **Not qualified:** hosted credentials/entitlement, actual downloaded local-model quality, GUI
   install/remove and system-to-managed handoff, packaged release, real mobile device, or other
   operating-system/architecture targets. Switching an already-supervised draft to Pi was not

@@ -1935,6 +1935,7 @@ it.layer(
         ready: Effect.void,
         getSettings: Effect.fail(settingsError),
         updateSettings: () => Effect.fail(settingsError),
+        ...ServerSettings.customModelsTestMethods,
         streamChanges: Stream.empty,
         subscribeChanges: Effect.succeed(Stream.empty),
       });

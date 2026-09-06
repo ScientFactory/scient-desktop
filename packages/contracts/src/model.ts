@@ -25,6 +25,12 @@ export const SelectProviderOptionDescriptor = Schema.Struct({
   ...ProviderOptionDescriptorBase,
   type: Schema.Literal("select"),
   options: Schema.Array(ProviderOptionChoice),
+  /** Preserve unavailable saved choices for display and provider-side validation. */
+  strictSelection: Schema.optional(Schema.Boolean),
+  /** Resolve a concrete next-turn effort and dispatch it, even without a saved choice. */
+  concreteReasoning: Schema.optional(Schema.Boolean),
+  /** Provider-owned label when a strict selection has no current or default value. */
+  emptySelectionLabel: Schema.optional(TrimmedNonEmptyString),
   currentValue: Schema.optional(TrimmedNonEmptyString),
   promptInjectedValues: Schema.optional(Schema.Array(TrimmedNonEmptyString)),
 });

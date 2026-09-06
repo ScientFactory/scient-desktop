@@ -2,7 +2,7 @@ import * as NodeAssert from "node:assert/strict";
 
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { PiSettings, ProviderInstanceId, TextGenerationError } from "@t3tools/contracts";
-import { createModelSelection } from "@t3tools/shared/model";
+import { createModelSelection, MODEL_TOKEN_LIMIT_MESSAGE } from "@t3tools/shared/model";
 import { it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
@@ -16,7 +16,7 @@ import {
   type PiRpcClient,
   type PiRpcSpawnOptions,
 } from "../provider/pi/PiRpcClient.ts";
-import type { PiRpcEvent, PiThinkingLevel } from "../provider/pi/PiRpcSchema.ts";
+import type { PiRpcEvent, PiRpcState, PiThinkingLevel } from "../provider/pi/PiRpcSchema.ts";
 import { makePiTextGeneration } from "./PiTextGeneration.ts";
 
 const assert: typeof NodeAssert = NodeAssert;
@@ -29,12 +29,14 @@ class FakeClient implements PiRpcClient {
   readonly models: Array<[string, string]> = [];
   readonly thinking: PiThinkingLevel[] = [];
   closeCalls = 0;
+  promptCalls = 0;
+  state: PiRpcState = {};
   failPrompt = false;
   settle = true;
   shutdownAfterPrompt = false;
   promptEvents: PiRpcEvent[] | undefined;
   output = '{"subject":"Ship Pi generation","body":"Use RPC output."}';
-  getState = () => Effect.succeed({});
+  getState = () => Effect.succeed(this.state);
   getAvailableModels = () => Effect.succeed({ models: [] });
   getCommands = () => Effect.succeed({ commands: [] });
   getThinkingLevels = () => Effect.succeed({ levels: ["high"] as PiThinkingLevel[] });
@@ -44,13 +46,16 @@ class FakeClient implements PiRpcClient {
   setModel = (provider: string, modelId: string) =>
     Effect.sync(() => {
       this.models.push([provider, modelId]);
+      this.state = { ...this.state, model: { provider, id: modelId } };
       return { provider, id: modelId };
     });
   setThinkingLevel = (level: PiThinkingLevel) =>
     Effect.sync(() => {
       this.thinking.push(level);
+      this.state = { ...this.state, thinkingLevel: level };
     });
   prompt = () => {
+    this.promptCalls += 1;
     const self = this;
     return self.failPrompt
       ? Effect.fail(
@@ -94,7 +99,12 @@ const input = {
   modelSelection: selection,
 };
 
-const makeHarness = (client: FakeClient, spawns: PiRpcSpawnOptions[], timeoutMs?: number) =>
+const makeHarness = (
+  client: FakeClient,
+  spawns: PiRpcSpawnOptions[],
+  timeoutMs?: number,
+  modelSelection = selection,
+) =>
   Effect.scoped(
     Effect.gen(function* () {
       const textGeneration = yield* makePiTextGeneration(
@@ -110,7 +120,7 @@ const makeHarness = (client: FakeClient, spawns: PiRpcSpawnOptions[], timeoutMs?
           ),
         timeoutMs === undefined ? {} : { timeoutMs },
       );
-      return yield* textGeneration.generateCommitMessage(input);
+      return yield* textGeneration.generateCommitMessage({ ...input, modelSelection });
     }),
   ).pipe(Effect.provide(NodeServices.layer));
 
@@ -143,6 +153,83 @@ it.effect("closes the RPC client when generation fails", () => {
     assert.equal(client.closeCalls, 1);
   });
 });
+
+for (const failure of ["unsupported", "model mismatch", "thinking mismatch"] as const) {
+  it.effect(`rejects ${failure} before background prompt and closes the client`, () => {
+    const client = new FakeClient();
+    if (failure === "unsupported") client.getThinkingLevels = () => Effect.succeed({ levels: [] });
+    if (failure === "model mismatch") client.getState = () => Effect.succeed({});
+    if (failure === "thinking mismatch") client.setThinkingLevel = () => Effect.void;
+    return Effect.gen(function* () {
+      const result = yield* makeHarness(client, []).pipe(Effect.result);
+      assert.equal(result._tag, "Failure");
+      if (result._tag === "Failure") {
+        assert.equal(result.failure.operation, "generateCommitMessage");
+        assert.match(
+          result.failure.detail,
+          failure === "unsupported" ? /not supported/ : /did not apply/,
+        );
+      }
+      assert.equal(client.promptCalls, 0);
+      assert.equal(client.closeCalls, 1);
+    });
+  });
+}
+
+for (const thinking of [undefined, "off"] as const) {
+  it.effect(`background generation preserves thinking selection ${String(thinking)}`, () => {
+    const client = new FakeClient();
+    client.getThinkingLevels = () => Effect.succeed({ levels: ["off"] });
+    const selected = createModelSelection(
+      selection.instanceId,
+      selection.model,
+      thinking === undefined ? [] : [{ id: "thinkingLevel", value: thinking }],
+    );
+    return Effect.gen(function* () {
+      yield* makeHarness(client, [], undefined, selected);
+      assert.deepEqual(client.thinking, thinking === undefined ? [] : ["off"]);
+      assert.equal(client.state.thinkingLevel, thinking);
+      assert.equal(client.promptCalls, 1);
+    });
+  });
+}
+
+for (const recovers of [false, true]) {
+  it.effect(`handles exhausted background output after native recovery=${recovers}`, () => {
+    const client = new FakeClient();
+    client.promptEvents = [
+      {
+        type: "message_end",
+        message: {
+          role: "assistant",
+          stopReason: "length",
+          content: [{ type: "text", text: client.output }],
+        },
+      },
+      { type: "agent_end" },
+      ...(recovers
+        ? [
+            {
+              type: "message_end",
+              message: {
+                role: "assistant",
+                stopReason: "stop",
+                content: [{ type: "text", text: client.output }],
+              },
+            },
+          ]
+        : []),
+      { type: "agent_settled" },
+    ];
+    return Effect.gen(function* () {
+      const result = yield* makeHarness(client, []).pipe(Effect.result);
+      assert.equal(result._tag, recovers ? "Success" : "Failure");
+      if (result._tag === "Failure") assert.equal(result.failure.errorReason, "token_limit");
+      if (result._tag === "Failure") assert.equal(result.failure.detail, MODEL_TOKEN_LIMIT_MESSAGE);
+      assert.equal(client.closeCalls, 1);
+    });
+  });
+}
 
 it.effect("uses only the last completed assistant message across attempts", () => {
   const client = new FakeClient();

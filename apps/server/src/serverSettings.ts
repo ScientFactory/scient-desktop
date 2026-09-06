@@ -15,6 +15,9 @@ import {
   DEFAULT_TEXT_GENERATION_MODEL_BY_PROVIDER,
   DEFAULT_MODEL_BY_PROVIDER,
   DEFAULT_SERVER_SETTINGS,
+  CustomModelError,
+  type CustomModelSaveInput,
+  type CustomModelsSettings,
   type ModelSelection,
   type ProviderInstanceConfig,
   type ProviderInstanceEnvironmentVariable,
@@ -53,6 +56,15 @@ import {
   isModelSelectionProviderEnabled,
 } from "@t3tools/shared/serverSettings";
 import * as ServerSecretStore from "./auth/ServerSecretStore.ts";
+import { makeCustomModelReasoning } from "./customModelReasoning.ts";
+import {
+  saveCustomModel,
+  prepareCustomModelSave,
+  resolveCustomModels,
+  customModelSecretName,
+  withCustomModelKeyHints,
+  type ResolvedModelConnection,
+} from "./customModels.ts";
 
 export { resolveSourceControlWriterModelSelection } from "@t3tools/shared/serverSettings";
 
@@ -195,6 +207,16 @@ export class ServerSettingsService extends Context.Service<
 
     /** Read the current settings. */
     readonly getSettings: Effect.Effect<ServerSettings, ServerSettingsError>;
+    readonly saveCustomModel: (
+      input: CustomModelSaveInput,
+    ) => Effect.Effect<CustomModelsSettings, CustomModelError>;
+    readonly removeCustomModel: (input: {
+      readonly revision: number;
+      readonly connectionId: string;
+    }) => Effect.Effect<CustomModelsSettings, CustomModelError>;
+    readonly resolveCustomModels: (
+      instanceId: ProviderInstanceId,
+    ) => Effect.Effect<ReadonlyArray<ResolvedModelConnection>, CustomModelError>;
 
     /** Patch settings and persist. Returns the new full settings object. */
     readonly updateSettings: (
@@ -233,6 +255,7 @@ const makeTest = (overrides: DeepPartial<ServerSettings> = {}) =>
     const currentSettingsRef = yield* Ref.make<ServerSettings>(initialSettings);
 
     return {
+      ...customModelsTestMethods,
       start: Effect.void,
       ready: Effect.void,
       getSettings: Ref.get(currentSettingsRef).pipe(Effect.map(resolveTextGenerationProvider)),
@@ -250,6 +273,25 @@ const makeTest = (overrides: DeepPartial<ServerSettings> = {}) =>
 
 export const layerTest = (overrides: DeepPartial<ServerSettings> = {}) =>
   Layer.effect(ServerSettingsService, makeTest(overrides));
+
+export const customModelsTestMethods = {
+  saveCustomModel: () =>
+    Effect.fail(
+      new CustomModelError({
+        message: "Custom model persistence is unavailable in this test layer.",
+      }),
+    ),
+  removeCustomModel: () =>
+    Effect.fail(
+      new CustomModelError({
+        message: "Custom model persistence is unavailable in this test layer.",
+      }),
+    ),
+  resolveCustomModels: () => Effect.succeed([]),
+} satisfies Pick<
+  ServerSettingsService["Service"],
+  "saveCustomModel" | "removeCustomModel" | "resolveCustomModels"
+>;
 
 const ServerSettingsJson = fromLenientJson(ServerSettings);
 const decodeServerSettingsJsonExit = Schema.decodeUnknownExit(ServerSettingsJson);
@@ -405,6 +447,7 @@ const make = Effect.gen(function* () {
   const fs = yield* FileSystem.FileSystem;
   const pathService = yield* Path.Path;
   const secretStore = yield* ServerSecretStore.ServerSecretStore;
+  const modelReasoning = makeCustomModelReasoning();
   const sql = yield* SqlClient.SqlClient;
   const writeSemaphore = yield* Semaphore.make(1);
   const cacheKey = "settings" as const;
@@ -490,6 +533,10 @@ const make = Effect.gen(function* () {
       ),
     );
 
+    settings = {
+      ...settings,
+      customModels: yield* withCustomModelKeyHints(settings.customModels, secretStore),
+    };
     return foldProviderInstanceEnabledFlags(
       restoreUsedProviders(settings, persisted, providerHistory),
     );
@@ -819,9 +866,86 @@ const make = Effect.gen(function* () {
     yield* Deferred.succeed(startedDeferred, undefined).pipe(Effect.orDie);
   });
 
+  const customModelFailure = () =>
+    new CustomModelError({ message: "Could not save custom models." });
+  const commitCustomModels = (current: ServerSettings, customModels: CustomModelsSettings) =>
+    Effect.gen(function* () {
+      const next = yield* normalizeServerSettings({ ...current, customModels });
+      yield* writeSettingsAtomically(next);
+      yield* Cache.set(settingsCache, cacheKey, next);
+      yield* emitChange(next);
+    }).pipe(Effect.mapError(customModelFailure));
+
   return {
     start,
     ready: Deferred.await(startedDeferred),
+    saveCustomModel: (input) =>
+      Effect.gen(function* () {
+        const prepared = yield* writeSemaphore.withPermits(1)(
+          Effect.gen(function* () {
+            const current = yield* getSettingsFromCache.pipe(Effect.mapError(customModelFailure));
+            return yield* prepareCustomModelSave(current, input, secretStore);
+          }),
+        );
+        // Explicit setup only: slow endpoints must not block settings reads or other writes.
+        const enriched = yield* modelReasoning.prepare(
+          prepared.connection,
+          prepared.previous,
+          input.refreshModelId,
+        );
+        const metadata = new Map(
+          enriched.models.flatMap((model) =>
+            model.reasoningMetadata ? [[model.id, model.reasoningMetadata] as const] : [],
+          ),
+        );
+        return yield* writeSemaphore.withPermits(1)(
+          Effect.gen(function* () {
+            const current = yield* getSettingsFromCache.pipe(Effect.mapError(customModelFailure));
+            return yield* saveCustomModel(
+              current,
+              input,
+              secretStore,
+              (next) => commitCustomModels(current, next),
+              metadata,
+            );
+          }).pipe(Effect.uninterruptible),
+        );
+      }),
+    removeCustomModel: (input) =>
+      writeSemaphore.withPermits(1)(
+        Effect.gen(function* () {
+          const current = yield* getSettingsFromCache.pipe(Effect.mapError(customModelFailure));
+          if (current.customModels.revision !== input.revision)
+            return yield* new CustomModelError({
+              message: "Custom models changed. Reload and try again.",
+            });
+          const existing = current.customModels.connections.find(
+            (c) => c.id === input.connectionId,
+          );
+          if (!existing) return current.customModels;
+          const next = {
+            revision: input.revision + 1,
+            connections: current.customModels.connections.filter(
+              (c) => c.id !== input.connectionId,
+            ),
+          };
+          yield* commitCustomModels(current, next);
+          if (existing.credentialId)
+            yield* secretStore
+              .remove(customModelSecretName(existing.credentialId))
+              .pipe(Effect.ignore);
+          return next;
+        }).pipe(Effect.uninterruptible),
+      ),
+    resolveCustomModels: (instanceId) =>
+      writeSemaphore.withPermits(1)(
+        getSettingsFromCache.pipe(
+          Effect.mapError(() => new CustomModelError({ message: "Could not read custom models." })),
+          Effect.flatMap((settings) =>
+            resolveCustomModels(settings.customModels, instanceId, secretStore),
+          ),
+        ),
+      ),
     getSettings: getSettingsFromCache.pipe(
       Effect.flatMap(materializeProviderEnvironmentSecrets),
       Effect.map(resolveTextGenerationProvider),

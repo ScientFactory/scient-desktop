@@ -19,6 +19,7 @@ import { ClaudeInlineSetup } from "./ClaudeInlineSetup";
 import { CodexInlineSetup } from "./CodexInlineSetup";
 import { CursorInlineSetup } from "./CursorInlineSetup";
 import { DroidInlineSetup } from "./DroidInlineSetup";
+import { ConnectModelsButton } from "./ConnectModelsButton";
 import { GrokInlineSetup } from "./GrokInlineSetup";
 import { PiInlineSetup } from "./PiInlineSetup";
 import {
@@ -215,12 +216,20 @@ function SupportedAssistedProviderSetupHost(props: AssistedProviderSetupHostProp
       break;
     case "droid":
       setup = (
-        <DroidInlineSetup
-          {...managementProps}
-          controller={controller}
-          displayName={displayName}
-          provider={props.provider}
-        />
+        <>
+          <DroidInlineSetup
+            {...managementProps}
+            controller={controller}
+            displayName={displayName}
+            provider={props.provider}
+          />
+          {props.provider.installed && !props.provider.probePending ? (
+            <ConnectModelsButton
+              environmentId={props.environmentId}
+              instanceId={props.provider.instanceId}
+            />
+          ) : null}
+        </>
       );
       break;
     case "grok":

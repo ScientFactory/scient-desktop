@@ -33,6 +33,7 @@ import {
   type ProviderDriverKind,
 } from "./providerInstance.ts";
 import { VoiceLanguagePreference } from "./voice.ts";
+import { CustomModelsSettings } from "./customModels.ts";
 
 // ── Client Settings (local-only) ───────────────────────────────
 
@@ -654,8 +655,7 @@ export const PiSettings = makeProviderSettingsSchema(
     binaryPath: makeBinaryPathSetting("pi").pipe(
       Schema.annotateKey({
         title: "Binary path",
-        description:
-          "Path to the Pi coding agent CLI (0.84.4 or newer). Credentials remain managed by Pi.",
+        description: "Path to the Pi coding agent CLI (0.84.4 or newer).",
         providerSettingsForm: { placeholder: "pi", clearWhenEmpty: "omit" },
       }),
     ),
@@ -937,6 +937,7 @@ export const ScientificComputingSettings = Schema.Struct({
 export type ScientificComputingSettings = typeof ScientificComputingSettings.Type;
 
 export const ServerSettings = Schema.Struct({
+  customModels: CustomModelsSettings.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
   // Legacy token-by-token assistant output. Deliberately a fresh key (was
   // `enableAssistantStreaming`): decoding drops the old key, so everyone,
   // including prior opt-ins, resets to the buffered default.

@@ -1,4 +1,5 @@
 import * as Deferred from "effect/Deferred";
+import type { ModelConnectionReadiness } from "@t3tools/contracts";
 import type * as Cause from "effect/Cause";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
@@ -34,6 +35,12 @@ export class PiRpcProtocolError extends Schema.TaggedErrorClass<PiRpcProtocolErr
   { detail: Schema.String, cause: Schema.optional(Schema.Defect()) },
 ) {}
 
+/** A local configuration check failed; the transport itself is still usable. */
+export class PiRpcConfigurationError extends Schema.TaggedErrorClass<PiRpcConfigurationError>()(
+  "PiRpcConfigurationError",
+  { detail: Schema.String },
+) {}
+
 export class PiRpcRequestTimeoutError extends Schema.TaggedErrorClass<PiRpcRequestTimeoutError>()(
   "PiRpcRequestTimeoutError",
   { command: Schema.String, requestId: Schema.String, timeoutMs: Schema.Number },
@@ -50,6 +57,7 @@ export class PiRpcProcessExitedError extends Schema.TaggedErrorClass<PiRpcProces
 ) {}
 
 export type PiRpcError =
+  | PiRpcConfigurationError
   | PiRpcProtocolError
   | PiRpcRequestTimeoutError
   | PiRpcCommandError
@@ -74,6 +82,9 @@ export type PiExtensionUiResponse =
   | { readonly id: string; readonly cancelled: true };
 
 export interface PiRpcClient {
+  readonly assessModelConnections?: (
+    models: ReadonlyArray<PiRpcModel>,
+  ) => ReadonlyArray<ModelConnectionReadiness>;
   readonly version?: string;
   readonly events: Stream.Stream<PiRpcEvent>;
   readonly getState: () => Effect.Effect<PiRpcState, PiRpcError>;

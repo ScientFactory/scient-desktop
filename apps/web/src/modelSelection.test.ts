@@ -13,6 +13,7 @@ import { deriveProviderInstanceEntries, NO_PROVIDER_MODEL_SELECTION } from "./pr
 import {
   getCustomModelOptionsByInstance,
   getAppModelOptionsForInstance,
+  resolveAppModelSelection,
   resolveAppModelSelectionForInstance,
   resolveAppModelSelectionState,
   resolvePlanAgentHealPatch,
@@ -66,6 +67,73 @@ function settingsWithProviderInstances(): UnifiedSettings {
 }
 
 describe("instance-scoped model selection", () => {
+  it.each(["droid", "pi"] as const)(
+    "keeps %s discovered BYOK models selectable, scoped, hideable, and removable",
+    (kind) => {
+      const driver = ProviderDriverKind.make(kind);
+      const nativeSlug = kind === "droid" ? "custom:personal" : "native/model";
+      const connectedSlug = kind === "droid" ? "custom:scient-fixture" : "scient_fixture/model";
+      const primary = provider({
+        provider: driver,
+        instanceId: kind,
+        models: [nativeSlug, connectedSlug],
+      });
+      const other = provider({
+        provider: driver,
+        instanceId: `${kind}_other`,
+        models: [nativeSlug],
+      });
+      const entries = deriveProviderInstanceEntries([primary, other]);
+      const settings: UnifiedSettings = {
+        ...DEFAULT_UNIFIED_SETTINGS,
+        providerInstances: {
+          [primary.instanceId]: {
+            driver,
+            config: { customModels: [connectedSlug, "manual-only"] },
+          },
+        },
+      };
+      const options = getAppModelOptionsForInstance(settings, entries[0]!);
+      expect(options.map((option) => option.slug)).toEqual([
+        nativeSlug,
+        connectedSlug,
+        "manual-only",
+      ]);
+      expect(options.find((option) => option.slug === connectedSlug)?.isCustom).toBe(false);
+      expect(resolveAppModelSelection(driver, settings, [primary, other], connectedSlug)).toBe(
+        connectedSlug,
+      );
+      expect(
+        getAppModelOptionsForInstance(settings, entries[1]!).map((option) => option.slug),
+      ).toEqual([nativeSlug]);
+      const hidden: UnifiedSettings = {
+        ...DEFAULT_UNIFIED_SETTINGS,
+        providerModelPreferences: {
+          [primary.instanceId]: { hiddenModels: [connectedSlug], modelOrder: [] },
+        },
+      };
+      expect(
+        getAppModelOptionsForInstance(hidden, entries[0]!).map((option) => option.slug),
+      ).toEqual([nativeSlug]);
+      expect(
+        resolveAppModelSelectionForInstance(
+          primary.instanceId,
+          settings,
+          [primary, other],
+          connectedSlug,
+        ),
+      ).toBe(connectedSlug);
+      const removed = deriveProviderInstanceEntries([
+        { ...primary, models: primary.models.slice(0, 1) },
+      ])[0]!;
+      expect(
+        getAppModelOptionsForInstance(DEFAULT_UNIFIED_SETTINGS, removed).map(
+          (option) => option.slug,
+        ),
+      ).toEqual([nativeSlug]);
+    },
+  );
+
   it("preserves server-provided legacy model metadata", () => {
     const baseProvider = provider({
       instanceId: "claudeAgent",

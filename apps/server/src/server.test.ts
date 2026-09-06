@@ -11,6 +11,7 @@ import {
   AuthTokenExchangeGrantType,
   CommandId,
   DEFAULT_SERVER_SETTINGS,
+  type CustomModelsSettings,
   EnvironmentFilePath,
   type DpopFailureReason,
   EnvironmentId,
@@ -69,6 +70,7 @@ import * as Path from "effect/Path";
 import * as PubSub from "effect/PubSub";
 import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
+import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
@@ -5446,6 +5448,195 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       assert.deepEqual(response.keybindings, [resolved]);
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
+
+  it.effect("routes custom model mutations without returning the API key", () =>
+    Effect.gen(function* () {
+      let catalog: CustomModelsSettings = { revision: 0, connections: [] };
+      yield* buildAppUnderTest({
+        layers: {
+          serverSettings: {
+            saveCustomModel: (input) =>
+              Effect.sync(() => {
+                assert.equal(Redacted.value(input.apiKey!), "synthetic-wire-key");
+                catalog = {
+                  revision: input.revision + 1,
+                  connections: [{ ...input.connection, credentialId: "opaque-ref" }],
+                };
+                return catalog;
+              }),
+            removeCustomModel: (input) =>
+              Effect.sync(() => {
+                assert.equal(input.connectionId, "wire-connection");
+                assert.equal(input.revision, 1);
+                catalog = { revision: 2, connections: [] };
+                return catalog;
+              }),
+          },
+        },
+      });
+      const wsUrl = yield* getWsServerUrl("/ws");
+      yield* Effect.scoped(
+        withWsRpcClient(wsUrl, (client) =>
+          Effect.gen(function* () {
+            const saved = yield* client[WS_METHODS.serverSaveCustomModel]({
+              revision: 0,
+              apiKey: Redacted.make("synthetic-wire-key"),
+              connection: {
+                id: "wire-connection",
+                name: "Wire test",
+                protocol: "openai-completions",
+                baseUrl: "http://127.0.0.1:8080/v1",
+                models: [],
+              },
+            });
+            assert.deepEqual(saved, catalog);
+            assert.notProperty(saved.connections[0], "apiKey");
+            const removed = yield* client[WS_METHODS.serverRemoveCustomModel]({
+              revision: 1,
+              connectionId: "wire-connection",
+            });
+            assert.deepEqual(removed, { revision: 2, connections: [] });
+          }),
+        ),
+      );
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
+  it.effect("rejects stale or unattached custom model tests through websocket rpc", () =>
+    Effect.gen(function* () {
+      yield* buildAppUnderTest();
+      const wsUrl = yield* getWsServerUrl("/ws");
+      yield* Effect.scoped(
+        withWsRpcClient(wsUrl, (client) =>
+          Effect.gen(function* () {
+            for (const revision of [1, 0]) {
+              const result = yield* client[WS_METHODS.serverTestCustomModel]({
+                revision,
+                connectionId: "missing",
+                modelId: "missing",
+                instanceId: ProviderInstanceId.make("pi"),
+              }).pipe(Effect.result);
+              if (result._tag !== "Failure" || result.failure._tag !== "CustomModelError")
+                assert.fail("Expected a custom model setup error");
+              assert.equal(
+                result.failure.message,
+                revision === 1
+                  ? "Custom models changed. Test the updated configuration."
+                  : "Connect this model to an enabled Pi or Droid agent first.",
+              );
+            }
+          }),
+        ),
+      );
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
+  for (const missingCapacity of [false, true])
+    it.effect(
+      missingCapacity
+        ? "delegates an explicit automatic-model test to Droid without requiring Scient limits"
+        : "reports a missing custom model key before starting a paid test",
+      () =>
+        Effect.gen(function* () {
+          const driver = missingCapacity ? "droid" : "pi";
+          let generated = 0;
+          const id = ProviderInstanceId.make(driver);
+          const catalog: CustomModelsSettings = {
+            revision: 1,
+            connections: [
+              {
+                id: "broken",
+                name: "Broken",
+                baseUrl: "https://example.test/v1",
+                protocol: "openai-completions",
+                credentialId: "missing",
+                models: [
+                  {
+                    id: "one",
+                    modelId: "one",
+                    name: "One",
+                    ...(missingCapacity ? { configurationMode: "automatic" as const } : {}),
+                    contextWindow: 32000,
+                    maxOutputTokens: 128,
+                    images: false,
+                    reasoning: false,
+                    instanceIds: [id],
+                  },
+                ],
+              },
+            ],
+          };
+          const message = "Re-enter the API key for Broken in Custom models.";
+          const instance: ProviderInstance = {
+            instanceId: id,
+            driverKind: ProviderDriverKind.make(driver),
+            enabled: true,
+            displayName: "Pi",
+            continuationIdentity: {
+              driverKind: ProviderDriverKind.make(driver),
+              continuationKey: id,
+            },
+            get adapter(): never {
+              throw new Error("Must not start a chat");
+            },
+            get snapshot(): never {
+              throw new Error("Must not probe");
+            },
+            get textGeneration() {
+              if (!missingCapacity) throw new Error("Must not make a paid request");
+              return {
+                generateThreadTitle: () =>
+                  Effect.sync(() => {
+                    generated += 1;
+                    return { title: "Synthetic test" };
+                  }),
+                generateBranchName: (): never => {
+                  throw new Error("Unexpected generation");
+                },
+                generateCommitMessage: (): never => {
+                  throw new Error("Unexpected generation");
+                },
+                generatePrContent: (): never => {
+                  throw new Error("Unexpected generation");
+                },
+              };
+            },
+          };
+          yield* buildAppUnderTest({
+            layers: {
+              serverSettings: {
+                getSettings: Effect.succeed({ ...DEFAULT_SERVER_SETTINGS, customModels: catalog }),
+                resolveCustomModels: () =>
+                  Effect.succeed([
+                    missingCapacity
+                      ? { ...catalog.connections[0]!, apiKey: Redacted.make("synthetic-key") }
+                      : { ...catalog.connections[0]!, credentialError: message },
+                  ]),
+              },
+              providerInstanceRegistry: { getInstance: () => Effect.succeed(instance) },
+            },
+          });
+          const wsUrl = yield* getWsServerUrl("/ws");
+          const result = yield* Effect.scoped(
+            withWsRpcClient(wsUrl, (client) =>
+              client[WS_METHODS.serverTestCustomModel]({
+                revision: 1,
+                connectionId: "broken",
+                modelId: "one",
+                instanceId: id,
+              }).pipe(Effect.result),
+            ),
+          );
+          if (missingCapacity) {
+            assert.equal(result._tag, "Success");
+            assert.equal(generated, 1);
+            return;
+          }
+          if (result._tag !== "Failure" || result.failure._tag !== "CustomModelError")
+            assert.fail("Expected a credential setup error");
+          assert.equal(result.failure.message, message);
+        }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+    );
 
   it.effect("keeps agent session import project failures structured over websocket rpc", () =>
     Effect.gen(function* () {

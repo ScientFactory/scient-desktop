@@ -254,7 +254,7 @@ function AssistedProviderConnectionDialog(props: ProviderConnectionDialogContent
           </DialogTitle>
           <DialogDescription className="sr-only">
             {isPi
-              ? "Manage Pi's private runtime and model configuration. Pi owns model-specific credentials."
+              ? "Manage Pi's runtime and model connections."
               : isAntigravity
                 ? "Install Antigravity and connect your Google subscription."
                 : isClaude
