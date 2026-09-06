@@ -20,6 +20,7 @@ import { CodexInlineSetup } from "./CodexInlineSetup";
 import { CursorInlineSetup } from "./CursorInlineSetup";
 import { DroidInlineSetup } from "./DroidInlineSetup";
 import { GrokInlineSetup } from "./GrokInlineSetup";
+import { PiInlineSetup } from "./PiInlineSetup";
 import {
   DESTRUCTIVE_GHOST_ACTION_CLASS,
   PRIMARY_GHOST_ACTION_CLASS,
@@ -44,6 +45,7 @@ export function supportsAssistedProviderSetupSurface(
     case "cursor":
     case "droid":
     case "grok":
+    case "pi":
       return true;
     default:
       return false;
@@ -161,6 +163,16 @@ function SupportedAssistedProviderSetupHost(props: AssistedProviderSetupHostProp
 
   let setup: ReactNode;
   switch (props.provider.driver) {
+    case "pi":
+      setup = (
+        <PiInlineSetup
+          {...managementProps}
+          environmentId={props.environmentId}
+          displayName={displayName}
+          provider={props.provider}
+        />
+      );
+      break;
     case "antigravity":
       setup = (
         <AntigravityInlineSetup

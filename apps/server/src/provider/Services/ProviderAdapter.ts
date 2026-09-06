@@ -27,6 +27,12 @@ import type * as Stream from "effect/Stream";
 
 export type ProviderSessionModelSwitchMode = "in-session" | "unsupported";
 
+export type ProviderAdapterSendTurnInput = ProviderSendTurnInput & {
+  /** Server-owned user text before model-directed attachment/skill augmentation.
+   * Native commands may need their exact arguments; never decoded from client input. */
+  readonly originalInput?: string;
+};
+
 export interface ProviderAdapterCapabilities {
   /**
    * Declares whether changing the model on an existing session is supported.
@@ -67,7 +73,7 @@ export interface ProviderAdapterShape<TError> {
    * Send a turn to an active provider session.
    */
   readonly sendTurn: (
-    input: ProviderSendTurnInput,
+    input: ProviderAdapterSendTurnInput,
   ) => Effect.Effect<ProviderTurnStartResult, TError>;
 
   readonly compactThread?: (

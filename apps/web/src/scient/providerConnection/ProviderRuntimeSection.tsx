@@ -538,7 +538,10 @@ export function ProviderRuntimeSection(props: {
   const statusMessage =
     (terminalOperation?.status === "failed" ? terminalOperation.message : null) ??
     providerRuntimeError ??
-    (runtime.source === "missing" ? runtime.message : null);
+    (runtime.source === "missing" &&
+    !(props.provider.driver === "pi" && runtime.actions.includes("install"))
+      ? runtime.message
+      : null);
   const statusIcon =
     runtime.source === "missing" ||
     terminalOperation?.status === "failed" ||

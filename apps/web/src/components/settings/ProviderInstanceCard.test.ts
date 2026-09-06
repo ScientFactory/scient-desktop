@@ -10,8 +10,94 @@ import {
 } from "@t3tools/contracts";
 
 import { deriveProviderModelsForDisplay, ProviderInstanceCard } from "./ProviderInstanceCard";
+import { getDriverOption } from "./providerDriverMeta";
 
 const environmentId = EnvironmentId.make("local");
+
+describe("Pi status copy", () => {
+  const driver = ProviderDriverKind.make("pi");
+  const liveProvider: ServerProvider = {
+    instanceId: ProviderInstanceId.make("pi"),
+    driver,
+    enabled: true,
+    installed: true,
+    version: "0.84.4",
+    status: "ready",
+    auth: { status: "unknown" },
+    checkedAt: "2026-09-05T00:00:00.000Z",
+    models: [{ slug: "qa/text", name: "Test model", isCustom: false, capabilities: null }],
+    slashCommands: [],
+    skills: [],
+    message: "Pi reported 1 available model. Authentication is model-specific.",
+  };
+
+  function render(mode: "list" | "editor", value = liveProvider, enabled = true) {
+    return renderToStaticMarkup(
+      createElement(ProviderInstanceCard, {
+        environmentId,
+        instanceId: value.instanceId,
+        instance: { driver, enabled },
+        driverOption: getDriverOption(driver),
+        liveProvider: value,
+        mode,
+        onUpdate: () => undefined,
+        hiddenModels: [],
+        favoriteModels: [],
+        modelOrder: [],
+        onHiddenModelsChange: () => undefined,
+        onFavoriteModelsChange: () => undefined,
+        onModelOrderChange: () => undefined,
+      }),
+    );
+  }
+
+  it.each(["list", "editor"] as const)(
+    "keeps the healthy %s free of repeated model status",
+    (mode) => {
+      const markup = render(mode);
+      expect(markup).not.toContain("Models available");
+      expect(markup).not.toContain("Authentication is model-specific");
+      expect(markup).toContain("v0.84.4");
+      if (mode === "editor") expect(markup).toContain("Test model");
+    },
+  );
+
+  it.each(["list", "editor"] as const)("preserves a Pi discovery error in the %s", (mode) => {
+    expect(
+      render(mode, { ...liveProvider, status: "error", message: "Pi RPC timed out." }),
+    ).toContain("Pi RPC timed out.");
+  });
+
+  it.each(["list", "editor"] as const)(
+    "keeps the disabled %s explicit despite a stale ready snapshot",
+    (mode) => {
+      expect(render(mode, liveProvider, false)).toContain("Disabled");
+    },
+  );
+
+  it("keeps an update notice without restoring the repeated model explanation", () => {
+    const markup = render("editor", {
+      ...liveProvider,
+      connection: {
+        methods: [],
+        canDisconnect: false,
+        operation: null,
+        runtime: {
+          source: "scient_managed",
+          supportTier: "fully_assisted",
+          target: "darwin-arm64",
+          actions: ["update"],
+          managedVersion: "0.84.4",
+          previousManagedVersion: null,
+          operation: null,
+          message: "Update available.",
+        },
+      },
+    });
+    expect(markup).toContain("Update available");
+    expect(markup).not.toContain("Authentication is model-specific");
+  });
+});
 
 describe("deriveProviderModelsForDisplay", () => {
   it("uses current config custom models instead of stale live custom rows", () => {

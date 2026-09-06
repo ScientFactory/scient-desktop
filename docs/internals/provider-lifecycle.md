@@ -259,6 +259,7 @@ execution policy live in the provider manifests.
 | Droid                    | Apple silicon and Intel | ARM64 and x64      | ARM64 and x64, glibc           | Musl Linux.                                 |
 | Cursor                   | Apple silicon and Intel | ARM64 and x64      | ARM64 and x64, glibc           | Musl Linux.                                 |
 | OpenCode                 | No managed catalog      | No managed catalog | No managed catalog             | Scient-managed lifecycle is not advertised. |
+| Pi                       | Apple silicon only      | No managed catalog | No managed catalog             | Other targets require an external runtime.  |
 
 A release may advertise a row as platform-qualified only after its exact packaged install,
 cancellation, smoke test, authentication, repair, update, interruption, removal, and recovery paths
@@ -323,7 +324,7 @@ chunk, and it shows a percentage only when the server supplies meaningful byte t
 
 Settings and the composer use one explicit
 [`AssistedProviderSetupHost`](../../apps/web/src/scient/providerConnection/AssistedProviderSetupHost.tsx)
-for Codex, Claude, Antigravity, Grok, Droid, and Cursor. The host owns only shared routing and
+for Codex, Claude, Antigravity, Grok, Droid, Cursor, and Pi. The host owns only shared routing and
 presentation rules; provider views retain their real authentication and recovery flows.
 
 - **Settings** is the complete management surface. It can show runtime source, diagnostics, managed
@@ -344,7 +345,7 @@ presentation rules; provider views retain their real authentication and recovery
 - Diagnostics and raw server paths stay behind a low-prominence disclosure and out of the fast
   composer path.
 
-Provider dispatch is intentionally explicit and exhaustive. With seven built-in providers, one
+Provider dispatch is intentionally explicit and exhaustive. With eight built-in providers, one
 switch is easier to audit than a dynamic registry and prevents a new provider from silently
 inheriting unsupported lifecycle behavior.
 
@@ -364,6 +365,7 @@ policy and protocol differences, not universal platform qualification.
 | Droid                    | ACP device pairing only when the initialized peer advertises it and an external Factory API key is not controlling authentication. Droid may open a browser without giving Scient a URL.                                                                         | Visible only when the exact ACP peer advertises logout; there is no terminal-automation fallback.                                            | Custom, system, and Scient-managed sources. External updates remain manual pending installation-source qualification.                                                                                          |
 | Cursor                   | Browser login. Scient runs Cursor in no-open-browser mode, validates and opens any captured official URL once, or verifies directly if the flow has already completed. There is no pasted-code flow. Final verification uses a fresh account probe.              | Available for Cursor-owned credentials and hidden when API endpoint, key, or token configuration owns authentication.                        | Custom, system, and Scient-managed sources. External sources retain Cursor's native update path; managed sources use qualified actions and disable in-place self-update.                                       |
 | OpenCode                 | No single assisted account flow. OpenCode manages credentials for multiple unrelated upstream providers.                                                                                                                                                         | No universal sign-out is advertised.                                                                                                         | System, custom, or remote runtime use. No Scient-managed lifecycle or system-to-managed handoff is currently advertised; inherited updater behavior remains authoritative.                                     |
+| Pi                       | No single assisted account flow. Configure model credentials with Pi; discovery does not prove authentication or quota.                                                                                                                                          | No universal sign-out is advertised.                                                                                                         | Custom, system, and Scient-managed sources. Qualified private install, repair, update and removal; external updates remain manual.                                                                             |
 
 The detailed evidence and unresolved questions for these rows live in the
 [capability audit](./provider-lifecycle-capability-audit.md), not in provider-name branches in shared

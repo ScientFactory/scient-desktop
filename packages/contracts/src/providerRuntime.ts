@@ -30,6 +30,7 @@ const RuntimeEventRawSource = Schema.Union([
   Schema.Literal("opencode.sdk.event"),
   Schema.Literal("acp.jsonrpc"),
   Schema.Literal("antigravity.cli.stream-json"),
+  Schema.Literal("pi.rpc.notification"),
   Schema.TemplateLiteral(["acp.", Schema.String, ".extension"]),
 ]);
 export type RuntimeEventRawSource = typeof RuntimeEventRawSource.Type;

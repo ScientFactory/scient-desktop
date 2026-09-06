@@ -7,7 +7,7 @@ orchestration layer does not know which one is behind a thread.
 
 ## Built-in drivers
 
-[`builtInDrivers.ts`][drivers] exports `BUILT_IN_DRIVERS` with seven entries:
+[`builtInDrivers.ts`][drivers] exports `BUILT_IN_DRIVERS` with eight entries:
 
 | Driver kind   | Driver source                                 |
 | ------------- | --------------------------------------------- |
@@ -18,6 +18,7 @@ orchestration layer does not know which one is behind a thread.
 | `opencode`    | [`Drivers/OpenCodeDriver.ts`][opencode]       |
 | `droid`       | [`Drivers/DroidDriver.ts`][droid]             |
 | `antigravity` | [`Drivers/AntigravityDriver.ts`][antigravity] |
+| `pi`          | [`Drivers/PiDriver.ts`][pi]                   |
 
 Each driver declares its `driverKind`, a `configSchema`, and a `create` function that builds an
 adapter in a child scope. Adapter implementations live beside them in
@@ -316,7 +317,8 @@ mechanics remain in tool descriptions rather than consuming every turn's instruc
 Each built-in driver has an explicit native delivery decision, guarded against `BUILT_IN_DRIVERS`:
 
 - Codex uses developer instructions; Claude appends to its preset system prompt; OpenCode uses its
-  per-prompt system field; Grok uses `--rules`; Droid uses `--append-system-prompt`.
+  per-prompt system field; Grok uses `--rules`; Droid uses `--append-system-prompt`; Pi appends
+  awareness through its session-local `before_agent_start` extension hook.
 - Cursor accepts a documented `--plugin-dir`, but live CLI and ACP verification found that
   session-local plugin rules were not applied. Antigravity likewise has no verified
   application-private system extension. Both integrations are therefore marked unsupported for
@@ -371,10 +373,64 @@ credentials. New ACP text and voice helpers share T3's structured-generation imp
 
 The [provider lifecycle architecture](./provider-lifecycle.md) owns the shared management contract.
 
+### Pi driver
+
+[`PiDriver.ts`][pi] composes the same provider-instance registry, lifecycle actions, settings, and
+orchestration contracts as the other drivers. It does not import a second provider architecture or
+ACP translation layer. Native protocol tests cover official Pi 0.84.4 and 0.85.0; the managed
+installation remains pinned to the qualified 0.84.4 archive.
+
+- `provider/pi/PiRpcClient.ts` owns the newline-delimited RPC transport, request correlation, bounded
+  frames/queues and query timeouts. Prompt acceptance can wait for extension input; writes remain
+  bounded and Stop remains independent of the prompt lock.
+- `provider/Layers/PiAdapter.ts` maps native streaming, tools, extension questions, errors, steering,
+  and settlement into canonical runtime events. A native cycle ending is not sufficient to complete
+  a Scient turn: streaming, queued prompts, and compaction must also have settled. Context occupancy
+  comes from Pi's context estimate, separately from cumulative processed tokens; unknown usage is
+  not invented. The shared ingestion layer retains its buffered assistant-output default and does
+  not display a separate reasoning transcript. `ProviderService` supplies server-owned original
+  user text alongside the augmented model prompt. Pi sends recognized native commands verbatim
+  using the active session's catalog; ordinary prompts retain skill instructions. Per-turn MCP
+  skill scope replacement is unchanged. Attachments with native commands are explicitly rejected.
+- `provider/pi/PiSessionFile.ts` stores exact private per-instance JSONL session cursors, validates
+  containment, real paths, header identity and workspace, and rejects multiple live writers. Stop
+  closes the owned process; the durable cursor supports restart. Unrelated session imports and
+  provider-side rollback are unsupported, not simulated.
+- `provider/pi/PiScientExtension.ts` adapts the existing `McpProviderSession` endpoint and credential
+  into native Pi tools. It preserves canonical names, authorization, cancellation, structured
+  output and tool-error state. It does not infer authority from `cwd` or add a separate tool registry.
+  Tool discovery failure prevents silently starting a session without the bridge. Terminal-only Pi
+  UI APIs are not emulated.
+- `provider/Layers/PiProvider.ts` discovers models, thinking options, native skills and templates
+  passively with extensions/tools/context disabled. Authentication remains model-specific and
+  unknown until exercised. The driver's shared `snapshotForCwd` hook discovers workspace-local
+  resources without overriding Pi's project-trust policy. Live execution verifies the selected
+  model and thinking level, including image support when steering.
+- `textGeneration/PiTextGeneration.ts` uses ephemeral, tool-free and extension-free sessions for
+  internal structured-output helpers, without Scient MCP credentials or project instructions.
+- `scient/providerLifecycle/PiManagedRuntimeActions.ts` and the shared runtime package own private
+  installation/repair/removal. The bundled SHA-256-pinned macOS ARM64 archive is the only managed
+  target currently qualified. `supportedRuntimeModes` restricts clients to explicit Full access;
+  no native sandbox or approval enforcement is claimed.
+
+The native adapter/test foundation was selectively adapted from the main-based
+[T3 Pi proposal #5688](https://github.com/pingdotgg/t3code/pull/5688), donor
+`f3eb5d0f6779059aa463ee5e7b54439f7eea4aa2`. It was not merged wholesale and is not inherited T3 main
+functionality. Scient-specific bridge, lifecycle and safety adaptations live in this repository.
+The later V2-dependent Pi proposal was not imported. Official Pi RPC/model behavior was checked at
+`853a80d26c90a14c1886f0ebb8ffaae133ca2185`; see the [Pi source notice][pi-notice].
+
+The opt-in `provider/pi/PiRuntime.live.test.ts` uses `SCIENT_PI_TEST_BINARY` with isolated synthetic
+profiles and local model/MCP endpoints. It exercises the real binary without user credentials.
+Passing it proves native protocol/tool integration, not hosted authentication, every third-party
+extension, cross-platform runtime support, or human product acceptance.
+
 ## Scient-assisted provider lifecycle
 
 Codex, Claude, Cursor, Antigravity, Grok, and Droid optionally expose assisted runtime and account
 capabilities on their existing provider instances. OpenCode keeps its inherited multi-provider setup.
+Pi exposes assisted runtime management, but leaves model-specific credentials to Pi rather than
+inventing a single account login or logout flow.
 The lifecycle extension does not create another provider registry, session router, model catalog,
 credential store, or updater.
 
@@ -506,6 +562,8 @@ when a request opens (approval) or user input is requested, via
 [provider-setup]: ../../packages/contracts/src/providerSetup.ts
 [opencode-server-owner]: ../../apps/server/src/provider/OpenCodeServerOwner.ts
 [droid]: ../../apps/server/src/provider/Drivers/DroidDriver.ts
+[pi]: ../../apps/server/src/provider/Drivers/PiDriver.ts
+[pi-notice]: ../../apps/server/src/provider/pi/NOTICE.md
 [agy-session]: ../../apps/server/src/provider/antigravity/AgySession.ts
 [adapter]: ../../apps/server/src/provider/Services/ProviderAdapter.ts
 [awareness]: ../../apps/server/src/provider/ScientAwareness.ts

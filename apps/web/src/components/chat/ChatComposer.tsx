@@ -960,6 +960,7 @@ const ComposerFooterModeControls = memo(function ComposerFooterModeControls(prop
   runtimeMode: RuntimeMode;
   size?: "sm" | "xs";
   hidden?: boolean;
+  supportedRuntimeModes?: ReadonlyArray<RuntimeMode> | undefined;
   onToggleInteractionMode: () => void;
   onRuntimeModeChange: (mode: RuntimeMode) => void;
 }) {
@@ -1037,28 +1038,38 @@ const ComposerFooterModeControls = memo(function ComposerFooterModeControls(prop
             }
           >
             <ComposerControlIcon icon={RuntimeModeIcon} size={size} />
-            <SelectValue>{runtimeModeOption.label}</SelectValue>
+            <SelectValue>
+              {props.supportedRuntimeModes &&
+              !props.supportedRuntimeModes.includes(props.runtimeMode)
+                ? "Choose access"
+                : runtimeModeOption.label}
+            </SelectValue>
           </TooltipTrigger>
           <SelectPopup alignItemWithTrigger={false} {...composerFloatingLayerProps}>
-            {runtimeModeOptions.map((mode) => {
-              const option = runtimeModeConfig[mode];
-              const OptionIcon = option.icon;
-              return (
-                <SelectItem key={mode} value={mode} hideIndicator className="min-w-64 py-2">
-                  <div className="flex min-w-0 items-center gap-3">
-                    <div className="grid min-w-0 flex-1 gap-0.5">
-                      <span className="inline-flex items-center gap-1.5 font-medium text-foreground">
-                        <OptionIcon className="size-3.5 shrink-0 text-muted-foreground" />
-                        {option.label}
-                      </span>
-                      <span className="text-muted-foreground text-xs leading-4">
-                        {option.description}
-                      </span>
+            {runtimeModeOptions
+              .filter(
+                (mode) =>
+                  !props.supportedRuntimeModes || props.supportedRuntimeModes.includes(mode),
+              )
+              .map((mode) => {
+                const option = runtimeModeConfig[mode];
+                const OptionIcon = option.icon;
+                return (
+                  <SelectItem key={mode} value={mode} hideIndicator className="min-w-64 py-2">
+                    <div className="flex min-w-0 items-center gap-3">
+                      <div className="grid min-w-0 flex-1 gap-0.5">
+                        <span className="inline-flex items-center gap-1.5 font-medium text-foreground">
+                          <OptionIcon className="size-3.5 shrink-0 text-muted-foreground" />
+                          {option.label}
+                        </span>
+                        <span className="text-muted-foreground text-xs leading-4">
+                          {option.description}
+                        </span>
+                      </div>
                     </div>
-                  </div>
-                </SelectItem>
-              );
-            })}
+                  </SelectItem>
+                );
+              })}
           </SelectPopup>
         </Select>
         <TooltipPopup side="top">{runtimeModeOption.description}</TooltipPopup>
@@ -4155,6 +4166,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       id: "mode",
       content: (
         <ComposerFooterModeControls
+          supportedRuntimeModes={selectedProviderStatus?.supportedRuntimeModes}
           showInteractionModeToggle={planModeUiEnabled}
           interactionMode={interactionMode}
           runtimeMode={runtimeMode}
@@ -4245,6 +4257,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
 
         {composerControlsCompact ? (
           <CompactComposerControlsMenu
+            supportedRuntimeModes={selectedProviderStatus?.supportedRuntimeModes}
             interactionMode={interactionMode}
             runtimeMode={runtimeMode}
             showInteractionModeToggle={planModeUiEnabled}
@@ -4285,6 +4298,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                 )}
               >
                 <CompactComposerControlsMenu
+                  supportedRuntimeModes={selectedProviderStatus?.supportedRuntimeModes}
                   interactionMode={interactionMode}
                   runtimeMode={runtimeMode}
                   size="xs"

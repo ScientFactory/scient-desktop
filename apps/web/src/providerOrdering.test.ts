@@ -9,6 +9,7 @@ const expectedOrder = [
   "antigravity",
   "opencode",
   "droid",
+  "pi",
   "cursor",
   "grok",
 ];

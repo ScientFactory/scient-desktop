@@ -29,6 +29,7 @@ require a cosmetic folder migration.
   - [Droid](./user/providers-droid.md)
   - [Cursor](./user/providers-cursor.md)
   - [OpenCode](./user/providers-opencode.md)
+  - [Pi](./user/providers-pi.md)
 - [Permission modes](./user/permission-modes.md)
 - [Organizing threads](./user/thread-sidebar.md)
 - [Project settings](./user/project-settings.md)

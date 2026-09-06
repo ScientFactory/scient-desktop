@@ -12,6 +12,7 @@ import {
   ManagedCursorRuntime,
   ManagedDroidRuntime,
   ManagedGrokRuntime,
+  ManagedPiRuntime,
   detectManagedRuntimeTarget,
   hydrateManagedRuntimeArtifact,
   managedRuntimeTargetKey,
@@ -21,6 +22,7 @@ import {
   resolveReviewedCursorArtifact,
   resolveReviewedDroidArtifact,
   resolveReviewedGrokArtifact,
+  resolveReviewedPiArtifact,
   type ManagedProviderRuntime,
   type ManagedRuntimeArtifact,
   type ManagedRuntimeProvider,
@@ -76,6 +78,10 @@ const providerFactories: Readonly<
   grok: {
     policy: resolveReviewedGrokArtifact,
     runtime: (baseDir) => new ManagedGrokRuntime(baseDir),
+  },
+  pi: {
+    policy: resolveReviewedPiArtifact,
+    runtime: (baseDir) => new ManagedPiRuntime(baseDir),
   },
 };
 

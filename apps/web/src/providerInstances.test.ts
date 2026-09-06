@@ -10,6 +10,7 @@ import {
   resolveDefaultProviderModelSelection,
   resolveSelectableProviderInstance,
   resolveProviderDriverKindForInstanceSelection,
+  shouldShowInstanceBadge,
   sortProviderInstanceEntries,
 } from "./providerInstances";
 
@@ -85,6 +86,52 @@ describe("isProviderInstancePickerVisible", () => {
 
     expect(enabledEntry && isProviderInstancePickerVisible(enabledEntry)).toBe(true);
     expect(disabledEntry && isProviderInstancePickerVisible(disabledEntry)).toBe(false);
+  });
+});
+
+describe("shouldShowInstanceBadge", () => {
+  it("ignores disabled instances and restores the badge when they are enabled", () => {
+    const entries = deriveProviderInstanceEntries([
+      provider({ provider: ProviderDriverKind.make("pi"), instanceId: "pi" }),
+      provider({ provider: ProviderDriverKind.make("pi"), instanceId: "pi_hosted" }),
+    ]);
+    expect(shouldShowInstanceBadge(entries[1]!, entries)).toBe(true);
+
+    const disabled = applyProviderInstanceSettings(entries, {
+      providerInstances: {
+        [ProviderInstanceId.make("pi")]: {
+          driver: ProviderDriverKind.make("pi"),
+          enabled: false,
+        },
+        [ProviderInstanceId.make("pi_hosted")]: {
+          driver: ProviderDriverKind.make("pi"),
+          enabled: true,
+        },
+      },
+      providers: {} as never,
+    });
+    expect(shouldShowInstanceBadge(disabled[1]!, disabled)).toBe(false);
+    expect(shouldShowInstanceBadge(entries[1]!, entries)).toBe(true);
+  });
+
+  it("does not badge a single instance or count other drivers", () => {
+    const entries = deriveProviderInstanceEntries([
+      provider({ provider: ProviderDriverKind.make("pi"), instanceId: "pi" }),
+      provider({ provider: ProviderDriverKind.make("droid"), instanceId: "droid" }),
+    ]);
+    expect(shouldShowInstanceBadge(entries[0]!, [entries[0]!])).toBe(false);
+    expect(shouldShowInstanceBadge(entries[0]!, entries)).toBe(false);
+  });
+
+  it("preserves explicitly configured accent badges", () => {
+    const entries = deriveProviderInstanceEntries([
+      provider({
+        provider: ProviderDriverKind.make("pi"),
+        instanceId: "pi",
+        accentColor: "#123456",
+      }),
+    ]);
+    expect(shouldShowInstanceBadge(entries[0]!, entries)).toBe(true);
   });
 });
 

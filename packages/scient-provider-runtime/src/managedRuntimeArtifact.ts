@@ -8,7 +8,8 @@ export type ManagedRuntimeProvider =
   | "antigravity"
   | "cursor"
   | "droid"
-  | "grok";
+  | "grok"
+  | "pi";
 /** Distinct release families can belong to the same user-facing provider. */
 export type ManagedRuntimeCatalogProvider = ManagedRuntimeProvider | "antigravityAcp";
 export type ManagedRuntimeSupportTier =

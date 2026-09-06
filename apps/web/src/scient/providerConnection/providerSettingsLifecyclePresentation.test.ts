@@ -57,6 +57,25 @@ function presentingOperation(patch: Partial<ProviderRuntimeOperation>) {
 }
 
 describe("provider settings lifecycle presentation", () => {
+  it("offers Pi management without claiming an authenticated account", () => {
+    const pi = provider({
+      driver: ProviderDriverKind.make("pi"),
+      instanceId: ProviderInstanceId.make("pi"),
+      installed: true,
+      status: "ready",
+      auth: { status: "unknown" },
+      models: [{ slug: "local/test", name: "Test", isCustom: false, capabilities: null }],
+      connection: { methods: [], canDisconnect: false, operation: null },
+    });
+    expect(providerSettingsLifecyclePresentation(pi, "Pi")).toMatchObject({
+      statusLabel: "Models available",
+      actionKind: "manage",
+      actionLabel: "Manage",
+    });
+    expect(
+      providerSettingsLifecyclePresentation({ ...pi, models: [], status: "warning" }, "Pi"),
+    ).toMatchObject({ statusLabel: "Configure Pi", actionKind: "manage" });
+  });
   it("offers installation when Codex is missing", () => {
     expect(
       providerSettingsLifecyclePresentation(

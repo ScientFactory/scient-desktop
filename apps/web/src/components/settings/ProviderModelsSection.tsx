@@ -104,6 +104,7 @@ interface ProviderModelsSectionProps {
    * the section is rendered without enough provider metadata.
    */
   readonly driverKind: ProviderDriverKind | null;
+  readonly supportsCustomModels?: boolean;
   /**
    * The live model list to display. Includes both built-in (probe-reported)
    * and custom entries, distinguished by `isCustom`.
@@ -146,6 +147,7 @@ interface ProviderModelsSectionProps {
 export function ProviderModelsSection({
   instanceId,
   driverKind,
+  supportsCustomModels = driverKind !== "antigravity",
   models,
   customModels,
   hiddenModels,
@@ -206,7 +208,7 @@ export function ProviderModelsSection({
   }, [displayModels]);
 
   const handleAdd = () => {
-    if (driverKind === "antigravity") return;
+    if (!supportsCustomModels) return;
     const normalized = normalizeCustomModelSlug(input);
     if (!normalized) {
       setError("Enter a model slug.");
@@ -553,7 +555,7 @@ export function ProviderModelsSection({
         })}
       </div>
 
-      {driverKind === "antigravity" ? null : isAdding ? (
+      {!supportsCustomModels ? null : isAdding ? (
         <div className="mt-3 flex flex-col gap-2 sm:flex-row">
           <Input
             id={`provider-instance-${instanceId}-custom-model`}
@@ -599,7 +601,7 @@ export function ProviderModelsSection({
         </Button>
       )}
 
-      {driverKind !== "antigravity" && error ? (
+      {supportsCustomModels && error ? (
         <p className="mt-2 text-xs text-destructive">{error}</p>
       ) : null}
     </div>

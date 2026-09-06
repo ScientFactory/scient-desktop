@@ -125,6 +125,74 @@ function findActionButton(
 }
 
 describe("ProviderRuntimeSection", () => {
+  it.each([true, false])(
+    "keeps Pi installation concise without hiding unsupported-platform guidance (canInstall=%s)",
+    (canInstall) => {
+      const piProvider: ServerProvider = {
+        ...provider,
+        driver: ProviderDriverKind.make("pi"),
+        instanceId: ProviderInstanceId.make("pi"),
+        connection: {
+          ...provider.connection!,
+          runtime: {
+            ...provider.connection!.runtime!,
+            actions: canInstall ? ["install"] : [],
+            message: "Pi installation guidance.",
+          },
+        },
+      };
+      hooks.beginRender();
+      const markup = renderToStaticMarkup(
+        ProviderRuntimeSection({
+          environmentId,
+          provider: piProvider,
+          displayName: "Pi",
+          compact: true,
+        }),
+      );
+      expect(markup).toContain("Provider tool required");
+      if (canInstall) {
+        expect(markup).toContain("Install");
+        expect(markup).not.toContain("Pi installation guidance.");
+      } else {
+        expect(markup).toContain("Pi installation guidance.");
+      }
+    },
+  );
+
+  it("preserves a failed Pi install above its retry action", () => {
+    const piProvider: ServerProvider = {
+      ...provider,
+      driver: ProviderDriverKind.make("pi"),
+      instanceId: ProviderInstanceId.make("pi"),
+      connection: {
+        ...provider.connection!,
+        runtime: {
+          ...provider.connection!.runtime!,
+          operation: {
+            operationId: "pi-install-failed",
+            action: "install",
+            status: "failed",
+            startedAt: "2026-09-05T00:00:00.000Z",
+            finishedAt: "2026-09-05T00:00:05.000Z",
+            message: "Pi download checksum mismatch.",
+          },
+        },
+      },
+    };
+    hooks.beginRender();
+    const markup = renderToStaticMarkup(
+      ProviderRuntimeSection({
+        environmentId,
+        provider: piProvider,
+        displayName: "Pi",
+        compact: true,
+      }),
+    );
+    expect(markup).toContain("Pi download checksum mismatch.");
+    expect(markup).toContain("Install");
+  });
+
   beforeEach(() => {
     hooks.reset();
     commands.start

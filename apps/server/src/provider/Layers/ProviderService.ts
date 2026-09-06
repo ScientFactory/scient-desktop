@@ -1503,6 +1503,7 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
           Effect.gen(function* () {
             const turn = yield* routed.adapter.sendTurn({
               ...input,
+              ...(parsed.input !== undefined ? { originalInput: parsed.input } : {}),
               ...(skillTurn.input !== undefined ? { input: skillTurn.input } : {}),
             });
             yield* associateTurnAnalytics({

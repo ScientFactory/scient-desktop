@@ -368,6 +368,7 @@ export function useExistingThreadSettingsRoutePresentation() {
 }
 
 type ThreadSettingsSessionValue = {
+  readonly supportedRuntimeModes: ReadonlyArray<RuntimeMode> | undefined;
   readonly environmentId: EnvironmentId | null;
   readonly providerInstanceId?: ProviderInstanceId;
   readonly providerGroups: ReadonlyArray<ProviderGroup>;
@@ -521,6 +522,12 @@ function ThreadSettingsSessionProvider(
 
   const value = useMemo<ThreadSettingsSessionValue>(
     () => ({
+      supportedRuntimeModes:
+        pendingModel?.supportedRuntimeModes ??
+        props.providerGroups
+          .flatMap((group) => group.models)
+          .find((option) => option.selection.instanceId === props.selectedModel?.instanceId)
+          ?.supportedRuntimeModes,
       environmentId: props.environmentId,
       providerInstanceId: props.providerInstanceId,
       providerGroups: props.providerGroups,
@@ -559,6 +566,7 @@ function ThreadSettingsSessionProvider(
       props.onUpdateRuntimeMode,
       props.providerGroups,
       props.runtimeMode,
+      props.selectedModel,
       searchQuery,
       showLegacyToggle,
       toggleProvider,
@@ -787,7 +795,10 @@ function ThreadSettingsOptionsItem(props: {
             isLast
             label="Runtime"
             value={
-              RUNTIME_MODE_CHOICES.find((choice) => choice.mode === session.runtimeMode)?.label
+              session.supportedRuntimeModes &&
+              !session.supportedRuntimeModes.includes(session.runtimeMode)
+                ? "Choose access"
+                : RUNTIME_MODE_CHOICES.find((choice) => choice.mode === session.runtimeMode)?.label
             }
             onPress={() => props.onOpenSubmenu({ kind: "runtime" })}
           />
@@ -937,7 +948,10 @@ function ThreadSettingsChoiceContent(props: {
   const submenuContent =
     props.submenu.kind === "runtime"
       ? {
-          rows: RUNTIME_MODE_CHOICES.map((choice) => ({
+          rows: RUNTIME_MODE_CHOICES.filter(
+            (choice) =>
+              !session.supportedRuntimeModes || session.supportedRuntimeModes.includes(choice.mode),
+          ).map((choice) => ({
             id: choice.mode,
             label: choice.label,
             description: choice.description,

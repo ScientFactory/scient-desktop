@@ -900,6 +900,59 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
         ]);
       });
 
+      it("treats successful Pi discovery as authoritative while retaining failed-probe metadata", () => {
+        const previous: ServerProvider = {
+          driver: ProviderDriverKind.make("pi"),
+          instanceId: ProviderInstanceId.make("pi"),
+          enabled: true,
+          installed: true,
+          status: "ready",
+          auth: { status: "unknown" },
+          version: null,
+          checkedAt: "2026-08-31T00:00:00.000Z",
+          models: [
+            {
+              slug: "local/test",
+              name: "Test",
+              isCustom: false,
+              capabilities: {
+                optionDescriptors: [
+                  {
+                    id: "thinkingLevel",
+                    type: "select",
+                    label: "Thinking",
+                    options: [{ id: "high", label: "High" }],
+                  },
+                ],
+              },
+            },
+          ],
+          slashCommands: [{ name: "skill:test" }],
+          skills: [],
+        };
+        const empty: ServerProvider = {
+          ...previous,
+          status: "warning",
+          models: [],
+          slashCommands: [],
+        };
+        assert.deepStrictEqual(mergeProviderSnapshot(previous, empty).models, []);
+        assert.deepStrictEqual(mergeProviderSnapshot(previous, empty).slashCommands, []);
+        const failed: ServerProvider = { ...empty, status: "error" };
+        assert.deepStrictEqual(mergeProviderSnapshot(previous, failed).models, previous.models);
+        assert.deepStrictEqual(
+          mergeProviderSnapshot(previous, failed).slashCommands,
+          previous.slashCommands,
+        );
+        assert.strictEqual(
+          mergeProviderSnapshot(previous, {
+            ...previous,
+            models: [{ ...previous.models[0]!, capabilities: null }],
+          }).models[0]?.capabilities,
+          null,
+        );
+      });
+
       it("retains stale Droid models when the installed CLI probe fails", () => {
         const previousProvider = {
           instanceId: ProviderInstanceId.make("droid"),
@@ -3014,6 +3067,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
                 "droid",
                 "grok",
                 "opencode",
+                "pi",
               ]);
               assert.strictEqual(cursorProvider?.enabled, false);
               assert.strictEqual(cursorProvider?.status, "disabled");

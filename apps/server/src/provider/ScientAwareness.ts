@@ -55,6 +55,7 @@ export const SCIENT_AWARENESS_DELIVERY = {
   droid: "system-prompt-append",
   grok: "rules-append",
   opencode: "per-message-system",
+  pi: "before-agent-start-system-append",
 } as const;
 
 export type ScientAwarenessProvider = keyof typeof SCIENT_AWARENESS_DELIVERY;
