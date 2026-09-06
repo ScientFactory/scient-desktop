@@ -8,9 +8,13 @@ export const ScientAnalyticsConsent = Schema.Literals([
 ]);
 export type ScientAnalyticsConsent = typeof ScientAnalyticsConsent.Type;
 
+const CollectionContext = Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(96));
+
 export const ScientAnalyticsStatus = Schema.Struct({
   available: Schema.Boolean,
   consent: ScientAnalyticsConsent,
+  /** Ephemeral consent fence for UI operations; never an analytics property. */
+  collectionContext: Schema.optional(CollectionContext),
 });
 export type ScientAnalyticsStatus = typeof ScientAnalyticsStatus.Type;
 
@@ -30,6 +34,10 @@ export const ScientAnalyticsUiEventName = Schema.Literals([
   "voice.transcription.cancelled",
   "surface.opened",
   "setting.changed",
+  "scient.operation.started",
+  "scient.operation.completed",
+  "scient.operation.failed",
+  "scient.operation.cancelled",
 ]);
 export type ScientAnalyticsUiEventName = typeof ScientAnalyticsUiEventName.Type;
 
@@ -39,6 +47,7 @@ export const ScientAnalyticsUiEvent = Schema.Struct({
     Schema.String,
     Schema.Union([Schema.String, Schema.Boolean, Schema.Number]),
   ),
+  collectionContext: Schema.optional(CollectionContext),
 });
 export type ScientAnalyticsUiEvent = typeof ScientAnalyticsUiEvent.Type;
 

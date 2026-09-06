@@ -19,6 +19,8 @@ import * as OrchestrationEngine from "../orchestration/Services/OrchestrationEng
 import * as ProjectionSnapshotQuery from "../orchestration/Services/ProjectionSnapshotQuery.ts";
 import * as ProviderService from "../provider/Services/ProviderService.ts";
 import * as AnalyticsService from "./AnalyticsService.ts";
+import { ProviderRegistry } from "../provider/Services/ProviderRegistry.ts";
+import { createProviderLifecycleAnalyticsMapper } from "./ProviderLifecycleAnalytics.ts";
 
 const MAX_CORRELATED_TURNS = 1_000;
 
@@ -65,10 +67,24 @@ function elapsedMilliseconds(startedAt: number, completedAt: string): number | u
 export function createAnalyticsEventMapper() {
   const turns = new Map<string, TurnCorrelation>();
   const pendingForks = new Map<string, ForkCorrelation>();
+  const terminalTurns = new Map<string, true>();
+  const terminalReverts = new Map<string, true>();
+
+  const revertOutcome = (
+    eventId: string,
+    failed: boolean,
+  ): ReadonlyArray<RecordedAnalyticsEvent> => {
+    if (terminalReverts.has(eventId)) return [];
+    boundedSet(terminalReverts, eventId, true);
+    return failed
+      ? [{ name: "thread.revert.failed", properties: { failureClass: "unknown" } }]
+      : [{ name: "thread.revert.completed", properties: {} }];
+  };
 
   const providerEvent = (event: ProviderRuntimeEvent): ReadonlyArray<RecordedAnalyticsEvent> => {
     const turnId = event.turnId === undefined ? undefined : String(event.turnId);
     const key = turnId === undefined ? undefined : turnKey(String(event.threadId), turnId);
+    if (key !== undefined && terminalTurns.has(key)) return [];
 
     switch (event.type) {
       case "turn.started": {
@@ -97,11 +113,12 @@ export function createAnalyticsEventMapper() {
       }
       case "turn.aborted": {
         if (key === undefined) return [];
+        boundedSet(terminalTurns, key, true);
         const turn = turns.get(key);
         turns.delete(key);
         return [
           {
-            name: "provider.turn.failed",
+            name: "provider.turn.stopped",
             properties: {
               provider: turn?.provider ?? String(event.provider),
               model: turn?.model,
@@ -109,17 +126,31 @@ export function createAnalyticsEventMapper() {
                 turn === undefined
                   ? undefined
                   : elapsedMilliseconds(turn.startedAt, event.createdAt),
-              failureClass: "interrupted",
+              stopClass: "aborted",
             },
           },
         ];
       }
       case "turn.completed": {
         if (key === undefined) return [];
+        boundedSet(terminalTurns, key, true);
         const turn = turns.get(key);
         turns.delete(key);
         const durationMs =
           turn === undefined ? undefined : elapsedMilliseconds(turn.startedAt, event.createdAt);
+        if (event.payload.state === "cancelled" || event.payload.state === "interrupted") {
+          return [
+            {
+              name: "provider.turn.stopped",
+              properties: {
+                provider: turn?.provider ?? String(event.provider),
+                model: turn?.model,
+                durationMs,
+                stopClass: event.payload.state,
+              },
+            },
+          ];
+        }
         if (event.payload.state === "completed") {
           return [
             {
@@ -141,13 +172,7 @@ export function createAnalyticsEventMapper() {
               provider: turn?.provider ?? String(event.provider),
               model: turn?.model,
               durationMs,
-              failureClass:
-                turn?.failureClass ??
-                (event.payload.state === "cancelled"
-                  ? "cancelled"
-                  : event.payload.state === "interrupted"
-                    ? "interrupted"
-                    : "provider_error"),
+              failureClass: turn?.failureClass ?? "provider_error",
             },
           },
         ];
@@ -178,7 +203,7 @@ export function createAnalyticsEventMapper() {
       }
       case "thread.forked": {
         const newThreadId = String(event.payload.newThreadId);
-        pendingForks.set(newThreadId, {
+        boundedSet(pendingForks, newThreadId, {
           workspaceMode: event.payload.workspaceMode,
           boundaryClass:
             event.payload.sourceCheckpointTurnCount === null ? "conversation" : "checkpoint",
@@ -203,34 +228,86 @@ export function createAnalyticsEventMapper() {
         ];
       }
       case "thread.reverted":
-        return [{ name: "thread.revert.completed", properties: {} }];
+        return revertOutcome(String(event.eventId), false);
+      case "thread.activity-appended":
+        // This kind is emitted by CheckpointReactor after a failed attempt.
+        // The activity's summary/payload may contain private paths or errors.
+        return event.payload.activity.kind === "checkpoint.revert.failed"
+          ? revertOutcome(String(event.eventId), true)
+          : [];
       default:
         return [];
     }
   };
 
-  return { orchestrationEvent, providerEvent } as const;
+  const clear = () => {
+    turns.clear();
+    pendingForks.clear();
+    terminalTurns.clear();
+    terminalReverts.clear();
+  };
+  return { orchestrationEvent, providerEvent, clear } as const;
 }
 
 /** Starts both hot-stream observers inside the caller's scope and returns immediately. */
 export const launchAnalyticsEventObservers = Effect.gen(function* () {
   const analytics = yield* AnalyticsService.AnalyticsService;
+  if (!(yield* analytics.status).available) return;
   const orchestration = yield* OrchestrationEngine.OrchestrationEngineService;
   const projectionSnapshotQuery = yield* ProjectionSnapshotQuery.ProjectionSnapshotQuery;
   const provider = yield* ProviderService.ProviderService;
+  // Observability must not add a mandatory provider dependency to legacy/test hosts.
+  const registry = yield* Effect.serviceOption(ProviderRegistry);
   const mapper = createAnalyticsEventMapper();
+  const lifecycleMapper = createProviderLifecycleAnalyticsMapper();
+  let observedEpoch = yield* analytics.collectionEpoch;
+  const shouldObserve = Effect.gen(function* () {
+    const epoch = yield* analytics.collectionEpoch;
+    if (epoch !== observedEpoch) {
+      mapper.clear();
+      lifecycleMapper.clear();
+      observedEpoch = epoch;
+    }
+    const status = yield* analytics.status;
+    if (status.consent !== "off") return true;
+    mapper.clear();
+    lifecycleMapper.clear();
+    return false;
+  });
 
   const recordAll = (events: ReadonlyArray<RecordedAnalyticsEvent>) =>
     Effect.forEach(events, (event) => analytics.record(event.name, event.properties), {
       discard: true,
     });
 
+  if (Option.isSome(registry)) {
+    if (yield* shouldObserve) {
+      yield* recordAll(lifecycleMapper.observe(yield* registry.value.getProviders));
+    }
+    yield* Effect.forkScoped(
+      Stream.runForEach(registry.value.streamChanges, (providers) =>
+        shouldObserve.pipe(
+          Effect.flatMap((observe) =>
+            observe ? recordAll(lifecycleMapper.observe(providers)) : Effect.void,
+          ),
+        ),
+      ),
+    );
+  }
+
   yield* Effect.forkScoped(
-    Stream.runForEach(provider.streamEvents, (event) => recordAll(mapper.providerEvent(event))),
+    Stream.runForEach(provider.streamEvents, (event) =>
+      shouldObserve.pipe(
+        Effect.flatMap((observe) =>
+          observe ? recordAll(mapper.providerEvent(event)) : Effect.void,
+        ),
+      ),
+    ),
   );
   yield* Effect.forkScoped(
     Stream.runForEach(orchestration.streamDomainEvents, (event) =>
       Effect.gen(function* () {
+        if (!(yield* shouldObserve)) return;
         const refork =
           event.type === "thread.forked"
             ? yield* projectionSnapshotQuery.getThreadDetailById(event.payload.originThreadId).pipe(

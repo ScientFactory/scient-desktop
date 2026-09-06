@@ -24,6 +24,7 @@ import * as Scope from "effect/Scope";
 import { ProviderRegistry } from "../../provider/Services/ProviderRegistry.ts";
 import type { ProviderConnectionAttempt } from "../../provider/ProviderDriver.ts";
 import { ProviderLifecycleCoordinator } from "./ProviderLifecycleCoordinator.ts";
+import { observeAnalyticsEffect } from "../../telemetry/OperationAnalytics.ts";
 
 export interface ProviderConnectionManagerShape {
   readonly start: (
@@ -721,6 +722,7 @@ export const make = Effect.fn("ProviderConnectionManager.make")(function* () {
       });
     }
     const actions = target.actions;
+    const runtimeSource = target.snapshot.connection?.runtime?.source ?? "unknown";
     const operationId = `disconnect-${yield* crypto.randomUUIDv4.pipe(Effect.orDie)}`;
     const reserved = yield* lifecycleCoordinator.reserve({
       instanceId: input.instanceId,
@@ -774,7 +776,15 @@ export const make = Effect.fn("ProviderConnectionManager.make")(function* () {
           ),
         );
       return { providers };
-    }).pipe(Effect.ensuring(lifecycleCoordinator.release({ operationId }).pipe(Effect.asVoid)));
+    }).pipe(
+      (effect) =>
+        observeAnalyticsEffect(effect, {
+          kind: "provider-sign-out",
+          provider: target.provider,
+          source: runtimeSource,
+        }),
+      Effect.ensuring(lifecycleCoordinator.release({ operationId }).pipe(Effect.asVoid)),
+    );
   });
 
   return ProviderConnectionManager.of({ start, cancel, submitAuthorizationCode, disconnect });

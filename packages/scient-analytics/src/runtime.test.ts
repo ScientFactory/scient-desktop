@@ -24,6 +24,7 @@ function options(overrides: Partial<AnalyticsRuntimeOptions> = {}): AnalyticsRun
     outboxPath: fixturePath(),
     appVersion: "0.0.32",
     buildChannel: "development",
+    endpoint: "http://127.0.0.1:1/v1/events",
     ...overrides,
   };
 }
@@ -80,6 +81,97 @@ afterEach(async () => {
 });
 
 describe("Scient analytics background runtime", () => {
+  it("does not replay buffered batches after deletion rotates the installation", async () => {
+    const server = await ingestionServer();
+    const runtime = createAnalyticsRuntime(options({ endpoint: server.endpoint }));
+    try {
+      expect(await runtime.pendingCount()).toBe(0);
+      for (let index = 0; index < 1_000; index += 1) {
+        expect(runtime.record("provider.turn.sent", { provider: "codex" })).toBe(true);
+      }
+      expect(await runtime.deleteData()).toBe(true);
+      expect(await runtime.pendingCount()).toBe(0);
+      expect(await runtime.flush()).toBe(0);
+      expect(server.bodies).toHaveLength(0);
+      runtime.record("server.boot.heartbeat");
+      expect(await runtime.flush()).toBe(1);
+      expect(server.bodies).toMatchObject([{ events: [{ name: "server.boot.heartbeat" }] }]);
+    } finally {
+      await runtime.close();
+    }
+  });
+
+  it("fails closed when worker startup cannot acknowledge a consent reduction", async () => {
+    // A real worker that starts later than the bounded control deadline.
+    const workerUrl = new URL(
+      `data:text/javascript,${encodeURIComponent(`
+      import { setTimeout } from 'node:timers/promises';
+      await setTimeout(5000);
+      await import(${JSON.stringify(new URL("./worker-entry.ts", import.meta.url).href)});
+    `)}`,
+    );
+    const runtime = createAnalyticsRuntime(options({ workerUrl }));
+    try {
+      await expect(runtime.setConsent("essential")).rejects.toThrow("not acknowledged");
+      expect(runtime.enabled).toBe(false);
+      expect(runtime.record("server.boot.heartbeat")).toBe(false);
+      expect(await runtime.flush()).toBe(0);
+    } finally {
+      await runtime.close();
+    }
+  });
+
+  it("queues a consent reduction before a delayed worker becomes ready", async () => {
+    const workerUrl = new URL(
+      `data:text/javascript,${encodeURIComponent(`
+      import { setTimeout } from 'node:timers/promises';
+      await setTimeout(50);
+      await import(${JSON.stringify(new URL("./worker-entry.ts", import.meta.url).href)});
+    `)}`,
+    );
+    const server = await ingestionServer();
+    const runtime = createAnalyticsRuntime(options({ workerUrl, endpoint: server.endpoint }));
+    try {
+      runtime.record("provider.turn.sent", { provider: "codex" });
+      expect(await runtime.setConsent("essential")).toBe(1);
+      expect(await runtime.pendingCount()).toBe(0);
+      expect(await runtime.flush()).toBe(0);
+      expect(server.bodies).toHaveLength(0);
+    } finally {
+      await runtime.close();
+    }
+  });
+
+  it("emits bounded delivery diagnostics only at Diagnostic consent without creating a feedback loop", async () => {
+    const server = await ingestionServer();
+    const runtime = createAnalyticsRuntime(
+      options({ consent: "diagnostic", endpoint: server.endpoint }),
+    );
+    try {
+      runtime.record("server.boot.heartbeat");
+      expect(await runtime.flush()).toBe(1);
+      expect(await runtime.pendingCount()).toBe(1);
+      expect(await runtime.flush()).toBe(1);
+      expect(await runtime.pendingCount()).toBe(0);
+      expect(server.bodies[1]).toMatchObject({
+        events: [
+          {
+            name: "app.diagnostics",
+            privacy_level: "diagnostic",
+            properties: {
+              deliveryClass: "delivered",
+              queuedCountBucket: "0",
+              retryCountBucket: "0",
+              droppedCountBucket: "unknown",
+            },
+          },
+        ],
+      });
+    } finally {
+      await runtime.close();
+    }
+  });
+
   it("creates no worker state when analytics is disabled", async () => {
     const outboxPath = fixturePath();
     const runtime = createAnalyticsRuntime(options({ enabled: false, outboxPath }));
@@ -89,6 +181,112 @@ describe("Scient analytics background runtime", () => {
     await runtime.close();
 
     expect(NodeFS.existsSync(outboxPath)).toBe(false);
+  });
+
+  it("is inert with consent Off, even when collection is available", async () => {
+    const outboxPath = fixturePath();
+    const runtime = createAnalyticsRuntime(
+      options({
+        consent: "off",
+        outboxPath,
+        workerUrl: new URL("file:///nonexistent-worker.mjs"),
+        randomUUID: () => {
+          throw new Error("Must not create an identity while Off");
+        },
+      }),
+    );
+    expect(runtime.enabled).toBe(false);
+    expect(runtime.record("app.session.started")).toBe(false);
+    expect(await runtime.pendingCount()).toBe(0);
+    expect(await runtime.flush()).toBe(0);
+    expect(await runtime.deleteData()).toBe(false);
+    await runtime.close();
+    expect(NodeFS.existsSync(outboxPath)).toBe(false);
+  });
+
+  it("reconciles persisted consent before replaying an outbox after restart", async () => {
+    const outboxPath = fixturePath();
+    const first = createAnalyticsRuntime(options({ outboxPath }));
+    first.record("server.boot.heartbeat");
+    first.record("provider.turn.sent", { provider: "codex" });
+    expect(await first.pendingCount()).toBe(2);
+    await first.close();
+
+    const server = await ingestionServer();
+    const restarted = createAnalyticsRuntime(
+      options({
+        outboxPath,
+        endpoint: server.endpoint,
+        consent: "essential",
+      }),
+    );
+    expect(await restarted.pendingCount()).toBe(1);
+    expect(await restarted.flush()).toBe(1);
+    await restarted.close();
+    expect(server.bodies).toEqual([
+      expect.objectContaining({
+        events: [
+          expect.objectContaining({
+            name: "server.boot.heartbeat",
+            consent_level: "essential",
+          }),
+        ],
+      }),
+    ]);
+  });
+
+  it("authenticates deletion while Off without delivering queued behavioral events", async () => {
+    const outboxPath = fixturePath();
+    const first = createAnalyticsRuntime(options({ outboxPath }));
+    first.record("provider.turn.sent", { provider: "codex" });
+    expect(await first.pendingCount()).toBe(1);
+    await first.close();
+
+    const server = await ingestionServer();
+    const deletion = createAnalyticsRuntime(
+      options({
+        outboxPath,
+        endpoint: server.endpoint,
+        consent: "off",
+        purpose: "deletion",
+      }),
+    );
+    expect(deletion.record("server.boot.heartbeat")).toBe(false);
+    expect(await deletion.flush()).toBe(0);
+    expect(await deletion.deleteData()).toBe(true);
+    expect(await deletion.pendingCount()).toBe(0);
+    await deletion.close();
+    expect(server.bodies).toHaveLength(0);
+    expect(server.deletionBodies).toHaveLength(1);
+  });
+
+  it("aborts an in-flight upload and purges the queue when consent becomes Off", async () => {
+    const received = Promise.withResolvers<void>();
+    const disconnected = Promise.withResolvers<void>();
+    const server = NodeHttp.createServer((request, response) => {
+      request.resume();
+      request.on("end", () => received.resolve());
+      response.on("close", () => disconnected.resolve());
+    });
+    servers.push(server);
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    const address = server.address();
+    if (address === null || typeof address === "string") throw new Error("Missing test port");
+    const runtime = createAnalyticsRuntime(
+      options({
+        endpoint: `http://127.0.0.1:${address.port}/v1/events`,
+      }),
+    );
+    runtime.record("provider.turn.sent", { provider: "codex" });
+    const flushing = runtime.flush();
+    await received.promise;
+    expect(await runtime.setConsent("off")).toBe(1);
+    await disconnected.promise;
+    expect(await flushing).toBe(0);
+    expect(await runtime.pendingCount()).toBe(0);
+    expect(runtime.record("server.boot.heartbeat")).toBe(false);
+    expect(await runtime.flush()).toBe(0);
+    await runtime.close();
   });
 
   it("persists and delivers only the bounded normalized contract", async () => {

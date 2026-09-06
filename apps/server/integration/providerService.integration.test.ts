@@ -74,6 +74,7 @@ const makeRecordingAnalytics = Effect.gen(function* () {
         Ref.update(recorded, (current) => [...current, { event, properties }]),
       flush: Effect.void,
       status: Effect.succeed({ available: true, consent: "product" }),
+      collectionEpoch: Effect.succeed(0),
       setConsent: (consent) => Effect.succeed({ available: true, consent }),
       deleteData: Effect.succeed(true),
     }),

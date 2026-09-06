@@ -37,6 +37,7 @@ import * as ServerLifecycleEvents from "./serverLifecycleEvents.ts";
 import * as ServerSettings from "./serverSettings.ts";
 import * as AnalyticsService from "./telemetry/AnalyticsService.ts";
 import { launchAnalyticsEventObservers } from "./telemetry/AnalyticsEventObservers.ts";
+import { observeAnalyticsEffect } from "./telemetry/OperationAnalytics.ts";
 import * as ServerEnvironment from "./environment/ServerEnvironment.ts";
 import * as EnvironmentAuth from "./auth/EnvironmentAuth.ts";
 import * as ProviderService from "./provider/Services/ProviderService.ts";
@@ -150,25 +151,9 @@ export const makeCommandGate = Effect.gen(function* () {
 
 export const recordStartupHeartbeat = Effect.gen(function* () {
   const analytics = yield* AnalyticsService.AnalyticsService;
-  const projectionSnapshotQuery = yield* ProjectionSnapshotQuery.ProjectionSnapshotQuery;
-
-  const { threadCount, projectCount } = yield* projectionSnapshotQuery.getCounts().pipe(
-    Effect.catch((cause) =>
-      Effect.logWarning("failed to gather startup projection counts for telemetry", {
-        cause,
-      }).pipe(
-        Effect.as({
-          threadCount: 0,
-          projectCount: 0,
-        }),
-      ),
-    ),
-  );
-
-  yield* analytics.record("server.boot.heartbeat", {
-    threadCount,
-    projectCount,
-  });
+  // Scient's heartbeat contract has no project or thread counts. Do not query
+  // user state for properties the privacy boundary deliberately discards.
+  yield* analytics.record("server.boot.heartbeat");
 });
 
 const getAutoBootstrapThreadModelSelection = (): ModelSelection => ({
@@ -994,7 +979,7 @@ export const make = (options?: StartupOptions) =>
     );
 
     yield* Effect.forkScoped(
-      Effect.exit(startup).pipe(
+      Effect.exit(observeAnalyticsEffect(startup, { kind: "server-startup" })).pipe(
         Effect.flatMap((startupExit) => {
           if (Exit.isSuccess(startupExit)) return Effect.void;
           const error = new ServerRuntimeStartupError({

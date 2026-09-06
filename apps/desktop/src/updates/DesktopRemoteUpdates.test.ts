@@ -60,6 +60,7 @@ function runRemoteUpdatesTest(
         handleControl: () => Effect.void,
         handleControlForSource: () => Effect.void,
         removeControlSource: () => Effect.void,
+        publishHealth: () => Effect.void,
         publishUpdateReport: (report) =>
           Effect.sync(() => {
             reports.push(report);

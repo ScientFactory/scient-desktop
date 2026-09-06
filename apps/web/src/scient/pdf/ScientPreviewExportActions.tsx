@@ -49,6 +49,7 @@ export function ScientPreviewExportActions(props: {
           runtimeTabId: props.runtimeTabId,
           pageUrl: props.pageUrl,
           activate: action === "open",
+          trigger: "user",
         });
         if (action === "save") {
           const saveResult = await savePdfCopy(result.source);

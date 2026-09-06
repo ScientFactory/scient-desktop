@@ -113,8 +113,18 @@ beforeEach(async () => {
 
 afterEach(async () => {
   renderer?.cleanUp();
+  // terminate() schedules a final animation-frame broadcast. Await that receipt
+  // before removing browser globals, not just the underlying worker's exit.
+  let acknowledgeStopped!: () => void;
+  const stopped = new Promise<void>((resolve) => {
+    acknowledgeStopped = resolve;
+  });
+  const unsubscribe = pool.subscribeToStatChanges((stats) => {
+    if (stats.managerState === "waiting") acknowledgeStopped();
+  });
   pool?.terminate();
-  await Promise.all(terminationPromises);
+  await Promise.all([...terminationPromises, stopped]);
+  unsubscribe();
   await disposeHighlighter();
   vi.unstubAllGlobals();
 });

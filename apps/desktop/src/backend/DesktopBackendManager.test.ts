@@ -168,6 +168,7 @@ function makeTestInstance(input: MakeInstanceInput) {
         (input.desktopTelemetryPublisher?.handleControl ?? (() => Effect.void))(message),
       removeControlSource: () => Effect.void,
       publishUpdateReport: () => Effect.void,
+      publishHealth: () => Effect.void,
       updateRequests: Stream.empty,
       updateCommits: Stream.empty,
       updateCancellations: Stream.empty,

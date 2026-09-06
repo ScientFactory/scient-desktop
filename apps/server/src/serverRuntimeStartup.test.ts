@@ -15,6 +15,7 @@ import * as OrchestrationEngine from "./orchestration/Services/OrchestrationEngi
 import * as ProjectionSnapshotQuery from "./orchestration/Services/ProjectionSnapshotQuery.ts";
 import * as ServerRuntimeStartup from "./serverRuntimeStartup.ts";
 import * as ServerSettings from "./serverSettings.ts";
+import * as AnalyticsService from "./telemetry/AnalyticsService.ts";
 import * as GitVcsDriver from "./vcs/GitVcsDriver.ts";
 
 it.effect("automatic pull only updates enabled, behind, clean default-branch checkouts", () =>
@@ -109,6 +110,29 @@ it.effect("enqueueCommand fails queued work when readiness fails", () =>
 
       const error = yield* Effect.flip(Fiber.join(queuedCommandFiber));
       assert.equal(error.message, "Server runtime startup failed before command readiness.");
+    }),
+  ),
+);
+
+it.effect("startup heartbeat records without querying project or thread counts", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const events: string[] = [];
+
+      yield* ServerRuntimeStartup.recordStartupHeartbeat.pipe(
+        Effect.provideService(AnalyticsService.AnalyticsService, {
+          record: (name) =>
+            Effect.sync(() => {
+              events.push(name);
+            }),
+          flush: Effect.void,
+          status: Effect.succeed({ available: false, consent: "off" as const }),
+          collectionEpoch: Effect.succeed(0),
+          setConsent: () => Effect.succeed({ available: false, consent: "off" as const }),
+          deleteData: Effect.succeed(false),
+        }),
+      );
+      assert.deepStrictEqual(events, ["server.boot.heartbeat"]);
     }),
   ),
 );
