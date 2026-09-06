@@ -196,8 +196,9 @@ export const make = Effect.gen(function* () {
   const createRuntime = (
     runtimeConsent: AnalyticsConsent,
     purpose: "collection" | "deletion" = "collection",
-  ) =>
-    createAnalyticsRuntime({
+  ) => {
+    const endpoint = localAnalyticsTestEndpoint(analyticsConfig.testEndpoint);
+    return createAnalyticsRuntime({
       enabled: analyticsConfig.enabled,
       consent: runtimeConsent,
       outboxPath,
@@ -205,8 +206,9 @@ export const make = Effect.gen(function* () {
       buildChannel: parseBuildChannel(analyticsConfig.buildChannel),
       workerUrl: packagedAnalyticsWorkerUrl(),
       purpose,
-      endpoint: localAnalyticsTestEndpoint(analyticsConfig.testEndpoint),
+      ...(endpoint === undefined ? {} : { endpoint }),
     });
+  };
 
   const runtimeHolder: { current: AnalyticsRuntime } = {
     current: disabledRuntime(outboxPath),
