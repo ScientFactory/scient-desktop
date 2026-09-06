@@ -75,7 +75,7 @@ export function piDiscoveredModelToServerProviderModel(
             optionDescriptors: [
               {
                 id: "thinkingLevel",
-                label: "Thinking level",
+                label: "Reasoning",
                 type: "select",
                 strictSelection: true,
                 concreteReasoning: true,
