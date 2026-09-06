@@ -51,4 +51,6 @@ These selection changes belong to Scient's Pi/custom-model integration. Native C
 
 ## Qualification
 
+Droid's gated live suites use `SCIENT_DROID_TEST_BINARY` and require its reported version to match the bundled managed catalog before exercising version-specific wire assertions. An unset variable skips these suites. Qualify a checksum-verified managed artifact; an older system installation is not evidence about the bundled release. On macOS arm64, Droid 0.213.0 passed the four live cases on 2026-09-06: image forwarding and length recovery with explicit/native limits, protocol switching, and Chat Completions reasoning serialization. These local endpoint fixtures do not establish hosted-account or cross-platform compatibility.
+
 Focused tests cover provider payload parsing, missing/null fields, cache isolation and refresh failure, manual overrides, credential boundaries, explicit and inherited application, runtime mismatches, saved invalid values, and UI labels. The gated Pi reasoning live fixture uses a temporary profile and a local synthetic HTTP endpoint to inspect outgoing request parameters without accessing real provider credentials. Automated qualification does not replace visual/product acceptance.

@@ -1,5 +1,7 @@
 // @effect-diagnostics nodeBuiltinImport:off
 import * as NodeHttp from "node:http";
+import { beforeAll } from "vite-plus/test";
+import { qualifyDroidTestBinary } from "./DroidLiveTestPreflight.ts";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { expect, it } from "@effect/vitest";
 import { DEFAULT_SERVER_SETTINGS, ProviderInstanceId } from "@t3tools/contracts";
@@ -14,6 +16,7 @@ import {
 import { droidCustomModelId, makeDroidCustomModelsRuntimeFactory } from "./DroidCustomModels.ts";
 
 const binary = process.env.SCIENT_DROID_TEST_BINARY;
+beforeAll(() => qualifyDroidTestBinary(binary), 10_000);
 const decodeRequest = Schema.decodeUnknownSync(
   Schema.fromJsonString(Schema.Record(Schema.String, Schema.Unknown)),
 );

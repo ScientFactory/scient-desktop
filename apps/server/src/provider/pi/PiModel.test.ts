@@ -91,7 +91,7 @@ describe("PiModel", () => {
           optionDescriptors: [
             {
               id: "thinkingLevel",
-              label: "Thinking level",
+              label: "Reasoning",
               type: "select",
               strictSelection: true,
               concreteReasoning: true,

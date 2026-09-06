@@ -168,6 +168,7 @@ function SupportedAssistedProviderSetupHost(props: AssistedProviderSetupHostProp
       setup = (
         <PiInlineSetup
           {...managementProps}
+          {...(!isManagement ? { composerController: controller } : {})}
           environmentId={props.environmentId}
           displayName={displayName}
           provider={props.provider}

@@ -11,6 +11,7 @@ import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import { ChildProcessSpawner } from "effect/unstable/process";
+import { HttpClient } from "effect/unstable/http";
 
 import { BackgroundPolicy } from "../../background/BackgroundPolicy.ts";
 import { ServerConfig } from "../../config.ts";
@@ -30,7 +31,13 @@ import {
 } from "../ProviderDriver.ts";
 import type { ServerProviderDraft } from "../providerSnapshot.ts";
 import { mergeProviderInstanceEnvironment } from "../ProviderInstanceEnvironment.ts";
-import { makeManualOnlyProviderMaintenanceCapabilities } from "../providerMaintenance.ts";
+import {
+  enrichProviderSnapshotWithVersionAdvisory,
+  makeCachedProviderMaintenanceResolution,
+  makeManualOnlyProviderMaintenanceCapabilities,
+  resolveProviderMaintenanceCapabilitiesEffect,
+} from "../providerMaintenance.ts";
+import { piMaintenance } from "../piDroidMaintenance.ts";
 import { withInstanceIdentity } from "./instanceIdentity.ts";
 import {
   haveProviderSnapshotSettingsChanged,
@@ -45,6 +52,7 @@ export type PiDriverEnv =
   | ChildProcessSpawner.ChildProcessSpawner
   | Crypto.Crypto
   | FileSystem.FileSystem
+  | HttpClient.HttpClient
   | Path.Path
   | ServerConfig
   | ServerSettingsService;
@@ -59,6 +67,9 @@ export const PiDriver: ProviderDriver<PiSettings, PiDriverEnv> = {
       const serverConfig = yield* ServerConfig;
       const serverSettings = yield* ServerSettingsService;
       const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+      const fileSystem = yield* FileSystem.FileSystem;
+      const pathService = yield* Path.Path;
+      const httpClient = yield* HttpClient.HttpClient;
       const processEnv = mergeProviderInstanceEnvironment(environment);
       const makeRpcClient = yield* makePiCustomModelsClientFactory(
         serverSettings,
@@ -130,10 +141,24 @@ export const PiDriver: ProviderDriver<PiSettings, PiDriverEnv> = {
         processEnv,
         makeRpcClient,
       );
-      const maintenanceCapabilities = makeManualOnlyProviderMaintenanceCapabilities({
-        provider: DRIVER_KIND,
-        packageName: null,
-      });
+      const resolveMaintenance = yield* makeCachedProviderMaintenanceResolution(
+        (managedRuntime.usesManagedPath
+          ? Effect.succeed(
+              makeManualOnlyProviderMaintenanceCapabilities({
+                provider: DRIVER_KIND,
+                packageName: null,
+              }),
+            )
+          : resolveProviderMaintenanceCapabilitiesEffect(piMaintenance, {
+              binaryPath: effectiveConfig.binaryPath,
+              env: processEnv,
+            })
+        ).pipe(
+          Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+          Effect.provideService(FileSystem.FileSystem, fileSystem),
+          Effect.provideService(Path.Path, pathService),
+        ),
+      );
       const mapSettings = (settings: ServerSettings) => ({
         provider: effectiveConfig,
         enableProviderUpdateChecks: settings.enableProviderUpdateChecks,
@@ -148,7 +173,7 @@ export const PiDriver: ProviderDriver<PiSettings, PiDriverEnv> = {
           customModels: ReturnType<typeof customModelDiscoverySnapshot>;
         }
       >({
-        resolveMaintenance: () => Effect.succeed(maintenanceCapabilities),
+        resolveMaintenance,
         getSettings: source.getSettings,
         streamSettings: source.streamSettings,
         haveSettingsChanged: haveProviderSnapshotSettingsChanged,
@@ -158,6 +183,16 @@ export const PiDriver: ProviderDriver<PiSettings, PiDriverEnv> = {
           Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
           Effect.map(stamp),
         ),
+        enrichSnapshot: ({ settings, snapshot: currentSnapshot, publishSnapshot }) =>
+          resolveMaintenance().pipe(
+            Effect.flatMap((capabilities) =>
+              enrichProviderSnapshotWithVersionAdvisory(currentSnapshot, capabilities, {
+                enableProviderUpdateChecks: settings.enableProviderUpdateChecks,
+              }),
+            ),
+            Effect.provideService(HttpClient.HttpClient, httpClient),
+            Effect.flatMap(publishSnapshot),
+          ),
       }).pipe(
         Effect.mapError(
           (cause) =>

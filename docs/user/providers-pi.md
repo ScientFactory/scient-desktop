@@ -10,6 +10,10 @@ Enable **Pi** in **Settings > Providers**. Pi is off by default. On an Apple Sil
 install a qualified private Pi runtime through the existing **Install** action. Repair, update, and
 remove affect only that private runtime, not your system installation or Pi credentials.
 
+For recognized system package installations, Scient can check for updates and run the owning
+package manager when you choose **Update**. Extensions are not updated. Unrecognized installations
+remain manual-only; use the tool that installed Pi.
+
 Alternatively, install Pi using its [official instructions](https://github.com/earendil-works/pi),
 then configure its executable path if `pi` is not on the Scient server's `PATH`. The integration is
 tested against Pi 0.84.4 and 0.85.0 and requires 0.84.4 or newer. The managed runtime remains pinned to

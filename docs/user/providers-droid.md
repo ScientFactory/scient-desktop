@@ -97,5 +97,7 @@ message.
 - **Quota**: Droid usage draws on your Factory plan. If the CLI reports an out-of-quota or
   payment-required error, the turn fails with that message and you can retry after topping up or
   waiting for the quota window.
-- **External runtime maintenance stays external.** Scient can repair or remove only its own
-  app-private runtime. Update a custom or system Droid installation with the tool that installed it.
+- **Runtime updates:** Scient can update recognized system package installations and standard
+  macOS/Linux standalone installations when you choose **Update**. Other installations remain
+  manual-only. Native update restrictions are respected. Repair and remove affect only Scient's
+  app-private runtime.
