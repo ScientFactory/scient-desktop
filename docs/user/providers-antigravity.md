@@ -96,6 +96,11 @@ Scient keeps the thread's selected model when it resumes and asks for another
 selection if that model disappears. Older model generations remain available
 under **Legacy models** when the provider still offers them.
 
+Before a conversation starts, desktop/web can update an older saved Gemini family
+selection to its matching available reasoning variant. Existing conversations are
+not switched automatically. If the matching variant is unavailable, select an
+available model rather than reinstalling the provider.
+
 The model picker also refreshes when a running session reports new model choices.
 Models available in other Antigravity apps may not be available through the ACP agent.
 

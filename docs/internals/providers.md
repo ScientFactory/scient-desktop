@@ -233,6 +233,16 @@ Favorites retain exact variant shortcuts; hidden rows are not restored by groupi
 models, ambiguous names, and models already advertising native options are not rewritten.
 The catalog, ACP adapter, legacy `agy` reasoning path, and managed lifecycle remain unchanged.
 
+On desktop/web, an unstarted draft may still contain an old `agy` family ID with
+separate reasoning. `antigravityDraftSelection.ts` reconciles only verified live
+variants from that instance, preserving the explicit effort (or the historical
+default: medium when available) and excluding hidden variants. The draft store writes the complete
+native selection before the first send and updates a matching remembered selection
+without overwriting a newer choice. This is not a display alias or a session migration:
+started conversations, unknown IDs, ambiguous options, and legacy catalogs stay unchanged.
+The composer keeps an open provider setup mounted through its ready-model handoff;
+Antigravity hands off a complete selection so obsolete reasoning options do not survive.
+
 ACP `config_option_update` notifications and supplied `session/set_config_option`
 inventories update the instance model catalog. An empty acknowledgment preserves
 an inventory already published by a notification; otherwise it confirms only the
