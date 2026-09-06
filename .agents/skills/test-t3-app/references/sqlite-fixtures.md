@@ -1,10 +1,21 @@
 # SQLite fixtures
 
-Load this reference only when inspecting or seeding local T3 state directly.
+Load this reference only when inspecting or seeding isolated test state directly.
 
 ## Select the correct database
 
-When `--base-dir` or `--home-dir` is explicit, runtime state lives under `<base-dir>/userdata` and the database path is `<base-dir>/userdata/state.sqlite`. The `<base-dir>/dev` state directory is only the fallback for an implicit development home, preventing an ordinary `vp run dev` from touching production state.
+The helper hardcodes `<base-dir>/userdata/state.sqlite`; it does not discover the
+running server's database. Scient's development and desktop profiles can use other
+layouts even when a base directory is explicit. Follow the
+[development runbook](../../../../docs/operations/development.md#state-and-ports)
+and verify the target runtime's actual database path before using these commands.
+If it does not match the helper's layout, use application commands or APIs instead;
+do not move or symlink a database to make the helper work.
+
+The helper's write guard rejects the canonical shared `~/.t3` base directory by
+default. It does not protect every Scient profile or authorize reading live data.
+Use only the isolated test database selected for this task. Its pre-write backup
+does not replace that ownership check.
 
 Start the target runtime once before seeding so all migrations have run. Use an isolated base directory. Stop the server before writes to avoid racing application state or an active projection.
 
