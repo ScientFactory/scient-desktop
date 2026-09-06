@@ -83,79 +83,79 @@
     "claudeAgent": {
       "contractRevision": 1,
       "channel": "stable",
-      "version": "2.1.261",
+      "version": "2.1.263",
       "artifacts": {
         "darwin-arm64": {
-          "artifactName": "claude-2.1.261-darwin-arm64",
-          "url": "https://downloads.claude.ai/claude-code-releases/2.1.261/darwin-arm64/claude",
+          "artifactName": "claude-2.1.263-darwin-arm64",
+          "url": "https://downloads.claude.ai/claude-code-releases/2.1.263/darwin-arm64/claude",
           "checksum": {
             "algorithm": "sha256",
-            "digest": "5efecaff231b798be3c66def9be54183623b328b80eaef17f93c43987024e82a"
+            "digest": "ef5d2909c8af49f31ab6d5487e90316777bc2fac170adfe8160716caa8aaf4f9"
           },
-          "size": 199241568
+          "size": 199257984
         },
         "darwin-x64": {
-          "artifactName": "claude-2.1.261-darwin-x64",
-          "url": "https://downloads.claude.ai/claude-code-releases/2.1.261/darwin-x64/claude",
+          "artifactName": "claude-2.1.263-darwin-x64",
+          "url": "https://downloads.claude.ai/claude-code-releases/2.1.263/darwin-x64/claude",
           "checksum": {
             "algorithm": "sha256",
-            "digest": "2cbc002b32778bd70aa2e668ada920c54d9aacd91b71dbd5619c01ca148ae533"
+            "digest": "a94a8b229fa85c3a316c6b4a35e0aa22bec1aabbd3d1422826ce1d10ddc88751"
           },
-          "size": 208009440
+          "size": 208025952
         },
         "linux-arm64-glibc": {
-          "artifactName": "claude-2.1.261-linux-arm64",
-          "url": "https://downloads.claude.ai/claude-code-releases/2.1.261/linux-arm64/claude",
+          "artifactName": "claude-2.1.263-linux-arm64",
+          "url": "https://downloads.claude.ai/claude-code-releases/2.1.263/linux-arm64/claude",
           "checksum": {
             "algorithm": "sha256",
-            "digest": "7bbed5a9b0fc2e4ec67bad3490d06ca91b86d6b037d47520b7898951757d1b8a"
+            "digest": "7d25d7c8ae6c6e009cc7dae4e817f674179fd31fb7761bcd56fee4c2902b4c03"
           },
           "size": 215211432
         },
         "linux-arm64-musl": {
-          "artifactName": "claude-2.1.261-linux-arm64-musl",
-          "url": "https://downloads.claude.ai/claude-code-releases/2.1.261/linux-arm64-musl/claude",
+          "artifactName": "claude-2.1.263-linux-arm64-musl",
+          "url": "https://downloads.claude.ai/claude-code-releases/2.1.263/linux-arm64-musl/claude",
           "checksum": {
             "algorithm": "sha256",
-            "digest": "53b58ffbeb3f9325f0ca5eb54fd03cd0346bd197328fa1e68a700ac8e097e6c1"
+            "digest": "9b02e81a61d54bef3e6d190b6f2f6c4a9c31e6e068468f79d520d5ffff6b0e42"
           },
-          "size": 208090776
+          "size": 208156312
         },
         "linux-x64-glibc": {
-          "artifactName": "claude-2.1.261-linux-x64",
-          "url": "https://downloads.claude.ai/claude-code-releases/2.1.261/linux-x64/claude",
+          "artifactName": "claude-2.1.263-linux-x64",
+          "url": "https://downloads.claude.ai/claude-code-releases/2.1.263/linux-x64/claude",
           "checksum": {
             "algorithm": "sha256",
-            "digest": "4ae40dd1784e85753e742e09f267d29ecbb82890361ad3817d27560866d364a6"
+            "digest": "26d020351e8112f4006790f3cfce43b4c9df0c1bb1d0e542364d64151b81d5ba"
           },
-          "size": 215641584
+          "size": 215662064
         },
         "linux-x64-musl": {
-          "artifactName": "claude-2.1.261-linux-x64-musl",
-          "url": "https://downloads.claude.ai/claude-code-releases/2.1.261/linux-x64-musl/claude",
+          "artifactName": "claude-2.1.263-linux-x64-musl",
+          "url": "https://downloads.claude.ai/claude-code-releases/2.1.263/linux-x64-musl/claude",
           "checksum": {
             "algorithm": "sha256",
-            "digest": "df6502c5978420d71fb32fe41b4ca956a7eb3f6245fc11a03ca2cde7f03b8f93"
+            "digest": "b9c407e36847bcb24b953b1390f240c840ae6c99e10a76475d2fadc5d5c4adca"
           },
-          "size": 209661904
+          "size": 209678288
         },
         "win32-arm64": {
-          "artifactName": "claude-2.1.261-win32-arm64",
-          "url": "https://downloads.claude.ai/claude-code-releases/2.1.261/win32-arm64/claude.exe",
+          "artifactName": "claude-2.1.263-win32-arm64",
+          "url": "https://downloads.claude.ai/claude-code-releases/2.1.263/win32-arm64/claude.exe",
           "checksum": {
             "algorithm": "sha256",
-            "digest": "df26e336df846f4b68edda1021af5aecc1f8172d9f045ee33a480916385b35f9"
+            "digest": "2ca14d6f61a39c3ad5d72424f4e347d5a570a58036ab1afe14c5e3eb668e9540"
           },
-          "size": 209778336
+          "size": 209795744
         },
         "win32-x64": {
-          "artifactName": "claude-2.1.261-win32-x64",
-          "url": "https://downloads.claude.ai/claude-code-releases/2.1.261/win32-x64/claude.exe",
+          "artifactName": "claude-2.1.263-win32-x64",
+          "url": "https://downloads.claude.ai/claude-code-releases/2.1.263/win32-x64/claude.exe",
           "checksum": {
             "algorithm": "sha256",
-            "digest": "f2f5d1a155167488aeb32cd263e15436253c7b1681ae147c9e73e4d6bbc3c852"
+            "digest": "0b35df94c1307004f07b738390bfef8dfca5e9af29aaf6517f305bf086b95b03"
           },
-          "size": 218728608
+          "size": 218746016
         }
       }
     },
@@ -217,6 +217,83 @@
             "digest": "85b4fb9cb6c2235142d02d869fbf7b0a8a4b0ca0d0994dd1948b58cacb9f69f59d337d9808298b8c2054f604c6849fea977d17b898e9662168cc7fc870f8aa3c"
           },
           "size": 189485208
+        }
+      }
+    },
+    "antigravityAcp": {
+      "contractRevision": 1,
+      "channel": "stable",
+      "version": "1.1.1",
+      "artifacts": {
+        "darwin-arm64": {
+          "artifactName": "agy-acp-server-agy_acp_server_1.1.1-darwin-arm64.zip",
+          "url": "https://dl.google.com/agy-extensions/releases/macos/agy-acp-server-agy_acp_server_1.1.1-darwin-arm64.zip",
+          "checksum": {
+            "algorithm": "sha256",
+            "digest": "fdfa915652cdb7ba8085cc8fffed072cbe009251aa2c951aabdda07a8c28a189"
+          },
+          "size": 316014828,
+          "antigravityAcp": {
+            "version": "agy_acp_server_1.1.1",
+            "executableBytes": 802163856,
+            "harnessBytes": 116766704
+          }
+        },
+        "linux-x64": {
+          "artifactName": "agy-acp-server-agy_acp_server_1.1.1-linux-x86_64.zip",
+          "url": "https://dl.google.com/agy-extensions/releases/linux/agy-acp-server-agy_acp_server_1.1.1-linux-x86_64.zip",
+          "checksum": {
+            "algorithm": "sha256",
+            "digest": "38f62d01b32deb0907b3d39a71ec301fd36369f6ffd1cf262d4af385177f79df"
+          },
+          "size": 681969407,
+          "antigravityAcp": {
+            "version": "agy_acp_server_1.1.1",
+            "executableBytes": 1880360328,
+            "harnessBytes": 128966920
+          }
+        },
+        "linux-arm64": {
+          "artifactName": "agy-acp-server-agy_acp_server_1.1.1-linux-arm64.zip",
+          "url": "https://dl.google.com/agy-extensions/releases/linux/agy-acp-server-agy_acp_server_1.1.1-linux-arm64.zip",
+          "checksum": {
+            "algorithm": "sha256",
+            "digest": "ed69e64b308fcb123ab54bf3277bf9cb0d651064f885ea5aab0ff520c7175398"
+          },
+          "size": 656572786,
+          "antigravityAcp": {
+            "version": "agy_acp_server_1.1.1",
+            "executableBytes": 1862073131,
+            "harnessBytes": 122158704
+          }
+        },
+        "win32-x64": {
+          "artifactName": "agy-acp-server-agy_acp_server_1.1.1-windows-x86_64.zip",
+          "url": "https://dl.google.com/agy-extensions/releases/windows/agy-acp-server-agy_acp_server_1.1.1-windows-x86_64.zip",
+          "checksum": {
+            "algorithm": "sha256",
+            "digest": "47cb50eef14f0a4655d78cfcfda869bcea7aaee5f9787e936bc2935ea612c3b8"
+          },
+          "size": 468238392,
+          "antigravityAcp": {
+            "version": "agy_acp_server_1.1.1",
+            "executableBytes": 430801616,
+            "harnessBytes": 130971800
+          }
+        },
+        "win32-arm64": {
+          "artifactName": "agy-acp-server-agy_acp_server_1.1.1-windows-arm64.zip",
+          "url": "https://dl.google.com/agy-extensions/releases/windows/agy-acp-server-agy_acp_server_1.1.1-windows-arm64.zip",
+          "checksum": {
+            "algorithm": "sha256",
+            "digest": "35f4b1f47ba6a3fea7b0a3e30010df5ea73a64b4f0e7cf991cddc673ddfbcafc"
+          },
+          "size": 468521191,
+          "antigravityAcp": {
+            "version": "agy_acp_server_1.1.1",
+            "executableBytes": 435075816,
+            "harnessBytes": 122455704
+          }
         }
       }
     },
@@ -400,83 +477,6 @@
             "digest": "5ee2a664ea8584b40d3620a97b21c81351b42e86ccdfd7cbbe2cddbf84b671750a5186fc8f7060d0ba52fc024a47312359d37a0c9fbedd4595faee691802fa79"
           },
           "size": 140810568
-        }
-      }
-    },
-    "antigravityAcp": {
-      "contractRevision": 1,
-      "channel": "stable",
-      "version": "1.1.1",
-      "artifacts": {
-        "darwin-arm64": {
-          "artifactName": "agy-acp-server-agy_acp_server_1.1.1-darwin-arm64.zip",
-          "url": "https://dl.google.com/agy-extensions/releases/macos/agy-acp-server-agy_acp_server_1.1.1-darwin-arm64.zip",
-          "checksum": {
-            "algorithm": "sha256",
-            "digest": "fdfa915652cdb7ba8085cc8fffed072cbe009251aa2c951aabdda07a8c28a189"
-          },
-          "size": 316014828,
-          "antigravityAcp": {
-            "version": "agy_acp_server_1.1.1",
-            "executableBytes": 802163856,
-            "harnessBytes": 116766704
-          }
-        },
-        "linux-x64": {
-          "artifactName": "agy-acp-server-agy_acp_server_1.1.1-linux-x86_64.zip",
-          "url": "https://dl.google.com/agy-extensions/releases/linux/agy-acp-server-agy_acp_server_1.1.1-linux-x86_64.zip",
-          "checksum": {
-            "algorithm": "sha256",
-            "digest": "38f62d01b32deb0907b3d39a71ec301fd36369f6ffd1cf262d4af385177f79df"
-          },
-          "size": 681969407,
-          "antigravityAcp": {
-            "version": "agy_acp_server_1.1.1",
-            "executableBytes": 1880360328,
-            "harnessBytes": 128966920
-          }
-        },
-        "linux-arm64": {
-          "artifactName": "agy-acp-server-agy_acp_server_1.1.1-linux-arm64.zip",
-          "url": "https://dl.google.com/agy-extensions/releases/linux/agy-acp-server-agy_acp_server_1.1.1-linux-arm64.zip",
-          "checksum": {
-            "algorithm": "sha256",
-            "digest": "ed69e64b308fcb123ab54bf3277bf9cb0d651064f885ea5aab0ff520c7175398"
-          },
-          "size": 656572786,
-          "antigravityAcp": {
-            "version": "agy_acp_server_1.1.1",
-            "executableBytes": 1862073131,
-            "harnessBytes": 122158704
-          }
-        },
-        "win32-x64": {
-          "artifactName": "agy-acp-server-agy_acp_server_1.1.1-windows-x86_64.zip",
-          "url": "https://dl.google.com/agy-extensions/releases/windows/agy-acp-server-agy_acp_server_1.1.1-windows-x86_64.zip",
-          "checksum": {
-            "algorithm": "sha256",
-            "digest": "47cb50eef14f0a4655d78cfcfda869bcea7aaee5f9787e936bc2935ea612c3b8"
-          },
-          "size": 468238392,
-          "antigravityAcp": {
-            "version": "agy_acp_server_1.1.1",
-            "executableBytes": 430801616,
-            "harnessBytes": 130971800
-          }
-        },
-        "win32-arm64": {
-          "artifactName": "agy-acp-server-agy_acp_server_1.1.1-windows-arm64.zip",
-          "url": "https://dl.google.com/agy-extensions/releases/windows/agy-acp-server-agy_acp_server_1.1.1-windows-arm64.zip",
-          "checksum": {
-            "algorithm": "sha256",
-            "digest": "35f4b1f47ba6a3fea7b0a3e30010df5ea73a64b4f0e7cf991cddc673ddfbcafc"
-          },
-          "size": 468521191,
-          "antigravityAcp": {
-            "version": "agy_acp_server_1.1.1",
-            "executableBytes": 435075816,
-            "harnessBytes": 122455704
-          }
         }
       }
     }
