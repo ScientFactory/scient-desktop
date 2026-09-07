@@ -1,5 +1,14 @@
 import { useNavigate } from "@tanstack/react-router";
-import type { EnvironmentId, ProviderDriverKind, ProviderInstanceId } from "@t3tools/contracts";
+import type {
+  EnvironmentId,
+  ModelSelection,
+  ProviderOptionSelection,
+  ProviderDriverKind,
+  ProviderInstanceId,
+} from "@t3tools/contracts";
+import { createModelSelection, resolveSelectableModel } from "@t3tools/shared/model";
+import { ANTIGRAVITY_DEFAULT_MODEL } from "@t3tools/contracts";
+import type { UnifiedSettings } from "@t3tools/contracts/settings";
 import { BlocksIcon, ChevronRightIcon, SearchIcon, SettingsIcon } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 
@@ -21,6 +30,7 @@ import {
   providerConnectionPresentation,
 } from "./providerConnectionPresentation";
 import { PRIMARY_GHOST_ACTION_CLASS } from "./providerConnectionActionStyles";
+import { resolveAntigravityDraftSelection } from "./antigravityDraftSelection";
 
 export function providerOnboardingStatusLabel(entry: ProviderInstanceEntry | undefined): string {
   if (!entry) return "Not configured";
@@ -55,6 +65,31 @@ export function readyProviderDefaultModel(entry: ProviderInstanceEntry | undefin
   );
 }
 
+export function readyProviderModelSelection(
+  entry: ProviderInstanceEntry | undefined,
+  saved?: ModelSelection | null,
+  hiddenModels: ReadonlyArray<string> = [],
+): ModelSelection | null {
+  const defaultModel = readyProviderDefaultModel(entry);
+  if (!entry || !defaultModel) return null;
+  if (entry.driverKind === "antigravity" && saved?.instanceId === entry.instanceId) {
+    const selection =
+      resolveAntigravityDraftSelection(saved, entry.snapshot, hiddenModels) ?? saved;
+    const model = resolveSelectableModel(entry.driverKind, selection.model, entry.models);
+    // Missing/ambiguous variants require a choice, not a silent reasoning change.
+    if (saved.model !== ANTIGRAVITY_DEFAULT_MODEL) {
+      return model && !hiddenModels.includes(model)
+        ? createModelSelection(entry.instanceId, model, selection.options)
+        : null;
+    }
+  }
+  const model =
+    entry.driverKind === "antigravity" && hiddenModels.includes(defaultModel)
+      ? entry.models.find((candidate) => !hiddenModels.includes(candidate.slug))?.slug
+      : defaultModel;
+  return model ? createModelSelection(entry.instanceId, model) : null;
+}
+
 export function ProviderOnboardingPicker(props: {
   readonly environmentId: EnvironmentId;
   readonly instanceEntries: ReadonlyArray<ProviderInstanceEntry>;
@@ -62,7 +97,14 @@ export function ProviderOnboardingPicker(props: {
   readonly compact?: boolean;
   readonly open?: boolean;
   readonly onOpenChange?: (open: boolean) => void;
-  readonly onInstanceModelChange: (instanceId: ProviderInstanceId, model: string) => void;
+  readonly onInstanceModelChange: (
+    instanceId: ProviderInstanceId,
+    model: string,
+    options?: ReadonlyArray<ProviderOptionSelection>,
+  ) => void;
+  readonly preferredSelections?: Partial<Record<ProviderInstanceId, ModelSelection>>;
+  readonly modelPreferences?: UnifiedSettings["providerModelPreferences"];
+  readonly fallbackSelection?: ModelSelection | null | undefined;
   readonly onOpenProviderSetup?: (instanceId: ProviderInstanceId) => void;
   readonly autoSelectReadyProvider?: boolean;
 }) {
@@ -116,27 +158,46 @@ export function ProviderOnboardingPicker(props: {
     ? `Reconnect ${reconnectEntry.displayName}`
     : "Choose your AI";
 
-  const readyModel = readyProviderDefaultModel(selectedEntry);
+  const readySelection = useMemo(
+    () =>
+      readyProviderModelSelection(
+        selectedEntry,
+        (selectedEntry ? props.preferredSelections?.[selectedEntry.instanceId] : undefined) ??
+          props.fallbackSelection,
+        selectedEntry
+          ? props.modelPreferences?.[selectedEntry.instanceId]?.hiddenModels
+          : undefined,
+      ),
+    [selectedEntry, props.preferredSelections, props.fallbackSelection, props.modelPreferences],
+  );
   useEffect(() => {
     if (
       !open ||
       showHome ||
       !selectedEntry ||
-      !readyModel ||
+      !readySelection ||
       props.autoSelectReadyProvider === false
     ) {
       return;
     }
     // Setup completion is asynchronous. Hand the ready instance and its
-    // canonical default model back to T3's existing selection path so the
+    // canonical selection back to T3's existing selection path so the
     // user leaves onboarding with a provider they can immediately use.
-    props.onInstanceModelChange(selectedEntry.instanceId, readyModel);
+    if (selectedEntry.driverKind === "antigravity") {
+      props.onInstanceModelChange(
+        selectedEntry.instanceId,
+        readySelection.model,
+        readySelection.options ?? [],
+      );
+    } else {
+      props.onInstanceModelChange(selectedEntry.instanceId, readySelection.model);
+    }
     setOpen(false);
   }, [
     open,
     props.autoSelectReadyProvider,
     props.onInstanceModelChange,
-    readyModel,
+    readySelection,
     selectedEntry,
     setOpen,
     showHome,

@@ -10,6 +10,7 @@ import type {
   ProjectId,
   ProviderApprovalDecision,
   ProviderInteractionMode,
+  ProviderOptionSelection,
   ProviderRuntimeSummary,
   ResolvedKeybindingsConfig,
   RuntimeMode,
@@ -1346,7 +1347,11 @@ export interface ChatComposerProps {
     cursorAdjacentToMention: boolean,
   ) => void;
 
-  onProviderModelSelect: (instanceId: ProviderInstanceId, model: string) => void;
+  onProviderModelSelect: (
+    instanceId: ProviderInstanceId,
+    model: string,
+    options?: ReadonlyArray<ProviderOptionSelection>,
+  ) => void;
   onOpenProviderSetup: (instanceId: ProviderInstanceId) => void;
   getModelDisabledReason: (instanceId: ProviderInstanceId, model: string) => string | null;
   toggleInteractionMode: () => void;
@@ -1720,6 +1725,39 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   const selectedProvider: ProviderDriverKind =
     selectedProviderEntry?.driverKind ?? requestedDriverKind;
 
+  const fallbackModelSelection = activeThreadModelSelection ?? activeProjectDefaultModelSelection;
+  const hasStartedModelSession = activeThread
+    ? activeThread.session !== null || activeThread.messages.length > 0
+    : routeKind !== "draft";
+  useLayoutEffect(() => {
+    if (!selectedProviderEntry) return;
+    if (
+      composerDraft.activeProvider &&
+      composerDraft.activeProvider !== selectedProviderEntry.instanceId
+    )
+      return;
+    const source =
+      composerDraft.modelSelectionByProvider[selectedProviderEntry.instanceId] ??
+      fallbackModelSelection;
+    if (!source) return;
+    useComposerDraftStore.getState().reconcileAntigravityDraftSelection({
+      threadRef: composerDraftTarget,
+      provider: selectedProviderEntry.snapshot,
+      hasStartedSession: hasStartedModelSession,
+      fallbackSelection: fallbackModelSelection,
+      hiddenModels:
+        settings.providerModelPreferences[selectedProviderEntry.instanceId]?.hiddenModels,
+    });
+  }, [
+    composerDraftTarget,
+    selectedProviderEntry,
+    hasStartedModelSession,
+    fallbackModelSelection,
+    composerDraft.activeProvider,
+    composerDraft.modelSelectionByProvider,
+    settings.providerModelPreferences,
+  ]);
+
   const { modelOptions: composerModelOptions, selectedModel } = useEffectiveComposerModelState({
     threadRef: composerDraftTarget,
     providers: providerStatuses,
@@ -1932,6 +1970,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   const [isComposerFooterCompact, setIsComposerFooterCompact] = useState(false);
   const [isComposerPrimaryActionsCompact, setIsComposerPrimaryActionsCompact] = useState(false);
   const [isComposerModelPickerOpen, setIsComposerModelPickerOpen] = useState(false);
+  const [isProviderOnboardingOpen, setIsProviderOnboardingOpen] = useState(false);
   const providerUpdateDisabledReason =
     phase === "running" || isSendBusy || isConnecting || isPreparingWorktree
       ? "Available when the provider is idle."
@@ -4182,12 +4221,18 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     .slice(restingBlockDefs.length - restingHiddenBlockCount)
     .map((def) => def.id);
   const composerControls =
-    selectedProviderNeedsConnection || noProviderAvailable ? (
+    selectedProviderNeedsConnection || noProviderAvailable || isProviderOnboardingOpen ? (
       <ProviderOnboardingPicker
-        autoSelectReadyProvider={lockedProvider === null}
+        key={composerTargetKey(composerDraftTarget)}
+        autoSelectReadyProvider={!hasStartedModelSession && lockedProvider === null}
         compact={isComposerFooterCompact || composerControlsInStrip}
         environmentId={environmentId}
         instanceEntries={providerInstanceEntries}
+        open={isProviderOnboardingOpen}
+        onOpenChange={setIsProviderOnboardingOpen}
+        preferredSelections={composerDraft.modelSelectionByProvider}
+        modelPreferences={settings.providerModelPreferences}
+        fallbackSelection={fallbackModelSelection}
         {...(reconnectProviderEntry ? { reconnectEntry: reconnectProviderEntry } : {})}
         onInstanceModelChange={onProviderModelSelect}
         onOpenProviderSetup={onOpenProviderSetup}

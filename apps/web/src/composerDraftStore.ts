@@ -59,6 +59,7 @@ import { useShallow } from "zustand/react/shallow";
 import { createDeferredStorage, createMemoryStorage } from "./lib/storage";
 import { getDefaultServerModel } from "./providerModels";
 import { UnifiedSettings } from "@t3tools/contracts/settings";
+import { resolveAntigravityDraftSelection } from "./scient/providerConnection/antigravityDraftSelection";
 import { ReviewCommentContextSchema, type ReviewCommentContext } from "./reviewCommentContext";
 const isRuntimeMode = Schema.is(RuntimeMode);
 const isProviderDriverKind = Schema.is(ProviderDriverKind);
@@ -584,6 +585,13 @@ interface ComposerDraftStoreState {
       | undefined,
   ) => void;
   applyStickyState: (threadRef: ComposerThreadTarget) => void;
+  reconcileAntigravityDraftSelection: (input: {
+    threadRef: ComposerThreadTarget;
+    provider: ServerProvider;
+    hasStartedSession: boolean;
+    fallbackSelection?: ModelSelection | null | undefined;
+    hiddenModels?: ReadonlyArray<string> | undefined;
+  }) => void;
   setProviderModelOptions: (
     threadRef: ComposerThreadTarget,
     provider: ProviderDriverKind,
@@ -2976,6 +2984,47 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
               nextDraftsByThreadKey[threadKey] = nextDraft;
             }
             return { draftsByThreadKey: nextDraftsByThreadKey };
+          });
+        },
+        reconcileAntigravityDraftSelection: (input) => {
+          if (input.hasStartedSession || input.provider.driver !== "antigravity") return;
+          const threadKey = resolveComposerDraftKey(get(), input.threadRef);
+          if (!threadKey) return;
+          set((state) => {
+            const base = state.draftsByThreadKey[threadKey] ?? createEmptyThreadDraft();
+            const instanceId = input.provider.instanceId;
+            if (base.activeProvider && base.activeProvider !== instanceId) return state;
+            const source = base.modelSelectionByProvider[instanceId] ?? input.fallbackSelection;
+            if (!source) return state;
+            const next = resolveAntigravityDraftSelection(
+              source,
+              input.provider,
+              input.hiddenModels,
+            );
+            if (!next) return state;
+            // Read and replace in one state update. Never overwrite a newer remembered choice
+            // or mark an inherited selection as a deliberate picker action.
+            return {
+              draftsByThreadKey: {
+                ...state.draftsByThreadKey,
+                [threadKey]: {
+                  ...base,
+                  activeProvider: instanceId,
+                  modelSelectionByProvider: {
+                    ...base.modelSelectionByProvider,
+                    [instanceId]: next,
+                  },
+                },
+              },
+              ...(Equal.equals(state.stickyModelSelectionByProvider[instanceId], source)
+                ? {
+                    stickyModelSelectionByProvider: {
+                      ...state.stickyModelSelectionByProvider,
+                      [instanceId]: next,
+                    },
+                  }
+                : {}),
+            };
           });
         },
         setPrompt: (threadRef, prompt) => {

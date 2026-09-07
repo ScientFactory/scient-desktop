@@ -423,6 +423,11 @@ and mobile without moving grouping into the provider engine. If Google or T3
 exposes native reasoning options, prefer those; models with native options
 already bypass grouping. See [provider architecture](docs/internals/providers.md).
 
+Desktop/web also reconciles historical Antigravity family selections in unstarted
+drafts against the instance's live native variants. Preserve its draft-store write,
+reasoning and visibility checks, and started-session guard; a render-only alias can
+resurrect the old ID after sending. No provider catalog or legacy cursor is rewritten.
+
 Scient retired its projectless Quick Chat experiment. Every newly created
 thread now requires a real owning project; the product surfaces, capability,
 relocation command, and seam verifier were removed together. A migration
