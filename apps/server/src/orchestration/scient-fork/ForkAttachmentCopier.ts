@@ -13,7 +13,7 @@ import {
 } from "../../attachmentStore.ts";
 import { ServerConfig } from "../../config.ts";
 
-export class ScientForkAttachmentCopyError extends Schema.TaggedErrorClass<ScientForkAttachmentCopyError>()(
+export class ScientForkAttachmentCopyError extends Schema.TaggedError<ScientForkAttachmentCopyError>()(
   "ScientForkAttachmentCopyError",
   {
     threadId: ThreadId,

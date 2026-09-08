@@ -73,7 +73,7 @@ export interface RuntimeExecutableConfiguration {
   readonly warning: string | null;
 }
 
-export class LocalAnalysisStoreError extends Schema.TaggedErrorClass<LocalAnalysisStoreError>()(
+export class LocalAnalysisStoreError extends Schema.TaggedError<LocalAnalysisStoreError>()(
   "LocalAnalysisStoreError",
   {
     operation: Schema.String,

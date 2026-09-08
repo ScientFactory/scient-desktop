@@ -26,7 +26,7 @@ const UnknownJsonString = Schema.fromJsonString(Schema.Unknown);
 const decodeUnknownJsonString = Schema.decodeUnknownOption(UnknownJsonString);
 const encodeUnknownJsonString = Schema.encodeUnknownSync(UnknownJsonString);
 
-export class AnalysisRunPromotionError extends Schema.TaggedErrorClass<AnalysisRunPromotionError>()(
+export class AnalysisRunPromotionError extends Schema.TaggedError<AnalysisRunPromotionError>()(
   "AnalysisRunPromotionError",
   {
     reason: Schema.Literals(["run-data-unavailable", "destination-exists", "persistence-failed"]),

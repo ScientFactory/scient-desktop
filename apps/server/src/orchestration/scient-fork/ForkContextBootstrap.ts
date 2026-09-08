@@ -43,7 +43,7 @@ interface ForkTranscriptPayload {
   readonly transcript: ReadonlyArray<ReturnType<typeof messageRecord>>;
 }
 
-export class ScientForkContextBootstrapError extends Schema.TaggedErrorClass<ScientForkContextBootstrapError>()(
+export class ScientForkContextBootstrapError extends Schema.TaggedError<ScientForkContextBootstrapError>()(
   "ScientForkContextBootstrapError",
   {
     threadId: ThreadId,

@@ -18,6 +18,7 @@ import { Route as ChatRouteImport } from './routes/_chat'
 import { Route as ChatIndexRouteImport } from './routes/_chat.index'
 import { Route as SettingsVoiceRouteImport } from './routes/settings.voice'
 import { Route as SettingsSourceControlRouteImport } from './routes/settings.source-control'
+import { Route as SettingsSnapShotRouteImport } from './routes/settings.snap-shot'
 import { Route as SettingsSkillsRouteImport } from './routes/settings.skills'
 import { Route as SettingsScientificComputingRouteImport } from './routes/settings.scientific-computing'
 import { Route as SettingsProvidersRouteImport } from './routes/settings.providers'
@@ -81,6 +82,11 @@ const SettingsVoiceRoute = SettingsVoiceRouteImport.update({
 const SettingsSourceControlRoute = SettingsSourceControlRouteImport.update({
   id: '/source-control',
   path: '/source-control',
+  getParentRoute: () => SettingsRoute,
+} as any)
+const SettingsSnapShotRoute = SettingsSnapShotRouteImport.update({
+  id: '/snap-shot',
+  path: '/snap-shot',
   getParentRoute: () => SettingsRoute,
 } as any)
 const SettingsSkillsRoute = SettingsSkillsRouteImport.update({
@@ -209,6 +215,7 @@ export interface FileRoutesByFullPath {
   '/settings/providers': typeof SettingsProvidersRoute
   '/settings/scientific-computing': typeof SettingsScientificComputingRoute
   '/settings/skills': typeof SettingsSkillsRoute
+  '/settings/snap-shot': typeof SettingsSnapShotRoute
   '/settings/source-control': typeof SettingsSourceControlRoute
   '/settings/voice': typeof SettingsVoiceRoute
   '/$environmentId/$threadId': typeof ChatEnvironmentIdThreadIdRoute
@@ -238,6 +245,7 @@ export interface FileRoutesByTo {
   '/settings/providers': typeof SettingsProvidersRoute
   '/settings/scientific-computing': typeof SettingsScientificComputingRoute
   '/settings/skills': typeof SettingsSkillsRoute
+  '/settings/snap-shot': typeof SettingsSnapShotRoute
   '/settings/source-control': typeof SettingsSourceControlRoute
   '/settings/voice': typeof SettingsVoiceRoute
   '/': typeof ChatIndexRoute
@@ -270,6 +278,7 @@ export interface FileRoutesById {
   '/settings/providers': typeof SettingsProvidersRoute
   '/settings/scientific-computing': typeof SettingsScientificComputingRoute
   '/settings/skills': typeof SettingsSkillsRoute
+  '/settings/snap-shot': typeof SettingsSnapShotRoute
   '/settings/source-control': typeof SettingsSourceControlRoute
   '/settings/voice': typeof SettingsVoiceRoute
   '/_chat/': typeof ChatIndexRoute
@@ -303,6 +312,7 @@ export interface FileRouteTypes {
     | '/settings/providers'
     | '/settings/scientific-computing'
     | '/settings/skills'
+    | '/settings/snap-shot'
     | '/settings/source-control'
     | '/settings/voice'
     | '/$environmentId/$threadId'
@@ -332,6 +342,7 @@ export interface FileRouteTypes {
     | '/settings/providers'
     | '/settings/scientific-computing'
     | '/settings/skills'
+    | '/settings/snap-shot'
     | '/settings/source-control'
     | '/settings/voice'
     | '/'
@@ -363,6 +374,7 @@ export interface FileRouteTypes {
     | '/settings/providers'
     | '/settings/scientific-computing'
     | '/settings/skills'
+    | '/settings/snap-shot'
     | '/settings/source-control'
     | '/settings/voice'
     | '/_chat/'
@@ -446,6 +458,13 @@ declare module '@tanstack/react-router' {
       path: '/source-control'
       fullPath: '/settings/source-control'
       preLoaderRoute: typeof SettingsSourceControlRouteImport
+      parentRoute: typeof SettingsRoute
+    }
+    '/settings/snap-shot': {
+      id: '/settings/snap-shot'
+      path: '/snap-shot'
+      fullPath: '/settings/snap-shot'
+      preLoaderRoute: typeof SettingsSnapShotRouteImport
       parentRoute: typeof SettingsRoute
     }
     '/settings/skills': {
@@ -622,6 +641,7 @@ interface SettingsRouteChildren {
   SettingsProvidersRoute: typeof SettingsProvidersRoute
   SettingsScientificComputingRoute: typeof SettingsScientificComputingRoute
   SettingsSkillsRoute: typeof SettingsSkillsRoute
+  SettingsSnapShotRoute: typeof SettingsSnapShotRoute
   SettingsSourceControlRoute: typeof SettingsSourceControlRoute
   SettingsVoiceRoute: typeof SettingsVoiceRoute
   SettingsSkillsExternalRoute: typeof SettingsSkillsExternalRoute
@@ -641,6 +661,7 @@ const SettingsRouteChildren: SettingsRouteChildren = {
   SettingsProvidersRoute: SettingsProvidersRoute,
   SettingsScientificComputingRoute: SettingsScientificComputingRoute,
   SettingsSkillsRoute: SettingsSkillsRoute,
+  SettingsSnapShotRoute: SettingsSnapShotRoute,
   SettingsSourceControlRoute: SettingsSourceControlRoute,
   SettingsVoiceRoute: SettingsVoiceRoute,
   SettingsSkillsExternalRoute: SettingsSkillsExternalRoute,

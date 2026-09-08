@@ -50,7 +50,7 @@ const nowIso = Effect.map(DateTime.now, DateTime.formatIso);
 const isScientForkCompletionError = Schema.is(ScientForkCompletionError);
 const isScientForkAttachmentCopyError = Schema.is(ScientForkAttachmentCopyError);
 
-class ScientForkTerminalProvisioningError extends Schema.TaggedErrorClass<ScientForkTerminalProvisioningError>()(
+class ScientForkTerminalProvisioningError extends Schema.TaggedError<ScientForkTerminalProvisioningError>()(
   "ScientForkTerminalProvisioningError",
   { detail: Schema.String },
 ) {}

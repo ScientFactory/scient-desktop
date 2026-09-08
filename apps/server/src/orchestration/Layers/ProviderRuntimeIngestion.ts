@@ -147,7 +147,7 @@ const MAX_BUFFERED_ASSISTANT_CHARS = 24_000;
 const STRICT_PROVIDER_LIFECYCLE_GUARD = process.env.T3CODE_STRICT_PROVIDER_LIFECYCLE_GUARD !== "0";
 const decodeCodexSettingsOption = Schema.decodeUnknownOption(CodexSettings);
 
-class GeneratedImageIngestionError extends Schema.TaggedErrorClass<GeneratedImageIngestionError>()(
+class GeneratedImageIngestionError extends Schema.TaggedError<GeneratedImageIngestionError>()(
   "GeneratedImageIngestionError",
   {
     detail: Schema.String,

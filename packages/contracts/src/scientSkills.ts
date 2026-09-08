@@ -61,7 +61,7 @@ export const ScientSkillSetProjectPreferenceInput = Schema.Struct({
   invocationPolicy: ScientSkillInvocationPolicy,
 });
 
-export class ScientSkillManagementError extends Schema.TaggedErrorClass<ScientSkillManagementError>()(
+export class ScientSkillManagementError extends Schema.TaggedError<ScientSkillManagementError>()(
   "ScientSkillManagementError",
   {
     operation: TrimmedNonEmptyString,
@@ -89,7 +89,7 @@ export const ProviderSkillSetEnabledResult = Schema.Struct({
 });
 export type ProviderSkillSetEnabledResult = typeof ProviderSkillSetEnabledResult.Type;
 
-export class ProviderSkillManagementError extends Schema.TaggedErrorClass<ProviderSkillManagementError>()(
+export class ProviderSkillManagementError extends Schema.TaggedError<ProviderSkillManagementError>()(
   "ProviderSkillManagementError",
   {
     instanceId: ProviderInstanceId,

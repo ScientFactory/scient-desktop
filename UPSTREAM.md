@@ -45,6 +45,11 @@ publication remains a separate gate.
 
 ## Receiving T3 updates
 
+The uncommitted local alignment through `349ce301` is documented in the
+[2026-09-08 review](docs/internals/2026-09-08-upstream-sync-349ce301-review.md).
+It does not yet advance the integrated boundary above. That record includes the
+native capture identity composition, qualification results, and remaining review gates.
+
 The canonical procedure and stop conditions live in the
 [T3 upstream alignment protocol](docs/internals/upstream-alignment-protocol.md). The short form is:
 

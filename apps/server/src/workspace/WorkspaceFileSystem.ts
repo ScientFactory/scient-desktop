@@ -44,7 +44,7 @@ function isNodeError(error: unknown, code: string): error is NodeJS.ErrnoExcepti
   return error instanceof Error && "code" in error && error.code === code;
 }
 
-export class WorkspaceFileSystemOperationError extends Schema.TaggedErrorClass<WorkspaceFileSystemOperationError>()(
+export class WorkspaceFileSystemOperationError extends Schema.TaggedError<WorkspaceFileSystemOperationError>()(
   "WorkspaceFileSystemOperationError",
   {
     workspaceRoot: Schema.String,
@@ -74,7 +74,7 @@ export class WorkspaceFileSystemOperationError extends Schema.TaggedErrorClass<W
   }
 }
 
-export class WorkspaceFilePathEscapeError extends Schema.TaggedErrorClass<WorkspaceFilePathEscapeError>()(
+export class WorkspaceFilePathEscapeError extends Schema.TaggedError<WorkspaceFilePathEscapeError>()(
   "WorkspaceFilePathEscapeError",
   {
     workspaceRoot: Schema.String,
@@ -88,7 +88,7 @@ export class WorkspaceFilePathEscapeError extends Schema.TaggedErrorClass<Worksp
   }
 }
 
-export class WorkspacePathNotFileError extends Schema.TaggedErrorClass<WorkspacePathNotFileError>()(
+export class WorkspacePathNotFileError extends Schema.TaggedError<WorkspacePathNotFileError>()(
   "WorkspacePathNotFileError",
   {
     workspaceRoot: Schema.String,
@@ -101,7 +101,7 @@ export class WorkspacePathNotFileError extends Schema.TaggedErrorClass<Workspace
   }
 }
 
-export class WorkspaceBinaryFileError extends Schema.TaggedErrorClass<WorkspaceBinaryFileError>()(
+export class WorkspaceBinaryFileError extends Schema.TaggedError<WorkspaceBinaryFileError>()(
   "WorkspaceBinaryFileError",
   {
     workspaceRoot: Schema.String,
@@ -114,7 +114,7 @@ export class WorkspaceBinaryFileError extends Schema.TaggedErrorClass<WorkspaceB
   }
 }
 
-export class WorkspaceFileRevisionConflictError extends Schema.TaggedErrorClass<WorkspaceFileRevisionConflictError>()(
+export class WorkspaceFileRevisionConflictError extends Schema.TaggedError<WorkspaceFileRevisionConflictError>()(
   "WorkspaceFileRevisionConflictError",
   {
     workspaceRoot: Schema.String,
@@ -128,7 +128,7 @@ export class WorkspaceFileRevisionConflictError extends Schema.TaggedErrorClass<
   }
 }
 
-export class WorkspaceFileExistsError extends Schema.TaggedErrorClass<WorkspaceFileExistsError>()(
+export class WorkspaceFileExistsError extends Schema.TaggedError<WorkspaceFileExistsError>()(
   "WorkspaceFileExistsError",
   {
     workspaceRoot: Schema.String,

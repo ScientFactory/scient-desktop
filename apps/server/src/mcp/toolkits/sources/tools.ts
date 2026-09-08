@@ -33,7 +33,7 @@ const ScientSourceAgentAttachment = Schema.Struct({
   importedAt: NonEmptyString,
 });
 
-export class ScientSourcesToolError extends Schema.TaggedErrorClass<ScientSourcesToolError>()(
+export class ScientSourcesToolError extends Schema.TaggedError<ScientSourcesToolError>()(
   "ScientSourcesToolError",
   {
     code: Schema.Literals([

@@ -2,16 +2,22 @@ import { assert, describe, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import { beforeEach, vi } from "vite-plus/test";
 
-const { createFromBufferMock, imageIsEmptyMock, openExternalMock, writeImageMock, writeTextMock } =
+const { createFromBufferMock, imageIsEmptyMock, openExternalMock, writeMock, writeTextMock } =
   vi.hoisted(() => ({
     createFromBufferMock: vi.fn(),
     imageIsEmptyMock: vi.fn(),
     openExternalMock: vi.fn(),
-    writeImageMock: vi.fn(),
+    writeMock: vi.fn(),
     writeTextMock: vi.fn(),
   }));
 
 vi.mock("electron", () => ({
+  ClipboardItem: class {
+    readonly data: Record<string, Blob>;
+    constructor(data: Record<string, Blob>) {
+      this.data = data;
+    }
+  },
   shell: {
     openExternal: openExternalMock,
   },
@@ -19,7 +25,7 @@ vi.mock("electron", () => ({
     createFromBuffer: createFromBufferMock,
   },
   clipboard: {
-    writeImage: writeImageMock,
+    write: writeMock,
     writeText: writeTextMock,
   },
 }));
@@ -31,10 +37,14 @@ describe("ElectronShell", () => {
     createFromBufferMock.mockReset();
     imageIsEmptyMock.mockReset();
     openExternalMock.mockReset();
-    writeImageMock.mockReset();
+    writeMock.mockReset();
+    writeMock.mockResolvedValue(undefined);
     writeTextMock.mockReset();
     imageIsEmptyMock.mockReturnValue(false);
-    createFromBufferMock.mockReturnValue({ isEmpty: imageIsEmptyMock });
+    createFromBufferMock.mockReturnValue({
+      isEmpty: imageIsEmptyMock,
+      toPNG: () => Buffer.from([137, 80, 78, 71]),
+    });
   });
 
   it.effect("opens safe external URLs", () =>
@@ -46,6 +56,28 @@ describe("ElectronShell", () => {
 
       assert.equal(result, true);
       assert.deepEqual(openExternalMock.mock.calls, [["https://example.com/path"]]);
+    }).pipe(Effect.provide(ElectronShell.layer)),
+  );
+
+  it.effect("copies text to the system clipboard", () =>
+    Effect.gen(function* () {
+      writeTextMock.mockResolvedValue(undefined);
+
+      const electronShell = yield* ElectronShell.ElectronShell;
+      yield* electronShell.copyText("https://example.com/path");
+
+      assert.deepEqual(writeTextMock.mock.calls, [["https://example.com/path"]]);
+    }).pipe(Effect.provide(ElectronShell.layer)),
+  );
+
+  it.effect("does not fail when the clipboard write rejects", () =>
+    Effect.gen(function* () {
+      writeTextMock.mockRejectedValue(new Error("write failed"));
+
+      const electronShell = yield* ElectronShell.ElectronShell;
+      yield* electronShell.copyText("https://example.com/path");
+
+      assert.deepEqual(writeTextMock.mock.calls, [["https://example.com/path"]]);
     }).pipe(Effect.provide(ElectronShell.layer)),
   );
 
@@ -141,11 +173,19 @@ describe("ElectronShell", () => {
       assert.isTrue(yield* electronShell.copyPng(png));
 
       assert.deepEqual([...createFromBufferMock.mock.calls[0]![0]], [...png]);
-      assert.equal(writeImageMock.mock.calls.length, 1);
-      assert.strictEqual(
-        writeImageMock.mock.calls[0]![0],
-        createFromBufferMock.mock.results[0]!.value,
-      );
+      assert.equal(writeMock.mock.calls.length, 1);
+      const blob = writeMock.mock.calls[0]![0][0].data["image/png"] as Blob;
+      assert.equal(blob.type, "image/png");
+      const copied = yield* Effect.promise(() => blob.arrayBuffer());
+      assert.deepEqual([...new Uint8Array(copied)], [...png]);
+    }).pipe(Effect.provide(ElectronShell.layer)),
+  );
+
+  it.effect("reports a rejected image clipboard write without failing the caller", () =>
+    Effect.gen(function* () {
+      writeMock.mockRejectedValue(new Error("clipboard unavailable"));
+      const shell = yield* ElectronShell.ElectronShell;
+      assert.isFalse(yield* shell.copyPng(new Uint8Array([137, 80, 78, 71])));
     }).pipe(Effect.provide(ElectronShell.layer)),
   );
 
@@ -155,7 +195,7 @@ describe("ElectronShell", () => {
       const electronShell = yield* ElectronShell.ElectronShell;
 
       assert.isFalse(yield* electronShell.copyPng(new Uint8Array([1, 2, 3])));
-      assert.equal(writeImageMock.mock.calls.length, 0);
+      assert.equal(writeMock.mock.calls.length, 0);
     }).pipe(Effect.provide(ElectronShell.layer)),
   );
 });

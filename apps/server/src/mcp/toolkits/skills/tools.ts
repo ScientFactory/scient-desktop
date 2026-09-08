@@ -16,7 +16,7 @@ const SkillName = Schema.Trimmed.check(
 const Digest = Schema.String.pipe(Schema.check(Schema.isPattern(/^sha256:[0-9a-f]{64}$/u)));
 const dependencies = [McpInvocationContext.McpInvocationContext];
 
-export class ScientSkillToolError extends Schema.TaggedErrorClass<ScientSkillToolError>()(
+export class ScientSkillToolError extends Schema.TaggedError<ScientSkillToolError>()(
   "ScientSkillToolError",
   {
     code: Schema.Literals([

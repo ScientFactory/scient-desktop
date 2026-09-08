@@ -130,7 +130,7 @@ const BINDING_CHANGE_REPLAY = 32;
 
 const IDENTIFIER_NAME = /^[A-Za-z0-9][A-Za-z0-9._:-]*$/u;
 
-export class GeneratedDocumentStoreError extends Schema.TaggedErrorClass<GeneratedDocumentStoreError>()(
+export class GeneratedDocumentStoreError extends Schema.TaggedError<GeneratedDocumentStoreError>()(
   "GeneratedDocumentStoreError",
   {
     operation: Schema.Literals([

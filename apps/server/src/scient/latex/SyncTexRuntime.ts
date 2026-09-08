@@ -28,7 +28,7 @@ const decodeRuntimeReceipt = Schema.decodeUnknownEffect(Schema.fromJsonString(Ru
 
 export type SyncTexRuntimeErrorReason = "damaged" | "missing" | "unsupported";
 
-export class SyncTexRuntimeError extends Schema.TaggedErrorClass<SyncTexRuntimeError>()(
+export class SyncTexRuntimeError extends Schema.TaggedError<SyncTexRuntimeError>()(
   "SyncTexRuntimeError",
   {
     reason: Schema.Literals(["damaged", "missing", "unsupported"]),

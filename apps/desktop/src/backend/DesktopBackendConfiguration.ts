@@ -26,7 +26,7 @@ import {
   SCIENT_ANALYTICS_METADATA_ENV_NAMES,
 } from "./scientAnalyticsMetadata.ts";
 
-export class DesktopBackendObservabilitySettingsReadError extends Schema.TaggedErrorClass<DesktopBackendObservabilitySettingsReadError>()(
+export class DesktopBackendObservabilitySettingsReadError extends Schema.TaggedError<DesktopBackendObservabilitySettingsReadError>()(
   "DesktopBackendObservabilitySettingsReadError",
   {
     settingsPath: Schema.String,
@@ -827,6 +827,7 @@ const resolveWslStartConfig = Effect.fn("desktop.backendConfiguration.resolveWsl
   } satisfies DesktopBackendManager.DesktopBackendStartConfig;
 });
 
+/** @public Service construction is part of the canonical Effect module API. */
 export const make = Effect.gen(function* () {
   const environment = yield* DesktopEnvironment.DesktopEnvironment;
   const fileSystem = yield* FileSystem.FileSystem;

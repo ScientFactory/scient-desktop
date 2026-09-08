@@ -123,7 +123,7 @@ export function isActiveManagedInstallPhase(
   return ACTIVE_PHASES.has(phase);
 }
 
-class ManagedLatexInstallFailure extends Schema.TaggedErrorClass<ManagedLatexInstallFailure>()(
+class ManagedLatexInstallFailure extends Schema.TaggedError<ManagedLatexInstallFailure>()(
   "ManagedLatexInstallFailure",
   {
     reason: ScientLatexManagedInstallFailureReason,

@@ -23,7 +23,7 @@ import {
  * Error raised when the Scient-owned resolver cannot find or validate a fork
  * boundary from SQL-backed projection and lineage data.
  */
-export class ForkBoundaryResolutionError extends Schema.TaggedErrorClass<ForkBoundaryResolutionError>()(
+export class ForkBoundaryResolutionError extends Schema.TaggedError<ForkBoundaryResolutionError>()(
   "ForkBoundaryResolutionError",
   { detail: Schema.String },
 ) {
