@@ -11,8 +11,12 @@ import { stackedThreadToast, toastManager } from "../../components/ui/toast";
 import { AnalyticsSharingInfo } from "./AnalyticsSharingInfo";
 import { readScientAnalyticsStatus } from "./client";
 
-/** One-time disclosure for installations whose analytics sharing is active. */
-export function AnalyticsSharingNotice() {
+/** Notification-only rollout gate. Keep off until audience and timing are approved. */
+export function AnalyticsSharingNotice({ enabled = false }: { enabled?: boolean }) {
+  return enabled ? <EnabledAnalyticsSharingNotice /> : null;
+}
+
+function EnabledAnalyticsSharingNotice() {
   const environmentId = usePrimaryEnvironmentId();
   // A separate keyed lifetime prevents a pending read or dismissal crossing environments.
   return environmentId === null ? null : (
