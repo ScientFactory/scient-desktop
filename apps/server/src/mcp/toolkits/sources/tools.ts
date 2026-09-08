@@ -33,7 +33,7 @@ const ScientSourceAgentAttachment = Schema.Struct({
   importedAt: NonEmptyString,
 });
 
-export class ScientSourcesToolError extends Schema.TaggedErrorClass<ScientSourcesToolError>()(
+export class ScientSourcesToolError extends Schema.TaggedError<ScientSourcesToolError>()(
   "ScientSourcesToolError",
   {
     code: Schema.Literals([
@@ -98,7 +98,7 @@ export const ScientSourceAgentDetail = Schema.Struct({
   updatedAt: Schema.optionalKey(NonEmptyString),
 });
 
-export const ScientSourcesListTool = Tool.make("scient_sources_list", {
+const ScientSourcesListTool = Tool.make("scient_sources_list", {
   description:
     "List a bounded page of canonical Sources from this thread's Scient project. Use this before source-dependent work; do not scan or edit .scient/sources files directly.",
   parameters: Schema.Struct({
@@ -116,7 +116,7 @@ export const ScientSourcesListTool = Tool.make("scient_sources_list", {
   .annotate(Tool.Idempotent, true)
   .annotate(Tool.OpenWorld, false);
 
-export const ScientSourceGetTool = Tool.make("scient_sources_get", {
+const ScientSourceGetTool = Tool.make("scient_sources_get", {
   description:
     "Read one canonical Source from this thread's Scient project by source ID. Returns metadata, provenance, and attachment identity but never an absolute filesystem path.",
   parameters: Schema.Struct({ sourceId: NonEmptyString }),
@@ -137,7 +137,7 @@ export const ScientSourceNoteUpdateResult = Schema.Struct({
   note: ScientSourceNote,
 });
 
-export const ScientSourceNoteUpdateTool = Tool.make("scient_sources_note_update", {
+const ScientSourceNoteUpdateTool = Tool.make("scient_sources_note_update", {
   description:
     "Add, replace, or clear the project-owned note for one canonical Source. Read the source first and pass its current revision. Use null to clear the note; bold and italic may use Markdown markers.",
   parameters: Schema.Struct({
@@ -155,7 +155,7 @@ export const ScientSourceNoteUpdateTool = Tool.make("scient_sources_note_update"
   .annotate(Tool.Idempotent, true)
   .annotate(Tool.OpenWorld, false);
 
-export const ScientSourceMetadataUpdateTool = Tool.make("scient_sources_update", {
+const ScientSourceMetadataUpdateTool = Tool.make("scient_sources_update", {
   description:
     "Update canonical metadata or tags for one project Source after the user explicitly asks. " +
     "Read the source first and pass its current revision. This never changes provenance, review state, or attachments.",
@@ -191,7 +191,7 @@ export const ScientSourceMetadataUpdateTool = Tool.make("scient_sources_update",
   .annotate(Tool.Idempotent, true)
   .annotate(Tool.OpenWorld, false);
 
-export const ScientSourceRemoveTool = Tool.make("scient_sources_remove", {
+const ScientSourceRemoveTool = Tool.make("scient_sources_remove", {
   description:
     "Remove one canonical Source from this project's library. Use only after the user explicitly asks for removal. Read the source first and pass its current revision.",
   parameters: Schema.Struct({
@@ -212,7 +212,7 @@ export const ScientSourceRemoveTool = Tool.make("scient_sources_remove", {
   .annotate(Tool.Idempotent, true)
   .annotate(Tool.OpenWorld, false);
 
-export const ScientSourceReviewTool = Tool.make("scient_sources_review", {
+const ScientSourceReviewTool = Tool.make("scient_sources_review", {
   description:
     "Approve or reject an agent-added Source after the user explicitly asks. Approval clears pending review; rejection removes the source.",
   parameters: Schema.Struct({
@@ -286,7 +286,7 @@ export const ScientSourceAddResult = Schema.Struct({
   review: Schema.Literals(["none", "pending"]),
 });
 
-export const ScientSourceAddTool = Tool.make("scient_sources_add", {
+const ScientSourceAddTool = Tool.make("scient_sources_add", {
   description:
     "Add one source to this thread's Scient project after the user explicitly asks. Read existing " +
     "Sources first. To add a PDF, find it in the project and pass its relative .pdf path; Scient " +
@@ -303,7 +303,7 @@ export const ScientSourceAddTool = Tool.make("scient_sources_add", {
   .annotate(Tool.Idempotent, true)
   .annotate(Tool.OpenWorld, true);
 
-export const ScientSourceAttachPdfTool = Tool.make("scient_sources_attach_pdf", {
+const ScientSourceAttachPdfTool = Tool.make("scient_sources_attach_pdf", {
   description:
     "Attach a project-relative PDF to any Source after the user explicitly asks. Read the source first " +
     "and pass its current revision. The PDF is copied or reused in canonical Sources storage.",
@@ -326,7 +326,7 @@ export const ScientSourceAttachPdfTool = Tool.make("scient_sources_attach_pdf", 
   .annotate(Tool.Idempotent, true)
   .annotate(Tool.OpenWorld, false);
 
-export const ScientSourceDetachPdfTool = Tool.make("scient_sources_detach_pdf", {
+const ScientSourceDetachPdfTool = Tool.make("scient_sources_detach_pdf", {
   description:
     "Remove one PDF attachment from a Source while keeping its metadata. Use only after the user explicitly asks. " +
     "Read the source first and pass its current revision.",

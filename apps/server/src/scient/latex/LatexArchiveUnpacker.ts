@@ -28,7 +28,7 @@ import * as Schema from "effect/Schema";
 import * as ProcessRunner from "../../processRunner.ts";
 import type { TinyTexArchiveKind } from "./tinytexManifest.ts";
 
-export class LatexArchiveUnpackError extends Schema.TaggedErrorClass<LatexArchiveUnpackError>()(
+export class LatexArchiveUnpackError extends Schema.TaggedError<LatexArchiveUnpackError>()(
   "LatexArchiveUnpackError",
   {
     reason: Schema.Literals(["unsupported-archive", "unpacker-unavailable", "unpack-failed"]),

@@ -4,6 +4,7 @@ import {
   ProviderInstanceId,
   ThreadId,
   TurnId,
+  PROVIDER_SEND_TURN_MAX_INPUT_CHARS,
   type ChatAttachment,
   type OrchestrationMessage,
   type OrchestrationThread,
@@ -14,6 +15,8 @@ import * as Layer from "effect/Layer";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 
 import { SqlitePersistenceMemory } from "../../persistence/Layers/Sqlite.ts";
+import { questionAnswerActivity } from "./questionAnswer.test-fixtures.ts";
+import { retainQuestionAnswers } from "./retainedQuestionAnswers.ts";
 import {
   ScientForkContextBootstrap,
   ScientForkContextBootstrapLive,
@@ -198,6 +201,75 @@ it.layer(layer)("ScientForkContextBootstrap", (it) => {
         omittedMessageCount: 0,
         omittedAttachmentCount: 0,
       });
+    }),
+  );
+
+  it.effect("bootstraps submitted answers as historical records and respects file limits", () =>
+    Effect.gen(function* () {
+      yield* insertFork();
+      const service = yield* ScientForkContextBootstrap;
+      const messages = [
+        message({ id: "user-1", role: "user", text: "Analyze" }),
+        message({ id: "assistant-1", role: "assistant", text: "Done" }),
+      ];
+      const fork = {
+        ...thread(messages),
+        activities: [
+          questionAnswerActivity("turn-assistant-1"),
+          questionAnswerActivity("later", "later-answer"),
+        ],
+      };
+      const input = {
+        thread: fork,
+        currentMessageId: "current",
+        messageText: "Continue",
+        attachments: [],
+      };
+      const prepared = yield* service.prepareTurn(input);
+      // @effect-diagnostics-next-line preferSchemaOverJson:off - inspect the actual internal provider JSON in this test.
+      const context = JSON.parse(
+        prepared.input
+          .split("SCIENT_FORK_CONTEXT_JSON\n")[1]!
+          .split("\n\nLATEST_USER_MESSAGE_JSON")[0]!,
+      );
+      assert.deepEqual(
+        context.transcript.map((entry: { role: string }) => entry.role),
+        ["user", "question-answer", "assistant"],
+      );
+      assert.deepEqual(context.transcript[1].answers, { dataset: "Use the measured data" });
+      assert.strictEqual(context.transcript[1].questions.dataset, "Which dataset?");
+      assert.strictEqual(context.transcript[1].attachments[0].contentReattached, true);
+      assert.strictEqual(prepared.attachments.length, 1);
+      const limited = yield* service.prepareTurn({
+        ...input,
+        attachments: Array.from({ length: 8 }, (_, index) => attachment(index)),
+      });
+      assert.strictEqual(limited.attachments.length, 8);
+      assert.strictEqual(limited.omittedAttachmentCount, 1);
+      assert.include(limited.input, '"contentReattached":false');
+      assert.strictEqual(fork.messages.length, 2);
+      const bounded = yield* service.prepareTurn({
+        ...input,
+        messageText: "x".repeat(PROVIDER_SEND_TURN_MAX_INPUT_CHARS - 1000),
+        thread: {
+          ...fork,
+          activities: [
+            {
+              ...questionAnswerActivity("turn-assistant-1"),
+              payload: {
+                ...retainQuestionAnswers(
+                  [questionAnswerActivity("turn-assistant-1")],
+                  new Set(["turn-assistant-1"]),
+                ).answers[0]!.answer,
+                answers: { dataset: "x".repeat(2000) },
+              },
+            },
+          ],
+        },
+      });
+      assert.isAtMost(bounded.input.length, PROVIDER_SEND_TURN_MAX_INPUT_CHARS);
+      assert.include(bounded.input, '"omittedQuestionAnswerCount":1');
+      assert.strictEqual(bounded.attachments.length, 0);
     }),
   );
 

@@ -51,16 +51,7 @@ export function ProjectSkillsSettingsPage() {
                       onToggle={() =>
                         setExpandedProjectKey((current) => (current === key ? null : key))
                       }
-                      icon={
-                        <ProjectFavicon
-                          environmentId={project.environmentId}
-                          cwd={project.workspaceRoot}
-                          projectName={project.title}
-                          faviconPath={project.faviconPath}
-                          projectIcon={project.projectIcon}
-                          className="size-5"
-                        />
-                      }
+                      icon={<ProjectFavicon project={project} className="size-5" />}
                     />
                   );
                 })}

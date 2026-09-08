@@ -16,7 +16,7 @@ import {
 } from "./ManagedProviderRuntimeActions.ts";
 
 const DEFAULT_CURSOR_BINARY = "cursor-agent";
-export const CURSOR_MANAGED_RUNTIME_CONTRACT_REVISION = 1;
+const CURSOR_MANAGED_RUNTIME_CONTRACT_REVISION = 1;
 
 function detectTargetSafely(input: { readonly platform: NodeJS.Platform; readonly arch: string }) {
   try {

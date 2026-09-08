@@ -5,7 +5,7 @@ It is optional: **Add project** continues to work as before. Import checks the p
 only after you open it.
 
 Scient finds directories that Claude Code or Codex has used. The default
-selection includes projects active within the last 30 days. Select **Choose**
+selection includes git repositories active within the last 30 days with at least three conversations. Select **Choose**
 to include older projects or change the selection.
 
 A large or malformed history can reach the scan limit. Scient keeps the

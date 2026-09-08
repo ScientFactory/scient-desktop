@@ -863,12 +863,12 @@ export function ProviderInstanceCard({
             <span className="flex min-w-0 flex-1">{versionCodeNode}</span>
           </span>
         }
-        description={editorStatusNode}
         icon={titleIconNode}
         headerAction={editorHeaderAction}
         variant="plain"
-        children={null}
-      />
+      >
+        <div className="px-3 text-xs text-muted-foreground sm:px-4">{editorStatusNode}</div>
+      </SettingsSection>
       {/* Scient keeps the models-first view; configuration uses upstream settings rows. */}
       <div className="flex h-11 shrink-0 border-b border-border/70">
         {driverOption ? (

@@ -33,6 +33,7 @@ export type PreviewMiniPlayerContent =
 export interface PreviewMiniPlayerState {
   readonly content: PreviewMiniPlayerContent;
   readonly position: PreviewMiniPlayerPosition | null;
+  /** Browser height is derived from the live source ratio; artifacts retain free sizing. */
   readonly size: PreviewMiniPlayerSize | null;
 }
 

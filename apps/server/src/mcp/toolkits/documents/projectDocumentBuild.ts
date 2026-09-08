@@ -9,7 +9,7 @@ import * as McpInvocationContext from "../../McpInvocationContext.ts";
 
 const NonEmptyMessage = Schema.String.check(Schema.isTrimmed(), Schema.isNonEmpty());
 
-export class ProjectDocumentBuildBoundaryError extends Schema.TaggedErrorClass<ProjectDocumentBuildBoundaryError>()(
+export class ProjectDocumentBuildBoundaryError extends Schema.TaggedError<ProjectDocumentBuildBoundaryError>()(
   "ProjectDocumentBuildBoundaryError",
   {
     code: Schema.Literals([

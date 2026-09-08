@@ -217,7 +217,7 @@ export const ProviderRuntimeCancelInput = Schema.Struct({
 });
 export type ProviderRuntimeCancelInput = typeof ProviderRuntimeCancelInput.Type;
 
-export class ProviderConnectionError extends Schema.TaggedErrorClass<ProviderConnectionError>()(
+export class ProviderConnectionError extends Schema.TaggedError<ProviderConnectionError>()(
   "ProviderConnectionError",
   {
     provider: ProviderDriverKind,

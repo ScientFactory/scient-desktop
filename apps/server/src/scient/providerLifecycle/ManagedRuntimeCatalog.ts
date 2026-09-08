@@ -39,7 +39,7 @@ import * as ServerSettings from "../../serverSettings.ts";
 import { isManagedRuntimeUpdate } from "./managedRuntimeVersion.ts";
 import bundledCatalogJson from "./bundled-managed-runtime-catalog.json" with { type: "json" };
 
-export const MANAGED_RUNTIME_CATALOG_URL =
+const MANAGED_RUNTIME_CATALOG_URL =
   "https://raw.githubusercontent.com/ScientFactory/scient-desktop/automation/managed-runtime-catalog-v1/apps/server/src/scient/providerLifecycle/managed-runtime-catalog.json";
 
 const CATALOG_TTL_MS = 60 * 60 * 1_000;
@@ -95,7 +95,6 @@ const CatalogCacheSchema = Schema.Struct({
   catalog: ManagedRuntimeCatalogDataSchema,
 });
 
-const decodeCatalog = Schema.decodeUnknownEffect(ManagedRuntimeCatalogDataSchema);
 const decodeCatalogJson = Schema.decodeUnknownEffect(
   Schema.fromJsonString(
     ManagedRuntimeCatalogDataSchema as unknown as Schema.Codec<ManagedRuntimeCatalogData>,
@@ -378,6 +377,7 @@ export class ManagedRuntimeCatalog extends Context.Reference<ManagedRuntimeCatal
   { defaultValue: () => bundledOnlyService },
 ) {}
 
+/** @public Service construction is part of the canonical Effect module API. */
 export const layerTest = Layer.succeed(ManagedRuntimeCatalog, bundledOnlyService);
 
 export const makeWithOptions = (options?: { readonly startBackgroundRefresh?: boolean }) =>
@@ -514,9 +514,9 @@ export const makeWithOptions = (options?: { readonly startBackgroundRefresh?: bo
     });
   });
 
+/** @public Service construction is part of the canonical Effect module API. */
 export const make = makeWithOptions();
 
 export const layer = Layer.effect(ManagedRuntimeCatalog, make);
 
 /** Test-only decoder that exercises the same schema as bundle, disk, and network data. */
-export const decodeManagedRuntimeCatalog = decodeCatalog;

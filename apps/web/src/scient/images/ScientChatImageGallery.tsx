@@ -1,4 +1,6 @@
 import { useState } from "react";
+import type { SnapShotSource } from "@t3tools/contracts";
+import { SnapShotAttachmentDetails } from "~/components/chat/SnapShotAttachmentDetails";
 
 import { cn } from "~/lib/utils";
 
@@ -6,6 +8,7 @@ export interface ScientChatImageItem {
   readonly id: string;
   readonly name: string;
   readonly previewUrl?: string | undefined;
+  readonly source?: SnapShotSource | undefined;
 }
 
 function ScientChatImageTile(props: {
@@ -17,7 +20,7 @@ function ScientChatImageTile(props: {
     props.image.previewUrl !== undefined && failedUrl !== props.image.previewUrl;
 
   return (
-    <div className="min-w-0 overflow-hidden rounded-lg border border-border/80 bg-background/70">
+    <div className="relative min-w-0 overflow-hidden rounded-lg border border-border/80 bg-background/70">
       {previewAvailable ? (
         <button
           aria-label={`Preview ${props.image.name}`}
@@ -43,6 +46,9 @@ function ScientChatImageTile(props: {
           <span className="text-muted-foreground text-[11px]">Preview unavailable</span>
         </div>
       )}
+      {previewAvailable && props.image.source?.kind === "snap-shot" ? (
+        <SnapShotAttachmentDetails source={props.image.source} />
+      ) : null}
     </div>
   );
 }

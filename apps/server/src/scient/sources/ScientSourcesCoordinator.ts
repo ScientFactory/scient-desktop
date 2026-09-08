@@ -405,13 +405,6 @@ function proposeRefreshedSourceUpdate(input: {
   return { metadata, takenFields };
 }
 
-export function proposeRefreshedSourceMetadata(input: {
-  readonly record: ScientSourceRecord;
-  readonly candidate: ScientSourceCandidate;
-}): ScientSourceEditableMetadata {
-  return proposeRefreshedSourceUpdate(input).metadata;
-}
-
 export async function applyRefreshedSourceMetadata(input: {
   readonly root: string;
   readonly record: ScientSourceRecord;
