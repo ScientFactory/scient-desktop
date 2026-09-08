@@ -1,7 +1,8 @@
 import {
+  countTableStrongScripts,
   normalizeRtlFlowArrows,
   resolveAggregateDirection,
-  resolveDominantDirection,
+  resolveDominantDirectionFromCounts,
   resolveProseBlockDirection,
   resolveTableCellDirection,
   type ContentDirection,
@@ -57,6 +58,22 @@ function plainText(node: BidiNode): string {
   }
   if (node.type === "text") return node.value ?? "";
   return node.children?.map(plainText).join("") ?? "";
+}
+
+function tableProseText(node: BidiNode): string {
+  if (
+    node.type === "element" &&
+    node.tagName &&
+    (node.tagName === "code" ||
+      node.tagName === "math" ||
+      node.tagName === "pre" ||
+      node.tagName === "script" ||
+      node.tagName === "style")
+  ) {
+    return "";
+  }
+  if (node.type === "text") return node.value ?? "";
+  return node.children?.map(tableProseText).join(" ") ?? "";
 }
 
 function hasStyledArrow(value: string): boolean {
@@ -172,7 +189,10 @@ export function rehypeScientBidi(options: {
           const resolvedTableDirection =
             options.requestedDirection && options.requestedDirection !== "auto"
               ? options.requestedDirection
-              : resolveDominantDirection(plainText(node), options.direction);
+              : resolveDominantDirectionFromCounts(
+                  countTableStrongScripts(tableProseText(node)),
+                  options.direction,
+                );
           setDirection(node, resolvedTableDirection);
           processChildren(
             node,
@@ -187,7 +207,7 @@ export function rehypeScientBidi(options: {
             options.requestedDirection && options.requestedDirection !== "auto"
               ? options.requestedDirection
               : resolveTableCellDirection(
-                  plainText(node),
+                  tableProseText(node),
                   inheritedDirection ?? tableDirection ?? options.direction,
                 );
           setDirection(node, cellDirection);

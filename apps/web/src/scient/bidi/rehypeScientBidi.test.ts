@@ -290,6 +290,75 @@ describe("rehypeScientBidi", () => {
     expect(heading.properties?.dir).toBe("ltr");
   });
 
+  it("keeps a Hebrew scientific table RTL when technical identifiers dominate", () => {
+    const tree = {
+      type: "root",
+      children: [
+        {
+          type: "element",
+          tagName: "table",
+          children: [
+            {
+              type: "element",
+              tagName: "tr",
+              children: [
+                {
+                  type: "element",
+                  tagName: "th",
+                  children: [{ type: "text", value: "מאפיין HER2 TNBC cN0 BCS NET" }],
+                },
+                {
+                  type: "element",
+                  tagName: "td",
+                  children: [
+                    {
+                      type: "text",
+                      value: String.raw`טיפול $\text{HER2 positive receptor status}^+$`,
+                    },
+                  ],
+                },
+              ],
+            },
+          ],
+        },
+      ],
+    };
+
+    rehypeScientBidi({ direction: "rtl" })(tree);
+
+    const table = tree.children[0] as {
+      children: Array<{ children: Array<{ properties?: Record<string, unknown> }> }>;
+      properties?: Record<string, unknown>;
+    };
+    expect(table.properties?.dir).toBe("rtl");
+    expect(table.children[0]?.children[0]?.properties?.dir).toBe("ltr");
+    expect(table.children[0]?.children[1]?.properties?.dir).toBe("ltr");
+  });
+
+  it("does not mistake ordinary English table prose for a technical identifier", () => {
+    const tree = {
+      type: "root",
+      children: [
+        {
+          type: "element",
+          tagName: "table",
+          children: [
+            {
+              type: "element",
+              tagName: "td",
+              children: [{ type: "text", value: "Standard treatment and clinical follow-up" }],
+            },
+          ],
+        },
+      ],
+    };
+
+    rehypeScientBidi({ direction: "rtl" })(tree);
+
+    const table = tree.children[0] as { properties?: Record<string, unknown> };
+    expect(table.properties?.dir).toBe("ltr");
+  });
+
   it("keeps a table nested in a list on its own aggregate direction", () => {
     const tree = {
       type: "root",

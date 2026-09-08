@@ -172,6 +172,28 @@ describe("rich Markdown direction presentation", () => {
     expect(onUserSourceChange).toHaveBeenCalled();
   });
 
+  it("keeps scientific identifiers from deciding automatic table column order", () => {
+    const source = [
+      "| מאפיין HER2 TNBC cN0 BCS NET | טיפול |",
+      "| --- | --- |",
+      "| HER2 TNBC BCS NET | טיפול מותאם |",
+      "",
+    ].join("\n");
+    const { controller, onUserSourceChange, view } = mount(source);
+    const table = view.dom.querySelector("table");
+    const cells = Array.from(view.dom.querySelectorAll("th, td"));
+
+    expect(inheritedDirection(table)).toBe("rtl");
+    expect(
+      inheritedDirection(cells.find((cell) => cell.textContent?.includes("HER2")) ?? null),
+    ).toBe("ltr");
+    expect(
+      inheritedDirection(cells.find((cell) => cell.textContent === "טיפול מותאם") ?? null),
+    ).toBe("rtl");
+    expect(controller.session.session.draftSource).toBe(source);
+    expect(onUserSourceChange).not.toHaveBeenCalled();
+  });
+
   it("keeps explicit direction authoritative and recomputes automatic direction after edits", () => {
     const source = '<div dir="ltr">\n\nשלום עולם.\n\n</div>\n';
     const { controller, view } = mount(source);

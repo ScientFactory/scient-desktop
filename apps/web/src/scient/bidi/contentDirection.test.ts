@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vite-plus/test";
 
 import {
+  countTableStrongScripts,
   findRtlFlowArrowSpans,
   normalizeRtlFlowArrows,
   resolveAggregateDirection,
@@ -15,6 +16,16 @@ import {
 } from "./contentDirection";
 
 describe("message and block direction", () => {
+  it("keeps scientific identifiers and literal TeX from steering table structure", () => {
+    expect(countTableStrongScripts("מאפיין HER2 TNBC cN0 BCS NET")).toEqual({ ltr: 0, rtl: 6 });
+    expect(countTableStrongScripts(String.raw`טיפול $\text{HER2 positive receptor}^+$`)).toEqual({
+      ltr: 0,
+      rtl: 5,
+    });
+    expect(countTableStrongScripts("Standard treatment")).toEqual({ ltr: 17, rtl: 0 });
+    expect(countTableStrongScripts("TREATMENT DETAILS")).toEqual({ ltr: 16, rtl: 0 });
+  });
+
   it("keeps a Hebrew message RTL when list items begin with English terms", () => {
     const markdown = [
       "### מעבדה וסרולוגיה",

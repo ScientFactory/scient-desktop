@@ -4,6 +4,7 @@ import { Decoration, DecorationSet } from "prosemirror-view";
 
 import {
   countStrongScripts,
+  countTableStrongScripts,
   findRtlFlowArrowSpans,
   resolveAggregateDirectionFromCounts,
   resolveDominantDirectionFromCounts,
@@ -43,6 +44,7 @@ const TECHNICAL_NODE_NAMES = new Set([
 
 const ZERO_COUNTS: StrongScriptCounts = { ltr: 0, rtl: 0 };
 const proseCountCache = new WeakMap<ProseMirrorNode, StrongScriptCounts>();
+const tableCountCache = new WeakMap<ProseMirrorNode, StrongScriptCounts>();
 
 function addRtlFlowArrowDecorations(
   node: ProseMirrorNode,
@@ -111,6 +113,26 @@ function proseCounts(node: ProseMirrorNode): StrongScriptCounts {
   return counts;
 }
 
+function tableDirectionCounts(node: ProseMirrorNode): StrongScriptCounts {
+  const cached = tableCountCache.get(node);
+  if (cached) return cached;
+
+  let counts = ZERO_COUNTS;
+  if (!TECHNICAL_NODE_NAMES.has(node.type.name)) {
+    if (node.isText) {
+      counts = node.marks.some((mark) => mark.type.name === "code")
+        ? ZERO_COUNTS
+        : countTableStrongScripts(node.text ?? "");
+    } else if (!node.isLeaf) {
+      node.forEach((child) => {
+        counts = addCounts(counts, tableDirectionCounts(child));
+      });
+    }
+  }
+  tableCountCache.set(node, counts);
+  return counts;
+}
+
 export function resolveScientMarkdownDocumentDirection(
   document: ProseMirrorNode,
 ): FixedContentDirection {
@@ -131,7 +153,10 @@ function addNodeDecorations(
   let childContext = context;
 
   if (nodeName === "table") {
-    const tableContentDirection = resolveDominantDirectionFromCounts(proseCounts(node), direction);
+    const tableContentDirection = resolveDominantDirectionFromCounts(
+      tableDirectionCounts(node),
+      direction,
+    );
     resolved = authoredDirection ?? tableContentDirection;
     childContext = {
       domDirection: resolved,

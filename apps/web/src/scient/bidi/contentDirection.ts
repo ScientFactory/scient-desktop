@@ -12,6 +12,10 @@ const MARKDOWN_CODE_BLOCK = /(?:```|~~~)[\s\S]*?(?:```|~~~|$)/g;
 const MARKDOWN_INLINE_CODE = /`[^`\n]*`/g;
 const MARKDOWN_LINK_DESTINATION = /\]\([^)]*\)/g;
 const MARKDOWN_AUTOLINK = /<(?:https?:\/\/|mailto:)[^>]+>/gi;
+const TABLE_LITERAL_TEX = /\$(?=[^$\n]*\\[A-Za-z]{2,})[^$\n]{1,1000}\$/g;
+const TABLE_TEX_COMMAND = /\\[A-Za-z]{2,}(?:\s*\{[^{}\n]*\})?/g;
+const TABLE_TECHNICAL_IDENTIFIER =
+  /(?<![\p{L}\p{N}])(?:[A-Z]{2,5}[+-]?|[A-Za-z]+\d+[A-Za-z0-9+-]*|\d+[A-Za-z]+[A-Za-z0-9+-]*)(?![\p{L}\p{N}])/gu;
 
 const RTL_FLOW_ARROW_REPLACEMENTS: Readonly<Record<string, string>> = {
   "→": "←",
@@ -70,6 +74,20 @@ export function countStrongScripts(text: string): StrongScriptCounts {
   }
 
   return { rtl, ltr };
+}
+
+/**
+ * Counts prose that can reliably describe a table's reading order. Scientific
+ * identifiers and literal TeX are cell content, not evidence that the table's
+ * column structure is LTR. Individual cells still use the unfiltered counter.
+ */
+export function countTableStrongScripts(text: string): StrongScriptCounts {
+  return countStrongScripts(
+    text
+      .replace(TABLE_LITERAL_TEX, " ")
+      .replace(TABLE_TEX_COMMAND, " ")
+      .replace(TABLE_TECHNICAL_IDENTIFIER, " "),
+  );
 }
 
 export function resolveStrongScriptDirection(

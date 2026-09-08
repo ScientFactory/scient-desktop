@@ -20,14 +20,20 @@ direction only to conversational structural elements (`p`, headings,
 blockquotes, lists, tables, and details). In automatic mode, each complete
 list gets one aggregate direction: any RTL prose makes the whole list RTL; an
 English-only list is LTR; items do not receive competing per-item overrides.
-Nested lists inherit their parent list direction. Tables use the same
-whole-group rule, so an English-only table can be LTR inside an RTL message.
-The resolved table direction is authoritative for every normal cell and nested
-prose, so an English cell cannot flip a Hebrew table (or vice versa). An
-explicit user mode remains authoritative. Headings use the resolved message
-direction rather than their own text, except when they are inside a table and
-therefore inherit that table's direction. The transform does not duplicate or
-replace the T3 Markdown renderer and intentionally leaves code elements alone.
+Nested lists inherit their parent list direction. In automatic mode, table
+structure follows the dominant prose direction across the whole table. Code,
+equations, literal TeX, and scientific identifiers such as `HER2` and `cN0` do
+not decide column order. English-only prose tables can therefore remain LTR
+inside an RTL message, while technical terms do not flip a Hebrew table. Each
+cell resolves its own text direction so mixed-language content and punctuation
+remain readable without changing the table's column order. An explicit user
+mode remains authoritative. Headings use the resolved message direction except
+inside table cells, where they follow the cell. The transform does not
+duplicate or replace the T3 Markdown renderer and intentionally leaves code
+elements alone.
+Wide chat tables give the DOM viewport and Base UI scrollbar the same resolved
+direction, keeping the custom thumb synchronized with Chromium's RTL scroll
+coordinates.
 Standalone right-flow arrows in clearly RTL prose within an RTL-base message
 are normalized to their left-flow counterparts. Technical content, links, and
 ambiguous arrow usage are left unchanged. An explicitly LTR-base message never
