@@ -45,10 +45,12 @@ publication remains a separate gate.
 
 ## Receiving T3 updates
 
-The uncommitted local alignment through `349ce301` is documented in the
+The local alignment through `eb115063` is documented in the
 [2026-09-08 review](docs/internals/2026-09-08-upstream-sync-349ce301-review.md).
-It does not yet advance the integrated boundary above. That record includes the
-native capture identity composition, qualification results, and remaining review gates.
+It extends the reviewed `349ce301` checkpoint in the same history-preserving
+candidate. It does not yet advance the integrated boundary above. That record includes
+the native capture identity composition, question attachments, qualification results,
+and remaining review gates.
 
 The canonical procedure and stop conditions live in the
 [T3 upstream alignment protocol](docs/internals/upstream-alignment-protocol.md). The short form is:
@@ -475,11 +477,19 @@ four tokens in `apps/web/src/scient/typography/profile.css`; do not spread those
 overrides across inherited components during upstream conflict resolution. See
 [Scient typography profile](docs/internals/scient-typography.md).
 
-Composer collapse is opt-in in Scient: both `composerCollapseOnBlur` and
-`composerCollapseOnScroll` default to `false` (Settings shows **Never**).
-Preserve saved choices and T3's optional collapse behavior, including the shared
-focus-scope marker on Scient's provider onboarding popup. Keep this divergence
-at the shared settings defaults rather than disabling the collapse implementation.
+Composer collapse is opt-in in Scient: `composerCollapseOnScroll` defaults to
+`false`. Upstream removed blur-triggered collapse; do not restore that obsolete
+setting. Preserve saved scroll-collapse choices and the shared focus-scope marker
+on Scient's provider onboarding popup. Keep the default in the shared settings schema.
+
+Scient retains explicitly expandable Settings section navigation. Upstream's
+flat navigation remains the base; `useScientSettingsNavigation` under
+`apps/web/src/scient/settings` owns subsection definitions, expansion state,
+visibility observation, and section jumps. Preserve its single rendering slot in
+`SettingsSidebarNav`, rather than restoring those mechanics throughout the host
+component. The Settings route retains `data-settings-page-layout` as the observer's
+root. Page changes do not automatically open a submenu. Settings search,
+page routing, and shared sidebar primitives remain upstream-owned.
 
 LaTeX compilation is isolated under `apps/server/src/scient/latex` and
 `apps/web/src/scient/latex`, with `packages/contracts/src/scientLatex.ts` and

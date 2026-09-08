@@ -294,7 +294,7 @@ export function parseAgyModelsOutput(output: string): ReadonlyArray<string> {
   );
 }
 
-export function isAgyModelsAuthenticationRequired(output: string): boolean {
+function isAgyModelsAuthenticationRequired(output: string): boolean {
   return /please\s+(?:sign|log)\s+in|not\s+(?:signed\s+in|logged\s+in|authenticated)|auth(?:entication)?\s+required|unauthori[sz]ed|missing\s+credentials/iu.test(
     output,
   );

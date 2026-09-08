@@ -20,7 +20,7 @@ interface SupportedImage {
   readonly acceptedExtensions: ReadonlySet<string>;
 }
 
-export class WorkspaceMarkdownImageOperationError extends Data.TaggedError(
+class WorkspaceMarkdownImageOperationError extends Data.TaggedError(
   "WorkspaceMarkdownImageOperationError",
 )<{ readonly cause: unknown }> {}
 

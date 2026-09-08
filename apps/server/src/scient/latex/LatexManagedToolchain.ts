@@ -117,9 +117,7 @@ const ACTIVE_PHASES: ReadonlySet<ScientLatexManagedInstallState["state"]> = new 
   "installing-packages",
 ]);
 
-export function isActiveManagedInstallPhase(
-  phase: ScientLatexManagedInstallState["state"],
-): boolean {
+function isActiveManagedInstallPhase(phase: ScientLatexManagedInstallState["state"]): boolean {
   return ACTIVE_PHASES.has(phase);
 }
 

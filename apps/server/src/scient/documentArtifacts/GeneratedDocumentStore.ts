@@ -115,7 +115,7 @@ export interface GeneratedDocumentRetentionPolicy {
   readonly maxEvictionsPerSweep: number;
 }
 
-export const DEFAULT_GENERATED_DOCUMENT_RETENTION: GeneratedDocumentRetentionPolicy = {
+const DEFAULT_GENERATED_DOCUMENT_RETENTION: GeneratedDocumentRetentionPolicy = {
   maxTotalBytes: 500 * 1_024 * 1_024,
   maxRevisionCount: 100,
   maxEvictionsPerSweep: 32,
@@ -325,6 +325,7 @@ export interface GeneratedDocumentStoreOptions {
   readonly retention?: Partial<GeneratedDocumentRetentionPolicy> | undefined;
 }
 
+/** @public Service construction is part of the canonical Effect module API. */
 export const make = Effect.fn("GeneratedDocumentStore.make")(function* (
   options: GeneratedDocumentStoreOptions = {},
 ) {

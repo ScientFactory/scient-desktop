@@ -1,21 +1,25 @@
-# Upstream sync review through `349ce301`
+# Upstream sync review through `eb115063`
 
-Status: local implementation and automated review complete; human interaction review, commit,
-PR, CI, and merge remain pending. This is one in-progress history-preserving merge, not two syncs.
+Status: the reviewed `349ce301` implementation has a local history-preserving checkpoint.
+The additional 22 commits through `eb115063` are composed in the same candidate. Automated
+review is complete; the native question-attachment fork finding below remains open.
+Manual acceptance, PR, CI, and publication remain separate gates.
 
 ## Frozen boundary
 
 - Scient base and reverified `origin/main`: `4d4d53d80595de0f0da2308ce9b25259e094d0c8`
 - Previous upstream receipt: `223ff4490f764a74ff911589e97b9bbcd595fee8`
-- Upstream target / `MERGE_HEAD`: `349ce3014233352e073a5fc1b3f12bd786160913`
-- Range: 138 official commits
+- Original upstream target: `349ce3014233352e073a5fc1b3f12bd786160913`
+- Original range: 138 official commits; extended range: 160 through `eb115063`
 - Branch: `codex/t3-sync-349ce301-20260908`
 - Initial conflicts: 70; first phase resolved 40, final phase resolved 30; no unmerged paths remain.
 - Upstream push URL: `DISABLED`
 
-No upstream commit was cherry-picked, replayed, or squashed. The merge is not committed yet;
-`upstream-state.json` deliberately retains the last integrated boundary. Advance it only after
-the literal merge commit and applicable gate exist, as the alignment protocol requires.
+No upstream commit was cherry-picked, replayed, or squashed. The original merge is now
+`c482622f09`, with `349ce301` as its literal second parent. The extension targets
+`eb115063634c416c6362cc407f8572cb0c136ddf` as another literal second parent in the same
+branch and eventual PR. `upstream-state.json` deliberately retains the last qualified boundary
+until the extended candidate passes its gate.
 
 ## Composition and review
 
@@ -165,5 +169,90 @@ behavior or native permissions. No persistent dev app was left running.
 - SnapShots: optional setup, capture other windows, app-text on/off, cancel/retry, and restart recovery.
 - Import: optional local onboarding, existing/new project import, retry, and late shell arrival.
 
-Nothing has been pushed, merged, or published by this pass. This receipt does not authorize those
-actions or advance the integrated upstream boundary.
+Nothing has been pushed or merged to main, and no release has been published by this pass.
+
+## Additional upstream range: `349ce301..eb115063`
+
+The owner approved receiving these 22 commits in the same history-preserving PR. There were
+14 textual conflict paths; automatic merges were also reviewed for Scient consumers.
+
+- Question answers accept image/file uploads per question, preserve separate prompt drafts,
+  wait for uploads, retain retry sources, and record attachments in history. The server claims
+  pending uploads in the executing environment, rejects historical thread files as uploads,
+  and supplies saved paths through existing provider answer protocols. Revert/bootstrap cleanup
+  accounts for activity-held files and has its own retry cursor. No mobile publication is enabled.
+- Completed provider turns receive a full idle window before session reaping.
+- Pull-request merge defaults are per project; repository/user merge authority is unchanged.
+- Usage-limit account columns stay aligned when individual windows are absent.
+- Composer banner clearance, previous/next-turn minimap navigation, Ctrl+Insert terminal copying,
+  sidebar row stability, and project-icon consistency are adopted.
+- The macOS installer adopts upstream's aurora artwork and updated geometry with Scient labels.
+  Signing, release channels, approval, and publication controls are unchanged.
+- Server export classification and its CI check are adopted. Private Scient helpers no longer
+  expose unused named exports. Canonical Effect construction remains explicitly public.
+  Three upstream exports still used by Scient tests remain exported: provider registry fixtures,
+  the Antigravity release version, and the privacy-preserving startup heartbeat.
+- Mobile's source version advances to 1.1.1; store/OTA workflows remain disabled.
+
+### Conflict composition
+
+Question attachment schemas coexist with Scient's exported upload schema for the thread queue.
+Normalizer cleanup covers both turn and question attachments while retaining Scient's inline-image
+cleanup option. Composer question preparation uses per-question keys while preserving managed-runtime
+update blocking and voice busy state. Persisted answers coexist with scientific skill activity labels.
+
+The project-icon refactor uses the full project record throughout the palette, sidebar, drafts,
+and Project Skills. Grouped display labels do not replace the actual title used to choose an icon.
+The folder-picker Enter/keyboard-highlight fixes remain unchanged.
+
+The owner chose to retain current Settings behavior rather than adopt upstream's flat-only list.
+The existing section navigation and visibility helper moved under `scient/settings`, leaving one
+hook and one rendering slot in the inherited sidebar, plus the existing Settings page-root
+attribute used for visibility observation. The semantic review restored that attribute after Git
+automatically accepted its upstream removal. Tests cover explicit expansion, route changes,
+returning to the chosen page, mobile dismissal, local scrolling, and hash-navigation fallback.
+The root-marker contract and observer cleanup on route changes also have a regression check.
+
+Analytics retains Scient's consent/configuration gates and disabled layer. The export-classification
+conflict does not restore upstream identity collection or network delivery.
+
+### Review finding requiring a separate fork decision
+
+Scient's existing fork pipeline retains message records and copies their files. T3 stores native
+question-answer attachments in `user-input.answer-submitted` activity records instead. Those
+activity-only files are retained in the original thread, but the current fork path does not copy them
+or seed their answer text into the new provider's transcript. Message-mode question responses already
+use ordinary messages and their files follow the existing fork copy path.
+
+This follows from `retainPrefixMessages`/`forkThread`, the fork availability check's message-only
+source list, and `ForkContextBootstrap`'s message transcript. It is a code-review finding, not a
+claimed live-provider reproduction. The native answer-transcript omission predates this feature;
+the new activity-only files make the consequence more visible.
+
+Do not silently append activity text to authored messages or change fork boundary counting as a
+merge workaround. Before claiming complete question-attachment support across forks, define the
+retained answer representation, map activity/file identities to fork ownership, preserve exact
+completed boundaries, and test bootstrap plus origin deletion/revert. This pass leaves that
+broader fork change unimplemented for owner review.
+
+### Extended candidate automated qualification
+
+- Full workspace test run: 19,636 passed and 108 skipped. After the final web-only root-marker
+  correction, the complete web suite was rerun: 6,822 passed in 623 files (one additional test).
+  The unchanged server portion passed 6,233 tests in 455 files; 63 tests were skipped.
+- Focused attachment suite: 85 passed across five files, including the added historical-file
+  ownership rejection check. Settings navigation and visibility: ten tests across two files.
+- Workspace typechecks, production build, non-visual Electron startup smoke, formatting, lint,
+  server export enforcement, branding, and whitespace checks passed. Lint/typecheck advisory
+  warnings remain; passing does not mean warning-free.
+- Analysis, onboarding, Skills, LaTeX, and upstream provenance checks passed. The provenance
+  check still uses the previous qualified integration boundary; literal ancestry of this
+  candidate is checked separately. The integration cursor is not advanced before manual
+  acceptance and disposition of the fork finding.
+- Mobile native static inventory completed, but SwiftLint, ktlint, and detekt were unavailable
+  on this host and skipped. No Windows/Linux, mobile-device, or live-provider qualification is
+  claimed by this extension.
+
+No computer use or visual review was performed. No remote push, PR, main merge, release, or
+development-profile cleanup/restart was performed. The unrelated ProviderInstanceCard changes
+already present in this shared candidate remain outside this pass's commit scope.

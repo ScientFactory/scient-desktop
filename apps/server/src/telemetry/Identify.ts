@@ -1,4 +1,3 @@
-import * as NodeOS from "node:os";
 import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
 import * as Encoding from "effect/Encoding";
@@ -296,8 +295,4 @@ export const getTelemetryIdentifierForHome = Effect.fn("getTelemetryIdentifierFo
   },
   Effect.tapError(logTelemetryIdentityError),
   Effect.orElseSucceed(() => null),
-);
-
-export const getTelemetryIdentifier = Effect.suspend(() =>
-  getTelemetryIdentifierForHome(NodeOS.homedir()),
 );

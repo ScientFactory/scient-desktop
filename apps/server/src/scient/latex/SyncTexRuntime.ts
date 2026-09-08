@@ -59,6 +59,7 @@ export class SyncTexRuntime extends Context.Service<
   { readonly resolve: Effect.Effect<ResolvedSyncTexRuntime, SyncTexRuntimeError> }
 >()("t3/scient/latex/SyncTexRuntime") {}
 
+/** @public Service construction is part of the canonical Effect module API. */
 export const make = Effect.gen(function* () {
   const config = yield* ServerConfig.ServerConfig;
   const fileSystem = yield* FileSystem.FileSystem;
@@ -137,6 +138,7 @@ export const make = Effect.gen(function* () {
 
 export const layer = Layer.effect(SyncTexRuntime, make);
 
+/** @public Service construction is part of the canonical Effect module API. */
 export const layerTest = (
   runtime: ResolvedSyncTexRuntime = { command: "synctex", source: "bundled" },
 ) => Layer.succeed(SyncTexRuntime, SyncTexRuntime.of({ resolve: Effect.succeed(runtime) }));

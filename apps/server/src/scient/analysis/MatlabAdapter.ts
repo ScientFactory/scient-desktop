@@ -20,8 +20,8 @@ import * as Option from "effect/Option";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 
-export const MATLAB_RUNTIME_ID = AnalysisRuntimeId.make("matlab:local");
-export const MATLAB_RUNTIME_KIND = "matlab" as const;
+const MATLAB_RUNTIME_ID = AnalysisRuntimeId.make("matlab:local");
+const MATLAB_RUNTIME_KIND = "matlab" as const;
 export const MATLAB_BATCH_EXPRESSION = "cd(matlabroot);run(getenv('SCIENT_MATLAB_RUNNER'))";
 
 const MATLAB_CAPTURE_DIRECTORY_NAME = "files";
@@ -154,7 +154,7 @@ function scientPayloads = scient_flatten_causes(scientError, scientDepth)
 end
 `;
 
-export const MATLAB_VERIFY_BATCH_EXPRESSION = "cd(matlabroot);run(getenv('SCIENT_MATLAB_VERIFY'))";
+const MATLAB_VERIFY_BATCH_EXPRESSION = "cd(matlabroot);run(getenv('SCIENT_MATLAB_VERIFY'))";
 
 const MATLAB_VERIFY_SOURCE = `scientResultPath = getenv('SCIENT_MATLAB_VERIFY_RESULT');
 scientTemporaryPath = [scientResultPath '.partial'];

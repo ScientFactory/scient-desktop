@@ -42,7 +42,7 @@ import type { CustomModelReasoning } from "../../customModelCapabilities.ts";
 /** Compatibility marker advertised by genuine Droid ACP agents. */
 export const DROID_AGENT_INFO_NAME = "@factory/cli";
 
-export const DROID_AUTH_METHOD_API_KEY = "factory-api-key";
+const DROID_AUTH_METHOD_API_KEY = "factory-api-key";
 export const DROID_AUTH_METHOD_DEVICE_PAIRING = "device-pairing";
 
 export interface DroidAccountCapabilities {
@@ -61,7 +61,7 @@ export function droidAccountCapabilitiesFromInitializeResult(
   };
 }
 
-export const DROID_EFFORT_CONFIG_ID = "reasoning_effort";
+const DROID_EFFORT_CONFIG_ID = "reasoning_effort";
 const DROID_AUTONOMY_CONFIG_ID = "autonomy_level";
 
 /** Env vars whose presence selects key-based auth for probes and sessions. */
@@ -170,7 +170,7 @@ export function resolveAdvertisedDroidAuthMethodId(input: {
  * Headless authenticate metadata. Background probes must never open a
  * pairing browser; Droid honors `_meta.headless` on `authenticate`.
  */
-export const DROID_HEADLESS_AUTH_META = { headless: true } as const;
+const DROID_HEADLESS_AUTH_META = { headless: true } as const;
 
 export const makeDroidAcpRuntime = (
   input: DroidAcpRuntimeInput,

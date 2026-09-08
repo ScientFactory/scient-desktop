@@ -229,7 +229,7 @@ export const ScientSourcesToolkitRegistrationLive = McpServer.toolkit(ScientSour
   Layer.provide(ScientSourcesToolkitHandlersLive),
 );
 
-export const ScientSkillsToolkitRegistrationLive = McpServer.toolkit(ScientSkillsToolkit).pipe(
+const ScientSkillsToolkitRegistrationLive = McpServer.toolkit(ScientSkillsToolkit).pipe(
   Layer.provide(ScientSkillsToolkitHandlersLive),
 );
 

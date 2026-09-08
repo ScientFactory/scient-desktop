@@ -225,9 +225,7 @@ export const resolveFileManagerRevealKindForConfig = <E, R>(
   discovery: Effect.Effect<FileManagerRevealKind | undefined, E, R>,
 ) => resolveDiscoveryForConfig(discovery, () => undefined);
 
-export const redactProviderAuthorizationForReadOnlyClient = (
-  provider: ServerProvider,
-): ServerProvider => {
+const redactProviderAuthorizationForReadOnlyClient = (provider: ServerProvider): ServerProvider => {
   const connection = provider.connection;
   const operation = connection?.operation;
   if (

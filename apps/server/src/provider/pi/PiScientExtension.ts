@@ -34,7 +34,7 @@ interface PiExtensionApi {
   }): void;
 }
 
-export async function piScientExtension(pi: PiExtensionApi): Promise<void> {
+async function piScientExtension(pi: PiExtensionApi): Promise<void> {
   const endpoint = process.env.SCIENT_PI_MCP_ENDPOINT;
   const authorization = process.env.SCIENT_PI_MCP_AUTHORIZATION;
   const awareness = process.env.SCIENT_PI_AWARENESS ?? "";

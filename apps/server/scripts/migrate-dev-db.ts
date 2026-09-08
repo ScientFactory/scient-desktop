@@ -503,7 +503,7 @@ const formatSize = (bytes: number): string =>
     ? `${(bytes / (1024 * 1024)).toFixed(1)} MB`
     : `${(bytes / 1024).toFixed(0)} KB`;
 
-export const migrateDevDbCommand = Command.make(
+const migrateDevDbCommand = Command.make(
   "migrate-dev-db",
   {
     projects: Flag.integer("projects").pipe(
