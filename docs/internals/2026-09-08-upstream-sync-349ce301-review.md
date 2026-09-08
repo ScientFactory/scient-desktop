@@ -2,13 +2,15 @@
 
 Status: the reviewed `349ce301` implementation has a local history-preserving checkpoint.
 The additional 22 commits through `eb115063` are composed in the same candidate. Automated
-review of the extension is complete; the owner-approved native question-attachment fork fix
-is implemented and undergoing the final combined gate.
+review of the extension and the owner-approved native question-attachment fork fix is complete.
+The final combined automated gate passed; the candidate is ready for manual acceptance.
 Manual acceptance, PR, CI, and publication remain separate gates.
 
 ## Frozen boundary
 
-- Scient base and reverified `origin/main`: `4d4d53d80595de0f0da2308ce9b25259e094d0c8`
+- Original Scient base: `4d4d53d80595de0f0da2308ce9b25259e094d0c8`
+- Refreshed Scient main: `507b8f1f80ca6eb24cdeabb46f849a949cf0b2b4` (PR #264),
+  merged without conflict as `e75f483f05`; canonical local main fast-forwarded to the same main.
 - Previous upstream receipt: `223ff4490f764a74ff911589e97b9bbcd595fee8`
 - Original upstream target: `349ce3014233352e073a5fc1b3f12bd786160913`
 - Original range: 138 official commits; extended range: 160 through `eb115063`
@@ -17,8 +19,8 @@ Manual acceptance, PR, CI, and publication remain separate gates.
 - Upstream push URL: `DISABLED`
 
 No upstream commit was cherry-picked, replayed, or squashed. The original merge is now
-`c482622f09`, with `349ce301` as its literal second parent. The extension targets
-`eb115063634c416c6362cc407f8572cb0c136ddf` as another literal second parent in the same
+`c482622f09`, with `349ce301` as its literal second parent. Extension merge `c680824fe2` has
+`eb115063634c416c6362cc407f8572cb0c136ddf` as its literal second parent in the same
 branch and eventual PR. `upstream-state.json` deliberately retains the last qualified boundary
 until the extended candidate passes its gate.
 
@@ -243,6 +245,12 @@ regressions cover admission with missing question files, earlier boundaries, pen
 exclusion, malformed or unscoped records, independent identities, and context/attachment limits.
 This is synthetic backend evidence, not a live-provider or visual acceptance claim.
 
+The fix checkpoint is `5307bd237d`. Full typechecking subsequently corrected a test-only
+unknown-payload spread to use the decoded answer fixture; error wording was also made accurate
+for both pre-fork admission and an already-created fork's bootstrap. The focused suite was
+rerun on those corrections. Main's already-approved analytics notice was merged unchanged;
+this alignment does not introduce a separate analytics activation decision.
+
 ### Extended candidate automated qualification
 
 - Full workspace test run: 19,636 passed and 108 skipped. After the final web-only root-marker
@@ -264,3 +272,26 @@ This is synthetic backend evidence, not a live-provider or visual acceptance cla
 No computer use or visual review was performed. No remote push, PR, main merge, release, or
 development-profile cleanup/restart was performed. The unrelated ProviderInstanceCard changes
 already present in this shared candidate remain outside this pass's commit scope.
+
+Product diff whitespace checks pass. A whole-history whitespace scan also reports inherited
+whitespace in `.repos` reference snapshots; those read-only donor files remain unchanged by
+the fork fix rather than being reformatted during alignment.
+
+### Final fork fix and main refresh qualification
+
+- Full workspace run passed: 19,643 tests, with 108 skipped. Its server phase passed 6,239
+  tests in 456 files. After incorporating main's analytics-notice PR, the complete web suite
+  passed again: 6,820 tests in 623 files (that PR removes two gate-specific tests).
+- The corrected fork suite passed again: 165 tests across 13 files. Latest workspace typechecks,
+  lint, production build, non-visual Electron startup, formatting, export enforcement, branding,
+  onboarding seam, provenance, and product whitespace checks passed. Existing diagnostic
+  warnings and the previously stated platform/visual limitations remain.
+- Literal ancestry includes both `eb115063` and refreshed main `507b8f1f80`. The qualified
+  integration cursor remains unchanged until manual acceptance; no remote publication is implied.
+- The shared candidate's unrelated ProviderInstanceCard edits were preserved and exercised by
+  the web suite, but not committed as part of this fork fix or alignment extension.
+
+Manual review should use a rebuilt candidate backend: submit an agent-question attachment,
+fork its completed response, inspect the retained answer/file and use it with the new provider.
+Also fork an earlier response and confirm that later answers/files are excluded. No dev app
+was restarted during this pass, and no live-provider success is claimed by the automated tests.

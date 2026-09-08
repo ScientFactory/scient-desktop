@@ -16,6 +16,7 @@ import * as SqlClient from "effect/unstable/sql/SqlClient";
 
 import { SqlitePersistenceMemory } from "../../persistence/Layers/Sqlite.ts";
 import { questionAnswerActivity } from "./questionAnswer.test-fixtures.ts";
+import { retainQuestionAnswers } from "./retainedQuestionAnswers.ts";
 import {
   ScientForkContextBootstrap,
   ScientForkContextBootstrapLive,
@@ -256,7 +257,10 @@ it.layer(layer)("ScientForkContextBootstrap", (it) => {
             {
               ...questionAnswerActivity("turn-assistant-1"),
               payload: {
-                ...questionAnswerActivity("turn-assistant-1").payload,
+                ...retainQuestionAnswers(
+                  [questionAnswerActivity("turn-assistant-1")],
+                  new Set(["turn-assistant-1"]),
+                ).answers[0]!.answer,
                 answers: { dataset: "x".repeat(2000) },
               },
             },

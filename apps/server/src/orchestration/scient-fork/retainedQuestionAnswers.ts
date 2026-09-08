@@ -39,7 +39,7 @@ export function retainQuestionAnswers(
       return {
         answers: [],
         error:
-          "A retained question answer cannot be decoded safely. The conversation has not been forked.",
+          "A retained question answer cannot be decoded safely. Fork context cannot be prepared.",
       };
     }
     seen.add(activity.id);
