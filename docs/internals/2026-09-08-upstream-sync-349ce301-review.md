@@ -6,7 +6,9 @@ review of the extension and the owner-approved native question-attachment fork f
 Those checkpoints passed their combined automated gates. A further seven commits through
 `12391bd0` are composed below and passed final automated qualification. The combined candidate
 is ready for manual acceptance.
-Manual acceptance, PR, CI, and publication remain separate gates.
+The owner subsequently authorized PR delivery and history-preserving auto-merge after CI.
+This authorization is not additional visual or native-platform test evidence; release publication
+remains separate. Earlier checkpoint status statements below describe their state at the time.
 
 ## Frozen boundary
 
@@ -25,8 +27,10 @@ Manual acceptance, PR, CI, and publication remain separate gates.
 No upstream commit was cherry-picked, replayed, or squashed. The original merge is now
 `c482622f09`, with `349ce301` as its literal second parent. Extension merge `c680824fe2` has
 `eb115063634c416c6362cc407f8572cb0c136ddf` as its literal second parent in the same
-branch and eventual PR. `upstream-state.json` deliberately retains the last qualified boundary
-until the extended candidate passes its gate.
+branch and eventual PR. Final extension merge `d32a018817139808efe4a784b5d004df54d705bb`
+has `12391bd0d38eef6655b7a9f8945d0cb5febadc2b` as its literal second parent.
+After the full automated gate and owner delivery authorization, `upstream-state.json` advances
+to that exact target. Hosted CI and remote merge status are established by the PR, not this receipt.
 
 ## Composition and review
 
