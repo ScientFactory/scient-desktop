@@ -1,9 +1,11 @@
-# Upstream sync review through `eb115063`
+# Upstream sync review through `12391bd0`
 
 Status: the reviewed `349ce301` implementation has a local history-preserving checkpoint.
 The additional 22 commits through `eb115063` are composed in the same candidate. Automated
 review of the extension and the owner-approved native question-attachment fork fix is complete.
-The final combined automated gate passed; the candidate is ready for manual acceptance.
+Those checkpoints passed their combined automated gates. A further seven commits through
+`12391bd0` are composed below and passed final automated qualification. The combined candidate
+is ready for manual acceptance.
 Manual acceptance, PR, CI, and publication remain separate gates.
 
 ## Frozen boundary
@@ -13,7 +15,9 @@ Manual acceptance, PR, CI, and publication remain separate gates.
   merged without conflict as `e75f483f05`; canonical local main fast-forwarded to the same main.
 - Previous upstream receipt: `223ff4490f764a74ff911589e97b9bbcd595fee8`
 - Original upstream target: `349ce3014233352e073a5fc1b3f12bd786160913`
-- Original range: 138 official commits; extended range: 160 through `eb115063`
+- Original range: 138 official commits; extended range: 167 through `12391bd0`
+- Latest upstream target: `12391bd0d38eef6655b7a9f8945d0cb5febadc2b`
+- Latest target description: `v0.0.41-nightly.20260908.1400-7-g12391bd0d3`
 - Branch: `codex/t3-sync-349ce301-20260908`
 - Initial conflicts: 70; first phase resolved 40, final phase resolved 30; no unmerged paths remain.
 - Upstream push URL: `DISABLED`
@@ -295,3 +299,63 @@ Manual review should use a rebuilt candidate backend: submit an agent-question a
 fork its completed response, inspect the retained answer/file and use it with the new provider.
 Also fork an earlier response and confirm that later answers/files are excluded. No dev app
 was restarted during this pass, and no live-provider success is claimed by the automated tests.
+
+## Additional upstream range: `eb115063..12391bd0`
+
+The owner approved extending the same local history-preserving candidate again, without pushing
+or merging to main. This range contains seven official commits and six behavioral changes:
+`b5d89038` has no tree change. The range touches 54 paths; 17 overlap Scient changes and five
+actually conflicted. Refreshed `origin/main` remains `507b8f1f80`.
+
+### Adopted behavior and composition
+
+- Sidebar file drops open the target conversation and add files through the existing composer
+  attachment path, without sending. Both sidebar implementations receive the upstream queue and
+  navigation cleanup. Scoped thread identity, promoting drafts, missing-thread cleanup, repeat
+  drops, and Scient selection behavior remain. Question attachments still use the current question's
+  validation and capacity rules; an unsupported question reports the existing error. Unsent files
+  do not become retained fork history just because they were dropped on a sidebar row.
+- Browser snapshots bound their text, preserve useful locators, explain omissions, and optionally
+  save their PNG on the executing server. JavaScript evaluation returns an object containing
+  `value`, including for arrays and scalar results. Scient's MCP registrations and authorization
+  remain unchanged. Saved absolute PNG paths use the existing `media-file` asset path and the
+  conversation's environment; no client-local path assumption or additional file-access grant was
+  introduced.
+- Windows terminal closing uses node-pty's no-POSIX-signal process-tree shutdown. This is separate
+  from the earlier Scient Droid runtime-scope teardown fix, which remains intact.
+- Android can use wallpaper-derived Material You colors and an independently optional Material
+  You layout. The layout defaults off and is Android-only. Scient project guards, Skills and
+  provider capabilities remain; no mobile publication workflow is activated.
+- The new-thread project selector shows project favicons. Scient retains its workspace wording,
+  field-wise project identity checks, and real-project requirement.
+
+The five conflicts were composed narrowly: server paths retain both document and browser artifact
+directories; the legacy sidebar retains selection controls with one async navigation prop and
+the new drop callback; the project selector combines upstream layout/icons with Scient semantics;
+sidebar documentation retains settlement behavior and adds file drops; pnpm regenerated the
+lockfile from the combined manifests. Mobile theme artifacts were regenerated and match the
+upstream generated result. The regenerated lockfile also normalizes two existing transitive
+references to versions already present in the lockfile; no provider runtime/catalog update is added.
+
+### Qualification and acceptance
+
+The frozen candidate passed the full workspace run: 19,662 tests passed and 108 skipped.
+This includes 6,829 web tests in 624 files and 6,247 server tests in 456 files. The focused
+MCP/asset/terminal tests passed 59 tests across three files; file-drop queue/handler tests passed
+13 across two files. Workspace typechecks, production build, non-visual Electron startup smoke,
+formatting, lint, unused-code/export enforcement, branding, and product whitespace checks passed.
+Analysis, onboarding against the exact target, Skills, LaTeX, and provenance guards passed.
+The provenance cursor remains the previous qualified boundary pending manual acceptance;
+the extension preserves the exact official target as its merge's second parent.
+
+Existing advisory diagnostics remain. SwiftLint, ktlint, and detekt were unavailable and explicitly
+skipped by the mobile static check. No computer use or visual review was performed.
+Native Windows behavior and Android appearance still
+need their respective platform acceptance; a Mac-hosted unit test is not native-device evidence.
+The unrelated ProviderInstanceCard edits remain unstaged and outside this alignment's commit.
+
+Additional manual checks: drop multiple files onto the open conversation, a different conversation,
+and a search result; confirm the correct unsent composer receives them. Check a pending question's
+file handling, and confirm normal thread dragging still reorders rows. Inspect the project-picker
+favicon and long-title truncation. When testing browser tools, request a saved screenshot and check
+that its Markdown image renders in the conversation, including on a remote environment if used.

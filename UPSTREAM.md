@@ -45,11 +45,12 @@ publication remains a separate gate.
 
 ## Receiving T3 updates
 
-The local alignment through `eb115063` is documented in the
+The local alignment through `12391bd0` is documented in the
 [2026-09-08 review](docs/internals/2026-09-08-upstream-sync-349ce301-review.md).
 It extends the reviewed `349ce301` checkpoint in the same history-preserving
 candidate. It does not yet advance the integrated boundary above. That record includes
-the native capture identity composition, question attachments, qualification results,
+the native capture identity composition, question attachments, sidebar file drops, browser snapshot
+improvements, optional Android appearance, qualification results,
 and remaining review gates.
 
 The canonical procedure and stop conditions live in the
