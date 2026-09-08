@@ -687,6 +687,14 @@
   white-space: nowrap;
 }
 
+.scient-markdown-document :is(th, td)[data-scient-table-column-direction="ltr"] {
+  text-align: left;
+}
+
+.scient-markdown-document :is(th, td)[data-scient-table-column-direction="rtl"] {
+  text-align: right;
+}
+
 .scient-markdown-document.is-read a,
 .scient-markdown-document.is-write a {
   color: var(--info-foreground);

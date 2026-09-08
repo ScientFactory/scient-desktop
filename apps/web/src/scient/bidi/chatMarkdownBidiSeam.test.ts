@@ -80,6 +80,15 @@ describe("ChatMarkdown BiDi seam", () => {
       /\.chat-markdown \.scient-flow-arrow-long \{[^}]*display:\s*inline-block;/u,
     );
   });
+
+  it("maps automatic table-column direction to a stable physical alignment", () => {
+    expect(bidiCssSource).toMatch(
+      /\[data-scient-table-column-direction="ltr"\]\s*\{\s*text-align:\s*left;/u,
+    );
+    expect(bidiCssSource).toMatch(
+      /\[data-scient-table-column-direction="rtl"\]\s*\{\s*text-align:\s*right;/u,
+    );
+  });
 });
 
 describe("user Markdown plus Scient BiDi", () => {
@@ -115,6 +124,17 @@ describe("user Markdown plus Scient BiDi", () => {
 
     expect(html).toContain("שלב ראשון ← שלב שני");
     expect(html).toContain("שלום → עולם");
+  });
+
+  it("keeps automatic alignment stable down each mixed-language table column", () => {
+    const html = renderUserPipeline(
+      ["| אבחנה | Treatment |", "| --- | --- |", "| TNBC | טיפול |"].join("\n"),
+    );
+
+    expect(html.match(/data-scient-table-column-direction="rtl"/gu)).toHaveLength(2);
+    expect(html.match(/data-scient-table-column-direction="ltr"/gu)).toHaveLength(2);
+    expect(html).toContain('<td dir="ltr" data-scient-table-column-direction="rtl">TNBC</td>');
+    expect(html).toContain('<td dir="rtl" data-scient-table-column-direction="ltr">טיפול</td>');
   });
 
   it("emits thickening and lift classes for the styled RTL arrows", () => {

@@ -13,6 +13,7 @@ import {
   resolveProseBlockDirection,
   resolveStreamingMarkdownDirection,
   resolveTableCellDirection,
+  resolveTableColumnDirectionFromCounts,
 } from "./contentDirection";
 
 describe("message and block direction", () => {
@@ -72,6 +73,18 @@ describe("message and block direction", () => {
     expect(resolveDominantDirection("English שלום עולם נוסף", "ltr")).toBe("rtl");
     expect(resolveDominantDirection("ab אב", "ltr")).toBe("ltr");
     expect(resolveDominantDirection("ab אב", "rtl")).toBe("rtl");
+  });
+
+  it("uses prose first and technical content only for identifier-only table columns", () => {
+    expect(
+      resolveTableColumnDirectionFromCounts({ ltr: 0, rtl: 8 }, { ltr: 40, rtl: 8 }, "ltr"),
+    ).toBe("rtl");
+    expect(
+      resolveTableColumnDirectionFromCounts({ ltr: 0, rtl: 0 }, { ltr: 12, rtl: 0 }, "rtl"),
+    ).toBe("ltr");
+    expect(
+      resolveTableColumnDirectionFromCounts({ ltr: 0, rtl: 0 }, { ltr: 0, rtl: 0 }, "rtl"),
+    ).toBe("rtl");
   });
 
   it("resolves each table cell independently and uses automatic table flow only for ties", () => {

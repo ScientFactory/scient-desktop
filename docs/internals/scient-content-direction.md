@@ -26,11 +26,22 @@ equations, literal TeX, and scientific identifiers such as `HER2` and `cN0` do
 not decide column order. English-only prose tables can therefore remain LTR
 inside an RTL message, while technical terms do not flip a Hebrew table. Each
 cell resolves its own text direction so mixed-language content and punctuation
-remain readable without changing the table's column order. An explicit user
-mode remains authoritative. Headings use the resolved message direction except
-inside table cells, where they follow the cell. The transform does not
-duplicate or replace the T3 Markdown renderer and intentionally leaves code
-elements alone.
+remain readable without changing the table's column order. Automatic visual
+alignment is resolved once per logical column from all of its cells: ordinary
+prose is the primary signal, identifier-only columns use their raw script as a
+fallback, and neutral or tied columns follow the table. Every unaligned cell in
+that column receives the same physical left or right alignment even when its
+local text direction differs. Authored GFM left, center, and right alignment
+remains authoritative. Row and column spans are mapped to logical columns in
+the rendered tree; the GFM editor continues to enforce its existing rectangular
+table model. The renderer and editor table node view use the same column rule,
+and the resulting metadata never enters Markdown source. The editor caches
+immutable row counts and updates cell attributes only when a column result or
+table structure changes, preserving the large-table typing budget. An
+explicit user mode remains authoritative. Headings use the resolved message
+direction except inside table cells, where they follow the cell. The transform
+does not duplicate or replace the T3 Markdown renderer and intentionally leaves
+code elements alone.
 Wide chat tables give the DOM viewport and Base UI scrollbar the same resolved
 direction, keeping the custom thumb synchronized with Chromium's RTL scroll
 coordinates.

@@ -244,6 +244,23 @@ export function resolveTableCellDirectionFromCounts(
 }
 
 /**
+ * Resolves one visual alignment direction for a complete table column.
+ * Ordinary prose is authoritative when present. Identifier-only columns use
+ * their raw script as a fallback, while neutral columns follow the table.
+ * Cell-level `dir` remains separate so mixed punctuation keeps its local flow.
+ */
+export function resolveTableColumnDirectionFromCounts(
+  proseCounts: StrongScriptCounts,
+  rawCounts: StrongScriptCounts,
+  tableDirection: FixedContentDirection,
+): FixedContentDirection {
+  if (proseCounts.rtl > 0 || proseCounts.ltr > 0) {
+    return resolveDominantDirectionFromCounts(proseCounts, tableDirection);
+  }
+  return resolveDominantDirectionFromCounts(rawCounts, tableDirection);
+}
+
+/**
  * Normalizes only obvious right-flow arrows in a message whose base direction
  * is RTL. The renderer additionally excludes technical and non-prose nodes.
  *

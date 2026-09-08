@@ -34,6 +34,16 @@
   text-align: start;
 }
 
+/* Column alignment is stable even when individual cells need a different
+   Unicode base direction for mixed-language punctuation. */
+.chat-markdown :is(th, td)[data-scient-table-column-direction="ltr"] {
+  text-align: left;
+}
+
+.chat-markdown :is(th, td)[data-scient-table-column-direction="rtl"] {
+  text-align: right;
+}
+
 .chat-markdown[data-scient-content-direction="rtl"] li.task-list-item input[type="checkbox"],
 .chat-markdown[data-scient-content-direction="ltr"] li.task-list-item input[type="checkbox"] {
   margin: 0 0 0.15em;
