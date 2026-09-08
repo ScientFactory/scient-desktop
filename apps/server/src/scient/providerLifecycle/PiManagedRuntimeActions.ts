@@ -16,7 +16,7 @@ import {
 } from "./ManagedProviderRuntimeActions.ts";
 
 const DEFAULT_PI_BINARY = "pi";
-export const PI_MANAGED_RUNTIME_CONTRACT_REVISION = 1;
+const PI_MANAGED_RUNTIME_CONTRACT_REVISION = 1;
 
 function detectTargetSafely(input: { readonly platform: NodeJS.Platform; readonly arch: string }) {
   try {

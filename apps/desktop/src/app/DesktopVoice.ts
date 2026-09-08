@@ -44,7 +44,7 @@ import * as Schema from "effect/Schema";
 import * as DesktopEnvironment from "./DesktopEnvironment.ts";
 import * as DesktopAppSettings from "../settings/DesktopAppSettings.ts";
 
-export class VoiceRequestError extends Schema.TaggedErrorClass<VoiceRequestError>()(
+export class VoiceRequestError extends Schema.TaggedError<VoiceRequestError>()(
   "VoiceRequestError",
   {
     kind: VoiceTranscriptionErrorKind,
@@ -59,10 +59,9 @@ export class VoiceRequestError extends Schema.TaggedErrorClass<VoiceRequestError
 const isVoiceRequestError = Schema.is(VoiceRequestError);
 const isVoiceModelId = Schema.is(VoiceModelIdSchema);
 
-class VoiceHostProbeError extends Schema.TaggedErrorClass<VoiceHostProbeError>()(
-  "VoiceHostProbeError",
-  { operation: Schema.Literals(["runtime", "model", "storage"]) },
-) {}
+class VoiceHostProbeError extends Schema.TaggedError<VoiceHostProbeError>()("VoiceHostProbeError", {
+  operation: Schema.Literals(["runtime", "model", "storage"]),
+}) {}
 
 function toVoiceRequestError(
   cause: unknown,
@@ -573,6 +572,7 @@ export const makeWithDependencies = (dependencies: DesktopVoiceDependencies) =>
     });
   });
 
+/** @public Canonical Effect service construction; production uses the composed layer. */
 export const make = makeWithDependencies(defaultDependencies);
 
 export const layer = Layer.effect(DesktopVoice, make);

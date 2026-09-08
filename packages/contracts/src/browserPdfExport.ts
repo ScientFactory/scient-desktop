@@ -78,7 +78,7 @@ export const BrowserPdfExportResult = Schema.Struct({
 });
 export type BrowserPdfExportResult = typeof BrowserPdfExportResult.Type;
 
-export class BrowserPdfExportError extends Schema.TaggedErrorClass<BrowserPdfExportError>()(
+export class BrowserPdfExportError extends Schema.TaggedError<BrowserPdfExportError>()(
   "BrowserPdfExportError",
   {
     reason: Schema.Literals(["too-large", "invalid-pdf", "superseded", "storage", "failed"]),

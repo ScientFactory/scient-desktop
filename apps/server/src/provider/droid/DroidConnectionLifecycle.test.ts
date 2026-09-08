@@ -11,6 +11,7 @@ import * as Path from "effect/Path";
 import * as PubSub from "effect/PubSub";
 import * as Redacted from "effect/Redacted";
 import * as Stream from "effect/Stream";
+import * as ChildProcessSpawner from "effect/unstable/process/ChildProcessSpawner";
 import { ServerConfig } from "../../config.ts";
 import type { ResolvedModelConnection } from "../../customModels.ts";
 import { makeDroidTextGeneration } from "../../textGeneration/DroidTextGeneration.ts";
@@ -28,6 +29,21 @@ const fixture = (stallFirst = true) =>
     const fs = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
     const root = yield* fs.makeTempDirectoryScoped({ prefix: "scient-droid-lifecycle-" });
+    const processes: Array<ChildProcessSpawner.ChildProcessHandle> = [];
+    // Keep a failing teardown assertion from leaving its real test child behind.
+    yield* Effect.addFinalizer(() =>
+      Effect.forEach(
+        processes,
+        (child) =>
+          child.isRunning.pipe(
+            Effect.flatMap((running) =>
+              running ? child.kill({ forceKillAfter: "1 second" }) : Effect.void,
+            ),
+            Effect.ignore,
+          ),
+        { discard: true },
+      ),
+    );
     const binaryPath = path.join(root, "droid");
     yield* fs.writeFileString(
       binaryPath,
@@ -85,6 +101,15 @@ const fixture = (stallFirst = true) =>
         Effect.gen(function* () {
           const runtime = yield* makeDroidAcpRuntime({
             ...input,
+            childProcessSpawner: ChildProcessSpawner.make((command) =>
+              input.childProcessSpawner.spawn(command).pipe(
+                Effect.tap((child) =>
+                  Effect.sync(() => {
+                    processes.push(child);
+                  }),
+                ),
+              ),
+            ),
             environment: {
               ...input.environment,
               HOME: root,
@@ -117,6 +142,7 @@ const fixture = (stallFirst = true) =>
     );
     return {
       root,
+      processes,
       factory,
       partial,
       promptEntered,
@@ -283,7 +309,7 @@ for (const change of ["rotate", "remove"] as const) {
     }).pipe(Effect.scoped, Effect.provide(testLayer)),
   );
   it.effect(
-    `fails interrupted background generation and succeeds on the next request after ${change}`,
+    `terminates revoked background generation and cleans up its replacement after ${change}`,
     () =>
       Effect.gen(function* () {
         const f = yield* fixture();
@@ -295,10 +321,14 @@ for (const change of ["rotate", "remove"] as const) {
         yield* Deferred.await(f.partial);
         yield* f.update(change);
         expect((yield* Fiber.join(pending))._tag).toBe("Failure");
+        expect(f.processes).toHaveLength(1);
+        expect(yield* f.processes[0]!.isRunning).toBe(false);
         const modelSelection = change === "remove" ? { instanceId, model: "default" } : f.selection;
         expect(yield* generation.generateThreadTitle({ ...input, modelSelection })).toEqual({
           title: "Recovered",
         });
+        expect(f.processes).toHaveLength(2);
+        expect(yield* f.processes[1]!.isRunning).toBe(false);
       }).pipe(Effect.scoped, Effect.provide(testLayer)),
   );
 }

@@ -23,7 +23,7 @@ import {
  * Error raised when the Scient-owned resolver cannot find or validate a fork
  * boundary from SQL-backed projection and lineage data.
  */
-export class ForkBoundaryResolutionError extends Schema.TaggedErrorClass<ForkBoundaryResolutionError>()(
+export class ForkBoundaryResolutionError extends Schema.TaggedError<ForkBoundaryResolutionError>()(
   "ForkBoundaryResolutionError",
   { detail: Schema.String },
 ) {
@@ -44,7 +44,7 @@ export const ProjectionForkBoundaryRow = Schema.Struct({
 });
 export type ProjectionForkBoundaryRow = typeof ProjectionForkBoundaryRow.Type;
 
-export function mapForkBoundaries(
+function mapForkBoundaries(
   rows: ReadonlyArray<ProjectionForkBoundaryRow>,
   threadCreatedAt: string,
   copiedBoundaries: ReadonlyArray<ThreadForkCopiedBoundary> = [],
@@ -107,7 +107,7 @@ export function mapForkBoundaries(
   return [emptyBoundary, ...boundaries];
 }
 
-export function makeForkBoundaryQueries(sql: SqlClient.SqlClient) {
+function makeForkBoundaryQueries(sql: SqlClient.SqlClient) {
   return {
     listForkBoundaryRowsByThread: SqlSchema.findAll({
       Request: Schema.Struct({ threadId: ThreadId }),

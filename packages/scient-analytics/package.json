@@ -15,7 +15,7 @@
   },
   "scripts": {
     "contract:fixtures": "node src/generateConformance.ts",
-    "typecheck": "tsgo --noEmit",
+    "typecheck": "tsc --noEmit",
     "test": "vp test run"
   },
   "devDependencies": {

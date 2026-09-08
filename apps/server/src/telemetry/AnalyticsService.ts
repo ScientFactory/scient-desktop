@@ -168,6 +168,7 @@ export class AnalyticsService extends Context.Service<
   static readonly layerTest = AnalyticsService.layerDisabled;
 }
 
+/** @public Service construction is part of the canonical Effect module API. */
 export const make = Effect.gen(function* () {
   const analyticsConfig = yield* AnalyticsEnvConfig;
   if (!analyticsConfig.enabled) {
@@ -401,4 +402,5 @@ export const make = Effect.gen(function* () {
 
 export const layer = Layer.effect(AnalyticsService, make);
 export const layerTest = AnalyticsService.layerTest;
+/** @public Service construction is part of the canonical Effect module API. */
 export const layerDisabled = AnalyticsService.layerDisabled;

@@ -1,5 +1,7 @@
-import { createFileRoute, redirect, useNavigate } from "@tanstack/react-router";
+import { createFileRoute, redirect, useLocation, useNavigate } from "@tanstack/react-router";
+import { useState } from "react";
 
+import { NoProjectsHero } from "../components/NoProjectsHero";
 import { WelcomeWizard } from "../components/onboarding/WelcomeWizard";
 import { useNewThreadHandler } from "../hooks/useHandleNewThread";
 
@@ -22,19 +24,29 @@ export const Route = createFileRoute("/welcome")({
 
 function WelcomeRouteView() {
   const navigate = useNavigate();
+  // The root shell can remount this pending outlet after the location changes.
+  // Never reopen setup while the destination route is still loading.
+  const isWelcomeRoute = useLocation({ select: (location) => location.pathname === "/welcome" });
+  const [dismissed, setDismissed] = useState(false);
   const openNewThread = useNewThreadHandler();
   return (
-    <WelcomeWizard
-      localAvailable={false}
-      onDone={(projectRef) => {
-        if (projectRef !== undefined) {
-          void openNewThread(projectRef, { replace: true }).catch(() => {
+    <>
+      <NoProjectsHero />
+      {isWelcomeRoute && !dismissed ? (
+        <WelcomeWizard
+          localAvailable={false}
+          onDone={(projectRef) => {
+            setDismissed(true);
+            if (projectRef !== undefined) {
+              void openNewThread(projectRef, { replace: true }).catch(() => {
+                void navigate({ to: "/", replace: true });
+              });
+              return;
+            }
             void navigate({ to: "/", replace: true });
-          });
-          return;
-        }
-        void navigate({ to: "/", replace: true });
-      }}
-    />
+          }}
+        />
+      ) : null}
+    </>
   );
 }

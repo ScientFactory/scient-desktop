@@ -252,7 +252,7 @@ export const makeSpawnProbe = (
  * Built as an effect because both halves have to be acquired: the bridge is
  * found on disk and the probe needs the process port.
  */
-export const pythonRuntimeBinding: Effect.Effect<
+const pythonRuntimeBinding: Effect.Effect<
   ComputeRuntimeBinding,
   ComputeRuntimeError,
   DuplexProcess | ExecutionProcess | FileSystem.FileSystem

@@ -50,7 +50,7 @@ export type ResolvedModelConnection = CustomModelConnection &
   );
 
 /** Run before setup IO and again under the commit lock. */
-export const validateCustomModelSave = Effect.fn("CustomModels.validateSave")(function* (
+const validateCustomModelSave = Effect.fn("CustomModels.validateSave")(function* (
   current: ServerSettings,
   input: CustomModelSaveInput,
 ) {

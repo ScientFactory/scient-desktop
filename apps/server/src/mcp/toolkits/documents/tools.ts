@@ -29,7 +29,7 @@ const NonEmptyMessage = Schema.String.check(
   Schema.isMaxLength(2_048),
 );
 
-export class ScientPdfBuildToolError extends Schema.TaggedErrorClass<ScientPdfBuildToolError>()(
+export class ScientPdfBuildToolError extends Schema.TaggedError<ScientPdfBuildToolError>()(
   "ScientPdfBuildToolError",
   {
     code: Schema.Literals([
@@ -52,7 +52,7 @@ export class ScientPdfBuildToolError extends Schema.TaggedErrorClass<ScientPdfBu
   },
 ) {}
 
-export class ScientLatexBuildToolError extends Schema.TaggedErrorClass<ScientLatexBuildToolError>()(
+export class ScientLatexBuildToolError extends Schema.TaggedError<ScientLatexBuildToolError>()(
   "ScientLatexBuildToolError",
   {
     code: Schema.Literals([

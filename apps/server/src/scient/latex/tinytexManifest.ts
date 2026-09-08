@@ -73,10 +73,7 @@ function isTinyTexPlatformArch(value: string): value is TinyTexPlatformArch {
 }
 
 /** `"win32-x64"`-style key for whatever platform/architecture pair is asked about. */
-export function tinyTexPlatformArchKey(
-  platform: NodeJS.Platform,
-  arch: NodeJS.Architecture,
-): string {
+function tinyTexPlatformArchKey(platform: NodeJS.Platform, arch: NodeJS.Architecture): string {
   return `${platform}-${arch}`;
 }
 

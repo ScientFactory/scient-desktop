@@ -13,6 +13,7 @@ import * as Path from "effect/Path";
 
 import * as DesktopAppSettings from "../settings/DesktopAppSettings.ts";
 import * as DesktopConfig from "./DesktopConfig.ts";
+import { resolveLinuxDesktopEntryName } from "./DesktopEarlyElectronStartup.ts";
 import { resolveDesktopBaseDir, resolveDesktopStateDir } from "./DesktopStatePaths.ts";
 import { isNightlyDesktopVersion } from "../updates/updateChannels.ts";
 import { SCIENT_DESKTOP_IDENTITY } from "@t3tools/shared/scientDesktopIdentity";
@@ -126,7 +127,7 @@ function resolveDesktopAppStageLabel(input: {
   return isNightlyDesktopVersion(input.appVersion) ? "Nightly" : "Alpha";
 }
 
-function resolveDesktopAppBranding(input: {
+export function resolveDesktopAppBranding(input: {
   readonly isDevelopment: boolean;
   readonly appVersion: string;
 }): DesktopAppBranding {
@@ -266,9 +267,7 @@ const make = Effect.fn("desktop.environment.make")(function* (
       isDevelopment,
       override: config.appUserModelIdOverride,
     }),
-    linuxDesktopEntryName: isDevelopment
-      ? SCIENT_DESKTOP_IDENTITY.linuxDevelopmentDesktopEntryName
-      : SCIENT_DESKTOP_IDENTITY.linuxDesktopEntryName,
+    linuxDesktopEntryName: resolveLinuxDesktopEntryName(isDevelopment),
     linuxWmClass: isDevelopment
       ? SCIENT_DESKTOP_IDENTITY.linuxDevelopmentWmClass
       : SCIENT_DESKTOP_IDENTITY.linuxWmClass,

@@ -4,7 +4,9 @@ import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
+import * as Option from "effect/Option";
 import * as PlatformError from "effect/PlatformError";
+import * as Result from "effect/Result";
 import * as TestClock from "effect/testing/TestClock";
 import { makeInstallerFilesystem } from "./runtimeFilesystem.ts";
 
@@ -52,9 +54,10 @@ it.effect(
       const exit = yield* Fiber.join(fiber);
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        const failure = Cause.squash(exit.cause);
-        expect(failure).toBeInstanceOf(AggregateError);
-        expect((failure as AggregateError).errors).toEqual(["original validation failure", lock]);
+        expect(Cause.findErrorOption(exit.cause)).toEqual(
+          Option.some("original validation failure"),
+        );
+        expect(Result.getOrThrow(Cause.findDefect(exit.cause))).toBe(lock);
       }
       expect(removals).toBeGreaterThan(1);
     }),

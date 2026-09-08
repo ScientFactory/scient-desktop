@@ -23,7 +23,7 @@ import { ComputeExecutionSource, ComputeProjectId } from "./record.ts";
  * once, at the edge, instead of every caller hand-validating the same fields.
  */
 
-export class ComputeOperationError extends Schema.TaggedErrorClass<ComputeOperationError>()(
+export class ComputeOperationError extends Schema.TaggedError<ComputeOperationError>()(
   "ComputeOperationError",
   {
     operation: Schema.Literals([

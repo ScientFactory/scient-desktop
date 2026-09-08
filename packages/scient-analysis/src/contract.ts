@@ -431,7 +431,7 @@ export function summarizeAnalysisRun(run: AnalysisRunSnapshot): AnalysisRunSumma
   };
 }
 
-export class AnalysisOperationError extends Schema.TaggedErrorClass<AnalysisOperationError>()(
+export class AnalysisOperationError extends Schema.TaggedError<AnalysisOperationError>()(
   "AnalysisOperationError",
   {
     operation: Schema.Literals([

@@ -43,7 +43,7 @@ export const ScientMarkdownImageInvalidReason = Schema.Literals([
 ]);
 export type ScientMarkdownImageInvalidReason = typeof ScientMarkdownImageInvalidReason.Type;
 
-export class ScientMarkdownImageInvalidError extends Schema.TaggedErrorClass<ScientMarkdownImageInvalidError>()(
+export class ScientMarkdownImageInvalidError extends Schema.TaggedError<ScientMarkdownImageInvalidError>()(
   "ScientMarkdownImageInvalidError",
   {
     reason: ScientMarkdownImageInvalidReason,
@@ -56,7 +56,7 @@ export class ScientMarkdownImageInvalidError extends Schema.TaggedErrorClass<Sci
   }
 }
 
-export class ScientMarkdownImageTooLargeError extends Schema.TaggedErrorClass<ScientMarkdownImageTooLargeError>()(
+export class ScientMarkdownImageTooLargeError extends Schema.TaggedError<ScientMarkdownImageTooLargeError>()(
   "ScientMarkdownImageTooLargeError",
   {
     byteLength: Schema.Int.check(Schema.isGreaterThan(0)),
@@ -70,7 +70,7 @@ export class ScientMarkdownImageTooLargeError extends Schema.TaggedErrorClass<Sc
   }
 }
 
-export class ScientMarkdownImageConflictError extends Schema.TaggedErrorClass<ScientMarkdownImageConflictError>()(
+export class ScientMarkdownImageConflictError extends Schema.TaggedError<ScientMarkdownImageConflictError>()(
   "ScientMarkdownImageConflictError",
   { message: Schema.String },
   { httpApiStatus: 409 },

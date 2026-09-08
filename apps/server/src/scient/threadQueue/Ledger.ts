@@ -12,7 +12,7 @@ import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 
-export class QueueError extends Schema.TaggedErrorClass<QueueError>()("QueueError", {
+export class QueueError extends Schema.TaggedError<QueueError>()("QueueError", {
   message: Schema.String,
 }) {}
 

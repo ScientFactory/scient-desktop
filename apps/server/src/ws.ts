@@ -14,6 +14,7 @@ import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Path from "effect/Path";
 import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
@@ -224,9 +225,7 @@ export const resolveFileManagerRevealKindForConfig = <E, R>(
   discovery: Effect.Effect<FileManagerRevealKind | undefined, E, R>,
 ) => resolveDiscoveryForConfig(discovery, () => undefined);
 
-export const redactProviderAuthorizationForReadOnlyClient = (
-  provider: ServerProvider,
-): ServerProvider => {
+const redactProviderAuthorizationForReadOnlyClient = (provider: ServerProvider): ServerProvider => {
   const connection = provider.connection;
   const operation = connection?.operation;
   if (
@@ -2175,6 +2174,7 @@ const makeWsRpcLayer = (
           observeRpcEffect(
             WS_METHODS.providerConsumeResetCredit,
             Effect.gen(function* () {
+              if ("sourceId" in input) return yield* usageLimitSources.consumeResetCredit(input);
               const instance = yield* providerInstances.getInstance(input.instanceId);
               // A disabled instance must not spend anything on its account.
               if (instance === undefined || !instance.enabled) {
@@ -3036,6 +3036,7 @@ const makeWsRpcLayer = (
           observeRpcEffect(
             WS_METHODS.assetsCreateUrl,
             Effect.gen(function* () {
+              const path = yield* Path.Path;
               if (input.resource._tag === "analysis-artifact") {
                 const analysisArtifact = yield* analysis.resolveArtifact(input.resource).pipe(
                   Effect.mapError(
@@ -3101,9 +3102,11 @@ const makeWsRpcLayer = (
                   generatedDocumentExpiresAtEpochMs: retained.expiresAtEpochMs,
                 });
               }
+              // An absolute media path can be linked from a thread on another environment.
               if (
                 input.resource._tag === "attachment" ||
-                input.resource._tag === "native-app-icon"
+                input.resource._tag === "native-app-icon" ||
+                (input.resource._tag === "media-file" && path.isAbsolute(input.resource.path))
               ) {
                 return yield* issueAssetUrl({ resource: input.resource });
               }

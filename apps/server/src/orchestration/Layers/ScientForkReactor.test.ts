@@ -15,6 +15,7 @@ import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
+import { questionAnswerActivity } from "../scient-fork/questionAnswer.test-fixtures.ts";
 
 import { checkpointRefForThreadTurn } from "../../checkpointing/Utils.ts";
 import { ServerConfig } from "../../config.ts";
@@ -515,6 +516,40 @@ describe("ScientForkReactor", () => {
                 detail: "Unavailable evidence.png",
               }),
             ),
+        }),
+      ),
+    ),
+  );
+
+  it.live("includes native question files in fork admission checks", () =>
+    Effect.gen(function* () {
+      yield* seedOrigin();
+      const engine = yield* OrchestrationEngineService;
+      yield* engine.dispatch({
+        type: "thread.activity.append",
+        commandId: CommandId.make("question-files"),
+        threadId: ORIGIN,
+        createdAt: CREATED_AT,
+        activity: questionAnswerActivity("origin-turn-1"),
+      });
+      const reactor = yield* ScientForkReactor;
+      const options = yield* reactor.getOptions({ originThreadId: ORIGIN });
+      expect(options.available).toBe(false);
+      expect(options.reason).toContain("measurements.csv");
+      expect(yield* readLineageRow(yield* SqlClient.SqlClient)).toBeUndefined();
+    }).pipe(
+      Effect.provide(
+        makeHarnessLayer([], [], true, {
+          checkSources: ({ threadId, attachments }) => {
+            expect(attachments.map((attachment) => attachment.name)).toEqual(["measurements.csv"]);
+            return Effect.fail(
+              new ScientForkAttachmentCopyError({
+                threadId,
+                reason: "source-unavailable",
+                detail: "Missing measurements.csv",
+              }),
+            );
+          },
         }),
       ),
     ),

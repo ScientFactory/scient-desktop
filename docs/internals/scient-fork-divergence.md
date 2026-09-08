@@ -522,6 +522,28 @@ counts remain explicit inside the injected context payload.
 
 ## Narrow T3-owned seams
 
+### Submitted question-answer continuity
+
+`scient-fork/retainedQuestionAnswers.ts` is the shared selection rule for fork admission,
+durable history copying, and provider bootstrap. It accepts only decodable
+`user-input.answer-submitted` activities associated with retained turn IDs. It does not infer
+boundaries from timestamps, copy pending questions, or inspect client drafts. An undecodable
+retained record or unscoped submitted answer fails explicitly instead of silently dropping data.
+
+The fork decider remaps activity, request, turn, and attachment identities. It emits historical
+`thread.activity-appended` events, never a question request or response command. Message-mode
+answers remain ordinary messages and are not duplicated. The existing attachment copier and
+projection cleanup own file lifecycle; no new storage schema or provider adapter is introduced.
+
+Bootstrap serializes separate `question-answer` context entries before their retained turn's
+terminal assistant message. This is provider-neutral history, not a new user instruction or an
+alteration of authored messages. Existing input/attachment budgets apply, with an explicit
+omitted-question-answer count. Copied turn identities preserve this behavior through re-fork,
+revert, and replay. Existing draft handoff and queue policies are unchanged.
+
+T3 question submission, activity schemas, rendering, and cleanup remain unchanged. Future
+upstream schema changes should be qualified against this selector and the fork cross-area tests.
+
 All production seams are additive and marked with `SCIENT-FORK:START` and
 `SCIENT-FORK:END` where practical.
 

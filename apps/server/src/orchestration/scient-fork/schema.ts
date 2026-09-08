@@ -8,4 +8,4 @@
  *
  * SCIENT-OWNED.
  */
-export { runScientMigrations, SCIENT_MIGRATIONS, ScientMigrationError } from "./scientMigrator.ts";
+export { runScientMigrations } from "./scientMigrator.ts";
