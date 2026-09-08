@@ -2,7 +2,8 @@
 
 Status: the reviewed `349ce301` implementation has a local history-preserving checkpoint.
 The additional 22 commits through `eb115063` are composed in the same candidate. Automated
-review is complete; the native question-attachment fork finding below remains open.
+review of the extension is complete; the owner-approved native question-attachment fork fix
+is implemented and undergoing the final combined gate.
 Manual acceptance, PR, CI, and publication remain separate gates.
 
 ## Frozen boundary
@@ -216,11 +217,11 @@ The root-marker contract and observer cleanup on route changes also have a regre
 Analytics retains Scient's consent/configuration gates and disabled layer. The export-classification
 conflict does not restore upstream identity collection or network delivery.
 
-### Review finding requiring a separate fork decision
+### Resolved review finding: submitted question attachments in forks
 
-Scient's existing fork pipeline retains message records and copies their files. T3 stores native
+The previous fork pipeline retained message records and copied their files. T3 stores native
 question-answer attachments in `user-input.answer-submitted` activity records instead. Those
-activity-only files are retained in the original thread, but the current fork path does not copy them
+activity-only files were retained in the original thread, but the fork path did not copy them
 or seed their answer text into the new provider's transcript. Message-mode question responses already
 use ordinary messages and their files follow the existing fork copy path.
 
@@ -229,11 +230,18 @@ source list, and `ForkContextBootstrap`'s message transcript. It is a code-revie
 claimed live-provider reproduction. The native answer-transcript omission predates this feature;
 the new activity-only files make the consequence more visible.
 
-Do not silently append activity text to authored messages or change fork boundary counting as a
-merge workaround. Before claiming complete question-attachment support across forks, define the
-retained answer representation, map activity/file identities to fork ownership, preserve exact
-completed boundaries, and test bootstrap plus origin deletion/revert. This pass leaves that
-broader fork change unimplemented for owner review.
+The owner approved preserving submitted answers and files while retaining existing unsent-draft
+behavior. The targeted fix uses one Scient-owned selector for admission, copying, and bootstrap.
+History remains activity records with fresh activity/request/turn/file identities. Existing
+copy/recovery machinery provisions independent files; provider bootstrap encodes separate answer
+records within the existing context budgets. T3 submission, rendering, schema, and cleanup are
+unchanged, as are completed boundary counts and ordinary draft/queue behavior.
+
+The 165-test fork suite passed, including a new real-SQL/event-store/file-copy test covering copy
+retry, original deletion, fork revert, replay, provider context, and fork-of-fork. Additional
+regressions cover admission with missing question files, earlier boundaries, pending/message-mode
+exclusion, malformed or unscoped records, independent identities, and context/attachment limits.
+This is synthetic backend evidence, not a live-provider or visual acceptance claim.
 
 ### Extended candidate automated qualification
 
@@ -248,7 +256,7 @@ broader fork change unimplemented for owner review.
 - Analysis, onboarding, Skills, LaTeX, and upstream provenance checks passed. The provenance
   check still uses the previous qualified integration boundary; literal ancestry of this
   candidate is checked separately. The integration cursor is not advanced before manual
-  acceptance and disposition of the fork finding.
+  acceptance.
 - Mobile native static inventory completed, but SwiftLint, ktlint, and detekt were unavailable
   on this host and skipped. No Windows/Linux, mobile-device, or live-provider qualification is
   claimed by this extension.

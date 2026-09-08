@@ -412,7 +412,9 @@ never through a broad merge into this repository.
 ## Post-D4 Scient-owned feature seams
 
 Conversation forks keep server-owned boundary resolution, durable provisioning,
-and provider-neutral context bootstrap. Preserve the read-authorized
+and provider-neutral context bootstrap. Preserve the shared
+selection of submitted question-answer activities and independent file ownership;
+T3's question submission path remains unchanged. Preserve the read-authorized
 `orchestration.getForkOptions` RPC and its `threadForkRecovery` capability,
 typed fork dispositions on dispatch errors, and the pre-send readiness gate.
 Client retries retain one operation identity and draft across navigation and
