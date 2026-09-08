@@ -56,8 +56,9 @@
   unicode-bidi: isolate;
 }
 
-/* Authored layout (for example a centered image paragraph) is not prose direction. */
-.chat-markdown [dir="ltr"]:not([align]) {
+/* Authored layout and automatic table-column alignment own their physical
+   alignment independently of the local prose direction. */
+.chat-markdown [dir="ltr"]:not([align]):not([data-scient-table-column-direction]) {
   text-align: start;
 }
 

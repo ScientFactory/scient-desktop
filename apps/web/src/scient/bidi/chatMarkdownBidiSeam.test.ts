@@ -1,5 +1,7 @@
+// @vitest-environment happy-dom
 // @effect-diagnostics nodeBuiltinImport:off -- Static audit for the inherited chat-markdown seam.
 import * as NodeFS from "node:fs";
+import * as NodePath from "node:path";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import ReactMarkdown from "react-markdown";
@@ -11,14 +13,17 @@ import { describe, expect, it } from "vite-plus/test";
 import { rehypeScientBidi } from "./rehypeScientBidi";
 
 const chatMarkdownSource = NodeFS.readFileSync(
-  new URL("../../components/ChatMarkdown.tsx", import.meta.url),
+  NodePath.resolve(import.meta.dirname, "../../components/ChatMarkdown.tsx"),
   "utf8",
 );
 const timelineSource = NodeFS.readFileSync(
-  new URL("../../components/chat/MessagesTimeline.tsx", import.meta.url),
+  NodePath.resolve(import.meta.dirname, "../../components/chat/MessagesTimeline.tsx"),
   "utf8",
 );
-const bidiCssSource = NodeFS.readFileSync(new URL("./scient-bidi.css", import.meta.url), "utf8");
+const bidiCssSource = NodeFS.readFileSync(
+  NodePath.resolve(import.meta.dirname, "scient-bidi.css"),
+  "utf8",
+);
 
 function renderUserPipeline(markdown: string): string {
   return renderToStaticMarkup(
@@ -53,6 +58,41 @@ function renderAssistantPipeline(markdown: string): string {
 }
 
 describe("ChatMarkdown BiDi seam", () => {
+  it.each([renderUserPipeline, renderAssistantPipeline])(
+    "keeps computed column alignment consistent across mixed cell directions (%#)",
+    (renderPipeline) => {
+      const source = [
+        "| Term / מונח | Meaning / משמעות | Example |",
+        "| --- | --- | --- |",
+        "| Blood pressure | לחץ דם | 120/80 mm Hg |",
+        "| טיפול | Treatment | Medication and follow-up |",
+        "| Remote monitoring | ניטור מרחוק | Daily home measurements |",
+        "| תופעות לוואי | Adverse events | No serious events reported |",
+        "| Patient adherence | היענות המטופל | 24 of 30 measurements completed |",
+      ].join("\n");
+      const style = document.createElement("style");
+      style.textContent = bidiCssSource;
+      const host = document.createElement("div");
+      host.className = "chat-markdown";
+      host.dataset.scientContentDirection = "ltr";
+      host.innerHTML = renderPipeline(source);
+      document.head.append(style);
+      document.body.append(host);
+      try {
+        for (const row of host.querySelectorAll("tr")) {
+          expect(Array.from(row.cells, (cell) => getComputedStyle(cell).textAlign)).toEqual([
+            "left",
+            "right",
+            "left",
+          ]);
+        }
+      } finally {
+        host.remove();
+        style.remove();
+      }
+    },
+  );
+
   it("keeps T3 HTML plugins behind parseRawHtml and always appends Scient BiDi", () => {
     expect(chatMarkdownSource).toMatch(
       /\.\.\.\(parseRawHtml \? CHAT_MARKDOWN_REHYPE_PLUGINS : \[rehypePreserveImageSourceMeta\]\),\s*\[\s*rehypeScientBidi,/u,
