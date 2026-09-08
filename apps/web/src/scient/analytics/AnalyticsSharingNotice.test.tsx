@@ -83,27 +83,13 @@ async function render() {
     for (const listener of mocks.listeners) listener();
     root.render(
       <StrictMode>
-        <AnalyticsSharingNotice enabled />
+        <AnalyticsSharingNotice />
       </StrictMode>,
     );
   });
 }
 
 describe("analytics sharing notice", () => {
-  it("is disabled by default without reading status or storing a dismissal", async () => {
-    await act(() => root.render(<AnalyticsSharingNotice />));
-    expect(mocks.readStatus).not.toHaveBeenCalled();
-    expect(mocks.add).not.toHaveBeenCalled();
-    expect(localStorage.getItem(storageKey)).toBeNull();
-  });
-
-  it("closes an already visible notice when disabled without changing its dismissal record", async () => {
-    await render();
-    await act(() => root.render(<AnalyticsSharingNotice enabled={false} />));
-    expect(mocks.close).toHaveBeenCalledWith("notice");
-    expect(localStorage.getItem(storageKey)).toBeNull();
-  });
-
   it("shows one persistent notice using the same information component as Settings", async () => {
     await render();
     expect(mocks.add).toHaveBeenCalledTimes(1);
