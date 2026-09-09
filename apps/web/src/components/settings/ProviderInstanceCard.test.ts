@@ -182,46 +182,69 @@ describe("deriveProviderModelsForDisplay", () => {
     });
   });
 
-  it("shows the provider email by default while retaining the visibility control", () => {
-    const instanceId = ProviderInstanceId.make("codex");
-    const driver = ProviderDriverKind.make("codex");
-    const liveProvider: ServerProvider = {
-      instanceId,
-      driver,
-      enabled: true,
-      installed: true,
-      version: "1.0.0",
-      status: "ready",
-      auth: { status: "authenticated", email: "developer@example.com" },
-      checkedAt: "2026-08-27T12:00:00.000Z",
-      models: [],
-      slashCommands: [],
-      skills: [],
-    };
-
-    const markup = renderToStaticMarkup(
-      createElement(ProviderInstanceCard, {
-        environmentId,
+  it.each([
+    { kind: "codex", authLabel: "ChatGPT Pro 20x Subscription" },
+    { kind: "claudeAgent", authLabel: "Claude Max" },
+    { kind: "codex", authLabel: undefined },
+  ])(
+    "keeps $kind subscription ($authLabel) above its visible account row",
+    ({ kind, authLabel }) => {
+      const instanceId = ProviderInstanceId.make(kind);
+      const driver = ProviderDriverKind.make(kind);
+      const liveProvider: ServerProvider = {
         instanceId,
-        instance: { driver },
-        driverOption: undefined,
-        liveProvider,
-        mode: "editor",
-        onUpdate: () => undefined,
-        hiddenModels: [],
-        favoriteModels: [],
-        modelOrder: [],
-        onHiddenModelsChange: () => undefined,
-        onFavoriteModelsChange: () => undefined,
-        onModelOrderChange: () => undefined,
-      }),
-    );
+        driver,
+        enabled: true,
+        installed: true,
+        version: "1.0.0",
+        status: "ready",
+        auth: {
+          status: "authenticated",
+          email: "developer@example.com",
+          ...(authLabel ? { label: authLabel } : {}),
+        },
+        checkedAt: "2026-08-27T12:00:00.000Z",
+        models: [],
+        slashCommands: [],
+        skills: [],
+      };
 
-    expect(markup).toContain("Authenticated as");
-    expect(markup).toContain('aria-label="Toggle account email visibility"');
-    expect(markup).not.toContain("blur-[2px]");
-    expect(markup).toContain("developer@example.com");
-  });
+      const markup = renderToStaticMarkup(
+        createElement(ProviderInstanceCard, {
+          environmentId,
+          instanceId,
+          instance: { driver },
+          driverOption: undefined,
+          liveProvider,
+          mode: "editor",
+          onUpdate: () => undefined,
+          hiddenModels: [],
+          favoriteModels: [],
+          modelOrder: [],
+          onHiddenModelsChange: () => undefined,
+          onFavoriteModelsChange: () => undefined,
+          onModelOrderChange: () => undefined,
+        }),
+      );
+
+      expect(markup).toContain("Authenticated as");
+      expect(markup).toContain('aria-label="Toggle account email visibility"');
+      expect(markup).not.toContain("blur-[2px]");
+      expect(markup).toContain("developer@example.com");
+      // Block siblings, not two inline spans that share a line at wide widths.
+      // Keep this assertion tied to the account area rather than the whole card.
+      if (authLabel) {
+        expect(markup).toContain(
+          `<p class="text-sm text-foreground/80 [overflow-wrap:anywhere]">${authLabel}</p><div class="flex flex-wrap items-center gap-x-1.5 gap-y-1"><span>Authenticated as</span>`,
+        );
+        expect(markup).not.toContain(`· ${authLabel}`);
+      } else {
+        expect(markup).toContain(
+          '<div class="grid gap-1"><div class="flex flex-wrap items-center gap-x-1.5 gap-y-1"><span>Authenticated as</span>',
+        );
+      }
+    },
+  );
   it("surfaces a failed probe message in both the list row and the editor", () => {
     const instanceId = ProviderInstanceId.make("codex_work");
     const driver = ProviderDriverKind.make("codex");

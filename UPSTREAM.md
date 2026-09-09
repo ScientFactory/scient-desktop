@@ -506,6 +506,12 @@ component. The Settings route retains `data-settings-page-layout` as the observe
 root. Page changes do not automatically open a submenu. Settings search,
 page routing, and shared sidebar primitives remain upstream-owned.
 
+In the shared provider settings editor, Scient displays the authenticated account's
+subscription label on its own line above the email/visibility control. Preserve
+this hierarchy rather than joining both with an inline separator. Providers without
+a label retain the account row without an empty subscription row. The shared
+`ProviderInstanceCard.test.ts` covers the layout independently of provider kind.
+
 LaTeX compilation is isolated under `apps/server/src/scient/latex` and
 `apps/web/src/scient/latex`, with `packages/contracts/src/scientLatex.ts` and
 `packages/client-runtime/src/state/scientLatexHttp.ts` as the two owned files
