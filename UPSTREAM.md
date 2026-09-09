@@ -37,30 +37,26 @@ revision remains literal ancestry of owned `main`; it is not merely a reviewed
 or observed tip.
 
 The current T3 alignment is recorded in
-[`docs/internals/2026-09-08-upstream-sync-349ce301-review.md`](docs/internals/2026-09-08-upstream-sync-349ce301-review.md)
-and in `upstream-state.json`. It preserves all 167 official commits after
-`223ff4490f764a74ff911589e97b9bbcd595fee8` through
-`12391bd0d38eef6655b7a9f8945d0cb5febadc2b`, with history-preserving checkpoints
-at `349ce301`, `eb115063`, and `12391bd0`. The final upstream merge is
-`d32a018817139808efe4a784b5d004df54d705bb`. The candidate starts from owned main
-`4d4d53d805` and includes refreshed main `507b8f1f80`.
+[`docs/internals/2026-09-09-upstream-sync-6c583620.md`](docs/internals/2026-09-09-upstream-sync-6c583620.md)
+and in `upstream-state.json`. This local candidate preserves all 16 official commits after
+`12391bd0d38eef6655b7a9f8945d0cb5febadc2b` through
+`6c583620ff7ad3235b135af7107c0543467eecfa`. Merge
+`72a99fadb7d42c34fd470d82827583b239335a46` retains owned main
+`083993b13b42718873721fe90c92d8cd87fedd64` and the exact official target as its parents.
 
-Automated qualification passed, and the owner authorized PR delivery and merge-commit auto-merge.
-The receipt records conflict decisions, preserved Scient capabilities, and remaining native-platform
-and visual evidence limits. This authorization does not claim new visual testing or a completed
-remote merge. The [preceding checkpoint](docs/internals/2026-09-06-upstream-sync-223ff449.md)
-remains in ancestry. Later observed upstream tips do not move `integrationBase` by themselves,
-and release publication remains a separate gate.
+Automated qualification passed; the owner will test the isolated candidate before PR delivery.
+No push, PR, main merge, or publication is implied. The
+[preceding alignment](docs/internals/2026-09-08-upstream-sync-349ce301-review.md) remains in
+ancestry. Later observed upstream tips do not move `integrationBase` by themselves.
 
 ## Receiving T3 updates
 
-The local alignment through `12391bd0` is documented in the
-[2026-09-08 review](docs/internals/2026-09-08-upstream-sync-349ce301-review.md).
-It extends the reviewed `349ce301` checkpoint in the same history-preserving
-candidate. That record includes
-the native capture identity composition, question attachments, sidebar file drops, browser snapshot
-improvements, optional Android appearance, qualification results,
-and remaining review gates.
+The local alignment through `6c583620` is documented in the
+[2026-09-09 review](docs/internals/2026-09-09-upstream-sync-6c583620.md).
+It adopts composer loading stability, shared setup wizards, terminal-link browser overrides,
+lazy keyring loading, bounded event-replay memory, mobile thread arrangement, and Android/iOS
+notification improvements. Scient provider lifecycle, fork behavior, identity, and cloud/mobile
+publication holds remain. The receipt records qualification and remaining platform/manual gates.
 
 The canonical procedure and stop conditions live in the
 [T3 upstream alignment protocol](docs/internals/upstream-alignment-protocol.md). The short form is:
