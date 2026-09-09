@@ -1,9 +1,10 @@
 import type { DesktopUpdateState } from "@t3tools/contracts";
-import { TriangleAlertIcon } from "lucide-react";
+import { DownloadIcon, LoaderCircleIcon, RotateCwIcon, TriangleAlertIcon } from "lucide-react";
 import { type ComponentProps, useCallback, useEffect, useId, useRef, useState } from "react";
 import { flushSync } from "react-dom";
 import { isElectron } from "../../env";
 import { useMediaQuery } from "../../hooks/useMediaQuery";
+import { useScientDownloadProgress } from "../../hooks/useScientDownloadProgress";
 import { cn } from "../../lib/utils";
 import { ensureLocalApi } from "../../localApi";
 import { useDesktopUpdateState } from "../../state/desktopUpdate";
@@ -14,6 +15,7 @@ import {
   getDesktopUpdateActionError,
   getDesktopUpdateButtonTooltip,
   getDesktopUpdateInstallConfirmationMessage,
+  getScientDesktopUpdateLabel,
   isDesktopUpdateButtonDisabled,
   resolveDesktopUpdateButtonAction,
   shouldShowArm64IntelBuildWarning,
@@ -122,6 +124,12 @@ function SidebarUpdateControl() {
   const releaseNotesPopupRef = useRef<HTMLDivElement>(null);
   const releaseNotesTriggerId = useId();
   const prefersReducedMotion = useMediaQuery("(prefers-reduced-motion: reduce)");
+  const displayedDownloadPercent = useScientDownloadProgress({
+    status: state?.status,
+    version: state?.availableVersion,
+    percent: state?.downloadPercent ?? null,
+    reducedMotion: prefersReducedMotion,
+  });
 
   useEffect(() => {
     if (prefersReducedMotion) {
@@ -297,21 +305,32 @@ function SidebarUpdateControl() {
     );
   }, [prefersReducedMotion, state?.status]);
 
+  // SCIENT-FORK: compact active-state copy and emphasis; keep upstream actions and focus handling.
+  const updateLabel =
+    showUpdateIconState && state
+      ? getScientDesktopUpdateLabel({ ...state, downloadPercent: displayedDownloadPercent })
+      : null;
   const updateButton = (
     <button
       type="button"
-      aria-label={tooltip}
+      aria-label={
+        isDownloading && updateLabel
+          ? `Downloading update (${updateLabel})`
+          : updateLabel
+            ? `${updateLabel}: ${tooltip}`
+            : tooltip
+      }
       aria-disabled={isInteractionDisabled || undefined}
       className={cn(
-        "inline-flex size-8 items-center justify-center rounded-full outline-hidden ring-ring transition-colors focus-visible:ring-2",
+        "inline-flex items-center justify-center outline-hidden ring-ring transition-colors focus-visible:ring-2",
         isInteractionDisabled ? "cursor-not-allowed" : "cursor-pointer",
         showUpdateIconState
           ? cn(
-              "bg-sidebar-control-surface text-sidebar-foreground",
-              !isInteractionDisabled && "hover:bg-sidebar-row-hover",
+              "h-7 w-22 gap-1.5 rounded-[var(--control-radius)] bg-primary px-2 text-sm font-medium whitespace-nowrap text-primary-foreground",
+              !isInteractionDisabled && "hover:bg-primary/90",
             )
           : cn(
-              "text-[var(--sidebar-icon-color)]",
+              "size-8 rounded-full text-[var(--sidebar-icon-color)]",
               !isInteractionDisabled && "hover:bg-sidebar-row-hover hover:text-sidebar-foreground",
             ),
         disabled && !showUpdateIconState && "opacity-60",
@@ -337,13 +356,33 @@ function SidebarUpdateControl() {
         );
       }}
     >
-      <DesktopUpdateStatusIcon
-        key={showCheckIcon ? checkAnimationKey : iconStatus}
-        downloadPercent={state?.downloadPercent ?? null}
-        isCheckAnimating={showCheckIcon && !prefersReducedMotion}
-        onCheckAnimationIteration={handleCheckAnimationIteration}
-        status={iconStatus}
-      />
+      {iconStatus === "available" ? (
+        <DownloadIcon aria-hidden="true" className="size-4 shrink-0" />
+      ) : iconStatus === "downloaded" ? (
+        <RotateCwIcon aria-hidden="true" className="size-4 shrink-0" />
+      ) : iconStatus === "downloading" && (state?.downloadPercent ?? 0) <= 0 ? (
+        <LoaderCircleIcon
+          aria-hidden="true"
+          className="size-4 shrink-0 animate-spin motion-reduce:animate-none"
+        />
+      ) : (
+        <span
+          className={cn(
+            "flex shrink-0 items-center justify-center",
+            iconStatus === "downloading" &&
+              "size-6 [&>span]:shrink-0 [&>span]:scale-75 [&_circle]:transition-none",
+          )}
+        >
+          <DesktopUpdateStatusIcon
+            key={showCheckIcon ? checkAnimationKey : iconStatus}
+            downloadPercent={displayedDownloadPercent}
+            isCheckAnimating={showCheckIcon && !prefersReducedMotion}
+            onCheckAnimationIteration={handleCheckAnimationIteration}
+            status={iconStatus}
+          />
+        </span>
+      )}
+      {updateLabel ? <span className="tabular-nums">{updateLabel}</span> : null}
     </button>
   );
 

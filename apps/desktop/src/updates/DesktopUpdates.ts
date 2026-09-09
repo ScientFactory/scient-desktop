@@ -227,24 +227,6 @@ function getCanRetryFromState(state: DesktopUpdateState): boolean {
   return state.availableVersion !== null || state.downloadedVersion !== null;
 }
 
-function shouldBroadcastDownloadProgress(
-  currentState: DesktopUpdateState,
-  nextPercent: number,
-): boolean {
-  if (currentState.status !== "downloading") {
-    return true;
-  }
-
-  const currentPercent = currentState.downloadPercent;
-  if (currentPercent === null) {
-    return true;
-  }
-
-  const previousStep = Math.floor(currentPercent / 10);
-  const nextStep = Math.floor(nextPercent / 10);
-  return nextStep !== previousStep || nextPercent === 100;
-}
-
 function getAutoUpdateDisabledReason(args: {
   isDevelopment: boolean;
   isPackaged: boolean;
@@ -803,9 +785,8 @@ export const make = Effect.gen(function* () {
         Effect.fn("desktop.updates.applyDownloadProgress")(function* (progress) {
           const state = yield* Ref.get(updateStateRef);
           const percent = Math.floor(progress.percent);
-          if (shouldBroadcastDownloadProgress(state, progress.percent) || state.message !== null) {
-            yield* setState(reduceDesktopUpdateStateOnDownloadProgress(state, progress.percent));
-          }
+          // SCIENT-FORK: publish every real progress event; only logs use 10% milestones.
+          yield* setState(reduceDesktopUpdateStateOnDownloadProgress(state, progress.percent));
           const milestone = percent - (percent % 10);
           const lastLoggedMilestone = yield* Ref.get(lastLoggedDownloadMilestoneRef);
           if (milestone > lastLoggedMilestone) {
