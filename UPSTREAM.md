@@ -1,5 +1,20 @@
 # Upstream maintenance
 
+Scient's desktop update control retains the inherited idle check icon and update
+actions. Its active states use a compact primary-colored button with Update,
+download percentage, Restart, or Retry copy. The labeled button is 28px tall and
+uses plain download/restart icons without status badges. Preserve the marked presentation
+seam in `SidebarUpdatePill.tsx` and `getScientDesktopUpdateLabel` in
+`desktopUpdate.logic.ts`; updater state, IPC, confirmation, release-note focus,
+and Electron installation remain inherited. Do not copy the updater into a
+second component or restore upstream's muted active-state styling during alignment.
+`DesktopUpdates.ts` forwards every real download progress event to the UI instead
+of filtering at 10% boundaries; only logging retains the 10% milestones. Preserve
+this small marked exception without changing the downloader's event cadence.
+The Scient-owned `useScientDownloadProgress` hook smooths only the displayed
+percentage and ring, bounded by confirmed progress. It must not drive updater
+actions, completion, or shared state; reduced motion uses direct readings.
+
 This is the public ScientFactory-owned T3-derived desktop application. Official
 T3 supplies the maintained generic host platform; ScientFactory owns product
 policy, identity, scientific behavior, release decisions, and every deliberate

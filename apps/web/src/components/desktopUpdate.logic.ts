@@ -53,6 +53,20 @@ export function shouldShowArm64IntelBuildWarning(state: DesktopUpdateState | nul
   return state?.hostArch === "arm64" && state.appArch === "x64";
 }
 
+/** Scient's compact footer copy; action admission remains owned by the updater. */
+export function getScientDesktopUpdateLabel(state: DesktopUpdateState): string | null {
+  if (state.status === "downloading") {
+    const percent = state.downloadPercent;
+    return percent !== null && Number.isFinite(percent)
+      ? `${Math.floor(Math.min(100, Math.max(0, percent)))}%`
+      : "…";
+  }
+  const action = resolveDesktopUpdateButtonAction(state);
+  if (action === "none") return null;
+  if (state.errorContext === "download" || state.errorContext === "install") return "Retry";
+  return action === "install" ? "Restart" : "Update";
+}
+
 export function isDesktopUpdateButtonDisabled(state: DesktopUpdateState | null): boolean {
   return state?.status === "downloading";
 }
