@@ -307,3 +307,36 @@ describe("guarded single-dollar tokenizer", () => {
     expect(render("norm $\\alpha$ fine")).toContain(INLINE_MATH_SHAPE);
   });
 });
+
+describe("scientific subscripts and charges", () => {
+  it.each(["PCO_2", "PO_2", "CO_2", "HCO_3^-", "Na^+", String.raw`\text{HER2}^+`])(
+    "recognizes %s in prose, emphasis, callouts and tables",
+    (tex) => {
+      const math = `$${tex}$`;
+      for (const source of [
+        `ערך ${math} תקין`,
+        `**${math}**`,
+        `> [!IMPORTANT]\n> ${math}`,
+        `| Value |\n| --- |\n| ${math} |`,
+      ]) {
+        expect(render(source)).toContain(INLINE_MATH_SHAPE);
+      }
+      expect(render(math.slice(0, -1))).not.toContain(INLINE_MATH_SHAPE);
+    },
+  );
+
+  it.each([
+    "$PATH$",
+    "$USER_ID$",
+    "$BUILD_2_PATH$",
+    "$PCO_2/file$",
+    "$Na+$",
+    "$x-$",
+    "$5-$10",
+    "$PCO_2$10",
+    "`$PCO_2$`",
+    String.raw`\$PCO_2$`,
+  ])("preserves non-math boundaries: %s", (source) => {
+    expect(render(source)).not.toContain(INLINE_MATH_SHAPE);
+  });
+});

@@ -34,6 +34,18 @@ describe("rich Markdown direction presentation", () => {
     return element?.closest("[dir]")?.getAttribute("dir") ?? null;
   }
 
+  it("recognizes scientific math without changing its Markdown source", () => {
+    const source = String.raw`ערך $PCO_2$ ו-$HCO_3^-$ וגם $\text{HER2}^+$`;
+    const { controller, onUserSourceChange, view } = mount(source);
+    const values: string[] = [];
+    view.state.doc.descendants((node) => {
+      if (node.type.name === "inline_math") values.push(node.attrs.tex);
+    });
+    expect(values).toEqual(["PCO_2", "HCO_3^-", String.raw`\text{HER2}^+`]);
+    expect(controller.session.session.draftSource).toBe(source);
+    expect(onUserSourceChange).not.toHaveBeenCalled();
+  });
+
   it("derives the document base from visible prose rather than technical source", () => {
     const document = scientMarkdownParser.parse(
       [
