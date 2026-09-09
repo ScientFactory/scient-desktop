@@ -339,6 +339,11 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
             url: "https://github.com/pingdotgg/t3code/pull/42",
           },
           branchPullRequest,
+          latestCompletedAnswer: {
+            turnId: asTurnId("turn-1"),
+            messageId: asMessageId("message-1"),
+            completedAt: "2026-02-24T00:00:08.000Z",
+          },
           latestTurn: {
             turnId: asTurnId("turn-1"),
             state: "completed",
@@ -471,6 +476,11 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
             url: "https://github.com/pingdotgg/t3code/pull/42",
           },
           branchPullRequest,
+          latestCompletedAnswer: {
+            turnId: asTurnId("turn-1"),
+            messageId: asMessageId("message-1"),
+            completedAt: "2026-02-24T00:00:08.000Z",
+          },
           latestTurn: {
             turnId: asTurnId("turn-1"),
             state: "completed",

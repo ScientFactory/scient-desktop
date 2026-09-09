@@ -119,3 +119,5 @@ export const VOICE_SELECT_MODEL_CHANNEL = "desktop:voice-select-model";
 export const VOICE_REMOVE_MODEL_CHANNEL = "desktop:voice-remove-model";
 export const VOICE_TRANSCRIBE_CHANNEL = "desktop:voice-transcribe";
 export const VOICE_CANCEL_TRANSCRIPTION_CHANNEL = "desktop:voice-cancel-transcription";
+
+export const SET_UNREAD_ANSWER_COUNT_CHANNEL = "scient:answer-attention:set-count";

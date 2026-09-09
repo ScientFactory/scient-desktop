@@ -220,6 +220,7 @@ describe("environment entity projections", () => {
       ...THREAD_SHELL,
       environmentId: ENVIRONMENT_ID,
       title: "Current thread",
+      latestCompletedAnswer: null,
       branch: "current-branch",
       worktreePath: "/repo/current-worktree",
       activeOrderKey: "f",
@@ -230,6 +231,7 @@ describe("environment entity projections", () => {
 
     expect(merged).toMatchObject({
       title: "Current thread",
+      latestCompletedAnswer: null,
       branch: "current-branch",
       worktreePath: "/repo/current-worktree",
       activeOrderKey: "f",
