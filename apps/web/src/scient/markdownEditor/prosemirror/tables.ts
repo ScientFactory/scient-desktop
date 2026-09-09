@@ -3,6 +3,10 @@ import { Plugin, type Command } from "prosemirror-state";
 import { CellSelection, findTable, TableMap, TableView } from "prosemirror-tables";
 import { Decoration, DecorationSet, type EditorView, type NodeView } from "prosemirror-view";
 import { guardPresentationMutations } from "../nodes/presentationMutations";
+import {
+  resolveProseMirrorTableColumnDirections,
+  resolveProseMirrorTableDirection,
+} from "./directionPresentation";
 
 /** Reuse the normal cell selection so formatting, copying, and table commands agree. */
 export const selectMarkdownTable: Command = (state, dispatch) => {
@@ -52,25 +56,80 @@ function markdownTableView(node: ProseMirrorNode, view: EditorView): NodeView {
     view.focus();
   });
   dom.append(button, tableView.dom);
+  let currentNode = node;
+  let appliedColumnKey: string | null = null;
+  let columnSyncScheduled = false;
+  let destroyed = false;
   const syncDirection = (current: ProseMirrorNode) => {
     if (current.attrs.dir === "ltr" || current.attrs.dir === "rtl")
       tableView.table.dir = current.attrs.dir;
     else tableView.table.removeAttribute("dir");
   };
+  const scheduleColumnAlignmentSync = () => {
+    if (columnSyncScheduled) return;
+    columnSyncScheduled = true;
+    queueMicrotask(() => {
+      columnSyncScheduled = false;
+      if (destroyed) return;
+      const documentDirection = view.dom.dir === "rtl" ? "rtl" : "ltr";
+      const tableDirection = resolveProseMirrorTableDirection(currentNode, documentDirection);
+      const columnDirections = resolveProseMirrorTableColumnDirections(currentNode, tableDirection);
+      const firstRow = currentNode.firstChild;
+      const alignmentKey = [
+        columnDirections.join(""),
+        currentNode.childCount,
+        firstRow?.childCount ?? 0,
+        ...(firstRow
+          ? Array.from({ length: firstRow.childCount }, (_, column) =>
+              String(firstRow.child(column).attrs.alignment ?? ""),
+            )
+          : []),
+      ].join(":");
+      if (alignmentKey === appliedColumnKey) return;
+
+      const domRows = tableView.table.querySelectorAll("tr");
+      currentNode.forEach((row, _rowOffset, rowIndex) => {
+        const domRow = domRows.item(rowIndex);
+        if (!domRow) return;
+        const domCells = Array.from(domRow.children).filter(
+          (child): child is HTMLTableCellElement =>
+            child.tagName === "TH" || child.tagName === "TD",
+        );
+        row.forEach((cell, _cellOffset, column) => {
+          const domCell = domCells[column];
+          if (!domCell) return;
+          const direction = cell.attrs.alignment == null ? columnDirections[column] : undefined;
+          if (direction) domCell.setAttribute("data-scient-table-column-direction", direction);
+          else domCell.removeAttribute("data-scient-table-column-direction");
+        });
+      });
+      appliedColumnKey = alignmentKey;
+    });
+  };
   syncDirection(node);
+  scheduleColumnAlignmentSync();
   return guardPresentationMutations({
     dom,
     contentDOM: tableView.contentDOM,
     update(current) {
       if (!tableView.update(current)) return false;
+      currentNode = current;
       syncDirection(current);
+      scheduleColumnAlignmentSync();
       return true;
+    },
+    destroy() {
+      destroyed = true;
     },
     stopEvent: (event) =>
       event.type !== "contextmenu" &&
       event.target instanceof globalThis.Node &&
       button.contains(event.target),
-    ignoreMutation: (record) => button.contains(record.target) || tableView.ignoreMutation(record),
+    ignoreMutation: (record) =>
+      button.contains(record.target) ||
+      (record.type === "attributes" &&
+        record.attributeName === "data-scient-table-column-direction") ||
+      tableView.ignoreMutation(record),
   });
 }
 

@@ -20,14 +20,33 @@ direction only to conversational structural elements (`p`, headings,
 blockquotes, lists, tables, and details). In automatic mode, each complete
 list gets one aggregate direction: any RTL prose makes the whole list RTL; an
 English-only list is LTR; items do not receive competing per-item overrides.
-Nested lists inherit their parent list direction. Tables use the same
-whole-group rule, so an English-only table can be LTR inside an RTL message.
-The resolved table direction is authoritative for every normal cell and nested
-prose, so an English cell cannot flip a Hebrew table (or vice versa). An
+Nested lists inherit their parent list direction. In automatic mode, table
+structure follows the dominant prose direction across the whole table. Code,
+equations, literal TeX, and scientific identifiers such as `HER2` and `cN0` do
+not decide column order. English-only prose tables can therefore remain LTR
+inside an RTL message, while technical terms do not flip a Hebrew table. Each
+cell resolves its own text direction without changing the table's column
+order. A mixed cell becomes LTR only when at least 70% of its strong characters
+are LTR; otherwise RTL wins. Pure-script cells keep their own direction, while
+neutral cells follow the table. Automatic visual
+alignment is resolved once per logical column from all of its cells: ordinary
+prose is the primary signal, identifier-only columns use their raw script as a
+fallback, and neutral or tied columns follow the table. Every unaligned cell in
+that column receives the same physical left or right alignment even when its
+local text direction differs. Authored GFM left, center, and right alignment
+remains authoritative. Row and column spans are mapped to logical columns in
+the rendered tree; the GFM editor continues to enforce its existing rectangular
+table model. The renderer and editor table node view use the same column rule,
+and the resulting metadata never enters Markdown source. The editor caches
+immutable row counts and updates cell attributes only when a column result or
+table structure changes, preserving the large-table typing budget. An
 explicit user mode remains authoritative. Headings use the resolved message
-direction rather than their own text, except when they are inside a table and
-therefore inherit that table's direction. The transform does not duplicate or
-replace the T3 Markdown renderer and intentionally leaves code elements alone.
+direction except inside table cells, where they follow the cell. The transform
+does not duplicate or replace the T3 Markdown renderer and intentionally leaves
+code elements alone.
+Wide chat tables give the DOM viewport and Base UI scrollbar the same resolved
+direction, keeping the custom thumb synchronized with Chromium's RTL scroll
+coordinates.
 Standalone right-flow arrows in clearly RTL prose within an RTL-base message
 are normalized to their left-flow counterparts. Technical content, links, and
 ambiguous arrow usage are left unchanged. An explicitly LTR-base message never

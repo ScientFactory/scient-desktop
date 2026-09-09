@@ -12,6 +12,7 @@ interface Operation {
 }
 
 interface Snapshot {
+  readonly installed: boolean;
   readonly source: string;
   readonly state: string;
   readonly runtime: Operation | null;
@@ -30,7 +31,8 @@ function snapshot(provider: ServerProvider): Snapshot {
   const connection = provider.connection?.operation;
   const update = provider.updateState;
   return {
-    source: runtime?.source ?? (provider.installed ? "unknown" : "missing"),
+    installed: provider.installed,
+    source: provider.installed ? (runtime?.source ?? "unknown") : "missing",
     state: provider.status,
     runtime: operation
       ? {
@@ -115,6 +117,11 @@ function lifecycleEvent(
 /** Observes canonical snapshots without storing account, path, model, or message data. */
 export function createProviderLifecycleAnalyticsMapper() {
   const previous = new Map<string, Snapshot>();
+  // Installation analytics is provider-level, not instance-level. A user may
+  // configure several instances of one driver, and exposing instance IDs would
+  // add unnecessary identity surface. "Installed" therefore means that at
+  // least one settled instance of the provider is installed.
+  const previousInstallations = new Map<string, boolean>();
   const observedStarts = new Map<
     string,
     Partial<Record<"runtime" | "connection" | "update", string>>
@@ -124,7 +131,44 @@ export function createProviderLifecycleAnalyticsMapper() {
   const observe = (providers: ReadonlyArray<ServerProvider>): ReadonlyArray<Event> => {
     const events: Event[] = [];
     const present = new Set<string>();
-    for (const provider of providers.slice(0, MAX_INSTANCES)) {
+    const presentDrivers = new Set<string>();
+    const pendingDrivers = new Set<string>();
+    const installations = new Map<string, boolean>();
+    const limitedProviders = providers.slice(0, MAX_INSTANCES);
+
+    for (const provider of limitedProviders) {
+      const driver = String(provider.driver);
+      presentDrivers.add(driver);
+      if (provider.probePending) {
+        pendingDrivers.add(driver);
+        continue;
+      }
+      installations.set(driver, (installations.get(driver) ?? false) || provider.installed);
+    }
+
+    for (const [driver, installed] of installations) {
+      // Do not publish a provisional aggregate while any instance of the same
+      // provider is still being probed.
+      if (pendingDrivers.has(driver)) continue;
+      const before = previousInstallations.get(driver);
+      if (before === undefined) {
+        events.push({
+          name: "provider.installation.observed",
+          properties: { provider: driver, installed },
+        });
+      } else if (before !== installed) {
+        events.push({
+          name: "provider.installation.changed",
+          properties: { provider: driver, fromInstalled: before, toInstalled: installed },
+        });
+      }
+      previousInstallations.set(driver, installed);
+    }
+
+    for (const driver of previousInstallations.keys())
+      if (!presentDrivers.has(driver)) previousInstallations.delete(driver);
+
+    for (const provider of limitedProviders) {
       const id = String(provider.instanceId);
       present.add(id);
       if (provider.probePending) continue;
@@ -132,16 +176,7 @@ export function createProviderLifecycleAnalyticsMapper() {
       const next = snapshot(provider);
       previous.set(id, next);
       const driver = String(provider.driver);
-      if (!before) {
-        events.push({
-          name: "provider.discovered",
-          properties: {
-            provider: driver,
-            source: next.source,
-            state: next.state,
-          },
-        });
-      } else {
+      if (before) {
         if (before.state !== next.state)
           events.push({
             name: "provider.readiness.changed",
@@ -181,6 +216,7 @@ export function createProviderLifecycleAnalyticsMapper() {
     observe,
     clear: () => {
       previous.clear();
+      previousInstallations.clear();
       observedStarts.clear();
       initialized = false;
     },

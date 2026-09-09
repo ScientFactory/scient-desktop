@@ -115,7 +115,7 @@ describe("Scient analytics contract", () => {
     expect(surface?.properties).toEqual({
       surface: "settings",
       ...context,
-      contractRevision: "3",
+      contractRevision: "4",
     });
   });
 

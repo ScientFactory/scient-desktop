@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vite-plus/test";
 
 import {
+  countTableStrongScripts,
   findRtlFlowArrowSpans,
   normalizeRtlFlowArrows,
   resolveAggregateDirection,
@@ -12,9 +13,21 @@ import {
   resolveProseBlockDirection,
   resolveStreamingMarkdownDirection,
   resolveTableCellDirection,
+  resolveTableCellDirectionFromCounts,
+  resolveTableColumnDirectionFromCounts,
 } from "./contentDirection";
 
 describe("message and block direction", () => {
+  it("keeps scientific identifiers and literal TeX from steering table structure", () => {
+    expect(countTableStrongScripts("מאפיין HER2 TNBC cN0 BCS NET")).toEqual({ ltr: 0, rtl: 6 });
+    expect(countTableStrongScripts(String.raw`טיפול $\text{HER2 positive receptor}^+$`)).toEqual({
+      ltr: 0,
+      rtl: 5,
+    });
+    expect(countTableStrongScripts("Standard treatment")).toEqual({ ltr: 17, rtl: 0 });
+    expect(countTableStrongScripts("TREATMENT DETAILS")).toEqual({ ltr: 16, rtl: 0 });
+  });
+
   it("keeps a Hebrew message RTL when list items begin with English terms", () => {
     const markdown = [
       "### מעבדה וסרולוגיה",
@@ -63,7 +76,22 @@ describe("message and block direction", () => {
     expect(resolveDominantDirection("ab אב", "rtl")).toBe("rtl");
   });
 
-  it("resolves each table cell independently and uses automatic table flow only for ties", () => {
+  it("uses prose first and technical content only for identifier-only table columns", () => {
+    expect(
+      resolveTableColumnDirectionFromCounts({ ltr: 0, rtl: 8 }, { ltr: 40, rtl: 8 }, "ltr"),
+    ).toBe("rtl");
+    expect(
+      resolveTableColumnDirectionFromCounts({ ltr: 0, rtl: 0 }, { ltr: 12, rtl: 0 }, "rtl"),
+    ).toBe("ltr");
+    expect(
+      resolveTableColumnDirectionFromCounts({ ltr: 0, rtl: 0 }, { ltr: 0, rtl: 0 }, "rtl"),
+    ).toBe("rtl");
+  });
+
+  it("requires 70% LTR content for LTR to win inside a mixed table cell", () => {
+    expect(resolveTableCellDirectionFromCounts({ ltr: 70, rtl: 30 }, "rtl")).toBe("ltr");
+    expect(resolveTableCellDirectionFromCounts({ ltr: 69, rtl: 31 }, "ltr")).toBe("rtl");
+    expect(resolveTableCellDirectionFromCounts({ ltr: 1, rtl: 1 }, "ltr")).toBe("rtl");
     expect(resolveTableCellDirection("English בתוך עברית נוספת", "ltr")).toBe("rtl");
     expect(resolveTableCellDirection("English sentence with עברית", "rtl")).toBe("ltr");
     expect(resolveTableCellDirection("العربية فقط", "ltr")).toBe("rtl");

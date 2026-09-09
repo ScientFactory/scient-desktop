@@ -51,6 +51,10 @@ const CODE_LEFT_BRACE = 123;
 export const MAX_SCIENT_SINGLE_DOLLAR_TEX_LENGTH = 300;
 
 const IDENTIFIER_PATTERN = /^[A-Z][A-Z0-9_]*$/;
+// Numeric subscripts are mathematical structure, even on uppercase symbols.
+const NUMERIC_SUBSCRIPT_PATTERN = /^[A-Z]+_\d+$/;
+// Admit a complete unbraced charge, not an arbitrary trailing operator.
+const CHARGE_END_PATTERN = /[\p{L}\p{N})\]}]\^[+-]$/u;
 const IDENTIFIER_PATH_PATTERN = /^[A-Z][A-Z0-9_]*[/:.]/;
 // `*` is deliberately absent: in spaced prose an asterisk is almost always
 // the author's emphasis delimiter, and letting it qualify a span would let
@@ -171,9 +175,9 @@ function isWhitespaceCode(code: Code): boolean {
 export function isPlausibleScientSingleDollarTex(content: string): boolean {
   if (content.length === 0 || content.length > MAX_SCIENT_SINGLE_DOLLAR_TEX_LENGTH) return false;
   if (STRING_ESCAPE_PATTERN.test(content)) return false;
-  if (IDENTIFIER_PATTERN.test(content)) return false;
+  if (IDENTIFIER_PATTERN.test(content) && !NUMERIC_SUBSCRIPT_PATTERN.test(content)) return false;
   if (IDENTIFIER_PATH_PATTERN.test(content)) return false;
-  if (!CONTENT_END_PATTERN.test(content)) return false;
+  if (!CONTENT_END_PATTERN.test(content) && !CHARGE_END_PATTERN.test(content)) return false;
   if (content.endsWith("'") && !PRIME_END_PATTERN.test(content)) return false;
   // An unescaped trailing % is a TeX comment and always renders wrong.
   if (content.endsWith("%") && !content.endsWith("\\%")) return false;

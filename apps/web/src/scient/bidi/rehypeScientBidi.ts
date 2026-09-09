@@ -1,11 +1,15 @@
 import {
+  countStrongScripts,
+  countTableStrongScripts,
   normalizeRtlFlowArrows,
   resolveAggregateDirection,
-  resolveDominantDirection,
+  resolveDominantDirectionFromCounts,
   resolveProseBlockDirection,
   resolveTableCellDirection,
+  resolveTableColumnDirectionFromCounts,
   type ContentDirection,
   type FixedContentDirection,
+  type StrongScriptCounts,
 } from "./contentDirection";
 
 type BidiNode = {
@@ -34,6 +38,13 @@ const LIST_TAGS = new Set(["ul", "ol"]);
 const LOCAL_DIRECTION_TAGS = new Set(DIRECTIONAL_BLOCK_TAGS);
 const TABLE_CELL_TAGS = new Set(["th", "td"]);
 const NON_PROSE_TAGS = new Set(["a", "code", "math", "pre", "script", "style"]);
+const ZERO_COUNTS: StrongScriptCounts = { ltr: 0, rtl: 0 };
+
+interface TableCellPlacement {
+  readonly column: number;
+  readonly columnSpan: number;
+  readonly node: BidiNode;
+}
 
 /**
  * Arrows that receive visual styling in RTL prose. The basic `←` (U+2190)
@@ -57,6 +68,142 @@ function plainText(node: BidiNode): string {
   }
   if (node.type === "text") return node.value ?? "";
   return node.children?.map(plainText).join("") ?? "";
+}
+
+function tableProseText(node: BidiNode): string {
+  if (
+    node.type === "element" &&
+    node.tagName &&
+    (node.tagName === "code" ||
+      node.tagName === "math" ||
+      node.tagName === "pre" ||
+      node.tagName === "script" ||
+      node.tagName === "style")
+  ) {
+    return "";
+  }
+  if (node.type === "text") return node.value ?? "";
+  return node.children?.map(tableProseText).join(" ") ?? "";
+}
+
+function addCounts(left: StrongScriptCounts, right: StrongScriptCounts): StrongScriptCounts {
+  return { ltr: left.ltr + right.ltr, rtl: left.rtl + right.rtl };
+}
+
+function positiveSpan(value: unknown): number {
+  const parsed = typeof value === "number" ? value : Number.parseInt(String(value ?? ""), 10);
+  return Number.isFinite(parsed) && parsed > 0 ? Math.floor(parsed) : 1;
+}
+
+function tableRows(table: BidiNode): BidiNode[][] {
+  const rows: BidiNode[][] = [];
+  const directCells =
+    table.children?.filter(
+      (child) => child.type === "element" && child.tagName && TABLE_CELL_TAGS.has(child.tagName),
+    ) ?? [];
+  if (directCells.length > 0) rows.push(directCells);
+
+  function collect(node: BidiNode): void {
+    if (node !== table && node.type === "element" && node.tagName === "table") return;
+    if (node.type === "element" && node.tagName === "tr") {
+      rows.push(
+        node.children?.filter(
+          (child) =>
+            child.type === "element" && child.tagName && TABLE_CELL_TAGS.has(child.tagName),
+        ) ?? [],
+      );
+      return;
+    }
+    node.children?.forEach(collect);
+  }
+
+  table.children
+    ?.filter((child) => !directCells.includes(child))
+    .forEach((child) => collect(child));
+  return rows;
+}
+
+function tableCellPlacements(table: BidiNode): TableCellPlacement[] {
+  const placements: TableCellPlacement[] = [];
+  const occupiedUntil: number[] = [];
+
+  tableRows(table).forEach((row, rowIndex) => {
+    let column = 0;
+    for (const cell of row) {
+      while ((occupiedUntil[column] ?? 0) > rowIndex) column += 1;
+      const properties = cell.properties ?? {};
+      const columnSpan = positiveSpan(properties.colSpan ?? properties.colspan);
+      const rowSpan = positiveSpan(properties.rowSpan ?? properties.rowspan);
+      placements.push({ column, columnSpan, node: cell });
+      for (let offset = 0; offset < columnSpan; offset += 1) {
+        occupiedUntil[column + offset] = Math.max(
+          occupiedUntil[column + offset] ?? 0,
+          rowIndex + rowSpan,
+        );
+      }
+      column += columnSpan;
+    }
+  });
+  return placements;
+}
+
+function resolveTableColumnDirections(
+  table: BidiNode,
+  tableDirection: FixedContentDirection,
+  forcedDirection?: FixedContentDirection,
+): Map<BidiNode, FixedContentDirection> {
+  const placements = tableCellPlacements(table);
+  const proseCounts: StrongScriptCounts[] = [];
+  const rawCounts: StrongScriptCounts[] = [];
+
+  for (const placement of placements) {
+    const text = tableProseText(placement.node);
+    const cellProseCounts = countTableStrongScripts(text);
+    const cellRawCounts = countStrongScripts(text);
+    for (let offset = 0; offset < placement.columnSpan; offset += 1) {
+      const column = placement.column + offset;
+      proseCounts[column] = addCounts(proseCounts[column] ?? ZERO_COUNTS, cellProseCounts);
+      rawCounts[column] = addCounts(rawCounts[column] ?? ZERO_COUNTS, cellRawCounts);
+    }
+  }
+
+  const width = Math.max(proseCounts.length, rawCounts.length);
+  const columnDirections = Array.from({ length: width }, (_, column) =>
+    forcedDirection
+      ? forcedDirection
+      : resolveTableColumnDirectionFromCounts(
+          proseCounts[column] ?? ZERO_COUNTS,
+          rawCounts[column] ?? ZERO_COUNTS,
+          tableDirection,
+        ),
+  );
+  const result = new Map<BidiNode, FixedContentDirection>();
+  for (const placement of placements) {
+    const directions = columnDirections.slice(
+      placement.column,
+      placement.column + placement.columnSpan,
+    );
+    result.set(
+      placement.node,
+      directions.every((direction) => direction === directions[0])
+        ? (directions[0] ?? tableDirection)
+        : tableDirection,
+    );
+  }
+  return result;
+}
+
+function hasAuthoredCellAlignment(node: BidiNode): boolean {
+  const align = node.properties?.align;
+  if (align === "left" || align === "center" || align === "right") return true;
+  const style = node.properties?.style;
+  if (typeof style === "string") return /(?:^|;)\s*text-align\s*:/iu.test(style);
+  return (
+    typeof style === "object" &&
+    style !== null &&
+    "textAlign" in style &&
+    typeof style.textAlign === "string"
+  );
 }
 
 function hasStyledArrow(value: string): boolean {
@@ -101,6 +248,7 @@ export function rehypeScientBidi(options: {
   readonly requestedDirection?: ContentDirection;
 }) {
   return (tree: BidiNode) => {
+    const tableColumnDirections = new WeakMap<BidiNode, FixedContentDirection>();
     function processChildren(
       parent: BidiNode,
       inheritedDirection: FixedContentDirection | undefined,
@@ -172,8 +320,18 @@ export function rehypeScientBidi(options: {
           const resolvedTableDirection =
             options.requestedDirection && options.requestedDirection !== "auto"
               ? options.requestedDirection
-              : resolveDominantDirection(plainText(node), options.direction);
+              : resolveDominantDirectionFromCounts(
+                  countTableStrongScripts(tableProseText(node)),
+                  options.direction,
+                );
           setDirection(node, resolvedTableDirection);
+          const forcedColumnDirection =
+            options.requestedDirection && options.requestedDirection !== "auto"
+              ? options.requestedDirection
+              : undefined;
+          resolveTableColumnDirections(node, resolvedTableDirection, forcedColumnDirection).forEach(
+            (direction, cell) => tableColumnDirections.set(cell, direction),
+          );
           processChildren(
             node,
             resolvedTableDirection,
@@ -187,10 +345,14 @@ export function rehypeScientBidi(options: {
             options.requestedDirection && options.requestedDirection !== "auto"
               ? options.requestedDirection
               : resolveTableCellDirection(
-                  plainText(node),
+                  tableProseText(node),
                   inheritedDirection ?? tableDirection ?? options.direction,
                 );
           setDirection(node, cellDirection);
+          const columnDirection = tableColumnDirections.get(node);
+          if (columnDirection && !hasAuthoredCellAlignment(node)) {
+            node.properties!["data-scient-table-column-direction"] = columnDirection;
+          }
           processChildren(
             node,
             cellDirection,

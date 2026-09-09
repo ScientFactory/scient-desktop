@@ -2,7 +2,7 @@ export const ANALYTICS_SCHEMA_VERSION = 1 as const;
 export const ANALYTICS_SOURCE = "desktop" as const;
 import { EVENT_DEFINITIONS } from "./wireContract.ts";
 
-export const ANALYTICS_CONTRACT_REVISION = "3" as const;
+export const ANALYTICS_CONTRACT_REVISION = "4" as const;
 
 export const ANALYTICS_EVENT_NAMES = [
   "app.session.started",
@@ -22,7 +22,10 @@ export const ANALYTICS_EVENT_NAMES = [
   "provider.turn.interrupted",
   "provider.request.responded",
   "provider.conversation.rolled_back",
+  // Legacy producer event retained in the wire contract for older releases.
   "provider.discovered",
+  "provider.installation.observed",
+  "provider.installation.changed",
   "provider.readiness.changed",
   "provider.runtime.source.changed",
   "provider.lifecycle.started",
@@ -497,6 +500,27 @@ function normalizeEvent(
           provider,
           runtimeSource: normalizedEnum(property(input, "source"), RUNTIME_SOURCES),
           state: normalizedEnum(property(input, "state"), PROVIDER_STATES),
+        },
+      };
+    case "provider.installation.observed":
+      return {
+        name,
+        privacyLevel: "product",
+        priority: "summary",
+        properties: {
+          provider,
+          installed: normalizedBoolean(property(input, "installed")),
+        },
+      };
+    case "provider.installation.changed":
+      return {
+        name,
+        privacyLevel: "product",
+        priority: "core",
+        properties: {
+          provider,
+          fromInstalled: normalizedBoolean(property(input, "fromInstalled")),
+          toInstalled: normalizedBoolean(property(input, "toInstalled")),
         },
       };
     case "provider.readiness.changed":
