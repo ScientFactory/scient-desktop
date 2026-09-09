@@ -25,8 +25,10 @@ structure follows the dominant prose direction across the whole table. Code,
 equations, literal TeX, and scientific identifiers such as `HER2` and `cN0` do
 not decide column order. English-only prose tables can therefore remain LTR
 inside an RTL message, while technical terms do not flip a Hebrew table. Each
-cell resolves its own text direction so mixed-language content and punctuation
-remain readable without changing the table's column order. Automatic visual
+cell resolves its own text direction without changing the table's column
+order. A mixed cell becomes LTR only when at least 70% of its strong characters
+are LTR; otherwise RTL wins. Pure-script cells keep their own direction, while
+neutral cells follow the table. Automatic visual
 alignment is resolved once per logical column from all of its cells: ordinary
 prose is the primary signal, identifier-only columns use their raw script as a
 fallback, and neutral or tied columns follow the table. Every unaligned cell in

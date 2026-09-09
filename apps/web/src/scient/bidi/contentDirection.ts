@@ -16,6 +16,7 @@ const TABLE_LITERAL_TEX = /\$(?=[^$\n]*\\[A-Za-z]{2,})[^$\n]{1,1000}\$/g;
 const TABLE_TEX_COMMAND = /\\[A-Za-z]{2,}(?:\s*\{[^{}\n]*\})?/g;
 const TABLE_TECHNICAL_IDENTIFIER =
   /(?<![\p{L}\p{N}])(?:[A-Z]{2,5}[+-]?|[A-Za-z]+\d+[A-Za-z0-9+-]*|\d+[A-Za-z]+[A-Za-z0-9+-]*)(?![\p{L}\p{N}])/gu;
+const MIXED_TABLE_CELL_LTR_THRESHOLD_PERCENT = 70;
 
 const RTL_FLOW_ARROW_REPLACEMENTS: Readonly<Record<string, string>> = {
   "→": "←",
@@ -226,8 +227,9 @@ export function resolveDominantDirectionFromCounts(
 
 /**
  * Resolves text flow inside one table cell independently from table layout.
- * Mixed cells use their own dominant script; neutral or tied cells inherit the
- * table's automatic content direction, never a manual column-order override.
+ * A mixed cell becomes LTR only when at least 70% of its strong characters are
+ * LTR; otherwise RTL wins. Pure-script cells keep their script direction, and
+ * neutral cells inherit the table's automatic content direction.
  */
 export function resolveTableCellDirection(
   text: string,
@@ -240,6 +242,10 @@ export function resolveTableCellDirectionFromCounts(
   counts: StrongScriptCounts,
   automaticTableDirection: FixedContentDirection,
 ): FixedContentDirection {
+  if (counts.rtl > 0 && counts.ltr > 0) {
+    const total = counts.rtl + counts.ltr;
+    return counts.ltr * 100 >= total * MIXED_TABLE_CELL_LTR_THRESHOLD_PERCENT ? "ltr" : "rtl";
+  }
   return resolveDominantDirectionFromCounts(counts, automaticTableDirection);
 }
 

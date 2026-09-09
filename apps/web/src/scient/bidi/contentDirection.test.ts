@@ -13,6 +13,7 @@ import {
   resolveProseBlockDirection,
   resolveStreamingMarkdownDirection,
   resolveTableCellDirection,
+  resolveTableCellDirectionFromCounts,
   resolveTableColumnDirectionFromCounts,
 } from "./contentDirection";
 
@@ -87,7 +88,10 @@ describe("message and block direction", () => {
     ).toBe("rtl");
   });
 
-  it("resolves each table cell independently and uses automatic table flow only for ties", () => {
+  it("requires 70% LTR content for LTR to win inside a mixed table cell", () => {
+    expect(resolveTableCellDirectionFromCounts({ ltr: 70, rtl: 30 }, "rtl")).toBe("ltr");
+    expect(resolveTableCellDirectionFromCounts({ ltr: 69, rtl: 31 }, "ltr")).toBe("rtl");
+    expect(resolveTableCellDirectionFromCounts({ ltr: 1, rtl: 1 }, "ltr")).toBe("rtl");
     expect(resolveTableCellDirection("English בתוך עברית נוספת", "ltr")).toBe("rtl");
     expect(resolveTableCellDirection("English sentence with עברית", "rtl")).toBe("ltr");
     expect(resolveTableCellDirection("العربية فقط", "ltr")).toBe("rtl");
