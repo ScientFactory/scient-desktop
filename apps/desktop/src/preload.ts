@@ -58,6 +58,8 @@ contextBridge.exposeInMainWorld("desktopBridge", {
     return result as ReturnType<DesktopBridge["getAppBranding"]>;
   },
   getClientPlatform: () => clientPlatform,
+  setUnreadAnswerCount: (count) =>
+    ipcRenderer.invoke(IpcChannels.SET_UNREAD_ANSWER_COUNT_CHANNEL, count),
   getSystemLocale: () => {
     const result = ipcRenderer.sendSync(IpcChannels.GET_SYSTEM_LOCALE_CHANNEL);
     return typeof result === "string" ? result : null;

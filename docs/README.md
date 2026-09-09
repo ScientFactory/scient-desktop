@@ -71,6 +71,7 @@ Everything below is for maintainers. Setup lives in the [root README](../README.
 policy in [CONTRIBUTING.md](../CONTRIBUTING.md); agent rules in [AGENTS.md](../AGENTS.md).
 
 - [Architecture overview](./internals/overview.md)
+- [Unread answers and Dock badge](./internals/answer-attention.md)
 - [Workspace layout](../AGENTS.md#where-code-lives)
 - [Glossary](./internals/glossary.md)
 - [Scripts](./internals/scripts.md)

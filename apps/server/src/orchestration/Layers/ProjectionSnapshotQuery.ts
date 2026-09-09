@@ -1,3 +1,5 @@
+import { ScientCompletedAnswer } from "@t3tools/contracts";
+import { completedAnswerSql } from "../../scient/answerAttention/completedAnswerSql.ts";
 import {
   AgentSessionImportSource,
   ApprovalRequestId,
@@ -123,6 +125,7 @@ const ProjectionTurnStartMessageDbRowSchema = ProjectionThreadMessageDbRowSchema
 const ProjectionThreadProposedPlanDbRowSchema = ProjectionThreadProposedPlan;
 const ProjectionThreadDbRowSchema = ProjectionThread.mapFields(
   Struct.assign({
+    latestCompletedAnswer: Schema.NullOr(Schema.fromJsonString(ScientCompletedAnswer)),
     modelSelection: Schema.fromJsonString(ModelSelection),
     linkedPullRequest: Schema.NullOr(Schema.fromJsonString(ThreadLinkedPullRequest)),
     branchPullRequest: Schema.NullOr(Schema.fromJsonString(ThreadLinkedPullRequest)),
@@ -548,6 +551,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           linked_pull_request_json AS "linkedPullRequest",
           branch_pull_request_json AS "branchPullRequest",
           latest_turn_id AS "latestTurnId",
+          ${completedAnswerSql(sql)} AS "latestCompletedAnswer",
           created_at AS "createdAt",
           updated_at AS "updatedAt",
           archived_at AS "archivedAt",
@@ -589,6 +593,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           linked_pull_request_json AS "linkedPullRequest",
           branch_pull_request_json AS "branchPullRequest",
           latest_turn_id AS "latestTurnId",
+          ${completedAnswerSql(sql)} AS "latestCompletedAnswer",
           created_at AS "createdAt",
           updated_at AS "updatedAt",
           archived_at AS "archivedAt",
@@ -632,6 +637,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           linked_pull_request_json AS "linkedPullRequest",
           branch_pull_request_json AS "branchPullRequest",
           latest_turn_id AS "latestTurnId",
+          ${completedAnswerSql(sql)} AS "latestCompletedAnswer",
           created_at AS "createdAt",
           updated_at AS "updatedAt",
           archived_at AS "archivedAt",
@@ -1128,6 +1134,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           linked_pull_request_json AS "linkedPullRequest",
           branch_pull_request_json AS "branchPullRequest",
           latest_turn_id AS "latestTurnId",
+          ${completedAnswerSql(sql)} AS "latestCompletedAnswer",
           created_at AS "createdAt",
           updated_at AS "updatedAt",
           archived_at AS "archivedAt",
@@ -1172,6 +1179,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           linked_pull_request_json AS "linkedPullRequest",
           branch_pull_request_json AS "branchPullRequest",
           latest_turn_id AS "latestTurnId",
+          ${completedAnswerSql(sql)} AS "latestCompletedAnswer",
           created_at AS "createdAt",
           updated_at AS "updatedAt",
           archived_at AS "archivedAt",
@@ -2273,6 +2281,7 @@ pending_approval_requests AS (
                   ? {}
                   : { linkedPullRequest: row.linkedPullRequest }),
                 latestTurn: latestTurnByThread.get(row.threadId) ?? null,
+                latestCompletedAnswer: row.latestCompletedAnswer,
                 createdAt: row.createdAt,
                 updatedAt: row.updatedAt,
                 archivedAt: row.archivedAt,
@@ -2490,6 +2499,7 @@ pending_approval_requests AS (
                     ? {}
                     : { linkedPullRequest: row.linkedPullRequest }),
                   latestTurn: latestTurnByThread.get(row.threadId) ?? null,
+                  latestCompletedAnswer: row.latestCompletedAnswer,
                   createdAt: row.createdAt,
                   updatedAt: row.updatedAt,
                   archivedAt: row.archivedAt,
@@ -2646,6 +2656,7 @@ pending_approval_requests AS (
                           ? {}
                           : { linkedPullRequest: row.linkedPullRequest }),
                         latestTurn: latestTurnByThread.get(row.threadId) ?? null,
+                        latestCompletedAnswer: row.latestCompletedAnswer,
                         createdAt: row.createdAt,
                         updatedAt: row.updatedAt,
                         archivedAt: row.archivedAt,
@@ -2810,6 +2821,7 @@ pending_approval_requests AS (
                     ? {}
                     : { linkedPullRequest: row.linkedPullRequest }),
                   latestTurn: latestTurnByThread.get(row.threadId) ?? null,
+                  latestCompletedAnswer: row.latestCompletedAnswer,
                   createdAt: row.createdAt,
                   updatedAt: row.updatedAt,
                   archivedAt: row.archivedAt,
@@ -3143,6 +3155,7 @@ pending_approval_requests AS (
           ? {}
           : { linkedPullRequest: threadRow.value.linkedPullRequest }),
         latestTurn: Option.isSome(latestTurnRow) ? mapLatestTurn(latestTurnRow.value) : null,
+        latestCompletedAnswer: threadRow.value.latestCompletedAnswer,
         createdAt: threadRow.value.createdAt,
         updatedAt: threadRow.value.updatedAt,
         archivedAt: threadRow.value.archivedAt,
@@ -3457,6 +3470,7 @@ pending_approval_requests AS (
           ? {}
           : { linkedPullRequest: threadRow.value.linkedPullRequest }),
         latestTurn: Option.isSome(latestTurnRow) ? mapLatestTurn(latestTurnRow.value) : null,
+        latestCompletedAnswer: threadRow.value.latestCompletedAnswer,
         createdAt: threadRow.value.createdAt,
         updatedAt: threadRow.value.updatedAt,
         archivedAt: threadRow.value.archivedAt,

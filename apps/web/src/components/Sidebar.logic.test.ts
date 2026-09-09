@@ -313,7 +313,7 @@ function makeLatestTurn(overrides?: {
   return {
     turnId: "turn-1" as never,
     state: "completed",
-    assistantMessageId: null,
+    assistantMessageId: "answer-1" as never,
     requestedAt: "2026-03-09T10:00:00.000Z",
     startedAt:
       overrides?.startedAt !== undefined ? overrides.startedAt : "2026-03-09T10:00:00.000Z",

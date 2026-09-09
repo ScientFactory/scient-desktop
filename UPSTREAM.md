@@ -406,6 +406,13 @@ never through a broad merge into this repository.
 
 ## Post-D4 Scient-owned feature seams
 
+Unread-answer attention stays in Scient-owned `scient/answerAttention` modules.
+Preserve the optional durable completion marker in shell/detail snapshots, its
+shell-authoritative merge, focus-aware read acknowledgement, and validated native
+badge bridge. Queue/provider execution and the existing macOS window lifecycle
+remain owned by their current systems. The badge adoption baseline is separate
+from sidebar visit timestamps. See [answer attention](docs/internals/answer-attention.md).
+
 Conversation forks keep server-owned boundary resolution, durable provisioning,
 and provider-neutral context bootstrap. Preserve the shared
 selection of submitted question-answer activities and independent file ownership;

@@ -1,3 +1,4 @@
+import { completedAnswer } from "../scient/answerAttention/completion";
 import { Spinner } from "~/components/ui/spinner";
 import {
   ArchiveIcon,
@@ -1888,7 +1889,7 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
 
       if (clicked === "mark-unread") {
         for (const { threadKey, thread } of selectedThreadEntries) {
-          markThreadUnread(threadKey, thread.latestTurn?.completedAt);
+          markThreadUnread(threadKey, completedAnswer(thread)?.completedAt);
         }
         clearSelection();
         return;
@@ -2282,7 +2283,7 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
       }
 
       if (clicked === "mark-unread") {
-        markThreadUnread(threadKey, thread.latestTurn?.completedAt);
+        markThreadUnread(threadKey, completedAnswer(thread)?.completedAt);
         return;
       }
       if (clicked === "copy-path") {

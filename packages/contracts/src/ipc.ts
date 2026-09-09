@@ -1313,6 +1313,8 @@ export const SystemSettingsPaneSchema = Schema.Literals(["full-disk-access"]);
 export type SystemSettingsPane = typeof SystemSettingsPaneSchema.Type;
 
 export interface DesktopBridge {
+  /** Scient: macOS conversations with unread completed answers; zero clears the badge. */
+  setUnreadAnswerCount?: (count: number) => Promise<boolean>;
   getAppBranding: () => DesktopAppBranding | null;
   /** The desktop client's OS platform, read from Electron's preload process. */
   getClientPlatform?: () => string;

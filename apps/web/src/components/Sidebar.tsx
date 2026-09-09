@@ -1,3 +1,4 @@
+import { completedAnswer } from "../scient/answerAttention/completion";
 import { useAtomValue } from "@effect/atom-react";
 import * as Schema from "effect/Schema";
 import {
@@ -3870,7 +3871,7 @@ export default function Sidebar() {
       if (clicked.value === "mark-unread") {
         for (const threadKey of threadKeys) {
           const thread = threadByKeyRef.current.get(threadKey);
-          markThreadUnread(threadKey, thread?.latestTurn?.completedAt);
+          markThreadUnread(threadKey, completedAnswer(thread)?.completedAt);
         }
         clearSelection();
         return;
@@ -4072,7 +4073,7 @@ export default function Sidebar() {
             return;
           }
           case "mark-unread":
-            markThreadUnread(threadKey, thread.latestTurn?.completedAt);
+            markThreadUnread(threadKey, completedAnswer(thread)?.completedAt);
             return;
           case "copy-path":
             if (!threadWorkspacePath) {
