@@ -1,3 +1,4 @@
+import { completedAnswer } from "../scient/answerAttention/completion";
 import { scopeProjectRef, scopedThreadKey } from "@t3tools/client-runtime/environment";
 import {
   type AtomCommandResult,
@@ -253,7 +254,7 @@ export function useThreadActionMenu(input: {
             );
             return;
           case "mark-unread":
-            markThreadUnread(scopedThreadKey(threadRef), thread.latestTurn?.completedAt);
+            markThreadUnread(scopedThreadKey(threadRef), completedAnswer(thread)?.completedAt);
             return;
           case "copy-path": {
             const workspacePath = thread.worktreePath ?? projectCwd;

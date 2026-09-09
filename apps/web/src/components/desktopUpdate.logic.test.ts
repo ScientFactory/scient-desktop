@@ -7,6 +7,7 @@ import {
   getDesktopUpdateActionError,
   getDesktopUpdateButtonTooltip,
   getDesktopUpdateInstallConfirmationMessage,
+  getScientDesktopUpdateLabel,
   getDesktopUpdateReleaseHistoryUrl,
   getDesktopUpdateReleaseUrl,
   isDesktopUpdateButtonDisabled,
@@ -33,6 +34,42 @@ const baseState: DesktopUpdateState = {
   errorContext: null,
   canRetry: false,
 };
+
+describe("Scient update labels", () => {
+  it.each(["idle", "up-to-date", "checking", "disabled", "error"] as const)(
+    "keeps %s as the discovery icon",
+    (status) => expect(getScientDesktopUpdateLabel({ ...baseState, status })).toBeNull(),
+  );
+  it("offers download, restart, and recovery using the canonical action", () => {
+    const available: DesktopUpdateState = {
+      ...baseState,
+      status: "available",
+      availableVersion: "1.1.0",
+    };
+    const downloaded: DesktopUpdateState = {
+      ...available,
+      status: "downloaded",
+      downloadedVersion: "1.1.0",
+    };
+    expect(getScientDesktopUpdateLabel(available)).toBe("Update");
+    expect(getScientDesktopUpdateLabel(downloaded)).toBe("Restart");
+    // Main-process failures retain available/downloaded rather than error status.
+    expect(getScientDesktopUpdateLabel({ ...available, errorContext: "download" })).toBe("Retry");
+    expect(getScientDesktopUpdateLabel({ ...downloaded, errorContext: "install" })).toBe("Retry");
+  });
+  it.each<[number | null, string]>([
+    [40.9, "40%"],
+    [100, "100%"],
+    [-5, "0%"],
+    [125, "100%"],
+    [null, "…"],
+    [NaN, "…"],
+  ])("shows bounded progress for %s", (downloadPercent, label) =>
+    expect(
+      getScientDesktopUpdateLabel({ ...baseState, status: "downloading", downloadPercent }),
+    ).toBe(label),
+  );
+});
 
 describe("desktop update button state", () => {
   it("shows a download action when an update is available", () => {

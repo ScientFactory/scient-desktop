@@ -1,3 +1,4 @@
+import { setUnreadAnswerCount } from "../scient/answerAttention/ipc.ts";
 import * as Effect from "effect/Effect";
 
 import * as DesktopIpc from "./DesktopIpc.ts";
@@ -71,6 +72,7 @@ export const installDesktopIpcHandlers = Effect.fn("desktop.ipc.installHandlers"
   const ipc = yield* DesktopIpc.DesktopIpc;
   yield* PreviewIpc.installPreviewEventForwarding();
 
+  yield* ipc.handle(setUnreadAnswerCount);
   yield* ipc.handle(AppActivationIpc.setReady);
   yield* ipc.handle(AppActivationIpc.complete);
 

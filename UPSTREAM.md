@@ -1,5 +1,20 @@
 # Upstream maintenance
 
+Scient's desktop update control retains the inherited idle check icon and update
+actions. Its active states use a compact primary-colored button with Update,
+download percentage, Restart, or Retry copy. The labeled button is 28px tall and
+uses plain download/restart icons without status badges. Preserve the marked presentation
+seam in `SidebarUpdatePill.tsx` and `getScientDesktopUpdateLabel` in
+`desktopUpdate.logic.ts`; updater state, IPC, confirmation, release-note focus,
+and Electron installation remain inherited. Do not copy the updater into a
+second component or restore upstream's muted active-state styling during alignment.
+`DesktopUpdates.ts` forwards every real download progress event to the UI instead
+of filtering at 10% boundaries; only logging retains the 10% milestones. Preserve
+this small marked exception without changing the downloader's event cadence.
+The Scient-owned `useScientDownloadProgress` hook smooths only the displayed
+percentage and ring, bounded by confirmed progress. It must not drive updater
+actions, completion, or shared state; reduced motion uses direct readings.
+
 This is the public ScientFactory-owned T3-derived desktop application. Official
 T3 supplies the maintained generic host platform; ScientFactory owns product
 policy, identity, scientific behavior, release decisions, and every deliberate
@@ -405,6 +420,13 @@ Synara behavior must enter through a separately justified Scient-native lane,
 never through a broad merge into this repository.
 
 ## Post-D4 Scient-owned feature seams
+
+Unread-answer attention stays in Scient-owned `scient/answerAttention` modules.
+Preserve the optional durable completion marker in shell/detail snapshots, its
+shell-authoritative merge, focus-aware read acknowledgement, and validated native
+badge bridge. Queue/provider execution and the existing macOS window lifecycle
+remain owned by their current systems. The badge adoption baseline is separate
+from sidebar visit timestamps. See [answer attention](docs/internals/answer-attention.md).
 
 Conversation forks keep server-owned boundary resolution, durable provisioning,
 and provider-neutral context bootstrap. Preserve the shared

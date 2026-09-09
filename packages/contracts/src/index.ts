@@ -58,3 +58,5 @@ export * from "./usage.ts";
 export * from "./rpc.ts";
 export * from "./customModels.ts";
 export * from "./modelReasoning.ts";
+
+export * from "./scientAnswerAttention.ts";

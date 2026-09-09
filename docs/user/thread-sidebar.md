@@ -145,3 +145,23 @@ pill** fallback because their colors are not controlled by Scient.
 To generate a fresh title from the conversation, open a thread's context menu and choose
 **Regenerate title**. While Scient is generating it, the action reads **Regenerating…** and cannot
 be selected again. The option is hidden when the connected environment needs a server update.
+
+## Answers waiting in the Dock
+
+On macOS, Scient's Dock badge counts conversations with an unread completed answer.
+Several answers in one conversation count once. The badge keeps updating while
+Scient is in the background or minimized. Opening the app clears only the answer
+in the conversation you view; opening Settings or another conversation leaves
+other answers waiting.
+
+A queued turn starting does not clear an earlier unread answer. Stopped or failed
+turns do not add a completed-answer badge. Archiving or deleting a conversation
+removes it from the count. **Mark unread** restores its waiting-answer indication.
+Read state belongs to this client; reading on another device does not clear the
+Mac's badge. Existing conversations without read history are treated as read when
+this feature first connects to their environment.
+
+The badge uses the macOS app-icon badge permission. If macOS suppresses it, check
+Scient's notification settings and allow app-icon badges. No banner or sound is
+sent by this feature. Closing the last window pauses badge updates until a window
+is reopened; the last displayed count remains. Quitting Scient stops updates.
