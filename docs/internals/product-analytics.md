@@ -61,7 +61,11 @@ protections below. Final copy and layout require human review before activation.
 
 `contract.ts` normalizes raw call-site values. `wireContract.ts` is the strict
 persisted/wire validator; the website gateway consumes its generated copy.
-Revision 3 adds product insight signals while the envelope remains schema version 1.
+Revision 3 added product insight signals. Revision 4 makes provider installation
+state explicit, so a bundled-but-missing provider cannot be mistaken for an
+installed runtime. Installation state is aggregated per provider driver: it is
+true when at least one settled configured instance is installed. The envelope
+remains schema version 1.
 Legacy events may omit `contractRevision`; new events carry the bounded revision.
 Unrecognized/custom model and build labels become safe categories, not raw text.
 
@@ -71,8 +75,8 @@ registered event. Regenerate and compare both repositories from the desktop root
 ```sh
 node packages/scient-analytics/src/generateConformance.ts \
   --wire=/absolute/website/workers/events/src/eventContract.ts \
-  packages/scient-analytics/fixtures/contract-v3.json \
-  /absolute/website/workers/events/fixtures/contract-v3.json
+  packages/scient-analytics/fixtures/contract-v4.json \
+  /absolute/website/workers/events/fixtures/contract-v4.json
 # Repeat with --check to verify exact source/corpus parity without writing.
 ```
 
