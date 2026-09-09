@@ -172,6 +172,100 @@ describe("rich Markdown direction presentation", () => {
     expect(onUserSourceChange).toHaveBeenCalled();
   });
 
+  it("keeps scientific identifiers from deciding automatic table column order", async () => {
+    const source = [
+      "| מאפיין HER2 TNBC cN0 BCS NET | טיפול |",
+      "| --- | --- |",
+      "| HER2 TNBC BCS NET | טיפול מותאם |",
+      "",
+    ].join("\n");
+    const { controller, onUserSourceChange, view } = mount(source);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(view.dom.querySelector(".scient-markdown-table")).not.toBeNull();
+    const table = view.dom.querySelector("table");
+    const cells = Array.from(view.dom.querySelectorAll("th, td"));
+
+    expect(inheritedDirection(table)).toBe("rtl");
+    expect(
+      inheritedDirection(cells.find((cell) => cell.textContent?.includes("HER2")) ?? null),
+    ).toBe("ltr");
+    expect(
+      inheritedDirection(cells.find((cell) => cell.textContent === "טיפול מותאם") ?? null),
+    ).toBe("rtl");
+    expect(cells.map((cell) => cell.getAttribute("data-scient-table-column-direction"))).toEqual([
+      "rtl",
+      "rtl",
+      "rtl",
+      "rtl",
+    ]);
+    expect(controller.session.session.draftSource).toBe(source);
+    expect(onUserSourceChange).not.toHaveBeenCalled();
+  });
+
+  it("aligns logical columns consistently without changing each cell's text direction", async () => {
+    const source = [
+      "| אבחנה | Treatment | Explicit |",
+      "| --- | --- | :---: |",
+      "| TNBC | טיפול | מרכז |",
+      "",
+    ].join("\n");
+    const { controller, onUserSourceChange, view } = mount(source);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    const rows = Array.from(view.dom.querySelectorAll("tr")).map((row) =>
+      Array.from(row.querySelectorAll("th, td")),
+    );
+
+    expect(inheritedDirection(rows[1]?.[0] ?? null)).toBe("ltr");
+    expect(inheritedDirection(rows[1]?.[1] ?? null)).toBe("rtl");
+    expect(rows.map((row) => row[0]?.getAttribute("data-scient-table-column-direction"))).toEqual([
+      "rtl",
+      "rtl",
+    ]);
+    expect(rows.map((row) => row[1]?.getAttribute("data-scient-table-column-direction"))).toEqual([
+      "ltr",
+      "ltr",
+    ]);
+    expect(rows[0]?.[2]?.getAttribute("data-alignment")).toBe("center");
+    expect(rows[1]?.[2]?.getAttribute("data-alignment")).toBe("center");
+    expect(rows[0]?.[2]?.hasAttribute("data-scient-table-column-direction")).toBe(false);
+    expect(rows[1]?.[2]?.hasAttribute("data-scient-table-column-direction")).toBe(false);
+    expect(controller.session.session.draftSource).toBe(source);
+    expect(onUserSourceChange).not.toHaveBeenCalled();
+  });
+
+  it("updates a complete column when an edit changes its dominant prose", async () => {
+    const source = ["| אבחנה | Value |", "| --- | --- |", "| TNBC | stable |", ""].join("\n");
+    const { controller, onUserSourceChange, view } = mount(source);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    const columnDirections = () =>
+      Array.from(view.dom.querySelectorAll("tr")).map((row) =>
+        row.querySelector("th, td")?.getAttribute("data-scient-table-column-direction"),
+      );
+    expect(columnDirections()).toEqual(["rtl", "rtl"]);
+
+    let headerPosition: number | null = null;
+    view.state.doc.descendants((node, position) => {
+      if (headerPosition === null && node.type.spec.tableRole === "header_cell") {
+        headerPosition = position;
+        return false;
+      }
+      return true;
+    });
+    const header = view.state.doc.nodeAt(headerPosition!);
+    view.dispatch(
+      view.state.tr.insertText(
+        "Diagnosis details",
+        headerPosition! + 1,
+        headerPosition! + 1 + (header?.content.size ?? 0),
+      ),
+    );
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(columnDirections()).toEqual(["ltr", "ltr"]);
+    expect(controller.session.session.draftSource).toContain("Diagnosis details");
+    expect(onUserSourceChange).toHaveBeenCalled();
+  });
+
   it("keeps explicit direction authoritative and recomputes automatic direction after edits", () => {
     const source = '<div dir="ltr">\n\nשלום עולם.\n\n</div>\n';
     const { controller, view } = mount(source);

@@ -313,6 +313,28 @@ describe("rich Markdown compact-surface styles", () => {
     }
   });
 
+  it("keeps automatic alignment physical and independent from cell text direction", () => {
+    const style = document.createElement("style");
+    style.textContent = cssSource;
+    document.head.append(style);
+    const host = document.createElement("div");
+    host.className = "scient-markdown-document";
+    host.innerHTML = `
+      <table><tbody><tr>
+        <td id="ltr-in-rtl-column" dir="ltr" data-scient-table-column-direction="rtl">TNBC</td>
+        <td id="rtl-in-ltr-column" dir="rtl" data-scient-table-column-direction="ltr">טיפול</td>
+      </tr></tbody></table>
+    `;
+    document.body.append(host);
+    try {
+      expect(getComputedStyle(host.querySelector("#ltr-in-rtl-column")!).textAlign).toBe("right");
+      expect(getComputedStyle(host.querySelector("#rtl-in-ltr-column")!).textAlign).toBe("left");
+    } finally {
+      host.remove();
+      style.remove();
+    }
+  });
+
   it("keeps caret and cell-selection decorations out of table layout", () => {
     expect(cssSource).toMatch(
       /\.scient-markdown-document p,\s*\.scient-markdown-document ul,\s*\.scient-markdown-document ol,\s*\.scient-markdown-document blockquote,\s*\.scient-markdown-document pre,\s*\.scient-markdown-document table \{\s*margin-block: 0\.65rem;/su,

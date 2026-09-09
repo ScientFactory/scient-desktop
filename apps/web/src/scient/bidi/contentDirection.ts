@@ -12,6 +12,11 @@ const MARKDOWN_CODE_BLOCK = /(?:```|~~~)[\s\S]*?(?:```|~~~|$)/g;
 const MARKDOWN_INLINE_CODE = /`[^`\n]*`/g;
 const MARKDOWN_LINK_DESTINATION = /\]\([^)]*\)/g;
 const MARKDOWN_AUTOLINK = /<(?:https?:\/\/|mailto:)[^>]+>/gi;
+const TABLE_LITERAL_TEX = /\$(?=[^$\n]*\\[A-Za-z]{2,})[^$\n]{1,1000}\$/g;
+const TABLE_TEX_COMMAND = /\\[A-Za-z]{2,}(?:\s*\{[^{}\n]*\})?/g;
+const TABLE_TECHNICAL_IDENTIFIER =
+  /(?<![\p{L}\p{N}])(?:[A-Z]{2,5}[+-]?|[A-Za-z]+\d+[A-Za-z0-9+-]*|\d+[A-Za-z]+[A-Za-z0-9+-]*)(?![\p{L}\p{N}])/gu;
+const MIXED_TABLE_CELL_LTR_THRESHOLD_PERCENT = 70;
 
 const RTL_FLOW_ARROW_REPLACEMENTS: Readonly<Record<string, string>> = {
   "→": "←",
@@ -70,6 +75,20 @@ export function countStrongScripts(text: string): StrongScriptCounts {
   }
 
   return { rtl, ltr };
+}
+
+/**
+ * Counts prose that can reliably describe a table's reading order. Scientific
+ * identifiers and literal TeX are cell content, not evidence that the table's
+ * column structure is LTR. Individual cells still use the unfiltered counter.
+ */
+export function countTableStrongScripts(text: string): StrongScriptCounts {
+  return countStrongScripts(
+    text
+      .replace(TABLE_LITERAL_TEX, " ")
+      .replace(TABLE_TEX_COMMAND, " ")
+      .replace(TABLE_TECHNICAL_IDENTIFIER, " "),
+  );
 }
 
 export function resolveStrongScriptDirection(
@@ -208,8 +227,9 @@ export function resolveDominantDirectionFromCounts(
 
 /**
  * Resolves text flow inside one table cell independently from table layout.
- * Mixed cells use their own dominant script; neutral or tied cells inherit the
- * table's automatic content direction, never a manual column-order override.
+ * A mixed cell becomes LTR only when at least 70% of its strong characters are
+ * LTR; otherwise RTL wins. Pure-script cells keep their script direction, and
+ * neutral cells inherit the table's automatic content direction.
  */
 export function resolveTableCellDirection(
   text: string,
@@ -222,7 +242,28 @@ export function resolveTableCellDirectionFromCounts(
   counts: StrongScriptCounts,
   automaticTableDirection: FixedContentDirection,
 ): FixedContentDirection {
+  if (counts.rtl > 0 && counts.ltr > 0) {
+    const total = counts.rtl + counts.ltr;
+    return counts.ltr * 100 >= total * MIXED_TABLE_CELL_LTR_THRESHOLD_PERCENT ? "ltr" : "rtl";
+  }
   return resolveDominantDirectionFromCounts(counts, automaticTableDirection);
+}
+
+/**
+ * Resolves one visual alignment direction for a complete table column.
+ * Ordinary prose is authoritative when present. Identifier-only columns use
+ * their raw script as a fallback, while neutral columns follow the table.
+ * Cell-level `dir` remains separate so mixed punctuation keeps its local flow.
+ */
+export function resolveTableColumnDirectionFromCounts(
+  proseCounts: StrongScriptCounts,
+  rawCounts: StrongScriptCounts,
+  tableDirection: FixedContentDirection,
+): FixedContentDirection {
+  if (proseCounts.rtl > 0 || proseCounts.ltr > 0) {
+    return resolveDominantDirectionFromCounts(proseCounts, tableDirection);
+  }
+  return resolveDominantDirectionFromCounts(rawCounts, tableDirection);
 }
 
 /**
