@@ -80,6 +80,7 @@ import {
   WindowsPrimaryNativeProbeError,
   WindowsDesktopBuildPrerequisitesMissingError,
   WindowsPackagedPayloadValidationError,
+  WINDOWS_EXTRA_RESOURCE_FILE_EXCLUSIONS,
   WINDOWS_NATIVE_ASAR_UNPACK_GLOB,
   WINDOWS_PACKAGED_PAYLOAD_FILE_LIMIT,
   WINDOWS_SERVER_ASAR_IGNORE_GLOBS,
@@ -755,7 +756,10 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
       ]);
       assert.deepStrictEqual(mac.files, [...DESKTOP_FILE_EXCLUSIONS, ...MAC_FILE_EXCLUSIONS]);
       assert.deepStrictEqual(linux.files, DESKTOP_FILE_EXCLUSIONS);
-      assert.deepStrictEqual(win.files, DESKTOP_FILE_EXCLUSIONS);
+      assert.deepStrictEqual(win.files, [
+        ...DESKTOP_FILE_EXCLUSIONS,
+        ...WINDOWS_EXTRA_RESOURCE_FILE_EXCLUSIONS,
+      ]);
       assert.deepStrictEqual(winWithoutWslPrebuild.files, win.files);
       assert.notProperty(mac.mac as Record<string, unknown>, "sign");
       for (const config of [linux, win]) {
@@ -769,6 +773,34 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
     assert.deepStrictEqual(MAC_FILE_EXCLUSIONS, [
       "!**/node_modules/node-pty/prebuilds/win32-*/**/*",
       "!**/node_modules/node-pty/third_party/conpty/**/*",
+    ]);
+  });
+
+  it("excludes separately emitted Scient runtimes only from the Windows app asar", () => {
+    for (const resource of DESKTOP_EXTRA_RESOURCES) {
+      const sourceTreeResource = resource.from.replace(
+        "apps/desktop/prod-resources/",
+        "apps/desktop/resources/",
+      );
+      for (const stagingPath of [sourceTreeResource, resource.from]) {
+        assert.include(WINDOWS_EXTRA_RESOURCE_FILE_EXCLUSIONS, `!${stagingPath}`);
+        assert.include(WINDOWS_EXTRA_RESOURCE_FILE_EXCLUSIONS, `!${stagingPath}/**/*`);
+      }
+    }
+
+    assert.deepStrictEqual(WINDOWS_EXTRA_RESOURCE_FILE_EXCLUSIONS, [
+      "!apps/desktop/resources/resource-monitor",
+      "!apps/desktop/resources/resource-monitor/**/*",
+      "!apps/desktop/resources/whisper-runtime",
+      "!apps/desktop/resources/whisper-runtime/**/*",
+      "!apps/desktop/resources/synctex-runtime",
+      "!apps/desktop/resources/synctex-runtime/**/*",
+      "!apps/desktop/prod-resources/resource-monitor",
+      "!apps/desktop/prod-resources/resource-monitor/**/*",
+      "!apps/desktop/prod-resources/whisper-runtime",
+      "!apps/desktop/prod-resources/whisper-runtime/**/*",
+      "!apps/desktop/prod-resources/synctex-runtime",
+      "!apps/desktop/prod-resources/synctex-runtime/**/*",
     ]);
   });
 

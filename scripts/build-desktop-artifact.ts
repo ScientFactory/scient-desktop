@@ -1048,6 +1048,25 @@ export const MAC_FILE_EXCLUSIONS = [
   "!**/node_modules/node-pty/third_party/conpty/**/*",
 ] as const;
 
+// Scient's packaged runtimes are emitted once at Electron's top-level
+// resources/ directory through extraResources. The Windows ASAR rule unpacks
+// every executable and DLL, so retaining either staging tree in app.asar would
+// create two additional loose copies of the same binaries and bloat installs.
+export const WINDOWS_EXTRA_RESOURCE_FILE_EXCLUSIONS = [
+  "!apps/desktop/resources/resource-monitor",
+  "!apps/desktop/resources/resource-monitor/**/*",
+  "!apps/desktop/resources/whisper-runtime",
+  "!apps/desktop/resources/whisper-runtime/**/*",
+  "!apps/desktop/resources/synctex-runtime",
+  "!apps/desktop/resources/synctex-runtime/**/*",
+  "!apps/desktop/prod-resources/resource-monitor",
+  "!apps/desktop/prod-resources/resource-monitor/**/*",
+  "!apps/desktop/prod-resources/whisper-runtime",
+  "!apps/desktop/prod-resources/whisper-runtime/**/*",
+  "!apps/desktop/prod-resources/synctex-runtime",
+  "!apps/desktop/prod-resources/synctex-runtime/**/*",
+] as const;
+
 // node-pty publishes both Darwin prebuilds in one package. Single-architecture
 // apps only need the native target; universal apps need both. An omitted arch
 // preserves the existing common exclusions for callers that only inspect the
@@ -2791,6 +2810,7 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
     files: [
       ...DESKTOP_FILE_EXCLUSIONS,
       ...(platform === "mac" ? resolveMacFileExclusions(arch) : []),
+      ...(platform === "win" ? WINDOWS_EXTRA_RESOURCE_FILE_EXCLUSIONS : []),
     ],
     directories: {
       buildResources: "apps/desktop/resources",
