@@ -1,8 +1,7 @@
 export const ANALYTICS_SCHEMA_VERSION = 1 as const;
 export const ANALYTICS_SOURCE = "desktop" as const;
-import { EVENT_DEFINITIONS } from "./wireContract.ts";
-
-export const ANALYTICS_CONTRACT_REVISION = "4" as const;
+import { ANALYTICS_CONTRACT_REVISION, EVENT_DEFINITIONS } from "./wireContract.ts";
+export { ANALYTICS_CONTRACT_REVISION } from "./wireContract.ts";
 
 export const ANALYTICS_EVENT_NAMES = [
   "app.session.started",
