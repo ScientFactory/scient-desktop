@@ -127,6 +127,39 @@ tables stay fully editable instead of gaining the preview's collapsed-cell trunc
 selection, source, and formatting controls appear only while interacting. These exceptions may
 not alter Markdown source unless the user performs an editing command.
 
+### Cite selected text
+
+Rendered workspace Markdown extends the inherited composer citation workflow,
+not the Sources library or the file-edit review-comment system. Assistant and
+file quotes have distinct contracts and wire formats. They share the inline
+composer node, optional comment UI, selection-action lifecycle, and the single
+provider-input expansion boundary; assistant v1 links remain compatible.
+
+Capture reads the live ProseMirror document and current projected source ranges.
+Nested code selection belongs to CodeMirror and is translated to its containing
+ProseMirror code node. No capture, comment, or highlighting action may serialize,
+save, or replace the editor document or undo history. A quote stores the exact
+selected text, original environment/workspace/path, draft-or-saved provenance,
+snapshot SHA-256, and enclosing source blocks/lines. ProseMirror positions are
+an optimization for that exact snapshot only. Changed-source navigation uses
+conservative text/context matching; an ambiguous match must not be highlighted.
+
+Only text selections are supported in this slice. Non-text atoms, source mode,
+and fallback read-only host-file previews do not inherit a fake file selection
+from assistant-message DOM attributes. Future readers can add a concrete quote
+type or capture adapter if needed, without introducing a universal annotation
+store into this workflow.
+
+File navigation reuses scoped thread routes and the existing pending-save guard
+before switching file panels, never a basename search in the active project.
+If the original thread has moved worktrees, its captured absolute file opens
+through the existing read-only host-file path, without pretending to highlight
+a matching file in the new worktree. The rendered reveal is transient and does not alter the global eye
+preference. Quote payloads are persisted only with the prompt/message; the panel
+does not retain a second copy across app restarts. The server expands references
+once as quoted data before all provider adapters; it does not read a path supplied
+by a citation or grant new workspace permissions.
+
 ### Node behavior
 
 | Node                          | Rendered-editor behavior                                                     | Markdown authority                                                      |

@@ -5,7 +5,7 @@ import {
   type ScopedThreadRef,
 } from "@t3tools/contracts";
 import { QuoteIcon } from "lucide-react";
-import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import {
   captureAssistantTextSelection,
@@ -18,17 +18,17 @@ import {
 } from "~/lib/selectionActions";
 import { Button } from "../ui/button";
 
-export function AssistantSelectionToolbar({
+export function SelectionCitationToolbar<T extends { readonly text: string }>({
   viewport,
-  threadRef,
+  capture,
   onCite,
 }: {
   viewport: HTMLElement | null;
-  threadRef: ScopedThreadRef;
-  onCite: (citation: AssistantCitation, sourceAnchor: AssistantCitationSourceAnchor) => boolean;
+  capture: () => { citation: T; sourceAnchor: AssistantCitationSourceAnchor } | null;
+  onCite: (citation: T, sourceAnchor: AssistantCitationSourceAnchor) => boolean;
 }) {
   const [selection, setSelection] = useState<{
-    citation: AssistantCitation;
+    citation: T;
     position: SelectionActionPoint;
     sourceAnchor: AssistantCitationSourceAnchor;
   } | null>(null);
@@ -47,28 +47,21 @@ export function AssistantSelectionToolbar({
     if (!viewport) return;
     const clear = () => setSelection(null);
     const update = (pointer: SelectionActionPoint | null) => {
-      const nativeSelection = window.getSelection();
-      const captured = captureAssistantTextSelection(viewport, nativeSelection);
-      const messageId = captured?.source.dataset.assistantCitationSource;
-      if (!captured || !messageId) {
+      const captured = capture();
+      if (!captured) {
         clear();
         return;
       }
-      const rect = captured.range.getBoundingClientRect();
+      const rect = captured.sourceAnchor.range.getBoundingClientRect();
       const viewportRect = viewport.getBoundingClientRect();
       if (rect.bottom < viewportRect.top || rect.top > viewportRect.bottom || rect.width === 0) {
         clear();
         return;
       }
-      const rects = captured.range.getClientRects();
+      const rects = captured.sourceAnchor.range.getClientRects();
       setSelection({
-        sourceAnchor: { source: captured.source, range: captured.range, viewport },
-        citation: {
-          version: 1,
-          ...threadRef,
-          messageId: MessageId.make(messageId),
-          ...captured.selector,
-        },
+        sourceAnchor: captured.sourceAnchor,
+        citation: captured.citation,
         position: resolveSelectionActionPosition({
           bounds: viewportRect,
           selectionRect: rects.item(rects.length - 1) ?? rect,
@@ -112,7 +105,7 @@ export function AssistantSelectionToolbar({
       actions.dispose();
       actionsRef.current = null;
     };
-  }, [threadRef, viewport]);
+  }, [capture, viewport]);
 
   if (!selection) return null;
   const tooLong = selection.citation.text.length > ASSISTANT_CITATION_MAX_TEXT_LENGTH;
@@ -151,4 +144,31 @@ export function AssistantSelectionToolbar({
     </Button>,
     document.body,
   );
+}
+
+export function AssistantSelectionToolbar({
+  viewport,
+  threadRef,
+  onCite,
+}: {
+  viewport: HTMLElement | null;
+  threadRef: ScopedThreadRef;
+  onCite: (citation: AssistantCitation, sourceAnchor: AssistantCitationSourceAnchor) => boolean;
+}) {
+  const capture = useCallback(() => {
+    if (!viewport) return null;
+    const captured = captureAssistantTextSelection(viewport, window.getSelection());
+    const messageId = captured?.source.dataset.assistantCitationSource;
+    if (!captured || !messageId) return null;
+    return {
+      citation: {
+        version: 1 as const,
+        ...threadRef,
+        messageId: MessageId.make(messageId),
+        ...captured.selector,
+      },
+      sourceAnchor: { source: captured.source, range: captured.range, viewport },
+    };
+  }, [threadRef, viewport]);
+  return <SelectionCitationToolbar viewport={viewport} capture={capture} onCite={onCite} />;
 }

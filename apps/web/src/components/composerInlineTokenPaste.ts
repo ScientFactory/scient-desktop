@@ -1,4 +1,4 @@
-import type { AssistantCitation } from "@t3tools/contracts";
+import type { ComposerCitation } from "@t3tools/contracts";
 import {
   $createLineBreakNode,
   $createTextNode,
@@ -15,7 +15,7 @@ import { collectComposerPromptInlineTokens } from "../composer-editor-mentions";
 
 interface ComposerInlineTokenPasteOptions {
   createMentionNode: (path: string) => LexicalNode;
-  createCitationNode: (citation: AssistantCitation, source: string) => LexicalNode;
+  createCitationNode: (citation: ComposerCitation, source: string) => LexicalNode;
   getExpandedAbsoluteOffsetForPoint: (node: LexicalNode, pointOffset: number) => number;
 }
 

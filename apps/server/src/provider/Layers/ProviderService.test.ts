@@ -5,6 +5,7 @@ import * as NodePath from "node:path";
 import * as FileSystem from "effect/FileSystem";
 
 import type {
+  FileCitation,
   ProviderApprovalDecision,
   ProviderRuntimeEvent,
   ProviderSendTurnInput,
@@ -33,6 +34,10 @@ import {
   expandAssistantCitationsForProvider,
   serializeAssistantCitation,
 } from "@t3tools/shared/assistantCitations";
+import {
+  serializeComposerCitation,
+  expandComposerCitationsForProvider,
+} from "@t3tools/shared/composerCitations";
 import { createModelSelection } from "@t3tools/shared/model";
 import { it, assert, describe, vi } from "@effect/vitest";
 import { afterAll } from "vite-plus/test";
@@ -3442,6 +3447,52 @@ citations.layer("ProviderServiceLive assistant citations", (it) => {
     [CLAUDE_AGENT_DRIVER, citations.claude],
     [CURSOR_DRIVER, citations.cursor],
   ] as const) {
+    it.effect(
+      `expands a file quote at the shared ${driver} boundary without losing its source`,
+      () =>
+        Effect.gen(function* () {
+          const provider = yield* ProviderService.ProviderService;
+          const threadId = asThreadId(`thread-file-citation-${driver}`);
+          yield* provider.startSession(threadId, {
+            provider: driver,
+            providerInstanceId: ProviderInstanceId.make(driver),
+            threadId,
+            runtimeMode: "full-access",
+          });
+          const quote: FileCitation = {
+            kind: "file",
+            version: 1,
+            environmentId: EnvironmentId.make("remote-source"),
+            threadId: asThreadId("original-thread"),
+            cwd: "/original/worktree",
+            path: "notes.md",
+            revision: `sha256:${"a".repeat(64)}`,
+            origin: "draft",
+            sourceStart: 0,
+            sourceEnd: 50,
+            startLine: 1,
+            endLine: 4,
+            from: 1,
+            to: 12,
+            text: "Exact quote\n  with indentation",
+            prefix: "",
+            suffix: "",
+            comment: "Explain this.",
+          };
+          const prompt = `Explain ${serializeComposerCitation(quote)}`;
+          const request = Object.freeze({ threadId, input: prompt });
+          adapter.sendTurn.mockClear();
+          yield* provider.sendTurn(request);
+          const sent = adapter.sendTurn.mock.calls[0]?.[0].input ?? "";
+          assert.equal(sent, expandComposerCitationsForProvider(prompt));
+          assert.include(sent, '"cwd": "/original/worktree"');
+          assert.include(sent, '"origin": "draft"');
+          assert.include(sent, '"text": "Exact quote\\n  with indentation"');
+          assert.notInclude(sent, "scient-file-citation:");
+          assert.equal(request.input, prompt);
+          yield* provider.stopSession({ threadId });
+        }),
+    );
     it.effect(`expands quotes and bound comments as JSON data for ${driver}`, () =>
       Effect.gen(function* () {
         const provider = yield* ProviderService.ProviderService;
