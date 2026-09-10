@@ -23,12 +23,13 @@ describe("Scient awareness", () => {
     expect(SCIENT_CORE_AWARENESS).toContain("editable LaTeX source/PDF workspace");
     expect(SCIENT_CORE_AWARENESS).not.toContain("project-relative Markdown link");
     expect(SCIENT_CORE_AWARENESS).not.toContain("When LaTeX fits");
-    expect(SCIENT_CORE_AWARENESS).toContain("diagram declaration first");
+    expect(SCIENT_CORE_AWARENESS).toContain("diagram declaration before its contents");
     expect(SCIENT_CORE_AWARENESS).toContain("self-contained Plotly figure JSON");
     expect(SCIENT_CORE_AWARENESS).toContain(
-      "For these inline visual blocks, do not wrap them in HTML",
+      "Use these formats directly, without HTML or JavaScript wrappers",
     );
-    expect(SCIENT_CORE_AWARENESS).toContain("not durable project artifacts");
+    expect(SCIENT_CORE_AWARENESS).toContain("Create workspace files");
+    expect(SCIENT_CORE_AWARENESS).toContain("standalone deliverable");
     expect(SCIENT_CORE_AWARENESS).not.toContain("sources_");
   });
 

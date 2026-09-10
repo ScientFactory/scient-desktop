@@ -1,11 +1,12 @@
 import type { LegendListRef } from "@legendapp/list/react";
 import type { AssistantCitation, MessageId, ScopedThreadRef } from "@t3tools/contracts";
-import { useEffect, useRef, type ReactNode, type RefObject } from "react";
+import { useEffect, useMemo, useRef, type ReactNode, type RefObject } from "react";
 import {
   resolveAssistantCitationRange,
   type AssistantCitationSourceAnchor,
 } from "~/lib/assistantTextSelection";
 import { toastManager } from "../ui/toast";
+import { AssistantCitationContext } from "./assistantCitationContext";
 
 const CITATION_PULSE_DURATION_MS = 650;
 // The second pulse settles into a held highlight so late glances still find the quote.
@@ -358,6 +359,10 @@ export function AssistantCitationSource({
   children: ReactNode;
 }) {
   const rootRef = useRef<HTMLDivElement>(null);
+  const citationSource = useMemo(
+    () => (threadRef ? { ...threadRef, messageId } : null),
+    [messageId, threadRef],
+  );
   useEffect(() => {
     const root = rootRef.current;
     const list = listRef.current;
@@ -372,7 +377,7 @@ export function AssistantCitationSource({
       data-assistant-citation-environment={threadRef?.environmentId}
       data-assistant-citation-thread={threadRef?.threadId}
     >
-      {children}
+      <AssistantCitationContext value={citationSource}>{children}</AssistantCitationContext>
     </div>
   );
 }

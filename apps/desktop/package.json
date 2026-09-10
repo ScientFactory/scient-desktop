@@ -10,7 +10,8 @@
     "typecheck": "tsc --noEmit",
     "test": "vp test run --passWithNoTests",
     "smoke-test": "node scripts/smoke-test.mjs",
-    "test:pdf-pagination": "node scripts/pdf-pagination-smoke.mjs"
+    "test:pdf-pagination": "node scripts/pdf-pagination-smoke.mjs",
+    "test:mermaid-render": "node scripts/mermaid-render-smoke.mjs"
   },
   "dependencies": {
     "@clerk/electron": "catalog:",

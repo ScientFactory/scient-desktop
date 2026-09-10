@@ -214,7 +214,15 @@ export function captureAssistantTextSelection(
   selection: Selection | null,
 ): { source: HTMLElement; selector: AssistantTextSelector; range: Range } | null {
   if (selection === null || selection.isCollapsed || selection.rangeCount !== 1) return null;
-  const range = selection.getRangeAt(0).cloneRange();
+  return captureAssistantTextRange(viewport, selection.getRangeAt(0));
+}
+
+/** Also supports explicit cite actions without replacing the user's native selection. */
+export function captureAssistantTextRange(
+  viewport: HTMLElement,
+  selectedRange: Range,
+): { source: HTMLElement; selector: AssistantTextSelector; range: Range } | null {
+  const range = selectedRange.cloneRange();
   const first = selectedTextBoundary(range, range.commonAncestorContainer, false);
   const last = selectedTextBoundary(range, range.commonAncestorContainer, true);
   if (first === null || last === null) return null;
