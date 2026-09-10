@@ -123,6 +123,7 @@ const makeThread = (input: {
   hasPendingApprovals: false,
   hasPendingUserInput: false,
   hasActionableProposedPlan: false,
+  pullRequests: [],
 });
 
 const makeQuery = (input: {

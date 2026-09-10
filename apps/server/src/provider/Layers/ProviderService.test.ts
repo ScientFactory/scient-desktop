@@ -5128,12 +5128,14 @@ describe("agent browser access", () => {
 
   it.effect("keeps project capabilities available when browser access is off", () =>
     Effect.gen(function* () {
-      const issued = yield* startSessionWith(false, asThreadId("thread-browser-off"));
+      const threadId = asThreadId("thread-browser-off");
+      const issued = yield* startSessionWith(false, threadId);
 
       assert.deepEqual(issued, [
         {
           threadId: asThreadId("thread-browser-off"),
           capabilities: new Set([
+            "pull-requests",
             "documents:build",
             "sources:read",
             "sources:write",
@@ -5156,6 +5158,7 @@ describe("agent browser access", () => {
           threadId,
           capabilities: new Set([
             "preview",
+            "pull-requests",
             "documents:build",
             "sources:read",
             "sources:write",
@@ -5183,7 +5186,12 @@ describe("agent browser access", () => {
       assert.deepEqual(issued, [
         {
           threadId,
-          capabilities: new Set(["documents:build", "sources:read", "sources:write"]),
+          capabilities: new Set([
+            "pull-requests",
+            "documents:build",
+            "sources:read",
+            "sources:write",
+          ]),
         },
       ]);
     }).pipe(Effect.provide(NodeServices.layer)),
@@ -5229,6 +5237,7 @@ describe("agent browser access", () => {
         {
           threadId,
           capabilities: new Set([
+            "pull-requests",
             "documents:build",
             "sources:read",
             "sources:write",
@@ -5259,7 +5268,13 @@ describe("agent browser access", () => {
       assert.equal(issued.length, 1);
       assert.deepEqual(
         issued[0]?.capabilities,
-        new Set(["documents:build", "sources:read", "sources:write", "skills:read"]),
+        new Set([
+          "pull-requests",
+          "documents:build",
+          "sources:read",
+          "sources:write",
+          "skills:read",
+        ]),
       );
     }).pipe(Effect.provide(NodeServices.layer)),
   );
@@ -5279,7 +5294,14 @@ describe("agent browser access", () => {
       assert.equal(issued.length, 1);
       assert.deepEqual(
         issued[0]?.capabilities,
-        new Set(["preview", "documents:build", "sources:read", "sources:write", "skills:read"]),
+        new Set([
+          "preview",
+          "pull-requests",
+          "documents:build",
+          "sources:read",
+          "sources:write",
+          "skills:read",
+        ]),
       );
     }).pipe(Effect.provide(NodeServices.layer)),
   );

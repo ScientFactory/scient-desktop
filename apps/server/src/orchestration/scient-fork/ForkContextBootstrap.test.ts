@@ -75,6 +75,7 @@ function thread(messages: ReadonlyArray<OrchestrationMessage>): OrchestrationThr
     deletedAt: null,
     messages: [...messages],
     proposedPlans: [],
+    pullRequests: [],
     activities: [],
     checkpoints: [],
     session: {

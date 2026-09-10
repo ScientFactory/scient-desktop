@@ -232,6 +232,8 @@ export const make = Effect.gen(function* () {
       threadTitleRegeneration: true,
       threadForkTitleOverride: true,
       threadForkRecovery: true,
+      threadPullRequests: true,
+      pullRequestStackActions: true,
       threadPullRequestLinking: true,
       environmentIcon: true,
       ...(serverSelfUpdate === null ? {} : { serverSelfUpdate }),
