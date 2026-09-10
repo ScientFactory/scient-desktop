@@ -1,5 +1,7 @@
 "use client";
 
+import { Spinner } from "~/components/ui/spinner";
+
 import { Toast } from "@base-ui/react/toast";
 import {
   useEffect,
@@ -20,7 +22,6 @@ import {
   CircleCheckIcon,
   CopyIcon,
   InfoIcon,
-  LoaderCircleIcon,
   TriangleAlertIcon,
   XIcon,
 } from "lucide-react";
@@ -66,6 +67,10 @@ export type ThreadToastData = {
   /** When set with `expandableContent`, the summary + label act as one text disclosure (no separate chevron row). */
   expandableDescriptionTrigger?: boolean;
   actionLayout?: "inline" | "stacked-end";
+  /** In stacked toasts, align the body with the icon rather than indenting it under the title. */
+  fullWidthDescription?: boolean;
+  /** Optional content at the start of a stacked action row. */
+  actionLeadingContent?: ReactNode;
   actionVariant?:
     | "default"
     | "destructive"
@@ -84,7 +89,7 @@ const threadToastVisibleTimeoutRemainingMs = new Map<ToastId, number>();
 const TOAST_ICONS = {
   error: CircleAlertIcon,
   info: InfoIcon,
-  loading: LoaderCircleIcon,
+  loading: Spinner,
   success: CircleCheckIcon,
   warning: TriangleAlertIcon,
 } as const;
@@ -340,6 +345,7 @@ function ToastBodyContent({
   const additionalActions = toastData?.additionalActions ?? [];
   const secondaryActionProps = toastData?.secondaryActionProps;
   const leadingIcon = toastData?.leadingIcon;
+  const fullWidthDescription = stackedActionLayout && toastData?.fullWidthDescription === true;
   const { className: secondaryActionClassName, ...secondaryActionRest } =
     secondaryActionProps ?? {};
 
@@ -358,7 +364,7 @@ function ToastBodyContent({
             className="[&>svg]:h-lh [&>svg]:w-4 [&_svg]:pointer-events-none [&_svg]:shrink-0"
             data-slot="toast-icon"
           >
-            <Icon className="in-data-[type=loading]:animate-spin in-data-[type=error]:text-destructive in-data-[type=info]:text-info in-data-[type=success]:text-success in-data-[type=warning]:text-warning in-data-[type=loading]:opacity-80" />
+            <Icon className="in-data-[type=error]:text-destructive in-data-[type=info]:text-info in-data-[type=success]:text-success in-data-[type=warning]:text-warning in-data-[type=loading]:opacity-80" />
           </div>
         ) : null}
         <div
@@ -368,13 +374,22 @@ function ToastBodyContent({
           )}
         >
           <Toast.Title className="min-w-0 wrap-break-word font-medium" data-slot="toast-title" />
-          <ToastDescriptionAndExpandable
-            toastData={toastData}
-            toastDescription={toastDescription}
-            toastType={toastType}
-          />
+          {!fullWidthDescription ? (
+            <ToastDescriptionAndExpandable
+              toastData={toastData}
+              toastDescription={toastDescription}
+              toastType={toastType}
+            />
+          ) : null}
         </div>
       </div>
+      {fullWidthDescription ? (
+        <ToastDescriptionAndExpandable
+          toastData={toastData}
+          toastDescription={toastDescription}
+          toastType={toastType}
+        />
+      ) : null}
       {hasTrailingControls ? (
         <div
           className={cn(
@@ -382,6 +397,11 @@ function ToastBodyContent({
             stackedActionLayout ? "w-full justify-end" : "shrink-0",
           )}
         >
+          {stackedActionLayout && toastData?.actionLeadingContent ? (
+            <div className="mr-auto min-w-0" data-slot="toast-action-leading">
+              {toastData.actionLeadingContent}
+            </div>
+          ) : null}
           {copyErrorText !== null ? <CopyErrorButton text={copyErrorText} /> : null}
           {additionalActions.map(({ id, props: { className, ...props } }) => (
             <Button

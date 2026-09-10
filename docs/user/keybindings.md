@@ -86,6 +86,12 @@ successful pick; its hover glow and badge preview the element and color family t
 `rightPanel.toggleMaximized` maximizes or restores the open right panel. It has no default shortcut,
 so add one in **Settings** → **Keybindings** if you want to use it.
 
+`rightPanel.close` closes the active right panel tab and defaults to `mod+w`. Press it again to close
+the next tab. With the terminal focused, `mod+w` closes the terminal instead, and with nothing left
+to close it closes the desktop window as before. Browsers reserve `mod+w` for closing their own tab
+and never pass it to the page, so in a browser rebind this command (and `terminal.close`) to a
+shortcut the browser leaves alone, such as `alt+w`.
+
 `thread.copyReference` copies the active thread's pull request link, or its thread ID when no pull
 request is available. Its default shortcut is `mod+shift+c`, and it does not replace terminal copy
 while the terminal has focus.
@@ -105,6 +111,13 @@ case-insensitive matching.
 
 The full command list and the current defaults are shown in **Settings** → **Keybindings**, which
 always matches the build you are running. Use that rather than a copied list.
+
+`thread.stop` interrupts the running turn in the focused thread. It has no default
+shortcut; assign one in **Settings → Keybindings**.
+
+`chat.new` may ask you to choose a project when there is more than one.
+`chat.newLocal` skips that chooser. Both use your
+[new-thread defaults](./thread-sidebar.md#start-a-thread).
 
 Note that `chat.new` and `chat.newLocal` both create a thread through the same path. A new thread
 inherits the project you were in, along with model and mode selections. Branch, worktree, and

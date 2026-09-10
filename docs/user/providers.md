@@ -1,7 +1,7 @@
 # Providers in Scient
 
 A provider supplies the AI models that work inside Scient. For example, you
-can connect Codex, Claude, Cursor, Grok, Droid, or Antigravity, then choose an
+can connect Codex, Claude, Cursor, Grok, Droid, Antigravity, or Pi, then choose an
 available model for each conversation. Different providers can have different
 models, tools, account requirements, and usage limits.
 
@@ -22,6 +22,8 @@ available step without requiring you to leave the conversation:
 
 Scient verifies the provider again after installation or sign-in. It reports Ready only when the
 runtime, account configuration, and available models are usable together.
+Pi instead reports **Models available** after discovery; authentication and quota remain specific
+to each configured model provider and are verified when used.
 
 In **Settings > Providers**, a shipped provider opens on **Models** when that tab is available; use
 **Configuration** for paths, environment variables, and advanced instance settings. An
@@ -44,23 +46,35 @@ copy returns eligible instances to the healthy system runtime.
 Runtime controls always apply to the machine running the Scient server. A remote browser controls
 that environment; it does not install or remove provider software on the device displaying the UI.
 
+For system or custom installations, an executable update action is available only when Scient can
+verify which installer owns that binary. Otherwise the version notice remains informational and
+you update it with the original installer. Scient rechecks ownership before running an update;
+it does not guess a package manager from whichever command happens to be on your PATH. This is
+separate from the verified private-runtime actions below.
+
 ## What each action changes
 
 | Action   | What it does                                                             | What it preserves                                                               |
 | -------- | ------------------------------------------------------------------------ | ------------------------------------------------------------------------------- |
 | Install  | Downloads, verifies, tests, and activates a qualified private runtime.   | System/custom installations and provider credentials.                           |
 | Update   | Safely replaces a Scient-managed runtime with a newer qualified version. | The previous working copy until activation succeeds, plus provider credentials. |
-| Repair   | Restores and verifies the exact active managed release.                  | The previous working copy until repair succeeds, plus provider credentials.     |
+| Repair   | Installs or restores the latest qualified managed release.               | The previous working copy until repair succeeds, plus provider credentials.     |
 | Remove   | Deletes only Scient's private runtime.                                   | System/custom installations and provider credentials.                           |
 | Sign out | Asks the provider to revoke the account session and verifies the result. | Every provider runtime.                                                         |
 
-When provider update checks are enabled, Scient refreshes its qualified stable-release catalog in
-the background and when you open an Install or Update plan. It never installs a provider update by
-itself. You still confirm the exact release, and the local computer independently verifies and tests
-it before activation. Repair keeps a separate meaning: it restores the exact active managed release
-instead of silently updating it.
+When provider update checks are enabled, Scient checks its qualified stable-release catalog when the
+app starts, periodically while it remains open, and when you click **Install**, **Update**, or **Repair**.
+A newly qualified release can appear as **Update** without restarting Scient. Clicking **Install** or
+**Update** starts the operation directly, without a second confirmation. In Settings, it runs without
+opening the management card: the button shows **Installing**, **Updating**, or **Verifying**, with a
+small download percentage when available. Click that button to open details. A **Failed** button opens
+the existing error and recovery controls; errors before an operation starts appear as notifications.
+The local computer independently verifies and tests the release before activation.
+Scient never installs a provider update without your action. Repair also uses the latest qualified release and can restore it
+when you already have that version. Offline, Scient uses the latest qualified release it already
+knows about; it does not claim to have checked for newer releases.
 
-Removing a runtime does not sign out. Signing out does not uninstall anything. Disabling a provider
+**Remove** still asks for confirmation. Removing a runtime does not sign out. Signing out does not uninstall anything. Disabling a provider
 also preserves both its runtime and its credentials.
 
 ## Accounts, subscriptions, and codes
@@ -100,6 +114,11 @@ You can still use an installation administered directly on the server when that 
 - [Grok](./providers-grok.md)
 - [Droid](./providers-droid.md)
 - [Cursor](./providers-cursor.md)
+- [Pi](./providers-pi.md)
+
+Pi uses its own multi-provider model and credential configuration. Scient can manage its runtime
+on a qualified target, but does not offer a universal Pi account sign-in or sign-out action. Model
+discovery is not proof that a particular credential or subscription works.
 
 OpenCode uses its own multi-provider credential and runtime configuration. Scient does not present
 one universal OpenCode account, sign-out action, or Scient-managed installation because its upstream

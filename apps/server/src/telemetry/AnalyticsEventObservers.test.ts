@@ -12,6 +12,56 @@ function orchestrationEvent(input: Record<string, unknown>): OrchestrationEvent 
 }
 
 describe("AnalyticsEventObservers", () => {
+  it("counts one stopped outcome for duplicate abort/completion notifications, not a provider failure", () => {
+    const mapper = createAnalyticsEventMapper();
+    const event = {
+      provider: "grok",
+      threadId: "thread-1",
+      turnId: "turn-1",
+      createdAt: "2026-08-31T10:00:00Z",
+    };
+    const stopped = mapper.providerEvent(
+      providerEvent({ ...event, type: "turn.aborted", payload: { reason: "private reason" } }),
+    );
+    expect(stopped).toEqual([
+      {
+        name: "provider.turn.stopped",
+        properties: {
+          provider: "grok",
+          model: undefined,
+          durationMs: undefined,
+          stopClass: "aborted",
+        },
+      },
+    ]);
+    expect(
+      mapper.providerEvent(
+        providerEvent({ ...event, type: "turn.completed", payload: { state: "cancelled" } }),
+      ),
+    ).toEqual([]);
+    expect(JSON.stringify(stopped)).not.toContain("private reason");
+  });
+
+  it("clears correlations when a collection boundary changes", () => {
+    const mapper = createAnalyticsEventMapper();
+    const event = {
+      provider: "droid",
+      threadId: "private-thread",
+      turnId: "private-turn",
+      createdAt: "2026-08-31T10:00:00Z",
+    };
+    mapper.providerEvent(
+      providerEvent({ ...event, type: "turn.started", payload: { model: "private-model" } }),
+    );
+    mapper.clear();
+    const result = mapper.providerEvent(
+      providerEvent({ ...event, type: "turn.completed", payload: { state: "completed" } }),
+    );
+    expect(result[0]!.properties.model).toBeUndefined();
+    expect(result[0]!.properties.durationMs).toBeUndefined();
+    expect(JSON.stringify(result)).not.toContain("private");
+  });
+
   it("correlates a successful provider turn without retaining transcript content", () => {
     const mapper = createAnalyticsEventMapper();
     expect(
@@ -154,8 +204,67 @@ describe("AnalyticsEventObservers", () => {
     ]);
     expect(
       mapper.orchestrationEvent(
-        orchestrationEvent({ type: "thread.reverted", payload: { threadId: "fork" } }),
+        orchestrationEvent({
+          eventId: "private-revert-event",
+          type: "thread.reverted",
+          payload: { threadId: "fork" },
+        }),
       ),
     ).toEqual([{ name: "thread.revert.completed", properties: {} }]);
+  });
+
+  it("records canonical revert failures without reading private activity content", () => {
+    const mapper = createAnalyticsEventMapper();
+    const event = orchestrationEvent({
+      eventId: "private-failure-event",
+      type: "thread.activity-appended",
+      payload: {
+        threadId: "private-thread",
+        activity: {
+          kind: "checkpoint.revert.failed",
+          get summary() {
+            throw new Error("analytics must not read private summaries");
+          },
+          get payload() {
+            throw new Error("analytics must not read private failure details");
+          },
+        },
+      },
+    });
+    expect(mapper.orchestrationEvent(event)).toEqual([
+      { name: "thread.revert.failed", properties: { failureClass: "unknown" } },
+    ]);
+    expect(mapper.orchestrationEvent(event)).toEqual([]);
+    mapper.clear();
+    expect(mapper.orchestrationEvent(event)).toHaveLength(1);
+  });
+
+  it("does not mistake other error activities for a revert failure", () => {
+    const mapper = createAnalyticsEventMapper();
+    for (const kind of ["checkpoint.capture.failed", "provider.error", "revert.failed"]) {
+      expect(
+        mapper.orchestrationEvent(
+          orchestrationEvent({
+            eventId: kind,
+            type: "thread.activity-appended",
+            payload: { activity: { kind, tone: "error" } },
+          }),
+        ),
+      ).toEqual([]);
+    }
+  });
+
+  it("deduplicates revert completion without suppressing later attempts", () => {
+    const mapper = createAnalyticsEventMapper();
+    const event = orchestrationEvent({
+      eventId: "first-revert-event",
+      type: "thread.reverted",
+      payload: { threadId: "private-thread" },
+    });
+    expect(mapper.orchestrationEvent(event)).toHaveLength(1);
+    expect(mapper.orchestrationEvent(event)).toEqual([]);
+    expect(
+      mapper.orchestrationEvent(orchestrationEvent({ ...event, eventId: "next-revert-event" })),
+    ).toHaveLength(1);
   });
 });

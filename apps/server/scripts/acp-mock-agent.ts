@@ -3,6 +3,8 @@
 import * as NodeFS from "node:fs";
 
 import * as Effect from "effect/Effect";
+import * as Deferred from "effect/Deferred";
+import * as Schema from "effect/Schema";
 
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as NodeRuntime from "@effect/platform-node/NodeRuntime";
@@ -23,6 +25,7 @@ if (process.argv.slice(2).join(" ") === "inspect --json") {
 const requestLogPath = process.env.T3_ACP_REQUEST_LOG_PATH;
 const grokProbeAuthState = process.env.T3_ACP_GROK_PROBE_AUTH_STATE;
 const exitLogPath = process.env.T3_ACP_EXIT_LOG_PATH;
+const antigravityProfile = process.env.T3_ACP_ANTIGRAVITY === "1";
 const emitToolCalls = process.env.T3_ACP_EMIT_TOOL_CALLS === "1";
 const emitInterleavedAssistantToolCalls =
   process.env.T3_ACP_EMIT_INTERLEAVED_ASSISTANT_TOOL_CALLS === "1";
@@ -40,6 +43,9 @@ const emitContentThenHang = process.env.T3_ACP_EMIT_CONTENT_THEN_HANG === "1";
 const emitPlanThenHang = process.env.T3_ACP_EMIT_PLAN_THEN_HANG === "1";
 const emitActiveToolThenHang = process.env.T3_ACP_EMIT_ACTIVE_TOOL_THEN_HANG === "1";
 const emitForeignSessionUpdates = process.env.T3_ACP_EMIT_FOREIGN_SESSION_UPDATES === "1";
+const waitForResumeRelease = process.env.T3_ACP_WAIT_FOR_RESUME_RELEASE === "1";
+const completeFirstPromptOnCancel = process.env.T3_ACP_COMPLETE_FIRST_PROMPT_ON_CANCEL === "1";
+const floodStderr = process.env.T3_ACP_FLOOD_STDERR === "1";
 const hangPromptForever = process.env.T3_ACP_HANG_PROMPT_FOREVER === "1";
 const hangFirstPromptForever = process.env.T3_ACP_HANG_FIRST_PROMPT_FOREVER === "1";
 const emitLateUpdateAfterCancel = process.env.T3_ACP_EMIT_LATE_UPDATE_AFTER_CANCEL === "1";
@@ -59,8 +65,27 @@ const failSetConfigOption = process.env.T3_ACP_FAIL_SET_CONFIG_OPTION === "1";
 const exitOnSetConfigOption = process.env.T3_ACP_EXIT_ON_SET_CONFIG_OPTION === "1";
 // Droid-style async config refresh: publish the new inventory through a
 // `config_option_update`. The optional drop flag additionally leaves the
-// request pending, reproducing @factory/cli 0.200.0's exact wire behavior.
+// request pending to cover older Droid builds that applied a request without
+// responding. Current Droid model writes still require a JSON-RPC request.
 const droidAsyncConfigRefresh = process.env.T3_ACP_DROID_ASYNC_CONFIG_REFRESH === "1";
+// Droid's process-scoped settings overlay augments (does not replace) native models.
+const settingsArg = process.argv.indexOf("--settings");
+const overlayModels =
+  settingsArg < 0
+    ? []
+    : Schema.decodeSync(
+        Schema.fromJsonString(
+          Schema.Struct({
+            customModels: Schema.Array(
+              Schema.Struct({ id: Schema.String, displayName: Schema.String }),
+            ),
+          }),
+        ),
+      )(NodeFS.readFileSync(process.argv[settingsArg + 1]!, "utf8")).customModels;
+const overlayModelOptions = overlayModels.map((model) => ({
+  value: model.id,
+  name: model.displayName,
+}));
 const droidDropsConfigResponse = process.env.T3_ACP_DROID_DROP_CONFIG_RESPONSE === "1";
 const droidReturnsEmptyConfigResponse = process.env.T3_ACP_DROID_EMPTY_CONFIG_RESPONSE === "1";
 const promptResponseText = process.env.T3_ACP_PROMPT_RESPONSE_TEXT;
@@ -79,8 +104,8 @@ const permissionRequestCount = Math.max(
 );
 const sessionId = "mock-session-1";
 
-let currentModeId = "ask";
-let currentModelId = "default";
+let currentModeId = antigravityProfile ? "default" : "ask";
+let currentModelId = antigravityProfile ? "gemini-test-low" : "default";
 let parameterizedModelPicker = false;
 let currentReasoning = "medium";
 let currentContext = "272k";
@@ -126,6 +151,26 @@ process.once("exit", (code) => {
 });
 
 function configOptions(): ReadonlyArray<AcpSchema.SessionConfigOption> {
+  if (antigravityProfile) {
+    return [
+      {
+        id: "model",
+        name: "Model",
+        category: "model",
+        type: "select",
+        currentValue: currentModelId,
+        options: antigravityModels.map((model) => ({ value: model.modelId, name: model.name })),
+      },
+      {
+        id: "mode",
+        name: "Mode",
+        category: "mode",
+        type: "select",
+        currentValue: currentModeId,
+        options: availableModes.map((mode) => ({ value: mode.id, name: mode.name })),
+      },
+    ];
+  }
   if (parameterizedModelPicker) {
     const baseOptions: Array<AcpSchema.SessionConfigOption> = [
       {
@@ -160,6 +205,7 @@ function configOptions(): ReadonlyArray<AcpSchema.SessionConfigOption> {
           },
           { value: "claude-opus-4-6", name: "Opus 4.6" },
           { value: "custom:Ox-Alpha-0", name: "Ox Alpha" },
+          ...overlayModelOptions,
         ],
       },
     ];
@@ -260,6 +306,7 @@ function configOptions(): ReadonlyArray<AcpSchema.SessionConfigOption> {
       { value: "composer-2[fast=true]", name: "Composer 2 Fast" },
       { value: "gpt-5.3-codex[reasoning=medium,fast=false]", name: "Codex 5.3" },
       { value: "custom:Ox-Alpha-0", name: "Ox Alpha" },
+      ...overlayModelOptions,
     ],
   };
   return currentModelId === "custom:Ox-Alpha-0"
@@ -312,23 +359,34 @@ function availableModels(): ReadonlyArray<{
   }));
 }
 
-const availableModes: ReadonlyArray<AcpSchema.SessionMode> = [
-  {
-    id: "ask",
-    name: "Ask",
-    description: "Request permission before making any changes",
-  },
-  {
-    id: "architect",
-    name: "Architect",
-    description: "Design and plan software systems without implementation",
-  },
-  {
-    id: "code",
-    name: "Code",
-    description: "Write and modify code with full tool access",
-  },
-];
+const antigravityModels = [
+  { modelId: "gemini-test-low", name: "Gemini Test Low" },
+  { modelId: "gemini-test-high", name: "Gemini Test High" },
+] satisfies ReadonlyArray<AcpSchema.ModelInfo>;
+
+const availableModes: ReadonlyArray<AcpSchema.SessionMode> = antigravityProfile
+  ? [
+      { id: "default", name: "Default" },
+      { id: "auto_edit", name: "Auto edit" },
+      { id: "yolo", name: "YOLO" },
+    ]
+  : [
+      {
+        id: "ask",
+        name: "Ask",
+        description: "Request permission before making any changes",
+      },
+      {
+        id: "architect",
+        name: "Architect",
+        description: "Design and plan software systems without implementation",
+      },
+      {
+        id: "code",
+        name: "Code",
+        description: "Write and modify code with full tool access",
+      },
+    ];
 
 function modeState(): AcpSchema.SessionModeState {
   return {
@@ -337,21 +395,33 @@ function modeState(): AcpSchema.SessionModeState {
   };
 }
 
+// Mirrors the real Grok ACP: it advertises versioned model ids, never the CLI's own
+// "grok-build" product name, and it rejects unknown ids in session/set_model.
 const grokAcpModels: ReadonlyArray<AcpSchema.ModelInfo> = [
   {
-    modelId: "grok-build",
-    name: "Grok Build",
-    ...(initialGrokReasoningEffort
-      ? { _meta: { reasoningEffort: initialGrokReasoningEffort } }
-      : {}),
+    modelId: "grok-4.6",
+    name: "Grok 4.6",
+    _meta: {
+      totalContextTokens: 500_000,
+      supportsReasoningEffort: true,
+      reasoningEffort: initialGrokReasoningEffort ?? "high",
+      reasoningEfforts: [
+        { id: "xhigh", value: "xhigh", label: "Extra High Effort", default: false },
+        { id: "high", value: "high", label: "High Effort", default: true },
+        { id: "low", value: "low", label: "Low Effort", default: false },
+      ],
+    },
   },
   { modelId: "grok-mock-alt", name: "Grok Mock Alt" },
 ];
 
 function modelState(): AcpSchema.SessionModelState {
+  if (antigravityProfile) {
+    return { currentModelId, availableModels: antigravityModels };
+  }
   const modelId = grokAcpModels.some((model) => model.modelId === currentModelId)
     ? currentModelId
-    : "grok-build";
+    : "grok-4.6";
   return {
     currentModelId: modelId,
     availableModels: grokAcpModels,
@@ -360,11 +430,46 @@ function modelState(): AcpSchema.SessionModelState {
 
 const program = Effect.gen(function* () {
   const agent = yield* EffectAcpAgent.AcpAgent;
+  const resumeRelease = yield* Deferred.make<void>();
+  const nativeCancelRequested = yield* Deferred.make<void>();
+  const nativeCancelRelease = yield* Deferred.make<void>();
+  const publishAntigravityCommands = (targetSessionId: string) =>
+    agent.client.sessionUpdate({
+      sessionId: targetSessionId,
+      update: {
+        sessionUpdate: "available_commands_update",
+        availableCommands: [
+          { name: "plan", description: "Plan a task", input: { hint: "task" } },
+          { name: "logout", description: "Sign out" },
+        ],
+      },
+    });
 
   yield* agent.handleInitialize((request) =>
-    Effect.sync(() => {
+    Effect.gen(function* () {
+      if (floodStderr) {
+        yield* Effect.promise(
+          () =>
+            new Promise<void>((resolve) => {
+              process.stderr.write("stderr".repeat(350_000), () => resolve());
+            }),
+        );
+      }
       parameterizedModelPicker =
         request.clientCapabilities?._meta?.parameterizedModelPicker === true;
+      if (antigravityProfile) {
+        return {
+          protocolVersion: 1,
+          agentInfo: { name: "antigravity-acp", version: "mock" },
+          agentCapabilities: {
+            loadSession: true,
+            sessionCapabilities: { resume: {} },
+            auth: { logout: {} },
+            promptCapabilities: { image: true, embeddedContext: true },
+          },
+          authMethods: [{ id: "oauth-personal", name: "Sign in with Google" }],
+        };
+      }
       const authMethods =
         grokProbeAuthState === "account" ||
         grokProbeAuthState === "account-no-metadata" ||
@@ -380,21 +485,67 @@ const program = Effect.gen(function* () {
               : undefined;
       return {
         protocolVersion: 1,
-        agentCapabilities: { loadSession: true },
+        agentCapabilities: { loadSession: true, sessionCapabilities: { resume: {} } },
         ...(authMethods ? { authMethods } : {}),
-        ...(grokProbeAuthState ? { _meta: { modelState: modelState() } } : {}),
+        // Grok advertises model state before any session exists; the provider
+        // health check reads it from here without authenticating.
+        _meta: { modelState: modelState() },
       };
     }),
   );
 
-  yield* agent.handleAuthenticate(() => Effect.succeed({}));
+  // Mirrors the real agent: the API key method reads GEMINI_API_KEY from the
+  // process environment and rejects when it is missing.
+  yield* agent.handleAuthenticate((request) =>
+    !antigravityProfile || request.methodId === "oauth-personal"
+      ? Effect.succeed({})
+      : request.methodId === "gemini-api-key" && process.env.GEMINI_API_KEY
+        ? Effect.succeed({})
+        : Effect.fail(
+            AcpError.AcpRequestError.invalidParams(
+              `Mock Antigravity rejected auth method ${request.methodId}.`,
+            ),
+          ),
+  );
+  if (antigravityProfile) {
+    yield* agent.handleLogout(() => Effect.succeed({}));
+  }
 
   yield* agent.handleCreateSession(() =>
-    Effect.succeed({
-      sessionId,
-      modes: modeState(),
-      models: modelState(),
-      configOptions: configOptions(),
+    Effect.gen(function* () {
+      if (antigravityProfile) {
+        yield* publishAntigravityCommands(sessionId);
+      }
+      return {
+        sessionId,
+        modes: modeState(),
+        models: modelState(),
+        configOptions: configOptions(),
+      };
+    }),
+  );
+
+  yield* agent.handleResumeSession((request) =>
+    Effect.gen(function* () {
+      yield* agent.client.sessionUpdate({
+        sessionId: request.sessionId,
+        update: {
+          sessionUpdate: "user_message_chunk",
+          content: { type: "text", text: "native-resume-started" },
+        },
+      });
+      if (waitForResumeRelease) {
+        yield* Deferred.await(resumeRelease);
+      }
+      if (antigravityProfile) {
+        yield* publishAntigravityCommands(request.sessionId);
+      }
+      return {
+        modes: modeState(),
+        models: modelState(),
+        configOptions: configOptions(),
+        _meta: { nativeResume: true },
+      };
     }),
   );
 
@@ -462,7 +613,7 @@ const program = Effect.gen(function* () {
 
   yield* agent.handleSetSessionModel((request) =>
     Effect.gen(function* () {
-      if (!grokAcpModels.some((model) => model.modelId === request.modelId)) {
+      if (!modelState().availableModels.some((model) => model.modelId === request.modelId)) {
         return yield* AcpError.AcpRequestError.invalidParams(
           `Unknown mock model id: ${request.modelId}`,
           {
@@ -528,9 +679,8 @@ const program = Effect.gen(function* () {
     Effect.gen(function* () {
       yield* applySessionConfigOption(request);
       if (droidDropsConfigResponse) {
-        // Factory Droid 0.200.0 never completes this request after publishing
-        // the authoritative update. Keep the handler pending to reproduce
-        // that wire behavior in the notification-transport regression test.
+        // Some older agents publish an authoritative update without completing
+        // the request. Confirmation must tolerate that without using notifications.
         return yield* Effect.never;
       }
       if (droidAsyncConfigRefresh) {
@@ -552,19 +702,20 @@ const program = Effect.gen(function* () {
     }),
   );
 
-  // Factory Droid also accepts this normally request-shaped method as a
-  // JSON-RPC notification. The real compatibility path uses that form so it
-  // cannot be wedged by Droid's missing response.
-  yield* agent.handleExtNotification(
-    "session/set_config_option",
-    AcpSchema.SetSessionConfigOptionRequest,
-    applySessionConfigOption,
-  );
-
   yield* agent.handleCancel(({ sessionId }) =>
     Effect.gen(function* () {
       const cancelledSessionId = String(sessionId ?? "mock-session-1");
       cancelledSessions.add(cancelledSessionId);
+      if (completeFirstPromptOnCancel) {
+        yield* Deferred.succeed(nativeCancelRequested, undefined);
+        yield* agent.client.sessionUpdate({
+          sessionId: cancelledSessionId,
+          update: {
+            sessionUpdate: "agent_thought_chunk",
+            content: { type: "text", text: "native-cancel-received" },
+          },
+        });
+      }
       if (emitLateUpdateAfterCancel) {
         yield* Effect.sleep("50 millis");
         yield* Effect.sync(() => {
@@ -585,12 +736,61 @@ const program = Effect.gen(function* () {
       const requestedSessionId = String(request.sessionId ?? sessionId);
       promptCount += 1;
 
+      if (completeFirstPromptOnCancel && promptCount === 1) {
+        yield* agent.client.sessionUpdate({
+          sessionId: requestedSessionId,
+          update: {
+            sessionUpdate: "tool_call",
+            toolCallId: "native-cancel-tool",
+            title: "Long command",
+            kind: "execute",
+            status: "in_progress",
+          },
+        });
+        yield* Deferred.await(nativeCancelRequested);
+        yield* Deferred.await(nativeCancelRelease);
+        yield* agent.client.sessionUpdate({
+          sessionId: requestedSessionId,
+          update: {
+            sessionUpdate: "tool_call_update",
+            toolCallId: "native-cancel-tool",
+            status: "failed",
+            content: [{ type: "content", content: { type: "text", text: "Cancelled." } }],
+          },
+        });
+        yield* agent.client.sessionUpdate({
+          sessionId: requestedSessionId,
+          update: {
+            sessionUpdate: "agent_message_chunk",
+            content: { type: "text", text: "Request cancelled." },
+          },
+        });
+        return { stopReason: "cancelled", _meta: { nativeCancel: true } };
+      }
+
       if (Number.isFinite(promptDelayMs) && promptDelayMs > 0) {
         yield* Effect.sleep(`${promptDelayMs} millis`);
       }
 
       if (failPrompt) {
         return yield* AcpError.AcpRequestError.internalError("Mock prompt failure");
+      }
+
+      if (
+        process.env.T3_ACP_TOKEN_LIMIT === "1" ||
+        (process.env.T3_ACP_TOKEN_LIMIT_FIRST === "1" && promptCount === 1)
+      ) {
+        yield* agent.client.sessionUpdate({
+          sessionId: requestedSessionId,
+          update: {
+            sessionUpdate: "agent_message_chunk",
+            content: {
+              type: "text",
+              text: process.env.T3_ACP_TOKEN_LIMIT_TEXT ?? promptResponseText ?? "",
+            },
+          },
+        });
+        return { stopReason: "max_tokens" };
       }
 
       if (emitElicitation) {
@@ -1234,6 +1434,60 @@ const program = Effect.gen(function* () {
       });
     }
 
+    if (method === "_test/environment") {
+      return Effect.succeed({
+        inherited: process.env.T3_ACP_RUNTIME_AMBIENT === "sentinel",
+        explicit: process.env.T3_ACP_RUNTIME_EXPLICIT === "kept",
+      });
+    }
+    if (method === "_test/release-resume") {
+      return Deferred.succeed(resumeRelease, undefined).pipe(Effect.as({}));
+    }
+    if (method === "_test/finish-cancel") {
+      return Deferred.succeed(nativeCancelRelease, undefined).pipe(Effect.as({}));
+    }
+    if (method === "_test/startup-metadata") {
+      return Effect.gen(function* () {
+        for (const [metadataSessionId, commandName, modeId] of [
+          [sessionId, "plan", "code"],
+          ["child-session", "foreign-command", "ask"],
+        ] as const) {
+          yield* agent.client.sessionUpdate({
+            sessionId: metadataSessionId,
+            update: {
+              sessionUpdate: "available_commands_update",
+              availableCommands: [{ name: commandName, description: "Native command" }],
+            },
+          });
+          yield* agent.client.sessionUpdate({
+            sessionId: metadataSessionId,
+            update: { sessionUpdate: "current_mode_update", currentModeId: modeId },
+          });
+          yield* agent.client.sessionUpdate({
+            sessionId: metadataSessionId,
+            update: {
+              sessionUpdate: "config_option_update",
+              configOptions: configOptions().map((option) =>
+                option.type === "select" && option.category === "model"
+                  ? {
+                      ...option,
+                      currentValue: metadataSessionId === sessionId ? "gpt-5.4" : "default",
+                    }
+                  : option,
+              ),
+            },
+          });
+          yield* agent.client.sessionUpdate({
+            sessionId: metadataSessionId,
+            update: {
+              sessionUpdate: "agent_message_chunk",
+              content: { type: "text", text: "Startup transcript must not replay." },
+            },
+          });
+        }
+        return {};
+      });
+    }
     if (method === "cursor/list_available_models") {
       return Effect.succeed({
         models: availableModels(),
@@ -1279,6 +1533,10 @@ const program = Effect.gen(function* () {
 
     return Effect.succeed({});
   });
+
+  yield* agent.handleUnknownExtNotification((method) =>
+    method === "_test/exit" ? Effect.sync(() => process.exit(19)) : Effect.void,
+  );
 
   return yield* Effect.never;
 }).pipe(

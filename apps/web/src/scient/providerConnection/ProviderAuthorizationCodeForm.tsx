@@ -8,6 +8,7 @@ export function ProviderAuthorizationCodeForm(props: {
   readonly disabled?: boolean;
   readonly placeholder?: string;
   readonly providerName: string;
+  readonly responseKind?: "code" | "callback_url";
   readonly submitting?: boolean;
   readonly onAuthorizationCodeChange: (value: string) => void;
   readonly onSubmit: () => void;
@@ -21,13 +22,18 @@ export function ProviderAuthorizationCodeForm(props: {
       }}
     >
       <input
-        aria-label={`${props.providerName} one-time authorization code`}
+        aria-label={`${props.providerName} ${props.responseKind === "callback_url" ? "sign-in redirect URL" : "one-time authorization code"}`}
         autoCapitalize="none"
         autoComplete="off"
         className="h-9 min-w-0 flex-1 rounded-md border border-input bg-background px-3 text-sm outline-none transition-colors placeholder:text-placeholder focus-visible:border-ring disabled:opacity-64"
         disabled={props.disabled}
         onChange={(event) => props.onAuthorizationCodeChange(event.currentTarget.value)}
-        placeholder={props.placeholder ?? "Paste authorization code"}
+        placeholder={
+          props.placeholder ??
+          (props.responseKind === "callback_url"
+            ? "Paste the full redirect URL"
+            : "Paste authorization code")
+        }
         spellCheck={false}
         value={props.authorizationCode}
       />
@@ -49,6 +55,7 @@ export function ProviderAuthorizationCodeDisclosure(props: {
   readonly disabled?: boolean;
   readonly expanded: boolean;
   readonly providerName: string;
+  readonly responseKind?: "code" | "callback_url";
   readonly submitting?: boolean;
   readonly onAuthorizationCodeChange: (value: string) => void;
   readonly onExpandedChange: (expanded: boolean) => void;
@@ -69,17 +76,29 @@ export function ProviderAuthorizationCodeDisclosure(props: {
         variant="ghost-muted"
       >
         {props.expanded ? <ChevronUpIcon aria-hidden /> : <ChevronDownIcon aria-hidden />}
-        Have a sign-in code?
+        {props.responseKind === "callback_url"
+          ? "Signing in on another computer?"
+          : "Have a sign-in code?"}
       </Button>
       {props.expanded ? (
-        <div id={formId}>
+        <div className="space-y-2" id={formId}>
+          {props.responseKind === "callback_url" ? (
+            <p className="text-muted-foreground text-xs">
+              If Google redirects to an unreachable localhost page, paste its full URL here.
+            </p>
+          ) : null}
           <ProviderAuthorizationCodeForm
             authorizationCode={props.authorizationCode}
             disabled={props.disabled ?? false}
             onAuthorizationCodeChange={props.onAuthorizationCodeChange}
             onSubmit={props.onSubmit}
-            placeholder="Paste sign-in code"
+            placeholder={
+              props.responseKind === "callback_url"
+                ? "Paste the full redirect URL"
+                : "Paste sign-in code"
+            }
             providerName={props.providerName}
+            responseKind={props.responseKind ?? "code"}
             submitting={props.submitting ?? false}
           />
         </div>

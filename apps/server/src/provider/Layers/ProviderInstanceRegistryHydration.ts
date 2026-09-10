@@ -141,8 +141,8 @@ const SettingsWatcherLive = (settingsChanges: Stream.Stream<ServerSettings>) =>
  *   - `ProviderInstanceRegistryMutableLayer` produces the registry +
  *     mutator from the initial config map. Its scope owns every
  *     per-instance child scope created during reconcile.
- *   - `SettingsWatcherLive` consumes the mutator and runs a daemon fiber
- *     in the same scope.
+ *   - `SettingsWatcherLive` consumes the mutator, acquires its settings
+ *     subscription before forking, and runs a daemon fiber in the same scope.
  *
  * Composing via `Layer.provideMerge` makes the watcher's deps available
  * from the mutable layer while still surfacing the registry as an output.

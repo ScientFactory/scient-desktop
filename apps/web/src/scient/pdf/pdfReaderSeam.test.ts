@@ -21,7 +21,8 @@ describe("Scient PDF reader source seam", () => {
 
     expect(sourceActions).toContain("documents.saveAssetCopy({");
     expect(sourceActions).not.toContain('document.createElement("a")');
-    expect(readerSource).toContain("await props.actions.saveCopy(");
+    expect(readerSource).toContain("await observePdfCopy(");
+    expect(readerSource).toContain("props.actions.saveCopy(");
     expect(readerSource).toContain("disabled={savingCopy}");
   });
 
@@ -68,6 +69,15 @@ describe("Scient PDF reader source seam", () => {
     expect(styles).toMatch(
       /\.scient-pdf-page-control \{[^}]*flex: none;[^}]*white-space: nowrap;/su,
     );
+  });
+
+  it("styles the PDF.js selection overlay without exposing its native text-layer selection", () => {
+    const styles = NodeFS.readFileSync(new URL("./scientPdfReader.css", import.meta.url), "utf8");
+
+    expect(styles).toMatch(
+      /\.scient-pdf-viewer-container \.pdfViewer \.canvasWrapper \.selection \{[^}]*background:/su,
+    );
+    expect(styles).not.toMatch(/\.textLayer\s+::selection\s*\{/u);
   });
 
   it("teaches inverse source sync without turning the PDF into a hover target", () => {

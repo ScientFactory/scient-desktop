@@ -36,7 +36,7 @@ const TraceRecordLine = Schema.Struct({
 
 const decodeTraceRecordLine = Schema.decodeUnknownSync(Schema.fromJsonString(TraceRecordLine));
 
-const environmentInput = (baseDir: string) =>
+const environmentInput = (baseDir: string, isDevelopment: boolean) =>
   ({
     dirname: "/repo/apps/desktop/dist-electron",
     homeDirectory: baseDir,
@@ -44,13 +44,13 @@ const environmentInput = (baseDir: string) =>
     processArch: "arm64",
     appVersion: "1.2.3",
     appPath: "/repo",
-    isPackaged: false,
+    isPackaged: !isDevelopment,
     resourcesPath: "/repo/resources",
     runningUnderArm64Translation: false,
   }) satisfies DesktopEnvironment.MakeDesktopEnvironmentInput;
 
 const makeEnvironmentLayer = (baseDir: string, isDevelopment = true) =>
-  DesktopEnvironment.layer(environmentInput(baseDir)).pipe(
+  DesktopEnvironment.layer(environmentInput(baseDir, isDevelopment)).pipe(
     Layer.provide(
       Layer.mergeAll(
         NodeServices.layer,

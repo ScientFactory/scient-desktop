@@ -5,6 +5,7 @@ import * as NodeSqlite from "node:sqlite";
 
 import type { AnalyticsConsent, AnalyticsEvent, AnalyticsPriority } from "./contract.ts";
 import { consentAllows } from "./contract.ts";
+import { eventContractViolation, EVENT_DEFINITIONS } from "./wireContract.ts";
 
 const MAX_OUTBOX_EVENTS = 10_000;
 const MAX_DEAD_LETTERS = 100;
@@ -34,10 +35,12 @@ export class AnalyticsOutbox {
   #size: number;
 
   constructor(filename: string) {
-    NodeFS.mkdirSync(NodePath.dirname(filename), { recursive: true });
+    NodeFS.mkdirSync(NodePath.dirname(filename), { recursive: true, mode: 0o700 });
     this.#database = new NodeSqlite.DatabaseSync(filename);
-    this.#database.exec("PRAGMA journal_mode = WAL; PRAGMA synchronous = NORMAL;");
-    this.#database.exec(`
+    try {
+      NodeFS.chmodSync(filename, 0o600);
+      this.#database.exec("PRAGMA journal_mode = WAL; PRAGMA synchronous = NORMAL;");
+      this.#database.exec(`
       CREATE TABLE IF NOT EXISTS analytics_meta (
         key TEXT PRIMARY KEY,
         value TEXT NOT NULL
@@ -63,37 +66,43 @@ export class AnalyticsOutbox {
         failed_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
       );
     `);
-    const columns = this.#database
-      .prepare("PRAGMA table_info(analytics_outbox)")
-      .all() as unknown as ReadonlyArray<{ readonly name: string }>;
-    if (!columns.some((column) => column.name === "priority")) {
-      this.#database.exec(
-        "ALTER TABLE analytics_outbox ADD COLUMN priority INTEGER NOT NULL DEFAULT 1 CHECK (priority IN (0, 1, 2))",
-      );
-    }
-    this.#database.exec(`
+      const columns = this.#database
+        .prepare("PRAGMA table_info(analytics_outbox)")
+        .all() as unknown as ReadonlyArray<{ readonly name: string }>;
+      if (!columns.some((column) => column.name === "priority")) {
+        this.#database.exec(
+          "ALTER TABLE analytics_outbox ADD COLUMN priority INTEGER NOT NULL DEFAULT 1 CHECK (priority IN (0, 1, 2))",
+        );
+      }
+      this.#database.exec(`
       DROP INDEX IF EXISTS analytics_outbox_due;
       CREATE INDEX IF NOT EXISTS analytics_outbox_due_priority
         ON analytics_outbox (next_attempt_at, priority, occurred_at, id);
     `);
-    this.#insert = this.#database.prepare(
-      `INSERT OR IGNORE INTO analytics_outbox (
+      this.#insert = this.#database.prepare(
+        `INSERT OR IGNORE INTO analytics_outbox (
          id, name, distinct_id, session_id, occurred_at,
          privacy_level, consent_level, properties_json, priority
        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-    );
-    this.#remove = this.#database.prepare("DELETE FROM analytics_outbox WHERE id = ?");
-    this.#markFailed = this.#database.prepare(
-      `UPDATE analytics_outbox
+      );
+      this.#remove = this.#database.prepare("DELETE FROM analytics_outbox WHERE id = ?");
+      this.#markFailed = this.#database.prepare(
+        `UPDATE analytics_outbox
           SET attempt_count = attempt_count + 1,
               next_attempt_at = ?,
               last_error_class = ?
         WHERE id = ?`,
-    );
-    const row = this.#database.prepare("SELECT COUNT(*) AS count FROM analytics_outbox").get() as {
-      readonly count: number;
-    };
-    this.#size = row.count;
+      );
+      const row = this.#database
+        .prepare("SELECT COUNT(*) AS count FROM analytics_outbox")
+        .get() as {
+        readonly count: number;
+      };
+      this.#size = row.count;
+    } catch (error) {
+      this.#database.close();
+      throw error;
+    }
   }
 
   readMeta(key: string): string | null {
@@ -124,6 +133,7 @@ export class AnalyticsOutbox {
       throw new Error("Analytics event and priority batches must have equal length.");
     }
     let inserted = 0;
+    let trimmedCount = 0;
     this.#database.exec("BEGIN IMMEDIATE");
     try {
       for (const [index, event] of events.entries()) {
@@ -140,8 +150,7 @@ export class AnalyticsOutbox {
         );
         inserted += Number(result.changes);
       }
-      this.#size += inserted;
-      const excess = this.#size - MAX_OUTBOX_EVENTS;
+      const excess = this.#size + inserted - MAX_OUTBOX_EVENTS;
       if (excess > 0) {
         const trimmed = this.#database
           .prepare(
@@ -153,9 +162,10 @@ export class AnalyticsOutbox {
               )`,
           )
           .run(excess);
-        this.#size -= Number(trimmed.changes);
+        trimmedCount = Number(trimmed.changes);
       }
       this.#database.exec("COMMIT");
+      this.#size += inserted - trimmedCount;
       return inserted;
     } catch (error) {
       this.#database.exec("ROLLBACK");
@@ -164,6 +174,21 @@ export class AnalyticsOutbox {
   }
 
   pending(limit: number, now: number): ReadonlyArray<PendingAnalyticsEvent> {
+    // Expired events must not retry forever or outlive the diagnostic policy.
+    const expired = this.#database
+      .prepare(`SELECT id, name FROM analytics_outbox
+      WHERE attempt_count >= 20 OR julianday(occurred_at) < julianday(?, 'unixepoch')
+        OR (privacy_level = 'diagnostic' AND julianday(occurred_at) < julianday(?, 'unixepoch'))`)
+      .all(
+        (now - 180 * 86400000) / 1000,
+        (now - 30 * 86400000) / 1000,
+      ) as unknown as ReadonlyArray<{ id: string; name: string }>;
+    this.#quarantine(expired, "retired");
+    this.#database
+      .prepare(
+        "DELETE FROM analytics_dead_letter WHERE julianday(failed_at) < julianday(?, 'unixepoch')",
+      )
+      .run((now - 30 * 86400000) / 1000);
     const rows = this.#database
       .prepare(
         `SELECT id, name, distinct_id, session_id, occurred_at, privacy_level,
@@ -195,11 +220,28 @@ export class AnalyticsOutbox {
           parsed === null ||
           Array.isArray(parsed) ||
           Object.values(parsed).some(
-            (value) => typeof value !== "boolean" && typeof value !== "string",
+            (value) =>
+              typeof value !== "boolean" &&
+              typeof value !== "string" &&
+              !(typeof value === "number" && Number.isSafeInteger(value)),
           )
         ) {
           throw new Error("invalid-properties");
         }
+        if (
+          eventContractViolation({
+            name: row.name,
+            privacyLevel: row.privacy_level,
+            consentLevel: row.consent_level,
+            properties: parsed as Record<string, unknown>,
+          }) !== null ||
+          !/^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/.test(row.id) ||
+          !/^installation:[0-9a-f-]{36}$/i.test(row.distinct_id) ||
+          !/^session:[0-9a-f-]{36}$/i.test(row.session_id) ||
+          !Number.isFinite(Date.parse(row.occurred_at)) ||
+          Date.parse(row.occurred_at) > now + 86400000
+        )
+          throw new Error("invalid-event");
         events.push({
           id: row.id,
           name: row.name,
@@ -208,7 +250,7 @@ export class AnalyticsOutbox {
           occurred_at: row.occurred_at,
           privacy_level: row.privacy_level,
           consent_level: row.consent_level,
-          properties: parsed as Readonly<Record<string, boolean | string>>,
+          properties: parsed as Readonly<Record<string, boolean | string | number>>,
           attemptCount: row.attempt_count,
           priority: analyticsPriority(row.priority),
         });
@@ -216,7 +258,7 @@ export class AnalyticsOutbox {
         corrupt.push({ id: row.id, name: row.name });
       }
     }
-    this.#quarantine(corrupt, "corrupt-properties-json");
+    this.#quarantine(corrupt, "invalid-event");
     return events;
   }
 
@@ -233,7 +275,11 @@ export class AnalyticsOutbox {
     this.#database.exec("BEGIN IMMEDIATE");
     try {
       for (const row of rows) {
-        insert.run(row.id, row.name, errorClass);
+        insert.run(
+          row.id,
+          Object.hasOwn(EVENT_DEFINITIONS, row.name) ? row.name : "unknown",
+          errorClass,
+        );
         removed += Number(this.#remove.run(row.id).changes);
       }
       this.#database
@@ -291,6 +337,14 @@ export class AnalyticsOutbox {
       .filter((row) => !consentAllows(consent, row.privacy_level))
       .map((row) => row.id);
     if (ids.length > 0) this.remove(ids);
+    if (consent !== "off") {
+      for (const level of ["essential", "product", "diagnostic"] as const) {
+        if (consentAllows(consent, level)) continue;
+        this.#database
+          .prepare("UPDATE analytics_outbox SET consent_level = ? WHERE consent_level = ?")
+          .run(consent, level);
+      }
+    }
     return ids.length;
   }
 

@@ -29,9 +29,11 @@ import type {
   ProviderRuntimeOperationStatus,
   ProviderRuntimePlan,
   ProviderRuntimeSummary,
+  ProviderConsumeResetCreditOutcome,
   ProviderDriverKind,
   ProviderInstanceEnvironment,
   ProviderInstanceId,
+  ServerProvider,
   VoiceTranscriptionLanguage,
   VoiceTranscriptCorrectionError,
 } from "@t3tools/contracts";
@@ -43,6 +45,7 @@ import type * as TextGeneration from "../textGeneration/TextGeneration.ts";
 import type { ProviderAdapterError, ProviderDriverError } from "./Errors.ts";
 import type { ProviderAdapterShape } from "./Services/ProviderAdapter.ts";
 import type { ServerProviderShape } from "./Services/ServerProvider.ts";
+import type { ProviderAuthController } from "./Services/ProviderAuthService.ts";
 
 /**
  * Static metadata advertised by a driver. Used for default presentation
@@ -87,8 +90,20 @@ export interface ProviderInstance {
   readonly accentColor?: string | undefined;
   readonly enabled: boolean;
   readonly snapshot: ServerProviderShape;
+  readonly snapshotForCwd?: (cwd: string) => Effect.Effect<ServerProvider, ProviderDriverError>;
+  readonly refreshModels?: () => Effect.Effect<void, ProviderDriverError>;
+  /**
+   * Redeem one banked rate-limit reset credit on the signed-in account, then
+   * re-probe so the snapshot reflects the cleared windows. Account-level,
+   * not thread-level, which is why it lives here rather than on the adapter.
+   */
+  readonly consumeResetCredit?: () => Effect.Effect<
+    ProviderConsumeResetCreditOutcome,
+    ProviderDriverError
+  >;
   readonly adapter: ProviderAdapterShape<ProviderAdapterError>;
   readonly textGeneration: TextGeneration.TextGeneration["Service"];
+  readonly auth?: ProviderAuthController;
   /** Optional provider capability; unsupported drivers leave it absent. */
   readonly voiceTranscriptCorrection?: ProviderVoiceTranscriptCorrection | undefined;
   /** Scient-owned optional lifecycle seam; absent drivers keep pure T3 behavior. */
@@ -125,9 +140,10 @@ export interface ProviderConnectionAttempt {
   /** Explicit initial state; never inferred from method names, URLs, or codes. */
   readonly initialStatus: "waiting_for_browser" | "waiting_for_device_code" | "verifying";
   readonly userCode?: string | undefined;
+  readonly authorizationResponseKind?: "code" | "callback_url" | undefined;
   /**
-   * Some official browser flows return a one-time code that must be handed
-   * back to the provider CLI. The code is written directly to the live
+   * Some official browser flows return a code or redirect URL that must be handed
+   * back to the provider CLI. The response is written directly to the live
    * provider process and is never persisted in Scient state.
    */
   readonly submitAuthorizationCode?:

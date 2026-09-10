@@ -7,9 +7,9 @@ server rather than the computer in front of you.
 
 The important rule is that the work runs where the environment lives. When a
 remote environment is selected, provider tools, project files, terminals, Git
-credentials, Zotero, MATLAB, and other software belong to the remote computer.
-The desktop app displays and controls that work; it does not silently copy the
-whole project or run those tools locally.
+credentials, and other software belong to the remote computer. The desktop app
+displays and controls that work; it does not silently copy the whole project or
+run those tools locally.
 
 ## Connect over SSH
 
@@ -51,15 +51,74 @@ Keep these responsibilities separate:
   it; and
 - a pairing credential decides what that client is allowed to do.
 
-An address such as `127.0.0.1` is reachable only from the server computer.
+Endpoint behavior follows the actual address:
+
+- an HTTPS/WSS endpoint works from clients allowed to reach it;
+- a non-loopback HTTP endpoint can be used for direct LAN pairing; and
+- `127.0.0.1` is reachable only from the server computer.
+
 Prefer SSH forwarding or a correctly secured private HTTPS endpoint. Do not
 expose an unauthenticated Scient server port to the public internet.
+
+### Balance new threads across machines
+
+Auto balance is off by default. On web and desktop, enable it in
+**Settings → Connections → Load balancing** to automatically choose a machine for
+new threads in projects grouped across connected environments.
+Each machine starts at **Normal**. Choose **Prefer** to favor it when it has CPU and
+memory available, **Less often** to reduce its share, or **Manual only** to exclude
+it from automatic selection. These are preferences, not fixed traffic percentages.
+Preferences are saved separately in each client.
+
+The composer checks eligible machines when choosing a draft's environment, then keeps
+that choice stable. Choose **Auto balance** again to check current resources, or choose
+a specific machine to override it. Choosing a branch or worktree also keeps the draft
+on that machine. Existing threads stay where they started. If resource checks are
+unavailable or all eligible machines are full, choose a machine manually to continue.
+Mobile keeps its manual environment selection.
+
+### Tailscale HTTPS
+
+When the desktop app detects Tailscale, **Settings → Connections** can show its
+Tailnet IP, MagicDNS name, and an HTTPS MagicDNS endpoint. Tailscale HTTPS is
+off until you explicitly enable it. Turning it on asks Tailscale Serve to proxy
+private HTTPS traffic to the local Scient backend; turning it off removes that
+mapping.
+
+This is an endpoint option, not a separate kind of Scient environment. LAN,
+custom HTTPS, Tailscale, and SSH connections all use the same environment and
+pairing model.
+
+### Headless server
+
+For a separately managed server, use the exact Scient release archive and
+`SCIENT_SERVER_PACKAGE` variable described in [Background service setup](background-service.md).
+The retained compatibility executable is `t3`; do not use T3's npm package.
+For example, a Tailnet-only server can be started with:
+
+```bash
+npx --yes --allow-scripts=node-pty@1.1.0,msgpackr-extract@3.0.4 --package="$SCIENT_SERVER_PACKAGE" t3 serve --host "$(tailscale ip -4)"
+```
+
+Use the same package command with `t3 serve --help` for the complete options. To ask the server to manage
+Tailscale Serve directly, use `--tailscale-serve`; advanced users can add
+`--tailscale-serve-port 8443` for another HTTPS port. The command prints the
+address and temporary pairing information needed by a client.
 
 ## Pair a client safely
 
 In **Settings → Connections**, create a time-limited pairing link or code with
 only the read and write permissions that client needs. Share it only with the
 intended device, and revoke unused links or sessions from the same page.
+
+Pairing codes and share links are available only in the client that created them,
+while its Connections page remains open. After leaving or reloading that page,
+create a new link to share. Other clients can see a link's name, scopes, and expiry,
+and can revoke it if they have access-management permission.
+
+The default endpoint controls the QR code and primary copy action. You can change
+it in the expanded endpoint list. The preference follows the endpoint type rather
+than a particular IP address.
 
 Treat a pairing link like a temporary password:
 
@@ -71,6 +130,18 @@ Treat a pairing link like a temporary password:
 Connecting successfully does not give every operation unlimited access. The
 server continues to enforce the selected scopes and the conversation's
 permission mode.
+
+## Antigravity sign-in on a remote environment
+
+Antigravity runs and saves its Google credentials on the selected environment.
+You can start setup from a remote Scient client without signing in over SSH.
+
+Google returns to a `127.0.0.1` address on the device running the browser. If
+that browser is on another computer, the final page may fail to load; this is
+expected. Copy the complete return address, including its query string, and
+paste it into the same Antigravity setup flow where sign-in started. Do not
+change the address to the server hostname or paste it into a conversation or
+bug report. See [Antigravity](./providers-antigravity.md) for the complete flow.
 
 ## Keep versions aligned
 

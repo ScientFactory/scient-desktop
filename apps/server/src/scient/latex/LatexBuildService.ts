@@ -54,6 +54,7 @@ import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
 
 import { writeFileStringAtomically } from "../../atomicWrite.ts";
+import { makeOperationAnalytics } from "../../telemetry/OperationAnalytics.ts";
 import * as ServerConfig from "../../config.ts";
 import {
   GeneratedDocumentStore,
@@ -87,7 +88,7 @@ export interface LatexBuildInput {
   readonly relativePath: string;
 }
 
-export class LatexBuildError extends Schema.TaggedErrorClass<LatexBuildError>()("LatexBuildError", {
+export class LatexBuildError extends Schema.TaggedError<LatexBuildError>()("LatexBuildError", {
   operation: Schema.Literals(["build", "status", "cancel"]),
   reason: Schema.Literals(["invalid-path", "document-key-too-long"]),
   detail: Schema.String,
@@ -404,6 +405,7 @@ export function renderTranscript(state: TranscriptState): string {
 }
 
 export const make = Effect.gen(function* () {
+  const observeOperation = yield* makeOperationAnalytics;
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const config = yield* ServerConfig.ServerConfig;
@@ -539,6 +541,29 @@ export const make = Effect.gen(function* () {
         handle: null,
         installingPackages: null,
       }));
+      const entry = yield* getEntry(key);
+      if (
+        entry?.generation === generation &&
+        entry.startedAtEpochMs !== null &&
+        entry.finishedAtEpochMs === finishedAtEpochMs
+      ) {
+        const status =
+          entry.state === "succeeded"
+            ? "completed"
+            : entry.state === "cancelled"
+              ? "cancelled"
+              : entry.state === "failed"
+                ? "failed"
+                : null;
+        if (status !== null)
+          yield* observeOperation({
+            key: `${generation}:${entry.startedAtEpochMs}`,
+            operationKind: "latex-build",
+            status,
+            startedAt: entry.startedAtEpochMs,
+            finishedAt: finishedAtEpochMs,
+          });
+      }
     });
 
   const recordStoreFailure = (production: GeneratedDocumentProductionHandle, reason: string) =>
@@ -1463,6 +1488,19 @@ export const make = Effect.gen(function* () {
     Effect.gen(function* () {
       let again = true;
       while (again) {
+        const entry = yield* getEntry(key);
+        if (
+          entry?.generation === generation &&
+          entry.startedAtEpochMs !== null &&
+          ACTIVE_STATES.has(entry.state)
+        ) {
+          yield* observeOperation({
+            key: `${generation}:${entry.startedAtEpochMs}`,
+            operationKind: "latex-build",
+            status: "active",
+            startedAt: entry.startedAtEpochMs,
+          });
+        }
         yield* runOnce(key, generation);
         again = yield* consumePendingRerun(key, generation);
       }

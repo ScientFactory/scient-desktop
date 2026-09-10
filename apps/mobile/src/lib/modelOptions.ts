@@ -1,14 +1,23 @@
+import {
+  getAntigravityModelGroups,
+  getAntigravityReasoningControl,
+  groupAntigravityModelRows,
+  type AntigravityModelGroup,
+} from "@t3tools/client-runtime/antigravity-model-presentation";
 import type {
   ModelCapabilities,
   ModelSelection,
+  RuntimeMode,
   ServerConfig as T3ServerConfig,
 } from "@t3tools/contracts";
 import {
-  buildProviderOptionSelectionsFromDescriptors,
+  buildExplicitProviderOptionSelectionsFromDescriptors,
   getProviderOptionDescriptors,
 } from "@t3tools/shared/model";
 
 export type ModelOption = {
+  readonly reasoningGroup?: AntigravityModelGroup;
+  readonly supportedRuntimeModes?: ReadonlyArray<RuntimeMode> | undefined;
   readonly key: string;
   readonly label: string;
   readonly subtitle: string;
@@ -17,6 +26,7 @@ export type ModelOption = {
   readonly providerDriver: string;
   readonly isDefault: boolean;
   readonly isLegacy: boolean;
+  readonly isUnavailable?: boolean;
   readonly capabilities: ModelCapabilities | null;
   readonly selection: ModelSelection;
 };
@@ -45,11 +55,12 @@ function normalizeSelectionOptions(
   if (!capabilities) {
     return selection;
   }
-  const options = buildProviderOptionSelectionsFromDescriptors(
+  const options = buildExplicitProviderOptionSelectionsFromDescriptors(
     getProviderOptionDescriptors({
       caps: capabilities,
       selections: selection.options,
     }),
+    selection.options,
   );
   return options
     ? { ...selection, options }
@@ -59,12 +70,34 @@ function normalizeSelectionOptions(
       };
 }
 
+/** Whether a known Antigravity selection needs setup or a different model. */
+export function isModelSelectionUnavailable(
+  config: T3ServerConfig | null | undefined,
+  selection: ModelSelection | null | undefined,
+): boolean {
+  if (!config || !selection) {
+    return false;
+  }
+  const provider = config.providers.find(
+    (candidate) => candidate.instanceId === selection.instanceId,
+  );
+  const driver =
+    provider?.driver ?? config.settings?.providerInstances[selection.instanceId]?.driver;
+  return (
+    driver === "antigravity" &&
+    (!provider ||
+      !provider.enabled ||
+      !provider.installed ||
+      provider.auth.status === "unauthenticated" ||
+      provider.availability === "unavailable" ||
+      !provider.models.some((model) => model.slug === selection.model))
+  );
+}
+
 /**
- * A stored model selection is only usable when its provider instance is
- * currently enabled, installed, and authenticated on the server. Returns the
- * selection unchanged when usable, otherwise `null` so callers fall through to
- * the server's default model. A missing config (environment offline) cannot be
- * validated, so stored selections pass through untouched.
+ * Keep Antigravity selections when setup or catalog changes make them
+ * unavailable. Other providers fall through to the server default when they
+ * are disabled, missing, or signed out. Without config, keep stored selections.
  */
 export function resolveSelectableModelSelection(
   config: T3ServerConfig | null | undefined,
@@ -76,6 +109,11 @@ export function resolveSelectableModelSelection(
   const provider = config.providers.find(
     (candidate) => candidate.instanceId === selection.instanceId,
   );
+  const driver =
+    provider?.driver ?? config.settings?.providerInstances[selection.instanceId]?.driver;
+  if (driver === "antigravity") {
+    return selection;
+  }
   return provider &&
     provider.enabled &&
     provider.installed &&
@@ -85,11 +123,9 @@ export function resolveSelectableModelSelection(
 }
 
 /**
- * Like resolveSelectableModelSelection, but additionally rejects legacy
- * models. Used for implicit defaults (stored draft, project last-used): a
- * new thread should never quietly start on a legacy model, so those fall
- * through to the provider's default instead. Explicit picks in the settings
- * sheet are unaffected.
+ * Reject legacy models for implicit defaults, except Antigravity selections,
+ * which must not silently change after a catalog update. Explicit picks in
+ * the settings sheet are unaffected.
  */
 export function resolveDefaultableModelSelection(
   config: T3ServerConfig | null | undefined,
@@ -101,7 +137,7 @@ export function resolveDefaultableModelSelection(
   }
   const provider = config.providers.find((candidate) => candidate.instanceId === usable.instanceId);
   const model = provider?.models.find((candidate) => candidate.slug === usable.model);
-  return model?.isLegacy === true ? null : usable;
+  return provider?.driver !== "antigravity" && model?.isLegacy === true ? null : usable;
 }
 
 export function resolveNewTaskModelSelection(input: {
@@ -114,8 +150,8 @@ export function resolveNewTaskModelSelection(input: {
     input.draftSelection ??
     input.projectDefaultSelection ??
     input.stickySelection ??
-    input.modelOptions.find((option) => option.isDefault)?.selection ??
-    input.modelOptions[0]?.selection ??
+    input.modelOptions.find((option) => option.isDefault && !option.isUnavailable)?.selection ??
+    input.modelOptions.find((option) => !option.isUnavailable)?.selection ??
     null
   );
 }
@@ -127,18 +163,29 @@ export function buildModelOptions(
   const options = new Map<string, ModelOption>();
 
   for (const provider of config?.providers ?? []) {
-    if (!provider.enabled || !provider.installed || provider.auth.status === "unauthenticated") {
+    if (
+      !provider.enabled ||
+      !provider.installed ||
+      provider.auth.status === "unauthenticated" ||
+      (provider.driver === "antigravity" && provider.availability === "unavailable")
+    ) {
       continue;
     }
 
     const providerLabel = providerDisplayLabel(provider);
+    const reasoningGroups = getAntigravityModelGroups(provider.driver, provider.models);
     for (const model of provider.models) {
+      const reasoningGroup = reasoningGroups.find((group) =>
+        group.models.some(({ slug }) => slug === model.slug),
+      );
       const key = `${provider.instanceId}:${model.slug}`;
       options.set(key, {
         key,
         label: model.name,
+        ...(reasoningGroup ? { reasoningGroup } : {}),
         subtitle: model.subProvider ?? "",
         providerKey: provider.instanceId,
+        supportedRuntimeModes: provider.supportedRuntimeModes,
         providerLabel,
         providerDriver: provider.driver,
         isDefault: model.isDefault === true,
@@ -161,26 +208,71 @@ export function buildModelOptions(
     if (existing) {
       options.set(key, {
         ...existing,
-        selection: normalizeSelectionOptions(fallbackModelSelection, existing.capabilities),
+        selection:
+          existing.providerDriver === "antigravity"
+            ? fallbackModelSelection
+            : normalizeSelectionOptions(fallbackModelSelection, existing.capabilities),
       });
     } else {
-      const providerLabel = fallbackModelSelection.instanceId;
+      const provider = config?.providers.find(
+        (candidate) => candidate.instanceId === fallbackModelSelection.instanceId,
+      );
+      const instanceConfig = config?.settings?.providerInstances[fallbackModelSelection.instanceId];
+      const model = provider?.models.find(
+        (candidate) => candidate.slug === fallbackModelSelection.model,
+      );
+      const providerDriver =
+        provider?.driver ?? instanceConfig?.driver ?? fallbackModelSelection.instanceId;
+      const providerLabel = providerDisplayLabel({
+        driver: providerDriver,
+        displayName: provider?.displayName ?? instanceConfig?.displayName,
+        instanceId: fallbackModelSelection.instanceId,
+      });
       options.set(key, {
         key,
-        label: fallbackModelSelection.model,
-        subtitle: "",
+        label: model?.name ?? fallbackModelSelection.model,
+        subtitle: model?.subProvider ?? "",
         providerKey: fallbackModelSelection.instanceId,
         providerLabel,
-        providerDriver: fallbackModelSelection.instanceId,
+        providerDriver,
         isDefault: false,
-        isLegacy: false,
-        capabilities: null,
+        isLegacy: model?.isLegacy === true,
+        ...(isModelSelectionUnavailable(config, fallbackModelSelection)
+          ? { isUnavailable: true }
+          : {}),
+        capabilities: model?.capabilities ?? null,
         selection: fallbackModelSelection,
       });
     }
   }
 
   return [...options.values()];
+}
+
+export function modelOptionReasoningControl(option: ModelOption | null | undefined) {
+  return !option?.isUnavailable && option?.reasoningGroup
+    ? getAntigravityReasoningControl([option.reasoningGroup], option.selection.model)
+    : null;
+}
+
+/** Presentation only; callers keep the full catalog for selection and validation. */
+export function groupModelOptionsForDisplay(
+  options: ReadonlyArray<ModelOption>,
+  selectedModel?: string | null,
+): ReadonlyArray<ModelOption> {
+  const groups = [
+    ...new Set(options.flatMap((option) => (option.reasoningGroup ? [option.reasoningGroup] : []))),
+  ];
+  if (groups.length === 0) return options;
+  return groupAntigravityModelRows(
+    options.map((option) => ({
+      ...option,
+      slug: option.selection.model,
+      name: option.label,
+    })),
+    groups,
+    selectedModel,
+  ).map(({ slug: _slug, name, shortName: _shortName, ...option }) => ({ ...option, label: name }));
 }
 
 export function groupByProvider(options: ReadonlyArray<ModelOption>): ReadonlyArray<ProviderGroup> {

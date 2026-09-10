@@ -1,0 +1,219 @@
+# Managed provider runtime updates
+
+This runbook owns release discovery and publication for the qualified provider
+runtimes that Scient can install privately. It does not own provider login,
+runtime selection, download/extraction policy, local install/update/repair/remove
+transactions, or system/custom installations. Those remain in the
+[provider lifecycle architecture](../internals/provider-lifecycle.md) and
+`@scientfactory/provider-runtime`.
+
+## What is published
+
+`automation/managed-runtime-catalog-v1` is a generated data branch. Its
+`apps/server/src/scient/providerLifecycle/managed-runtime-catalog.json` file is
+the remote last-known-good catalog read by the new catalog client. The app imports
+`bundled-managed-runtime-catalog.json` in the same directory as its offline/minimum
+fallback. Snapshot the newest qualified feed into that **new bundled file** before
+each app release and requalify changed runtime policy.
+
+The older `managed-runtime-catalog.json` on **main** is a compatibility snapshot
+still read directly by v0.6.9. Do not overwrite it during release preparation:
+those clients cannot extract the newer, larger Cursor packages. The identical
+filename on the **generated branch** is the current feed, not this legacy snapshot.
+
+The generated branch may change only immutable release facts for an existing
+app-approved provider and target: version, artifact name, HTTPS URL, checksum,
+and byte size. The app and CI both re-apply policy compiled on `main`; the branch
+cannot introduce a provider or target, change extraction or smoke behavior,
+widen an allowed host or path family, or increase a support tier.
+
+## Automated path
+
+`managed-provider-runtime-updates.yml` runs every two hours and may also be
+started manually. It invokes `managed-provider-runtime-update-provider.yml`
+once for each of Codex, Claude, legacy Antigravity, official Antigravity ACP, Cursor, Droid,
+Grok, and Pi. The eight release-family runs are intentionally independent:
+
+1. Read the latest generated catalog, or the bundled catalog before the branch
+   exists.
+2. Read only that provider's official stable pointer.
+   Droid uses Factory's native `factory-cli/LATEST` download channel, not the
+   independently maintained changelog RSS. Pi uses the official `earendil-works/pi`
+   stable GitHub release.
+3. If the version is newer, collect complete immutable metadata for every
+   app-approved target.
+4. Exercise the normal managed-runtime engine on hosted macOS Apple-silicon,
+   macOS Intel, Linux x64/ARM64, and Windows x64/ARM64 runners. Each runner downloads,
+   verifies, materializes, checks package contents, smoke-tests, activates, and
+   removes its native artifact in a temporary private root.
+   Pi qualifies only Apple-silicon macOS, its sole app-approved managed target.
+   Official Antigravity ACP uses T3's paired-executable installer instead of the generic
+   runtime engine. Its five runners cover Apple-silicon macOS, Linux x64/ARM64, and Windows
+   x64/ARM64; no ACP artifact exists for Intel macOS. Its qualification initializes the
+   actual agent without authentication, then checks repair, activation recovery from a new
+   service instance, and removal. Linux musl policy variants have archive/policy tests;
+   the hosted Linux jobs exercise glibc, not native musl, and must not be reported
+   as native musl qualification. Its server dependencies are installed through the
+   already-provisioned Vite+ package-manager entrypoint.
+5. Serialize publication, re-read the latest generated catalog, validate both
+   inputs against policy on the immutable discovery commit, and merge only the
+   provider that passed.
+6. Confirm that current `main` still descends from the discovery commit and that
+   managed-runtime policy, discovery, qualification, and publication code did
+   not change while the candidate was running. Unrelated `main` changes do not
+   block publication; relevant changes require a fresh run.
+7. Publish with a normal fast-forward push using the release GitHub App.
+
+A failed provider is red in its own matrix entry and does not stop other
+providers. Failed discovery, incomplete metadata, a failed native check, a
+downgrade, a same-version repack, or a publication race leaves the current
+catalog untouched. The workflow never force-pushes and never opens a catalog PR,
+so an unrelated monorepo test cannot suppress a qualified provider update.
+
+An older feed may omit an app-approved family, such as subsequently added ACP or Pi. Validation
+preserves those omissions so other providers can continue independently. Discovery
+uses that family's bundled policy baseline, but collects and qualifies the official
+release even if its version matches the bundle. Only that family's successful
+publication adds it to the feed; no unrelated provider run seeds unqualified entries.
+The runtime package owns the shared release-family list. A workflow contract test
+keeps the scheduled matrix and manual choices aligned with that list.
+
+Before a Scient app release, snapshot the latest **qualified** generated catalog into
+`apps/server/src/scient/providerLifecycle/bundled-managed-runtime-catalog.json`
+and run its focused policy tests. Live update
+availability does not wait for this snapshot, but it keeps a newly installed app
+close to the current qualified floor before its first network refresh.
+
+A bundled version must not bypass native qualification: a failed feed publication does
+not withdraw an artifact already present in the bundle. Qualify the exact bundled
+candidate with the intended installer before shipping; if it fails, hold that release
+or retain the last qualified provider entry as a whole (do not mix artifact versions).
+
+## App behavior
+
+Released apps start a non-blocking catalog refresh with the server, use ETags,
+and revalidate at most hourly after a successful fetch. A failed attempt is
+eligible for retry after five minutes. The atomic disk cache and bundled catalog
+keep the provider screens available while offline. Disabling **Provider update
+checks** prevents network refresh; re-enabling it asks for an immediate refresh.
+Each network refresh has one ten-second deadline covering response headers and
+the catalog body. A stalled response is aborted and leaves the last good catalog
+and ETag intact; later refreshes remain eligible under the existing retry policy.
+
+When one provider entry changes, Scient recomputes only that provider's managed
+runtime summary. It does not reload provider processes, interrupt sessions,
+change credentials, switch runtime sources, or install anything. If the active
+source is an older healthy Scient-managed runtime, the existing **Update** action
+appears. Clicking **Install** or **Update** runs the existing server preflight and starts
+the transaction with that plan's exact catalog revision, without a second confirmation.
+The local machine independently repeats integrity, package, smoke, and atomic
+activation checks. **Repair** refreshes the same catalog and selects the latest known
+qualified release, including when that version is already installed. If the catalog
+cannot be refreshed, the last good catalog/bundle is used; a compatible newer installed
+receipt is not downgraded. ACP rejects an older offer when its installed registry
+receipt is newer, rather than guessing missing archive metadata. Repair does not revoke credentials or modify external installs.
+Removal uses only local state and does not depend on a current download offer.
+
+On Windows, installer-owned directory moves and removal tolerate transient file locks
+with bounded backoff (up to fifteen seconds per operation). The first attempt is
+immediate; permanent failures remain failures. Activation retries never deliberately
+overwrite a destination that appeared during the wait. Cancellation stops activation
+retries, while restoration/cleanup keeps its own bounded opportunity to finish.
+The activation journal and backup remain available if restoration cannot complete.
+ACP scoped cleanup preserves both the original operation failure and a cleanup failure;
+qualification cleanup does likewise. These are filesystem retries, not repeated
+downloads or CI attempts that discard failed runs.
+
+## Credentials and branch authority
+
+The existing release GitHub App needs only repository **Contents: read and
+write** for publication. The scheduler's default token remains read-only. Do
+not add pull-request, Actions, administration, or secrets permissions for this
+workflow.
+
+Treat the generated branch as automation-owned during normal operation. Do not
+hand-edit or force-push it. A routine correction must first be encoded in
+discovery, policy, or validation on `main`, then qualified through the same
+workflow. If the branch is deleted, the next successful provider run recreates
+it from its immutable `main` source and the bundled catalog; until every provider
+runs again, previously published releases may remain unavailable to fresh apps.
+
+## Operating and recovery
+
+- Open **Actions > Promote managed provider runtime updates** to inspect the eight
+  release-family results or start a manual run.
+- Open the failed provider's reusable-workflow run to identify whether stable
+  discovery, metadata collection, a native runner, or publication failed.
+- A transient provider or runner failure needs no rollback; retry that workflow
+  after the external condition clears.
+- If an official stable endpoint or artifact layout changed, update only that
+  provider's discovery and app-owned manifest policy, add focused fixtures, and
+  re-run every approved native family before publication.
+- If an incorrect entry was somehow published, disable provider update checks
+  only as temporary client-side containment. The break-glass withdrawal is a
+  reviewed, normal (non-force) commit that restores only the affected provider's
+  last qualified entry on the generated branch. Then fix discovery or policy on
+  `main` before re-enabling automation. Never replace bytes under an existing
+  version.
+- After this replacement workflow lands and its first generated-branch
+  publication succeeds, close the superseded
+  `automation/managed-runtime-catalog` PR/branch. It is not an input to the app.
+
+## Local qualification
+
+Before merging runtime-policy changes, run **Promote managed provider runtime
+updates** on the feature branch, choose the affected `provider`, and enable
+`qualify_only`. Branch runs always prohibit publication, even if that checkbox
+is left off. They qualify the caller's immutable commit, never current `main`,
+and do not mint a publication token. Qualification-only runs include repair and
+repeat the Windows install/repair/remove cycle five times; every attempt must
+pass (these are not retries that hide a failure).
+
+```sh
+gh workflow run managed-provider-runtime-updates.yml \
+  --ref <feature-branch> -f provider=cursor -F qualify_only=true
+```
+
+Cursor's complete 2026.09.02 Unix packages expand to 511–570 MiB, so its
+app-owned tar budget is 768 MiB. Windows retains its 384 MiB ZIP budget; both
+remain capped at 768 entries. Do not remove bundled executables to fit an older
+budget or increase the shared defaults. The extractor permits an explicitly
+reviewed budget up to 768 MiB independently of its unchanged 512 MiB download
+ceiling and default expansion budget. Native probes must finish closing
+before activation or failure cleanup moves the payload.
+
+The v0.6.9 production app still reads the catalog from `main` and has the older
+Cursor extraction budget. Keep that legacy Cursor entry unchanged until a
+separately reviewed compatibility transition; qualify newer Cursor packages on
+the generated branch for builds containing the new reader and budget. A release
+snapshot updates only the separate bundled file; it must not advertise an incompatible
+package at the legacy main URL.
+
+Use temporary files; do not edit the bundled catalog merely to test discovery:
+
+```sh
+node scripts/update-managed-runtime-catalog.ts \
+  --provider claudeAgent \
+  --input apps/server/src/scient/providerLifecycle/bundled-managed-runtime-catalog.json \
+  --output /tmp/managed-runtime-candidate.json
+
+node scripts/qualify-managed-runtime-catalog.ts \
+  --provider claudeAgent \
+  --catalog /tmp/managed-runtime-candidate.json
+
+node scripts/promote-managed-runtime-catalog.ts \
+  --provider claudeAgent \
+  --current apps/server/src/scient/providerLifecycle/bundled-managed-runtime-catalog.json \
+  --candidate /tmp/managed-runtime-candidate.json \
+  --output /tmp/managed-runtime-promoted.json
+```
+
+For official ACP, discover with `--provider antigravityAcp`, then qualify with:
+
+```sh
+node apps/server/scripts/qualify-antigravity-acp-catalog.ts \
+  --catalog /tmp/managed-runtime-candidate.json
+```
+
+This proves discovery, current-host qualification, and merge behavior. It does
+not replace the provider's complete hosted runner matrix, and it does not publish.

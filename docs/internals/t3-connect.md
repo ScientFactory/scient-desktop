@@ -13,8 +13,7 @@ two kinds of bearer credential: template JWTs generated from the `t3-relay` temp
 verification (`acceptsToken: "oauth_token"`), so the CLI's OAuth credential works without a JWT
 template.
 
-For the wider system diagram, see
-[t3-code-connect-auth-flow.html](./t3-code-connect-auth-flow.html).
+For deployment prerequisites, see the inherited [Connect setup reference](../operations/connect-setup.md).
 
 ## Application Keys
 

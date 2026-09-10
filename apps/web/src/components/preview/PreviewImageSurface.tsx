@@ -33,11 +33,14 @@ export function PreviewImageSurface({
   className,
   onLoadError,
   statusLabel,
+  crossOrigin = "anonymous",
 }: {
   readonly source: PreviewImageSource;
   readonly className?: string;
   readonly onLoadError?: () => void;
   readonly statusLabel?: string;
+  /** Direct web images can display without granting byte access to this origin. */
+  readonly crossOrigin?: "anonymous" | null | undefined;
 }) {
   const viewportRef = useRef<HTMLDivElement | null>(null);
   const zoomFrameRef = useRef<number | null>(null);
@@ -168,7 +171,7 @@ export function PreviewImageSurface({
             key={previewImageSourceToken(imageState.displayed)}
             src={imageState.displayed.url}
             alt={imageState.displayed.alt}
-            crossOrigin="anonymous"
+            crossOrigin={crossOrigin ?? undefined}
             draggable={false}
             className="absolute inset-0 size-full select-none object-contain"
           />
@@ -179,7 +182,7 @@ export function PreviewImageSurface({
             src={imageState.pending.url}
             alt=""
             aria-hidden="true"
-            crossOrigin="anonymous"
+            crossOrigin={crossOrigin ?? undefined}
             draggable={false}
             className="pointer-events-none absolute inset-0 size-full select-none object-contain opacity-0"
             onLoad={() => {

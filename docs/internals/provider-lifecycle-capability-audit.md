@@ -12,6 +12,22 @@
 
 ## Role of this document
 
+### Antigravity evidence update — 2026-09-03 candidate
+
+The Antigravity rows in the 2026-08-25 evidence below describe the retained **legacy `agy`**
+transport. They do not constrain the newly aligned official ACP implementation. Its selected
+OAuth/API-key methods, isolated profiles, remote callback URLs, paired installer, and five-target
+catalog are documented in [Provider architecture](./providers.md#antigravity-ownership-and-protocol)
+and the current [lifecycle matrix](./provider-lifecycle.md). The ACP adapter and authentication
+engine come from T3; Scient supplies the management bridge and legacy-cursor routing. Native
+Apple-silicon install/initialize/activation/removal passed in a synthetic root. Hosted qualification
+on the other targets and manual authenticated flows are not yet claimed.
+
+The proposal remains historical; this update does not retroactively reinterpret its subscription-only
+acceptance criteria as a restriction on the upstream ACP account methods.
+
+### Reading the ledger
+
 This audit exists to keep two different questions separate:
 
 1. **What does each provider actually support, and why does it differ?** This document owns that
@@ -68,6 +84,59 @@ earlier implementation checkpoint. They are not a complete final cross-provider 
 provider, state, operating system, or architecture is implied to be live-qualified. In particular,
 every system-to-managed row remains **code-confirmed** until its corresponding live scenario and
 platform are recorded.
+
+## Pi qualification addition — 2026-08-31
+
+This addition records the Pi candidate on `codex/pi-provider-20260831`, based on
+`6e608aadf29ad083c46c8552fea6a1ce4b4e7554`; it does not requalify the historical rows below.
+
+- **Code-confirmed:** disabled by default; native RPC, multiple instances, custom/system/private
+  runtimes, and the existing shared managed install/update/repair/remove and explicit system-to-managed
+  switch. Managed acquisition is restricted to local desktop macOS ARM64 with the qualified catalog.
+  External runtime updates remain manual. No universal Pi account login/logout is advertised.
+- **Automated native evidence:** official Pi 0.84.4 download/checksum/extraction/smoke/activation/removal
+  passed on macOS ARM64. Isolated native tests exercise model discovery, synthetic local-model turns,
+  Scient MCP tool calls and structured errors, exact private-session resume, concurrent turns,
+  native questions, native skill/template expansion, and pre-completion text/reasoning deltas.
+- **Bounded live-app evidence:** isolated synthetic-state Settings enablement, model discovery,
+  runtime presentation, Full access selection, model/thinking changes, Scient `preview_status`, and
+  native file read were exercised. Follow-up native passes verified all four question types,
+  including a multiline Hebrew/English editor replacement; native-question Stop and reopen;
+  exact private-session resume; generation Stop; model-error recovery; steering within one turn;
+  and compact thinking/access controls with restoration to the expanded layout. The passes exposed
+  and regression-tested native-command augmentation, free-text question filtering, and cancellation
+  misclassification defects before repeating these checks on the repaired candidate.
+- **Intentional boundaries:** Pi has no Scient-enforced sandbox; supported runtime modes are explicit
+  Full access only. Native credentials and local inference servers remain Pi/user-owned. Shared
+  conversation buffering and question-control limitations remain unchanged; see
+  [Pi in Scient](../user/providers-pi.md) for the supported behavior and partial editor presentation.
+- **Additional branch implementation, not yet merged or visually accepted:** reusable Scient custom
+  connections now provide API-key and keyless endpoint setup with explicit Pi-instance attachments.
+  Native profile credentials are not imported. See [Custom model connections](./custom-models.md)
+  for automated evidence and remaining qualification boundaries.
+- **Not qualified:** hosted credentials/entitlement, actual downloaded local-model quality, GUI
+  install/remove and system-to-managed handoff, packaged release, real mobile device, or other
+  operating-system/architecture targets. Switching an already-supervised draft to Pi was not
+  visually exercised in the Pi-only fixture; unsupported-mode refusal has automated coverage, and
+  both live access menus showed Full access only. Native/headless evidence does not promote these
+  remaining cases to live-app acceptance.
+
+### Main alignment and follow-up — 2026-09-05
+
+The candidate was realigned with merged Scient main
+`0b33fabfb97a009651ccc78bb3be944e50cb84aa`. Native protocol tests passed against official
+Pi 0.84.4 and 0.85.0, including workspace-local discovery without extension execution; the
+managed catalog remains pinned to 0.84.4. Follow-up fixes preserve exact native selection values,
+bound session-header reads, reject directory-segment instance IDs and unsupported image steering,
+and suppress unsupported rollback
+and Scient-side custom-model entry controls. Existing catalog curation remains available.
+
+The isolated desktop pass repeated Scient tool calls, native file reads, all four question types,
+generation Stop, exact-session continuation, model-error recovery, and model/thinking selection.
+After a fresh backend restart, desktop checks also verified image delivery to the synthetic model
+endpoint, generic-file attachment paths, queued-message steering through completion, native model
+favorites, and the corrected model-entry/runtime-management presentation. Hosted models and the
+other unqualified cases above remain separate acceptance gates.
 
 ## Lifecycle dimensions
 
@@ -240,18 +309,22 @@ These are common guarantees, not requirements for every provider to display the 
 **Code-confirmed:** every assisted managed provider now resolves immutable release facts through one
 process-scoped catalog while retaining its own app-compiled host, URL path family, target, archive,
 package, executable, smoke-test, environment, and support policy. Routine provider status uses
-memory/disk state and a background refresh; opening Install or Update may wait for the bounded refresh.
-Update is advertised only when the provider-specific strict comparator proves the catalog release is
-newer than the active managed version. Downgrades, same-version repacks, missing targets, contract
-drift, and malformed catalogs do not displace the last known good entry.
+memory/disk state and a non-blocking refresh; opening Install or Update may wait for the bounded
+refresh. A newly published entry recomputes only the affected managed-runtime summary, so Update can
+appear without an app restart and without reloading the provider or touching sessions. Update is
+advertised only when the provider-specific strict comparator proves the catalog release is newer than
+the active managed version. Downgrades, same-version repacks, missing targets, contract drift, and
+malformed catalogs do not displace the last known good entry.
 
 **Automation design (code-confirmed; hosted qualification pending):** the scheduled workflow discovers
-official stable releases, obtains or computes exact digests and sizes for every app-approved target,
-and runs the shared install boundary on native macOS Apple-silicon, macOS Intel, Linux x64, and Windows
-x64 runners. A least-privilege release app creates a catalog-only PR and requests auto-merge only after
-those jobs pass. Repository required checks remain the final gate. Users receive an Update action after
-catalog promotion; Scient does not install the release until the user confirms it and the local machine
-independently verifies, tests, and atomically activates it.
+each official stable release independently, obtains or computes exact digests and sizes for every
+app-approved target, and runs the shared install boundary on native macOS Apple-silicon, macOS Intel,
+Linux x64, and Windows x64 runners. Each qualified provider is serialized through a least-privilege
+release app into a generated catalog branch using a normal fast-forward push. Publication re-reads the
+latest catalog and changes only that provider, so one broken channel or unrelated repository check
+cannot block another provider and concurrent runs cannot discard one another. Users receive an Update
+action after catalog promotion; Scient does not install the release until the user confirms it and the
+local machine independently verifies, tests, and atomically activates it.
 
 **Provider-specific evidence sources:** Codex uses OpenAI's stable channel and published digests;
 Claude uses Anthropic's stable pointer and platform manifest; Antigravity uses Google's platform

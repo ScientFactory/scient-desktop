@@ -77,6 +77,8 @@ describe("previewStaticImageRevisionKey", () => {
         representationId: "static-png",
       },
       { _tag: "environment-file", path: "/project/figure.png", access: "exact" },
+      { _tag: "media-file", threadId: "thread-a", path: "/tmp/figure.png" },
+      { _tag: "native-app-icon", app: { _tag: "app-id", appId: "com.example.app" } },
     ].map((resource) => resource as Resource);
     const keys = [...resources, computeOutput()].map(keyFor);
 

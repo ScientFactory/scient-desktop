@@ -16,6 +16,7 @@ import {
   verifyManagedRuntimeChecksum,
 } from "./runtimeFiles.ts";
 import { managedRuntimeTargetKey } from "./target.ts";
+import { runtimeFilesystem } from "./runtimeFilesystem.ts";
 
 export type ManagedProviderRuntimeStage =
   | "preparing"
@@ -135,13 +136,14 @@ export function managedRuntimeSmokeEnvironment(environment: NodeJS.ProcessEnv): 
   );
 }
 
-async function smokeExecutable(
+export async function smokeManagedRuntimeExecutable(
   executable: string,
   args: ReadonlyArray<string>,
   displayName: string,
   environment: Readonly<Record<string, string>> = {},
-  options: { readonly cwd?: string | undefined } = {},
+  options: { readonly cwd?: string | undefined; readonly signal?: AbortSignal | undefined } = {},
 ): Promise<void> {
+  options.signal?.throwIfAborted();
   await new Promise<void>((resolve, reject) => {
     const child = NodeChildProcess.spawn(executable, [...args], {
       ...(options.cwd ? { cwd: options.cwd } : {}),
@@ -151,18 +153,31 @@ async function smokeExecutable(
     });
     let outputBytes = 0;
     let settled = false;
+    let failure: Error | undefined;
+    let terminationRequested = false;
     const finish = (error?: Error) => {
       if (settled) return;
       settled = true;
       clearTimeout(timer);
+      options.signal?.removeEventListener("abort", onAbort);
       if (error) reject(error);
       else resolve();
     };
+    const terminate = (error: Error) => {
+      if (settled || terminationRequested) return;
+      terminationRequested = true;
+      failure ??= error;
+      // This is only the owned, bounded version probe, never a user session.
+      // Wait for close even on failure so staging cleanup cannot race it.
+      child.kill("SIGKILL");
+      child.stdout.destroy();
+      child.stderr.destroy();
+    };
+    const onAbort = () => terminate(new DOMException("Installation cancelled.", "AbortError"));
     const count = (chunk: Buffer) => {
       outputBytes += chunk.byteLength;
       if (outputBytes > MAX_SMOKE_OUTPUT_BYTES) {
-        child.kill();
-        finish(
+        terminate(
           new ManagedProviderRuntimeError(
             `Managed ${displayName} smoke test produced excessive output.`,
           ),
@@ -171,15 +186,19 @@ async function smokeExecutable(
     };
     child.stdout.on("data", count);
     child.stderr.on("data", count);
-    child.once("error", (cause) =>
-      finish(
-        new ManagedProviderRuntimeError(`Managed ${displayName} smoke test could not start.`, {
+    child.once("error", (cause) => {
+      failure ??= new ManagedProviderRuntimeError(
+        `Managed ${displayName} smoke test could not start.`,
+        {
           cause,
-        }),
-      ),
-    );
-    child.once("exit", (code, signal) => {
-      if (code === 0) finish();
+        },
+      );
+    });
+    // exit may precede stdio closure; Windows cannot reliably rename the
+    // package while probe-owned handles are still being released.
+    child.once("close", (code, signal) => {
+      if (failure) finish(failure);
+      else if (code === 0) finish();
       else {
         finish(
           new ManagedProviderRuntimeError(
@@ -189,13 +208,15 @@ async function smokeExecutable(
       }
     });
     const timer = setTimeout(() => {
-      child.kill();
-      finish(new ManagedProviderRuntimeError(`Managed ${displayName} smoke test timed out.`));
+      terminate(new ManagedProviderRuntimeError(`Managed ${displayName} smoke test timed out.`));
     }, SMOKE_TIMEOUT_MS);
+    options.signal?.addEventListener("abort", onAbort, { once: true });
+    if (options.signal?.aborted) onAbort();
   });
 }
 
 export interface ManagedProviderRuntimeDependencies {
+  readonly filesystem: typeof runtimeFilesystem;
   readonly download: typeof downloadManagedRuntime;
   readonly verify: typeof verifyManagedRuntimeChecksum;
   readonly materialize: typeof materializeManagedRuntimeArtifact;
@@ -204,7 +225,7 @@ export interface ManagedProviderRuntimeDependencies {
     args: ReadonlyArray<string>,
     displayName: string,
     environment?: Readonly<Record<string, string>>,
-    options?: { readonly cwd?: string | undefined },
+    options?: { readonly cwd?: string | undefined; readonly signal?: AbortSignal | undefined },
   ) => Promise<void>;
   readonly commitState: (
     statePath: string,
@@ -235,10 +256,11 @@ async function commitManagedRuntimeState(
 }
 
 const DEFAULT_DEPENDENCIES: ManagedProviderRuntimeDependencies = {
+  filesystem: runtimeFilesystem,
   download: downloadManagedRuntime,
   verify: verifyManagedRuntimeChecksum,
   materialize: materializeManagedRuntimeArtifact,
-  smoke: smokeExecutable,
+  smoke: smokeManagedRuntimeExecutable,
   commitState: commitManagedRuntimeState,
   now: Date.now,
   activationId: NodeCrypto.randomUUID,
@@ -251,6 +273,7 @@ const MANAGED_RUNTIME_PROVIDERS = new Set([
   "cursor",
   "droid",
   "grok",
+  "pi",
 ]);
 
 function decodeArtifactReceipt(value: unknown): ManagedRuntimeArtifactReceipt | undefined {
@@ -532,7 +555,7 @@ export class ManagedProviderRuntime {
         artifact.smokeArgs,
         this.#displayName,
         artifact.smokeEnvironment,
-        smokeWorkingDirectory ? { cwd: smokeWorkingDirectory } : undefined,
+        { ...(smokeWorkingDirectory ? { cwd: smokeWorkingDirectory } : {}), signal },
       );
       if (signal.aborted) throw new DOMException("Installation cancelled.", "AbortError");
       onProgress?.({ stage: "activating" });
@@ -553,10 +576,10 @@ export class ManagedProviderRuntime {
       let candidateMoved = false;
       try {
         if (hadExisting) {
-          await NodeFSP.rename(destination, replaced);
+          await this.#dependencies.filesystem.rename(destination, replaced, { signal });
           existingMoved = true;
         }
-        await NodeFSP.rename(payloadPath, destination);
+        await this.#dependencies.filesystem.rename(payloadPath, destination, { signal });
         candidateMoved = true;
         if (qualify) {
           await qualify({
@@ -593,9 +616,9 @@ export class ManagedProviderRuntime {
       } catch (cause) {
         try {
           if (candidateMoved) {
-            await NodeFSP.rm(destination, { recursive: true, force: true });
+            await this.#dependencies.filesystem.remove(destination);
           }
-          if (existingMoved) await NodeFSP.rename(replaced, destination);
+          if (existingMoved) await this.#dependencies.filesystem.rename(replaced, destination);
           await NodeFSP.rm(this.#activationPath, { force: true });
         } catch (rollbackCause) {
           throw new ManagedProviderRuntimeError(
@@ -607,7 +630,7 @@ export class ManagedProviderRuntime {
       }
       await NodeFSP.rm(this.#activationPath, { force: true }).catch(() => undefined);
       if (hadExisting) {
-        await NodeFSP.rm(replaced, { recursive: true, force: true }).catch(() => undefined);
+        await this.#dependencies.filesystem.remove(replaced).catch(() => undefined);
       }
       return await this.status(artifact);
     } catch (cause) {
@@ -617,7 +640,7 @@ export class ManagedProviderRuntime {
             cause,
           });
     } finally {
-      await NodeFSP.rm(stage, { recursive: true, force: true }).catch(() => undefined);
+      await this.#dependencies.filesystem.remove(stage).catch(() => undefined);
     }
   }
 
@@ -631,7 +654,7 @@ export class ManagedProviderRuntime {
       // Make the managed runtime disappear atomically before recursively
       // deleting it. A concurrent probe therefore sees either the complete
       // runtime or no runtime, never a half-deleted version directory.
-      await NodeFSP.rename(this.#root, tombstone);
+      await this.#dependencies.filesystem.rename(this.#root, tombstone);
     } catch (cause) {
       if ((cause as NodeJS.ErrnoException).code === "ENOENT") return;
       throw new ManagedProviderRuntimeError(
@@ -641,10 +664,10 @@ export class ManagedProviderRuntime {
     }
 
     try {
-      await NodeFSP.rm(tombstone, { recursive: true, force: true });
+      await this.#dependencies.filesystem.remove(tombstone);
     } catch (cause) {
       try {
-        await NodeFSP.rename(tombstone, this.#root);
+        await this.#dependencies.filesystem.rename(tombstone, this.#root);
       } catch (rollbackCause) {
         throw new ManagedProviderRuntimeError(
           `Managed ${this.#displayName} removal failed and its private runtime could not be restored.`,
@@ -694,18 +717,18 @@ export class ManagedProviderRuntime {
     const state = await this.readState();
     const committed = state?.schemaVersion === 3 && state.activationId === activation.activationId;
     if (committed) {
-      if (replaced) await NodeFSP.rm(replaced, { recursive: true, force: true });
+      if (replaced) await this.#dependencies.filesystem.remove(replaced);
     } else if (replaced) {
       const replacedExists = await NodeFSP.access(replaced).then(
         () => true,
         () => false,
       );
       if (replacedExists) {
-        await NodeFSP.rm(destination, { recursive: true, force: true });
-        await NodeFSP.rename(replaced, destination);
+        await this.#dependencies.filesystem.remove(destination);
+        await this.#dependencies.filesystem.rename(replaced, destination);
       }
     } else {
-      await NodeFSP.rm(destination, { recursive: true, force: true });
+      await this.#dependencies.filesystem.remove(destination);
     }
     await NodeFSP.rm(this.#activationPath, { force: true });
   }
@@ -740,7 +763,8 @@ export class ManagedProviderRuntime {
     );
     if (!destinationExists) {
       const [newest, ...older] = replacements;
-      if (newest) await NodeFSP.rename(NodePath.join(parent, newest), destination);
+      if (newest)
+        await this.#dependencies.filesystem.rename(NodePath.join(parent, newest), destination);
       await Promise.all(
         older.map((entry) =>
           NodeFSP.rm(NodePath.join(parent, entry), { recursive: true, force: true }),
@@ -764,8 +788,9 @@ export class ManagedProviderRuntime {
     }
 
     const [newest, ...older] = replacements;
-    await NodeFSP.rm(destination, { recursive: true, force: true });
-    if (newest) await NodeFSP.rename(NodePath.join(parent, newest), destination);
+    await this.#dependencies.filesystem.remove(destination);
+    if (newest)
+      await this.#dependencies.filesystem.rename(NodePath.join(parent, newest), destination);
     await Promise.all(
       older.map((entry) =>
         NodeFSP.rm(NodePath.join(parent, entry), { recursive: true, force: true }),

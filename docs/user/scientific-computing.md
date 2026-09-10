@@ -1,8 +1,10 @@
 # Scientific computing
 
-Scient can run Python from an initialized project without turning the project into a notebook or
-installing a second copy of its files. Python is the first supported stateful runtime; the compute
-contracts and settings are language-neutral so later languages can remain independently optional.
+Scient can run Python and MATLAB from an initialized project without turning the project into a
+notebook or installing a second copy of its files. Both use the same session, source, results, and
+history controls. Each language remains optional; MATLAB requires a user-installed, licensed
+runtime and a compatible Engine host. See [Run a MATLAB file](matlab-run-file.md) for its setup and
+the separate fresh-process workflow.
 
 ## Set up a runtime
 
@@ -84,6 +86,8 @@ background and a gutter run action while normal caret placement and editing cont
 Selecting text removes the cell treatment because the exact selection becomes the run target;
 moving the pointer alone never changes the active cell.
 
+MATLAB `.m` files use the same controls with MATLAB `%%` sections instead of Python cell markers.
+
 The first run starts a ready project session when necessary and changes the file to **Split**, so
 the result appears beside the source that produced it. A project has at most one live session.
 Values defined by one successful execution are available to later executions until you restart or
@@ -144,6 +148,11 @@ The separate **Compute** project surface is secondary: use it to inspect session
 are not tied to the file currently open, or to restart, interrupt, and stop the live session. It is
 not a second editor and has no generic code composer.
 
+Supported scalar tables appear as bounded previews, and Plotly outputs use Scient's existing
+interactive chart viewer. A **Limited preview** label identifies clipped tables; this is not a
+full dataset browser. Unsupported or malformed rich output retains its available plain-text
+fallback. Viewing results does not enable executable HTML or widgets.
+
 The secondary **Variables** view describes the current live Python namespace with bounded names,
 types, shapes or sizes, and safe previews for simple values. It refreshes after a run finishes,
 including a failed run because assignments before the exception may remain. It is not saved in run
@@ -170,7 +179,7 @@ Scientific code runs with the filesystem and network authority of the selected S
 environment. It is not sandboxed. Only run code you trust, especially when the server is remote.
 
 Python is disabled by default until a user enables it or explicitly starts managed setup. R, Julia,
-MATLAB stateful sessions, arbitrary package installation, notebook editing, rich executable
-HTML/widgets, rich variable drill-down/table browsing, and portable compute-result promotion remain
-future work. MATLAB's existing isolated **Run file** workflow is separate from a stateful compute
-session.
+arbitrary package installation, notebook editing, rich executable HTML/widgets, rich variable
+drill-down/table browsing, and portable stateful compute-result promotion remain future work.
+MATLAB's existing fresh-process **Run file** workflow remains separate from a stateful compute
+session and already offers its own **Save to project** action.

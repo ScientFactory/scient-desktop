@@ -25,7 +25,7 @@ import {
 } from "../src/provider/Services/ProviderService.ts";
 import * as ServerConfig from "../src/config.ts";
 import { ServerSettingsService } from "../src/serverSettings.ts";
-import { AnalyticsService } from "../src/telemetry/Services/AnalyticsService.ts";
+import { AnalyticsService } from "../src/telemetry/AnalyticsService.ts";
 import { SqlitePersistenceMemory } from "../src/persistence/Layers/Sqlite.ts";
 import * as ProviderSessionRuntime from "../src/persistence/ProviderSessionRuntime.ts";
 
@@ -74,6 +74,7 @@ const makeRecordingAnalytics = Effect.gen(function* () {
         Ref.update(recorded, (current) => [...current, { event, properties }]),
       flush: Effect.void,
       status: Effect.succeed({ available: true, consent: "product" }),
+      collectionEpoch: Effect.succeed(0),
       setConsent: (consent) => Effect.succeed({ available: true, consent }),
       deleteData: Effect.succeed(true),
     }),
@@ -103,7 +104,10 @@ const makeIntegrationFixture = (options?: { readonly analytics?: Layer.Layer<Ana
       Layer.succeed(ProviderEventLoggers, NoOpProviderEventLoggers),
     ).pipe(Layer.provide(SqlitePersistenceMemory));
 
-    const layer = makeProviderServiceLive().pipe(Layer.provide(shared));
+    const layer = makeProviderServiceLive().pipe(
+      Layer.provide(NodeServices.layer),
+      Layer.provide(shared),
+    );
 
     return {
       cwd,

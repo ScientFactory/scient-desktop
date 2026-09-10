@@ -8,7 +8,14 @@ raw notation.
   mid-paragraph, where it breaks the text the way TeX does — `$$...$$` alone
   on its line, or a ` ```math ` fence.
 
-Rendered Markdown file previews get the same treatment.
+Rendered Markdown file previews and the Markdown editor get the same treatment.
+
+Long block equations wrap automatically at mathematical break points to fit the
+available width. Fractions, matrices, grouped expressions, and authored alignment
+stay intact. When one of those parts is still too wide, the equation scrolls
+horizontally with a thin scrollbar. Equation numbers keep their own space and
+move below when needed. This changes the presentation only; copying or editing
+the equation preserves its TeX source.
 
 Ordinary dollars stay text. Single-dollar math renders only when the span
 actually reads as math: prices like "it costs $5 and $10 today", shell
@@ -23,3 +30,9 @@ notation as typed instead of an error.
 
 Math renders locally on your device; no network request is involved.
 Where typeset math is unavailable, the readable TeX notation remains visible.
+
+Scientific subscripts and charges, such as `$PCO_2$` and `$HCO_3^-$`, are
+recognized as inline math. When selecting and copying rendered math, even a
+partial selection of an equation copies the complete formula as Markdown/TeX.
+Rich-text destinations receive that source once, alongside the surrounding
+formatting, rather than a duplicate or incomplete representation of the equation.

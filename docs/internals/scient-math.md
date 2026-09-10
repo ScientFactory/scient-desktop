@@ -142,9 +142,18 @@ fallback math element carries `data-markdown-copy` with its dollar-form
 source, so highlight-and-copy (`markdown-clipboard.ts`) round-trips math
 instead of serializing KaTeX's DOM. Both copy forms use `$$` — the only
 dollar form that re-renders on paste now that single-dollar spans are not
-recognized — with newline framing keeping display math a block. The stylesheet resets the chat surface's
-aggressive `overflow-wrap`/`word-break` inside equations and keeps wide
-display math scrolling inside its own container.
+recognized — with newline framing keeping display math a block.
+
+The shared `scient-math.css` stylesheet resets the chat surface's aggressive
+`overflow-wrap`/`word-break` inside equations. Display math wraps between KaTeX's
+atomic `.base` spans, using the renderer's mathematical break opportunities
+without splitting fractions, matrices, or authored alignment. A fit-content
+inner container keeps oversized groups reachable from their left edge; only
+those groups require horizontal scrolling. `scient-content-scrollbar.css` owns
+the scoped thin scrollbar shared with Markdown code boxes.
+Equation tags participate in flow at the right edge so they cannot overlap the
+last term when space is tight. The editor's math NodeView uses the same shared
+renderer and leaves overflow ownership to it, avoiding a second scroll container.
 
 ## Verification
 
@@ -176,3 +185,21 @@ reapply this narrow adapter and rerun the focused math tests before accepting
 the update. Retirement condition: if T3 adds native math rendering, drop the
 Scient plugin and components and keep only delimiter normalization, if it is
 still needed on top of T3's own delimiter handling.
+
+## Scientific recognition and clipboard export
+
+Single-dollar recognition admits uppercase symbols with a numeric subscript
+(such as `$PCO_2$`) and complete unbraced superscript charges (`$HCO_3^-$`,
+`$Na^+$`). These narrow exceptions do not remove the surrounding delimiter,
+length, code, link, price, or shell-shape guards. Other uppercase identifiers
+remain ambiguous and keep their existing literal behavior. The shared
+plausibility predicate is used by the preview and Markdown editor.
+
+Selection copying treats rendered math as an atomic source object: a selection
+starting or ending inside a formula includes that complete formula. Plain text
+contains its Markdown source once. Rich HTML replaces the copied math subtree
+with a left-to-right span containing that same source once; surrounding rich
+formatting is retained. This intentionally exports portable TeX rather than
+KaTeX's internal DOM, whose MathML and annotation can duplicate text in paste
+consumers. Only the detached clipboard fragment changes; live accessibility
+markup and the user's selection remain intact.

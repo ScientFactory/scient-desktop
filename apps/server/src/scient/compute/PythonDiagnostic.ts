@@ -53,7 +53,7 @@ function truncateOnByteBoundary(text: string, maxBytes: number): string {
   // within the byte limit.  This avoids producing U+FFFD replacement
   // characters (3 bytes each) from incomplete multi-byte sequences.
   let safeEnd = 0;
-  for (let i = 0; i < bytes.byteLength && i < maxBytes; ) {
+  for (let i = 0; i < bytes.byteLength && i < maxBytes;) {
     const byte = bytes[i]!;
     let charLen: number;
     if (byte < 0x80) charLen = 1;

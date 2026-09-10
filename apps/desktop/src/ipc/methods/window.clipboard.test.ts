@@ -11,6 +11,7 @@ function runCopyHandler(raw: unknown, copyPng: ElectronShell.ElectronShell["Serv
       copyPng,
       copyText: () => Effect.void,
       openExternal: () => Effect.succeed(false),
+      openSystemSettings: () => Effect.succeed(false),
     }),
   );
 }

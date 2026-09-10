@@ -3,10 +3,11 @@ import {
   ProviderConnectionError,
   ProviderDriverKind,
   ProviderInstanceId,
+  type ProviderManagedRuntimeAction,
   type ServerProvider,
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
-import type { ReactElement, ReactNode } from "react";
+import { isValidElement, type ReactElement, type ReactNode } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
@@ -100,44 +101,287 @@ const provider: ServerProvider = {
   },
 };
 
+function findActionButton(
+  node: unknown,
+  label: string,
+): ReactElement<Record<string, unknown>> | undefined {
+  if (Array.isArray(node)) {
+    for (const child of node) {
+      const found = findActionButton(child, label);
+      if (found) return found;
+    }
+  }
+  if (!isValidElement<Record<string, unknown>>(node)) return undefined;
+  if (
+    typeof node.props.onClick === "function" &&
+    renderToStaticMarkup(<>{node.props.children as ReactNode}</>).endsWith(label)
+  )
+    return node;
+  for (const value of Object.values(node.props)) {
+    const found = findActionButton(value, label);
+    if (found) return found;
+  }
+  return undefined;
+}
+
 describe("ProviderRuntimeSection", () => {
+  it.each([true, false])(
+    "keeps Pi installation concise without hiding unsupported-platform guidance (canInstall=%s)",
+    (canInstall) => {
+      const piProvider: ServerProvider = {
+        ...provider,
+        driver: ProviderDriverKind.make("pi"),
+        instanceId: ProviderInstanceId.make("pi"),
+        connection: {
+          ...provider.connection!,
+          runtime: {
+            ...provider.connection!.runtime!,
+            actions: canInstall ? ["install"] : [],
+            message: "Pi installation guidance.",
+          },
+        },
+      };
+      hooks.beginRender();
+      const markup = renderToStaticMarkup(
+        ProviderRuntimeSection({
+          environmentId,
+          provider: piProvider,
+          displayName: "Pi",
+          compact: true,
+        }),
+      );
+      expect(markup).toContain("Provider tool required");
+      if (canInstall) {
+        expect(markup).toContain("Install");
+        expect(markup).not.toContain("Pi installation guidance.");
+      } else {
+        expect(markup).toContain("Pi installation guidance.");
+      }
+    },
+  );
+
+  it("preserves a failed Pi install above its retry action", () => {
+    const piProvider: ServerProvider = {
+      ...provider,
+      driver: ProviderDriverKind.make("pi"),
+      instanceId: ProviderInstanceId.make("pi"),
+      connection: {
+        ...provider.connection!,
+        runtime: {
+          ...provider.connection!.runtime!,
+          operation: {
+            operationId: "pi-install-failed",
+            action: "install",
+            status: "failed",
+            startedAt: "2026-09-05T00:00:00.000Z",
+            finishedAt: "2026-09-05T00:00:05.000Z",
+            message: "Pi download checksum mismatch.",
+          },
+        },
+      },
+    };
+    hooks.beginRender();
+    const markup = renderToStaticMarkup(
+      ProviderRuntimeSection({
+        environmentId,
+        provider: piProvider,
+        displayName: "Pi",
+        compact: true,
+      }),
+    );
+    expect(markup).toContain("Pi download checksum mismatch.");
+    expect(markup).toContain("Install");
+  });
+
   beforeEach(() => {
     hooks.reset();
-    commands.start.mockReset();
+    commands.start
+      .mockReset()
+      .mockImplementation(
+        async ({ input }: { input: { action: ProviderManagedRuntimeAction } }) => ({
+          _tag: "Success",
+          value: {
+            providers: [
+              {
+                ...provider,
+                connection: {
+                  ...provider.connection!,
+                  runtime: {
+                    ...provider.connection!.runtime!,
+                    operation: {
+                      operationId: "runtime-active",
+                      action: input.action,
+                      status: "preparing",
+                      startedAt: provider.checkedAt,
+                      finishedAt: null,
+                      message: "Preparing the provider runtime operation.",
+                    },
+                  },
+                },
+              },
+            ],
+          },
+        }),
+      );
     commands.cancel.mockReset();
-    commands.plan.mockReset().mockResolvedValue({
-      _tag: "Success",
-      value: {
-        instanceId,
-        action: "install",
-        target: "darwin-arm64",
-        version: "1.1.17",
-        downloadBytes: 42,
-        sourceLabel: "Official Google Antigravity CLI release",
-        catalogRevision: "reviewed:1",
-        message: "Install the reviewed Antigravity release.",
-      },
-    });
+    commands.plan
+      .mockReset()
+      .mockImplementation(
+        async ({ input }: { input: { action: ProviderManagedRuntimeAction } }) => ({
+          _tag: "Success",
+          value: {
+            instanceId,
+            action: input.action,
+            target: "darwin-arm64",
+            version: "1.1.17",
+            downloadBytes: 42,
+            sourceLabel: "Official Google Antigravity CLI release",
+            catalogRevision: "reviewed:1",
+            message: "Install the reviewed Antigravity release.",
+          },
+        }),
+      );
   });
 
-  it("prepares the install review immediately for an explicit install entry point", async () => {
+  it.each(["install", "update", "repair"] as const)(
+    "starts %s once after preflight for an explicit action entry point",
+    async (action) => {
+      const actionableProvider = {
+        ...provider,
+        connection: {
+          ...provider.connection!,
+          runtime: {
+            ...provider.connection!.runtime!,
+            actions: [action],
+          },
+        },
+      };
+      hooks.beginRender();
+      ProviderRuntimeSection({
+        environmentId,
+        provider: actionableProvider,
+        displayName: "Antigravity",
+        initialAction: action,
+      });
+
+      await vi.waitFor(() => expect(commands.start).toHaveBeenCalledTimes(1));
+
+      expect(commands.plan).toHaveBeenCalledTimes(1);
+      expect(commands.plan).toHaveBeenCalledWith({
+        environmentId,
+        input: { instanceId, action },
+      });
+      expect(commands.start).toHaveBeenCalledWith({
+        environmentId,
+        input: {
+          instanceId,
+          action,
+          catalogRevision: "reviewed:1",
+        },
+      });
+      hooks.beginRender();
+      const markup = renderToStaticMarkup(
+        ProviderRuntimeSection({
+          environmentId,
+          provider: actionableProvider,
+          displayName: "Antigravity",
+          initialAction: action,
+        }),
+      );
+      expect(markup).toContain("Preparing the provider runtime operation.");
+      expect(markup).not.toContain("Review Antigravity setup");
+      expect(markup).not.toContain(">Back<");
+      expect(commands.plan).toHaveBeenCalledTimes(1);
+      expect(commands.start).toHaveBeenCalledTimes(1);
+    },
+  );
+
+  it.each([false, true])("opening the runtime card is passive (compact=%s)", (compact) => {
     hooks.beginRender();
-    ProviderRuntimeSection({
-      environmentId,
-      provider,
-      displayName: "Antigravity",
-      initialAction: "install",
-    });
-
-    await Promise.resolve();
-
-    expect(commands.plan).toHaveBeenCalledTimes(1);
-    expect(commands.plan).toHaveBeenCalledWith({
-      environmentId,
-      input: { instanceId, action: "install" },
-    });
+    const markup = renderToStaticMarkup(
+      ProviderRuntimeSection({
+        compact,
+        environmentId,
+        provider,
+        displayName: "Antigravity",
+      }),
+    );
+    expect(markup).toContain(">Install</button>");
+    expect(commands.plan).not.toHaveBeenCalled();
     expect(commands.start).not.toHaveBeenCalled();
   });
+
+  it.each([
+    [false, "install"],
+    [true, "install"],
+    [false, "update"],
+    [true, "update"],
+  ] as const)(
+    "starts %s card action %s from one click, after preflight completes",
+    async (compact, action) => {
+      const actionableProvider = {
+        ...provider,
+        connection: {
+          ...provider.connection!,
+          runtime: {
+            ...provider.connection!.runtime!,
+            actions: [action],
+          },
+        },
+      };
+      const props = {
+        compact,
+        environmentId,
+        provider: actionableProvider,
+        displayName: "Antigravity",
+      };
+      const planResult = {
+        _tag: "Success",
+        value: {
+          instanceId,
+          action,
+          target: "darwin-arm64",
+          version: "1.1.17",
+          downloadBytes: 42,
+          sourceLabel: "Official release",
+          catalogRevision: "fresh:2",
+          message: "Ready",
+        },
+      };
+      let finishPlan!: (result: typeof planResult) => void;
+      commands.plan.mockReturnValue(
+        new Promise<typeof planResult>((resolve) => {
+          finishPlan = resolve;
+        }),
+      );
+      hooks.beginRender();
+      const button = findActionButton(
+        ProviderRuntimeSection(props),
+        action === "install" ? "Install" : "Update",
+      );
+      expect(button).toBeDefined();
+      (button!.props.onClick as () => void)();
+      expect(commands.plan).toHaveBeenCalledTimes(1);
+      expect(commands.start).not.toHaveBeenCalled();
+      hooks.beginRender();
+      expect(
+        findActionButton(ProviderRuntimeSection(props), action === "install" ? "Install" : "Update")
+          ?.props.disabled,
+      ).toBe(true);
+      finishPlan(planResult);
+      await vi.waitFor(() =>
+        expect(commands.start).toHaveBeenCalledWith({
+          environmentId,
+          input: {
+            instanceId,
+            action,
+            catalogRevision: "fresh:2",
+          },
+        }),
+      );
+      expect(commands.start).toHaveBeenCalledTimes(1);
+    },
+  );
 
   it("presents a qualified system-to-managed action as a compact secondary choice", () => {
     hooks.beginRender();
@@ -180,7 +424,7 @@ describe("ProviderRuntimeSection", () => {
     expect(actionMarkup).not.toContain("bg-primary");
   });
 
-  it("keeps the reviewed system-to-managed handoff concise and explicit", async () => {
+  it("starts a qualified system-to-managed install from its explicit action", async () => {
     const systemProvider: ServerProvider = {
       ...provider,
       installed: true,
@@ -196,15 +440,18 @@ describe("ProviderRuntimeSection", () => {
     };
 
     hooks.beginRender();
-    ProviderRuntimeSection({
+    const section = ProviderRuntimeSection({
       compact: true,
       environmentId,
       provider: systemProvider,
       displayName: "Antigravity",
-      initialAction: "install",
     });
+    expect(commands.plan).not.toHaveBeenCalled();
+    const button = findActionButton(section, "Use Scient-managed");
+    expect(button).toBeDefined();
+    (button!.props.onClick as () => void)();
 
-    await vi.waitFor(() => expect(commands.plan).toHaveBeenCalledTimes(1));
+    await vi.waitFor(() => expect(commands.start).toHaveBeenCalledTimes(1));
 
     hooks.beginRender();
     const markup = renderToStaticMarkup(
@@ -213,54 +460,65 @@ describe("ProviderRuntimeSection", () => {
         environmentId,
         provider: systemProvider,
         displayName: "Antigravity",
-        initialAction: "install",
       }),
     );
 
-    expect(markup).toContain("Use Scient-managed Antigravity?");
-    expect(markup).toContain(
-      "Accounts using the default installation will use Scient’s private copy",
-    );
-    expect(markup).toContain("system and custom installations stay unchanged");
+    expect(markup).toContain("Preparing the provider runtime operation.");
+    expect(commands.start).toHaveBeenCalledWith({
+      environmentId,
+      input: {
+        instanceId,
+        action: "install",
+        catalogRevision: "reviewed:1",
+      },
+    });
     expect(markup).not.toContain("Review Antigravity setup");
   });
 
-  it("keeps the managed install review flat in the Antigravity dialog", async () => {
-    hooks.beginRender();
-    ProviderRuntimeSection({
+  it.each([
+    ["install", "plan"],
+    ["install", "start"],
+    ["update", "plan"],
+    ["update", "start"],
+  ] as const)("shows %s %s failures without automatically retrying", async (action, stage) => {
+    commands[stage].mockResolvedValue({
+      _tag: "Failure",
+      cause: Cause.fail(
+        new ProviderConnectionError({
+          provider: provider.driver,
+          instanceId,
+          reason: "connection_failed",
+          message: "The provider service is unavailable. Try again.",
+        }),
+      ),
+    });
+    const actionableProvider = {
+      ...provider,
+      connection: {
+        ...provider.connection!,
+        runtime: {
+          ...provider.connection!.runtime!,
+          actions: [action],
+        },
+      },
+    };
+    const props = {
       compact: true,
       environmentId,
-      provider,
+      provider: actionableProvider,
       displayName: "Antigravity",
-      initialAction: "install",
-    });
-
-    await vi.waitFor(() => expect(commands.plan).toHaveBeenCalledTimes(1));
-
+      initialAction: action,
+    };
     hooks.beginRender();
-    const markup = renderToStaticMarkup(
-      ProviderRuntimeSection({
-        compact: true,
-        environmentId,
-        provider,
-        displayName: "Antigravity",
-        initialAction: "install",
-      }),
-    );
-
-    expect(markup).toContain("Install Antigravity");
-    expect(markup).toContain("Version 1.1.17 · macOS · Apple silicon · about 1 MB");
-    expect(markup).not.toContain("Official Google release");
-    expect(markup).toContain(">Install<");
-    expect(markup).not.toContain("download, verify, stage, test, and activate");
-    expect(markup).not.toContain("Computer");
-    expect(markup).not.toContain(">Version<");
-    expect(markup).not.toContain("Source");
-    expect(markup).not.toContain("rounded-lg border");
-    expect(markup).not.toContain("bg-primary/[0.03]");
-    expect(markup).toContain("border-transparent");
-    expect(markup).toContain("text-primary");
-    expect(markup).not.toContain("text-primary-foreground");
+    ProviderRuntimeSection(props);
+    await vi.waitFor(() => {
+      hooks.beginRender();
+      const markup = renderToStaticMarkup(ProviderRuntimeSection(props));
+      expect(markup).toContain('role="alert"');
+      expect(markup).toContain("The provider service is unavailable. Try again.");
+    });
+    expect(commands.plan).toHaveBeenCalledTimes(1);
+    expect(commands.start).toHaveBeenCalledTimes(stage === "plan" ? 0 : 1);
   });
 
   it("drops an install-plan failure superseded by an active runtime operation", async () => {
@@ -423,14 +681,24 @@ describe("ProviderRuntimeSection", () => {
 
   it("closes a prepared plan when a newer runtime no longer offers its action", async () => {
     const onPlanOpenChange = vi.fn();
+    const removableProvider = {
+      ...provider,
+      connection: {
+        ...provider.connection!,
+        runtime: {
+          ...provider.connection!.runtime!,
+          actions: ["remove" as const],
+        },
+      },
+    };
 
     hooks.beginRender();
     ProviderRuntimeSection({
       compact: true,
       environmentId,
-      provider,
+      provider: removableProvider,
       displayName: "Antigravity",
-      initialAction: "install",
+      initialAction: "remove",
       onPlanOpenChange,
     });
     await vi.waitFor(() => expect(commands.plan).toHaveBeenCalledTimes(1));
@@ -441,13 +709,14 @@ describe("ProviderRuntimeSection", () => {
         ProviderRuntimeSection({
           compact: true,
           environmentId,
-          provider,
+          provider: removableProvider,
           displayName: "Antigravity",
-          initialAction: "install",
+          initialAction: "remove",
           onPlanOpenChange,
         }),
       ),
-    ).toContain("Install Antigravity");
+    ).toContain("Remove Antigravity?");
+    expect(commands.start).not.toHaveBeenCalled();
 
     const managedProvider: ServerProvider = {
       ...provider,
@@ -459,7 +728,7 @@ describe("ProviderRuntimeSection", () => {
         runtime: {
           ...provider.connection!.runtime!,
           source: "scient_managed",
-          actions: ["repair", "remove"],
+          actions: ["repair"],
           managedVersion: "1.1.17",
         },
       },
@@ -476,11 +745,11 @@ describe("ProviderRuntimeSection", () => {
     );
 
     expect(markup).toContain("Managed by Scient");
-    expect(markup).not.toContain("Install Antigravity");
+    expect(markup).not.toContain("Remove Antigravity?");
     expect(onPlanOpenChange).toHaveBeenLastCalledWith(false);
   });
 
-  it("keeps removal confirmation focused on the decision", async () => {
+  it.each(["Back", "Remove"])("keeps removal confirmed and honors %s", async (choice) => {
     const removableProvider: ServerProvider = {
       ...provider,
       installed: true,
@@ -548,6 +817,45 @@ describe("ProviderRuntimeSection", () => {
     expect(removeButton).toContain("border-transparent");
     expect(removeButton).toContain("text-destructive");
     expect(removeButton).not.toContain("text-white");
+    expect(commands.start).not.toHaveBeenCalled();
+
+    hooks.beginRender();
+    const section = ProviderRuntimeSection({
+      compact: true,
+      environmentId,
+      provider: removableProvider,
+      displayName: "Antigravity",
+      initialAction: "remove",
+    });
+    const button = findActionButton(section, choice);
+    expect(button).toBeDefined();
+    (button!.props.onClick as () => void)();
+    if (choice === "Remove") {
+      await vi.waitFor(() =>
+        expect(commands.start).toHaveBeenCalledWith({
+          environmentId,
+          input: {
+            instanceId,
+            action: "remove",
+            catalogRevision: "reviewed:remove-1",
+          },
+        }),
+      );
+    } else {
+      hooks.beginRender();
+      expect(
+        renderToStaticMarkup(
+          ProviderRuntimeSection({
+            compact: true,
+            environmentId,
+            provider: removableProvider,
+            displayName: "Antigravity",
+            initialAction: "remove",
+          }),
+        ),
+      ).not.toContain("Remove Antigravity?");
+      expect(commands.start).not.toHaveBeenCalled();
+    }
   });
 
   it("shows compact download progress beside the quiet cancel action", () => {
@@ -889,73 +1197,125 @@ describe("ProviderRuntimeSection", () => {
       }),
     );
 
-    expect(markup).toContain("Antigravity 1.1.17");
+    expect(markup).toContain("Managed by Scient");
     expect(markup).not.toContain("Repaired successfully");
     expect(markup).not.toContain("repaired and verified successfully");
   });
 
-  it("keeps healthy managed runtime maintenance clear and preserves its actions", () => {
+  it.each(["1.1.17", "agy_acp_server_20260818_01_RC01"])(
+    "keeps managed maintenance clear for %s",
+    (version) => {
+      const managedProvider: ServerProvider = {
+        ...provider,
+        installed: true,
+        version,
+        status: "ready",
+        auth: { status: "authenticated", required: true, label: "Google account" },
+        connection: {
+          methods: ["antigravity_google"],
+          canDisconnect: true,
+          operation: null,
+          runtime: {
+            source: "scient_managed",
+            supportTier: "fully_assisted",
+            target: "darwin-arm64",
+            actions: ["update", "repair", "remove"],
+            managedVersion: version,
+            previousManagedVersion: null,
+            operation: null,
+            message: "The provider runtime is installed and verified.",
+            diagnostics: {
+              executable: "/Applications/Scient.app/Contents/Resources/antigravity",
+              version,
+              homePath: "/Users/server/.gemini",
+              backend: "macOS native",
+            },
+          },
+        },
+      };
+
+      hooks.beginRender();
+      const markup = renderToStaticMarkup(
+        ProviderRuntimeSection({
+          compact: true,
+          environmentId,
+          provider: managedProvider,
+          displayName: "Antigravity",
+        }),
+      );
+
+      expect(markup).toContain("Managed by Scient");
+      const [summaryMarkup, diagnosticsMarkup] = markup.split("<details");
+      expect(summaryMarkup).not.toContain(version);
+      expect(summaryMarkup).not.toContain("2026-08-18");
+      expect(diagnosticsMarkup).toContain(version);
+      const updateIndex = markup.indexOf(">Update<");
+      const updateStart = markup.lastIndexOf("<button", updateIndex);
+      const updateMarkup = markup.slice(updateStart, updateIndex);
+      expect(updateMarkup).toContain("lucide-refresh-cw");
+      expect(updateMarkup).toContain("text-primary");
+      expect(updateMarkup).not.toContain("lucide-wrench");
+      const diagnosticsIndex = markup.indexOf("Runtime diagnostics");
+      expect(markup.indexOf(">Repair<")).toBeLessThan(diagnosticsIndex);
+      expect(markup.indexOf(">Remove<")).toBeLessThan(diagnosticsIndex);
+      expect(diagnosticsIndex).toBeLessThan(updateIndex);
+      expect(markup).toContain("flex items-center justify-between gap-3 pt-1");
+      expect(markup).toContain(">Repair<");
+      expect(markup).toContain(">Remove<");
+      expect(markup).not.toContain("installed and verified");
+      expect(markup).not.toContain("Private version");
+      expect(markup).not.toContain("rounded-lg border p-3");
+      expect(markup).not.toContain("border-input");
+    },
+  );
+
+  it.each([true, false])("keeps the version in diagnostics only (compact=%s)", (compact) => {
+    const version = "2026.09.02-c22c1a3";
     const managedProvider: ServerProvider = {
       ...provider,
+      instanceId: ProviderInstanceId.make("cursor"),
+      driver: ProviderDriverKind.make("cursor"),
       installed: true,
-      version: "1.1.17",
+      version,
       status: "ready",
-      auth: { status: "authenticated", required: true, label: "Google account" },
       connection: {
-        methods: ["antigravity_google"],
-        canDisconnect: true,
-        operation: null,
+        ...provider.connection!,
+        methods: ["cursor_browser"],
         runtime: {
+          ...provider.connection!.runtime!,
           source: "scient_managed",
-          supportTier: "fully_assisted",
-          target: "darwin-arm64",
-          actions: ["update", "repair", "remove"],
-          managedVersion: "1.1.17",
-          previousManagedVersion: null,
-          operation: null,
-          message: "The provider runtime is installed and verified.",
+          actions: ["repair", "remove"],
+          managedVersion: version,
           diagnostics: {
-            executable: "/Applications/Scient.app/Contents/Resources/antigravity",
-            version: "1.1.17",
-            homePath: "/Users/server/.gemini",
+            executable: "/private/qa/cursor-agent",
+            version,
+            homePath: "/private/qa",
             backend: "macOS native",
           },
         },
       },
     };
-
     hooks.beginRender();
     const markup = renderToStaticMarkup(
       ProviderRuntimeSection({
-        compact: true,
+        compact,
         environmentId,
         provider: managedProvider,
-        displayName: "Antigravity",
+        displayName: "Cursor",
       }),
     );
-
-    expect(markup).toContain("Managed by Scient");
-    expect(markup).toContain("Antigravity 1.1.17");
-    const updateIndex = markup.indexOf(">Update<");
-    const updateStart = markup.lastIndexOf("<button", updateIndex);
-    const updateMarkup = markup.slice(updateStart, updateIndex);
-    expect(updateMarkup).toContain("lucide-refresh-cw");
-    expect(updateMarkup).toContain("text-primary");
-    expect(updateMarkup).not.toContain("lucide-wrench");
-    const diagnosticsIndex = markup.indexOf("Runtime diagnostics");
-    expect(markup.indexOf(">Repair<")).toBeLessThan(diagnosticsIndex);
-    expect(markup.indexOf(">Remove<")).toBeLessThan(diagnosticsIndex);
-    expect(diagnosticsIndex).toBeLessThan(updateIndex);
-    expect(markup).toContain("flex items-center justify-between gap-3 pt-1");
-    expect(markup).toContain(">Repair<");
-    expect(markup).toContain(">Remove<");
-    expect(markup).not.toContain("installed and verified");
-    expect(markup).not.toContain("Private version");
-    expect(markup).not.toContain("rounded-lg border p-3");
-    expect(markup).not.toContain("border-input");
+    const diagnosticsStart = markup.indexOf("<details");
+    expect(diagnosticsStart).toBeGreaterThan(-1);
+    const summary = markup.slice(0, diagnosticsStart);
+    expect(summary).toContain("Managed by Scient");
+    expect(summary).not.toContain(version);
+    expect(summary).toContain(">Repair<");
+    expect(summary).toContain(">Remove<");
+    expect(markup.slice(diagnosticsStart)).toContain(version);
+    expect(markup).not.toContain(`Cursor ${version}`);
   });
 
-  it("never hides a terminal runtime failure behind the installed version", () => {
+  it.each([true, false])("keeps a terminal runtime failure visible (compact=%s)", (compact) => {
     const failedProvider: ServerProvider = {
       ...provider,
       installed: true,
@@ -988,13 +1348,14 @@ describe("ProviderRuntimeSection", () => {
     const markup = renderToStaticMarkup(
       ProviderRuntimeSection({
         environmentId,
+        compact,
         provider: failedProvider,
         displayName: "Antigravity",
       }),
     );
 
     expect(markup).toContain("Verification failed after repair");
-    expect(markup).toContain("Antigravity 1.1.17");
+    expect(markup).not.toContain("Antigravity 1.1.17");
   });
 
   it("returns to the current runtime state after setup is cancelled", () => {
@@ -1075,7 +1436,7 @@ describe("ProviderRuntimeSection", () => {
     );
 
     expect(markup).toContain("Provider tool required");
-    expect(markup).toContain("Review setup");
+    expect(markup).toContain(">Install</button>");
     expect(markup).not.toContain("Antigravity removed");
     expect(markup).not.toContain("private provider runtime was removed");
   });

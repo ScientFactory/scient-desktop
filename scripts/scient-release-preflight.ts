@@ -17,16 +17,29 @@ interface Options {
   readonly notesOutput?: string;
 }
 
-interface ScientReleaseNoteLike {
+interface ScientReleaseNoteBaseLike {
   readonly version: string;
-  readonly kicker: string;
+  readonly publishedAt: string;
   readonly headline: string;
-  readonly summary: string;
   readonly highlights: ReadonlyArray<{
+    readonly id: string;
     readonly title: string;
     readonly description: string;
   }>;
 }
+
+interface ScientLegacyReleaseNoteLike extends ScientReleaseNoteBaseLike {
+  readonly format?: "legacy";
+  readonly kicker: string;
+  readonly summary: string;
+}
+
+interface ScientParagraphReleaseNoteLike extends ScientReleaseNoteBaseLike {
+  readonly format: "paragraphs";
+  readonly alsoIncluded: string;
+}
+
+type ScientReleaseNoteLike = ScientLegacyReleaseNoteLike | ScientParagraphReleaseNoteLike;
 
 const SHA_PATTERN = /^[0-9a-f]{40}$/u;
 
@@ -67,6 +80,11 @@ export function renderScientReleaseNotesMarkdown(note: ScientReleaseNoteLike): s
   const highlights = note.highlights
     .map((highlight) => `- **${highlight.title.trim()}** — ${highlight.description.trim()}`)
     .join("\n");
+
+  if (note.format === "paragraphs") {
+    return `# ${note.headline.trim()}\n\n## Highlights\n\n${highlights}\n\n## Also included\n\n${note.alsoIncluded.trim()}\n`;
+  }
+
   return `# ${note.headline.trim()}\n\n**${note.kicker.trim()}**\n\n${note.summary.trim()}\n\n## Highlights\n\n${highlights}\n`;
 }
 

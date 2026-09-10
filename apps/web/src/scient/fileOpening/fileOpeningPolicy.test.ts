@@ -4,6 +4,7 @@ import {
   SCIENT_DEFAULT_FILE_EXPLORER_OPEN,
   SCIENT_DEFAULT_RENDER_MARKDOWN,
   resolveInitialFileExplorerOpen,
+  resolveHtmlRenderedState,
   shouldOpenInBrowserByDefault,
 } from "./fileOpeningPolicy";
 
@@ -23,6 +24,12 @@ describe("Scient file-opening policy", () => {
     expect(shouldOpenInBrowserByDefault("report.html")).toBe(true);
     expect(shouldOpenInBrowserByDefault("output/REPORT.HTM")).toBe(true);
     expect(shouldOpenInBrowserByDefault("report.html?revision=2#results")).toBe(true);
+  });
+
+  it("lets an explicit HTML presentation request override without replacing the preference", () => {
+    expect(resolveHtmlRenderedState(true, "source")).toBe(false);
+    expect(resolveHtmlRenderedState(true, null)).toBe(true);
+    expect(resolveHtmlRenderedState(false, null)).toBe(false);
   });
 
   it("leaves markdown, PDFs, and source files on their existing file surfaces", () => {

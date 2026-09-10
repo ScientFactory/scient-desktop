@@ -173,11 +173,15 @@ const makeHarness = Effect.fn("ProviderRegistryTransientState.makeHarness")(func
     displayName: undefined,
     enabled: true,
     snapshot: {
-      maintenanceCapabilities: makeManualOnlyProviderMaintenanceCapabilities({
-        provider: DRIVER,
-        packageName: null,
-      }),
+      resolveMaintenance: () =>
+        Effect.succeed(
+          makeManualOnlyProviderMaintenanceCapabilities({
+            provider: DRIVER,
+            packageName: null,
+          }),
+        ),
       getSnapshot: Ref.get(snapshotRef),
+      applyUsageLimits: () => Effect.void,
       refresh: Effect.gen(function* () {
         const beforeRefreshSnapshot = yield* Ref.get(beforeRefreshSnapshotRef);
         yield* beforeRefreshSnapshot;
@@ -288,6 +292,37 @@ describe("ProviderRegistry transient lifecycle overlays", () => {
           assert.strictEqual(cleared[0]?.connection?.runtime?.source, "system");
         }),
       ),
+  );
+
+  it.effect("preserves a concurrent runtime operation during catalog reconciliation", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const { registry } = yield* makeHarness();
+        yield* registry.setProviderManagedRuntimeSummary({
+          instanceId: INSTANCE_ID,
+          runtime: managedRuntime,
+        });
+        const reconciled = yield* registry.setProviderManagedRuntimeSummary({
+          instanceId: INSTANCE_ID,
+          runtime: {
+            ...managedRuntime,
+            actions: ["update", "repair", "remove"],
+            operation: null,
+          },
+          preserveOperation: true,
+        });
+
+        assert.deepStrictEqual(
+          reconciled[0]?.connection?.runtime?.operation,
+          managedRuntimeOperation,
+        );
+        assert.deepStrictEqual(reconciled[0]?.connection?.runtime?.actions, [
+          "update",
+          "repair",
+          "remove",
+        ]);
+      }),
+    ),
   );
 
   it.effect("prunes overlays when an instance disappears before the same id is rebuilt", () =>

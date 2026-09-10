@@ -2,6 +2,7 @@ import * as Effect from "effect/Effect";
 
 import type {
   ThreadId,
+  ScientThreadQueueControlRequest,
   ScientThreadQueueEnqueueRequest,
   ScientThreadQueueRemoveRequest,
   ScientThreadQueueReorderRequest,
@@ -11,8 +12,8 @@ import type {
 import type { PreparedConnection } from "../connection/model.ts";
 import { environmentEndpointUrl } from "../environment/endpoint.ts";
 import { ManagedRelayDpopSigner } from "../relay/managedRelay.ts";
-import { executeEnvironmentHttpRequest, makeEnvironmentHttpApiClient } from "../rpc/http.ts";
-import { buildEnvironmentAuthHeaders, withEnvironmentCredentials } from "./environmentHttpAuth.ts";
+import { executeAuthenticatedEnvironmentHttpRequest } from "./environmentHttpAuth.ts";
+import { RemoteEnvironmentAuthorization } from "../authorization/service.ts";
 
 /**
  * Client for the Scient thread queue HTTP surface. Mirrors
@@ -22,39 +23,31 @@ import { buildEnvironmentAuthHeaders, withEnvironmentCredentials } from "./envir
 
 const REQUEST_TIMEOUT_MS = 15_000;
 
-const requestContext = Effect.fn("clientRuntime.state.scientThreadQueueRequestContext")(
-  function* (input: { readonly prepared: PreparedConnection; readonly path: string }) {
-    const signer = yield* Effect.serviceOption(ManagedRelayDpopSigner);
-    const requestUrl = environmentEndpointUrl(input.prepared.httpBaseUrl, input.path);
-    const client = yield* makeEnvironmentHttpApiClient(input.prepared.httpBaseUrl);
-    const headers = yield* buildEnvironmentAuthHeaders(
-      input.prepared.httpAuthorization,
-      "POST",
-      requestUrl,
-      signer,
-    );
-    return { requestUrl, client, headers };
-  },
-);
-
 export const listEnvironmentScientThreadQueue = Effect.fn(
   "clientRuntime.state.listEnvironmentScientThreadQueue",
-)(function* (input: { readonly prepared: PreparedConnection; readonly threadId: ThreadId }) {
-  const context = yield* requestContext({
+)(function* (input: {
+  readonly prepared: PreparedConnection;
+  readonly threadId: ThreadId;
+  readonly knownRevision?: number;
+}) {
+  const signer = yield* Effect.serviceOption(ManagedRelayDpopSigner);
+  const remoteAuthorization = yield* Effect.serviceOption(RemoteEnvironmentAuthorization);
+  return yield* executeAuthenticatedEnvironmentHttpRequest({
     prepared: input.prepared,
-    path: "/api/scient/thread-queue/list",
-  });
-  return yield* executeEnvironmentHttpRequest(
-    context.requestUrl,
-    REQUEST_TIMEOUT_MS,
-    withEnvironmentCredentials(
-      input.prepared.httpAuthorization,
-      context.client.scientThreadQueue.list({
-        headers: context.headers,
-        payload: { threadId: input.threadId },
+    signer,
+    remoteAuthorization,
+    method: "POST",
+    url: (httpBaseUrl) => environmentEndpointUrl(httpBaseUrl, "/api/scient/thread-queue/v2/list"),
+    timeoutMs: REQUEST_TIMEOUT_MS,
+    request: ({ client, headers }) =>
+      client.scientThreadQueue.list({
+        headers,
+        payload: {
+          threadId: input.threadId,
+          ...(input.knownRevision !== undefined ? { knownRevision: input.knownRevision } : {}),
+        },
       }),
-    ),
-  );
+  });
 });
 
 export const enqueueEnvironmentScientThreadQueueItem = Effect.fn(
@@ -62,28 +55,37 @@ export const enqueueEnvironmentScientThreadQueueItem = Effect.fn(
 )(function* (input: {
   readonly prepared: PreparedConnection;
   readonly threadId: ThreadId;
+  readonly queueItemId: string;
+  readonly modelSelection?: ScientThreadQueueEnqueueRequest["modelSelection"];
+  readonly runtimeMode?: ScientThreadQueueEnqueueRequest["runtimeMode"];
+  readonly interactionMode?: ScientThreadQueueEnqueueRequest["interactionMode"];
   readonly text: ScientThreadQueueEnqueueRequest["text"];
   readonly attachments: ScientThreadQueueEnqueueRequest["attachments"];
 }) {
-  const context = yield* requestContext({
+  const signer = yield* Effect.serviceOption(ManagedRelayDpopSigner);
+  const remoteAuthorization = yield* Effect.serviceOption(RemoteEnvironmentAuthorization);
+  return yield* executeAuthenticatedEnvironmentHttpRequest({
     prepared: input.prepared,
-    path: "/api/scient/thread-queue/enqueue",
-  });
-  return yield* executeEnvironmentHttpRequest(
-    context.requestUrl,
-    REQUEST_TIMEOUT_MS,
-    withEnvironmentCredentials(
-      input.prepared.httpAuthorization,
-      context.client.scientThreadQueue.enqueue({
-        headers: context.headers,
+    signer,
+    remoteAuthorization,
+    method: "POST",
+    url: (httpBaseUrl) =>
+      environmentEndpointUrl(httpBaseUrl, "/api/scient/thread-queue/v2/enqueue"),
+    timeoutMs: REQUEST_TIMEOUT_MS,
+    request: ({ client, headers }) =>
+      client.scientThreadQueue.enqueue({
+        headers,
         payload: {
           threadId: input.threadId,
+          queueItemId: input.queueItemId,
+          modelSelection: input.modelSelection,
+          runtimeMode: input.runtimeMode,
+          interactionMode: input.interactionMode,
           text: input.text,
           attachments: input.attachments,
         },
       }),
-    ),
-  );
+  });
 });
 
 export const removeEnvironmentScientThreadQueueItem = Effect.fn(
@@ -93,21 +95,21 @@ export const removeEnvironmentScientThreadQueueItem = Effect.fn(
   readonly threadId: ThreadId;
   readonly queueItemId: ScientThreadQueueRemoveRequest["queueItemId"];
 }) {
-  const context = yield* requestContext({
+  const signer = yield* Effect.serviceOption(ManagedRelayDpopSigner);
+  const remoteAuthorization = yield* Effect.serviceOption(RemoteEnvironmentAuthorization);
+  return yield* executeAuthenticatedEnvironmentHttpRequest({
     prepared: input.prepared,
-    path: "/api/scient/thread-queue/remove",
-  });
-  return yield* executeEnvironmentHttpRequest(
-    context.requestUrl,
-    REQUEST_TIMEOUT_MS,
-    withEnvironmentCredentials(
-      input.prepared.httpAuthorization,
-      context.client.scientThreadQueue.remove({
-        headers: context.headers,
+    signer,
+    remoteAuthorization,
+    method: "POST",
+    url: (httpBaseUrl) => environmentEndpointUrl(httpBaseUrl, "/api/scient/thread-queue/v2/remove"),
+    timeoutMs: REQUEST_TIMEOUT_MS,
+    request: ({ client, headers }) =>
+      client.scientThreadQueue.remove({
+        headers,
         payload: { threadId: input.threadId, queueItemId: input.queueItemId },
       }),
-    ),
-  );
+  });
 });
 
 export const updateEnvironmentScientThreadQueueItem = Effect.fn(
@@ -116,29 +118,37 @@ export const updateEnvironmentScientThreadQueueItem = Effect.fn(
   readonly prepared: PreparedConnection;
   readonly threadId: ThreadId;
   readonly queueItemId: ScientThreadQueueUpdateRequest["queueItemId"];
+  readonly editToken: string;
+  readonly modelSelection?: ScientThreadQueueUpdateRequest["modelSelection"];
+  readonly runtimeMode?: ScientThreadQueueUpdateRequest["runtimeMode"];
+  readonly interactionMode?: ScientThreadQueueUpdateRequest["interactionMode"];
   readonly text: ScientThreadQueueUpdateRequest["text"];
   readonly attachments: ScientThreadQueueUpdateRequest["attachments"];
 }) {
-  const context = yield* requestContext({
+  const signer = yield* Effect.serviceOption(ManagedRelayDpopSigner);
+  const remoteAuthorization = yield* Effect.serviceOption(RemoteEnvironmentAuthorization);
+  return yield* executeAuthenticatedEnvironmentHttpRequest({
     prepared: input.prepared,
-    path: "/api/scient/thread-queue/update",
-  });
-  return yield* executeEnvironmentHttpRequest(
-    context.requestUrl,
-    REQUEST_TIMEOUT_MS,
-    withEnvironmentCredentials(
-      input.prepared.httpAuthorization,
-      context.client.scientThreadQueue.update({
-        headers: context.headers,
+    signer,
+    remoteAuthorization,
+    method: "POST",
+    url: (httpBaseUrl) => environmentEndpointUrl(httpBaseUrl, "/api/scient/thread-queue/v2/update"),
+    timeoutMs: REQUEST_TIMEOUT_MS,
+    request: ({ client, headers }) =>
+      client.scientThreadQueue.update({
+        headers,
         payload: {
           threadId: input.threadId,
           queueItemId: input.queueItemId,
+          editToken: input.editToken,
+          modelSelection: input.modelSelection,
+          runtimeMode: input.runtimeMode,
+          interactionMode: input.interactionMode,
           text: input.text,
           attachments: input.attachments,
         },
       }),
-    ),
-  );
+  });
 });
 
 export const reorderEnvironmentScientThreadQueue = Effect.fn(
@@ -148,19 +158,44 @@ export const reorderEnvironmentScientThreadQueue = Effect.fn(
   readonly threadId: ThreadId;
   readonly queueItemIds: ScientThreadQueueReorderRequest["queueItemIds"];
 }) {
-  const context = yield* requestContext({
+  const signer = yield* Effect.serviceOption(ManagedRelayDpopSigner);
+  const remoteAuthorization = yield* Effect.serviceOption(RemoteEnvironmentAuthorization);
+  return yield* executeAuthenticatedEnvironmentHttpRequest({
     prepared: input.prepared,
-    path: "/api/scient/thread-queue/reorder",
-  });
-  return yield* executeEnvironmentHttpRequest(
-    context.requestUrl,
-    REQUEST_TIMEOUT_MS,
-    withEnvironmentCredentials(
-      input.prepared.httpAuthorization,
-      context.client.scientThreadQueue.reorder({
-        headers: context.headers,
+    signer,
+    remoteAuthorization,
+    method: "POST",
+    url: (httpBaseUrl) =>
+      environmentEndpointUrl(httpBaseUrl, "/api/scient/thread-queue/v2/reorder"),
+    timeoutMs: REQUEST_TIMEOUT_MS,
+    request: ({ client, headers }) =>
+      client.scientThreadQueue.reorder({
+        headers,
         payload: { threadId: input.threadId, queueItemIds: input.queueItemIds },
       }),
-    ),
-  );
+  });
+});
+
+export const controlEnvironmentScientThreadQueue = Effect.fn(
+  "clientRuntime.state.controlScientThreadQueue",
+)(function* (input: {
+  readonly prepared: PreparedConnection;
+  readonly payload: ScientThreadQueueControlRequest;
+}) {
+  const signer = yield* Effect.serviceOption(ManagedRelayDpopSigner);
+  const remoteAuthorization = yield* Effect.serviceOption(RemoteEnvironmentAuthorization);
+  return yield* executeAuthenticatedEnvironmentHttpRequest({
+    prepared: input.prepared,
+    signer,
+    remoteAuthorization,
+    method: "POST",
+    url: (httpBaseUrl) =>
+      environmentEndpointUrl(httpBaseUrl, "/api/scient/thread-queue/v2/control"),
+    timeoutMs: REQUEST_TIMEOUT_MS,
+    request: ({ client, headers }) =>
+      client.scientThreadQueue.control({
+        headers,
+        payload: input.payload,
+      }),
+  });
 });

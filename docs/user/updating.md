@@ -37,6 +37,15 @@ If a connected environment uses a different server version, Scient shows the
 version warning above the composer and in **Settings → Connections**. Hiding
 the composer warning does not change either runtime.
 
+**Settings → General → Continue threads after restarts** is off by default.
+When enabled, supported active threads can resume after an update, crash, or machine restart.
+Scient must start again on that machine; this does not enable automatic startup. Threads without
+saved provider resume state need a new message, and terminal commands may still be interrupted.
+Changes apply to connected environments that support the setting. After an offline environment
+reconnects, use **Apply to all** to reconcile a different value; older servers need updating first.
+If you previously enabled continuation only for updates, enable this setting once to allow recovery
+without a connected client.
+
 The action depends on how that environment started:
 
 | Action                     | Meaning                                                                                                           |
@@ -44,6 +53,10 @@ The action depends on how that environment started:
 | **Update the desktop app** | Update Scient on the machine that owns the bundled local server.                                                  |
 | **Update server**          | Prepare and trial an exact replacement for a supported background service, then reconnect only after it is ready. |
 | **Copy update command**    | Copy the exact Scient release-asset command for a manually managed server and run it on that server machine.      |
+
+For a server owned by a current Scient desktop app, **Update server** can close
+and relaunch that desktop app on its machine. If installation fails, the app
+stays open and reconnects to its existing server.
 
 Run the copied update command exactly as Scient provides it. Changing its
 package, version, or release URL can install a server that does not match the
@@ -66,6 +79,16 @@ request is accepted. A failure remains visible for review and retry.
 An older service installation may require one local repair or update first.
 Use the exact command supplied by Scient or the procedure
 in [Run Scient in the background](./background-service.md).
+
+## Nightly desktop release notes
+
+The desktop app shows a compact release-notes preview when a nightly update is available. Changes
+appear newest first within each release. Each release links to its exact page on GitHub, even when
+all changes fit in the preview.
+
+The preview shows up to eight changes from each of six releases. When it leaves out changes or older
+releases, it shows the exact number and links to the rest. Contributor credits do not count as
+changes.
 
 ## Troubleshooting
 

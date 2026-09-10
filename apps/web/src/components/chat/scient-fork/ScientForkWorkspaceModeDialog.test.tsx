@@ -81,10 +81,9 @@ describe("resolveScientForkSubmission", () => {
     });
   });
 
-  it("fails closed to the current workspace when a worktree is unavailable", () => {
+  it("never silently substitutes the current workspace for a requested worktree", () => {
     expect(resolve({ newWorktree: true, worktreeAvailability: WORKTREE_UNAVAILABLE })).toEqual({
-      ok: true,
-      confirmation: { workspaceMode: "local" },
+      ok: false,
     });
   });
 

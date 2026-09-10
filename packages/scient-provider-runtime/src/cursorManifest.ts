@@ -8,11 +8,15 @@ const VERSION = "2026.08.11-e8db854";
 const RELEASE_BASE = `https://downloads.cursor.com/lab/${VERSION}`;
 const ALLOWED_HOSTS = ["downloads.cursor.com"] as const;
 const ALLOWED_URL_PATH_PREFIXES = ["/lab/"] as const;
-const EXTRACTION_LIMITS = {
-  // The reviewed Cursor bundles currently contain fewer than 570 entries and
-  // expand to roughly 220-240 MB. Keep bounded headroom for every target.
+const ZIP_EXTRACTION_LIMITS = {
   maxEntries: 768,
   maxExpandedBytes: 384 * 1024 * 1024,
+} as const;
+const TAR_EXTRACTION_LIMITS = {
+  // Cursor 2026.09.02's complete Unix bundles expand to 511-570 MiB
+  // (at most 576 entries). Windows remains below the existing ZIP budget.
+  maxEntries: 768,
+  maxExpandedBytes: 768 * 1024 * 1024,
 } as const;
 
 interface ArtifactRecord {
@@ -111,7 +115,8 @@ export function resolveReviewedCursorArtifact(
     checksum: { algorithm: "sha256", digest: artifact.sha256 },
     size: artifact.size,
     archiveFormat: artifact.archiveFormat,
-    extractionLimits: EXTRACTION_LIMITS,
+    extractionLimits:
+      artifact.archiveFormat === "zip" ? ZIP_EXTRACTION_LIMITS : TAR_EXTRACTION_LIMITS,
     executablePath: artifact.executablePath,
     ...(artifact.smokeExecutablePath ? { smokeExecutablePath: artifact.smokeExecutablePath } : {}),
     ...(artifact.smokeWorkingDirectory

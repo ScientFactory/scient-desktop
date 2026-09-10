@@ -522,7 +522,11 @@ export function VoiceSettingsPanel(): ReactNode {
 
   return (
     <SettingsPageContainer>
-      <SettingsSection title="Voice" icon={<Mic2Icon className="size-4 text-muted-foreground" />}>
+      <SettingsSection
+        title="Voice"
+        icon={<Mic2Icon className="size-4 text-muted-foreground" />}
+        variant="plain"
+      >
         <div className="space-y-3 px-3 sm:px-4">
           <div className="grid items-start gap-y-3 md:grid-cols-[minmax(0,3fr)_minmax(0,2fr)] md:gap-y-0">
             <div className="flex items-start justify-between gap-4 py-1 md:pr-8">

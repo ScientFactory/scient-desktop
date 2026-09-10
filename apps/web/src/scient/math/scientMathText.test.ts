@@ -1,8 +1,27 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { normalizeScientMathDelimiters } from "./scientMathText";
+import { findScientBackslashMathSpans, normalizeScientMathDelimiters } from "./scientMathText";
 
 describe("normalizeScientMathDelimiters", () => {
+  it("exposes one shared source-offset contract for preview and editor parsing", () => {
+    const input = "שלום \\(x + 1\\) then \\[E = mc^2\\] and `\\(literal\\)`";
+
+    expect(findScientBackslashMathSpans(input)).toEqual([
+      {
+        content: "x + 1",
+        delimiter: "\\(",
+        end: 14,
+        start: 5,
+      },
+      {
+        content: "E = mc^2",
+        delimiter: "\\[",
+        end: 32,
+        start: 20,
+      },
+    ]);
+  });
+
   it("rewrites inline pairs to double dollars, preserving length exactly", () => {
     const input = "Euler: \\(e^{i\\pi} = -1\\) holds.";
     const output = normalizeScientMathDelimiters(input);

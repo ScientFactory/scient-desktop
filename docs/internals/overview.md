@@ -18,7 +18,7 @@ there, never in the client.
 ┌──────────────────▼─────────────────────────────┐
 │ apps/server                                    │
 │  orchestration engine (event-sourced)          │
-│  provider driver registry (5 built-in drivers) │
+│  provider driver registry (8 built-in drivers) │
 │  checkpointing, VCS, terminals, filesystem     │
 └──────────────────┬─────────────────────────────┘
                    │ per-driver transport
@@ -73,7 +73,8 @@ processing is totally ordered. For each envelope `processEnvelope`:
 3. inside one SQL transaction, appends events to the event store, applies them to the in-memory read
    model via [`projector.ts`][projector], projects them into persisted tables, and writes the
    accepted receipt;
-4. after commit, swaps in the new read model and publishes committed events to subscribers.
+4. after commit, swaps in the new read model, cleans up attachments, and publishes committed events
+   to subscribers. Attachment cleanup failures are logged and do not reject committed commands.
 
 Because persistence and projection share a transaction, the read model cannot durably disagree with
 the event log. On dispatch failure the engine rereads persisted events past the starting sequence and
@@ -88,15 +89,27 @@ A turn is complete when its session leaves `running` status, projected by
 `settledTurnStateForSessionStatus` in [`projector.ts`][projector]. Checkpoint work settling later
 does not define turn end.
 
-Thread settlement is server-owned. Per-environment settings control PR and inactivity settlement.
+Thread settlement is server-owned. Each server's own settings control PR and inactivity
+settlement. Those keys are user preferences, so clients write them to every shared-settings sync
+target (`SHARED_SERVER_SETTING_KEYS` in `packages/client-runtime/src/state/sharedSettings.ts`) and
+warn when another target drifts. A target must have an active connection and advertise the
+`threadAutoSettlement` capability, which signals that the server can hold every shared key.
 [`ThreadSettlementReactor`][settlement] checks threads at startup, when those settings change, and
 once per minute, including when no client is connected. It dispatches the guarded internal
 `thread.auto-settle` command, which uses the existing settlement event lifecycle. Automatic
 settlement excludes live background work and requires a comparable PR timestamp for immediate PR
-settlement. The command also rejects any later event for its thread after the reactor's snapshot.
-Clients render the persisted settlement state and do not derive settlement from PR or inactivity
-state. A committed `thread.settled` event also lets `ProviderCommandReactor` stop an idle provider
-session.
+settlement. The command carries the latest activity timestamp and rejects any later event for its
+thread after the reactor's snapshot. The sweep looks a branch up from the thread's worktree when it
+still exists, so it shares the per-cwd PR cache the sidebar polls instead of spending a second host
+request. Clients render the persisted settlement state and do not derive settlement from PR or
+inactivity state. A committed `thread.settled` event also lets `ProviderCommandReactor` stop an idle
+provider session.
+
+At turn completion, `CheckpointReactor` refreshes PR discovery when the checkout matches the
+thread's non-default branch. `VcsStatusBroadcaster` requires loaded remote status and permission
+from background policy. `GitManager` retries only a successful "no PR" cache entry for the current
+branch, preserving known PRs and failure backoff without fetching remotes. Remote status reads
+that write the broadcaster cache share a lock per cwd, including the initial status load.
 
 ## Drainable workers
 
@@ -117,8 +130,8 @@ build production behavior on receipts.
 
 ## Provider drivers
 
-Seven drivers ship built in, registered in [`builtInDrivers.ts`][drivers] as `BUILT_IN_DRIVERS`:
-Codex, Claude, Cursor, Grok, OpenCode, Droid, and Antigravity. A driver declares its kind and config schema and creates a
+Eight drivers ship built in, registered in [`builtInDrivers.ts`][drivers] as `BUILT_IN_DRIVERS`:
+Codex, Claude, Cursor, Grok, OpenCode, Droid, Antigravity, and Pi. A driver declares its kind and config schema and creates a
 scoped adapter; `ProviderInstanceRegistry` owns live instances and `ProviderAdapterRegistry` resolves
 an instance to its adapter, so `ProviderService` routes session and turn operations without knowing
 which agent is behind them. See [providers.md](./providers.md).
@@ -142,7 +155,7 @@ already dispatch.
 
 ## Related
 
-- [Workspace layout](./workspace-layout.md), [Glossary](./glossary.md)
+- [Workspace layout](../../AGENTS.md#where-code-lives), [Glossary](./glossary.md)
 - [Remote environments](./remote.md), [Server updates](./server-updates.md)
 - [Resource telemetry](./resource-telemetry.md)
 - [Scient conversation-fork architecture and T3 divergence](./scient-fork-divergence.md)
@@ -166,3 +179,26 @@ already dispatch.
 [settlement]: ../../apps/server/src/orchestration/ThreadSettlementReactor.ts
 [receipts]: ../../apps/server/src/orchestration/Layers/RuntimeReceiptBus.ts
 [drivers]: ../../apps/server/src/provider/builtInDrivers.ts
+
+## Desktop startup and native isolation
+
+The Electron shell acquires `DesktopPreReadyPlatform.layer` synchronously before asynchronous
+services. On Linux this sets the desktop-entry identity and global-shortcut portal flags before
+Chromium initializes its portal connection. Setting the identity later in `DesktopAppIdentity`
+is too late: Chromium caches the first registration, including failures. The identity must match
+the installed entry managed by `DesktopLinuxUrlHandler`. Pre-ready setup also refreshes that entry's
+`Exec` path before portal registration: AppImage updates can remove the previous executable, which
+makes the old entry invalid even though its filename is correct. The later URL handler avoids
+rewriting an identical entry while the portal may be reading it. On Wayland, Electron's synchronous
+shortcut-registration result only confirms submission; it does not confirm desktop consent or
+an active binding.
+
+Native modules never load in the Electron main process on the startup path, and the two the
+snapshot feature keeps are isolated: `@crowecawcaw/xa11y` runs only in forked Node-mode children
+(`SnapShotAccessibilityWorker`, `RegionSnapShotWorker`) and a worker thread, and `ffi-rs` loads
+lazily inside `WindowsForeground.ts` for a handful of Win32 calls. macOS window lookup shells out
+to `osascript` instead of a native addon. A crash or stall in any of these must not take the app
+down, so new native capability goes in a child with a deadline, not an `import` in main.
+
+See the [glossary](./glossary.md) for shared terms and the
+[development runbook](../operations/development.md) for setup and checks.

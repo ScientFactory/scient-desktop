@@ -1,6 +1,7 @@
 interface FileEditorDismissalOptions {
   root: HTMLElement;
   editor: {
+    getFile: () => unknown | undefined;
     setSelections: (selections: []) => void;
   };
   isBlocked: () => boolean;
@@ -13,7 +14,9 @@ function dismissFileEditorInteraction({
   onDismiss,
 }: Pick<FileEditorDismissalOptions, "root" | "editor" | "onDismiss">): void {
   onDismiss();
-  editor.setSelections([]);
+  // The document listener can outlive editor attachment during initialization,
+  // read-only transitions or cleanup. Pierre rejects selection changes then.
+  if (editor.getFile() !== undefined) editor.setSelections([]);
 
   const file = root.querySelector<HTMLElement>("diffs-container");
   const activeElement = file?.shadowRoot?.activeElement;

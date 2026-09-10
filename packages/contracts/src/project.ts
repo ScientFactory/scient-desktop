@@ -154,7 +154,7 @@ function decodedProjectErrorMessage(props: object): string | undefined {
   return typeof props.message === "string" ? props.message : undefined;
 }
 
-export class ProjectSearchEntriesError extends Schema.TaggedErrorClass<ProjectSearchEntriesError>()(
+export class ProjectSearchEntriesError extends Schema.TaggedError<ProjectSearchEntriesError>()(
   "ProjectSearchEntriesError",
   {
     cwd: Schema.optional(TrimmedNonEmptyString),
@@ -187,7 +187,7 @@ export class ProjectSearchEntriesError extends Schema.TaggedErrorClass<ProjectSe
   }
 }
 
-export class ProjectSearchContentsError extends Schema.TaggedErrorClass<ProjectSearchContentsError>()(
+export class ProjectSearchContentsError extends Schema.TaggedError<ProjectSearchContentsError>()(
   "ProjectSearchContentsError",
   {
     cwd: Schema.optional(TrimmedNonEmptyString),
@@ -218,7 +218,7 @@ export class ProjectSearchContentsError extends Schema.TaggedErrorClass<ProjectS
   }
 }
 
-export class ProjectListEntriesError extends Schema.TaggedErrorClass<ProjectListEntriesError>()(
+export class ProjectListEntriesError extends Schema.TaggedError<ProjectListEntriesError>()(
   "ProjectListEntriesError",
   {
     cwd: Schema.optional(TrimmedNonEmptyString),
@@ -252,7 +252,7 @@ type ProjectDirectoryFailureContext = {
   readonly cause?: unknown;
 };
 
-export class ProjectListDirectoryError extends Schema.TaggedErrorClass<ProjectListDirectoryError>()(
+export class ProjectListDirectoryError extends Schema.TaggedError<ProjectListDirectoryError>()(
   "ProjectListDirectoryError",
   {
     cwd: Schema.optional(TrimmedNonEmptyString),
@@ -280,6 +280,8 @@ export class ProjectListDirectoryError extends Schema.TaggedErrorClass<ProjectLi
 
 export const ProjectReadFileInput = Schema.Struct({
   cwd: TrimmedNonEmptyString,
+  // Workspace-relative, or an absolute host path for a file outside the
+  // workspace. Only workspace-relative paths can be written back.
   relativePath: TrimmedNonEmptyString.check(Schema.isMaxLength(PROJECT_READ_FILE_PATH_MAX_LENGTH)),
 });
 export type ProjectReadFileInput = typeof ProjectReadFileInput.Type;
@@ -321,6 +323,7 @@ export const ProjectFileFailure = Schema.Literals([
   "workspace_path_outside_root",
   "resolved_path_outside_root",
   "path_not_file",
+  "path_exists",
   "binary_file",
   "revision_conflict",
   "read_only_in_files",
@@ -339,6 +342,8 @@ export const ProjectFileOperation = Schema.Literals([
   "make-directory",
   "write-file",
   "atomic-write-file",
+  "link",
+  "unlink",
   "watch",
 ]);
 export type ProjectFileOperation = typeof ProjectFileOperation.Type;
@@ -355,7 +360,7 @@ type ProjectFileFailureContext = {
   readonly cause?: unknown;
 };
 
-export class ProjectReadFileError extends Schema.TaggedErrorClass<ProjectReadFileError>()(
+export class ProjectReadFileError extends Schema.TaggedError<ProjectReadFileError>()(
   "ProjectReadFileError",
   {
     cwd: Schema.optional(TrimmedNonEmptyString),
@@ -385,6 +390,8 @@ export const ProjectWriteFileInput = Schema.Struct({
   relativePath: TrimmedNonEmptyString.check(Schema.isMaxLength(PROJECT_WRITE_FILE_PATH_MAX_LENGTH)),
   contents: Schema.String,
   expectedRevision: Schema.optional(TrimmedNonEmptyString),
+  /** Create a new file atomically and fail if its path already exists. */
+  createOnly: Schema.optional(Schema.Literal(true)),
 });
 export type ProjectWriteFileInput = typeof ProjectWriteFileInput.Type;
 
@@ -394,7 +401,7 @@ export const ProjectWriteFileResult = Schema.Struct({
 });
 export type ProjectWriteFileResult = typeof ProjectWriteFileResult.Type;
 
-export class ProjectWriteFileError extends Schema.TaggedErrorClass<ProjectWriteFileError>()(
+export class ProjectWriteFileError extends Schema.TaggedError<ProjectWriteFileError>()(
   "ProjectWriteFileError",
   {
     cwd: Schema.optional(TrimmedNonEmptyString),
@@ -418,6 +425,50 @@ export class ProjectWriteFileError extends Schema.TaggedErrorClass<ProjectWriteF
         (props.failure === "read_only_in_files"
           ? `Workspace file '${props.relativePath}' is read-only in Files.`
           : `Failed to write workspace file '${props.relativePath}' in '${props.cwd}'.`),
+    } as any);
+  }
+}
+
+export const ProjectRenameFileInput = Schema.Struct({
+  cwd: TrimmedNonEmptyString,
+  relativePath: TrimmedNonEmptyString.check(Schema.isMaxLength(PROJECT_WRITE_FILE_PATH_MAX_LENGTH)),
+  destinationRelativePath: TrimmedNonEmptyString.check(
+    Schema.isMaxLength(PROJECT_WRITE_FILE_PATH_MAX_LENGTH),
+  ),
+  expectedRevision: TrimmedNonEmptyString,
+});
+export type ProjectRenameFileInput = typeof ProjectRenameFileInput.Type;
+
+export const ProjectRenameFileResult = Schema.Struct({
+  relativePath: TrimmedNonEmptyString,
+  destinationRelativePath: TrimmedNonEmptyString,
+  revision: TrimmedNonEmptyString,
+});
+export type ProjectRenameFileResult = typeof ProjectRenameFileResult.Type;
+
+export class ProjectRenameFileError extends Schema.TaggedError<ProjectRenameFileError>()(
+  "ProjectRenameFileError",
+  {
+    cwd: Schema.optional(TrimmedNonEmptyString),
+    relativePath: Schema.optional(TrimmedNonEmptyString),
+    destinationRelativePath: Schema.optional(TrimmedNonEmptyString),
+    failure: Schema.optional(ProjectFileFailure),
+    resolvedPath: Schema.optional(TrimmedNonEmptyString),
+    resolvedWorkspaceRoot: Schema.optional(TrimmedNonEmptyString),
+    operation: Schema.optional(ProjectFileOperation),
+    operationPath: Schema.optional(TrimmedNonEmptyString),
+    currentRevision: Schema.optional(TrimmedNonEmptyString),
+    message: TrimmedNonEmptyString,
+    cause: Schema.optional(Schema.Defect()),
+  },
+) {
+  // @effect-diagnostics-next-line overriddenSchemaConstructor:off
+  constructor(props: ProjectFileFailureContext & { readonly destinationRelativePath: string }) {
+    super({
+      ...props,
+      message:
+        decodedProjectErrorMessage(props) ??
+        `Failed to rename workspace file '${props.relativePath}' to '${props.destinationRelativePath}' in '${props.cwd}'.`,
     } as any);
   }
 }

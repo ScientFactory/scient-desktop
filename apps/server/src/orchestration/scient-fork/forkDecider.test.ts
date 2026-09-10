@@ -24,6 +24,8 @@ import {
   resolveUserForkBoundariesFromList,
 } from "./forkBoundaryTypes.ts";
 import { forkThread as forkThreadAuthoritative } from "./forkDecider.ts";
+import { questionAnswerActivity } from "./questionAnswer.test-fixtures.ts";
+import { retainQuestionAnswers, questionAnswerAttachments } from "./retainedQuestionAnswers.ts";
 
 const NOW = "2026-01-01T00:00:00.000Z";
 const ORIGIN = ThreadId.make("origin-thread");
@@ -579,6 +581,86 @@ it.layer(NodeServices.layer)("scient fork decider", (it) => {
         copiedMessages[1]?.type === "thread.message-sent" ? copiedMessages[1].payload.turnId : null,
       );
     }),
+  );
+
+  it.effect(
+    "copies native answer history and files without replaying a response or changing messages",
+    () =>
+      Effect.gen(function* () {
+        const original = makeOriginThread({
+          activities: [questionAnswerActivity("turn-1"), questionAnswerActivity("turn-2", "later")],
+        });
+        const events = yield* forkThreadForTest({
+          command: forkCommand({ sourceAssistantMessageId: A1 }),
+          readModel: makeReadModel({ origin: original }),
+        });
+        const histories = events.filter((event) => event.type === "thread.activity-appended");
+        expect(histories).toHaveLength(1);
+        const history = histories[0]!.payload.activity;
+        const forked = events.find((event) => event.type === "thread.forked")!;
+        const copiedAssistant = events.find(
+          (event) => event.type === "thread.message-sent" && event.payload.text === "first answer",
+        )!;
+        expect(copiedAssistant.type).toBe("thread.message-sent");
+        if (copiedAssistant.type !== "thread.message-sent") return;
+        expect(history.turnId).toBe(copiedAssistant.payload.turnId);
+        expect(history.id).not.toBe(original.activities[0]!.id);
+        const decoded = retainQuestionAnswers([history], new Set([history.turnId!]));
+        expect(decoded.error).toBeNull();
+        expect(decoded.answers[0]!.answer.requestId).not.toBe("request-1");
+        expect(decoded.answers[0]!.answer.answers).toEqual({ dataset: "Use the measured data" });
+        const files = questionAnswerAttachments(decoded.answers);
+        expect(files[0]!.id).toMatch(/^forked-thread-.*-csv$/);
+        expect(forked.payload.attachmentCopies.map((copy) => copy.target)).toEqual(files);
+        expect(events.some((event) => event.type === "thread.user-input-response-requested")).toBe(
+          false,
+        );
+        expect(events.every((event) => event.aggregateId === NEW)).toBe(true);
+        expect(original.activities).toHaveLength(2);
+      }),
+  );
+
+  it.effect("does not retain later system messages or messages after the selected response", () =>
+    Effect.gen(function* () {
+      const origin = makeOriginThread();
+      const messages = [
+        ...origin.messages,
+        message({
+          id: "later-system",
+          role: "system",
+          text: "Future instructions",
+          turnId: null,
+          createdAt: NOW,
+        }),
+      ];
+      const events = yield* forkThreadForTest({
+        command: forkCommand({ sourceAssistantMessageId: A1 }),
+        readModel: makeReadModel({ origin: { ...origin, messages } }),
+      });
+      expect(
+        events
+          .filter((event) => event.type === "thread.message-sent")
+          .map((event) => event.payload.text),
+      ).toEqual(["first prompt", "first answer"]);
+    }),
+  );
+
+  it.effect(
+    "uses authoritative SQL message identity for historical messages without a turn id",
+    () =>
+      Effect.gen(function* () {
+        const origin = makeOriginThread();
+        const messages = origin.messages.map((message) =>
+          message.id === A1 ? { ...message, turnId: null } : message,
+        );
+        const events = yield* forkThreadForTest({
+          command: forkCommand({ sourceAssistantMessageId: A1 }),
+          readModel: makeReadModel({ origin: { ...origin, messages } }),
+        });
+        const copied = events.filter((event) => event.type === "thread.message-sent");
+        expect(copied.map((event) => event.payload.text)).toEqual(["first prompt", "first answer"]);
+        expect(copied[1]?.payload.turnId).not.toBeNull();
+      }),
   );
 
   it.effect("forking from a user message retains only the prior completed boundary", () =>

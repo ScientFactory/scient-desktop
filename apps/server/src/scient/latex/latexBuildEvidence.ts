@@ -43,7 +43,7 @@ import * as Stream from "effect/Stream";
 /** Recorded for a dependency the compile read that is no longer on disk. */
 export const MISSING_FILE_DIGEST = "missing";
 /** Legacy marker read from evidence written before large inputs were hashed. */
-export const OVERSIZE_FILE_DIGEST = "oversize";
+const OVERSIZE_FILE_DIGEST = "oversize";
 /**
  * Recorded for a dependency that is *there* and could not be read anyway.
  *
@@ -145,8 +145,9 @@ const UNREADABLE: ReadOutcome<never> = { _tag: "unreadable" };
  * lock, a permission, a device that went away — is `unreadable`, because the
  * one thing this call has established is that it does not know.
  */
-const classifyError = (error: { readonly reason: { readonly _tag: string } }): ReadOutcome<never> =>
-  error.reason._tag === "NotFound" ? ABSENT : UNREADABLE;
+const classifyError = (error: {
+  readonly reason: { readonly _tag: string };
+}): ReadOutcome<never> => (error.reason._tag === "NotFound" ? ABSENT : UNREADABLE);
 
 const statOf = (absolutePath: string) =>
   Effect.gen(function* () {

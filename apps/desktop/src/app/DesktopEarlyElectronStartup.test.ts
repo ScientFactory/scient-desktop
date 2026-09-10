@@ -81,7 +81,9 @@ describe("DesktopEarlyElectronStartup", () => {
     });
 
     assert.deepEqual(options, {
+      isDevelopment: true,
       linuxWmClass: "scient-next-dev",
+      linuxDesktopEntryName: "scient-next-dev.desktop",
       passwordStore: "gnome-libsecret",
     });
   });

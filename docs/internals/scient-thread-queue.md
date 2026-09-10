@@ -1,147 +1,301 @@
-# Scient thread queue: design, seams, and retirement plan
+# Scient thread queue: architecture, behavior, and retirement
 
-This document is the maintenance contract for Scient's message-queue and steer
-feature. It records what the feature promises, which parts Scient owns, the
-exact T3-owned seams an upstream merge may touch, and how to delete the whole
-feature when upstream T3 ships a native queue.
+This is the maintenance contract for the desktop/web queue. The server owns
+ordering and delivery. The open conversation is only a view and a composer;
+navigation, remounts, and additional windows cannot start a queued turn.
+This document describes the implementation in this checkout. Automated checks
+and manual product acceptance are separate; no visual acceptance is implied.
 
-## Product behavior
+## Behavioral contract
 
-- **Enter while a turn is running queues.** The composer clears and the
-  message appears in a strip directly above the composer. It is _not_ sent.
-- **Cmd/Ctrl+Enter steers.** The message dispatches immediately, even while a
-  turn is running, as an ordinary `thread.turn.start` issued while
-  `phase === "running"`. The client and orchestration layer accepting that
-  command is not by itself proof that the provider adopted it into the active
-  turn. In-flight adoption is explicit today in the Claude, Grok, Cursor,
-  Droid, and OpenCode adapters; behavior in another adapter must be verified
-  rather than inferred. A provider rejection remains a visible failed start.
-- **Queued messages auto-send in order.** When the active turn moves from
-  running to ready, the client dispatches the first queued item through the
-  ordinary `thread.turn.start` command. It waits for that next turn to settle
-  before advancing again.
-- **A failed queued dispatch remains queued.** The pump blocks after a failed
-  start rather than skipping or retrying silently; the error stays adjacent to
-  the message with an explicit retry action.
-- **The composer extension stays compact.** Each row can be edited with its
-  pencil button, deleted, or steered into a running turn. Editing pulls the
-  message out of the queue and back into the composer (it is a "bring it back"
-  action, not an in-place edit); pressing Enter then re-queues the reworked
-  message, or sends it if the turn has already finished. Multiple rows can be
-  reordered with their drag handles.
-- Queues are per thread, persist across app restarts, and are capped at 20
-  items and 64 MiB per thread.
+- Enter during a running turn, or while messages are already eligible to advance, adds a
+  message to the current environment and thread. After Stop, ordinary idle Send starts
+  new work while the existing queue waits for its successful completion. Otherwise idle Send uses
+  the existing immediate-send path. Server admission rejects an ordinary Send
+  that races a busy thread or waiting queue; the draft remains available and
+  sending again queues it. It never silently becomes steering.
+- Each waiting message starts individually after the preceding turn's answer
+  ingestion **and** checkpoint finalization finish. A session's `ready` status
+  alone is insufficient. Provider thinking, tool work, and intermediate output
+  do not advance the queue.
+- Explicit Cmd/Ctrl+Enter and a row's Steer action retain their existing meaning.
+  They request immediate provider adoption. Provider support or rejection is
+  independent of queue admission. Ordinary queued delivery never steers.
+- Edit withdraws the row from the visible and deliverable queue. Its position
+  remains reserved internally. The queued text and images occupy the existing
+  composer; any ordinary draft is temporarily hidden intact. There is no second
+  editor, additional confirmation, or changed queue layout.
+- Enter while editing returns that item to its reserved position, then restores
+  the ordinary draft. If earlier items started during editing, they cannot be
+  overtaken; the edited item remains ahead of the surviving items that followed
+  its slot. If no turn is active and the queue is eligible, it can start immediately after requeue.
+  Requeue after Stop continues waiting for a successful answer.
+- Editing does not block other waiting messages. Dragging rearranges visible
+  items across visible slots while hidden edit slots remain fixed. For example,
+  `[A, editing B, C, D]`, dragged to visible order `[D, A, C]`, becomes
+  `[D, editing B, A, C]`.
+- The existing Stash action during an edit saves that complete edit, removes its
+  reserved queue slot, and restores the ordinary draft. Restoring that stash is
+  ordinary draft restoration; it does not resurrect a queue position.
+- Stop preserves every waiting item and edit reservation, with no automatic delivery.
+  A new ordinary message can start work once the session is inactive. Starting that
+  work, becoming idle, reconnecting, or restarting the server never releases the queue.
+  Only a later successfully finalized answer makes the next waiting item eligible.
+  An unsuccessful answer waits for later successful work in the same way.
+- Retry applies to a pre-admission delivery error. It cannot bypass an active
+  finalization barrier or the requirement for a successful answer after Stop.
+  No Retry or additional confirmation is needed after later successful completion.
+- Limits remain 20 items (including withdrawn edit slots), 64 MiB serialized
+  queue data per thread, and the existing provider input/attachment limits.
+  Desktop/web queued attachments remain images; generic files are still supported
+  in ordinary drafts and immediate sends, but cannot be queued.
 
-## Architecture: the queue is not an orchestration concept
+## Durable server authority
 
-A queued item is a _pending composer payload_, not a thread event. Therefore:
+`apps/server/src/scient/threadQueue/` owns the implementation:
 
-- No new orchestration command or event types. No decider, projector, or
-  read-model changes. No SQLite migrations.
-- Queue state lives in its own file store:
-  `<stateDir>/scient/thread-queue/<threadId>.json`.
-- Dispatch reuses the existing `thread.turn.start` command end to end. The
-  queue disappears the moment an item is sent; nothing in the projection ever
-  knew it existed.
+| File            | Responsibility                                                             |
+| --------------- | -------------------------------------------------------------------------- |
+| `Ledger.ts`     | Typed SQL document, caps, revisions, admission checks, completion barriers |
+| `operations.ts` | Enqueue, edit, requeue, stash, delete, reorder, resume, explicit steer     |
+| `Worker.ts`     | Scoped background sender and restart reconciliation                        |
+| `signals.ts`    | Runtime-local wakeup hints keyed by SQL client identity                    |
+| `http.ts`       | Authentication, authorization, transactional mutation, revision reads      |
+| `migration.ts`  | Transactional, one-time import of legacy queue payloads                    |
+| `Store.ts`      | Read-only v1 JSON compatibility reader                                     |
 
-This is deliberate. Orchestration involvement would create durable state that
-a future T3 queue migration would have to reconcile; a file store makes
-retirement a deletion, not a migration.
+Scient migration **11**, `thread-queue`, belongs to the independent
+`scient_schema_migrations` registry. It does not add an upstream numbered
+migration. Its tables share the orchestration database and transaction:
 
-## Scient-owned implementation
+- `scient_thread_queue`: one document and monotonically increasing revision per
+  thread. The document contains ordered items, migration completion, the delivery
+  barrier (`blocked`), active turn ID, `awaitingCompletion`, and a delivery-error
+  pause reason. `awaitingCompletion` distinguishes waiting after interruption from
+  a retryable delivery failure. It remains true while recovery work runs; only
+  successful finalization clears it.
+- `scient_queue_receipts`: stable message IDs, owning thread IDs, and the last
+  committed edit token. Receipts survive consumption and deletion so a lost
+  response cannot recreate an already accepted message.
+- `scient_queue_finalization`: independent answer/checkpoint markers by thread
+  and durable turn ID. Duplicate markers are harmless; failure is sticky for that
+  turn. Stop writes `successful = 0` in the same transaction as the waiting state,
+  revoking that turn's eligibility even if a late success arrives. Existing durable
+  turn identities are reused; no second execution-ID system or new SQL table is needed.
 
-New files only; none of these touch T3 internals:
+Environment ownership comes from the authenticated environment connection and
+its database; thread ownership is explicit in every request and command. A
+receipt cannot be reused for another thread. Deleting a thread clears its queue
+and retains an empty migration tombstone so an old JSON file cannot resurrect it.
 
-- `packages/contracts/src/scientThreadQueue.ts` — item, snapshot, and
-  request schemas. Reuses `UploadChatAttachment` and the existing provider
-  send-size bounds.
-- `apps/server/src/scient/threadQueue/Store.ts` (+ `Store.test.ts`) — the
-  file store. Atomic temp-file + rename writes (mode `0600`), per-file
-  promise lanes serialize mutations, thread IDs are SHA-256 hashed into safe
-  filenames, the item and disk caps are enforced here (the real authority),
-  removing the last item deletes the file, and a corrupt or oversized file is
-  quarantined to `.corrupt-<uuid>` before the read fails closed to an empty
-  queue. The old safe-filename format is migrated on first access.
-- `apps/server/src/scient/threadQueue/http.ts` — thin auth (read/operate
-  scopes) and error-mapping layer over the store.
-- `packages/client-runtime/src/state/scientThreadQueueHttp.ts` — HTTP client
-  functions (list/enqueue/update/remove/reorder).
-- `apps/web/src/scient/threadQueue/` — all web logic:
-  - `disposition.ts` (+ tests) — `resolveComposerSendDisposition`
-    (steer-requested or idle → send; busy → queue) and `isSteerShortcut`
-    (Cmd/Ctrl, not Shift).
-  - `client.ts` — `runtime.runPromise` wrappers.
-  - `queueImageRestore.ts` (+ tests) — rebuilds composer image attachments
-    from stored data URLs when editing a queued item.
-  - `useThreadQueue.ts` — authoritative snapshot state with generation and
-    thread-context guards, refetch on mount/thread change/running→idle
-    transition, optimistic reorder with rollback-refetch.
-  - `ThreadQueueStrip.tsx` — the UI panel (dnd-kit sortable rows, explicit
-    Steer/Edit/Delete actions, attachment counts, and a bounded scroll area).
-    Renders only when items exist or the server reports an error.
+## Admission and finalization
 
-## Narrow T3-owned seams
+1. A mutation runs in a SQL transaction, validates ownership and current state,
+   enforces caps, updates the revision, and issues a wakeup hint.
+2. The worker rereads SQL, chooses the first waiting item (or an explicitly
+   requested steer), and checks the target session. It normalizes attachments
+   using the existing attachment pipeline.
+3. Its `thread.turn.start` carries internal `queueItemId` and `queueRevision`.
+   The command ID is `queue:<itemId>:<revision>`; the message ID is
+   `queue:<itemId>`. The revision permits a fresh attempt after a rejected stale
+   claim while command receipts deduplicate the same attempt.
+4. Inside the engine's existing event/receipt transaction, `observeQueueCommand`
+   checks the revision, item state, order, session and barrier. It consumes the
+   item and closes the barrier atomically with the user message and start events.
+   Competing edits, deletes, reorderings, workers, and direct starts cannot both
+   win admission. There is no later client-side remove operation.
+5. Provider session adoption records the active turn ID. Final answer ingestion
+   signals only after final assistant segments, images, and plans are persisted.
+   The checkpoint reactor signals after checkpoint capture or its valid skip
+   path. Both matching markers are required to release delivery. A stale turn's
+   completion cannot release a newer turn.
+6. A successful release wakes the next item. Unsuccessful finalization leaves the
+   queue waiting for a later successful answer; a pre-admission error remains retryable.
 
-Every seam is marked with `SCIENT-FORK:START` / `SCIENT-FORK:END` comments and
-is small enough to revert by deleting the marked block.
+New queue entries capture model/options, runtime mode, and interaction mode.
+Admission applies those settings through the existing orchestration events
+before the provider starts. Legacy entries without settings use the thread's
+current settings. Explicit steering uses the active thread's settings.
 
-| Surface                                         | Deliberate change                                                                                                                                                                                                                                                                                                                         | Retirement condition                                |
-| ----------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------- |
-| `packages/contracts/src/orchestration.ts`       | Export the already-existing `UploadChatAttachment` schema (was module-private).                                                                                                                                                                                                                                                           | T3 exports it natively or the queue is gone.        |
-| `packages/contracts/src/index.ts`               | `export * from "./scientThreadQueue"`.                                                                                                                                                                                                                                                                                                    | Delete with the feature.                            |
-| `packages/contracts/src/environmentHttp.ts`     | `EnvironmentScientThreadQueueHttpApi` group (`/api/scient/thread-queue/*`), its registration in `EnvironmentHttpApi`, and the `scient_thread_queue_operation_failed` error-reason literal.                                                                                                                                                | T3 ships a queue API; delete the group.             |
-| `apps/server/src/server.ts`                     | Import and `Layer.provide` of the Scient queue HTTP layer.                                                                                                                                                                                                                                                                                | Delete with the feature.                            |
-| `packages/client-runtime/package.json`          | `./state/scient-thread-queue` subpath export.                                                                                                                                                                                                                                                                                             | Delete with the feature.                            |
-| `apps/web/src/components/chat/ChatComposer.tsx` | `onSend` gains an optional `{ steer?: boolean }` third parameter; `submitComposer` forwards it; the Enter handler treats Cmd/Ctrl+Enter as steer.                                                                                                                                                                                         | Map the shortcut onto T3's native steer affordance. |
-| `apps/web/src/components/ChatView.tsx`          | Marked import block; `useThreadQueue` instantiation after `phase`; the queue branch inside `onSend` (after the final payload is computed, before optimistic-message handling); `dispatchQueuedItem` / `editQueuedItem` / `deleteQueuedItem` handlers after `onInterrupt`; the `<ThreadQueueStrip>` mount directly above `<ChatComposer>`. | Delete the blocks; mount T3's queue UI instead.     |
+The worker starts once per scoped server service. It subscribes before its
+initial database scan and processes wakeup hints from a deduplicated mailbox.
+Hints carry no authority; SQL is always reread. There is no background sender
+poll and no dependency on a mounted ChatView. Client display refreshes ask once
+per second for a revision; unchanged replies do not resend image payloads.
 
-## Safety and bounded compromises
+## Failure and restart semantics
 
-- The server is the authority for the 20-item cap and item validation; the UI
-  never decides validity.
-- Queued dispatch uses the thread's current model, runtime, and interaction
-  settings; it does not silently inherit a different composer selection.
-- Editing a queued item refuses to clobber a non-empty composer; the item
-  remains persisted until the user saves or cancels the edit.
-- A message is removed from the queue only after `thread.turn.start`
-  succeeds. If the remove call fails after a successful send, the user gets a
-  warning toast rather than a silent stale copy.
-- The strip does not optimistic-render enqueues; the enqueue response is the
-  snapshot. Local-first latency is accepted in exchange for one source of
-  truth.
-- Local draft threads (no server thread yet) have no queue surface.
+A rejected pre-admission attempt keeps the item. Known rejected attachment claims
+are cleaned up. If a concurrent mutation changed the revision, the worker
+rereads after its wakeup; otherwise a failure pauses the queue visibly.
 
-## Upstream update procedure and retirement
+After durable admission the item is represented by the orchestration message,
+not a second waiting copy. A provider-side failure leaves remaining items waiting; it
+cannot safely be interpreted as proof that the provider never received the
+message. Scient does **not** promise exactly-once execution inside an external
+provider or blindly replay an ambiguous accepted start.
 
-Before each T3 merge, search the marked seams above and keep them minimal.
+At server restart, each persisted incomplete barrier is transactionally converted
+into `awaitingCompletion`, retaining all items and invalidating the previous turn.
+It does not replay a start or consume a waiting item. A later admitted start can
+run normally; its successful answer and checkpoint completion release one item.
+Queues already eligible before shutdown can still advance in the background.
 
-When T3 ships a native thread queue:
+The lifecycle transitions are:
 
-1. Check the native behavior against the product section. Adopt T3's
-   disposition (what queues, what steers) even if it differs from this one.
-2. Delete the Scient-owned files listed above.
-3. Delete every marked seam block in the table above. With the feature gone,
-   `UploadChatAttachment` may stay exported if something else uses it;
-   otherwise restore module privacy.
-4. Migrate data: queued items are JSON at
-   `<stateDir>/scient/thread-queue/<sha256(threadId)>.json` with
-   `{ formatVersion: 1, threadId, items: [{ queueItemId, text, attachments,
-createdAt, updatedAt }] }`. The previous `<threadId>.json` safe-filename
-   format is migrated on first access. Either enqueue them into T3's store on
-   first run or leave the files (they are inert once nothing reads them).
-5. Delete this document last.
+| Event                                                     | `blocked` | `awaitingCompletion` | Queue items                          |
+| --------------------------------------------------------- | --------- | -------------------- | ------------------------------------ |
+| Stop, failed active session, or incomplete server restart | false     | true                 | Preserved                            |
+| New ordinary/automation start admitted                    | true      | Preserved            | Preserved                            |
+| Provider adopts that start                                | true      | Preserved            | Preserved; eligible turn ID recorded |
+| Session becomes ready, or only one finalizer finishes     | Unchanged | Unchanged            | Preserved                            |
+| Both finalizers succeed for the eligible turn             | false     | false                | Next item becomes eligible           |
+| Finalization fails                                        | false     | true                 | Preserved                            |
+| Aborted turn for the eligible turn                        | false     | true                 | Preserved                            |
+| Worker admits the next waiting item                       | true      | false                | Exactly that item consumed           |
 
-## Verification checklist
+An aborted turn signals both finalizers as unsuccessful, so it ends the barrier
+the same way a failed answer does rather than leaving delivery blocked with no
+terminal signal. The eligible-turn check still applies: an abort naming any
+other turn cannot release the current one.
 
-- Store: enqueue/list/remove/reorder, cap enforcement, exact-permutation
-  reorder, corrupt-file quarantine, path-unsafe thread IDs, atomic write
-  recovery (`apps/server/src/scient/threadQueue/Store.test.ts`).
-- Web units: disposition matrix and steer shortcut; image restore including
-  malformed data URLs (`apps/web/src/scient/threadQueue/*.test.ts`).
-- Typechecks for `packages/contracts`, `packages/client-runtime`,
-  `apps/server`, and `apps/web`; targeted lint; `pnpm exec vp fmt --check`;
-  `git diff --check`.
-- Manual smoke when touching seams: Enter while running queues; the first
-  queued message automatically sends when the answer finishes; Cmd/Ctrl+Enter
-  steers; drag reorder persists across reload; edit restores text and images;
-  delete removes; a failed queued send remains visible.
+Stop clears the eligible turn ID and cancels any unadmitted Steer request,
+retaining that message in its slot. A new explicit Steer action remains available.
+A late running notification while waiting with no admitted start also invalidates that notification's turn ID; it cannot rearm
+an interrupted pending start. Running notifications for failed/invalidated or
+already completed turn IDs are ignored by the ledger. New work enters through
+`thread.turn.start`, whether sent by the composer or another server caller.
+Turn IDs retain their existing meaning: a new execution has a new turn
+ID; reopening an interrupted execution's session is not a new answer.
+
+Ordinary Send admission checks both the actual session and the durable barrier.
+Only an inactive task waiting for completion can accept an ordinary message ahead
+of its retained queue. Two competing recovery sends cannot both win. Editing
+continues to requeue in its reserved slot, even when the task is stopped.
+
+Earlier candidate documents without `awaitingCompletion` retain compatibility:
+legacy Stop/failure/restart pauses convert transactionally on read to waiting
+state. Delivery-error pauses remain retryable. No payload or edit journal is
+rewritten by this conversion. No live application data is needed for tests.
+
+## Composer draft ownership and recovery
+
+`editSession.ts` maintains a local IndexedDB journal containing both full drafts,
+including File/Blob bytes, image metadata, settings and structured composer
+context. The ordinary draft keeps its original scoped identity. The edit has an
+internal draft identity but renders through the same keyed ChatComposer. During
+in-app switching, editor state/history/cursor are cached by draft identity and
+never shared between those two drafts. Reload restores draft contents, not the
+previous process's undo history.
+
+Before withdrawal, both drafts are durably saved. The server's editing token
+owns the reserved slot; other tokens cannot overwrite or delete it. Browser
+Web Locks prevent two windows in the same origin from simultaneously recovering
+and editing the same journal. Closing the owning window releases its lease.
+If Web Locks are unavailable, editing fails before withdrawal and leaves the
+ordinary draft intact; use HTTPS or localhost. A server token cannot replace
+this lock because same-origin windows recover the same journal and token.
+Other devices are still governed by the server token and cannot adopt that
+window's local unsaved draft.
+
+Attachment bytes live in a separate IndexedDB store and are written only when
+the File object changes; keystrokes write lightweight draft metadata. Completing
+an edit removes its journal-owned blobs. Autosave operations serialize by journal key. Requeue flushes the journal,
+reasserts the same edit token, submits the replacement, and deletes the journal
+only after durable acceptance. The receipt token makes retries harmless even
+if the worker already consumed the replacement. Storage/network failures retain
+both drafts and report an error. A lost withdrawal response retains its durable
+intent and token for retry. A definitive conflict leaves the ordinary composer
+untouched. A committed edit receipt also stores a payload fingerprint: changed
+text after a lost response cannot be mistaken for an identical retry. Stash
+spends the token without an accepted-update fingerprint: repeating Stash is
+harmless, but a subsequent requeue is rejected so unsubmitted edits remain
+recoverable instead of being acknowledged as sent. Ordinary enqueue identities
+use SHA-256 of the payload and are scoped to environment/thread; plain HTTP uses
+the existing JavaScript SHA-256 implementation when Web Crypto is unavailable.
+
+Async attachment and transcript callbacks retain their original draft target.
+The composer is remounted on draft identity changes; unmounted voice callbacks
+write to their captured draft, never the newly visible composer. Sending waits
+for pending image compression/voice work, and the editing composer is disabled
+while its submission is in progress. Ordinary enqueue clears only the unchanged
+submitted draft, so newly typed text or a different task cannot be erased by a
+late response. If content still arrives during an accepted requeue, a recovery
+copy is retained through the existing prompt stash and reported visibly. Incoming
+approvals/questions cannot consume the editing draft as an answer; their normal
+composer controls return after requeue or stash.
+
+Stashed queue edits retain their full journal rather than fitting file bytes
+into localStorage's smaller prompt-stash image allowance. Their existing stash
+menu entry points to that journal. Browser storage is local to that installation;
+clearing it removes local edit/stash recovery data. It is not cloud draft sync.
+
+## API and compatibility
+
+The authenticated API is `/api/scient/thread-queue/v2/` with `list`, `enqueue`,
+`update`, `remove`, `reorder`, and `control`. List accepts `knownRevision`.
+Mutations return the authoritative snapshot. Expected queue conflicts/capacity
+errors use a typed 409 response; unexpected storage errors use the existing
+internal-error channel. Read and operate scopes remain distinct.
+
+Old unversioned queue endpoints are removed. Client turn starts must advertise
+`queueProtocolVersion: 2`; the shared updated client runtime supplies it. This
+prevents an old client-owned queue pump from dispatching copied queue contents.
+Older connected clients must update before sending. Internal queue admission
+fields are absent from the client command schema.
+
+At startup, the server discovers valid v1 files, including unopened threads,
+and imports each existing thread transactionally. First HTTP access also imports
+if necessary. Hashed filenames and older safe thread filenames are accepted;
+ownership, schema, duplicate IDs, and size are checked. Source bytes are retained
+unchanged. Invalid files are not erased or converted to an empty successful
+import; opening their thread surfaces the failure. Deleted/nonexistent threads
+are not imported.
+
+## Integration seams and retirement
+
+Protected upstream seams are the command schema/protocol gate, engine admission
+transaction, decider settings events, provider ingestion, checkpoint reactor,
+reactor/server layer wiring, shared HTTP client errors, and composer wiring.
+There are no new orchestration event types. Review these semantic seams during
+an upstream merge even if Git merges them cleanly.
+
+A native replacement must first preserve the behavioral contract above. Retire
+this implementation only with a migration for waiting items, withdrawn slots,
+receipts, incomplete barriers, and local edit journals. Remove the old sender
+before enabling another sender. Keep deployed Scient migration history intact;
+do not delete or renumber migration 11. Retained v1 files are recovery sources,
+not active authority. Remove this document only after the replacement owns the
+contract and recovery path.
+
+## Verification and manual acceptance
+
+Automated coverage belongs to `Ledger.test.ts`, `Worker.test.ts`, `Store.test.ts`,
+`editSession.test.ts`, `submission.test.ts`, orchestration engine/ingestion/checkpoint tests, migration
+schema tests, and the existing disposition/image-restore tests. The worker test
+uses real SQL, normalization, engine receipts and projections, with no mounted
+client or provider call. Repository format, lint, type, test, build, and desktop
+smoke gates are required before manual review.
+
+Manual acceptance should exercise these cases in an isolated candidate:
+
+1. Queue several messages in A, visit B, and stay there while A finishes. Every
+   message belongs to A; each starts after its own preceding answer finishes.
+2. Edit a middle item over an ordinary draft containing text and attachments.
+   Requeue it, verify its position and the restored ordinary draft, then exercise
+   cursor/undo and repeated navigation.
+3. Edit the head while the current answer finishes. Later waiting items may
+   start; the withdrawn message must not. Requeue before and after that advance.
+4. Drag visible items while another slot is being edited. Delete and explicitly
+   steer rows using the existing controls.
+5. Stop with multiple messages queued. Visit another task, return, and restart
+   the candidate: nothing should send. Send a new ordinary message; the queue
+   waits through that answer, then advances one message per completed answer.
+   Stop again and repeat. Check failed delivery/Retry separately. Exercise reload
+   during editing, another window, and lost responses; inspect for missing or
+   duplicated user messages and retained drafts.
+6. Stash an edit, restore the ordinary draft, then recover that edit through the
+   existing stash menu. Check text, image bytes, settings and context fidelity.
+
+Visual/layout and real-provider adoption remain manual acceptance work. Unit and
+integration tests do not establish those properties.

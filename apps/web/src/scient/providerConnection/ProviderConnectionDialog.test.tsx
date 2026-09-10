@@ -108,7 +108,7 @@ vi.mock("./ProviderRuntimeSection", () => ({
   ProviderRuntimeSection: (props: { compact?: boolean; initialAction?: string }) => (
     <div>
       {props.compact ? "Compact managed runtime actions" : "Managed runtime actions"}
-      {props.initialAction ? ` · ${props.initialAction} confirmation requested` : null}
+      {props.initialAction ? ` · ${props.initialAction} action requested` : null}
     </div>
   ),
 }));
@@ -300,7 +300,7 @@ describe("ProviderConnectionDialog", () => {
       expect(markup).toContain("lucide-loader");
       expect(markup).toContain('role="status"');
       expect(markup).not.toContain("Managed runtime actions");
-      expect(markup).not.toContain("confirmation requested");
+      expect(markup).not.toContain("action requested");
       expect(markup).not.toContain(`${displayName} lifecycle surface`);
       expect(markup).not.toContain(">Install<");
     },
@@ -388,7 +388,7 @@ describe("ProviderConnectionDialog", () => {
       expect(markup).toContain(`${displayName} is disabled`);
       expect(markup).toContain(">Enable<");
       expect(markup).not.toContain("Compact managed runtime actions");
-      expect(markup).not.toContain("confirmation requested");
+      expect(markup).not.toContain("action requested");
       expect(markup).not.toContain(`${displayName} lifecycle surface`);
     },
   );
@@ -482,8 +482,9 @@ describe("ProviderConnectionDialog", () => {
     ["antigravity", "Antigravity", "Antigravity lifecycle surface", "antigravity_google"],
     ["droid", "Droid", "Droid lifecycle surface", "droid_device_pairing"],
     ["grok", "Grok", "Grok lifecycle surface", "grok_account"],
+    ["cursor", "Cursor", "Cursor lifecycle surface", "cursor_browser"],
   ] as const)(
-    "opens the reviewed install flow directly for missing assisted %s runtimes",
+    "forwards the explicit Install click to shared runtime management for missing %s",
     (driver, name, surface, method) => {
       const markup = renderToStaticMarkup(
         <ProviderConnectionDialog
@@ -521,7 +522,7 @@ describe("ProviderConnectionDialog", () => {
       );
 
       expect(markup).toContain("Compact managed runtime actions");
-      expect(markup).toContain("install confirmation requested");
+      expect(markup).toContain("install action requested");
       expect(markup).not.toContain(surface);
     },
   );
@@ -557,15 +558,14 @@ describe("ProviderConnectionDialog", () => {
     );
 
     expect(markup).toContain("Grok lifecycle surface");
-    expect(markup).not.toContain("install confirmation requested");
+    expect(markup).not.toContain("install action requested");
   });
 
-  it("keeps Cursor installation visible when opened from the settings Install action", () => {
+  it("keeps opening missing Cursor management passive until Install is clicked", () => {
     const markup = renderToStaticMarkup(
       <ProviderConnectionDialog
         displayName="Cursor"
         environmentId={EnvironmentId.make("local")}
-        initialRuntimeAction="install"
         onOpenChange={vi.fn()}
         open
         provider={{
@@ -594,9 +594,10 @@ describe("ProviderConnectionDialog", () => {
 
     expect(markup).toContain("Cursor lifecycle surface");
     expect(markup).not.toContain("Compact managed runtime actions");
+    expect(markup).not.toContain("install action requested");
   });
 
-  it("keeps the Cursor install surface mounted when the runtime operation begins", () => {
+  it("keeps shared Cursor runtime management mounted when the install operation begins", () => {
     const markup = renderToStaticMarkup(
       <ProviderConnectionDialog
         displayName="Cursor"
@@ -641,8 +642,8 @@ describe("ProviderConnectionDialog", () => {
       />,
     );
 
-    expect(markup).toContain("Cursor lifecycle surface");
-    expect(markup).not.toContain("Compact managed runtime actions");
+    expect(markup).not.toContain("Cursor lifecycle surface");
+    expect(markup).toContain("Compact managed runtime actions");
   });
 
   it("drops the stale Cursor install intent after managed installation finishes", () => {
@@ -679,7 +680,7 @@ describe("ProviderConnectionDialog", () => {
 
     expect(markup).toContain("Compact managed runtime actions");
     expect(markup).toContain("Cursor lifecycle surface");
-    expect(markup).not.toContain("install confirmation requested");
+    expect(markup).not.toContain("install action requested");
   });
 
   it("omits a read-only system-runtime row when an older server provides no diagnostics", () => {
@@ -824,7 +825,7 @@ describe("ProviderConnectionDialog", () => {
         />,
       );
 
-      expect(markup).toContain("remove confirmation requested");
+      expect(markup).toContain("remove action requested");
       expect(markup).not.toContain(`${name} lifecycle surface`);
       expect(markup).not.toContain(">Sign out<");
     },

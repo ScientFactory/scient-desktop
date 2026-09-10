@@ -41,6 +41,22 @@ describe("resolveScientOnboardingEntry", () => {
       }),
     ).toBe("complete-silently");
   });
+
+  it("does not unmount an active import when its first project reaches the shell", () => {
+    const importing = {
+      ...ready,
+      status: "in-progress" as const,
+      hasExistingActivity: true,
+      presentationActive: true,
+    };
+    expect(resolveScientOnboardingEntry(importing)).toBe("present");
+    expect(resolveScientOnboardingEntry({ ...importing, status: "completed" })).toBe("bypass");
+    expect(resolveScientOnboardingEntry({ ...importing, status: "dismissed" })).toBe("bypass");
+    // A later app launch still recognizes existing work instead of reopening setup.
+    expect(resolveScientOnboardingEntry({ ...importing, presentationActive: false })).toBe(
+      "complete-silently",
+    );
+  });
 });
 
 describe("resolveScientOnboardingJourney", () => {

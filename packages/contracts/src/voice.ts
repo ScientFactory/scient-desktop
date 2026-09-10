@@ -21,7 +21,7 @@ export const VOICE_AUDIO_BASE64_MAX_CHARS = 4 * Math.ceil((10 * 1024 * 1024) / 3
 export const VOICE_TRANSCRIPT_CORRECTION_MAX_CHARS = 20_000;
 
 /** Languages Scient can explicitly pin for local Whisper transcription. */
-export const VOICE_TRANSCRIPTION_LANGUAGE_CODES = [
+const VOICE_TRANSCRIPTION_LANGUAGE_CODES = [
   "ar",
   "de",
   "el",
@@ -109,7 +109,7 @@ export const VoiceTranscriptCorrectionFailureKind = Schema.Literals([
 export type VoiceTranscriptCorrectionFailureKind = typeof VoiceTranscriptCorrectionFailureKind.Type;
 
 /** Safe, content-free failure returned to the client before it falls back. */
-export class VoiceTranscriptCorrectionError extends Schema.TaggedErrorClass<VoiceTranscriptCorrectionError>()(
+export class VoiceTranscriptCorrectionError extends Schema.TaggedError<VoiceTranscriptCorrectionError>()(
   "VoiceTranscriptCorrectionError",
   {
     kind: VoiceTranscriptCorrectionFailureKind,

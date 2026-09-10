@@ -21,7 +21,7 @@ export const COMPUTE_FILE_SPLIT_LAYOUT_STORAGE_KEY = "scient.pythonComputeSplitL
 export const COMPUTE_FILE_VIEWS = ["code", "split", "results"] as const;
 export type ComputeFileView = (typeof COMPUTE_FILE_VIEWS)[number];
 
-export const COMPUTE_FILE_SPLIT_LAYOUTS = ["side-by-side", "stacked"] as const;
+const COMPUTE_FILE_SPLIT_LAYOUTS = ["side-by-side", "stacked"] as const;
 export type ComputeFileSplitLayout = (typeof COMPUTE_FILE_SPLIT_LAYOUTS)[number];
 
 export const COMPUTE_FILE_VIEW_LABELS: Readonly<Record<ComputeFileView, string>> = {
@@ -30,7 +30,7 @@ export const COMPUTE_FILE_VIEW_LABELS: Readonly<Record<ComputeFileView, string>>
   results: "Results",
 };
 
-export const DEFAULT_COMPUTE_FILE_VIEW: ComputeFileView = "code";
+const DEFAULT_COMPUTE_FILE_VIEW: ComputeFileView = "code";
 export const DEFAULT_COMPUTE_FILE_SPLIT_LAYOUT: ComputeFileSplitLayout = "side-by-side";
 export const DEFAULT_COMPUTE_FILE_SPLIT = 0.5;
 export const MIN_COMPUTE_FILE_SPLIT = 0.2;

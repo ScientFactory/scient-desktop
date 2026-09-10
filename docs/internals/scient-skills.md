@@ -131,9 +131,11 @@ that index and allowlist without altering the message stored in the
 conversation. **Only with $name** is therefore enforced by omission, not by a
 secondary denial after discovery.
 
-Antigravity has no MCP transport, and Cursor has no reviewed private awareness
-seam. Both are therefore reported as unsupported instead of receiving partial
-or prompt-emulated behavior. Provider-native skill discovery remains
+Antigravity's official ACP sessions receive Scient's authenticated HTTP MCP
+connection, including on resume. This transport alone does not qualify Scient
+skill delivery: Antigravity and Cursor still have no reviewed private awareness
+seam. Both therefore remain unsupported for Scient-managed skills instead of
+receiving partial or prompt-emulated behavior. Provider-native skill discovery remains
 authoritative. The composer appends active Scient skills only when the provider
 supports them, and withholds a Scient entry when a native skill already owns
 the same name.
@@ -144,8 +146,7 @@ the same name.
 lists them in manifest presentation order. The user can make each one available
 personally. An active skill can be set to **Agent may use** or **Only with
 $name**. Changes are persisted in app-private state and take effect on the next
-turn. The composer exposes the same active inventory through its existing `$`
-and optional `/` skill menus. Loading a skill appears as a concise work-log
+turn. The composer exposes the same active inventory through its existing `$`and optional`/` skill menus. Loading a skill appears as a concise work-log
 event.
 
 The built-in shipping policy is:

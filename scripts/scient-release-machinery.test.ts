@@ -126,6 +126,16 @@ describe("Scient release machinery", () => {
       );
       assert(uses.length > 0, `${workflowName} must declare at least one action`);
       for (const action of uses) {
+        // This repository-local action is pinned by the release checkout itself.
+        // Keep the exception exact and prevent nested mutable action references.
+        if (action === "./.github/actions/setup-apt-mirrors") {
+          const localAction = NodeFS.readFileSync(
+            NodePath.join(import.meta.dirname, "../.github/actions/setup-apt-mirrors/action.yml"),
+            "utf8",
+          );
+          assert.notMatch(localAction, /^\s*(?:-\s+)?uses:/mu);
+          continue;
+        }
         assert.match(
           action ?? "",
           /@[0-9a-f]{40}$/u,
@@ -150,6 +160,24 @@ describe("Scient release machinery", () => {
       "Windows publication is unsigned; rerun only with explicit allow_unsigned_windows=true.",
     );
     assert.include(workflow, "Publication requires signed macOS artifacts:");
+  });
+
+  it("uses the temporary keychain password when granting macOS signing access", () => {
+    const workspace = NodeFS.readFileSync(
+      NodePath.join(import.meta.dirname, "../pnpm-workspace.yaml"),
+      "utf8",
+    );
+    const patch = NodeFS.readFileSync(
+      NodePath.join(import.meta.dirname, "../patches/app-builder-lib@26.15.6.patch"),
+      "utf8",
+    );
+
+    assert.include(workspace, "app-builder-lib@26.15.6: patches/app-builder-lib@26.15.6.patch");
+    assert.include(patch, "importCerts(keychainFile, certPaths, cscPasswords, keychainPassword)");
+    assert.include(
+      patch,
+      '"set-key-partition-list", "-S", "apple-tool:,apple:", "-s", "-k", keychainPassword',
+    );
   });
 
   it("pins Bash for every package-version alignment step", () => {
@@ -271,17 +299,39 @@ describe("Scient release machinery", () => {
     assert.equal(
       renderScientReleaseNotesMarkdown({
         version: "0.6.0",
+        publishedAt: "2026-08-01",
         kicker: "The new Scient foundation",
         headline: "A faster, clearer Scient",
         summary: "Scient now runs on its new maintained desktop foundation.",
         highlights: [
           {
+            id: "easier-setup",
             title: "Easier setup",
             description: "Connect an existing AI subscription from the composer.",
           },
         ],
       }),
       "# A faster, clearer Scient\n\n**The new Scient foundation**\n\nScient now runs on its new maintained desktop foundation.\n\n## Highlights\n\n- **Easier setup** — Connect an existing AI subscription from the composer.\n",
+    );
+  });
+
+  it("renders paragraph-format notes without requiring legacy copy", () => {
+    assert.equal(
+      renderScientReleaseNotesMarkdown({
+        version: "0.6.11",
+        publishedAt: "2026-09-06",
+        format: "paragraphs",
+        headline: "More AI choices. Smoother work.",
+        highlights: [
+          {
+            id: "bring-your-own-models",
+            title: "Bring your own models",
+            description: "Connect your own API keys or local models to Pi and Droid.",
+          },
+        ],
+        alsoIncluded: "Clearer Settings controls and more reliable provider update checks.",
+      }),
+      "# More AI choices. Smoother work.\n\n## Highlights\n\n- **Bring your own models** — Connect your own API keys or local models to Pi and Droid.\n\n## Also included\n\nClearer Settings controls and more reliable provider update checks.\n",
     );
   });
 

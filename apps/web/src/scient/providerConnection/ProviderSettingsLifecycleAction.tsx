@@ -11,7 +11,7 @@ import {
   Settings2Icon,
   WrenchIcon,
 } from "lucide-react";
-import { type ReactNode, useState } from "react";
+import { type ReactNode, useRef, useState } from "react";
 
 import { Button } from "../../components/ui/button";
 import { stackedThreadToast, toastManager } from "../../components/ui/toast";
@@ -31,7 +31,7 @@ const SETTINGS_LIFECYCLE_NEUTRAL_ACTION_CLASS =
 
 export type ProviderSettingsPrimaryAction =
   | { readonly kind: "open"; readonly runtimeAction: ProviderManagedRuntimeAction | null }
-  | { readonly kind: "managed-update" }
+  | { readonly kind: "managed-runtime"; readonly action: "install" | "update" }
   | { readonly kind: "codex-browser-sign-in" }
   | { readonly kind: "external-update" }
   | { readonly kind: "none" };
@@ -44,8 +44,9 @@ export function resolveProviderSettingsPrimaryAction(input: {
 }): ProviderSettingsPrimaryAction {
   switch (input.presentation.actionKind) {
     case "runtime":
-      return input.presentation.runtimeAction === "update"
-        ? { kind: "managed-update" }
+      return input.presentation.runtimeAction === "install" ||
+        input.presentation.runtimeAction === "update"
+        ? { kind: "managed-runtime", action: input.presentation.runtimeAction }
         : { kind: "open", runtimeAction: input.presentation.runtimeAction };
     case "external-update":
       return input.canRunExternalUpdate
@@ -106,15 +107,23 @@ export function ProviderSettingsLifecycleAction(props: {
       />
     );
   }
-  if (primaryAction.kind === "managed-update") {
-    return (
+  if (primaryAction.kind === "managed-runtime") {
+    const actionButton = (
+      <ManagedRuntimeActionButton
+        key={JSON.stringify([props.environmentId, props.provider.instanceId, primaryAction.action])}
+        action={primaryAction.action}
+        displayName={props.displayName}
+        environmentId={props.environmentId}
+        onManage={props.onManage}
+        provider={props.provider}
+      />
+    );
+    return primaryAction.action === "update" ? (
       <ProviderSettingsUpdateActions displayName={props.displayName} onManage={props.onManage}>
-        <ManagedRuntimeUpdateButton
-          displayName={props.displayName}
-          environmentId={props.environmentId}
-          provider={props.provider}
-        />
+        {actionButton}
       </ProviderSettingsUpdateActions>
+    ) : (
+      actionButton
     );
   }
   if (primaryAction.kind === "none") return null;
@@ -136,7 +145,7 @@ export function ProviderSettingsLifecycleAction(props: {
   const actionButton = (
     <Button
       className={
-        presentation.actionKind === "manage"
+        presentation.actionKind === "manage" || presentation.kind === "installing"
           ? SETTINGS_LIFECYCLE_NEUTRAL_ACTION_CLASS
           : SETTINGS_LIFECYCLE_PRIMARY_ACTION_CLASS
       }
@@ -159,7 +168,21 @@ export function ProviderSettingsLifecycleAction(props: {
       ) : (
         <Settings2Icon />
       )}
-      {externallyUpdating ? "Updating" : presentation.actionLabel}
+      {presentation.downloadPercent !== undefined ? (
+        <span className="inline-flex items-baseline gap-1.5">
+          {presentation.actionLabel}
+          <span
+            aria-label={`Download progress ${presentation.downloadPercent}%`}
+            className="text-[11px] font-normal tabular-nums text-muted-foreground"
+          >
+            {presentation.downloadPercent}%
+          </span>
+        </span>
+      ) : externallyUpdating ? (
+        "Updating"
+      ) : (
+        presentation.actionLabel
+      )}
     </Button>
   );
 
@@ -245,45 +268,68 @@ function CodexBrowserSignInButton(props: {
   );
 }
 
-function ManagedRuntimeUpdateButton(props: {
+function ManagedRuntimeActionButton(props: {
+  readonly action: "install" | "update";
   readonly environmentId: EnvironmentId;
   readonly provider: ServerProvider;
   readonly displayName: string;
+  readonly onManage: () => void;
 }) {
   const controller = useProviderLifecycleController({
     environmentId: props.environmentId,
     provider: props.provider,
   });
   const [pending, setPending] = useState(false);
+  const pendingRef = useRef(false);
 
-  const update = async () => {
+  const run = async () => {
+    // A second click opens details, including before React renders the pending state.
+    if (pendingRef.current) {
+      props.onManage();
+      return;
+    }
+    pendingRef.current = true;
     setPending(true);
     try {
-      await startReviewedProviderRuntimeAction(controller, "update");
+      await startReviewedProviderRuntimeAction(controller, props.action);
     } catch (error) {
       toastManager.add(
         stackedThreadToast({
           type: "error",
-          title: `Could not update ${props.displayName}`,
+          title: `Could not ${props.action} ${props.displayName}`,
           description: actionErrorMessage(error),
         }),
       );
     } finally {
+      pendingRef.current = false;
       setPending(false);
     }
   };
 
   return (
     <Button
-      className={SETTINGS_LIFECYCLE_PRIMARY_ACTION_CLASS}
-      disabled={pending}
-      onClick={() => void update()}
+      className={
+        pending ? SETTINGS_LIFECYCLE_NEUTRAL_ACTION_CLASS : SETTINGS_LIFECYCLE_PRIMARY_ACTION_CLASS
+      }
+      onClick={run}
       size="sm"
       type="button"
       variant="ghost"
     >
-      {pending ? <LoaderIcon className="animate-spin" /> : <RefreshCwIcon />}
-      {pending ? "Updating" : "Update"}
+      {pending ? (
+        <LoaderIcon className="animate-spin" />
+      ) : props.action === "install" ? (
+        <DownloadIcon />
+      ) : (
+        <RefreshCwIcon />
+      )}
+      {props.action === "install"
+        ? pending
+          ? "Installing"
+          : "Install"
+        : pending
+          ? "Updating"
+          : "Update"}
     </Button>
   );
 }

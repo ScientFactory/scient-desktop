@@ -12,8 +12,8 @@ import type {
 import type { PreparedConnection } from "../connection/model.ts";
 import { environmentEndpointUrl } from "../environment/endpoint.ts";
 import { ManagedRelayDpopSigner } from "../relay/managedRelay.ts";
-import { executeEnvironmentHttpRequest, makeEnvironmentHttpApiClient } from "../rpc/http.ts";
-import { buildEnvironmentAuthHeaders, withEnvironmentCredentials } from "./environmentHttpAuth.ts";
+import { executeAuthenticatedEnvironmentHttpRequest } from "./environmentHttpAuth.ts";
+import { RemoteEnvironmentAuthorization } from "../authorization/service.ts";
 
 /**
  * Every LaTeX endpoint answers from server-side build state rather than waiting
@@ -24,45 +24,30 @@ const REQUEST_TIMEOUT_MS = 15_000;
 /** A cold toolchain probe shells out to the engine, which can be slow on first run. */
 const TOOLCHAIN_TIMEOUT_MS = 30_000;
 
-const requestContext = Effect.fn("clientRuntime.state.scientLatexRequestContext")(
-  function* (input: { readonly prepared: PreparedConnection; readonly path: string }) {
-    const signer = yield* Effect.serviceOption(ManagedRelayDpopSigner);
-    const requestUrl = environmentEndpointUrl(input.prepared.httpBaseUrl, input.path);
-    const client = yield* makeEnvironmentHttpApiClient(input.prepared.httpBaseUrl);
-    const headers = yield* buildEnvironmentAuthHeaders(
-      input.prepared.httpAuthorization,
-      "POST",
-      requestUrl,
-      signer,
-    );
-    return { requestUrl, client, headers };
-  },
-);
-
 export const getEnvironmentLatexBuild = Effect.fn("clientRuntime.state.getEnvironmentLatexBuild")(
   function* (input: {
     readonly prepared: PreparedConnection;
     readonly workspaceRoot: ScientLatexBuildRequest["workspaceRoot"];
     readonly relativePath: ScientLatexBuildRequest["relativePath"];
   }) {
-    const context = yield* requestContext({
+    const signer = yield* Effect.serviceOption(ManagedRelayDpopSigner);
+    const remoteAuthorization = yield* Effect.serviceOption(RemoteEnvironmentAuthorization);
+    return yield* executeAuthenticatedEnvironmentHttpRequest({
       prepared: input.prepared,
-      path: "/api/scient/latex/build",
-    });
-    return yield* executeEnvironmentHttpRequest(
-      context.requestUrl,
-      REQUEST_TIMEOUT_MS,
-      withEnvironmentCredentials(
-        input.prepared.httpAuthorization,
-        context.client.scientLatex.build({
-          headers: context.headers,
+      signer,
+      remoteAuthorization,
+      method: "POST",
+      url: (httpBaseUrl) => environmentEndpointUrl(httpBaseUrl, "/api/scient/latex/build"),
+      timeoutMs: REQUEST_TIMEOUT_MS,
+      request: ({ client, headers }) =>
+        client.scientLatex.build({
+          headers,
           payload: {
             workspaceRoot: input.workspaceRoot,
             relativePath: input.relativePath,
           },
         }),
-      ),
-    );
+    });
   },
 );
 
@@ -72,24 +57,24 @@ export const getEnvironmentLatexStatus = Effect.fn("clientRuntime.state.getEnvir
     readonly workspaceRoot: ScientLatexStatusRequest["workspaceRoot"];
     readonly relativePath: ScientLatexStatusRequest["relativePath"];
   }) {
-    const context = yield* requestContext({
+    const signer = yield* Effect.serviceOption(ManagedRelayDpopSigner);
+    const remoteAuthorization = yield* Effect.serviceOption(RemoteEnvironmentAuthorization);
+    return yield* executeAuthenticatedEnvironmentHttpRequest({
       prepared: input.prepared,
-      path: "/api/scient/latex/status",
-    });
-    return yield* executeEnvironmentHttpRequest(
-      context.requestUrl,
-      REQUEST_TIMEOUT_MS,
-      withEnvironmentCredentials(
-        input.prepared.httpAuthorization,
-        context.client.scientLatex.status({
-          headers: context.headers,
+      signer,
+      remoteAuthorization,
+      method: "POST",
+      url: (httpBaseUrl) => environmentEndpointUrl(httpBaseUrl, "/api/scient/latex/status"),
+      timeoutMs: REQUEST_TIMEOUT_MS,
+      request: ({ client, headers }) =>
+        client.scientLatex.status({
+          headers,
           payload: {
             workspaceRoot: input.workspaceRoot,
             relativePath: input.relativePath,
           },
         }),
-      ),
-    );
+    });
   },
 );
 
@@ -99,24 +84,24 @@ export const getEnvironmentLatexCancel = Effect.fn("clientRuntime.state.getEnvir
     readonly workspaceRoot: ScientLatexCancelRequest["workspaceRoot"];
     readonly relativePath: ScientLatexCancelRequest["relativePath"];
   }) {
-    const context = yield* requestContext({
+    const signer = yield* Effect.serviceOption(ManagedRelayDpopSigner);
+    const remoteAuthorization = yield* Effect.serviceOption(RemoteEnvironmentAuthorization);
+    return yield* executeAuthenticatedEnvironmentHttpRequest({
       prepared: input.prepared,
-      path: "/api/scient/latex/cancel",
-    });
-    return yield* executeEnvironmentHttpRequest(
-      context.requestUrl,
-      REQUEST_TIMEOUT_MS,
-      withEnvironmentCredentials(
-        input.prepared.httpAuthorization,
-        context.client.scientLatex.cancel({
-          headers: context.headers,
+      signer,
+      remoteAuthorization,
+      method: "POST",
+      url: (httpBaseUrl) => environmentEndpointUrl(httpBaseUrl, "/api/scient/latex/cancel"),
+      timeoutMs: REQUEST_TIMEOUT_MS,
+      request: ({ client, headers }) =>
+        client.scientLatex.cancel({
+          headers,
           payload: {
             workspaceRoot: input.workspaceRoot,
             relativePath: input.relativePath,
           },
         }),
-      ),
-    );
+    });
   },
 );
 
@@ -126,21 +111,21 @@ export const getEnvironmentLatexForwardSync = Effect.fn(
   readonly prepared: PreparedConnection;
   readonly request: ScientLatexForwardSyncRequest;
 }) {
-  const context = yield* requestContext({
+  const signer = yield* Effect.serviceOption(ManagedRelayDpopSigner);
+  const remoteAuthorization = yield* Effect.serviceOption(RemoteEnvironmentAuthorization);
+  return yield* executeAuthenticatedEnvironmentHttpRequest({
     prepared: input.prepared,
-    path: "/api/scient/latex/synctex/forward",
-  });
-  return yield* executeEnvironmentHttpRequest(
-    context.requestUrl,
-    REQUEST_TIMEOUT_MS,
-    withEnvironmentCredentials(
-      input.prepared.httpAuthorization,
-      context.client.scientLatex.forwardSync({
-        headers: context.headers,
+    signer,
+    remoteAuthorization,
+    method: "POST",
+    url: (httpBaseUrl) => environmentEndpointUrl(httpBaseUrl, "/api/scient/latex/synctex/forward"),
+    timeoutMs: REQUEST_TIMEOUT_MS,
+    request: ({ client, headers }) =>
+      client.scientLatex.forwardSync({
+        headers,
         payload: input.request,
       }),
-    ),
-  );
+  });
 });
 
 export const getEnvironmentLatexInverseSync = Effect.fn(
@@ -149,40 +134,41 @@ export const getEnvironmentLatexInverseSync = Effect.fn(
   readonly prepared: PreparedConnection;
   readonly request: ScientLatexInverseSyncRequest;
 }) {
-  const context = yield* requestContext({
+  const signer = yield* Effect.serviceOption(ManagedRelayDpopSigner);
+  const remoteAuthorization = yield* Effect.serviceOption(RemoteEnvironmentAuthorization);
+  return yield* executeAuthenticatedEnvironmentHttpRequest({
     prepared: input.prepared,
-    path: "/api/scient/latex/synctex/inverse",
-  });
-  return yield* executeEnvironmentHttpRequest(
-    context.requestUrl,
-    REQUEST_TIMEOUT_MS,
-    withEnvironmentCredentials(
-      input.prepared.httpAuthorization,
-      context.client.scientLatex.inverseSync({
-        headers: context.headers,
+    signer,
+    remoteAuthorization,
+    method: "POST",
+    url: (httpBaseUrl) => environmentEndpointUrl(httpBaseUrl, "/api/scient/latex/synctex/inverse"),
+    timeoutMs: REQUEST_TIMEOUT_MS,
+    request: ({ client, headers }) =>
+      client.scientLatex.inverseSync({
+        headers,
         payload: input.request,
       }),
-    ),
-  );
+  });
 });
 
 export const getEnvironmentLatexInstallToolchain = Effect.fn(
   "clientRuntime.state.getEnvironmentLatexInstallToolchain",
 )(function* (input: { readonly prepared: PreparedConnection }) {
-  const context = yield* requestContext({
+  const signer = yield* Effect.serviceOption(ManagedRelayDpopSigner);
+  const remoteAuthorization = yield* Effect.serviceOption(RemoteEnvironmentAuthorization);
+  return yield* executeAuthenticatedEnvironmentHttpRequest({
     prepared: input.prepared,
-    path: "/api/scient/latex/toolchain/install",
-  });
-  return yield* executeEnvironmentHttpRequest(
-    context.requestUrl,
-    REQUEST_TIMEOUT_MS,
-    withEnvironmentCredentials(
-      input.prepared.httpAuthorization,
+    signer,
+    remoteAuthorization,
+    method: "POST",
+    url: (httpBaseUrl) =>
+      environmentEndpointUrl(httpBaseUrl, "/api/scient/latex/toolchain/install"),
+    timeoutMs: REQUEST_TIMEOUT_MS,
+    request: ({ client, headers }) =>
       // The server only starts the install and answers with the state it left
       // behind, so this request is as short as the rest of the group.
-      context.client.scientLatex.installToolchain({ headers: context.headers }),
-    ),
-  );
+      client.scientLatex.installToolchain({ headers }),
+  });
 });
 
 export const getEnvironmentLatexToolchain = Effect.fn(
@@ -191,19 +177,19 @@ export const getEnvironmentLatexToolchain = Effect.fn(
   readonly prepared: PreparedConnection;
   readonly refresh: ScientLatexToolchainRequest["refresh"];
 }) {
-  const context = yield* requestContext({
+  const signer = yield* Effect.serviceOption(ManagedRelayDpopSigner);
+  const remoteAuthorization = yield* Effect.serviceOption(RemoteEnvironmentAuthorization);
+  return yield* executeAuthenticatedEnvironmentHttpRequest({
     prepared: input.prepared,
-    path: "/api/scient/latex/toolchain",
-  });
-  return yield* executeEnvironmentHttpRequest(
-    context.requestUrl,
-    TOOLCHAIN_TIMEOUT_MS,
-    withEnvironmentCredentials(
-      input.prepared.httpAuthorization,
-      context.client.scientLatex.toolchain({
-        headers: context.headers,
+    signer,
+    remoteAuthorization,
+    method: "POST",
+    url: (httpBaseUrl) => environmentEndpointUrl(httpBaseUrl, "/api/scient/latex/toolchain"),
+    timeoutMs: TOOLCHAIN_TIMEOUT_MS,
+    request: ({ client, headers }) =>
+      client.scientLatex.toolchain({
+        headers,
         payload: { refresh: input.refresh },
       }),
-    ),
-  );
+  });
 });

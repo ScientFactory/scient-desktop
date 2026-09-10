@@ -34,6 +34,7 @@ export const MAX_STASH_ENTRY_ATTACHMENT_CHARS = 2_700_000;
  * Image payloads remain subject to the localStorage budget.
  */
 const StashEntrySchema = Schema.Struct({
+  queueEditKey: Schema.optionalKey(Schema.String),
   id: Schema.String,
   createdAt: Schema.String,
   prompt: Schema.String,

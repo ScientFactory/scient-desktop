@@ -65,7 +65,7 @@ describe("rehypeScientBidi", () => {
     expect(elements[2]?.children?.[0]?.properties).toBeUndefined();
     expect(elements[2]?.children?.[1]?.properties).toBeUndefined();
     expect(elements[3]?.properties?.dir).toBe("rtl");
-    expect(elements[3]?.children?.[0]?.properties?.dir).toBe("rtl");
+    expect(elements[3]?.children?.[0]?.properties?.dir).toBe("ltr");
     expect(elements[3]?.children?.[1]?.properties?.dir).toBe("rtl");
     expect(elements[4]?.properties).toBeUndefined();
   });
@@ -219,7 +219,7 @@ describe("rehypeScientBidi", () => {
     expect(table.children?.[1]?.properties?.dir).toBe("ltr");
   });
 
-  it("keeps every normal cell in the aggregate table direction", () => {
+  it("uses the whole-table majority for structure and each cell for text flow", () => {
     const tree = {
       type: "root",
       children: [
@@ -247,6 +247,21 @@ describe("rehypeScientBidi", () => {
                     },
                   ],
                 },
+                {
+                  type: "element",
+                  tagName: "td",
+                  children: [{ type: "text", value: "English בתוך עברית נוספת" }],
+                },
+                {
+                  type: "element",
+                  tagName: "td",
+                  children: [{ type: "text", value: "English sentence with עברית" }],
+                },
+                {
+                  type: "element",
+                  tagName: "td",
+                  children: [{ type: "text", value: "123 — —" }],
+                },
               ],
             },
           ],
@@ -263,13 +278,204 @@ describe("rehypeScientBidi", () => {
       properties?: Record<string, unknown>;
     };
     const row = table.children?.[0];
-    expect(table.properties?.dir).toBe("rtl");
+    expect(table.properties?.dir).toBe("ltr");
     expect(row?.children?.[0]?.properties?.dir).toBe("rtl");
-    expect(row?.children?.[1]?.properties?.dir).toBe("rtl");
+    expect(row?.children?.[1]?.properties?.dir).toBe("ltr");
+    expect(row?.children?.[2]?.properties?.dir).toBe("rtl");
+    expect(row?.children?.[3]?.properties?.dir).toBe("ltr");
+    expect(row?.children?.[4]?.properties?.dir).toBe("ltr");
     const heading = row?.children?.[1]?.children?.[0] as {
       properties?: Record<string, unknown>;
     };
-    expect(heading.properties?.dir).toBe("rtl");
+    expect(heading.properties?.dir).toBe("ltr");
+  });
+
+  it("aligns every cell in a logical column while preserving local text direction", () => {
+    const tree = {
+      type: "root",
+      children: [
+        {
+          type: "element",
+          tagName: "table",
+          children: [
+            {
+              type: "element",
+              tagName: "tr",
+              children: [
+                {
+                  type: "element",
+                  tagName: "th",
+                  children: [{ type: "text", value: "אבחנה" }],
+                },
+                {
+                  type: "element",
+                  tagName: "th",
+                  children: [{ type: "text", value: "Treatment" }],
+                },
+              ],
+            },
+            {
+              type: "element",
+              tagName: "tr",
+              children: [
+                {
+                  type: "element",
+                  tagName: "td",
+                  children: [{ type: "text", value: "TNBC" }],
+                },
+                {
+                  type: "element",
+                  tagName: "td",
+                  children: [{ type: "text", value: "טיפול" }],
+                },
+              ],
+            },
+          ],
+        },
+      ],
+    };
+
+    rehypeScientBidi({ direction: "rtl" })(tree);
+
+    const rows = tree.children[0]?.children as Array<{
+      children: Array<{ properties?: Record<string, unknown> }>;
+    }>;
+    expect(rows[1]?.children[0]?.properties?.dir).toBe("ltr");
+    expect(rows[1]?.children[1]?.properties?.dir).toBe("rtl");
+    expect(
+      rows.map((row) => row.children[0]?.properties?.["data-scient-table-column-direction"]),
+    ).toEqual(["rtl", "rtl"]);
+    expect(
+      rows.map((row) => row.children[1]?.properties?.["data-scient-table-column-direction"]),
+    ).toEqual(["ltr", "ltr"]);
+  });
+
+  it("maps row spans to logical columns and leaves authored alignment authoritative", () => {
+    const tree = {
+      type: "root",
+      children: [
+        {
+          type: "element",
+          tagName: "table",
+          children: [
+            {
+              type: "element",
+              tagName: "tr",
+              children: [
+                {
+                  type: "element",
+                  tagName: "th",
+                  properties: { rowSpan: 2 },
+                  children: [{ type: "text", value: "אבחנה" }],
+                },
+                {
+                  type: "element",
+                  tagName: "th",
+                  properties: { align: "center" },
+                  children: [{ type: "text", value: "Treatment" }],
+                },
+              ],
+            },
+            {
+              type: "element",
+              tagName: "tr",
+              children: [
+                {
+                  type: "element",
+                  tagName: "td",
+                  children: [{ type: "text", value: "English detail" }],
+                },
+              ],
+            },
+          ],
+        },
+      ],
+    };
+
+    rehypeScientBidi({ direction: "rtl" })(tree);
+
+    const rows = tree.children[0]?.children as Array<{
+      children: Array<{ properties?: Record<string, unknown> }>;
+    }>;
+    expect(rows[0]?.children[0]?.properties?.["data-scient-table-column-direction"]).toBe("rtl");
+    expect(
+      rows[0]?.children[1]?.properties?.["data-scient-table-column-direction"],
+    ).toBeUndefined();
+    expect(rows[1]?.children[0]?.properties?.["data-scient-table-column-direction"]).toBe("ltr");
+  });
+
+  it("keeps a Hebrew scientific table RTL when technical identifiers dominate", () => {
+    const tree = {
+      type: "root",
+      children: [
+        {
+          type: "element",
+          tagName: "table",
+          children: [
+            {
+              type: "element",
+              tagName: "tr",
+              children: [
+                {
+                  type: "element",
+                  tagName: "th",
+                  children: [{ type: "text", value: "מאפיין HER2 TNBC cN0 BCS NET" }],
+                },
+                {
+                  type: "element",
+                  tagName: "td",
+                  children: [
+                    {
+                      type: "text",
+                      value: String.raw`טיפול $\text{HER2 positive receptor status}^+$`,
+                    },
+                  ],
+                },
+              ],
+            },
+          ],
+        },
+      ],
+    };
+
+    rehypeScientBidi({ direction: "rtl" })(tree);
+
+    const table = tree.children[0] as {
+      children: Array<{ children: Array<{ properties?: Record<string, unknown> }> }>;
+      properties?: Record<string, unknown>;
+    };
+    expect(table.properties?.dir).toBe("rtl");
+    expect(table.children[0]?.children[0]?.properties?.dir).toBe("ltr");
+    expect(table.children[0]?.children[1]?.properties?.dir).toBe("ltr");
+    expect(
+      table.children[0]?.children.map(
+        (cell) => cell.properties?.["data-scient-table-column-direction"],
+      ),
+    ).toEqual(["rtl", "rtl"]);
+  });
+
+  it("does not mistake ordinary English table prose for a technical identifier", () => {
+    const tree = {
+      type: "root",
+      children: [
+        {
+          type: "element",
+          tagName: "table",
+          children: [
+            {
+              type: "element",
+              tagName: "td",
+              children: [{ type: "text", value: "Standard treatment and clinical follow-up" }],
+            },
+          ],
+        },
+      ],
+    };
+
+    rehypeScientBidi({ direction: "rtl" })(tree);
+
+    const table = tree.children[0] as { properties?: Record<string, unknown> };
+    expect(table.properties?.dir).toBe("ltr");
   });
 
   it("keeps a table nested in a list on its own aggregate direction", () => {
@@ -316,7 +522,7 @@ describe("rehypeScientBidi", () => {
     expect(table.children?.[0]?.properties?.dir).toBe("ltr");
   });
 
-  it("keeps explicit LTR authoritative for Hebrew table cells", () => {
+  it("keeps an explicit global LTR setting authoritative for the whole table", () => {
     const tree = {
       type: "root",
       children: [

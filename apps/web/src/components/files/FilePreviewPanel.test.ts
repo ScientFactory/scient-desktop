@@ -11,6 +11,7 @@ import {
   resolveFilePreviewKind,
   setMarkdownTaskChecked,
   shouldLoadFileAsText,
+  shouldShowFileExplorer,
 } from "./filePreviewMode";
 
 describe("file comment annotations", () => {
@@ -84,8 +85,46 @@ describe("PDF file routing", () => {
   it("keeps binary-image and text routing distinct", () => {
     expect(resolveFilePreviewKind("figure.png")).toBe("image");
     expect(shouldLoadFileAsText("figure.png")).toBe(false);
+    expect(resolveFilePreviewKind("clip.mp4")).toBe("video");
+    expect(shouldLoadFileAsText("clip.mp4")).toBe(false);
     expect(resolveFilePreviewKind("notes.md")).toBe("text");
     expect(shouldLoadFileAsText("notes.md")).toBe(true);
+  });
+});
+
+describe("shouldShowFileExplorer", () => {
+  it("hides the workspace tree for host files and attachments", () => {
+    expect(
+      shouldShowFileExplorer({
+        relativePath: "/tmp/report.pdf",
+        explorerOpen: true,
+        attachmentOpen: false,
+      }),
+    ).toBe(false);
+    expect(
+      shouldShowFileExplorer({
+        relativePath: "report.pdf",
+        explorerOpen: true,
+        attachmentOpen: true,
+      }),
+    ).toBe(false);
+  });
+
+  it("keeps the saved explorer preference for workspace files", () => {
+    expect(
+      shouldShowFileExplorer({
+        relativePath: "docs/report.pdf",
+        explorerOpen: true,
+        attachmentOpen: false,
+      }),
+    ).toBe(true);
+    expect(
+      shouldShowFileExplorer({
+        relativePath: "docs/report.pdf",
+        explorerOpen: false,
+        attachmentOpen: false,
+      }),
+    ).toBe(false);
   });
 });
 

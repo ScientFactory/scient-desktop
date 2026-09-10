@@ -6,7 +6,7 @@ import { SettingsRow } from "../../components/settings/settingsLayout";
 export function ScientGettingStartedSettingsRow() {
   return (
     <Link
-      className="group block rounded-xl outline-none transition-colors hover:bg-foreground/[0.025] focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
+      className="group -mb-3 block rounded-xl outline-none transition-colors hover:bg-foreground/[0.025] focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
       to="/getting-started"
     >
       <SettingsRow

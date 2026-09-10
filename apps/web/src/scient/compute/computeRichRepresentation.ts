@@ -1,9 +1,9 @@
 import type { ComputeProjectedOutput } from "@t3tools/contracts";
 
-export const COMPUTE_TABLE_MEDIA_TYPE = "application/vnd.dataresource+json";
-export const COMPUTE_PLOTLY_MEDIA_TYPE = "application/vnd.plotly.v1+json";
-export const MAX_COMPUTE_TABLE_ROWS = 100;
-export const MAX_COMPUTE_TABLE_COLUMNS = 24;
+const COMPUTE_TABLE_MEDIA_TYPE = "application/vnd.dataresource+json";
+const COMPUTE_PLOTLY_MEDIA_TYPE = "application/vnd.plotly.v1+json";
+const MAX_COMPUTE_TABLE_ROWS = 100;
+const MAX_COMPUTE_TABLE_COLUMNS = 24;
 const MAX_CELL_TEXT = 512;
 const MAX_RICH_SOURCE = 1_000_000;
 

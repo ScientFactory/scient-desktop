@@ -1,7 +1,7 @@
 import { parse, printParseErrorCode, type ParseError } from "jsonc-parser";
 
 export const MAX_PLOTLY_SOURCE_LENGTH = 1_000_000;
-export const MAX_PLOTLY_VALUE_NODES = 500_000;
+const MAX_PLOTLY_VALUE_NODES = 500_000;
 export const MAX_PLOTLY_TRACES = 512;
 export const MAX_PLOTLY_FRAMES = 2_000;
 export const MAX_PLOTLY_NESTING_DEPTH = 128;

@@ -57,6 +57,16 @@ describe("Antigravity lifecycle actions", () => {
     expect(lifecycle.startConnection).toHaveBeenCalledWith("antigravity_google");
   });
 
+  it("connects the advertised credential method without opening a browser", async () => {
+    const current = provider({
+      connection: { methods: ["antigravity_credentials"], canDisconnect: false, operation: null },
+    });
+    const lifecycle = controller({ startConnection: vi.fn(async () => current) });
+    await startAntigravitySignInAndOpenAuthorizationPage(lifecycle, current);
+    expect(lifecycle.startConnection).toHaveBeenCalledWith("antigravity_credentials");
+    expect(lifecycle.openAuthorizationPage).not.toHaveBeenCalled();
+  });
+
   it("opens the primary Google authorization page after starting sign-in", async () => {
     const authorizationUrl = "https://accounts.google.com/o/oauth2/v2/auth?client_id=test";
     const lifecycle = controller({

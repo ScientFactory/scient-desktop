@@ -1,10 +1,7 @@
 "use client";
 
-import {
-  scopedThreadKey,
-  scopeProjectRef,
-  scopeThreadRef,
-} from "@t3tools/client-runtime/environment";
+import { scopeProjectRef, scopeThreadRef } from "@t3tools/client-runtime/environment";
+import { useScientAnalyticsView } from "~/scient/analytics/client";
 import {
   canCreateProjectInEnvironment,
   getCloneDestinationBrowsePath,
@@ -30,12 +27,14 @@ import {
 import {
   type DesktopWslState,
   type EnvironmentId,
+  type EnvironmentMachineKind,
   type FilesystemBrowseResult,
   type ProjectId,
   type SourceControlDiscoveryResult,
   type SourceControlProviderKind,
   type SourceControlRepositoryInfo,
   PRIMARY_LOCAL_ENVIRONMENT_ID,
+  resolveEnvironmentMachineKind,
 } from "@t3tools/contracts";
 import { useLocation, useNavigate, useParams, useRouter } from "@tanstack/react-router";
 import * as Option from "effect/Option";
@@ -48,7 +47,6 @@ import {
   LinkIcon,
   MessageSquareIcon,
   PaletteIcon,
-  ServerIcon,
   SettingsIcon,
   SquarePenIcon,
   TextSearchIcon,
@@ -72,6 +70,8 @@ import { useDesktopLocalBootstraps } from "../connection/useDesktopLocalBootstra
 import { useHandleNewThread } from "../hooks/useHandleNewThread";
 import { useProjectFolderDrop } from "../hooks/useProjectFolderDrop";
 import { useScientProjectInitialization } from "../hooks/useScientProjectInitialization";
+import { useProjectOpening } from "../hooks/useProjectOpening";
+import { useOpenPanelPullRequestUrl } from "../hooks/useOpenPanelPullRequestUrl";
 import { writeTextToClipboard } from "../hooks/useCopyToClipboard";
 import { useClientSettings } from "../hooks/useSettings";
 import { useTheme } from "../hooks/useTheme";
@@ -82,13 +82,11 @@ import { projectEnvironment } from "../state/projects";
 import { useEnvironmentQuery } from "../state/query";
 import { readPreparedConnection, usePreparedConnection } from "../state/session";
 import { sourceControlEnvironment } from "../state/sourceControl";
-import { vcsEnvironment } from "../state/vcs";
 import { useAtomCommand } from "../state/use-atom-command";
 import { useAtomQueryRunner } from "../state/use-atom-query-runner";
 import { useEnvironments, usePrimaryEnvironmentId } from "../state/environments";
-import { useProject, useProjects, useThreadShells } from "../state/entities";
+import { readProjects, readThreadShells, useProjects, useThreadShells } from "../state/entities";
 import { useThreadSearch } from "../state/queries";
-import * as ThreadPr from "./ThreadStatusIndicators";
 import { resolveThreadActionProjectRef, startNewThreadFromContext } from "../lib/chatThreadActions";
 import { getAvailableNewFolderName, getAvailableNewProjectPath } from "../lib/projectEntry";
 import {
@@ -96,10 +94,8 @@ import {
   type NewThreadNavigationIntent,
 } from "../lib/newThreadNavigationIntent";
 import { waitForProjectProjection } from "../lib/projectProjection";
-import {
-  shouldCloseProjectPickerAfterScientDecision,
-  type ScientProjectInitializationDecision,
-} from "../lib/scientProjectInitialization";
+import { preloadProjectChat } from "../lib/preloadProjectChat";
+import { type ScientProjectInitializationDecision } from "../lib/scientProjectInitialization";
 import {
   appendBrowsePathSegment,
   ensureBrowseDirectoryPath,
@@ -114,7 +110,11 @@ import {
 import { onOpenCommandPalette } from "../commandPaletteBus";
 import { isPreviewFocused } from "../lib/previewFocus";
 import { isTerminalFocused } from "../lib/terminalFocus";
-import { selectActiveRightPanel, useRightPanelStore } from "../rightPanelStore";
+import {
+  PULL_REQUESTS_PANEL_REF,
+  selectActiveRightPanel,
+  useRightPanelStore,
+} from "../rightPanelStore";
 import { getLatestThreadForProject, sortThreads } from "../lib/threadSort";
 import {
   cn,
@@ -164,6 +164,7 @@ import { CommandPaletteContent } from "./CommandPaletteContent";
 import { CommandPaletteResults } from "./CommandPaletteResults";
 import { ScientProjectInitializationDialog } from "./ScientProjectInitializationDialog";
 import { AzureDevOpsIcon, BitbucketIcon, GitHubIcon, GitLabIcon } from "./Icons";
+import { EnvironmentMachineIcon } from "./EnvironmentMachineIcon";
 import { ProjectFavicon } from "./ProjectFavicon";
 import { ProjectFolderDropTarget } from "./ProjectFolderDropTarget";
 import { ProjectFilePicker } from "./files/ProjectFilePicker";
@@ -177,11 +178,7 @@ import {
 } from "./ThreadCommandSubtitle";
 import { ThreadRowLeadingStatus, ThreadRowTrailingStatus } from "./ThreadStatusIndicators";
 import { primaryServerKeybindingsAtom, primaryServerProvidersAtom } from "../state/server";
-import {
-  deriveProviderInstanceEntries,
-  resolveDefaultProviderModelSelection,
-  type ProviderInstanceEntry,
-} from "../providerInstances";
+import { deriveProviderInstanceEntries, type ProviderInstanceEntry } from "../providerInstances";
 import { resolveShortcutCommand, threadJumpIndexFromCommand } from "../keybindings";
 import { CommandDialog, CommandDialogPopup, CommandFooterAction } from "./ui/command";
 import { Button } from "./ui/button";
@@ -201,14 +198,7 @@ import type { Project } from "../types";
 const EMPTY_BROWSE_ENTRIES: FilesystemBrowseResult["entries"] = [];
 
 function projectFavicon(project: Project) {
-  return (
-    <ProjectFavicon
-      environmentId={project.environmentId}
-      cwd={project.workspaceRoot}
-      faviconPath={project.faviconPath}
-      className={ITEM_ICON_CLASS}
-    />
-  );
+  return <ProjectFavicon project={project} className="size-4" />;
 }
 
 function getEnvironmentBrowsePlatform(os: string | null | undefined): string {
@@ -233,6 +223,7 @@ function isMatchingLocalPlatform(environmentPlatform: string, browserPlatform: s
 interface AddProjectEnvironmentOption {
   readonly environmentId: EnvironmentId;
   readonly label: string;
+  readonly machine: EnvironmentMachineKind;
   readonly isPrimary: boolean;
   readonly isConnected: boolean;
   readonly status: string;
@@ -433,6 +424,21 @@ export function CommandPalette({ children }: { children: ReactNode }) {
     openIntent: null,
   });
   const setOpen = useCallback((open: boolean) => dispatch({ _tag: "SetOpen", open }), []);
+  useScientAnalyticsView(
+    state.open
+      ? {
+          name: "feature.viewed",
+          properties: {
+            feature:
+              state.openIntent?.kind === "add-project"
+                ? "project-picker"
+                : state.openIntent?.kind === "new-thread-in"
+                  ? "new-thread"
+                  : "search",
+          },
+        }
+      : null,
+  );
   const toggleMode = useCallback(
     (mode: SearchOverlayMode) => dispatch({ _tag: "ToggleMode", mode }),
     [],
@@ -533,8 +539,12 @@ export function CommandPalette({ children }: { children: ReactNode }) {
           setOpen(open);
         }}
       >
-        {children}
+        {/* Block background focus calls for the entire time the palette is open. */}
+        <div className="contents" inert={state.open}>
+          {children}
+        </div>
         <CommandPaletteDialog
+          open={state.open}
           mode={state.mode}
           openIntent={state.openIntent}
           setOpen={setOpen}
@@ -547,6 +557,7 @@ export function CommandPalette({ children }: { children: ReactNode }) {
 }
 
 function CommandPaletteDialog(props: {
+  readonly open: boolean;
   readonly mode: SearchOverlayMode;
   readonly openIntent: CommandPaletteOpenIntent | null;
   readonly setOpen: (open: boolean) => void;
@@ -582,6 +593,7 @@ function CommandPaletteDialog(props: {
         <ProjectContentSearchDialog onOpenChange={props.setOpen} />
       ) : (
         <OpenCommandPaletteDialog
+          open={props.open}
           openIntent={props.openIntent}
           setOpen={props.setOpen}
           openOverlayMode={props.openOverlayMode}
@@ -593,6 +605,7 @@ function CommandPaletteDialog(props: {
 }
 
 function OpenCommandPaletteDialog(props: {
+  readonly open: boolean;
   readonly openIntent: CommandPaletteOpenIntent | null;
   readonly setOpen: (open: boolean) => void;
   readonly openOverlayMode: (mode: SearchOverlayMode) => void;
@@ -602,6 +615,11 @@ function OpenCommandPaletteDialog(props: {
   const router = useRouter();
   const pathname = useLocation({ select: (location) => location.pathname });
   const { clearOpenIntent, openIntent, openOverlayMode, setOpen } = props;
+  const closeProjectPicker = useCallback(() => setOpen(false), [setOpen]);
+  const { pending: isOpeningProject, run: runProjectOpening } = useProjectOpening(
+    props.open,
+    closeProjectPicker,
+  );
   const [query, setQuery] = useState("");
   const deferredQuery = useDeferredValue(query);
   const isActionsOnly = deferredQuery.startsWith(">");
@@ -633,42 +651,25 @@ function OpenCommandPaletteDialog(props: {
   const { activeDraftThread, activeThread, defaultProjectRef, handleNewThread } =
     useHandleNewThread();
   const projects = useProjects();
-  const changeRequestSnapshotByKey = useAtomValue(ThreadPr.threadChangeRequestSnapshotsAtom);
-  const activeThreadProject = useProject(
-    activeThread?.projectId == null
-      ? null
-      : scopeProjectRef(activeThread.environmentId, activeThread.projectId),
-  );
-  const activeThreadCwd = activeThread?.worktreePath ?? activeThreadProject?.workspaceRoot ?? null;
-  const activeThreadGitStatus = useEnvironmentQuery(
-    activeThread != null &&
-      activeThread.linkedPullRequest == null &&
-      activeThread.branch !== null &&
-      activeThreadCwd !== null
-      ? vcsEnvironment.status({
-          environmentId: activeThread.environmentId,
-          input: { cwd: activeThreadCwd },
-        })
-      : null,
-  ).data;
-  const detectedPullRequestUrl =
-    activeThread == null || activeThread.linkedPullRequest != null
-      ? null
-      : (ThreadPr.resolveDisplayedThreadPr({
-          threadBranch: activeThread.branch,
-          gitStatus: activeThreadGitStatus ?? null,
-          snapshot: changeRequestSnapshotByKey.get(
-            scopedThreadKey(scopeThreadRef(activeThread.environmentId, activeThread.id)),
-          ),
-          retainTerminalOnBranchMismatch: activeThread.worktreePath === null,
-        })?.url ?? null);
+  const referenceThreadRef =
+    pathname === "/pull-requests"
+      ? environments.some(
+          (environment) => environment.serverConfig?.environment.capabilities.pullRequests === true,
+        )
+        ? PULL_REQUESTS_PANEL_REF
+        : null
+      : activeThread
+        ? scopeThreadRef(activeThread.environmentId, activeThread.id)
+        : null;
+  const openPanelPullRequestUrl = useOpenPanelPullRequestUrl(referenceThreadRef);
   const activeThreadReferenceCopyTarget =
-    activeThread == null
+    referenceThreadRef === null || (pathname === "/pull-requests" && !openPanelPullRequestUrl)
       ? null
       : resolveThreadReferenceCopyTarget({
-          threadId: activeThread.id,
-          linkedPullRequestUrl: activeThread.linkedPullRequest?.url ?? null,
-          detectedPullRequestUrl,
+          threadId: referenceThreadRef.threadId,
+          openPanelPullRequestUrl,
+          linkedPullRequestUrl:
+            activeThread?.linkedPullRequest?.url ?? activeThread?.branchPullRequest?.url ?? null,
         });
   const copyActiveThreadReference = useCallback(async () => {
     const target = activeThreadReferenceCopyTarget;
@@ -752,17 +753,16 @@ function OpenCommandPaletteDialog(props: {
     prepareForOpening: prepareScientProjectForOpening,
     resolveDecision: resolveProjectInitializationDecision,
   } = useScientProjectInitialization();
+  useLayoutEffect(() => {
+    if (!props.open) resolveProjectInitializationDecision("cancel");
+  }, [props.open, resolveProjectInitializationDecision]);
   const handleProjectInitializationDecision = useCallback(
     (decision: ScientProjectInitializationDecision) => {
-      // Resolve first so unmount cleanup cannot reinterpret an accepted choice
-      // as cancellation. Both state changes are batched in the same interaction,
-      // so the underlying project picker never resurfaces between dialogs.
+      // The opening attempt closes the picker at handoff, after registration
+      // and draft preparation. A setup choice alone isn't a navigation handoff.
       resolveProjectInitializationDecision(decision);
-      if (shouldCloseProjectPickerAfterScientDecision(decision)) {
-        setOpen(false);
-      }
     },
-    [resolveProjectInitializationDecision, setOpen],
+    [resolveProjectInitializationDecision],
   );
   const projectPathInputRef = useRef<HTMLInputElement>(null);
   const projectGroupingSettings = useMemo(
@@ -792,6 +792,7 @@ function OpenCommandPaletteDialog(props: {
                 : isLocal
                   ? `${environment.label} (Local)`
                   : environment.label,
+              machine: resolveEnvironmentMachineKind(environment.serverConfig),
             },
           ] as const;
         }),
@@ -862,7 +863,7 @@ function OpenCommandPaletteDialog(props: {
     () =>
       projectPickerEntries.map(({ group, targetProject }) => ({
         ...targetProject,
-        title: group.displayName,
+        displayName: group.displayName,
       })),
     [projectPickerEntries],
   );
@@ -888,6 +889,7 @@ function OpenCommandPaletteDialog(props: {
           runtimeLabel: environment.label,
         }),
         isPrimary,
+        machine: resolveEnvironmentMachineKind(environment.serverConfig),
         isConnected: canCreateProjectInEnvironment(environment.connection.phase),
         status: connectionStatusText(environment.connection),
       };
@@ -995,8 +997,8 @@ function OpenCommandPaletteDialog(props: {
       new Map<ProjectId, string>(projects.map((project) => [project.id, project.workspaceRoot])),
     [projects],
   );
-  const projectFaviconPathById = useMemo(
-    () => new Map(projects.map((project) => [project.id, project.faviconPath ?? null] as const)),
+  const projectByKey = useMemo(
+    () => new Map(projects.map((project) => [`${project.environmentId}:${project.id}`, project])),
     [projects],
   );
   const projectTitleById = useMemo(
@@ -1165,12 +1167,17 @@ function OpenCommandPaletteDialog(props: {
         const location = projectEnvironmentLocationById.get(project.environmentId) ?? {
           kind: "remote",
           label: "Remote",
+          machine: "server" as const,
         };
         return (
           <span className="flex min-w-0 items-center gap-1">
             <span className="inline-flex min-w-0 items-center gap-1">
               {location.kind === "remote" ? (
-                <ServerIcon aria-hidden className={COMMAND_PALETTE_META_ICON_CLASS} />
+                <EnvironmentMachineIcon
+                  aria-hidden
+                  kind={location.machine}
+                  className={COMMAND_PALETTE_META_ICON_CLASS}
+                />
               ) : null}
               <span className="truncate">{location.label}</span>
             </span>
@@ -1224,15 +1231,7 @@ function OpenCommandPaletteDialog(props: {
             ) ?? null;
           return (
             <ThreadCommandSubtitle
-              environmentId={thread.environmentId}
-              projectCwd={
-                thread.projectId === null ? null : (projectCwdById.get(thread.projectId) ?? null)
-              }
-              projectFaviconPath={
-                thread.projectId === null
-                  ? null
-                  : (projectFaviconPathById.get(thread.projectId) ?? null)
-              }
+              project={projectByKey.get(`${thread.environmentId}:${thread.projectId}`) ?? null}
               projectTitle={projectTitle ?? null}
               branch={thread.branch}
               worktreePath={thread.worktreePath}
@@ -1270,8 +1269,7 @@ function OpenCommandPaletteDialog(props: {
       activeThreadId,
       clientSettings.sidebarThreadSortOrder,
       navigate,
-      projectCwdById,
-      projectFaviconPathById,
+      projectByKey,
       projectTitleById,
       providerEntryByEnvironmentAndInstanceId,
       threadContentMatchByKey,
@@ -1337,6 +1335,9 @@ function OpenCommandPaletteDialog(props: {
 
   const startAddProjectBrowse = useCallback(
     async (environmentId: EnvironmentId): Promise<void> => {
+      // Warm code while the user browses, without blocking the picker or
+      // surfacing speculative failures. Submission still checks readiness.
+      void settlePromise(() => preloadProjectChat(router));
       const initialQuery = getAddProjectInitialQueryForEnvironment(environmentId);
       const initialBrowsePath = getBrowseDirectoryPath(initialQuery);
       const browseCwd = getBrowseCwdForEnvironment(environmentId);
@@ -1364,6 +1365,7 @@ function OpenCommandPaletteDialog(props: {
       getBrowseCwdForEnvironment,
       prefetchBrowsePath,
       pushPaletteView,
+      router,
     ],
   );
 
@@ -1527,7 +1529,7 @@ function OpenCommandPaletteDialog(props: {
           : option.environmentId
         : option.status,
       disabled: !option.isConnected,
-      icon: <FolderPlusIcon className={ITEM_ICON_CLASS} />,
+      icon: <EnvironmentMachineIcon kind={option.machine} className={ITEM_ICON_CLASS} />,
       keepOpen: true,
       run: async () => {
         startAddProjectSourceSelection(option.environmentId);
@@ -1832,6 +1834,8 @@ function OpenCommandPaletteDialog(props: {
     run: async () => {
       await navigate({
         to: item.to,
+        search: (previous) =>
+          item.to === "/settings/projects" ? { ...previous, project: undefined } : previous,
         hash: item.targetId ?? item.id,
         replace: pathname === item.to,
         hashScrollIntoView: false,
@@ -1859,7 +1863,7 @@ function OpenCommandPaletteDialog(props: {
     threadSearchItems: allThreadItems,
   });
 
-  const handleAddProjectForEnvironment = useCallback(
+  const performProjectOpening = useCallback(
     async (
       input: {
         readonly environmentId: EnvironmentId;
@@ -1869,23 +1873,12 @@ function OpenCommandPaletteDialog(props: {
         readonly prepared: PreparedConnection | null;
         readonly analyticsMethod: "picker" | "drag-drop" | "recent" | "unknown";
       },
-      preparedNavigationIntent?: NewThreadNavigationIntent,
+      navigationIntent: NewThreadNavigationIntent,
+      handoff: () => void,
     ) => {
-      // Claim at the user's selection boundary, before filesystem inspection
-      // or project registration can yield. Claiming only inside
-      // handleNewThread lets an older, slower open complete one click late.
-      const navigationIntent =
-        preparedNavigationIntent ??
-        getNewThreadNavigationIntentCoordinator(router, (invalidate) => {
-          router.subscribe("onBeforeNavigate", invalidate);
-        }).claim({
-          kind: "explicit",
-          scope:
-            router.state.location.state.__TSR_key ??
-            router.state.location.state.key ??
-            router.state.location.href,
-        });
       const canCommitNavigation = navigationIntent.isCurrent;
+      if (!canCommitNavigation()) return;
+      resolveProjectInitializationDecision("cancel");
       const environment = environments.find(
         (candidate) => candidate.environmentId === input.environmentId,
       );
@@ -1934,19 +1927,28 @@ function OpenCommandPaletteDialog(props: {
       let cwd = resolveProjectPathForDispatch(rawCwd, input.currentProjectCwd);
       if (cwd.length === 0) return;
 
+      // Start independent code loading now; keep the current screen and picker
+      // available until both preparation and the destination code are ready.
+      const chatCode = settlePromise(() => preloadProjectChat(router));
       const projectPreparation = await prepareScientProjectForOpening({
         environmentId: input.environmentId,
         prepared: input.prepared,
         root: cwd,
+        isCurrent: canCommitNavigation,
       });
       if (projectPreparation === null || !canCommitNavigation()) return;
+      const chatCodeResult = await chatCode;
+      if (!canCommitNavigation()) return;
+      if (chatCodeResult._tag === "Failure") {
+        throw squashAtomCommandFailure(chatCodeResult);
+      }
       // The server owns filesystem identity. Use its canonical root for both
       // the host project record and the optional Scient initialization.
       cwd = projectPreparation.root;
       const initializeProject = projectPreparation.initialize;
 
       const existing = findProjectByPath(
-        projects.filter((project) => project.environmentId === input.environmentId),
+        readProjects().filter((project) => project.environmentId === input.environmentId),
         cwd,
       );
       if (existing) {
@@ -1957,12 +1959,13 @@ function OpenCommandPaletteDialog(props: {
           });
         }
         const latestThread = getLatestThreadForProject(
-          threads.filter((thread) => thread.environmentId === existing.environmentId),
+          readThreadShells().filter((thread) => thread.environmentId === existing.environmentId),
           existing.id,
           clientSettings.sidebarThreadSortOrder,
         );
         if (latestThread) {
           if (!canCommitNavigation()) return;
+          handoff();
           await navigate({
             to: "/$environmentId/$threadId",
             params: buildThreadRouteParams(
@@ -1973,18 +1976,12 @@ function OpenCommandPaletteDialog(props: {
           const navigationResult = await settlePromise(() =>
             handleNewThread(scopeProjectRef(existing.environmentId, existing.id), {
               navigationIntent,
+              onNavigationReady: handoff,
             }),
           );
+          if (navigationResult._tag === "Success" && navigationResult.value === null) return;
           if (navigationResult._tag === "Failure") {
-            const error = squashAtomCommandFailure(navigationResult);
-            toastManager.add(
-              stackedThreadToast({
-                type: "error",
-                title: "Failed to open project",
-                description: error instanceof Error ? error.message : "An error occurred.",
-              }),
-            );
-            return;
+            throw squashAtomCommandFailure(navigationResult);
           }
           recordScientAnalytics(readPreparedConnection(input.environmentId), {
             name: "thread.created",
@@ -1998,15 +1995,10 @@ function OpenCommandPaletteDialog(props: {
             initializationState: initializeProject ? "missing" : "unknown",
           },
         });
-        setOpen(false);
         return;
       }
 
       const projectId = newProjectId();
-      const targetEnvironmentProviders =
-        environments.find((environment) => environment.environmentId === input.environmentId)
-          ?.serverConfig?.providers ??
-        (input.environmentId === primaryEnvironmentId ? providers : []);
       const createResult = await createProject({
         environmentId: input.environmentId,
         input: {
@@ -2014,12 +2006,10 @@ function OpenCommandPaletteDialog(props: {
           title: inferProjectTitleFromPath(cwd),
           workspaceRoot: cwd,
           createWorkspaceRootIfMissing: true,
-          defaultModelSelection: resolveDefaultProviderModelSelection(
-            targetEnvironmentProviders,
-            null,
-          ),
+          defaultModelSelection: null,
         },
       });
+      if (!canCommitNavigation()) return;
       if (createResult._tag === "Failure") {
         recordScientAnalytics(readPreparedConnection(input.environmentId), {
           name: "project.add.failed",
@@ -2050,7 +2040,6 @@ function OpenCommandPaletteDialog(props: {
             description: "The project is saved. Select it again after it appears in the sidebar.",
           }),
         );
-        setOpen(false);
         return;
       }
 
@@ -2062,22 +2051,15 @@ function OpenCommandPaletteDialog(props: {
       }
 
       const navigationResult = await settlePromise(() =>
-        handleNewThread(createdProjectRef, { navigationIntent }),
+        handleNewThread(createdProjectRef, { navigationIntent, onNavigationReady: handoff }),
       );
+      if (navigationResult._tag === "Success" && navigationResult.value === null) return;
       if (navigationResult._tag === "Failure") {
         recordScientAnalytics(readPreparedConnection(input.environmentId), {
           name: "project.add.failed",
           properties: { stage: "navigation" },
         });
-        const error = squashAtomCommandFailure(navigationResult);
-        toastManager.add(
-          stackedThreadToast({
-            type: "error",
-            title: "Failed to add project",
-            description: error instanceof Error ? error.message : "An error occurred.",
-          }),
-        );
-        return;
+        throw squashAtomCommandFailure(navigationResult);
       }
       const analyticsConnection = readPreparedConnection(input.environmentId);
       recordScientAnalytics(analyticsConnection, {
@@ -2095,23 +2077,52 @@ function OpenCommandPaletteDialog(props: {
         name: "thread.created",
         properties: { creationSource: "new" },
       });
-      setOpen(false);
     },
     [
       handleNewThread,
       createProject,
       environments,
       navigate,
-      primaryEnvironmentId,
-      projects,
-      providers,
       initializeProjectWithFeedback,
       prepareScientProjectForOpening,
-      setOpen,
+      resolveProjectInitializationDecision,
       clientSettings.sidebarThreadSortOrder,
-      threads,
       router,
     ],
+  );
+
+  const handleAddProjectForEnvironment = useCallback(
+    async (input: Parameters<typeof performProjectOpening>[0]) => {
+      await runProjectOpening(
+        JSON.stringify([
+          input.environmentId,
+          resolveProjectPathForDispatch(input.rawCwd, input.currentProjectCwd),
+        ]),
+        // Claim before inspection or registration yields, but only once for
+        // repeated submissions of the same pending folder selection.
+        () =>
+          getNewThreadNavigationIntentCoordinator(router, (invalidate) => {
+            router.subscribe("onBeforeNavigate", invalidate);
+          }).claim({
+            kind: "explicit",
+            scope:
+              router.state.location.state.__TSR_key ??
+              router.state.location.state.key ??
+              router.state.location.href,
+          }),
+        ({ navigationIntent, handoff }) => performProjectOpening(input, navigationIntent, handoff),
+        (error) => {
+          toastManager.add(
+            stackedThreadToast({
+              type: "error",
+              title: "Failed to open project",
+              description: `${errorMessage(error)} Select the folder again to retry.`,
+            }),
+          );
+        },
+      );
+    },
+    [performProjectOpening, router, runProjectOpening],
   );
 
   const handleAddProject = useCallback(
@@ -2517,19 +2528,20 @@ function OpenCommandPaletteDialog(props: {
       context: { modelPickerOpen: false },
     });
     if (threadJumpIndexFromCommand(command ?? "") !== null) {
+      event.preventDefault();
+      event.stopPropagation();
       const matchingItem = displayedGroups
         .flatMap((group) => group.items)
         .find((item) => item.shortcutCommand === command);
       if (matchingItem) {
-        event.preventDefault();
-        event.stopPropagation();
         executeItem(matchingItem);
-        return;
       }
+      return;
     }
-    if (command === "thread.copyReference" && activeThreadReferenceCopyTarget !== null) {
+    if (command === "thread.copyReference") {
       event.preventDefault();
       event.stopPropagation();
+      if (activeThreadReferenceCopyTarget === null) return;
       setOpen(false);
       void copyActiveThreadReference();
       return;
@@ -2776,7 +2788,11 @@ function OpenCommandPaletteDialog(props: {
           }
         >
           <span>
-            {isCloneDestinationStep && isRemoteProjectPending ? "Cloning" : submitActionLabel}
+            {isOpeningProject
+              ? "Opening…"
+              : isCloneDestinationStep && isRemoteProjectPending
+                ? "Cloning"
+                : submitActionLabel}
           </span>
           <KbdGroup className="pointer-events-none -me-0.5 items-center gap-1">
             <Kbd>{hasKeyboardBrowseHighlight ? `${submitModifierLabel} Enter` : "Enter"}</Kbd>

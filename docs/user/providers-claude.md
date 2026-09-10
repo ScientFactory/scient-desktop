@@ -97,24 +97,40 @@ When you set this field, Scient points Claude Code at that directory with the
 `CLAUDE_CONFIG_DIR` environment variable. It does not change `HOME`, so your system keychain and
 the rest of your environment stay as they are.
 
-## Reduce Context Usage
+Claude Code's verbose mode can stay enabled when you use Claude for text generation, including
+thread titles, branch names, commit messages, and pull request descriptions. On a remote connection,
+Scient uses the Claude configuration on the connected server.
+
+## Compact long conversations
+
+If Claude reaches a subscription usage limit mid-turn, the conversation shows the limit and the
+remaining wait when Claude reports a reset time. Claude may keep the turn open until the window
+reopens. Wait for that reset, or stop the turn and continue later; the warning timestamp indicates
+when its displayed wait began.
 
 In Settings, open your Claude provider and set **Auto-compact after** to a token count between
 `100000` and `1000000`. For example, `300000` compacts the conversation into a summary once it
 reaches about 300,000 tokens, without changing the model's context window. Leave the field
 empty to keep Claude Code's default behavior.
 
-On web and desktop, when you return to an older Claude thread with a large context, T3 Code
+On web and desktop, when you return to an older Claude thread with a large context, Scient
 offers to compact the conversation before you continue. You can also select **Compact context**
 from the context meter. On every client, you can enter `/compact` in the message composer, and
 Claude can show its own resume prompt when you continue an old session.
 
 ## Where Claude Skills Are Loaded
 
-Scient looks for Claude skills in the Claude config directory's `skills` folder, then
-`<workspace>/.agents/skills`, then `<workspace>/.claude/skills`.
+Scient looks for Claude skills in the Claude config directory's `skills` folder and
+`<workspace>/.claude/skills`, the two places Claude Code loads them from.
 
-If the same skill name exists in more than one folder, the later folder wins.
+If the same skill name exists in more than one folder, the one in the Claude config directory
+wins, the same way Claude Code resolves it.
+
+A skill set to `off` in Claude Code's `skillOverrides` is left out of both composer menus. A skill
+marked `disable-model-invocation` still appears, because you start it yourself when you pick it.
+Claude Code runs one skill per message; when a message names several, the last one runs directly and
+Claude starts the others through its Skill tool, which refuses skills marked
+`disable-model-invocation`.
 
 ## I Want Work And Personal Claude Accounts
 

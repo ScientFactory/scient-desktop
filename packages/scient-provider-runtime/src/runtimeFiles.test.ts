@@ -8,6 +8,7 @@ import * as Tar from "tar";
 import JSZip from "jszip";
 import { afterEach, describe, expect, it } from "vite-plus/test";
 
+import { resolveReviewedCursorArtifact } from "./cursorManifest.ts";
 import {
   materializeManagedRuntimeArtifact,
   resolveManagedRuntimeArtifactPath,
@@ -328,7 +329,31 @@ describe("managed runtime files", () => {
     ).rejects.toThrow("Unsafe Windows archive path");
   });
 
-  it("rejects invalid catalog extraction limits before extraction", async () => {
+  it("accepts Cursor's reviewed expanded budget independently of the download ceiling", async () => {
+    const root = await temporaryRoot();
+    const source = NodePath.join(root, "source");
+    const policy = resolveReviewedCursorArtifact({ platform: "darwin", arch: "arm64" })!;
+    await NodeFSP.mkdir(NodePath.join(source, "dist-package"), { recursive: true });
+    await NodeFSP.writeFile(NodePath.join(source, policy.executablePath), "cursor fixture");
+    const archive = NodePath.join(root, "cursor.tar.gz");
+    await Tar.c({ cwd: source, file: archive, gzip: true }, ["dist-package"]);
+
+    const executable = await materializeManagedRuntimeArtifact({
+      archivePath: archive,
+      archiveFormat: policy.archiveFormat,
+      destination: NodePath.join(root, "destination"),
+      executablePath: policy.executablePath,
+      platform: policy.target.platform,
+      extractionLimits: policy.extractionLimits,
+      signal: new AbortController().signal,
+    });
+    expect(await NodeFSP.readFile(executable, "utf8")).toBe("cursor fixture");
+  });
+
+  it.each([
+    { maxEntries: 0, maxExpandedBytes: 4_096 },
+    { maxEntries: 4, maxExpandedBytes: 768 * 1024 * 1024 + 1 },
+  ])("rejects invalid extraction limits before extraction: %j", async (extractionLimits) => {
     const root = await temporaryRoot();
     const archive = NodePath.join(root, "cursor.zip");
     const zip = new JSZip();
@@ -342,7 +367,7 @@ describe("managed runtime files", () => {
         destination: NodePath.join(root, "destination"),
         executablePath: "cursor-agent.cmd",
         platform: "win32",
-        extractionLimits: { maxEntries: 0, maxExpandedBytes: 4_096 },
+        extractionLimits,
         signal: new AbortController().signal,
       }),
     ).rejects.toThrow("invalid extraction limits");

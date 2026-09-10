@@ -1,16 +1,19 @@
 import {
   isWorkspaceImagePreviewPath,
   isWorkspacePdfPreviewPath,
+  isWorkspaceVideoPreviewPath,
 } from "@t3tools/shared/filePreview";
+import { isAbsolutePath } from "~/terminal-links";
 
 export const isMarkdownPreviewFile = (path: string): boolean => /\.(?:md|mdx)$/i.test(path);
 
 export const isLatexPreviewFile = (path: string): boolean => /\.(?:tex|latex|ltx)$/i.test(path);
 
-export type FilePreviewKind = "empty" | "image" | "pdf" | "text";
+export type FilePreviewKind = "empty" | "image" | "pdf" | "text" | "video";
 
 export function resolveFilePreviewKind(path: string | null): FilePreviewKind {
   if (path === null) return "empty";
+  if (isWorkspaceVideoPreviewPath(path)) return "video";
   if (isWorkspaceImagePreviewPath(path)) return "image";
   if (isWorkspacePdfPreviewPath(path)) return "pdf";
   return "text";
@@ -18,6 +21,17 @@ export function resolveFilePreviewKind(path: string | null): FilePreviewKind {
 
 export function shouldLoadFileAsText(path: string | null): boolean {
   return resolveFilePreviewKind(path) === "text";
+}
+
+export function shouldShowFileExplorer(input: {
+  readonly relativePath: string | null;
+  readonly explorerOpen: boolean;
+  readonly attachmentOpen: boolean;
+}): boolean {
+  if (input.attachmentOpen || (input.relativePath && isAbsolutePath(input.relativePath))) {
+    return false;
+  }
+  return input.explorerOpen || input.relativePath === null;
 }
 
 export function setMarkdownTaskChecked(

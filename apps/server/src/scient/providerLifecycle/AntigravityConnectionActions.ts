@@ -70,6 +70,11 @@ const TERMINAL_MODE_QUERIES = [
   },
 ] as const;
 
+type LegacyAntigravityConnectionSettings = Pick<
+  AntigravitySettings,
+  "enabled" | "binaryPath" | "customModels"
+>;
+
 function hasControlCharacter(value: string): boolean {
   return [...value].some((character) => {
     const codePoint = character.codePointAt(0);
@@ -324,7 +329,7 @@ export function withAntigravitySessionShutdown<E>(
 }
 
 const runAgyModels = Effect.fn("AntigravityConnectionActions.runModels")(function* (
-  settings: AntigravitySettings,
+  settings: LegacyAntigravityConnectionSettings,
   environment: NodeJS.ProcessEnv,
   spawner: ChildProcessSpawner.ChildProcessSpawner["Service"],
 ) {
@@ -376,7 +381,7 @@ function ptySpawnCommand(
 
 export const makeAntigravityConnectionActions = Effect.fn("AntigravityConnectionActions.make")(
   function (
-    settings: AntigravitySettings,
+    settings: LegacyAntigravityConnectionSettings,
     environment: NodeJS.ProcessEnv,
     spawner: ChildProcessSpawner.ChildProcessSpawner["Service"],
     ptyAdapter: PtyAdapter.PtyAdapter["Service"],

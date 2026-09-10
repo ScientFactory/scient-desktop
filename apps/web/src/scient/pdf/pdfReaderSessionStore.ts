@@ -4,7 +4,7 @@ import { createMemoryStorage } from "~/lib/storage";
 import { clampPdfPage, normalizePdfZoom, type PdfSidebarMode } from "./pdfReaderModel";
 
 export const PDF_READER_SESSION_STORAGE_KEY = "scient:pdf-reader-sessions:v1";
-export const PDF_READER_SESSION_MAX_DOCUMENTS = 100;
+const PDF_READER_SESSION_MAX_DOCUMENTS = 100;
 
 const PDF_READER_SESSION_VERSION = 1;
 const PDF_READER_SESSION_WRITE_DELAY_MS = 250;

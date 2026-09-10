@@ -11,7 +11,6 @@ const ProjectPath = Schema.String.check(
   Schema.isTrimmed(),
   Schema.isNonEmpty(),
   Schema.isMaxLength(1_024),
-  // eslint-disable-next-line no-control-regex -- Filesystem paths must reject NUL.
   Schema.isPattern(/^[^\0]+$/u),
 );
 const BoundedText = Schema.String.check(Schema.isMaxLength(2_048));

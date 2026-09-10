@@ -1,6 +1,7 @@
 import type {
   ProviderDriverKind,
   ScientSkillInventory,
+  ServerProvider,
   ServerProviderSkill,
   ServerProviderSlashCommand,
 } from "@t3tools/contracts";
@@ -44,6 +45,19 @@ export function dedupeProviderSkillsByName(
   });
 }
 
+/**
+ * Whether a composer pick can start this skill. A skill switched off in the
+ * provider's settings will not run, and one the provider reserves for the
+ * agent (Claude Code's `user-invocable: false`) rejects a user invocation.
+ * Everything else, including skills the agent may not start on its own, is
+ * fair game: the server dispatches the pick in the provider's native form.
+ */
+export function isProviderSkillUserInvocable(
+  skill: Pick<ServerProviderSkill, "enabled" | "userInvocable">,
+): boolean {
+  return skill.enabled && skill.userInvocable !== false;
+}
+
 export function getProviderSkillsForSlashMenu(
   skills: ReadonlyArray<ServerProviderSkill>,
   showSkillsInSlashMenu: boolean,
@@ -52,7 +66,7 @@ export function getProviderSkillsForSlashMenu(
     ? dedupeProviderSkillsByName(
         skills.filter(
           (skill) =>
-            skill.enabled &&
+            isProviderSkillUserInvocable(skill) &&
             (isGlobalProviderSkill(skill) || skill.path.startsWith(SCIENT_SKILL_PATH_PREFIX)),
         ),
       )
@@ -122,9 +136,12 @@ export function mergeEffectiveProviderSkills(input: {
   readonly provider: ProviderDriverKind;
   readonly providerSkills: ReadonlyArray<ServerProviderSkill>;
   readonly inventory: ScientSkillInventory | null;
+  readonly includeContextualProviderSkills?: boolean;
 }): ReadonlyArray<ServerProviderSkill> {
   const { inventory, provider, providerSkills } = input;
-  const visibleProviderSkills = providerSkills.filter(isGlobalProviderSkill);
+  const visibleProviderSkills = input.includeContextualProviderSkills
+    ? providerSkills
+    : providerSkills.filter(isGlobalProviderSkill);
   if (!inventory?.supportedProviders.includes(provider)) return visibleProviderSkills;
 
   // Provider-native behavior remains authoritative. A Scient skill with the
@@ -134,18 +151,38 @@ export function mergeEffectiveProviderSkills(input: {
   );
   const scientSkills = inventory.skills
     .filter((skill) => skill.active && !occupiedNames.has(skill.name.trim().toLowerCase()))
-    .map(
-      (skill): ServerProviderSkill => ({
-        name: skill.name,
-        description: skill.description,
-        shortDescription: skill.description,
-        path: `${SCIENT_SKILL_PATH_PREFIX}${encodeURIComponent(skill.releaseKey)}`,
-        scope: skill.scope === "project" ? "project" : "personal",
-        enabled: true,
-      }),
-    )
+    .map((skill): ServerProviderSkill => ({
+      name: skill.name,
+      description: skill.description,
+      shortDescription: skill.description,
+      path: `${SCIENT_SKILL_PATH_PREFIX}${encodeURIComponent(skill.releaseKey)}`,
+      scope: skill.scope === "project" ? "project" : "personal",
+      enabled: true,
+    }))
     .sort((left, right) => left.name.localeCompare(right.name));
   return scientSkills.length === 0
     ? visibleProviderSkills
     : [...visibleProviderSkills, ...scientSkills];
+}
+
+function resolveProviderWorkspaceSnapshot(
+  provider: ServerProvider,
+  cwd: string | null | undefined,
+) {
+  if (!cwd) return undefined;
+  return provider.workspaceSnapshots?.find((snapshot) => snapshot.cwd === cwd);
+}
+
+export function resolveProviderSkillsForCwd(
+  provider: ServerProvider,
+  cwd: string | null | undefined,
+): ServerProvider["skills"] {
+  return resolveProviderWorkspaceSnapshot(provider, cwd)?.skills ?? provider.skills;
+}
+
+export function resolveProviderSlashCommandsForCwd(
+  provider: ServerProvider,
+  cwd: string | null | undefined,
+): ServerProvider["slashCommands"] {
+  return resolveProviderWorkspaceSnapshot(provider, cwd)?.slashCommands ?? provider.slashCommands;
 }

@@ -26,6 +26,7 @@
  */
 import {
   EventId,
+  ApprovalRequestId,
   isForkBaselineBoundary,
   MessageId,
   TurnId,
@@ -50,6 +51,7 @@ import { checkpointRefForThreadTurn } from "../../checkpointing/Utils.ts";
 import { OrchestrationCommandInvariantError } from "../Errors.ts";
 import { requireThread, requireThreadAbsent } from "../commandInvariants.ts";
 import type { ResolvedForkBoundaries } from "./forkBoundaryTypes.ts";
+import { retainQuestionAnswers, questionAnswerAttachments } from "./retainedQuestionAnswers.ts";
 
 const nowIso = Effect.map(DateTime.now, DateTime.formatIso);
 
@@ -101,7 +103,7 @@ const withForkEventBase = (input: {
  * user ids on their boundaries, so the nearest unclaimed user message before
  * each boundary assistant is associated as a legacy fallback.
  */
-function retainPrefixMessages(
+export function retainPrefixMessages(
   messages: ReadonlyArray<OrchestrationMessage>,
   retainedBoundaries: ReadonlyArray<OrchestrationForkBoundary>,
   retainedTurnIds: ReadonlySet<string>,
@@ -112,8 +114,17 @@ function retainPrefixMessages(
   const retainedMessageIds = new Set<string>();
   const sourceTurnIdByMessageId = new Map<string, TurnId>();
   const claimedUserMessageIds = new Set<string>();
+  const messageById = new Map(messages.map((message, index) => [message.id, { message, index }]));
+  let lastRetainedIndex = -1;
+  for (const boundary of retainedBoundaries) {
+    const index =
+      boundary.assistantMessageId === null
+        ? -1
+        : (messageById.get(boundary.assistantMessageId)?.index ?? -1);
+    lastRetainedIndex = Math.max(lastRetainedIndex, index);
+  }
 
-  for (const message of messages) {
+  for (const message of messages.slice(0, lastRetainedIndex + 1)) {
     if (message.role === "system") {
       retainedMessageIds.add(message.id);
     } else if (message.turnId !== null && retainedTurnIds.has(message.turnId)) {
@@ -126,9 +137,7 @@ function retainPrefixMessages(
       continue;
     }
 
-    const assistantIndex = messages.findIndex(
-      (message) => message.id === boundary.assistantMessageId,
-    );
+    const assistantIndex = messageById.get(boundary.assistantMessageId)?.index ?? -1;
     if (assistantIndex < 0) {
       continue;
     }
@@ -142,17 +151,17 @@ function retainPrefixMessages(
     const explicitUser =
       boundary.userMessageId === null
         ? undefined
-        : messages.find(
-            (message) => message.id === boundary.userMessageId && message.role === "user",
-          );
-    const user =
-      explicitUser ??
-      messages.findLast(
-        (message, index) =>
-          index < assistantIndex &&
-          message.role === "user" &&
-          !claimedUserMessageIds.has(message.id),
-      );
+        : messageById.get(boundary.userMessageId)?.message;
+    let user = explicitUser?.role === "user" ? explicitUser : undefined;
+    if (!user) {
+      for (let index = assistantIndex - 1; index >= 0; index--) {
+        const candidate = messages[index]!;
+        if (candidate.role === "user" && !claimedUserMessageIds.has(candidate.id)) {
+          user = candidate;
+          break;
+        }
+      }
+    }
     if (user) {
       retainedMessageIds.add(user.id);
       claimedUserMessageIds.add(user.id);
@@ -266,7 +275,7 @@ export const forkThread = Effect.fn("scientForkThread")(function* ({
       sourceMessage.role !== "assistant" ||
       sourceMessage.streaming ||
       selectedBoundary.turnId === null ||
-      sourceMessage.turnId !== selectedBoundary.turnId
+      (sourceMessage.turnId !== null && sourceMessage.turnId !== selectedBoundary.turnId)
     ) {
       return yield* invariant(
         `Assistant message '${forkPoint.messageId}' is not a terminal completed response of origin thread '${command.originThreadId}'.`,
@@ -296,6 +305,8 @@ export const forkThread = Effect.fn("scientForkThread")(function* ({
   );
   const retainedPrefix = retainPrefixMessages(origin.messages, retainedBoundaries, retainedTurnIds);
   const prefixMessages = retainedPrefix.messages;
+  const retainedAnswers = retainQuestionAnswers(origin.activities, retainedTurnIds);
+  if (retainedAnswers.error) return yield* invariant(retainedAnswers.error);
   if (
     forkPoint.kind === "user-message" &&
     prefixMessages.some((message) => message.id === forkPoint.messageId)
@@ -333,16 +344,17 @@ export const forkThread = Effect.fn("scientForkThread")(function* ({
 
   const attachmentRemap = new Map<string, ChatAttachment>();
   const attachmentCopies: Array<ThreadForkedPayload["attachmentCopies"][number]> = [];
-  for (const message of prefixMessages) {
-    for (const source of message.attachments ?? []) {
-      if (attachmentRemap.has(source.id)) continue;
-      const uuid = yield* Crypto.Crypto.pipe(Effect.flatMap((crypto) => crypto.randomUUIDv4));
-      const extensionSuffix =
-        source.type === "file" ? `-${attachmentFileExtension(source.name).slice(1)}` : "";
-      const target = { ...source, id: `${attachmentThreadSegment}-${uuid}${extensionSuffix}` };
-      attachmentRemap.set(source.id, target);
-      attachmentCopies.push({ source, target });
-    }
+  for (const source of [
+    ...prefixMessages.flatMap((message) => message.attachments ?? []),
+    ...questionAnswerAttachments(retainedAnswers.answers),
+  ]) {
+    if (attachmentRemap.has(source.id)) continue;
+    const uuid = yield* Crypto.Crypto.pipe(Effect.flatMap((crypto) => crypto.randomUUIDv4));
+    const extensionSuffix =
+      source.type === "file" ? `-${attachmentFileExtension(source.name).slice(1)}` : "";
+    const target = { ...source, id: `${attachmentThreadSegment}-${uuid}${extensionSuffix}` };
+    attachmentRemap.set(source.id, target);
+    attachmentCopies.push({ source, target });
   }
 
   // 1) The new thread aggregate. The provider session starts independently and
@@ -432,6 +444,51 @@ export const forkThread = Effect.fn("scientForkThread")(function* ({
         streaming: false,
         createdAt: message.createdAt,
         updatedAt: message.updatedAt,
+      },
+    });
+  }
+
+  // Copy history, not executable question requests/responses. Existing activity
+  // projectors render and retain these files without contacting a provider.
+  const requestIds = new Map<string, ApprovalRequestId>();
+  for (const { activity, answer } of retainedAnswers.answers) {
+    const turnId = activity.turnId === null ? undefined : importedTurnIds.get(activity.turnId);
+    if (turnId === undefined)
+      return yield* invariant("A retained question answer has no copied conversation turn.");
+    const id = EventId.make(
+      yield* Crypto.Crypto.pipe(Effect.flatMap((crypto) => crypto.randomUUIDv4)),
+    );
+    let requestId = requestIds.get(answer.requestId);
+    if (requestId === undefined) {
+      requestId = ApprovalRequestId.make(
+        yield* Crypto.Crypto.pipe(Effect.flatMap((crypto) => crypto.randomUUIDv4)),
+      );
+      requestIds.set(answer.requestId, requestId);
+    }
+    events.push({
+      ...(yield* withForkEventBase({
+        commandId: command.commandId,
+        aggregateId: command.newThreadId,
+        occurredAt,
+      })),
+      type: "thread.activity-appended",
+      payload: {
+        threadId: command.newThreadId,
+        activity: {
+          ...activity,
+          id,
+          turnId,
+          payload: {
+            ...answer,
+            requestId,
+            attachmentsByQuestionId: Object.fromEntries(
+              Object.entries(answer.attachmentsByQuestionId).map(([questionId, attachments]) => [
+                questionId,
+                attachments.map((attachment) => attachmentRemap.get(attachment.id)!),
+              ]),
+            ),
+          },
+        },
       },
     });
   }

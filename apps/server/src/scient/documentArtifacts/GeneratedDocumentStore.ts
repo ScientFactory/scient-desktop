@@ -54,7 +54,6 @@ const StoredGeneratedDocumentRevision = Schema.Struct({
   fileName: Schema.String.check(
     Schema.isMinLength(1),
     Schema.isMaxLength(255),
-    // eslint-disable-next-line no-control-regex -- Persisted filenames must reject NUL explicitly.
     Schema.isPattern(/^[^/\\\0]+\.pdf$/iu),
   ),
   pageCount: Schema.Int.check(Schema.isGreaterThanOrEqualTo(1)),
@@ -116,7 +115,7 @@ export interface GeneratedDocumentRetentionPolicy {
   readonly maxEvictionsPerSweep: number;
 }
 
-export const DEFAULT_GENERATED_DOCUMENT_RETENTION: GeneratedDocumentRetentionPolicy = {
+const DEFAULT_GENERATED_DOCUMENT_RETENTION: GeneratedDocumentRetentionPolicy = {
   maxTotalBytes: 500 * 1_024 * 1_024,
   maxRevisionCount: 100,
   maxEvictionsPerSweep: 32,
@@ -131,7 +130,7 @@ const BINDING_CHANGE_REPLAY = 32;
 
 const IDENTIFIER_NAME = /^[A-Za-z0-9][A-Za-z0-9._:-]*$/u;
 
-export class GeneratedDocumentStoreError extends Schema.TaggedErrorClass<GeneratedDocumentStoreError>()(
+export class GeneratedDocumentStoreError extends Schema.TaggedError<GeneratedDocumentStoreError>()(
   "GeneratedDocumentStoreError",
   {
     operation: Schema.Literals([
@@ -315,7 +314,6 @@ function pdfFileName(title: string): string {
   const normalized = title
     .trim()
     .replace(/\.pdf$/iu, "")
-    // eslint-disable-next-line no-control-regex -- Filesystem-safe output names replace NUL explicitly.
     .replace(/[\\/:*?"<>|\0]/gu, "-")
     .replace(/\s+/gu, " ")
     .slice(0, 240)
@@ -327,6 +325,7 @@ export interface GeneratedDocumentStoreOptions {
   readonly retention?: Partial<GeneratedDocumentRetentionPolicy> | undefined;
 }
 
+/** @public Service construction is part of the canonical Effect module API. */
 export const make = Effect.fn("GeneratedDocumentStore.make")(function* (
   options: GeneratedDocumentStoreOptions = {},
 ) {

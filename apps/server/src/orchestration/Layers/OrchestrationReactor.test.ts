@@ -1,3 +1,4 @@
+import { ScientQueueWorker } from "../../scient/threadQueue/Worker.ts";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
@@ -13,6 +14,7 @@ import { ProviderCommandReactor } from "../Services/ProviderCommandReactor.ts";
 import { ProviderRuntimeIngestionService } from "../Services/ProviderRuntimeIngestion.ts";
 import { ThreadDeletionReactor } from "../Services/ThreadDeletionReactor.ts";
 import * as ThreadSettlementReactor from "../ThreadSettlementReactor.ts";
+import * as ThreadPullRequestReactor from "../ThreadPullRequestReactor.ts";
 import { OrchestrationReactor } from "../Services/OrchestrationReactor.ts";
 import { makeOrchestrationReactor } from "./OrchestrationReactor.ts";
 import * as AgentAwarenessRelay from "../../relay/AgentAwarenessRelay.ts";
@@ -32,6 +34,7 @@ describe("OrchestrationReactor", () => {
 
     runtime = ManagedRuntime.make(
       Layer.effect(OrchestrationReactor, makeOrchestrationReactor).pipe(
+        Layer.provide(Layer.succeed(ScientQueueWorker, { start: Effect.void })),
         Layer.provideMerge(
           Layer.succeed(ProviderRuntimeIngestionService, {
             start: () => {
@@ -68,6 +71,16 @@ describe("OrchestrationReactor", () => {
             },
             drain: Effect.void,
             awaitCompletion: () => Effect.void,
+            getDisposition: () => Effect.succeed("unknown"),
+            getOptions: () =>
+              Effect.succeed({
+                available: false,
+                localAvailable: false,
+                reason: "No fixture boundary",
+                newWorktree: false,
+                sourceAssistantMessageId: null,
+                sourceUserMessageId: null,
+              }),
           }),
         ),
         // SCIENT-FORK:END
@@ -78,6 +91,15 @@ describe("OrchestrationReactor", () => {
               return Effect.void;
             },
             drainThrough: () => Effect.void,
+          }),
+        ),
+        Layer.provideMerge(
+          Layer.succeed(ThreadPullRequestReactor.ThreadPullRequestReactor, {
+            start: () => {
+              started.push("thread-pull-request-reactor");
+              return Effect.void;
+            },
+            drain: Effect.void,
           }),
         ),
         Layer.provideMerge(
@@ -113,6 +135,7 @@ describe("OrchestrationReactor", () => {
       "scient-fork-reactor",
       // SCIENT-FORK:END
       "thread-deletion-reactor",
+      "thread-pull-request-reactor",
       "thread-settlement-reactor",
       "agent-awareness-relay",
     ]);

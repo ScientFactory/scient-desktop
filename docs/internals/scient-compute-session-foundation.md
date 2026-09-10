@@ -5,9 +5,35 @@ Owner: Yaacov
 Created: 2026-08-18
 Purpose: Defines the architecture, domain model, transport boundary, persistence semantics, delivered foundation phases, and post-baseline capability roadmap for stateful interactive scientific compute sessions in Scient. Written as a companion to the accepted `scient-analysis-runtime-foundation.md`, which governs one-shot terminal execution.
 Doc type: Architecture decision record
-Implementation maturity: Phases 1-4 and the figure-viewing extension are committed and locally qualified on macOS; the Phase 5B shared-representation foundation is a locally qualified child candidate
+Implementation maturity: The initial Python product and shared-representation foundation reached main through PR #129; the continuation adds optional managed Python, stateful MATLAB, and bounded table/Plotly presentation locally, with final product and platform qualification pending
 Product maturity: Phase 4 core workflow and the figure-viewing extension are owner-accepted locally
-Release maturity: Not approved
+Release maturity: The continuation is not approved for release; historical baseline receipts below do not qualify it
+
+## Current implementation boundary
+
+The local continuation builds on the merged Python baseline rather than replacing
+its session, history, or project-file ownership. It implements:
+
+- optional Scient-managed Scientific Python with exact-runtime Toolkit assessment,
+  explicit selection, refresh, update, repair, cancellation, and private removal;
+- stateful MATLAB through a language binding, shared bridge transport, file actions,
+  results/history, and bounded variables, while retaining fresh-process `AnalysisRun`;
+- bounded scalar-table previews and reuse of Scient's Plotly renderer; and
+- runtime-change recovery, scoped file refresh, cancellation-safe setup, and
+  project-owned bounded session notifications.
+
+These are implementation claims, not renewed visual or cross-platform acceptance.
+The managed-runtime owner and promotion gates are in
+[the Toolkit foundation](scient-compute-toolkit-foundation.md). Positive MATLAB
+desktop execution after the candidate's macOS permission prompt, graphical
+setup/removal and session recovery, and packaged/platform checks remain open.
+Native notebook authoring, portable stateful-result promotion, richer data
+inspection, and agent authority remain separate tracks below. Existing notebook
+contract experiments are not an integrated notebook product.
+
+The dated qualification section below records the earlier baseline. Consult the
+exact candidate's test receipts for current integration status; do not infer that
+old green checks qualify a later merge.
 
 ## Planning Posture
 

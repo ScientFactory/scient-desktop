@@ -1,6 +1,6 @@
 import { compareSemverVersions, parseSemver } from "@t3tools/shared/semver";
 
-import type { ManagedRuntimeProvider } from "./managedRuntimeArtifact.ts";
+import type { ManagedRuntimeCatalogProvider } from "./managedRuntimeArtifact.ts";
 
 export type ManagedRuntimeVersionComparison = "older" | "equal" | "newer" | "unknown";
 
@@ -52,7 +52,7 @@ function compareCursorVersions(
 }
 
 export function compareManagedRuntimeVersions(input: {
-  readonly provider: ManagedRuntimeProvider;
+  readonly provider: ManagedRuntimeCatalogProvider;
   readonly current: string;
   readonly candidate: string;
 }): ManagedRuntimeVersionComparison {
@@ -64,7 +64,7 @@ export function compareManagedRuntimeVersions(input: {
 }
 
 export function isManagedRuntimeUpdate(input: {
-  readonly provider: ManagedRuntimeProvider;
+  readonly provider: ManagedRuntimeCatalogProvider;
   readonly current: string | null;
   readonly candidate: string;
 }): boolean {

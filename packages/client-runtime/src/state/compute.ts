@@ -38,7 +38,7 @@ export function withManagedRuntimePolling<A extends ComputeManagedRuntimeStatus 
   }).pipe(Atom.setIdleTTL(0));
 }
 
-export function managedRuntimeInspectionKey(status: ComputeManagedRuntimeStatus | null) {
+function managedRuntimeInspectionKey(status: ComputeManagedRuntimeStatus | null) {
   return JSON.stringify(
     status === null
       ? null

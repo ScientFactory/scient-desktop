@@ -39,7 +39,9 @@ import {
   RuntimeRequestId,
   type ThreadId,
   TurnId,
+  type TurnCompletedPayload,
 } from "@t3tools/contracts";
+
 import * as Clock from "effect/Clock";
 import * as Crypto from "effect/Crypto";
 import * as DateTime from "effect/DateTime";
@@ -85,10 +87,13 @@ import { parsePermissionRequest } from "../acp/AcpRuntimeModel.ts";
 import { makeAcpNativeLoggerFactory } from "../acp/AcpNativeLogging.ts";
 import {
   applyDroidModelAndEffort,
+  validateDroidReasoningState,
   findDroidAutonomyOption,
   makeDroidAcpRuntime,
   requestedDroidEffortFromSelection,
   resolveDroidAutonomyModeId,
+  type DroidAcpRuntimeFactory,
+  type DroidAcpRuntime,
 } from "../acp/DroidAcpSupport.ts";
 import { type DroidAdapterShape } from "../Services/DroidAdapter.ts";
 import { type EventNdjsonLogger, makeEventNdjsonLogger } from "./EventNdjsonLogger.ts";
@@ -96,6 +101,12 @@ import { type EventNdjsonLogger, makeEventNdjsonLogger } from "./EventNdjsonLogg
 const encodeUnknownJsonStringExit = Schema.encodeUnknownExit(Schema.fromJsonString(Schema.Unknown));
 
 const PROVIDER = ProviderDriverKind.make("droid");
+
+function droidPromptCompletion(
+  stopReason: EffectAcpSchema.StopReason | null,
+): TurnCompletedPayload {
+  return { state: stopReason === "cancelled" ? "cancelled" : "completed", stopReason };
+}
 const DROID_RESUME_VERSION = 1 as const;
 
 const DEFAULT_TURN_IDLE_TIMEOUT_MILLIS = 600_000;
@@ -131,6 +142,7 @@ export interface DroidAdapterLiveOptions {
   readonly nativeEventLogPath?: string;
   readonly nativeEventLogger?: EventNdjsonLogger;
   readonly instanceId?: ProviderInstanceId;
+  readonly makeAcpRuntime?: DroidAcpRuntimeFactory;
   /** Deterministic lifecycle gates used only by adapter cancellation tests. */
   readonly testHooks?: {
     readonly afterPromptRpcSucceeded?: (
@@ -153,7 +165,7 @@ interface DroidSessionContext {
   readonly acpSessionId: string;
   session: ProviderSession;
   readonly scope: Scope.Closeable;
-  readonly acp: AcpSessionRuntime.AcpSessionRuntime["Service"];
+  readonly acp: DroidAcpRuntime;
   notificationFiber: Fiber.Fiber<void, never> | undefined;
   readonly pendingApprovals: Map<ApprovalRequestId, PendingApproval>;
   readonly pendingUserInputs: Map<ApprovalRequestId, PendingUserInput>;
@@ -342,6 +354,7 @@ const applyDroidAutonomyMode = (input: {
 export function makeDroidAdapter(droidSettings: DroidSettings, options?: DroidAdapterLiveOptions) {
   return Effect.gen(function* () {
     const boundInstanceId = options?.instanceId ?? ProviderInstanceId.make("droid");
+    const makeAcpRuntime = options?.makeAcpRuntime ?? makeDroidAcpRuntime;
     const fileSystem = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
     const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
@@ -610,10 +623,7 @@ export function makeDroidAdapter(droidSettings: DroidSettings, options?: DroidAd
                 provider: PROVIDER,
                 threadId,
                 turnId,
-                payload: {
-                  state: options.completedStopReason === "cancelled" ? "cancelled" : "completed",
-                  stopReason: options.completedStopReason ?? null,
-                },
+                payload: droidPromptCompletion(options.completedStopReason),
               });
             }
           }
@@ -686,10 +696,7 @@ export function makeDroidAdapter(droidSettings: DroidSettings, options?: DroidAd
             provider: PROVIDER,
             threadId,
             turnId: settleTurnId,
-            payload: {
-              state: options.completedStopReason === "cancelled" ? "cancelled" : "completed",
-              stopReason: options.completedStopReason ?? null,
-            },
+            payload: droidPromptCompletion(options.completedStopReason ?? null),
           });
         }
       });
@@ -855,7 +862,7 @@ export function makeDroidAdapter(droidSettings: DroidSettings, options?: DroidAd
           });
 
           const mcpSession = McpProviderSession.readMcpProviderSession(input.threadId);
-          const acp = yield* makeDroidAcpRuntime({
+          const acp = yield* makeAcpRuntime({
             droidSettings,
             ...(options?.environment ? { environment: options.environment } : {}),
             childProcessSpawner,
@@ -1246,9 +1253,9 @@ export function makeDroidAdapter(droidSettings: DroidSettings, options?: DroidAd
                   ? input.modelSelection
                   : undefined;
               const requestedModel = turnModelSelection?.model ?? ctx.session.model ?? undefined;
-              const requestedEffort = requestedDroidEffortFromSelection(
-                turnModelSelection?.options,
-              );
+              const requestedEffort = turnModelSelection
+                ? requestedDroidEffortFromSelection(turnModelSelection.options)
+                : ctx.appliedEffortValue;
 
               // Reassert configuration only when it actually changed: Droid's
               // async config updates make redundant writes pure latency.
@@ -1280,6 +1287,17 @@ export function makeDroidAdapter(droidSettings: DroidSettings, options?: DroidAd
                   };
                 }
               }
+              // Validate inherited runtime state on every send, including unchanged selections.
+              yield* validateDroidReasoningState(ctx.acp).pipe(
+                Effect.mapError((error) =>
+                  mapAcpToAdapterError(
+                    PROVIDER,
+                    input.threadId,
+                    "session/set_config_option",
+                    error,
+                  ),
+                ),
+              );
               if (input.interactionMode !== undefined) {
                 ctx.appliedAutonomyModeId = yield* applyDroidAutonomyMode({
                   runtime: ctx.acp,
@@ -1299,6 +1317,17 @@ export function makeDroidAdapter(droidSettings: DroidSettings, options?: DroidAd
               }
 
               const text = input.input?.trim();
+              if (
+                input.attachments?.length &&
+                ctx.session.model &&
+                ctx.acp.getImageSupport?.(ctx.session.model) === false
+              ) {
+                return yield* new ProviderAdapterRequestError({
+                  provider: PROVIDER,
+                  method: "session/prompt",
+                  detail: "Selected Droid model does not advertise image support.",
+                });
+              }
               const imagePromptParts = yield* Effect.forEach(
                 input.attachments ?? [],
                 (attachment) =>
@@ -1533,10 +1562,7 @@ export function makeDroidAdapter(droidSettings: DroidSettings, options?: DroidAd
                   provider: PROVIDER,
                   threadId: input.threadId,
                   turnId: prepared.turnId,
-                  payload: {
-                    state: result.stopReason === "cancelled" ? "cancelled" : "completed",
-                    stopReason: result.stopReason ?? null,
-                  },
+                  payload: droidPromptCompletion(result.stopReason ?? null),
                 });
                 ctx.interruptedTurnIds.delete(prepared.turnId);
                 yield* Ref.set(promptSettled, true);
@@ -1710,12 +1736,24 @@ export function makeDroidAdapter(droidSettings: DroidSettings, options?: DroidAd
       );
 
     const listSessions: DroidAdapterShape["listSessions"] = () =>
-      Effect.sync(() => Array.from(sessions.values(), (c) => ({ ...c.session })));
+      Effect.sync(() =>
+        Array.from(sessions.values()).flatMap((c) =>
+          c.acp.isConfigurationRetired?.() === true ||
+          (c.promptsInFlight === 0 && c.acp.isConfigurationCurrent?.() === false)
+            ? []
+            : [{ ...c.session }],
+        ),
+      );
 
     const hasSession: DroidAdapterShape["hasSession"] = (threadId) =>
-      Effect.sync(() => {
+      Effect.gen(function* () {
         const c = sessions.get(threadId);
-        return c !== undefined && !c.stopped;
+        if (!c || c.stopped) return false;
+        if (c.acp.checkConfiguration) yield* c.acp.checkConfiguration().pipe(Effect.ignore);
+        return (
+          c.acp.isConfigurationRetired?.() !== true &&
+          (c.promptsInFlight > 0 || c.acp.isConfigurationCurrent?.() !== false)
+        );
       });
 
     const stopAll: DroidAdapterShape["stopAll"] = () =>

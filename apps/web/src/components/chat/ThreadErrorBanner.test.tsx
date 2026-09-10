@@ -1,15 +1,57 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vite-plus/test";
+import { MODEL_TOKEN_LIMIT_MESSAGE } from "@t3tools/shared/model";
+import { EventId, TurnId } from "@t3tools/contracts";
 
 import {
   dismissThreadErrorBannerForSession,
   getThreadErrorBannerKey,
+  isTokenLimitError,
+  getTruncationNoticeKey,
   isThreadErrorBannerDismissedForSession,
   shouldShowThreadErrorBanner,
   ThreadErrorBanner,
 } from "./ThreadErrorBanner";
 
 describe("ThreadErrorBanner", () => {
+  it("uses persisted activity independently of copy, without development-only aliases", () => {
+    const activities = [
+      { id: EventId.make("limit-one"), kind: "turn.truncated", turnId: TurnId.make("one") },
+    ];
+    const first = getTruncationNoticeKey("typed", activities, "one", "ready");
+    expect(first).not.toBeNull();
+    expect(getTruncationNoticeKey("typed", activities, "one", "running")).toBeNull();
+    expect(getTruncationNoticeKey("typed", activities, "one", "starting")).toBeNull();
+    expect(getTruncationNoticeKey("typed", activities, "two", "ready")).toBeNull();
+    expect(getTruncationNoticeKey("typed", activities, null, "ready")).toBeNull();
+    expect(isTokenLimitError(null)).toBe(false);
+    expect(isTokenLimitError("Unrelated failure")).toBe(false);
+    expect(
+      isTokenLimitError("Response reached its token limit. Continue, or adjust the model limits."),
+    ).toBe(false);
+    dismissThreadErrorBannerForSession(first);
+    expect(
+      isThreadErrorBannerDismissedForSession(
+        getTruncationNoticeKey("typed", [...activities], "one", "ready"),
+      ),
+    ).toBe(true);
+    expect(
+      isThreadErrorBannerDismissedForSession(
+        getTruncationNoticeKey("other-thread", activities, "one", "ready"),
+      ),
+    ).toBe(false);
+  });
+  it("scopes token-limit dismissal to its occurrence, not every future failure", () => {
+    const first = getThreadErrorBannerKey("env:limits", MODEL_TOKEN_LIMIT_MESSAGE, "turn-1");
+    dismissThreadErrorBannerForSession(first);
+    expect(isThreadErrorBannerDismissedForSession(first)).toBe(true);
+    const next = getThreadErrorBannerKey("env:limits", MODEL_TOKEN_LIMIT_MESSAGE, "turn-2");
+    expect(isThreadErrorBannerDismissedForSession(next)).toBe(false);
+    expect(getThreadErrorBannerKey("env:limits", null, "turn-2")).toBeNull();
+    expect(getThreadErrorBannerKey("env:limits", "Other error", "turn-1")).toBe(
+      getThreadErrorBannerKey("env:limits", "Other error", "turn-2"),
+    );
+  });
   it("stays hidden after its current error is dismissed", () => {
     const bannerKey = getThreadErrorBannerKey("env:thread-a", "Aborted");
     dismissThreadErrorBannerForSession(bannerKey);

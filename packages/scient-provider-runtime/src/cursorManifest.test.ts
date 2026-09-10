@@ -26,7 +26,7 @@ describe("Cursor managed-runtime manifest", () => {
       expect(artifact?.size).toBeGreaterThan(70_000_000);
       expect(artifact?.extractionLimits).toEqual({
         maxEntries: 768,
-        maxExpandedBytes: 384 * 1024 * 1024,
+        maxExpandedBytes: (target.platform === "win32" ? 384 : 768) * 1024 * 1024,
       });
     }
   });

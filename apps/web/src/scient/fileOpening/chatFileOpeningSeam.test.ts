@@ -21,13 +21,15 @@ const htmlPreviewSource = NodeFS.readFileSync(
 );
 
 describe("universal chat-file opening seam", () => {
-  it("keeps workspace files on the inherited file surface and sends other files to Scient", () => {
-    expect(chatMarkdownSource).toContain("onOpenInPanel(workspaceRelativePath, line);");
+  it("uses the file surface for workspace and readable host files while preserving media preview", () => {
+    expect(chatMarkdownSource).toContain("onOpenInPanel(panelPath, line);");
     expect(chatMarkdownSource).toContain(
       "useRightPanelStore.getState().openFile(threadRef, path, line);",
     );
-    expect(chatMarkdownSource).toContain("scientEnvironmentFileSurface({ path: filePath");
-    expect(chatMarkdownSource).not.toContain("if (!threadRef || !workspaceRelativePath)");
+    expect(chatMarkdownSource).toContain(
+      "!canPreviewMedia && isAbsolutePath(fileLinkMeta.filePath)",
+    );
+    expect(chatMarkdownSource).toContain("openMarkdownMedia(mediaPath, fileLinkMeta.filePath)");
   });
 
   it("routes HTML through the integrated Browser with an explicit document capability", () => {
@@ -43,7 +45,7 @@ describe("universal chat-file opening seam", () => {
     expect(htmlPreviewSource).toContain("openUrlInPreview({");
   });
 
-  it("mounts one lazy Scient-owned file panel without widening the inherited file editor", () => {
+  it("keeps the explicit Scient environment-file surface read-only", () => {
     expect(chatViewSource).toContain(
       '() => import("../scient/fileOpening/EnvironmentFilePreview")',
     );

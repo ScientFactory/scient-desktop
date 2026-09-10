@@ -51,7 +51,7 @@ const MIN_IPYKERNEL_VERSION = "6.29";
  * data-and-figures Toolkit. The probe stays bounded and does not enumerate an
  * arbitrary user environment.
  */
-export const OBSERVED_PYTHON_PACKAGES = [
+const OBSERVED_PYTHON_PACKAGES = [
   "ipykernel",
   "jupyter_client",
   "matplotlib",
@@ -214,7 +214,7 @@ export function checkReadiness(probe: ProbeResult): {
 }
 
 /** Stable, sorted package observations safe to expose through runtime inspection. */
-export function observedPackages(probe: ProbeResult): ReadonlyArray<ComputeRuntimePackage> {
+function observedPackages(probe: ProbeResult): ReadonlyArray<ComputeRuntimePackage> {
   return OBSERVED_PYTHON_PACKAGES.map((name) => ({
     name,
     version: probe.packages[name] ?? null,

@@ -4,7 +4,8 @@ import { isWindowsPlatform } from "~/lib/utils";
 
 export type DesktopUpdateButtonAction = "download" | "install" | "none";
 
-const DESKTOP_RELEASE_TAG_URL = `https://github.com/${SCIENT_DESKTOP_RELEASE_REPOSITORY}/releases/tag`;
+const DESKTOP_RELEASE_HISTORY_URL = `https://github.com/${SCIENT_DESKTOP_RELEASE_REPOSITORY}/releases`;
+const DESKTOP_RELEASE_TAG_URL = `${DESKTOP_RELEASE_HISTORY_URL}/tag`;
 
 /**
  * The main process fills `downloadedVersion` from the updater's `update-downloaded`
@@ -20,6 +21,10 @@ export function getDesktopUpdateReleaseUrl(version: string | null): string | nul
   const normalizedVersion = version?.trim();
   if (!normalizedVersion) return null;
   return `${DESKTOP_RELEASE_TAG_URL}/v${encodeURIComponent(normalizedVersion)}`;
+}
+
+export function getDesktopUpdateReleaseHistoryUrl(): string {
+  return DESKTOP_RELEASE_HISTORY_URL;
 }
 
 export function resolveDesktopUpdateButtonAction(
@@ -44,18 +49,22 @@ export function resolveDesktopUpdateButtonAction(
   return "none";
 }
 
-export function shouldShowDesktopUpdateButton(state: DesktopUpdateState | null): boolean {
-  if (!state || !state.enabled) {
-    return false;
-  }
-  if (state.status === "downloading") {
-    return true;
-  }
-  return resolveDesktopUpdateButtonAction(state) !== "none";
-}
-
 export function shouldShowArm64IntelBuildWarning(state: DesktopUpdateState | null): boolean {
   return state?.hostArch === "arm64" && state.appArch === "x64";
+}
+
+/** Scient's compact footer copy; action admission remains owned by the updater. */
+export function getScientDesktopUpdateLabel(state: DesktopUpdateState): string | null {
+  if (state.status === "downloading") {
+    const percent = state.downloadPercent;
+    return percent !== null && Number.isFinite(percent)
+      ? `${Math.floor(Math.min(100, Math.max(0, percent)))}%`
+      : "…";
+  }
+  const action = resolveDesktopUpdateButtonAction(state);
+  if (action === "none") return null;
+  if (state.errorContext === "download" || state.errorContext === "install") return "Retry";
+  return action === "install" ? "Restart" : "Update";
 }
 
 export function isDesktopUpdateButtonDisabled(state: DesktopUpdateState | null): boolean {
@@ -124,11 +133,6 @@ export function getDesktopUpdateActionError(result: DesktopUpdateActionResult): 
 
 export function shouldToastDesktopUpdateActionResult(result: DesktopUpdateActionResult): boolean {
   return getDesktopUpdateActionError(result) !== null;
-}
-
-export function shouldHighlightDesktopUpdateError(state: DesktopUpdateState | null): boolean {
-  if (!state || state.status !== "error") return false;
-  return state.errorContext === "download" || state.errorContext === "install";
 }
 
 export function canCheckForUpdate(state: DesktopUpdateState | null): boolean {

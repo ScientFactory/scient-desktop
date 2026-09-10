@@ -17,6 +17,7 @@
     "packages/scient-execution"
   ],
   "ownedFiles": [
+    "apps/server/src/telemetry/ComputeOutputAnalytics.ts",
     "apps/server/src/orchestration/scient-fork/migrations/005_AnalysisRunIndex.ts",
     "apps/server/src/orchestration/scient-fork/migrations/006_AnalysisRunProjectionState.ts",
     "apps/server/src/orchestration/scient-fork/migrations/007_AnalysisRunStorageStatus.ts",
@@ -155,6 +156,11 @@
       "path": "apps/web/src/components/files/fileSaveCoordinator.ts",
       "anchor": "confirmedFileRevision",
       "purpose": "Preserve dirty buffers across conditional-write conflicts."
+    },
+    {
+      "path": "apps/web/src/components/files/useFileSaveCoordinator.ts",
+      "anchor": "expectedRevision",
+      "purpose": "Compose the upstream save hook with Scient revision-checked writes and explicit conflict recovery."
     },
     {
       "path": "apps/web/src/components/files/projectFilesQueryState.ts",

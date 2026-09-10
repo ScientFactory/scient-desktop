@@ -211,6 +211,7 @@ function AssistedProviderConnectionDialog(props: ProviderConnectionDialogContent
   const isGrok = props.provider.driver === "grok";
   const isDroid = props.provider.driver === "droid";
   const isCursor = props.provider.driver === "cursor";
+  const isPi = props.provider.driver === "pi";
   const assistedDisplayName = props.displayName;
   const runtime = props.provider.connection?.runtime;
   const hasActionableManagedRuntime =
@@ -218,18 +219,12 @@ function AssistedProviderConnectionDialog(props: ProviderConnectionDialogContent
     (runtime.actions.length > 0 || runtime.operation !== null);
   const hasQualifiedSystemManagedAction =
     runtime?.source === "system" && runtime.actions.includes("install");
-  const cursorInlineInstallIsRunning =
-    isCursor &&
-    props.initialRuntimeAction === "install" &&
-    isRuntimeWorking &&
-    runtime?.operation?.action === "install";
   const hasRuntimeMaintenanceActions =
     runtime?.actions.some((action) => action !== "install") ?? false;
   const showManagedRuntime =
     runtime !== undefined &&
-    !cursorInlineInstallIsRunning &&
     (isCursor
-      ? isConnected || hasRuntimeMaintenanceActions
+      ? isConnected || props.initialRuntimeAction !== undefined || hasRuntimeMaintenanceActions
       : isConnected ||
         props.initialRuntimeAction !== undefined ||
         hasActionableManagedRuntime ||
@@ -258,17 +253,19 @@ function AssistedProviderConnectionDialog(props: ProviderConnectionDialogContent
             />
           </DialogTitle>
           <DialogDescription className="sr-only">
-            {isAntigravity
-              ? "Install Antigravity and connect your Google subscription."
-              : isClaude
-                ? "Connect and manage your Claude account."
-                : isGrok
-                  ? "Install Grok and connect your existing subscription."
-                  : isDroid
-                    ? "Install Droid and connect your Factory account."
-                    : isCursor
-                      ? "Connect and manage your Cursor account."
-                      : "Connect and manage your existing ChatGPT subscription."}
+            {isPi
+              ? "Manage Pi's runtime and model connections."
+              : isAntigravity
+                ? "Install Antigravity and connect your Google subscription."
+                : isClaude
+                  ? "Connect and manage your Claude account."
+                  : isGrok
+                    ? "Install Grok and connect your existing subscription."
+                    : isDroid
+                      ? "Install Droid and connect your Factory account."
+                      : isCursor
+                        ? "Connect and manage your Cursor account."
+                        : "Connect and manage your existing ChatGPT subscription."}
           </DialogDescription>
         </DialogHeader>
         <DialogPanel className="space-y-3">

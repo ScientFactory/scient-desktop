@@ -91,6 +91,7 @@ it.layer(layer)("ScientForkAttachmentCopier", (it) => {
 
       assert.strictEqual(yield* fileSystem.readFileString(targetPath), "evidence");
       yield* fileSystem.remove(sourcePath);
+      yield* copier.copyAll({ threadId, copies: [{ source, target }] });
       assert.strictEqual(yield* fileSystem.readFileString(targetPath), "evidence");
     }),
   );

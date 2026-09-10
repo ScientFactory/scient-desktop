@@ -72,6 +72,8 @@ import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import { makeOperationAnalytics } from "../../telemetry/OperationAnalytics.ts";
+import { makeComputeOutputAnalytics } from "../../telemetry/ComputeOutputAnalytics.ts";
 import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
 import * as Ref from "effect/Ref";
@@ -410,6 +412,8 @@ class ComputeSessionServiceConfig extends Context.Reference<ComputeSessionServic
 ) {}
 
 const make = Effect.gen(function* () {
+  const observeOperation = yield* makeOperationAnalytics;
+  const observeComputeOutputs = yield* makeComputeOutputAnalytics;
   const bindings = yield* ComputeRuntimeBindings;
   const options = yield* ComputeSessionServiceConfig;
   const hostEnvironment = yield* HostProcessEnvironment;
@@ -425,6 +429,14 @@ const make = Effect.gen(function* () {
   const nowIso = DateTime.now.pipe(Effect.map(DateTime.formatIso));
   const sessionKey = (projectId: ComputeProjectId, sessionId: ComputeSessionId): string =>
     `${projectId}/${sessionId}`;
+  const analyticsExecutionKey = (
+    live: LiveComputeSession,
+    executionId: string,
+    generation: number,
+  ) =>
+    [live.projectId, live.sessionId, String(generation), executionId]
+      .map((part) => `${part.length}:${part}`)
+      .join("|");
 
   const descriptorFor = (binding: ComputeRuntimeBinding): ComputeRuntimeDescriptor =>
     binding.descriptor ?? {
@@ -620,14 +632,67 @@ const make = Effect.gen(function* () {
       session,
     }));
 
-  const publishExecution = (live: LiveComputeSession, execution: ComputeExecutionRecord) =>
-    notifications.publish(live.projectId, (eventSequence) => ({
-      _tag: "execution-updated",
-      eventSequence,
-      projectId: live.projectId,
-      sessionId: live.sessionId,
-      execution,
-    }));
+  const publishExecution = (
+    live: LiveComputeSession,
+    execution: ComputeExecutionRecord,
+    isNewExecution = false,
+  ) =>
+    Effect.gen(function* () {
+      yield* notifications.publish(live.projectId, (eventSequence) => ({
+        _tag: "execution-updated",
+        eventSequence,
+        projectId: live.projectId,
+        sessionId: live.sessionId,
+        execution,
+      }));
+      const result = execution.result;
+      const status = result?.status;
+      // Queue/phase changes must not recreate a start after consent is changed.
+      if (
+        !isNewExecution &&
+        (status === undefined || !TERMINAL_COMPUTE_EXECUTION_STATUSES.has(status))
+      )
+        return;
+      const key = analyticsExecutionKey(
+        live,
+        execution.request.executionId,
+        execution.request.generation,
+      );
+      yield* observeOperation({
+        // Local-only correlation; never serialized into the analytics payload.
+        key,
+        operationKind: "compute-run",
+        status:
+          status === "succeeded"
+            ? "completed"
+            : status === "cancelled"
+              ? "cancelled"
+              : status === "failed" || status === "lost"
+                ? "failed"
+                : "active",
+        startedAt: Date.parse(execution.request.submittedAt),
+        ...(result?.finishedAt ? { finishedAt: Date.parse(result.finishedAt) } : {}),
+        failureClass: status === "lost" ? "process-crash" : "unknown",
+      });
+      if (
+        status === "succeeded" ||
+        status === "failed" ||
+        status === "cancelled" ||
+        status === "lost"
+      ) {
+        yield* observeComputeOutputs({
+          key,
+          phase: "finished",
+          ...(result?.finishedAt ? { finishedAt: Date.parse(result.finishedAt) } : {}),
+        });
+      } else if (isNewExecution) {
+        yield* observeComputeOutputs({
+          key,
+          phase: "started",
+          startedAt: Date.parse(execution.request.submittedAt),
+        });
+      }
+    });
 
   const publishOutputs = (
     live: LiveComputeSession,
@@ -974,7 +1039,7 @@ const make = Effect.gen(function* () {
     ),
   });
 
-  const applyOutput = (
+  const persistOutput = (
     live: LiveComputeSession,
     event: Extract<ComputeTransportEvent, { readonly _tag: "output" }>,
   ) =>
@@ -1146,6 +1211,35 @@ const make = Effect.gen(function* () {
       return true;
     });
 
+  const applyOutput = (
+    live: LiveComputeSession,
+    event: Extract<ComputeTransportEvent, { readonly _tag: "output" }>,
+  ) =>
+    Effect.gen(function* () {
+      const output = event.output;
+      const rich =
+        output._tag === "image" ||
+        ((output._tag === "display-data" ||
+          output._tag === "execute-result" ||
+          output._tag === "display-update") &&
+          output.bundle.representations.some(
+            (representation) => representation.mediaType !== "text/plain",
+          ));
+      if (!rich || event.requestId === null) return yield* persistOutput(live, event);
+      const record = yield* Ref.get(live.recordRef);
+      if (event.generation !== record.generation) return yield* persistOutput(live, event);
+      const key = analyticsExecutionKey(live, event.requestId, event.generation);
+      return yield* persistOutput(live, event).pipe(
+        Effect.onExit((exit) =>
+          observeComputeOutputs({
+            key,
+            phase: "output",
+            retained: Exit.isSuccess(exit) && exit.value,
+          }),
+        ),
+      );
+    });
+
   /**
    * Turns supported project files changed during this execution into durable
    * compute outputs before the execution is declared terminal.
@@ -1177,7 +1271,24 @@ const make = Effect.gen(function* () {
           budgets.session.ceiling - budgets.session.bytes,
         ),
       );
-      const collection = yield* projectOutputObserver.collect(observation, { maximumBytes });
+      const collection = yield* projectOutputObserver.collect(observation, { maximumBytes }).pipe(
+        Effect.onExit((exit) =>
+          Exit.isFailure(exit)
+            ? observeComputeOutputs({
+                key: analyticsExecutionKey(live, event.requestId, event.generation),
+                phase: "output",
+                retained: false,
+              })
+            : Effect.void,
+        ),
+      );
+      if (collection.warnings.length > 0) {
+        yield* observeComputeOutputs({
+          key: analyticsExecutionKey(live, event.requestId, event.generation),
+          phase: "output",
+          retained: false,
+        });
+      }
       for (const image of collection.images) {
         yield* applyOutput(live, {
           _tag: "output",
@@ -2163,7 +2274,7 @@ const make = Effect.gen(function* () {
       yield* Ref.set(live.queueRef, admission.state);
       yield* Ref.update(live.pendingRef, (map) => new Map(map).set(input.executionId, execution));
       yield* syncQueueCounters("submit", live);
-      yield* publishExecution(live, execution);
+      yield* publishExecution(live, execution, stored === null);
       const next = yield* takeNextDispatch("submit", live);
       const current = (yield* Ref.get(live.pendingRef)).get(input.executionId) ?? execution;
       return { execution: current, dispatch: next };
@@ -2701,11 +2812,13 @@ export const layerWithRuntimeBindings = <E, R>(
     Layer.provide(projectOutputObserverLayer),
   );
 
+/** @public Service construction is part of the canonical Effect module API. */
 export const layerWithRuntimes = (
   bindings: ReadonlyArray<ComputeRuntimeBinding>,
   options: ComputeSessionServiceOptions = DEFAULT_COMPUTE_SESSION_SERVICE_OPTIONS,
 ) => layerWithRuntimeBindings(Effect.succeed(bindings), options);
 
+/** @public Service construction is part of the canonical Effect module API. */
 export const layer = Layer.effect(ComputeSessionService, make).pipe(
   Layer.provide(disabledProjectOutputObserverLayer),
 );

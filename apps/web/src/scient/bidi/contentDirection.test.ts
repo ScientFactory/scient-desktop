@@ -1,17 +1,33 @@
 import { describe, expect, it } from "vite-plus/test";
 
 import {
+  countTableStrongScripts,
+  findRtlFlowArrowSpans,
+  normalizeRtlFlowArrows,
   resolveAggregateDirection,
+  resolveDominantDirection,
   resolveFenceDirection,
   resolveMarkdownDirectionHint,
   resolveMarkdownDirection,
-  normalizeRtlFlowArrows,
   resolvePlainTextBoxDirection,
   resolveProseBlockDirection,
   resolveStreamingMarkdownDirection,
+  resolveTableCellDirection,
+  resolveTableCellDirectionFromCounts,
+  resolveTableColumnDirectionFromCounts,
 } from "./contentDirection";
 
 describe("message and block direction", () => {
+  it("keeps scientific identifiers and literal TeX from steering table structure", () => {
+    expect(countTableStrongScripts("מאפיין HER2 TNBC cN0 BCS NET")).toEqual({ ltr: 0, rtl: 6 });
+    expect(countTableStrongScripts(String.raw`טיפול $\text{HER2 positive receptor}^+$`)).toEqual({
+      ltr: 0,
+      rtl: 5,
+    });
+    expect(countTableStrongScripts("Standard treatment")).toEqual({ ltr: 17, rtl: 0 });
+    expect(countTableStrongScripts("TREATMENT DETAILS")).toEqual({ ltr: 16, rtl: 0 });
+  });
+
   it("keeps a Hebrew message RTL when list items begin with English terms", () => {
     const markdown = [
       "### מעבדה וסרולוגיה",
@@ -51,6 +67,36 @@ describe("message and block direction", () => {
   it("makes English-only groups LTR and leaves empty groups at their fallback", () => {
     expect(resolveAggregateDirection("Standard deviation\nConfidence interval", "rtl")).toBe("ltr");
     expect(resolveAggregateDirection("123 — —", "rtl")).toBe("rtl");
+  });
+
+  it("uses the dominant language for tables and the surrounding direction only for ties", () => {
+    expect(resolveDominantDirection("English details שלום", "rtl")).toBe("ltr");
+    expect(resolveDominantDirection("English שלום עולם נוסף", "ltr")).toBe("rtl");
+    expect(resolveDominantDirection("ab אב", "ltr")).toBe("ltr");
+    expect(resolveDominantDirection("ab אב", "rtl")).toBe("rtl");
+  });
+
+  it("uses prose first and technical content only for identifier-only table columns", () => {
+    expect(
+      resolveTableColumnDirectionFromCounts({ ltr: 0, rtl: 8 }, { ltr: 40, rtl: 8 }, "ltr"),
+    ).toBe("rtl");
+    expect(
+      resolveTableColumnDirectionFromCounts({ ltr: 0, rtl: 0 }, { ltr: 12, rtl: 0 }, "rtl"),
+    ).toBe("ltr");
+    expect(
+      resolveTableColumnDirectionFromCounts({ ltr: 0, rtl: 0 }, { ltr: 0, rtl: 0 }, "rtl"),
+    ).toBe("rtl");
+  });
+
+  it("requires 70% LTR content for LTR to win inside a mixed table cell", () => {
+    expect(resolveTableCellDirectionFromCounts({ ltr: 70, rtl: 30 }, "rtl")).toBe("ltr");
+    expect(resolveTableCellDirectionFromCounts({ ltr: 69, rtl: 31 }, "ltr")).toBe("rtl");
+    expect(resolveTableCellDirectionFromCounts({ ltr: 1, rtl: 1 }, "ltr")).toBe("rtl");
+    expect(resolveTableCellDirection("English בתוך עברית נוספת", "ltr")).toBe("rtl");
+    expect(resolveTableCellDirection("English sentence with עברית", "rtl")).toBe("ltr");
+    expect(resolveTableCellDirection("العربية فقط", "ltr")).toBe("rtl");
+    expect(resolveTableCellDirection("123 — —", "ltr")).toBe("ltr");
+    expect(resolveTableCellDirection("123 — —", "rtl")).toBe("rtl");
   });
 
   it("honors an explicit direction instead of inferring it", () => {
@@ -107,6 +153,10 @@ describe("message and block direction", () => {
     expect(normalizeRtlFlowArrows("שלב ראשון → x→y")).toBe("שלב ראשון ← x→y");
     expect(normalizeRtlFlowArrows("עברית: H2O → CO2")).toBe("עברית: H2O → CO2");
     expect(normalizeRtlFlowArrows("עברית: $A → B$")).toBe("עברית: $A → B$");
+    expect(findRtlFlowArrowSpans("שלב ראשון → שלב שני ⟶ שלב שלישי")).toEqual([
+      { end: 11, replacement: "←", start: 10 },
+      { end: 21, replacement: "⟵", start: 20 },
+    ]);
   });
 });
 

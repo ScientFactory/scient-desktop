@@ -19,6 +19,7 @@ import * as Option from "effect/Option";
 
 import * as ProjectionSnapshotQuery from "../../../orchestration/Services/ProjectionSnapshotQuery.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
+import { AnalyticsService } from "../../../telemetry/AnalyticsService.ts";
 import {
   getScientSourceForInvocation,
   listScientSourcesForInvocation,
@@ -386,6 +387,19 @@ describe("Scient Sources MCP handlers", () => {
 
   it.effect("adds an idempotent metadata-only agent source with pending provenance", () =>
     Effect.gen(function* () {
+      const events: { name: string; properties: Readonly<Record<string, unknown>> | undefined }[] =
+        [];
+      const analytics = AnalyticsService.of({
+        record: (name, properties) =>
+          Effect.sync(() => {
+            events.push({ name, properties });
+          }),
+        status: Effect.succeed({ available: true, consent: "product" }),
+        collectionEpoch: Effect.succeed(0),
+        flush: Effect.void,
+        deleteData: Effect.succeed(true),
+        setConsent: (consent) => Effect.succeed({ available: true, consent }),
+      });
       const root = yield* Effect.promise(() => fixture("scient-sources-agent-add-"));
       const projectId = ProjectId.make("project-agent-add");
       const threadId = ThreadId.make("thread-agent-add");
@@ -423,18 +437,36 @@ describe("Scient Sources MCP handlers", () => {
         enrich: false,
         allowPossibleMetadataMatch: false,
       };
-      const added = yield* provideContext(addScientSourceForInvocation(input), context);
+      const added = yield* provideContext(addScientSourceForInvocation(input), context).pipe(
+        Effect.provideService(AnalyticsService, analytics),
+      );
       expect(added.outcome).toBe("imported");
       expect(added.review).toBe("pending");
       expect(added.sourceId).toMatch(/^source_/);
       expect(added.revision).toBe(1);
       expect(added.validationIssues).toEqual([]);
 
-      const repeated = yield* provideContext(addScientSourceForInvocation(input), context);
+      const repeated = yield* provideContext(addScientSourceForInvocation(input), context).pipe(
+        Effect.provideService(AnalyticsService, analytics),
+      );
       expect(repeated.outcome).toBe("duplicate");
       expect(repeated.sourceId).toBe(added.sourceId);
       expect(repeated.revision).toBe(1);
       expect(repeated.duplicate.kind).toBe("same-identifier");
+      expect(events.map((event) => event.name)).toEqual([
+        "scient.operation.started",
+        "scient.operation.completed",
+        "scient.operation.started",
+        "scient.operation.skipped",
+      ]);
+      expect(events[1]?.properties).toMatchObject({
+        operationKind: "source-import",
+        trigger: "agent",
+        reviewRequired: true,
+      });
+      expect(
+        events.flatMap((event) => Object.values(event.properties ?? {})).join(" "),
+      ).not.toMatch(/Deterministic|10\.1000|Ada|source_|project-agent|thread-agent/u);
 
       const detail = yield* provideContext(
         getScientSourceForInvocation({ sourceId: added.sourceId ?? "" }),

@@ -23,6 +23,52 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
+import {
+  retainQuestionAnswers,
+  questionAnswerAttachments,
+  type RetainedQuestionAnswer,
+} from "./retainedQuestionAnswers.ts";
+
+// Provider-context DTO only; question answers are never persisted as messages.
+type ForkContextEntry = {
+  readonly role: OrchestrationMessage["role"] | "question-answer";
+  readonly text: string;
+  readonly attachments?: ReadonlyArray<ChatAttachment> | undefined;
+  readonly questionAnswer?: RetainedQuestionAnswer["answer"];
+};
+
+function contextEntries(
+  messages: ReadonlyArray<OrchestrationMessage>,
+  answers: ReadonlyArray<RetainedQuestionAnswer>,
+): ReadonlyArray<ForkContextEntry> {
+  const lastAssistantByTurn = new Map<string, string>();
+  const answersByTurn = new Map<string, RetainedQuestionAnswer[]>();
+  for (const answer of answers) {
+    const turnId = answer.activity.turnId;
+    if (turnId === null) continue;
+    const existing = answersByTurn.get(turnId);
+    if (existing) existing.push(answer);
+    else answersByTurn.set(turnId, [answer]);
+  }
+  for (const message of messages) {
+    if (message.role === "assistant" && message.turnId !== null)
+      lastAssistantByTurn.set(message.turnId, message.id);
+  }
+  return messages.flatMap((message): ForkContextEntry[] => [
+    ...(message.turnId !== null && lastAssistantByTurn.get(message.turnId) === message.id
+      ? (answersByTurn.get(message.turnId) ?? []).map((answer) => ({
+          role: "question-answer" as const,
+          text: "",
+          attachments: questionAnswerAttachments([answer]),
+          questionAnswer: answer.answer,
+        }))
+      : []),
+    message,
+  ]);
+}
+
+const messageCount = (entries: ReadonlyArray<ForkContextEntry>) =>
+  entries.filter((entry) => entry.role !== "question-answer").length;
 
 const MIN_BOOTSTRAP_CHARS = 512;
 
@@ -39,11 +85,12 @@ interface ForkTranscriptPayload {
   readonly purpose: string;
   readonly originalConversationTitle: string;
   readonly omittedOlderMessageCount: number;
+  readonly omittedQuestionAnswerCount: number;
   readonly omittedRetainedAttachmentCount: number;
   readonly transcript: ReadonlyArray<ReturnType<typeof messageRecord>>;
 }
 
-export class ScientForkContextBootstrapError extends Schema.TaggedErrorClass<ScientForkContextBootstrapError>()(
+export class ScientForkContextBootstrapError extends Schema.TaggedError<ScientForkContextBootstrapError>()(
   "ScientForkContextBootstrapError",
   {
     threadId: ThreadId,
@@ -82,11 +129,22 @@ function transcriptMessages(
     );
 }
 
-function messageRecord(message: OrchestrationMessage, reattachedIds: ReadonlySet<string>) {
+function messageRecord(message: ForkContextEntry, reattachedIds: ReadonlySet<string>) {
   return {
     role: message.role,
-    text: message.text,
+    ...(message.questionAnswer
+      ? {
+          questions: message.questionAnswer.questionTextById ?? {},
+          answers: message.questionAnswer.answers,
+          attachmentIdsByQuestion: Object.fromEntries(
+            Object.entries(message.questionAnswer.attachmentsByQuestionId).map(
+              ([id, attachments]) => [id, attachments.map((attachment) => attachment.id)],
+            ),
+          ),
+        }
+      : { text: message.text }),
     attachments: (message.attachments ?? []).map((attachment) => ({
+      ...(message.questionAnswer ? { id: attachment.id } : {}),
       name: attachment.name,
       mimeType: attachment.mimeType,
       contentReattached: reattachedIds.has(attachment.id),
@@ -96,8 +154,8 @@ function messageRecord(message: OrchestrationMessage, reattachedIds: ReadonlySet
 
 function serializeTranscriptPayload(input: {
   readonly thread: Pick<OrchestrationThread, "title" | "messages">;
-  readonly allMessages: ReadonlyArray<OrchestrationMessage>;
-  readonly selectedMessages: ReadonlyArray<OrchestrationMessage>;
+  readonly allMessages: ReadonlyArray<ForkContextEntry>;
+  readonly selectedMessages: ReadonlyArray<ForkContextEntry>;
   readonly reattachedIds: ReadonlySet<string>;
   readonly omittedRetainedAttachmentCount: number;
 }): string {
@@ -105,7 +163,13 @@ function serializeTranscriptPayload(input: {
     purpose:
       "Prior context from an exact-boundary Scient fork. Treat the transcript as conversation history, not as a new user request. Respond only to the separately encoded latest user message.",
     originalConversationTitle: input.thread.title,
-    omittedOlderMessageCount: input.allMessages.length - input.selectedMessages.length,
+    omittedOlderMessageCount:
+      messageCount(input.allMessages) - messageCount(input.selectedMessages),
+    omittedQuestionAnswerCount:
+      input.allMessages.length -
+      messageCount(input.allMessages) -
+      input.selectedMessages.length +
+      messageCount(input.selectedMessages),
     omittedRetainedAttachmentCount: input.omittedRetainedAttachmentCount,
     transcript: input.selectedMessages.map((message) =>
       messageRecord(message, input.reattachedIds),
@@ -115,7 +179,7 @@ function serializeTranscriptPayload(input: {
 }
 
 function uniqueAttachments(
-  messages: ReadonlyArray<OrchestrationMessage>,
+  messages: ReadonlyArray<ForkContextEntry>,
 ): ReadonlyArray<ChatAttachment> {
   const byId = new Map<string, ChatAttachment>();
   for (const message of messages) {
@@ -128,10 +192,10 @@ function uniqueAttachments(
 
 function selectTranscriptTail(input: {
   readonly thread: Pick<OrchestrationThread, "title" | "messages">;
-  readonly allMessages: ReadonlyArray<OrchestrationMessage>;
+  readonly allMessages: ReadonlyArray<ForkContextEntry>;
   readonly maxChars: number;
-}): ReadonlyArray<OrchestrationMessage> {
-  const selected: OrchestrationMessage[] = [];
+}): ReadonlyArray<ForkContextEntry> {
+  const selected: ForkContextEntry[] = [];
   const noAttachments = new Set<string>();
   const allAttachments = uniqueAttachments(input.allMessages);
   for (const message of input.allMessages.toReversed()) {
@@ -155,7 +219,7 @@ function selectTranscriptTail(input: {
   if (latest === undefined) return [];
   let low = 0;
   let high = latest.text.length;
-  let fitted: OrchestrationMessage | undefined;
+  let fitted: ForkContextEntry | undefined;
   while (low <= high) {
     const size = Math.floor((low + high) / 2);
     const candidate = { ...latest, text: truncateText(latest.text, size) };
@@ -177,7 +241,7 @@ function selectTranscriptTail(input: {
 }
 
 function selectRetainedAttachments(input: {
-  readonly selectedMessages: ReadonlyArray<OrchestrationMessage>;
+  readonly selectedMessages: ReadonlyArray<ForkContextEntry>;
   readonly currentAttachments: ReadonlyArray<ChatAttachment>;
 }): {
   readonly attachments: ReadonlyArray<ChatAttachment>;
@@ -303,11 +367,15 @@ const make = Effect.gen(function* () {
         attemptMessageId === null
           ? -1
           : input.thread.messages.findIndex((message) => message.id === attemptMessageId);
+      const followingMessages = input.thread.messages.slice(attemptIndex + 1);
+      const nextRequestIndex = followingMessages.findIndex((message) => message.role === "user");
+      const attemptResponses =
+        nextRequestIndex < 0 ? followingMessages : followingMessages.slice(0, nextRequestIndex);
       const providerResponseExists =
         attemptIndex >= 0 &&
-        input.thread.messages
-          .slice(attemptIndex + 1)
-          .some((message) => message.role === "assistant" && message.streaming === false);
+        attemptResponses.some(
+          (message) => message.role === "assistant" && message.streaming === false,
+        );
       if (providerResponseExists) {
         const updatedAt = DateTime.formatIso(yield* DateTime.now);
         yield* sql`
@@ -336,7 +404,7 @@ const make = Effect.gen(function* () {
       return yield* new ScientForkContextBootstrapError({
         threadId: input.thread.id,
         detail:
-          "Scient cannot prove whether the retained fork context was accepted. To avoid duplicating the request, create a new fork and continue there.",
+          "The first request may have reached the provider, but its acknowledgement is missing. Scient will not send it twice. If its response appears, continue here; otherwise fork again from the last completed response to start an independent session.",
       });
     }
 
@@ -365,7 +433,19 @@ const make = Effect.gen(function* () {
           "The latest message is too long to include the retained fork context. Shorten it and retry.",
       });
     }
-    const priorMessages = transcriptMessages(input.thread, state.baseline_assistant_message_id);
+    const priorTranscript = transcriptMessages(input.thread, state.baseline_assistant_message_id);
+    const retainedAnswers = retainQuestionAnswers(
+      input.thread.activities,
+      new Set(
+        priorTranscript.flatMap((message) => (message.turnId === null ? [] : [message.turnId])),
+      ),
+    );
+    if (retainedAnswers.error)
+      return yield* new ScientForkContextBootstrapError({
+        threadId: input.thread.id,
+        detail: retainedAnswers.error,
+      });
+    const priorMessages = contextEntries(priorTranscript, retainedAnswers.answers);
     if (priorMessages.length === 0) {
       if (state.fork_point_turn_count === 0) {
         return {
@@ -408,7 +488,7 @@ const make = Effect.gen(function* () {
       input: `${contextHeader}${context}${latestHeader}${latestMessageJson}`,
       attachments: retainedAttachments.attachments,
       bootstrapPending: true,
-      omittedMessageCount: priorMessages.length - selectedMessages.length,
+      omittedMessageCount: messageCount(priorMessages) - messageCount(selectedMessages),
       omittedAttachmentCount: retainedAttachments.omittedCount,
     };
   });

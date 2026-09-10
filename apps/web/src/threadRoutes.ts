@@ -36,7 +36,9 @@ export function resolveThreadRouteRenderState(input: {
   if (input.serverThreadDetailDeleted) {
     return "missing";
   }
-  return input.serverThreadShellExists ? "loading" : "missing";
+  // A ready fork or an archived source may not be in the sidebar snapshot.
+  // Only the detail subscription's explicit deletion proves it is missing.
+  return "loading";
 }
 
 export function buildThreadRouteParams(ref: ScopedThreadRef): {

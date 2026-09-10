@@ -1,6 +1,5 @@
 import { DEFAULT_CONTENT_DIRECTION, type ContentDirection } from "@t3tools/contracts/settings";
 
-export { DEFAULT_CONTENT_DIRECTION } from "@t3tools/contracts/settings";
 export type { ContentDirection } from "@t3tools/contracts/settings";
 export type FixedContentDirection = Exclude<ContentDirection, "auto">;
 
@@ -13,6 +12,11 @@ const MARKDOWN_CODE_BLOCK = /(?:```|~~~)[\s\S]*?(?:```|~~~|$)/g;
 const MARKDOWN_INLINE_CODE = /`[^`\n]*`/g;
 const MARKDOWN_LINK_DESTINATION = /\]\([^)]*\)/g;
 const MARKDOWN_AUTOLINK = /<(?:https?:\/\/|mailto:)[^>]+>/gi;
+const TABLE_LITERAL_TEX = /\$(?=[^$\n]*\\[A-Za-z]{2,})[^$\n]{1,1000}\$/g;
+const TABLE_TEX_COMMAND = /\\[A-Za-z]{2,}(?:\s*\{[^{}\n]*\})?/g;
+const TABLE_TECHNICAL_IDENTIFIER =
+  /(?<![\p{L}\p{N}])(?:[A-Z]{2,5}[+-]?|[A-Za-z]+\d+[A-Za-z0-9+-]*|\d+[A-Za-z]+[A-Za-z0-9+-]*)(?![\p{L}\p{N}])/gu;
+const MIXED_TABLE_CELL_LTR_THRESHOLD_PERCENT = 70;
 
 const RTL_FLOW_ARROW_REPLACEMENTS: Readonly<Record<string, string>> = {
   "→": "←",
@@ -27,11 +31,17 @@ const ASCII_TECHNICAL_TOKEN_START = /^[A-Za-z0-9][A-Za-z0-9_./:+-]*/u;
 /** Fences whose contents are copyable prose rather than source code. */
 const PLAIN_TEXT_FENCE_LANGUAGES = new Set(["text", "plaintext", "txt"]);
 
-export function isFixedContentDirection(direction: ContentDirection): direction is "rtl" | "ltr" {
+export interface RtlFlowArrowSpan {
+  readonly end: number;
+  readonly replacement: string;
+  readonly start: number;
+}
+
+function isFixedContentDirection(direction: ContentDirection): direction is "rtl" | "ltr" {
   return direction !== "auto";
 }
 
-export function isPlainTextFence(language: string, fenceTitle: string | null): boolean {
+function isPlainTextFence(language: string, fenceTitle: string | null): boolean {
   return fenceTitle === null && PLAIN_TEXT_FENCE_LANGUAGES.has(language.toLowerCase());
 }
 
@@ -50,7 +60,12 @@ function containsStrongLtr(text: string): boolean {
   return LTR_STRONG_CHARACTER.test(text);
 }
 
-function countStrongScripts(text: string): { rtl: number; ltr: number } {
+export interface StrongScriptCounts {
+  readonly rtl: number;
+  readonly ltr: number;
+}
+
+export function countStrongScripts(text: string): StrongScriptCounts {
   let rtl = 0;
   let ltr = 0;
 
@@ -60,6 +75,27 @@ function countStrongScripts(text: string): { rtl: number; ltr: number } {
   }
 
   return { rtl, ltr };
+}
+
+/**
+ * Counts prose that can reliably describe a table's reading order. Scientific
+ * identifiers and literal TeX are cell content, not evidence that the table's
+ * column structure is LTR. Individual cells still use the unfiltered counter.
+ */
+export function countTableStrongScripts(text: string): StrongScriptCounts {
+  return countStrongScripts(
+    text
+      .replace(TABLE_LITERAL_TEX, " ")
+      .replace(TABLE_TEX_COMMAND, " ")
+      .replace(TABLE_TECHNICAL_IDENTIFIER, " "),
+  );
+}
+
+export function resolveStrongScriptDirection(
+  counts: StrongScriptCounts,
+): FixedContentDirection | null {
+  if (counts.rtl === 0 && counts.ltr === 0) return null;
+  return counts.rtl >= counts.ltr ? "rtl" : "ltr";
 }
 
 function stripMarkdownTechnicalContent(markdown: string): string {
@@ -72,9 +108,7 @@ function stripMarkdownTechnicalContent(markdown: string): string {
 
 /** Returns the strongest direction signal in Markdown prose, if one exists. */
 export function resolveMarkdownDirectionHint(markdown: string): FixedContentDirection | null {
-  const { rtl, ltr } = countStrongScripts(stripMarkdownTechnicalContent(markdown));
-  if (rtl === 0 && ltr === 0) return null;
-  return rtl >= ltr ? "rtl" : "ltr";
+  return resolveStrongScriptDirection(countStrongScripts(stripMarkdownTechnicalContent(markdown)));
 }
 
 /**
@@ -128,13 +162,20 @@ export function resolveStreamingMarkdownDirection(input: {
 /**
  * Gives a prose block an explicit local direction only when it is unambiguous.
  * Mixed blocks inherit the message base so leading English tokens cannot flip
- * an otherwise Hebrew sentence, list item, or table cell.
+ * an otherwise Hebrew sentence or list item.
  */
 export function resolveProseBlockDirection(
   text: string,
   baseDirection: FixedContentDirection,
 ): FixedContentDirection {
-  const { rtl, ltr } = countStrongScripts(text);
+  return resolveProseBlockDirectionFromCounts(countStrongScripts(text), baseDirection);
+}
+
+export function resolveProseBlockDirectionFromCounts(
+  counts: StrongScriptCounts,
+  baseDirection: FixedContentDirection,
+): FixedContentDirection {
+  const { rtl, ltr } = counts;
   if (rtl > 0 && ltr === 0) return "rtl";
   if (ltr > 0 && rtl === 0) return "ltr";
   return baseDirection;
@@ -149,10 +190,80 @@ export function resolveAggregateDirection(
   text: string,
   fallbackDirection: FixedContentDirection,
 ): FixedContentDirection {
-  const { rtl, ltr } = countStrongScripts(text);
+  return resolveAggregateDirectionFromCounts(countStrongScripts(text), fallbackDirection);
+}
+
+export function resolveAggregateDirectionFromCounts(
+  counts: StrongScriptCounts,
+  fallbackDirection: FixedContentDirection,
+): FixedContentDirection {
+  const { rtl, ltr } = counts;
   if (rtl > 0) return "rtl";
   if (ltr > 0) return "ltr";
   return fallbackDirection;
+}
+
+/**
+ * Resolves a structural direction from the dominant script across a complete
+ * region. Unlike list direction, a minority-language cell must not reverse an
+ * otherwise dominant table. A tie has no dominant script and keeps the
+ * surrounding direction.
+ */
+export function resolveDominantDirection(
+  text: string,
+  fallbackDirection: FixedContentDirection,
+): FixedContentDirection {
+  return resolveDominantDirectionFromCounts(countStrongScripts(text), fallbackDirection);
+}
+
+export function resolveDominantDirectionFromCounts(
+  counts: StrongScriptCounts,
+  fallbackDirection: FixedContentDirection,
+): FixedContentDirection {
+  if (counts.rtl > counts.ltr) return "rtl";
+  if (counts.ltr > counts.rtl) return "ltr";
+  return fallbackDirection;
+}
+
+/**
+ * Resolves text flow inside one table cell independently from table layout.
+ * A mixed cell becomes LTR only when at least 70% of its strong characters are
+ * LTR; otherwise RTL wins. Pure-script cells keep their script direction, and
+ * neutral cells inherit the table's automatic content direction.
+ */
+export function resolveTableCellDirection(
+  text: string,
+  automaticTableDirection: FixedContentDirection,
+): FixedContentDirection {
+  return resolveTableCellDirectionFromCounts(countStrongScripts(text), automaticTableDirection);
+}
+
+export function resolveTableCellDirectionFromCounts(
+  counts: StrongScriptCounts,
+  automaticTableDirection: FixedContentDirection,
+): FixedContentDirection {
+  if (counts.rtl > 0 && counts.ltr > 0) {
+    const total = counts.rtl + counts.ltr;
+    return counts.ltr * 100 >= total * MIXED_TABLE_CELL_LTR_THRESHOLD_PERCENT ? "ltr" : "rtl";
+  }
+  return resolveDominantDirectionFromCounts(counts, automaticTableDirection);
+}
+
+/**
+ * Resolves one visual alignment direction for a complete table column.
+ * Ordinary prose is authoritative when present. Identifier-only columns use
+ * their raw script as a fallback, while neutral columns follow the table.
+ * Cell-level `dir` remains separate so mixed punctuation keeps its local flow.
+ */
+export function resolveTableColumnDirectionFromCounts(
+  proseCounts: StrongScriptCounts,
+  rawCounts: StrongScriptCounts,
+  tableDirection: FixedContentDirection,
+): FixedContentDirection {
+  if (proseCounts.rtl > 0 || proseCounts.ltr > 0) {
+    return resolveDominantDirectionFromCounts(proseCounts, tableDirection);
+  }
+  return resolveDominantDirectionFromCounts(rawCounts, tableDirection);
 }
 
 /**
@@ -164,46 +275,59 @@ export function resolveAggregateDirection(
  * keeps this presentation fallback conservative; callers must still exclude
  * code, links, and other technical content before invoking it.
  */
-export function normalizeRtlFlowArrows(text: string): string {
-  STANDALONE_RTL_FLOW_ARROW.lastIndex = 0;
-  if (!containsStrongRtl(text) || !STANDALONE_RTL_FLOW_ARROW.test(text)) {
-    STANDALONE_RTL_FLOW_ARROW.lastIndex = 0;
-    return text;
+export function findRtlFlowArrowSpans(text: string): ReadonlyArray<RtlFlowArrowSpan> {
+  if (!containsStrongRtl(text)) return [];
+
+  const spans: RtlFlowArrowSpan[] = [];
+  for (const match of text.matchAll(STANDALONE_RTL_FLOW_ARROW)) {
+    const prefix = match[1] ?? "";
+    const arrow = match[2] ?? "";
+    const arrowOffset = match.index + prefix.length;
+    const beforeArrow = text.slice(0, arrowOffset);
+    const afterArrow = text.slice(arrowOffset + arrow.length);
+    const leftToken = ASCII_TECHNICAL_TOKEN.exec(beforeArrow.trimEnd())?.[0];
+    const rightToken = ASCII_TECHNICAL_TOKEN_START.exec(afterArrow.trimStart())?.[0];
+
+    // A Latin/number token on both sides is much more likely to be a
+    // formula, reaction, or identifier relationship than a prose flow.
+    if (leftToken && rightToken) continue;
+
+    // Do not reinterpret an arrow inside simple inline math delimiters.
+    const before = text.slice(0, arrowOffset);
+    let dollarOpen = false;
+    for (let index = 0; index < before.length; index += 1) {
+      if (before[index] === "$" && before[index - 1] !== "\\") {
+        dollarOpen = !dollarOpen;
+      }
+    }
+    if (
+      dollarOpen ||
+      before.lastIndexOf("\\(") > before.lastIndexOf("\\)") ||
+      before.lastIndexOf("\\[") > before.lastIndexOf("\\]")
+    ) {
+      continue;
+    }
+
+    spans.push({
+      end: arrowOffset + arrow.length,
+      replacement: RTL_FLOW_ARROW_REPLACEMENTS[arrow] ?? arrow,
+      start: arrowOffset,
+    });
   }
+  return spans;
+}
 
-  STANDALONE_RTL_FLOW_ARROW.lastIndex = 0;
-  return text.replace(
-    STANDALONE_RTL_FLOW_ARROW,
-    (match: string, prefix: string, arrow: string, offset: number, source: string) => {
-      const arrowOffset = offset + match.length - arrow.length;
-      const beforeArrow = source.slice(0, arrowOffset);
-      const afterArrow = source.slice(arrowOffset + arrow.length);
-      const leftToken = ASCII_TECHNICAL_TOKEN.exec(beforeArrow.trimEnd())?.[0];
-      const rightToken = ASCII_TECHNICAL_TOKEN_START.exec(afterArrow.trimStart())?.[0];
-
-      // A Latin/number token on both sides is much more likely to be a
-      // formula, reaction, or identifier relationship than a prose flow.
-      if (leftToken && rightToken) return match;
-
-      // Do not reinterpret an arrow inside simple inline math delimiters.
-      const before = source.slice(0, arrowOffset);
-      let dollarOpen = false;
-      for (let index = 0; index < before.length; index += 1) {
-        if (before[index] === "$" && before[index - 1] !== "\\") {
-          dollarOpen = !dollarOpen;
-        }
-      }
-      if (
-        dollarOpen ||
-        before.lastIndexOf("\\(") > before.lastIndexOf("\\)") ||
-        before.lastIndexOf("\\[") > before.lastIndexOf("\\]")
-      ) {
-        return match;
-      }
-
-      return `${prefix}${RTL_FLOW_ARROW_REPLACEMENTS[arrow] ?? arrow}`;
-    },
-  );
+export function normalizeRtlFlowArrows(text: string): string {
+  const spans = findRtlFlowArrowSpans(text);
+  if (spans.length === 0) return text;
+  let output = "";
+  let cursor = 0;
+  for (const span of spans) {
+    output += text.slice(cursor, span.start);
+    output += span.replacement;
+    cursor = span.end;
+  }
+  return output + text.slice(cursor);
 }
 
 /**

@@ -9,6 +9,7 @@ import {
   requireEnvironmentScope,
 } from "../auth/http.ts";
 import * as AnalyticsService from "./AnalyticsService.ts";
+import { makeAnalyticsUiAdapter } from "./AnalyticsUiAdapter.ts";
 
 export const scientAnalyticsHttpApiLayer = HttpApiBuilder.group(
   EnvironmentHttpApi,
@@ -21,10 +22,12 @@ export const scientAnalyticsHttpApiLayer = HttpApiBuilder.group(
           record: () => Effect.void,
           flush: Effect.void,
           status: Effect.succeed({ available: false, consent: "off" }),
+          collectionEpoch: Effect.succeed(0),
           setConsent: () => Effect.succeed({ available: false, consent: "off" }),
           deleteData: Effect.succeed(false),
         }),
     );
+    const ui = makeAnalyticsUiAdapter(analytics);
     const authorize = (endpoint: string) =>
       annotateEnvironmentRequest(endpoint).pipe(
         Effect.andThen(requireEnvironmentScope(AuthOrchestrationOperateScope)),
@@ -35,22 +38,22 @@ export const scientAnalyticsHttpApiLayer = HttpApiBuilder.group(
         "status",
         Effect.fn("environment.scientAnalytics.status")(function* (args) {
           yield* authorize(args.endpoint.name);
-          return yield* analytics.status;
+          return yield* ui.status;
         }),
       )
       .handle(
         "preferences",
         Effect.fn("environment.scientAnalytics.preferences")(function* (args) {
           yield* authorize(args.endpoint.name);
-          return yield* analytics.setConsent(args.payload.consent);
+          yield* analytics.setConsent(args.payload.consent);
+          return yield* ui.status;
         }),
       )
       .handle(
         "record",
         Effect.fn("environment.scientAnalytics.record")(function* (args) {
           yield* authorize(args.endpoint.name);
-          yield* analytics.record(args.payload.name, args.payload.properties);
-          return { accepted: true } as const;
+          return yield* ui.record(args.payload);
         }),
       )
       .handle(

@@ -1,15 +1,22 @@
-import { DroidSettings, ProviderDriverKind, type ServerProvider } from "@t3tools/contracts";
+import {
+  DroidSettings,
+  ProviderDriverKind,
+  type ServerProvider,
+  type ServerSettings,
+} from "@t3tools/contracts";
 import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
+import * as Stream from "effect/Stream";
 import { HttpClient } from "effect/unstable/http";
 import { ChildProcessSpawner } from "effect/unstable/process";
 
 import * as BackgroundPolicy from "../../background/BackgroundPolicy.ts";
 import { ServerConfig } from "../../config.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
+import { customModelDiscoverySnapshot } from "../../customModelCapabilities.ts";
 import { makeDroidTextGeneration } from "../../textGeneration/DroidTextGeneration.ts";
 import { ProviderDriverError } from "../Errors.ts";
 import { makeDroidAdapter } from "../Layers/DroidAdapter.ts";
@@ -28,13 +35,13 @@ import {
 import type { ServerProviderDraft } from "../providerSnapshot.ts";
 import { mergeProviderInstanceEnvironment } from "../ProviderInstanceEnvironment.ts";
 import {
+  makeCachedProviderMaintenanceResolution,
   makeManualOnlyProviderMaintenanceCapabilities,
-  makeStaticProviderMaintenanceResolver,
   resolveProviderMaintenanceCapabilitiesEffect,
 } from "../providerMaintenance.ts";
+import { droidMaintenance, withDroidReleaseVersion } from "../piDroidMaintenance.ts";
 import {
   haveProviderSnapshotSettingsChanged,
-  makeProviderSnapshotSettingsSource,
   type ProviderSnapshotSettings,
 } from "../providerUpdateSettings.ts";
 import {
@@ -47,16 +54,11 @@ import {
   withDroidSessionShutdown,
 } from "../../scient/providerLifecycle/DroidConnectionActions.ts";
 import { makeDroidManagedRuntimeResolution } from "../../scient/providerLifecycle/DroidManagedRuntimeActions.ts";
+import { makeDroidCustomModelsRuntimeFactory } from "../droid/DroidCustomModels.ts";
 
 const decodeDroidSettings = Schema.decodeSync(DroidSettings);
 
 const DRIVER_KIND = ProviderDriverKind.make("droid");
-const UPDATE = makeStaticProviderMaintenanceResolver(
-  makeManualOnlyProviderMaintenanceCapabilities({
-    provider: DRIVER_KIND,
-    packageName: null,
-  }),
-);
 
 export type DroidDriverEnv =
   | BackgroundPolicy.BackgroundPolicy
@@ -120,11 +122,14 @@ export const DroidDriver: ProviderDriver<DroidSettings, DroidDriverEnv> = {
     Effect.gen(function* () {
       const crypto = yield* Crypto.Crypto;
       const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+      const fileSystem = yield* FileSystem.FileSystem;
+      const pathService = yield* Path.Path;
       const httpClient = yield* HttpClient.HttpClient;
       const serverConfig = yield* ServerConfig;
       const serverSettings = yield* ServerSettingsService;
       const eventLoggers = yield* ProviderEventLoggers;
-      const processEnv = droidProcessEnvironment(mergeProviderInstanceEnvironment(environment));
+      const installationEnv = mergeProviderInstanceEnvironment(environment);
+      const processEnv = droidProcessEnvironment(installationEnv);
       const continuationIdentity = defaultProviderContinuationIdentity({
         driverKind: DRIVER_KIND,
         instanceId,
@@ -141,6 +146,32 @@ export const DroidDriver: ProviderDriver<DroidSettings, DroidDriverEnv> = {
         enabled,
         binaryPath: managedRuntime.effectiveBinaryPath,
       } satisfies DroidSettings;
+      const resolveInstallationMaintenance = yield* makeCachedProviderMaintenanceResolution(
+        (managedRuntime.usesManagedPath
+          ? Effect.succeed(
+              makeManualOnlyProviderMaintenanceCapabilities({
+                provider: DRIVER_KIND,
+                packageName: null,
+              }),
+            )
+          : resolveProviderMaintenanceCapabilitiesEffect(droidMaintenance, {
+              binaryPath: effectiveConfig.binaryPath,
+              env: installationEnv,
+            })
+        ).pipe(
+          Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+          Effect.provideService(FileSystem.FileSystem, fileSystem),
+          Effect.provideService(Path.Path, pathService),
+        ),
+      );
+      // Explicit update execution also needs the native channel for post-update verification.
+      const resolveMaintenance = (options?: { readonly fresh?: boolean }) =>
+        resolveInstallationMaintenance(options).pipe(
+          Effect.flatMap((capabilities) =>
+            withDroidReleaseVersion(capabilities, options?.fresh === true),
+          ),
+          Effect.provideService(HttpClient.HttpClient, httpClient),
+        );
       const assistedAccountActionsAllowed = !hasDroidApiKeyEnvironment(processEnv);
       const stampIdentity = withInstanceIdentity({
         instanceId,
@@ -150,22 +181,19 @@ export const DroidDriver: ProviderDriver<DroidSettings, DroidDriverEnv> = {
         runtime: managedRuntime.summary,
         assistedAccountActionsAllowed,
       });
-      const maintenanceCapabilities = managedRuntime.usesManagedPath
-        ? makeManualOnlyProviderMaintenanceCapabilities({
-            provider: DRIVER_KIND,
-            packageName: null,
-          })
-        : yield* resolveProviderMaintenanceCapabilitiesEffect(UPDATE, {
-            binaryPath: effectiveConfig.binaryPath,
-            env: processEnv,
-          });
+      const makeAcpRuntime = yield* makeDroidCustomModelsRuntimeFactory(serverSettings, instanceId);
 
       const adapter = yield* makeDroidAdapter(effectiveConfig, {
         environment: processEnv,
         ...(eventLoggers.native ? { nativeEventLogger: eventLoggers.native } : {}),
         instanceId,
+        makeAcpRuntime,
       });
-      const textGeneration = yield* makeDroidTextGeneration(effectiveConfig, processEnv);
+      const textGeneration = yield* makeDroidTextGeneration(
+        effectiveConfig,
+        processEnv,
+        makeAcpRuntime,
+      );
       const connectionActions = !assistedAccountActionsAllowed
         ? undefined
         : withDroidSessionShutdown(
@@ -180,6 +208,7 @@ export const DroidDriver: ProviderDriver<DroidSettings, DroidDriverEnv> = {
       const checkProvider = checkDroidProviderStatusWithCapabilities(
         effectiveConfig,
         processEnv,
+        makeAcpRuntime,
       ).pipe(
         Effect.map(({ snapshot: checkedSnapshot, accountCapabilities }) =>
           stampIdentity(checkedSnapshot, accountCapabilities),
@@ -188,9 +217,21 @@ export const DroidDriver: ProviderDriver<DroidSettings, DroidDriverEnv> = {
         Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
       );
 
-      const snapshotSettings = makeProviderSnapshotSettingsSource(effectiveConfig, serverSettings);
-      const snapshot = yield* makeManagedServerProvider<ProviderSnapshotSettings<DroidSettings>>({
-        maintenanceCapabilities,
+      const mapSettings = (settings: ServerSettings) => ({
+        provider: effectiveConfig,
+        enableProviderUpdateChecks: settings.enableProviderUpdateChecks,
+        customModels: customModelDiscoverySnapshot(settings.customModels.connections, instanceId),
+      });
+      const snapshotSettings = {
+        getSettings: serverSettings.getSettings.pipe(Effect.map(mapSettings)),
+        streamSettings: serverSettings.streamChanges.pipe(Stream.map(mapSettings)),
+      };
+      const snapshot = yield* makeManagedServerProvider<
+        ProviderSnapshotSettings<DroidSettings> & {
+          customModels: ReturnType<typeof customModelDiscoverySnapshot>;
+        }
+      >({
+        resolveMaintenance,
         getSettings: snapshotSettings.getSettings,
         streamSettings: snapshotSettings.streamSettings,
         haveSettingsChanged: haveProviderSnapshotSettingsChanged,
@@ -198,13 +239,27 @@ export const DroidDriver: ProviderDriver<DroidSettings, DroidDriverEnv> = {
           buildInitialDroidProviderSnapshot(settings.provider).pipe(Effect.map(stampIdentity)),
         checkProvider,
         enrichSnapshot: ({ settings, snapshot: currentSnapshot, publishSnapshot }) =>
-          enrichDroidSnapshot({
-            snapshot: currentSnapshot,
-            maintenanceCapabilities,
-            enableProviderUpdateChecks: settings.enableProviderUpdateChecks,
-            publishSnapshot,
-            httpClient,
-          }),
+          resolveMaintenance().pipe(
+            Effect.flatMap((capabilities) =>
+              withDroidReleaseVersion(
+                capabilities,
+                settings.enableProviderUpdateChecks !== false &&
+                  currentSnapshot.enabled &&
+                  currentSnapshot.installed &&
+                  Boolean(currentSnapshot.version),
+              ),
+            ),
+            Effect.provideService(HttpClient.HttpClient, httpClient),
+            Effect.flatMap((maintenanceCapabilities) =>
+              enrichDroidSnapshot({
+                snapshot: currentSnapshot,
+                maintenanceCapabilities,
+                enableProviderUpdateChecks: settings.enableProviderUpdateChecks,
+                publishSnapshot,
+                httpClient,
+              }),
+            ),
+          ),
       }).pipe(
         Effect.mapError(
           (cause) =>

@@ -14,6 +14,7 @@ import {
 } from "../../auth/http.ts";
 import { issueAssetUrl } from "../../assets/AssetAccess.ts";
 import * as ServerConfig from "../../config.ts";
+import { makeSourceImportAnalytics } from "../../telemetry/SourceImportAnalytics.ts";
 import {
   advanceSourceImport,
   beginLocalPdfImport,
@@ -56,6 +57,7 @@ export const scientSourcesHttpApiLayer = HttpApiBuilder.group(
   EnvironmentHttpApi,
   "scientSources",
   Effect.fnUntraced(function* (handlers) {
+    const observeImport = yield* makeSourceImportAnalytics("user");
     return yield* Effect.succeed(
       handlers
         .handle("overview", (args) =>
@@ -197,7 +199,7 @@ export const scientSourcesHttpApiLayer = HttpApiBuilder.group(
         )
         .handle("advanceImport", (args) =>
           handle(args.endpoint.name, AuthOrchestrationOperateScope, () =>
-            advanceSourceImport(args.payload),
+            advanceSourceImport(args.payload, observeImport),
           ),
         )
         .handle("cancelImport", (args) =>

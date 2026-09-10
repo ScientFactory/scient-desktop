@@ -2,13 +2,19 @@ import type { ManagedRuntimeTarget } from "./target.ts";
 import { managedRuntimeTargetKey } from "./target.ts";
 
 export type ManagedRuntimeArchiveFormat = "raw" | "tar.gz" | "zip";
-export type ManagedRuntimeProvider =
-  | "codex"
-  | "claudeAgent"
-  | "antigravity"
-  | "cursor"
-  | "droid"
-  | "grok";
+/** Distinct release families can belong to the same user-facing provider. */
+export const MANAGED_RUNTIME_CATALOG_PROVIDERS = [
+  "codex",
+  "claudeAgent",
+  "antigravity",
+  "antigravityAcp",
+  "cursor",
+  "droid",
+  "grok",
+  "pi",
+] as const;
+export type ManagedRuntimeCatalogProvider = (typeof MANAGED_RUNTIME_CATALOG_PROVIDERS)[number];
+export type ManagedRuntimeProvider = Exclude<ManagedRuntimeCatalogProvider, "antigravityAcp">;
 export type ManagedRuntimeSupportTier =
   | "fully_assisted"
   | "external_runtime_supported"

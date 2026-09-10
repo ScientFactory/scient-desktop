@@ -164,28 +164,36 @@ function missingAntigravityProvider(): ServerProvider {
 
 function renderPanel(options?: {
   readonly readOnly?: boolean;
+  readonly targetInstanceId?: ProviderInstanceId;
 }): ReactElement<Record<string, unknown>> {
   hooks.beginRender();
   return EnvironmentProviderSettings({
     environmentId,
     environmentLabel: "Remote device",
     ...(options?.readOnly === undefined ? {} : { readOnly: options.readOnly }),
+    ...(options?.targetInstanceId === undefined
+      ? {}
+      : { targetInstanceId: options.targetInstanceId }),
   }) as ReactElement<Record<string, unknown>>;
+}
+
+function isRefreshButton(element: ReactElement<Record<string, unknown>>): boolean {
+  const children = element.props.children;
+  return (
+    Array.isArray(children) &&
+    children.some(
+      (child) =>
+        typeof child === "object" &&
+        child !== null &&
+        (child as ReactElement<Record<string, unknown>>).props?.className === "sr-only" &&
+        (child as ReactElement<Record<string, unknown>>).props?.children ===
+          "Refresh provider status",
+    )
+  );
 }
 
 function isAddProviderButton(element: ReactElement<Record<string, unknown>>): boolean {
   return element.props["aria-label"] === "Add provider";
-}
-
-function findAdvancedPanel(panel: ReactElement<Record<string, unknown>>) {
-  return visitElements(
-    panel,
-    (element) => element.props.className === "mt-1" && typeof element.props.open === "boolean",
-  );
-}
-
-function flushEffects(): void {
-  for (const effect of settingsSearchState.effects.splice(0)) effect();
 }
 
 async function flushPromises(): Promise<void> {
@@ -216,15 +224,15 @@ describe("EnvironmentProviderSettings routing", () => {
   it("routes refresh and provider update commands to the selected environment", async () => {
     atoms.providers = [provider()];
     const panel = renderPanel();
-    const refreshButton = visitElements(
-      panel,
-      (element) => element.props["aria-label"] === "Refresh provider status",
-    );
+    const refreshButton = visitElements(panel, isRefreshButton);
     expect(refreshButton).not.toBeNull();
     (refreshButton?.props.onClick as (() => void) | undefined)?.();
     await flushPromises();
 
-    expect(commands.refresh).toHaveBeenCalledWith({ environmentId, input: {} });
+    expect(commands.refresh).toHaveBeenCalledWith({
+      environmentId,
+      input: { refreshModels: true },
+    });
 
     const providerCard = visitElements(
       panel,
@@ -241,37 +249,42 @@ describe("EnvironmentProviderSettings routing", () => {
     });
   });
 
-  it("opens a missing provider directly on its reviewed installation plan", () => {
-    atoms.providers = [missingAntigravityProvider()];
-    let panel = renderPanel();
-    const providerRow = visitElements(
-      panel,
-      (element) => element.props.instanceId === antigravityId && element.props.mode === "list",
-    );
-    expect(providerRow).not.toBeNull();
-    (providerRow?.props.onSelect as (() => void) | undefined)?.();
-
-    panel = renderPanel();
-    const providerCard = visitElements(
-      panel,
-      (element) =>
-        element.props.instanceId === antigravityId &&
-        typeof element.props.onManageConnection === "function",
-    );
-    expect(providerCard).not.toBeNull();
-
-    (providerCard?.props.onManageConnection as (() => void) | undefined)?.();
-
-    const updatedPanel = renderPanel();
-    const connectionDialog = visitElements(updatedPanel, (element) => {
-      const dialogProvider = element.props.provider as ServerProvider | undefined;
-      return (
-        dialogProvider?.instanceId === antigravityId &&
-        element.props.initialRuntimeAction === "install"
+  it.each([undefined, "install"] as const)(
+    "opens a missing provider with only the requested action (%s)",
+    (action) => {
+      atoms.providers = [missingAntigravityProvider()];
+      let panel = renderPanel();
+      const providerRow = visitElements(
+        panel,
+        (element) => element.props.instanceId === antigravityId && element.props.mode === "list",
       );
-    });
-    expect(connectionDialog).not.toBeNull();
-  });
+      expect(providerRow).not.toBeNull();
+      (providerRow?.props.onSelect as (() => void) | undefined)?.();
+
+      panel = renderPanel();
+      const providerCard = visitElements(
+        panel,
+        (element) =>
+          element.props.instanceId === antigravityId &&
+          typeof element.props.onManageConnection === "function",
+      );
+      expect(providerCard).not.toBeNull();
+
+      (providerCard?.props.onManageConnection as ((action?: "install") => void) | undefined)?.(
+        action,
+      );
+
+      const updatedPanel = renderPanel();
+      const connectionDialog = visitElements(updatedPanel, (element) => {
+        const dialogProvider = element.props.provider as ServerProvider | undefined;
+        return (
+          dialogProvider?.instanceId === antigravityId &&
+          element.props.initialRuntimeAction === action
+        );
+      });
+      expect(connectionDialog).not.toBeNull();
+    },
+  );
 
   it("forwards a requested runtime action into the lifecycle dialog", () => {
     atoms.providers = [provider()];
@@ -295,6 +308,26 @@ describe("EnvironmentProviderSettings routing", () => {
       );
     });
     expect(connectionDialog).not.toBeNull();
+  });
+
+  it("opens the requested provider instance instead of the first provider", () => {
+    settingsState.value = {
+      ...DEFAULT_UNIFIED_SETTINGS,
+      providerInstances: {
+        [customId]: { driver: ProviderDriverKind.make("codex"), enabled: true },
+      },
+    };
+    atoms.providers = [provider()];
+    const panel = renderPanel({ targetInstanceId: customId });
+    const editor = visitElements(panel, (element) => element.props.mode === "editor");
+    expect(editor?.props.instanceId).toBe(customId);
+  });
+
+  it("does not substitute another account when the requested instance was removed", () => {
+    atoms.providers = [provider()];
+    const panel = renderPanel({ targetInstanceId: customId });
+    expect(visitElements(panel, (element) => element.props.mode === "editor")).toBeNull();
+    expect(settingsState.updateSettings).not.toHaveBeenCalled();
   });
 
   it("keeps provider selection available while write controls are read only", () => {
@@ -331,10 +364,45 @@ describe("EnvironmentProviderSettings routing", () => {
     const notice = visitElements(panel, (element) => element.props.title === "Limited permissions");
     expect(notice).not.toBeNull();
 
-    expect(
-      visitElements(panel, (element) => element.props["aria-label"] === "Refresh provider status"),
-    ).toBeNull();
+    expect(visitElements(panel, isRefreshButton)).toBeNull();
     expect(visitElements(panel, isAddProviderButton)).toBeNull();
+  });
+
+  it("selects another provider during an update and retains it across status refreshes", async () => {
+    let finishUpdate!: () => void;
+    commands.updateProvider.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          finishUpdate = () => resolve({ _tag: "Success" });
+        }),
+    );
+    atoms.providers = [provider(), missingAntigravityProvider()];
+    let panel = renderPanel();
+    const initialEditor = visitElements(panel, (element) => element.props.mode === "editor");
+    (initialEditor?.props.onRunUpdate as () => void)();
+
+    panel = renderPanel();
+    const antigravityRow = visitElements(
+      panel,
+      (element) => element.props.mode === "list" && element.props.instanceId === antigravityId,
+    );
+    (antigravityRow?.props.onSelect as () => void)();
+
+    for (const status of ["warning", "ready"] as const) {
+      atoms.providers = [{ ...provider(), status }, missingAntigravityProvider()];
+      panel = renderPanel();
+      expect(
+        visitElements(panel, (element) => element.props.mode === "editor")?.props.instanceId,
+      ).toBe(antigravityId);
+    }
+
+    finishUpdate();
+    await flushPromises();
+    panel = renderPanel();
+    expect(
+      visitElements(panel, (element) => element.props.mode === "editor")?.props.instanceId,
+    ).toBe(antigravityId);
+    expect(settingsState.updateSettings).not.toHaveBeenCalled();
   });
 
   it("keeps the editable layout interactive when not read only", () => {
@@ -344,21 +412,23 @@ describe("EnvironmentProviderSettings routing", () => {
     expect(
       visitElements(panel, (element) => element.props.title === "Limited permissions"),
     ).toBeNull();
-    expect(
-      visitElements(panel, (element) => element.props["aria-label"] === "Refresh provider status"),
-    ).not.toBeNull();
+    expect(visitElements(panel, isRefreshButton)).not.toBeNull();
     expect(visitElements(panel, isAddProviderButton)).not.toBeNull();
   });
 
-  it("opens Advanced when search targets the provider health interval", () => {
-    settingsSearchState.targetId = "provider-health-check-interval";
+  it("keeps Advanced visible when search targets the provider health interval", () => {
     let panel = renderPanel();
+    expect(visitElements(panel, (element) => element.props.title === "Advanced")).not.toBeNull();
+    expect(
+      visitElements(panel, (element) => element.props.id === "provider-health-check-interval"),
+    ).not.toBeNull();
 
-    expect(findAdvancedPanel(panel)?.props.open).toBe(false);
-    flushEffects();
-
+    settingsSearchState.targetId = "provider-health-check-interval";
     panel = renderPanel();
-    expect(findAdvancedPanel(panel)?.props.open).toBe(true);
+    expect(visitElements(panel, (element) => element.props.title === "Advanced")).not.toBeNull();
+    expect(
+      visitElements(panel, (element) => element.props.id === "provider-health-check-interval"),
+    ).not.toBeNull();
   });
 
   it("deletes and resets provider configuration without erasing shared preferences", () => {

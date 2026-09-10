@@ -44,7 +44,7 @@ export function ScientReleaseNotes() {
   );
 }
 
-export function ScientReleaseNotesCard({
+function ScientReleaseNotesCard({
   release,
   onDismiss,
   onOpen,
@@ -91,7 +91,7 @@ export function ScientReleaseNotesCard({
   );
 }
 
-export function ScientReleaseNotesDialog({
+function ScientReleaseNotesDialog({
   current,
   history,
   open,
@@ -136,7 +136,14 @@ export function ScientReleaseNotesDialog({
           onBack={() => setView("release")}
         />
 
-        <DialogPanel className={view === "release" ? "px-5 pb-4 pt-5" : "max-h-[22rem] p-0"}>
+        <DialogPanel
+          className={view === "release" ? "px-5 pb-4 pt-5" : "p-0"}
+          scrollAreaClassName={
+            view === "release"
+              ? "max-h-[min(32rem,calc(100dvh-12rem))]"
+              : "max-h-[min(22rem,calc(100dvh-12rem))]"
+          }
+        >
           {view === "release" ? (
             <ScientReleaseDetail release={selected} />
           ) : (
@@ -222,6 +229,21 @@ function ScientReleaseDialogHeader({
 }
 
 function ScientReleaseDetail({ release }: { readonly release: ScientReleaseNote }) {
+  if (release.format === "paragraphs") {
+    return (
+      <div>
+        <div className="-mx-5 -mt-5 bg-[linear-gradient(180deg,transparent_0%,white_100%),linear-gradient(105deg,color-mix(in_srgb,var(--scient-warm-white)_88%,white)_0%,color-mix(in_srgb,var(--scient-warm-white)_42%,white)_58%,white_100%)] px-5 pb-5 pt-7 dark:bg-[linear-gradient(180deg,transparent_0%,#151315_100%),linear-gradient(105deg,color-mix(in_srgb,var(--scient-burgundy)_15%,#151315)_0%,#151315_100%)]">
+          <p className="text-lg font-semibold leading-snug text-foreground">{release.headline}</p>
+        </div>
+
+        <ScientReleaseParagraphs
+          alsoIncluded={release.alsoIncluded}
+          highlights={release.highlights}
+        />
+      </div>
+    );
+  }
+
   return (
     <div>
       <div className="-mx-5 -mt-5 bg-[linear-gradient(180deg,transparent_0%,white_100%),linear-gradient(105deg,color-mix(in_srgb,var(--scient-warm-white)_88%,white)_0%,color-mix(in_srgb,var(--scient-warm-white)_42%,white)_58%,white_100%)] px-5 pb-5 pt-7 dark:bg-[linear-gradient(180deg,transparent_0%,#151315_100%),linear-gradient(105deg,color-mix(in_srgb,var(--scient-burgundy)_15%,#151315)_0%,#151315_100%)]">
@@ -234,21 +256,38 @@ function ScientReleaseDetail({ release }: { readonly release: ScientReleaseNote 
         <p className="mt-2 text-sm leading-relaxed text-muted-foreground">{release.summary}</p>
       </div>
 
-      <div className="mt-1 grid gap-4">
-        {release.highlights.map((highlight, index) => (
-          <div className="flex gap-3" key={highlight.id}>
-            <span className="mt-0.5 flex size-6 shrink-0 items-center justify-center rounded-full bg-[color-mix(in_srgb,var(--scient-slate)_10%,transparent)] text-[11px] font-semibold text-[var(--scient-slate)] dark:bg-white/[0.06] dark:text-[var(--scient-warm-white)]">
-              {index + 1}
-            </span>
-            <div>
-              <p className="text-sm font-semibold text-foreground">{highlight.title}</p>
+      <ScientReleaseParagraphs highlights={release.highlights} />
+    </div>
+  );
+}
+
+function ScientReleaseParagraphs({
+  highlights,
+  alsoIncluded,
+}: {
+  readonly highlights: ScientReleaseNote["highlights"];
+  readonly alsoIncluded?: string;
+}) {
+  return (
+    <div>
+      <ol className="mt-1 grid list-decimal gap-4 pl-[1.625rem] marker:text-sm marker:font-medium marker:text-[var(--scient-slate)] dark:marker:text-[var(--scient-warm-white)]">
+        {highlights.map((highlight) => (
+          <li className="min-w-0 pl-0.5" key={highlight.id}>
+            <div className="min-w-0">
+              <p className="text-sm font-semibold leading-5 text-foreground">{highlight.title}</p>
               <p className="mt-1 text-[13px] leading-relaxed text-muted-foreground">
                 {highlight.description}
               </p>
             </div>
-          </div>
+          </li>
         ))}
-      </div>
+      </ol>
+      {alsoIncluded ? (
+        <div className="mt-4 min-w-0">
+          <p className="text-sm font-semibold leading-5 text-foreground">Also included</p>
+          <p className="mt-1 text-[13px] leading-relaxed text-muted-foreground">{alsoIncluded}</p>
+        </div>
+      ) : null}
     </div>
   );
 }

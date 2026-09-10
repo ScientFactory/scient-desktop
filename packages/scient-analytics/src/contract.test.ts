@@ -8,6 +8,64 @@ const context = {
 };
 
 describe("Scient analytics contract", () => {
+  it("does not turn inherited terminal notifications into duplicate successes", () => {
+    for (const terminalStatus of ["completed", "failed", "cancelled", "interrupted"]) {
+      expect(
+        normalizeInheritedEvent(
+          "provider.turn.completed",
+          { provider: "pi", terminalStatus },
+          context,
+        ),
+      ).toMatchObject({
+        name: "provider.turn.usage",
+        privacyLevel: "product",
+        properties: {
+          terminalStatus:
+            terminalStatus === "cancelled" || terminalStatus === "interrupted"
+              ? "stopped"
+              : terminalStatus,
+          usageStatus: "unavailable",
+        },
+      });
+    }
+    expect(
+      normalizeInheritedEvent("provider.turn.completed", { provider: "pi" }, context)?.name,
+    ).toBe("provider.turn.completed");
+  });
+  it("attributes Pi without collecting custom endpoint or model names", () => {
+    const event = normalizeInheritedEvent(
+      "provider.turn.sent",
+      {
+        provider: "pi",
+        model: "private-local-model",
+        endpoint: "https://private.example",
+      },
+      context,
+    );
+    expect(event?.properties).toMatchObject({ provider: "pi", modelKey: "other" });
+    expect(JSON.stringify(event)).not.toContain("private");
+  });
+  it("keeps skipped source imports distinct from success and failure without private details", () => {
+    const skipped = normalizeInheritedEvent(
+      "scient.operation.skipped",
+      {
+        operationKind: "source-import",
+        trigger: "user",
+        durationMs: 450,
+        title: "PRIVATE_SOURCE",
+        itemKey: "PRIVATE_KEY",
+        error: "PRIVATE_ERROR",
+      },
+      context,
+    );
+    expect(skipped).toMatchObject({
+      name: "scient.operation.skipped",
+      privacyLevel: "product",
+      priority: "core",
+      properties: { operationKind: "source-import", trigger: "user", durationBucket: "under-1s" },
+    });
+    expect(JSON.stringify(skipped)).not.toContain("PRIVATE");
+  });
   it("keeps known model choices useful while suppressing custom model text", () => {
     expect(modelKey("gpt-5-codex")).toBe("gpt-5.4");
     expect(modelKey("claude-opus-4-6-20251117")).toBe("claude-opus-4-6");
@@ -54,7 +112,11 @@ describe("Scient analytics contract", () => {
       { surface: "settings", path: "/Users/private" },
       context,
     );
-    expect(surface?.properties).toEqual({ surface: "settings" });
+    expect(surface?.properties).toEqual({
+      surface: "settings",
+      ...context,
+      contractRevision: "4",
+    });
   });
 
   it("classifies project-registration failures without accepting raw errors", () => {

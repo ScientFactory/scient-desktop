@@ -1,6 +1,11 @@
 import { describe, expect, it } from "vite-plus/test";
 import { ProviderDriverKind, type ProviderOptionDescriptor } from "@t3tools/contracts";
-import { buildTraitsTriggerDisplay, buildUnavailableModelOptionDescriptors } from "./TraitsPicker";
+import {
+  buildTraitsTriggerDisplay,
+  buildUnavailableModelOptionDescriptors,
+  shouldRenderTraitsControls,
+} from "./TraitsPicker";
+import { getProviderOptionDescriptors, getProviderOptionCurrentValue } from "@t3tools/shared/model";
 
 function selectDescriptor(
   id: string,
@@ -61,6 +66,99 @@ function display(descriptors: ReadonlyArray<ProviderOptionDescriptor>) {
 }
 
 describe("buildTraitsTriggerDisplay", () => {
+  it.each([true, false])(
+    "shows unavailable strict saved effort without selecting a valid choice (empty: %s)",
+    (empty) => {
+      const descriptors = getProviderOptionDescriptors({
+        caps: {
+          optionDescriptors: [
+            {
+              id: "thinking",
+              label: "Reasoning",
+              type: "select",
+              strictSelection: true,
+              options: empty ? [] : [{ id: "default", label: "Default (Medium)", isDefault: true }],
+            },
+          ],
+        },
+        selections: [{ id: "thinking", value: "max" }],
+      });
+      expect(display(descriptors).label).toBe("max unavailable");
+      const descriptor = descriptors[0];
+      expect(
+        descriptor?.type === "select" &&
+          descriptor.options.some(
+            (option) => option.id === getProviderOptionCurrentValue(descriptor),
+          ),
+      ).toBe(false);
+    },
+  );
+
+  it("keeps unknown strict reasoning visible without inventing an effort", () => {
+    const descriptor: ProviderOptionDescriptor = {
+      id: "thinking",
+      label: "Reasoning",
+      type: "select",
+      strictSelection: true,
+      options: [],
+      emptySelectionLabel: "Reasoning unknown",
+      description: "Reasoning settings unknown...",
+    };
+    expect(display([descriptor]).label).toBe("Reasoning unknown");
+    expect(
+      shouldRenderTraitsControls({
+        provider: ProviderDriverKind.make("pi"),
+        model: "custom",
+        models: [
+          {
+            slug: "custom",
+            name: "Custom",
+            isCustom: false,
+            capabilities: { optionDescriptors: [descriptor] },
+          },
+        ],
+        modelOptions: undefined,
+        prompt: "",
+        planModeEnabled: false,
+      }),
+    ).toBe(true);
+  });
+
+  it.each([undefined, "Reasoning unknown", "Reasoning unavailable"])(
+    "displays the provider empty selection label %s for strict reasoning",
+    (emptySelectionLabel) => {
+      for (const options of [[], [{ id: "medium", label: "Medium" }]]) {
+        const descriptor: ProviderOptionDescriptor = {
+          id: "thinking",
+          label: "Reasoning",
+          type: "select",
+          strictSelection: true,
+          options,
+          ...(emptySelectionLabel ? { emptySelectionLabel } : {}),
+        };
+        expect(display([descriptor]).label).toBe(emptySelectionLabel ?? "Default");
+        expect(getProviderOptionCurrentValue(descriptor)).toBeUndefined();
+      }
+    },
+  );
+
+  it.each(["Default", "Default (Medium)"])(
+    "renders the strict provider default label %s",
+    (label) => {
+      expect(
+        display([
+          {
+            id: "thinking",
+            label: "Reasoning",
+            type: "select",
+            strictSelection: true,
+            options: [{ id: "default", label, isDefault: true }],
+          },
+        ]).label,
+      ).toBe(label);
+    },
+  );
+
   it("omits fast mode from the label entirely when it is off", () => {
     expect(display([EFFORT, fastModeDescriptor(false), CONTEXT_WINDOW])).toEqual({
       label: "High · 1M",
@@ -167,7 +265,7 @@ describe("buildUnavailableModelOptionDescriptors", () => {
     ).toEqual([
       {
         id: "variant",
-        label: "Variant",
+        label: "Reasoning",
         type: "select",
         options: [{ id: "max", label: "max" }],
         currentValue: "max",

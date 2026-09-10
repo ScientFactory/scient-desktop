@@ -3,3 +3,6 @@
 
 # Unified patch context lines intentionally contain a single leading marker.
 *.patch -whitespace
+# Batch files need CRLF for cmd.exe to parse them reliably.
+*.cmd text eol=crlf
+*.bat text eol=crlf

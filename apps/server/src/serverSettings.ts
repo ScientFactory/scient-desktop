@@ -15,11 +15,16 @@ import {
   DEFAULT_TEXT_GENERATION_MODEL_BY_PROVIDER,
   DEFAULT_MODEL_BY_PROVIDER,
   DEFAULT_SERVER_SETTINGS,
+  CustomModelError,
+  type CustomModelSaveInput,
+  type CustomModelsSettings,
   type ModelSelection,
   type ProviderInstanceConfig,
   type ProviderInstanceEnvironmentVariable,
+  type UsageLimitSourceConfig,
   ProviderDriverKind,
   ProviderInstanceId,
+  resolveProviderInstanceEnabled,
   ServerSettings,
   ServerSettingsError,
   type ServerSettingsPatch,
@@ -52,6 +57,15 @@ import {
   isModelSelectionProviderEnabled,
 } from "@t3tools/shared/serverSettings";
 import * as ServerSecretStore from "./auth/ServerSecretStore.ts";
+import { makeCustomModelReasoning } from "./customModelReasoning.ts";
+import {
+  saveCustomModel,
+  prepareCustomModelSave,
+  resolveCustomModels,
+  customModelSecretName,
+  withCustomModelKeyHints,
+  type ResolvedModelConnection,
+} from "./customModels.ts";
 
 export { resolveSourceControlWriterModelSelection } from "@t3tools/shared/serverSettings";
 
@@ -133,6 +147,17 @@ function providerEnvironmentSecretName(input: {
   return `provider-env-${Buffer.from(input.instanceId, "utf8").toString("base64url")}-${Buffer.from(input.name, "utf8").toString("base64url")}`;
 }
 
+/**
+ * On disk the hub key is replaced by this marker and the real value lives in
+ * the secret store, mirroring provider environment secrets. A client that
+ * sends the marker back means "keep what you have".
+ */
+const USAGE_LIMIT_SOURCE_KEY_REDACTED = "\u2022\u2022\u2022\u2022\u2022\u2022";
+
+function usageLimitSourceSecretName(sourceId: string): string {
+  return `usage-limit-source-${Buffer.from(sourceId, "utf8").toString("base64url")}`;
+}
+
 function redactProviderEnvironmentVariable(
   variable: ProviderInstanceEnvironmentVariable,
 ): ProviderInstanceEnvironmentVariable {
@@ -159,7 +184,17 @@ export function redactServerSettingsForClient(settings: ServerSettings): ServerS
         : instance,
     ]),
   );
-  return { ...settings, providerInstances };
+  // The hub key is a bearer secret; clients only need to know one is set.
+  const usageLimitSources = Object.fromEntries(
+    Object.entries(settings.usageLimitSources).map(([id, source]) => [
+      id,
+      {
+        ...source,
+        managementKey: source.managementKey.length > 0 ? USAGE_LIMIT_SOURCE_KEY_REDACTED : "",
+      },
+    ]),
+  );
+  return { ...settings, providerInstances, usageLimitSources };
 }
 
 export class ServerSettingsService extends Context.Service<
@@ -173,6 +208,16 @@ export class ServerSettingsService extends Context.Service<
 
     /** Read the current settings. */
     readonly getSettings: Effect.Effect<ServerSettings, ServerSettingsError>;
+    readonly saveCustomModel: (
+      input: CustomModelSaveInput,
+    ) => Effect.Effect<CustomModelsSettings, CustomModelError>;
+    readonly removeCustomModel: (input: {
+      readonly revision: number;
+      readonly connectionId: string;
+    }) => Effect.Effect<CustomModelsSettings, CustomModelError>;
+    readonly resolveCustomModels: (
+      instanceId: ProviderInstanceId,
+    ) => Effect.Effect<ReadonlyArray<ResolvedModelConnection>, CustomModelError>;
 
     /** Patch settings and persist. Returns the new full settings object. */
     readonly updateSettings: (
@@ -211,6 +256,7 @@ const makeTest = (overrides: DeepPartial<ServerSettings> = {}) =>
     const currentSettingsRef = yield* Ref.make<ServerSettings>(initialSettings);
 
     return {
+      ...customModelsTestMethods,
       start: Effect.void,
       ready: Effect.void,
       getSettings: Ref.get(currentSettingsRef).pipe(Effect.map(resolveTextGenerationProvider)),
@@ -228,6 +274,25 @@ const makeTest = (overrides: DeepPartial<ServerSettings> = {}) =>
 
 export const layerTest = (overrides: DeepPartial<ServerSettings> = {}) =>
   Layer.effect(ServerSettingsService, makeTest(overrides));
+
+export const customModelsTestMethods = {
+  saveCustomModel: () =>
+    Effect.fail(
+      new CustomModelError({
+        message: "Custom model persistence is unavailable in this test layer.",
+      }),
+    ),
+  removeCustomModel: () =>
+    Effect.fail(
+      new CustomModelError({
+        message: "Custom model persistence is unavailable in this test layer.",
+      }),
+    ),
+  resolveCustomModels: () => Effect.succeed([]),
+} satisfies Pick<
+  ServerSettingsService["Service"],
+  "saveCustomModel" | "removeCustomModel" | "resolveCustomModels"
+>;
 
 const ServerSettingsJson = fromLenientJson(ServerSettings);
 const decodeServerSettingsJsonExit = Schema.decodeUnknownExit(ServerSettingsJson);
@@ -305,7 +370,13 @@ function resolveTextGenerationProvider(settings: ServerSettings): ServerSettings
 }
 
 function fallbackTextGenerationProvider(settings: ServerSettings): ServerSettings {
-  const fallbackEntry = Object.entries(settings.providers).find(([, provider]) => provider.enabled);
+  // Same precedence as isModelSelectionProviderEnabled: an explicit provider
+  // instance wins over the legacy providers map, which decodes to defaults
+  // (codex enabled) when the Providers UI has only written providerInstances.
+  const fallbackEntry = Object.entries(settings.providers).find(([driver, provider]) => {
+    const instance = settings.providerInstances[ProviderInstanceId.make(driver)];
+    return instance === undefined ? provider.enabled : resolveProviderInstanceEnabled(instance);
+  });
   const fallback = fallbackEntry ? ProviderDriverKind.make(fallbackEntry[0]) : undefined;
   if (!fallback) {
     return settings;
@@ -383,6 +454,7 @@ const make = Effect.gen(function* () {
   const fs = yield* FileSystem.FileSystem;
   const pathService = yield* Path.Path;
   const secretStore = yield* ServerSecretStore.ServerSecretStore;
+  const modelReasoning = makeCustomModelReasoning();
   const sql = yield* SqlClient.SqlClient;
   const writeSemaphore = yield* Semaphore.make(1);
   const cacheKey = "settings" as const;
@@ -468,6 +540,10 @@ const make = Effect.gen(function* () {
       ),
     );
 
+    settings = {
+      ...settings,
+      customModels: yield* withCustomModelKeyHints(settings.customModels, secretStore),
+    };
     return foldProviderInstanceEnabledFlags(
       restoreUsedProviders(settings, persisted, providerHistory),
     );
@@ -519,9 +595,28 @@ const make = Effect.gen(function* () {
           environment,
         } satisfies ProviderInstanceConfig;
       }
+      const usageLimitSources: Record<string, UsageLimitSourceConfig> = {};
+      for (const [sourceId, source] of Object.entries(settings.usageLimitSources)) {
+        if (source.managementKey !== USAGE_LIMIT_SOURCE_KEY_REDACTED) {
+          usageLimitSources[sourceId] = source;
+          continue;
+        }
+        const secret = yield* secretStore
+          .get(usageLimitSourceSecretName(sourceId))
+          .pipe(
+            Effect.mapError(
+              (cause) => new ServerSettingsError({ settingsPath, operation: "read-secret", cause }),
+            ),
+          );
+        usageLimitSources[sourceId] = {
+          ...source,
+          managementKey: Option.isSome(secret) ? textDecoder.decode(secret.value) : "",
+        };
+      }
       return {
         ...settings,
         providerInstances: providerInstances as ServerSettings["providerInstances"],
+        usageLimitSources: usageLimitSources as ServerSettings["usageLimitSources"],
       };
     });
 
@@ -575,9 +670,20 @@ const make = Effect.gen(function* () {
           }
 
           nextSecretKeys.add(secretName);
-          if (!variable.valueRedacted) {
-            if (variable.value.length > 0) {
-              yield* secretStore.set(secretName, textEncoder.encode(variable.value)).pipe(
+          // Match the provider environment's last-value-wins behavior for duplicate names.
+          const previous = variable.valueRedacted
+            ? current.providerInstances[ProviderInstanceId.make(instanceId)]?.environment?.findLast(
+                (entry) => entry.name === variable.name,
+              )
+            : undefined;
+          const inlineValue =
+            previous?.sensitive && !previous.valueRedacted && previous.value.length > 0
+              ? previous.value
+              : undefined;
+          const value = inlineValue ?? variable.value;
+          if (!variable.valueRedacted || inlineValue !== undefined) {
+            if (value.length > 0) {
+              yield* secretStore.set(secretName, textEncoder.encode(value)).pipe(
                 Effect.mapError(
                   (cause) =>
                     new ServerSettingsError({
@@ -637,9 +743,52 @@ const make = Effect.gen(function* () {
         }
       }
 
+      const usageLimitSources: Record<string, UsageLimitSourceConfig> = {};
+      for (const [sourceId, source] of Object.entries(next.usageLimitSources)) {
+        const secretName = usageLimitSourceSecretName(sourceId);
+        if (source.managementKey === USAGE_LIMIT_SOURCE_KEY_REDACTED) {
+          // Unchanged from the client's point of view; the store already has it.
+          usageLimitSources[sourceId] = source;
+          continue;
+        }
+        if (source.managementKey.length === 0) {
+          yield* secretStore
+            .remove(secretName)
+            .pipe(
+              Effect.mapError(
+                (cause) =>
+                  new ServerSettingsError({ settingsPath, operation: "remove-secret", cause }),
+              ),
+            );
+          usageLimitSources[sourceId] = source;
+          continue;
+        }
+        yield* secretStore
+          .set(secretName, textEncoder.encode(source.managementKey))
+          .pipe(
+            Effect.mapError(
+              (cause) =>
+                new ServerSettingsError({ settingsPath, operation: "write-secret", cause }),
+            ),
+          );
+        usageLimitSources[sourceId] = { ...source, managementKey: USAGE_LIMIT_SOURCE_KEY_REDACTED };
+      }
+      for (const sourceId of Object.keys(current.usageLimitSources)) {
+        if (sourceId in next.usageLimitSources) continue;
+        yield* secretStore
+          .remove(usageLimitSourceSecretName(sourceId))
+          .pipe(
+            Effect.mapError(
+              (cause) =>
+                new ServerSettingsError({ settingsPath, operation: "remove-stale-secret", cause }),
+            ),
+          );
+      }
+
       return {
         ...next,
         providerInstances: providerInstances as ServerSettings["providerInstances"],
+        usageLimitSources: usageLimitSources as ServerSettings["usageLimitSources"],
       };
     });
 
@@ -735,9 +884,86 @@ const make = Effect.gen(function* () {
     yield* Deferred.succeed(startedDeferred, undefined).pipe(Effect.orDie);
   });
 
+  const customModelFailure = () =>
+    new CustomModelError({ message: "Could not save custom models." });
+  const commitCustomModels = (current: ServerSettings, customModels: CustomModelsSettings) =>
+    Effect.gen(function* () {
+      const next = yield* normalizeServerSettings({ ...current, customModels });
+      yield* writeSettingsAtomically(next);
+      yield* Cache.set(settingsCache, cacheKey, next);
+      yield* emitChange(next);
+    }).pipe(Effect.mapError(customModelFailure));
+
   return {
     start,
     ready: Deferred.await(startedDeferred),
+    saveCustomModel: (input) =>
+      Effect.gen(function* () {
+        const prepared = yield* writeSemaphore.withPermits(1)(
+          Effect.gen(function* () {
+            const current = yield* getSettingsFromCache.pipe(Effect.mapError(customModelFailure));
+            return yield* prepareCustomModelSave(current, input, secretStore);
+          }),
+        );
+        // Explicit setup only: slow endpoints must not block settings reads or other writes.
+        const enriched = yield* modelReasoning.prepare(
+          prepared.connection,
+          prepared.previous,
+          input.refreshModelId,
+        );
+        const metadata = new Map(
+          enriched.models.flatMap((model) =>
+            model.reasoningMetadata ? [[model.id, model.reasoningMetadata] as const] : [],
+          ),
+        );
+        return yield* writeSemaphore.withPermits(1)(
+          Effect.gen(function* () {
+            const current = yield* getSettingsFromCache.pipe(Effect.mapError(customModelFailure));
+            return yield* saveCustomModel(
+              current,
+              input,
+              secretStore,
+              (next) => commitCustomModels(current, next),
+              metadata,
+            );
+          }).pipe(Effect.uninterruptible),
+        );
+      }),
+    removeCustomModel: (input) =>
+      writeSemaphore.withPermits(1)(
+        Effect.gen(function* () {
+          const current = yield* getSettingsFromCache.pipe(Effect.mapError(customModelFailure));
+          if (current.customModels.revision !== input.revision)
+            return yield* new CustomModelError({
+              message: "Custom models changed. Reload and try again.",
+            });
+          const existing = current.customModels.connections.find(
+            (c) => c.id === input.connectionId,
+          );
+          if (!existing) return current.customModels;
+          const next = {
+            revision: input.revision + 1,
+            connections: current.customModels.connections.filter(
+              (c) => c.id !== input.connectionId,
+            ),
+          };
+          yield* commitCustomModels(current, next);
+          if (existing.credentialId)
+            yield* secretStore
+              .remove(customModelSecretName(existing.credentialId))
+              .pipe(Effect.ignore);
+          return next;
+        }).pipe(Effect.uninterruptible),
+      ),
+    resolveCustomModels: (instanceId) =>
+      writeSemaphore.withPermits(1)(
+        getSettingsFromCache.pipe(
+          Effect.mapError(() => new CustomModelError({ message: "Could not read custom models." })),
+          Effect.flatMap((settings) =>
+            resolveCustomModels(settings.customModels, instanceId, secretStore),
+          ),
+        ),
+      ),
     getSettings: getSettingsFromCache.pipe(
       Effect.flatMap(materializeProviderEnvironmentSecrets),
       Effect.map(resolveTextGenerationProvider),

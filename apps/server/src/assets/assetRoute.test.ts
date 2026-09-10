@@ -16,6 +16,7 @@ import * as ProjectFaviconResolver from "../project/ProjectFaviconResolver.ts";
 import * as T3ProjectFileLoader from "../project/T3ProjectFileLoader.ts";
 import * as WorkspacePaths from "../workspace/WorkspacePaths.ts";
 import { ASSET_ROUTE_PREFIX, issueAssetUrl } from "./AssetAccess.ts";
+import * as NativeAppIconResolver from "./NativeAppIconResolver.ts";
 
 const configLayer = ServerConfig.ServerConfig.layerTest(process.cwd(), {
   prefix: "scient-pdf-route-test-",
@@ -27,6 +28,7 @@ const testLayer = Layer.mergeAll(
     Layer.provide(WorkspacePaths.layer),
     Layer.provide(T3ProjectFileLoader.layer),
   ),
+  NativeAppIconResolver.layer.pipe(Layer.provide(configLayer)),
   ServerSecretStore.layer.pipe(Layer.provide(configLayer)),
   NodeHttpPlatform.layer,
 ).pipe(Layer.provideMerge(NodeServices.layer));
@@ -156,7 +158,9 @@ describe("asset route", () => {
       const html = yield* runRequest(asset.relativeUrl);
       expect(html.status).toBe(200);
       expect(html.headers.get("content-type")).toContain("text/html");
-      expect(html.headers.get("content-security-policy")).toBeNull();
+      expect(html.headers.get("content-security-policy")).toBe(
+        "sandbox allow-scripts allow-forms allow-popups allow-modals",
+      );
       expect(html.headers.get("cache-control")).toBe("no-store");
 
       const script = yield* runRequest(`${ASSET_ROUTE_PREFIX}/${token}/assets/app.js`);

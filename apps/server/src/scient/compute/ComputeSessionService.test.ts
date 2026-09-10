@@ -33,20 +33,28 @@ import * as Exit from "effect/Exit";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Scope from "effect/Scope";
+import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 
 import * as ServerConfig from "../../config.ts";
+import { AnalyticsService, type AnalyticsStatus } from "../../telemetry/AnalyticsService.ts";
 import {
   ComputeSessionService,
   DEFAULT_COMPUTE_SESSION_SERVICE_OPTIONS,
   layerWithRuntimes,
   type ComputeRuntimeBinding,
+  layerWithRuntimeBindings,
   type ComputeSessionServiceOptions,
 } from "./ComputeSessionService.ts";
 import * as LocalComputeStore from "./LocalComputeStore.ts";
+import {
+  ComputeProjectOutputObserver,
+  type ComputeProjectOutputObserverPort,
+} from "./ComputeProjectOutputObserver.ts";
 
 const OBSERVED_AT = "2026-08-20T09:00:00.000Z";
+const encodeUnknownJson = Schema.encodeUnknownEffect(Schema.fromJsonString(Schema.Unknown));
 
 const PROJECT_ID = ComputeProjectId.make("project-1");
 const OTHER_PROJECT_ID = ComputeProjectId.make("project-2");
@@ -134,6 +142,22 @@ const richImageOutput: ComputeOutput = {
   displayId: "display-1",
 };
 
+const chartOutput = {
+  _tag: "display-data",
+  sequence: 0,
+  observedAt: OBSERVED_AT,
+  bundle: {
+    representations: [
+      {
+        mediaType: "application/vnd.plotly.v1+json",
+        data: { _tag: "json", json: '{"data":[],"layout":{"title":"private-chart"}}' },
+      },
+    ],
+    metadataJson: null,
+  },
+  displayId: "private-chart-id",
+} satisfies ComputeOutput;
+
 /**
  * The scripted runtime every test drives.
  *
@@ -143,6 +167,28 @@ const richImageOutput: ComputeOutput = {
  */
 const script = (code: string): SimulatedComputeExecution => {
   switch (code) {
+    case "chart":
+      return { _tag: "completes", outputs: [chartOutput], outcome: "succeeded" };
+    case "chart-then-failure":
+      return { _tag: "completes", outputs: [chartOutput], outcome: "failed" };
+    case "chart-then-missing":
+      return {
+        _tag: "completes",
+        outputs: [chartOutput, { ...imageOutput, sequence: 1 }],
+        outcome: "succeeded",
+      };
+    case "chart-hold":
+      return { _tag: "runs-until-interrupted", outputs: [chartOutput] };
+    case "chart-updates":
+      return {
+        _tag: "completes",
+        outputs: Array.from({ length: 50 }, (_, sequence) => ({
+          ...chartOutput,
+          _tag: "display-update" as const,
+          sequence,
+        })),
+        outcome: "succeeded",
+      };
     case "hold":
       return { _tag: "runs-until-interrupted", outputs: [streamOutput(0, "working\n")] };
     case "quiet-hold":
@@ -268,6 +314,8 @@ const withReportedCapabilities = (
 });
 
 interface HarnessOptions {
+  readonly analytics?: AnalyticsService["Service"];
+  readonly projectOutputs?: ComputeProjectOutputObserverPort;
   readonly capabilities?: ReadonlyArray<ComputeCapability>;
   readonly reportedCapabilities?: ReadonlyArray<ComputeCapability>;
   readonly readiness?: ComputeRuntimeReadiness;
@@ -307,22 +355,28 @@ const harness = (options: HarnessOptions = {}) =>
         return base.open(request);
       },
     };
-    const serviceLayer = layerWithRuntimes(
-      [
+    const serviceLayer = layerWithRuntimeBindings(
+      Effect.succeed([
         {
           adapter: adapterFor(options.readiness ?? "ready", options.runtimeProfiles),
           transport,
           toolkitSupport: options.toolkitSupport,
           managedRuntime: options.managedRuntime,
         },
-      ],
+      ]),
       { ...DEFAULT_COMPUTE_SESSION_SERVICE_OPTIONS, ...options.service },
+      options.projectOutputs
+        ? Layer.succeed(ComputeProjectOutputObserver, options.projectOutputs)
+        : undefined,
     ).pipe(
       // Merged rather than provided, so a test can read the disk the
       // coordinator wrote to and check that the two agree.
       Layer.provideMerge(LocalComputeStore.layer),
       Layer.provide(ServerConfig.layerTest(process.cwd(), baseDir)),
       Layer.provideMerge(NodeServices.layer),
+      Layer.provide(
+        options.analytics ? Layer.succeed(AnalyticsService, options.analytics) : Layer.empty,
+      ),
     );
     const use = <A, E>(
       body: Effect.Effect<
@@ -621,6 +675,324 @@ describe("compute runtime inspection", () => {
       );
     }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
   );
+});
+
+const analyticsFixture = () => {
+  const events: { name: string; properties: Readonly<Record<string, unknown>> | undefined }[] = [];
+  let status: AnalyticsStatus = { available: true, consent: "product" };
+  let epoch = 0;
+  const service = AnalyticsService.of({
+    record: (name, properties) =>
+      Effect.sync(() => {
+        events.push({ name, properties });
+      }),
+    status: Effect.sync(() => status),
+    collectionEpoch: Effect.sync(() => epoch),
+    setConsent: (consent) =>
+      Effect.sync(() => {
+        status = { available: true, consent };
+        epoch += 1;
+        return status;
+      }),
+    flush: Effect.void,
+    deleteData: Effect.succeed(true),
+  });
+  return { events, service };
+};
+
+describe("interactive capture analytics", () => {
+  for (const [code, outcome, expected] of [
+    ["figure", "succeeded", "completed"],
+    ["rich-figure", "succeeded", "completed"],
+    ["chart", "succeeded", "completed"],
+    ["chart-updates", "succeeded", "completed"],
+    ["chart-then-failure", "failed", "completed"],
+    ["chart-then-missing", "succeeded", "failed"],
+    ["phantom-figure", "succeeded", "failed"],
+    ["phantom-rich-figure", "succeeded", "failed"],
+    ["print(1)", "succeeded", "skipped"],
+    ["empty-display-flood", "succeeded", "skipped"],
+    ["boom", "failed", "skipped"],
+    ["die", "lost", "skipped"],
+  ] as const) {
+    it.effect(`captures ${code} as ${expected} independently of ${outcome} execution`, () =>
+      Effect.gen(function* () {
+        const f = analyticsFixture();
+        const test = yield* harness({ analytics: f.service });
+        yield* test.use(
+          Effect.gen(function* () {
+            yield* start;
+            yield* submit(code, "private-output-execution");
+            yield* waitUntil(
+              executionAt(ComputeExecutionId.make("private-output-execution"), outcome),
+            );
+          }),
+        );
+        const captures = f.events.filter(
+          (event) => event.properties?.operationKind === "compute-artifact",
+        );
+        expect(captures.map((event) => event.name)).toEqual([
+          "scient.operation.started",
+          `scient.operation.${expected}`,
+        ]);
+        expect(captures[1]?.properties).toEqual({
+          operationKind: "compute-artifact",
+          trigger: "other",
+          durationMs: expect.any(Number),
+          failureClass: "unknown",
+        });
+        expect(yield* encodeUnknownJson(f.events)).not.toMatch(
+          /private-|project-1|session-1|sha256:|display-1|print\(1\)/u,
+        );
+        expect(test.submitted()).toEqual([code]);
+      }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+    );
+  }
+
+  it.effect("records failed capture when a retained-output budget rejects a chart", () =>
+    Effect.gen(function* () {
+      const f = analyticsFixture();
+      const test = yield* harness({
+        analytics: f.service,
+        service: { maximumExecutionOutputBytes: 1 },
+      });
+      yield* test.use(
+        Effect.gen(function* () {
+          yield* start;
+          yield* submit("chart", "limited-output");
+          const finished = yield* waitUntil(
+            executionAt(ComputeExecutionId.make("limited-output"), "succeeded"),
+          );
+          expect(finished.result?.truncated).toBe(true);
+        }),
+      );
+      expect(
+        f.events
+          .filter((event) => event.properties?.operationKind === "compute-artifact")
+          .map((event) => event.name),
+      ).toEqual(["scient.operation.started", "scient.operation.failed"]);
+    }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+  );
+
+  for (const [code, expected] of [
+    ["chart-hold", "completed"],
+    ["hold", "skipped"],
+  ] as const) {
+    it.effect(`records ${expected} capture when the user interrupts ${code}`, () =>
+      Effect.gen(function* () {
+        const f = analyticsFixture();
+        const test = yield* harness({ analytics: f.service });
+        yield* test.use(
+          Effect.gen(function* () {
+            const service = yield* ComputeSessionService;
+            yield* start;
+            yield* submit(code, "cancel-output");
+            yield* waitUntil(
+              Effect.gen(function* () {
+                const transcript = yield* service.listOutputs({
+                  projectId: PROJECT_ID,
+                  sessionId: SESSION_ID,
+                  executionId: ComputeExecutionId.make("cancel-output"),
+                });
+                return transcript.outputs.length > 0 ? true : null;
+              }),
+            );
+            yield* service.interruptSession({
+              projectId: PROJECT_ID,
+              sessionId: SESSION_ID,
+              expectedGeneration: INITIAL_COMPUTE_SESSION_GENERATION,
+            });
+            yield* waitUntil(executionAt(ComputeExecutionId.make("cancel-output"), "cancelled"));
+          }),
+        );
+        expect(
+          f.events
+            .filter((event) => event.properties?.operationKind === "compute-artifact")
+            .map((event) => event.name),
+        ).toEqual(["scient.operation.started", `scient.operation.${expected}`]);
+      }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+    );
+  }
+
+  it.effect("counts a project figure only after it becomes a retained execution output", () =>
+    Effect.gen(function* () {
+      const f = analyticsFixture();
+      const test = yield* harness({
+        analytics: f.service,
+        projectOutputs: {
+          begin: () => Effect.succeed({ projectRoot: "/synthetic", baseline: null, warnings: [] }),
+          collect: () =>
+            Effect.succeed({
+              images: [
+                {
+                  relativePath: "private-figure.png",
+                  mediaType: "image/png",
+                  contentHash: PNG_HASH,
+                  bytes: PNG_BYTES,
+                  width: 4,
+                  height: 3,
+                },
+              ],
+              warnings: [],
+            }),
+        },
+      });
+      yield* test.use(
+        Effect.gen(function* () {
+          yield* start;
+          yield* submit("print(1)", "project-figure");
+          yield* waitUntil(executionAt(ComputeExecutionId.make("project-figure"), "succeeded"));
+          const transcript = yield* outputsOf(ComputeExecutionId.make("project-figure"));
+          expect(transcript.outputs.some((output) => output._tag === "image")).toBe(true);
+        }),
+      );
+      expect(
+        f.events
+          .filter((event) => event.properties?.operationKind === "compute-artifact")
+          .map((event) => event.name),
+      ).toEqual(["scient.operation.started", "scient.operation.completed"]);
+      expect(yield* encodeUnknownJson(f.events)).not.toMatch(
+        /private|project-figure|synthetic|sha256:/u,
+      );
+    }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+  );
+
+  it.effect("keeps a partial project-output warning visible without reading its text", () =>
+    Effect.gen(function* () {
+      const f = analyticsFixture();
+      const test = yield* harness({
+        analytics: f.service,
+        projectOutputs: {
+          begin: () => Effect.succeed({ projectRoot: "/synthetic", baseline: null, warnings: [] }),
+          collect: () =>
+            Effect.succeed({
+              images: [],
+              warnings: ["private project-output warning /private/path"],
+            }),
+        },
+      });
+      yield* test.use(
+        Effect.gen(function* () {
+          yield* start;
+          yield* submit("chart", "project-warning");
+          yield* waitUntil(executionAt(ComputeExecutionId.make("project-warning"), "succeeded"));
+        }),
+      );
+      expect(
+        f.events
+          .filter((event) => event.properties?.operationKind === "compute-artifact")
+          .map((event) => event.name),
+      ).toEqual(["scient.operation.started", "scient.operation.failed"]);
+      expect(yield* encodeUnknownJson(f.events)).not.toMatch(/private|project-warning|synthetic/u);
+    }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+  );
+
+  for (const mode of ["off", "broken"] as const) {
+    it.effect(`keeps real output persistence intact with ${mode} analytics`, () =>
+      Effect.gen(function* () {
+        const f = analyticsFixture();
+        if (mode === "off") yield* f.service.setConsent("off");
+        const test = yield* harness({
+          analytics:
+            mode === "broken"
+              ? { ...f.service, status: Effect.die("private analytics error") }
+              : f.service,
+        });
+        yield* test.use(
+          Effect.gen(function* () {
+            const service = yield* ComputeSessionService;
+            yield* start;
+            yield* submit("rich-figure", "untracked-output");
+            yield* waitUntil(executionAt(ComputeExecutionId.make("untracked-output"), "succeeded"));
+            const transcript = yield* service.listOutputs({
+              projectId: PROJECT_ID,
+              sessionId: SESSION_ID,
+              executionId: ComputeExecutionId.make("untracked-output"),
+            });
+            expect(transcript.outputs).toEqual([richImageOutput]);
+          }),
+        );
+        expect(f.events).toHaveLength(0);
+      }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+    );
+  }
+});
+
+describe("compute outcome analytics", () => {
+  for (const initialConsent of ["off", "product"] as const) {
+    it.effect(`does not restart tracking queued work when ${initialConsent} consent is reset`, () =>
+      Effect.gen(function* () {
+        const events: {
+          name: string;
+          properties: Readonly<Record<string, unknown>> | undefined;
+        }[] = [];
+        let status: AnalyticsStatus = { available: true, consent: initialConsent };
+        let epoch = 0;
+        const analytics = AnalyticsService.of({
+          record: (name, properties) =>
+            Effect.sync(() => {
+              events.push({ name, properties });
+            }),
+          status: Effect.sync(() => status),
+          collectionEpoch: Effect.sync(() => epoch),
+          setConsent: (consent) =>
+            Effect.sync(() => {
+              status = { available: true, consent };
+              epoch += 1;
+              return status;
+            }),
+          flush: Effect.void,
+          deleteData: Effect.succeed(true),
+        });
+        const test = yield* harness({ analytics });
+        yield* test.use(
+          Effect.gen(function* () {
+            const service = yield* ComputeSessionService;
+            yield* start;
+            yield* submit("hold", "active-before-consent");
+            yield* waitUntil(
+              executionAt(ComputeExecutionId.make("active-before-consent"), "running"),
+            );
+            yield* submit("hold", "queued-cancel");
+            yield* submit("print(1)", "queued-complete");
+            yield* analytics.setConsent("off");
+            yield* analytics.setConsent("product");
+            yield* service.cancelExecution({
+              projectId: PROJECT_ID,
+              sessionId: SESSION_ID,
+              executionId: ComputeExecutionId.make("queued-cancel"),
+              expectedGeneration: INITIAL_COMPUTE_SESSION_GENERATION,
+            });
+            yield* service.interruptSession({
+              projectId: PROJECT_ID,
+              sessionId: SESSION_ID,
+              expectedGeneration: INITIAL_COMPUTE_SESSION_GENERATION,
+            });
+            yield* waitUntil(executionAt(ComputeExecutionId.make("queued-complete"), "succeeded"));
+            yield* submit("boom", "fresh-after-consent");
+            yield* waitUntil(executionAt(ComputeExecutionId.make("fresh-after-consent"), "failed"));
+          }),
+        );
+        for (const kind of ["compute-run", "compute-artifact"]) {
+          expect(
+            events
+              .filter((event) => event.properties?.operationKind === kind)
+              .map((event) => event.name),
+          ).toEqual([
+            ...(initialConsent === "product"
+              ? Array.from({ length: 3 }, () => "scient.operation.started")
+              : []),
+            "scient.operation.started",
+            kind === "compute-run" ? "scient.operation.failed" : "scient.operation.skipped",
+          ]);
+        }
+        expect(events).toHaveLength(initialConsent === "product" ? 10 : 4);
+        expect(yield* encodeUnknownJson(events)).not.toMatch(
+          /project-1|session-1|before-consent|after-consent|queued-|print\(1\)|ZeroDivisionError|division by zero|python3/u,
+        );
+      }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+    );
+  }
 });
 
 describe("compute session startup", () => {

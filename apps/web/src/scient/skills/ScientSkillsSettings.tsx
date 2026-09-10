@@ -104,11 +104,11 @@ export function ScientSkillsSettings() {
 
   return (
     <SettingsPageContainer>
-      <SettingsSection {...searchableSetting("skills")} icon={<Layers3Icon className="size-4" />}>
-        <p className="px-3 pb-2 text-sm leading-relaxed text-muted-foreground sm:px-4">
-          Make reusable guidance available to supported agents. Skills add instructions, never tools
-          or permissions.
-        </p>
+      <SettingsSection
+        {...searchableSetting("skills")}
+        icon={<Layers3Icon className="size-4" />}
+        variant="plain"
+      >
         <div className="grid grid-cols-1 sm:grid-cols-2 sm:divide-x sm:divide-border/50">
           <Link
             className="group block cursor-pointer rounded-xl outline-none transition-colors hover:bg-foreground/[0.025] focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
@@ -174,30 +174,32 @@ export function ScientSkillsSettings() {
             description="This Scient build does not publish any managed skills."
           />
         ) : (
-          groupSkillsByCategory(
-            inventory.data.skills.filter((skill) => skill.scope === "user"),
-          ).map((group) => (
-            <SkillCategoryDisclosure
-              key={group.category}
-              title={group.category}
-              description={group.description}
-              skillCount={group.skills.length}
-            >
-              {group.skills.map((skill) => {
-                const pending = pendingReleaseKey === skill.releaseKey;
-                return (
-                  <SkillSettingsRow
-                    key={skill.releaseKey}
-                    skill={skill}
-                    pending={pending}
-                    disabled={pendingReleaseKey !== null}
-                    status="Built into Scient · Personal"
-                    onUpdate={(patch) => void updateSkill(skill, patch)}
-                  />
-                );
-              })}
-            </SkillCategoryDisclosure>
-          ))
+          <div className="rounded-xl border border-border/60 bg-card/40 shadow-xs/5 [&>*+*]:border-t [&>*+*]:border-border/50">
+            {groupSkillsByCategory(
+              inventory.data.skills.filter((skill) => skill.scope === "user"),
+            ).map((group) => (
+              <SkillCategoryDisclosure
+                key={group.category}
+                title={group.category}
+                description={group.description}
+                skillCount={group.skills.length}
+              >
+                {group.skills.map((skill) => {
+                  const pending = pendingReleaseKey === skill.releaseKey;
+                  return (
+                    <SkillSettingsRow
+                      key={skill.releaseKey}
+                      skill={skill}
+                      pending={pending}
+                      disabled={pendingReleaseKey !== null}
+                      status="Built into Scient · Personal"
+                      onUpdate={(patch) => void updateSkill(skill, patch)}
+                    />
+                  );
+                })}
+              </SkillCategoryDisclosure>
+            ))}
+          </div>
         )}
         {inventory.data?.skills.some((skill) => skill.active) ? (
           <p className="px-3 pt-2 text-xs text-muted-foreground sm:px-4">

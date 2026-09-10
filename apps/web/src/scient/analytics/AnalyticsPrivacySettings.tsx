@@ -1,18 +1,22 @@
 import type { ScientAnalyticsConsent, ScientAnalyticsStatus } from "@t3tools/contracts";
 import { useEffect, useState } from "react";
 
-import { ensureLocalApi, readLocalApi } from "../../localApi";
 import { usePrimaryEnvironmentId } from "../../state/environments";
 import { readPreparedConnection } from "../../state/session";
 import { Button } from "../../components/ui/button";
 import {
-  Select,
-  SelectItem,
-  SelectPopup,
-  SelectTrigger,
-  SelectValue,
-} from "../../components/ui/select";
+  Dialog,
+  DialogTrigger,
+  DialogPopup,
+  DialogHeader,
+  DialogTitle,
+  DialogDescription,
+  DialogFooter,
+  DialogClose,
+} from "../../components/ui/dialog";
+import { Switch } from "../../components/ui/switch";
 import { toastManager } from "../../components/ui/toast";
+import { AnalyticsSharingInfo } from "./AnalyticsSharingInfo";
 import { SettingsRow, SettingsSection } from "../../components/settings/settingsLayout";
 import {
   deleteScientAnalyticsData,
@@ -21,18 +25,12 @@ import {
   useRecordScientAnalytics,
 } from "./client";
 
-const CONSENT_LABELS: Readonly<Record<ScientAnalyticsConsent, string>> = {
-  off: "Off",
-  essential: "Essential reliability",
-  product: "Product improvement",
-  diagnostic: "Diagnostics",
-};
-
 export function AnalyticsPrivacySettings() {
   const environmentId = usePrimaryEnvironmentId();
   const record = useRecordScientAnalytics();
   const [status, setStatus] = useState<ScientAnalyticsStatus | null>(null);
   const [pending, setPending] = useState(false);
+  const [confirmDelete, setConfirmDelete] = useState(false);
 
   useEffect(() => {
     if (environmentId === null) {
@@ -77,7 +75,7 @@ export function AnalyticsPrivacySettings() {
       toastManager.add({
         type: "error",
         title: "Analytics preference was not saved",
-        description: "Your previous privacy setting is still active.",
+        description: "Your new choice could not be confirmed. Please try again.",
       });
     } finally {
       setPending(false);
@@ -88,28 +86,21 @@ export function AnalyticsPrivacySettings() {
     if (pending) return;
     const prepared = readPreparedConnection(environmentId);
     if (prepared === null) return;
-    const api = readLocalApi();
-    const confirmed = await (api ?? ensureLocalApi()).dialogs.confirm(
-      [
-        "Delete Scient analytics data?",
-        "Scient will request deletion of this installation's analytics data and replace its anonymous identifier.",
-      ].join("\n"),
-    );
-    if (!confirmed) return;
+    setConfirmDelete(false);
     setPending(true);
     try {
       await deleteScientAnalyticsData(prepared);
       toastManager.add({
         type: "success",
         title: "Analytics deletion requested",
-        description: "Local analytics data was cleared and the anonymous identifier was replaced.",
+        description: "Local analytics data was cleared and the analytics identifier was replaced.",
       });
     } catch {
       toastManager.add({
         type: "error",
         title: "Analytics data was not deleted",
         description:
-          "Nothing was cleared locally because the deletion gateway did not acknowledge the request.",
+          "Deletion could not be confirmed. Please try again; an accepted request may still be processing.",
       });
     } finally {
       setPending(false);
@@ -119,37 +110,51 @@ export function AnalyticsPrivacySettings() {
   return (
     <SettingsSection id="scient-analytics" title="Privacy and analytics">
       <SettingsRow
-        title="Share anonymous usage data"
-        description="Choose whether Scient may send bounded product and reliability events. Prompts, responses, files, paths, URLs, credentials, and provider account identities are never collected."
+        description="Help improve Scient. Analytics never collects your conversations, files, or credentials."
+        title={
+          <span className="inline-flex flex-wrap items-baseline gap-x-4 gap-y-1">
+            <span>Share usage and reliability</span>
+            <AnalyticsSharingInfo consent={status.consent} />
+          </span>
+        }
         control={
-          <Select
-            value={status.consent}
-            onValueChange={(value) => void updateConsent(value as ScientAnalyticsConsent)}
-          >
-            <SelectTrigger
-              className="w-full sm:w-52"
-              aria-label="Analytics sharing level"
-              disabled={pending}
-            >
-              <SelectValue>{CONSENT_LABELS[status.consent]}</SelectValue>
-            </SelectTrigger>
-            <SelectPopup align="end" alignItemWithTrigger={false}>
-              {(Object.keys(CONSENT_LABELS) as ScientAnalyticsConsent[]).map((consent) => (
-                <SelectItem key={consent} hideIndicator value={consent}>
-                  {CONSENT_LABELS[consent]}
-                </SelectItem>
-              ))}
-            </SelectPopup>
-          </Select>
+          <Switch
+            aria-label="Share usage and reliability"
+            checked={status.consent !== "off"}
+            disabled={pending}
+            onCheckedChange={(checked) => void updateConsent(checked ? "diagnostic" : "off")}
+          />
         }
       />
       <SettingsRow
         title="Delete analytics data"
-        description="Request deletion for this anonymous installation and rotate its local analytics identity."
+        description="Request deletion for this installation and reset its local analytics identifier."
         control={
-          <Button size="xs" variant="outline" disabled={pending} onClick={() => void deleteData()}>
-            Delete data
-          </Button>
+          <Dialog modal={false} open={confirmDelete} onOpenChange={setConfirmDelete}>
+            <DialogTrigger render={<Button size="xs" variant="outline" disabled={pending} />}>
+              Delete data
+            </DialogTrigger>
+            <DialogPopup
+              className="max-w-sm"
+              bottomStickOnMobile={false}
+              showBackdrop={false}
+              showCloseButton={false}
+            >
+              <DialogHeader className="gap-2 p-4 text-left">
+                <DialogTitle className="text-base">Delete analytics data?</DialogTitle>
+                <DialogDescription className="text-xs">
+                  Request deletion of this installation’s analytics data and reset its random
+                  analytics identifier.
+                </DialogDescription>
+              </DialogHeader>
+              <DialogFooter variant="bare" className="flex-row justify-end px-4 pb-4 pt-0">
+                <DialogClose render={<Button size="sm" variant="outline" />}>Cancel</DialogClose>
+                <Button size="sm" disabled={pending} onClick={() => void deleteData()}>
+                  Delete data
+                </Button>
+              </DialogFooter>
+            </DialogPopup>
+          </Dialog>
         }
       />
     </SettingsSection>

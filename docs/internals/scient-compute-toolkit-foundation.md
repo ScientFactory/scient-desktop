@@ -325,10 +325,11 @@ Deliberately deferred:
 3. Additional managed Toolkits or languages, until real product demand proves
    their dependency and ownership model.
 
-Notebook authoring, additional renderers, and second-language work remain
-independent tracks under the accepted compute ADR. Managed Python improves
-first-use reliability; it is not a prerequisite that blocks those tracks or a
-replacement for users' existing runtimes.
+Notebook authoring and further renderers remain independent tracks under the
+accepted compute ADR. This local continuation already includes a stateful MATLAB
+binding and bounded table/Plotly results; their acceptance is distinct from
+Python acquisition. Managed Python improves first-use reliability; it is not a
+prerequisite that blocks those tracks or a replacement for users' existing runtimes.
 
 ## Qualification evidence and remaining promotion gates
 

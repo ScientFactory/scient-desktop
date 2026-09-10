@@ -11,7 +11,6 @@ import * as Schema from "effect/Schema";
 const TrackedPath = Schema.String.check(
   Schema.isMinLength(1),
   Schema.isMaxLength(4_096),
-  // eslint-disable-next-line no-control-regex -- Persisted source paths must reject NUL.
   Schema.isPattern(/^[^\0]+$/u),
 );
 

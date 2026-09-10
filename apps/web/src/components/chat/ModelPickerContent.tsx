@@ -1,9 +1,19 @@
 import {
+  getAntigravityModelGroups,
+  groupAntigravityModelRows,
+} from "@t3tools/client-runtime/antigravity-model-presentation";
+import {
+  getDroidModelSection,
+  groupDroidModelRows,
+} from "@t3tools/client-runtime/droid-model-presentation";
+import {
+  ANTIGRAVITY_DEFAULT_MODEL,
   type ProviderInstanceId,
   type ProviderDriverKind,
   type ResolvedKeybindingsConfig,
 } from "@t3tools/contracts";
 import { resolveSelectableModel } from "@t3tools/shared/model";
+import { useAtomValue } from "@effect/atom-react";
 import { LegendList, type LegendListRef } from "@legendapp/list/react";
 import {
   memo,
@@ -15,11 +25,13 @@ import {
   useRef,
   type ReactNode,
 } from "react";
-import { ChevronRightIcon, DownloadIcon, Loader2Icon, SearchIcon, SplitIcon } from "lucide-react";
+import { DownloadIcon, Loader2Icon, SearchIcon, SplitIcon } from "lucide-react";
+import { ModelListDisclosureContent } from "./ModelListDisclosureContent";
 import { ModelListRow } from "./ModelListRow";
 import { ProviderInstanceIcon } from "./ProviderInstanceIcon";
 import { ModelPickerSidebar } from "./ModelPickerSidebar";
 import { prioritizeActiveProviderInstance } from "./modelPickerProviderOrder";
+import { hasProviderSetup } from "./ProviderStatusBanner";
 import {
   modelPickerLegacySectionKey,
   modelPickerModelKey,
@@ -35,6 +47,8 @@ import {
   ComboboxListVirtualized,
 } from "../ui/combobox";
 import { ModelEsque } from "./providerIconUtils";
+import { isCommandPaletteOpen } from "../../commandPaletteBus";
+import { primaryServerKeybindingsAtom } from "../../state/server";
 import {
   modelPickerJumpCommandForIndex,
   modelPickerJumpIndexFromCommand,
@@ -54,6 +68,7 @@ import {
 import { providerModelKey, sortProviderModelItems } from "../../modelOrdering";
 
 type ModelPickerItem = {
+  isDefault?: boolean | undefined;
   slug: string;
   name: string;
   shortName?: string;
@@ -70,19 +85,54 @@ type ModelPickerItem = {
   isUnavailable?: boolean | undefined;
 };
 
+export function resolveModelPickerSelectedModel(input: {
+  driverKind: ProviderDriverKind | undefined;
+  model: string;
+  options: ReadonlyArray<ModelEsque>;
+}) {
+  if (input.driverKind === "antigravity" && input.model === ANTIGRAVITY_DEFAULT_MODEL) {
+    const availableModels = input.options.filter(
+      (option) => option.slug !== ANTIGRAVITY_DEFAULT_MODEL && !option.isUnavailable,
+    );
+    return (
+      availableModels.find((option) => option.aliases?.includes(ANTIGRAVITY_DEFAULT_MODEL)) ??
+      availableModels.find((option) => option.isDefault)
+    );
+  }
+  return input.options.find((option) => option.slug === input.model);
+}
+
 export function shouldIncludeModelPickerOption(input: {
   readonly entry: ProviderInstanceEntry;
   readonly option: ModelEsque;
   readonly activeInstanceId: ProviderInstanceId;
   readonly activeModel: string;
 }): boolean {
+  if (input.entry.driverKind === "antigravity" && input.option.slug === ANTIGRAVITY_DEFAULT_MODEL) {
+    return false;
+  }
   if (isProviderInstancePickerReady(input.entry)) return true;
   return (
     input.entry.enabled &&
-    input.entry.driverKind === "opencode" &&
+    (input.entry.driverKind === "opencode" || input.entry.driverKind === "antigravity") &&
     input.entry.instanceId === input.activeInstanceId &&
     input.option.slug === input.activeModel &&
     input.option.isUnavailable === true
+  );
+}
+
+export function shouldOfferModelPickerSetup(
+  entry: ProviderInstanceEntry,
+  options: ReadonlyArray<ModelEsque>,
+): boolean {
+  return (
+    entry.enabled &&
+    entry.status !== "disabled" &&
+    hasProviderSetup(entry.snapshot) &&
+    (!isProviderInstancePickerReady(entry) ||
+      !entry.installed ||
+      entry.snapshot.auth.status === "unauthenticated" ||
+      !options.some((option) => !option.isUnavailable))
   );
 }
 
@@ -217,6 +267,7 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
   modelOptionsByInstance: ReadonlyMap<ProviderInstanceId, ReadonlyArray<ModelEsque>>;
   terminalOpen: boolean;
   onRequestClose?: () => void;
+  onOpenProviderSetup?: (instanceId: ProviderInstanceId) => void;
   getModelDisabledReason?: (instanceId: ProviderInstanceId, model: string) => string | null;
   onInstanceModelChange: (instanceId: ProviderInstanceId, model: string) => void;
   /** Keep a not-ready provider selectable when Scient can render its setup flow inline. */
@@ -244,6 +295,16 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
   const activeEntry = props.instanceEntries.find(
     (entry) => entry.instanceId === props.activeInstanceId,
   );
+  const activeModel = resolveModelPickerSelectedModel({
+    driverKind: activeEntry?.driverKind,
+    model: props.model,
+    options: modelOptionsByInstance.get(props.activeInstanceId) ?? [],
+  });
+  const activeModelSlug =
+    activeModel?.slug ?? (props.model === ANTIGRAVITY_DEFAULT_MODEL ? "" : props.model);
+  const activeModelKey = activeModelSlug
+    ? modelPickerModelKey(props.activeInstanceId, activeModelSlug)
+    : null;
   const activeInstanceHasSelectableUnavailableModel =
     activeEntry !== undefined &&
     (modelOptionsByInstance.get(props.activeInstanceId) ?? []).some((option) =>
@@ -251,15 +312,25 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
         entry: activeEntry,
         option,
         activeInstanceId: props.activeInstanceId,
-        activeModel: props.model,
+        activeModel: activeModelSlug,
       }),
     ) &&
     !isProviderInstancePickerReady(activeEntry);
+  const activeInstanceNeedsSetup =
+    props.onOpenProviderSetup !== undefined &&
+    activeEntry !== undefined &&
+    shouldOfferModelPickerSetup(
+      activeEntry,
+      modelOptionsByInstance.get(props.activeInstanceId) ?? [],
+    );
   const [selectedInstanceId, setSelectedInstanceId] = useState<ProviderInstanceId | "favorites">(
     () => {
-      if (props.lockedProvider !== null || activeInstanceHasSelectableUnavailableModel) {
-        // When locked, prime the sidebar to the currently-active instance
-        // so jumping into the picker keeps the focused instance visible.
+      if (
+        props.lockedProvider !== null ||
+        activeInstanceHasSelectableUnavailableModel ||
+        activeInstanceNeedsSetup
+      ) {
+        // Keep the active instance visible when it is locked or needs setup.
         return props.activeInstanceId;
       }
       return favorites.length > 0 ? "favorites" : props.activeInstanceId;
@@ -270,15 +341,19 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
       new Set<ProviderInstanceId>(
         modelOptionsByInstance
           .get(props.activeInstanceId)
-          ?.some((model) => model.slug === props.model && model.isLegacy)
+          ?.some(
+            (model) =>
+              model.slug === activeModelSlug &&
+              (activeEntry?.driverKind === "droid"
+                ? getDroidModelSection(model) === "more"
+                : model.isLegacy),
+          )
           ? [props.activeInstanceId]
           : [],
       ),
   );
-  const keybindings = useMemo<ResolvedKeybindingsConfig>(
-    () => providedKeybindings ?? [],
-    [providedKeybindings],
-  );
+  const serverKeybindings = useAtomValue(primaryServerKeybindingsAtom);
+  const keybindings = providedKeybindings ?? serverKeybindings;
   const updateSettings = useUpdateClientSettings();
 
   const focusSearchInput = useCallback(() => {
@@ -339,11 +414,27 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
   );
 
   const selectableUnavailableInstanceIds = useMemo(() => {
-    if (!activeInstanceHasSelectableUnavailableModel) {
-      return undefined;
+    const instanceIds = new Set<ProviderInstanceId>();
+    if (activeInstanceHasSelectableUnavailableModel) {
+      instanceIds.add(props.activeInstanceId);
     }
-    return new Set([props.activeInstanceId]);
-  }, [activeInstanceHasSelectableUnavailableModel, props.activeInstanceId]);
+    if (props.onOpenProviderSetup) {
+      for (const entry of instanceEntries) {
+        if (
+          shouldOfferModelPickerSetup(entry, modelOptionsByInstance.get(entry.instanceId) ?? [])
+        ) {
+          instanceIds.add(entry.instanceId);
+        }
+      }
+    }
+    return instanceIds.size > 0 ? instanceIds : undefined;
+  }, [
+    activeInstanceHasSelectableUnavailableModel,
+    instanceEntries,
+    modelOptionsByInstance,
+    props.activeInstanceId,
+    props.onOpenProviderSetup,
+  ]);
 
   // Flatten models into a searchable array. One pass over the
   // instance-keyed map; each model carries its instance id + driver kind
@@ -364,7 +455,7 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
             entry,
             option: model,
             activeInstanceId: props.activeInstanceId,
-            activeModel: props.model,
+            activeModel: activeModelSlug,
           })
         ) {
           continue;
@@ -372,6 +463,7 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
         out.push({
           slug: model.slug,
           name: model.name,
+          ...(model.isDefault ? { isDefault: true } : {}),
           ...(model.shortName ? { shortName: model.shortName } : {}),
           ...(model.subProvider ? { subProvider: model.subProvider } : {}),
           ...(model.badge ? { badge: model.badge } : {}),
@@ -389,7 +481,7 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
       }
     }
     return out;
-  }, [modelOptionsByInstance, entryByInstanceId, props.activeInstanceId, props.model]);
+  }, [modelOptionsByInstance, entryByInstanceId, props.activeInstanceId, activeModelSlug]);
 
   const isLocked = props.lockedProvider !== null;
   const isSearching = searchQuery.trim().length > 0;
@@ -453,7 +545,7 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
   );
 
   // Filter models based on search query and selected instance
-  const filteredModels = useMemo(() => {
+  const ungroupedFilteredModels = useMemo(() => {
     let result = flatModels;
 
     // Apply tokenized fuzzy search across the combined provider/model search fields.
@@ -558,12 +650,56 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
     selectedInstanceId,
   ]);
 
+  const filteredModels = useMemo(() => {
+    // Favorites remain exact model/effort shortcuts, including pre-existing bookmarks.
+    if (
+      selectedInstanceId === "favorites" ||
+      !ungroupedFilteredModels.some((model) => model.driverKind === "antigravity")
+    )
+      return ungroupedFilteredModels;
+    const visible = new Map<string, ModelPickerItem>();
+    for (const entry of instanceEntries) {
+      const rows = ungroupedFilteredModels.filter((model) => model.instanceId === entry.instanceId);
+      const groups = getAntigravityModelGroups(entry.driverKind, entry.models);
+      for (const row of groupAntigravityModelRows(
+        rows,
+        groups,
+        entry.instanceId === props.activeInstanceId ? activeModelSlug : null,
+      )) {
+        visible.set(providerModelKey(row.instanceId, row.slug), row);
+      }
+    }
+    return ungroupedFilteredModels.flatMap((row) => {
+      const shown = visible.get(providerModelKey(row.instanceId, row.slug));
+      return shown ? [shown] : [];
+    });
+  }, [
+    ungroupedFilteredModels,
+    selectedInstanceId,
+    instanceEntries,
+    props.activeInstanceId,
+    activeModelSlug,
+  ]);
+
+  const droidGroups = useMemo(() => {
+    if (
+      isSearching ||
+      selectedInstanceId === "favorites" ||
+      instanceEntries.find((entry) => entry.instanceId === selectedInstanceId)?.driverKind !==
+        "droid"
+    )
+      return null;
+    return groupDroidModelRows(filteredModels);
+  }, [isSearching, selectedInstanceId, instanceEntries, filteredModels]);
+
   const legacySection = useMemo(() => {
     if (isSearching || selectedInstanceId === "favorites") {
       return null;
     }
-    const currentModels = filteredModels.filter((model) => !model.isLegacy);
-    const legacyModels = filteredModels.filter((model) => model.isLegacy);
+    const currentModels = droidGroups
+      ? [...droidGroups.models, ...droidGroups.custom]
+      : filteredModels.filter((model) => !model.isLegacy);
+    const legacyModels = droidGroups?.more ?? filteredModels.filter((model) => model.isLegacy);
     if (legacyModels.length === 0) {
       return null;
     }
@@ -573,17 +709,17 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
       legacyModels,
       isExpanded: expandedLegacyInstances.has(selectedInstanceId),
     };
-  }, [expandedLegacyInstances, filteredModels, isSearching, selectedInstanceId]);
+  }, [droidGroups, expandedLegacyInstances, filteredModels, isSearching, selectedInstanceId]);
 
   const visibleModels = useMemo(() => {
     if (!legacySection) {
-      return filteredModels;
+      return droidGroups ? [...droidGroups.models, ...droidGroups.custom] : filteredModels;
     }
     return [
       ...legacySection.currentModels,
       ...(legacySection.isExpanded ? legacySection.legacyModels : []),
     ];
-  }, [filteredModels, legacySection]);
+  }, [droidGroups, filteredModels, legacySection]);
 
   const toggleLegacySection = useCallback((instanceId: ProviderInstanceId) => {
     setExpandedLegacyInstances((expanded) => {
@@ -669,7 +805,9 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
       ...flatModels.map((model) => modelPickerModelKey(model.instanceId, model.slug)),
       ...new Set(
         flatModels
-          .filter((model) => model.isLegacy)
+          .filter((model) =>
+            model.driverKind === "droid" ? getDroidModelSection(model) === "more" : model.isLegacy,
+          )
           .map((model) => modelPickerLegacySectionKey(model.instanceId)),
       ),
     ],
@@ -736,7 +874,7 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
 
   useEffect(() => {
     const onWindowKeyDown = (event: globalThis.KeyboardEvent) => {
-      if (event.defaultPrevented || event.repeat) {
+      if (event.defaultPrevented || event.repeat || isCommandPaletteOpen()) {
         return;
       }
 
@@ -748,6 +886,8 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
       if (jumpIndex === null) {
         return;
       }
+      event.preventDefault();
+      event.stopPropagation();
 
       const targetModelKey = modelJumpModelKeys[jumpIndex];
       if (!targetModelKey) {
@@ -757,8 +897,6 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
       if (!model) {
         return;
       }
-      event.preventDefault();
-      event.stopPropagation();
       handleModelSelect(model.slug, model.instanceId);
     };
 
@@ -817,7 +955,7 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
           autoHighlight
           open
           virtualized
-          value={modelPickerModelKey(props.activeInstanceId, props.model)}
+          value={activeModelKey}
           onItemHighlighted={(modelKey, eventDetails) => {
             highlightedModelKeyRef.current = typeof modelKey === "string" ? modelKey : null;
             if (eventDetails.reason === "keyboard" && eventDetails.index >= 0) {
@@ -924,17 +1062,10 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
                           className="group w-full cursor-pointer rounded-md px-2 py-2"
                           contentClassName="flex w-full items-center gap-3"
                         >
-                          <div className="min-w-0 flex-1 text-left">
-                            <div className="text-xs font-medium leading-snug">Legacy models</div>
-                            <div className="mt-1 text-xs font-normal leading-snug text-muted-foreground/70">
-                              {legacySection.legacyModels.length} models
-                            </div>
-                          </div>
-                          <ChevronRightIcon
-                            className={cn(
-                              "size-4 transition-transform",
-                              legacySection.isExpanded && "rotate-90",
-                            )}
+                          <ModelListDisclosureContent
+                            label={droidGroups ? "More models" : "Legacy models"}
+                            count={legacySection.legacyModels.length}
+                            expanded={legacySection.isExpanded}
                           />
                         </ComboboxItem>
                       );
@@ -946,29 +1077,34 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
                     const disabledReason =
                       getModelDisabledReason?.(model.instanceId, model.slug) ?? null;
                     return (
-                      <ModelListRow
-                        key={modelKey}
-                        index={index}
-                        model={model}
-                        instanceId={model.instanceId}
-                        driverKind={model.driverKind}
-                        providerDisplayName={model.instanceDisplayName}
-                        providerAccentColor={model.instanceAccentColor}
-                        isFavorite={favoritesSet.has(
-                          providerModelKey(model.instanceId, model.slug),
-                        )}
-                        isSelected={
-                          modelKey === modelPickerModelKey(props.activeInstanceId, props.model)
-                        }
-                        showProvider
-                        preferShortName={!isLocked}
-                        useTriggerLabel={false}
-                        showNewBadge={model.badge === "new"}
-                        unavailable={model.isUnavailable === true}
-                        jumpLabel={modelJumpLabelByKey.get(modelKey) ?? null}
-                        disabledReason={disabledReason}
-                        onToggleFavorite={() => toggleFavorite(model.instanceId, model.slug)}
-                      />
+                      <div>
+                        {droidGroups?.custom[0] === model ? (
+                          <div className="px-2 pt-3 pb-1 text-[11px] text-muted-foreground">
+                            Custom models
+                          </div>
+                        ) : null}
+                        <ModelListRow
+                          key={modelKey}
+                          index={index}
+                          model={model}
+                          instanceId={model.instanceId}
+                          driverKind={model.driverKind}
+                          providerDisplayName={model.instanceDisplayName}
+                          providerAccentColor={model.instanceAccentColor}
+                          isFavorite={favoritesSet.has(
+                            providerModelKey(model.instanceId, model.slug),
+                          )}
+                          isSelected={modelKey === activeModelKey}
+                          showProvider
+                          preferShortName={!isLocked}
+                          useTriggerLabel={false}
+                          showNewBadge={model.badge === "new"}
+                          unavailable={model.isUnavailable === true}
+                          jumpLabel={modelJumpLabelByKey.get(modelKey) ?? null}
+                          disabledReason={disabledReason}
+                          onToggleFavorite={() => toggleFavorite(model.instanceId, model.slug)}
+                        />
+                      </div>
                     );
                   }}
                   estimatedItemSize={52}

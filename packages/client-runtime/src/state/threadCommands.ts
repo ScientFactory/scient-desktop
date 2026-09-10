@@ -1,6 +1,6 @@
 import * as Crypto from "effect/Crypto";
 import { Atom } from "effect/unstable/reactivity";
-import { WS_METHODS } from "@t3tools/contracts";
+import { WS_METHODS, ORCHESTRATION_WS_METHODS } from "@t3tools/contracts";
 
 import {
   createAtomCommandScheduler,
@@ -14,11 +14,13 @@ import {
   type InterruptThreadTurnInput,
   type RespondToThreadApprovalInput,
   type RespondToThreadUserInputInput,
+  type DismissThreadUserInputInput,
   type RevertThreadCheckpointInput,
   type SetThreadInteractionModeInput,
   type SetThreadRuntimeModeInput,
   type PinThreadInput,
   type ReorderPinnedThreadInput,
+  type ReorderActiveThreadInput,
   type SettleThreadInput,
   type SnoozeThreadInput,
   type StartThreadTurnInput,
@@ -38,11 +40,13 @@ import {
   interruptThreadTurn,
   respondToThreadApproval,
   respondToThreadUserInput,
+  dismissThreadUserInput,
   revertThreadCheckpoint,
   setThreadInteractionMode,
   setThreadRuntimeMode,
   pinThread,
   reorderPinnedThread,
+  reorderActiveThread,
   settleThread,
   snoozeThread,
   startThreadTurn,
@@ -62,11 +66,13 @@ export type {
   InterruptThreadTurnInput,
   RespondToThreadApprovalInput,
   RespondToThreadUserInputInput,
+  DismissThreadUserInputInput,
   RevertThreadCheckpointInput,
   SetThreadInteractionModeInput,
   SetThreadRuntimeModeInput,
   PinThreadInput,
   ReorderPinnedThreadInput,
+  ReorderActiveThreadInput,
   SettleThreadInput,
   SnoozeThreadInput,
   StartThreadTurnInput,
@@ -157,6 +163,12 @@ export function createThreadEnvironmentAtoms<R, E>(
       scheduler,
       concurrency,
     }),
+    reorderActive: createEnvironmentCommand(runtime, {
+      label: "environment-data:commands:thread:reorder-active",
+      execute: (input: ReorderActiveThreadInput) => reorderActiveThread(input),
+      scheduler,
+      concurrency,
+    }),
     updateMetadata: createEnvironmentCommand(runtime, {
       label: "environment-data:commands:thread:update-metadata",
       execute: (input: UpdateThreadMetadataInput) => updateThreadMetadata(input),
@@ -199,6 +211,12 @@ export function createThreadEnvironmentAtoms<R, E>(
       scheduler,
       concurrency,
     }),
+    dismissUserInput: createEnvironmentCommand(runtime, {
+      label: "environment-data:commands:thread:dismiss-user-input",
+      execute: (input: DismissThreadUserInputInput) => dismissThreadUserInput(input),
+      scheduler,
+      concurrency,
+    }),
     revertCheckpoint: createEnvironmentCommand(runtime, {
       label: "environment-data:commands:thread:revert-checkpoint",
       execute: (input: RevertThreadCheckpointInput) => revertThreadCheckpoint(input),
@@ -222,6 +240,10 @@ export function createThreadEnvironmentAtoms<R, E>(
         key: ({ environmentId, input }: { environmentId: string; input: ForkThreadInput }) =>
           JSON.stringify([environmentId, input.originThreadId]),
       },
+    }),
+    getForkOptions: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:commands:thread:fork-options",
+      tag: ORCHESTRATION_WS_METHODS.getForkOptions,
     }),
     // SCIENT-FORK:END
     uploadFeedback: createEnvironmentRpcCommand(runtime, {

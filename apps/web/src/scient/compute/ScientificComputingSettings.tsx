@@ -1,4 +1,4 @@
-import { Download, LoaderCircle, RefreshCwIcon, Trash2, Wrench } from "lucide-react";
+import { Download, LoaderCircle, RefreshCwIcon, SigmaIcon, Trash2, Wrench } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 import type {
   ComputeLanguageRuntimeInspection,
@@ -31,7 +31,6 @@ import {
   SettingsRow,
   SettingsSection,
 } from "~/components/settings/settingsLayout";
-import { searchableSetting } from "~/components/settings/settingsSearch";
 
 function readinessLabel(language: ComputeLanguageRuntimeInspection, enabled: boolean): string {
   if (!enabled) return "Disabled";
@@ -423,7 +422,7 @@ export function ScientificComputingSettings(
   );
 }
 
-export function EnvironmentScientificComputingSettings({
+function EnvironmentScientificComputingSettings({
   environmentId,
   label,
 }: {
@@ -484,31 +483,44 @@ export function EnvironmentScientificComputingSettings({
       <SettingsSection
         id="scientific-computing"
         title="Scientific Computing"
+        icon={<SigmaIcon className="size-4 text-muted-foreground" />}
+        variant="plain"
         headerAction={<span className="text-xs text-muted-foreground">{label}</span>}
       >
-        <SettingsRow
-          {...searchableSetting("scientific-computing")}
-          title="Compute environments"
-          description="Use an existing environment or let Scient set up a private Scientific Python. System Python and project environments are never changed. Executed code has this server environment's filesystem and network access and is not sandboxed."
-          status={refreshFailure ?? runtimes.error}
-        />
-        {(runtimes.data?.languages ?? []).map((language) => {
-          const preference = preferences.languages[language.descriptor.languageId] ?? {
-            enabled: false,
-            executable: "",
-          };
-          return (
-            <LanguageSettingsRow
-              key={language.descriptor.languageId}
-              language={language}
-              preference={preference}
-              onChange={(next) => updateLanguage(language.descriptor.languageId, next)}
-              onRefresh={() => void handleRefresh()}
-              refreshing={runtimes.isPending || refreshing}
-              environmentId={environmentId}
-            />
-          );
-        })}
+        <div className="space-y-3">
+          <div className="rounded-xl border border-border/60 bg-card/40 shadow-xs/5 [&>*+*]:border-t [&>*+*]:border-border/50 [&>[data-slot=settings-row]]:rounded-none">
+            {(runtimes.data?.languages ?? []).map((language) => {
+              const preference = preferences.languages[language.descriptor.languageId] ?? {
+                enabled: false,
+                executable: "",
+              };
+              return (
+                <LanguageSettingsRow
+                  key={language.descriptor.languageId}
+                  language={language}
+                  preference={preference}
+                  onChange={(next) => updateLanguage(language.descriptor.languageId, next)}
+                  onRefresh={() => void handleRefresh()}
+                  refreshing={runtimes.isPending || refreshing}
+                  environmentId={environmentId}
+                />
+              );
+            })}
+            {(refreshFailure ?? runtimes.error) ? (
+              <p className="px-4 py-3 text-xs text-destructive" role="alert">
+                {refreshFailure ?? runtimes.error}
+              </p>
+            ) : null}
+          </div>
+          <div className="mx-auto w-full max-w-xl rounded-xl border border-dashed border-border/60 bg-muted/15 px-4 py-5 text-center">
+            <p className="text-sm font-medium text-foreground/85">
+              More scientific tools are coming soon
+            </p>
+            <p className="mt-1 text-xs text-muted-foreground/80">
+              Additional languages and purpose-built scientific workflows are on the way.
+            </p>
+          </div>
+        </div>
       </SettingsSection>
     </SettingsPageContainer>
   );

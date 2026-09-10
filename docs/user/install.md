@@ -31,6 +31,12 @@ Run the x64 installer. If Windows displays a SmartScreen warning, verify that
 you downloaded the installer from the official Scient page before deciding
 whether to continue.
 
+When Scient runs a project through Windows Subsystem for Linux, it keeps a
+Linux-local copy of the matching server runtime. The first launch after an app
+update can take longer while that copy is prepared. Later launches reuse it,
+keep one previous working runtime for rollback, and repair the cache
+automatically if the selected copy can no longer start.
+
 ### Linux
 
 Download the x64 AppImage, make it executable if your file manager did not do
@@ -39,8 +45,16 @@ built-in desktop updater to continue finding it.
 
 ## Start using Scient
 
+If the app shows **Scient could not load**, check your connection and select
+**Reload** to try again.
+
 When Scient opens, the optional [Getting started](./getting-started.md) flow can
 help you connect an AI provider and add your first project. You can skip it and
-configure providers later from **Settings → Providers**. See
-[AI providers](./providers.md) or [Projects](./projects.md) when you need more
-detail.
+configure providers later from **Settings → Providers**. Provider setup is not
+required before Scient itself starts: install or connect a provider when you
+are ready to begin a conversation.
+
+Scient can use a healthy provider tool already installed on the environment or,
+when supported, install and verify a private Scient-managed copy. See
+[AI providers](./providers.md) for setup and lifecycle details, or
+[Projects](./projects.md) for adding a workspace.

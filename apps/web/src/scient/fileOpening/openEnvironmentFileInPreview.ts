@@ -12,6 +12,7 @@ import { AsyncResult } from "effect/unstable/reactivity";
 import { resolveAssetUrl } from "~/assets/assetUrls";
 import {
   BrowserPreviewUnavailableError,
+  type BrowserSettingsReadError,
   openUrlInPreview,
   type OpenPreviewMutation,
 } from "~/browser/openFileInPreview";
@@ -38,7 +39,12 @@ export async function openEnvironmentFileInPreview<AssetError, PreviewError>(inp
     readonly input: { readonly resource: AssetResource };
   }) => Promise<AtomCommandResult<AssetCreateUrlResult, AssetError>>;
   readonly openPreview: OpenPreviewMutation<PreviewError>;
-}): Promise<AtomCommandResult<void, AssetError | PreviewError | BrowserPreviewUnavailableError>> {
+}): Promise<
+  AtomCommandResult<
+    void,
+    AssetError | PreviewError | BrowserPreviewUnavailableError | BrowserSettingsReadError
+  >
+> {
   if (!isPreviewSupportedInRuntime()) {
     return AsyncResult.failure(
       Cause.fail(

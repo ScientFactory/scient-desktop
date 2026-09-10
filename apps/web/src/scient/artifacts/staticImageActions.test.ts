@@ -32,11 +32,56 @@ describe("static image copy dimensions", () => {
 });
 
 describe("static image byte actions", () => {
+  it("starts browser clipboard access before the fresh URL is available", async () => {
+    let resolveUrl!: (url: string) => void;
+    const url = new Promise<string>((resolve) => {
+      resolveUrl = resolve;
+    });
+    const png = new Blob([new Uint8Array([1, 2, 3])], { type: "image/png" });
+    const fetch = vi.fn().mockResolvedValue({ ok: true, blob: async () => png });
+    const write = vi.fn().mockResolvedValue(undefined);
+    let clipboardPng: Blob | Promise<Blob> | undefined;
+    function TestClipboardItem(data: Record<string, Blob | Promise<Blob>>) {
+      clipboardPng = data["image/png"];
+    }
+    vi.stubGlobal("fetch", fetch);
+    vi.stubGlobal("navigator", { clipboard: { write } });
+    vi.stubGlobal("ClipboardItem", TestClipboardItem);
+    const pending = copyStaticImage(url);
+    expect(write).toHaveBeenCalledOnce();
+    expect(fetch).not.toHaveBeenCalled();
+    resolveUrl("https://environment.test/api/assets/fresh");
+    await pending;
+    expect(await clipboardPng).toBe(png);
+  });
+
+  it("retains native desktop PNG clipboard support without browser ClipboardItem", async () => {
+    const source = new Blob([new Uint8Array([1, 2, 3])], { type: "image/png" });
+    const copyPngToClipboard = vi.fn().mockResolvedValue(undefined);
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: true, blob: async () => source }));
+    vi.stubGlobal("window", { desktopBridge: { copyPngToClipboard } });
+    vi.stubGlobal("ClipboardItem", undefined);
+    await copyStaticImage(Promise.resolve("https://environment.test/figure.png"));
+    expect(copyPngToClipboard).toHaveBeenCalledWith(new Uint8Array([1, 2, 3]));
+  });
+
+  it("handles simultaneous clipboard construction and image preparation failures", async () => {
+    vi.stubGlobal("navigator", { clipboard: { write: vi.fn() } });
+    vi.stubGlobal("ClipboardItem", function () {
+      throw new Error("Clipboard denied");
+    });
+    await expect(copyStaticImage(Promise.reject(new Error("Image unavailable")))).rejects.toThrow(
+      "Clipboard denied",
+    );
+    // The rejected preparation remains observed even when the clipboard never consumes it.
+    await Promise.resolve();
+  });
+
   it("copies an existing PNG without re-encoding it", async () => {
     const source = new Blob([new Uint8Array([1, 2, 3])], { type: "image/png" });
     const write = vi.fn().mockResolvedValue(undefined);
-    const items: Array<Record<string, Blob>> = [];
-    function TestClipboardItem(data: Record<string, Blob>) {
+    const items: Array<Record<string, Blob | Promise<Blob>>> = [];
+    function TestClipboardItem(data: Record<string, Blob | Promise<Blob>>) {
       items.push(data);
     }
     const fetch = vi.fn().mockResolvedValue({ ok: true, blob: async () => source });
@@ -46,7 +91,7 @@ describe("static image byte actions", () => {
 
     await copyStaticImage("https://environment.test/figure.png");
 
-    expect(items).toEqual([{ "image/png": source }]);
+    expect(await items[0]?.["image/png"]).toBe(source);
     expect(write).toHaveBeenCalledTimes(1);
     expect(fetch).toHaveBeenCalledWith("https://environment.test/figure.png", {
       cache: "no-store",
@@ -59,7 +104,7 @@ describe("static image byte actions", () => {
     const png = new Blob([new Uint8Array([8, 9, 10])], { type: "image/png" });
     const drawImage = vi.fn();
     const write = vi.fn().mockResolvedValue(undefined);
-    const items: Array<Record<string, Blob>> = [];
+    const items: Array<Record<string, Blob | Promise<Blob>>> = [];
     let loadListener: (() => void) | undefined;
 
     class TestImage {
@@ -73,7 +118,7 @@ describe("static image byte actions", () => {
         loadListener?.();
       }
     }
-    function TestClipboardItem(data: Record<string, Blob>) {
+    function TestClipboardItem(data: Record<string, Blob | Promise<Blob>>) {
       items.push(data);
     }
 
@@ -97,7 +142,7 @@ describe("static image byte actions", () => {
     await copyStaticImage("https://environment.test/figure.svg");
 
     expect(drawImage).toHaveBeenCalledWith(expect.any(TestImage), 0, 0, 600, 400);
-    expect(items).toEqual([{ "image/png": png }]);
+    expect(await items[0]?.["image/png"]).toBe(png);
     expect(write).toHaveBeenCalledOnce();
   });
 

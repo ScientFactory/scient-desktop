@@ -9,7 +9,7 @@ import type { PreviewStaticImageSurfaceDescriptor } from "~/previewStaticImageSu
 
 type AnalysisRun = AnalysisRunSnapshot | AnalysisRunSummary;
 
-export function staticArtifactSurfaceId(input: {
+function staticArtifactSurfaceId(input: {
   readonly projectId: string;
   readonly sourcePath: string;
   readonly artifactId: string;

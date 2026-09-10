@@ -8,13 +8,11 @@ import { describe, expect, it } from "vite-plus/test";
 import * as Effect from "effect/Effect";
 
 import {
-  managedRuntimeArtifactReceipt,
   resolveReviewedCodexArtifact,
   type ManagedRuntimeArtifact,
 } from "@scientfactory/provider-runtime";
 import {
   hasManagedCodexCodeModeHost,
-  resolveCodexActionArtifact,
   resolveCodexCatalogCandidate,
   resolveCodexCodeModeHostPath,
   resolveCodexManagedRuntimePolicy,
@@ -353,55 +351,5 @@ describe("Codex managed runtime release selection", () => {
         catalog: codexCatalogAt(bundled.version),
       }),
     ).toBe(bundled);
-  });
-
-  it("repairs the exact activated release instead of silently updating it", () => {
-    const installed = resolveCodexCatalogCandidate({
-      bundledArtifact: bundled,
-      catalog: codexCatalogAt("0.150.0"),
-    });
-    const newer = resolveCodexCatalogCandidate({
-      bundledArtifact: bundled,
-      catalog: codexCatalogAt("0.151.0"),
-    });
-    expect(installed).toBeDefined();
-    expect(newer).toBeDefined();
-    const repaired = resolveCodexActionArtifact({
-      action: "repair",
-      bundledArtifact: bundled,
-      candidateArtifact: newer,
-      status: {
-        launchPath: "/private/codex",
-        activeVersion: installed?.version ?? null,
-        previousVersion: null,
-        installed: true,
-        selected: true,
-        activeArtifact: installed ? managedRuntimeArtifactReceipt(installed) : null,
-        previousArtifact: null,
-      },
-    });
-    expect(repaired?.version).toBe("0.150.0");
-    expect(repaired?.checksum).toEqual(installed?.checksum);
-  });
-
-  it("uses the bundled artifact only for legacy receipt-less repairs", () => {
-    const repaired = resolveCodexActionArtifact({
-      action: "repair",
-      bundledArtifact: bundled,
-      candidateArtifact: resolveCodexCatalogCandidate({
-        bundledArtifact: bundled,
-        catalog: codexCatalogAt("0.151.0"),
-      }),
-      status: {
-        launchPath: "/private/codex",
-        activeVersion: "0.148.0",
-        previousVersion: null,
-        installed: true,
-        selected: true,
-        activeArtifact: null,
-        previousArtifact: null,
-      },
-    });
-    expect(repaired).toBe(bundled);
   });
 });

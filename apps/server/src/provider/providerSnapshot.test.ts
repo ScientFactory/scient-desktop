@@ -10,10 +10,38 @@ import * as Stream from "effect/Stream";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 
 import {
+  buildServerProvider,
   isCommandMissingCause,
   providerModelsFromSettings,
   spawnAndCollect,
 } from "./providerSnapshot.ts";
+
+describe("provider presentation capabilities", () => {
+  it.each([true, false, undefined])(
+    "preserves context reporting %s alongside Scient runtime and rollback capabilities",
+    (reportsContextWindow) => {
+      const snapshot = buildServerProvider({
+        presentation: {
+          displayName: "Test",
+          supportedRuntimeModes: ["full-access"],
+          supportsConversationRollback: false,
+          ...(reportsContextWindow === undefined ? {} : { reportsContextWindow }),
+        },
+        enabled: true,
+        checkedAt: "2026-09-09T00:00:00Z",
+        models: [],
+        probe: { installed: true, version: null, status: "ready", auth: { status: "unknown" } },
+      });
+      expect(snapshot.supportedRuntimeModes).toEqual(["full-access"]);
+      expect(snapshot.supportsConversationRollback).toBe(false);
+      if (reportsContextWindow === undefined) {
+        expect(snapshot).not.toHaveProperty("reportsContextWindow");
+      } else {
+        expect(snapshot.reportsContextWindow).toBe(reportsContextWindow);
+      }
+    },
+  );
+});
 
 const OPENCODE_CUSTOM_MODEL_CAPABILITIES: ModelCapabilities = createModelCapabilities({
   optionDescriptors: [
@@ -49,6 +77,27 @@ describe("providerModelsFromSettings", () => {
         isCustom: true,
         capabilities: OPENCODE_CUSTOM_MODEL_CAPABILITIES,
       },
+    ]);
+  });
+
+  it("keeps an entry's own name and capabilities over the driver default", () => {
+    const capabilities = createModelCapabilities({
+      optionDescriptors: [{ id: "fastMode", label: "Fast Mode", type: "boolean" }],
+    });
+    const models = providerModelsFromSettings(
+      [],
+      ["bare", { slug: "named", name: "Named", capabilities }],
+      OPENCODE_CUSTOM_MODEL_CAPABILITIES,
+    );
+
+    expect(models).toEqual([
+      {
+        slug: "bare",
+        name: "bare",
+        isCustom: true,
+        capabilities: OPENCODE_CUSTOM_MODEL_CAPABILITIES,
+      },
+      { slug: "named", name: "Named", isCustom: true, capabilities },
     ]);
   });
 

@@ -6,7 +6,7 @@ import { ScientificComputingSettings } from "../scient/compute/ScientificComputi
 
 export const Route = createFileRoute("/settings/scientific-computing")({
   validateSearch: Schema.decodeUnknownSync(
-    Schema.Struct({ environmentId: Schema.optional(EnvironmentId) }),
+    Schema.Struct({ environmentId: Schema.optionalKey(EnvironmentId) }),
   ),
   component: () => <ScientificComputingSettings environmentId={Route.useSearch().environmentId} />,
 });

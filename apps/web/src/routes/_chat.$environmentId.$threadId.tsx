@@ -2,10 +2,12 @@ import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useEffect } from "react";
 
 import ChatView from "../components/ChatView";
+import { ChatLoadingState } from "../components/ChatLoadingState";
 import { threadHasStarted } from "../components/ChatView.logic";
 import { finalizePromotedDraftThreadByRef, useComposerDraftStore } from "../composerDraftStore";
 import { resolveThreadRouteRef, resolveThreadRouteRenderState } from "../threadRoutes";
 import { resolveThreadSyncPhase } from "../threadSync";
+import { useSidebarPendingFileDropStore } from "../sidebarPendingFileDropStore";
 import { SidebarInset } from "~/components/ui/sidebar";
 import {
   useEnvironmentThreadRefs,
@@ -62,8 +64,15 @@ function ChatThreadRouteView() {
       return;
     }
 
-    if (renderState === "missing" && environmentHasAnyThreads) {
-      void navigate({ to: "/", replace: true });
+    // Navigation already resolved onto this path, so a drop aimed here
+    // passed its landing check; once the thread reads as missing it can
+    // never be attached, release it even when there is nowhere to redirect.
+    if (renderState === "missing") {
+      const { clearPendingFileDropsForThread } = useSidebarPendingFileDropStore.getState();
+      clearPendingFileDropsForThread(threadRef);
+      if (environmentHasAnyThreads) {
+        void navigate({ to: "/", replace: true });
+      }
     }
   }, [bootstrapComplete, environmentHasAnyThreads, navigate, renderState, threadRef]);
 
@@ -76,6 +85,10 @@ function ChatThreadRouteView() {
 
   if (!threadRef) {
     return null;
+  }
+
+  if (renderState === "loading" && serverThreadShell === null) {
+    return <ChatLoadingState />;
   }
 
   return (

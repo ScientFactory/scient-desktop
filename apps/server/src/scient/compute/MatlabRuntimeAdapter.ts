@@ -19,7 +19,7 @@ import * as Effect from "effect/Effect";
 import { sanitizeComputeEnvironment, validateProjectRoot } from "./ComputeEnvironmentPolicy.ts";
 
 export const MATLAB_LANGUAGE_ID = ComputeLanguageId.make("matlab");
-export const MATLAB_ENGINE_TRANSPORT_KIND = ComputeTransportKind.make("matlab-engine-bridge");
+const MATLAB_ENGINE_TRANSPORT_KIND = ComputeTransportKind.make("matlab-engine-bridge");
 
 const PROBE_CACHE_TTL_MS = 30_000;
 

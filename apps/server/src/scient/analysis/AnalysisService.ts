@@ -60,6 +60,7 @@ import * as Scope from "effect/Scope";
 import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
 
+import { makeOperationAnalytics } from "../../telemetry/OperationAnalytics.ts";
 import * as WorkspaceFileSystem from "../../workspace/WorkspaceFileSystem.ts";
 import * as WorkspacePaths from "../../workspace/WorkspacePaths.ts";
 import * as AnalysisRunIndex from "./AnalysisRunIndex.ts";
@@ -190,6 +191,7 @@ class AnalysisRuntimeAdapters extends Context.Reference<ReadonlyArray<AnalysisRu
 ) {}
 
 const make = Effect.gen(function* () {
+  const observeOperation = yield* makeOperationAnalytics;
   const runtimeAdapters = yield* AnalysisRuntimeAdapters;
   const crypto = yield* Crypto.Crypto;
   const hostEnvironment = yield* HostProcessEnvironment;
@@ -239,13 +241,62 @@ const make = Effect.gen(function* () {
 
   const nextEventSequence = Ref.getAndUpdate(eventSequenceRef, (value) => value + 1);
 
-  const publish = (run: AnalysisRunSnapshot) =>
+  const publish = (run: AnalysisRunSnapshot, isNewRun = false) =>
     Effect.gen(function* () {
       const eventSequence = yield* nextEventSequence;
       yield* PubSub.publish(pubsub, {
         _tag: "run-updated" as const,
         eventSequence,
         run: summarizeAnalysisRun(run),
+      });
+      const { receipt } = run;
+      // Local correlation only; no source, output or identity is exported.
+      const key = [run.projectId, String(receipt.runId)]
+        .map((part) => `${part.length}:${part}`)
+        .join("|");
+      // Phase/queue updates are not new work, including after a consent reset.
+      if (isNewRun || isTerminal(receipt.status)) {
+        yield* observeOperation({
+          key,
+          operationKind: "compute-run",
+          status:
+            receipt.status === "succeeded"
+              ? "completed"
+              : receipt.status === "cancelled"
+                ? "cancelled"
+                : receipt.status === "failed" || receipt.status === "lost"
+                  ? "failed"
+                  : "active",
+          startedAt: Date.parse(receipt.startedAt),
+          ...(receipt.finishedAt === null ? {} : { finishedAt: Date.parse(receipt.finishedAt) }),
+          trigger: "user",
+        });
+      }
+
+      // Capture is a separate persisted outcome: code can succeed without its figures.
+      // Admission starts observation once; later progress must not replay pre-consent work.
+      const capture = run.artifactReceipt.status;
+      if (capture === "not-requested") return;
+      if (!isNewRun && capture === "pending" && !isTerminal(receipt.status)) return;
+      const status =
+        capture === "succeeded"
+          ? run.artifacts.length > 0
+            ? "completed"
+            : "skipped"
+          : capture === "failed"
+            ? "failed"
+            : receipt.cancellationRequested
+              ? "cancelled"
+              : isTerminal(receipt.status)
+                ? "failed"
+                : "active";
+      yield* observeOperation({
+        key: `${key}|artifacts`,
+        operationKind: "compute-artifact",
+        status,
+        startedAt: Date.parse(receipt.startedAt),
+        ...(status === "active" ? {} : { finishedAt: yield* Clock.currentTimeMillis }),
+        trigger: "user",
       });
     });
 
@@ -332,7 +383,7 @@ const make = Effect.gen(function* () {
         return next;
       });
       yield* persist(operation, run);
-      yield* publish(run);
+      yield* publish(run, true);
       return run;
     });
 

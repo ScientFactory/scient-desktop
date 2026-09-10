@@ -1,10 +1,20 @@
 import { useNavigate } from "@tanstack/react-router";
-import type { EnvironmentId, ProviderDriverKind, ProviderInstanceId } from "@t3tools/contracts";
+import type {
+  EnvironmentId,
+  ModelSelection,
+  ProviderOptionSelection,
+  ProviderDriverKind,
+  ProviderInstanceId,
+} from "@t3tools/contracts";
+import { createModelSelection, resolveSelectableModel } from "@t3tools/shared/model";
+import { ANTIGRAVITY_DEFAULT_MODEL } from "@t3tools/contracts";
+import type { UnifiedSettings } from "@t3tools/contracts/settings";
 import { BlocksIcon, ChevronRightIcon, SearchIcon, SettingsIcon } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 
 import { ComposerControl, ComposerControlChevron } from "../../components/chat/ComposerControl";
-import { PROVIDER_CLIENT_DEFINITIONS } from "../../components/settings/providerDriverMeta";
+import { composerFloatingLayerProps } from "../../components/chat/composerEventScope";
+import { DRIVER_OPTIONS } from "../../components/settings/providerDriverMeta";
 import { Button } from "../../components/ui/button";
 import { Popover, PopoverPopup, PopoverTrigger } from "../../components/ui/popover";
 import { ScientTooltip } from "../presentation/ScientTooltip";
@@ -20,6 +30,7 @@ import {
   providerConnectionPresentation,
 } from "./providerConnectionPresentation";
 import { PRIMARY_GHOST_ACTION_CLASS } from "./providerConnectionActionStyles";
+import { resolveAntigravityDraftSelection } from "./antigravityDraftSelection";
 
 export function providerOnboardingStatusLabel(entry: ProviderInstanceEntry | undefined): string {
   if (!entry) return "Not configured";
@@ -54,6 +65,31 @@ export function readyProviderDefaultModel(entry: ProviderInstanceEntry | undefin
   );
 }
 
+export function readyProviderModelSelection(
+  entry: ProviderInstanceEntry | undefined,
+  saved?: ModelSelection | null,
+  hiddenModels: ReadonlyArray<string> = [],
+): ModelSelection | null {
+  const defaultModel = readyProviderDefaultModel(entry);
+  if (!entry || !defaultModel) return null;
+  if (entry.driverKind === "antigravity" && saved?.instanceId === entry.instanceId) {
+    const selection =
+      resolveAntigravityDraftSelection(saved, entry.snapshot, hiddenModels) ?? saved;
+    const model = resolveSelectableModel(entry.driverKind, selection.model, entry.models);
+    // Missing/ambiguous variants require a choice, not a silent reasoning change.
+    if (saved.model !== ANTIGRAVITY_DEFAULT_MODEL) {
+      return model && !hiddenModels.includes(model)
+        ? createModelSelection(entry.instanceId, model, selection.options)
+        : null;
+    }
+  }
+  const model =
+    entry.driverKind === "antigravity" && hiddenModels.includes(defaultModel)
+      ? entry.models.find((candidate) => !hiddenModels.includes(candidate.slug))?.slug
+      : defaultModel;
+  return model ? createModelSelection(entry.instanceId, model) : null;
+}
+
 export function ProviderOnboardingPicker(props: {
   readonly environmentId: EnvironmentId;
   readonly instanceEntries: ReadonlyArray<ProviderInstanceEntry>;
@@ -61,7 +97,15 @@ export function ProviderOnboardingPicker(props: {
   readonly compact?: boolean;
   readonly open?: boolean;
   readonly onOpenChange?: (open: boolean) => void;
-  readonly onInstanceModelChange: (instanceId: ProviderInstanceId, model: string) => void;
+  readonly onInstanceModelChange: (
+    instanceId: ProviderInstanceId,
+    model: string,
+    options?: ReadonlyArray<ProviderOptionSelection>,
+  ) => void;
+  readonly preferredSelections?: Partial<Record<ProviderInstanceId, ModelSelection>>;
+  readonly modelPreferences?: UnifiedSettings["providerModelPreferences"];
+  readonly fallbackSelection?: ModelSelection | null | undefined;
+  readonly onOpenProviderSetup?: (instanceId: ProviderInstanceId) => void;
   readonly autoSelectReadyProvider?: boolean;
 }) {
   const navigate = useNavigate();
@@ -97,53 +141,74 @@ export function ProviderOnboardingPicker(props: {
     return entries;
   }, [props.instanceEntries]);
   const normalizedQuery = query.trim().toLocaleLowerCase();
-  const visibleDefinitions = PROVIDER_CLIENT_DEFINITIONS.filter((definition) =>
+  const visibleDefinitions = DRIVER_OPTIONS.filter((definition) =>
     definition.label.toLocaleLowerCase().includes(normalizedQuery),
   );
-  const previewDefinitions = PROVIDER_CLIENT_DEFINITIONS.slice(0, 3);
-  const selectedDefinition = PROVIDER_CLIENT_DEFINITIONS.find(
+  const previewDefinitions = DRIVER_OPTIONS.slice(0, 3);
+  const selectedDefinition = DRIVER_OPTIONS.find(
     (definition) => definition.value === selectedDriver,
   );
   const selectedEntry = selectedDriver ? entriesByDriver.get(selectedDriver) : undefined;
   const showHome = selectedDefinition === undefined || normalizedQuery.length > 0;
   const reconnectDefinition = reconnectEntry
-    ? PROVIDER_CLIENT_DEFINITIONS.find(
-        (definition) => definition.value === reconnectEntry.driverKind,
-      )
+    ? DRIVER_OPTIONS.find((definition) => definition.value === reconnectEntry.driverKind)
     : undefined;
   const TriggerIcon = reconnectDefinition?.icon ?? BlocksIcon;
   const triggerLabel = reconnectEntry
     ? `Reconnect ${reconnectEntry.displayName}`
     : "Choose your AI";
 
-  const readyModel = readyProviderDefaultModel(selectedEntry);
+  const readySelection = useMemo(
+    () =>
+      readyProviderModelSelection(
+        selectedEntry,
+        (selectedEntry ? props.preferredSelections?.[selectedEntry.instanceId] : undefined) ??
+          props.fallbackSelection,
+        selectedEntry
+          ? props.modelPreferences?.[selectedEntry.instanceId]?.hiddenModels
+          : undefined,
+      ),
+    [selectedEntry, props.preferredSelections, props.fallbackSelection, props.modelPreferences],
+  );
   useEffect(() => {
     if (
       !open ||
       showHome ||
       !selectedEntry ||
-      !readyModel ||
+      !readySelection ||
       props.autoSelectReadyProvider === false
     ) {
       return;
     }
     // Setup completion is asynchronous. Hand the ready instance and its
-    // canonical default model back to T3's existing selection path so the
+    // canonical selection back to T3's existing selection path so the
     // user leaves onboarding with a provider they can immediately use.
-    props.onInstanceModelChange(selectedEntry.instanceId, readyModel);
+    if (selectedEntry.driverKind === "antigravity") {
+      props.onInstanceModelChange(
+        selectedEntry.instanceId,
+        readySelection.model,
+        readySelection.options ?? [],
+      );
+    } else {
+      props.onInstanceModelChange(selectedEntry.instanceId, readySelection.model);
+    }
     setOpen(false);
   }, [
     open,
     props.autoSelectReadyProvider,
     props.onInstanceModelChange,
-    readyModel,
+    readySelection,
     selectedEntry,
     setOpen,
     showHome,
   ]);
 
-  const openSettings = () => {
+  const openSettings = (instanceId?: ProviderInstanceId) => {
     setOpen(false);
+    if (instanceId && props.onOpenProviderSetup) {
+      props.onOpenProviderSetup(instanceId);
+      return;
+    }
     void navigate({ to: "/settings/providers" });
   };
 
@@ -184,6 +249,7 @@ export function ProviderOnboardingPicker(props: {
           <ComposerControlChevron />
         </PopoverTrigger>
         <PopoverPopup
+          {...composerFloatingLayerProps}
           align="start"
           className="border-0 bg-transparent p-0 shadow-none before:hidden [-webkit-backdrop-filter:none]! [--viewport-inline-padding:0] [backdrop-filter:none]!"
           viewportClassName="rounded-lg !overflow-hidden p-0"
@@ -208,7 +274,7 @@ export function ProviderOnboardingPicker(props: {
               />
               <div aria-hidden className="my-1 border-b border-border/70" />
               <div className="flex flex-col gap-1">
-                {PROVIDER_CLIENT_DEFINITIONS.map((definition) => (
+                {DRIVER_OPTIONS.map((definition) => (
                   <RailButton
                     key={definition.value}
                     active={!showHome && definition.value === selectedDriver}
@@ -294,7 +360,7 @@ export function ProviderOnboardingPicker(props: {
                       setOpen(false);
                       setDialogEntry(selectedEntry);
                     } else {
-                      openSettings();
+                      openSettings(selectedEntry.instanceId);
                     }
                   }}
                 />
@@ -358,7 +424,7 @@ export function ProviderLifecycleSetupSurface(props: {
 
 function RailButton(props: {
   readonly active: boolean;
-  readonly icon: (typeof PROVIDER_CLIENT_DEFINITIONS)[number]["icon"];
+  readonly icon: (typeof DRIVER_OPTIONS)[number]["icon"];
   readonly label: string;
   readonly onClick: () => void;
 }) {

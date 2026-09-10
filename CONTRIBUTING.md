@@ -2,12 +2,11 @@
 
 ## Scient repository boundary
 
-This public repository is the active source for released Scient Desktop. The
-product, safety, release, and verification rules in [AGENTS.md](AGENTS.md)
-govern contributions before the inherited T3 guidance below. Public visibility
-does not make every product direction or release operation open: scientific
-features, legacy-data migration, cloud/mobile enablement, signing, releases,
-and distribution still require their owning product or operational decision.
+This public repository is the active source for released Scient Desktop.
+Contributions follow Scient's product, safety, release, and verification rules
+in [AGENTS.md](AGENTS.md). Public visibility does not authorize changes to product
+direction, live-data migration, cloud/mobile enablement, signing, releases, or
+distribution.
 
 All candidate changes use short-lived branches and draft pull requests. T3
 upstream merges use dedicated branches and must remain separate from Scient
@@ -21,6 +20,11 @@ and upstream divergence lives in `UPSTREAM.md`. Keep temporary plans, scratch,
 transcripts, and handoffs out of the repository. In the pull request, state one
 of `Documentation impact: None — reason`, `Updated — paths`, or `Dependent PR —
 repository and link`.
+
+## Developer Setup
+
+See the [development runbook](docs/operations/development.md#first-checkout) for the initial checkout,
+development commands, tests, and platform-specific desktop packaging prerequisites.
 
 ## Read This First
 
@@ -63,6 +67,10 @@ Keep it small.
 Explain exactly what changed.
 
 Explain exactly why the change should exist.
+
+Follow the [documentation rules](AGENTS.md#documentation). Keep internal docs for decisions and
+hard-to-discover constraints. Update user guides when how to use a feature changes; skip descriptions
+of obvious controls and cosmetic changes.
 
 Do not mix unrelated fixes together.
 

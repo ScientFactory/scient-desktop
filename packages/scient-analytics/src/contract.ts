@@ -1,5 +1,65 @@
 export const ANALYTICS_SCHEMA_VERSION = 1 as const;
 export const ANALYTICS_SOURCE = "desktop" as const;
+import { ANALYTICS_CONTRACT_REVISION, EVENT_DEFINITIONS } from "./wireContract.ts";
+export { ANALYTICS_CONTRACT_REVISION } from "./wireContract.ts";
+
+export const ANALYTICS_EVENT_NAMES = [
+  "app.session.started",
+  "app.session.ended",
+  "app.health",
+  "app.diagnostics",
+  "server.boot.heartbeat",
+  "provider.session.started",
+  "provider.session.recovered",
+  "provider.session.stopped",
+  "provider.sessions.stopped_all",
+  "provider.runtime_mode.changed",
+  "provider.turn.sent",
+  "provider.turn.completed",
+  "provider.turn.failed",
+  "provider.turn.stopped",
+  "provider.turn.interrupted",
+  "provider.request.responded",
+  "provider.conversation.rolled_back",
+  // Legacy producer event retained in the wire contract for older releases.
+  "provider.discovered",
+  "provider.installation.observed",
+  "provider.installation.changed",
+  "provider.readiness.changed",
+  "provider.runtime.source.changed",
+  "provider.lifecycle.started",
+  "provider.lifecycle.completed",
+  "provider.lifecycle.failed",
+  "provider.lifecycle.cancelled",
+  "project.added",
+  "project.add.failed",
+  "project.opened",
+  "project.initialization.completed",
+  "project.initialization.failed",
+  "thread.created",
+  "thread.fork.completed",
+  "thread.fork.failed",
+  "thread.revert.completed",
+  "thread.revert.failed",
+  "voice.transcription.started",
+  "voice.transcription.completed",
+  "voice.transcription.failed",
+  "voice.transcription.cancelled",
+  "surface.opened",
+  "panel.viewed",
+  "settings.viewed",
+  "usage.viewed",
+  "usage.refresh.requested",
+  "usage.availability",
+  "feature.viewed",
+  "provider.turn.usage",
+  "setting.changed",
+  "scient.operation.started",
+  "scient.operation.completed",
+  "scient.operation.failed",
+  "scient.operation.cancelled",
+  "scient.operation.skipped",
+] as const;
 
 export const AnalyticsConsent = ["off", "essential", "product", "diagnostic"] as const;
 export type AnalyticsConsent = (typeof AnalyticsConsent)[number];
@@ -15,7 +75,7 @@ export interface AnalyticsEvent {
   readonly occurred_at: string;
   readonly privacy_level: EventPrivacyLevel;
   readonly consent_level: EventPrivacyLevel;
-  readonly properties: Readonly<Record<string, boolean | string>>;
+  readonly properties: Readonly<Record<string, boolean | string | number>>;
 }
 
 export interface AnalyticsBatch {
@@ -33,10 +93,109 @@ export interface NormalizedEvent {
   readonly name: string;
   readonly privacyLevel: EventPrivacyLevel;
   readonly priority: AnalyticsPriority;
-  readonly properties: Readonly<Record<string, boolean | string>>;
+  readonly properties: Readonly<Record<string, boolean | string | number>>;
 }
 
-const PROVIDERS = new Set(["codex", "claudeAgent", "cursor", "grok", "opencode"]);
+const PROVIDERS = new Set([
+  "codex",
+  "claudeAgent",
+  "antigravity",
+  "droid",
+  "cursor",
+  "grok",
+  "opencode",
+  "pi",
+]);
+const RUNTIME_SOURCES = new Set(["custom", "system", "scient_managed", "missing", "unknown"]);
+const LIFECYCLE_ACTIONS = new Set([
+  "install",
+  "update",
+  "repair",
+  "remove",
+  "sign-in",
+  "sign-out",
+  "source-switch",
+]);
+const LIFECYCLE_STAGES = new Set([
+  "preparing",
+  "downloading",
+  "verifying",
+  "installing",
+  "testing",
+  "activating",
+  "removing",
+  "starting",
+  "waiting_for_browser",
+  "waiting_for_device_code",
+  "queued",
+  "running",
+  "unknown",
+]);
+const FAILURE_CLASSES = new Set([
+  "configuration",
+  "authentication",
+  "connection",
+  "permission",
+  "provider",
+  "timeout",
+  "filesystem",
+  "checkpoint",
+  "validation",
+  "unavailable",
+  "incompatible-version",
+  "missing-dependency",
+  "resource-exhaustion",
+  "process-crash",
+  "internal",
+  "unknown",
+]);
+const HEALTH_COMPONENTS = new Set(["desktop", "server", "renderer", "browser", "analytics"]);
+const HEALTH_OPERATIONS = new Set([
+  "startup",
+  "restart",
+  "shutdown",
+  "termination",
+  "migration",
+  "update",
+]);
+const HEALTH_OUTCOMES = new Set(["started", "completed", "failed", "abnormal"]);
+const OPERATION_KINDS = new Set([
+  "file-preview",
+  "pdf-open",
+  "pdf-search",
+  "pdf-export",
+  "source-import",
+  "browser",
+  "chart-render",
+  "math-render",
+  "diagram-render",
+  "compute-session",
+  "compute-run",
+  "compute-artifact",
+  "latex-build",
+  "document-export",
+  "source-control",
+  "built-in-skill",
+  "worktree-provision",
+  "thread-fork",
+  "thread-revert",
+  "turn-retry",
+  "turn-steer",
+  "queued-follow-up",
+  "provider-handoff",
+  "other",
+]);
+const TRIGGERS = new Set(["user", "agent", "automation", "other"]);
+const PROVIDER_STATES = new Set(["ready", "warning", "error", "disabled"]);
+const DELIVERY_CLASSES = new Set([
+  "idle",
+  "delivered",
+  "network",
+  "timeout",
+  "rejected",
+  "unavailable",
+]);
+const BUILD_CHANNELS = new Set(["stable", "beta", "nightly", "development", "unknown"]);
 const RUNTIME_MODES = new Set(["approval-required", "auto-accept-edits", "auto", "full-access"]);
 const PLATFORM_VALUES = new Set(["macos", "windows", "linux", "other"]);
 const ARCHITECTURE_VALUES = new Set(["arm64", "x64", "other"]);
@@ -50,6 +209,7 @@ const TURN_FAILURE_CLASSES = new Set([
   "cancelled",
   "unknown",
 ]);
+const TURN_STOP_CLASSES = new Set(["aborted", "cancelled", "interrupted"]);
 const PROJECT_ADD_METHODS = new Set(["picker", "drag-drop", "recent", "unknown"]);
 const PROJECT_ADD_FAILURE_STAGES = new Set([
   "validation",
@@ -145,6 +305,10 @@ const KNOWN_MODEL_KEYS = new Set([
   "gpt-5.6-sol",
   "gpt-5.6-terra",
   "grok-build",
+  "gemini-3.1-pro",
+  "gemini-3.7-flash",
+  "gemini-3.7-pro",
+  "gemini-3.8-flash",
   "openai/gpt-5",
 ]);
 
@@ -243,7 +407,13 @@ function modelFamily(provider: string, model: unknown): string {
 export function modelKey(model: unknown): string {
   if (typeof model !== "string") return "unknown";
   const normalized = model.trim().toLowerCase();
-  const withoutPinnedVersion = normalized.replace(/-(?:20\d{6,8})$/u, "");
+  if (KNOWN_MODEL_KEYS.has(normalized)) return normalized;
+  // Strip only known public namespaces; the result still must be allowlisted.
+  const publicSlug = normalized.replace(/^(?:openai|anthropic|google)\//u, "");
+  const withoutPinnedVersion = publicSlug.replace(/-(?:20\d{6,8})$/u, "");
+  const geminiVariant = withoutPinnedVersion.replace(/-(?:high|medium|low)$/u, "");
+  if (geminiVariant.startsWith("gemini-") && KNOWN_MODEL_KEYS.has(geminiVariant))
+    return geminiVariant;
   const canonical =
     MODEL_KEY_ALIASES[normalized] ??
     MODEL_KEY_ALIASES[withoutPinnedVersion] ??
@@ -286,7 +456,7 @@ function normalizedDecision(value: unknown): string {
  * Unknown events are deliberately ignored until they receive a registered
  * Scient event definition.
  */
-export function normalizeInheritedEvent(
+function normalizeEvent(
   name: string,
   rawProperties: Readonly<Record<string, unknown>> | undefined,
   context: NormalizationContext,
@@ -295,6 +465,119 @@ export function normalizeInheritedEvent(
   const provider = normalizedProvider(property(input, "provider"));
 
   switch (name) {
+    case "app.health":
+      return {
+        name,
+        privacyLevel: "essential",
+        priority: "critical",
+        properties: {
+          component: normalizedEnum(property(input, "component"), HEALTH_COMPONENTS),
+          operation: normalizedEnum(property(input, "operation"), HEALTH_OPERATIONS),
+          outcome: normalizedEnum(property(input, "outcome"), HEALTH_OUTCOMES),
+          failureClass: normalizedEnum(property(input, "failureClass"), FAILURE_CLASSES),
+          durationBucket: durationBucket(property(input, "durationMs")),
+        },
+      };
+    case "app.diagnostics":
+      return {
+        name,
+        privacyLevel: "diagnostic",
+        priority: "summary",
+        properties: {
+          queuedCountBucket: countBucket(property(input, "queuedCount")),
+          droppedCountBucket: countBucket(property(input, "droppedCount")),
+          retryCountBucket: countBucket(property(input, "retryCount")),
+          deliveryClass: normalizedEnum(property(input, "deliveryClass"), DELIVERY_CLASSES),
+        },
+      };
+    case "provider.discovered":
+      return {
+        name,
+        privacyLevel: "product",
+        priority: "summary",
+        properties: {
+          provider,
+          runtimeSource: normalizedEnum(property(input, "source"), RUNTIME_SOURCES),
+          state: normalizedEnum(property(input, "state"), PROVIDER_STATES),
+        },
+      };
+    case "provider.installation.observed":
+      return {
+        name,
+        privacyLevel: "product",
+        priority: "summary",
+        properties: {
+          provider,
+          installed: normalizedBoolean(property(input, "installed")),
+        },
+      };
+    case "provider.installation.changed":
+      return {
+        name,
+        privacyLevel: "product",
+        priority: "core",
+        properties: {
+          provider,
+          fromInstalled: normalizedBoolean(property(input, "fromInstalled")),
+          toInstalled: normalizedBoolean(property(input, "toInstalled")),
+        },
+      };
+    case "provider.readiness.changed":
+      return {
+        name,
+        privacyLevel: "product",
+        priority: "core",
+        properties: {
+          provider,
+          from: normalizedEnum(property(input, "from"), PROVIDER_STATES),
+          to: normalizedEnum(property(input, "to"), PROVIDER_STATES),
+        },
+      };
+    case "provider.runtime.source.changed":
+      return {
+        name,
+        privacyLevel: "product",
+        priority: "core",
+        properties: {
+          provider,
+          from: normalizedEnum(property(input, "from"), RUNTIME_SOURCES),
+          to: normalizedEnum(property(input, "to"), RUNTIME_SOURCES),
+        },
+      };
+    case "provider.lifecycle.started":
+    case "provider.lifecycle.completed":
+    case "provider.lifecycle.failed":
+    case "provider.lifecycle.cancelled":
+      return {
+        name,
+        privacyLevel: name === "provider.lifecycle.failed" ? "essential" : "product",
+        priority: name === "provider.lifecycle.failed" ? "critical" : "core",
+        properties: {
+          provider,
+          action: normalizedEnum(property(input, "action"), LIFECYCLE_ACTIONS),
+          runtimeSource: normalizedEnum(property(input, "source"), RUNTIME_SOURCES),
+          stage: normalizedEnum(property(input, "stage"), LIFECYCLE_STAGES),
+          failureClass: normalizedEnum(property(input, "failureClass"), FAILURE_CLASSES),
+          durationBucket: durationBucket(property(input, "durationMs")),
+        },
+      };
+    case "scient.operation.started":
+    case "scient.operation.completed":
+    case "scient.operation.failed":
+    case "scient.operation.cancelled":
+    case "scient.operation.skipped":
+      return {
+        name,
+        privacyLevel: name === "scient.operation.failed" ? "essential" : "product",
+        priority: name === "scient.operation.failed" ? "critical" : "core",
+        properties: {
+          operationKind: normalizedEnum(property(input, "operationKind"), OPERATION_KINDS, "other"),
+          trigger: normalizedEnum(property(input, "trigger"), TRIGGERS, "other"),
+          durationBucket: durationBucket(property(input, "durationMs")),
+          failureClass: normalizedEnum(property(input, "failureClass"), FAILURE_CLASSES),
+          reviewRequired: normalizedBoolean(property(input, "reviewRequired")),
+        },
+      };
     case "app.session.started":
       return {
         name,
@@ -399,7 +682,95 @@ export function normalizeInheritedEvent(
           hasInput: normalizedBoolean(property(input, "hasInput")),
         },
       };
+    case "usage.refresh.requested": {
+      return { name, privacyLevel: "product", priority: "core", properties: {} };
+    }
+    case "panel.viewed":
+    case "settings.viewed":
+    case "usage.viewed":
+    case "usage.availability":
+    case "feature.viewed": {
+      const properties: Record<string, string> = {};
+      for (const [key, rule] of Object.entries(EVENT_DEFINITIONS[name].properties)) {
+        properties[key] = normalizedEnum(property(input, key), new Set(rule.values), "other");
+      }
+      return { name, privacyLevel: "product", priority: "core", properties };
+    }
+    case "provider.turn.usage": {
+      const properties: Record<string, string | boolean | number> = {
+        provider,
+        modelKey:
+          property(input, "mixedModels") === true ? "other" : modelKey(property(input, "model")),
+        terminalStatus:
+          normalizedEnum(
+            property(input, "terminalStatus"),
+            new Set(["cancelled", "interrupted"]),
+            "other",
+          ) !== "other"
+            ? "stopped"
+            : normalizedEnum(
+                property(input, "terminalStatus"),
+                new Set(["completed", "failed", "stopped"]),
+                "other",
+              ),
+        usageStatus: normalizedEnum(
+          property(input, "usageStatus"),
+          new Set(["complete", "partial", "unavailable"]),
+          "unavailable",
+        ),
+        usageScope: "main_agent",
+      };
+      if (typeof property(input, "hasSubagents") === "boolean")
+        properties.hasSubagents = property(input, "hasSubagents") as boolean;
+      for (const key of [
+        "inputTokens",
+        "outputTokens",
+        "cachedInputTokens",
+        "cacheCreationTokens",
+        "reasoningTokens",
+      ]) {
+        const value = property(input, key);
+        if (
+          typeof value === "number" &&
+          Number.isSafeInteger(value) &&
+          value >= 0 &&
+          value <= 1_000_000_000
+        )
+          properties[key] = value;
+      }
+      for (const [subset, total] of [
+        ["cachedInputTokens", "inputTokens"],
+        ["cacheCreationTokens", "inputTokens"],
+        ["reasoningTokens", "outputTokens"],
+      ] as const) {
+        if (
+          typeof properties[subset] === "number" &&
+          typeof properties[total] === "number" &&
+          properties[subset] > properties[total]
+        )
+          delete properties[subset];
+      }
+      if (
+        properties.usageStatus === "complete" &&
+        (properties.inputTokens === undefined || properties.outputTokens === undefined)
+      )
+        properties.usageStatus = "partial";
+      const hasCounts = [
+        "inputTokens",
+        "outputTokens",
+        "cachedInputTokens",
+        "cacheCreationTokens",
+        "reasoningTokens",
+      ].some((key) => properties[key] !== undefined);
+      if (!hasCounts) properties.usageStatus = "unavailable";
+      else if (properties.usageStatus === "unavailable") properties.usageStatus = "partial";
+      return { name, privacyLevel: "product", priority: "core", properties };
+    }
     case "provider.turn.completed":
+      // Keep outcomes owned by the semantic observer; reuse upstream's
+      // instance-aware terminal/model association only for product usage.
+      if (property(input, "terminalStatus") !== undefined)
+        return normalizeEvent("provider.turn.usage", input, context);
       return {
         name,
         privacyLevel: "product",
@@ -422,6 +793,18 @@ export function normalizeInheritedEvent(
           modelKey: modelKey(property(input, "model")),
           failureClass: normalizedEnum(property(input, "failureClass"), TURN_FAILURE_CLASSES),
           durationBucket: durationBucket(property(input, "durationMs")),
+        },
+      };
+    case "provider.turn.stopped":
+      return {
+        name,
+        privacyLevel: "product",
+        priority: "core",
+        properties: {
+          provider,
+          modelKey: modelKey(property(input, "model")),
+          durationBucket: durationBucket(property(input, "durationMs")),
+          stopClass: normalizedEnum(property(input, "stopClass"), TURN_STOP_CLASSES),
         },
       };
     case "provider.turn.interrupted":
@@ -625,6 +1008,32 @@ export function normalizeInheritedEvent(
     default:
       return null;
   }
+}
+
+/** Public release coordinates only; custom build labels must never become identity hints. */
+export function analyticsAppVersion(value: string): string {
+  return /^\d{1,4}\.\d{1,4}\.\d{1,4}(?:-(?:beta|nightly|rc|dev)(?:\.\d{1,14}){0,3})?$/u.test(value)
+    ? value
+    : "unknown";
+}
+
+export function normalizeInheritedEvent(
+  name: string,
+  rawProperties: Readonly<Record<string, unknown>> | undefined,
+  context: NormalizationContext,
+): NormalizedEvent | null {
+  const normalized = normalizeEvent(name, rawProperties, context);
+  return normalized === null
+    ? null
+    : {
+        ...normalized,
+        properties: {
+          ...normalized.properties,
+          appVersion: analyticsAppVersion(context.appVersion),
+          buildChannel: normalizedEnum(context.buildChannel, BUILD_CHANNELS),
+          contractRevision: ANALYTICS_CONTRACT_REVISION,
+        },
+      };
 }
 
 const CONSENT_RANK: Readonly<Record<AnalyticsConsent, number>> = {

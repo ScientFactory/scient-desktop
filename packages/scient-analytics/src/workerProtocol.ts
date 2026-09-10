@@ -1,5 +1,12 @@
 import type { AnalyticsConsent, AnalyticsEvent, AnalyticsPriority } from "./contract.ts";
 
+export interface AnalyticsWorkerInput {
+  readonly outboxPath: string;
+  readonly endpoint: string;
+  readonly consent: AnalyticsConsent;
+  readonly purpose: "collection" | "deletion";
+}
+
 export interface AnalyticsEventDraft extends Omit<AnalyticsEvent, "distinct_id"> {
   readonly priority: AnalyticsPriority;
 }
@@ -22,6 +29,12 @@ export type AnalyticsWorkerCommand =
 
 export type AnalyticsWorkerResponse =
   | { readonly type: "ready" }
+  | {
+      readonly type: "diagnostics";
+      readonly queuedCount: number;
+      readonly retryCount: number;
+      readonly deliveryClass: "delivered" | "timeout" | "network" | "rejected";
+    }
   | {
       readonly type: "persisted";
       readonly batchId: number;

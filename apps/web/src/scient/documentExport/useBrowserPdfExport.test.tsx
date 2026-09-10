@@ -11,7 +11,11 @@ const mocks = vi.hoisted(() => ({
   publish: vi.fn(),
   recordExport: vi.fn(),
   updateScientGeneratedPdf: vi.fn(),
+  beginAnalytics: vi.fn(),
+  finishAnalytics: vi.fn(),
 }));
+
+vi.mock("../analytics/client", () => ({ beginScientUiOperation: mocks.beginAnalytics }));
 
 vi.mock("~/components/preview/previewBridge", () => ({
   previewBridge: { exportPdf: mocks.exportPdf },
@@ -90,6 +94,7 @@ describe("useBrowserPdfExport", () => {
   beforeEach(() => {
     exportPdf = null;
     for (const mock of Object.values(mocks)) mock.mockReset();
+    mocks.beginAnalytics.mockReturnValue(mocks.finishAnalytics);
     mocks.exportPdf.mockResolvedValue({
       data: new Uint8Array([37, 80, 68, 70]),
       sourceUrl: target.pageUrl,
@@ -121,6 +126,8 @@ describe("useBrowserPdfExport", () => {
     expect(mocks.updateScientGeneratedPdf).toHaveBeenCalledOnce();
     expect(mocks.openScient).not.toHaveBeenCalled();
     expect(mocks.recordExport).toHaveBeenCalledWith("relation-1", generatedSource);
+    expect(mocks.beginAnalytics).toHaveBeenCalledWith("environment-1", "pdf-export", "other");
+    expect(mocks.finishAnalytics).toHaveBeenCalledExactlyOnceWith("completed");
     expect(mocks.publish).toHaveBeenCalledWith({
       environmentId: "environment-1",
       input: expect.objectContaining({
@@ -136,6 +143,7 @@ describe("useBrowserPdfExport", () => {
 
     expect(mocks.publish).not.toHaveBeenCalled();
     expect(mocks.updateScientGeneratedPdf).not.toHaveBeenCalled();
+    expect(mocks.finishAnalytics).toHaveBeenCalledExactlyOnceWith("failed");
   });
 
   it("does not present a revision whose source lease expires after publication", async () => {
@@ -152,5 +160,45 @@ describe("useBrowserPdfExport", () => {
     expect(mocks.publish).toHaveBeenCalledOnce();
     expect(mocks.updateScientGeneratedPdf).not.toHaveBeenCalled();
     expect(mocks.recordExport).not.toHaveBeenCalled();
+    expect(mocks.finishAnalytics).toHaveBeenCalledExactlyOnceWith("failed");
+  });
+
+  it("does not report success until presentation and source association finish", async () => {
+    const failure = new Error("private presentation failure");
+    mocks.recordExport.mockImplementation(() => {
+      throw failure;
+    });
+    await expect(exportPdf?.(target)).rejects.toBe(failure);
+    expect(mocks.finishAnalytics).toHaveBeenCalledExactlyOnceWith("failed");
+  });
+
+  it("observes one attempt for a coalesced export and a new attempt for a retry", async () => {
+    let resolve!: (value: unknown) => void;
+    mocks.publish.mockImplementationOnce(
+      () =>
+        new Promise((done) => {
+          resolve = done;
+        }),
+    );
+    const first = exportPdf?.(target);
+    const duplicate = exportPdf?.(target);
+    await Promise.resolve();
+    expect(mocks.exportPdf).toHaveBeenCalledOnce();
+    expect(mocks.finishAnalytics).not.toHaveBeenCalled();
+    resolve({ _tag: "Success", value: { source: generatedSource, receipt: { warnings: [] } } });
+    await Promise.all([first, duplicate]);
+    expect(mocks.beginAnalytics).toHaveBeenCalledOnce();
+    expect(mocks.finishAnalytics).toHaveBeenCalledExactlyOnceWith("completed");
+    await exportPdf?.(target);
+    expect(mocks.beginAnalytics).toHaveBeenCalledTimes(2);
+    expect(mocks.finishAnalytics).toHaveBeenCalledTimes(2);
+  });
+
+  it("preserves the render error and records no private error text", async () => {
+    const error = new Error("private render failure /private/path");
+    mocks.exportPdf.mockRejectedValue(error);
+    await expect(exportPdf?.(target)).rejects.toBe(error);
+    expect(mocks.finishAnalytics).toHaveBeenCalledExactlyOnceWith("failed");
+    expect(mocks.publish).not.toHaveBeenCalled();
   });
 });

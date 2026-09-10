@@ -9,6 +9,183 @@ import type { ScientReleaseNote } from "./model";
  */
 export const SCIENT_RELEASE_NOTES = [
   {
+    version: "0.6.13",
+    publishedAt: "2026-09-09",
+    format: "paragraphs",
+    headline: "Bring what you see into the conversation.",
+    highlights: [
+      {
+        id: "snapshots",
+        title: "Capture windows with SnapShots",
+        description:
+          "Capture the window you are working in and attach it directly to your draft. When available, Scient can include the app's text and controls for richer context. SnapShots are optional on macOS, Windows, and supported Linux Wayland desktops.",
+      },
+      {
+        id: "scientific-markdown",
+        title: "Clearer scientific Markdown",
+        description:
+          "Scientific formulas such as subscripts and chemical charges now render and copy more reliably. Mixed Hebrew and English tables keep more consistent direction, column alignment, and scrolling in chat, previews, and the Markdown editor.",
+      },
+      {
+        id: "dock-unread-answers",
+        title: "Know when your work is ready",
+        description:
+          "On macOS, Scient's Dock badge shows how many conversations have unread completed answers, even while the app is minimized or running in the background.",
+      },
+      {
+        id: "question-answer-attachments",
+        title: "Answer questions with files",
+        description:
+          "Attach images and files directly when an agent asks you a question. Each question keeps its own attachments, failed submissions remain available to retry, and retained answers and files remain available in conversation forks.",
+      },
+      {
+        id: "sidebar-file-attachments",
+        title: "Attach files from the sidebar",
+        description:
+          "Drag files onto any conversation in the sidebar to open it and add those files to its composer, ready for your next message without sending automatically.",
+      },
+    ],
+    alsoIncluded:
+      "Steadier composer controls, resizable previews, turn navigation, clearer provider setup, better browser and terminal interactions, smoother updates, consistent project icons and sidebar behavior, and reliability fixes for conversation forks, provider sessions, imports, and restarts.",
+  },
+  {
+    version: "0.6.12",
+    publishedAt: "2026-09-07",
+    format: "paragraphs",
+    headline: "More AI choices. Smoother work.",
+    highlights: [
+      {
+        id: "gemini-model-discovery-hotfix",
+        title: "Gemini model discovery hotfix",
+        description: "Fixed Gemini model discovery for the Antigravity provider.",
+      },
+      {
+        id: "bring-your-own-models-0612",
+        title: "Bring your own models",
+        description:
+          "Connect your own API keys or local models to Pi and Droid. Save a connection once and reuse it across models.",
+      },
+      {
+        id: "pi-available-0612",
+        title: "Pi is now available",
+        description:
+          "Pi is a lightweight, extensible coding agent that supports multiple model providers. You can now use it directly in Scient.",
+      },
+      {
+        id: "continue-existing-conversations-0612",
+        title: "Continue your Codex and Claude conversations in Scient",
+        description:
+          "Import recent projects and conversations through Getting Started, then pick up where you left off.",
+      },
+      {
+        id: "project-preferences-0612",
+        title: "Set your preferences once",
+        description:
+          "Choose defaults across your projects, with individual adjustments whenever a project needs something different.",
+      },
+      {
+        id: "smoother-markdown-editing-0612",
+        title: "Smoother Markdown editing",
+        description:
+          "Large documents respond faster, tables are easier to edit, and recovery of unsaved changes is improved.",
+      },
+      {
+        id: "faster-more-reliable-work-0612",
+        title: "Faster, more reliable work",
+        description:
+          "Improvements across project opening, conversation forks, provider update checks, and chat make everyday work in Scient smoother and more dependable.",
+      },
+    ],
+    alsoIncluded:
+      "The improvements below were originally released in Scient 0.6.11. Also included: clearer remaining AI allowances, cleaner Settings controls, and better handling of your selected panel so automatic previews do not interrupt what you are viewing.",
+  },
+  {
+    version: "0.6.11",
+    publishedAt: "2026-09-06",
+    format: "paragraphs",
+    headline: "More AI choices. Smoother work.",
+    highlights: [
+      {
+        id: "bring-your-own-models",
+        title: "Bring your own models",
+        description:
+          "Connect your own API keys or local models to Pi and Droid. Save a connection once and reuse it across models.",
+      },
+      {
+        id: "pi-available",
+        title: "Pi is now available",
+        description:
+          "Pi is a lightweight, extensible coding agent that supports multiple model providers. You can now use it directly in Scient.",
+      },
+      {
+        id: "continue-existing-conversations",
+        title: "Continue your Codex and Claude conversations in Scient",
+        description:
+          "Import recent projects and conversations through Getting Started, then pick up where you left off.",
+      },
+      {
+        id: "project-preferences",
+        title: "Set your preferences once",
+        description:
+          "Choose defaults across your projects, with individual adjustments whenever a project needs something different.",
+      },
+      {
+        id: "smoother-markdown-editing",
+        title: "Smoother Markdown editing",
+        description:
+          "Large documents respond faster, tables are easier to edit, and recovery of unsaved changes is improved.",
+      },
+      {
+        id: "faster-more-reliable-work",
+        title: "Faster, more reliable work",
+        description:
+          "Improvements across project opening, conversation forks, provider update checks, and chat make everyday work in Scient smoother and more dependable.",
+      },
+    ],
+    alsoIncluded:
+      "Clearer remaining AI allowances, cleaner Settings controls, and better handling of your selected panel so automatic previews do not interrupt what you are viewing.",
+  },
+  {
+    version: "0.6.10",
+    publishedAt: "2026-09-04",
+    kicker: "Direct Markdown editing and a smoother research workflow",
+    headline: "Edit scientific Markdown directly",
+    summary:
+      "Scient 0.6.10 puts direct Markdown editing at the center of the workspace, while making agent follow-ups more reliable, authenticated browser research easier to reuse, provider limits clearer, and large workspaces faster to review.",
+    highlights: [
+      {
+        id: "direct-markdown-editing",
+        title: "Edit Markdown directly in the workspace",
+        description:
+          "Work directly with Markdown source while preserving formatting and previewing TeX, Mermaid diagrams, aligned tables, and image captions as you write.",
+      },
+      {
+        id: "reliable-follow-up-messages",
+        title: "More reliable follow-up messages",
+        description:
+          "Queued messages stay attached to their original thread and send one at a time after the active answer finishes. Editing preserves your draft and queue position, and stopping leaves pending messages waiting until a later answer finishes successfully.",
+      },
+      {
+        id: "browser-session-import",
+        title: "Reuse authenticated browser sessions",
+        description:
+          "Import supported browser profiles into Scient so authenticated sites can be opened without signing in again.",
+      },
+      {
+        id: "provider-usage-limits",
+        title: "See provider limits and reset options together",
+        description:
+          "The Usage page brings token usage, subscription limits, reset dates, and available reset credits into one place for supported providers. Open its Limits view to see your remaining subscription allowance.",
+      },
+      {
+        id: "smoother-workspace-review",
+        title: "Review large workspaces more smoothly",
+        description:
+          "Improved syntax highlighting, file presentation, and panel controls make large files and workspace reviews faster to navigate.",
+      },
+    ],
+  },
+  {
     version: "0.6.9",
     publishedAt: "2026-08-31",
     kicker: "More ways to share, clearer figures, and smoother everyday work.",

@@ -111,6 +111,17 @@ describe("GettingStartedPreferencesStep", () => {
 });
 
 describe("GettingStartedStartStep", () => {
+  it("offers optional import alongside the unchanged Add project action", () => {
+    const markup = renderToStaticMarkup(
+      <GettingStartedStartStep
+        onAddProject={() => undefined}
+        importAction={<button>Import projects and conversations</button>}
+      />,
+    );
+    expect(markup).toContain("Add project");
+    expect(markup).toContain("Import projects and conversations");
+    expect(markup).not.toContain("required");
+  });
   it("requires a project before starting work", () => {
     const markup = renderToStaticMarkup(<GettingStartedStartStep onAddProject={() => undefined} />);
 

@@ -1,4 +1,8 @@
-import { EnvironmentId } from "@t3tools/contracts";
+import {
+  EnvironmentId,
+  ProjectWriteFileError,
+  type ProjectReadFileResult,
+} from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import { AsyncResult } from "effect/unstable/reactivity";
 import { beforeEach, describe, expect, it, vi } from "vite-plus/test";
@@ -7,6 +11,18 @@ const mocks = vi.hoisted(() => ({
   watcher: { _tag: "Initial", waiting: false } as unknown,
   refreshFile: vi.fn(),
   refreshWatcher: vi.fn(),
+  clearFile: vi.fn(),
+  file: {
+    authoritativeData: null,
+    data: null,
+    error: null,
+    isPending: false,
+  } as {
+    authoritativeData: ProjectReadFileResult | null;
+    data: ProjectReadFileResult | null;
+    error: string | null;
+    isPending: boolean;
+  },
 }));
 
 // Run the real refresh hook and its effects across explicit render/commit cycles.
@@ -74,11 +90,10 @@ vi.mock("~/state/projects", () => ({
   projectEnvironment: { fileChanges: vi.fn() },
 }));
 vi.mock("~/components/files/projectFilesQueryState", () => ({
-  clearProjectFileQueryData: vi.fn(),
+  clearProjectFileQueryData: mocks.clearFile,
   useProjectFileQuery: () => ({
+    ...mocks.file,
     refresh: mocks.refreshFile,
-    authoritativeData: null,
-    data: null,
   }),
 }));
 
@@ -90,8 +105,19 @@ const input = {
   relativePath: "report.md",
   loadAsText: true,
   sourcePending: false,
+  surfaceOwnsConflictDetection: false,
   workspaceMutationId: "mutation-1",
 };
+
+function file(contents: string, revision: string): ProjectReadFileResult {
+  return {
+    relativePath: "report.md",
+    contents,
+    byteLength: contents.length,
+    truncated: false,
+    revision,
+  };
+}
 
 function render(overrides: Partial<typeof input> = {}) {
   hooks.begin();
@@ -105,6 +131,12 @@ describe("workspace refresh ownership", () => {
     hooks.reset();
     vi.clearAllMocks();
     mocks.watcher = AsyncResult.initial(false);
+    mocks.file = {
+      authoritativeData: null,
+      data: null,
+      error: null,
+      isPending: false,
+    };
   });
 
   it("lets the watcher own refreshes without duplicate reads for agent hints", () => {
@@ -138,5 +170,126 @@ describe("workspace refresh ownership", () => {
     render({ relativePath: "paper.pdf", loadAsText: false });
     expect(render({ relativePath: "paper.pdf", loadAsText: false }).viewerRefreshKey).toBe(2);
     expect(mocks.refreshFile).toHaveBeenCalledTimes(2);
+  });
+
+  it("leaves rich-editor conflict ownership to the session", () => {
+    mocks.file = {
+      authoritativeData: file("External", "r1"),
+      data: file("My draft", "r0"),
+      error: null,
+      isPending: false,
+    };
+
+    render({ sourcePending: true, surfaceOwnsConflictDetection: true });
+    expect(
+      render({ sourcePending: true, surfaceOwnsConflictDetection: true }).reloadNotice,
+    ).toBeNull();
+  });
+
+  it("keeps one complete snapshot through conflict confirmation and retry", () => {
+    mocks.file = {
+      authoritativeData: file("External", "r1"),
+      data: file("My draft", "r0"),
+      error: null,
+      isPending: false,
+    };
+
+    render({ sourcePending: true });
+    let result = render({ sourcePending: true });
+    expect(result.reloadNotice).toMatchObject({
+      kind: "external-change",
+      contents: "External",
+      revision: "r1",
+    });
+
+    result.requestOverwrite();
+    result = render({ sourcePending: true });
+    expect(result.reloadNotice).toMatchObject({
+      kind: "confirm-overwrite",
+      contents: "External",
+      revision: "r1",
+    });
+
+    // Confirmation freezes the exact snapshot even if another read completes.
+    mocks.file = {
+      ...mocks.file,
+      authoritativeData: file("Newer external", "r2"),
+    };
+    render({ sourcePending: true });
+    result = render({ sourcePending: true });
+    expect(result.reloadNotice).toMatchObject({ contents: "External", revision: "r1" });
+
+    result.resolveReloadNotice("retry");
+    result = render({ sourcePending: true });
+    expect(result.saveResolution).toMatchObject({
+      action: "retry",
+      contents: "External",
+      revision: "r1",
+    });
+    result.handleSaveResolutionApplied();
+    result = render({ sourcePending: true });
+    expect(result.saveResolution).toBeNull();
+    expect(result.reloadNotice).toBeNull();
+  });
+
+  it("waits for the matching authoritative bytes after a revision-conflict response", () => {
+    let result = render({ sourcePending: true, surfaceOwnsConflictDetection: true });
+    result.handleSaveFailure(
+      "report.md",
+      new ProjectWriteFileError({
+        cwd: "/workspace",
+        relativePath: "report.md",
+        failure: "revision_conflict",
+        currentRevision: "r2",
+      }),
+    );
+    result = render({ sourcePending: true, surfaceOwnsConflictDetection: true });
+    expect(result.reloadNotice).toMatchObject({ contents: null, revision: "r2" });
+
+    result.requestOverwrite();
+    result.resolveReloadNotice("retry");
+    expect(
+      render({ sourcePending: true, surfaceOwnsConflictDetection: true }).saveResolution,
+    ).toBeNull();
+
+    mocks.file = {
+      authoritativeData: file("External", "r2"),
+      data: file("My draft", "r0"),
+      error: null,
+      isPending: false,
+    };
+    render({ sourcePending: true, surfaceOwnsConflictDetection: true });
+    result = render({ sourcePending: true, surfaceOwnsConflictDetection: true });
+    expect(result.reloadNotice).toMatchObject({ contents: "External", revision: "r2" });
+  });
+
+  it("uses the authoritative snapshot when discarding a dirty manual reload", () => {
+    mocks.file = {
+      authoritativeData: file("Disk", "r1"),
+      data: file("My draft", "r0"),
+      error: null,
+      isPending: false,
+    };
+    let result = render({ sourcePending: true, surfaceOwnsConflictDetection: true });
+
+    result.requestManualReload();
+    result = render({ sourcePending: true, surfaceOwnsConflictDetection: true });
+    expect(result.reloadNotice).toMatchObject({
+      kind: "manual-reload",
+      contents: "Disk",
+      revision: "r1",
+    });
+    result.resolveReloadNotice("discard");
+    result = render({ sourcePending: true, surfaceOwnsConflictDetection: true });
+    expect(result.saveResolution).toMatchObject({
+      action: "discard",
+      contents: "Disk",
+      revision: "r1",
+    });
+    expect(mocks.clearFile).toHaveBeenCalledWith(
+      input.environmentId,
+      input.cwd,
+      input.relativePath,
+    );
   });
 });

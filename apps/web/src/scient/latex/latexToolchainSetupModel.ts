@@ -42,7 +42,7 @@ export interface LatexSetupCardInput {
   readonly toolchainMissing: boolean;
 }
 
-export const TINYTEX_DOWNLOAD_LABEL = "about 70 MB";
+const TINYTEX_DOWNLOAD_LABEL = "about 70 MB";
 
 const ACTIVE_INSTALL_PHASES: ReadonlySet<ScientLatexManagedInstallState["state"]> = new Set([
   "downloading",
@@ -90,9 +90,7 @@ function downloadBody(install: ScientLatexManagedInstallState): string {
     : `Downloading TinyTeX — ${formatMegabytes(bytesReceived)} of ${formatMegabytes(totalBytes)}.`;
 }
 
-export function latexInstallFailureMessage(
-  reason: ScientLatexManagedInstallFailureReason | null,
-): string {
+function latexInstallFailureMessage(reason: ScientLatexManagedInstallFailureReason | null): string {
   switch (reason) {
     case "unsupported-platform":
       return "Scient does not have a LaTeX distribution for this computer yet.";

@@ -111,6 +111,13 @@ import {
   ScientLatexToolchainRequest,
 } from "./scientLatex.ts";
 import {
+  ScientMarkdownImageConflictError,
+  ScientMarkdownImageInvalidError,
+  ScientMarkdownImageTooLargeError,
+  ScientMarkdownImageUploadRequest,
+  ScientMarkdownImageUploadResult,
+} from "./scientMarkdown.ts";
+import {
   ScientAnalyticsDeletionResult,
   ScientAnalyticsPreferenceUpdate,
   ScientAnalyticsRecordResult,
@@ -121,6 +128,7 @@ import {
 import {
   ScientThreadQueueEnqueueRequest,
   ScientThreadQueueListRequest,
+  ScientThreadQueueControlRequest,
   ScientThreadQueueRemoveRequest,
   ScientThreadQueueReorderRequest,
   ScientThreadQueueSnapshot,
@@ -176,6 +184,7 @@ export const EnvironmentInternalErrorReason = Schema.Literals([
   "scient_latex_navigation_failed",
   "scient_latex_toolchain_failed",
   "scient_latex_install_failed",
+  "scient_markdown_operation_failed",
   "scient_analytics_consent_update_failed",
   "scient_analytics_deletion_failed",
   // SCIENT-FORK:START
@@ -185,7 +194,7 @@ export const EnvironmentInternalErrorReason = Schema.Literals([
 ]);
 export type EnvironmentInternalErrorReason = typeof EnvironmentInternalErrorReason.Type;
 
-export class EnvironmentRequestInvalidError extends Schema.TaggedErrorClass<EnvironmentRequestInvalidError>()(
+export class EnvironmentRequestInvalidError extends Schema.TaggedError<EnvironmentRequestInvalidError>()(
   "EnvironmentRequestInvalidError",
   {
     code: Schema.Literal("invalid_request"),
@@ -203,7 +212,7 @@ export class EnvironmentRequestInvalidError extends Schema.TaggedErrorClass<Envi
   }
 }
 
-export class EnvironmentAuthInvalidError extends Schema.TaggedErrorClass<EnvironmentAuthInvalidError>()(
+export class EnvironmentAuthInvalidError extends Schema.TaggedError<EnvironmentAuthInvalidError>()(
   "EnvironmentAuthInvalidError",
   {
     code: Schema.Literal("auth_invalid"),
@@ -223,7 +232,7 @@ export class EnvironmentAuthInvalidError extends Schema.TaggedErrorClass<Environ
   }
 }
 
-export class EnvironmentScopeRequiredError extends Schema.TaggedErrorClass<EnvironmentScopeRequiredError>()(
+export class EnvironmentScopeRequiredError extends Schema.TaggedError<EnvironmentScopeRequiredError>()(
   "EnvironmentScopeRequiredError",
   {
     code: Schema.Literal("insufficient_scope"),
@@ -241,7 +250,7 @@ export class EnvironmentScopeRequiredError extends Schema.TaggedErrorClass<Envir
   }
 }
 
-export class EnvironmentOperationForbiddenError extends Schema.TaggedErrorClass<EnvironmentOperationForbiddenError>()(
+export class EnvironmentOperationForbiddenError extends Schema.TaggedError<EnvironmentOperationForbiddenError>()(
   "EnvironmentOperationForbiddenError",
   {
     code: Schema.Literal("operation_forbidden"),
@@ -259,7 +268,7 @@ export class EnvironmentOperationForbiddenError extends Schema.TaggedErrorClass<
   }
 }
 
-export class EnvironmentInternalError extends Schema.TaggedErrorClass<EnvironmentInternalError>()(
+export class EnvironmentInternalError extends Schema.TaggedError<EnvironmentInternalError>()(
   "EnvironmentInternalError",
   {
     code: Schema.Literal("internal_error"),
@@ -280,7 +289,7 @@ export class EnvironmentInternalError extends Schema.TaggedErrorClass<Environmen
 export const EnvironmentResourceNotFoundReason = Schema.Literals(["thread_not_found"]);
 export type EnvironmentResourceNotFoundReason = typeof EnvironmentResourceNotFoundReason.Type;
 
-export class EnvironmentResourceNotFoundError extends Schema.TaggedErrorClass<EnvironmentResourceNotFoundError>()(
+export class EnvironmentResourceNotFoundError extends Schema.TaggedError<EnvironmentResourceNotFoundError>()(
   "EnvironmentResourceNotFoundError",
   {
     code: Schema.Literal("not_found"),
@@ -313,7 +322,7 @@ const EnvironmentAuthenticationErrors = [
   EnvironmentInternalError,
 ] as const;
 
-export class EnvironmentHttpBadRequestError extends Schema.TaggedErrorClass<EnvironmentHttpBadRequestError>()(
+export class EnvironmentHttpBadRequestError extends Schema.TaggedError<EnvironmentHttpBadRequestError>()(
   "EnvironmentHttpBadRequestError",
   {
     message: Schema.String,
@@ -325,7 +334,7 @@ export class EnvironmentHttpBadRequestError extends Schema.TaggedErrorClass<Envi
   }
 }
 
-export class EnvironmentHttpUnauthorizedError extends Schema.TaggedErrorClass<EnvironmentHttpUnauthorizedError>()(
+export class EnvironmentHttpUnauthorizedError extends Schema.TaggedError<EnvironmentHttpUnauthorizedError>()(
   "EnvironmentHttpUnauthorizedError",
   {
     message: Schema.String,
@@ -337,7 +346,7 @@ export class EnvironmentHttpUnauthorizedError extends Schema.TaggedErrorClass<En
   }
 }
 
-export class EnvironmentHttpForbiddenError extends Schema.TaggedErrorClass<EnvironmentHttpForbiddenError>()(
+export class EnvironmentHttpForbiddenError extends Schema.TaggedError<EnvironmentHttpForbiddenError>()(
   "EnvironmentHttpForbiddenError",
   {
     message: Schema.String,
@@ -349,7 +358,7 @@ export class EnvironmentHttpForbiddenError extends Schema.TaggedErrorClass<Envir
   }
 }
 
-export class EnvironmentHttpInternalServerError extends Schema.TaggedErrorClass<EnvironmentHttpInternalServerError>()(
+export class EnvironmentHttpInternalServerError extends Schema.TaggedError<EnvironmentHttpInternalServerError>()(
   "EnvironmentHttpInternalServerError",
   {
     message: Schema.String,
@@ -361,7 +370,7 @@ export class EnvironmentHttpInternalServerError extends Schema.TaggedErrorClass<
   }
 }
 
-export class EnvironmentHttpConflictError extends Schema.TaggedErrorClass<EnvironmentHttpConflictError>()(
+export class EnvironmentHttpConflictError extends Schema.TaggedError<EnvironmentHttpConflictError>()(
   "EnvironmentHttpConflictError",
   {
     message: Schema.String,
@@ -373,7 +382,7 @@ export class EnvironmentHttpConflictError extends Schema.TaggedErrorClass<Enviro
   }
 }
 
-export class EnvironmentCloudEndpointUnavailableError extends Schema.TaggedErrorClass<EnvironmentCloudEndpointUnavailableError>()(
+export class EnvironmentCloudEndpointUnavailableError extends Schema.TaggedError<EnvironmentCloudEndpointUnavailableError>()(
   "EnvironmentCloudEndpointUnavailableError",
   {
     message: Schema.String,
@@ -494,13 +503,13 @@ export const AuthOtherClientSessionsRevokeResult = Schema.Struct({
 });
 export type AuthOtherClientSessionsRevokeResult = typeof AuthOtherClientSessionsRevokeResult.Type;
 
-export class EnvironmentMetadataHttpApi extends HttpApiGroup.make("metadata").add(
+class EnvironmentMetadataHttpApi extends HttpApiGroup.make("metadata").add(
   HttpApiEndpoint.get("descriptor", "/.well-known/t3/environment", {
     success: ExecutionEnvironmentDescriptor,
   }),
 ) {}
 
-export class EnvironmentAuthHttpApi extends HttpApiGroup.make("auth")
+class EnvironmentAuthHttpApi extends HttpApiGroup.make("auth")
   .add(
     HttpApiEndpoint.get("session", "/api/auth/session", {
       headers: OptionalBearerHeaders,
@@ -624,7 +633,7 @@ export class EnvironmentOrchestrationHttpApi extends HttpApiGroup.make("orchestr
   ) {}
 
 /** Large, compressible pull-request payloads travel over HTTP rather than the RPC socket. */
-export class EnvironmentPullRequestsHttpApi extends HttpApiGroup.make("pullRequests").add(
+class EnvironmentPullRequestsHttpApi extends HttpApiGroup.make("pullRequests").add(
   HttpApiEndpoint.post("diff", "/api/pull-requests/diff", {
     headers: OptionalBearerHeaders,
     payload: PullRequestDiffInput,
@@ -639,7 +648,7 @@ export class EnvironmentPullRequestsHttpApi extends HttpApiGroup.make("pullReque
   }).middleware(EnvironmentAuthenticatedAuth),
 ) {}
 
-export class EnvironmentConnectHttpApi extends HttpApiGroup.make("connect")
+class EnvironmentConnectHttpApi extends HttpApiGroup.make("connect")
   .add(
     HttpApiEndpoint.post("linkProof", "/api/connect/link-proof", {
       headers: OptionalBearerHeaders,
@@ -950,6 +959,25 @@ export class EnvironmentScientLatexHttpApi extends HttpApiGroup.make("scientLate
     }).middleware(EnvironmentAuthenticatedAuth),
   ) {}
 
+export class EnvironmentScientMarkdownHttpApi extends HttpApiGroup.make("scientMarkdown").add(
+  HttpApiEndpoint.post("imageUpload", "/api/scient/markdown/images/upload", {
+    headers: OptionalBearerHeaders,
+    payload: ScientMarkdownImageUploadRequest,
+    success: ScientMarkdownImageUploadResult,
+    error: [
+      EnvironmentRequestInvalidError,
+      EnvironmentAuthInvalidError,
+      EnvironmentScopeRequiredError,
+      EnvironmentOperationForbiddenError,
+      EnvironmentResourceNotFoundError,
+      EnvironmentInternalError,
+      ScientMarkdownImageInvalidError,
+      ScientMarkdownImageTooLargeError,
+      ScientMarkdownImageConflictError,
+    ],
+  }).middleware(EnvironmentAuthenticatedAuth),
+) {}
+
 export class EnvironmentScientAnalyticsHttpApi extends HttpApiGroup.make("scientAnalytics")
   .add(
     HttpApiEndpoint.get("status", "/api/scient/analytics/status", {
@@ -985,45 +1013,63 @@ export class EnvironmentScientAnalyticsHttpApi extends HttpApiGroup.make("scient
 // SCIENT-FORK:START — Scient thread queue group. Appended after inherited
 // groups like the other Scient groups so upstream additions never collide
 // with this class or the composition seam below.
+export class ScientThreadQueueOperationError extends Schema.TaggedError<ScientThreadQueueOperationError>()(
+  "ScientThreadQueueOperationError",
+  { message: Schema.String },
+  { httpApiStatus: 409 },
+) {
+  [HttpServerRespondable.symbol]() {
+    return HttpServerResponse.schemaJson(ScientThreadQueueOperationError)(this, { status: 409 });
+  }
+}
+
 export class EnvironmentScientThreadQueueHttpApi extends HttpApiGroup.make("scientThreadQueue")
   .add(
-    HttpApiEndpoint.post("list", "/api/scient/thread-queue/list", {
+    HttpApiEndpoint.post("list", "/api/scient/thread-queue/v2/list", {
       headers: OptionalBearerHeaders,
       payload: ScientThreadQueueListRequest,
       success: ScientThreadQueueSnapshot,
-      error: EnvironmentHttpCommonError,
+      error: [EnvironmentHttpCommonError, ScientThreadQueueOperationError],
     }).middleware(EnvironmentAuthenticatedAuth),
   )
   .add(
-    HttpApiEndpoint.post("enqueue", "/api/scient/thread-queue/enqueue", {
+    HttpApiEndpoint.post("enqueue", "/api/scient/thread-queue/v2/enqueue", {
       headers: OptionalBearerHeaders,
       payload: ScientThreadQueueEnqueueRequest,
       success: ScientThreadQueueSnapshot,
-      error: EnvironmentHttpCommonError,
+      error: [EnvironmentHttpCommonError, ScientThreadQueueOperationError],
     }).middleware(EnvironmentAuthenticatedAuth),
   )
   .add(
-    HttpApiEndpoint.post("update", "/api/scient/thread-queue/update", {
+    HttpApiEndpoint.post("update", "/api/scient/thread-queue/v2/update", {
       headers: OptionalBearerHeaders,
       payload: ScientThreadQueueUpdateRequest,
       success: ScientThreadQueueSnapshot,
-      error: EnvironmentHttpCommonError,
+      error: [EnvironmentHttpCommonError, ScientThreadQueueOperationError],
     }).middleware(EnvironmentAuthenticatedAuth),
   )
   .add(
-    HttpApiEndpoint.post("remove", "/api/scient/thread-queue/remove", {
+    HttpApiEndpoint.post("remove", "/api/scient/thread-queue/v2/remove", {
       headers: OptionalBearerHeaders,
       payload: ScientThreadQueueRemoveRequest,
       success: ScientThreadQueueSnapshot,
-      error: EnvironmentHttpCommonError,
+      error: [EnvironmentHttpCommonError, ScientThreadQueueOperationError],
     }).middleware(EnvironmentAuthenticatedAuth),
   )
   .add(
-    HttpApiEndpoint.post("reorder", "/api/scient/thread-queue/reorder", {
+    HttpApiEndpoint.post("reorder", "/api/scient/thread-queue/v2/reorder", {
       headers: OptionalBearerHeaders,
       payload: ScientThreadQueueReorderRequest,
       success: ScientThreadQueueSnapshot,
-      error: EnvironmentHttpCommonError,
+      error: [EnvironmentHttpCommonError, ScientThreadQueueOperationError],
+    }).middleware(EnvironmentAuthenticatedAuth),
+  )
+  .add(
+    HttpApiEndpoint.post("control", "/api/scient/thread-queue/v2/control", {
+      headers: OptionalBearerHeaders,
+      payload: ScientThreadQueueControlRequest,
+      success: ScientThreadQueueSnapshot,
+      error: [EnvironmentHttpCommonError, ScientThreadQueueOperationError],
     }).middleware(EnvironmentAuthenticatedAuth),
   ) {}
 // SCIENT-FORK:END
@@ -1035,6 +1081,7 @@ export class EnvironmentHttpApi extends HttpApi.make("environment")
   .add(EnvironmentPullRequestsHttpApi)
   .add(EnvironmentScientProjectHttpApi)
   .add(EnvironmentScientSourcesHttpApi)
+  .add(EnvironmentScientMarkdownHttpApi)
   .add(EnvironmentScientAnalyticsHttpApi)
   .add(EnvironmentScientLatexHttpApi)
   // SCIENT-FORK:START

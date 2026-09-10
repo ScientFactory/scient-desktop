@@ -1,8 +1,23 @@
 # Project settings
 
-Project settings control project-specific behavior such as reusable agent
-instructions, the icon shown in Scient, and commands that open a local preview.
-They do not change the settings of every other project.
+Open **Settings → Projects**. The project and machine pickers start at **All projects** and
+**All machines**.
+
+Change the default model, workspace, automatic pull, agent browser access, or actions for projects that inherit those values.
+Select an individual project to override a default. Reset its row to inherit again. Changing a
+default preserves explicit project overrides. Workspace preferences in `t3.json` take precedence
+over machine defaults when the project has no explicit workspace override.
+
+Select a machine to limit edits to it. **All machines** writes defaults to connected machines;
+offline machines keep their previous values. Mixed values are indicated when selected machines
+or checkouts disagree. Browser access changes apply when an agent session next starts.
+
+Project grouping has a client-wide default across machines, with individual checkout overrides.
+Shared actions apply to inheriting projects; editing a project's actions creates an independent list.
+Reset that list to use shared actions again. Existing project actions are preserved.
+
+Project names, icons, removal, and importing actions from a checkout remain project-specific.
+When there are several checkouts, the checkout picker selects which actions and grouping to edit.
 
 ## Manage project skills
 
@@ -18,20 +33,26 @@ or permissions.
 
 ## Customize a project icon
 
-Scient selects a project icon automatically from common favicon and app-icon
-paths or icon links in project HTML files.
+Scient selects a project icon automatically. It checks `t3.json`, common favicon and app icon
+paths, and icon links in project HTML files. If it does not find an image, it chooses a built-in
+icon from the saved project name. In web and desktop, this icon stays the same when the sidebar
+shows a repository label such as `owner/repo`.
 
-To choose a different icon:
+To choose a different icon or emoji:
 
-1. Open the project selector at the top of the sidebar.
-2. Select the settings control beside the project.
-3. Under **Project → Project icon**, select **Choose file**.
-4. Search for an image file and select it.
+1. Open **Settings** and select **Projects**.
+2. Select the project.
+3. Next to **Project icon**, select **Choose icon**.
+4. Search the full Lucide icon set and choose a color, or switch to **Emoji** and choose or paste
+   an emoji.
+
+To use an image from the project instead, select **Choose file**, search for an image, and select
+it.
 
 Scient supports SVG, PNG, ICO, JPEG, GIF, AVIF, and WebP files. The selected path applies to
 each checkout in the project group and appears on your connected clients.
 
-To use automatic detection again, use the reset control beside **Project icon**.
+To use automatic detection again, select **Automatic**.
 
 ## Open a browser preview from a project action
 
@@ -52,3 +73,13 @@ does not take focus back later.
 Automatic preview is available in the Scient desktop app. Other clients still run the action but do
 not open the embedded Browser. Actions that run automatically during worktree creation start on the
 server and do not currently trigger this client-side Browser opening.
+
+## Keep the default branch current
+
+Turn on **Automatically pull** in a project's settings to keep its default-branch checkout current.
+Scient checks in the background and when the server starts. It uses the branch's configured
+upstream and only performs a fast-forward pull when the checkout has no working-tree changes,
+untracked files, or local commits.
+
+The pull is skipped if the checkout is on another branch, has no upstream, or contains local work.
+Pull failures do not prevent the server from starting.

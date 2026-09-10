@@ -9,6 +9,7 @@ import type * as EffectAcpErrors from "effect-acp/errors";
 import { type DroidSettings, type ModelSelection } from "@t3tools/contracts";
 import { sanitizeBranchFragment, sanitizeFeatureBranchName } from "@t3tools/shared/git";
 import { extractJsonObject } from "@t3tools/shared/schemaJson";
+import { MODEL_TOKEN_LIMIT_MESSAGE } from "@t3tools/shared/model";
 
 import { TextGenerationError } from "@t3tools/contracts";
 import * as TextGeneration from "./TextGeneration.ts";
@@ -27,6 +28,7 @@ import {
   applyDroidModelAndEffort,
   makeDroidAcpRuntime,
   requestedDroidEffortFromSelection,
+  type DroidAcpRuntimeFactory,
 } from "../provider/acp/DroidAcpSupport.ts";
 
 const DROID_TIMEOUT_MS = 180_000;
@@ -53,21 +55,21 @@ const applyDroidTextGenerationSelection = (input: {
     requestedModel: input.requestedModel,
     requestedEffort: input.requestedEffort,
   }).pipe(
-    Effect.mapError(
-      (cause): TextGenerationError =>
-        isTextGenerationError(cause)
-          ? cause
-          : new TextGenerationError({
-              operation: input.operation,
-              detail: "Failed to apply Droid ACP model selection for text generation.",
-              cause,
-            }),
+    Effect.mapError((cause): TextGenerationError =>
+      isTextGenerationError(cause)
+        ? cause
+        : new TextGenerationError({
+            operation: input.operation,
+            detail: "Failed to apply Droid ACP model selection for text generation.",
+            cause,
+          }),
     ),
   );
 
 export const makeDroidTextGeneration = Effect.fn("makeDroidTextGeneration")(function* (
   droidSettings: DroidSettings,
   environment: NodeJS.ProcessEnv = process.env,
+  makeAcpRuntime: DroidAcpRuntimeFactory = makeDroidAcpRuntime,
 ) {
   const crypto = yield* Crypto.Crypto;
   const commandSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
@@ -91,7 +93,7 @@ export const makeDroidTextGeneration = Effect.fn("makeDroidTextGeneration")(func
   }): Effect.Effect<S["Type"], TextGenerationError, S["DecodingServices"]> =>
     Effect.gen(function* () {
       const outputRef = yield* Ref.make("");
-      const runtime = yield* makeDroidAcpRuntime({
+      const runtime = yield* makeAcpRuntime({
         droidSettings,
         environment,
         childProcessSpawner: commandSpawner,
@@ -146,6 +148,13 @@ export const makeDroidTextGeneration = Effect.fn("makeDroidTextGeneration")(func
       );
 
       const trimmed = (yield* Ref.get(outputRef)).trim();
+      if (promptResult.stopReason === "max_tokens") {
+        return yield* new TextGenerationError({
+          operation,
+          detail: MODEL_TOKEN_LIMIT_MESSAGE,
+          errorReason: "token_limit",
+        });
+      }
       if (!trimmed) {
         return yield* new TextGenerationError({
           operation,

@@ -20,6 +20,15 @@ interface ProtectedRange {
   readonly end: number;
 }
 
+export type ScientBackslashMathDelimiter = "\\(" | "\\[";
+
+export interface ScientBackslashMathSpan {
+  readonly content: string;
+  readonly delimiter: ScientBackslashMathDelimiter;
+  readonly end: number;
+  readonly start: number;
+}
+
 const FENCE_OPEN_PATTERN = /^ {0,3}(`{3,}|~{3,})/;
 const INDENTED_CODE_LINE_PATTERN = /^(?: {4,}|\t)/;
 const INLINE_CODE_SPAN_PATTERN = /(`+)[^`][\s\S]*?\1(?!`)|``(?!`)/g;
@@ -93,9 +102,15 @@ function overlapsProtected(ranges: ProtectedRange[], start: number, end: number)
   return ranges.some((range) => start < range.end && end > range.start);
 }
 
-export function normalizeScientMathDelimiters(text: string): string {
+/**
+ * Finds authored TeX delimiter pairs in Markdown prose without interpreting
+ * lookalikes inside code, raw HTML syntax, or escaped source. Offsets always
+ * address the original UTF-16 string, so renderers and editors can share the
+ * same source-preserving boundary.
+ */
+export function findScientBackslashMathSpans(text: string): ReadonlyArray<ScientBackslashMathSpan> {
   if (!text.includes("\\[") && !text.includes("\\(")) {
-    return text;
+    return [];
   }
 
   const protectedRanges: ProtectedRange[] = [];
@@ -106,7 +121,7 @@ export function normalizeScientMathDelimiters(text: string): string {
   collectPatternRanges(text, RAW_HTML_TAG_PATTERN, protectedRanges);
   collectPatternRanges(text, RAW_HTML_COMMENT_PATTERN, protectedRanges);
 
-  let characters: string[] | null = null;
+  const spans: ScientBackslashMathSpan[] = [];
   for (const match of text.matchAll(TEX_DELIMITER_PAIR_PATTERN)) {
     const content = match[1] ?? match[2] ?? "";
     if (content.trim() === "") continue;
@@ -114,15 +129,30 @@ export function normalizeScientMathDelimiters(text: string): string {
     const end = start + match[0].length;
     if (overlapsProtected(protectedRanges, start, end)) continue;
 
-    // split("") keeps UTF-16 code units, so indices stay aligned with the
-    // regex offsets even when the text contains astral characters.
-    characters ??= text.split("");
-    characters[start] = "$";
-    characters[start + 1] = "$";
-    characters[end - 2] = "$";
-    characters[end - 1] = "$";
+    spans.push({
+      content,
+      delimiter: match[1] === undefined ? "\\(" : "\\[",
+      end,
+      start,
+    });
   }
-  return characters === null ? text : characters.join("");
+  return spans;
+}
+
+export function normalizeScientMathDelimiters(text: string): string {
+  const spans = findScientBackslashMathSpans(text);
+  if (spans.length === 0) return text;
+
+  // split("") keeps UTF-16 code units, so indices stay aligned with the
+  // source offsets even when the text contains astral characters.
+  const characters = text.split("");
+  for (const span of spans) {
+    characters[span.start] = "$";
+    characters[span.start + 1] = "$";
+    characters[span.end - 2] = "$";
+    characters[span.end - 1] = "$";
+  }
+  return characters.join("");
 }
 
 /** Memoized per message text, since streaming re-renders the same string repeatedly. */

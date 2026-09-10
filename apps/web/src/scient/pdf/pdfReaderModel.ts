@@ -1,6 +1,6 @@
-export const PDF_MIN_ZOOM = 0.25;
-export const PDF_MAX_ZOOM = 5;
-export const PDF_ZOOM_STEP_PERCENT = 5;
+const PDF_MIN_ZOOM = 0.25;
+const PDF_MAX_ZOOM = 5;
+const PDF_ZOOM_STEP_PERCENT = 5;
 
 export type PdfSidebarMode = "closed" | "thumbnails" | "outline";
 export type PdfZoomMode = "page-width" | "page-fit" | "page-actual";

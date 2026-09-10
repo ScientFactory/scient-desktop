@@ -40,7 +40,7 @@ function DialogViewport({ className, ...props }: DialogPrimitive.Viewport.Props)
   return (
     <DialogPrimitive.Viewport
       className={cn(
-        "fixed inset-0 z-50 grid grid-rows-[1fr_auto_1fr] justify-items-center p-4",
+        "fixed inset-0 z-50 grid grid-rows-[1fr_auto_1fr] justify-items-center p-4 [-webkit-app-region:no-drag]",
         className,
       )}
       data-slot="dialog-viewport"
@@ -53,17 +53,19 @@ function DialogPopup({
   className,
   children,
   showCloseButton = true,
+  showBackdrop = true,
   bottomStickOnMobile = true,
   backdropClassName,
   ...props
 }: DialogPrimitive.Popup.Props & {
   showCloseButton?: boolean;
+  showBackdrop?: boolean;
   bottomStickOnMobile?: boolean;
   backdropClassName?: string;
 }) {
   return (
     <DialogPortal>
-      <DialogBackdrop className={backdropClassName} />
+      {showBackdrop ? <DialogBackdrop className={backdropClassName} /> : null}
       <DialogViewport
         className={cn(bottomStickOnMobile && "max-sm:grid-rows-[1fr_auto] max-sm:p-0 max-sm:pt-12")}
       >
@@ -149,11 +151,15 @@ function DialogDescription({ className, ...props }: DialogPrimitive.Description.
 
 function DialogPanel({
   className,
+  scrollAreaClassName,
   scrollFade = true,
   ...props
-}: React.ComponentProps<"div"> & { scrollFade?: boolean }) {
+}: React.ComponentProps<"div"> & {
+  scrollAreaClassName?: string;
+  scrollFade?: boolean;
+}) {
   return (
-    <ScrollArea scrollFade={scrollFade}>
+    <ScrollArea className={scrollAreaClassName} scrollFade={scrollFade}>
       <div
         className={cn(
           "p-6 in-[[data-slot=dialog-popup]:has([data-slot=dialog-header])]:pt-1 in-[[data-slot=dialog-popup]:has([data-slot=dialog-footer]:not(.border-t))]:pb-1",

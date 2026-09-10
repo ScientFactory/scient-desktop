@@ -147,7 +147,11 @@ export function PlotlyInteractionToolbar({
   );
 
   if (compact) {
-    return <VisualCardToolbar label="Plotly interaction tools">{controls}</VisualCardToolbar>;
+    return (
+      <VisualCardToolbar label="Plotly interaction tools" variant="exploration">
+        {controls}
+      </VisualCardToolbar>
+    );
   }
 
   return (

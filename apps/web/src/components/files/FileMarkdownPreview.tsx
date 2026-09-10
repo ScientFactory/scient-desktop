@@ -26,6 +26,7 @@ export function FileMarkdownPreview(props: {
       text={props.text}
       cwd={props.cwd}
       imageBaseDir={imageBaseDir}
+      imageCaptions
       threadRef={props.threadRef}
       contentDirection="auto"
       className="mx-auto max-w-4xl px-6 py-5"

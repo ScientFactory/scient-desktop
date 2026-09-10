@@ -136,16 +136,12 @@ export function ThreadQueueStrip(props: {
   readonly dispatchingItemId: ScientThreadQueueItemId | null;
   readonly onSteer: (item: ScientThreadQueueItem) => void;
   readonly retryItemId?: ScientThreadQueueItemId;
-  readonly onRetry?: (item: ScientThreadQueueItem) => void;
+  readonly onRetry?: () => void;
   readonly onEdit: (item: ScientThreadQueueItem) => void;
   readonly onDelete: (item: ScientThreadQueueItem) => void;
   readonly onReorder: (queueItemIds: ReadonlyArray<ScientThreadQueueItemId>) => void;
 }) {
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 6 } }));
-  const retryItem =
-    props.retryItemId === undefined
-      ? null
-      : (props.items.find((item) => item.queueItemId === props.retryItemId) ?? null);
   const handleDragEnd = useCallback(
     (event: DragEndEvent) => {
       const activeId = String(event.active.id) as ScientThreadQueueItemId;
@@ -175,13 +171,13 @@ export function ThreadQueueStrip(props: {
           role="alert"
         >
           <span className="min-w-0 flex-1 truncate">{props.error}</span>
-          {!props.threadBusy && retryItem && props.onRetry && (
+          {!props.threadBusy && props.onRetry && (
             <Button
               type="button"
               size="compact"
               variant="outline"
               disabled={props.dispatchingItemId !== null}
-              onClick={() => props.onRetry?.(retryItem)}
+              onClick={() => props.onRetry?.()}
             >
               Retry
             </Button>

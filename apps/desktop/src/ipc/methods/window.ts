@@ -9,6 +9,7 @@ import {
   PickFolderOptionsSchema,
   PRIMARY_LOCAL_ENVIRONMENT_ID,
   REMOTE_CAPABLE_EDITOR_IDS,
+  SystemSettingsPaneSchema,
   type DesktopEnvironmentBootstrap,
   type PickedThemeFile,
 } from "@t3tools/contracts";
@@ -53,9 +54,9 @@ const ContextMenuInput = Schema.Struct({
 
 // The web renderers are capped at 16,777,216 pixels. A lossless RGBA PNG for
 // that surface is roughly 64 MiB before modest encoding overhead.
-export const MAX_CLIPBOARD_PNG_BYTES = 80 * 1024 * 1024;
+const MAX_CLIPBOARD_PNG_BYTES = 80 * 1024 * 1024;
 
-export class DesktopClipboardPngWriteError extends Schema.TaggedErrorClass<DesktopClipboardPngWriteError>()(
+export class DesktopClipboardPngWriteError extends Schema.TaggedError<DesktopClipboardPngWriteError>()(
   "DesktopClipboardPngWriteError",
   {
     reason: Schema.Literals(["empty", "too-large", "decode-failed"]),
@@ -336,6 +337,16 @@ export const openExternal = DesktopIpc.makeIpcMethod({
   handler: Effect.fn("desktop.ipc.window.openExternal")(function* (url) {
     const shell = yield* ElectronShell.ElectronShell;
     return yield* shell.openExternal(url);
+  }),
+});
+
+export const openSystemSettings = DesktopIpc.makeIpcMethod({
+  channel: IpcChannels.OPEN_SYSTEM_SETTINGS_CHANNEL,
+  payload: SystemSettingsPaneSchema,
+  result: Schema.Boolean,
+  handler: Effect.fn("desktop.ipc.window.openSystemSettings")(function* (pane) {
+    const shell = yield* ElectronShell.ElectronShell;
+    return yield* shell.openSystemSettings(pane);
   }),
 });
 

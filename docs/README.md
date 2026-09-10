@@ -5,6 +5,11 @@ Some internal documents retain inherited T3 terminology where it describes the
 host platform or historical ancestry; that terminology is not product identity
 or release authority.
 
+Related documentation also lives in the separate
+[Scient repository](https://github.com/ScientFactory/Scient/blob/main/docs/README.md).
+Topics may span repositories; follow the relevant documents and their ownership
+or supersession links rather than assuming either repository contains all guidance.
+
 The logical roles are Help, Capabilities, Architecture, Development,
 Operations, Upstream, and Records. They map to the real compatibility paths
 below: `docs/user/` is the authored Help source for public Scient Docs;
@@ -18,6 +23,7 @@ require a cosmetic folder migration.
 
 - [Install and first run](./user/install.md)
 - [Getting started](./user/getting-started.md)
+- [Import projects and conversations](./user/welcome-wizard.md)
 - [Starting a project](./user/projects.md)
 - [Message Scient](./user/composer.md)
 - [Providers and assisted setup](./user/providers.md)
@@ -28,12 +34,18 @@ require a cosmetic folder migration.
   - [Droid](./user/providers-droid.md)
   - [Cursor](./user/providers-cursor.md)
   - [OpenCode](./user/providers-opencode.md)
+  - [Pi](./user/providers-pi.md)
 - [Permission modes](./user/permission-modes.md)
 - [Organizing threads](./user/thread-sidebar.md)
 - [Project settings](./user/project-settings.md)
 - [Voice dictation](./user/voice-dictation.md)
 - [Keyboard shortcuts](./user/keybindings.md)
 - [Environment themes](./user/environment-theme.md)
+- [Appearance and themes](./user/appearance.md)
+- [SnapShots](./user/snap-shot.md)
+- [Import browser sessions](./user/browser-import.md)
+- [Usage and limits](./user/usage.md)
+- [Product usage data](./user/telemetry.md)
 - [Review usage](./user/usage.md)
 - [Remote access](./user/remote-access.md)
 - [Keeping app and server in sync](./user/updating.md)
@@ -59,7 +71,8 @@ Everything below is for maintainers. Setup lives in the [root README](../README.
 policy in [CONTRIBUTING.md](../CONTRIBUTING.md); agent rules in [AGENTS.md](../AGENTS.md).
 
 - [Architecture overview](./internals/overview.md)
-- [Workspace layout](./internals/workspace-layout.md)
+- [Unread answers and Dock badge](./internals/answer-attention.md)
+- [Workspace layout](../AGENTS.md#where-code-lives)
 - [Glossary](./internals/glossary.md)
 - [Scripts](./internals/scripts.md)
 - [Connection runtime](./internals/connection-runtime.md)
@@ -83,6 +96,7 @@ policy in [CONTRIBUTING.md](../CONTRIBUTING.md); agent rules in [AGENTS.md](../A
 - [Scient Sources foundation](./internals/scient-sources.md)
 - [Scient thread queue and upstream retirement seam](./internals/scient-thread-queue.md)
 - [Scient voice architecture](./internals/scient-voice.md)
+- [Custom model connections](./internals/custom-models.md)
 - [Scient mobile release hold](./internals/scient-mobile-release-hold.md)
 - [Scient Browser PDF export](./internals/scient-browser-pdf-export.md)
 - [Historical PDF export and rendering plan](./internals/scient-pdf-export-rendering-plan.md)
@@ -95,6 +109,7 @@ policy in [CONTRIBUTING.md](../CONTRIBUTING.md); agent rules in [AGENTS.md](../A
 - [Scient content direction](./internals/scient-content-direction.md)
 - [Scient typography profile](./internals/scient-typography.md)
 - [Scient math rendering](./internals/scient-math.md)
+- [Scient rich Markdown editor](./internals/scient-rich-markdown-editor.md)
 - [Scient rich chat diagrams](./internals/scient-chat-diagrams.md)
 - [Scient inline workspace images](./internals/scient-chat-images.md)
 - [Scient rich chat visualizations](./internals/scient-chat-visualizations.md)
@@ -129,6 +144,7 @@ Follow their linked successors for current behavior.
 
 - [Scient local dev app](./operations/local-dev-app.md)
 - [Release](./operations/release.md)
+- [Managed provider runtime updates](./operations/managed-provider-runtime-updates.md)
 - [Observability](./operations/observability.md)
 - [Relay observability](./operations/relay-observability.md)
 - [Mobile app store screenshots](./operations/mobile-app-store-screenshots.md)

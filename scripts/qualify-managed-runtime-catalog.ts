@@ -12,15 +12,18 @@ import {
   ManagedCursorRuntime,
   ManagedDroidRuntime,
   ManagedGrokRuntime,
+  ManagedPiRuntime,
   detectManagedRuntimeTarget,
   hydrateManagedRuntimeArtifact,
   managedRuntimeTargetKey,
+  runtimeFilesystem,
   resolveReviewedAntigravityArtifact,
   resolveReviewedClaudeArtifact,
   resolveReviewedCodexArtifact,
   resolveReviewedCursorArtifact,
   resolveReviewedDroidArtifact,
   resolveReviewedGrokArtifact,
+  resolveReviewedPiArtifact,
   type ManagedProviderRuntime,
   type ManagedRuntimeArtifact,
   type ManagedRuntimeProvider,
@@ -37,7 +40,8 @@ function argument(name: string): string | undefined {
 
 const provider = argument("--provider") as ManagedRuntimeProvider | undefined;
 const catalogPath = NodePath.resolve(
-  argument("--catalog") ?? "apps/server/src/scient/providerLifecycle/managed-runtime-catalog.json",
+  argument("--catalog") ??
+    "apps/server/src/scient/providerLifecycle/bundled-managed-runtime-catalog.json",
 );
 if (!provider) throw new Error("--provider is required.");
 
@@ -75,6 +79,10 @@ const providerFactories: Readonly<
   grok: {
     policy: resolveReviewedGrokArtifact,
     runtime: (baseDir) => new ManagedGrokRuntime(baseDir),
+  },
+  pi: {
+    policy: resolveReviewedPiArtifact,
+    runtime: (baseDir) => new ManagedPiRuntime(baseDir),
   },
 };
 
@@ -119,12 +127,20 @@ if (!artifact) throw new Error(`${provider} ${targetKey} violates app-owned runt
 const root = await NodeFSP.mkdtemp(
   NodePath.join(NodeOS.tmpdir(), `scient-${provider}-qualification-`),
 );
+let qualificationFailure: unknown;
 try {
   const runtime = factory.runtime(root);
   await runtime.install({ artifact, signal: AbortSignal.timeout(15 * 60_000) });
   const status = await runtime.status(artifact);
   if (!status.installed || !status.selected || status.activeVersion !== artifact.version) {
     throw new Error(`${provider} ${targetKey} did not activate the qualified release.`);
+  }
+  if (process.argv.includes("--repair")) {
+    await runtime.install({ artifact, signal: AbortSignal.timeout(15 * 60_000) });
+    const repaired = await runtime.status(artifact);
+    if (!repaired.installed || !repaired.selected || repaired.activeVersion !== artifact.version) {
+      throw new Error(`${provider} ${targetKey} did not repair the qualified release.`);
+    }
   }
   await runtime.remove();
   const removed = await runtime.status(artifact);
@@ -134,6 +150,17 @@ try {
   process.stdout.write(
     `${provider} ${artifact.version} passed native ${targetKey} qualification.\n`,
   );
+} catch (cause) {
+  qualificationFailure = cause;
+  throw cause;
 } finally {
-  await NodeFSP.rm(root, { recursive: true, force: true });
+  await runtimeFilesystem.remove(root).catch((cleanupFailure: unknown) => {
+    if (qualificationFailure !== undefined) {
+      throw new AggregateError(
+        [qualificationFailure, cleanupFailure],
+        "Runtime qualification and cleanup both failed.",
+      );
+    }
+    throw cleanupFailure;
+  });
 }

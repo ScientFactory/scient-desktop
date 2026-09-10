@@ -7,6 +7,7 @@ import {
   resolveScientReleaseNotesDecision,
   sortScientReleaseNotes,
   validateScientReleaseNotesCatalog,
+  type ScientParagraphReleaseNote,
   type ScientReleaseNote,
 } from "./model";
 
@@ -24,6 +25,23 @@ function release(version: string, publishedAt = "2030-03-04"): ScientReleaseNote
         description: "The workflow is easier to understand and complete.",
       },
     ],
+  };
+}
+
+function paragraphRelease(version: string): ScientParagraphReleaseNote {
+  return {
+    version,
+    publishedAt: "2030-03-04",
+    format: "paragraphs",
+    headline: `Release ${version}`,
+    highlights: [
+      {
+        id: `highlight-${version}`,
+        title: "A clearer workflow",
+        description: "The workflow is easier to understand and complete.",
+      },
+    ],
+    alsoIncluded: "Several smaller reliability and interface improvements.",
   };
 }
 
@@ -115,5 +133,91 @@ describe("validateScientReleaseNotesCatalog", () => {
       "release[1].headline must not be empty.",
       "release[1].highlights[1].id duplicates highlight-2.4.0 in this release.",
     ]);
+  });
+
+  it("accepts seven dedicated paragraphs plus Also included and rejects a longer note", () => {
+    const highlights: ScientReleaseNote["highlights"] = [
+      {
+        id: "highlight-0",
+        title: "Highlight 0",
+        description: "A user-facing improvement.",
+      },
+      ...Array.from({ length: 6 }, (_, index) => ({
+        id: `highlight-${index + 1}`,
+        title: `Highlight ${index + 1}`,
+        description: "A user-facing improvement.",
+      })),
+    ];
+    const withinLimit = { ...paragraphRelease("2.5.0"), highlights };
+    const tooMany = {
+      ...withinLimit,
+      highlights: [
+        ...highlights,
+        { id: "highlight-7", title: "Highlight 7", description: "A user-facing improvement." },
+      ] as unknown as ScientReleaseNote["highlights"],
+    };
+
+    expect(validateScientReleaseNotesCatalog([withinLimit])).toEqual([]);
+    expect(validateScientReleaseNotesCatalog([tooMany])).toContain(
+      "release[0].highlights must contain no more than seven items.",
+    );
+  });
+
+  it("bounds each paragraph and the total visible copy in the current format", () => {
+    const oversizedFields = {
+      ...paragraphRelease("2.6.0"),
+      headline: "H".repeat(81),
+      highlights: [
+        {
+          id: "oversized",
+          title: "T".repeat(73),
+          description: "D".repeat(241),
+        },
+      ] as ScientReleaseNote["highlights"],
+      alsoIncluded: "A".repeat(321),
+    } satisfies ScientReleaseNote;
+    const excessiveTotal = {
+      ...paragraphRelease("2.7.0"),
+      highlights: Array.from({ length: 7 }, (_, index) => ({
+        id: `highlight-${index}`,
+        title: `Highlight ${index}`,
+        description: "D".repeat(220),
+      })) as unknown as ScientReleaseNote["highlights"],
+    } satisfies ScientReleaseNote;
+
+    expect(validateScientReleaseNotesCatalog([oversizedFields])).toEqual([
+      "release[0].headline must contain no more than 80 characters.",
+      "release[0].alsoIncluded must contain no more than 320 characters.",
+      "release[0].highlights[0].title must contain no more than 72 characters.",
+      "release[0].highlights[0].description must contain no more than 240 characters.",
+    ]);
+    expect(validateScientReleaseNotesCatalog([excessiveTotal])).toContain(
+      "release[0] must contain no more than 1600 characters of visible copy.",
+    );
+  });
+});
+
+describe("Scient 0.6.12 release-note decision", () => {
+  it("keeps the hotfix concise while carrying the approved 0.6.11 highlights", () => {
+    const note = SCIENT_RELEASE_NOTES.find(({ version }) => version === "0.6.12") as
+      | ScientReleaseNote
+      | undefined;
+    if (!note || note.format !== "paragraphs")
+      throw new Error("Expected the 0.6.12 paragraph note.");
+    expect(note.highlights[0]).toEqual({
+      id: "gemini-model-discovery-hotfix",
+      title: "Gemini model discovery hotfix",
+      description: "Fixed Gemini model discovery for the Antigravity provider.",
+    });
+    expect(note.highlights.slice(1).map(({ title }) => title)).toEqual([
+      "Bring your own models",
+      "Pi is now available",
+      "Continue your Codex and Claude conversations in Scient",
+      "Set your preferences once",
+      "Smoother Markdown editing",
+      "Faster, more reliable work",
+    ]);
+    expect(note.alsoIncluded).toContain("originally released in Scient 0.6.11");
+    expect(note.alsoIncluded).not.toContain("Windows");
   });
 });

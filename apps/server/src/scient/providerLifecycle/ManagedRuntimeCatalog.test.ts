@@ -1,28 +1,36 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import {
+  managedRuntimeArtifactReceipt,
   resolveReviewedAntigravityArtifact,
   resolveReviewedClaudeArtifact,
   resolveReviewedCodexArtifact,
   resolveReviewedCursorArtifact,
   resolveReviewedDroidArtifact,
   resolveReviewedGrokArtifact,
+  resolveReviewedPiArtifact,
   type ManagedRuntimeArtifact,
   type ManagedRuntimeProvider,
   type ManagedRuntimeTarget,
 } from "@scientfactory/provider-runtime";
 import { assert, describe, it } from "@effect/vitest";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
-import { HttpClient, HttpClientResponse } from "effect/unstable/http";
+import * as Option from "effect/Option";
+import * as Stream from "effect/Stream";
+import * as TestClock from "effect/testing/TestClock";
+import { HttpClient, HttpClientRequest, HttpClientResponse } from "effect/unstable/http";
 
 import * as ServerConfig from "../../config.ts";
 import * as ServerSettings from "../../serverSettings.ts";
 import {
   BUNDLED_MANAGED_RUNTIME_CATALOG,
-  make,
+  makeWithOptions,
   mergeManagedRuntimeCatalogs,
   resolveManagedRuntimeCatalogArtifact,
   resolveManagedRuntimeCatalogCandidate,
+  resolveManagedRuntimeRepairArtifact,
   resolveFetchedManagedRuntimeCatalog,
   type ManagedRuntimeCatalogData,
 } from "./ManagedRuntimeCatalog.ts";
@@ -48,9 +56,20 @@ const policies: ReadonlyArray<{
   { provider: "cursor", resolve: resolveReviewedCursorArtifact },
   { provider: "droid", resolve: resolveReviewedDroidArtifact },
   { provider: "grok", resolve: resolveReviewedGrokArtifact },
+  { provider: "pi", resolve: resolveReviewedPiArtifact },
 ];
 
-const remoteCatalog = (version = "0.151.0"): ManagedRuntimeCatalogData => ({
+function nextPatch(version: string): string {
+  const match = /^(.*\.)([0-9]+)$/u.exec(version);
+  if (!match) throw new Error(`Test version '${version}' has no numeric patch component.`);
+  return `${match[1]}${Number(match[2]) + 1}`;
+}
+
+const bundledCodexVersion = BUNDLED_MANAGED_RUNTIME_CATALOG.providers.codex?.version;
+if (!bundledCodexVersion) throw new Error("Bundled Codex catalog release is missing.");
+const newerCodexVersion = nextPatch(bundledCodexVersion);
+
+const remoteCatalog = (version = newerCodexVersion): ManagedRuntimeCatalogData => ({
   schemaVersion: 1,
   providers: {
     codex: {
@@ -70,15 +89,17 @@ const remoteCatalog = (version = "0.151.0"): ManagedRuntimeCatalogData => ({
   },
 });
 
-const httpClientLayer = (handler: () => Response) =>
+const httpClientLayer = (handler: (request: HttpClientRequest.HttpClientRequest) => Response) =>
   Layer.succeed(
     HttpClient.HttpClient,
-    HttpClient.make((request) => Effect.succeed(HttpClientResponse.fromWeb(request, handler()))),
+    HttpClient.make((request) =>
+      Effect.succeed(HttpClientResponse.fromWeb(request, handler(request))),
+    ),
   );
 
 const serviceLayers = (input: {
   readonly prefix: string;
-  readonly response: () => Response;
+  readonly response: (request: HttpClientRequest.HttpClientRequest) => Response;
   readonly settings?: Parameters<typeof ServerSettings.layerTest>[0];
 }) =>
   ServerConfig.layerTest(process.cwd(), { prefix: input.prefix }).pipe(
@@ -97,12 +118,12 @@ describe("managed runtime catalog resolution", () => {
     const merged = mergeManagedRuntimeCatalogs(bundled, {
       schemaVersion: 1,
       providers: {
-        codex: { ...codex, version: "0.149.1" },
-        claudeAgent: { ...claude, version: "2.1.252" },
+        codex: { ...codex, version: "0.0.1" },
+        claudeAgent: { ...claude, version: nextPatch(claude.version) },
       },
     });
     assert.strictEqual(merged.providers.codex?.version, codex.version);
-    assert.strictEqual(merged.providers.claudeAgent?.version, "2.1.252");
+    assert.strictEqual(merged.providers.claudeAgent?.version, nextPatch(claude.version));
     assert.isDefined(merged.providers.antigravity);
   });
 
@@ -130,7 +151,7 @@ describe("managed runtime catalog resolution", () => {
     assert.deepStrictEqual(repacked.providers.codex, codex);
     const contractDrift = mergeManagedRuntimeCatalogs(bundled, {
       schemaVersion: 1,
-      providers: { codex: { ...codex, contractRevision: 2, version: "0.151.0" } },
+      providers: { codex: { ...codex, contractRevision: 2, version: newerCodexVersion } },
     });
     assert.deepStrictEqual(contractDrift.providers.codex, codex);
   });
@@ -139,24 +160,53 @@ describe("managed runtime catalog resolution", () => {
     const bundled = BUNDLED_MANAGED_RUNTIME_CATALOG;
     const codex = bundled.providers.codex;
     assert.isDefined(codex);
-    const fetched = resolveFetchedManagedRuntimeCatalog({
-      schemaVersion: 1,
-      providers: { codex: { ...codex, version: "0.151.0" } },
-    });
-    assert.strictEqual(fetched.providers.codex?.version, "0.151.0");
+    const fetched = resolveFetchedManagedRuntimeCatalog(remoteCatalog(), bundled);
+    assert.strictEqual(fetched.providers.codex?.version, newerCodexVersion);
 
-    const withdrawn = resolveFetchedManagedRuntimeCatalog({
-      schemaVersion: 1,
-      providers: { codex: { ...codex, version: codex.version } },
-    });
+    const withdrawn = resolveFetchedManagedRuntimeCatalog(
+      { schemaVersion: 1, providers: { codex } },
+      fetched,
+    );
     assert.strictEqual(withdrawn.providers.codex?.version, codex.version);
     assert.isDefined(withdrawn.providers.claudeAgent);
 
-    const undercut = resolveFetchedManagedRuntimeCatalog({
-      schemaVersion: 1,
-      providers: { codex: { ...codex, version: "0.149.1" } },
-    });
-    assert.strictEqual(undercut.providers.codex?.version, codex.version);
+    const undercut = resolveFetchedManagedRuntimeCatalog(
+      { schemaVersion: 1, providers: { codex: { ...codex, version: "0.0.1" } } },
+      fetched,
+    );
+    assert.strictEqual(undercut.providers.codex?.version, newerCodexVersion);
+  });
+
+  it("retains the current release for same-version repacks and missing entries", () => {
+    const current = remoteCatalog();
+    const codex = current.providers.codex;
+    assert.isDefined(codex);
+    const darwin = codex.artifacts["darwin-arm64"];
+    assert.isDefined(darwin);
+    const repacked = resolveFetchedManagedRuntimeCatalog(
+      {
+        schemaVersion: 1,
+        providers: {
+          codex: {
+            ...codex,
+            artifacts: {
+              ...codex.artifacts,
+              "darwin-arm64": {
+                ...darwin,
+                checksum: { ...darwin.checksum, digest: "f".repeat(64) },
+              },
+            },
+          },
+        },
+      },
+      current,
+    );
+    assert.deepStrictEqual(repacked.providers.codex, codex);
+    assert.deepStrictEqual(
+      resolveFetchedManagedRuntimeCatalog({ schemaVersion: 1, providers: {} }, current).providers
+        .codex,
+      codex,
+    );
   });
 
   it("keeps release facts synchronized with every bundled provider target", () => {
@@ -189,6 +239,7 @@ describe("managed runtime catalog resolution", () => {
     assert.isDefined(current);
     const release = current.artifacts["darwin-arm64"];
     assert.isDefined(release);
+    const newerVersion = nextPatch(current.version);
     const candidate = resolveManagedRuntimeCatalogCandidate({
       bundledArtifact: policy,
       contractRevision: 1,
@@ -197,13 +248,13 @@ describe("managed runtime catalog resolution", () => {
         providers: {
           claudeAgent: {
             ...current,
-            version: "2.1.252",
+            version: newerVersion,
             artifacts: {
               ...current.artifacts,
               "darwin-arm64": {
                 ...release,
-                artifactName: "claude-2.1.252-darwin-arm64",
-                url: "https://downloads.claude.ai/claude-code-releases/2.1.252/darwin-arm64/claude",
+                artifactName: `claude-${newerVersion}-darwin-arm64`,
+                url: `https://downloads.claude.ai/claude-code-releases/${newerVersion}/darwin-arm64/claude`,
                 checksum: { algorithm: "sha256", digest: "c".repeat(64) },
               },
             },
@@ -211,7 +262,7 @@ describe("managed runtime catalog resolution", () => {
         },
       },
     });
-    assert.strictEqual(candidate?.version, "2.1.252");
+    assert.strictEqual(candidate?.version, newerVersion);
 
     const sameVersionRepack = resolveManagedRuntimeCatalogCandidate({
       bundledArtifact: policy,
@@ -245,7 +296,7 @@ describe("managed runtime catalog resolution", () => {
       contractRevision: 1,
     });
     assert.isDefined(resolved);
-    assert.strictEqual(resolved.version, "0.151.0");
+    assert.strictEqual(resolved.version, newerCodexVersion);
     assert.strictEqual(resolved.size, 123_456);
     assert.strictEqual(resolved.archiveFormat, policy.archiveFormat);
     assert.strictEqual(resolved.executablePath, policy.executablePath);
@@ -291,10 +342,84 @@ describe("managed runtime catalog resolution", () => {
 });
 
 describe("ManagedRuntimeCatalog service", () => {
+  for (const stalledStage of ["headers", "body"] as const) {
+    it.effect(
+      `aborts stalled ${stalledStage}, preserves the cache, and allows a later refresh`,
+      () =>
+        Effect.gen(function* () {
+          const requested = yield* Deferred.make<void>();
+          const headersReceived = yield* Deferred.make<void>();
+          const requests: Array<string | undefined> = [];
+          let stalledSignal: AbortSignal | undefined;
+          const client = HttpClient.make((request, _url, signal) =>
+            Effect.gen(function* () {
+              requests.push(request.headers["if-none-match"]);
+              if (requests.length !== 2) {
+                return HttpClientResponse.fromWeb(
+                  request,
+                  Response.json(remoteCatalog(), { headers: { etag: '"good"' } }),
+                );
+              }
+              stalledSignal = signal;
+              yield* Deferred.succeed(requested, undefined);
+              if (stalledStage === "headers") return yield* Effect.never;
+              // The body gets only the time remaining after the headers arrive.
+              yield* Effect.sleep(6_000);
+              const body = new ReadableStream<Uint8Array>({
+                start(controller) {
+                  signal.addEventListener(
+                    "abort",
+                    () => controller.error(new Error("Request aborted")),
+                    { once: true },
+                  );
+                },
+              });
+              yield* Deferred.succeed(headersReceived, undefined);
+              return HttpClientResponse.fromWeb(
+                request,
+                new Response(body, { headers: { etag: '"incomplete"' } }),
+              );
+            }),
+          );
+          const service = yield* makeWithOptions({ startBackgroundRefresh: false }).pipe(
+            Effect.provideService(HttpClient.HttpClient, client),
+          );
+          const good = yield* service.refresh;
+          yield* TestClock.adjust(60 * 60_000);
+          const refresh = yield* Effect.forkChild(service.refresh);
+          yield* Deferred.await(requested);
+          if (stalledStage === "body") {
+            yield* TestClock.adjust(6_000);
+            yield* Deferred.await(headersReceived);
+            yield* TestClock.adjust(4_000);
+          } else {
+            yield* TestClock.adjust(10_000);
+          }
+          assert.deepStrictEqual(yield* Fiber.join(refresh), good);
+          assert.isTrue(stalledSignal?.aborted);
+          assert.deepStrictEqual(yield* service.current, good);
+          // The failed response must not poison the ETag or start a success TTL.
+          assert.deepStrictEqual(yield* service.refresh, good);
+          assert.strictEqual(requests.length, 2);
+          yield* TestClock.adjust(5 * 60_000);
+          assert.deepStrictEqual(yield* service.refresh, good);
+          assert.deepStrictEqual(requests, [undefined, '"good"', '"good"']);
+        }).pipe(
+          Effect.scoped,
+          Effect.provide(
+            serviceLayers({
+              prefix: `managed-runtime-catalog-stalled-${stalledStage}-test`,
+              response: () => Response.json(remoteCatalog()),
+            }),
+          ),
+        ),
+    );
+  }
+
   it.live("prefers a valid remote catalog and restores it from the atomic disk cache", () =>
     Effect.gen(function* () {
       let fetchCount = 0;
-      const service = yield* make.pipe(
+      const service = yield* makeWithOptions({ startBackgroundRefresh: false }).pipe(
         Effect.provide(
           httpClientLayer(() => {
             fetchCount += 1;
@@ -303,10 +428,10 @@ describe("ManagedRuntimeCatalog service", () => {
         ),
       );
       const refreshed = yield* service.refresh;
-      assert.strictEqual(refreshed.providers.codex?.version, "0.151.0");
+      assert.strictEqual(refreshed.providers.codex?.version, newerCodexVersion);
       assert.strictEqual(fetchCount, 1);
 
-      const rebooted = yield* make.pipe(
+      const rebooted = yield* makeWithOptions({ startBackgroundRefresh: false }).pipe(
         Effect.provide(
           httpClientLayer(() => {
             fetchCount += 1;
@@ -314,7 +439,7 @@ describe("ManagedRuntimeCatalog service", () => {
           }),
         ),
       );
-      assert.strictEqual((yield* rebooted.current).providers.codex?.version, "0.151.0");
+      assert.strictEqual((yield* rebooted.current).providers.codex?.version, newerCodexVersion);
       assert.strictEqual(fetchCount, 1);
     }).pipe(
       Effect.scoped,
@@ -329,7 +454,7 @@ describe("ManagedRuntimeCatalog service", () => {
 
   it.live("keeps the bundled catalog when remote data is malformed", () =>
     Effect.gen(function* () {
-      const service = yield* make;
+      const service = yield* makeWithOptions({ startBackgroundRefresh: false });
       assert.deepStrictEqual(yield* service.refresh, BUNDLED_MANAGED_RUNTIME_CATALOG);
     }).pipe(
       Effect.scoped,
@@ -345,7 +470,7 @@ describe("ManagedRuntimeCatalog service", () => {
   it.live("does not fetch when provider update checks are disabled", () =>
     Effect.gen(function* () {
       let fetchCount = 0;
-      const service = yield* make.pipe(
+      const service = yield* makeWithOptions({ startBackgroundRefresh: false }).pipe(
         Effect.provide(
           httpClientLayer(() => {
             fetchCount += 1;
@@ -366,4 +491,113 @@ describe("ManagedRuntimeCatalog service", () => {
       ),
     ),
   );
+
+  it.live("uses an ETag to revalidate the last good catalog without redownloading it", () =>
+    Effect.gen(function* () {
+      const requests: Array<string | undefined> = [];
+      const first = yield* makeWithOptions({ startBackgroundRefresh: false }).pipe(
+        Effect.provide(
+          httpClientLayer((request) => {
+            requests.push(request.headers["if-none-match"]);
+            return Response.json(remoteCatalog(), { headers: { etag: '"catalog-v1"' } });
+          }),
+        ),
+      );
+      yield* first.refresh;
+
+      const rebooted = yield* makeWithOptions({ startBackgroundRefresh: false }).pipe(
+        Effect.provide(
+          httpClientLayer((request) => {
+            requests.push(request.headers["if-none-match"]);
+            return new Response(null, { status: 304, headers: { etag: '"catalog-v1"' } });
+          }),
+        ),
+      );
+      const refreshed = yield* rebooted.refresh;
+      assert.strictEqual(refreshed.providers.codex?.version, newerCodexVersion);
+      assert.deepStrictEqual(requests, [undefined, '"catalog-v1"']);
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(
+        serviceLayers({
+          prefix: "managed-runtime-catalog-etag-test",
+          response: () => Response.json(remoteCatalog()),
+        }),
+      ),
+    ),
+  );
+
+  it.live("emits the exact provider whose qualified release changed", () =>
+    Effect.gen(function* () {
+      const service = yield* makeWithOptions({ startBackgroundRefresh: false });
+      const changes = yield* service.subscribeChanges;
+      yield* service.refresh;
+      const change = Option.getOrThrow(yield* changes.pipe(Stream.runHead));
+      assert.deepStrictEqual(change.changedProviders, ["codex"]);
+      assert.strictEqual(change.catalog.providers.codex?.version, newerCodexVersion);
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(
+        serviceLayers({
+          prefix: "managed-runtime-catalog-change-test",
+          response: () => Response.json(remoteCatalog()),
+        }),
+      ),
+    ),
+  );
+});
+
+describe("latest qualified repair selection", () => {
+  for (const { provider, resolve } of policies) {
+    it(`repairs latest for ${provider} and never downgrades a newer compatible receipt offline`, () => {
+      const bundled = resolve({ platform: "darwin", arch: "arm64" });
+      assert.isDefined(bundled);
+      const candidate = resolveManagedRuntimeCatalogCandidate({
+        bundledArtifact: bundled,
+        catalog: BUNDLED_MANAGED_RUNTIME_CATALOG,
+        contractRevision: 1,
+      });
+      assert.isDefined(candidate);
+      const newer = {
+        ...candidate,
+        version: provider === "cursor" ? "2099.01.01-abcdef0" : "99.0.0",
+        catalogRevision: "fixture-newer",
+      };
+      assert.strictEqual(
+        resolveManagedRuntimeRepairArtifact({
+          bundledArtifact: bundled,
+          candidateArtifact: newer,
+          activeArtifact: managedRuntimeArtifactReceipt(candidate),
+        }),
+        newer,
+      );
+      assert.strictEqual(
+        resolveManagedRuntimeRepairArtifact({
+          bundledArtifact: bundled,
+          candidateArtifact: candidate,
+          activeArtifact: undefined,
+        }),
+        candidate,
+      );
+      assert.equal(
+        resolveManagedRuntimeRepairArtifact({
+          bundledArtifact: bundled,
+          candidateArtifact: candidate,
+          activeArtifact: managedRuntimeArtifactReceipt(newer),
+        })?.version,
+        newer.version,
+      );
+      assert.strictEqual(
+        resolveManagedRuntimeRepairArtifact({
+          bundledArtifact: bundled,
+          candidateArtifact: candidate,
+          activeArtifact: {
+            ...managedRuntimeArtifactReceipt(newer),
+            url: "https://untrusted.example/runtime",
+          },
+        }),
+        candidate,
+      );
+    });
+  }
 });

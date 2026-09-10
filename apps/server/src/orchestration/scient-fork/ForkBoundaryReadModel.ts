@@ -23,7 +23,7 @@ import {
  * Error raised when the Scient-owned resolver cannot find or validate a fork
  * boundary from SQL-backed projection and lineage data.
  */
-export class ForkBoundaryResolutionError extends Schema.TaggedErrorClass<ForkBoundaryResolutionError>()(
+export class ForkBoundaryResolutionError extends Schema.TaggedError<ForkBoundaryResolutionError>()(
   "ForkBoundaryResolutionError",
   { detail: Schema.String },
 ) {
@@ -44,7 +44,7 @@ export const ProjectionForkBoundaryRow = Schema.Struct({
 });
 export type ProjectionForkBoundaryRow = typeof ProjectionForkBoundaryRow.Type;
 
-export function mapForkBoundaries(
+function mapForkBoundaries(
   rows: ReadonlyArray<ProjectionForkBoundaryRow>,
   threadCreatedAt: string,
   copiedBoundaries: ReadonlyArray<ThreadForkCopiedBoundary> = [],
@@ -68,25 +68,21 @@ export function mapForkBoundaries(
     const nativeRows = rows.filter((row) => !copiedTurnIds.has(row.turnId));
     return [
       emptyBoundary,
-      ...copiedBoundaries.map(
-        (boundary): OrchestrationForkBoundary => ({
-          ...boundary,
-          conversationTurnCount: 0,
-          checkpointTurnCount: null,
-          checkpointStatus: null,
-        }),
-      ),
-      ...nativeRows.map(
-        (row, index): OrchestrationForkBoundary => ({
-          turnId: row.turnId,
-          conversationTurnCount: index + 1,
-          userMessageId: row.userMessageId,
-          assistantMessageId: row.assistantMessageId,
-          completedAt: row.completedAt,
-          checkpointTurnCount: row.checkpointTurnCount,
-          checkpointStatus: row.checkpointStatus,
-        }),
-      ),
+      ...copiedBoundaries.map((boundary): OrchestrationForkBoundary => ({
+        ...boundary,
+        conversationTurnCount: 0,
+        checkpointTurnCount: null,
+        checkpointStatus: null,
+      })),
+      ...nativeRows.map((row, index): OrchestrationForkBoundary => ({
+        turnId: row.turnId,
+        conversationTurnCount: index + 1,
+        userMessageId: row.userMessageId,
+        assistantMessageId: row.assistantMessageId,
+        completedAt: row.completedAt,
+        checkpointTurnCount: row.checkpointTurnCount,
+        checkpointStatus: row.checkpointStatus,
+      })),
     ];
   }
 
@@ -111,7 +107,7 @@ export function mapForkBoundaries(
   return [emptyBoundary, ...boundaries];
 }
 
-export function makeForkBoundaryQueries(sql: SqlClient.SqlClient) {
+function makeForkBoundaryQueries(sql: SqlClient.SqlClient) {
   return {
     listForkBoundaryRowsByThread: SqlSchema.findAll({
       Request: Schema.Struct({ threadId: ThreadId }),
@@ -294,7 +290,12 @@ export function makeForkBoundaryResolver(sql: SqlClient.SqlClient) {
       input.threadCreatedAt,
       copiedBoundaryRow._tag === "Some" ? copiedBoundaryRow.value.copiedBoundaries : [],
     );
-    const sourceAssistantMessageId = input.sourceAssistantMessageId;
+    const sourceAssistantMessageId =
+      input.sourceAssistantMessageId ??
+      (input.sourceUserMessageId === undefined
+        ? (boundaries.findLast((boundary) => boundary.assistantMessageId !== null)
+            ?.assistantMessageId ?? undefined)
+        : undefined);
     const sourceUserMessageId = input.sourceUserMessageId;
     const resolved =
       sourceAssistantMessageId !== undefined

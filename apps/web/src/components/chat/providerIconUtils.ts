@@ -4,6 +4,7 @@ import {
   ClaudeAI,
   CursorIcon,
   DroidIcon,
+  PiIcon,
   GrokIcon,
   Icon,
   OpenAI,
@@ -18,6 +19,7 @@ export const PROVIDER_ICON_BY_PROVIDER: Partial<Record<ProviderDriverKind, Icon>
   [ProviderDriverKind.make("cursor")]: CursorIcon,
   [ProviderDriverKind.make("grok")]: GrokIcon,
   [ProviderDriverKind.make("droid")]: DroidIcon,
+  [ProviderDriverKind.make("pi")]: PiIcon,
   [ProviderDriverKind.make("antigravity")]: AntigravityIcon,
 };
 
@@ -37,6 +39,8 @@ export type ModelEsque = {
   name: string;
   shortName?: string | undefined;
   subProvider?: string | undefined;
+  aliases?: ReadonlyArray<string> | undefined;
+  isDefault?: boolean | undefined;
   badge?: "new" | undefined;
   isLegacy?: boolean | undefined;
   /** Provider-reported compact cost label (e.g. `"0.5×"`); absent when unknown. */

@@ -23,6 +23,7 @@ export const SCIENT_DESKTOP_IDENTITY = {
   serviceUnitName: "scient.service",
   serviceLaunchdLabel: "com.scientfactory.scient.service",
   previewPartitionPrefix: "persist:scient-next-preview-",
+  previewEphemeralPartitionPrefix: "scient-next-preview-ephemeral-",
   clientSettingsStorageKey: "scient-next:client-settings:v1",
   safetyEnvelopeMarker: "true",
   safetyEnvelopeEnabled: true,

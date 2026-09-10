@@ -63,17 +63,6 @@ describe("DesktopClerk", () => {
     storageMock.mockReset();
   });
 
-  it("derives the Clerk Frontend API hostname used by the desktop CSP", () => {
-    const publishableKey = `pk_test_${btoa("clerk.t3.codes$")}`;
-
-    assert.equal(
-      DesktopClerk.resolveDesktopClerkFrontendApiHostname(publishableKey),
-      "clerk.t3.codes",
-    );
-    assert.equal(DesktopClerk.resolveDesktopClerkFrontendApiHostname(""), undefined);
-    assert.equal(DesktopClerk.resolveDesktopClerkFrontendApiHostname("invalid"), undefined);
-  });
-
   it.effect("acquires and releases the SDK bridge with the layer", () => {
     const cleanup = vi.fn();
     const events: string[] = [];
@@ -212,26 +201,30 @@ describe("DesktopClerk", () => {
     );
   });
 
-  it.each([
+  for (const { isDevelopment, scheme } of [
     { isDevelopment: true, scheme: "scient-next-dev" },
     { isDevelopment: false, scheme: "scient" },
-  ])("configures the SDK with the $scheme renderer origin", ({ isDevelopment, scheme }) => {
-    const bridge = { cleanup: vi.fn(), isPrimaryInstance: true };
-    storageMock.mockReturnValue(storageAdapter);
-    createClerkBridgeMock.mockReturnValue(bridge);
+  ]) {
+    it.effect(`configures the SDK with the ${scheme} renderer origin`, () =>
+      Effect.gen(function* () {
+        const bridge = { cleanup: vi.fn(), isPrimaryInstance: true };
+        storageMock.mockReturnValue(storageAdapter);
+        createClerkBridgeMock.mockReturnValue(bridge);
 
-    assert.equal(DesktopClerk.createDesktopClerkBridge("/tmp/t3-state", isDevelopment), bridge);
-    assert.deepEqual(storageMock.mock.calls, [[{ path: "/tmp/t3-state" }]]);
-    assert.deepEqual(createClerkBridgeMock.mock.calls, [
-      [
-        {
-          storage: storageAdapter,
-          passkeys: true,
-          renderer: { scheme, host: "app" },
-        },
-      ],
-    ]);
-    storageMock.mockClear();
-    createClerkBridgeMock.mockClear();
-  });
+        yield* Effect.scoped(Layer.build(makeDesktopClerkLayer(isDevelopment)));
+        assert.deepEqual(storageMock.mock.calls, [[{ path: "/tmp/t3-state" }]]);
+        assert.deepEqual(createClerkBridgeMock.mock.calls, [
+          [
+            {
+              storage: storageAdapter,
+              passkeys: true,
+              renderer: { scheme, host: "app" },
+            },
+          ],
+        ]);
+        storageMock.mockClear();
+        createClerkBridgeMock.mockClear();
+      }),
+    );
+  }
 });

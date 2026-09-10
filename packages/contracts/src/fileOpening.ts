@@ -3,7 +3,6 @@ import * as Schema from "effect/Schema";
 export const EnvironmentFilePath = Schema.String.check(
   Schema.isMinLength(1),
   Schema.isMaxLength(4_096),
-  // eslint-disable-next-line no-control-regex -- Host paths must reject NUL before filesystem use.
   Schema.isPattern(/^[^\0]+$/u),
 ).pipe(Schema.brand("EnvironmentFilePath"));
 export type EnvironmentFilePath = typeof EnvironmentFilePath.Type;
@@ -64,7 +63,7 @@ export const EnvironmentFilePrepareFailure = Schema.Literals([
 ]);
 export type EnvironmentFilePrepareFailure = typeof EnvironmentFilePrepareFailure.Type;
 
-export class EnvironmentFilePrepareError extends Schema.TaggedErrorClass<EnvironmentFilePrepareError>()(
+export class EnvironmentFilePrepareError extends Schema.TaggedError<EnvironmentFilePrepareError>()(
   "EnvironmentFilePrepareError",
   {
     path: EnvironmentFilePath,

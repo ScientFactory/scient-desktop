@@ -4,6 +4,7 @@ import type {
   PdfSourceResolver,
 } from "@scientfactory/document-artifacts";
 import { LegendList } from "@legendapp/list/react";
+import { EnvironmentId } from "@t3tools/contracts";
 import {
   ChevronDown,
   ChevronLeft,
@@ -42,6 +43,7 @@ import { ScientTooltip } from "../presentation/ScientTooltip";
 
 import { PdfOutline } from "./PdfOutline";
 import { announcePdfSaveCopyResult } from "./pdfSaveCopyNotification";
+import { observePdfCopy } from "./pdfCopyAnalytics";
 import { PdfThumbnail } from "./PdfThumbnail";
 import { webPdfSourceActions, webPdfSourceResolver } from "./pdfSource";
 import {
@@ -257,11 +259,13 @@ function LoadedScientPdfReader(props: {
     saveCopyPendingRef.current = true;
     setSavingCopy(true);
     try {
-      const result = await props.actions.saveCopy(props.source, {
-        url: props.sourceUrl,
-        expiresAt: props.sourceExpiresAt,
-        refresh: props.refreshSource,
-      });
+      const result = await observePdfCopy(EnvironmentId.make(props.source.authority), () =>
+        props.actions.saveCopy(props.source, {
+          url: props.sourceUrl,
+          expiresAt: props.sourceExpiresAt,
+          refresh: props.refreshSource,
+        }),
+      );
       const presentation = announcePdfSaveCopyResult(result);
       if (presentation.refreshSource) props.refreshSource();
     } catch {
