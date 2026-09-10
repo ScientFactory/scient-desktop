@@ -546,7 +546,8 @@ mount and eye switch in `FilePreviewPanel.tsx`, one create button in
 `FileBrowserPanel.tsx`, a generic current-file control slot in
 `FileBreadcrumbNavigator.tsx`, the pending-departure calls in `ChatView.tsx`,
 typed workspace operations in `WorkspaceFileSystem.ts`, RPC, and contracts, the
-shared code-block title and actions imported by `ChatMarkdown.tsx`, optional
+shared `MarkdownCodeBlock` (including its title, actions, and highlighter)
+imported by `ChatMarkdown.tsx` and read-only Mermaid error fallbacks, optional
 positioner props on `ui/menu.tsx` and `ui/popover.tsx`, `useMediaActionUrl` in
 `MediaActions.tsx`, and an additive trailing block plus two tokens in
 `index.css`. Source projection, the save queue, command policy, nested-node

@@ -48,7 +48,18 @@ stateDiagram-v2
   Published --> [*]
 ```
 
-## Entity relationship
+## Class diagram
+
+```mermaid
+classDiagram
+  class Study {
+    +String title
+    +analyze()
+  }
+  Study "1" --> "many" Dataset
+```
+
+## Entity relationships
 
 ```mermaid
 erDiagram

@@ -1230,7 +1230,7 @@ export interface ChatComposerHandle {
   insertTextAtEnd: (text: string, options?: { ensureLeadingBoundary?: boolean }) => boolean;
   citeAssistantText: (
     citation: AssistantCitation,
-    sourceAnchor: AssistantCitationSourceAnchor,
+    sourceAnchor?: AssistantCitationSourceAnchor,
   ) => boolean;
   openModelPicker: () => void;
   toggleModelPicker: () => void;
@@ -5065,12 +5065,18 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         focusComposer();
       },
       insertTextAtEnd: insertComposerTextAtEnd,
-      citeAssistantText: (citation, sourceAnchor) =>
-        insertComposerText(
+      citeAssistantText: (citation, sourceAnchor) => {
+        const inserted = insertComposerText(
           formatAssistantCitationForComposer(citation, citation.comment),
           "cursor",
-          { ensureLeadingBoundary: true, citationCommentAnchor: sourceAnchor },
-        ),
+          {
+            ensureLeadingBoundary: true,
+            ...(sourceAnchor ? { citationCommentAnchor: sourceAnchor } : {}),
+          },
+        );
+        if (inserted && isComposerCollapsedMobile) expandMobileComposer();
+        return inserted;
+      },
       openModelPicker,
       toggleModelPicker: () => {
         if (isComposerModelPickerOpen) {
@@ -5187,6 +5193,8 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       composerPreviewAnnotations,
       composerReviewComments,
       focusComposer,
+      expandMobileComposer,
+      isComposerCollapsedMobile,
       isConnecting,
       isComposerApprovalState,
       isChoiceOnlyPendingQuestion,

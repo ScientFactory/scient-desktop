@@ -8,7 +8,10 @@ import { renderMermaidDiagram } from "~/scient/diagrams/mermaidRuntime";
 import { createScientNestedCodeEditor } from "../nodes/codeMirrorCodeEditor";
 import { ScientMarkdownEditorView } from "./view";
 
-vi.mock("~/scient/diagrams/mermaidRuntime", () => ({ renderMermaidDiagram: vi.fn() }));
+vi.mock("~/scient/diagrams/mermaidRuntime", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("~/scient/diagrams/mermaidRuntime")>()),
+  renderMermaidDiagram: vi.fn(),
+}));
 vi.mock("../nodes/codeMirrorCodeEditor", { spy: true });
 
 const broken = "flowchart LR\n  Source --> Editor --> Save ---";
@@ -52,7 +55,7 @@ async function fixture(mode: "write" | "read" = "write", source = broken) {
   });
   await vi.waitFor(() =>
     source === broken
-      ? expect(host.textContent).toContain("Unable to render this diagram")
+      ? expect(host.querySelector('[aria-label="Diagram error"]')).not.toBeNull()
       : expect(host.querySelector('svg[aria-label="Repaired diagram"]')).not.toBeNull(),
   );
   return { controller, host, onUserSourceChange, showRichFenceContextMenu };
