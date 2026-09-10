@@ -508,7 +508,7 @@ class MatlabEngineBridge:
         if not os.path.isabs(working_directory):
             raise ProtocolViolation("start-kernel workingDirectory must be absolute.")
         module = self._load_engine_module()
-        future = module.start_matlab("-nodesktop -nosplash", background=True)
+        future = module.start_matlab("-nodesktop -nosplash -noFigureWindows", background=True)
         try:
             # Use the Engine's native timeout: cancelling an asyncio wrapper
             # alone leaves its worker waiting and may start an unowned MATLAB later.

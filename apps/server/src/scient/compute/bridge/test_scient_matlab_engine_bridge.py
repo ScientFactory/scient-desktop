@@ -170,6 +170,9 @@ class TestMatlabBridge(unittest.IsolatedAsyncioTestCase):
         instance._engine_module = module
         with self.assertRaises(TimeoutError):
             await instance._start_engine("/project")
+        module.start_matlab.assert_called_once_with(
+            "-nodesktop -nosplash -noFigureWindows", background=True
+        )
         future.result.assert_called_once_with(timeout=matlab_bridge.STARTUP_TIMEOUT)
         future.cancel.assert_called_once()
         self.assertIsNone(instance._engine)

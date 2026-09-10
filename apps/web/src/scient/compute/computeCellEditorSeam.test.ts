@@ -35,6 +35,9 @@ describe("Python active-cell editor seam", () => {
   it("uses one Pierre gutter utility API for the run-cell action", () => {
     expect(fileEditorSource).toContain("renderEditorGutterAction === undefined");
     expect(fileEditorSource).toContain("{ onGutterUtilityClick: handleGutterUtilityClick }");
+    expect(fileEditorSource).toContain("FILE_EDITOR_ACTION_GUTTER_UNSAFE_CSS");
+    expect(fileEditorSource).toContain("[data-gutter-utility-slot]");
+    expect(fileEditorSource).toContain("justify-content: flex-start");
     expect(pythonSurfaceSource).toContain("renderEditorGutterAction: (");
     expect(pythonSurfaceSource).toContain("const hoveredLine = getHoveredLine();");
     expect(pythonSurfaceSource).not.toContain("onEditorGutterAction:");
