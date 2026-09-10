@@ -9,6 +9,7 @@ import { ComposerHandleContext, type ComposerHandleRef } from "~/composerHandleC
 import { toastManager } from "~/components/ui/toast";
 import { AssistantCitationSource } from "~/components/chat/AssistantCitationSource";
 import { formatAssistantCitationForComposer } from "~/composer-logic";
+import { getSyntaxHighlighterPromise } from "~/lib/syntaxHighlighting";
 import { MermaidDiagramCard } from "./MermaidDiagramCard";
 import { buildMermaidRepairRequest } from "./mermaidRepair";
 import {
@@ -137,10 +138,8 @@ describe("Mermaid error recovery", () => {
     expect(container.textContent).toContain("Error and source copied");
   });
 
-  it("cites a hidden-source error without changing source visibility or native selection", async () => {
+  it("cites the shared source block without changing native selection", async () => {
     await render();
-    await menuAction("Hide source");
-    const preview = container.querySelector(".scient-mermaid-source")!.parentElement!;
     const nativeSelection = window.getSelection()!;
     const range = document.createRange();
     range.selectNodeContents(container.querySelector('[aria-label="Diagram error"]')!);
@@ -148,9 +147,8 @@ describe("Mermaid error recovery", () => {
     nativeSelection.addRange(range);
     await act(() => button("Ask agent to fix").click());
     const citation = collectAssistantCitations(draft)[0]!.citation;
-    expect(citation.text).toBe("Parse error on line 2:");
-    expect(citation.comment).toBe(buildMermaidRepairRequest(source, diagnostic));
-    expect(preview.hidden).toBe(true);
+    expect(citation.text).toBe(source);
+    expect(citation.comment).toContain(diagnostic);
     expect(nativeSelection.getRangeAt(0)).toBe(range);
     expect(toastManager.add).not.toHaveBeenCalled();
     nativeSelection.removeAllRanges();
@@ -210,7 +208,7 @@ describe("Mermaid error recovery", () => {
     expect(editor.mount).toHaveBeenCalledTimes(1);
     await act(() => pending.reject(new MermaidRenderError(new Error("Still incomplete"))));
     expect(cleanup).not.toHaveBeenCalled();
-    await menuAction("Retry");
+    await act(() => button("Retry diagram").click());
     expect(editor.mount).toHaveBeenCalledTimes(1);
   });
 
@@ -235,7 +233,7 @@ describe("Mermaid error recovery", () => {
       await render();
       const pending = pendingRender();
       vi.mocked(renderMermaidDiagram).mockReturnValueOnce(pending.promise);
-      if (change === "retry") await menuAction("Retry");
+      if (change === "retry") await act(() => button("Retry diagram").click());
       else
         await render(
           change === "source" ? `${source}new` : source,
@@ -254,17 +252,24 @@ describe("Mermaid error recovery", () => {
     },
   );
 
-  it("keeps feedback outside layout and all controls in the existing toolbar", async () => {
+  it("keeps recovery beside the error and directly above the shared code block", async () => {
     await render();
     const figure = container.querySelector('[role="figure"]')!;
     const errorRow = container.querySelector('[aria-label="Diagram error"]')!;
-    const toolbar = container.querySelector('[aria-label="Diagram actions"]')!;
+    const toolbar = container.querySelector('[aria-label="Diagram recovery"]')!;
+    const codeBlock = container.querySelector(".chat-markdown-codeblock")!;
     const copy = button("Copy error and source");
     const initialChildren = [...figure.children];
-    expect(errorRow.querySelector("button")).toBeNull();
+    expect(errorRow.contains(toolbar)).toBe(true);
     expect(toolbar.contains(copy)).toBe(true);
     expect(toolbar.contains(button("Ask agent to fix"))).toBe(true);
-    expect(toolbar.contains(button("More diagram actions"))).toBe(true);
+    expect(toolbar.contains(button("Retry diagram"))).toBe(true);
+    expect(container.querySelector('[aria-label="More diagram actions"]')).toBeNull();
+    expect(container.querySelector('[aria-label="Diagram actions"]')).toBeNull();
+    expect(errorRow.nextElementSibling).toBe(codeBlock);
+    expect(codeBlock.classList.contains("my-0")).toBe(true);
+    expect(codeBlock.className).not.toContain("my-[0.65rem]");
+    expect(container.querySelector(".scient-mermaid-source")).toBeNull();
     expect(copy.textContent).toBe("");
     expect(copy.className).toContain("chat-markdown-chrome-action");
     vi.useFakeTimers();
@@ -285,7 +290,7 @@ describe("Mermaid error recovery", () => {
     const children = [...errorRow.children];
     const pending = pendingRender();
     vi.mocked(renderMermaidDiagram).mockReturnValueOnce(pending.promise);
-    await menuAction("Retry");
+    await act(() => button("Retry diagram").click());
     expect(container.querySelector('[aria-label="Diagram error"]')).toBe(errorRow);
     expect([...errorRow.children]).toEqual(children);
     expect(summary.textContent).toBe("Rendering diagram…");
@@ -296,14 +301,65 @@ describe("Mermaid error recovery", () => {
     expect(summary.textContent).toBe("Parse error on line 2:");
   });
 
-  it("lets the source menu hide and show the automatic error fallback", async () => {
+  it("exposes normal source copy and wrapping without changing repair context", async () => {
     await render();
-    const sourceContainer = container.querySelector(".scient-mermaid-source")!.parentElement!;
-    expect(sourceContainer.hidden).toBe(false);
-    await menuAction("Hide source");
-    expect(sourceContainer.hidden).toBe(true);
+    const codeBlock = container.querySelector(".chat-markdown-codeblock")!;
+    expect(codeBlock.getAttribute("data-language")).toBe("mermaid");
+    expect(codeBlock.querySelector(".chat-markdown-codeblock-header")).not.toBeNull();
+    const wrapped = codeBlock.getAttribute("data-wrap") === "true";
+    await act(() => button(wrapped ? "Disable line wrap" : "Wrap lines").click());
+    expect(codeBlock.getAttribute("data-wrap")).toBe(String(!wrapped));
+    await act(() => button("Copy code").click());
+    expect(writeText).toHaveBeenCalledWith(source);
+    await act(() => button("Ask agent to fix").click());
+    expect(collectAssistantCitations(draft)[0]!.citation.text).toBe(source);
+    const pending = pendingRender();
+    vi.mocked(renderMermaidDiagram).mockReturnValueOnce(pending.promise);
+    await act(() => button("Retry diagram").click());
+    await act(() => pending.reject(new MermaidRenderError(new Error(diagnostic))));
+    expect(container.querySelector(".chat-markdown-codeblock")).toBe(codeBlock);
+    expect(codeBlock.getAttribute("data-wrap")).toBe(String(!wrapped));
+  });
+
+  it.each(["light", "dark"] as const)(
+    "uses the normal language header and highlighting in %s appearance",
+    async (theme) => {
+      await getSyntaxHighlighterPromise("mermaid");
+      const original = 'flowchart LR\nA["שלום <start> & end"\n';
+      await render(original, theme);
+      const codeBlock = container.querySelector(".chat-markdown-codeblock")!;
+      const header = codeBlock.querySelector(".chat-markdown-codeblock-header")!;
+      expect(
+        header.querySelector('[aria-label="Language: mermaid"]') ??
+          [...header.querySelectorAll("span")].find((node) => node.textContent === "mermaid"),
+      ).toBeTruthy();
+      expect(codeBlock.querySelector(".chat-markdown-shiki .shiki code")?.textContent).toBe(
+        original,
+      );
+      await act(() => button("Copy code").click());
+      expect(writeText).toHaveBeenCalledWith(original);
+    },
+  );
+
+  it("preserves the successful diagram toolbar and source controls", async () => {
+    vi.mocked(renderMermaidDiagram).mockResolvedValueOnce({
+      svg: "<svg><text>A valid diagram</text></svg>",
+      diagramType: "flowchart",
+    });
+    const valid = "flowchart LR\nA --> B";
+    await render(valid);
+    expect(button("Expand diagram").disabled).toBe(false);
+    expect(container.querySelector('[aria-label="Diagram error"]')).toBeNull();
+    expect(container.querySelector(".chat-markdown-codeblock")).toBeNull();
     await menuAction("Show source");
-    expect(sourceContainer.hidden).toBe(false);
+    const sourcePreview = container.querySelector(".scient-mermaid-source")!;
+    expect(sourcePreview.textContent).toBe(valid);
+    expect(sourcePreview.parentElement!.hidden).toBe(false);
+    await menuAction("Copy source");
+    expect(writeText).toHaveBeenCalledWith(valid);
+    await menuAction("Hide source");
+    expect(sourcePreview.parentElement!.hidden).toBe(true);
+    expect(container.textContent).toContain("A valid diagram");
   });
 
   it("ignores out-of-order results and removes an old SVG when inputs change", async () => {

@@ -17,6 +17,7 @@ import { AssistantCitationContext } from "~/components/chat/assistantCitationCon
 import { Menu, MenuItem, MenuTrigger } from "~/components/ui/menu";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "~/components/ui/tooltip";
 import { toastManager } from "~/components/ui/toast";
+import { MarkdownCodeBlock } from "../presentation/MarkdownCodeBlock";
 import {
   RichFenceSourceMenuItem,
   RichFenceSourcePreview,
@@ -215,7 +216,7 @@ export function MermaidDiagramCard({
 
   const handleContextMenu = useRichFenceContextMenu(authoringActions, handleCopySource);
   const sourceIsVisible =
-    (sourceVisible ?? diagramState.status === "error") || sourceEditor?.open === true;
+    diagramState.status === "error" || sourceVisible === true || sourceEditor?.open === true;
   const handleToggleSource = () => setSourceVisible(!sourceIsVisible);
 
   const resultIsCurrent =
@@ -322,114 +323,83 @@ export function MermaidDiagramCard({
       onContextMenu={handleContextMenu}
       role="figure"
     >
-      <div className="flex flex-wrap items-center justify-end gap-2 px-2 pt-2">
-        {title ? (
-          <span className="min-w-0 flex-1 basis-40 wrap-anywhere text-xs font-medium" dir="auto">
-            {title}
-          </span>
-        ) : null}
-        <VisualCardToolbar label="Diagram actions">
-          {diagramState.status === "error" ? (
-            <>
-              {composerRef !== null && citationSource !== null ? (
-                <DiagramActionButton
-                  onClick={handleAskToFix}
-                  disabled={repairRequest === null}
-                  label="Ask agent to fix"
-                >
-                  <MessageSquareIcon className="size-3" strokeWidth={1.5} />
-                </DiagramActionButton>
-              ) : null}
+      {diagramState.status !== "error" ? (
+        <div className="flex flex-wrap items-center justify-end gap-2 px-2 pt-2">
+          {title ? (
+            <span className="min-w-0 flex-1 basis-40 wrap-anywhere text-xs font-medium" dir="auto">
+              {title}
+            </span>
+          ) : null}
+          <VisualCardToolbar label="Diagram actions">
+            {readyResult != null ? (
               <DiagramActionButton
-                onClick={handleCopyRepair}
-                disabled={repairRequest === null || activeAction !== null}
-                label="Copy error and source"
+                disabled={activeAction != null}
+                label="Expand diagram"
+                onClick={() => setExpanded(true)}
               >
-                {actionMessage === "Error and source copied" ? (
-                  <CheckIcon className="size-3" strokeWidth={1.5} />
-                ) : (
-                  <CopyIcon className="size-3" strokeWidth={1.5} />
-                )}
+                <Maximize2Icon className="size-3" strokeWidth={1.5} />
               </DiagramActionButton>
-            </>
-          ) : null}
-          {readyResult != null ? (
-            <DiagramActionButton
-              disabled={activeAction != null}
-              label="Expand diagram"
-              onClick={() => setExpanded(true)}
-            >
-              <Maximize2Icon className="size-3" strokeWidth={1.5} />
-            </DiagramActionButton>
-          ) : null}
+            ) : null}
 
-          <Menu>
-            <Tooltip>
-              <TooltipTrigger
-                render={
-                  <MenuTrigger
-                    render={
-                      <Button
-                        aria-label="More diagram actions"
-                        className="chat-markdown-chrome-action"
-                        size="icon-xs"
-                        type="button"
-                        variant="ghost"
-                      />
-                    }
-                  />
-                }
-              >
-                <EllipsisIcon className="size-3" />
-              </TooltipTrigger>
-              <TooltipPopup side="top">More diagram actions</TooltipPopup>
-            </Tooltip>
-            <VisualCardMenuPopup align="end" className="min-w-52 max-w-[calc(100vw-2rem)]">
-              <VisualCardDetails title={displayTitle} detail={readyResult?.diagramType} />
-              <MenuItem disabled={activeAction != null} onClick={handleCopySource}>
-                {actionMessage === "Source copied" ? <CheckIcon /> : <CopyIcon />}
-                Copy source
-              </MenuItem>
-              <RichFenceSourceMenuItem
-                authoringActions={authoringActions}
-                onToggleSource={handleToggleSource}
-                sourceVisible={sourceIsVisible}
-              />
-              {diagramState.status === "error" ? (
-                <MenuItem
-                  disabled={!resultIsCurrent}
-                  onClick={() => setRetryVersion((version) => version + 1)}
+            <Menu>
+              <Tooltip>
+                <TooltipTrigger
+                  render={
+                    <MenuTrigger
+                      render={
+                        <Button
+                          aria-label="More diagram actions"
+                          className="chat-markdown-chrome-action"
+                          size="icon-xs"
+                          type="button"
+                          variant="ghost"
+                        />
+                      }
+                    />
+                  }
                 >
-                  <RefreshCwIcon />
-                  Retry
+                  <EllipsisIcon className="size-3" />
+                </TooltipTrigger>
+                <TooltipPopup side="top">More diagram actions</TooltipPopup>
+              </Tooltip>
+              <VisualCardMenuPopup align="end" className="min-w-52 max-w-[calc(100vw-2rem)]">
+                <VisualCardDetails title={displayTitle} detail={readyResult?.diagramType} />
+                <MenuItem disabled={activeAction != null} onClick={handleCopySource}>
+                  {actionMessage === "Source copied" ? <CheckIcon /> : <CopyIcon />}
+                  Copy source
                 </MenuItem>
-              ) : null}
-              <MenuItem
-                disabled={readyResult == null || activeAction != null}
-                onClick={handleDownloadSvg}
-              >
-                <DownloadIcon />
-                Download SVG
-              </MenuItem>
-              <MenuItem
-                disabled={readyResult == null || activeAction != null}
-                onClick={handleCopyPng}
-              >
-                {actionMessage === "Image copied" ? <CheckIcon /> : <ImageIcon />}
-                {activeAction === "copy-png" ? "Copying image…" : "Copy image"}
-              </MenuItem>
-              <MenuItem
-                disabled={readyResult == null || activeAction != null}
-                onClick={handleDownloadPng}
-              >
-                <FileImageIcon />
-                {activeAction === "download-png" ? "Creating PNG…" : "Download PNG"}
-              </MenuItem>
-              <VisualCardToolbarMenuItems />
-            </VisualCardMenuPopup>
-          </Menu>
-        </VisualCardToolbar>
-      </div>
+                <RichFenceSourceMenuItem
+                  authoringActions={authoringActions}
+                  onToggleSource={handleToggleSource}
+                  sourceVisible={sourceIsVisible}
+                />
+                <MenuItem
+                  disabled={readyResult == null || activeAction != null}
+                  onClick={handleDownloadSvg}
+                >
+                  <DownloadIcon />
+                  Download SVG
+                </MenuItem>
+                <MenuItem
+                  disabled={readyResult == null || activeAction != null}
+                  onClick={handleCopyPng}
+                >
+                  {actionMessage === "Image copied" ? <CheckIcon /> : <ImageIcon />}
+                  {activeAction === "copy-png" ? "Copying image…" : "Copy image"}
+                </MenuItem>
+                <MenuItem
+                  disabled={readyResult == null || activeAction != null}
+                  onClick={handleDownloadPng}
+                >
+                  <FileImageIcon />
+                  {activeAction === "download-png" ? "Creating PNG…" : "Download PNG"}
+                </MenuItem>
+                <VisualCardToolbarMenuItems />
+              </VisualCardMenuPopup>
+            </Menu>
+          </VisualCardToolbar>
+        </div>
+      ) : null}
 
       <span aria-live="polite" className="sr-only">
         {!expanded || readyResult === null ? actionMessage : null}
@@ -447,7 +417,7 @@ export function MermaidDiagramCard({
         <div
           aria-busy={!resultIsCurrent}
           aria-label="Diagram error"
-          className="flex min-w-0 items-center gap-2 px-4 py-2"
+          className="flex min-w-0 items-center gap-1.5 px-3 pb-1"
           role="group"
         >
           <Tooltip disabled={!resultIsCurrent}>
@@ -455,7 +425,7 @@ export function MermaidDiagramCard({
               render={
                 <span
                   ref={errorElementRef}
-                  className="min-w-0 flex-1 truncate text-xs text-muted-foreground"
+                  className="min-w-0 truncate text-xs text-muted-foreground"
                   tabIndex={0}
                 />
               }
@@ -466,6 +436,39 @@ export function MermaidDiagramCard({
               {resultIsCurrent ? diagramState.diagnostic : null}
             </TooltipPopup>
           </Tooltip>
+          <div
+            className="flex shrink-0 items-center gap-0.5"
+            role="group"
+            aria-label="Diagram recovery"
+          >
+            {composerRef !== null && citationSource !== null ? (
+              <DiagramActionButton
+                onClick={handleAskToFix}
+                disabled={repairRequest === null}
+                label="Ask agent to fix"
+              >
+                <MessageSquareIcon className="size-3" strokeWidth={1.5} />
+              </DiagramActionButton>
+            ) : null}
+            <DiagramActionButton
+              onClick={handleCopyRepair}
+              disabled={repairRequest === null || activeAction !== null}
+              label="Copy error and source"
+            >
+              {actionMessage === "Error and source copied" ? (
+                <CheckIcon className="size-3" strokeWidth={1.5} />
+              ) : (
+                <CopyIcon className="size-3" strokeWidth={1.5} />
+              )}
+            </DiagramActionButton>
+            <DiagramActionButton
+              onClick={() => setRetryVersion((version) => version + 1)}
+              disabled={!resultIsCurrent}
+              label="Retry diagram"
+            >
+              <RefreshCwIcon className="size-3" strokeWidth={1.5} />
+            </DiagramActionButton>
+          </div>
         </div>
       ) : readyResult !== null ? (
         <div className="scient-mermaid-inline overflow-auto p-2">
@@ -477,16 +480,27 @@ export function MermaidDiagramCard({
         </div>
       ) : null}
 
-      <RichFenceSourcePreview
-        editor={sourceEditor}
-        visible={sourceIsVisible}
-        source={source}
-        className={
-          sourceEditor || diagramState.status === "error"
-            ? "px-4 pb-4"
-            : "border-t border-border/60 bg-background/45 p-3"
-        }
-      />
+      {diagramState.status === "error" && !sourceEditor ? (
+        <MarkdownCodeBlock
+          code={source}
+          language={language}
+          fenceTitle={title}
+          theme={theme}
+          className="my-0"
+          onCopyFailure={() => showActionError("Unable to copy the diagram source.")}
+        />
+      ) : (
+        <RichFenceSourcePreview
+          editor={sourceEditor}
+          visible={sourceIsVisible}
+          source={source}
+          className={
+            sourceEditor || diagramState.status === "error"
+              ? "px-4 pb-4"
+              : "border-t border-border/60 bg-background/45 p-3"
+          }
+        />
+      )}
 
       {readyResult != null ? (
         <MermaidDiagramDialog

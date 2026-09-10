@@ -54,10 +54,14 @@ registered.
 ## UX and recovery
 
 The settled card has explicit loading, ready, source, and error states. A parse
-failure shows one compact error line and readable source. Repair/copy icons sit
-beside More in the existing `VisualCardToolbar`, not in a separate row;
-retry remains in the existing actions menu. It cannot fail the surrounding
-Markdown render. In chat, **Ask agent to fix** uses the
+failure shows one compact error line with adjacent repair, copy, and retry icons.
+The failed diagram has no separate toolbar or diagram menu. Its source sits
+directly below, using the same `MarkdownCodeBlock` as ordinary chat fences:
+language/title header, highlighting, source copy, and line wrapping. The shared
+block has no extra outer margin in this slot. Editable Markdown files retain
+their mounted source editor instead. Successful diagrams keep their existing
+toolbar, viewer, and export actions. A diagram failure does not prevent the
+surrounding Markdown from rendering. In chat, **Ask agent to fix** uses the
 existing `ComposerHandleContext.citeAssistantText` API to insert a reviewable
 `AssistantCitationChip` at the caret, using the same serialization, editable
 comment, removal, and provider expansion as selected-text citations,
@@ -66,9 +70,9 @@ Insertion owns deferred focus: an immediate extra focus call would publish the
 editor's previous snapshot before its controlled update. It does not submit or
 mutate a past message. The containing `AssistantCitationSource` provides the
 actual message/thread identity. Shared range capture quotes the displayed source
-without changing native selection; if source is hidden, it quotes the visible
-error and includes the full source in the comment instead. No source offsets are
-invented. Prefilled repair citations do not automatically open a comment popup.
+without changing native selection; if the source cannot be captured, it quotes
+the visible error and includes the full source in the comment instead. No source
+offsets are invented. Prefilled repair citations do not automatically open a comment popup.
 The existing 8,000-character quote/comment limits remain; oversized contexts are
 not silently truncated and can still be copied. **Copy error and source** provides
 the same request when no composer is available. Requests include the Mermaid source,
