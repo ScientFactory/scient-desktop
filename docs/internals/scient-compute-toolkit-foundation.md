@@ -99,6 +99,12 @@ feature parity, cross-platform release readiness, owner acceptance, or a license
 will remain available indefinitely. Phase three is cumulative qualification/delivery
 after the bounded implementation and owner review; no release is authorized here.
 
+The subsequent [runnable code-block follow-up](scient-compute-session-foundation.md#follow-up-runnable-code-blocks-in-chat-and-markdown)
+records the proposed Run action and inline results for Python/MATLAB in chat and
+Markdown. Its scope and gates live in the Compute Foundation ADR, not a duplicate
+setup plan. Revisit it after owner acceptance of this pass and the relevant phase-two
+session/figure work; it does not expand or block the current phase-one review.
+
 ## Why Toolkits are the product unit
 
 Most users want to work with data, create figures, fit a model, or prepare a

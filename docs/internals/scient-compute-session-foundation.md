@@ -31,6 +31,10 @@ Native notebook authoring, portable stateful-result promotion, richer data
 inspection, and agent authority remain separate tracks below. Existing notebook
 contract experiments are not an integrated notebook product.
 
+[Runnable Python/MATLAB blocks in chat and Markdown](#follow-up-runnable-code-blocks-in-chat-and-markdown)
+are a recorded follow-up, not implemented behavior or part of the current setup
+review. That section owns the bounded scope, prerequisites and acceptance gates.
+
 The dated qualification section below records the earlier baseline. Consult the
 exact candidate's test receipts for current integration status; do not infer that
 old green checks qualify a later merge.
@@ -3283,6 +3287,85 @@ A narrow, feature-gated pilot may begin after Phase 4 product acceptance, the
 baseline gap-recovery/output-bound/process-cleanup guarantees, and acceptance of
 the operation envelope. It need not wait for notebooks, every renderer, or every
 language, but later capabilities must use the same actor and provenance model.
+
+#### Follow-up: Runnable code blocks in chat and Markdown
+
+**Status:** Direction recorded for later implementation; not implemented or
+authorized to start by this note. Re-evaluate the concrete design against the
+then-current code and owner review rather than treating this proposal as fixed.
+
+**Outcome:** A user can read an explanation, explicitly run its Python or MATLAB
+code block, and see supported results directly below it. This is a compact entry
+point to shared Compute, not another execution engine or a notebook product.
+This section owns the desktop follow-up; the broader
+[computing roadmap](https://github.com/ScientFactory/Scient/blob/main/docs/planning/scientific-computing-and-data-analysis-roadmap.md)
+remains the proposed cross-product direction. Do not create competing runnable-
+block plans in the chat, Markdown, or runtime-setup documentation.
+
+**Sequence:** First finish owner review and corrections of the
+[Python/MATLAB setup pass](scient-compute-toolkit-foundation.md#qualification-and-next-boundary).
+Then qualify the continuation's phase-two session-switching and MATLAB figure-
+identity behavior needed by inline execution. Those local continuation phases
+are not the historical foundation Phases 1–3 in this ADR. This is a separate
+bounded follow-up, not an addition to the current phase-one acceptance checklist
+or an automatic change to phase-three delivery. It need not wait for a complete
+notebook product, every output renderer, or retirement of the older analysis path.
+
+The first slice should provide:
+
+- a small Run action on ordinary Python/MATLAB code blocks, Stop while running,
+  and bounded inline results with access to existing expanded viewers/history;
+- predictable reuse of an eligible user-owned project session and its selected
+  runtime/environment, with explicit switching when the language differs;
+- an actionable path to the existing setup/connection settings when the selected
+  runtime or required packages are unavailable; and
+- existing supported text, diagnostics, images, table and Plotly representations,
+  according to what the language adapter actually produces. Unsupported outputs
+  keep a truthful fallback or an authorized artifact link where one exists.
+
+Preserve these boundaries:
+
+1. **Shared execution and presentation.** Chat and Markdown consume one reusable
+   runnable-block controller/view through their existing Scient-owned seams.
+   Reuse server execution, queueing, interruption, limits, durable outputs and
+   renderer selection. Extend a common renderer when justified instead of adding
+   chat-only or MATLAB-only result systems. No per-block runtime processes.
+2. **Explicit authority.** A click authorizes that code's execution in the selected
+   project/server environment, not a sandbox. Opening, scrolling, streaming,
+   editing or restoring a document must never execute it. Missing runtimes do not
+   authorize silent installation or mutation of system/project environments.
+   Running agent-authored code by user click is not autonomous agent access;
+   Track H still governs agent execution and cross-actor session grants.
+3. **Exact source and result identity.** Retain the submitted bytes/hash, execution,
+   session generation and runtime identity. Add a deliberate chat message/block
+   source association; do not disguise chat as a filesystem path or identify a
+   block only by its current DOM position. Markdown keeps its document revision,
+   range and saved/dirty distinction. Editing/reordering, retries, reload and
+   duplicate blocks must not attach a result to different code. Mark results from
+   changed code as outdated; a code match alone does not prove the current kernel
+   namespace or input files still match the earlier run.
+4. **Bounded, durable results.** Inline UI is a projection of the existing execution
+   record, not a second output store. Unmounting a card must not lose the run or
+   restart it; retained results can reopen without rerunning. Preserve warnings
+   and partial output on failure, and never present a previous success as the
+   result of a failed rerun. Do not embed outputs into Markdown automatically or
+   render arbitrary active HTML with Scient's authority.
+
+Before implementation, settle the minimum source-identity extension, session-
+selection UX and result reattachment contract against real chat/Markdown editing
+behavior. Inspect `ComputeFileActions`, `ComputeOutputView`, `ComputeRichOutput`,
+`ScientRichFence`, the Markdown code-block node view, `ComputeRpcGateway` and
+`ComputeExecutionSource`; reuse mechanisms, not filesystem assumptions. Do not
+force executable blocks into the existing declarative chart-rendering path.
+
+**Acceptance gate:** Real Python and MATLAB runs through both entry points,
+source editing/reordering/duplicates, double clicks, missing setup/packages,
+language/session switching, interrupt and recovery, failed reruns with partial
+output, large/unsupported results, and reload/reconnect without implicit execution
+or misattribution. Verify remote environment scoping and user/agent ownership,
+plus bounded narrow-screen UI. Backend qualification and owner visual acceptance
+remain separate; full notebooks, widgets/comms, autonomous execution and arbitrary
+package installation are not part of this first slice.
 
 ### Roadmap dependency gates
 
