@@ -54,6 +54,78 @@ const profile: ComputeRuntimeProfile = {
 };
 
 describe("Python filesystem inventory", () => {
+  it.effect("keeps a selected PATH installation's provenance and virtualenvs distinct", () =>
+    Effect.gen(function* () {
+      const adapter = makePythonRuntimeAdapter(() => Effect.never, "/bridge.py");
+      for (const configuredExecutable of ["python3", "/system/python"]) {
+        const rows = yield* adapter.listInstallations!({
+          projectRoot: null,
+          configuredExecutable,
+          refresh: true,
+        });
+        expect(rows).toEqual([
+          {
+            executable: "/system/python",
+            source: "path",
+            configured: true,
+            version: null,
+            problem: null,
+          },
+        ]);
+      }
+      const rows = yield* adapter.listInstallations!({
+        projectRoot: null,
+        configuredExecutable: "/venv/bin/python",
+        refresh: true,
+      });
+      expect(rows.map((row) => row.executable)).toEqual(["/venv/bin/python", "/system/python"]);
+    }).pipe(
+      Effect.provideService(HostProcessPlatform, "darwin"),
+      Effect.provideService(HostProcessEnvironment, {}),
+      Effect.provideService(SpawnExecutableResolution, (command) =>
+        command === "python3" || command === "python" || command === "/system/python"
+          ? "/system/python"
+          : command === "/venv/bin/python"
+            ? command
+            : undefined,
+      ),
+    ),
+  );
+
+  for (const selected of [true, false]) {
+    it.effect(`preserves managed ownership when also found on PATH (selected=${selected})`, () =>
+      Effect.gen(function* () {
+        const adapter = makePythonRuntimeAdapter(() => Effect.never, "/bridge.py", {
+          managedRuntime: () =>
+            Effect.succeed({
+              executable: "/managed/python",
+              selected,
+              available: true,
+              version: "3.12.13",
+            }),
+        });
+        const rows = yield* adapter.listInstallations!({
+          projectRoot: null,
+          configuredExecutable: "/managed/python",
+          refresh: true,
+        });
+        expect(rows).toEqual([
+          {
+            executable: "/managed/python",
+            source: "managed",
+            configured: true,
+            version: "3.12.13",
+            problem: null,
+          },
+        ]);
+      }).pipe(
+        Effect.provideService(HostProcessPlatform, "darwin"),
+        Effect.provideService(HostProcessEnvironment, {}),
+        Effect.provideService(SpawnExecutableResolution, () => "/managed/python"),
+      ),
+    );
+  }
+
   it.effect("preserves managed selection and venv identity without spawning a probe", () =>
     Effect.gen(function* () {
       let available = true;
@@ -82,6 +154,7 @@ describe("Python filesystem inventory", () => {
         {
           executable: "/project/venv/bin/python",
           source: "configured",
+          configured: true,
           version: null,
           problem: null,
         },
@@ -110,6 +183,7 @@ describe("Python filesystem inventory", () => {
         {
           executable: "/missing/python",
           source: "configured",
+          configured: true,
           version: null,
           problem: expect.stringContaining("not found"),
         },

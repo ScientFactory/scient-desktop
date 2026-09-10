@@ -1,5 +1,6 @@
 import { describe, expect, it } from "@effect/vitest";
 import * as Schema from "effect/Schema";
+import { ComputeManagedRuntimeStatus, ComputeRuntimeInstallation } from "@scientfactory/compute";
 
 import { ComputeRuntimeInspection, ComputeRuntimeInventory } from "./scientCompute.ts";
 
@@ -7,6 +8,35 @@ const decodeRuntimeInspection = Schema.decodeUnknownSync(ComputeRuntimeInspectio
 const decodeRuntimeInventory = Schema.decodeUnknownSync(ComputeRuntimeInventory);
 
 describe("scient compute contracts", () => {
+  it("keeps installation-selection and helper-ownership metadata optional for older payloads", () => {
+    const installation = {
+      executable: "/system/python",
+      source: "path",
+      version: null,
+      problem: null,
+    };
+    const decodeInstallation = Schema.decodeUnknownSync(ComputeRuntimeInstallation);
+    expect(decodeInstallation(installation)).not.toHaveProperty("configured");
+    expect(decodeInstallation({ ...installation, configured: true })).toMatchObject({
+      source: "path",
+      configured: true,
+    });
+    const helper = {
+      installed: true,
+      selection: "managed",
+      updateAvailable: false,
+      runtimeVersion: "3.12.13",
+      toolkitRevision: null,
+      operation: null,
+      failureMessage: null,
+    };
+    const decodeHelper = Schema.decodeUnknownSync(ComputeManagedRuntimeStatus);
+    expect(decodeHelper(helper)).not.toHaveProperty("installationExecutable");
+    expect(
+      decodeHelper({ ...helper, installationExecutable: "/MATLAB/bin/matlab" })
+        .installationExecutable,
+    ).toBe("/MATLAB/bin/matlab");
+  });
   it("represents installation presence without inventing execution readiness", () => {
     const inventory = decodeRuntimeInventory({
       languages: [

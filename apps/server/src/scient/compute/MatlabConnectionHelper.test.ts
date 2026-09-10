@@ -10,6 +10,7 @@ import {
   makeMatlabConnectionHelper,
   MATLAB_CONNECTION_SPECIFICATION,
 } from "./MatlabConnectionHelper.ts";
+import type { ManagedPythonEnvironmentStatus } from "./ManagedPythonEnvironment.ts";
 
 describe("MATLAB connection helper prerequisites", () => {
   let root: string;
@@ -17,8 +18,77 @@ describe("MATLAB connection helper prerequisites", () => {
     root = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "scient-matlab-helper-test-"));
   });
   afterEach(async () => {
+    vi.restoreAllMocks();
     await NodeFSP.rm(root, { recursive: true, force: true });
   });
+
+  it.live(
+    "reports only the helper's recorded installation and drops stale or unreadable ownership",
+    () =>
+      Effect.gen(function* () {
+        const start = vi.fn(() => Effect.die("Status must not start an installer or a runtime."));
+        const helper = makeMatlabConnectionHelper({
+          computeDir: NodePath.join(root, "compute"),
+          specDirectory: NodePath.join(import.meta.dirname, "managed-python", "matlab-connection"),
+          processes: { start },
+          environment: {},
+          platform: "darwin",
+          arch: "arm64",
+          selectedExecutable: async () => "/different/MATLAB/bin/matlab",
+        });
+        yield* Effect.addFinalizer(() => Effect.sync(() => helper.controller.dispose()));
+        const generation = NodePath.join(root, "generation-test");
+        yield* Effect.promise(() => NodeFSP.mkdir(generation));
+        const metadata = NodePath.join(generation, "matlab-installation.json");
+        const current: ManagedPythonEnvironmentStatus = {
+          executable: NodePath.join(generation, "environment", "bin", "python"),
+          available: true,
+          record: {
+            schemaVersion: 1,
+            selection: "managed",
+            previous: null,
+            active: {
+              generationId: "generation-test",
+              executableRelativePath: "environment/bin/python",
+              toolkitIds: [],
+              toolkitRevision: "test",
+              pythonVersion: "3.12.13",
+              provisionerVersion: "test",
+              activatedAtEpochMs: 0,
+            },
+          },
+        };
+        const inspect = vi.spyOn(helper.manager, "inspect").mockResolvedValue(current);
+        for (let n = 0; n < 20; n++) {
+          yield* Effect.promise(() =>
+            NodeFSP.writeFile(metadata, '{"root":"/recorded/MATLAB","release":"R2026a"}'),
+          );
+          expect((yield* helper.controller.status()).installationExecutable).toBe(
+            "/recorded/MATLAB/bin/matlab",
+          );
+          yield* Effect.promise(() => NodeFSP.writeFile(metadata, "{broken"));
+          expect((yield* helper.controller.status()).installationExecutable).toBeUndefined();
+        }
+        yield* Effect.promise(() => NodeFSP.unlink(metadata));
+        expect((yield* helper.controller.status()).installationExecutable).toBeUndefined();
+        yield* Effect.promise(() =>
+          NodeFSP.writeFile(metadata, '{"root":"/recorded/MATLAB","release":"R2026a"}'),
+        );
+        inspect.mockResolvedValueOnce(current).mockResolvedValueOnce({
+          ...current,
+          record: {
+            ...current.record,
+            active: { ...current.record.active, generationId: "replacement" },
+          },
+        });
+        expect((yield* helper.controller.status()).installationExecutable).toBeUndefined();
+        inspect.mockResolvedValue(null);
+        const removed = yield* helper.controller.status();
+        expect(removed.installed).toBe(false);
+        expect(removed.installationExecutable).toBeUndefined();
+        expect(start).not.toHaveBeenCalled();
+      }).pipe(Effect.scoped),
+  );
 
   it("pins its minimal helper lock without pulling in the scientific bundle", async () => {
     const specification = NodePath.join(import.meta.dirname, "managed-python", "matlab-connection");

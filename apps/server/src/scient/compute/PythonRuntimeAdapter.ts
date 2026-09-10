@@ -604,23 +604,43 @@ export function makePythonRuntimeAdapter(
       const managed = options.managedRuntime === undefined ? null : yield* options.managedRuntime();
       const installations: ComputeRuntimeInstallation[] = [];
       const seen = new Set<string>();
-      for (const candidate of discoverCandidates(
+      const configured = request.configuredExecutable?.trim();
+      const configuredPath = configured
+        ? (resolveExecutable(configured, platform, environment) ?? configured)
+        : null;
+      const managedPath = managed
+        ? (resolveExecutable(managed.executable, platform, environment) ?? managed.executable)
+        : null;
+      const candidates = discoverCandidates(
         request.projectRoot,
         request.configuredExecutable,
         platform,
         managed,
-      )) {
-        const resolved = resolveExecutable(candidate.executable, platform, environment);
+      ).map((candidate) => ({
+        ...candidate,
+        resolved: resolveExecutable(candidate.executable, platform, environment),
+      }));
+      for (const candidate of candidates) {
+        const resolved = candidate.resolved;
         if (resolved === undefined && candidate.source === "path") continue;
         const executable = resolved ?? candidate.executable;
         if (seen.has(executable)) continue;
         seen.add(executable);
+        // Keep PATH/managed ownership when the same executable is explicitly
+        // selected. Do not realpath Python: that would collapse virtualenvs.
+        const source =
+          managedPath === executable
+            ? "managed"
+            : (candidates.find(
+                (other) => other.source !== "configured" && other.resolved === executable,
+              )?.source ?? candidate.source);
         installations.push({
           executable,
-          source: candidate.source,
-          version: candidate.source === "managed" ? (managed?.version ?? null) : null,
+          source,
+          ...(configuredPath === executable ? { configured: true } : {}),
+          version: source === "managed" ? (managed?.version ?? null) : null,
           problem:
-            candidate.source === "managed" && managed?.available === false
+            source === "managed" && managed?.available === false
               ? "Scient-managed Python needs repair."
               : resolved === undefined
                 ? "The selected Python executable was not found."

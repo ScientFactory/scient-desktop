@@ -547,6 +547,8 @@ export const ComputeManagedRuntimeStatus = Schema.Struct({
   /** Labels belong to the reviewed adapter, not to a parallel UI provider switch. */
   displayName: Schema.optional(Label),
   description: Schema.optional(ShortText),
+  /** The external installation served by an assisted connection helper. */
+  installationExecutable: Schema.optional(Schema.String.check(Schema.isMaxLength(4096))),
   installed: Schema.Boolean,
   generationId: Schema.optional(Schema.NullOr(Label)),
   selection: ComputeManagedRuntimeSelection,
@@ -572,6 +574,8 @@ export type ComputeRuntimeProfile = typeof ComputeRuntimeProfile.Type;
 export const ComputeRuntimeInstallation = Schema.Struct({
   executable: Schema.NonEmptyString.check(Schema.isMaxLength(4096)),
   source: ComputeRuntimeSource,
+  /** Explicit selection is independent of how an installation was discovered. */
+  configured: Schema.optional(Schema.Boolean),
   version: Schema.NullOr(Label),
   problem: Schema.NullOr(ShortText),
 });

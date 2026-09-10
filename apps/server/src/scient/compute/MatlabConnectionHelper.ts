@@ -176,5 +176,37 @@ export function makeMatlabConnectionHelper(input: {
           cause,
         }),
     });
-  return { manager, controller, hostFor };
+  const status = () =>
+    controller.status().pipe(
+      Effect.flatMap((currentStatus) =>
+        Effect.tryPromise({
+          try: async () => {
+            const current = await manager.inspect();
+            if (!current || current.record.active.generationId !== currentStatus.generationId)
+              return currentStatus;
+            const metadata = decodeInstallation(
+              await NodeFSP.readFile(
+                NodePath.join(generationRoot(current.executable), METADATA),
+                "utf8",
+              ),
+            );
+            return {
+              ...currentStatus,
+              installationExecutable: NodePath.join(
+                metadata.root,
+                "bin",
+                input.platform === "win32" ? "matlab.exe" : "matlab",
+              ),
+            };
+          },
+          catch: (cause) =>
+            new ComputeRuntimeError({
+              operation: "discover",
+              message: "The helper's installation metadata could not be read.",
+              cause,
+            }),
+        }).pipe(Effect.orElseSucceed(() => currentStatus)),
+      ),
+    );
+  return { manager, controller: { ...controller, status }, hostFor };
 }

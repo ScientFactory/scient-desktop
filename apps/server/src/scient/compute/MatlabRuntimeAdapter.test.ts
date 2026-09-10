@@ -34,12 +34,70 @@ const profile: ComputeRuntimeProfile = matlabProfile(probe, "conventional");
 
 describe("MATLAB runtime adapter", () => {
   it.effect(
+    "lists alternatives and deduplicates configured aliases without widening execution discovery",
+    () =>
+      Effect.gen(function* () {
+        const root = yield* Effect.acquireRelease(
+          Effect.promise(() =>
+            NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "scient-matlab-alternatives-")).then(
+              (path) => NodeFSP.realpath(path),
+            ),
+          ),
+          (path) => Effect.promise(() => NodeFSP.rm(path, { recursive: true, force: true })),
+        );
+        const first = NodePath.join(root, "first", "bin", "matlab");
+        const second = NodePath.join(root, "second", "bin", "matlab");
+        const alias = NodePath.join(root, "alias", "matlab");
+        yield* Effect.promise(async () => {
+          for (const candidate of [first, second]) {
+            await NodeFSP.mkdir(NodePath.dirname(candidate), { recursive: true });
+            await NodeFSP.writeFile(candidate, "synthetic executable", { mode: 0o755 });
+            await NodeFSP.writeFile(
+              NodePath.join(NodePath.dirname(NodePath.dirname(candidate)), "VersionInfo.xml"),
+              "<release>R2026a</release><version>26.1</version>",
+            );
+          }
+          await NodeFSP.mkdir(NodePath.dirname(alias));
+          await NodeFSP.symlink(first, alias);
+        });
+        const environment = {
+          PATH: [NodePath.dirname(first), NodePath.dirname(second)].join(NodePath.delimiter),
+        };
+        const runtime = makeMatlabRuntimeAdapter(() => Effect.never, environment, "linux");
+        for (let n = 0; n < 20; n++) {
+          const rows = yield* runtime.adapter.listInstallations!({
+            projectRoot: null,
+            configuredExecutable: alias,
+            refresh: true,
+          });
+          expect(rows.filter((row) => row.executable.startsWith(root))).toEqual([
+            {
+              executable: first,
+              source: "path",
+              configured: true,
+              version: "R2026a",
+              problem: null,
+            },
+            { executable: second, source: "path", version: "R2026a", problem: null },
+          ]);
+        }
+        expect(discoverMatlabCandidates(alias, environment, "linux")).toEqual([
+          { executable: alias, source: "configured" },
+        ]);
+        expect(discoverMatlabCandidates("/missing/matlab", environment, "linux")).toEqual([
+          { executable: "/missing/matlab", source: "configured" },
+        ]);
+      }).pipe(Effect.scoped),
+  );
+  it.effect(
     "refreshes installation metadata after removal and reinstall without an Engine import",
     () =>
       Effect.gen(function* () {
         const root = yield* Effect.acquireRelease(
           Effect.promise(() =>
-            NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "scient-matlab-inventory-")),
+            NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "scient-matlab-inventory-")).then(
+              (path) => NodeFSP.realpath(path),
+            ),
           ),
           (path) => Effect.promise(() => NodeFSP.rm(path, { recursive: true, force: true })),
         );
@@ -52,14 +110,15 @@ describe("MATLAB runtime adapter", () => {
             "<release>R2026a</release><version>26.1</version>",
           );
         });
-        const runtime = makeMatlabRuntimeAdapter(() => Effect.never, {}, "darwin");
+        const runtime = makeMatlabRuntimeAdapter(() => Effect.never, {}, "linux");
         const request = { projectRoot: null, configuredExecutable: candidate, refresh: true };
         for (let n = 0; n < 20; n += 1) {
           const rows = yield* runtime.adapter.listInstallations!(request);
-          expect(rows).toEqual([
+          expect(rows.filter((row) => row.executable.startsWith(root))).toEqual([
             {
               executable: yield* Effect.promise(() => NodeFSP.realpath(candidate)),
               source: "configured",
+              configured: true,
               version: "R2026a",
               problem: null,
             },

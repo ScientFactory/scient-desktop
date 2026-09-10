@@ -351,14 +351,24 @@ export function makeMatlabRuntimeAdapter(
     transportKind: MATLAB_ENGINE_TRANSPORT_KIND,
     listInstallations: Effect.fn("MatlabRuntimeAdapter.listInstallations")(function* (request) {
       const resolveExecutable = yield* SpawnExecutableResolution;
-      return yield* Effect.forEach(
-        discoverMatlabCandidates(request.configuredExecutable, environment, platform),
+      // Settings lists alternatives even when execution is pinned to one path.
+      // The execution discovery path below deliberately retains its precedence.
+      const automatic = discoverMatlabCandidates(null, environment, platform);
+      const candidates = request.configuredExecutable?.trim()
+        ? [
+            ...discoverMatlabCandidates(request.configuredExecutable, environment, platform),
+            ...automatic,
+          ]
+        : automatic;
+      const rows = yield* Effect.forEach(
+        candidates,
         (candidate) =>
           Effect.gen(function* (): Effect.fn.Return<ComputeRuntimeInstallation> {
             const executable = resolveExecutable(candidate.executable, platform, environment);
             if (executable === undefined)
               return {
                 ...candidate,
+                ...(candidate.source === "configured" ? { configured: true } : {}),
                 version: null,
                 problem: "The selected MATLAB executable was not found.",
               };
@@ -366,6 +376,7 @@ export function makeMatlabRuntimeAdapter(
               Effect.map((installation) => ({
                 executable: installation.executableRealpath,
                 source: candidate.source,
+                ...(candidate.source === "configured" ? { configured: true } : {}),
                 version: installation.release,
                 problem: null,
               })),
@@ -373,6 +384,7 @@ export function makeMatlabRuntimeAdapter(
                 Effect.succeed({
                   executable,
                   source: candidate.source,
+                  ...(candidate.source === "configured" ? { configured: true } : {}),
                   version: null,
                   problem: cause.message,
                 }),
@@ -381,6 +393,17 @@ export function makeMatlabRuntimeAdapter(
           }),
         { concurrency: 2 },
       );
+      const installations = new Map<string, ComputeRuntimeInstallation>();
+      for (const row of rows) {
+        const previous = installations.get(row.executable);
+        installations.set(
+          row.executable,
+          previous
+            ? { ...previous, source: row.source === "configured" ? previous.source : row.source }
+            : row,
+        );
+      }
+      return [...installations.values()];
     }),
     discover: (request) =>
       Effect.forEach(
