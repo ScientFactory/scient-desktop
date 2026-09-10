@@ -1,0 +1,47 @@
+.scient-annotation-popover {
+  position: fixed;
+  z-index: 80;
+  width: 344px;
+  max-width: calc(100vw - 16px);
+  overflow: auto;
+  padding: 10px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  color: var(--foreground);
+  background: var(--background);
+  box-shadow: 0 4px 18px rgb(0 0 0 / 10%);
+  font-size: 13px;
+}
+
+.scient-pdf-annotation-mark {
+  position: absolute;
+  z-index: 4;
+  width: 17px;
+  height: 18px;
+  padding: 0;
+  border: 0;
+  border-radius: 3px;
+  background: transparent;
+  color: #64748b;
+  opacity: 0;
+  pointer-events: none;
+  font: 14px/18px sans-serif;
+  cursor: pointer;
+}
+
+.scient-annotation-selection {
+  width: max-content;
+  padding: 6px;
+}
+
+.scient-pdf-annotation-mark:hover,
+.scient-pdf-annotation-mark:focus-visible {
+  background: #f1f5f9;
+  outline: 1px solid #94a3b8;
+}
+
+.scient-pdf-annotation-mark[data-revealed],
+.scient-pdf-annotation-mark:focus-visible {
+  opacity: 1;
+  pointer-events: auto;
+}

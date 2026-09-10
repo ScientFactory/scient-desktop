@@ -78,6 +78,25 @@ describe("experimental PDF passage evidence", () => {
     ).toEqual({ _tag: "NotExact", reason: "extractor-changed" });
   });
 
+  it("preserves geometry checks across an extractor upgrade before offering the saved location", () => {
+    const original = capture();
+    expect(
+      verifyPdfPassage(original, {
+        material,
+        extractorVersion: "future",
+        pages: [selection({ viewBox: [0, 0, 600, 800] })],
+      }),
+    ).toEqual({ _tag: "NotExact", reason: "page-geometry-changed" });
+    expect(
+      verifyPdfPassage(original, {
+        material,
+        extractorVersion: "future",
+        pages: [selection({ text: "new extraction" })],
+      }),
+    ).toEqual({ _tag: "NotExact", reason: "extractor-changed" });
+    expect(original.pages[0]?.quote).toBe("repeated");
+  });
+
   it.each([
     { text: "A repeated quote. A changed quote." },
     { text: "A changed quote. A repeated quote." },

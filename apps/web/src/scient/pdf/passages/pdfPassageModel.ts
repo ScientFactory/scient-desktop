@@ -1,7 +1,8 @@
 import { sha256 } from "@noble/hashes/sha2.js";
 import { bytesToHex } from "@noble/hashes/utils.js";
+import type { ScientPassageCapture } from "@scientfactory/scient-sources";
 
-// Experimental, in-memory capture evidence. This is not a persisted Region schema.
+// Exact PDF.js extraction profile, shared with the bounded saved-passage schema.
 export const PDF_PASSAGE_PROFILE = "pdfjs-text-layer-utf16-eol-v1";
 export const PDF_PASSAGE_LIMITS = { pages: 4, characters: 8_000, rectangles: 256 } as const;
 export type PdfRectangle = readonly [number, number, number, number];
@@ -25,24 +26,7 @@ export interface PassageSelection extends PassagePage {
   readonly rectangles: ReadonlyArray<PdfRectangle>;
 }
 
-export interface PdfPassageCapture {
-  readonly material: PassageMaterial;
-  readonly extractorVersion: string;
-  readonly profile: typeof PDF_PASSAGE_PROFILE;
-  readonly pages: ReadonlyArray<{
-    readonly page: number;
-    readonly pageTextHash: string;
-    readonly viewBox: PdfRectangle;
-    readonly rotation: number;
-    readonly userUnit: number;
-    readonly start: number;
-    readonly end: number;
-    readonly quote: string;
-    readonly prefix: string;
-    readonly suffix: string;
-    readonly rectangles: ReadonlyArray<PdfRectangle>;
-  }>;
-}
+export type PdfPassageCapture = ScientPassageCapture;
 
 export type PassageRefusal =
   | "empty-selection"
@@ -173,11 +157,9 @@ export function verifyPdfPassage(
     capture.material.byteLength !== current.material.byteLength
   )
     return fail("material-changed");
-  if (
+  const extractorChanged =
     capture.extractorVersion !== current.extractorVersion ||
-    capture.profile !== PDF_PASSAGE_PROFILE
-  )
-    return fail("extractor-changed");
+    capture.profile !== PDF_PASSAGE_PROFILE;
   if (!capture.pages.length || capture.pages.length > PDF_PASSAGE_LIMITS.pages)
     return fail("invalid-selection");
   for (const original of capture.pages) {
@@ -191,14 +173,16 @@ export function verifyPdfPassage(
     )
       return fail("page-geometry-changed");
     if (
-      passageHash(page.text) !== original.pageTextHash ||
-      !original.quote ||
-      page.text.slice(original.start, original.end) !== original.quote ||
-      page.text.slice(Math.max(0, original.start - 64), original.start) !== original.prefix ||
-      page.text.slice(original.end, original.end + 64) !== original.suffix
+      !extractorChanged &&
+      (passageHash(page.text) !== original.pageTextHash ||
+        !original.quote ||
+        page.text.slice(original.start, original.end) !== original.quote ||
+        page.text.slice(Math.max(0, original.start - 64), original.start) !== original.prefix ||
+        page.text.slice(original.end, original.end + 64) !== original.suffix)
     )
       return fail("page-text-changed");
   }
+  if (extractorChanged) return fail("extractor-changed");
   return { _tag: "Exact" };
 }
 
@@ -207,9 +191,9 @@ export const PASSAGE_REFUSAL_COPY: Record<PassageRefusal, string> = {
   "too-many-pages": "Select up to four consecutive pages.",
   "too-many-rectangles": "This selection has too many text fragments. Select a shorter passage.",
   "page-not-ready": "Wait for the selected pages to render, then select the passage again.",
-  "page-too-complex": "This page exceeds the capture proof's text-layer limit.",
+  "page-too-complex": "This page exceeds the supported text-layer limit.",
   "unsupported-text-angle":
-    "Diagonal text is not supported by this capture proof. No approximate highlight was captured.",
+    "Diagonal text is not supported yet. No approximate highlight was captured.",
   "selection-too-large": "Select a shorter passage (up to four pages and 8,000 characters).",
   "invalid-selection":
     "This selection could not be captured reliably. Select text entirely inside the PDF.",

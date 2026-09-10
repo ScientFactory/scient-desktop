@@ -604,6 +604,7 @@ function MetadataRefreshConfirmation(props: {
 }
 
 export function SourceDetails(props: {
+  readonly passageControls?: React.ReactNode;
   readonly record: SourceRecord;
   readonly diagnostics: ReadonlyArray<SourceDiagnostic>;
   readonly onBack: () => void;
@@ -877,6 +878,7 @@ export function SourceDetails(props: {
           <SourceReference record={record} />
 
           {sourceNote.section}
+          {props.passageControls}
 
           <p className="border-t border-border pt-3 text-xs text-muted-foreground">
             {importedLabel(record)}

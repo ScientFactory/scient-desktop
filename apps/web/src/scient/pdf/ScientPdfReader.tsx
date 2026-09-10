@@ -55,18 +55,16 @@ import {
 } from "./pdfReaderModel";
 import { pdfReaderSessionDocumentKey, pdfReaderSessionStore } from "./pdfReaderSessionStore";
 import { useScientPdfReader } from "./useScientPdfReader";
+import type { SourcePassageContext } from "../sources/SourcePassages";
+const SourcePassages = lazy(() =>
+  import("../sources/SourcePassages").then((module) => ({ default: module.SourcePassages })),
+);
 
 import "pdfjs-dist/legacy/web/pdf_viewer.css";
 import "./scientPdfReader.css";
 
 const PDF_SOURCE_SYNC_HINT_DELAY_MS = 300;
 const PDF_SOURCE_SYNC_HINT_VISIBLE_MS = 4_000;
-
-const PdfPassageProbe = import.meta.env.DEV
-  ? lazy(() =>
-      import("./passages/PdfPassageProbe").then((module) => ({ default: module.PdfPassageProbe })),
-    )
-  : null;
 
 let pdfSourceSyncHintLearnedThisSession = false;
 
@@ -143,6 +141,7 @@ function PdfPasswordPrompt(props: {
 }
 
 export function ScientPdfReader(props: {
+  readonly sourcePassages?: SourcePassageContext;
   readonly actions?: PdfSourceActions;
   readonly refreshKey?: number;
   readonly resolver?: PdfSourceResolver;
@@ -188,12 +187,14 @@ export function ScientPdfReader(props: {
       sourceExpiresAt={asset.expiresAt}
       refreshSource={asset.refresh}
       actions={props.actions ?? webPdfSourceActions}
+      {...(props.sourcePassages ? { sourcePassages: props.sourcePassages } : {})}
       {...(props.syncNavigation === undefined ? {} : { syncNavigation: props.syncNavigation })}
     />
   );
 }
 
 function LoadedScientPdfReader(props: {
+  readonly sourcePassages?: SourcePassageContext;
   readonly actions: PdfSourceActions;
   readonly documentKey: string;
   readonly source: PdfSourceDescriptor;
@@ -217,7 +218,6 @@ function LoadedScientPdfReader(props: {
   const sourceSyncHintHideTimerRef = useRef<number | null>(null);
   const [pageInput, setPageInput] = useState("1");
   const [sourceSyncHintVisible, setSourceSyncHintVisible] = useState(false);
-  const [passageProofOpen, setPassageProofOpen] = useState(false);
   const reader = useScientPdfReader({
     documentKey: props.documentKey,
     onSourceInvalidated: props.refreshSource,
@@ -485,6 +485,15 @@ function LoadedScientPdfReader(props: {
         >
           <Search />
         </ReaderButton>
+        {props.sourcePassages ? (
+          <Suspense fallback={null}>
+            <SourcePassages
+              key={`${props.sourcePassages.environmentId}:${props.sourcePassages.root}:${props.sourcePassages.sourceId}:${props.sourcePassages.attachmentId}`}
+              {...props.sourcePassages}
+              runtime={state.phase === "ready" ? reader.runtimeRef.current : null}
+            />
+          </Suspense>
+        ) : null}
         <DropdownMenu>
           <ScientTooltip content="More PDF actions">
             <DropdownMenuTrigger
@@ -529,12 +538,6 @@ function LoadedScientPdfReader(props: {
             <DropdownMenuItem onClick={() => setSearchOpen(true)}>
               <Search /> Search PDF
             </DropdownMenuItem>
-            {import.meta.env.DEV ? (
-              <DropdownMenuItem onClick={() => setPassageProofOpen((open) => !open)}>
-                <FileText />{" "}
-                {passageProofOpen ? "Close passage capture proof" : "Passage capture proof"}
-              </DropdownMenuItem>
-            ) : null}
             {hasSourceActions ? <DropdownMenuSeparator /> : null}
             {props.source.capabilities.canSaveCopy ? (
               <DropdownMenuItem disabled={savingCopy} onClick={() => void saveCopy()}>
@@ -558,14 +561,6 @@ function LoadedScientPdfReader(props: {
           </DropdownMenuContent>
         </DropdownMenu>
       </div>
-      {passageProofOpen && PdfPassageProbe ? (
-        <Suspense fallback={null}>
-          <PdfPassageProbe
-            runtime={state.phase === "ready" ? reader.runtimeRef.current : null}
-            reopen={reader.reopen}
-          />
-        </Suspense>
-      ) : null}
       {props.source._tag === "generated-pdf" && props.source.bindingStatus === "stale" ? (
         <div className="scient-pdf-notice" role="status">
           The latest build failed. Showing the last successful PDF.

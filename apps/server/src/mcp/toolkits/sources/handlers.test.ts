@@ -5,6 +5,7 @@ import * as NodePath from "node:path";
 
 import { initializeScientProject, readScientProjectIdentity } from "@scientfactory/project-init";
 import { SCIENT_SOURCE_RECORDS_DIRECTORY } from "@scientfactory/scient-sources/store";
+import type { ScientSavedPassage } from "@scientfactory/scient-sources";
 import {
   EnvironmentId,
   type OrchestrationProjectShell,
@@ -16,12 +17,14 @@ import {
 import { afterEach, describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
+import * as Schema from "effect/Schema";
 
 import * as ProjectionSnapshotQuery from "../../../orchestration/Services/ProjectionSnapshotQuery.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
 import { AnalyticsService } from "../../../telemetry/AnalyticsService.ts";
 import {
   getScientSourceForInvocation,
+  readScientSourcePassagesForInvocation,
   listScientSourcesForInvocation,
   addScientSourceForInvocation,
   attachScientSourcePdfForInvocation,
@@ -32,6 +35,7 @@ import {
 } from "./handlers.ts";
 
 const fixtures: string[] = [];
+const encodeUnknownJson = Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown));
 const now = "2026-08-13T12:00:00.000Z";
 const environmentId = EnvironmentId.make("environment-sources-test");
 const providerInstanceId = ProviderInstanceId.make("codex");
@@ -57,11 +61,13 @@ async function writeSource(
     readonly title: string;
     readonly abstract?: string | null;
     readonly hasPdf?: boolean;
+    readonly savedPassages?: ReadonlyArray<ScientSavedPassage>;
   },
 ) {
   const identity = await readScientProjectIdentity(root);
   const record = {
-    formatVersion: 1 as const,
+    formatVersion: input.savedPassages ? (2 as const) : (1 as const),
+    ...(input.savedPassages ? { savedPassages: input.savedPassages } : {}),
     sourceId: input.sourceId,
     projectId: identity.projectId,
     revision: 1,
@@ -199,6 +205,75 @@ afterEach(async () => {
 });
 
 describe("Scient Sources MCP handlers", () => {
+  it.effect(
+    "reads bounded saved passages from the active worktree and rejects missing grants",
+    () =>
+      Effect.gen(function* () {
+        const root = yield* Effect.promise(() => fixture("scient-passages-mcp-"));
+        const passages: ScientSavedPassage[] = Array.from({ length: 8 }, (_, i) => ({
+          formatVersion: 1,
+          passageId: `passage_${i}`,
+          attachmentId: "pdf_test",
+          revision: 1,
+          actor: "user",
+          note: `Note ${i}`,
+          createdAt: now,
+          updatedAt: now,
+          deletedAt: i === 7 ? now : null,
+          capture: {
+            material: { sha256: "a".repeat(64), byteLength: 100 },
+            extractorVersion: "6.2.108",
+            profile: "pdfjs-text-layer-utf16-eol-v1",
+            pages: [
+              {
+                page: 1,
+                pageTextHash: "b".repeat(64),
+                viewBox: [0, 0, 600, 800],
+                rotation: 0,
+                userUnit: 1,
+                start: 0,
+                end: 5,
+                quote: "Quote",
+                prefix: "",
+                suffix: "",
+                rectangles: [[1, 1, 10, 10]],
+              },
+            ],
+          },
+        }));
+        yield* Effect.promise(() =>
+          writeSource(root, { sourceId: "source_saved", title: "Saved", savedPassages: passages }),
+        );
+        const threadId = ThreadId.make("thread-passages");
+        const projectId = ProjectId.make("project-passages");
+        const context = {
+          invocation: makeInvocation(threadId),
+          query: makeQuery({
+            project: makeProject(projectId, "/wrong-root"),
+            thread: makeThread({ threadId, projectId, worktreePath: root }),
+          }),
+        };
+        const first = yield* provideContext(
+          readScientSourcePassagesForInvocation({ sourceId: "source_saved", limit: 100 }),
+          context,
+        );
+        expect(first.passages).toHaveLength(5);
+        expect(first.total).toBe(7);
+        expect(first.nextOffset).toBe(5);
+        expect(yield* encodeUnknownJson(first)).not.toContain(root);
+        const last = yield* provideContext(
+          readScientSourcePassagesForInvocation({ sourceId: "source_saved", offset: 5 }),
+          context,
+        );
+        expect(last.passages).toHaveLength(2);
+        expect(last.nextOffset).toBeNull();
+        const denied = yield* provideContext(
+          readScientSourcePassagesForInvocation({ sourceId: "source_saved" }),
+          { ...context, invocation: makeInvocation(threadId, new Set()) },
+        ).pipe(Effect.result);
+        expect(denied._tag).toBe("Failure");
+      }),
+  );
   it.effect("resolves the current project on every call and prefers its active worktree", () =>
     Effect.gen(function* () {
       const workspaceRoot = yield* Effect.promise(() => fixture("scient-sources-workspace-"));

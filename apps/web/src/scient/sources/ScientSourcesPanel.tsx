@@ -25,6 +25,8 @@ import {
   X,
 } from "lucide-react";
 import {
+  lazy,
+  Suspense,
   useCallback,
   useEffect,
   useMemo,
@@ -33,6 +35,10 @@ import {
   type MouseEvent as ReactMouseEvent,
   type ReactNode,
 } from "react";
+
+const SourcePassages = lazy(() =>
+  import("./SourcePassages").then((module) => ({ default: module.SourcePassages })),
+);
 
 import { Button } from "../../components/ui/button";
 import { Checkbox } from "../../components/ui/checkbox";
@@ -872,6 +878,18 @@ export function ScientSourcesPanel(props: {
     }
     return (
       <SourceDetails
+        passageControls={
+          <Suspense fallback={null}>
+            <SourcePassages
+              key={selectedRecord.sourceId}
+              environmentId={props.environmentId}
+              root={props.root}
+              sourceId={selectedRecord.sourceId}
+              runtime={null}
+              onRecordChange={sources.acceptSourceRecord}
+            />
+          </Suspense>
+        }
         key={selectedRecord.sourceId}
         record={selectedRecord}
         diagnostics={diagnosticsBySourceId.get(selectedRecord.sourceId) ?? []}

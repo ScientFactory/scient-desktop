@@ -96,6 +96,53 @@ Incomplete metadata can produce an incomplete citation, so review visible
 warnings before using it in a manuscript. Scient does not silently fill
 unknown values.
 
+## Highlight and annotate a PDF (local candidate)
+
+This section describes the local saved-passage candidate, not a released app
+feature. Open a PDF **from Sources** and select text. A small menu offers:
+
+- **Highlight** to keep the selected passage immediately.
+- **Add note** to write in a small editor, without highlighting the text.
+  Notes autosave after a short pause; **Save note** saves immediately.
+- **Copy** for just the selected text. Its arrow offers **Copy with citation**:
+  the excerpt plus a short author/title/year attribution, an article link when
+  available, and the physical PDF page number. Neither saves an annotation.
+  Full bibliographic references remain available in source details.
+- **Add to chat** to add the excerpt and short attribution to your current message.
+  Your existing draft is kept; nothing is sent until you send the message.
+
+Click the marked passage to reopen its annotation. Notes use a subtle dotted
+underline rather than yellow highlighting; the small margin button appears on
+hover or keyboard focus without covering the text. Use
+**Annotations** in the PDF toolbar to browse saved items, edit a note, copy a
+quotation with its citation, or return to its page. The list stays closed
+while you read. Clicking elsewhere, pressing Escape, or leaving the PDF view
+also saves your note. **Cancel** discards only changes not already autosaved.
+If saving fails, Scient keeps a local draft for recovery in the same app profile;
+it does not silently overwrite a note changed elsewhere. An abrupt app quit may
+interrupt saving, so check recovered drafts when reopening. If a PDF location
+could not be captured, the recovered text needs you to select its location again.
+To remove a note, use **Remove**; clearing its text does not silently delete it.
+
+Saved passages belong to the project and remain available after reopening it.
+They also appear in source details, where quotations and notes remain readable
+if the PDF is missing. **Remove** removes that passage and its note, not the
+PDF. Remove a material's saved passages before detaching its PDF or removing
+the Source.
+
+The quotation and your interpretation remain separate. Returning to a passage
+checks the original PDF and location; it does not verify the scientific claim.
+If the PDF changed, Scient preserves the original quotation instead of jumping
+to a guessed match. If only the text extractor changed, it can show the saved
+location in the same PDF with a warning to compare the quotation yourself.
+
+Text capture requires a usable, copy-permitted PDF text layer. This candidate
+supports PDFs up to 100 MB, selections of up to four consecutive pages and
+8,000 characters, and notes of up to 8,000 characters. Each Source has a bounded
+storage budget and a maximum of 200 passage identities, including removed
+passages retained for retry safety. It is not yet a large-library annotation
+system; deleting a passage does not reclaim an identity slot.
+
 ## Work with agents
 
 In a project conversation, an agent can search and read the same project-owned
@@ -108,11 +155,18 @@ flow still apply to writes. Sources tools stay scoped to the current project:
 they do not grant arbitrary host file paths, change Zotero, or turn uncertain
 metadata into verified evidence.
 
+In the local candidate, agents with Sources read access can also read saved
+passages and their notes in small batches. They cannot create or edit passages
+through this new tool. Agent interpretation and review are separate future work;
+tool availability still depends on the provider receiving Scient's tools.
+
 ## Current limits
 
 Sources currently supports local Zotero intake and direct PDF import. It is not
 a replacement for Zotero and does not yet provide ongoing synchronization,
 Zotero write-back, in-text citation insertion, multi-source bibliography
-generation, PDF annotation, or evidence grading. When a Zotero item has several
+generation, general-purpose PDF annotation, or evidence grading. The bounded
+saved-passage candidate above does not implement those broader workflows.
+When a Zotero item has several
 PDF attachments, the import identifies and copies one rather than silently
 representing all of them.

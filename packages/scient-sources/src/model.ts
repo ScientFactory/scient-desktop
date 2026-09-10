@@ -1,4 +1,5 @@
 import * as Schema from "effect/Schema";
+import { ScientSavedPassage } from "./passages.ts";
 
 const NonEmptyString = Schema.Trimmed.check(Schema.isNonEmpty());
 const NullableText = Schema.NullOr(Schema.String);
@@ -109,7 +110,7 @@ export const ScientSourceAttachmentSummary = Schema.Struct({
 export type ScientSourceAttachmentSummary = typeof ScientSourceAttachmentSummary.Type;
 
 export const ScientSourceRecord = Schema.Struct({
-  formatVersion: Schema.Literal(1),
+  formatVersion: Schema.Literals([1, 2]),
   sourceId: NonEmptyString,
   projectId: NonEmptyString,
   revision: Schema.Int.check(Schema.isGreaterThan(0)),
@@ -123,6 +124,9 @@ export const ScientSourceRecord = Schema.Struct({
   abstract: NullableText,
   abstractSections: Schema.optionalKey(BoundedAbstractSections),
   note: Schema.optionalKey(ScientSourceNote),
+  savedPassages: Schema.optionalKey(
+    Schema.Array(ScientSavedPassage).check(Schema.isMaxLength(200)),
+  ),
   containerTitle: NullableText,
   publisher: NullableText,
   volume: NullableText,
@@ -297,7 +301,7 @@ export const ScientSourceReviewUpdateResult = Schema.Struct({
 export type ScientSourceReviewUpdateResult = typeof ScientSourceReviewUpdateResult.Type;
 
 export const ScientSourceRemovalResult = Schema.Struct({
-  outcome: Schema.Literals(["removed", "not-found", "stale"]),
+  outcome: Schema.Literals(["removed", "not-found", "stale", "has-passages"]),
   sourceId: NonEmptyString,
   revision: Schema.NullOr(Schema.Int.check(Schema.isGreaterThan(0))),
   removedAttachmentCount: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),

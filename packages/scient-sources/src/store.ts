@@ -10,6 +10,12 @@ import {
   type ScientProjectIdentity,
 } from "@scientfactory/project-init";
 import * as Schema from "effect/Schema";
+import {
+  activeSourcePassages,
+  ScientPassageCommand,
+  type ScientPassageMutationResult,
+  type ScientSavedPassage,
+} from "./passages.ts";
 
 import { assessSourceDuplicate, assessSourceMetadataDuplicate } from "./duplicates.ts";
 import { abstractDocumentFromSections, normalizeScientSourceAbstractDocument } from "./abstract.ts";
@@ -63,7 +69,8 @@ const operationRecordSnapshots = new Map<
     readonly records: ReadonlyArray<ScientSourceRecord>;
   }
 >();
-const decodeScientSourceRecordV1 = Schema.decodeUnknownSync(ScientSourceRecord);
+const decodeScientSourceRecord = Schema.decodeUnknownSync(ScientSourceRecord);
+const decodeScientPassageCommand = Schema.decodeUnknownSync(ScientPassageCommand);
 const decodeScientSourceStagedMaterial = Schema.decodeUnknownSync(ScientSourceStagedMaterial);
 const PersistedScientSourceImportOperation = Schema.Struct({
   ...ScientSourceImportOperation.fields,
@@ -146,9 +153,15 @@ export function decodePersistedScientSourceRecord(value: unknown): ScientSourceR
     throw new Error("The source record has no recognized format version.");
   }
   const version = (value as { readonly formatVersion?: unknown }).formatVersion;
+  if (version === 1 && "savedPassages" in value) {
+    throw new Error(
+      "Experimental version-1 saved passages require explicit migration; refusing an unsafe older-writer format.",
+    );
+  }
   switch (version) {
     case 1:
-      return decodeScientSourceRecordV1(value);
+    case 2:
+      return decodeScientSourceRecord(value);
     default:
       throw new Error(`Source record format version ${String(version)} is not supported.`);
   }
@@ -367,6 +380,13 @@ async function persistSourceRevision(
   current: ScientSourceRecord,
   next: ScientSourceRecord,
 ): Promise<void> {
+  // Every active passage must remain removable even at the record-size ceiling.
+  // A deletion adds a timestamp/revision but releases this reserved headroom.
+  boundedJson(
+    next,
+    MAX_RECORD_BYTES - activeSourcePassages(next).length * 128,
+    "Source record (including passage removal reserve)",
+  );
   const historyPath = sourceHistoryPath(paths, current.sourceId, current.revision);
   const preserved = await atomicCreateJson(historyPath, current, MAX_RECORD_BYTES);
   if (!preserved) {
@@ -477,6 +497,113 @@ export async function updateScientSourceNote(input: {
   });
 }
 
+/** Uses the same canonical-root write lane and atomic revision history as Sources.
+ * The HTTP host admits manual writes; agents only receive a read projection for now.
+ */
+export async function mutateScientSourcePassage(input: {
+  readonly root: string;
+  readonly projectId: string;
+  readonly sourceId: string;
+  readonly command: ScientPassageCommand;
+}): Promise<ScientPassageMutationResult> {
+  const command = decodeScientPassageCommand(input.command);
+  const paths = await sourceStorePaths(input.root);
+  assertSafeIdentifier(input.sourceId, "Source ID");
+  if (paths.identity.projectId !== input.projectId)
+    throw new Error("The project changed. Reopen the source before saving.");
+  return withOperationLock(`${paths.root}:source-write`, async () => {
+    const current = await readSourceRecordFromPaths(paths, input.sourceId);
+    const passages = current.savedPassages ?? [];
+    const existing = passages.find((passage) => passage.passageId === command.passageId);
+    const now = new Date().toISOString();
+    let passage: ScientSavedPassage;
+    let outcome: ScientPassageMutationResult["outcome"];
+    if (command.action === "save") {
+      // Keep deletion tombstones so a delayed request cannot resurrect a passage.
+      if (existing) {
+        if (
+          existing.attachmentId !== command.attachmentId ||
+          JSON.stringify(existing.capture) !== JSON.stringify(command.capture)
+        ) {
+          throw new Error("This passage identifier already belongs to a different capture.");
+        }
+        return { outcome: "unchanged", passage: existing };
+      }
+      if (passages.length >= 200) return { outcome: "limit-reached", passage: null };
+      const attachment = current.attachments.find(
+        (item) => item.attachmentId === command.attachmentId,
+      );
+      if (
+        !attachment ||
+        attachment.sha256 !== command.capture.material.sha256 ||
+        attachment.byteLength !== command.capture.material.byteLength
+      ) {
+        return { outcome: "material-changed", passage: null };
+      }
+      // Client identities and hashes are claims; verify the actual server-owned file.
+      const actual = await readValidatedPdf(sourceAttachmentAbsolutePath(paths.root, attachment));
+      if (actual.sha256 !== attachment.sha256 || actual.byteLength !== attachment.byteLength) {
+        return { outcome: "material-changed", passage: null };
+      }
+      passage = {
+        formatVersion: 1,
+        passageId: command.passageId,
+        attachmentId: attachment.attachmentId,
+        revision: 1,
+        capture: command.capture,
+        note: command.note,
+        highlighted: command.highlighted ?? command.note.length === 0,
+        actor: "user",
+        createdAt: now,
+        updatedAt: now,
+        deletedAt: null,
+      };
+      outcome = "saved";
+    } else {
+      if (!existing) return { outcome: "not-found", passage: null };
+      if (existing.deletedAt !== null)
+        return {
+          outcome: command.action === "remove" ? "unchanged" : "not-found",
+          passage: existing,
+        };
+      if (command.action === "update" && command.note === existing.note)
+        return { outcome: "unchanged", passage: existing };
+      if (command.expectedRevision !== existing.revision)
+        return { outcome: "stale", passage: existing };
+      passage = {
+        ...existing,
+        highlighted: existing.highlighted ?? existing.note.length === 0,
+        revision: existing.revision + 1,
+        updatedAt: now,
+        ...(command.action === "remove" ? { deletedAt: now } : { note: command.note }),
+      };
+      outcome = command.action === "remove" ? "removed" : "updated";
+    }
+    // Do not publish into a root whose canonical project identity changed while reading.
+    const latest = await sourceStorePaths(input.root);
+    if (latest.root !== paths.root || latest.identity.projectId !== input.projectId)
+      throw new Error("The project changed before the passage could be saved.");
+    const next: ScientSourceRecord = {
+      ...current,
+      formatVersion: 2,
+      revision: current.revision + 1,
+      updatedAt: now,
+      savedPassages: existing
+        ? passages.map((item) => (item.passageId === passage.passageId ? passage : item))
+        : [...passages, passage],
+    };
+    // Validate before writing history; a bounded record must never become unreadable.
+    if (
+      Buffer.byteLength(formatJson(next), "utf8") >
+      MAX_RECORD_BYTES - activeSourcePassages(next).length * 128
+    ) {
+      return { outcome: "limit-reached", passage: null };
+    }
+    await persistSourceRevision(paths, current, next);
+    return { outcome, passage };
+  });
+}
+
 export async function updateScientSourceReview(input: {
   readonly root: string;
   readonly sourceId: string;
@@ -535,6 +662,15 @@ export async function removeScientSource(input: {
       };
     }
 
+    if (activeSourcePassages(current).length > 0) {
+      return {
+        outcome: "has-passages",
+        sourceId: current.sourceId,
+        revision: current.revision,
+        removedAttachmentCount: 0,
+        retainedAttachmentCount: current.attachments.length,
+      };
+    }
     // Validate the remaining store before the irreversible write. After the
     // record is removed, only best-effort orphan cleanup remains.
     const remaining = (await listScientSourceRecords(paths.root)).filter(
@@ -1422,7 +1558,7 @@ export async function attachScientSourcePdf(input: {
 }
 
 export interface ScientSourcePdfDetachmentResult {
-  readonly outcome: "removed" | "unchanged" | "stale" | "not-found";
+  readonly outcome: "removed" | "unchanged" | "stale" | "not-found" | "has-passages";
   readonly record: ScientSourceRecord | null;
   readonly attachmentId: string;
   readonly removedAttachmentCount: number;
@@ -1453,6 +1589,17 @@ export async function detachScientSourcePdf(input: {
     if (current.revision !== input.expectedRevision) {
       return {
         outcome: "stale",
+        record: current,
+        attachmentId: input.attachmentId,
+        removedAttachmentCount: 0,
+        retainedAttachmentCount: current.attachments.length,
+      };
+    }
+    if (
+      activeSourcePassages(current).some((passage) => passage.attachmentId === input.attachmentId)
+    ) {
+      return {
+        outcome: "has-passages",
         record: current,
         attachmentId: input.attachmentId,
         removedAttachmentCount: 0,

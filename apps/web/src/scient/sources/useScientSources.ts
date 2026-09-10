@@ -198,6 +198,11 @@ export function useScientSources(input: {
           sourceId,
           expectedRevision,
         });
+        if (result.outcome === "has-passages") {
+          throw new Error(
+            "This source has saved passages. Remove those passages before removing the source; its PDF has been kept.",
+          );
+        }
         if (isCurrentContext() && result.outcome !== "stale") {
           dispatch({ type: "sourceRemoved", sourceId });
         }

@@ -2,6 +2,7 @@ import * as NodeCrypto from "node:crypto";
 
 import {
   normalizeScientSourceEditableMetadata,
+  activeSourcePassages,
   validateScientSourceEditableMetadata,
   type ScientSourceCandidate,
   type ScientSourceEditableMetadata,
@@ -574,7 +575,30 @@ export const detachScientSourcePdfForInvocation = Effect.fn("ScientSourcesToolki
   },
 );
 
+export const readScientSourcePassagesForInvocation = Effect.fn("ScientSourcesToolkit.passages")(
+  function* (input: {
+    readonly sourceId: string;
+    readonly offset?: number;
+    readonly limit?: number;
+  }) {
+    const { root } = yield* resolveScientSourcesProject();
+    const record = yield* attempt(() => readScientSourceRecord(root, input.sourceId));
+    if (!record) return yield* toolError("not-found", "The source was not found in this project.");
+    const all = activeSourcePassages(record);
+    const offset = Number.isSafeInteger(input.offset) ? Math.max(0, input.offset ?? 0) : 0;
+    const limit = Number.isSafeInteger(input.limit)
+      ? Math.min(5, Math.max(1, input.limit ?? 5))
+      : 5;
+    return {
+      passages: all.slice(offset, offset + limit),
+      total: all.length,
+      nextOffset: offset + limit < all.length ? offset + limit : null,
+    };
+  },
+);
+
 const handlers = {
+  scient_sources_passages: readScientSourcePassagesForInvocation,
   scient_sources_list: listScientSourcesForInvocation,
   scient_sources_get: getScientSourceForInvocation,
   scient_sources_note_update: updateScientSourceNoteForInvocation,

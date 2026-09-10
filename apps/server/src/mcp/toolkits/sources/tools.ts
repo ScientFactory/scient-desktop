@@ -1,5 +1,6 @@
 import {
   ScientSourceCreator,
+  ScientSavedPassage,
   ScientSourceExternalReference,
   ScientSourceEditableMetadata,
   ScientSourceFieldProvenance,
@@ -68,7 +69,7 @@ export const ScientSourcesListResult = Schema.Struct({
 });
 
 export const ScientSourceAgentDetail = Schema.Struct({
-  formatVersion: Schema.Literal(1),
+  formatVersion: Schema.Literals([1, 2]),
   sourceId: NonEmptyString,
   projectId: NonEmptyString,
   revision: Schema.Int.check(Schema.isGreaterThan(0)),
@@ -199,7 +200,7 @@ export const ScientSourceRemoveTool = Tool.make("scient_sources_remove", {
     expectedRevision: Schema.Int.check(Schema.isGreaterThan(0)),
   }),
   success: Schema.Struct({
-    outcome: Schema.Literals(["removed", "not-found", "stale"]),
+    outcome: Schema.Literals(["removed", "not-found", "stale", "has-passages"]),
     sourceId: NonEmptyString,
     revision: Schema.NullOr(Schema.Int.check(Schema.isGreaterThan(0))),
   }),
@@ -222,7 +223,14 @@ export const ScientSourceReviewTool = Tool.make("scient_sources_review", {
   }),
   success: Schema.Struct({
     action: Schema.Literals(["approve", "reject"]),
-    outcome: Schema.Literals(["updated", "unchanged", "stale", "removed", "not-found"]),
+    outcome: Schema.Literals([
+      "updated",
+      "unchanged",
+      "stale",
+      "removed",
+      "not-found",
+      "has-passages",
+    ]),
     sourceId: NonEmptyString,
     revision: Schema.NullOr(Schema.Int.check(Schema.isGreaterThan(0))),
   }),
@@ -336,7 +344,7 @@ export const ScientSourceDetachPdfTool = Tool.make("scient_sources_detach_pdf", 
     expectedRevision: Schema.Int.check(Schema.isGreaterThan(0)),
   }),
   success: Schema.Struct({
-    outcome: Schema.Literals(["removed", "unchanged", "stale", "not-found"]),
+    outcome: Schema.Literals(["removed", "unchanged", "stale", "not-found", "has-passages"]),
     sourceId: NonEmptyString,
     attachmentId: NonEmptyString,
     revision: Schema.NullOr(Schema.Int.check(Schema.isGreaterThan(0))),
@@ -352,7 +360,30 @@ export const ScientSourceDetachPdfTool = Tool.make("scient_sources_detach_pdf", 
   .annotate(Tool.Idempotent, true)
   .annotate(Tool.OpenWorld, false);
 
+export const ScientSourcePassagesTool = Tool.make("scient_sources_passages", {
+  description:
+    "Read a bounded page of saved passages and researcher notes for a Source in this thread's project. Quotes are captured text, not verified scientific claims. Preserve passage/material identity when citing them. No filesystem paths are returned.",
+  parameters: Schema.Struct({
+    sourceId: NonEmptyString,
+    offset: Schema.optionalKey(Schema.Int.check(Schema.isGreaterThanOrEqualTo(0))),
+    limit: Schema.optionalKey(Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 5 }))),
+  }),
+  success: Schema.Struct({
+    passages: Schema.Array(ScientSavedPassage).check(Schema.isMaxLength(5)),
+    total: Schema.Int,
+    nextOffset: Schema.NullOr(Schema.Int),
+  }),
+  failure: ScientSourcesToolError,
+  dependencies,
+})
+  .annotate(Tool.Title, "Read saved source passages")
+  .annotate(Tool.Readonly, true)
+  .annotate(Tool.Destructive, false)
+  .annotate(Tool.Idempotent, true)
+  .annotate(Tool.OpenWorld, false);
+
 export const ScientSourcesToolkit = Toolkit.make(
+  ScientSourcePassagesTool,
   ScientSourcesListTool,
   ScientSourceGetTool,
   ScientSourceNoteUpdateTool,

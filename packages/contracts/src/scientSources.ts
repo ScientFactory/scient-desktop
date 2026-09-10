@@ -1,5 +1,7 @@
 import {
   ScientSourceEditableMetadata,
+  ScientPassageCommand,
+  ScientPassageMutationResult,
   ScientSourceImportOperation,
   ScientSourceMetadataDiagnostic,
   ScientSourceMetadataUpdateResult,
@@ -26,6 +28,15 @@ import { TrimmedNonEmptyString } from "./baseSchemas.ts";
 
 const NonEmptyString = Schema.Trimmed.check(Schema.isNonEmpty());
 const BoundedPageSize = Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 100 }));
+
+export const ScientSourcePassageRequest = Schema.Struct({
+  root: NonEmptyString,
+  projectId: NonEmptyString,
+  sourceId: NonEmptyString,
+  command: ScientPassageCommand,
+});
+export type ScientSourcePassageRequest = typeof ScientSourcePassageRequest.Type;
+export { ScientPassageMutationResult };
 
 export const ScientSourcesOverviewRequest = Schema.Struct({ root: NonEmptyString });
 export type ScientSourcesOverviewRequest = typeof ScientSourcesOverviewRequest.Type;

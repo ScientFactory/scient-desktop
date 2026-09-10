@@ -8539,6 +8539,13 @@ function ChatViewContent(props: ChatViewProps) {
           fileName={renderedRightPanelSurface.fileName}
           root={activeWorkspaceRoot}
           sourceId={renderedRightPanelSurface.sourceId}
+          onAskScient={(context) => {
+            const inserted =
+              composerRef.current?.insertTextAtEnd(context, { ensureLeadingBoundary: true }) ??
+              false;
+            if (inserted) scheduleComposerFocus();
+            return inserted;
+          }}
         />
       </Suspense>
     ) : renderedRightPanelSurface?.kind === "scient" &&

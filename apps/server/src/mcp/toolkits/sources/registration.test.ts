@@ -21,12 +21,13 @@ it.effect("registers one shared Sources toolkit with explicit read and note-writ
       "scient_sources_get",
       "scient_sources_list",
       "scient_sources_note_update",
+      "scient_sources_passages",
       "scient_sources_remove",
       "scient_sources_review",
       "scient_sources_update",
     ]);
     for (const { tool } of sourceTools.filter(({ tool }) =>
-      ["scient_sources_get", "scient_sources_list"].includes(tool.name),
+      ["scient_sources_get", "scient_sources_list", "scient_sources_passages"].includes(tool.name),
     )) {
       expect(tool.annotations?.readOnlyHint).toBe(true);
       expect(tool.annotations?.destructiveHint).toBe(false);

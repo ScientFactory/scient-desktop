@@ -72,7 +72,7 @@ export function readPassageMaterial(runtime: ScientPdfRuntime): Promise<PassageM
     result = runtime.document.getDownloadInfo().then(async ({ length }) => {
       // A proof must not turn selection into an unbounded full-document buffer.
       if (length > MAX_MATERIAL_BYTES)
-        throw new Error("The capture proof supports PDFs up to 100 MB.");
+        throw new Error("Saving passages supports PDFs up to 100 MB.");
       const permissions = await runtime.document.getPermissions();
       if (permissions && !permissions.includes(PermissionFlag.COPY)) {
         throw new Error("This PDF does not permit copying its text.");
@@ -81,7 +81,7 @@ export function readPassageMaterial(runtime: ScientPdfRuntime): Promise<PassageM
         throw new Error("Passage capture needs browser worker support.");
       const bytes = await runtime.document.getData();
       if (bytes.byteLength > MAX_MATERIAL_BYTES)
-        throw new Error("The capture proof supports PDFs up to 100 MB.");
+        throw new Error("Saving passages supports PDFs up to 100 MB.");
       if (!(bytes.buffer instanceof ArrayBuffer)) throw new Error("PDF bytes are unavailable.");
       // Transfer, rather than copy, this getData() buffer. PDF.js retains its own
       // worker-side material. Remember length before the transfer detaches our copy.
@@ -297,10 +297,18 @@ export async function verifyCapturedPdfPassage(
 export function showCapturedPdfPassage(
   runtime: ScientPdfRuntime,
   capture: PdfPassageCapture,
+  options?: {
+    navigate?: boolean;
+    onActivate?: (bounds: DOMRect) => void;
+    label?: string;
+    highlighted?: boolean;
+  },
 ): () => void {
   const markers: HTMLElement[] = [];
+  const listeners: Array<() => void> = [];
   const clear = () => {
     for (const marker of markers.splice(0)) marker.remove();
+    for (const remove of listeners.splice(0)) remove();
   };
   const paint = () => {
     clear();
@@ -310,15 +318,79 @@ export function showCapturedPdfPassage(
       if (!view || !layer?.isConnected) continue;
       const layerBounds = layer.getBoundingClientRect();
       const parentBounds = view.div.getBoundingClientRect();
-      for (const rect of page.rectangles) {
+      const pageMarkers: HTMLElement[] = [];
+      let annotationButton: HTMLButtonElement | null = null;
+      for (const [index, rect] of page.rectangles.entries()) {
         const [x1, y1] = view.viewport.convertToViewportPoint(rect[0], rect[1]);
         const [x2, y2] = view.viewport.convertToViewportPoint(rect[2], rect[3]);
         const marker = document.createElement("span");
         marker.className = "scient-pdf-passage-proof-mark";
         marker.setAttribute("aria-hidden", "true");
         marker.style.cssText = `position:absolute;pointer-events:none;background:rgba(250,204,21,.32);outline:1px solid rgba(161,98,7,.45);z-index:2;left:${(Math.min(x1!, x2!) * layerBounds.width) / view.viewport.width + layerBounds.left - parentBounds.left - view.div.clientLeft}px;top:${(Math.min(y1!, y2!) * layerBounds.height) / view.viewport.height + layerBounds.top - parentBounds.top - view.div.clientTop}px;width:${(Math.abs(x2! - x1!) * layerBounds.width) / view.viewport.width}px;height:${(Math.abs(y2! - y1!) * layerBounds.height) / view.viewport.height}px`;
+        if (options?.highlighted === false) {
+          marker.style.background = "transparent";
+          marker.style.outline = "none";
+          marker.style.borderBottom = "1px dotted rgba(100,116,139,.45)";
+        }
         view.div.append(marker);
         markers.push(marker);
+        pageMarkers.push(marker);
+        if (options?.onActivate && index === 0) {
+          const button = document.createElement("button");
+          button.type = "button";
+          button.className = "scient-pdf-annotation-mark";
+          button.setAttribute("aria-label", options.label ?? "Open annotation");
+          button.title = options.label ?? "Open annotation";
+          button.textContent = "▤";
+          button.style.right = "3px";
+          button.style.top = marker.style.top;
+          button.addEventListener("click", (event) => {
+            event.stopPropagation();
+            options.onActivate?.(button.getBoundingClientRect());
+          });
+          view.div.append(button);
+          markers.push(button);
+          annotationButton = button;
+        }
+      }
+      if (options?.onActivate) {
+        const activate = (event: MouseEvent) => {
+          // Highlights never intercept dragging or normal text selection.
+          if (window.getSelection()?.isCollapsed === false) return;
+          const hit = pageMarkers.find((marker) => {
+            const bounds = marker.getBoundingClientRect();
+            return (
+              event.clientX >= bounds.left &&
+              event.clientX <= bounds.right &&
+              event.clientY >= bounds.top &&
+              event.clientY <= bounds.bottom
+            );
+          });
+          if (hit) options.onActivate?.(hit.getBoundingClientRect());
+        };
+        view.div.addEventListener("click", activate);
+        listeners.push(() => view.div.removeEventListener("click", activate));
+        const reveal = (event: PointerEvent) => {
+          const overPassage = pageMarkers.some((marker) => {
+            const bounds = marker.getBoundingClientRect();
+            return (
+              event.clientX >= bounds.left &&
+              event.clientX <= bounds.right &&
+              event.clientY >= bounds.top &&
+              event.clientY <= bounds.bottom
+            );
+          });
+          if (overPassage && annotationButton) annotationButton.dataset.revealed = "true";
+        };
+        const hide = () => {
+          if (annotationButton) delete annotationButton.dataset.revealed;
+        };
+        view.div.addEventListener("pointermove", reveal);
+        view.div.addEventListener("pointerleave", hide);
+        listeners.push(() => {
+          view.div.removeEventListener("pointermove", reveal);
+          view.div.removeEventListener("pointerleave", hide);
+        });
       }
     }
   };
@@ -334,12 +406,13 @@ export function showCapturedPdfPassage(
   for (const event of events) runtime.eventBus.on(event, schedule);
   const first = capture.pages[0]!;
   const rectangle = first.rectangles[0]!;
-  runtime.viewer.scrollPageIntoView({
-    pageNumber: first.page,
-    destArray: [null, { name: "XYZ" }, rectangle[0], rectangle[3], null],
-    allowNegativeOffset: true,
-    ignoreDestinationZoom: true,
-  });
+  if (options?.navigate !== false)
+    runtime.viewer.scrollPageIntoView({
+      pageNumber: first.page,
+      destArray: [null, { name: "XYZ" }, rectangle[0], rectangle[3], null],
+      allowNegativeOffset: true,
+      ignoreDestinationZoom: true,
+    });
   schedule();
   return () => {
     if (frame !== null) cancelAnimationFrame(frame);

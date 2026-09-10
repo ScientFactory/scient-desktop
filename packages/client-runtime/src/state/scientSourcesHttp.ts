@@ -4,6 +4,7 @@ import type {
   ScientSourceMetadataRefreshRequest,
   ScientSourceMetadataUpdateRequest,
   ScientSourceNoteUpdateRequest,
+  ScientSourcePassageRequest,
   ScientSourceReviewUpdateRequest,
   ScientSourceRemovalRequest,
   ZoteroImportScope,
@@ -18,6 +19,23 @@ import { RemoteEnvironmentAuthorization } from "../authorization/service.ts";
 const REQUEST_TIMEOUT_MS = 15_000;
 const METADATA_REFRESH_TIMEOUT_MS = 45_000;
 const IMPORT_STEP_TIMEOUT_MS = 120_000;
+
+export const mutateEnvironmentScientSourcePassage = Effect.fn(
+  "clientRuntime.state.mutateScientSourcePassage",
+)(function* (input: ScientSourcePassageRequest & { readonly prepared: PreparedConnection }) {
+  const signer = yield* Effect.serviceOption(ManagedRelayDpopSigner);
+  const remoteAuthorization = yield* Effect.serviceOption(RemoteEnvironmentAuthorization);
+  const { prepared, ...payload } = input;
+  return yield* executeAuthenticatedEnvironmentHttpRequest({
+    prepared,
+    signer,
+    remoteAuthorization,
+    method: "POST",
+    url: (base) => environmentEndpointUrl(base, "/api/scient/sources/passage"),
+    timeoutMs: REQUEST_TIMEOUT_MS,
+    request: ({ client, headers }) => client.scientSources.passage({ headers, payload }),
+  });
+});
 
 export const getEnvironmentScientSourcesOverview = Effect.fn(
   "clientRuntime.state.getEnvironmentScientSourcesOverview",

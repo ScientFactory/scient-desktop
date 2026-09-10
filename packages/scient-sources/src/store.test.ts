@@ -3,14 +3,19 @@ import * as NodeCrypto from "node:crypto";
 import * as NodeFSP from "node:fs/promises";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
+import * as NodeChildProcess from "node:child_process";
+import * as NodeUtil from "node:util";
 
 import { initializeScientProject, readScientProjectIdentity } from "@scientfactory/project-init";
 import { afterEach, describe, expect, it } from "@effect/vitest";
 
 import { editableMetadataFromRecord } from "./editable.ts";
+import { ScientPassageCapture, activeSourcePassages, savedPassageMarkdown } from "./passages.ts";
+import * as Schema from "effect/Schema";
 import { SCIENT_SOURCE_IMPORT_ITEM_LIMIT, type ScientSourceCandidate } from "./model.ts";
 import {
   cancelSourceImportOperation,
+  mutateScientSourcePassage,
   attachScientSourcePdf,
   canonicalizeScientSourceRoot,
   createSourceImportOperation,
@@ -39,6 +44,7 @@ import {
 } from "./store.ts";
 
 const fixtures: string[] = [];
+const runFile = NodeUtil.promisify(NodeChildProcess.execFile);
 
 async function fixture(): Promise<string> {
   const root = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "scient-sources-"));
@@ -80,6 +86,382 @@ const candidate: ScientSourceCandidate = {
   pdfFileName: "paper.pdf",
   pdfAttachmentCount: 1,
 };
+
+async function passageFixture() {
+  const root = await fixture();
+  await initializeScientProject({ root });
+  const pdfPath = NodePath.join(root, "passage.pdf");
+  await NodeFSP.writeFile(pdfPath, "%PDF-1.7\npassage fixture\n");
+  const imported = await importScientSource({
+    root,
+    operationId: NodeCrypto.randomUUID(),
+    candidate,
+    pdfPath,
+  });
+  const record = imported.record!;
+  const attachment = record.attachments[0]!;
+  const capture: ScientPassageCapture = {
+    material: { sha256: attachment.sha256, byteLength: attachment.byteLength },
+    extractorVersion: "6.2.108",
+    profile: "pdfjs-text-layer-utf16-eol-v1",
+    pages: [
+      {
+        page: 1,
+        pageTextHash: "a".repeat(64),
+        viewBox: [0, 0, 600, 800],
+        rotation: 0,
+        userUnit: 1,
+        start: 0,
+        end: 7,
+        quote: "A quote",
+        prefix: "",
+        suffix: "",
+        rectangles: [[10, 10, 100, 30]],
+      },
+    ],
+  };
+  const input = { root, projectId: record.projectId, sourceId: record.sourceId };
+  const command = {
+    action: "save" as const,
+    passageId: "passage_one",
+    attachmentId: attachment.attachmentId,
+    capture,
+    note: "",
+  };
+  return { root, record, attachment, input, command };
+}
+
+describe("durable source passages", () => {
+  it.each([false, true])(
+    "preserves highlight choice %s independently of later note edits",
+    async (highlighted) => {
+      const { input, command } = await passageFixture();
+      const saved = await mutateScientSourcePassage({
+        ...input,
+        command: { ...command, note: "A note", highlighted },
+      });
+      expect(saved.passage?.highlighted).toBe(highlighted);
+      const updated = await mutateScientSourcePassage({
+        ...input,
+        command: {
+          action: "update",
+          passageId: command.passageId,
+          expectedRevision: 1,
+          note: "",
+        },
+      });
+      expect(updated.passage?.highlighted).toBe(highlighted);
+      const reopened = await readScientSourceRecord(input.root, input.sourceId);
+      expect(reopened?.savedPassages?.[0]?.highlighted).toBe(highlighted);
+    },
+  );
+
+  it("enforces the 200-identity ceiling under parallel load and preserves retry safety after deletion", async () => {
+    const { input, command } = await passageFixture();
+    const results = await Promise.all(
+      Array.from({ length: 205 }, (_, index) =>
+        mutateScientSourcePassage({
+          ...input,
+          command: { ...command, passageId: `load_${index}` },
+        }),
+      ),
+    );
+    expect(results.filter((result) => result.outcome === "saved")).toHaveLength(200);
+    expect(results.filter((result) => result.outcome === "limit-reached")).toHaveLength(5);
+    const saved = results.find((result) => result.passage)?.passage;
+    if (!saved) throw new Error("Expected a saved passage from the load test.");
+    const edits = await Promise.all(
+      Array.from({ length: 32 }, (_, index) =>
+        mutateScientSourcePassage({
+          ...input,
+          command: {
+            action: "update",
+            passageId: saved.passageId,
+            expectedRevision: 1,
+            note: `Competing note ${index}`,
+          },
+        }),
+      ),
+    );
+    expect(edits.filter((result) => result.outcome === "updated")).toHaveLength(1);
+    expect(edits.filter((result) => result.outcome === "stale")).toHaveLength(31);
+    await mutateScientSourcePassage({
+      ...input,
+      command: { action: "remove", passageId: saved.passageId, expectedRevision: 2 },
+    });
+    const retry = await mutateScientSourcePassage({
+      ...input,
+      command: { ...command, passageId: saved.passageId },
+    });
+    expect(retry.outcome).toBe("unchanged");
+    expect(retry.passage?.deletedAt).not.toBeNull();
+    expect(
+      (
+        await mutateScientSourcePassage({
+          ...input,
+          command: { ...command, passageId: "beyond_limit" },
+        })
+      ).outcome,
+    ).toBe("limit-reached");
+    const record = (await readScientSourceRecord(input.root, input.sourceId))!;
+    expect(record.savedPassages).toHaveLength(200);
+    expect(activeSourcePassages(record)).toHaveLength(199);
+  });
+
+  it("reopens saved passages in a fresh process without in-memory state", async () => {
+    const { input, command } = await passageFixture();
+    await mutateScientSourcePassage({ ...input, command });
+    await mutateScientSourcePassage({
+      ...input,
+      command: {
+        action: "update",
+        passageId: command.passageId,
+        expectedRevision: 1,
+        note: "Durable after restart",
+      },
+    });
+    const script = `import { readScientSourceRecord } from ${JSON.stringify(new URL("./store.ts", import.meta.url).href)};
+      const record = await readScientSourceRecord(process.argv[1], process.argv[2]);
+      process.stdout.write(JSON.stringify(record));`;
+    const { stdout } = await runFile(
+      process.execPath,
+      ["--input-type=module", "-e", script, input.root, input.sourceId],
+      { timeout: 15_000 },
+    );
+    const reopened = decodePersistedScientSourceRecord(JSON.parse(stdout));
+    expect(reopened.formatVersion).toBe(2);
+    expect(activeSourcePassages(reopened)[0]?.note).toBe("Durable after restart");
+    expect(activeSourcePassages(reopened)[0]?.capture).toEqual(command.capture);
+  });
+
+  it("persists capture and note, preserves source notes, and rejects stale edits", async () => {
+    const { input, command } = await passageFixture();
+    const first = await mutateScientSourcePassage({ ...input, command });
+    expect(first.outcome).toBe("saved");
+    expect((await mutateScientSourcePassage({ ...input, command })).outcome).toBe("unchanged");
+    const updated = await mutateScientSourcePassage({
+      ...input,
+      command: {
+        action: "update",
+        passageId: command.passageId,
+        expectedRevision: 1,
+        note: "My interpretation",
+      },
+    });
+    expect(updated.passage?.revision).toBe(2);
+    expect(
+      (
+        await mutateScientSourcePassage({
+          ...input,
+          command: {
+            action: "update",
+            passageId: command.passageId,
+            expectedRevision: 1,
+            note: "Stale overwrite",
+          },
+        })
+      ).outcome,
+    ).toBe("stale");
+    const read = await readScientSourceRecord(input.root, input.sourceId);
+    await updateScientSourceNote({
+      root: input.root,
+      sourceId: input.sourceId,
+      expectedRevision: read!.revision,
+      note: "Whole-source note",
+    });
+    const reopened = await readScientSourceRecord(input.root, input.sourceId);
+    expect(reopened?.formatVersion).toBe(2);
+    expect(() => decodePersistedScientSourceRecord({ ...reopened, formatVersion: 1 })).toThrow(
+      "explicit migration",
+    );
+    expect(reopened?.note).toBe("Whole-source note");
+    expect(activeSourcePassages(reopened!)[0]?.note).toBe("My interpretation");
+    expect(activeSourcePassages(reopened!)[0]?.capture).toEqual(command.capture);
+    const copied = savedPassageMarkdown(updated.passage!, "Author. Paper.", input.sourceId);
+    expect(copied).toContain("Author. Paper. · PDF page 1");
+    expect(copied).toContain(`Source: ${input.sourceId}`);
+    expect(copied).toContain("Note (researcher interpretation):");
+  });
+
+  it("reserves deletion headroom at the record ceiling and rejects oversized edits without changing history", async () => {
+    const { input, command } = await passageFixture();
+    await mutateScientSourcePassage({ ...input, command });
+    const read = (await readScientSourceRecord(input.root, input.sourceId))!;
+    const padded = { ...read, abstract: "" };
+    const limit = 2 * 1024 * 1024;
+    const size = Buffer.byteLength(`${JSON.stringify(padded, null, 2)}\n`);
+    padded.abstract = "x".repeat(limit - 128 - size);
+    const path = NodePath.join(
+      input.root,
+      SCIENT_SOURCE_RECORDS_DIRECTORY,
+      `${input.sourceId}.json`,
+    );
+    await NodeFSP.writeFile(path, `${JSON.stringify(padded, null, 2)}\n`);
+    const before = await NodeFSP.readFile(path, "utf8");
+    expect(
+      (
+        await mutateScientSourcePassage({
+          ...input,
+          command: {
+            action: "update",
+            passageId: command.passageId,
+            expectedRevision: 1,
+            note: "x".repeat(8_000),
+          },
+        })
+      ).outcome,
+    ).toBe("limit-reached");
+    expect(await NodeFSP.readFile(path, "utf8")).toBe(before);
+    expect(
+      (
+        await mutateScientSourcePassage({
+          ...input,
+          command: { action: "remove", passageId: command.passageId, expectedRevision: 1 },
+        })
+      ).outcome,
+    ).toBe("removed");
+    expect(
+      activeSourcePassages((await readScientSourceRecord(input.root, input.sourceId))!),
+    ).toHaveLength(0);
+    expect(Buffer.byteLength(await NodeFSP.readFile(path, "utf8"))).toBeLessThan(limit);
+  });
+
+  it("serializes capture against material detach without saving an orphan", async () => {
+    const { input, command, attachment, record } = await passageFixture();
+    const [saved, detached] = await Promise.all([
+      mutateScientSourcePassage({ ...input, command }),
+      detachScientSourcePdf({
+        ...input,
+        attachmentId: attachment.attachmentId,
+        expectedRevision: record.revision,
+      }),
+    ]);
+    const reopened = (await readScientSourceRecord(input.root, input.sourceId))!;
+    if (saved.outcome === "saved") {
+      expect(detached.outcome).not.toBe("removed");
+      expect(reopened.attachments).toHaveLength(1);
+      expect(activeSourcePassages(reopened)).toHaveLength(1);
+    } else {
+      expect(saved.outcome).toBe("material-changed");
+      expect(detached.outcome).toBe("removed");
+      expect(activeSourcePassages(reopened)).toHaveLength(0);
+    }
+  });
+
+  it("protects source/material removal and cannot resurrect a deleted passage on retry", async () => {
+    const { input, command, attachment } = await passageFixture();
+    await mutateScientSourcePassage({ ...input, command });
+    let read = (await readScientSourceRecord(input.root, input.sourceId))!;
+    expect((await removeScientSource({ ...input, expectedRevision: read.revision })).outcome).toBe(
+      "has-passages",
+    );
+    expect(
+      (
+        await detachScientSourcePdf({
+          ...input,
+          attachmentId: attachment.attachmentId,
+          expectedRevision: read.revision,
+        })
+      ).outcome,
+    ).toBe("has-passages");
+    await mutateScientSourcePassage({
+      ...input,
+      command: { action: "remove", passageId: command.passageId, expectedRevision: 1 },
+    });
+    expect(
+      (await mutateScientSourcePassage({ ...input, command })).passage?.deletedAt,
+    ).not.toBeNull();
+    read = (await readScientSourceRecord(input.root, input.sourceId))!;
+    expect(activeSourcePassages(read)).toHaveLength(0);
+    expect(
+      (
+        await detachScientSourcePdf({
+          ...input,
+          attachmentId: attachment.attachmentId,
+          expectedRevision: read.revision,
+        })
+      ).outcome,
+    ).toBe("removed");
+  });
+
+  it("serializes 40 concurrent captures and independent note edits without lost writes", async () => {
+    const { input, command } = await passageFixture();
+    const saved = await Promise.all(
+      Array.from({ length: 40 }, (_, i) =>
+        mutateScientSourcePassage({ ...input, command: { ...command, passageId: `passage_${i}` } }),
+      ),
+    );
+    expect(saved.every((result) => result.outcome === "saved")).toBe(true);
+    await Promise.all(
+      saved.map((result, i) =>
+        mutateScientSourcePassage({
+          ...input,
+          command: {
+            action: "update",
+            passageId: result.passage!.passageId,
+            expectedRevision: 1,
+            note: `Note ${i}`,
+          },
+        }),
+      ),
+    );
+    const records = activeSourcePassages(
+      (await readScientSourceRecord(input.root, input.sourceId))!,
+    );
+    expect(records).toHaveLength(40);
+    expect(new Set(records.map((passage) => passage.note)).size).toBe(40);
+  });
+
+  it("verifies actual PDF bytes and refuses foreign project identity and malformed selectors", async () => {
+    const { input, command, attachment } = await passageFixture();
+    await expect(
+      mutateScientSourcePassage({ ...input, projectId: "foreign", command }),
+    ).rejects.toThrow("project changed");
+    const decode = Schema.decodeUnknownSync(ScientPassageCapture);
+    expect(() =>
+      decode({ ...command.capture, pages: [{ ...command.capture.pages[0], end: 10 }] }),
+    ).toThrow();
+    expect(() =>
+      decode({
+        ...command.capture,
+        pages: [{ ...command.capture.pages[0], rectangles: [[-100, 0, 40, 50]] }],
+      }),
+    ).toThrow();
+    await NodeFSP.writeFile(
+      sourceAttachmentAbsolutePath(input.root, attachment),
+      "%PDF-1.7\ntampered\n",
+    );
+    expect((await mutateScientSourcePassage({ ...input, command })).outcome).toBe(
+      "material-changed",
+    );
+    expect(
+      (await readScientSourceRecord(input.root, input.sourceId))?.savedPassages,
+    ).toBeUndefined();
+  });
+
+  it("preserves readable quotations and editable notes when a PDF goes missing", async () => {
+    const { input, command, attachment } = await passageFixture();
+    await mutateScientSourcePassage({ ...input, command });
+    await NodeFSP.unlink(sourceAttachmentAbsolutePath(input.root, attachment));
+    expect(
+      activeSourcePassages((await readScientSourceRecord(input.root, input.sourceId))!)[0]?.capture
+        .pages[0]?.quote,
+    ).toBe("A quote");
+    expect(
+      (
+        await mutateScientSourcePassage({
+          ...input,
+          command: {
+            action: "update",
+            passageId: command.passageId,
+            expectedRevision: 1,
+            note: "Still readable",
+          },
+        })
+      ).outcome,
+    ).toBe("updated");
+  });
+});
 
 async function writeSourceRecordFixture(input: {
   readonly root: string;

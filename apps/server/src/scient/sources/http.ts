@@ -6,6 +6,7 @@ import {
 import * as Effect from "effect/Effect";
 import * as HttpApiBuilder from "effect/unstable/httpapi/HttpApiBuilder";
 import * as Path from "effect/Path";
+import { mutateScientSourcePassage } from "@scientfactory/scient-sources/store";
 
 import {
   annotateEnvironmentRequest,
@@ -130,6 +131,11 @@ export const scientSourcesHttpApiLayer = HttpApiBuilder.group(
         .handle("updateMetadata", (args) =>
           handle(args.endpoint.name, AuthOrchestrationOperateScope, () =>
             updateScientSource(args.payload),
+          ),
+        )
+        .handle("passage", (args) =>
+          handle(args.endpoint.name, AuthOrchestrationOperateScope, () =>
+            mutateScientSourcePassage(args.payload),
           ),
         )
         .handle("updateNote", (args) =>

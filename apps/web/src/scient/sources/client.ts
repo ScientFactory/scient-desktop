@@ -1,5 +1,6 @@
 import {
   advanceEnvironmentScientSourcesImport,
+  mutateEnvironmentScientSourcePassage,
   beginEnvironmentLocalSourceImport,
   beginEnvironmentZoteroImport,
   beginEnvironmentZoteroScopedImport,
@@ -27,6 +28,7 @@ import type {
   ScientSourceMetadataRefreshRequest,
   ScientSourceMetadataUpdateRequest,
   ScientSourceNoteUpdateRequest,
+  ScientSourcePassageRequest,
   ScientSourceRemovalRequest,
   ZoteroImportScope,
 } from "@t3tools/contracts";
@@ -43,6 +45,15 @@ function prepared(environmentId: EnvironmentId) {
 export function readScientSources(environmentId: EnvironmentId, root: string) {
   return runtime.runPromise(
     getEnvironmentScientSourcesOverview({ prepared: prepared(environmentId), root }),
+  );
+}
+
+export function mutateScientSourcePassage(
+  environmentId: EnvironmentId,
+  input: ScientSourcePassageRequest,
+) {
+  return runtime.runPromise(
+    mutateEnvironmentScientSourcePassage({ prepared: prepared(environmentId), ...input }),
   );
 }
 

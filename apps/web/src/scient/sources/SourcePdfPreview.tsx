@@ -24,6 +24,7 @@ export function SourcePdfPreview(props: {
   readonly fileName: string;
   readonly root: string;
   readonly sourceId: string;
+  readonly onAskScient?: (context: string) => boolean;
 }) {
   const requestKey = `${props.environmentId}\0${props.root}\0${props.sourceId}\0${props.attachmentId}`;
   const [request, setRequest] = useState(0);
@@ -126,7 +127,17 @@ export function SourcePdfPreview(props: {
   }
   return (
     <Suspense fallback={null}>
-      <ScientPdfReader source={source} resolver={resolver} />
+      <ScientPdfReader
+        source={source}
+        resolver={resolver}
+        sourcePassages={{
+          environmentId: props.environmentId,
+          root: props.root,
+          sourceId: props.sourceId,
+          attachmentId: props.attachmentId,
+          ...(props.onAskScient ? { onAskScient: props.onAskScient } : {}),
+        }}
+      />
     </Suspense>
   );
 }

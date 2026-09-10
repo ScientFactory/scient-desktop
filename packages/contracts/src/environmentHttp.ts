@@ -72,6 +72,8 @@ import {
   ScientSourceMetadataUpdateRequest,
   ScientSourceMetadataUpdateResult,
   ScientSourceNoteUpdateRequest,
+  ScientSourcePassageRequest,
+  ScientPassageMutationResult,
   ScientSourceReviewUpdateRequest,
   ScientSourceNoteUpdateResult,
   ScientSourceReviewUpdateResult,
@@ -780,6 +782,12 @@ export class EnvironmentScientSourcesHttpApi extends HttpApiGroup.make("scientSo
     }).middleware(EnvironmentAuthenticatedAuth),
   )
   .add(
+    HttpApiEndpoint.post("passage", "/api/scient/sources/passage", {
+      headers: OptionalBearerHeaders,
+      payload: ScientSourcePassageRequest,
+      success: ScientPassageMutationResult,
+      error: EnvironmentHttpCommonError,
+    }).middleware(EnvironmentAuthenticatedAuth),
     HttpApiEndpoint.post("updateNote", "/api/scient/sources/note/update", {
       headers: OptionalBearerHeaders,
       payload: ScientSourceNoteUpdateRequest,
