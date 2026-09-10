@@ -2,6 +2,8 @@
 // @effect-diagnostics globalDate:off -- test uses process.hrtime for unique temp directories.
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
+import { HostProcessEnvironment, HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import { SpawnExecutableResolution } from "@t3tools/shared/shell";
 
 import {
   ComputeRuntimeError,
@@ -50,6 +52,78 @@ const profile: ComputeRuntimeProfile = {
   architecture: "arm64",
   displayName: "Python 3.12.0 (path)",
 };
+
+describe("Python filesystem inventory", () => {
+  it.effect("preserves managed selection and venv identity without spawning a probe", () =>
+    Effect.gen(function* () {
+      let available = true;
+      const adapter = makePythonRuntimeAdapter(() => Effect.never, "/bridge.py", {
+        managedRuntime: () =>
+          Effect.succeed({
+            executable: "/managed/venv/bin/python",
+            selected: true,
+            available,
+            version: "3.12.13",
+          }),
+      });
+      const request = {
+        projectRoot: null,
+        configuredExecutable: "/project/venv/bin/python",
+        refresh: true,
+      };
+      const first = yield* adapter.listInstallations!(request);
+      expect(first).toEqual([
+        {
+          executable: "/managed/venv/bin/python",
+          source: "managed",
+          version: "3.12.13",
+          problem: null,
+        },
+        {
+          executable: "/project/venv/bin/python",
+          source: "configured",
+          version: null,
+          problem: null,
+        },
+      ]);
+      available = false;
+      expect((yield* adapter.listInstallations!(request))[0]?.problem).toContain("repair");
+    }).pipe(
+      Effect.provideService(HostProcessPlatform, "darwin"),
+      Effect.provideService(HostProcessEnvironment, {}),
+      Effect.provideService(SpawnExecutableResolution, (command) =>
+        command.startsWith("/") ? command : undefined,
+      ),
+    ),
+  );
+
+  it.effect("shows a missing explicit executable without silently selecting PATH Python", () =>
+    Effect.gen(function* () {
+      const adapter = makePythonRuntimeAdapter(() => Effect.never, "/bridge.py");
+      expect(
+        yield* adapter.listInstallations!({
+          projectRoot: null,
+          configuredExecutable: "/missing/python",
+          refresh: true,
+        }),
+      ).toEqual([
+        {
+          executable: "/missing/python",
+          source: "configured",
+          version: null,
+          problem: expect.stringContaining("not found"),
+        },
+        { executable: "/usr/bin/python3", source: "path", version: null, problem: null },
+      ]);
+    }).pipe(
+      Effect.provideService(HostProcessPlatform, "darwin"),
+      Effect.provideService(HostProcessEnvironment, {}),
+      Effect.provideService(SpawnExecutableResolution, (command) =>
+        command === "python3" ? "/usr/bin/python3" : undefined,
+      ),
+    ),
+  );
+});
 
 describe("python probe parsing", () => {
   it("parses valid probe output", () => {

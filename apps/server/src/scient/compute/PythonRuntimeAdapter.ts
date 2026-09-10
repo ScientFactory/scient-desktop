@@ -1,5 +1,6 @@
 // @effect-diagnostics nodeBuiltinImport:off -- discovery checks .venv existence and resolves paths.
-import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import { HostProcessEnvironment, HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import { SpawnExecutableResolution } from "@t3tools/shared/shell";
 import * as Effect from "effect/Effect";
 import * as Clock from "effect/Clock";
 import * as Option from "effect/Option";
@@ -14,6 +15,7 @@ import {
   ComputeRuntimeError,
   ComputeRuntimeProfile,
   type ComputeRuntimePackage,
+  type ComputeRuntimeInstallation,
   ComputeRuntimeReadiness,
   ComputeRuntimeSource,
   ComputeRuntimeVerification,
@@ -415,6 +417,7 @@ export function makePythonRuntimeAdapter(
             readonly executable: string;
             readonly selected: boolean;
             readonly available?: boolean;
+            readonly version?: string;
           } | null,
           ComputeRuntimeError
         >)
@@ -594,6 +597,38 @@ export function makePythonRuntimeAdapter(
   return {
     languageId: PYTHON_LANGUAGE_ID,
     transportKind: JUPYTER_BRIDGE_TRANSPORT_KIND,
+    listInstallations: Effect.fn("PythonRuntimeAdapter.listInstallations")(function* (request) {
+      const platform = yield* HostProcessPlatform;
+      const environment = yield* HostProcessEnvironment;
+      const resolveExecutable = yield* SpawnExecutableResolution;
+      const managed = options.managedRuntime === undefined ? null : yield* options.managedRuntime();
+      const installations: ComputeRuntimeInstallation[] = [];
+      const seen = new Set<string>();
+      for (const candidate of discoverCandidates(
+        request.projectRoot,
+        request.configuredExecutable,
+        platform,
+        managed,
+      )) {
+        const resolved = resolveExecutable(candidate.executable, platform, environment);
+        if (resolved === undefined && candidate.source === "path") continue;
+        const executable = resolved ?? candidate.executable;
+        if (seen.has(executable)) continue;
+        seen.add(executable);
+        installations.push({
+          executable,
+          source: candidate.source,
+          version: candidate.source === "managed" ? (managed?.version ?? null) : null,
+          problem:
+            candidate.source === "managed" && managed?.available === false
+              ? "Scient-managed Python needs repair."
+              : resolved === undefined
+                ? "The selected Python executable was not found."
+                : null,
+        });
+      }
+      return installations;
+    }),
     discover,
     verify,
     prepareLaunch,

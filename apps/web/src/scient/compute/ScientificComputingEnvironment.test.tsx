@@ -10,6 +10,7 @@ const mocks = vi.hoisted(() => ({
   updateAtom: {},
   toggle: null as null | ((enabled: boolean) => void),
   known: true,
+  pending: false,
 }));
 vi.mock("~/state/environments", () => ({
   usePrimaryEnvironmentId: () => "local-server",
@@ -24,17 +25,21 @@ vi.mock("~/hooks/useSettings", () => ({
 vi.mock("~/state/server", () => ({ serverEnvironment: { updateSettings: mocks.updateAtom } }));
 vi.mock("~/state/compute", () => ({
   computeEnvironment: {
-    runtimes: (target: unknown) => {
+    runtimeInventory: (target: unknown) => {
       mocks.query(target);
       return {};
     },
-    refreshRuntimes: {},
+    refreshRuntimeInventory: {},
+    managedRuntime: () => null,
+    verifyRuntime: {},
+    manageRuntime: {},
+    cancelManagedRuntime: {},
   },
 }));
 vi.mock("~/state/query", () => ({
   useEnvironmentQuery: (atom: unknown) => ({
     data:
-      atom === null
+      atom === null || mocks.pending
         ? undefined
         : {
             languages: [
@@ -49,17 +54,24 @@ vi.mock("~/state/query", () => ({
                 configuredExecutable: null,
                 managedRuntime: null,
                 toolkits: [],
-                runtimes: [],
+                installations: [],
+                failureMessage: null,
               },
             ],
           },
-    isPending: false,
+    isPending: mocks.pending,
     error: null,
     refresh: vi.fn(),
   }),
 }));
 vi.mock("~/state/use-atom-command", () => ({
   useAtomCommand: (atom: unknown) => (atom === mocks.updateAtom ? mocks.updateSettings : vi.fn()),
+}));
+vi.mock("~/components/ui/switch", () => ({
+  Switch: ({ onCheckedChange }: { onCheckedChange: (enabled: boolean) => void }) => {
+    mocks.toggle = onCheckedChange;
+    return <button type="button">Toggle</button>;
+  },
 }));
 vi.mock("~/components/settings/settingsLayout", () => ({
   SettingsPageContainer: ({ children }: { children: ReactNode }) => <div>{children}</div>,
@@ -91,6 +103,7 @@ describe("Scientific Computing environment ownership", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mocks.known = true;
+    mocks.pending = false;
     mocks.toggle = null;
     mocks.updateSettings.mockResolvedValue({ _tag: "Success", value: null });
   });
@@ -115,14 +128,24 @@ describe("Scientific Computing environment ownership", () => {
     });
     expect(mocks.query).toHaveBeenCalledWith({
       environmentId: "remote-server",
-      input: { cwd: null, refresh: false },
+      input: {},
     });
     expect(mocks.readSettings).not.toHaveBeenCalledWith("local-server");
   });
 
   it("uses the primary environment only when none was requested", () => {
-    renderToStaticMarkup(<ScientificComputingSettings />);
+    const markup = renderToStaticMarkup(<ScientificComputingSettings />);
     expect(mocks.readSettings).toHaveBeenCalledWith("local-server");
+    expect(markup).toContain("More scientific tools are coming soon");
+  });
+
+  it("renders truthful language cards while the inventory is loading", () => {
+    mocks.pending = true;
+    const markup = renderToStaticMarkup(<ScientificComputingSettings />);
+    expect(markup).toContain("Python");
+    expect(markup).toContain("MATLAB");
+    expect(markup).toContain("Checking…");
+    expect(markup).not.toContain("Not detected");
   });
 
   it("does not fall back to local settings when the requested server is missing", () => {

@@ -97,6 +97,16 @@ function computeStub(overrides: Partial<GatewayCompute> = {}): GatewayCompute {
   };
   return {
     runtimeDescriptors: [DESCRIPTOR],
+    runtimeInventory: () =>
+      Effect.succeed([
+        {
+          descriptor: DESCRIPTOR,
+          managedRuntime,
+          toolkits: [],
+          installations: [],
+          failureMessage: null,
+        },
+      ]),
     inspectRuntimes: (input) =>
       Effect.succeed([
         {
@@ -178,6 +188,37 @@ const project = Effect.gen(function* () {
 });
 
 describe("compute RPC gateway", () => {
+  it.effect("reads inventory preferences without inspecting or verifying runtimes", () =>
+    Effect.gen(function* () {
+      let enabled: ReadonlySet<unknown> = new Set();
+      const gateway = makeComputeRpcGateway({
+        compute: computeStub({
+          runtimeInventory: (input) => {
+            enabled = input.enabledLanguageIds;
+            return Effect.succeed([
+              {
+                descriptor: DESCRIPTOR,
+                managedRuntime: null,
+                toolkits: [],
+                installations: [],
+                failureMessage: null,
+              },
+            ]);
+          },
+          inspectRuntimes: () => Effect.die("Settings must not inspect runtimes"),
+          verifyRuntime: () => Effect.die("Settings must not verify runtimes"),
+        }),
+        serverSettings: { getSettings: Effect.succeed(DEFAULT_SERVER_SETTINGS) },
+        workspaceFileSystem: workspace(),
+      });
+      expect((yield* gateway.runtimeInventory()).languages[0]).toMatchObject({
+        enabled: false,
+        configuredExecutable: null,
+        installations: [],
+      });
+      expect(enabled.size).toBe(0);
+    }),
+  );
   it.effect("does not inspect or start a language the user left disabled", () =>
     Effect.gen(function* () {
       const initialized = yield* project;

@@ -80,6 +80,37 @@ The older analysis service also keys its cached profile by the current canonical
 executable preference. Failed inspection of a newly selected path cannot reuse or
 relabel the previous profile, and late verification cannot overwrite a newer choice.
 
+### Settings inventory versus execution checks
+
+Settings uses the read-only `compute.runtimeInventory` RPC. Each language adapter's
+optional `listInstallations` operation reads executable paths and installation
+metadata only: Python preserves the lexical virtual-environment launcher and reads
+the managed receipt; MATLAB reads its installation's `VersionInfo.xml`. Neither
+operation starts a process, imports MATLAB Engine, assesses packages, or claims
+execution readiness. Adapters without this operation still return their language
+metadata; there is no fallback to expensive discovery.
+
+The service lists independent languages with bounded concurrency and retains each
+language row when its own inventory fails. The environment-scoped client retains
+recent observations for one minute while idle, revalidates on return, and invalidates
+on settings/lifecycle changes. It polls only during an active managed operation and
+stops polling when Settings is no longer observed. Refresh awaits one fresh inventory
+request; it does not request an Engine/native check.
+
+Explicit Verify connection and Run keep the existing full discovery/verification
+and native transport boundaries. The original runtime-inspection API remains for
+project/file surfaces that need package readiness. Inventory is never an admission
+decision: stale observations cannot permit execution, helper removal, or replacement
+of the selected runtime. MATLAB probe successes and failures share a bounded short
+cache to avoid a duplicate import at discover-to-verify; explicit refresh bypasses
+it, cancellation is not cached, and helper invalidation prevents in-flight results
+from repopulating the old cache.
+
+Regression coverage holds process operations indefinitely while exercising inventory,
+removes/reinstalls synthetic runtimes, checks malformed metadata, independent-language
+failure isolation, cached return-to-Settings, refresh deduplication and polling cleanup.
+Native MATLAB/Python product tests remain separate execution-regression gates.
+
 ### Qualification and next boundary
 
 Backend coverage includes isolation between both environment roots, failed repair

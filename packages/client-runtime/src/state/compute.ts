@@ -15,11 +15,12 @@ import {
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Stream from "effect/Stream";
-import { AsyncResult, Atom } from "effect/unstable/reactivity";
+import { AsyncResult, Atom, AtomRegistry } from "effect/unstable/reactivity";
 
 import type { EnvironmentRegistry } from "../connection/registry.ts";
 import {
   createAtomCommandScheduler,
+  createEnvironmentCommand,
   createEnvironmentRpcCommand,
   createEnvironmentRpcQueryAtomFamily,
   createEnvironmentRpcSubscriptionAtomFamily,
@@ -29,10 +30,17 @@ import {
 export function withManagedRuntimePolling<A extends ComputeManagedRuntimeStatus | null, E>(
   source: Atom.Atom<AsyncResult.AsyncResult<A, E>>,
 ) {
+  return withActiveOperationPolling(source, (status) => status?.operation != null);
+}
+
+function withActiveOperationPolling<A, E>(
+  source: Atom.Atom<AsyncResult.AsyncResult<A, E>>,
+  active: (value: A) => boolean,
+) {
   const polling = source.pipe(Atom.withRefresh("1 second"), Atom.setIdleTTL(0));
   return Atom.transform(source, (get) => {
     const result = get(source);
-    return result._tag === "Success" && !result.waiting && result.value?.operation
+    return result._tag === "Success" && !result.waiting && active(result.value)
       ? get(polling)
       : result;
   }).pipe(Atom.setIdleTTL(0));
@@ -336,7 +344,51 @@ export function createComputeEnvironmentAtoms<R, E>(
   });
   const runtimes = (target: InspectionTarget) => runtimesFamily(JSON.stringify(target));
 
+  // Settings keeps recent filesystem observations, never an execution-readiness
+  // promise. Revalidation on mount and identity changes is cheap and process-free.
+  const inventoryQuery = createEnvironmentRpcQueryAtomFamily(runtime, {
+    label: "environment-data:compute:runtime-inventory",
+    tag: WS_METHODS.computeRuntimeInventory,
+    staleTimeMs: 0,
+    idleTtlMs: 60_000,
+  });
+  type InventoryTarget = Parameters<typeof inventoryQuery>[0];
+  const inventoryFamily = Atom.family((key: string) => {
+    const target = JSON.parse(key) as InventoryTarget;
+    const invalidation = Atom.make((get) =>
+      JSON.stringify([
+        get(revision(target.environmentId)),
+        settings === undefined ? null : get(settings(target.environmentId)),
+      ]),
+    );
+    return withActiveOperationPolling(
+      inventoryQuery(target).pipe(
+        Atom.makeRefreshOnSignal(invalidation),
+        Atom.swr({ staleTime: 0, revalidateOnMount: true }),
+        Atom.setIdleTTL(0),
+      ),
+      (inventory) =>
+        inventory.languages.some((language) => language.managedRuntime?.operation != null),
+    );
+  });
+  const runtimeInventory = (target: InventoryTarget) => inventoryFamily(JSON.stringify(target));
+
   return {
+    runtimeInventory,
+    refreshRuntimeInventory: createEnvironmentCommand(runtime, {
+      label: "environment-data:compute:refresh-runtime-inventory",
+      scheduler: runtimeScheduler,
+      concurrency: {
+        mode: "singleFlight",
+        key: ({ environmentId }: InventoryTarget) => environmentId,
+      },
+      execute: (_input: InventoryTarget["input"], registry, environmentId) =>
+        Effect.gen(function* () {
+          const query = runtimeInventory({ environmentId, input: {} });
+          registry.refresh(query);
+          return yield* AtomRegistry.getResult(registry, query, { suspendOnWaiting: true });
+        }),
+    }),
     runtimes,
     refreshRuntimes: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:compute:refresh-runtimes",

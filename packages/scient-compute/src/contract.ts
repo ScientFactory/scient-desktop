@@ -568,6 +568,15 @@ export const ComputeRuntimeProfile = Schema.Struct({
 });
 export type ComputeRuntimeProfile = typeof ComputeRuntimeProfile.Type;
 
+/** Filesystem observation only. Presence is not execution or package readiness. */
+export const ComputeRuntimeInstallation = Schema.Struct({
+  executable: Schema.NonEmptyString.check(Schema.isMaxLength(4096)),
+  source: ComputeRuntimeSource,
+  version: Schema.NullOr(Label),
+  problem: Schema.NullOr(ShortText),
+});
+export type ComputeRuntimeInstallation = typeof ComputeRuntimeInstallation.Type;
+
 export const ComputeRuntimeReadiness = Schema.Literals([
   "ready",
   "missing-requirement",
@@ -673,6 +682,10 @@ export class ComputeRuntimeError extends Schema.TaggedError<ComputeRuntimeError>
 export interface ComputeLanguageAdapter {
   readonly languageId: ComputeLanguageId;
   readonly transportKind: ComputeTransportKind;
+  /** Settings discovery must not spawn a runtime or import its execution bridge. */
+  readonly listInstallations?: (
+    request: ComputeDiscoveryRequest,
+  ) => Effect.Effect<ReadonlyArray<ComputeRuntimeInstallation>, ComputeRuntimeError>;
   readonly discover: (
     request: ComputeDiscoveryRequest,
   ) => Effect.Effect<ReadonlyArray<ComputeRuntimeProfile>, ComputeRuntimeError>;

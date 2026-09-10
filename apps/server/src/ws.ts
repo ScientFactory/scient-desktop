@@ -2901,6 +2901,10 @@ const makeWsRpcLayer = (
             computeGateway.inspectRuntimes(input),
             { "rpc.aggregate": "compute" },
           ),
+        [WS_METHODS.computeRuntimeInventory]: () =>
+          observeRpcEffect(WS_METHODS.computeRuntimeInventory, computeGateway.runtimeInventory(), {
+            "rpc.aggregate": "compute",
+          }),
         [WS_METHODS.computeVerifyRuntime]: (input) =>
           observeRpcEffect(WS_METHODS.computeVerifyRuntime, computeGateway.verifyRuntime(input), {
             "rpc.aggregate": "compute",

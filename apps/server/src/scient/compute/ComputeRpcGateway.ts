@@ -35,6 +35,7 @@ import type { ComputeSessionService } from "./ComputeSessionService.ts";
 type ComputeGatewayService = Pick<
   ComputeSessionService["Service"],
   | "runtimeDescriptors"
+  | "runtimeInventory"
   | "inspectRuntimes"
   | "verifyRuntime"
   | "managedRuntimeStatus"
@@ -156,6 +157,31 @@ export function makeComputeRpcGateway(input: {
       );
     }
     return { descriptor, preference };
+  });
+
+  const runtimeInventory = Effect.fn("ComputeRpcGateway.runtimeInventory")(function* () {
+    const settings = yield* readSettings("inspect");
+    const preferences = Object.fromEntries(
+      input.compute.runtimeDescriptors.map((descriptor) => [
+        descriptor.languageId,
+        languageSettings(settings, descriptor.languageId),
+      ]),
+    );
+    const languages = yield* input.compute.runtimeInventory({
+      configuredExecutables: Object.fromEntries(
+        Object.entries(preferences).map(([id, preference]) => [id, preference.executable || null]),
+      ),
+      enabledLanguageIds: new Set(
+        Object.entries(preferences).flatMap(([id, preference]) => (preference.enabled ? [id] : [])),
+      ),
+    });
+    return {
+      languages: languages.map((language) => ({
+        ...language,
+        enabled: preferences[language.descriptor.languageId]?.enabled ?? false,
+        configuredExecutable: preferences[language.descriptor.languageId]?.executable || null,
+      })),
+    };
   });
 
   const inspectRuntimes = Effect.fn("ComputeRpcGateway.inspectRuntimes")(function* (
@@ -374,6 +400,7 @@ export function makeComputeRpcGateway(input: {
   });
 
   return {
+    runtimeInventory,
     inspectRuntimes,
     verifyRuntime,
     managedRuntimeStatus,

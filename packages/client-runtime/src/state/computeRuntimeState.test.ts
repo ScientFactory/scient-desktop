@@ -6,6 +6,7 @@ import {
   WS_METHODS,
   type ComputeManagedRuntimeStatus,
   type ComputeRuntimeInspection,
+  type ComputeRuntimeInventory,
   type ScientificComputingSettings,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
@@ -54,6 +55,8 @@ const operation = {
 const harness = Effect.gen(function* () {
   let status = initialStatus;
   let statusAvailable = true;
+  let inventoryReads = 0;
+  let inventoryWait: Effect.Effect<void> = Effect.void;
   const inspected: Array<{ environmentId: string; cwd: string | null }> = [];
   const statusTarget = { environmentId: ENV, input: { languageId: PYTHON } };
   const supervisor = EnvironmentSupervisor.of({
@@ -74,6 +77,29 @@ const harness = Effect.gen(function* () {
     session: yield* SubscriptionRef.make<Option.Option<RpcSession>>(
       Option.some({
         client: {
+          [WS_METHODS.computeRuntimeInventory]: () =>
+            Effect.gen(function* () {
+              inventoryReads += 1;
+              yield* inventoryWait;
+              return {
+                languages: [
+                  {
+                    descriptor: {
+                      languageId: PYTHON,
+                      displayName: "Python",
+                      sourceExtensions: [".py"],
+                      capabilities: [],
+                    },
+                    enabled: true,
+                    configuredExecutable: null,
+                    managedRuntime: status,
+                    toolkits: [],
+                    installations: [],
+                    failureMessage: null,
+                  },
+                ],
+              } satisfies ComputeRuntimeInventory;
+            }),
           [WS_METHODS.computeManagedRuntimeStatus]: () =>
             statusAvailable
               ? Effect.succeed(status)
@@ -164,6 +190,10 @@ const harness = Effect.gen(function* () {
     read,
     observeStatus,
     inspected,
+    inventoryReads: () => inventoryReads,
+    setInventoryWait: (value: Effect.Effect<void>) => {
+      inventoryWait = value;
+    },
     setStatus: (value: ComputeManagedRuntimeStatus) => {
       status = value;
     },
@@ -174,6 +204,131 @@ const harness = Effect.gen(function* () {
 });
 
 describe("shared compute runtime transitions", () => {
+  it.live(
+    "polls active inventory operations, then stops after completion or leaving Settings",
+    () =>
+      Effect.gen(function* () {
+        vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+        const h = yield* harness;
+        try {
+          h.setStatus({ ...initialStatus, operation });
+          const query = h.atoms.runtimeInventory({ environmentId: ENV, input: {} });
+          const unmount = h.registry.mount(query);
+          yield* h.read(query);
+          const first = h.inventoryReads();
+          yield* Effect.promise(() => vi.advanceTimersByTimeAsync(1_000));
+          yield* h.read(query);
+          expect(h.inventoryReads()).toBeGreaterThan(first);
+          h.setStatus({ ...initialStatus, installed: true, operation: null });
+          yield* Effect.promise(() => vi.advanceTimersByTimeAsync(1_000));
+          expect((yield* h.read(query)).languages[0]?.managedRuntime?.installed).toBe(true);
+          const settled = h.inventoryReads();
+          yield* Effect.promise(() => vi.advanceTimersByTimeAsync(5_000));
+          expect(h.inventoryReads()).toBe(settled);
+          h.setStatus({ ...initialStatus, operation });
+          h.registry.refresh(query);
+          yield* h.read(query);
+          const beforeLeave = h.inventoryReads();
+          unmount();
+          yield* Effect.promise(() => vi.advanceTimersByTimeAsync(5_000));
+          expect(h.inventoryReads()).toBe(beforeLeave);
+        } finally {
+          h.registry.dispose();
+          vi.useRealTimers();
+        }
+      }),
+  );
+  it.live("loads Settings inventory without a preliminary status request or runtime probe", () =>
+    Effect.gen(function* () {
+      const h = yield* harness;
+      try {
+        h.setStatusAvailable(false);
+        const query = h.atoms.runtimeInventory({ environmentId: ENV, input: {} });
+        const unmount = h.registry.mount(query);
+        expect((yield* h.read(query)).languages).toHaveLength(1);
+        expect(h.inventoryReads()).toBe(1);
+        expect(h.inspected).toEqual([]);
+        const before = h.inventoryReads();
+        yield* Effect.promise(() =>
+          Promise.all([
+            h.atoms.refreshRuntimeInventory.run(h.registry, { environmentId: ENV, input: {} }),
+            h.atoms.refreshRuntimeInventory.run(h.registry, { environmentId: ENV, input: {} }),
+          ]),
+        );
+        expect(h.inventoryReads()).toBe(before + 1);
+        unmount();
+      } finally {
+        h.registry.dispose();
+      }
+    }),
+  );
+
+  it.live("keeps the last inventory visible while rechecking on a quick return to Settings", () =>
+    Effect.gen(function* () {
+      const h = yield* harness;
+      try {
+        const query = h.atoms.runtimeInventory({ environmentId: ENV, input: {} });
+        const unmount = h.registry.mount(query);
+        yield* h.read(query);
+        unmount();
+        yield* Effect.yieldNow;
+        h.setInventoryWait(Effect.never);
+        const remount = h.registry.mount(query);
+        yield* Effect.yieldNow;
+        const value = h.registry.get(query);
+        expect(value._tag).toBe("Success");
+        expect(value.waiting).toBe(true);
+        expect(h.inventoryReads()).toBe(2);
+        expect(h.inspected).toEqual([]);
+        remount();
+      } finally {
+        h.registry.dispose();
+      }
+    }),
+  );
+
+  it.live(
+    "invalidates inventory on settings and managed operations only for the affected server",
+    () =>
+      Effect.gen(function* () {
+        const h = yield* harness;
+        try {
+          const query = h.atoms.runtimeInventory({ environmentId: ENV, input: {} });
+          const other = h.atoms.runtimeInventory({
+            environmentId: EnvironmentId.make("other-server"),
+            input: {},
+          });
+          const unmount = h.registry.mount(query);
+          const unmountOther = h.registry.mount(other);
+          yield* h.read(query);
+          const otherBefore = yield* h.read(other);
+          let count = h.inventoryReads();
+          h.registry.set(h.settings, {
+            schemaVersion: 1,
+            languages: { [PYTHON]: { enabled: true, executable: "/new/python" } },
+          });
+          yield* h.read(query);
+          expect(h.inventoryReads()).toBeGreaterThan(count);
+          yield* h.read(other);
+          count = h.inventoryReads();
+          yield* Effect.promise(() =>
+            h.atoms.manageRuntime.run(h.registry, {
+              environmentId: ENV,
+              input: { languageId: PYTHON, action: "install" },
+            }),
+          );
+          expect((yield* h.read(query)).languages[0]?.managedRuntime?.operation).not.toBeNull();
+          expect(h.inventoryReads()).toBe(count + 1);
+          expect((yield* h.read(other)).languages[0]?.managedRuntime).toEqual(
+            otherBefore.languages[0]?.managedRuntime,
+          );
+          unmount();
+          unmountOther();
+        } finally {
+          h.registry.dispose();
+        }
+      }),
+  );
   it.live(
     "keeps ordinary discovery working when managed status fails and recovers on refresh",
     () =>

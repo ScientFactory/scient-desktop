@@ -14,6 +14,7 @@ import {
   sameComputeRepresentationBundle,
   selectComputeRepresentation,
   ComputeRuntimeProfile,
+  ComputeRuntimeInstallation,
   ComputeRuntimeVerification,
   ComputeSessionGeneration,
   ComputeSessionId,
@@ -76,6 +77,23 @@ export const ComputeRuntimeInspection = Schema.Struct({
   languages: Schema.Array(ComputeLanguageRuntimeInspection).check(Schema.isMaxLength(32)),
 });
 export type ComputeRuntimeInspection = typeof ComputeRuntimeInspection.Type;
+
+/** Cheap Settings data, deliberately separate from runnable candidates. */
+export const ComputeLanguageRuntimeInventory = Schema.Struct({
+  descriptor: ComputeLanguageDescriptor,
+  enabled: Schema.Boolean,
+  configuredExecutable: Schema.NullOr(ComputeExecutable),
+  managedRuntime: Schema.NullOr(ComputeManagedRuntimeStatus),
+  toolkits: Schema.Array(ComputeToolkitDescriptor).check(Schema.isMaxLength(64)),
+  installations: Schema.Array(ComputeRuntimeInstallation).check(Schema.isMaxLength(64)),
+  failureMessage: Schema.NullOr(Schema.String.check(Schema.isMaxLength(4096))),
+});
+export type ComputeLanguageRuntimeInventory = typeof ComputeLanguageRuntimeInventory.Type;
+
+export const ComputeRuntimeInventory = Schema.Struct({
+  languages: Schema.Array(ComputeLanguageRuntimeInventory).check(Schema.isMaxLength(32)),
+});
+export type ComputeRuntimeInventory = typeof ComputeRuntimeInventory.Type;
 
 export class ComputeGatewayError extends Schema.TaggedError<ComputeGatewayError>()(
   "ComputeGatewayError",

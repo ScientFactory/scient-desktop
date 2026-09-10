@@ -35,7 +35,7 @@ import {
   MATLAB_LANGUAGE_ID,
   makeMatlabRuntimeAdapter,
   matlabEngineDirectory,
-  matlabInstallationRoot,
+  readMatlabInstallation,
   type MatlabEngineProbeResult,
 } from "./MatlabRuntimeAdapter.ts";
 import {
@@ -134,15 +134,6 @@ function parseHostProbe(value: string): HostProbeResult {
   return decodeHostProbe(JSON.parse(value.trim()));
 }
 
-function parseVersionInfo(value: string): { readonly release: string; readonly version: string } {
-  const release = /<release>([^<]+)<\/release>/u.exec(value)?.[1]?.trim();
-  const version = /<version>([^<]+)<\/version>/u.exec(value)?.[1]?.trim();
-  if (release === undefined || version === undefined) {
-    throw new Error("MATLAB VersionInfo.xml did not contain a release and version.");
-  }
-  return { release, version };
-}
-
 function matlabArchitecture(engineDirectory: string): string | null {
   try {
     const entries = NodePath.join(engineDirectory, "matlab", "engine");
@@ -237,20 +228,9 @@ export const makeMatlabEngineInspector = Effect.fn("makeMatlabEngineInspector")(
   return Effect.fn("inspectMatlabEngine")(function* (
     executable: string,
   ): Effect.fn.Return<MatlabEngineProbeResult, ComputeRuntimeError> {
-    if (!NodePath.isAbsolute(executable)) {
-      return yield* runtimeError("The MATLAB executable path must be absolute.");
-    }
-    const resolved = yield* Effect.tryPromise({
-      try: () => NodeFSP.realpath(executable),
-      catch: (cause) => runtimeError(`MATLAB executable '${executable}' was not found.`, cause),
-    });
-    const stat = yield* Effect.tryPromise({
-      try: () => NodeFSP.stat(resolved, { bigint: true }),
-      catch: (cause) => runtimeError(`MATLAB executable '${resolved}' could not be read.`, cause),
-    });
-    if (!stat.isFile())
-      return yield* runtimeError(`MATLAB executable '${resolved}' is not a file.`);
-    const installationRoot = matlabInstallationRoot(resolved);
+    const installation = yield* readMatlabInstallation(executable);
+    const resolved = installation.executableRealpath;
+    const installationRoot = installation.installationRoot;
     const managed = managedHost === undefined ? null : yield* managedHost(installationRoot);
     const bundledDirectory = matlabEngineDirectory(resolved);
     const selectedEngineDirectory = yield* Effect.tryPromise({
@@ -263,14 +243,6 @@ export const makeMatlabEngineInspector = Effect.fn("makeMatlabEngineInspector")(
     }).pipe(
       Effect.catch((cause) => (managed === null ? Effect.succeed(null) : Effect.fail(cause))),
     );
-    const versionInfo = yield* Effect.tryPromise({
-      try: () => NodeFSP.readFile(NodePath.join(installationRoot, "VersionInfo.xml"), "utf8"),
-      catch: (cause) => runtimeError("MATLAB VersionInfo.xml could not be read.", cause),
-    });
-    const version = yield* Effect.try({
-      try: () => parseVersionInfo(versionInfo),
-      catch: (cause) => runtimeError("MATLAB version information was malformed.", cause),
-    });
     // Import behavior is authoritative: newer releases can bundle a working
     // Engine without _arch.txt, while older source distributions need an
     // installed Engine. Never fall back away from an explicitly selected helper.
@@ -312,10 +284,10 @@ export const makeMatlabEngineInspector = Effect.fn("makeMatlabEngineInspector")(
     return {
       executable,
       executableRealpath: resolved,
-      executableMtimeNs: stat.mtimeNs.toString(),
+      executableMtimeNs: installation.executableMtimeNs,
       installationRoot,
-      release: version.release,
-      version: version.version,
+      release: installation.release,
+      version: installation.version,
       architecture: matlabArchitecture(engineDirectory),
       engineDirectory,
       hostExecutable: host.hostExecutable,

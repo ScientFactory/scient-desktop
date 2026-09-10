@@ -1,6 +1,18 @@
-import { Download, LoaderCircle, RefreshCwIcon, SigmaIcon, Trash2, Wrench } from "lucide-react";
+import {
+  CheckIcon,
+  ChevronDownIcon,
+  CopyIcon,
+  Download,
+  ExternalLinkIcon,
+  LoaderCircle,
+  RefreshCwIcon,
+  SigmaIcon,
+  Trash2,
+  Wrench,
+} from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import type {
+  ComputeLanguageRuntimeInventory,
   ComputeLanguageRuntimeInspection,
   ComputeManagedRuntimeAction,
   ComputeManagedRuntimeStatus,
@@ -8,6 +20,7 @@ import type {
   EnvironmentId,
   ScientificComputingLanguageSettings,
 } from "@t3tools/contracts";
+import { ComputeLanguageId } from "@t3tools/contracts";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 
 import { useEnvironmentSettings } from "~/hooks/useSettings";
@@ -16,6 +29,8 @@ import { useEnvironment, usePrimaryEnvironmentId } from "~/state/environments";
 import { useEnvironmentQuery } from "~/state/query";
 import { computeEnvironment } from "~/state/compute";
 import { useAtomCommand } from "~/state/use-atom-command";
+import { useCopyToClipboard } from "~/hooks/useCopyToClipboard";
+import { cn } from "~/lib/utils";
 import { Button } from "~/components/ui/button";
 import {
   AlertDialog,
@@ -28,24 +43,77 @@ import {
 } from "~/components/ui/alert-dialog";
 import { Input } from "~/components/ui/input";
 import { Switch } from "~/components/ui/switch";
-import {
-  SettingsPageContainer,
-  SettingsRow,
-  SettingsSection,
-} from "~/components/settings/settingsLayout";
+import { Collapsible, CollapsiblePanel, CollapsibleTrigger } from "~/components/ui/collapsible";
+import { Tooltip, TooltipPopup, TooltipTrigger } from "~/components/ui/tooltip";
+import { SettingsPageContainer, SettingsSection } from "~/components/settings/settingsLayout";
 
-function readinessLabel(language: ComputeLanguageRuntimeInspection, enabled: boolean): string {
+export function inventoryStatusLabel(
+  language: ComputeLanguageRuntimeInventory,
+  enabled: boolean,
+  verificationState: {
+    pending: boolean;
+    result: ComputeRuntimeVerification | null;
+    error: string | null;
+  } | null,
+  selectedProblem: string | null = null,
+): string {
   if (!enabled) return "Disabled";
-  if (language.runtimes.length === 0) return "No compatible runtime detected";
-  const ready = language.runtimes.filter(
-    (candidate) => candidate.verification.readiness === "ready",
-  ).length;
-  if (language.runtimes.some(({ verification }) => verification.connection === "detected")) {
-    return `${language.runtimes.length} installation${language.runtimes.length === 1 ? "" : "s"} detected`;
+  if (verificationState?.pending) return "Verifying…";
+  if (verificationState?.error || language.failureMessage || selectedProblem) {
+    return "Needs attention";
   }
-  return ready > 0
-    ? `${ready} ready runtime${ready === 1 ? "" : "s"}`
-    : "Runtime requirements are missing";
+  if (verificationState?.result?.connection === "verified") return "Verified";
+  if (language.installations.length === 0) return "Not detected";
+  if (language.installations.every((installation) => installation.problem !== null)) {
+    return "Needs attention";
+  }
+  return language.installations.length === 1
+    ? "Detected"
+    : `${language.installations.length} detected`;
+}
+
+function runtimeSourceLabel(source: string): string {
+  switch (source) {
+    case "managed":
+      return "Scient-managed";
+    case "configured":
+      return "Custom runtime";
+    case "project":
+      return "Project environment";
+    case "path":
+    case "conventional":
+      return "System installation";
+    default:
+      return source;
+  }
+}
+
+function RuntimePath({ value }: { readonly value: string }) {
+  const { copyToClipboard, isCopied } = useCopyToClipboard({
+    target: "runtime path",
+    timeout: 1600,
+  });
+  return (
+    <div className="group/runtime-path mt-1 flex min-w-0 items-center gap-0.5">
+      <code className="min-w-0 truncate text-[11px] text-muted-foreground">{value}</code>
+      <Tooltip>
+        <TooltipTrigger
+          render={
+            <Button
+              size="icon-micro"
+              variant="ghost-muted"
+              className="shrink-0 text-muted-foreground opacity-0 transition-opacity group-hover/runtime-path:opacity-70 focus-visible:opacity-100"
+              aria-label={isCopied ? "Runtime path copied" : "Copy runtime path"}
+              onClick={() => copyToClipboard(value)}
+            >
+              {isCopied ? <CheckIcon className="size-3" /> : <CopyIcon className="size-3" />}
+            </Button>
+          }
+        />
+        <TooltipPopup side="top">{isCopied ? "Copied" : "Copy path"}</TooltipPopup>
+      </Tooltip>
+    </div>
+  );
 }
 
 export function managedRuntimeOperationLabel(status: ComputeManagedRuntimeStatus): string | null {
@@ -77,9 +145,12 @@ export function managedRuntimeOperationLabel(status: ComputeManagedRuntimeStatus
 
 export function ManagedRuntimeCard(props: {
   readonly environmentId: EnvironmentId | null;
-  readonly language: ComputeLanguageRuntimeInspection;
+  readonly language: ComputeLanguageRuntimeInspection | ComputeLanguageRuntimeInventory;
   readonly enabled: boolean;
   readonly ensureEnabled: () => Promise<boolean>;
+  readonly embedded?: boolean;
+  readonly selected?: boolean;
+  readonly separated?: boolean;
 }) {
   const manageRuntime = useAtomCommand(computeEnvironment.manageRuntime, { reportFailure: false });
   const cancelRuntime = useAtomCommand(computeEnvironment.cancelManagedRuntime, {
@@ -147,50 +218,77 @@ export function ManagedRuntimeCard(props: {
   };
 
   const working = status.operation !== null || actionPending || queried.isPending;
-  const existingRuntimeReady = props.language.runtimes.some(
-    ({ profile, verification }) =>
-      profile.source !== "managed" && verification.readiness === "ready",
-  );
+  const existingRuntimeReady =
+    "runtimes" in props.language
+      ? props.language.runtimes.some(
+          ({ profile, verification }) =>
+            profile.source !== "managed" && verification.readiness === "ready",
+        )
+      : props.language.installations.some(
+          (installation) => installation.source !== "managed" && installation.problem === null,
+        );
   const progress = managedRuntimeOperationLabel(status);
   const failure = localFailure ?? queried.error ?? status.failureMessage;
-  const managedCandidate = props.language.runtimes.find(
-    ({ profile }) => profile.source === "managed",
-  );
+  const managedCandidate =
+    "runtimes" in props.language
+      ? props.language.runtimes.find(({ profile }) => profile.source === "managed")
+      : props.language.installations.find((installation) => installation.source === "managed");
+  const managedExecutable =
+    managedCandidate === undefined
+      ? null
+      : "profile" in managedCandidate
+        ? managedCandidate.profile.executable
+        : managedCandidate.executable;
   const needsRepair =
-    (managedCandidate !== undefined && managedCandidate.verification.readiness !== "ready") ||
+    (managedCandidate !== undefined &&
+      ("verification" in managedCandidate
+        ? managedCandidate.verification.readiness !== "ready"
+        : managedCandidate.problem !== null)) ||
     (status.installed && status.selection === "managed" && status.failureMessage !== null);
 
   return (
     <>
-      <div className="@container/managed-runtime mt-3 rounded-lg border border-border/60 bg-muted/20 p-3">
+      <div
+        className={cn(
+          "@container/managed-runtime",
+          props.embedded
+            ? cn("py-3", props.separated && "border-t border-border/50")
+            : "mt-3 rounded-lg border border-border/60 bg-muted/20 p-3",
+        )}
+      >
         <div className="flex flex-col gap-3 @[32rem]/managed-runtime:flex-row @[32rem]/managed-runtime:items-start @[32rem]/managed-runtime:justify-between">
           <div className="min-w-0">
-            <div className="flex items-center gap-2 text-sm font-medium">
-              {displayName}
-              {status.installed ? (
-                <span
-                  className={`text-[11px] font-normal ${needsRepair ? "text-warning" : "text-success"}`}
-                >
-                  {needsRepair
-                    ? "Needs repair"
-                    : status.selection === "managed" && props.enabled
-                      ? status.displayName
-                        ? "Selected"
-                        : "In use"
-                      : "Installed"}
-                </span>
-              ) : null}
-            </div>
-            <p className="mt-1 max-w-2xl text-xs leading-relaxed text-muted-foreground">
-              {status.description ??
-                "A private Python environment with NumPy, pandas, SciPy, Matplotlib, and Jupyter. Your system Python and project environments stay untouched."}
-            </p>
+            {!props.embedded || !props.selected ? (
+              <div className="flex items-center gap-2 text-sm font-medium">
+                {props.embedded && languageId === "python" ? "Scient-managed" : displayName}
+                {status.installed ? (
+                  <span
+                    className={`text-[11px] font-normal ${needsRepair ? "text-warning" : "text-success"}`}
+                  >
+                    {needsRepair
+                      ? "Needs repair"
+                      : status.selection === "managed" && props.enabled
+                        ? status.displayName
+                          ? "Selected"
+                          : "In use"
+                        : "Installed"}
+                  </span>
+                ) : null}
+              </div>
+            ) : null}
+            {!props.embedded ? (
+              <p className="mt-1 max-w-2xl text-xs leading-relaxed text-muted-foreground">
+                {status.description ??
+                  "A private Python environment with NumPy, pandas, SciPy, Matplotlib, and Jupyter. Your system Python and project environments stay untouched."}
+              </p>
+            ) : null}
             {progress ? (
               <p className="mt-2 flex items-center gap-1.5 text-xs text-muted-foreground">
                 <LoaderCircle className="size-3 animate-spin" /> {progress}
               </p>
             ) : null}
             {failure ? <p className="mt-2 text-xs text-destructive">{failure}</p> : null}
+            {props.embedded && managedExecutable ? <RuntimePath value={managedExecutable} /> : null}
           </div>
           <div className="flex shrink-0 flex-wrap items-center gap-1.5">
             {!status.installed ? (
@@ -201,6 +299,40 @@ export function ManagedRuntimeCard(props: {
               >
                 <Download /> Set up
               </Button>
+            ) : props.embedded ? (
+              <>
+                {!props.selected ? (
+                  <Button
+                    size="xs"
+                    disabled={working}
+                    onClick={() => void runAction("use-managed")}
+                  >
+                    Use
+                  </Button>
+                ) : null}
+                {status.updateAvailable ? (
+                  <Button size="xs" disabled={working} onClick={() => void runAction("update")}>
+                    <Download /> Update
+                  </Button>
+                ) : null}
+                <Button
+                  size="xs"
+                  variant="ghost"
+                  disabled={working}
+                  onClick={() => void runAction("repair")}
+                >
+                  <Wrench /> Repair
+                </Button>
+                <Button
+                  size="xs"
+                  variant="ghost"
+                  disabled={working}
+                  onClick={() => setRemoveConfirmation(true)}
+                  aria-label={`Remove ${displayName}`}
+                >
+                  <Trash2 /> Remove
+                </Button>
+              </>
             ) : (
               <>
                 {status.selection === "managed" &&
@@ -300,23 +432,24 @@ export function RuntimeDetails({
 }) {
   if (!enabled || language.runtimes.length === 0) return null;
   return (
-    <div className="mt-3 space-y-1 border-t border-border/50 py-2">
+    <div className="space-y-1">
       {language.runtimes.map(({ profile, verification: detected, toolkits }) => {
         const state =
           verificationState?.executable === profile.executable ? verificationState : null;
         const verification = state?.result ?? detected;
         return (
-          <div key={`${profile.source}:${profile.executable}`} className="min-w-0 py-1.5 text-xs">
-            <div className="flex min-w-0 items-start justify-between gap-4">
+          <div
+            key={`${profile.source}:${profile.executable}`}
+            className="min-w-0 rounded-lg border border-border/50 px-3 py-2.5 text-xs"
+          >
+            <div className="flex min-w-0 flex-col gap-1 sm:flex-row sm:items-start sm:justify-between sm:gap-4">
               <div className="min-w-0">
                 <div className="truncate font-medium text-foreground/90">{profile.displayName}</div>
-                <div className="select-text font-mono break-all text-muted-foreground">
-                  {profile.executable}
-                </div>
                 <div className="text-muted-foreground">
-                  {profile.source === "managed" ? "Scient-managed" : profile.source}
+                  {runtimeSourceLabel(profile.source)}
                   {profile.architecture ? ` · ${profile.architecture}` : ""}
                 </div>
+                <RuntimePath value={profile.executable} />
               </div>
               <div
                 className={
@@ -341,8 +474,8 @@ export function RuntimeDetails({
             {onVerify && detected.connection === "detected" ? (
               <Button
                 size="xs"
-                variant="ghost"
-                className="mt-1"
+                variant="outline"
+                className="mt-2"
                 disabled={verificationState?.pending}
                 onClick={() => onVerify(profile.executable)}
               >
@@ -377,44 +510,154 @@ export function RuntimeDetails({
   );
 }
 
+export function RuntimeInventoryDetails({
+  language,
+  onVerify,
+  onUse,
+  verificationState,
+  excludedExecutables = [],
+}: {
+  readonly language: ComputeLanguageRuntimeInventory;
+  readonly onVerify: (executable: string) => void;
+  readonly onUse?: ((executable: string) => void) | undefined;
+  readonly excludedExecutables?: ReadonlyArray<string>;
+  readonly verificationState: {
+    executable: string;
+    pending: boolean;
+    result: ComputeRuntimeVerification | null;
+    error: string | null;
+  } | null;
+}) {
+  if (!language.enabled || language.installations.length === 0) return null;
+  return (
+    <div>
+      {language.installations
+        .filter((installation) => !excludedExecutables.includes(installation.executable))
+        .map((installation) => {
+          const state =
+            verificationState?.executable === installation.executable ? verificationState : null;
+          const status = state?.pending
+            ? "Verifying…"
+            : state?.result?.connection === "verified"
+              ? "Verified"
+              : state?.error || installation.problem
+                ? "Needs attention"
+                : "Detected";
+          return (
+            <div
+              key={`${installation.source}:${installation.executable}`}
+              className="min-w-0 border-t border-border/50 py-3 text-xs"
+            >
+              <div className="flex min-w-0 flex-col gap-2 sm:flex-row sm:items-start sm:justify-between sm:gap-4">
+                <div className="min-w-0 flex-1">
+                  <div className="font-medium text-foreground/90">
+                    {runtimeSourceLabel(installation.source)}
+                  </div>
+                  {installation.version ? (
+                    <div className="mt-0.5 text-muted-foreground">{installation.version}</div>
+                  ) : null}
+                  <RuntimePath value={installation.executable} />
+                </div>
+                <div className="flex shrink-0 items-center gap-2">
+                  <span
+                    className={cn(
+                      "text-xs",
+                      status === "Verified"
+                        ? "text-success"
+                        : status === "Detected"
+                          ? "text-muted-foreground"
+                          : "text-warning",
+                    )}
+                  >
+                    {status}
+                  </span>
+                  {onUse ? (
+                    <Button
+                      size="xs"
+                      variant="outline"
+                      onClick={() => onUse(installation.executable)}
+                    >
+                      Use
+                    </Button>
+                  ) : (
+                    <Button
+                      size="xs"
+                      variant="outline"
+                      disabled={state?.pending}
+                      onClick={() => onVerify(installation.executable)}
+                    >
+                      {state?.pending ? <LoaderCircle className="animate-spin" /> : null}
+                      {state?.pending ? "Verifying…" : "Verify"}
+                    </Button>
+                  )}
+                </div>
+              </div>
+              {state?.error || installation.problem ? (
+                <p className="mt-2 text-xs text-destructive" role="alert">
+                  {state?.error ?? installation.problem}
+                </p>
+              ) : null}
+              {state?.result?.message ? (
+                <p className="mt-2 text-xs text-muted-foreground">{state.result.message}</p>
+              ) : null}
+            </div>
+          );
+        })}
+    </div>
+  );
+}
+
 function LanguageSettingsRow({
   language,
   preference,
   onChange,
-  onRefresh,
-  refreshing,
   environmentId,
+  loading,
+  refreshing,
+  refreshRevision,
 }: {
-  language: ComputeLanguageRuntimeInspection;
+  language: ComputeLanguageRuntimeInventory;
   preference: ScientificComputingLanguageSettings;
   onChange: (next: ScientificComputingLanguageSettings) => Promise<boolean>;
-  onRefresh: () => void;
-  refreshing: boolean;
   environmentId: EnvironmentId | null;
+  loading?: boolean;
+  refreshing: boolean;
+  refreshRevision: number;
 }) {
-  const [executable, setExecutable] = useState(preference.executable);
+  const [executableDraft, setExecutableDraft] = useState(() => ({
+    source: preference.executable,
+    value: preference.executable,
+  }));
+  const [detailsOpen, setDetailsOpen] = useState(false);
+  const [customPathRequested, setCustomPathRequested] = useState(false);
   const verifyRuntime = useAtomCommand(computeEnvironment.verifyRuntime, { reportFailure: false });
-  const [verificationState, setVerificationState] =
-    useState<Exclude<Parameters<typeof RuntimeDetails>[0]["verificationState"], undefined>>(null);
+  const [verificationState, setVerificationState] = useState<
+    | (Exclude<Parameters<typeof RuntimeDetails>[0]["verificationState"], undefined | null> & {
+        scopeKey: string;
+      })
+    | null
+  >(null);
   const verificationEpoch = useRef(0);
-  useEffect(() => {
-    verificationEpoch.current += 1;
-    setVerificationState(null);
-    return () => {
-      verificationEpoch.current += 1;
-    };
-  }, [
+  const verificationScopeKey = JSON.stringify([
     environmentId,
-    language.runtimes,
+    language.installations.map(({ executable, problem, version }) => [
+      executable,
+      problem,
+      version,
+    ]),
+    refreshRevision,
     preference.executable,
     preference.enabled,
     language.managedRuntime?.generationId,
     language.managedRuntime?.selection,
   ]);
+  const visibleVerificationState =
+    verificationState?.scopeKey === verificationScopeKey ? verificationState : null;
   const verify = async (path: string) => {
     if (environmentId === null) return;
     const epoch = ++verificationEpoch.current;
-    setVerificationState({ executable: path, pending: true, result: null, error: null });
+    const scopeKey = verificationScopeKey;
+    setVerificationState({ scopeKey, executable: path, pending: true, result: null, error: null });
     const result = await verifyRuntime({
       environmentId,
       input: { cwd: null, languageId: language.descriptor.languageId, executable: path },
@@ -422,6 +665,7 @@ function LanguageSettingsRow({
     if (epoch !== verificationEpoch.current) return;
     const failure = result._tag === "Failure" ? squashAtomCommandFailure(result) : null;
     setVerificationState({
+      scopeKey,
       executable: path,
       pending: false,
       result: result._tag === "Success" ? result.value : null,
@@ -433,88 +677,282 @@ function LanguageSettingsRow({
             : "The connection could not be verified.",
     });
   };
-  useEffect(() => setExecutable(preference.executable), [preference.executable]);
+
+  const executable =
+    executableDraft.source === preference.executable
+      ? executableDraft.value
+      : preference.executable;
 
   const persistExecutable = () => {
     const next = executable.trim();
     if (next !== preference.executable) void onChange({ ...preference, executable: next });
+    setExecutableDraft({ source: next, value: next });
   };
 
-  return (
-    <SettingsRow
-      title={language.descriptor.displayName}
-      description={`Enable ${language.descriptor.displayName} for new scientific sessions on this server.`}
-      status={readinessLabel(language, preference.enabled)}
-      control={
-        <Switch
-          checked={preference.enabled}
-          onCheckedChange={(enabled) => void onChange({ ...preference, enabled })}
-          aria-label={`Enable ${language.descriptor.displayName}`}
-        />
-      }
-    >
-      <ManagedRuntimeCard
-        environmentId={environmentId}
-        language={language}
-        enabled={preference.enabled}
-        ensureEnabled={async () =>
-          preference.enabled || (await onChange({ ...preference, enabled: true }))
-        }
-      />
-      {language.descriptor.languageId === "matlab" ? (
-        <p className="mt-2 text-xs leading-relaxed text-muted-foreground">
-          Uses your licensed MATLAB on this server. Refresh finds installations; Verify connection
-          starts and closes a test session.{" "}
-          <a
-            className="underline underline-offset-2"
-            href="https://www.mathworks.com/products/matlab.html"
-            target="_blank"
-            rel="noreferrer"
-          >
-            Get MATLAB
-          </a>
-        </p>
-      ) : null}
-      <div className="mt-3 flex flex-col gap-2 border-t border-border/50 py-3 sm:flex-row sm:items-center">
-        <Input
-          nativeInput
-          size="compact"
-          value={executable}
-          disabled={!preference.enabled}
-          placeholder="Automatic"
-          aria-label={`${language.descriptor.displayName} executable`}
-          onChange={(event) => setExecutable(event.currentTarget.value)}
-          onBlur={persistExecutable}
-          onKeyDown={(event) => {
-            if (event.key === "Enter") {
-              persistExecutable();
-              event.currentTarget.blur();
-            }
-          }}
-        />
-        <Button
-          size="xs"
-          variant="outline"
-          disabled={!preference.enabled || refreshing}
-          onClick={onRefresh}
-        >
-          <RefreshCwIcon className={refreshing ? "size-3 animate-spin" : "size-3"} />
-          Refresh
-        </Button>
-      </div>
-      {preference.enabled ? (
-        <p className="text-[11px] text-muted-foreground">
-          Capabilities: {language.descriptor.capabilities.join(", ")}
-        </p>
-      ) : null}
-      <RuntimeDetails
-        language={language}
-        enabled={preference.enabled}
-        onVerify={(path) => void verify(path)}
-        verificationState={verificationState}
-      />
-    </SettingsRow>
+  const configured = preference.executable.trim();
+  const configuredInstallation = language.installations.find(
+    (installation) => installation.executable === configured,
   );
+  const customPathOpen = customPathRequested;
+  const selectedInstallation =
+    language.installations.find(
+      (installation) =>
+        language.managedRuntime?.selection === "managed" && installation.source === "managed",
+    ) ??
+    configuredInstallation ??
+    language.installations[0];
+  const selectedVerificationState =
+    visibleVerificationState?.executable === selectedInstallation?.executable
+      ? visibleVerificationState
+      : null;
+  const canVerify =
+    !loading && !refreshing && preference.enabled && selectedInstallation?.problem === null;
+  const isMatlab = language.descriptor.languageId === "matlab";
+  const isManagedSelected = selectedInstallation?.source === "managed";
+  const managedRuntimeRepresentsInstallation = !isMatlab && language.managedRuntime !== null;
+  const managedExecutable = language.installations.find(
+    (installation) => installation.source === "managed",
+  )?.executable;
+  const alternativeExclusions = [
+    ...(selectedInstallation ? [selectedInstallation.executable] : []),
+    ...(managedRuntimeRepresentsInstallation && managedExecutable ? [managedExecutable] : []),
+  ];
+
+  return (
+    <section className="space-y-2" aria-labelledby={`${language.descriptor.languageId}-heading`}>
+      <h3
+        id={`${language.descriptor.languageId}-heading`}
+        className="px-3 text-sm font-normal text-foreground/70 sm:px-4"
+      >
+        {language.descriptor.displayName}
+      </h3>
+      <Collapsible open={detailsOpen} onOpenChange={setDetailsOpen}>
+        <div className="rounded-xl border border-border/60 bg-card/40 shadow-xs/5">
+          <div className="flex flex-col gap-3 px-3 py-3 sm:grid sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center sm:gap-6 sm:px-4">
+            <div className="min-w-0">
+              <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
+                <span className="truncate text-sm font-medium tracking-[-0.005em] text-foreground">
+                  {loading
+                    ? "Checking installations"
+                    : (selectedInstallation?.version ??
+                      (selectedInstallation
+                        ? runtimeSourceLabel(selectedInstallation.source)
+                        : "No installation detected"))}
+                </span>
+                <span
+                  className={cn(
+                    "text-xs",
+                    !preference.enabled
+                      ? "text-muted-foreground"
+                      : selectedVerificationState?.result?.connection === "verified"
+                        ? "text-success"
+                        : language.failureMessage ||
+                            selectedVerificationState?.error ||
+                            selectedInstallation?.problem
+                          ? "text-warning"
+                          : "text-muted-foreground",
+                  )}
+                >
+                  {loading
+                    ? "Checking…"
+                    : inventoryStatusLabel(
+                        language,
+                        preference.enabled,
+                        selectedVerificationState,
+                        selectedInstallation?.problem,
+                      )}
+                </span>
+              </div>
+              {selectedInstallation?.version ? (
+                <p className="mt-1 text-[13px] text-muted-foreground/80">
+                  {runtimeSourceLabel(selectedInstallation.source)}
+                </p>
+              ) : !selectedInstallation ? (
+                <p className="mt-1 text-[13px] text-muted-foreground/80">
+                  {configured === "" ? "Automatic detection" : "Custom path"}
+                </p>
+              ) : null}
+            </div>
+            <div className="flex min-w-0 items-center gap-1.5 sm:justify-end">
+              {canVerify ? (
+                <Button
+                  size="xs"
+                  variant="outline"
+                  disabled={selectedVerificationState?.pending}
+                  onClick={() => void verify(selectedInstallation.executable)}
+                >
+                  {selectedVerificationState?.pending ? (
+                    <LoaderCircle className="animate-spin" />
+                  ) : null}
+                  {selectedVerificationState?.pending ? "Verifying…" : "Verify connection"}
+                </Button>
+              ) : preference.enabled && isMatlab && language.installations.length === 0 ? (
+                <Button
+                  size="xs"
+                  variant="outline"
+                  render={
+                    <a
+                      href="https://www.mathworks.com/products/matlab.html"
+                      target="_blank"
+                      rel="noreferrer"
+                    />
+                  }
+                >
+                  Get MATLAB <ExternalLinkIcon />
+                </Button>
+              ) : null}
+              <CollapsibleTrigger
+                render={
+                  <Button
+                    size="xs"
+                    variant="ghost-muted"
+                    aria-label={`${detailsOpen ? "Hide" : "Show"} ${language.descriptor.displayName} details`}
+                  />
+                }
+              >
+                Manage
+                <ChevronDownIcon
+                  className={cn("transition-transform", detailsOpen && "rotate-180")}
+                />
+              </CollapsibleTrigger>
+              <Switch
+                checked={preference.enabled}
+                disabled={loading}
+                onCheckedChange={(enabled) => void onChange({ ...preference, enabled })}
+                aria-label={`Enable ${language.descriptor.displayName}`}
+              />
+            </div>
+          </div>
+          <CollapsiblePanel>
+            <div className="border-t border-border/50 px-3 pb-3 sm:px-4">
+              {isManagedSelected && managedRuntimeRepresentsInstallation ? (
+                <ManagedRuntimeCard
+                  embedded
+                  selected
+                  environmentId={environmentId}
+                  language={language}
+                  enabled={preference.enabled}
+                  ensureEnabled={async () =>
+                    preference.enabled || (await onChange({ ...preference, enabled: true }))
+                  }
+                />
+              ) : selectedInstallation ? (
+                <div className="py-3">
+                  <RuntimePath value={selectedInstallation.executable} />
+                </div>
+              ) : null}
+              {language.managedRuntime !== null &&
+              (!managedRuntimeRepresentsInstallation || !isManagedSelected) ? (
+                <ManagedRuntimeCard
+                  embedded
+                  separated={selectedInstallation !== undefined}
+                  environmentId={environmentId}
+                  language={language}
+                  enabled={preference.enabled}
+                  ensureEnabled={async () =>
+                    preference.enabled || (await onChange({ ...preference, enabled: true }))
+                  }
+                />
+              ) : null}
+              <RuntimeInventoryDetails
+                language={language}
+                onVerify={(path) => void verify(path)}
+                onUse={(path) => {
+                  setCustomPathRequested(false);
+                  void onChange({ ...preference, executable: path });
+                }}
+                verificationState={visibleVerificationState}
+                excludedExecutables={alternativeExclusions}
+              />
+              <div className="border-t border-border/50 pt-2">
+                <Button
+                  size="xs"
+                  variant="ghost-muted"
+                  disabled={!preference.enabled}
+                  onClick={() => setCustomPathRequested(!customPathOpen)}
+                >
+                  Advanced path
+                  <ChevronDownIcon
+                    className={cn("transition-transform", customPathOpen && "rotate-180")}
+                  />
+                </Button>
+                {customPathOpen ? (
+                  <div className="mt-2 flex items-center gap-2">
+                    <Input
+                      nativeInput
+                      size="compact"
+                      value={executable}
+                      disabled={!preference.enabled}
+                      placeholder="Executable path"
+                      aria-label={`${language.descriptor.displayName} executable`}
+                      onChange={(event) =>
+                        setExecutableDraft({
+                          source: preference.executable,
+                          value: event.currentTarget.value,
+                        })
+                      }
+                      onBlur={persistExecutable}
+                      onKeyDown={(event) => {
+                        if (event.key === "Enter") {
+                          persistExecutable();
+                          event.currentTarget.blur();
+                        }
+                      }}
+                    />
+                    {configured !== "" ? (
+                      <Button
+                        size="xs"
+                        variant="outline"
+                        onClick={() => {
+                          setExecutableDraft({ source: "", value: "" });
+                          setCustomPathRequested(false);
+                          void onChange({ ...preference, executable: "" });
+                        }}
+                      >
+                        Use automatic
+                      </Button>
+                    ) : null}
+                  </div>
+                ) : null}
+              </div>
+            </div>
+          </CollapsiblePanel>
+        </div>
+      </Collapsible>
+    </section>
+  );
+}
+
+const PENDING_RUNTIME_DESCRIPTORS = [
+  {
+    languageId: ComputeLanguageId.make("python"),
+    displayName: "Python",
+    sourceExtensions: [".py"],
+    capabilities: ["execute", "interrupt", "restart", "shutdown"],
+  },
+  {
+    languageId: ComputeLanguageId.make("matlab"),
+    displayName: "MATLAB",
+    sourceExtensions: [".m"],
+    capabilities: ["execute", "interrupt", "restart", "shutdown"],
+  },
+] as const;
+
+function pendingRuntimeInventory(
+  preferences: Readonly<Record<string, ScientificComputingLanguageSettings>>,
+): ReadonlyArray<ComputeLanguageRuntimeInventory> {
+  return PENDING_RUNTIME_DESCRIPTORS.map((descriptor) => {
+    const preference = preferences[descriptor.languageId] ?? { enabled: false, executable: "" };
+    return {
+      descriptor,
+      enabled: preference.enabled,
+      configuredExecutable: preference.executable || null,
+      managedRuntime: null,
+      toolkits: [],
+      installations: [],
+      failureMessage: null,
+    };
+  });
 }
 
 export function ScientificComputingSettings(
@@ -555,21 +993,25 @@ function EnvironmentScientificComputingSettings({
     (settings) => settings.scientificComputing,
   );
   const updateSettings = useAtomCommand(serverEnvironment.updateSettings, { reportFailure: false });
-  const refreshRuntimes = useAtomCommand(computeEnvironment.refreshRuntimes, {
+  const refreshRuntimes = useAtomCommand(computeEnvironment.refreshRuntimeInventory, {
     reportFailure: false,
   });
   const [refreshing, setRefreshing] = useState(false);
+  const [refreshRevision, setRefreshRevision] = useState(0);
   const [refreshFailure, setRefreshFailure] = useState<string | null>(null);
   const runtimesAtom = environmentId
-    ? computeEnvironment.runtimes({
+    ? computeEnvironment.runtimeInventory({
         environmentId,
-        input: { cwd: null, refresh: false },
+        input: {},
       })
     : null;
   const runtimes = useEnvironmentQuery(runtimesAtom);
+  const inventoryPending = runtimes.data === undefined && runtimes.error === null;
+  const displayedLanguages =
+    runtimes.data?.languages ?? pendingRuntimeInventory(preferences.languages);
 
   const updateLanguage = async (
-    languageId: ComputeLanguageRuntimeInspection["descriptor"]["languageId"],
+    languageId: ComputeLanguageRuntimeInventory["descriptor"]["languageId"],
     next: ScientificComputingLanguageSettings,
   ) => {
     const result = await updateSettings({
@@ -597,10 +1039,11 @@ function EnvironmentScientificComputingSettings({
   const handleRefresh = useCallback(async () => {
     if (environmentId === null) return;
     setRefreshFailure(null);
+    setRefreshRevision((revision) => revision + 1);
     setRefreshing(true);
     const result = await refreshRuntimes({
       environmentId,
-      input: { cwd: null, refresh: true },
+      input: {},
     });
     setRefreshing(false);
     if (result._tag === "Failure") {
@@ -622,33 +1065,54 @@ function EnvironmentScientificComputingSettings({
         title="Scientific Computing"
         icon={<SigmaIcon className="size-4 text-muted-foreground" />}
         variant="plain"
-        headerAction={<span className="text-xs text-muted-foreground">{label}</span>}
-      >
-        <div className="space-y-3">
-          <div className="rounded-xl border border-border/60 bg-card/40 shadow-xs/5 [&>*+*]:border-t [&>*+*]:border-border/50 [&>[data-slot=settings-row]]:rounded-none">
-            {(runtimes.data?.languages ?? []).map((language) => {
-              const preference = preferences.languages[language.descriptor.languageId] ?? {
-                enabled: false,
-                executable: language.configuredExecutable ?? "",
-              };
-              return (
-                <LanguageSettingsRow
-                  key={language.descriptor.languageId}
-                  language={language}
-                  preference={preference}
-                  onChange={(next) => updateLanguage(language.descriptor.languageId, next)}
-                  onRefresh={() => void handleRefresh()}
-                  refreshing={runtimes.isPending || refreshing}
-                  environmentId={environmentId}
-                />
-              );
-            })}
-            {(refreshFailure ?? runtimes.error) ? (
-              <p className="px-4 py-3 text-xs text-destructive" role="alert">
-                {refreshFailure ?? runtimes.error}
-              </p>
-            ) : null}
+        headerAction={
+          <div className="flex items-center gap-1.5">
+            <span className="hidden text-xs text-muted-foreground sm:inline">{label}</span>
+            <Tooltip>
+              <TooltipTrigger
+                render={
+                  <Button
+                    size="icon-xs"
+                    variant="ghost-muted"
+                    disabled={runtimes.isPending || refreshing}
+                    aria-label="Refresh scientific runtimes"
+                    onClick={() => void handleRefresh()}
+                  >
+                    <RefreshCwIcon
+                      className={cn(runtimes.isPending || refreshing ? "animate-spin" : undefined)}
+                    />
+                  </Button>
+                }
+              />
+              <TooltipPopup side="top">Refresh runtimes</TooltipPopup>
+            </Tooltip>
           </div>
+        }
+      >
+        <div className="space-y-5">
+          {displayedLanguages.map((language) => {
+            const preference = preferences.languages[language.descriptor.languageId] ?? {
+              enabled: false,
+              executable: language.configuredExecutable ?? "",
+            };
+            return (
+              <LanguageSettingsRow
+                key={language.descriptor.languageId}
+                language={language}
+                preference={preference}
+                onChange={(next) => updateLanguage(language.descriptor.languageId, next)}
+                environmentId={environmentId}
+                loading={inventoryPending}
+                refreshing={refreshing}
+                refreshRevision={refreshRevision}
+              />
+            );
+          })}
+          {(refreshFailure ?? runtimes.error) ? (
+            <p className="px-4 py-3 text-xs text-destructive" role="alert">
+              {refreshFailure ?? runtimes.error}
+            </p>
+          ) : null}
           <div className="mx-auto w-full max-w-xl rounded-xl border border-dashed border-border/60 bg-muted/15 px-4 py-5 text-center">
             <p className="text-sm font-medium text-foreground/85">
               More scientific tools are coming soon

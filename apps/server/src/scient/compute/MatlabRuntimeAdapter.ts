@@ -1,7 +1,9 @@
 // @effect-diagnostics nodeBuiltinImport:off -- runtime discovery is an operating-system adapter.
 import * as NodeCrypto from "node:crypto";
 import * as NodeFS from "node:fs";
+import * as NodeFSP from "node:fs/promises";
 import * as NodePath from "node:path";
+import { SpawnExecutableResolution } from "@t3tools/shared/shell";
 
 import {
   ComputeLanguageId,
@@ -11,10 +13,13 @@ import {
   type ComputeEnvironmentFingerprint,
   type ComputeLanguageAdapter,
   type ComputeRuntimeProfile,
+  type ComputeRuntimeInstallation,
   type ComputeRuntimeSource,
 } from "@scientfactory/compute";
 import * as Clock from "effect/Clock";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
+import * as Semaphore from "effect/Semaphore";
 
 import { sanitizeComputeEnvironment, validateProjectRoot } from "./ComputeEnvironmentPolicy.ts";
 
@@ -85,6 +90,47 @@ export function matlabInstallationRoot(executable: string): string {
 export function matlabEngineDirectory(executable: string): string {
   return NodePath.join(matlabInstallationRoot(executable), "extern", "engines", "python", "dist");
 }
+
+/** Installation metadata without loading any Python or MATLAB runtime. */
+export const readMatlabInstallation = Effect.fn("readMatlabInstallation")(function* (
+  executable: string,
+) {
+  return yield* Effect.tryPromise({
+    try: async () => {
+      if (!NodePath.isAbsolute(executable))
+        throw new Error("The MATLAB executable path must be absolute.");
+      const resolved = await NodeFSP.realpath(executable);
+      const stat = await NodeFSP.stat(resolved, { bigint: true });
+      if (!stat.isFile()) throw new Error("The selected MATLAB executable is not a file.");
+      const installationRoot = matlabInstallationRoot(resolved);
+      const xml = await NodeFSP.readFile(
+        NodePath.join(installationRoot, "VersionInfo.xml"),
+        "utf8",
+      );
+      const release = /<release>([^<]+)<\/release>/u.exec(xml)?.[1]?.trim();
+      const version = /<version>([^<]+)<\/version>/u.exec(xml)?.[1]?.trim();
+      if (!release || !version || release.length > 256 || version.length > 256) {
+        throw new Error("MATLAB VersionInfo.xml did not contain a valid release and version.");
+      }
+      return {
+        executableRealpath: resolved,
+        executableMtimeNs: stat.mtimeNs.toString(),
+        installationRoot,
+        release,
+        version,
+      };
+    },
+    catch: (cause) =>
+      runtimeError(
+        "discover",
+        `Could not read the selected MATLAB installation. ${cause instanceof Error ? cause.message : "Check its executable path."}`.slice(
+          0,
+          4096,
+        ),
+        cause,
+      ),
+  });
+});
 
 function pathCandidates(
   environment: Readonly<Record<string, string>>,
@@ -271,26 +317,71 @@ export function makeMatlabRuntimeAdapter(
 ): MatlabRuntimeAdapterResult {
   const cache = new Map<
     string,
-    { readonly observedAt: number; readonly result: MatlabEngineProbeResult }
+    {
+      readonly observedAt: number;
+      readonly result: Exit.Exit<MatlabEngineProbeResult, ComputeRuntimeError>;
+    }
   >();
+  const probeLock = Semaphore.makeUnsafe(1);
+  let probeEpoch = 0;
 
   const readProbe = (executable: string, refresh = false) =>
     Effect.gen(function* () {
       const now = yield* Clock.currentTimeMillis;
       const cached = cache.get(executable);
       if (!refresh && cached !== undefined && now - cached.observedAt < PROBE_CACHE_TTL_MS) {
-        return cached.result;
+        return yield* cached.result;
       }
-      const result = yield* inspect(executable);
+      const epoch = probeEpoch;
+      const result = yield* Effect.exit(inspect(executable));
       const observedAt = yield* Clock.currentTimeMillis;
-      cache.set(executable, { observedAt, result });
-      cache.set(result.executableRealpath, { observedAt, result });
-      return result;
-    });
+      // Cancellation is not an observation. Failed imports otherwise get the
+      // same short lifetime as successes, avoiding discover -> verify retries.
+      if (epoch === probeEpoch && !Exit.hasInterrupts(result)) {
+        if (cache.size >= 64) cache.clear();
+        cache.set(executable, { observedAt, result });
+        if (Exit.isSuccess(result))
+          cache.set(result.value.executableRealpath, { observedAt, result });
+      }
+      return yield* result;
+    }).pipe(probeLock.withPermits(1));
 
   const adapter: ComputeLanguageAdapter = {
     languageId: MATLAB_LANGUAGE_ID,
     transportKind: MATLAB_ENGINE_TRANSPORT_KIND,
+    listInstallations: Effect.fn("MatlabRuntimeAdapter.listInstallations")(function* (request) {
+      const resolveExecutable = yield* SpawnExecutableResolution;
+      return yield* Effect.forEach(
+        discoverMatlabCandidates(request.configuredExecutable, environment, platform),
+        (candidate) =>
+          Effect.gen(function* (): Effect.fn.Return<ComputeRuntimeInstallation> {
+            const executable = resolveExecutable(candidate.executable, platform, environment);
+            if (executable === undefined)
+              return {
+                ...candidate,
+                version: null,
+                problem: "The selected MATLAB executable was not found.",
+              };
+            return yield* readMatlabInstallation(executable).pipe(
+              Effect.map((installation) => ({
+                executable: installation.executableRealpath,
+                source: candidate.source,
+                version: installation.release,
+                problem: null,
+              })),
+              Effect.catch((cause) =>
+                Effect.succeed({
+                  executable,
+                  source: candidate.source,
+                  version: null,
+                  problem: cause.message,
+                }),
+              ),
+            );
+          }),
+        { concurrency: 2 },
+      );
+    }),
     discover: (request) =>
       Effect.forEach(
         discoverMatlabCandidates(request.configuredExecutable, environment, platform),
@@ -366,5 +457,12 @@ export function makeMatlabRuntimeAdapter(
       ),
   };
 
-  return { adapter, readProbe, clearProbeCache: () => cache.clear() };
+  return {
+    adapter,
+    readProbe,
+    clearProbeCache: () => {
+      probeEpoch += 1;
+      cache.clear();
+    },
+  };
 }

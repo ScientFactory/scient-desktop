@@ -2,6 +2,7 @@ import {
   ComputeExecutionId,
   ComputeLanguageId,
   ComputeOperationError,
+  ComputeRuntimeError,
   ComputeTransportError,
   ComputeProjectId,
   ComputeSessionId,
@@ -30,6 +31,7 @@ import {
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
+import * as Deferred from "effect/Deferred";
 import * as Exit from "effect/Exit";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
@@ -315,6 +317,8 @@ const withReportedCapabilities = (
 });
 
 interface HarnessOptions {
+  readonly adapter?: Partial<ComputeLanguageAdapter>;
+  readonly additionalBindings?: ReadonlyArray<ComputeRuntimeBinding>;
   readonly analytics?: AnalyticsService["Service"];
   readonly projectOutputs?: ComputeProjectOutputObserverPort;
   readonly capabilities?: ReadonlyArray<ComputeCapability>;
@@ -385,12 +389,14 @@ const harness = (options: HarnessOptions = {}) =>
                     ...(options.connection === undefined ? {} : { connection: options.connection }),
                   })),
                 ),
+              ...options.adapter,
             };
           })(),
           transport,
           toolkitSupport: options.toolkitSupport,
           managedRuntime: options.managedRuntime,
         },
+        ...(options.additionalBindings ?? []),
       ]),
       { ...DEFAULT_COMPUTE_SESSION_SERVICE_OPTIONS, ...options.service },
       options.projectOutputs
@@ -524,6 +530,141 @@ const start = Effect.gen(function* () {
 });
 
 describe("compute runtime inspection", () => {
+  it.effect(
+    "inspects independent languages concurrently and keeps healthy rows when one fails",
+    () =>
+      Effect.gen(function* () {
+        const otherRead = yield* Deferred.make<void>();
+        const other = {
+          ...adapterFor("ready"),
+          languageId: ComputeLanguageId.make("matlab"),
+          listInstallations: () =>
+            Deferred.succeed(otherRead, undefined).pipe(
+              Effect.as([
+                {
+                  executable: "/matlab",
+                  source: "configured" as const,
+                  version: "R2026a",
+                  problem: null,
+                },
+              ]),
+            ),
+        };
+        const test = yield* harness({
+          adapter: {
+            listInstallations: () =>
+              Deferred.await(otherRead).pipe(
+                Effect.andThen(
+                  Effect.fail(
+                    new ComputeRuntimeError({
+                      operation: "discover",
+                      message: "Python unavailable",
+                    }),
+                  ),
+                ),
+              ),
+          },
+          additionalBindings: [{ adapter: other, transport: { open: () => Effect.never } }],
+        });
+        yield* test.use(
+          Effect.gen(function* () {
+            const service = yield* ComputeSessionService;
+            const rows = yield* service.runtimeInventory({
+              configuredExecutables: {},
+              enabledLanguageIds: new Set([PYTHON, other.languageId]),
+            });
+            expect(rows[0]?.failureMessage).toBe("Python unavailable");
+            expect(rows[1]?.installations[0]?.executable).toBe("/matlab");
+          }),
+        );
+      }).pipe(Effect.provide(NodeServices.layer)),
+  );
+  it.effect("keeps repeated Settings inventory independent of all runtime process operations", () =>
+    Effect.gen(function* () {
+      let reads = 0;
+      const test = yield* harness({
+        adapter: {
+          discover: () => Effect.never,
+          verify: () => Effect.never,
+          prepareLaunch: () => Effect.never,
+          listInstallations: (request) =>
+            Effect.sync(() => {
+              reads += 1;
+              expect(request.projectRoot).toBeNull();
+              expect(request.configuredExecutable).toBe("/chosen/python");
+              return [
+                {
+                  executable: "/chosen/python",
+                  source: "configured" as const,
+                  version: null,
+                  problem: null,
+                },
+              ];
+            }),
+        },
+      });
+      yield* test.use(
+        Effect.gen(function* () {
+          const service = yield* ComputeSessionService;
+          const input = {
+            configuredExecutables: { [PYTHON]: "/chosen/python" },
+            enabledLanguageIds: new Set([PYTHON]),
+          };
+          const results = yield* Effect.forEach(
+            Array.from({ length: 100 }),
+            () => service.runtimeInventory(input),
+            { concurrency: 8 },
+          );
+          expect(reads).toBe(100);
+          expect(results.every((result) => result[0]?.installations.length === 1)).toBe(true);
+          expect(results[0]?.[0]).not.toHaveProperty("runtimes");
+          const disabled = yield* service.runtimeInventory({
+            ...input,
+            enabledLanguageIds: new Set(),
+          });
+          expect(disabled[0]?.installations).toEqual([]);
+          expect(reads).toBe(100);
+          expect(test.opened()).toEqual([]);
+          expect(test.submitted()).toEqual([]);
+        }),
+      );
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("retains the language row when its inventory fails or is unsupported", () =>
+    Effect.gen(function* () {
+      for (const adapter of [
+        {},
+        {
+          listInstallations: () =>
+            Effect.fail(
+              new ComputeRuntimeError({
+                operation: "discover",
+                message: "Installation is inaccessible.",
+              }),
+            ),
+        },
+      ]) {
+        const test = yield* harness({
+          adapter: { ...adapter, discover: () => Effect.never, verify: () => Effect.never },
+        });
+        yield* test.use(
+          Effect.gen(function* () {
+            const service = yield* ComputeSessionService;
+            const [row] = yield* service.runtimeInventory({
+              configuredExecutables: {},
+              enabledLanguageIds: new Set([PYTHON]),
+            });
+            expect(row?.descriptor.languageId).toBe(PYTHON);
+            expect(row?.installations).toEqual([]);
+            expect(row?.failureMessage).toBe(
+              "listInstallations" in adapter ? "Installation is inaccessible." : null,
+            );
+          }),
+        );
+      }
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
   it.effect("keeps discovery passive and verifies a connection without retaining a session", () =>
     Effect.gen(function* () {
       const test = yield* harness({ connection: "detected" });

@@ -63,6 +63,7 @@ import {
   type ComputeToolkitDescriptor,
   type ComputeVariableSnapshot,
   type ComputeRuntimeProfile,
+  type ComputeRuntimeInstallation,
   type ComputeRuntimeVerification,
 } from "@scientfactory/compute";
 import { HostProcessEnvironment } from "@t3tools/shared/hostProcess";
@@ -181,6 +182,14 @@ export interface ComputeRuntimeInspectionResult {
     readonly verification: ComputeRuntimeVerification;
     readonly toolkits: ReadonlyArray<ComputeToolkitAssessment>;
   }>;
+}
+
+export interface ComputeRuntimeInventoryResult {
+  readonly descriptor: ComputeRuntimeDescriptor;
+  readonly managedRuntime: ComputeManagedRuntimeStatus | null;
+  readonly toolkits: ReadonlyArray<ComputeToolkitDescriptor>;
+  readonly installations: ReadonlyArray<ComputeRuntimeInstallation>;
+  readonly failureMessage: string | null;
 }
 
 export interface ComputeRuntimeVerificationRequest {
@@ -328,6 +337,9 @@ export class ComputeSessionService extends Context.Service<
   ComputeSessionService,
   {
     readonly runtimeDescriptors: ReadonlyArray<ComputeRuntimeDescriptor>;
+    readonly runtimeInventory: (
+      input: Pick<ComputeRuntimeInspectionRequest, "configuredExecutables" | "enabledLanguageIds">,
+    ) => Effect.Effect<ReadonlyArray<ComputeRuntimeInventoryResult>, ComputeOperationError>;
     readonly inspectRuntimes: (
       input: ComputeRuntimeInspectionRequest,
     ) => Effect.Effect<ReadonlyArray<ComputeRuntimeInspectionResult>, ComputeOperationError>;
@@ -462,6 +474,52 @@ const make = Effect.gen(function* () {
           cause,
         ),
     });
+
+  const runtimeInventory = Effect.fn("ComputeSessionService.runtimeInventory")(function* (
+    input: Pick<ComputeRuntimeInspectionRequest, "configuredExecutables" | "enabledLanguageIds">,
+  ) {
+    return yield* Effect.forEach(
+      bindings,
+      (binding) =>
+        Effect.gen(function* () {
+          let failureMessage: string | null = null;
+          const managedRuntime =
+            binding.managedRuntime === undefined
+              ? null
+              : yield* binding.managedRuntime.status().pipe(
+                  Effect.catch((cause) => {
+                    failureMessage = shortText(cause.message);
+                    return Effect.succeed(null);
+                  }),
+                );
+          const installations =
+            !input.enabledLanguageIds.has(binding.adapter.languageId) ||
+            binding.adapter.listInstallations === undefined
+              ? []
+              : yield* binding.adapter
+                  .listInstallations({
+                    projectRoot: null,
+                    configuredExecutable:
+                      input.configuredExecutables[binding.adapter.languageId] ?? null,
+                    refresh: true,
+                  })
+                  .pipe(
+                    Effect.catch((cause) => {
+                      failureMessage = shortText(cause.message);
+                      return Effect.succeed([]);
+                    }),
+                  );
+          return {
+            descriptor: descriptorFor(binding),
+            managedRuntime,
+            toolkits: binding.toolkitSupport?.descriptors ?? [],
+            installations,
+            failureMessage,
+          };
+        }),
+      { concurrency: 2 },
+    );
+  });
 
   const inspectRuntimes = (input: ComputeRuntimeInspectionRequest) =>
     Effect.gen(function* () {
@@ -2809,6 +2867,7 @@ const make = Effect.gen(function* () {
 
   return ComputeSessionService.of({
     runtimeDescriptors: bindings.map(descriptorFor),
+    runtimeInventory,
     inspectRuntimes,
     verifyRuntime,
     managedRuntimeStatus,

@@ -19,9 +19,10 @@ The managed environment is optional. To use Python you already maintain instead:
 1. Open **Settings → Scientific Computing** for the server environment you want to use.
 2. Enable Python.
 3. Leave the executable on **Automatic**, or enter an interpreter path when you want to pin one.
-4. Choose **Refresh** to inspect existing runtimes. A ready Python needs CPython 3.10 or newer,
+4. Choose **Refresh** to find existing installations, then **Verify connection** to check one.
+   A ready Python needs CPython 3.10 or newer,
    `jupyter_client` 8.6 or newer, and `ipykernel` 6.29 or newer. Install missing requirements with
-   your own environment tooling, then refresh again.
+   your own environment tooling, then verify again.
 
 Prefer a project `.venv` or another virtual environment you control. Scient detects a project's
 `.venv` when that project is open. The isolated compute bridge does not load packages installed
@@ -56,8 +57,8 @@ instead. Removing the managed installation intentionally returns new sessions to
 discovery; it does not remove your other Python installations.
 
 An existing Python can run ordinary code without every scientific library. If the reviewed
-data-and-figures packages are missing, the header says **Python packages missing** and Settings
-names them. Run remains available for code that does not need those packages; Scient does not
+data-and-figures packages are missing, the header says **Python packages missing** and verification
+in Settings names them. Run remains available for code that does not need those packages; Scient does not
 silently install them into a user-owned environment.
 Hover over the file's Python status to see which interpreter it refers to. A missing-module error
 also offers **Python environments**, taking you to the right server's settings. After choosing or
@@ -71,8 +72,9 @@ The same executable preference is used by live Compute sessions and fresh-proces
 MATLAB runs. Existing preferences are respected; saving a new choice or clearing it
 does not reintroduce an older path.
 
-**Refresh** discovers installations and checks whether the Engine can be imported.
-**Detected** does not promise that a license is available. **Verify connection** starts
+Opening Settings and **Refresh** only look for installations and read their metadata; they do not
+import MATLAB Engine or start Python/MATLAB. Recent status stays visible while being rechecked.
+**Detected** does not promise that the Engine works or a license is available. **Verify connection** checks the Engine host, starts
 and closes a real, temporary MATLAB session without executing project code or creating
 run history. Verification is an observation, not a permanent license guarantee; refresh
 or a runtime change clears it. A license/startup failure stays visible with recovery guidance.

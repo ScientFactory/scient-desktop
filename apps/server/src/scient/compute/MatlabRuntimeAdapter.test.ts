@@ -1,6 +1,8 @@
 import { ComputeRuntimeError, type ComputeRuntimeProfile } from "@scientfactory/compute";
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
+import * as Deferred from "effect/Deferred";
+import * as Fiber from "effect/Fiber";
 
 import {
   MATLAB_LANGUAGE_ID,
@@ -31,6 +33,138 @@ const probe: MatlabEngineProbeResult = {
 const profile: ComputeRuntimeProfile = matlabProfile(probe, "conventional");
 
 describe("MATLAB runtime adapter", () => {
+  it.effect(
+    "refreshes installation metadata after removal and reinstall without an Engine import",
+    () =>
+      Effect.gen(function* () {
+        const root = yield* Effect.acquireRelease(
+          Effect.promise(() =>
+            NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "scient-matlab-inventory-")),
+          ),
+          (path) => Effect.promise(() => NodeFSP.rm(path, { recursive: true, force: true })),
+        );
+        const candidate = NodePath.join(root, "bin", "matlab");
+        yield* Effect.promise(async () => {
+          await NodeFSP.mkdir(NodePath.dirname(candidate));
+          await NodeFSP.writeFile(candidate, "synthetic executable", { mode: 0o755 });
+          await NodeFSP.writeFile(
+            NodePath.join(root, "VersionInfo.xml"),
+            "<release>R2026a</release><version>26.1</version>",
+          );
+        });
+        const runtime = makeMatlabRuntimeAdapter(() => Effect.never, {}, "darwin");
+        const request = { projectRoot: null, configuredExecutable: candidate, refresh: true };
+        for (let n = 0; n < 20; n += 1) {
+          const rows = yield* runtime.adapter.listInstallations!(request);
+          expect(rows).toEqual([
+            {
+              executable: yield* Effect.promise(() => NodeFSP.realpath(candidate)),
+              source: "configured",
+              version: "R2026a",
+              problem: null,
+            },
+          ]);
+        }
+        yield* Effect.promise(() => NodeFSP.unlink(candidate));
+        expect((yield* runtime.adapter.listInstallations!(request))[0]?.problem).toContain(
+          "not found",
+        );
+        yield* Effect.promise(() => NodeFSP.writeFile(candidate, "reinstalled", { mode: 0o755 }));
+        expect((yield* runtime.adapter.listInstallations!(request))[0]?.problem).toBeNull();
+        yield* Effect.promise(() =>
+          NodeFSP.writeFile(NodePath.join(root, "VersionInfo.xml"), "broken"),
+        );
+        expect((yield* runtime.adapter.listInstallations!(request))[0]?.problem).toContain(
+          "VersionInfo.xml",
+        );
+      }).pipe(Effect.scoped),
+  );
+
+  it.effect(
+    "shares failures between discovery and verification but explicitly retries on refresh",
+    () =>
+      Effect.gen(function* () {
+        let calls = 0;
+        const runtime = makeMatlabRuntimeAdapter(
+          () =>
+            Effect.suspend(() => {
+              calls += 1;
+              return Effect.fail(
+                new ComputeRuntimeError({
+                  operation: "discover",
+                  message: "No compatible Engine host.",
+                }),
+              );
+            }),
+          {},
+          "darwin",
+        );
+        yield* runtime.adapter.discover({
+          projectRoot: null,
+          configuredExecutable: executable,
+          refresh: true,
+        });
+        yield* runtime.adapter.verify({ profile, cwd: "/project", environment: {} });
+        expect(calls).toBe(1);
+        yield* Effect.exit(runtime.readProbe(executable, true));
+        expect(calls).toBe(2);
+      }),
+  );
+
+  it.effect(
+    "deduplicates overlapping probes and does not cache a result invalidated in flight",
+    () =>
+      Effect.gen(function* () {
+        const entered = yield* Deferred.make<void>();
+        const release = yield* Deferred.make<void>();
+        let calls = 0;
+        const runtime = makeMatlabRuntimeAdapter(
+          () =>
+            Effect.gen(function* () {
+              calls += 1;
+              yield* Deferred.succeed(entered, undefined);
+              yield* Deferred.await(release);
+              return probe;
+            }),
+          {},
+          "darwin",
+        );
+        const first = yield* Effect.forkChild(runtime.readProbe(executable));
+        yield* Deferred.await(entered);
+        runtime.clearProbeCache();
+        yield* Deferred.succeed(release, undefined);
+        yield* Fiber.join(first);
+        yield* Effect.all([runtime.readProbe(executable), runtime.readProbe(executable)], {
+          concurrency: 2,
+        });
+        expect(calls).toBe(2);
+      }),
+  );
+
+  it.effect("does not retain cancellation as a failed installation check", () =>
+    Effect.gen(function* () {
+      const entered = yield* Deferred.make<void>();
+      let calls = 0;
+      const runtime = makeMatlabRuntimeAdapter(
+        () =>
+          Effect.gen(function* () {
+            calls += 1;
+            if (calls === 1) {
+              yield* Deferred.succeed(entered, undefined);
+              return yield* Effect.never;
+            }
+            return probe;
+          }),
+        {},
+        "darwin",
+      );
+      const first = yield* Effect.forkChild(runtime.readProbe(executable));
+      yield* Deferred.await(entered);
+      yield* Fiber.interrupt(first);
+      expect(yield* runtime.readProbe(executable)).toEqual(probe);
+      expect(calls).toBe(2);
+    }),
+  );
   it.effect(
     "keeps an automatically discovered installation visible when its helper is broken",
     () =>

@@ -92,6 +92,10 @@ describe.runIf(ENABLED)("Scient-managed Python product", () => {
             failureMessage: null,
           });
 
+          const inventoried = (yield* gateway.runtimeInventory()).languages[0]?.installations[0];
+          expect(inventoried).toMatchObject({ source: "managed", problem: null });
+          expect(inventoried?.version).toMatch(/^3\./u);
+
           const inspection = yield* gateway.inspectRuntimes({ cwd: projectRoot, refresh: true });
           const managed = inspection.languages
             .find((language) => language.descriptor.languageId === PYTHON)
@@ -149,6 +153,11 @@ describe.runIf(ENABLED)("Scient-managed Python product", () => {
             (status) => status.operation === null && !status.installed,
           );
           expect(removed.failureMessage).toBeNull();
+          expect(
+            (yield* gateway.runtimeInventory()).languages[0]?.installations.some(
+              (runtime) => runtime.source === "managed",
+            ),
+          ).toBe(false);
         }).pipe(Effect.provide(Layer.merge(computeLayer, workspaceLayer)), Effect.scoped);
       }).pipe(Effect.provide(NodeServices.layer), Effect.scoped, Effect.timeout("40 minutes")),
   );

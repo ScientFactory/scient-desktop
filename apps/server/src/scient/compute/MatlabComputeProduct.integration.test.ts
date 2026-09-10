@@ -151,6 +151,21 @@ describe.runIf(Boolean(TEST_MATLAB))("MATLAB compute product backend", () => {
             },
           });
 
+          // Settings must inventory the real installation before a helper exists,
+          // without needing an Engine host or a native connection.
+          const inventories = yield* Effect.forEach(
+            Array.from({ length: 20 }),
+            () => gateway.runtimeInventory(),
+            { concurrency: 4 },
+          );
+          expect(
+            inventories.every(
+              (inventory) => inventory.languages[0]?.installations[0]?.problem === null,
+            ),
+          ).toBe(true);
+          expect(inventories[0]?.languages[0]?.installations[0]?.version).toMatch(/^R\d{4}[ab]$/u);
+          expect(yield* gateway.listSessions({ cwd: projectRoot })).toEqual([]);
+
           if (TEST_HELPER) {
             yield* gateway.manageRuntime({ languageId: MATLAB, action: "install" });
             for (;;) {
@@ -272,7 +287,7 @@ describe.runIf(Boolean(TEST_MATLAB))("MATLAB compute product backend", () => {
             sessionId,
             session.generation,
             "matlab-figure-first",
-            "figure('Visible','off'); plot(1:4, [1 4 2 3]); title('Scient MATLAB');",
+            "figure; plot(1:4, [1 4 2 3]); title('Scient MATLAB');",
           );
           expect(yield* waitForTerminal(gateway, projectRoot, sessionId, figureId)).toBe(
             "succeeded",
