@@ -63,6 +63,38 @@ Hover over the file's Python status to see which interpreter it refers to. A mis
 also offers **Python environments**, taking you to the right server's settings. After choosing or
 repairing an environment, rerun the code yourself; Scient never replays a failed run automatically.
 
+## Connect your MATLAB installation
+
+Open **Settings → Scientific Computing** for the project's server and enable MATLAB.
+Leave its executable on **Automatic**, or select the installation you want to use.
+The same executable preference is used by live Compute sessions and fresh-process
+MATLAB runs. Existing preferences are respected; saving a new choice or clearing it
+does not reintroduce an older path.
+
+**Refresh** discovers installations and checks whether the Engine can be imported.
+**Detected** does not promise that a license is available. **Verify connection** starts
+and closes a real, temporary MATLAB session without executing project code or creating
+run history. Verification is an observation, not a permanent license guarantee; refresh
+or a runtime change clears it. A license/startup failure stays visible with recovery guidance.
+
+If an Engine host is missing, **Set up** on **MATLAB connection helper** installs a small
+private Python helper for your selected MATLAB, then checks its Engine import. It does
+not install MATLAB, activate a license, or install the scientific Python Toolkit. Choose
+**Verify connection** afterward to check native startup. Assisted setup currently accepts
+MATLAB R2024b–R2026a; other releases may use an existing compatible Engine host. You still
+need MATLAB installed and licensed on the server where the code runs.
+
+**Use existing** returns to compatible Python hosts you maintain. **Repair** prepares a
+fresh private helper for the selected MATLAB and activates it only after verification.
+Use it after changing your MATLAB installation. **Remove** removes only this helper, never
+MATLAB, its license, your projects, or Scientific Python. Removal is blocked while a live
+MATLAB Compute session uses the language. A broken selected helper is reported instead
+of silently choosing another Python host. Setup and repair can be cancelled.
+
+The helper and Scientific Python are independent: installing, selecting, repairing, or
+removing one does not select or remove the other. No MATLAB-to-Python translation or
+automatic Octave fallback takes place.
+
 ## Run code and view results
 
 Open a `.py` file in the ordinary project editor. Its header offers three views:

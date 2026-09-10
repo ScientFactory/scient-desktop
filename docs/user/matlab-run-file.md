@@ -9,9 +9,17 @@ user-installed and licensed MATLAB in the selected project environment.
 
 The code/results controls above a `.m` file run it in a live MATLAB session.
 Enable MATLAB and check its runtime in **Settings → Scientific Computing**.
-The Engine connection requires a compatible Python host; Scient does not install
-MATLAB or its license. **MATLAB ready** and **Set up MATLAB** both open those
+The Engine connection requires a compatible Python host. Settings can set up a
+small private **MATLAB connection helper**, or use an existing compatible host.
+Scient does not install MATLAB or its license. **MATLAB ready** and **Set up MATLAB** both open those
 settings, and the nearby refresh action checks detection again.
+
+In Settings, **Detected** means the Engine import is available; **Verify connection**
+starts and closes a temporary native MATLAB session to check the license and startup.
+The executable preference is shared with fresh-process runs. Their older setup control
+now writes this same preference instead of maintaining a second runtime choice.
+See [Connect your MATLAB installation](scientific-computing.md#connect-your-matlab-installation)
+for setup, repair, removal, and the distinction between the helper and MATLAB itself.
 
 On macOS, MATLAB may check its usual Documents folder during startup. If macOS
 asks whether Scient can access Documents, answer that permission prompt before

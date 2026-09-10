@@ -69,6 +69,10 @@ const matlabInstallation = Effect.gen(function* () {
   yield* fs.makeDirectory(NodePath.join(engineDirectory, "matlab", "engine"), { recursive: true });
   yield* fs.writeFileString(executable, "matlab");
   yield* fs.writeFileString(
+    NodePath.join(engineDirectory, "matlab", "engine", "_arch.txt"),
+    "fixture",
+  );
+  yield* fs.writeFileString(
     NodePath.join(installationRoot, "VersionInfo.xml"),
     "<versioninfo><version>26.1</version><release>R2026a</release></versioninfo>",
   );
@@ -140,6 +144,63 @@ describe("MATLAB compute bridge location", () => {
 });
 
 describe("MATLAB Engine host inspection", () => {
+  it.effect(
+    "accepts an existing installed Engine only when its vendor metadata names the selected MATLAB",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const installation = yield* matlabInstallation;
+        yield* fs.remove(
+          NodePath.join(installation.engineDirectory, "matlab", "engine", "_arch.txt"),
+        );
+        const processes = yield* fakeHostProcesses(() => {
+          return {
+            stdout: JSON.stringify({
+              hostExecutable: "/existing/python",
+              hostVersion: "3.12.13",
+              engineModule: "/existing/site-packages/matlab/engine/__init__.py",
+              engineRoot: installation.installationRoot,
+            }),
+          };
+        });
+        const inspect = yield* makeMatlabEngineInspector().pipe(
+          Effect.provideService(ExecutionProcess, processes.port),
+        );
+        expect(yield* inspect(installation.executable)).toMatchObject({
+          hostExecutable: "/existing/python",
+          engineDirectory: "/existing/site-packages",
+        });
+      }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("canonicalizes a private helper directory without bypassing its venv launcher", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const installation = yield* matlabInstallation;
+      const helperRoot = yield* fs.makeTempDirectoryScoped({ prefix: "scient-helper-path-" });
+      const engineDirectory = NodePath.join(helperRoot, "engine");
+      yield* fs.makeDirectory(engineDirectory);
+      const canonical = yield* fs.realPath(engineDirectory);
+      const host = NodePath.join(helperRoot, "environment", "bin", "python");
+      const processes = yield* fakeHostProcesses(() => ({
+        stdout: JSON.stringify({
+          hostExecutable: host,
+          hostVersion: "3.12.13",
+          engineModule: NodePath.join(canonical, "matlab", "engine", "__init__.py"),
+        }),
+      }));
+      const inspect = yield* makeMatlabEngineInspector(() =>
+        Effect.succeed({ executable: host, engineDirectory }),
+      ).pipe(Effect.provideService(ExecutionProcess, processes.port));
+      const result = yield* inspect(installation.executable);
+      expect(result.hostExecutable).toBe(host);
+      expect(result.engineDirectory).toBe(canonical);
+      const requests = yield* processes.requests;
+      expect(requests).toHaveLength(1);
+      expect(requests[0]?.executable).toBe(host);
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
   it("accepts only descendants of the selected Engine directory", () => {
     const engineDirectory = NodePath.join("", "selected", "dist");
     expect(

@@ -6,7 +6,11 @@ import * as NodePath from "node:path";
 
 import { ComputeRuntimeError, REQUIRED_COMPUTE_CAPABILITIES } from "@scientfactory/compute";
 import { ExecutionRunId } from "@scientfactory/execution";
-import { HostProcessEnvironment, HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import {
+  HostProcessArchitecture,
+  HostProcessEnvironment,
+  HostProcessPlatform,
+} from "@t3tools/shared/hostProcess";
 import * as Deferred from "effect/Deferred";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
@@ -16,9 +20,14 @@ import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
+import * as Scope from "effect/Scope";
 
 import { DuplexProcess } from "../execution/LocalDuplexProcess.ts";
 import { ExecutionProcess } from "../execution/LocalExecutionProcess.ts";
+import { ServerConfig } from "../../config.ts";
+import { ScientificRuntimePreferences } from "./ScientificRuntimePreferences.ts";
+import { makeMatlabConnectionHelper } from "./MatlabConnectionHelper.ts";
+import { resolveManagedPythonSpecPath } from "./ManagedPythonProvisioner.ts";
 import { sanitizeComputeEnvironment } from "./ComputeEnvironmentPolicy.ts";
 import type { ComputeRuntimeBinding } from "./ComputeSessionService.ts";
 import { makeComputeBridgeTransport } from "./ComputeBridgeTransport.ts";
@@ -42,12 +51,16 @@ const MAXIMUM_PROBE_BYTES = 256 * 1024;
 
 const HOST_PROBE_SCRIPT = [
   "import json, os, platform, sys",
-  "sys.path.insert(0, sys.argv[1])",
+  "if sys.argv[1]: sys.path.insert(0, sys.argv[1])",
   "import matlab.engine",
+  "module = os.path.realpath(matlab.engine.__file__)",
+  "arch_path = os.path.join(os.path.dirname(module), '_arch.txt')",
+  "arch = open(arch_path, encoding='utf-8').read(16384).splitlines() if os.path.isfile(arch_path) else []",
   "print(json.dumps({",
-  '  "hostExecutable": os.path.realpath(sys.executable),',
+  '  "hostExecutable": os.path.abspath(sys.executable),',
   '  "hostVersion": platform.python_version(),',
   '  "engineModule": os.path.realpath(matlab.engine.__file__),',
+  '  "engineRoot": os.path.realpath(os.path.dirname(os.path.dirname(arch[1]))) if len(arch) == 4 else None,',
   '}, separators=(",", ":")))',
 ].join("\n");
 
@@ -55,6 +68,7 @@ const HostProbeResult = Schema.Struct({
   hostExecutable: Schema.String,
   hostVersion: Schema.String,
   engineModule: Schema.String,
+  engineRoot: Schema.optional(Schema.NullOr(Schema.String)),
 });
 type HostProbeResult = typeof HostProbeResult.Type;
 const decodeHostProbe = Schema.decodeUnknownSync(HostProbeResult);
@@ -141,7 +155,15 @@ function matlabArchitecture(engineDirectory: string): string | null {
   }
 }
 
-export const makeMatlabEngineInspector = Effect.fn("makeMatlabEngineInspector")(function* () {
+export const makeMatlabEngineInspector = Effect.fn("makeMatlabEngineInspector")(function* (
+  managedHost?: (installationRoot: string) => Effect.Effect<
+    {
+      readonly executable: string;
+      readonly engineDirectory: string;
+    } | null,
+    ComputeRuntimeError
+  >,
+) {
   const processes = yield* ExecutionProcess;
   const hostEnvironment = yield* HostProcessEnvironment;
   const { environment } = sanitizeComputeEnvironment(definedEnvironment(hostEnvironment));
@@ -229,7 +251,18 @@ export const makeMatlabEngineInspector = Effect.fn("makeMatlabEngineInspector")(
     if (!stat.isFile())
       return yield* runtimeError(`MATLAB executable '${resolved}' is not a file.`);
     const installationRoot = matlabInstallationRoot(resolved);
-    const engineDirectory = matlabEngineDirectory(resolved);
+    const managed = managedHost === undefined ? null : yield* managedHost(installationRoot);
+    const bundledDirectory = matlabEngineDirectory(resolved);
+    const selectedEngineDirectory = yield* Effect.tryPromise({
+      try: () => NodeFSP.realpath(managed?.engineDirectory ?? bundledDirectory),
+      catch: (cause) =>
+        runtimeError(
+          "MATLAB Engine files are unavailable. Set up or repair its connection helper.",
+          cause,
+        ),
+    }).pipe(
+      Effect.catch((cause) => (managed === null ? Effect.succeed(null) : Effect.fail(cause))),
+    );
     const versionInfo = yield* Effect.tryPromise({
       try: () => NodeFSP.readFile(NodePath.join(installationRoot, "VersionInfo.xml"), "utf8"),
       catch: (cause) => runtimeError("MATLAB VersionInfo.xml could not be read.", cause),
@@ -238,21 +271,44 @@ export const makeMatlabEngineInspector = Effect.fn("makeMatlabEngineInspector")(
       try: () => parseVersionInfo(versionInfo),
       catch: (cause) => runtimeError("MATLAB version information was malformed.", cause),
     });
+    // Import behavior is authoritative: newer releases can bundle a working
+    // Engine without _arch.txt, while older source distributions need an
+    // installed Engine. Never fall back away from an explicitly selected helper.
     const host = yield* Effect.firstSuccessOf(
-      hostCandidates().map((candidate) =>
-        probeHost(candidate, engineDirectory).pipe(Effect.scoped),
+      (managed === null ? hostCandidates() : [managed.executable]).flatMap((candidate) =>
+        (managed === null ? [selectedEngineDirectory, null] : [selectedEngineDirectory])
+          .filter((directory, index, directories) => directories.indexOf(directory) === index)
+          .map((directory) =>
+            probeHost(candidate, directory ?? "").pipe(
+              Effect.flatMap((host) => {
+                const matches =
+                  directory === null
+                    ? host.engineRoot === installationRoot
+                    : pathIsInside(directory, host.engineModule);
+                return matches
+                  ? Effect.succeed(host)
+                  : Effect.fail(
+                      runtimeError(
+                        "The Engine host imported MATLAB from a different installation.",
+                      ),
+                    );
+              }),
+              Effect.scoped,
+            ),
+          ),
       ),
     ).pipe(
       Effect.mapError((cause) =>
         runtimeError(
-          "MATLAB is installed, but no compatible Python host could import its Engine API.",
+          `MATLAB is installed, but no compatible Python host could import its Engine API. Set up or repair the MATLAB connection helper in Scientific Computing settings. ${cause.message}`.slice(
+            0,
+            4096,
+          ),
           cause,
         ),
       ),
     );
-    if (!pathIsInside(engineDirectory, host.engineModule)) {
-      return yield* runtimeError("The Engine host imported MATLAB from a different installation.");
-    }
+    const engineDirectory = NodePath.dirname(NodePath.dirname(NodePath.dirname(host.engineModule)));
     return {
       executable,
       executableRealpath: resolved,
@@ -271,19 +327,70 @@ export const makeMatlabEngineInspector = Effect.fn("makeMatlabEngineInspector")(
 export const matlabRuntimeBinding: Effect.Effect<
   ComputeRuntimeBinding,
   ComputeRuntimeError,
-  DuplexProcess | ExecutionProcess | FileSystem.FileSystem
+  | DuplexProcess
+  | ExecutionProcess
+  | FileSystem.FileSystem
+  | Scope.Scope
+  | ServerConfig
+  | ScientificRuntimePreferences
 > = Effect.gen(function* () {
   const bridgePath = yield* resolveMatlabBridgePath(moduleDirectory());
-  const inspect = yield* makeMatlabEngineInspector();
+  const config = yield* ServerConfig;
+  const preferences = yield* ScientificRuntimePreferences;
+  const processes = yield* ExecutionProcess;
   const duplexProcesses = yield* DuplexProcess;
   const hostEnvironment = yield* HostProcessEnvironment;
   const platform = yield* HostProcessPlatform;
+  const arch = yield* HostProcessArchitecture;
   const { environment } = sanitizeComputeEnvironment(definedEnvironment(hostEnvironment));
+  const helper = yield* Effect.tryPromise({
+    try: async () => {
+      const specRoot = await resolveManagedPythonSpecPath(moduleDirectory());
+      const helper = makeMatlabConnectionHelper({
+        computeDir: config.computeDir,
+        specDirectory: NodePath.join(specRoot, "matlab-connection"),
+        processes,
+        environment,
+        platform,
+        arch,
+        selectedExecutable: () =>
+          Effect.runPromise(preferences.readRuntimeExecutablePath("matlab")).then(
+            (value) => value.executablePath,
+          ),
+      });
+      await helper.manager.reconcile();
+      return helper;
+    },
+    catch: (cause) => runtimeError("MATLAB assisted connection is unavailable.", cause),
+  }).pipe(
+    Effect.catch((cause) => Effect.logWarning(cause.message, { cause }).pipe(Effect.as(null))),
+  );
+  if (helper !== null)
+    yield* Effect.addFinalizer(() => Effect.sync(() => helper.controller.dispose()));
+  const inspect = yield* makeMatlabEngineInspector(helper?.hostFor);
   const runtime = makeMatlabRuntimeAdapter(inspect, environment, platform, bridgePath);
+  let lastHelperIdentity: string | null = null;
+  const managedRuntime =
+    helper === null
+      ? undefined
+      : {
+          ...helper.controller,
+          status: () =>
+            helper.controller.status().pipe(
+              Effect.tap((status) =>
+                Effect.sync(() => {
+                  const identity = `${status.generationId ?? ""}:${status.selection}:${status.failureMessage ?? ""}`;
+                  if (identity !== lastHelperIdentity) runtime.clearProbeCache();
+                  lastHelperIdentity = identity;
+                }),
+              ),
+            ),
+        };
   const transport = makeComputeBridgeTransport(duplexProcesses, { startupTimeoutMs: 180_000 });
   return {
     adapter: runtime.adapter,
     transport,
+    ...(managedRuntime === undefined ? {} : { managedRuntime }),
     descriptor: {
       languageId: MATLAB_LANGUAGE_ID,
       displayName: "MATLAB",

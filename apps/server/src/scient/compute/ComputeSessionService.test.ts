@@ -2,6 +2,7 @@ import {
   ComputeExecutionId,
   ComputeLanguageId,
   ComputeOperationError,
+  ComputeTransportError,
   ComputeProjectId,
   ComputeSessionId,
   ComputeToolkitId,
@@ -323,6 +324,8 @@ interface HarnessOptions {
   readonly service?: Partial<ComputeSessionServiceOptions>;
   readonly toolkitSupport?: ComputeRuntimeBinding["toolkitSupport"];
   readonly managedRuntime?: ComputeRuntimeBinding["managedRuntime"];
+  readonly connection?: "detected";
+  readonly failConnection?: boolean;
 }
 
 /**
@@ -339,6 +342,7 @@ const harness = (options: HarnessOptions = {}) =>
     const baseDir = yield* fs.makeTempDirectoryScoped({ prefix: "scient-compute-session-" });
     const submitted: Array<string> = [];
     const opened: Array<ComputeSessionId> = [];
+    const closed: Array<ComputeSessionId> = [];
     const simulated = createSimulatedComputeTransport({
       runtime: IDENTITY,
       capabilities: options.capabilities ?? FULL_CAPABILITIES,
@@ -352,13 +356,37 @@ const harness = (options: HarnessOptions = {}) =>
     const transport: ComputeTransport = {
       open: (request) => {
         opened.push(request.sessionId);
-        return base.open(request);
+        return Effect.gen(function* () {
+          yield* Effect.addFinalizer(() =>
+            Effect.sync(() => {
+              closed.push(request.sessionId);
+            }),
+          );
+          if (options.failConnection)
+            return yield* new ComputeTransportError({
+              operation: "handshake",
+              message: "License unavailable",
+            });
+          return yield* base.open(request);
+        });
       },
     };
     const serviceLayer = layerWithRuntimeBindings(
       Effect.succeed([
         {
-          adapter: adapterFor(options.readiness ?? "ready", options.runtimeProfiles),
+          adapter: (() => {
+            const adapter = adapterFor(options.readiness ?? "ready", options.runtimeProfiles);
+            return {
+              ...adapter,
+              verify: (request: Parameters<typeof adapter.verify>[0]) =>
+                adapter.verify(request).pipe(
+                  Effect.map((result) => ({
+                    ...result,
+                    ...(options.connection === undefined ? {} : { connection: options.connection }),
+                  })),
+                ),
+            };
+          })(),
           transport,
           toolkitSupport: options.toolkitSupport,
           managedRuntime: options.managedRuntime,
@@ -391,6 +419,7 @@ const harness = (options: HarnessOptions = {}) =>
     return {
       submitted: () => [...submitted],
       opened: () => [...opened],
+      closed: () => [...closed],
       use,
     };
   });
@@ -495,6 +524,66 @@ const start = Effect.gen(function* () {
 });
 
 describe("compute runtime inspection", () => {
+  it.effect("keeps discovery passive and verifies a connection without retaining a session", () =>
+    Effect.gen(function* () {
+      const test = yield* harness({ connection: "detected" });
+      yield* test.use(
+        Effect.gen(function* () {
+          const service = yield* ComputeSessionService;
+          const inspection = yield* service.inspectRuntimes({
+            projectRoot: null,
+            workingDirectory: process.cwd(),
+            configuredExecutables: {},
+            enabledLanguageIds: new Set([PYTHON]),
+            refresh: true,
+          });
+          expect(inspection[0]?.runtimes[0]?.verification.connection).toBe("detected");
+          expect(test.opened()).toEqual([]);
+          for (let attempt = 0; attempt < 20; attempt += 1) {
+            const result = yield* service.verifyRuntime({
+              languageId: PYTHON,
+              executable: PROFILE.executable,
+              workingDirectory: process.cwd(),
+              refresh: true,
+            });
+            expect(result).toMatchObject({ readiness: "ready", connection: "verified" });
+          }
+          expect(test.opened()).toHaveLength(20);
+          expect(test.closed()).toEqual(test.opened());
+          expect(test.submitted()).toEqual([]);
+          expect(yield* service.listSessions({ projectId: PROJECT_ID })).toEqual([]);
+        }),
+      );
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("closes every failed verification and reports a useful connection failure", () =>
+    Effect.gen(function* () {
+      const test = yield* harness({ connection: "detected", failConnection: true });
+      yield* test.use(
+        Effect.gen(function* () {
+          const service = yield* ComputeSessionService;
+          for (let attempt = 0; attempt < 20; attempt += 1) {
+            const result = yield* service.verifyRuntime({
+              languageId: PYTHON,
+              executable: PROFILE.executable,
+              workingDirectory: process.cwd(),
+              refresh: true,
+            });
+            expect(result).toMatchObject({
+              readiness: "unusable",
+              connection: "detected",
+              message: expect.stringContaining("License unavailable"),
+            });
+          }
+          expect(test.closed()).toEqual(test.opened());
+          expect(test.closed()).toHaveLength(20);
+          expect(yield* service.listSessions({ projectId: PROJECT_ID })).toEqual([]);
+        }),
+      );
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
   it.effect("keeps Toolkit metadata and assessment on the language binding", () =>
     Effect.gen(function* () {
       const toolkitId = ComputeToolkitId.make("test-data-toolkit");

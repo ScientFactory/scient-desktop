@@ -1,12 +1,14 @@
 import { EnvironmentId } from "@t3tools/contracts";
 import { renderToStaticMarkup } from "react-dom/server";
-import type { ReactNode } from "react";
+import type { ReactElement, ReactNode } from "react";
 import { beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
 const mocks = vi.hoisted(() => ({
   readSettings: vi.fn(),
   updateSettings: vi.fn(),
   query: vi.fn(),
+  updateAtom: {},
+  toggle: null as null | ((enabled: boolean) => void),
   known: true,
 }));
 vi.mock("~/state/environments", () => ({
@@ -18,11 +20,8 @@ vi.mock("~/hooks/useSettings", () => ({
     mocks.readSettings(id);
     return { schemaVersion: 1, languages: {} };
   },
-  useUpdateEnvironmentSettings: (id: string) => {
-    mocks.updateSettings(id);
-    return vi.fn();
-  },
 }));
+vi.mock("~/state/server", () => ({ serverEnvironment: { updateSettings: mocks.updateAtom } }));
 vi.mock("~/state/compute", () => ({
   computeEnvironment: {
     runtimes: (target: unknown) => {
@@ -33,14 +32,35 @@ vi.mock("~/state/compute", () => ({
   },
 }));
 vi.mock("~/state/query", () => ({
-  useEnvironmentQuery: () => ({
-    data: { languages: [] },
+  useEnvironmentQuery: (atom: unknown) => ({
+    data:
+      atom === null
+        ? undefined
+        : {
+            languages: [
+              {
+                descriptor: {
+                  languageId: "matlab",
+                  displayName: "MATLAB",
+                  sourceExtensions: [".m"],
+                  capabilities: [],
+                },
+                enabled: false,
+                configuredExecutable: null,
+                managedRuntime: null,
+                toolkits: [],
+                runtimes: [],
+              },
+            ],
+          },
     isPending: false,
     error: null,
     refresh: vi.fn(),
   }),
 }));
-vi.mock("~/state/use-atom-command", () => ({ useAtomCommand: () => vi.fn() }));
+vi.mock("~/state/use-atom-command", () => ({
+  useAtomCommand: (atom: unknown) => (atom === mocks.updateAtom ? mocks.updateSettings : vi.fn()),
+}));
 vi.mock("~/components/settings/settingsLayout", () => ({
   SettingsPageContainer: ({ children }: { children: ReactNode }) => <div>{children}</div>,
   SettingsSection: ({
@@ -55,7 +75,14 @@ vi.mock("~/components/settings/settingsLayout", () => ({
       {children}
     </section>
   ),
-  SettingsRow: () => null,
+  SettingsRow: ({
+    control,
+  }: {
+    control: ReactElement<{ onCheckedChange: (enabled: boolean) => void }>;
+  }) => {
+    mocks.toggle = control.props.onCheckedChange;
+    return null;
+  },
 }));
 
 import { ScientificComputingSettings } from "./ScientificComputingSettings";
@@ -64,6 +91,8 @@ describe("Scientific Computing environment ownership", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mocks.known = true;
+    mocks.toggle = null;
+    mocks.updateSettings.mockResolvedValue({ _tag: "Success", value: null });
   });
 
   it("reads, edits, and inspects the requested remote server, not the primary", () => {
@@ -72,7 +101,18 @@ describe("Scientific Computing environment ownership", () => {
     );
     expect(markup).toContain("remote-server");
     expect(mocks.readSettings).toHaveBeenCalledWith("remote-server");
-    expect(mocks.updateSettings).toHaveBeenCalledWith("remote-server");
+    mocks.toggle?.(true);
+    expect(mocks.updateSettings).toHaveBeenCalledWith({
+      environmentId: "remote-server",
+      input: {
+        patch: {
+          scientificComputing: {
+            schemaVersion: 1,
+            languages: { matlab: { enabled: true, executable: "" } },
+          },
+        },
+      },
+    });
     expect(mocks.query).toHaveBeenCalledWith({
       environmentId: "remote-server",
       input: { cwd: null, refresh: false },

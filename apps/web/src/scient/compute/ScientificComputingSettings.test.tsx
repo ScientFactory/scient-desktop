@@ -40,6 +40,57 @@ function language(
 }
 
 describe("scientific computing runtime details", () => {
+  it("does not present passive MATLAB detection as a verified connection", () => {
+    const markup = renderToStaticMarkup(
+      <RuntimeDetails
+        enabled
+        onVerify={() => undefined}
+        language={language({
+          profile,
+          readiness: "ready",
+          connection: "detected",
+          missingRequirements: [],
+          message: null,
+          packages: [],
+        })}
+      />,
+    );
+    expect(markup).toContain("Detected");
+    expect(markup).toContain("Verify connection");
+    expect(markup).not.toContain(">Ready<");
+    expect(markup).not.toContain(">Verified<");
+  });
+
+  it("shows explicit verification failures without dropping their recovery guidance", () => {
+    const detected = {
+      profile,
+      readiness: "ready",
+      connection: "detected",
+      missingRequirements: [],
+      message: null,
+      packages: [],
+    } as const;
+    const markup = renderToStaticMarkup(
+      <RuntimeDetails
+        enabled
+        language={language(detected)}
+        verificationState={{
+          executable: profile.executable,
+          pending: false,
+          error: null,
+          result: {
+            ...detected,
+            readiness: "unusable",
+            message: "Check your MATLAB license, then verify again.",
+          },
+        }}
+      />,
+    );
+    expect(markup).toContain("Check your MATLAB license");
+    expect(markup).not.toContain(">Ready<");
+    expect(markup).not.toContain(">Verified<");
+  });
+
   it("shows actionable guidance without hiding the missing requirements", () => {
     const message =
       "Create or select a Python environment that satisfies: jupyter_client, ipykernel. " +

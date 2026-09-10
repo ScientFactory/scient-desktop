@@ -31,6 +31,45 @@ const probe: MatlabEngineProbeResult = {
 const profile: ComputeRuntimeProfile = matlabProfile(probe, "conventional");
 
 describe("MATLAB runtime adapter", () => {
+  it.effect(
+    "keeps an automatically discovered installation visible when its helper is broken",
+    () =>
+      Effect.gen(function* () {
+        const root = yield* Effect.acquireRelease(
+          Effect.promise(() =>
+            NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "scient-matlab-discovery-")),
+          ),
+          (path) => Effect.promise(() => NodeFSP.rm(path, { recursive: true, force: true })),
+        );
+        const candidate = NodePath.join(root, "matlab.exe");
+        yield* Effect.promise(() => NodeFSP.writeFile(candidate, "synthetic executable"));
+        const runtime = makeMatlabRuntimeAdapter(
+          () =>
+            Effect.fail(
+              new ComputeRuntimeError({
+                operation: "discover",
+                message: "The MATLAB installation changed. Repair the connection helper.",
+              }),
+            ),
+          { PATH: root },
+          "win32",
+        );
+        const profiles = yield* runtime.adapter.discover({
+          projectRoot: root,
+          configuredExecutable: null,
+          refresh: true,
+        });
+        expect(profiles).toHaveLength(1);
+        expect(profiles[0]?.executable).toBe(candidate);
+        const verification = yield* runtime.adapter.verify({
+          profile: profiles[0]!,
+          cwd: root,
+          environment: {},
+        });
+        expect(verification.readiness).toBe("unusable");
+        expect(verification.message).toContain("Repair the connection helper");
+      }).pipe(Effect.scoped),
+  );
   it("derives installation paths and releases without launching MATLAB", () => {
     expect(matlabInstallationRoot(executable)).toBe("/Applications/MATLAB_R2026a.app");
     expect(matlabEngineDirectory(executable)).toBe(probe.engineDirectory);
@@ -194,3 +233,7 @@ describe("MATLAB runtime adapter", () => {
       }),
   );
 });
+// @effect-diagnostics nodeBuiltinImport:off -- synthetic executable discovery fixtures.
+import * as NodeFSP from "node:fs/promises";
+import * as NodeOS from "node:os";
+import * as NodePath from "node:path";

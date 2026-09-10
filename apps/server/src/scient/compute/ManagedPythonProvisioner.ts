@@ -192,7 +192,7 @@ function appendTail(current: string, next: string): string {
   return combined.slice(-OUTPUT_TAIL_BYTES);
 }
 
-function runOwnedProcess(
+export function runOwnedProcess(
   processes: ExecutionProcessPort,
   input: {
     readonly runId: string;
@@ -294,28 +294,46 @@ export function managedPythonProvisioningEnvironment(
   };
 }
 
-async function verifySpecification(specDirectory: string): Promise<void> {
+async function verifySpecification(
+  specDirectory: string,
+  recipe?: ManagedPythonProvisionerOptions["recipe"],
+): Promise<void> {
   await Promise.all([
     verifyManagedRuntimeChecksum(NodePath.join(specDirectory, "uv.lock"), {
       algorithm: "sha256",
-      digest: MANAGED_PYTHON_LOCK_SHA256,
+      digest: recipe?.lockSha256 ?? MANAGED_PYTHON_LOCK_SHA256,
     }),
     verifyManagedRuntimeChecksum(NodePath.join(specDirectory, "pyproject.toml"), {
       algorithm: "sha256",
-      digest: MANAGED_PYTHON_PROJECT_SHA256,
+      digest: recipe?.projectSha256 ?? MANAGED_PYTHON_PROJECT_SHA256,
     }),
   ]);
 }
 
-export interface ManagedPythonProvisionerOptions {
+interface ManagedPythonProvisionerBase {
   readonly computeDir: string;
   readonly specDirectory: string;
   readonly processes: ExecutionProcessPort;
-  readonly spawnProbe: (executable: string) => Effect.Effect<string, ComputeRuntimeError>;
   readonly environment: Readonly<Record<string, string>>;
   readonly platform: NodeJS.Platform;
   readonly arch: NodeJS.Architecture;
 }
+
+/** A reviewed recipe supplies its own verifier; Scientific Python uses its adapter. */
+export type ManagedPythonProvisionerOptions = ManagedPythonProvisionerBase &
+  (
+    | {
+        readonly spawnProbe: (executable: string) => Effect.Effect<string, ComputeRuntimeError>;
+        readonly recipe?: undefined;
+      }
+    | {
+        readonly recipe: {
+          readonly lockSha256: string;
+          readonly projectSha256: string;
+          readonly verify: ManagedPythonEnvironmentDependencies["verify"];
+        };
+      }
+  );
 
 export function makeManagedPythonProvisioner(
   options: ManagedPythonProvisionerOptions,
@@ -450,7 +468,7 @@ export function makeManagedPythonProvisioner(
   };
 
   const provision = async (input: ManagedPythonProvisionInput) => {
-    await verifySpecification(options.specDirectory);
+    await verifySpecification(options.specDirectory, options.recipe);
     const uv = await ensureUv(input.signal, input.onProgress);
     const projectRoot = NodePath.join(input.targetRoot, "project");
     await NodeFSP.mkdir(projectRoot, { recursive: false, mode: 0o700 });
@@ -546,6 +564,7 @@ export function makeManagedPythonProvisioner(
     readonly onProgress?: ((progress: ManagedPythonProvisionProgress) => void) | undefined;
   }): Promise<void> => {
     input.onProgress?.({ phase: "verifying", downloadedBytes: null, totalBytes: null });
+    if (options.recipe !== undefined) return options.recipe.verify(input);
     const stdout = await Effect.runPromise(options.spawnProbe(input.executable), {
       signal: input.signal,
     });

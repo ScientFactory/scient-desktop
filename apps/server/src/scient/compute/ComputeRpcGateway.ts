@@ -27,8 +27,9 @@ import {
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 
-import type * as ServerSettings from "../../serverSettings.ts";
 import type * as WorkspaceFileSystem from "../../workspace/WorkspaceFileSystem.ts";
+import type { ServerSettingsError } from "@t3tools/contracts";
+import type { LocalAnalysisStoreError } from "../analysis/LocalAnalysisStore.ts";
 import type { ComputeSessionService } from "./ComputeSessionService.ts";
 
 type ComputeGatewayService = Pick<
@@ -52,7 +53,12 @@ type ComputeGatewayService = Pick<
   | "inspectVariables"
   | "subscribeSessions"
 >;
-type ComputeGatewaySettings = Pick<ServerSettings.ServerSettingsService["Service"], "getSettings">;
+type ComputeGatewaySettings = {
+  readonly getSettings: Effect.Effect<
+    ServerSettingsValue,
+    ServerSettingsError | LocalAnalysisStoreError
+  >;
+};
 type ComputeGatewayWorkspace = Pick<WorkspaceFileSystem.WorkspaceFileSystem["Service"], "readFile">;
 
 type GatewayOperation = ComputeGatewayError["operation"];

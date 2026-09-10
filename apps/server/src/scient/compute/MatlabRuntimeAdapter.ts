@@ -256,6 +256,7 @@ export function computeMatlabFingerprint(
 
 export interface MatlabRuntimeAdapterResult {
   readonly adapter: ComputeLanguageAdapter;
+  readonly clearProbeCache: () => void;
   readonly readProbe: (
     executable: string,
     refresh?: boolean,
@@ -296,22 +297,20 @@ export function makeMatlabRuntimeAdapter(
         (candidate) =>
           readProbe(candidate.executable, request.refresh).pipe(
             Effect.map((probe) => matlabProfile(probe, candidate.source)),
-            Effect.catch((cause) =>
-              candidate.source === "configured" || engineHostRequirementIsMissing(cause)
-                ? Effect.succeed(unavailableProfile(candidate.executable, candidate.source))
-                : Effect.logDebug("MATLAB candidate was not usable", {
-                    executable: candidate.executable,
-                    reason: cause.message,
-                  }).pipe(Effect.as(null)),
+            // Discovery already checked the executable. A broken helper or license
+            // must remain visible with its actionable verification failure.
+            Effect.catch(() =>
+              Effect.succeed(unavailableProfile(candidate.executable, candidate.source)),
             ),
           ),
         { concurrency: 1 },
-      ).pipe(Effect.map((profiles) => profiles.filter((profile) => profile !== null))),
+      ),
     verify: (request) =>
       readProbe(request.profile.executable).pipe(
         Effect.map((probe) => ({
           profile: matlabProfile(probe, request.profile.source),
           readiness: "ready" as const,
+          connection: "detected" as const,
           missingRequirements: [],
           message: null,
           packages: [],
@@ -367,5 +366,5 @@ export function makeMatlabRuntimeAdapter(
       ),
   };
 
-  return { adapter, readProbe };
+  return { adapter, readProbe, clearProbeCache: () => cache.clear() };
 }

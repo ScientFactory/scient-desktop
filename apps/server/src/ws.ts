@@ -143,6 +143,7 @@ import * as GeneratedDocumentStore from "./scient/documentArtifacts/GeneratedDoc
 import { publishBrowserPdfExport } from "./scient/documentArtifacts/BrowserPdfExportPublication.ts";
 import * as AnalysisService from "./scient/analysis/AnalysisService.ts";
 import { makeComputeRpcGateway } from "./scient/compute/ComputeRpcGateway.ts";
+import { ScientificRuntimePreferences } from "./scient/compute/ScientificRuntimePreferences.ts";
 import * as ComputeSessionService from "./scient/compute/ComputeSessionService.ts";
 import * as ScientSkillManagement from "./scient/skills/ScientSkillManagement.ts";
 import * as ProviderSkillManagement from "./scient/skills/ProviderSkillManagement.ts";
@@ -686,7 +687,7 @@ const makeWsRpcLayer = (
       const compute = yield* ComputeSessionService.ComputeSessionService;
       const computeGateway = makeComputeRpcGateway({
         compute,
-        serverSettings,
+        serverSettings: yield* ScientificRuntimePreferences,
         workspaceFileSystem,
       });
       const scientSkillManagement = yield* ScientSkillManagement.ScientSkillManagement;
@@ -3694,6 +3695,7 @@ export const websocketRpcRouteLayer = Layer.unwrap(
     const pullRequests = yield* PullRequestService.PullRequestService;
     const analysis = yield* AnalysisService.AnalysisService;
     const compute = yield* ComputeSessionService.ComputeSessionService;
+    const runtimePreferences = yield* ScientificRuntimePreferences;
     return HttpRouter.add(
       "GET",
       "/ws",
@@ -3757,6 +3759,7 @@ export const websocketRpcRouteLayer = Layer.unwrap(
               Layer.provide(Layer.succeed(PullRequestService.PullRequestService, pullRequests)),
               Layer.provide(Layer.succeed(AnalysisService.AnalysisService, analysis)),
               Layer.provide(Layer.succeed(ComputeSessionService.ComputeSessionService, compute)),
+              Layer.provide(Layer.succeed(ScientificRuntimePreferences, runtimePreferences)),
               Layer.provide(
                 SourceControlDiscovery.layer.pipe(
                   Layer.provide(

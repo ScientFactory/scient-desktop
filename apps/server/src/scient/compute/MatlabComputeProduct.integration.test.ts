@@ -18,6 +18,9 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 
 import * as ServerConfig from "../../config.ts";
+import * as ServerSettings from "../../serverSettings.ts";
+import * as LocalAnalysisStore from "../analysis/LocalAnalysisStore.ts";
+import * as ScientificRuntimePreferences from "./ScientificRuntimePreferences.ts";
 import * as WorkspaceEntries from "../../workspace/WorkspaceEntries.ts";
 import * as WorkspaceFileSystem from "../../workspace/WorkspaceFileSystem.ts";
 import * as WorkspacePaths from "../../workspace/WorkspacePaths.ts";
@@ -29,6 +32,7 @@ import * as LocalComputeStore from "./LocalComputeStore.ts";
 import { matlabRuntimeBinding } from "./MatlabComputeRuntime.ts";
 
 const TEST_MATLAB = NodeProcess.env.SCIENT_TEST_MATLAB;
+const TEST_HELPER = NodeProcess.env.SCIENT_TEST_MATLAB_HELPER === "1";
 const MATLAB = ComputeLanguageId.make("matlab");
 
 const waitForTerminal = Effect.fn("MatlabCompute.waitForTerminal")(function* (
@@ -106,6 +110,18 @@ describe.runIf(Boolean(TEST_MATLAB))("MATLAB compute product backend", () => {
         const computeLayer = ComputeSessionService.layerWithRuntimeBindings(
           matlabRuntimeBinding.pipe(Effect.map((binding) => [binding])),
         ).pipe(
+          Layer.provide(
+            ScientificRuntimePreferences.layer.pipe(
+              Layer.provide(
+                ServerSettings.layerTest({
+                  scientificComputing: {
+                    languages: { [MATLAB]: { enabled: true, executable: TEST_MATLAB } },
+                  },
+                }),
+              ),
+              Layer.provide(LocalAnalysisStore.layer),
+            ),
+          ),
           Layer.provide(LocalComputeStore.layer),
           Layer.provide(LocalExecutionProcess.layer),
           Layer.provide(LocalDuplexProcess.layer),
@@ -135,12 +151,38 @@ describe.runIf(Boolean(TEST_MATLAB))("MATLAB compute product backend", () => {
             },
           });
 
+          if (TEST_HELPER) {
+            yield* gateway.manageRuntime({ languageId: MATLAB, action: "install" });
+            for (;;) {
+              const status = yield* gateway.managedRuntimeStatus({ languageId: MATLAB });
+              if (status.operation === null) {
+                expect(status.failureMessage).toBeNull();
+                expect(status.installed).toBe(true);
+                expect(status.selection).toBe("managed");
+                break;
+              }
+              yield* Effect.sleep("100 millis");
+            }
+          }
           const inspection = yield* gateway.inspectRuntimes({ cwd: projectRoot, refresh: true });
           const runtime = inspection.languages
             .find((language) => language.descriptor.languageId === MATLAB)
             ?.runtimes.find((candidate) => candidate.verification.readiness === "ready");
-          if (runtime === undefined) return yield* Effect.die("No ready MATLAB runtime was found.");
+          if (runtime === undefined)
+            return yield* Effect.die(
+              `No ready MATLAB runtime was found: ${inspection.languages.flatMap((language) => language.runtimes.map((runtime) => runtime.verification.message)).join("; ")}`,
+            );
           expect(runtime.profile.languageVersion).toMatch(/^R\d{4}[ab]$/u);
+          expect(runtime.verification.connection).toBe("detected");
+          for (let attempt = 0; attempt < 2; attempt += 1) {
+            const verified = yield* gateway.verifyRuntime({
+              cwd: projectRoot,
+              languageId: MATLAB,
+              executable: runtime.profile.executable,
+            });
+            expect(verified).toMatchObject({ readiness: "ready", connection: "verified" });
+            expect(yield* gateway.listSessions({ cwd: projectRoot })).toEqual([]);
+          }
 
           for (const name of [
             "scient_compute_eval",
@@ -167,6 +209,15 @@ describe.runIf(Boolean(TEST_MATLAB))("MATLAB compute product backend", () => {
             executable: runtime.profile.executable,
           });
           expect(session.status).toBe("ready");
+          if (TEST_HELPER) {
+            const removal = yield* gateway
+              .manageRuntime({ languageId: MATLAB, action: "remove" })
+              .pipe(Effect.exit);
+            expect(removal._tag).toBe("Failure");
+            expect((yield* gateway.managedRuntimeStatus({ languageId: MATLAB })).installed).toBe(
+              true,
+            );
+          }
 
           const writeId = yield* submit(
             gateway,
@@ -448,7 +499,23 @@ describe.runIf(Boolean(TEST_MATLAB))("MATLAB compute product backend", () => {
               expectedGeneration: restarted.generation,
             })).status,
           ).toBe("stopped");
+          if (TEST_HELPER) {
+            yield* gateway.manageRuntime({ languageId: MATLAB, action: "remove" });
+            for (;;) {
+              const status = yield* gateway.managedRuntimeStatus({ languageId: MATLAB });
+              if (status.operation === null) {
+                expect(status.failureMessage).toBeNull();
+                expect(status.installed).toBe(false);
+                break;
+              }
+              yield* Effect.sleep("100 millis");
+            }
+          }
         }).pipe(Effect.provide(Layer.merge(computeLayer, workspaceLayer)), Effect.scoped);
-      }).pipe(Effect.provide(NodeServices.layer), Effect.scoped, Effect.timeout("6 minutes")),
+      }).pipe(
+        Effect.provide(NodeServices.layer),
+        Effect.scoped,
+        Effect.timeout(TEST_HELPER ? "15 minutes" : "6 minutes"),
+      ),
   );
 });

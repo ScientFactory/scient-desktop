@@ -487,12 +487,18 @@ class MatlabEngineBridge:
         expected_engine_directory = os.path.join(
             self._expected_matlab_root, "extern", "engines", "python", "dist"
         )
-        if os.path.normcase(os.path.realpath(self._engine_directory)) != os.path.normcase(
-            os.path.realpath(expected_engine_directory)
-        ):
-            raise RuntimeError(
-                "MATLAB Engine directory does not belong to the selected MATLAB installation."
-            )
+        selected = os.path.normcase(os.path.realpath(self._engine_directory))
+        module = os.path.normcase(os.path.realpath(matlab.engine.__file__))
+        if os.path.commonpath([selected, module]) != selected:
+            raise RuntimeError("The Engine host imported a different MATLAB package.")
+        if selected != os.path.normcase(os.path.realpath(expected_engine_directory)):
+            # A Scient-owned helper is built using the selected MATLAB release's
+            # setup.py. Its vendor-generated metadata must still name that root.
+            with open(os.path.join(os.path.dirname(module), "_arch.txt"), encoding="utf-8") as stream:
+                arch = stream.read().splitlines()
+            root = os.path.dirname(os.path.dirname(arch[1])) if len(arch) == 4 else ""
+            if not root or os.path.normcase(os.path.realpath(root)) != os.path.normcase(os.path.realpath(self._expected_matlab_root)):
+                raise RuntimeError("MATLAB Engine directory does not belong to the selected MATLAB installation.")
         self._engine_module = matlab.engine
         return matlab.engine
 

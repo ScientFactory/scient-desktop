@@ -65,7 +65,8 @@ import { cn, randomUUID } from "~/lib/utils";
 import { computeEnvironment } from "~/state/compute";
 import { useAtomCommand } from "~/state/use-atom-command";
 import { useEnvironmentQuery } from "~/state/query";
-import { useEnvironmentSettings, useUpdateEnvironmentSettings } from "~/hooks/useSettings";
+import { useEnvironmentSettings } from "~/hooks/useSettings";
+import { serverEnvironment } from "~/state/server";
 import { useRightPanelStore } from "~/rightPanelStore";
 import { refreshProjectFiles } from "~/components/files/projectFilesQueryState";
 
@@ -560,7 +561,9 @@ export function ComputePanel(props: {
     props.environmentId,
     (settings) => settings.scientificComputing,
   );
-  const updateEnvironmentSettings = useUpdateEnvironmentSettings(props.environmentId);
+  const updateEnvironmentSettings = useAtomCommand(serverEnvironment.updateSettings, {
+    reportFailure: false,
+  });
 
   const runtimes = useEnvironmentQuery(
     computeEnvironment.runtimes({
@@ -633,17 +636,23 @@ export function ComputePanel(props: {
     enabled: false,
     executable: "",
   };
-  const ensurePythonEnabled = useCallback(() => {
-    if (pythonPreference.enabled) return;
-    updateEnvironmentSettings({
-      scientificComputing: {
-        schemaVersion: 1,
-        languages: {
-          [PYTHON_LANGUAGE_ID]: { ...pythonPreference, enabled: true },
+  const ensurePythonEnabled = useCallback(async () => {
+    if (pythonPreference.enabled) return true;
+    const result = await updateEnvironmentSettings({
+      environmentId: props.environmentId,
+      input: {
+        patch: {
+          scientificComputing: {
+            schemaVersion: 1,
+            languages: {
+              [PYTHON_LANGUAGE_ID]: { ...pythonPreference, enabled: true },
+            },
+          },
         },
       },
     });
-  }, [pythonPreference, updateEnvironmentSettings]);
+    return result._tag === "Success";
+  }, [props.environmentId, pythonPreference, updateEnvironmentSettings]);
 
   const allSessions = useMemo(() => {
     const byId = new Map<string, ComputeSessionRecord>();

@@ -5,6 +5,7 @@ import {
   ComputeExecutionId,
   ComputeOperationError,
   ComputeRequestId,
+  ComputeSessionId,
   EMPTY_COMPUTE_QUEUE,
   EMPTY_COMPUTE_SESSION_STORAGE,
   INITIAL_COMPUTE_SESSION_GENERATION,
@@ -47,7 +48,6 @@ import {
   type ComputeQueueState,
   type ComputeSessionCommandInput,
   type ComputeSessionGeneration,
-  type ComputeSessionId,
   type ComputeSessionJournalEntry,
   type ComputeSessionJournalEvent,
   type ComputeSessionRecord,
@@ -612,14 +612,58 @@ const make = Effect.gen(function* () {
           `The configured ${input.languageId} runtime was not found.`,
         );
       }
-      return yield* binding.adapter
+      const verification = yield* binding.adapter
         .verify({ profile, cwd: workingDirectory, environment })
         .pipe(
           Effect.mapError((cause) =>
             computeError("verify", "runtime-unusable", cause.message, cause),
           ),
         );
-    });
+      if (verification.readiness !== "ready" || verification.connection !== "detected")
+        return verification;
+      if (binding.managedRuntime?.isRemoving()) {
+        return yield* computeError(
+          "verify",
+          "runtime-unusable",
+          "Wait for runtime removal to finish before verifying the connection.",
+        );
+      }
+      // Explicit verification exercises the same launch and shutdown as a real
+      // session, without creating project history or keeping a licensed session.
+      return yield* Effect.scoped(
+        Effect.gen(function* () {
+          const launch = yield* binding.adapter.prepareLaunch({
+            profile,
+            cwd: workingDirectory,
+            environment,
+          });
+          const channel = yield* binding.transport.open({
+            sessionId: ComputeSessionId.make(`verify-${NodeCrypto.randomUUID()}`),
+            generation: INITIAL_COMPUTE_SESSION_GENERATION,
+            languageId: binding.adapter.languageId,
+            transportKind: binding.adapter.transportKind,
+            launch,
+            requiredCapabilities: [...REQUIRED_COMPUTE_CAPABILITIES],
+          });
+          yield* channel.shutdown({ expectedGeneration: INITIAL_COMPUTE_SESSION_GENERATION });
+          return {
+            ...verification,
+            connection: "verified" as const,
+            message: "Connection verified. The test session was closed.",
+          };
+        }),
+      ).pipe(
+        Effect.catch((cause) =>
+          Effect.succeed({
+            ...verification,
+            readiness: "unusable" as const,
+            message: shortText(
+              `Could not start and close this runtime. Check the installation and license, then verify again. ${cause.message}`,
+            ),
+          }),
+        ),
+      );
+    }).pipe(startLock.withPermits(1));
 
   // -------------------------------------------------------------------------
   // Publishing and persistence

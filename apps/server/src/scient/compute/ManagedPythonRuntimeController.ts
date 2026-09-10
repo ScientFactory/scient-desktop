@@ -42,16 +42,30 @@ function operationError(message: string, cause?: unknown): ComputeOperationError
 }
 
 function shortMessage(value: unknown): string {
-  return (value instanceof Error ? value.message : "Scientific Python setup failed.").slice(
-    0,
-    4096,
-  );
+  const messages: string[] = [];
+  const seen = new Set<unknown>();
+  for (
+    let current = value;
+    current instanceof Error && messages.length < 3 && !seen.has(current);
+    current = current.cause
+  ) {
+    seen.add(current);
+    messages.push(current.message);
+  }
+  return (messages.join(" ") || "Scientific runtime setup failed.").slice(0, 4096);
 }
 
 export function makeManagedPythonRuntimeController(input: {
   readonly manager: ManagedPythonManager;
   readonly toolkitIds: ReadonlyArray<ComputeToolkitId>;
+  readonly configuration?: {
+    readonly displayName: string;
+    readonly description: string;
+    readonly toolkitRevision: string;
+  };
 }): NonNullable<ComputeRuntimeBinding["managedRuntime"]> & { readonly dispose: () => void } {
+  const displayName = input.configuration?.displayName ?? "Scientific Python";
+  const toolkitRevision = input.configuration?.toolkitRevision ?? MANAGED_PYTHON_TOOLKIT_REVISION;
   let operation: ActiveOperation | null = null;
   let failureMessage: string | null = null;
 
@@ -62,12 +76,18 @@ export function makeManagedPythonRuntimeController(input: {
       if (operationSnapshot !== operation) continue;
       const active = current?.record.active ?? null;
       return {
+        ...(input.configuration === undefined
+          ? {}
+          : {
+              displayName,
+              description: input.configuration.description,
+            }),
         installed: current !== null,
         generationId: active?.generationId ?? null,
         selection: current?.record.selection ?? "existing",
         updateAvailable:
           active !== null &&
-          (active.toolkitRevision !== MANAGED_PYTHON_TOOLKIT_REVISION ||
+          (active.toolkitRevision !== toolkitRevision ||
             active.pythonVersion !== MANAGED_PYTHON_VERSION ||
             active.provisionerVersion !== MANAGED_PYTHON_PROVISIONER_VERSION),
         runtimeVersion: active === null ? null : `Python ${active.pythonVersion}`,
@@ -86,7 +106,7 @@ export function makeManagedPythonRuntimeController(input: {
         failureMessage:
           failureMessage ??
           (current !== null && !current.available
-            ? "Scient-managed Python is unavailable. Repair it or choose an existing environment."
+            ? `${displayName} is unavailable. Repair it or choose an existing environment.`
             : null),
       };
     }
@@ -95,7 +115,7 @@ export function makeManagedPythonRuntimeController(input: {
   const status = () =>
     Effect.tryPromise({
       try: readStatus,
-      catch: (cause) => operationError("Unable to inspect Scientific Python.", cause),
+      catch: (cause) => operationError(`Unable to inspect ${displayName}.`, cause),
     });
 
   const begin = async (
@@ -110,7 +130,7 @@ export function makeManagedPythonRuntimeController(input: {
     if (action === "update" && current !== null) {
       const active = current.record.active;
       if (
-        active.toolkitRevision === MANAGED_PYTHON_TOOLKIT_REVISION &&
+        active.toolkitRevision === toolkitRevision &&
         active.pythonVersion === MANAGED_PYTHON_VERSION &&
         active.provisionerVersion === MANAGED_PYTHON_PROVISIONER_VERSION
       ) {
@@ -118,7 +138,7 @@ export function makeManagedPythonRuntimeController(input: {
       }
     }
     if ((action === "repair" || action === "update") && current === null) {
-      throw operationError("Set up Scientific Python before repairing or updating it.");
+      throw operationError(`Set up ${displayName} before repairing or updating it.`);
     }
     if (action === "remove" && current === null) return;
 
@@ -140,7 +160,7 @@ export function makeManagedPythonRuntimeController(input: {
         ? input.manager.remove()
         : input.manager[action === "repair" ? "repair" : "install"]({
             toolkitIds: input.toolkitIds,
-            toolkitRevision: MANAGED_PYTHON_TOOLKIT_REVISION,
+            toolkitRevision,
             pythonVersion: MANAGED_PYTHON_VERSION,
             provisionerVersion: MANAGED_PYTHON_PROVISIONER_VERSION,
             signal: controller.signal,
@@ -168,7 +188,7 @@ export function makeManagedPythonRuntimeController(input: {
       try: async () => {
         if (action === "use-managed" || action === "use-existing") {
           if (operation !== null) {
-            throw operationError("Wait for the current Scientific Python operation to finish.");
+            throw operationError(`Wait for the current ${displayName} operation to finish.`);
           }
           await input.manager.select(action === "use-managed" ? "managed" : "existing");
           failureMessage = null;
@@ -180,7 +200,7 @@ export function makeManagedPythonRuntimeController(input: {
       catch: (cause) =>
         isComputeOperationError(cause)
           ? cause
-          : operationError("Unable to manage Scientific Python.", cause),
+          : operationError(`Unable to manage ${displayName}.`, cause),
     });
 
   const cancel = () =>
@@ -189,7 +209,7 @@ export function makeManagedPythonRuntimeController(input: {
         operation?.controller.abort();
         return await readStatus();
       },
-      catch: (cause) => operationError("Unable to cancel Scientific Python setup.", cause),
+      catch: (cause) => operationError(`Unable to cancel ${displayName} setup.`, cause),
     });
 
   return {

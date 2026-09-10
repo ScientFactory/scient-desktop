@@ -124,9 +124,14 @@ export interface ManagedPythonEnvironmentPaths {
 const decodeRecord = Schema.decodeUnknownSync(ManagedPythonEnvironmentRecord);
 const encodeRecord = Schema.encodeSync(Schema.fromJsonString(ManagedPythonEnvironmentRecord));
 
-export function managedPythonEnvironmentPaths(computeDir: string): ManagedPythonEnvironmentPaths {
+export type ManagedPythonPurpose = "python" | "matlab-connection";
+
+export function managedPythonEnvironmentPaths(
+  computeDir: string,
+  purpose: ManagedPythonPurpose = "python",
+): ManagedPythonEnvironmentPaths {
   const environmentsRoot = NodePath.join(computeDir, "environments");
-  const managedRoot = NodePath.join(environmentsRoot, "python");
+  const managedRoot = NodePath.join(environmentsRoot, purpose);
   return {
     environmentsRoot,
     managedRoot,
@@ -290,6 +295,7 @@ async function readStatus(
 export function makeManagedPythonEnvironmentManager(
   computeDir: string,
   dependencies: ManagedPythonEnvironmentDependencies,
+  purpose: ManagedPythonPurpose = "python",
 ) {
   const now = dependencies.now ?? Date.now;
   const nextGenerationId = dependencies.generationId ?? (() => NodeCrypto.randomUUID());
@@ -297,7 +303,7 @@ export function makeManagedPythonEnvironmentManager(
   const removeTree =
     dependencies.removeTree ??
     ((root: string) => NodeFSP.rm(root, { recursive: true, force: true }));
-  const paths = managedPythonEnvironmentPaths(computeDir);
+  const paths = managedPythonEnvironmentPaths(computeDir, purpose);
 
   let mutationTail: Promise<void> = Promise.resolve();
   const serialize = async <A>(operation: () => Promise<A>): Promise<A> => {
@@ -346,7 +352,7 @@ export function makeManagedPythonEnvironmentManager(
     );
     await Promise.all(
       environmentEntries
-        .filter((entry) => entry.startsWith("python.removing-"))
+        .filter((entry) => entry.startsWith(`${purpose}.removing-`))
         .map((entry) =>
           NodeFSP.rm(NodePath.join(paths.environmentsRoot, entry), {
             recursive: true,
@@ -372,7 +378,10 @@ export function makeManagedPythonEnvironmentManager(
           "The managed Python setup was cancelled before it started.",
         );
       }
-      if (toolkitIds.length === 0 || new Set(toolkitIds).size !== toolkitIds.length) {
+      if (
+        (purpose === "python" && toolkitIds.length === 0) ||
+        new Set(toolkitIds).size !== toolkitIds.length
+      ) {
         throw new ManagedPythonEnvironmentError(
           "invalid-request",
           "Choose at least one distinct Toolkit for the managed Python environment.",
@@ -575,7 +584,7 @@ export function makeManagedPythonEnvironmentManager(
 
       const tombstone = NodePath.join(
         paths.environmentsRoot,
-        `python.removing-${NodeCrypto.randomUUID()}`,
+        `${purpose}.removing-${NodeCrypto.randomUUID()}`,
       );
       await NodeFSP.rename(paths.managedRoot, tombstone).catch((cause) => {
         throw new ManagedPythonEnvironmentError(

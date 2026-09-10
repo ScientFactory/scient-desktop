@@ -72,6 +72,57 @@ describe("ManagedPythonEnvironment", () => {
     expect(paths.statePath).toBe(NodePath.join(paths.managedRoot, "active.json"));
   });
 
+  it("isolates helper activation, reconciliation, and removal from Scientific Python", async () => {
+    const python = makeManagedPythonEnvironmentManager(computeDir, dependencies());
+    const helper = makeManagedPythonEnvironmentManager(
+      computeDir,
+      dependencies(),
+      "matlab-connection",
+    );
+    const [installedPython, installedHelper] = await Promise.all([
+      python.install(installInput()),
+      helper.install(installInput({ toolkitIds: [] })),
+    ]);
+    expect(installedPython.executable).not.toBe(installedHelper.executable);
+    const pythonPaths = managedPythonEnvironmentPaths(computeDir);
+    const pythonTombstone = NodePath.join(pythonPaths.environmentsRoot, "python.removing-preserve");
+    await NodeFSP.mkdir(pythonTombstone);
+    await helper.reconcile();
+    await helper.remove();
+    expect(await helper.inspect()).toBeNull();
+    expect(await python.inspect()).toEqual(installedPython);
+    expect((await NodeFSP.stat(pythonTombstone)).isDirectory()).toBe(true);
+    expect((await NodeFSP.stat(installedPython.executable)).isFile()).toBe(true);
+  });
+
+  it("rolls back failed helper repair and does not affect simultaneous Python mutations", async () => {
+    let fail = false;
+    const helper = makeManagedPythonEnvironmentManager(
+      computeDir,
+      dependencies({
+        verify: async () => {
+          if (fail) throw new Error("Engine import failed");
+        },
+      }),
+      "matlab-connection",
+    );
+    const original = await helper.install(installInput({ toolkitIds: [] }));
+    fail = true;
+    const python = makeManagedPythonEnvironmentManager(computeDir, dependencies());
+    const results = await Promise.allSettled([
+      helper.repair(installInput({ toolkitIds: [] })),
+      python.install(installInput()),
+    ]);
+    expect(results.map((result) => result.status)).toEqual(["rejected", "fulfilled"]);
+    expect(await helper.inspect()).toEqual(original);
+    await python.remove();
+    expect(await helper.inspect()).toEqual(original);
+    const entries = await NodeFSP.readdir(
+      managedPythonEnvironmentPaths(computeDir, "matlab-connection").managedRoot,
+    );
+    expect(entries.filter((name) => name.startsWith("generation-"))).toHaveLength(1);
+  });
+
   it("publishes only a provisioned and verified final-path generation", async () => {
     const verify = vi.fn(async () => undefined);
     const manager = makeManagedPythonEnvironmentManager(

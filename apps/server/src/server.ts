@@ -162,6 +162,7 @@ import * as LocalDuplexProcess from "./scient/execution/LocalDuplexProcess.ts";
 import * as LocalExecutionProcess from "./scient/execution/LocalExecutionProcess.ts";
 import * as LocalComputeStore from "./scient/compute/LocalComputeStore.ts";
 import * as ComputeRuntimeRegistry from "./scient/compute/ComputeRuntimeRegistry.ts";
+import * as ScientificRuntimePreferences from "./scient/compute/ScientificRuntimePreferences.ts";
 import * as LatexBuildService from "./scient/latex/LatexBuildService.ts";
 import * as LatexManagedToolchain from "./scient/latex/LatexManagedToolchain.ts";
 import * as LatexPackageInstaller from "./scient/latex/LatexPackageInstaller.ts";
@@ -602,6 +603,10 @@ const commandReadinessLayer = HttpRouter.middleware(
 );
 
 const AnalysisRunIndexLive = AnalysisRunIndex.layer.pipe(Layer.provide(PersistenceLayerLive));
+const ScientificRuntimePreferencesLive = ScientificRuntimePreferences.layer.pipe(
+  Layer.provide(ServerSettingsLayerLive),
+  Layer.provide(LocalAnalysisStore.layer),
+);
 
 const AnalysisServiceLive = AnalysisService.layer.pipe(
   Layer.provide(LocalAnalysisStore.layer),
@@ -666,6 +671,7 @@ export const makeRoutesLayer = Layer.mergeAll(
   Layer.provide(PullRequestServiceLive),
   Layer.provide(AnalysisServiceLive),
   Layer.provide(ComputeSessionServiceLive),
+  Layer.provide(ScientificRuntimePreferencesLive),
   Layer.provide(ScientLatexServicesLive),
   Layer.provide(PreviewAutomationBroker.layer),
   Layer.provide(ServerSelfUpdate.layer.pipe(Layer.provide(DesktopAppUpdateLayerLive))),

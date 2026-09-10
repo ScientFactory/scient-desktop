@@ -544,6 +544,9 @@ export const ComputeManagedRuntimeOperation = Schema.Struct({
 export type ComputeManagedRuntimeOperation = typeof ComputeManagedRuntimeOperation.Type;
 
 export const ComputeManagedRuntimeStatus = Schema.Struct({
+  /** Labels belong to the reviewed adapter, not to a parallel UI provider switch. */
+  displayName: Schema.optional(Label),
+  description: Schema.optional(ShortText),
   installed: Schema.Boolean,
   generationId: Schema.optional(Schema.NullOr(Label)),
   selection: ComputeManagedRuntimeSelection,
@@ -596,6 +599,8 @@ export const ComputeRuntimeVerification = Schema.Struct({
   readiness: ComputeRuntimeReadiness,
   missingRequirements: Schema.Array(Label),
   message: Schema.NullOr(ShortText),
+  /** Discovery is passive; only explicit verification starts a licensed runtime. */
+  connection: Schema.optional(Schema.Literals(["detected", "verified"])),
   // Optional on decode so retained fixtures and older attached clients remain
   // readable while current adapters always return the bounded observations.
   packages: Schema.Array(ComputeRuntimePackage)

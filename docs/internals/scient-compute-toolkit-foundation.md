@@ -1,4 +1,4 @@
-# Scientific Compute Toolkits and Managed Python Foundation
+# Scientific Compute Toolkits and Runtime Setup
 
 Status: Installable local vertical-slice candidate; owner and cross-platform review pending
 Owner: Yaacov
@@ -26,6 +26,78 @@ This note describes an implementation candidate, not a release claim. Every
 decision remains evidence-driven: implementation and qualification may refine
 this document when a mechanism proves unreliable, unnecessarily complex, or
 wrong for a supported platform.
+
+## Phase one: runtime setup and MATLAB connection — 2026-09-10
+
+This continuation completes the setup/connection slice, not the later MATLAB
+session/result parity work. The implementation deliberately reuses a private
+**Python environment** mechanism rather than introducing a general package manager.
+
+| Responsibility                | Shared mechanism                                                                                                                                    | Language-specific policy                                                                                                                                             |
+| ----------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Private environment lifecycle | `ManagedPythonEnvironment`, provisioner, controller: serialized generations, activation, rollback, cancellation, removal and startup reconciliation | Separate `python` and `matlab-connection` roots/receipts; independent selection and revisions                                                                        |
+| Download/provisioning         | Pinned uv artifact, private CPython, locked specification and owned process runner                                                                  | Scientific Python's data Toolkit versus a minimal MATLAB helper with setuptools/wheel and the selected installation's Engine                                         |
+| Runtime settings              | `ScientificRuntimePreferences`, server-scoped Settings and existing generic runtime RPCs                                                            | MATLAB's canonical executable is also read/written by the older analysis service; absent canonical settings read through the legacy choice without a migration write |
+| Native connection proof       | Existing adapter prepare/open/shutdown path, serialized with session mutations                                                                      | MATLAB advertises passive `detected` status, requesting an explicit native verification; Python retains its existing verification semantics                          |
+| UI                            | Existing Settings row and managed-runtime card with optional display text                                                                           | MATLAB acquisition/license explanation, helper-versus-MATLAB ownership and explicit Verify connection                                                                |
+
+The helper lives under `<computeDir>/environments/matlab-connection/`. It uses the
+same pinned CPython as managed Scientific Python, but **not** that environment or
+its scientific packages. The two may be repaired/removed independently. Only
+Scient-owned generations are writable/removable. MATLAB and system/project Python
+remain user-owned. An installed helper may explicitly be deselected with Use existing.
+
+`MatlabConnectionHelper` builds the selected MATLAB installation's own Engine
+package into an unpublished private generation and validates its import and
+`_arch.txt` installation identity before activation. It does not run pip against
+system Python or write into the MATLAB bundle. CPython 3.12 is accepted only for the
+explicit reviewed MATLAB release list R2024b–R2026a; a future release requires
+review, not a permissive version comparison. Existing Engine hosts remain supported,
+including installed Engine packages whose vendor metadata matches the selected
+MATLAB. The lexical virtual-environment launcher is preserved while imported module
+and MATLAB paths are canonicalized, including macOS `/var` versus `/private/var`.
+
+Source references: [MathWorks Engine installation](https://www.mathworks.com/help/matlab/matlab_external/install-the-matlab-engine-for-python.html)
+and [Python compatibility](https://www.mathworks.com/support/requirements/python-compatibility.html).
+The accepted release list is not cross-platform qualification: native verification
+in this pass is macOS arm64 / MATLAB R2026a. MATLAB Runtime alone is not MATLAB.
+
+Passive discovery/import never starts MATLAB. Explicit Verify connection creates a
+scoped transport using the same bridge as real runs, validates the handshake, then
+shuts it down without a project session or history entry. Failures retain actionable
+startup/license information. `detected`/`verified` are optional contract fields for
+backward compatibility. The UI clears transient verification on refresh, environment,
+runtime or helper selection changes and ignores stale in-flight results. Detected
+executables remain visible when their connection is broken. Launch always reprobes.
+
+Settings must finish saving the enabled language before assisted installation starts.
+A failed settings save must not start an installer; remote settings remain scoped to
+the selected environment. Helper generation/selection changes invalidate passive
+Engine probes. Removal is serialized with session creation and explicit verification,
+and is refused while a live MATLAB session exists. Failed repair preserves the prior
+generation; selected-but-broken helpers never silently fall back to a different host.
+The older analysis service also keys its cached profile by the current canonical
+executable preference. Failed inspection of a newly selected path cannot reuse or
+relabel the previous profile, and late verification cannot overwrite a newer choice.
+
+### Qualification and next boundary
+
+Backend coverage includes isolation between both environment roots, failed repair
+rollback, unsupported/missing MATLAB prerequisites without downloads, exact Engine
+host selection, canonical preference read-through and explicit clears, and repeated
+native verification success/failure without retained sessions. Opt-in native tests
+cover both private-helper and existing-host MATLAB: stateful execution, user errors,
+queued execution, output flooding, interrupt/recovery, restart and stop; the helper
+case also installs and removes the helper and refuses removal during a live session.
+The separate real Scientific Python install/run/remove test remains a regression gate.
+
+Phase two must still resolve stable MATLAB figure identity for changed-only emissions,
+cross-language session switching, ordinary `.m` file/path semantics, and parity with
+the older fresh-process artifacts/native FIG features. Do not delete the older engine
+until that parity is demonstrated. A connection being verified does not establish
+feature parity, cross-platform release readiness, owner acceptance, or a license that
+will remain available indefinitely. Phase three is cumulative qualification/delivery
+after the bounded implementation and owner review; no release is authorized here.
 
 ## Why Toolkits are the product unit
 
