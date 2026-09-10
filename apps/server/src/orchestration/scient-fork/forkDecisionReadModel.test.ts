@@ -34,6 +34,7 @@ function thread(id: string, messages: OrchestrationThread["messages"]): Orchestr
     deletedAt: null,
     messages,
     proposedPlans: [],
+    pullRequests: [],
     activities: [],
     checkpoints: [],
     session: null,

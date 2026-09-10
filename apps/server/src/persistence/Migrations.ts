@@ -63,6 +63,7 @@ import Migration0048 from "./Migrations/048_RepairAutomaticSettlementTimestamps.
 import Migration0049 from "./Migrations/049_ProjectionProjectIcon.ts";
 import Migration0051 from "./Migrations/051_ProjectionThreadBranchPullRequest.ts";
 import Migration0052 from "./Migrations/052_ProjectionThreadsActiveOrderKey.ts";
+import Migration0053 from "./Migrations/053_ProjectionThreadPullRequests.ts";
 
 /**
  * Migration loader with all migrations defined inline.
@@ -124,8 +125,12 @@ const migrationEntries = [
   [47, "ProjectionProjectsAutoPull", Migration0047],
   [48, "RepairAutomaticSettlementTimestamps", Migration0048],
   [49, "ProjectionProjectIcon", Migration0049],
+  // 50 was used by the retired development-only ProjectionSessionErrorReason.
+  // Never reuse recorded IDs: the runner advances past the highest recorded ID.
   [51, "ProjectionThreadBranchPullRequest", Migration0051],
   [52, "ProjectionThreadsActiveOrderKey", Migration0052],
+  // T3's migration 50 follows Scient's immutable history at the next free ID.
+  [53, "ProjectionThreadPullRequests", Migration0053],
 ] as const;
 
 export const migrationManifest = migrationEntries.map(([id, name]) => [id, name] as const);

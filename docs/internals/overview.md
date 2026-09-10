@@ -37,6 +37,25 @@ declares `WS_METHODS` and assembles `WsRpcGroup`; each member is either unary or
 be a broadcast push bus: a client subscribes to what it needs and the server pushes only on that
 subscription.
 
+### Pull request linking compatibility
+
+Web, desktop, mobile, and environments upgrade independently. Negotiate linking through the
+environment descriptor, never through a client version or an assumed coordinated release:
+
+| Environment capability                | Client behavior                                                                                                   |
+| ------------------------------------- | ----------------------------------------------------------------------------------------------------------------- |
+| `threadPullRequests: true`            | Use persisted `pullRequests[]`, multi-link commands, stack UI, and reverse thread lookup.                         |
+| Only `threadPullRequestLinking: true` | Use `linkedPullRequest` and the existing `thread.meta.update` single-link operation. Do not call multi-link RPCs. |
+| Neither flag                          | Hide linking actions; existing branch-discovered PR display remains available.                                    |
+
+New environments continue advertising the legacy flag, accepting legacy metadata commands, and
+emitting the derived `linkedPullRequest` field for older clients. That hostless field includes only
+links in the thread project's own repository; cross-host and cross-repository links require the
+multi-link protocol. New clients accept snapshots that
+omit `pullRequests`. Retain the legacy wire fields, projection column, and replay support; this feature
+does not schedule their removal. Missing new capabilities must also override cached multi-link data
+after an environment downgrade.
+
 [`ws.ts`][ws] serves the group. `websocketRpcRouteLayer` mounts `GET /ws`, authenticates the upgrade
 through `EnvironmentAuth.authenticateWebSocketUpgrade`, then hands the socket to
 `RpcServer.toHttpEffectWebsocket`. Authorization is per method: `RPC_REQUIRED_SCOPE` maps each method

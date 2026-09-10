@@ -950,6 +950,7 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
       const supportsScientSkills =
         ScientSkillSession.scientSkillDeliveryForProvider(provider) === "mcp";
       const capabilities = new Set<McpCapability>([
+        "pull-requests",
         "documents:build",
         "sources:read",
         "sources:write",

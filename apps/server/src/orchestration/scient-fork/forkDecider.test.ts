@@ -167,6 +167,7 @@ function makeOriginThread(overrides: Partial<OrchestrationThread> = {}): Orchest
       }),
     ],
     proposedPlans: [],
+    pullRequests: [],
     activities: [],
     checkpoints: [checkpoint("turn-1", 1), checkpoint("turn-2", 2)],
     conversationForkBoundaries: boundaries,
