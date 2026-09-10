@@ -54,14 +54,23 @@ registered.
 ## UX and recovery
 
 The settled card has explicit loading, ready, source, and error states. A parse
-failure shows one compact error line with repair/copy icons and readable source;
+failure shows one compact error line and readable source. Repair/copy icons sit
+beside More in the existing `VisualCardToolbar`, not in a separate row;
 retry remains in the existing actions menu. It cannot fail the surrounding
 Markdown render. In chat, **Ask agent to fix** uses the
-existing `ComposerHandleContext` insertion API to append a reviewable request,
+existing `ComposerHandleContext.citeAssistantText` API to insert a reviewable
+`AssistantCitationChip` at the caret, using the same serialization, editable
+comment, removal, and provider expansion as selected-text citations,
 preserving the draft and attachments and respecting the composer's busy state.
 Insertion owns deferred focus: an immediate extra focus call would publish the
 editor's previous snapshot before its controlled update. It does not submit or
-mutate a past message. **Copy error and source** provides
+mutate a past message. The containing `AssistantCitationSource` provides the
+actual message/thread identity. Shared range capture quotes the displayed source
+without changing native selection; if source is hidden, it quotes the visible
+error and includes the full source in the comment instead. No source offsets are
+invented. Prefilled repair citations do not automatically open a comment popup.
+The existing 8,000-character quote/comment limits remain; oversized contexts are
+not silently truncated and can still be copied. **Copy error and source** provides
 the same request when no composer is available. Requests include the Mermaid source,
 package version and parser diagnostic (bounded to 8,000 characters, without its
 stack); nested Markdown fences are escaped by the shared export helper.

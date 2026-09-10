@@ -7,7 +7,13 @@ import {
   useRef,
   useState,
   type RefObject,
+  type ComponentProps,
 } from "react";
+import { EnvironmentId, MessageId, ThreadId, type AssistantCitation } from "@t3tools/contracts";
+import {
+  collectAssistantCitations,
+  expandAssistantCitationsForProvider,
+} from "@t3tools/shared/assistantCitations";
 import { createRoot } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
@@ -16,9 +22,21 @@ import {
   type ComposerPromptEditorHandle,
 } from "~/components/ComposerPromptEditor";
 import { ComposerHandleContext, type ComposerHandleRef } from "~/composerHandleContext";
+import { AssistantCitationSource } from "~/components/chat/AssistantCitationSource";
+import { formatAssistantCitationForComposer } from "~/composer-logic";
 import { MermaidDiagramCard } from "./MermaidDiagramCard";
-import { buildMermaidRepairRequest } from "./mermaidRepair";
 import { MermaidRenderError } from "./mermaidRuntime";
+
+// Keep the real capsule and editor; only navigation is outside this fixture.
+vi.mock("@tanstack/react-router", async (original) => ({
+  ...(await original<typeof import("@tanstack/react-router")>()),
+  useNavigate: () => vi.fn(),
+  Link: ({ children, className, onClick, "aria-label": label }: ComponentProps<"a">) => (
+    <a href="#source" className={className} onClick={onClick} aria-label={label}>
+      {children}
+    </a>
+  ),
+}));
 
 vi.mock("../presentation/useNearViewport", () => ({
   useNearViewport: () => ({ ref: null, isNearViewport: true }),
@@ -59,8 +77,11 @@ function RepairEditorFixture({
     () =>
       ({
         readSnapshot: () => editor.current!.readSnapshot(),
-        insertTextAtEnd: (text: string) => {
-          const next = draftRef.current + text;
+        citeAssistantText: (citation: AssistantCitation) => {
+          const next =
+            draftRef.current +
+            (draftRef.current ? " " : "") +
+            formatAssistantCitationForComposer(citation, citation.comment);
           setPrompt(next);
           requestAnimationFrame(() => {
             if (draftRef.current === next) editor.current?.focusAtEnd();
@@ -73,7 +94,21 @@ function RepairEditorFixture({
   );
   return (
     <ComposerHandleContext value={handle}>
-      <MermaidDiagramCard source={source} language="mermaid" title={null} theme="light" />
+      <div data-assistant-citation-viewport>
+        <AssistantCitationSource
+          messageId={MessageId.make("assistant")}
+          threadRef={{
+            environmentId: EnvironmentId.make("local"),
+            threadId: ThreadId.make("thread"),
+          }}
+          itemKey="assistant"
+          listRef={createRef()}
+          request={null}
+        >
+          <p>The diagram:</p>
+          <MermaidDiagramCard source={source} language="mermaid" title={null} theme="light" />
+        </AssistantCitationSource>
+      </div>
       <form
         onSubmit={(event) => {
           event.preventDefault();
@@ -138,20 +173,46 @@ describe("Mermaid repair with the real composer editor", () => {
       );
       const ask = container.querySelector<HTMLButtonElement>('[aria-label="Ask agent to fix"]')!;
       expect(ask).not.toBeNull();
-      const expected = `${initialDraft}${initialDraft ? "\n\n" : ""}${buildMermaidRepairRequest(source, diagnostic)}`;
       await act(() => ask.click());
       await flushFocusFrame();
-      expect(container.querySelector("output")?.textContent).toBe(expected);
-      expect(editor.current!.readSnapshot().value).toBe(expected);
+      const storedDraft = container.querySelector("output")!.textContent!;
+      const citations = collectAssistantCitations(storedDraft);
+      expect(citations).toHaveLength(1);
+      expect(citations[0]!.citation).toMatchObject({
+        messageId: "assistant",
+        environmentId: "local",
+        threadId: "thread",
+        text: source,
+      });
+      expect(citations[0]!.citation.comment).toContain(diagnostic);
+      expect(storedDraft.slice(0, citations[0]!.start)).toBe(
+        initialDraft ? `${initialDraft} ` : "",
+      );
+      expect(editor.current!.readSnapshot().value).toBe(storedDraft);
       const editable = container.querySelector<HTMLElement>('[contenteditable="true"]')!;
-      expect(editable.textContent).toContain("Please fix this Mermaid diagram");
+      expect(editable.querySelectorAll("[data-assistant-citation-chip]")).toHaveLength(1);
+      expect(editable.textContent).not.toContain(source);
+      expect(editable.textContent).not.toContain(diagnostic);
+      expect(editable.querySelector('[aria-label="Edit citation comment"]')).not.toBeNull();
+      const providerPrompt = expandAssistantCitationsForProvider(storedDraft);
+      expect(providerPrompt).toContain(JSON.stringify(source));
+      expect(providerPrompt).toContain("Please fix this Mermaid diagram");
+      expect(providerPrompt).toContain("Parse error on line 2:");
       expect(document.activeElement).toBe(editable);
       await act(() => ask.click());
       await flushFocusFrame();
-      expect(editor.current!.readSnapshot().value).toBe(expected);
-      expect(container.querySelector("output")?.textContent).toBe(expected);
+      expect(editor.current!.readSnapshot().value).toBe(storedDraft);
+      expect(container.querySelector("output")?.textContent).toBe(storedDraft);
       expect(send).not.toHaveBeenCalled();
       expect(container.textContent).not.toContain("Request added to the composer");
+      await act(() =>
+        editable
+          .querySelector<HTMLButtonElement>('[aria-label="Remove assistant citation"]')!
+          .click(),
+      );
+      expect(collectAssistantCitations(editor.current!.readSnapshot().value)).toHaveLength(0);
+      expect(editor.current!.readSnapshot().value.trim()).toBe(initialDraft);
+      expect(send).not.toHaveBeenCalled();
     },
   );
 });

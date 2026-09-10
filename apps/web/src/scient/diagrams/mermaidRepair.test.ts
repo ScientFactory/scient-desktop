@@ -1,7 +1,22 @@
 import { describe, expect, it, vi } from "vite-plus/test";
+import { EnvironmentId, MessageId, ThreadId, type AssistantCitation } from "@t3tools/contracts";
+import { serializeAssistantCitation } from "@t3tools/shared/assistantCitations";
 
 import { addMermaidRepairToComposer, buildMermaidRepairRequest } from "./mermaidRepair";
 import { MERMAID_VERSION, MermaidRenderError } from "./mermaidRuntime";
+
+const citation: AssistantCitation = {
+  version: 1,
+  environmentId: EnvironmentId.make("environment"),
+  threadId: ThreadId.make("thread"),
+  messageId: MessageId.make("message"),
+  text: "flowchart LR\nA[",
+  start: 0,
+  end: 15,
+  prefix: "",
+  suffix: "",
+  comment: "Please fix this diagram. Parse error.",
+};
 
 describe("Mermaid repair requests", () => {
   it("preserves the exact source and diagnostic, including nested fences", () => {
@@ -16,32 +31,34 @@ describe("Mermaid repair requests", () => {
 
   it("appends once, without replacing the draft or sending a message", () => {
     let value = "Please keep my existing question.";
+    const focusAtEnd = vi.fn();
     const composer = {
       readSnapshot: () => ({ value }),
-      insertTextAtEnd: vi.fn((text: string) => {
-        value += text;
+      citeAssistantText: vi.fn((quote: AssistantCitation) => {
+        value += ` ${serializeAssistantCitation(quote)} `;
         return true;
       }),
-      focusAtEnd: vi.fn(),
+      focusAtEnd,
     } as unknown as NonNullable<Parameters<typeof addMermaidRepairToComposer>[0]>;
-    const request = buildMermaidRepairRequest("flowchart LR\nA[", "Parse error");
-    expect(addMermaidRepairToComposer(composer, request)).toBe(true);
-    expect(addMermaidRepairToComposer(composer, request)).toBe(true);
-    expect(value).toBe(`Please keep my existing question.\n\n${request}`);
-    expect(composer.insertTextAtEnd).toHaveBeenCalledTimes(1);
-    // Only refocus an already inserted request; insertion owns its own focus.
-    expect(composer.focusAtEnd).toHaveBeenCalledTimes(1);
+    expect(addMermaidRepairToComposer(composer, citation)).toBe(true);
+    expect(addMermaidRepairToComposer(composer, citation)).toBe(true);
+    expect(value).toBe(
+      `Please keep my existing question. ${serializeAssistantCitation(citation)} `,
+    );
+    expect(composer.citeAssistantText).toHaveBeenCalledTimes(1);
+    expect(focusAtEnd).not.toHaveBeenCalled();
   });
 
   it("fails safely when the composer is absent or refuses an insertion", () => {
-    expect(addMermaidRepairToComposer(null, "request")).toBe(false);
+    expect(addMermaidRepairToComposer(null, citation)).toBe(false);
+    const focusAtEnd = vi.fn();
     const composer = {
       readSnapshot: () => ({ value: "" }),
-      insertTextAtEnd: vi.fn(() => false),
-      focusAtEnd: vi.fn(),
+      citeAssistantText: vi.fn(() => false),
+      focusAtEnd,
     } as unknown as NonNullable<Parameters<typeof addMermaidRepairToComposer>[0]>;
-    expect(addMermaidRepairToComposer(composer, "request")).toBe(false);
-    expect(composer.focusAtEnd).not.toHaveBeenCalled();
+    expect(addMermaidRepairToComposer(composer, citation)).toBe(false);
+    expect(focusAtEnd).not.toHaveBeenCalled();
   });
 });
 

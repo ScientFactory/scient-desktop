@@ -9,10 +9,11 @@ import {
   RefreshCwIcon,
   MessageSquareIcon,
 } from "lucide-react";
-import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { use, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 
 import { Button } from "~/components/ui/button";
 import { useComposerHandleContext } from "~/composerHandleContext";
+import { AssistantCitationContext } from "~/components/chat/assistantCitationContext";
 import { Menu, MenuItem, MenuTrigger } from "~/components/ui/menu";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "~/components/ui/tooltip";
 import { toastManager } from "~/components/ui/toast";
@@ -37,7 +38,11 @@ import {
   type MermaidTheme,
   type RenderedMermaidDiagram,
 } from "./mermaidRuntime";
-import { addMermaidRepairToComposer, buildMermaidRepairRequest } from "./mermaidRepair";
+import {
+  addMermaidRepairToComposer,
+  buildMermaidRepairRequest,
+  createMermaidRepairCitation,
+} from "./mermaidRepair";
 import { useNearViewport } from "../presentation/useNearViewport";
 import {
   VisualCardDetails,
@@ -117,6 +122,8 @@ export function MermaidDiagramCard({
 }: MermaidDiagramCardProps) {
   const { ref, isNearViewport } = useNearViewport();
   const composerRef = useComposerHandleContext();
+  const citationSource = use(AssistantCitationContext);
+  const errorElementRef = useRef<HTMLSpanElement>(null);
   const [diagramState, setDiagramState] = useState<DiagramState>({ status: "idle" });
   const [retryVersion, setRetryVersion] = useState(0);
   const [sourceVisible, setSourceVisible] = useState<boolean | null>(null);
@@ -224,8 +231,24 @@ export function MermaidDiagramCard({
       : null;
 
   const handleAskToFix = () => {
-    if (repairRequest === null) return;
-    if (!addMermaidRepairToComposer(composerRef?.current, repairRequest)) {
+    if (
+      !resultIsCurrent ||
+      diagramState.status !== "error" ||
+      !citationSource ||
+      !errorElementRef.current
+    )
+      return;
+    const citation = createMermaidRepairCitation(
+      citationSource,
+      errorElementRef.current,
+      source,
+      diagramState.diagnostic,
+    );
+    if (!citation) {
+      showActionError("Unable to cite this diagram. Use Copy error and source.");
+      return;
+    }
+    if (!addMermaidRepairToComposer(composerRef?.current, citation)) {
       showActionError("The composer is unavailable right now.");
     }
   };
@@ -306,6 +329,30 @@ export function MermaidDiagramCard({
           </span>
         ) : null}
         <VisualCardToolbar label="Diagram actions">
+          {diagramState.status === "error" ? (
+            <>
+              {composerRef !== null && citationSource !== null ? (
+                <DiagramActionButton
+                  onClick={handleAskToFix}
+                  disabled={repairRequest === null}
+                  label="Ask agent to fix"
+                >
+                  <MessageSquareIcon className="size-3" strokeWidth={1.5} />
+                </DiagramActionButton>
+              ) : null}
+              <DiagramActionButton
+                onClick={handleCopyRepair}
+                disabled={repairRequest === null || activeAction !== null}
+                label="Copy error and source"
+              >
+                {actionMessage === "Error and source copied" ? (
+                  <CheckIcon className="size-3" strokeWidth={1.5} />
+                ) : (
+                  <CopyIcon className="size-3" strokeWidth={1.5} />
+                )}
+              </DiagramActionButton>
+            </>
+          ) : null}
           {readyResult != null ? (
             <DiagramActionButton
               disabled={activeAction != null}
@@ -407,6 +454,7 @@ export function MermaidDiagramCard({
             <TooltipTrigger
               render={
                 <span
+                  ref={errorElementRef}
                   className="min-w-0 flex-1 truncate text-xs text-muted-foreground"
                   tabIndex={0}
                 />
@@ -418,28 +466,6 @@ export function MermaidDiagramCard({
               {resultIsCurrent ? diagramState.diagnostic : null}
             </TooltipPopup>
           </Tooltip>
-          <div className="flex shrink-0 items-center gap-0.5">
-            {composerRef !== null ? (
-              <DiagramActionButton
-                onClick={handleAskToFix}
-                disabled={repairRequest === null}
-                label="Ask agent to fix"
-              >
-                <MessageSquareIcon className="size-3" strokeWidth={1.5} />
-              </DiagramActionButton>
-            ) : null}
-            <DiagramActionButton
-              onClick={handleCopyRepair}
-              disabled={repairRequest === null || activeAction !== null}
-              label="Copy error and source"
-            >
-              {actionMessage === "Error and source copied" ? (
-                <CheckIcon className="size-3" strokeWidth={1.5} />
-              ) : (
-                <CopyIcon className="size-3" strokeWidth={1.5} />
-              )}
-            </DiagramActionButton>
-          </div>
         </div>
       ) : readyResult !== null ? (
         <div className="scient-mermaid-inline overflow-auto p-2">
