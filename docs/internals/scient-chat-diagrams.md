@@ -25,11 +25,15 @@ diagram card.
 
 ## Rendering pipeline
 
-The exact-pinned `mermaid` 11.16.1 package is locally bundled and dynamically
+The exact-pinned `mermaid` 12.0.0 package is locally bundled and dynamically
 imported only when a settled diagram enters a 400 px viewport margin. The
 initial chat bundle does not import Mermaid. Rendering is serialized because
 Mermaid configuration is process-global. Identical source/appearance renders
 are deduplicated in flight and cached in a bounded LRU (100 entries / 20 MiB).
+Scient explicitly retains `layout: dagre`, `look: classic`, and its light/dark
+themes instead of adopting Mermaid 12's new visual defaults. Authors can opt
+into supported layouts/looks in Mermaid frontmatter. Mermaid 12 targets modern
+ES2024 browsers; the desktop Electron runtime meets that requirement.
 
 Cached SVG contains marker, mask, link, style, and accessibility ids. Every
 consumer receives a rebased copy with unique ids and rewritten fragment and
@@ -51,8 +55,19 @@ registered.
 
 The settled card has explicit loading, ready, source, and error states. A parse
 failure shows a concise error, the complete readable source, and retry; it
-cannot fail the surrounding Markdown render. The expanded dialog supports fit,
-25-400% zoom, actual-size layout, two-dimensional scrolling, source copy, and
+cannot fail the surrounding Markdown render. **Ask agent to fix** uses the
+existing `ComposerHandleContext` insertion API to append a reviewable request,
+preserving the draft and attachments and respecting the composer's busy state.
+It does not submit or mutate a past message. **Copy error and source** provides
+the same request when no composer is available. Requests include the Mermaid source,
+package version and parser diagnostic (bounded to 8,000 characters, without its
+stack); nested Markdown fences are escaped by the shared export helper.
+Only results matching the current source, theme and retry generation may be
+displayed or used for repair. Pending edits keep the error source editor mounted,
+but hide obsolete diagnostics and disable repair until the new result arrives.
+
+The expanded dialog supports fit, 25-400% zoom, actual-size layout,
+two-dimensional scrolling, source copy, and
 the same SVG/PNG export actions as the compact card. SVG download adds
 standalone namespaces and an appearance background. PNG copy/download
 rasterizes the same SVG at up to 2x, bounded to 8192 px per dimension.
@@ -75,9 +90,9 @@ title and a portable export filename.
 ## Agent capability discovery
 
 Agents do not infer renderer capabilities from the UI. Scient's compact shared
-awareness contract names Mermaid, requires the diagram declaration before
-accessibility metadata, and distinguishes inline representation from a durable
-artifact. Provider delivery and capability gating are governed centrally by
+awareness contract names Mermaid, places the diagram declaration before its
+contents (not necessarily before valid frontmatter/comments), and distinguishes
+inline representation from a durable artifact. Provider delivery and capability gating are governed centrally by
 [the provider architecture](./providers.md#scient-awareness); the diagram
 renderer does not inject hidden user text or project instruction files.
 
@@ -99,6 +114,21 @@ gate: Mermaid must remain in lazy chunks rather than the entry bundle.
 `docs/fixtures/scient-chat-diagrams.md` is the manual light/dark corpus for the
 major diagram families, math labels, RTL/Unicode, duplicates, export, copy, and
 recovery states.
+Mounted interaction tests cover review-before-send, draft preservation, repeated
+clicks, missing composer/clipboard and stale asynchronous results. Run
+`pnpm --dir apps/desktop test:mermaid-render` for a hidden Chromium test of the
+actual renderer, both themes, full diagnostics and 48 concurrent cache consumers.
+It uses only the synthetic fixture corpus and a disposable profile, without
+visual automation or provider calls. On Linux, run it under `xvfb-run`.
+
+Upgrade qualification also reproduced two **pre-existing export limitations**
+on 11.16.1 and 12.0.0: HTML line breaks can produce invalid standalone SVG XML,
+and PNG export of HTML-label (`foreignObject`) diagrams can fail with a tainted
+canvas. The smoke report lists these separately and detects changes from the
+pre-upgrade export baseline; a passing renderer check is not an export-success
+claim. Fix canonical SVG serialization and browser rasterization in a separate
+targeted export pass. Do not rewrite authors' Mermaid source to conceal these
+representation-layer failures.
 
 When T3 changes `ChatMarkdown.tsx`, reapply only the import and settled-fence
 branch, then rerun the diagram seam test. When T3 adds equivalent rich Mermaid

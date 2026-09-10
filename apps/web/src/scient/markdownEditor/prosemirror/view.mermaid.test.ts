@@ -8,7 +8,10 @@ import { renderMermaidDiagram } from "~/scient/diagrams/mermaidRuntime";
 import { createScientNestedCodeEditor } from "../nodes/codeMirrorCodeEditor";
 import { ScientMarkdownEditorView } from "./view";
 
-vi.mock("~/scient/diagrams/mermaidRuntime", () => ({ renderMermaidDiagram: vi.fn() }));
+vi.mock("~/scient/diagrams/mermaidRuntime", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("~/scient/diagrams/mermaidRuntime")>()),
+  renderMermaidDiagram: vi.fn(),
+}));
 vi.mock("../nodes/codeMirrorCodeEditor", { spy: true });
 
 const broken = "flowchart LR\n  Source --> Editor --> Save ---";

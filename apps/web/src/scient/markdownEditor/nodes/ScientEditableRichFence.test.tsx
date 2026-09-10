@@ -7,7 +7,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test"
 import { renderMermaidDiagram } from "~/scient/diagrams/mermaidRuntime";
 import { ScientEditableRichFence } from "./ScientEditableRichFence";
 
-vi.mock("~/scient/diagrams/mermaidRuntime", () => ({ renderMermaidDiagram: vi.fn() }));
+vi.mock("~/scient/diagrams/mermaidRuntime", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("~/scient/diagrams/mermaidRuntime")>()),
+  renderMermaidDiagram: vi.fn(),
+}));
 vi.mock("~/scient/presentation/ScientRichFence", () => ({
   ScientRichFence: ({
     authoringActions,

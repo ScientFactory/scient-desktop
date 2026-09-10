@@ -7,10 +7,12 @@ import {
   FileImageIcon,
   ImageIcon,
   RefreshCwIcon,
+  MessageSquareIcon,
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 
 import { Button } from "~/components/ui/button";
+import { useComposerHandleContext } from "~/composerHandleContext";
 import { Menu, MenuItem, MenuTrigger } from "~/components/ui/menu";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "~/components/ui/tooltip";
 import {
@@ -30,9 +32,11 @@ import {
 import { MermaidDiagramDialog } from "./MermaidDiagramDialog";
 import {
   renderMermaidDiagram,
+  MermaidRenderError,
   type MermaidTheme,
   type RenderedMermaidDiagram,
 } from "./mermaidRuntime";
+import { addMermaidRepairToComposer, buildMermaidRepairRequest } from "./mermaidRepair";
 import { useNearViewport } from "../presentation/useNearViewport";
 import {
   VisualCardDetails,
@@ -55,10 +59,12 @@ interface MermaidDiagramCardProps {
 
 type DiagramState =
   | { readonly status: "idle" | "loading" }
-  | { readonly status: "ready"; readonly result: RenderedMermaidDiagram }
-  | { readonly status: "error"; readonly message: string };
+  | ({ readonly source: string; readonly theme: MermaidTheme; readonly retryVersion: number } & (
+      | { readonly status: "ready"; readonly result: RenderedMermaidDiagram }
+      | { readonly status: "error"; readonly message: string; readonly diagnostic: string }
+    ));
 
-type DiagramAction = "copy-source" | "copy-png" | "download-png" | null;
+type DiagramAction = "copy-source" | "copy-repair" | "copy-png" | "download-png" | null;
 
 function diagramErrorMessage(cause: unknown): string {
   return cause instanceof Error && cause.message.trim().length > 0
@@ -109,6 +115,7 @@ export function MermaidDiagramCard({
   title,
 }: MermaidDiagramCardProps) {
   const { ref, isNearViewport } = useNearViewport();
+  const composerRef = useComposerHandleContext();
   const [diagramState, setDiagramState] = useState<DiagramState>({ status: "idle" });
   const [retryVersion, setRetryVersion] = useState(0);
   const [sourceVisible, setSourceVisible] = useState(false);
@@ -133,12 +140,20 @@ export function MermaidDiagramCard({
     void renderMermaidDiagram(source, theme).then(
       (result) => {
         if (renderGenerationRef.current === generation) {
-          setDiagramState({ status: "ready", result });
+          setDiagramState({ status: "ready", result, source, theme, retryVersion });
         }
       },
       (cause) => {
         if (renderGenerationRef.current === generation) {
-          setDiagramState({ status: "error", message: diagramErrorMessage(cause) });
+          setDiagramState({
+            status: "error",
+            message: diagramErrorMessage(cause),
+            diagnostic:
+              cause instanceof MermaidRenderError ? cause.details : diagramErrorMessage(cause),
+            source,
+            theme,
+            retryVersion,
+          });
         }
       },
     );
@@ -199,7 +214,45 @@ export function MermaidDiagramCard({
     setSourceVisible((visible) => !visible);
   }, []);
 
-  const readyResult = diagramState.status === "ready" ? diagramState.result : null;
+  const resultIsCurrent =
+    "source" in diagramState &&
+    diagramState.source === source &&
+    diagramState.theme === theme &&
+    diagramState.retryVersion === retryVersion;
+  const readyResult =
+    diagramState.status === "ready" && resultIsCurrent ? diagramState.result : null;
+  const repairRequest =
+    diagramState.status === "error" && resultIsCurrent
+      ? buildMermaidRepairRequest(source, diagramState.diagnostic)
+      : null;
+
+  const handleAskToFix = () => {
+    if (repairRequest === null) return;
+    if (addMermaidRepairToComposer(composerRef?.current, repairRequest)) {
+      showTransientMessage("Request added to the composer. Review it, then send.");
+    } else {
+      showPersistentMessage("The composer is not ready. Try again, or copy the error and source.");
+    }
+  };
+
+  const handleCopyRepair = () => {
+    if (repairRequest === null || activeAction !== null) return;
+    if (!navigator.clipboard?.writeText) {
+      showPersistentMessage("Clipboard access is unavailable.");
+      return;
+    }
+    setActiveAction("copy-repair");
+    void navigator.clipboard.writeText(repairRequest).then(
+      () => {
+        setActiveAction(null);
+        showTransientMessage("Error and source copied");
+      },
+      () => {
+        setActiveAction(null);
+        showPersistentMessage("Unable to copy the error and source.");
+      },
+    );
+  };
 
   const handleCopyPng = useCallback(() => {
     if (readyResult == null || activeAction != null) return;
@@ -327,7 +380,7 @@ export function MermaidDiagramCard({
         </VisualCardToolbar>
       </div>
 
-      {actionMessage != null && !expanded ? (
+      {actionMessage != null && (!expanded || readyResult === null) ? (
         <div
           aria-live="polite"
           className="border-b border-border/40 bg-background/45 px-3 py-1.5 text-muted-foreground text-xs"
@@ -336,7 +389,9 @@ export function MermaidDiagramCard({
         </div>
       ) : null}
 
-      {diagramState.status === "idle" || diagramState.status === "loading" ? (
+      {diagramState.status === "idle" ||
+      diagramState.status === "loading" ||
+      (diagramState.status === "ready" && !resultIsCurrent) ? (
         <div className="flex min-h-44 items-center justify-center px-4 py-8 text-muted-foreground text-sm">
           {diagramState.status === "idle"
             ? "Diagram will render when visible"
@@ -346,11 +401,16 @@ export function MermaidDiagramCard({
         <div className="space-y-3 p-4">
           <div className="flex items-start justify-between gap-3">
             <div>
-              <p className="font-medium text-sm">Unable to render this diagram</p>
-              <p className="mt-1 text-muted-foreground text-xs">{diagramState.message}</p>
+              <p className="font-medium text-sm">
+                {resultIsCurrent ? "Unable to render this diagram" : "Rendering diagram…"}
+              </p>
+              {resultIsCurrent ? (
+                <p className="mt-1 text-muted-foreground text-xs">{diagramState.message}</p>
+              ) : null}
             </div>
             <Button
               onClick={() => setRetryVersion((version) => version + 1)}
+              disabled={!resultIsCurrent}
               size="xs"
               variant="outline"
             >
@@ -358,13 +418,35 @@ export function MermaidDiagramCard({
               Retry
             </Button>
           </div>
+          <div className="flex flex-wrap gap-2">
+            {composerRef !== null ? (
+              <Button
+                onClick={handleAskToFix}
+                disabled={repairRequest === null}
+                size="xs"
+                variant="outline"
+              >
+                <MessageSquareIcon />
+                Ask agent to fix
+              </Button>
+            ) : null}
+            <Button
+              onClick={handleCopyRepair}
+              disabled={repairRequest === null || activeAction !== null}
+              size="xs"
+              variant="ghost"
+            >
+              <CopyIcon />
+              Copy error and source
+            </Button>
+          </div>
         </div>
-      ) : diagramState.status === "ready" ? (
+      ) : readyResult !== null ? (
         <div className="scient-mermaid-inline overflow-auto p-2">
           <div
             // Mermaid's strict renderer sanitizes generated SVG. We deliberately
             // do not call bindFunctions, so diagram-authored click handlers do not run.
-            dangerouslySetInnerHTML={{ __html: diagramState.result.svg }}
+            dangerouslySetInnerHTML={{ __html: readyResult.svg }}
           />
         </div>
       ) : null}
@@ -383,7 +465,7 @@ export function MermaidDiagramCard({
       {readyResult != null ? (
         <MermaidDiagramDialog
           actionMessage={actionMessage}
-          activeAction={activeAction}
+          activeAction={activeAction === "copy-repair" ? null : activeAction}
           onCopyPng={handleCopyPng}
           onCopySource={handleCopySource}
           onDownloadPng={handleDownloadPng}

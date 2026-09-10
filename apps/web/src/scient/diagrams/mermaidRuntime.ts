@@ -1,4 +1,7 @@
 import { LRUCache } from "~/lib/lruCache";
+import { dependencies } from "../../../package.json";
+
+export const MERMAID_VERSION = dependencies.mermaid;
 
 export type MermaidTheme = "light" | "dark";
 
@@ -105,14 +108,19 @@ function estimateDiagramSize(source: string, svg: string): number {
   return source.length * 2 + svg.length * 2;
 }
 
-function normalizedRenderError(cause: unknown): Error {
-  if (cause instanceof Error && cause.message.trim().length > 0) {
-    const firstLine = cause.message.split("\n").find((line) => line.trim().length > 0);
-    return new Error(firstLine?.trim() || "Mermaid could not render this diagram.", {
-      cause,
-    });
+/** Keep the parser's source excerpt/caret for repair, without exposing a stack trace. */
+export class MermaidRenderError extends Error {
+  readonly details: string;
+
+  constructor(cause: unknown) {
+    const detail =
+      cause instanceof Error && cause.message.trim()
+        ? cause.message.trim()
+        : "Mermaid could not render this diagram.";
+    super(detail.split("\n")[0]?.slice(0, 240), { cause });
+    this.name = "MermaidRenderError";
+    this.details = detail.length > 8_000 ? `${detail.slice(0, 8_000)}\n[Error truncated]` : detail;
   }
-  return new Error("Mermaid could not render this diagram.", { cause });
 }
 
 function enqueueRender<T>(operation: () => Promise<T>): Promise<T> {
@@ -131,6 +139,10 @@ async function renderTemplate(source: string, theme: MermaidTheme): Promise<Cach
       startOnLoad: false,
       securityLevel: "strict",
       suppressErrorRendering: true,
+      // Mermaid 12 changes these defaults. Preserve existing diagrams' appearance;
+      // authors can still opt into ELK/neo through valid Mermaid frontmatter.
+      layout: "dagre",
+      look: "classic",
       theme: theme === "dark" ? "dark" : "default",
       darkMode: theme === "dark",
       maxTextSize: MAX_MERMAID_SOURCE_LENGTH,
@@ -183,6 +195,6 @@ export async function renderMermaidDiagram(
       diagramType: template.diagramType,
     };
   } catch (cause) {
-    throw normalizedRenderError(cause);
+    throw new MermaidRenderError(cause);
   }
 }
