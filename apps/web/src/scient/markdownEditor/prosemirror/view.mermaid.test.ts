@@ -55,7 +55,7 @@ async function fixture(mode: "write" | "read" = "write", source = broken) {
   });
   await vi.waitFor(() =>
     source === broken
-      ? expect(host.textContent).toContain("Unable to render this diagram")
+      ? expect(host.querySelector('[aria-label="Diagram error"]')).not.toBeNull()
       : expect(host.querySelector('svg[aria-label="Repaired diagram"]')).not.toBeNull(),
   );
   return { controller, host, onUserSourceChange, showRichFenceContextMenu };

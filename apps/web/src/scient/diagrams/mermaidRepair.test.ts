@@ -29,7 +29,8 @@ describe("Mermaid repair requests", () => {
     expect(addMermaidRepairToComposer(composer, request)).toBe(true);
     expect(value).toBe(`Please keep my existing question.\n\n${request}`);
     expect(composer.insertTextAtEnd).toHaveBeenCalledTimes(1);
-    expect(composer.focusAtEnd).toHaveBeenCalledTimes(2);
+    // Only refocus an already inserted request; insertion owns its own focus.
+    expect(composer.focusAtEnd).toHaveBeenCalledTimes(1);
   });
 
   it("fails safely when the composer is absent or refuses an insertion", () => {

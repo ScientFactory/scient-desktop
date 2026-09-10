@@ -21,9 +21,12 @@ export function addMermaidRepairToComposer(
 ): boolean {
   if (!composer) return false;
   const current = composer.readSnapshot().value;
-  if (!current.endsWith(request)) {
-    if (!composer.insertTextAtEnd(`${current.length > 0 ? "\n\n" : ""}${request}`)) return false;
+  if (current.endsWith(request)) {
+    composer.focusAtEnd();
+    return true;
   }
-  composer.focusAtEnd();
-  return true;
+  // Insertion owns deferred focus after the controlled editor has updated.
+  // Focusing synchronously here emits the old editor snapshot through onChange
+  // and overwrites the newly queued draft.
+  return composer.insertTextAtEnd(`${current.length > 0 ? "\n\n" : ""}${request}`);
 }

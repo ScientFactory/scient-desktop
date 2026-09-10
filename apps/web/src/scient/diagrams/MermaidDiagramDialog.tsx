@@ -168,7 +168,7 @@ export function MermaidDiagramDialog({
                   Download SVG
                 </MenuItem>
                 <MenuItem disabled={activeAction != null} onClick={onCopyPng}>
-                  <ImageIcon />
+                  {actionMessage === "Image copied" ? <CheckIcon /> : <ImageIcon />}
                   {activeAction === "copy-png" ? "Copying image…" : "Copy image"}
                 </MenuItem>
                 <MenuItem disabled={activeAction != null} onClick={onDownloadPng}>
@@ -179,14 +179,9 @@ export function MermaidDiagramDialog({
             </Menu>
           </div>
         </DialogHeader>
-        {actionMessage != null ? (
-          <div
-            aria-live="polite"
-            className="border-b border-border/60 bg-background/70 px-4 py-2 text-muted-foreground text-xs"
-          >
-            {actionMessage}
-          </div>
-        ) : null}
+        <span aria-live="polite" className="sr-only">
+          {actionMessage}
+        </span>
         <div
           aria-label="Scrollable diagram canvas"
           className="scient-mermaid-dialog-stage min-h-0 flex-1 overflow-auto bg-secondary/30 p-6"

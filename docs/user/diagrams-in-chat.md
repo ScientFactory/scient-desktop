@@ -14,16 +14,17 @@ The diagram card lets you:
 - download a scalable SVG;
 - copy or download a high-resolution PNG;
 - retry or read the original source if the diagram is malformed;
-- choose **Ask agent to fix** to add the diagram and renderer error to your
+- in chat, choose **Ask agent to fix** beside the error to add the diagram and renderer error to your
   current composer draft. Review the request, then send it. This does not send
   automatically or change the original answer; the agent replies with a correction;
 - use **Copy error and source** if you prefer to paste the request elsewhere
-  or no conversation composer is available.
+  or while reviewing a Markdown file. The copy icon sits beside the error.
 
 Quiet **Expand** and **More** icons sit at the top-right. Any authored title
 remains visible; **More diagram actions** identifies the diagram and its type,
-and contains source, copy, and download actions. Source inspection opens only
-when requested. Expanded viewers keep zoom, fit, and actual-size controls visible.
+and contains source, copy, download, and retry actions. Source inspection opens
+on request, or automatically when a diagram fails. Expanded viewers keep zoom,
+fit, and actual-size controls visible.
 
 In an editable Markdown file, the source box below a diagram error is already
 an editor. Click anywhere in its text and type there; the box stays in place.

@@ -54,17 +54,25 @@ registered.
 ## UX and recovery
 
 The settled card has explicit loading, ready, source, and error states. A parse
-failure shows a concise error, the complete readable source, and retry; it
-cannot fail the surrounding Markdown render. **Ask agent to fix** uses the
+failure shows one compact error line with repair/copy icons and readable source;
+retry remains in the existing actions menu. It cannot fail the surrounding
+Markdown render. In chat, **Ask agent to fix** uses the
 existing `ComposerHandleContext` insertion API to append a reviewable request,
 preserving the draft and attachments and respecting the composer's busy state.
-It does not submit or mutate a past message. **Copy error and source** provides
+Insertion owns deferred focus: an immediate extra focus call would publish the
+editor's previous snapshot before its controlled update. It does not submit or
+mutate a past message. **Copy error and source** provides
 the same request when no composer is available. Requests include the Mermaid source,
 package version and parser diagnostic (bounded to 8,000 characters, without its
 stack); nested Markdown fences are escaped by the shared export helper.
 Only results matching the current source, theme and retry generation may be
 displayed or used for repair. Pending edits keep the error source editor mounted,
-but hide obsolete diagnostics and disable repair until the new result arrives.
+but replace obsolete diagnostics with a single-line pending label and disable
+repair until the new result arrives. Copy success uses an icon checkmark and a
+screen-reader announcement, not a layout-changing message row. Action failures
+use the shared error notification. The Markdown editor's isolated node-view
+roots do not receive the chat composer context; they retain source editing and
+the copy action rather than offering a nonfunctional repair action.
 
 The expanded dialog supports fit, 25-400% zoom, actual-size layout,
 two-dimensional scrolling, source copy, and

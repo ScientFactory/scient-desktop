@@ -15,6 +15,7 @@ import { Button } from "~/components/ui/button";
 import { useComposerHandleContext } from "~/composerHandleContext";
 import { Menu, MenuItem, MenuTrigger } from "~/components/ui/menu";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "~/components/ui/tooltip";
+import { toastManager } from "~/components/ui/toast";
 import {
   RichFenceSourceMenuItem,
   RichFenceSourcePreview,
@@ -118,7 +119,7 @@ export function MermaidDiagramCard({
   const composerRef = useComposerHandleContext();
   const [diagramState, setDiagramState] = useState<DiagramState>({ status: "idle" });
   const [retryVersion, setRetryVersion] = useState(0);
-  const [sourceVisible, setSourceVisible] = useState(false);
+  const [sourceVisible, setSourceVisible] = useState<boolean | null>(null);
   const [expanded, setExpanded] = useState(false);
   const [activeAction, setActiveAction] = useState<DiagramAction>(null);
   const [actionMessage, setActionMessage] = useState<string | null>(null);
@@ -181,18 +182,14 @@ export function MermaidDiagramCard({
     }, 1_500);
   }, []);
 
-  const showPersistentMessage = useCallback((message: string) => {
-    if (copyResetTimerRef.current != null) {
-      clearTimeout(copyResetTimerRef.current);
-      copyResetTimerRef.current = null;
-    }
-    setActionMessage(message);
+  const showActionError = useCallback((message: string) => {
+    toastManager.add({ type: "error", title: message, data: { hideCopyButton: true } });
   }, []);
 
   const handleCopySource = useCallback(() => {
     if (activeAction != null) return;
     if (navigator.clipboard?.writeText == null) {
-      showPersistentMessage("Clipboard access is unavailable.");
+      showActionError("Clipboard access is unavailable.");
       return;
     }
     setActiveAction("copy-source");
@@ -204,15 +201,15 @@ export function MermaidDiagramCard({
       (cause) => {
         console.error("[scient-diagrams] Failed to copy Mermaid source", cause);
         setActiveAction(null);
-        showPersistentMessage("Unable to copy the diagram source.");
+        showActionError("Unable to copy the diagram source.");
       },
     );
-  }, [activeAction, showPersistentMessage, showTransientMessage, source]);
+  }, [activeAction, showActionError, showTransientMessage, source]);
 
   const handleContextMenu = useRichFenceContextMenu(authoringActions, handleCopySource);
-  const handleToggleSource = useCallback(() => {
-    setSourceVisible((visible) => !visible);
-  }, []);
+  const sourceIsVisible =
+    (sourceVisible ?? diagramState.status === "error") || sourceEditor?.open === true;
+  const handleToggleSource = () => setSourceVisible(!sourceIsVisible);
 
   const resultIsCurrent =
     "source" in diagramState &&
@@ -228,17 +225,15 @@ export function MermaidDiagramCard({
 
   const handleAskToFix = () => {
     if (repairRequest === null) return;
-    if (addMermaidRepairToComposer(composerRef?.current, repairRequest)) {
-      showTransientMessage("Request added to the composer. Review it, then send.");
-    } else {
-      showPersistentMessage("The composer is not ready. Try again, or copy the error and source.");
+    if (!addMermaidRepairToComposer(composerRef?.current, repairRequest)) {
+      showActionError("The composer is unavailable right now.");
     }
   };
 
   const handleCopyRepair = () => {
     if (repairRequest === null || activeAction !== null) return;
     if (!navigator.clipboard?.writeText) {
-      showPersistentMessage("Clipboard access is unavailable.");
+      showActionError("Clipboard access is unavailable.");
       return;
     }
     setActiveAction("copy-repair");
@@ -249,7 +244,7 @@ export function MermaidDiagramCard({
       },
       () => {
         setActiveAction(null);
-        showPersistentMessage("Unable to copy the error and source.");
+        showActionError("Unable to copy the error and source.");
       },
     );
   };
@@ -265,10 +260,10 @@ export function MermaidDiagramCard({
       (cause) => {
         console.error("[scient-diagrams] Failed to copy Mermaid PNG", cause);
         setActiveAction(null);
-        showPersistentMessage("Copy image is unavailable. You can download the PNG instead.");
+        showActionError("Unable to copy the diagram image.");
       },
     );
-  }, [activeAction, readyResult, showPersistentMessage, showTransientMessage, theme]);
+  }, [activeAction, readyResult, showActionError, showTransientMessage, theme]);
 
   const handleDownloadPng = useCallback(() => {
     if (readyResult == null || activeAction != null) return;
@@ -278,10 +273,10 @@ export function MermaidDiagramCard({
       (cause) => {
         console.error("[scient-diagrams] Failed to download Mermaid PNG", cause);
         setActiveAction(null);
-        showPersistentMessage("Unable to create the PNG image.");
+        showActionError("Unable to create the PNG image.");
       },
     );
-  }, [activeAction, readyResult, showPersistentMessage, theme, title]);
+  }, [activeAction, readyResult, showActionError, theme, title]);
 
   const handleDownloadSvg = useCallback(() => {
     if (readyResult == null || activeAction != null) return;
@@ -289,9 +284,9 @@ export function MermaidDiagramCard({
       downloadMermaidSvg(readyResult.svg, title, theme);
     } catch (cause) {
       console.error("[scient-diagrams] Failed to download Mermaid SVG", cause);
-      showPersistentMessage("Unable to download the SVG image.");
+      showActionError("Unable to download the SVG image.");
     }
-  }, [activeAction, readyResult, showPersistentMessage, theme, title]);
+  }, [activeAction, readyResult, showActionError, theme, title]);
 
   return (
     <div
@@ -351,8 +346,17 @@ export function MermaidDiagramCard({
               <RichFenceSourceMenuItem
                 authoringActions={authoringActions}
                 onToggleSource={handleToggleSource}
-                sourceVisible={sourceVisible}
+                sourceVisible={sourceIsVisible}
               />
+              {diagramState.status === "error" ? (
+                <MenuItem
+                  disabled={!resultIsCurrent}
+                  onClick={() => setRetryVersion((version) => version + 1)}
+                >
+                  <RefreshCwIcon />
+                  Retry
+                </MenuItem>
+              ) : null}
               <MenuItem
                 disabled={readyResult == null || activeAction != null}
                 onClick={handleDownloadSvg}
@@ -364,7 +368,7 @@ export function MermaidDiagramCard({
                 disabled={readyResult == null || activeAction != null}
                 onClick={handleCopyPng}
               >
-                <ImageIcon />
+                {actionMessage === "Image copied" ? <CheckIcon /> : <ImageIcon />}
                 {activeAction === "copy-png" ? "Copying image…" : "Copy image"}
               </MenuItem>
               <MenuItem
@@ -380,14 +384,9 @@ export function MermaidDiagramCard({
         </VisualCardToolbar>
       </div>
 
-      {actionMessage != null && (!expanded || readyResult === null) ? (
-        <div
-          aria-live="polite"
-          className="border-b border-border/40 bg-background/45 px-3 py-1.5 text-muted-foreground text-xs"
-        >
-          {actionMessage}
-        </div>
-      ) : null}
+      <span aria-live="polite" className="sr-only">
+        {!expanded || readyResult === null ? actionMessage : null}
+      </span>
 
       {diagramState.status === "idle" ||
       diagramState.status === "loading" ||
@@ -398,47 +397,48 @@ export function MermaidDiagramCard({
             : "Rendering diagram…"}
         </div>
       ) : diagramState.status === "error" ? (
-        <div className="space-y-3 p-4">
-          <div className="flex items-start justify-between gap-3">
-            <div>
-              <p className="font-medium text-sm">
-                {resultIsCurrent ? "Unable to render this diagram" : "Rendering diagram…"}
-              </p>
-              {resultIsCurrent ? (
-                <p className="mt-1 text-muted-foreground text-xs">{diagramState.message}</p>
-              ) : null}
-            </div>
-            <Button
-              onClick={() => setRetryVersion((version) => version + 1)}
-              disabled={!resultIsCurrent}
-              size="xs"
-              variant="outline"
+        <div
+          aria-busy={!resultIsCurrent}
+          aria-label="Diagram error"
+          className="flex min-w-0 items-center gap-2 px-4 py-2"
+          role="group"
+        >
+          <Tooltip disabled={!resultIsCurrent}>
+            <TooltipTrigger
+              render={
+                <span
+                  className="min-w-0 flex-1 truncate text-xs text-muted-foreground"
+                  tabIndex={0}
+                />
+              }
             >
-              <RefreshCwIcon />
-              Retry
-            </Button>
-          </div>
-          <div className="flex flex-wrap gap-2">
+              {resultIsCurrent ? diagramState.message : "Rendering diagram…"}
+            </TooltipTrigger>
+            <TooltipPopup className="max-h-48 max-w-sm overflow-y-auto whitespace-pre-wrap wrap-anywhere">
+              {resultIsCurrent ? diagramState.diagnostic : null}
+            </TooltipPopup>
+          </Tooltip>
+          <div className="flex shrink-0 items-center gap-0.5">
             {composerRef !== null ? (
-              <Button
+              <DiagramActionButton
                 onClick={handleAskToFix}
                 disabled={repairRequest === null}
-                size="xs"
-                variant="outline"
+                label="Ask agent to fix"
               >
-                <MessageSquareIcon />
-                Ask agent to fix
-              </Button>
+                <MessageSquareIcon className="size-3" strokeWidth={1.5} />
+              </DiagramActionButton>
             ) : null}
-            <Button
+            <DiagramActionButton
               onClick={handleCopyRepair}
               disabled={repairRequest === null || activeAction !== null}
-              size="xs"
-              variant="ghost"
+              label="Copy error and source"
             >
-              <CopyIcon />
-              Copy error and source
-            </Button>
+              {actionMessage === "Error and source copied" ? (
+                <CheckIcon className="size-3" strokeWidth={1.5} />
+              ) : (
+                <CopyIcon className="size-3" strokeWidth={1.5} />
+              )}
+            </DiagramActionButton>
           </div>
         </div>
       ) : readyResult !== null ? (
@@ -453,7 +453,7 @@ export function MermaidDiagramCard({
 
       <RichFenceSourcePreview
         editor={sourceEditor}
-        visible={diagramState.status === "error" || sourceVisible || sourceEditor?.open === true}
+        visible={sourceIsVisible}
         source={source}
         className={
           sourceEditor || diagramState.status === "error"

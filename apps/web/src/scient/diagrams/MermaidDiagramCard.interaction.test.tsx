@@ -4,6 +4,7 @@ import { createRoot } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
 import { ComposerHandleContext, type ComposerHandleRef } from "~/composerHandleContext";
+import { toastManager } from "~/components/ui/toast";
 import { MermaidDiagramCard } from "./MermaidDiagramCard";
 import { buildMermaidRepairRequest } from "./mermaidRepair";
 import {
@@ -15,6 +16,7 @@ import {
 vi.mock("../presentation/useNearViewport", () => ({
   useNearViewport: () => ({ ref: null, isNearViewport: true }),
 }));
+vi.mock("~/components/ui/toast", () => ({ toastManager: { add: vi.fn() } }));
 vi.mock("./mermaidRuntime", async (importOriginal) => ({
   ...(await importOriginal<typeof import("./mermaidRuntime")>()),
   renderMermaidDiagram: vi.fn(),
@@ -43,6 +45,7 @@ describe("Mermaid error recovery", () => {
     vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
     vi.stubGlobal("navigator", { clipboard: { writeText } });
     writeText.mockReset().mockResolvedValue(undefined);
+    vi.mocked(toastManager.add).mockReset();
     vi.mocked(renderMermaidDiagram)
       .mockReset()
       .mockRejectedValue(new MermaidRenderError(new Error(diagnostic)));
@@ -64,6 +67,7 @@ describe("Mermaid error recovery", () => {
   afterEach(async () => {
     await act(() => root.unmount());
     container.remove();
+    vi.useRealTimers();
     vi.unstubAllGlobals();
   });
   async function render(text = source, theme: "light" | "dark" = "light", withComposer = true) {
@@ -77,10 +81,18 @@ describe("Mermaid error recovery", () => {
   }
   function button(label: string) {
     const found = [...container.querySelectorAll("button")].find(
-      (item) => item.textContent === label,
+      (item) => item.getAttribute("aria-label") === label || item.textContent === label,
     );
     expect(found, label).toBeDefined();
     return found!;
+  }
+  async function menuAction(label: string) {
+    await act(() => button("More diagram actions").click());
+    const item = [...document.querySelectorAll<HTMLElement>('[role="menuitem"]')].find(
+      (node) => node.textContent === label,
+    );
+    expect(item, label).toBeDefined();
+    await act(() => item!.click());
   }
 
   it("offers a reviewable request and preserves the original diagram and draft", async () => {
@@ -90,14 +102,15 @@ describe("Mermaid error recovery", () => {
     await act(() => ask.click());
     expect(draft).toBe(`An existing draft\n\n${buildMermaidRepairRequest(source, diagnostic)}`);
     expect(composer.current!.insertTextAtEnd).toHaveBeenCalledTimes(1);
-    expect(container.textContent).toContain("Review it, then send");
+    expect(container.textContent).not.toContain("Request added");
+    expect(toastManager.add).not.toHaveBeenCalled();
     expect(container.textContent).toContain(source);
     expect(renderMermaidDiagram).toHaveBeenCalledTimes(1);
   });
 
   it("copies the same full diagnostic and source even outside a composer", async () => {
     await render(source, "light", false);
-    expect(container.textContent).not.toContain("Ask agent to fix");
+    expect(container.querySelector('[aria-label="Ask agent to fix"]')).toBeNull();
     await act(() => button("Copy error and source").click());
     expect(writeText).toHaveBeenCalledWith(buildMermaidRepairRequest(source, diagnostic));
     expect(container.textContent).toContain("Error and source copied");
@@ -108,9 +121,14 @@ describe("Mermaid error recovery", () => {
     writeText.mockRejectedValue(new Error("permission denied"));
     await render();
     await act(() => button("Ask agent to fix").click());
-    expect(container.textContent).toContain("The composer is not ready");
+    expect(toastManager.add).toHaveBeenCalledWith(
+      expect.objectContaining({ title: "The composer is unavailable right now." }),
+    );
     await act(() => button("Copy error and source").click());
-    expect(container.textContent).toContain("Unable to copy the error and source");
+    expect(toastManager.add).toHaveBeenCalledWith(
+      expect.objectContaining({ title: "Unable to copy the error and source." }),
+    );
+    expect(container.textContent).not.toContain("Unable to copy");
     expect(draft).toBe("An existing draft");
     expect(container.textContent).toContain(source);
   });
@@ -140,7 +158,7 @@ describe("Mermaid error recovery", () => {
     expect(editor.mount).toHaveBeenCalledTimes(1);
     await act(() => pending.reject(new MermaidRenderError(new Error("Still incomplete"))));
     expect(cleanup).not.toHaveBeenCalled();
-    await act(() => button("Retry").click());
+    await menuAction("Retry");
     expect(editor.mount).toHaveBeenCalledTimes(1);
   });
 
@@ -148,7 +166,9 @@ describe("Mermaid error recovery", () => {
     await render();
     vi.stubGlobal("navigator", {});
     await act(() => button("Copy error and source").click());
-    expect(container.textContent).toContain("Clipboard access is unavailable");
+    expect(toastManager.add).toHaveBeenCalledWith(
+      expect.objectContaining({ title: "Clipboard access is unavailable." }),
+    );
     const pending = pendingRender();
     vi.mocked(renderMermaidDiagram).mockReturnValueOnce(pending.promise);
     await render(`${source}next`);
@@ -163,7 +183,7 @@ describe("Mermaid error recovery", () => {
       await render();
       const pending = pendingRender();
       vi.mocked(renderMermaidDiagram).mockReturnValueOnce(pending.promise);
-      if (change === "retry") await act(() => button("Retry").click());
+      if (change === "retry") await menuAction("Retry");
       else
         await render(
           change === "source" ? `${source}new` : source,
@@ -181,6 +201,55 @@ describe("Mermaid error recovery", () => {
       expect(draft).not.toContain(diagnostic);
     },
   );
+
+  it("keeps copy feedback outside layout and uses compact icon controls beside the error", async () => {
+    await render();
+    const figure = container.querySelector('[role="figure"]')!;
+    const errorRow = container.querySelector('[aria-label="Diagram error"]')!;
+    const copy = button("Copy error and source");
+    const initialChildren = [...figure.children];
+    expect(errorRow.contains(copy)).toBe(true);
+    expect(errorRow.contains(button("Ask agent to fix"))).toBe(true);
+    expect(copy.textContent).toBe("");
+    expect(copy.className).toContain("chat-markdown-chrome-action");
+    vi.useFakeTimers();
+    await act(() => copy.click());
+    expect(copy.querySelector(".lucide-check")).not.toBeNull();
+    expect([...figure.children]).toEqual(initialChildren);
+    expect(container.querySelector('[aria-live="polite"]')?.className).toBe("sr-only");
+    await act(() => vi.advanceTimersByTime(1501));
+    expect(copy.querySelector(".lucide-check")).toBeNull();
+    expect([...figure.children]).toEqual(initialChildren);
+    expect(toastManager.add).not.toHaveBeenCalled();
+  });
+
+  it("keeps one fixed-height error line during retry, with no obsolete diagnostic", async () => {
+    await render();
+    const errorRow = container.querySelector('[aria-label="Diagram error"]')!;
+    const summary = errorRow.firstElementChild!;
+    const children = [...errorRow.children];
+    const pending = pendingRender();
+    vi.mocked(renderMermaidDiagram).mockReturnValueOnce(pending.promise);
+    await menuAction("Retry");
+    expect(container.querySelector('[aria-label="Diagram error"]')).toBe(errorRow);
+    expect([...errorRow.children]).toEqual(children);
+    expect(summary.textContent).toBe("Rendering diagram…");
+    expect(summary.getAttribute("title")).toBeNull();
+    expect(summary.className).toContain("truncate");
+    await act(() => pending.reject(new MermaidRenderError(new Error(diagnostic))));
+    expect([...errorRow.children]).toEqual(children);
+    expect(summary.textContent).toBe("Parse error on line 2:");
+  });
+
+  it("lets the source menu hide and show the automatic error fallback", async () => {
+    await render();
+    const sourceContainer = container.querySelector(".scient-mermaid-source")!.parentElement!;
+    expect(sourceContainer.hidden).toBe(false);
+    await menuAction("Hide source");
+    expect(sourceContainer.hidden).toBe(true);
+    await menuAction("Show source");
+    expect(sourceContainer.hidden).toBe(false);
+  });
 
   it("ignores out-of-order results and removes an old SVG when inputs change", async () => {
     const first = pendingRender();
