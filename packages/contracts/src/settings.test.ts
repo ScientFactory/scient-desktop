@@ -227,6 +227,90 @@ describe("ClientSettings voice language", () => {
   });
 });
 
+describe("ClientSettings window capture", () => {
+  it("defaults capture off while keeping its feedback enabled", () => {
+    const settings = decodeClientSettings({});
+
+    expect(settings.snapShotEnabled).toBe(false);
+    expect(settings.snapShotIncludeAccessibility).toBe(true);
+    expect(settings.snapShotShortcut).toEqual({ kind: "both-shift-keys" });
+    expect(settings.snapShotPlaySound).toBe(true);
+    expect(settings.snapShotSound).toBe("soft-pop");
+    expect(settings.snapShotFlash).toBe(true);
+    expect(settings.snapShotAnimations).toBe(true);
+  });
+
+  it("accepts capture preference updates", () => {
+    expect(
+      decodeClientSettingsPatch({
+        snapShotEnabled: true,
+        snapShotIncludeAccessibility: false,
+        snapShotShortcut: {
+          key: "w",
+          metaKey: false,
+          ctrlKey: false,
+          shiftKey: true,
+          altKey: true,
+          modKey: false,
+        },
+        snapShotPlaySound: false,
+        snapShotSound: "camera-shutter",
+        snapShotFlash: false,
+        snapShotAnimations: false,
+      }),
+    ).toEqual({
+      snapShotEnabled: true,
+      snapShotIncludeAccessibility: false,
+      snapShotShortcut: {
+        key: "w",
+        metaKey: false,
+        ctrlKey: false,
+        shiftKey: true,
+        altKey: true,
+        modKey: false,
+      },
+      snapShotPlaySound: false,
+      snapShotSound: "camera-shutter",
+      snapShotFlash: false,
+      snapShotAnimations: false,
+    });
+  });
+
+  it("rejects unknown capture sounds", () => {
+    expect(() => decodeClientSettingsPatch({ snapShotSound: "doorbell" })).toThrow();
+  });
+
+  it("accepts modifier pair shortcuts", () => {
+    expect(
+      decodeClientSettingsPatch({
+        snapShotShortcut: { kind: "modifier-pair", modifier: "meta" },
+      }),
+    ).toEqual({
+      snapShotShortcut: { kind: "modifier-pair", modifier: "meta" },
+    });
+    expect(() =>
+      decodeClientSettingsPatch({
+        snapShotShortcut: { kind: "modifier-pair", modifier: "hyper" },
+      }),
+    ).toThrow();
+  });
+
+  it("rejects a capture shortcut with no modifier", () => {
+    expect(() =>
+      decodeClientSettingsPatch({
+        snapShotShortcut: {
+          key: "w",
+          metaKey: false,
+          ctrlKey: false,
+          shiftKey: false,
+          altKey: false,
+          modKey: false,
+        },
+      }),
+    ).toThrow();
+  });
+});
+
 describe("ClientSettings proactive panels", () => {
   it("is opt-in and accepts client-local updates", () => {
     expect(decodeClientSettings({}).proactivePanelsEnabled).toBe(false);
@@ -428,28 +512,25 @@ describe("ClientSettings composer collapse", () => {
       DEFAULT_CLIENT_SETTINGS,
       DEFAULT_UNIFIED_SETTINGS,
     ]) {
-      expect(defaults.composerCollapseOnBlur).toBe(false);
       expect(defaults.composerCollapseOnScroll).toBe(false);
+      expect(defaults).not.toHaveProperty("composerCollapseOnBlur");
     }
-    expect(decodeClientSettings({ composerCollapseOnBlur: true }).composerCollapseOnScroll).toBe(
-      false,
-    );
-    expect(decodeClientSettings({ composerCollapseOnScroll: true }).composerCollapseOnBlur).toBe(
-      false,
+  });
+
+  it.each([true, false])("preserves a saved scroll choice of %s", (composerCollapseOnScroll) => {
+    expect(
+      decodeClientSettings(encodeClientSettings(decodeClientSettings({ composerCollapseOnScroll })))
+        .composerCollapseOnScroll,
+    ).toBe(composerCollapseOnScroll);
+    expect(decodeClientSettingsPatch({ composerCollapseOnScroll }).composerCollapseOnScroll).toBe(
+      composerCollapseOnScroll,
     );
   });
 
-  it.each([
-    [false, false],
-    [true, false],
-    [false, true],
-    [true, true],
-  ])("preserves saved blur=%s and scroll=%s choices through reload and patches", (blur, scroll) => {
-    const saved = { composerCollapseOnBlur: blur, composerCollapseOnScroll: scroll };
-    expect(decodeClientSettings(encodeClientSettings(decodeClientSettings(saved)))).toMatchObject(
-      saved,
-    );
-    expect(decodeClientSettingsPatch(saved)).toEqual(saved);
+  it("drops the retired blur trigger key", () => {
+    const decoded = decodeClientSettings({ composerCollapseOnBlur: true });
+    expect(decoded.composerCollapseOnScroll).toBe(false);
+    expect(decoded).not.toHaveProperty("composerCollapseOnBlur");
   });
 });
 
@@ -478,6 +559,25 @@ describe("ServerSettings thread settlement", () => {
   it.each([-1, 0, 91])("rejects an auto-settle threshold outside 1..90: %s", (value) => {
     expect(() => decodeServerSettings({ sidebarAutoSettleAfterDays: value })).toThrow();
     expect(() => decodeServerSettingsPatch({ sidebarAutoSettleAfterDays: value })).toThrow();
+  });
+});
+
+describe("ClientSettings pull request merge methods", () => {
+  it("defaults to no project overrides and accepts supported methods", () => {
+    expect(decodeClientSettings({}).pullRequestMergeMethodOverrides).toEqual({});
+    expect(
+      decodeClientSettingsPatch({
+        pullRequestMergeMethodOverrides: { project: "squash" },
+      }).pullRequestMergeMethodOverrides,
+    ).toEqual({ project: "squash" });
+  });
+
+  it("rejects unsupported project merge methods", () => {
+    expect(() =>
+      decodeClientSettingsPatch({
+        pullRequestMergeMethodOverrides: { project: "fast-forward" },
+      }),
+    ).toThrow();
   });
 });
 
@@ -783,6 +883,7 @@ describe("ServerSettings environment icon", () => {
 
   it("keeps a kind this build knows", () => {
     expect(decodeServerSettings({ environmentIcon: "mac-mini" }).environmentIcon).toBe("mac-mini");
+    expect(decodeServerSettings({ environmentIcon: "linux" }).environmentIcon).toBe("linux");
   });
 
   it("decodes a kind from a newer server as null instead of failing the snapshot", () => {
@@ -792,5 +893,8 @@ describe("ServerSettings environment icon", () => {
   it("round-trips through encode", () => {
     const settings = decodeServerSettings({ environmentIcon: "laptop" });
     expect(encodeServerSettings(settings).environmentIcon).toBe("laptop");
+
+    const linuxSettings = decodeServerSettings({ environmentIcon: "linux" });
+    expect(encodeServerSettings(linuxSettings).environmentIcon).toBe("linux");
   });
 });

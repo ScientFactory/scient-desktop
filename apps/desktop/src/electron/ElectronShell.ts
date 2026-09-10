@@ -68,6 +68,7 @@ export class ElectronShell extends Context.Service<
   }
 >()("@t3tools/desktop/electron/ElectronShell") {}
 
+/** @public Service construction is part of the canonical Effect module API. */
 export const make = ElectronShell.of({
   openExternal: (rawUrl) =>
     Option.match(parseSafeExternalUrl(rawUrl), {
@@ -88,15 +89,21 @@ export const make = ElectronShell.of({
       ),
     ),
   copyText: (text) =>
-    Effect.sync(() => {
-      Electron.clipboard.writeText(text);
-    }),
+    Effect.promise(() => Electron.clipboard.writeText(text).catch(() => undefined)),
   copyPng: (png) =>
-    Effect.sync(() => {
+    Effect.promise(() => {
       const image = Electron.nativeImage.createFromBuffer(Buffer.from(png));
-      if (image.isEmpty()) return false;
-      Electron.clipboard.writeImage(image);
-      return true;
+      if (image.isEmpty()) return Promise.resolve(false);
+      return Electron.clipboard
+        .write([
+          new Electron.ClipboardItem({
+            "image/png": new Blob([Uint8Array.from(image.toPNG())], { type: "image/png" }),
+          }),
+        ])
+        .then(
+          () => true,
+          () => false,
+        );
     }),
 });
 

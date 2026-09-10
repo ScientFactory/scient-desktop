@@ -35,6 +35,10 @@ import { ScientForkCheckpointBaseline } from "../scient-fork/ForkCheckpointBasel
 import { makeForkBoundaryResolver } from "../scient-fork/ForkBoundaryReadModel.ts";
 import { retainPrefixMessages } from "../scient-fork/forkDecider.ts";
 import {
+  retainQuestionAnswers,
+  questionAnswerAttachments,
+} from "../scient-fork/retainedQuestionAnswers.ts";
+import {
   ScientForkAttachmentCopier,
   ScientForkAttachmentCopyError,
 } from "../scient-fork/ForkAttachmentCopier.ts";
@@ -50,7 +54,7 @@ const nowIso = Effect.map(DateTime.now, DateTime.formatIso);
 const isScientForkCompletionError = Schema.is(ScientForkCompletionError);
 const isScientForkAttachmentCopyError = Schema.is(ScientForkAttachmentCopyError);
 
-class ScientForkTerminalProvisioningError extends Schema.TaggedErrorClass<ScientForkTerminalProvisioningError>()(
+class ScientForkTerminalProvisioningError extends Schema.TaggedError<ScientForkTerminalProvisioningError>()(
   "ScientForkTerminalProvisioningError",
   { detail: Schema.String },
 ) {}
@@ -503,9 +507,19 @@ const make = Effect.gen(function* () {
             retained.flatMap((boundary) => (boundary.turnId === null ? [] : [boundary.turnId])),
           ),
         );
+        const retainedAnswers = retainQuestionAnswers(
+          origin.activities,
+          new Set(
+            retained.flatMap((boundary) => (boundary.turnId === null ? [] : [boundary.turnId])),
+          ),
+        );
+        if (retainedAnswers.error) return unavailable(retainedAnswers.error);
         yield* attachmentCopier.checkSources({
           threadId: origin.id,
-          attachments: prefix.messages.flatMap((message) => message.attachments ?? []),
+          attachments: [
+            ...prefix.messages.flatMap((message) => message.attachments ?? []),
+            ...questionAnswerAttachments(retainedAnswers.answers),
+          ],
         });
         const context = yield* projectionSnapshotQuery.getThreadCheckpointContext(origin.id);
         if (Option.isNone(context))

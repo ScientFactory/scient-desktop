@@ -91,7 +91,7 @@ export interface ExecutionProcessRequest {
   readonly extendEnv?: boolean;
 }
 
-export class ExecutionProcessError extends Schema.TaggedErrorClass<ExecutionProcessError>()(
+export class ExecutionProcessError extends Schema.TaggedError<ExecutionProcessError>()(
   "ExecutionProcessError",
   {
     operation: Schema.Literals(["spawn", "output", "exit", "cancel"]),
@@ -134,7 +134,7 @@ export interface DuplexProcessRequest {
   readonly extendEnv?: boolean;
 }
 
-export class DuplexProcessError extends Schema.TaggedErrorClass<DuplexProcessError>()(
+export class DuplexProcessError extends Schema.TaggedError<DuplexProcessError>()(
   "DuplexProcessError",
   {
     operation: Schema.Literals(["spawn", "output", "exit", "cancel", "write"]),

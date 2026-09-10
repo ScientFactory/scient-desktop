@@ -107,9 +107,7 @@ export function mapPiDiscoveredModels(
 }
 
 /** Pi 0.84.4 models.ts policy; execution also checks the live RPC answer. */
-export function piSupportedThinkingLevels(
-  model: PiDiscoveredModel,
-): ReadonlyArray<PiThinkingLevel> {
+function piSupportedThinkingLevels(model: PiDiscoveredModel): ReadonlyArray<PiThinkingLevel> {
   if (!model.reasoning) return [];
   return (["off", "minimal", "low", "medium", "high", "xhigh", "max"] as const).filter((level) => {
     const mapped = model.thinkingLevelMap?.[level];

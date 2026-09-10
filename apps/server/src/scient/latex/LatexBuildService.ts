@@ -88,7 +88,7 @@ export interface LatexBuildInput {
   readonly relativePath: string;
 }
 
-export class LatexBuildError extends Schema.TaggedErrorClass<LatexBuildError>()("LatexBuildError", {
+export class LatexBuildError extends Schema.TaggedError<LatexBuildError>()("LatexBuildError", {
   operation: Schema.Literals(["build", "status", "cancel"]),
   reason: Schema.Literals(["invalid-path", "document-key-too-long"]),
   detail: Schema.String,

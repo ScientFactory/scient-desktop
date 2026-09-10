@@ -51,7 +51,7 @@ function normalizedItemType(value: unknown): string {
     .toLowerCase();
 }
 
-export function isCodexGeneratedImageItem(value: unknown): boolean {
+function isCodexGeneratedImageItem(value: unknown): boolean {
   const item = asObject(value);
   return GENERATED_IMAGE_ITEM_TYPES.has(normalizedItemType(item?.type ?? item?.kind));
 }
@@ -79,9 +79,7 @@ export function codexGeneratedImageArtifactFromProviderEvent(input: {
   };
 }
 
-export function isCodexGeneratedImageArtifact(
-  value: unknown,
-): value is CodexGeneratedImageArtifact {
+function isCodexGeneratedImageArtifact(value: unknown): value is CodexGeneratedImageArtifact {
   const artifact = asObject(value);
   if (artifact?.kind !== CODEX_GENERATED_IMAGE_ARTIFACT_KIND) return false;
   const callId = artifact.callId;

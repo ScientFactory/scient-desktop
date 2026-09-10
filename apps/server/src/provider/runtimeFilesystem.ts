@@ -3,9 +3,7 @@ import {
   type RuntimeFilesystemOperation,
 } from "@scientfactory/provider-runtime";
 import * as Clock from "effect/Clock";
-import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
-import * as Exit from "effect/Exit";
 import type * as FileSystem from "effect/FileSystem";
 import type * as PlatformError from "effect/PlatformError";
 import * as Predicate from "effect/Predicate";
@@ -55,19 +53,8 @@ export function makeInstallerFilesystem(fs: FileSystem.FileSystem, platform: str
     ) =>
       platform !== "win32"
         ? fs.makeTempDirectoryScoped(options)
-        : Effect.acquireRelease(fs.makeTempDirectory(options), (path, exit) =>
-            remove(path).pipe(
-              Effect.catch((cleanupError) =>
-                Effect.die(
-                  Exit.isFailure(exit)
-                    ? new AggregateError(
-                        [Cause.squash(exit.cause), cleanupError],
-                        "Runtime operation and cleanup both failed.",
-                      )
-                    : cleanupError,
-                ),
-              ),
-            ),
+        : Effect.acquireRelease(fs.makeTempDirectory(options), (path) =>
+            remove(path).pipe(Effect.orDie),
           ),
   };
 }

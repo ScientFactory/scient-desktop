@@ -22,6 +22,7 @@ import {
 
 const PRESENTATION = {
   displayName: "Pi",
+  reportsContextWindow: true,
   showInteractionModeToggle: false,
   supportedRuntimeModes: ["full-access"],
   supportsConversationRollback: false,

@@ -616,15 +616,19 @@ export function ProviderInstanceCard({
   const showStatus = !(quietPiStatus && connectionPresentation.kind === "ready");
   const needsAttention = statusKey === "warning" || statusKey === "error";
   const editorStatusNode = !showStatus ? null : isAuthenticated && authEmail ? (
-    <>
-      {needsAttention ? statusDotNode : null}
-      <span>Authenticated as</span>
-      <ProviderAuthEmail email={authEmail} />
-      {authLabel ? <span>· {authLabel}</span> : null}
-      {statusDetail ? (
-        <span className="min-w-0 [overflow-wrap:anywhere]">· {statusDetail}</span>
+    <div className="grid gap-1">
+      {authLabel ? (
+        <p className="text-sm text-foreground/80 [overflow-wrap:anywhere]">{authLabel}</p>
       ) : null}
-    </>
+      <div className="flex flex-wrap items-center gap-x-1.5 gap-y-1">
+        {needsAttention ? statusDotNode : null}
+        <span>Authenticated as</span>
+        <ProviderAuthEmail email={authEmail} />
+        {statusDetail ? (
+          <span className="min-w-0 [overflow-wrap:anywhere]">· {statusDetail}</span>
+        ) : null}
+      </div>
+    </div>
   ) : (
     <>
       {statusDotNode}
@@ -863,12 +867,12 @@ export function ProviderInstanceCard({
             <span className="flex min-w-0 flex-1">{versionCodeNode}</span>
           </span>
         }
-        description={editorStatusNode}
         icon={titleIconNode}
         headerAction={editorHeaderAction}
         variant="plain"
-        children={null}
-      />
+      >
+        <div className="px-3 text-xs text-muted-foreground sm:px-4">{editorStatusNode}</div>
+      </SettingsSection>
       {/* Scient keeps the models-first view; configuration uses upstream settings rows. */}
       <div className="flex h-11 shrink-0 border-b border-border/70">
         {driverOption ? (

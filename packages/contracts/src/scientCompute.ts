@@ -64,7 +64,7 @@ export const ComputeRuntimeInspection = Schema.Struct({
 });
 export type ComputeRuntimeInspection = typeof ComputeRuntimeInspection.Type;
 
-export class ComputeGatewayError extends Schema.TaggedErrorClass<ComputeGatewayError>()(
+export class ComputeGatewayError extends Schema.TaggedError<ComputeGatewayError>()(
   "ComputeGatewayError",
   {
     operation: Schema.Literals([

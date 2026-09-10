@@ -39,7 +39,7 @@ const ALLOWED_SESSION_TRANSITIONS: Readonly<
  * stored status back, so an impossible pair is data to report rather than a
  * defect to crash on.
  */
-export class InvalidComputeSessionTransitionError extends Schema.TaggedErrorClass<InvalidComputeSessionTransitionError>()(
+export class InvalidComputeSessionTransitionError extends Schema.TaggedError<InvalidComputeSessionTransitionError>()(
   "InvalidComputeSessionTransitionError",
   {
     current: ComputeSessionStatus,

@@ -5,7 +5,7 @@ import { preferredReasoningLevel } from "@t3tools/shared/model";
 import type { PiRpcClient, PiRpcError } from "./PiRpcClient.ts";
 import { PiThinkingLevel } from "./PiRpcSchema.ts";
 
-export class PiModelSelectionError extends Schema.TaggedErrorClass<PiModelSelectionError>()(
+export class PiModelSelectionError extends Schema.TaggedError<PiModelSelectionError>()(
   "PiModelSelectionError",
   {
     kind: Schema.Literals(["validation", "request"]),

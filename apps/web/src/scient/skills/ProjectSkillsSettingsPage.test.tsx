@@ -76,10 +76,7 @@ describe("ProjectSkillsSettingsPage project selector", () => {
 
     expect(projectItems).toHaveLength(2);
     expect(projectItems.map((item) => item.props.expanded)).toEqual([false, false]);
-    expect(favicons.map((favicon) => favicon.props.cwd)).toEqual([
-      "/workspace/first",
-      "/workspace/second",
-    ]);
+    expect(favicons.map((favicon) => favicon.props.project)).toEqual(projects);
     expect(settings).toBeNull();
 
     (projectItems[1]?.props.onToggle as (() => void) | undefined)?.();

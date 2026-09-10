@@ -397,7 +397,7 @@ export const ComputeTransportEvent = Schema.Union([
 ]);
 export type ComputeTransportEvent = typeof ComputeTransportEvent.Type;
 
-export class ComputeTransportError extends Schema.TaggedErrorClass<ComputeTransportError>()(
+export class ComputeTransportError extends Schema.TaggedError<ComputeTransportError>()(
   "ComputeTransportError",
   {
     operation: Schema.Literals([
@@ -579,7 +579,7 @@ export interface ComputeLaunchRequest {
   readonly environment: Readonly<Record<string, string>>;
 }
 
-export class ComputeRuntimeError extends Schema.TaggedErrorClass<ComputeRuntimeError>()(
+export class ComputeRuntimeError extends Schema.TaggedError<ComputeRuntimeError>()(
   "ComputeRuntimeError",
   {
     operation: Schema.Literals(["discover", "verify", "prepare", "fingerprint"]),

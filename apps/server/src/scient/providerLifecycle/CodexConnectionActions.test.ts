@@ -16,7 +16,7 @@ type AccountUpdatedHandler = (
   notification: CodexSchema.V2AccountUpdatedNotification,
 ) => Effect.Effect<void>;
 
-class MockCodexClientError extends Schema.TaggedErrorClass<MockCodexClientError>()(
+class MockCodexClientError extends Schema.TaggedError<MockCodexClientError>()(
   "MockCodexClientError",
   { message: Schema.String },
 ) {}

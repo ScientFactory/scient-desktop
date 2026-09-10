@@ -36,6 +36,7 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
@@ -57,11 +58,24 @@ import { makeForkBoundaryResolver } from "./ForkBoundaryReadModel.ts";
 import { forkThread } from "./forkDecider.ts";
 import { withForkOriginDetail } from "./forkDecisionReadModel.ts";
 import { createEmptyReadModel } from "../projector.ts";
+import { questionAnswerActivity } from "./questionAnswer.test-fixtures.ts";
+import { retainQuestionAnswers, questionAnswerAttachments } from "./retainedQuestionAnswers.ts";
+import {
+  ScientForkAttachmentCopier,
+  ScientForkAttachmentCopierLive,
+} from "./ForkAttachmentCopier.ts";
+import {
+  ScientForkContextBootstrap,
+  ScientForkContextBootstrapLive,
+} from "./ForkContextBootstrap.ts";
+import { resolveAttachmentPath } from "../../attachmentStore.ts";
 
 const makeCrossAreaTestLayer = (prefix: string) =>
   Layer.mergeAll(
     OrchestrationProjectionPipelineLive,
     OrchestrationProjectionSnapshotQueryLive,
+    ScientForkAttachmentCopierLive,
+    ScientForkContextBootstrapLive,
   ).pipe(
     Layer.provide(ThreadBackgroundLiveness.layer),
     Layer.provide(ThreadPlanProgress.layer),
@@ -227,6 +241,140 @@ function revertedEvent(threadId: ThreadId, turnCount: number, eventId: string): 
 }
 
 // ---------------------------------------------------------------------------
+// Submitted question files remain independently owned through replay and re-fork.
+it.layer(Layer.fresh(makeCrossAreaTestLayer("scient-fork-question-files-")))(
+  "question answer continuity",
+  (it) => {
+    it.effect(
+      "copies history, survives copy retry, origin deletion, revert, replay and fork-of-fork",
+      () =>
+        Effect.gen(function* () {
+          const sql = yield* SqlClient.SqlClient;
+          const pipeline = yield* OrchestrationProjectionPipeline;
+          const store = yield* OrchestrationEventStore;
+          const query = yield* ProjectionSnapshotQuery;
+          const copier = yield* ScientForkAttachmentCopier;
+          const bootstrap = yield* ScientForkContextBootstrap;
+          const fs = yield* FileSystem.FileSystem;
+          const config = yield* ServerConfig;
+          yield* runScientMigrations(sql);
+          const project = (event: Parameters<typeof store.append>[0]) =>
+            store.append(event).pipe(Effect.flatMap((saved) => pipeline.projectEvent(saved)));
+          yield* project(projectCreatedEvent());
+          yield* project(threadCreatedEvent(ORIGIN, "Question history", "q-origin"));
+          yield* project(messageSentEvent(ORIGIN, U1, "user", "Analyze", T1, NOW, "q-user"));
+          const activity = questionAnswerActivity(T1);
+          const answer = retainQuestionAnswers([activity], new Set([T1])).answers;
+          const originalFile = {
+            ...questionAnswerAttachments(answer)[0]!,
+            id: "cross-origin-00000000-0000-4000-8000-000000000001-csv",
+          };
+          const originalPath = resolveAttachmentPath({
+            attachmentsDir: config.attachmentsDir,
+            attachment: originalFile,
+          })!;
+          yield* fs.makeDirectory(config.attachmentsDir, { recursive: true });
+          yield* fs.writeFileString(originalPath, "1,2\n");
+          yield* project({
+            ...threadCreatedEvent(ORIGIN, "unused", "q-history"),
+            type: "thread.activity-appended",
+            payload: {
+              threadId: ORIGIN,
+              activity: {
+                ...activity,
+                payload: {
+                  ...answer[0]!.answer,
+                  attachmentsByQuestionId: { dataset: [originalFile] },
+                },
+              },
+            },
+          });
+          yield* project(
+            messageSentEvent(ORIGIN, A1, "assistant", "Analyzed data", T1, NOW, "q-assistant"),
+          );
+          yield* project(turnDiffCompletedEvent(ORIGIN, T1, 1, A1, NOW, "q-completed"));
+          const resolver = makeForkBoundaryResolver(sql);
+          const fork = (originId: ThreadId, sourceId: MessageId, newId: ThreadId) =>
+            Effect.gen(function* () {
+              const origin = Option.getOrThrow(yield* query.getThreadDetailById(originId));
+              const resolved = yield* resolver.resolve({
+                originThreadId: originId,
+                sourceAssistantMessageId: sourceId,
+                threadCreatedAt: origin.createdAt,
+              });
+              const events = yield* forkThread({
+                command: {
+                  type: "thread.fork",
+                  commandId: CommandId.make(`fork-${newId}`),
+                  originThreadId: originId,
+                  newThreadId: newId,
+                  sourceAssistantMessageId: sourceId,
+                  workspaceMode: "local",
+                },
+                resolvedBoundaries: resolved,
+                readModel: withForkOriginDetail(createEmptyReadModel(NOW), origin),
+              });
+              for (const event of events) yield* project(event);
+              const lineage = events.find((event) => event.type === "thread.forked")!;
+              yield* copier.copyAll({ threadId: newId, copies: lineage.payload.attachmentCopies });
+              // Retry the same persisted mappings, as the provisioning worker does after interruption.
+              yield* copier.copyAll({ threadId: newId, copies: lineage.payload.attachmentCopies });
+              yield* sql`UPDATE scient_thread_lineage SET status = 'ready' WHERE thread_id = ${newId}`;
+              return lineage.payload;
+            });
+          const forkId = ThreadId.make("question-fork");
+          const lineage = yield* fork(ORIGIN, A1, forkId);
+          assert.strictEqual(lineage.attachmentCopies.length, 1);
+          const targetPath = resolveAttachmentPath({
+            attachmentsDir: config.attachmentsDir,
+            attachment: lineage.attachmentCopies[0]!.target,
+          })!;
+          assert.strictEqual(yield* fs.readFileString(targetPath), "1,2\n");
+          yield* project({
+            ...threadCreatedEvent(ORIGIN, "unused", "q-delete-origin"),
+            type: "thread.deleted",
+            payload: { threadId: ORIGIN, deletedAt: NOW },
+          });
+          assert.isFalse(yield* fs.exists(originalPath));
+          assert.strictEqual(yield* fs.readFileString(targetPath), "1,2\n");
+          yield* project(revertedEvent(forkId, 0, "q-fork-revert"));
+          yield* pipeline.bootstrap;
+          const destination = Option.getOrThrow(yield* query.getThreadDetailById(forkId));
+          assert.strictEqual(
+            destination.activities.filter((entry) => entry.kind === "user-input.answer-submitted")
+              .length,
+            1,
+          );
+          const prepared = yield* bootstrap.prepareTurn({
+            thread: destination,
+            currentMessageId: "next",
+            messageText: "Continue",
+            attachments: [],
+          });
+          assert.include(prepared.input, "Which dataset?");
+          assert.deepEqual(
+            prepared.attachments.map((file) => file.id),
+            [lineage.attachmentCopies[0]!.target.id],
+          );
+          const next = yield* fork(
+            forkId,
+            lineage.baselineAssistantMessageId!,
+            ThreadId.make("question-refork"),
+          );
+          assert.strictEqual(next.attachmentCopies.length, 1);
+          assert.strictEqual(
+            next.attachmentCopies[0]!.source.id,
+            lineage.attachmentCopies[0]!.target.id,
+          );
+          assert.notStrictEqual(
+            next.attachmentCopies[0]!.target.id,
+            next.attachmentCopies[0]!.source.id,
+          );
+        }),
+    );
+  },
+);
+
 // VAL-CROSS-005: Exact boundary survives projection and persistence
 // ---------------------------------------------------------------------------
 

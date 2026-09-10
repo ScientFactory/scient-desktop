@@ -53,7 +53,7 @@ const ALLOWED_EXECUTION_TRANSITIONS: Readonly<
  * is often read back from durable storage, and a stored status that cannot
  * reach the one an event asks for is bad data, not unreachable code.
  */
-export class InvalidComputeExecutionTransitionError extends Schema.TaggedErrorClass<InvalidComputeExecutionTransitionError>()(
+export class InvalidComputeExecutionTransitionError extends Schema.TaggedError<InvalidComputeExecutionTransitionError>()(
   "InvalidComputeExecutionTransitionError",
   {
     current: ComputeExecutionStatus,

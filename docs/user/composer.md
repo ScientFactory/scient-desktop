@@ -286,6 +286,8 @@ files. Turn it on to create an isolated worktree at the selected checkpoint. The
 unavailable when the project is not a Git repository or the fork point has no saved checkpoint.
 
 Forking from a completed response keeps the conversation through that response.
+This includes submitted question answers and their attached files, with independent copies owned
+by the fork. Unsubmitted question answers stay with the original conversation.
 Forking from a sent user message places that message and its images in the new
 composer as an unsent draft. A temporary setup failure is safe to retry; Scient
 does not open a partially created conversation.

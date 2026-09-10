@@ -156,10 +156,9 @@ export const CustomModelTestInput = Schema.Struct({
   instanceId: ProviderInstanceId,
   revision: Schema.Int,
 });
-export class CustomModelError extends Schema.TaggedErrorClass<CustomModelError>()(
-  "CustomModelError",
-  { message: Schema.String },
-) {}
+export class CustomModelError extends Schema.TaggedError<CustomModelError>()("CustomModelError", {
+  message: Schema.String,
+}) {}
 
 export function validateCustomModelConnection(
   connection: Omit<CustomModelConnection, "credentialId">,

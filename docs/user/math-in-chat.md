@@ -30,3 +30,9 @@ notation as typed instead of an error.
 
 Math renders locally on your device; no network request is involved.
 Where typeset math is unavailable, the readable TeX notation remains visible.
+
+Scientific subscripts and charges, such as `$PCO_2$` and `$HCO_3^-$`, are
+recognized as inline math. When selecting and copying rendered math, even a
+partial selection of an equation copies the complete formula as Markdown/TeX.
+Rich-text destinations receive that source once, alongside the surrounding
+formatting, rather than a duplicate or incomplete representation of the equation.

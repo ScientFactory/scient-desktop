@@ -1,5 +1,20 @@
 # Upstream maintenance
 
+Scient's desktop update control retains the inherited idle check icon and update
+actions. Its active states use a compact primary-colored button with Update,
+download percentage, Restart, or Retry copy. The labeled button is 28px tall and
+uses plain download/restart icons without status badges. Preserve the marked presentation
+seam in `SidebarUpdatePill.tsx` and `getScientDesktopUpdateLabel` in
+`desktopUpdate.logic.ts`; updater state, IPC, confirmation, release-note focus,
+and Electron installation remain inherited. Do not copy the updater into a
+second component or restore upstream's muted active-state styling during alignment.
+`DesktopUpdates.ts` forwards every real download progress event to the UI instead
+of filtering at 10% boundaries; only logging retains the 10% milestones. Preserve
+this small marked exception without changing the downloader's event cadence.
+The Scient-owned `useScientDownloadProgress` hook smooths only the displayed
+percentage and ring, bounded by confirmed progress. It must not drive updater
+actions, completion, or shared state; reduced motion uses direct readings.
+
 This is the public ScientFactory-owned T3-derived desktop application. Official
 T3 supplies the maintained generic host platform; ScientFactory owns product
 policy, identity, scientific behavior, release decisions, and every deliberate
@@ -21,29 +36,27 @@ official `main` only after its untouched baseline passed. That historical
 revision remains literal ancestry of owned `main`; it is not merely a reviewed
 or observed tip.
 
-The current proposed T3 ancestry is recorded in
-[`docs/internals/2026-09-06-upstream-sync-223ff449.md`](docs/internals/2026-09-06-upstream-sync-223ff449.md)
-and in `upstream-state.json`. This refresh preserves all 27 official commits
-from `272d6d747ef214f50dbd9d0051120de12ffa3591` through
-`223ff4490f764a74ff911589e97b9bbcd595fee8`. It includes pooled provider usage,
-accessibility fixes, shared request and result handling, faster targeted thread reads,
-reliable SSH stopping, stable manual panel choices, server-owned pull-request links,
-and checkpoint/settlement reliability. Scient's assisted lifecycle, managed/system
-ownership, reasoning selector, scientific rich output, models-first view, private
-preferences, projectless/fork behavior, and release authority remain. The candidate
-starts from owned main `527dc96d84`.
+The current T3 alignment is recorded in
+[`docs/internals/2026-09-09-upstream-sync-6c583620.md`](docs/internals/2026-09-09-upstream-sync-6c583620.md)
+and in `upstream-state.json`. This local candidate preserves all 16 official commits after
+`12391bd0d38eef6655b7a9f8945d0cb5febadc2b` through
+`6c583620ff7ad3235b135af7107c0543467eecfa`. Merge
+`72a99fadb7d42c34fd470d82827583b239335a46` retains owned main
+`083993b13b42718873721fe90c92d8cd87fedd64` and the exact official target as its parents.
 
-The history-preserving merge is `9c1eea0f9e8363315a090af54e2caf4a1a47986c`.
-Automated qualification passed; isolated-app interaction and human visual
-acceptance remain pending. The linked receipt states the platform limits and
-meaningful conflict decisions, including targeted-read composition, Scient fork
-preservation, release ownership, and the opt-in settlement default. The
-[preceding checkpoint](docs/internals/2026-09-06-upstream-sync-272d6d74.md)
-remains in ancestry. This local candidate does not claim to be pushed or merged into main.
-Later observed upstream tips do not move `integrationBase` by themselves, and
-publication remains a separate gate.
+Automated qualification passed; the owner will test the isolated candidate before PR delivery.
+No push, PR, main merge, or publication is implied. The
+[preceding alignment](docs/internals/2026-09-08-upstream-sync-349ce301-review.md) remains in
+ancestry. Later observed upstream tips do not move `integrationBase` by themselves.
 
 ## Receiving T3 updates
+
+The local alignment through `6c583620` is documented in the
+[2026-09-09 review](docs/internals/2026-09-09-upstream-sync-6c583620.md).
+It adopts composer loading stability, shared setup wizards, terminal-link browser overrides,
+lazy keyring loading, bounded event-replay memory, mobile thread arrangement, and Android/iOS
+notification improvements. Scient provider lifecycle, fork behavior, identity, and cloud/mobile
+publication holds remain. The receipt records qualification and remaining platform/manual gates.
 
 The canonical procedure and stop conditions live in the
 [T3 upstream alignment protocol](docs/internals/upstream-alignment-protocol.md). The short form is:
@@ -404,8 +417,17 @@ never through a broad merge into this repository.
 
 ## Post-D4 Scient-owned feature seams
 
+Unread-answer attention stays in Scient-owned `scient/answerAttention` modules.
+Preserve the optional durable completion marker in shell/detail snapshots, its
+shell-authoritative merge, focus-aware read acknowledgement, and validated native
+badge bridge. Queue/provider execution and the existing macOS window lifecycle
+remain owned by their current systems. The badge adoption baseline is separate
+from sidebar visit timestamps. See [answer attention](docs/internals/answer-attention.md).
+
 Conversation forks keep server-owned boundary resolution, durable provisioning,
-and provider-neutral context bootstrap. Preserve the read-authorized
+and provider-neutral context bootstrap. Preserve the shared
+selection of submitted question-answer activities and independent file ownership;
+T3's question submission path remains unchanged. Preserve the read-authorized
 `orchestration.getForkOptions` RPC and its `threadForkRecovery` capability,
 typed fork dispositions on dispatch errors, and the pre-send readiness gate.
 Client retries retain one operation identity and draft across navigation and
@@ -470,11 +492,25 @@ four tokens in `apps/web/src/scient/typography/profile.css`; do not spread those
 overrides across inherited components during upstream conflict resolution. See
 [Scient typography profile](docs/internals/scient-typography.md).
 
-Composer collapse is opt-in in Scient: both `composerCollapseOnBlur` and
-`composerCollapseOnScroll` default to `false` (Settings shows **Never**).
-Preserve saved choices and T3's optional collapse behavior, including the shared
-focus-scope marker on Scient's provider onboarding popup. Keep this divergence
-at the shared settings defaults rather than disabling the collapse implementation.
+Composer collapse is opt-in in Scient: `composerCollapseOnScroll` defaults to
+`false`. Upstream removed blur-triggered collapse; do not restore that obsolete
+setting. Preserve saved scroll-collapse choices and the shared focus-scope marker
+on Scient's provider onboarding popup. Keep the default in the shared settings schema.
+
+Scient retains explicitly expandable Settings section navigation. Upstream's
+flat navigation remains the base; `useScientSettingsNavigation` under
+`apps/web/src/scient/settings` owns subsection definitions, expansion state,
+visibility observation, and section jumps. Preserve its single rendering slot in
+`SettingsSidebarNav`, rather than restoring those mechanics throughout the host
+component. The Settings route retains `data-settings-page-layout` as the observer's
+root. Page changes do not automatically open a submenu. Settings search,
+page routing, and shared sidebar primitives remain upstream-owned.
+
+In the shared provider settings editor, Scient displays the authenticated account's
+subscription label on its own line above the email/visibility control. Preserve
+this hierarchy rather than joining both with an inline separator. Providers without
+a label retain the account row without an empty subscription row. The shared
+`ProviderInstanceCard.test.ts` covers the layout independently of provider kind.
 
 LaTeX compilation is isolated under `apps/server/src/scient/latex` and
 `apps/web/src/scient/latex`, with `packages/contracts/src/scientLatex.ts` and

@@ -2701,11 +2701,13 @@ export const layerWithRuntimeBindings = <E, R>(
     Layer.provide(projectOutputObserverLayer),
   );
 
+/** @public Service construction is part of the canonical Effect module API. */
 export const layerWithRuntimes = (
   bindings: ReadonlyArray<ComputeRuntimeBinding>,
   options: ComputeSessionServiceOptions = DEFAULT_COMPUTE_SESSION_SERVICE_OPTIONS,
 ) => layerWithRuntimeBindings(Effect.succeed(bindings), options);
 
+/** @public Service construction is part of the canonical Effect module API. */
 export const layer = Layer.effect(ComputeSessionService, make).pipe(
   Layer.provide(disabledProjectOutputObserverLayer),
 );

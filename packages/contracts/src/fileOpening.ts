@@ -63,7 +63,7 @@ export const EnvironmentFilePrepareFailure = Schema.Literals([
 ]);
 export type EnvironmentFilePrepareFailure = typeof EnvironmentFilePrepareFailure.Type;
 
-export class EnvironmentFilePrepareError extends Schema.TaggedErrorClass<EnvironmentFilePrepareError>()(
+export class EnvironmentFilePrepareError extends Schema.TaggedError<EnvironmentFilePrepareError>()(
   "EnvironmentFilePrepareError",
   {
     path: EnvironmentFilePath,

@@ -9,6 +9,46 @@ import type { ScientReleaseNote } from "./model";
  */
 export const SCIENT_RELEASE_NOTES = [
   {
+    version: "0.6.13",
+    publishedAt: "2026-09-09",
+    format: "paragraphs",
+    headline: "Bring what you see into the conversation.",
+    highlights: [
+      {
+        id: "snapshots",
+        title: "Capture windows with SnapShots",
+        description:
+          "Capture the window you are working in and attach it directly to your draft. When available, Scient can include the app's text and controls for richer context. SnapShots are optional on macOS, Windows, and supported Linux Wayland desktops.",
+      },
+      {
+        id: "scientific-markdown",
+        title: "Clearer scientific Markdown",
+        description:
+          "Scientific formulas such as subscripts and chemical charges now render and copy more reliably. Mixed Hebrew and English tables keep more consistent direction, column alignment, and scrolling in chat, previews, and the Markdown editor.",
+      },
+      {
+        id: "dock-unread-answers",
+        title: "Know when your work is ready",
+        description:
+          "On macOS, Scient's Dock badge shows how many conversations have unread completed answers, even while the app is minimized or running in the background.",
+      },
+      {
+        id: "question-answer-attachments",
+        title: "Answer questions with files",
+        description:
+          "Attach images and files directly when an agent asks you a question. Each question keeps its own attachments, failed submissions remain available to retry, and retained answers and files remain available in conversation forks.",
+      },
+      {
+        id: "sidebar-file-attachments",
+        title: "Attach files from the sidebar",
+        description:
+          "Drag files onto any conversation in the sidebar to open it and add those files to its composer, ready for your next message without sending automatically.",
+      },
+    ],
+    alsoIncluded:
+      "Steadier composer controls, resizable previews, turn navigation, clearer provider setup, better browser and terminal interactions, smoother updates, consistent project icons and sidebar behavior, and reliability fixes for conversation forks, provider sessions, imports, and restarts.",
+  },
+  {
     version: "0.6.12",
     publishedAt: "2026-09-07",
     format: "paragraphs",

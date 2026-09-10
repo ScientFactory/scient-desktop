@@ -110,7 +110,7 @@ export const BRIDGE_TO_SERVER_TYPES: ReadonlySet<BridgeMessageType> = new Set([
 
 export type BridgeDirection = "server-to-bridge" | "bridge-to-server";
 
-export function bridgeMessageDirection(type: BridgeMessageType): BridgeDirection {
+function bridgeMessageDirection(type: BridgeMessageType): BridgeDirection {
   return SERVER_TO_BRIDGE_TYPES.has(type) ? "server-to-bridge" : "bridge-to-server";
 }
 

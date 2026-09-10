@@ -13,7 +13,7 @@ import { Argument, Command, Flag } from "effect/unstable/cli";
 import { isExactScientReleaseVersion } from "@t3tools/shared/scientRelease";
 import { fromJsonStringPretty } from "@t3tools/shared/schemaJson";
 
-export class InvalidReleasePackageVersionError extends Schema.TaggedErrorClass<InvalidReleasePackageVersionError>()(
+export class InvalidReleasePackageVersionError extends Schema.TaggedError<InvalidReleasePackageVersionError>()(
   "InvalidReleasePackageVersionError",
   {
     version: Schema.String,
@@ -24,7 +24,7 @@ export class InvalidReleasePackageVersionError extends Schema.TaggedErrorClass<I
   }
 }
 
-export class ReleasePackageManifestError extends Schema.TaggedErrorClass<ReleasePackageManifestError>()(
+export class ReleasePackageManifestError extends Schema.TaggedError<ReleasePackageManifestError>()(
   "ReleasePackageManifestError",
   {
     operation: Schema.Literals(["read", "decode", "encode", "write"]),
@@ -37,7 +37,7 @@ export class ReleasePackageManifestError extends Schema.TaggedErrorClass<Release
   }
 }
 
-export class ReleaseGitHubOutputConfigurationError extends Schema.TaggedErrorClass<ReleaseGitHubOutputConfigurationError>()(
+export class ReleaseGitHubOutputConfigurationError extends Schema.TaggedError<ReleaseGitHubOutputConfigurationError>()(
   "ReleaseGitHubOutputConfigurationError",
   { cause: Schema.Defect() },
 ) {
@@ -46,7 +46,7 @@ export class ReleaseGitHubOutputConfigurationError extends Schema.TaggedErrorCla
   }
 }
 
-export class ReleaseGitHubOutputWriteError extends Schema.TaggedErrorClass<ReleaseGitHubOutputWriteError>()(
+export class ReleaseGitHubOutputWriteError extends Schema.TaggedError<ReleaseGitHubOutputWriteError>()(
   "ReleaseGitHubOutputWriteError",
   {
     filePath: Schema.String,

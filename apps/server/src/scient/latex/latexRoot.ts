@@ -9,7 +9,7 @@ const MAGIC_ROOT_PATTERN = /^\s*%\s*!\s*TEX\s+root\s*=\s*(.+?)\s*$/imu;
 const DOCUMENTCLASS_PATTERN = /^[^%\r\n]*\\documentclass\b/mu;
 const MAGIC_COMMENT_SCAN_LIMIT = 4_000;
 
-export const LATEX_SOURCE_EXTENSIONS = [".tex", ".latex", ".ltx"] as const;
+const LATEX_SOURCE_EXTENSIONS = [".tex", ".latex", ".ltx"] as const;
 
 export function isLatexSourcePath(relativePath: string): boolean {
   const cleanPath = relativePath.split(/[?#]/u, 1)[0] ?? "";

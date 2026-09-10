@@ -40,7 +40,7 @@ import {
 import { isManagedRuntimeUpdate } from "./managedRuntimeVersion.ts";
 
 const DEFAULT_CODEX_BINARY = "codex";
-export const CODEX_MANAGED_RUNTIME_CONTRACT_REVISION = 1;
+const CODEX_MANAGED_RUNTIME_CONTRACT_REVISION = 1;
 
 export function resolveCodexCodeModeHostPath(
   binaryPath: string,

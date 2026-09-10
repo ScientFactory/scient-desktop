@@ -71,6 +71,15 @@ describe("Scient PDF reader source seam", () => {
     );
   });
 
+  it("styles the PDF.js selection overlay without exposing its native text-layer selection", () => {
+    const styles = NodeFS.readFileSync(new URL("./scientPdfReader.css", import.meta.url), "utf8");
+
+    expect(styles).toMatch(
+      /\.scient-pdf-viewer-container \.pdfViewer \.canvasWrapper \.selection \{[^}]*background:/su,
+    );
+    expect(styles).not.toMatch(/\.textLayer\s+::selection\s*\{/u);
+  });
+
   it("teaches inverse source sync without turning the PDF into a hover target", () => {
     const source = NodeFS.readFileSync(new URL("./ScientPdfReader.tsx", import.meta.url), "utf8");
     const styles = NodeFS.readFileSync(new URL("./scientPdfReader.css", import.meta.url), "utf8");

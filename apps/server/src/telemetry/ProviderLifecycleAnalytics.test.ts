@@ -87,11 +87,51 @@ describe("Provider lifecycle analytics", () => {
   it("does not replay terminal or pre-consent operations as new successes or failures", () => {
     const mapper = createProviderLifecycleAnalyticsMapper();
     expect(mapper.observe([provider(operation("failed"))]).map((event) => event.name)).toEqual([
-      "provider.discovered",
+      "provider.installation.observed",
     ]);
     mapper.clear();
     expect(mapper.observe([provider(operation("failed"))]).map((event) => event.name)).toEqual([
-      "provider.discovered",
+      "provider.installation.observed",
+    ]);
+  });
+
+  it("reports explicit installed state without treating bundled provider entries as installs", () => {
+    const mapper = createProviderLifecycleAnalyticsMapper();
+    const installed = provider();
+    const { connection: _connection, ...withoutConnection } = installed;
+    const missing = {
+      ...withoutConnection,
+      enabled: false,
+      installed: false,
+      status: "disabled" as const,
+    };
+
+    expect(mapper.observe([missing])).toEqual([
+      {
+        name: "provider.installation.observed",
+        properties: {
+          provider: "droid",
+          installed: false,
+        },
+      },
+    ]);
+    expect(mapper.observe([installed])).toEqual([
+      {
+        name: "provider.installation.changed",
+        properties: {
+          provider: "droid",
+          fromInstalled: false,
+          toInstalled: true,
+        },
+      },
+      {
+        name: "provider.readiness.changed",
+        properties: { provider: "droid", from: "disabled", to: "ready" },
+      },
+      {
+        name: "provider.runtime.source.changed",
+        properties: { provider: "droid", from: "missing", to: "scient_managed" },
+      },
     ]);
   });
 
@@ -107,6 +147,14 @@ describe("Provider lifecycle analytics", () => {
     };
     expect(mapper.observe([missing])).toEqual([
       {
+        name: "provider.installation.changed",
+        properties: {
+          provider: "droid",
+          fromInstalled: true,
+          toInstalled: false,
+        },
+      },
+      {
         name: "provider.readiness.changed",
         properties: { provider: "droid", from: "ready", to: "warning" },
       },
@@ -115,5 +163,30 @@ describe("Provider lifecycle analytics", () => {
         properties: { provider: "droid", from: "scient_managed", to: "missing" },
       },
     ]);
+  });
+
+  it("aggregates multiple instances without exposing instance identifiers", () => {
+    const mapper = createProviderLifecycleAnalyticsMapper();
+    const installed = provider();
+    const { connection: _connection, ...withoutConnection } = installed;
+    const missing = {
+      ...withoutConnection,
+      instanceId: ProviderInstanceId.make("another-private-name"),
+      installed: false,
+      status: "disabled" as const,
+    };
+
+    expect(mapper.observe([missing, installed])).toEqual([
+      {
+        name: "provider.installation.observed",
+        properties: { provider: "droid", installed: true },
+      },
+    ]);
+    const events = mapper.observe([missing]);
+    expect(JSON.stringify(events)).not.toContain("private-name");
+    expect(events).toContainEqual({
+      name: "provider.installation.changed",
+      properties: { provider: "droid", fromInstalled: true, toInstalled: false },
+    });
   });
 });

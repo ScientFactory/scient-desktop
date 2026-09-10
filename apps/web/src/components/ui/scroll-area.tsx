@@ -1,5 +1,6 @@
 "use client";
 
+import { DirectionProvider, useDirection } from "@base-ui/react/direction-provider";
 import { ScrollArea as ScrollAreaPrimitive } from "@base-ui/react/scroll-area";
 
 import { cn } from "~/lib/utils";
@@ -25,43 +26,55 @@ function ScrollArea({
   className,
   children,
   scrollFade = false,
+  scrollFadePadding = true,
   scrollbarGutter = false,
   hideScrollbars = false,
   chainVerticalScroll = false,
+  dir,
   ...props
 }: ScrollAreaPrimitive.Root.Props & {
   scrollFade?: boolean;
+  /** Keep focused and highlighted items clear of the fade. Off for lists
+   * whose rows take focus on click, where the scroll would nudge the list. */
+  scrollFadePadding?: boolean;
   scrollbarGutter?: boolean;
   hideScrollbars?: boolean;
   chainVerticalScroll?: boolean;
 }) {
+  const inheritedDirection = useDirection();
+  const direction = dir === "rtl" || dir === "ltr" ? dir : inheritedDirection;
+
   return (
-    <ScrollAreaPrimitive.Root
-      className={cn("relative size-full min-h-0 overflow-hidden rounded-[inherit]", className)}
-      {...props}
-    >
-      <ScrollAreaPrimitive.Viewport
-        className={cn(
-          "h-full max-h-[inherit] overflow-auto overscroll-contain rounded-[inherit] outline-none transition-shadows focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background data-has-overflow-x:overscroll-x-contain",
-          chainVerticalScroll && "overscroll-y-auto",
-          scrollFade &&
-            "scroll-p-[var(--fade-size)] mask-t-from-[calc(100%-min(var(--fade-size),var(--scroll-area-overflow-y-start)))] mask-b-from-[calc(100%-min(var(--fade-size),var(--scroll-area-overflow-y-end)))] mask-l-from-[calc(100%-min(var(--fade-size),var(--scroll-area-overflow-x-start)))] mask-r-from-[calc(100%-min(var(--fade-size),var(--scroll-area-overflow-x-end)))] [--fade-size:1.5rem]",
-          scrollbarGutter && "scrollbar-gutter-stable",
-          hideScrollbars &&
-            "[-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden",
-        )}
-        data-slot="scroll-area-viewport"
+    <DirectionProvider direction={direction}>
+      <ScrollAreaPrimitive.Root
+        className={cn("relative size-full min-h-0 overflow-hidden rounded-[inherit]", className)}
+        dir={dir}
+        {...props}
       >
-        {children}
-      </ScrollAreaPrimitive.Viewport>
-      {!hideScrollbars && (
-        <>
-          <ScrollBar orientation="vertical" />
-          <ScrollBar orientation="horizontal" />
-          <ScrollAreaPrimitive.Corner data-slot="scroll-area-corner" />
-        </>
-      )}
-    </ScrollAreaPrimitive.Root>
+        <ScrollAreaPrimitive.Viewport
+          className={cn(
+            "h-full max-h-[inherit] overflow-auto overscroll-contain rounded-[inherit] outline-none transition-shadows focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background data-has-overflow-x:overscroll-x-contain",
+            chainVerticalScroll && "overscroll-y-auto",
+            scrollFade &&
+              "mask-t-from-[calc(100%-min(var(--fade-size),var(--scroll-area-overflow-y-start)))] mask-b-from-[calc(100%-min(var(--fade-size),var(--scroll-area-overflow-y-end)))] mask-l-from-[calc(100%-min(var(--fade-size),var(--scroll-area-overflow-x-start)))] mask-r-from-[calc(100%-min(var(--fade-size),var(--scroll-area-overflow-x-end)))] [--fade-size:1.5rem]",
+            scrollFade && scrollFadePadding && "scroll-p-[var(--fade-size)]",
+            scrollbarGutter && "scrollbar-gutter-stable",
+            hideScrollbars &&
+              "[-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden",
+          )}
+          data-slot="scroll-area-viewport"
+        >
+          {children}
+        </ScrollAreaPrimitive.Viewport>
+        {!hideScrollbars && (
+          <>
+            <ScrollBar orientation="vertical" />
+            <ScrollBar orientation="horizontal" />
+            <ScrollAreaPrimitive.Corner data-slot="scroll-area-corner" />
+          </>
+        )}
+      </ScrollAreaPrimitive.Root>
+    </DirectionProvider>
   );
 }
 

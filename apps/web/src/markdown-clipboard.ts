@@ -362,7 +362,32 @@ export function serializeTableElementToCsv(table: Element): string {
   return lines.join("\n");
 }
 
+const MATH_COPY_SELECTOR =
+  ".scient-math-inline[data-markdown-copy], .scient-math-display[data-markdown-copy]";
+
+/** A rendered equation is one semantic object, including when a range ends inside it. */
+function mathAwareRange(source: Range): Range {
+  const range = source.cloneRange();
+  const mathAt = (node: Node) =>
+    (node.nodeType === Node.ELEMENT_NODE ? (node as Element) : node.parentElement)?.closest(
+      MATH_COPY_SELECTOR,
+    );
+  const startMath = mathAt(range.startContainer);
+  const endMath = mathAt(range.endContainer);
+  if (startMath) range.setStartBefore(startMath);
+  if (endMath) range.setEndAfter(endMath);
+  return range;
+}
+
 function sanitizedHtmlFrom(container: Element): string {
+  // Export portable source once, rather than KaTeX's visual + accessibility DOM.
+  // The live document retains its MathML; only this detached copy is changed.
+  for (const math of container.querySelectorAll(MATH_COPY_SELECTOR)) {
+    const replacement = document.createElement("span");
+    replacement.dir = "ltr";
+    replacement.textContent = math.getAttribute("data-markdown-copy");
+    math.replaceWith(replacement);
+  }
   for (const node of container.querySelectorAll(SANITIZED_HTML_SELECTOR)) {
     if (
       node.classList.contains("chat-markdown-file-link") ||
@@ -384,8 +409,9 @@ export function chatMarkdownClipboardPayload(
   const texts: string[] = [];
   const htmls: string[] = [];
   for (let index = 0; index < selection.rangeCount; index += 1) {
-    const range = selection.getRangeAt(index);
-    if (range.collapsed) continue;
+    const selectedRange = selection.getRangeAt(index);
+    if (selectedRange.collapsed) continue;
+    const range = mathAwareRange(selectedRange);
     const container = document.createElement("div");
     container.appendChild(range.cloneContents());
     const ancestor = range.commonAncestorContainer;

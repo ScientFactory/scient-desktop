@@ -126,7 +126,7 @@ export interface LoadedComputeOutputs {
   readonly corruptLineCount: number;
 }
 
-export class LocalComputeStoreError extends Schema.TaggedErrorClass<LocalComputeStoreError>()(
+export class LocalComputeStoreError extends Schema.TaggedError<LocalComputeStoreError>()(
   "LocalComputeStoreError",
   {
     operation: Schema.String,

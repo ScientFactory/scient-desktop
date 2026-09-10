@@ -220,7 +220,9 @@ export const makeDroidCustomModelsRuntimeFactory = Effect.fn(
       const invalidate = yield* Effect.cached(
         Effect.gen(function* () {
           invalidated = true;
-          yield* Scope.close(runtimeScope, Exit.void);
+          // Closing the transport wakes the request, whose scope cancels this watcher.
+          // Finish all finalizers before allowing that cancellation to interrupt cleanup.
+          yield* Scope.close(runtimeScope, Exit.void).pipe(Effect.uninterruptible);
         }),
       );
       const assertCurrent = Effect.gen(function* () {

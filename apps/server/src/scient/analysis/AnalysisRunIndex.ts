@@ -48,7 +48,7 @@ export interface AnalysisIndexMutation {
   readonly wasClean: boolean;
 }
 
-export class AnalysisRunIndexError extends Schema.TaggedErrorClass<AnalysisRunIndexError>()(
+export class AnalysisRunIndexError extends Schema.TaggedError<AnalysisRunIndexError>()(
   "AnalysisRunIndexError",
   {
     operation: Schema.String,

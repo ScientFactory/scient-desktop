@@ -48,7 +48,8 @@ const candidate = (path: string): AgentSessionProjectCandidate => ({
   title: path.split("/").at(-1)!,
   path,
   sources: ["codex"],
-  threadCount: 1,
+  threadCount: 3,
+  git: { remoteKey: null, repository: null },
   lastActiveAt: new Date(Date.now() - 1_000).toISOString(),
   alreadyImported: false,
 });

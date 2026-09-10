@@ -4,12 +4,14 @@ import { Decoration, DecorationSet } from "prosemirror-view";
 
 import {
   countStrongScripts,
+  countTableStrongScripts,
   findRtlFlowArrowSpans,
   resolveAggregateDirectionFromCounts,
   resolveDominantDirectionFromCounts,
   resolveProseBlockDirectionFromCounts,
   resolveStrongScriptDirection,
   resolveTableCellDirectionFromCounts,
+  resolveTableColumnDirectionFromCounts,
   type FixedContentDirection,
   type StrongScriptCounts,
 } from "../../bidi/contentDirection";
@@ -25,6 +27,11 @@ interface DirectionContext {
   readonly domDirection: FixedContentDirection;
   readonly inheritedDirection?: FixedContentDirection;
   readonly tableContentDirection?: FixedContentDirection;
+}
+
+interface TableColumnCounts {
+  readonly prose: ReadonlyArray<StrongScriptCounts>;
+  readonly raw: ReadonlyArray<StrongScriptCounts>;
 }
 
 const directionPresentationKey = new PluginKey<DirectionPresentationState>(
@@ -43,6 +50,8 @@ const TECHNICAL_NODE_NAMES = new Set([
 
 const ZERO_COUNTS: StrongScriptCounts = { ltr: 0, rtl: 0 };
 const proseCountCache = new WeakMap<ProseMirrorNode, StrongScriptCounts>();
+const tableCountCache = new WeakMap<ProseMirrorNode, StrongScriptCounts>();
+const tableRowColumnCountCache = new WeakMap<ProseMirrorNode, TableColumnCounts>();
 
 function addRtlFlowArrowDecorations(
   node: ProseMirrorNode,
@@ -111,10 +120,81 @@ function proseCounts(node: ProseMirrorNode): StrongScriptCounts {
   return counts;
 }
 
+function tableDirectionCounts(node: ProseMirrorNode): StrongScriptCounts {
+  const cached = tableCountCache.get(node);
+  if (cached) return cached;
+
+  let counts = ZERO_COUNTS;
+  if (!TECHNICAL_NODE_NAMES.has(node.type.name)) {
+    if (node.isText) {
+      counts = node.marks.some((mark) => mark.type.name === "code")
+        ? ZERO_COUNTS
+        : countTableStrongScripts(node.text ?? "");
+    } else if (!node.isLeaf) {
+      node.forEach((child) => {
+        counts = addCounts(counts, tableDirectionCounts(child));
+      });
+    }
+  }
+  tableCountCache.set(node, counts);
+  return counts;
+}
+
+function tableRowColumnCounts(row: ProseMirrorNode): TableColumnCounts {
+  const cached = tableRowColumnCountCache.get(row);
+  if (cached) return cached;
+  const prose: StrongScriptCounts[] = [];
+  const raw: StrongScriptCounts[] = [];
+  row.forEach((cell, _offset, column) => {
+    prose[column] = tableDirectionCounts(cell);
+    raw[column] = proseCounts(cell);
+  });
+  const counts = { prose, raw };
+  tableRowColumnCountCache.set(row, counts);
+  return counts;
+}
+
+export function resolveProseMirrorTableColumnDirections(
+  table: ProseMirrorNode,
+  tableDirection: FixedContentDirection,
+): ReadonlyArray<FixedContentDirection> {
+  const proseLtr: number[] = [];
+  const proseRtl: number[] = [];
+  const rawLtr: number[] = [];
+  const rawRtl: number[] = [];
+  let width = 0;
+  table.forEach((row) => {
+    const counts = tableRowColumnCounts(row);
+    width = Math.max(width, counts.prose.length, counts.raw.length);
+    for (let column = 0; column < counts.prose.length; column += 1) {
+      const prose = counts.prose[column] ?? ZERO_COUNTS;
+      const raw = counts.raw[column] ?? ZERO_COUNTS;
+      proseLtr[column] = (proseLtr[column] ?? 0) + prose.ltr;
+      proseRtl[column] = (proseRtl[column] ?? 0) + prose.rtl;
+      rawLtr[column] = (rawLtr[column] ?? 0) + raw.ltr;
+      rawRtl[column] = (rawRtl[column] ?? 0) + raw.rtl;
+    }
+  });
+  return Array.from({ length: width }, (_, column) =>
+    resolveTableColumnDirectionFromCounts(
+      { ltr: proseLtr[column] ?? 0, rtl: proseRtl[column] ?? 0 },
+      { ltr: rawLtr[column] ?? 0, rtl: rawRtl[column] ?? 0 },
+      tableDirection,
+    ),
+  );
+}
+
 export function resolveScientMarkdownDocumentDirection(
   document: ProseMirrorNode,
 ): FixedContentDirection {
   return resolveStrongScriptDirection(proseCounts(document)) ?? "ltr";
+}
+
+export function resolveProseMirrorTableDirection(
+  table: ProseMirrorNode,
+  fallbackDirection: FixedContentDirection,
+): FixedContentDirection {
+  return resolveDominantDirectionFromCounts(tableDirectionCounts(table), fallbackDirection);
 }
 
 function addNodeDecorations(
@@ -131,7 +211,7 @@ function addNodeDecorations(
   let childContext = context;
 
   if (nodeName === "table") {
-    const tableContentDirection = resolveDominantDirectionFromCounts(proseCounts(node), direction);
+    const tableContentDirection = resolveProseMirrorTableDirection(node, direction);
     resolved = authoredDirection ?? tableContentDirection;
     childContext = {
       domDirection: resolved,

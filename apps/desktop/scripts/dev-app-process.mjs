@@ -109,7 +109,7 @@ export function readOwnedDevelopmentAppProcess({
   return { pid, command };
 }
 
-export function inspectChildProcesses(parentPid, { spawnSync = NodeChildProcess.spawnSync } = {}) {
+function inspectChildProcesses(parentPid, { spawnSync = NodeChildProcess.spawnSync } = {}) {
   const result = spawnSync("ps", ["-axo", "pid=,ppid=,command="], { encoding: "utf8" });
   if (result.status !== 0) return [];
   return result.stdout.split(/\r?\n/u).flatMap((line) => {

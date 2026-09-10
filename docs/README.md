@@ -42,6 +42,9 @@ require a cosmetic folder migration.
 - [Keyboard shortcuts](./user/keybindings.md)
 - [Environment themes](./user/environment-theme.md)
 - [Appearance and themes](./user/appearance.md)
+- [SnapShots](./user/snap-shot.md)
+- [Import browser sessions](./user/browser-import.md)
+- [Usage and limits](./user/usage.md)
 - [Product usage data](./user/telemetry.md)
 - [Review usage](./user/usage.md)
 - [Remote access](./user/remote-access.md)
@@ -68,6 +71,7 @@ Everything below is for maintainers. Setup lives in the [root README](../README.
 policy in [CONTRIBUTING.md](../CONTRIBUTING.md); agent rules in [AGENTS.md](../AGENTS.md).
 
 - [Architecture overview](./internals/overview.md)
+- [Unread answers and Dock badge](./internals/answer-attention.md)
 - [Workspace layout](../AGENTS.md#where-code-lives)
 - [Glossary](./internals/glossary.md)
 - [Scripts](./internals/scripts.md)

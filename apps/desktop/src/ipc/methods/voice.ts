@@ -13,7 +13,7 @@ import * as DesktopVoice from "../../app/DesktopVoice.ts";
 import * as IpcChannels from "../channels.ts";
 import * as DesktopIpc from "../DesktopIpc.ts";
 
-export const getVoiceModelsState = DesktopIpc.makeIpcMethod({
+const getVoiceModelsState = DesktopIpc.makeIpcMethod({
   channel: IpcChannels.VOICE_GET_MODELS_STATE_CHANNEL,
   payload: Schema.Void,
   result: VoiceModelsSnapshot,
@@ -23,7 +23,7 @@ export const getVoiceModelsState = DesktopIpc.makeIpcMethod({
   }),
 });
 
-export const downloadVoiceModel = DesktopIpc.makeIpcMethod({
+const downloadVoiceModel = DesktopIpc.makeIpcMethod({
   channel: IpcChannels.VOICE_DOWNLOAD_MODEL_CHANNEL,
   payload: VoiceModelDownloadRequest,
   result: VoiceModelsSnapshot,
@@ -33,7 +33,7 @@ export const downloadVoiceModel = DesktopIpc.makeIpcMethod({
   }),
 });
 
-export const cancelVoiceModelDownload = DesktopIpc.makeIpcMethod({
+const cancelVoiceModelDownload = DesktopIpc.makeIpcMethod({
   channel: IpcChannels.VOICE_CANCEL_MODEL_DOWNLOAD_CHANNEL,
   payload: VoiceModelOperationRequest,
   result: Schema.Void,
@@ -43,7 +43,7 @@ export const cancelVoiceModelDownload = DesktopIpc.makeIpcMethod({
   }),
 });
 
-export const selectVoiceModel = DesktopIpc.makeIpcMethod({
+const selectVoiceModel = DesktopIpc.makeIpcMethod({
   channel: IpcChannels.VOICE_SELECT_MODEL_CHANNEL,
   payload: VoiceModelOperationRequest,
   result: VoiceModelsSnapshot,
@@ -53,7 +53,7 @@ export const selectVoiceModel = DesktopIpc.makeIpcMethod({
   }),
 });
 
-export const removeVoiceModel = DesktopIpc.makeIpcMethod({
+const removeVoiceModel = DesktopIpc.makeIpcMethod({
   channel: IpcChannels.VOICE_REMOVE_MODEL_CHANNEL,
   payload: VoiceModelRemoveRequest,
   result: VoiceModelsSnapshot,
@@ -63,7 +63,7 @@ export const removeVoiceModel = DesktopIpc.makeIpcMethod({
   }),
 });
 
-export const transcribeVoice = DesktopIpc.makeIpcMethod({
+const transcribeVoice = DesktopIpc.makeIpcMethod({
   channel: IpcChannels.VOICE_TRANSCRIBE_CHANNEL,
   payload: VoiceTranscribeRequest,
   result: VoiceTranscript,
@@ -73,7 +73,7 @@ export const transcribeVoice = DesktopIpc.makeIpcMethod({
   }),
 });
 
-export const cancelVoiceTranscription = DesktopIpc.makeIpcMethod({
+const cancelVoiceTranscription = DesktopIpc.makeIpcMethod({
   channel: IpcChannels.VOICE_CANCEL_TRANSCRIPTION_CHANNEL,
   payload: Schema.Void,
   result: Schema.Void,

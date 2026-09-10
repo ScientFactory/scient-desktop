@@ -109,7 +109,7 @@ export const VoiceTranscriptCorrectionFailureKind = Schema.Literals([
 export type VoiceTranscriptCorrectionFailureKind = typeof VoiceTranscriptCorrectionFailureKind.Type;
 
 /** Safe, content-free failure returned to the client before it falls back. */
-export class VoiceTranscriptCorrectionError extends Schema.TaggedErrorClass<VoiceTranscriptCorrectionError>()(
+export class VoiceTranscriptCorrectionError extends Schema.TaggedError<VoiceTranscriptCorrectionError>()(
   "VoiceTranscriptCorrectionError",
   {
     kind: VoiceTranscriptCorrectionFailureKind,

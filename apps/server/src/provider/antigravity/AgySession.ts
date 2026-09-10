@@ -207,7 +207,7 @@ export interface AgyTurnResult {
   readonly raw: unknown;
 }
 
-export class AgySessionError extends Schema.TaggedErrorClass<AgySessionError>()("AgySessionError", {
+export class AgySessionError extends Schema.TaggedError<AgySessionError>()("AgySessionError", {
   stage: Schema.Literals(["spawn", "write", "protocol", "process", "concurrent", "closed"]),
   detail: Schema.String,
   cause: Schema.optional(Schema.Defect()),

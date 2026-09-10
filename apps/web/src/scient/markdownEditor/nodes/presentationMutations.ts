@@ -2,16 +2,17 @@ import { DOMSerializer, type Node as ProseMirrorNode } from "prosemirror-model";
 import type { EditorView, NodeView, ViewMutationRecord } from "prosemirror-view";
 
 /**
- * Modal isolation walks into the document to preserve CodeMirror's aria-live
- * announcer. Its attributes on surrounding blocks must not trigger reparsing:
- * that would destroy the node view which owns the open dialog.
+ * Presentation-owned attributes must not trigger document reparsing. Modal
+ * isolation uses these for accessibility, while the table node view uses one
+ * to keep automatic column alignment out of saved Markdown.
  */
 function isPresentationMutation(record: ViewMutationRecord): boolean {
   return (
     record.type === "attributes" &&
     (record.attributeName === "aria-hidden" ||
       record.attributeName === "inert" ||
-      record.attributeName === "data-base-ui-inert")
+      record.attributeName === "data-base-ui-inert" ||
+      record.attributeName === "data-scient-table-column-direction")
   );
 }
 

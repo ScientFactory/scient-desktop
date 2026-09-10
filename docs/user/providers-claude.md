@@ -97,7 +97,11 @@ When you set this field, Scient points Claude Code at that directory with the
 `CLAUDE_CONFIG_DIR` environment variable. It does not change `HOME`, so your system keychain and
 the rest of your environment stay as they are.
 
-## Reduce Context Usage
+Claude Code's verbose mode can stay enabled when you use Claude for text generation, including
+thread titles, branch names, commit messages, and pull request descriptions. On a remote connection,
+Scient uses the Claude configuration on the connected server.
+
+## Compact long conversations
 
 If Claude reaches a subscription usage limit mid-turn, the conversation shows the limit and the
 remaining wait when Claude reports a reset time. Claude may keep the turn open until the window

@@ -10,7 +10,7 @@ import * as Option from "effect/Option";
 import type { ProviderRegistryShape } from "../../provider/Services/ProviderRegistry.ts";
 import type { ServerSettingsService } from "../../serverSettings.ts";
 
-export const VOICE_TRANSCRIPT_CORRECTION_TIMEOUT_MS = 12_000;
+const VOICE_TRANSCRIPT_CORRECTION_TIMEOUT_MS = 12_000;
 
 function failure(
   kind: VoiceTranscriptCorrectionError["kind"],

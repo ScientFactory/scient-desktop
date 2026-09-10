@@ -149,6 +149,36 @@ describe("DesktopUpdates", () => {
     ).pipe(Effect.provide(Layer.merge(TestClock.layer(), harness.layer)));
   });
 
+  it.effect("broadcasts every download progress event within ten-percent milestones", () => {
+    const harness = makeHarness();
+
+    return Effect.scoped(
+      Effect.gen(function* () {
+        const updates = yield* DesktopUpdates.DesktopUpdates;
+        yield* updates.configure;
+        harness.emit("update-available", { version: "1.2.4" });
+        yield* flushCallbacks;
+
+        const progress = [0, 1, 2.5, 2.8, 9, 10, 11, 99, 100];
+        const firstProgressIndex = harness.sentStates.length;
+        for (const percent of progress) {
+          harness.emit("download-progress", { percent });
+          yield* flushCallbacks;
+          assert.equal((yield* updates.getState).downloadPercent, percent);
+        }
+        assert.deepEqual(
+          harness.sentStates.slice(firstProgressIndex).map((state) => state.downloadPercent),
+          progress,
+        );
+        // Transfer completion alone does not make the update installable.
+        assert.equal((yield* updates.getState).status, "downloading");
+        harness.emit("update-downloaded", { version: "1.2.4" });
+        yield* flushCallbacks;
+        assert.equal((yield* updates.getState).status, "downloaded");
+      }),
+    ).pipe(Effect.provide(Layer.merge(TestClock.layer(), harness.layer)));
+  });
+
   it.effect("enables nightly full changelog release notes and broadcasts summaries", () => {
     const harness = makeHarness();
 

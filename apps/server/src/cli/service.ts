@@ -182,7 +182,7 @@ const serviceStatusCommand = Command.make("status", projectLocationFlags).pipe(
   ),
 );
 
-export const serviceOnboardingDisabled = SCIENT_DESKTOP_IDENTITY.safetyEnvelopeEnabled;
+const serviceOnboardingDisabled = SCIENT_DESKTOP_IDENTITY.safetyEnvelopeEnabled;
 
 const offerInheritedServiceDuringOnboarding = Effect.gen(function* () {
   const service = yield* BootService.BootService;

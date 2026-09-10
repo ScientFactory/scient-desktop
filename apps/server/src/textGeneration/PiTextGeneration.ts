@@ -49,7 +49,7 @@ type PiRpcClientFactory = (
   options: PiRpcSpawnOptions,
 ) => Effect.Effect<PiRpcClient, PiRpcError, ChildProcessSpawner.ChildProcessSpawner | Scope.Scope>;
 const isTextGenerationError = Schema.is(TextGenerationError);
-export const PI_TEXT_GENERATION_TIMEOUT_MS = 120_000;
+const PI_TEXT_GENERATION_TIMEOUT_MS = 120_000;
 
 export interface PiTextGenerationOptions {
   readonly timeoutMs?: number;

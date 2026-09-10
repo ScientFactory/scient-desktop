@@ -30,7 +30,7 @@ export const MAX_COMPUTE_FRAME_BYTE_LENGTH = 16 * 1024 * 1024;
 // while an idle session does not retain 64 KiB for a four-byte header.
 const INITIAL_DECODER_CAPACITY = 4 * 1024;
 
-export class ComputeProtocolError extends Schema.TaggedErrorClass<ComputeProtocolError>()(
+export class ComputeProtocolError extends Schema.TaggedError<ComputeProtocolError>()(
   "ComputeProtocolError",
   {
     reason: Schema.Literals([

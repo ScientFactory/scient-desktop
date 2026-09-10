@@ -45,10 +45,17 @@ export default defineConfig({
     {
       format: "cjs",
       outDir: "dist-electron",
+      dts: false,
       sourcemap: true,
       outExtensions: () => ({ js: ".cjs" }),
       define: publicConfigDefine,
-      entry: ["src/main.ts"],
+      entry: [
+        "src/main.ts",
+        "src/electron/WindowsForegroundFocusWorker.ts",
+        "src/snapShot/GlobalShiftShortcutWorker.ts",
+        "src/snapShot/RegionSnapShotWorker.ts",
+        "src/snapShot/SnapShotAccessibilityWorker.ts",
+      ],
       clean: true,
       deps: {
         // Bundle owned workspace packages (published as TS source, no dist) into
@@ -60,6 +67,7 @@ export default defineConfig({
     {
       format: "cjs",
       outDir: "dist-electron",
+      dts: false,
       sourcemap: true,
       outExtensions: () => ({ js: ".cjs" }),
       define: publicConfigDefine,
@@ -74,6 +82,7 @@ export default defineConfig({
     {
       format: "cjs",
       outDir: "dist-electron",
+      dts: false,
       sourcemap: true,
       outExtensions: () => ({ js: ".cjs" }),
       entry: ["src/preview-pick-preload.ts"],
@@ -84,6 +93,7 @@ export default defineConfig({
     {
       format: "cjs",
       outDir: "dist-electron",
+      dts: false,
       sourcemap: true,
       outExtensions: () => ({ js: ".cjs" }),
       entry: ["src/preview-pip-preload.ts"],

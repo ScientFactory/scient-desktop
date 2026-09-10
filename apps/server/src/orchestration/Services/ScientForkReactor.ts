@@ -21,7 +21,7 @@ import {
   type GetForkOptionsInput,
 } from "@t3tools/contracts";
 
-export class ScientForkCompletionError extends Schema.TaggedErrorClass<ScientForkCompletionError>()(
+export class ScientForkCompletionError extends Schema.TaggedError<ScientForkCompletionError>()(
   "ScientForkCompletionError",
   {
     threadId: ThreadId,

@@ -13,7 +13,7 @@ import { makeInstallerFilesystem } from "../src/provider/runtimeFilesystem.ts";
 import { makeAntigravityInstallation } from "../src/provider/AntigravityInstallation.ts";
 import { ManagedRuntimeCatalogDataSchema } from "../src/scient/providerLifecycle/ManagedRuntimeCatalog.ts";
 
-class AntigravityAcpQualificationError extends Schema.TaggedErrorClass<AntigravityAcpQualificationError>()(
+class AntigravityAcpQualificationError extends Schema.TaggedError<AntigravityAcpQualificationError>()(
   "AntigravityAcpQualificationError",
   { detail: Schema.String },
 ) {

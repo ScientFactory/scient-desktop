@@ -47,14 +47,15 @@ jobs:
             START_SHA="$HEAD_SHA^"
           fi
 
-          git diff --check "$START_SHA" "$HEAD_SHA"
+          # Reference snapshots preserve their donor bytes; only owned files are linted.
+          git diff --check "$START_SHA" "$HEAD_SHA" -- . ':!.repos'
 
           markdown_files=()
           while IFS= read -r -d '' file; do
             if [[ "$file" == *.md ]]; then
               markdown_files+=("$file")
             fi
-          done < <(git diff --name-only -z --diff-filter=ACMR "$START_SHA" "$HEAD_SHA" -- "*.md" "docs/**")
+          done < <(git diff --name-only -z --diff-filter=ACMR "$START_SHA" "$HEAD_SHA" -- "*.md" "docs/**" ':!.repos')
 
           if (( ${#markdown_files[@]} > 0 )); then
             npx --yes oxfmt@0.57.0 --config .github/oxfmt-documentation.json --check "${markdown_files[@]}"

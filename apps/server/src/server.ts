@@ -432,6 +432,7 @@ const PortScannerLayerLive = PortScanner.layer.pipe(Layer.provide(ProcessRunner.
 const TerminalLayerLive = TerminalManager.layer.pipe(
   Layer.provide(PtyAdapterLive),
   Layer.provide(PortScannerLayerLive),
+  Layer.provide(NativeTelemetryLayerLive),
 );
 
 const PreviewLayerLive = Layer.empty.pipe(
@@ -673,7 +674,7 @@ export const makeRoutesLayer = Layer.mergeAll(
   Layer.provide(httpCompressionLayer),
 );
 
-export const makeServerLayer = Layer.unwrap(
+const makeServerLayer = Layer.unwrap(
   Effect.gen(function* () {
     const config = yield* ServerConfig.ServerConfig;
     const activation = yield* Deferred.make<void>();

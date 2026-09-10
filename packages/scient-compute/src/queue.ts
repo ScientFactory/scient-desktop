@@ -49,7 +49,7 @@ export const EMPTY_COMPUTE_QUEUE: ComputeQueueState = { active: null, pending: [
  * A caller that refused with a string would leave a client unable to say
  * "sixteen already waiting" without parsing prose.
  */
-export class ComputeQueueFullError extends Schema.TaggedErrorClass<ComputeQueueFullError>()(
+export class ComputeQueueFullError extends Schema.TaggedError<ComputeQueueFullError>()(
   "ComputeQueueFullError",
   {
     limit: Count,

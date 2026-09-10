@@ -119,7 +119,7 @@ export interface ScientSkillPolicySnapshot {
   readonly trustedProjects: ReadonlyArray<ProjectSkillTrustReceipt>;
 }
 
-export class ScientSkillPolicyError extends Schema.TaggedErrorClass<ScientSkillPolicyError>()(
+export class ScientSkillPolicyError extends Schema.TaggedError<ScientSkillPolicyError>()(
   "ScientSkillPolicyError",
   {
     operation: Schema.String,

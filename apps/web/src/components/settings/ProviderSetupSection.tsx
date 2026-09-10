@@ -54,17 +54,6 @@ const CREDENTIAL_PHASE_LABELS: Record<ProviderAuthState["phase"], string> = {
   cancelled: "Connection cancelled.",
 };
 
-/** Read the configured method from the instance config. Unknown values fall back to personal. */
-function readAntigravityAuthMethod(config: unknown): AntigravityAuthMethod {
-  const value =
-    config !== null && typeof config === "object" && "authMethod" in config
-      ? config.authMethod
-      : undefined;
-  return (
-    ANTIGRAVITY_AUTH_METHODS.find((method) => method.value === value)?.value ?? "oauth-personal"
-  );
-}
-
 /** Setup state belongs to the selected environment and is never saved in client settings. */
 export function ProviderSetupSection(props: ProviderSetupSectionProps) {
   return (
