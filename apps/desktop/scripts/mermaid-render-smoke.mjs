@@ -129,11 +129,9 @@ async function run() {
               prepareSvgForExport(svg, theme),
               "image/svg+xml",
             );
-            // Known pre-existing limitation, isolated to authored HTML breaks.
-            // Fail on any additional export failure introduced by an upgrade.
             check(
-              Boolean(exported.querySelector("parsererror")) === source.includes("<br/>"),
-              `Changed XML export behavior: ${theme}/${index}`,
+              !exported.querySelector("parsererror"),
+              `Invalid standalone SVG export: ${theme}/${index}`,
             );
             output.push(`${theme}: ${diagramType}`);
             try {
@@ -161,18 +159,7 @@ async function run() {
           }
         }
         const { default: mermaid } = await getMermaidRuntimePromise();
-        // Existing HTML-label export failures reproduced with 11.16.1. Keep
-        // the rendering gate explicit and do not present this as export success.
-        const baselinePngFailures = [0, 2, 3, 4, 5, 9, 10, 11, 12, 13];
-        check(
-          JSON.stringify(pngFailures.map((failure) => failure.split(":")[0])) ===
-            JSON.stringify(
-              ["light", "dark"].flatMap((theme) =>
-                baselinePngFailures.map((index) => `${theme}/${index}`),
-              ),
-            ),
-          "PNG export differs from the pre-upgrade baseline; inspect before accepting",
-        );
+        check(pngFailures.length === 0, `PNG export failed: ${pngFailures.join("; ")}`);
         const config = mermaid.mermaidAPI.getConfig();
         check(
           config.layout === "dagre" && config.look === "classic",
@@ -198,8 +185,6 @@ async function run() {
           fixtures: output,
           concurrentCopies: copies.length,
           pngFailures,
-          knownLimitation:
-            "Standalone XML export with HTML line-break labels (also reproduced on 11.16.1)",
         };
       }.toString()})(${JSON.stringify(fixtures)})`,
     );
