@@ -577,8 +577,11 @@ describe("Scient core awareness", () => {
     ]) {
       NodeAssert.match(instructions, /## Scient/);
       NodeAssert.match(instructions, /workspace-relative Markdown images/);
-      NodeAssert.match(instructions, /diagram declaration first/);
-      NodeAssert.match(instructions, /not durable project artifacts/);
+      NodeAssert.match(instructions, /diagram declaration before its contents/);
+      NodeAssert.match(
+        instructions,
+        /Create workspace files when the user needs a standalone deliverable/,
+      );
     }
   });
 });
