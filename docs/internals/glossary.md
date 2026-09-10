@@ -196,7 +196,7 @@ a theme again.
 - [Workspace layout][2]
 
 [1]: ../../packages/contracts/src/orchestration.ts
-[2]: ./workspace-layout.md
+[2]: ../../AGENTS.md#where-code-lives
 [3]: ../../apps/server/src/vcs/GitVcsDriverCore.ts
 [4]: ../../apps/server/src/orchestration/projector.ts
 [5]: ../../apps/server/src/orchestration/Layers/ProviderRuntimeIngestion.ts
