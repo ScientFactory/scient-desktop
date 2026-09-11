@@ -14,7 +14,9 @@ connection requires a compatible Python host. Scient can set up a small private
 **Settings → Scientific Computing → Change runtime**.
 That helper is independent of Scientific Python. Opening a `.m` file does not
 provision the scientific Toolkit; a helper setup failure is a one-line header
-status with copy and details, not a wrapped stack across **Run**.
+status with copy and details, not a wrapped stack across **Run**, and not
+**MATLAB ready**. Retry from that status; the header shows one of **Connect MATLAB**,
+the short failure, or ready after the helper can start.
 Scient does not install MATLAB or its license. The file header names the detected
 release until a live session starts; **MATLAB ready** means that session is up.
 Use the status menu to **Check again** or open those settings.

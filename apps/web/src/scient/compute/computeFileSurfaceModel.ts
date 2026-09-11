@@ -182,11 +182,20 @@ export function resolveComputeRuntimeToolbarState(input: {
     | "closing"
     | "close-failed"
     | "terminal";
+  /** Helper/setup failure is not ready. Do not pair it with a ready chip. */
+  readonly connectionSetupFailed?: boolean;
 }): ComputeRuntimeToolbarState {
   const languageId = input.languageId ?? "python";
   const languageName = input.languageName ?? "Python";
   const session = input.liveSession;
   const presenceLabel = computeRuntimePresenceLabel(languageName, input.runtimeVersion);
+  if (input.connectionSetupFailed) {
+    return {
+      kind: "setup",
+      label: computeRuntimeSetupActionLabel(languageId, languageName),
+      canRun: false,
+    };
+  }
   if (input.contextLifecycle === "starting") {
     if (input.capacityRecoveryAvailable) {
       return { kind: "status", label: `${languageName} capacity reached`, canRun: true };

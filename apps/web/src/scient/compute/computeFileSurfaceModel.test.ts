@@ -302,6 +302,31 @@ describe("python compute surface model", () => {
         scientificPackagesMissing: false,
       }),
     ).toEqual({ kind: "status", label: "MATLAB ready", canRun: true });
+    expect(
+      resolveComputeRuntimeToolbarState({
+        languageId: "matlab",
+        languageName: "MATLAB",
+        runtimeVersion: "R2026a",
+        connectionSetupFailed: true,
+        liveSession: {
+          activity: "idle",
+          label: "MATLAB",
+          languageId: ComputeLanguageId.make("matlab"),
+          runtime: {
+            ...pythonRuntime,
+            languageId: ComputeLanguageId.make("matlab"),
+            executable: "/MATLAB/bin/matlab",
+            languageVersion: "R2026a",
+            displayName: "MATLAB R2026a",
+          },
+          status: "ready",
+        },
+        runtimeInspectionPending: false,
+        readyRuntimeAvailable: true,
+        preferredRuntimeExecutable: "/MATLAB/bin/matlab",
+        scientificPackagesMissing: false,
+      }),
+    ).toEqual({ kind: "setup", label: "Connect MATLAB", canRun: false });
   });
 
   it("does not offer a switch from stale inspection data or while work is running", () => {

@@ -49,7 +49,8 @@ run. That listing is a package check, not proof a Jupyter or Engine session alre
 **Python ready** / **MATLAB ready** appear only after a live session is up. The status is not a
 Settings link. Open the menu for the interpreter path, **Check again**, or **Scientific Computing**.
 If setup fails, the header shows a one-line status with a copy control and a details toggle; it
-never wraps a stack or path across **Run**. **Check again** rechecks that exact project and bypasses the short runtime-probe cache, so an
+never wraps a stack or path across **Run**, and it does not also say ready. A failed MATLAB
+connection is **Connect MATLAB** or that short failure, not **MATLAB ready**. **Check again** rechecks that exact project and bypasses the short runtime-probe cache, so an
 installation or environment change can be recognized without reloading the app. **Test** in
 **Change runtime** starts and closes a temporary session; a package check is not Test passed.
 **Repair** rebuilds a damaged Scient-managed generation; it is not how you recover from a failed
