@@ -1,5 +1,5 @@
 import { PROVIDER_SEND_TURN_MAX_INPUT_CHARS } from "@t3tools/contracts";
-import { expandAssistantCitationsForProvider } from "@t3tools/shared/assistantCitations";
+import { expandComposerCitationsForProvider } from "@t3tools/shared/composerCitations";
 
 type ComposerSubmitEvent = { preventDefault: () => void };
 
@@ -13,7 +13,7 @@ export function getComposerPromptLengthValidationMessage(prompt: string): string
   const normalizedPrompt = prompt.trim();
   const inputLength = Math.max(
     normalizedPrompt.length,
-    expandAssistantCitationsForProvider(normalizedPrompt).length,
+    expandComposerCitationsForProvider(normalizedPrompt).length,
   );
   const excessCharacters = inputLength - PROVIDER_SEND_TURN_MAX_INPUT_CHARS;
   if (excessCharacters <= 0) return null;

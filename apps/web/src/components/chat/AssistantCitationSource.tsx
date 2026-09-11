@@ -26,7 +26,7 @@ export function observeAssistantCitationCommentSource({
   onUnavailable,
 }: {
   anchor: AssistantCitationSourceAnchor;
-  citation: AssistantCitation;
+  citation: AssistantCitation | undefined;
   onUnavailable: () => void;
 }): () => void {
   const { source, range, viewport } = anchor;
@@ -64,7 +64,11 @@ export function observeAssistantCitationCommentSource({
       !source.contains(range.startContainer) ||
       !source.contains(range.endContainer)
     ) {
-      const repaired = resolveAssistantCitationRange(source, citation);
+      const repaired = anchor.resolveRange
+        ? anchor.resolveRange()
+        : citation
+          ? resolveAssistantCitationRange(source, citation)
+          : null;
       if (!repaired) {
         unavailable();
         return false;

@@ -107,7 +107,8 @@ import {
 } from "react";
 import { flushSync } from "react-dom";
 import { useLocation, useNavigate } from "@tanstack/react-router";
-import { assistantCitationsToPlainText } from "@t3tools/shared/assistantCitations";
+import { useFileCitationTarget } from "~/scient/markdownEditor/fileCitationNavigation";
+import { composerCitationsToPlainText } from "@t3tools/shared/composerCitations";
 import { assistantCitationFromLocation } from "../lib/assistantCitationNavigation";
 import type { AssistantCitationSourceAnchor } from "~/lib/assistantTextSelection";
 import { useShallow } from "zustand/react/shallow";
@@ -1619,7 +1620,10 @@ function ChatViewContent(props: ChatViewProps) {
   const citationLocation = useLocation({
     select: (location) => ({
       href: location.href,
-      key: location.state.assistantCitationActivation ?? location.state.__TSR_key,
+      key:
+        location.state.fileCitationActivation ??
+        location.state.assistantCitationActivation ??
+        location.state.__TSR_key,
     }),
   });
   const citationRequest = useMemo<AssistantCitationRequest | null>(() => {
@@ -3693,6 +3697,12 @@ function ChatViewContent(props: ChatViewProps) {
     worktreePath: activeThreadWorktreePath,
     projectCwd: activeProjectCwd,
   });
+  useFileCitationTarget(
+    activeThreadRef,
+    citationLocation,
+    activeWorkspaceRoot,
+    runAfterPendingFileSave,
+  );
   useEffect(() => {
     if (!activeThreadRef) return;
     restoreForkPdfContinuity({
@@ -7600,7 +7610,7 @@ function ChatViewContent(props: ChatViewProps) {
         firstComposerImageName = firstComposerImage.name;
       }
     }
-    let titleSeed = assistantCitationsToPlainText(trimmed);
+    let titleSeed = composerCitationsToPlainText(trimmed);
     if (!titleSeed) {
       if (firstComposerImageName) {
         titleSeed = `Image: ${firstComposerImageName}`;
@@ -8954,6 +8964,14 @@ function ChatViewContent(props: ChatViewProps) {
           projectName={activeProject?.title ?? "Project"}
           threadRef={activeThreadRef}
           composerDraftTarget={composerDraftTarget}
+          onCiteFile={(citation, anchor) =>
+            composerRef.current?.citeText(citation, anchor) ?? false
+          }
+          fileCitation={
+            renderedRightPanelSurface.kind === "file"
+              ? renderedRightPanelSurface.fileCitation
+              : undefined
+          }
           keybindings={keybindings}
           availableEditors={availableEditors}
           relativePath={

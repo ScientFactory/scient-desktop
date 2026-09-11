@@ -1388,3 +1388,7 @@ textarea.scient-markdown-math-source {
   background: color-mix(in oklab, var(--primary) 14%, transparent);
   pointer-events: none;
 }
+::highlight(scient-file-citation) {
+  background: color-mix(in srgb, var(--primary) 30%, transparent);
+  color: inherit;
+}

@@ -560,6 +560,16 @@ behavior, and Markdown transport must remain outside inherited T3 components;
 `index.css` inherited rule bodies stay byte-identical. See
 [Scient rich Markdown editor](docs/internals/scient-rich-markdown-editor.md).
 
+Markdown file quotes deliberately extend the inherited assistant Cite flow.
+Preserve the concrete `FileCitation` variant and `composerCitations` helpers,
+the shared composer node/comment and selection toolbar, and the small source
+capture/reveal mounts in `ChatView`, `FilePreviewPanel`, and the right-panel
+store. Source mapping and editor interaction remain in `scient/markdownEditor`;
+assistant v1 links and timeline navigation keep their original semantics.
+Provider expansion, prompt previews, and mobile fallback must handle both quote
+types. Do not reinstate an assistant-only parser in these shared entry points
+or turn file citations into file-read operations. The rich editor remains lazy.
+
 No upstream update authorizes public release, live cloud, mobile publication,
 production credentials, or user-data conversion. Those remain separate Scient
 gates even when inherited T3 code contains the capability.

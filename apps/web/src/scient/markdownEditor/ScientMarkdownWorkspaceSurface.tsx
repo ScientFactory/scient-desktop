@@ -1,6 +1,9 @@
 import { useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore } from "react";
 
 import { readLocalApi } from "~/localApi";
+import type { FileCitation } from "@t3tools/contracts";
+import { MarkdownCitationActions } from "./MarkdownCitationActions";
+import type { MarkdownCitationSource, MarkdownCiteHandler } from "./markdownCitation";
 
 import { ScientMarkdownDocument } from "./ScientMarkdownDocument";
 import { showScientMarkdownFootnoteContextMenu } from "./footnoteContextMenu";
@@ -44,6 +47,10 @@ function targetOwnsTextEditing(target: EventTarget | null): boolean {
 }
 
 export interface ScientMarkdownWorkspaceSurfaceProps {
+  readonly citationSource?: MarkdownCitationSource;
+  readonly onCite?: MarkdownCiteHandler;
+  readonly citationReveal?: FileCitation | undefined;
+  readonly citationRevealId?: number | undefined;
   readonly persistence: MarkdownPersistenceLease;
   readonly ariaLabel: string;
   readonly resolvedTheme?: "light" | "dark";
@@ -331,6 +338,15 @@ export function ScientMarkdownWorkspaceSurface(props: ScientMarkdownWorkspaceSur
           {...(props.onWikiLinkSelected ? { onWikiLinkSelected: props.onWikiLinkSelected } : {})}
         />
         <ScientMarkdownDocument mode="write" controller={controller} />
+        {props.citationSource ? (
+          <MarkdownCitationActions
+            controller={controller}
+            source={props.citationSource}
+            onCite={props.onCite}
+            reveal={props.citationReveal}
+            revealId={props.citationRevealId}
+          />
+        ) : null}
       </div>
     </div>
   );

@@ -8,6 +8,7 @@ import {
 import type {
   ApprovalRequestId,
   AssistantCitation,
+  ComposerCitation,
   ChatFileAttachment,
   EnvironmentId,
   ModelSelection,
@@ -76,7 +77,7 @@ import {
   composerSubmissionIntentForEnter,
   detectComposerTrigger,
   expandCollapsedComposerCursor,
-  formatAssistantCitationForComposer,
+  formatCitationForComposer,
   replaceTextRange,
 } from "../../composer-logic";
 import { DISCONNECTED_COMPOSER_PLACEHOLDER } from "../../composerPlaceholder";
@@ -1232,6 +1233,7 @@ export interface ChatComposerHandle {
     citation: AssistantCitation,
     sourceAnchor?: AssistantCitationSourceAnchor,
   ) => boolean;
+  citeText: (citation: ComposerCitation, sourceAnchor?: AssistantCitationSourceAnchor) => boolean;
   openModelPicker: () => void;
   toggleModelPicker: () => void;
   isModelPickerOpen: () => boolean;
@@ -5033,6 +5035,22 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     setIsComposerModelPickerOpen(true);
   }, [composerControlsHidden, setIsComposerFocused, setIsComposerScrollCollapsed]);
 
+  const citeText = useCallback(
+    (citation: ComposerCitation, sourceAnchor?: AssistantCitationSourceAnchor) => {
+      const inserted = insertComposerText(
+        formatCitationForComposer(citation, citation.comment),
+        "cursor",
+        {
+          ensureLeadingBoundary: true,
+          ...(sourceAnchor ? { citationCommentAnchor: sourceAnchor } : {}),
+        },
+      );
+      if (inserted && isComposerCollapsedMobile) expandMobileComposer();
+      return inserted;
+    },
+    [insertComposerText, isComposerCollapsedMobile, expandMobileComposer],
+  );
+
   useImperativeHandle(
     composerRef,
     () => ({
@@ -5064,18 +5082,8 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         focusComposer();
       },
       insertTextAtEnd: insertComposerTextAtEnd,
-      citeAssistantText: (citation, sourceAnchor) => {
-        const inserted = insertComposerText(
-          formatAssistantCitationForComposer(citation, citation.comment),
-          "cursor",
-          {
-            ensureLeadingBoundary: true,
-            ...(sourceAnchor ? { citationCommentAnchor: sourceAnchor } : {}),
-          },
-        );
-        if (inserted && isComposerCollapsedMobile) expandMobileComposer();
-        return inserted;
-      },
+      citeAssistantText: (citation, sourceAnchor) => citeText(citation, sourceAnchor),
+      citeText,
       openModelPicker,
       toggleModelPicker: () => {
         if (isComposerModelPickerOpen) {
@@ -5178,6 +5186,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     [
       activeThread,
       addComposerAttachments,
+      citeText,
       composerDraftTarget,
       composerCursor,
       composerTerminalContexts,
