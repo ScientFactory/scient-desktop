@@ -37,6 +37,8 @@ const SessionUpdateNotification = jsonRpcNotification(
   AcpSchema.SessionNotification,
 );
 const decodePromptRequestLine = Schema.decodeEffect(Schema.fromJsonString(PromptRequest));
+const encodeUnknownJsonString = Schema.encodeUnknownSync(Schema.fromJsonString(Schema.Unknown));
+const encoder = new TextEncoder();
 const XAiPromptCompleteNotification = jsonRpcNotification(
   "_x.ai/session/prompt_complete",
   Schema.Struct({
@@ -776,5 +778,63 @@ it.layer(NodeServices.layer)("effect-acp client", (it) => {
         });
         yield* Scope.close(scope, Exit.void);
       }),
+  );
+
+  it.effect("keeps standard ACP response errors typed and the client usable", () =>
+    Effect.gen(function* () {
+      const { stdio, input, output } = yield* makeInMemoryStdio();
+      const scope = yield* Scope.make();
+      const acp = yield* AcpClient.make(stdio).pipe(Effect.provideService(Scope.Scope, scope));
+
+      const failedPrompt = yield* acp.agent
+        .prompt({
+          sessionId: "session-1",
+          prompt: [{ type: "text", text: "first" }],
+        })
+        .pipe(Effect.forkScoped);
+      const failedRequest = yield* decodePromptRequestLine(yield* Queue.take(output));
+      yield* Queue.offer(
+        input,
+        encoder.encode(
+          `${encodeUnknownJsonString({
+            jsonrpc: "2.0",
+            id: failedRequest.id,
+            error: {
+              code: -32603,
+              message: "Internal error: Agent error",
+              data: "403 Complete 18+ age confirmation in OpenRouter settings.",
+            },
+          })}\n`,
+        ),
+      );
+
+      const failure = yield* Fiber.join(failedPrompt).pipe(Effect.flip);
+      assert.instanceOf(failure, AcpError.AcpRequestError);
+      assert.deepInclude(failure, {
+        code: -32603,
+        errorMessage: "Internal error: Agent error",
+        data: "403 Complete 18+ age confirmation in OpenRouter settings.",
+        method: "session/prompt",
+        operation: "receive-response",
+      });
+
+      const nextPrompt = yield* acp.agent
+        .prompt({
+          sessionId: "session-1",
+          prompt: [{ type: "text", text: "second" }],
+        })
+        .pipe(Effect.forkScoped);
+      const nextRequest = yield* decodePromptRequestLine(yield* Queue.take(output));
+      yield* Queue.offer(
+        input,
+        yield* encodeJsonl(PromptResponse, {
+          jsonrpc: "2.0",
+          id: nextRequest.id,
+          result: { stopReason: "end_turn" },
+        }),
+      );
+      assert.deepEqual(yield* Fiber.join(nextPrompt), { stopReason: "end_turn" });
+      yield* Scope.close(scope, Exit.void);
+    }),
   );
 });

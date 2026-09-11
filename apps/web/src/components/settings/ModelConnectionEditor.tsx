@@ -201,14 +201,12 @@ export function ModelConnectionEditor({
   settings,
   target,
   agents,
-  defaultInstanceId,
   onSave,
   onClose,
 }: {
   settings: CustomModelsSettings;
   target: EditorTarget;
   agents: ReadonlyArray<{ id: ProviderInstanceId; name: string; driver?: ProviderDriverKind }>;
-  defaultInstanceId?: ProviderInstanceId | undefined;
   onSave: (input: CustomModelSaveInput) => Promise<void>;
   onClose: () => void;
 }) {
@@ -256,7 +254,7 @@ export function ModelConnectionEditor({
     target.model?.reasoningOverride,
   );
   const [instanceIds, setInstanceIds] = useState<ReadonlyArray<ProviderInstanceId>>(
-    target.model?.instanceIds ?? (defaultInstanceId ? [defaultInstanceId] : []),
+    target.model?.instanceIds ?? agents.map((agent) => agent.id),
   );
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
