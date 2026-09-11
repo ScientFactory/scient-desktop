@@ -159,6 +159,228 @@ async function run() {
           }
         }
         const { default: mermaid } = await getMermaidRuntimePromise();
+        const { recoveryFixtures, unrecoverableFixtures, userRegressionFixtures } =
+          await import("/src/scient/diagrams/mermaidRecovery.fixtures.ts");
+        const { planMermaidRecovery } = await import("/src/scient/diagrams/mermaidRecovery.ts");
+        const recoveryTimings = [];
+        for (const theme of ["light", "dark"]) {
+          for (const fixture of userRegressionFixtures) {
+            let result;
+            let failure;
+            try {
+              result = await renderMermaidDiagram(fixture.source, theme);
+            } catch (error) {
+              failure = error;
+            }
+            const status = failure ? "error" : result.recovery ? "recovered" : "native";
+            check(
+              status === fixture.status,
+              `User regression: ${fixture.name}/${theme}: ${status}`,
+            );
+            if (status === "recovered")
+              check(
+                result.recovery.source ===
+                  fixture.source.replace("branchz feature", "branch feature"),
+                "Git recovery changed more than the command typo",
+              );
+          }
+        }
+        for (const theme of ["light", "dark"]) {
+          for (const fixture of recoveryFixtures) {
+            const start = performance.now();
+            let rendered;
+            try {
+              rendered = await renderMermaidDiagram(fixture.source, theme);
+            } catch (error) {
+              try {
+                await mermaid.parse(fixture.expected);
+              } catch (candidateError) {
+                throw new Error(
+                  `${fixture.name}/${theme} candidate failed: ${candidateError.message}`,
+                  { cause: candidateError },
+                );
+              }
+              throw new Error(`${fixture.name}/${theme}: ${error.details ?? error.message}`, {
+                cause: error,
+              });
+            }
+            check(
+              rendered.recovery?.source === fixture.expected,
+              `Recovery mismatch: ${fixture.name}/${theme}`,
+            );
+            check(
+              rendered.recovery.originalSource === fixture.source,
+              "Recovery lost original source",
+            );
+            const svg = new DOMParser()
+              .parseFromString(rendered.svg, "text/html")
+              .querySelector("svg");
+            const bounds = svg?.getAttribute("viewBox")?.split(/[ ,]+/).map(Number);
+            check(
+              bounds?.length === 4 &&
+                bounds.every(Number.isFinite) &&
+                bounds[2] > 0 &&
+                bounds[3] > 0,
+              `Invalid recovered SVG: ${fixture.name}`,
+            );
+            check(!svg.querySelector("script"), "Recovered SVG lost strict sanitization");
+            recoveryTimings.push({
+              name: fixture.name,
+              theme,
+              ms: Math.round(performance.now() - start),
+            });
+            const native = await renderMermaidDiagram(fixture.expected, theme);
+            check(!native.recovery, `Already corrected source was changed: ${fixture.name}`);
+            check(
+              rendered.diagramType === native.diagramType,
+              "Recovery changed the diagram family",
+            );
+            if (fixture.shape) {
+              const diagram = await mermaid.mermaidAPI.getDiagramFromText(rendered.recovery.source);
+              const node = diagram.db.getVertices().get("A");
+              check(
+                node.type === fixture.shape && node.text === fixture.label,
+                `Recovery changed shape or text: ${fixture.name}`,
+              );
+            }
+            if (["nested literal quotes", "escaped literal quotes"].includes(fixture.name)) {
+              check(
+                svg.textContent.includes('Click "Save" now'),
+                "Recovered quotes changed the visible label",
+              );
+            }
+            if (["parallel node expression", "edge ID expression"].includes(fixture.name)) {
+              const diagram = await mermaid.mermaidAPI.getDiagramFromText(fixture.expected);
+              const edges = diagram.db.getEdges();
+              if (fixture.name === "parallel node expression") {
+                check(
+                  JSON.stringify(edges.map(({ start, end }) => [start, end])) ===
+                    JSON.stringify([
+                      ["A", "C"],
+                      ["B", "C"],
+                    ]),
+                  "Recovery changed parallel graph connectivity",
+                );
+              } else
+                check(
+                  edges.length === 1 &&
+                    edges[0].id === "e1" &&
+                    edges[0].start === "A" &&
+                    edges[0].end === "B",
+                  "Recovery lost named edge identity",
+                );
+            }
+            if (fixture.name === "class short arrow") {
+              const diagram = await mermaid.mermaidAPI.getDiagramFromText(fixture.expected);
+              const relations = diagram.db.getRelations();
+              check(
+                relations.length === 1 && relations[0].id1 === "A" && relations[0].id2 === "B",
+                "Class recovery changed relation endpoints",
+              );
+            }
+            if (fixture.name === "sequence fullwidth colon") {
+              const diagram = await mermaid.mermaidAPI.getDiagramFromText(fixture.expected);
+              const messages = diagram.db.getMessages();
+              check(
+                messages.length === 1 &&
+                  messages[0].from === "A" &&
+                  messages[0].to === "B" &&
+                  messages[0].message === "Hello",
+                "Sequence recovery changed message routing or content",
+              );
+            }
+            if (fixture.name === "pie spaced label") {
+              const diagram = await mermaid.mermaidAPI.getDiagramFromText(fixture.expected);
+              const values = diagram.db.getSections();
+              check(
+                values.size === 2 &&
+                  values.get("Small dogs") === 10 &&
+                  values.get("Big cats") === 20,
+                "Pie recovery changed labels or values",
+              );
+            }
+            if (fixture.name === "pie dash separator") {
+              const diagram = await mermaid.mermaidAPI.getDiagramFromText(fixture.expected);
+              const values = diagram.db.getSections();
+              check(
+                values.size === 3 &&
+                  values.get("Dogs") === 40 &&
+                  values.get("Cats") === 35 &&
+                  values.get("Birds") === 25,
+                "Pie dash recovery changed labels or values",
+              );
+            }
+          }
+        }
+        for (const source of unrecoverableFixtures) {
+          let error;
+          try {
+            await renderMermaidDiagram(source, "light");
+          } catch (cause) {
+            error = cause;
+          }
+          check(error instanceof Error, `Ambiguous source unexpectedly recovered: ${source}`);
+          if (source.startsWith("flowchart LR\nN0 -> N1"))
+            check(
+              error.details.startsWith("Parse error"),
+              "Candidate resource failure replaced the original syntax diagnostic",
+            );
+        }
+        // Each correction alone still fails. Success requires the full plan.
+        const combined = recoveryFixtures.find(
+          (fixture) => fixture.name === "multiple independent issues",
+        );
+        const plan = planMermaidRecovery(combined.source);
+        for (const change of plan.edits) {
+          const partial =
+            combined.source.slice(0, change.start) +
+            change.replacement +
+            combined.source.slice(change.end);
+          check(
+            (await mermaid.parse(partial, { suppressErrors: true })) === false,
+            "Combined fixture no longer proves multiple required fixes",
+          );
+        }
+        const literal = await mermaid.mermaidAPI.getDiagramFromText(
+          "flowchart LR\nA[Use -> operator] --> B",
+        );
+        check(
+          literal.db.getVertices().get("A").text === "Use -> operator",
+          "Recovery changed a literal operator",
+        );
+        const styled = await mermaid.mermaidAPI.getDiagramFromText(
+          recoveryFixtures.find((fixture) => fixture.name === "comments and styles").expected,
+        );
+        check(
+          styled.db.getVertices().get("B").text === "C4Context",
+          "Recovery renamed an unrelated label",
+        );
+        check(
+          styled.db.getVertices().get("A").text === "Read (local)",
+          "Quoting changed label text",
+        );
+        const pie = await mermaid.mermaidAPI.getDiagramFromText(
+          recoveryFixtures.find((fixture) => fixture.name === "pie Unicode").expected,
+        );
+        check(
+          pie.db.getSections().get("שלום（עולם）") === 10,
+          "Recovery changed Unicode label or value",
+        );
+        const recoveryCopies = await Promise.all(
+          Array.from({ length: 48 }, (_, index) =>
+            renderMermaidDiagram(combined.source, index % 2 ? "light" : "dark"),
+          ),
+        );
+        check(
+          new Set(recoveryCopies.map((copy) => copy.svg)).size === 48,
+          "Recovered cache reused DOM IDs",
+        );
+        const scanStart = performance.now();
+        const stressSource =
+          "flowchart LR\n" + "A[Read (local)] -> B\n".repeat(120) + "%% " + "x".repeat(45_000);
+        for (let iteration = 0; iteration < 200; iteration += 1) planMermaidRecovery(stressSource);
+        const scanMs = performance.now() - scanStart;
+        check(scanMs < 5_000, `Recovery scanner exceeded generous stress ceiling: ${scanMs}ms`);
         check(pngFailures.length === 0, `PNG export failed: ${pngFailures.join("; ")}`);
         const config = mermaid.mermaidAPI.getConfig();
         check(
@@ -185,6 +407,13 @@ async function run() {
           fixtures: output,
           concurrentCopies: copies.length,
           pngFailures,
+          recovery: {
+            fixtures: recoveryTimings,
+            declined: unrecoverableFixtures.length,
+            concurrentCopies: recoveryCopies.length,
+            scans: 200,
+            scanMs: Math.round(scanMs),
+          },
         };
       }.toString()})(${JSON.stringify(fixtures)})`,
     );
