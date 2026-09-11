@@ -4,7 +4,6 @@ import {
   type AssistantCitation,
   type ScopedThreadRef,
 } from "@t3tools/contracts";
-import { QuoteIcon } from "lucide-react";
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import {
@@ -139,7 +138,6 @@ export function SelectionCitationToolbar<T extends { readonly text: string }>({
         }
       }}
     >
-      <QuoteIcon aria-hidden="true" className="size-3.5" />
       {tooLong ? "Shorten selection" : "Ask in chat"}
     </Button>,
     document.body,
