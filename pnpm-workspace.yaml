@@ -166,6 +166,9 @@ packageExtensions:
 
 patchedDependencies:
   "@clerk/expo@4.2.0": patches/@clerk__expo@4.2.0.patch
+  # Backport the Node stream/raw fix from Effect-TS/effect#8148 until the
+  # pinned Effect release includes it, then remove this patch.
+  "@effect/platform-node@4.0.0-rc.112": patches/@effect__platform-node@4.0.0-rc.112.patch
   "@effect/vitest@4.0.0-rc.112": patches/@effect__vitest@4.0.0-rc.112.patch
   "@expo/metro-config@57.0.12": patches/@expo__metro-config@57.0.12.patch
   "@ff-labs/fff-node@0.10.3": patches/@ff-labs__fff-node@0.10.3.patch
