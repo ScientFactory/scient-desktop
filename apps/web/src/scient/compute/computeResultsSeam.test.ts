@@ -98,16 +98,16 @@ describe("compute result surface seam", () => {
 
   it("keeps Python setup contextual to the file toolbar", () => {
     expect(pythonActionsSource).toContain("resolveComputeRuntimeToolbarState");
-    expect(pythonActionsSource).toContain("Open Scientific Computing settings");
-    expect(pythonActionsSource).toContain(
-      "aria-label={`Refresh ${props.language.displayName} detection`}",
-    );
+    expect(pythonActionsSource).toContain("Python & MATLAB settings");
+    expect(pythonActionsSource).toContain("Check again");
+    expect(pythonActionsSource).toContain("handleSetup");
     expect(pythonActionsSource).toContain('runtimeToolbar.kind === "switch"');
     expect(pythonActionsSource).toContain("the next run uses the");
     expect(pythonActionsSource).toContain(
-      "{props.language.displayName} selected in Scientific Computing",
+      "{props.language.displayName} selected in Python & MATLAB settings",
     );
     expect(pythonActionsSource).not.toContain("Settings2");
+    expect(pythonActionsSource).toContain("showMatlabOneShotSurface");
     expect(panelSource).toContain("if (props.contextId === undefined) return allSessions;");
     expect(panelSource).toContain(
       "return allSessions.filter((session) => session.sessionId === contextBinding.sessionId);",
@@ -132,7 +132,7 @@ describe("compute result surface seam", () => {
     expect(panelSource).toContain("<span>to see results.</span>");
     expect(panelSource).toContain("!props.embedded && contextBinding !== null");
     expect(panelSource.indexOf("onClick={props.onRunSource}")).toBeLessThan(
-      panelSource.indexOf("Start a scientific session"),
+      panelSource.indexOf("Start an extra session"),
     );
     expect(pythonActionsSource).toContain("Switch {props.language.displayName} environment…");
   });

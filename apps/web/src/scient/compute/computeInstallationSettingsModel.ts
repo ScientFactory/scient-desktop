@@ -44,6 +44,63 @@ export function defaultComputeInstallation(
   return language.installations.find((installation) => installation.source !== "managed");
 }
 
+export type ComputeCurrentRuntimeSummary = {
+  readonly kind: "ready" | "setup" | "connect" | "repair" | "missing";
+  readonly title: string;
+  readonly detail: string;
+};
+
+/** One-line current runtime for the default Settings chrome. Inventory stays Advanced. */
+export function computeCurrentRuntimeSummary(input: {
+  readonly language: ComputeLanguageRuntimeInventory;
+  readonly preference: ScientificComputingLanguageSettings;
+  readonly managed: ComputeManagedRuntimeStatus | null;
+}): ComputeCurrentRuntimeSummary {
+  const { language, preference, managed } = input;
+  const isMatlab = language.descriptor.languageId === "matlab";
+  const selected = defaultComputeInstallation(language, preference, managed);
+  const source = selected === undefined ? null : runtimeSourceLabel(selected.source);
+  const enabled =
+    preference.enabled ||
+    (language.descriptor.languageId === "python" &&
+      managed?.installed === true &&
+      managed.selection === "managed");
+
+  if (selected?.problem) {
+    return {
+      kind: "repair",
+      title: selected.problem,
+      detail: source ?? language.descriptor.displayName,
+    };
+  }
+  if (selected !== undefined && enabled) {
+    return {
+      kind: "ready",
+      title: selected.version ?? language.descriptor.displayName,
+      detail: source ?? "Ready",
+    };
+  }
+  if (isMatlab) {
+    if (language.installations.length === 0) {
+      return {
+        kind: "missing",
+        title: "Not connected",
+        detail: "Requires a licensed MATLAB installation on this server.",
+      };
+    }
+    return {
+      kind: "connect",
+      title: "Not connected",
+      detail: "Connect the MATLAB already installed on this server.",
+    };
+  }
+  return {
+    kind: "setup",
+    title: "Not set up",
+    detail: "Set up Scientific Python here, or choose an existing runtime in Advanced.",
+  };
+}
+
 /** Save the requested path before releasing managed precedence. A failed save
  * must leave the current default intact; a failed release is surfaced for retry. */
 export async function selectExistingComputeInstallation(input: {

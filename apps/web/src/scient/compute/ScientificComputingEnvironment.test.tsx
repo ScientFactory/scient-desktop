@@ -136,7 +136,8 @@ describe("Scientific Computing environment ownership", () => {
   it("uses the primary environment only when none was requested", () => {
     const markup = renderToStaticMarkup(<ScientificComputingSettings />);
     expect(mocks.readSettings).toHaveBeenCalledWith("local-server");
-    expect(markup).toContain("More scientific tools are coming soon");
+    expect(markup).not.toContain("More scientific tools are coming soon");
+    expect(markup).toContain("Advanced");
   });
 
   it("renders truthful language cards while the inventory is loading", () => {

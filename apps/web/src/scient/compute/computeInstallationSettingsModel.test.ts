@@ -5,6 +5,7 @@ import {
   type ComputeManagedRuntimeStatus,
 } from "@t3tools/contracts";
 import {
+  computeCurrentRuntimeSummary,
   defaultComputeInstallation,
   selectExistingComputeInstallation,
 } from "./computeInstallationSettingsModel";
@@ -170,5 +171,54 @@ describe("installation selection", () => {
       useExisting: release,
     });
     expect(release).not.toHaveBeenCalled();
+  });
+});
+
+describe("current runtime summary", () => {
+  it("describes the selected Python without listing other installations", () => {
+    expect(
+      computeCurrentRuntimeSummary({
+        language: inventory,
+        preference: { enabled: true, executable: "" },
+        managed: status,
+      }),
+    ).toEqual({
+      kind: "ready",
+      title: "3.12.13",
+      detail: "Scient-managed",
+    });
+  });
+
+  it("asks MATLAB users to connect an installed runtime instead of setting one up", () => {
+    const matlab = {
+      ...inventory,
+      descriptor: { ...inventory.descriptor, languageId: ComputeLanguageId.make("matlab") },
+      installations: [
+        {
+          executable: "/MATLAB/bin/matlab",
+          source: "conventional" as const,
+          version: "R2026a",
+          problem: null,
+        },
+      ],
+    };
+    expect(
+      computeCurrentRuntimeSummary({
+        language: matlab,
+        preference: { enabled: false, executable: "" },
+        managed: null,
+      }),
+    ).toEqual({
+      kind: "connect",
+      title: "Not connected",
+      detail: "Connect the MATLAB already installed on this server.",
+    });
+    expect(
+      computeCurrentRuntimeSummary({
+        language: { ...matlab, installations: [] },
+        preference: { enabled: false, executable: "" },
+        managed: null,
+      }).kind,
+    ).toBe("missing");
   });
 });

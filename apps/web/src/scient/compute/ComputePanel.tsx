@@ -8,7 +8,6 @@ import type {
   ScopedThreadRef,
 } from "@t3tools/contracts";
 import {
-  ComputeLanguageId,
   ComputeSessionId,
   TERMINAL_COMPUTE_EXECUTION_STATUSES,
   TERMINAL_COMPUTE_SESSION_STATUSES,
@@ -59,15 +58,12 @@ import { computeEnvironment } from "~/state/compute";
 import { useAtomCommand } from "~/state/use-atom-command";
 import { useAtomQueryRunner } from "~/state/use-atom-query-runner";
 import { useEnvironmentQuery } from "~/state/query";
-import { useEnvironmentSettings } from "~/hooks/useSettings";
-import { serverEnvironment } from "~/state/server";
 import { useRightPanelStore } from "~/rightPanelStore";
 import { scientComputeSurface } from "~/scient/rightPanel/surfaces";
 import { refreshProjectFiles } from "~/components/files/projectFilesQueryState";
 
 import { ComputeOutputView } from "./ComputeOutputView";
 import { ComputeSavedFileAction } from "./ComputeSavedFileAction";
-import { ManagedRuntimeCard } from "./ScientificComputingSettings";
 import { defaultComputeRuntime, isComputeCapacityReachedError } from "./computeFileSurfaceModel";
 import { closeComputeContext, mergeComputeSessionRecords } from "./computeContextCoordinator";
 import {
@@ -92,8 +88,6 @@ interface ReadyRuntime {
   readonly candidate: ComputeLanguageRuntimeInspection["runtimes"][number];
   readonly key: string;
 }
-
-const PYTHON_LANGUAGE_ID = ComputeLanguageId.make("python");
 
 function statusLabel(status: string): string {
   return status.replaceAll("-", " ");
@@ -576,19 +570,13 @@ export function ComputePanel(props: {
   const [variableSnapshot, setVariableSnapshot] = useState<ComputeVariableSnapshot | null>(null);
   const [variableError, setVariableError] = useState<string | null>(null);
   const [variablesLoading, setVariablesLoading] = useState(false);
+  const [variablesOpen, setVariablesOpen] = useState(false);
   const contextBinding = useComputeContextStore((state) =>
     props.contextId === undefined ? null : (state.bindings[props.contextId] ?? null),
   );
   const observedTerminalExecutionsRef = useRef<Set<string> | null>(null);
   const newestExecutionRef = useRef<string | null>(null);
   const variableRequestRef = useRef(0);
-  const scientificComputing = useEnvironmentSettings(
-    props.environmentId,
-    (settings) => settings.scientificComputing,
-  );
-  const updateEnvironmentSettings = useAtomCommand(serverEnvironment.updateSettings, {
-    reportFailure: false,
-  });
 
   const runtimes = useEnvironmentQuery(
     computeEnvironment.runtimes({
@@ -669,30 +657,6 @@ export function ComputePanel(props: {
     runtimeKey === ""
       ? (readyRuntimes.find((runtime) => runtime.candidate === defaultRuntime) ?? null)
       : (readyRuntimes.find((runtime) => runtime.key === runtimeKey) ?? null);
-  const pythonLanguage =
-    runtimes.data?.languages.find((language) => language.descriptor.languageId === "python") ??
-    null;
-  const pythonPreference = scientificComputing.languages[PYTHON_LANGUAGE_ID] ?? {
-    enabled: false,
-    executable: "",
-  };
-  const ensurePythonEnabled = useCallback(async () => {
-    if (pythonPreference.enabled) return true;
-    const result = await updateEnvironmentSettings({
-      environmentId: props.environmentId,
-      input: {
-        patch: {
-          scientificComputing: {
-            schemaVersion: 1,
-            languages: {
-              [PYTHON_LANGUAGE_ID]: { ...pythonPreference, enabled: true },
-            },
-          },
-        },
-      },
-    });
-    return result._tag === "Success";
-  }, [props.environmentId, pythonPreference, updateEnvironmentSettings]);
 
   const allSessions = useMemo(() => {
     return mergeComputeSessionRecords(
@@ -1199,39 +1163,52 @@ export function ComputePanel(props: {
     };
   }, [sessionConfirmation]);
 
+  const showVariablesTab =
+    variablesOpen ||
+    panelView === "variables" ||
+    (variableSnapshot !== null && variableSnapshot.variables.length > 0);
+
   return (
     <section className="flex min-h-0 flex-1 flex-col bg-background" aria-label="Scientific results">
       <header className="flex min-h-12 shrink-0 flex-wrap items-center gap-2 border-b border-border/60 px-3 py-1">
         <div className="min-w-0 flex-1">
           <div
             className="flex flex-wrap items-center gap-1"
-            role="tablist"
-            aria-label="Compute view"
+            role={showVariablesTab ? "tablist" : undefined}
+            aria-label={showVariablesTab ? "Compute view" : undefined}
           >
-            <button
-              type="button"
-              role="tab"
-              aria-selected={panelView === "results"}
-              className={cn(
-                "cursor-pointer rounded-[4px] px-1.5 py-1 text-sm font-medium text-muted-foreground transition-colors hover:bg-muted/70 hover:text-foreground",
-                panelView === "results" && "text-foreground",
-              )}
-              onClick={() => setPanelView("results")}
-            >
-              {props.embedded ? "Results" : "Compute"}
-            </button>
-            <button
-              type="button"
-              role="tab"
-              aria-selected={panelView === "variables"}
-              className={cn(
-                "cursor-pointer rounded-[4px] px-1.5 py-1 text-xs text-muted-foreground transition-colors hover:bg-muted/70 hover:text-foreground",
-                panelView === "variables" && "text-foreground",
-              )}
-              onClick={() => setPanelView("variables")}
-            >
-              Variables
-            </button>
+            {showVariablesTab ? (
+              <button
+                type="button"
+                role="tab"
+                aria-selected={panelView === "results"}
+                className={cn(
+                  "cursor-pointer rounded-[4px] px-1.5 py-1 text-sm font-medium text-muted-foreground transition-colors hover:bg-muted/70 hover:text-foreground",
+                  panelView === "results" && "text-foreground",
+                )}
+                onClick={() => setPanelView("results")}
+              >
+                {props.embedded ? "Results" : "Compute"}
+              </button>
+            ) : (
+              <span className="px-1.5 py-1 text-sm font-medium text-foreground">
+                {props.embedded ? "Results" : "Compute"}
+              </span>
+            )}
+            {showVariablesTab ? (
+              <button
+                type="button"
+                role="tab"
+                aria-selected={panelView === "variables"}
+                className={cn(
+                  "cursor-pointer rounded-[4px] px-1.5 py-1 text-xs text-muted-foreground transition-colors hover:bg-muted/70 hover:text-foreground",
+                  panelView === "variables" && "text-foreground",
+                )}
+                onClick={() => setPanelView("variables")}
+              >
+                Variables
+              </button>
+            ) : null}
             {!props.embedded && contextBinding !== null ? (
               <span
                 className={cn(
@@ -1326,7 +1303,7 @@ export function ComputePanel(props: {
             </Menu>
           ) : null}
         </div>
-        {!props.embedded && props.contextId !== undefined && allSessions.length > 0 ? (
+        {!props.embedded && props.contextId !== undefined && allSessions.length > 1 ? (
           <Button
             size="icon-xs"
             variant="ghost-muted"
@@ -1412,6 +1389,15 @@ export function ComputePanel(props: {
               </MenuTrigger>
               <MenuPopup align="end" side="bottom" className="min-w-44">
                 <MenuItem
+                  onClick={() => {
+                    setVariablesOpen(true);
+                    setPanelView("variables");
+                  }}
+                >
+                  Variables
+                </MenuItem>
+                <MenuSeparator />
+                <MenuItem
                   disabled={operation !== null || liveSession?.status !== "ready"}
                   onClick={(event) => {
                     const bounds = event.currentTarget.getBoundingClientRect();
@@ -1477,7 +1463,7 @@ export function ComputePanel(props: {
               />
             }
           >
-            Set up compute
+            Python & MATLAB settings
           </Button>
         ) : null}
       </header>
@@ -1633,63 +1619,32 @@ export function ComputePanel(props: {
             ) : runtimes.isPending ? (
               <LoaderCircle className="mx-auto size-5 animate-spin text-muted-foreground" />
             ) : readyRuntimes.length === 0 ? (
-              pythonLanguage?.managedRuntime &&
-              (props.sourceLanguageId === undefined || props.sourceLanguageId === "python") ? (
-                <div className="text-left">
-                  <p className="text-center text-sm font-medium">Set up scientific computing</p>
-                  <p className="mx-auto mt-1 max-w-lg text-center text-xs leading-relaxed text-muted-foreground">
-                    Set up a private Scientific Python here, or choose an existing environment in
-                    Settings.
-                  </p>
-                  <ManagedRuntimeCard
-                    environmentId={props.environmentId}
-                    language={pythonLanguage}
-                    enabled={pythonPreference.enabled}
-                    ensureEnabled={ensurePythonEnabled}
-                  />
-                  <div className="mt-3 text-center">
-                    <Button
-                      size="xs"
-                      variant="ghost-muted"
-                      render={
-                        <Link
-                          to="/settings/scientific-computing"
-                          search={{ environmentId: props.environmentId }}
-                        />
-                      }
-                    >
-                      <Settings2 /> Use an existing environment
-                    </Button>
-                  </div>
-                </div>
-              ) : (
-                <>
-                  <CircleAlert className="mx-auto size-5 text-muted-foreground" />
-                  <p className="mt-3 text-sm font-medium">No compute runtime is ready</p>
-                  <p className="mx-auto mt-1 max-w-sm text-xs leading-relaxed text-muted-foreground">
-                    Enable a language and choose an existing runtime in Scientific Computing
-                    settings.
-                  </p>
-                  <Button
-                    className="mt-4"
-                    size="sm"
-                    variant="outline"
-                    render={
-                      <Link
-                        to="/settings/scientific-computing"
-                        search={{ environmentId: props.environmentId }}
-                      />
-                    }
-                  >
-                    <Settings2 /> Scientific Computing settings
-                  </Button>
-                </>
-              )
+              <>
+                <p className="text-sm font-medium">Open a source file to get started</p>
+                <p className="mx-auto mt-1 max-w-sm text-xs leading-relaxed text-muted-foreground">
+                  Set up Python or connect MATLAB from a `.py` or `.m` file. This extra session is
+                  for a second kernel, not first-time setup.
+                </p>
+                <Button
+                  className="mt-4"
+                  size="sm"
+                  variant="outline"
+                  render={
+                    <Link
+                      to="/settings/scientific-computing"
+                      search={{ environmentId: props.environmentId }}
+                    />
+                  }
+                >
+                  <Settings2 /> Python & MATLAB settings
+                </Button>
+              </>
             ) : (
               <>
-                <p className="text-sm font-medium">Start a scientific session</p>
+                <p className="text-sm font-medium">Start an extra session</p>
                 <p className="mx-auto mt-1 max-w-sm text-xs leading-relaxed text-muted-foreground">
-                  This Compute tab owns its own session. Past runs remain in history.
+                  This tab owns its own kernel, separate from the open file. Past runs remain in
+                  history.
                 </p>
                 <p className="mx-auto mt-1 max-w-sm text-[11px] leading-relaxed text-muted-foreground/80">
                   Code runs unsandboxed with this server&apos;s filesystem and network access.

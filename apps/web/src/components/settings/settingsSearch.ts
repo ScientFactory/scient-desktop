@@ -62,7 +62,7 @@ export const SETTINGS_SECTION_LABELS: Readonly<Record<SettingsPath, string>> = {
   "/settings/custom-models": "Custom models",
   "/settings/voice": "Voice",
   "/settings/skills": "Skills",
-  "/settings/scientific-computing": "Scientific Computing",
+  "/settings/scientific-computing": "Python & MATLAB",
   "/settings/keybindings": "Keybindings",
   "/settings/source-control": "Source Control",
   "/settings/connections": "Connections",
@@ -84,14 +84,16 @@ export const SETTINGS_SEARCH_ITEMS = [
   },
   {
     id: "scientific-computing",
-    title: "Scientific Computing",
+    title: "Python & MATLAB",
     to: "/settings/scientific-computing",
+    searchTerms: ["scientific computing", "python", "matlab", "runtimes"],
   },
   {
     id: "scientific-computing-language",
-    title: "Scientific computing languages and runtimes",
+    title: "Python and MATLAB languages and runtimes",
     to: "/settings/scientific-computing",
     targetId: "scientific-computing",
+    searchTerms: ["scientific computing languages"],
   },
   {
     id: "project-defaults",

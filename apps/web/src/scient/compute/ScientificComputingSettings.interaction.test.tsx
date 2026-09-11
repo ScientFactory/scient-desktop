@@ -214,7 +214,8 @@ describe("Scientific Computing settings interactions", () => {
     expect(row(managedPath).querySelector('[role="switch"]')).toBeNull();
     expect(container.querySelectorAll("h3")).toHaveLength(1);
     expect(container.textContent).not.toContain(managedPath);
-    expect(container.textContent).toContain("More scientific tools are coming soon");
+    expect(container.textContent).not.toContain("More scientific tools are coming soon");
+    expect(container.textContent).toContain("Advanced");
     await click("Details", row(managedPath));
     expect(row(managedPath).textContent).toContain("Repair");
     expect(row(managedPath).textContent).not.toContain("System installation");

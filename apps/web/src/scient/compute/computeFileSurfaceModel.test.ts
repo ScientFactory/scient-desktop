@@ -127,6 +127,17 @@ describe("python compute surface model", () => {
         scientificPackagesMissing: false,
       }),
     ).toEqual({ kind: "setup", label: "Set up Python", canRun: false });
+    expect(
+      resolveComputeRuntimeToolbarState({
+        languageId: "matlab",
+        languageName: "MATLAB",
+        liveSession: null,
+        runtimeInspectionPending: false,
+        readyRuntimeAvailable: false,
+        preferredRuntimeExecutable: null,
+        scientificPackagesMissing: false,
+      }),
+    ).toEqual({ kind: "setup", label: "Connect MATLAB", canRun: false });
     expect(isComputeCapacityReachedError({ reason: "capacity-reached" })).toBe(true);
     expect(isComputeCapacityReachedError(new Error("capacity-reached"))).toBe(false);
     expect(
@@ -228,7 +239,12 @@ describe("python compute surface model", () => {
         preferredRuntimeExecutable: pythonRuntime.executable,
         scientificPackagesMissing: true,
       }),
-    ).toEqual({ kind: "status", label: "Python packages missing", canRun: true });
+    ).toEqual({
+      kind: "status",
+      label: "Python ready",
+      canRun: true,
+      note: "Figures libraries are not in this environment",
+    });
   });
 
   it("does not offer a switch from stale inspection data or while work is running", () => {

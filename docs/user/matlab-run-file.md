@@ -8,13 +8,14 @@ user-installed and licensed MATLAB in the selected project environment.
 ## Live session
 
 The code/results controls above a `.m` file run it in a live MATLAB session.
-Enable MATLAB and check its runtime in **Settings → Scientific Computing**.
-The Engine connection requires a compatible Python host. Settings can set up a
-small private **MATLAB connection helper**, or use an existing compatible host.
-Scient does not install MATLAB or its license. **MATLAB ready** and **Set up MATLAB** both open those
-settings, and the nearby refresh action checks detection again.
+Choose **Connect MATLAB** on that file when MATLAB is not ready yet. The Engine
+connection requires a compatible Python host. Scient can set up a small private
+**MATLAB connection helper**, or use an existing compatible host from
+**Settings → Python & MATLAB → Advanced**.
+Scient does not install MATLAB or its license. **MATLAB ready** is a quiet status
+menu: use it to **Check again** or open those settings.
 
-In Settings, **Detected** means the Engine import is available; **Verify connection**
+In Advanced Settings, **Detected** means the Engine import is available; **Test**
 starts and closes a temporary native MATLAB session to check the license and startup.
 The executable preference is shared with fresh-process runs. Their older setup control
 now writes this same preference instead of maintaining a second runtime choice.
@@ -26,11 +27,12 @@ asks whether Scient can access Documents, answer that permission prompt before
 retrying the session. Scient does not grant operating-system permissions for you.
 
 Use **Run file**, **Run selection**, or **Run cell** for `%%` sections. Variables
-remain available between runs until the session stops or restarts. Results and
-Variables share the same panel used by Python. Running code is not sandboxed.
+remain available between runs until the session stops or restarts. Open **Variables**
+from the session overflow; it is not a sibling of Results until the namespace has names.
+Running code is not sandboxed.
 
-For saved-file batch execution and portable run artifacts, expand
-**Fresh-process MATLAB runs** below the file. This is the existing workflow:
+For saved-file batch execution and portable run artifacts, choose **Run as one-shot…**
+from the file's Run menu. This is the existing workflow:
 
 ## Fresh-process file run
 

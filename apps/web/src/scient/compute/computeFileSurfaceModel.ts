@@ -54,12 +54,19 @@ export type ComputeRuntimeToolbarState =
       readonly kind: "status";
       readonly label: string;
       readonly canRun: boolean;
+      readonly note?: string;
     }
   | {
       readonly kind: "switch";
       readonly label: string;
       readonly canRun: true;
     };
+
+export function computeRuntimeSetupActionLabel(languageId: string, languageName: string): string {
+  return languageId === "matlab" ? `Connect ${languageName}` : `Set up ${languageName}`;
+}
+
+const SCIENTIFIC_PACKAGES_NOTE = "Figures libraries are not in this environment";
 
 export function isComputeCapacityReachedError(error: unknown): boolean {
   return (
@@ -187,23 +194,25 @@ export function resolveComputeRuntimeToolbarState(input: {
     }
     return {
       kind: "status",
-      label: input.scientificPackagesMissing
-        ? `${languageName} packages missing`
-        : `${languageName} ready`,
+      label: `${languageName} ready`,
       canRun: true,
+      ...(input.scientificPackagesMissing ? { note: SCIENTIFIC_PACKAGES_NOTE } : {}),
     };
   }
   if (input.readyRuntimeAvailable) {
     return {
       kind: "status",
-      label: input.scientificPackagesMissing
-        ? `${languageName} packages missing`
-        : `${languageName} ready`,
+      label: `${languageName} ready`,
       canRun: true,
+      ...(input.scientificPackagesMissing ? { note: SCIENTIFIC_PACKAGES_NOTE } : {}),
     };
   }
   if (input.runtimeInspectionPending) {
     return { kind: "status", label: `Checking ${languageName}…`, canRun: false };
   }
-  return { kind: "setup", label: `Set up ${languageName}`, canRun: false };
+  return {
+    kind: "setup",
+    label: computeRuntimeSetupActionLabel(languageId, languageName),
+    canRun: false,
+  };
 }

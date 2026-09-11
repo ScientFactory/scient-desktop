@@ -28,6 +28,7 @@ import {
   ManagedRuntimeActions,
 } from "./ComputeManagedRuntimeControls";
 import {
+  computeCurrentRuntimeSummary,
   defaultComputeInstallation,
   selectExistingComputeInstallation,
 } from "./computeInstallationSettingsModel";
@@ -95,7 +96,7 @@ export function ManagedRuntimeCard(props: {
   );
 }
 
-function LanguageSettingsRow({
+function LanguageRuntimeSummary({
   language,
   preference,
   onChange,
@@ -111,6 +112,108 @@ function LanguageSettingsRow({
   loading?: boolean;
   refreshing: boolean;
   refreshRevision: number;
+}) {
+  const languageId = language.descriptor.languageId;
+  const isMatlab = languageId === "matlab";
+  const runtime = useComputeManagedRuntime({
+    environmentId,
+    languageId,
+    initialStatus: language.managedRuntime,
+    ensureEnabled: async () =>
+      preference.enabled || (await onChange({ ...preference, enabled: true })),
+  });
+  const summary = computeCurrentRuntimeSummary({
+    language,
+    preference,
+    managed: runtime.status,
+  });
+  const disabled = Boolean(loading || refreshing || runtime.busy || !environmentId);
+  const setup = () => {
+    void runtime.act(runtime.status?.installed ? (isMatlab ? "use-managed" : "repair") : "install");
+  };
+  return (
+    <section className="space-y-2" aria-labelledby={`${languageId}-heading`}>
+      <div className="flex min-h-7 flex-wrap items-start justify-between gap-2 px-1">
+        <div className="min-w-0 space-y-0.5">
+          <h3
+            id={`${languageId}-heading`}
+            className="text-sm font-medium tracking-[-0.005em] text-foreground"
+          >
+            {language.descriptor.displayName}
+          </h3>
+          {loading ? (
+            <p className="text-xs text-muted-foreground" role="status">
+              Checking…
+            </p>
+          ) : (
+            <>
+              <p className="text-sm text-foreground/90">{summary.title}</p>
+              <p className="text-xs text-muted-foreground">{summary.detail}</p>
+            </>
+          )}
+          <ManagedRuntimeNotice runtime={runtime} />
+        </div>
+        {loading ? null : summary.kind === "setup" || summary.kind === "repair" ? (
+          <Button size="xs" disabled={disabled} onClick={setup}>
+            {summary.kind === "repair" ? "Repair" : "Set up Python"}
+          </Button>
+        ) : summary.kind === "connect" ? (
+          <Button size="xs" disabled={disabled} onClick={setup}>
+            Connect MATLAB
+          </Button>
+        ) : summary.kind === "missing" ? (
+          <Button
+            size="xs"
+            variant="ghost"
+            render={
+              <a
+                href="https://www.mathworks.com/products/matlab.html"
+                target="_blank"
+                rel="noreferrer"
+              />
+            }
+          >
+            Get MATLAB <ExternalLinkIcon />
+          </Button>
+        ) : null}
+      </div>
+      <details className="px-1">
+        <summary className="w-fit cursor-pointer text-xs text-muted-foreground">Advanced</summary>
+        <div className="mt-3">
+          <LanguageSettingsRow
+            hideHeader
+            language={language}
+            preference={preference}
+            onChange={onChange}
+            environmentId={environmentId}
+            loading={loading}
+            refreshing={refreshing}
+            refreshRevision={refreshRevision}
+          />
+        </div>
+      </details>
+    </section>
+  );
+}
+
+function LanguageSettingsRow({
+  language,
+  preference,
+  onChange,
+  environmentId,
+  loading,
+  refreshing,
+  refreshRevision,
+  hideHeader = false,
+}: {
+  language: ComputeLanguageRuntimeInventory;
+  preference: ScientificComputingLanguageSettings;
+  onChange: (next: ScientificComputingLanguageSettings) => Promise<boolean>;
+  environmentId: EnvironmentId | null;
+  loading?: boolean;
+  refreshing: boolean;
+  refreshRevision: number;
+  hideHeader?: boolean;
 }) {
   const languageId = language.descriptor.languageId;
   const isPython = languageId === "python";
@@ -201,21 +304,38 @@ function LanguageSettingsRow({
     Boolean(preference.executable.trim()) || (isPython && runtime.status?.selection === "managed");
 
   return (
-    <section className="space-y-1.5" aria-labelledby={`${languageId}-heading`}>
-      <div className="flex min-h-7 items-center justify-between gap-2 px-1">
-        <h3
-          id={`${languageId}-heading`}
-          className="text-sm font-medium tracking-[-0.005em] text-foreground"
-        >
-          {language.descriptor.displayName}
-        </h3>
-        <Switch
-          checked={preference.enabled}
-          disabled={disabled}
-          onCheckedChange={(enabled) => void onChange({ ...preference, enabled })}
-          aria-label={`Enable ${language.descriptor.displayName}`}
-        />
-      </div>
+    <section
+      className="space-y-1.5"
+      aria-labelledby={hideHeader ? undefined : `${languageId}-heading`}
+    >
+      {hideHeader ? (
+        <div className="flex min-h-7 items-center justify-between gap-2 px-1">
+          <span className="text-xs text-muted-foreground">
+            Enable {language.descriptor.displayName}
+          </span>
+          <Switch
+            checked={preference.enabled}
+            disabled={disabled}
+            onCheckedChange={(enabled) => void onChange({ ...preference, enabled })}
+            aria-label={`Enable ${language.descriptor.displayName}`}
+          />
+        </div>
+      ) : (
+        <div className="flex min-h-7 items-center justify-between gap-2 px-1">
+          <h3
+            id={`${languageId}-heading`}
+            className="text-sm font-medium tracking-[-0.005em] text-foreground"
+          >
+            {language.descriptor.displayName}
+          </h3>
+          <Switch
+            checked={preference.enabled}
+            disabled={disabled}
+            onCheckedChange={(enabled) => void onChange({ ...preference, enabled })}
+            aria-label={`Enable ${language.descriptor.displayName}`}
+          />
+        </div>
+      )}
       <div className="divide-y divide-border/50 rounded-xl border border-border/60 bg-card/40 shadow-xs/5">
         {loading ? (
           <p className="px-4 py-3 text-xs text-muted-foreground" role="status">
@@ -447,9 +567,9 @@ export function ScientificComputingSettings(
   if (environmentId === null || environment === null) {
     return (
       <SettingsPageContainer>
-        <SettingsSection title="Scientific Computing">
+        <SettingsSection title="Python & MATLAB">
           <p className="text-sm text-muted-foreground">
-            This server is unavailable. Reconnect it to manage scientific runtimes.
+            This server is unavailable. Reconnect it to manage Python and MATLAB runtimes.
           </p>
         </SettingsSection>
       </SettingsPageContainer>
@@ -545,7 +665,7 @@ function EnvironmentScientificComputingSettings({
     <SettingsPageContainer>
       <SettingsSection
         id="scientific-computing"
-        title="Scientific Computing"
+        title="Python & MATLAB"
         icon={<SigmaIcon className="size-4 text-muted-foreground" />}
         variant="plain"
         headerAction={
@@ -579,7 +699,7 @@ function EnvironmentScientificComputingSettings({
               executable: language.configuredExecutable ?? "",
             };
             return (
-              <LanguageSettingsRow
+              <LanguageRuntimeSummary
                 key={language.descriptor.languageId}
                 language={language}
                 preference={preference}
@@ -596,14 +716,6 @@ function EnvironmentScientificComputingSettings({
               {refreshFailure ?? runtimes.error}
             </p>
           ) : null}
-          <div className="mx-auto w-full max-w-xl rounded-xl border border-dashed border-border/60 bg-muted/15 px-4 py-5 text-center">
-            <p className="text-sm font-medium text-foreground/85">
-              More scientific tools are coming soon
-            </p>
-            <p className="mt-1 text-xs text-muted-foreground/80">
-              Additional languages and purpose-built scientific workflows are on the way.
-            </p>
-          </div>
         </div>
       </SettingsSection>
     </SettingsPageContainer>
