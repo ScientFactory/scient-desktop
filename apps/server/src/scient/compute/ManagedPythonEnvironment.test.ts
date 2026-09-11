@@ -323,33 +323,35 @@ describe("ManagedPythonEnvironment", () => {
     await expect(NodeFSP.access(sibling)).resolves.toBeUndefined();
   });
 
-  it("inspects as absent while a private removal tombstone is still settling", async () => {
-    let release!: () => void;
-    const gate = new Promise<void>((resolve) => {
-      release = resolve;
-    });
-    const manager = makeManagedPythonEnvironmentManager(
-      computeDir,
-      dependencies({
-        generationId: () => "removing",
-        removeTree: async (root) => {
-          await gate;
-          await NodeFSP.rm(root, { recursive: true, force: true });
-        },
-      }),
-    );
-    await manager.install(installInput());
-    const removing = manager.remove();
-    let inspected: Awaited<ReturnType<typeof manager.inspect>> = null;
-    for (let attempt = 0; attempt < 1_000; attempt += 1) {
-      inspected = await manager.inspect();
-      if (inspected === null) break;
-      await new Promise((resolve) => setTimeout(resolve, 1));
-    }
-    expect(inspected).toBeNull();
-    release();
-    expect(await removing).toBe(true);
-  });
+  it.live("inspects as absent while a private removal tombstone is still settling", () =>
+    Effect.gen(function* () {
+      let release!: () => void;
+      const gate = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      const manager = makeManagedPythonEnvironmentManager(
+        computeDir,
+        dependencies({
+          generationId: () => "removing",
+          removeTree: async (root) => {
+            await gate;
+            await NodeFSP.rm(root, { recursive: true, force: true });
+          },
+        }),
+      );
+      yield* Effect.promise(() => manager.install(installInput()));
+      const removing = manager.remove();
+      let inspected: Awaited<ReturnType<typeof manager.inspect>> = null;
+      for (let attempt = 0; attempt < 1_000; attempt += 1) {
+        inspected = yield* Effect.promise(() => manager.inspect());
+        if (inspected === null) break;
+        yield* Effect.sleep("1 millis");
+      }
+      expect(inspected).toBeNull();
+      release();
+      expect(yield* Effect.promise(() => removing)).toBe(true);
+    }),
+  );
 
   it("rolls back atomic removal when deleting its tombstone fails", async () => {
     const manager = makeManagedPythonEnvironmentManager(
