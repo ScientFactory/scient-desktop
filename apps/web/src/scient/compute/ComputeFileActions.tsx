@@ -310,6 +310,8 @@ export const ComputeFileActions = forwardRef<ComputeFileActionsHandle, ComputeFi
       scientificToolkit?.readiness === "missing-requirement"
         ? scientificToolkit.missingRequirements
         : [];
+    const setupProgress =
+      managedRuntime.status === null ? null : managedRuntimeOperationLabel(managedRuntime.status);
     const runtimeToolbar = resolveComputeRuntimeToolbarState({
       languageId: props.language.languageId,
       languageName: props.language.displayName,
@@ -322,6 +324,7 @@ export const ComputeFileActions = forwardRef<ComputeFileActionsHandle, ComputeFi
       scientificPackagesMissing: missingScientificPackages.length > 0,
       capacityRecoveryAvailable: capacityBlocked,
       startingRetryAvailable: canRetryStart,
+      connectionSetupFailed: Boolean(managedRuntime.failure) && setupProgress === null,
       ...(contextBinding?.lifecycle === undefined
         ? {}
         : { contextLifecycle: contextBinding.lifecycle }),
@@ -730,8 +733,6 @@ export const ComputeFileActions = forwardRef<ComputeFileActionsHandle, ComputeFi
       switching ||
       stoppingUnusedSession !== null ||
       managedRuntime.busy;
-    const setupProgress =
-      managedRuntime.status === null ? null : managedRuntimeOperationLabel(managedRuntime.status);
     const pinRuntimeChrome =
       Boolean(setupProgress) ||
       Boolean(managedRuntime.failure) ||
@@ -780,9 +781,9 @@ export const ComputeFileActions = forwardRef<ComputeFileActionsHandle, ComputeFi
                 runtime={managedRuntime}
                 languageId={props.language.languageId}
                 variant="toolbar"
+                onRetry={() => void handleSetup()}
               />
-            ) : null}
-            {setupProgress ? null : capacityBlocked ? (
+            ) : capacityBlocked ? (
               <Menu>
                 <MenuTrigger
                   render={

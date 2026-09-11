@@ -151,7 +151,10 @@ describe("compute result surface seam", () => {
 
   it("keeps file-header runtime errors to one line with copy and details", () => {
     expect(pythonActionsSource).toContain('variant="toolbar"');
-    expect(pythonActionsSource).toContain("setupProgress ? null : capacityBlocked");
+    expect(pythonActionsSource).toContain("setupProgress || managedRuntime.failure ? (");
+    expect(pythonActionsSource).not.toContain("setupProgress ? null : capacityBlocked");
+    expect(pythonActionsSource).toContain("connectionSetupFailed:");
+    expect(pythonActionsSource).toContain("onRetry={() => void handleSetup()}");
     expect(pythonActionsSource).toContain("overflow-hidden");
     expect(pythonActionsSource).toContain('className="flex shrink-0 items-center"');
     expect(managedRuntimeSource).toContain("computeRuntimeFailureHeadline");

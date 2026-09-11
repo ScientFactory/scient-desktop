@@ -136,10 +136,12 @@ export function ManagedRuntimeNotice({
   runtime,
   languageId,
   variant = "block",
+  onRetry,
 }: {
   runtime: ComputeManagedRuntimeController;
   languageId?: string;
   variant?: "block" | "toolbar";
+  onRetry?: () => void;
 }) {
   const progress = runtime.status && managedRuntimeOperationLabel(runtime.status);
   const failure = runtime.failure;
@@ -169,13 +171,15 @@ export function ManagedRuntimeNotice({
         ) : null}
         {headline && failure ? (
           <>
-            <p
-              className="min-w-0 truncate whitespace-nowrap text-xs text-destructive"
+            <button
+              type="button"
+              className="min-w-0 truncate whitespace-nowrap text-left text-xs text-destructive"
               role="alert"
-              title={headline}
+              title={onRetry === undefined ? headline : `Retry ${headline}`}
+              onClick={onRetry}
             >
               {headline}
-            </p>
+            </button>
             <Button
               size="icon-xs"
               variant="ghost"
