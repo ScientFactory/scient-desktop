@@ -164,6 +164,7 @@ import * as PreviewManager from "./preview/Manager.ts";
 import * as PortScanner from "./preview/PortScanner.ts";
 import * as BrowserTraceCollector from "./observability/BrowserTraceCollector.ts";
 import * as NativeAppIconResolver from "./assets/NativeAppIconResolver.ts";
+import { ASSET_ROUTE_PREFIX } from "./assets/AssetAccess.ts";
 import * as ProjectFaviconResolver from "./project/ProjectFaviconResolver.ts";
 import * as T3ProjectFileLoader from "./project/T3ProjectFileLoader.ts";
 import * as ProjectSetupScriptRunner from "./project/ProjectSetupScriptRunner.ts";
@@ -5803,6 +5804,94 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
         ),
       );
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
+  it.effect("preserves signed HTML asset MIME types through HTTP compression", () =>
+    Effect.gen(function* () {
+      yield* buildAppUnderTest();
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const directory = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "scient-compressed-asset-",
+      });
+      const htmlPath = path.join(directory, "report.html");
+      const stylePath = path.join(directory, "assets", "report.css");
+      const scriptPath = path.join(directory, "assets", "report.js");
+      const html = `<!doctype html><title>Compressed report</title><link rel="stylesheet" href="assets/report.css"><script src="assets/report.js"></script>${"<p>report body</p>".repeat(128)}`;
+      const style = `.report { color: navy; }\n${"/* compressible style */\n".repeat(128)}`;
+      const script = `document.body.dataset.ready = "true";\n${"// compressible script\n".repeat(128)}`;
+      yield* fileSystem.makeDirectory(path.dirname(scriptPath), { recursive: true });
+      yield* fileSystem.writeFileString(htmlPath, html);
+      yield* fileSystem.writeFileString(stylePath, style);
+      yield* fileSystem.writeFileString(scriptPath, script);
+
+      const wsUrl = yield* getWsServerUrl("/ws");
+      const issued = yield* Effect.scoped(
+        withWsRpcClient(wsUrl, (client) =>
+          client[WS_METHODS.assetsCreateUrl]({
+            resource: {
+              _tag: "environment-file",
+              path: EnvironmentFilePath.make(htmlPath),
+              access: "html-document",
+            },
+          }),
+        ),
+      );
+      const suffix = issued.relativeUrl.slice(`${ASSET_ROUTE_PREFIX}/`.length);
+      const token = suffix.slice(0, suffix.indexOf("/"));
+      const assetUrl = (assetPath: string) => `${ASSET_ROUTE_PREFIX}/${token}/${assetPath}`;
+
+      for (const encoding of ["gzip", "br"] as const) {
+        const requestHeaders = { "accept-encoding": encoding };
+        const htmlResponse = yield* HttpClient.get(issued.relativeUrl, {
+          headers: requestHeaders,
+        });
+        assert.equal(htmlResponse.status, 200);
+        assert.equal(htmlResponse.headers["content-encoding"], encoding);
+        assert.equal(htmlResponse.headers["content-type"], "text/html; charset=utf-8");
+        assert.equal(
+          htmlResponse.headers["content-security-policy"],
+          "sandbox allow-scripts allow-forms allow-popups allow-modals",
+        );
+        assert.equal(htmlResponse.headers["x-content-type-options"], "nosniff");
+        assert.equal(yield* htmlResponse.text, html);
+
+        const styleResponse = yield* HttpClient.get(assetUrl("assets/report.css"), {
+          headers: requestHeaders,
+        });
+        assert.equal(styleResponse.status, 200);
+        assert.equal(styleResponse.headers["content-encoding"], encoding);
+        assert.match(styleResponse.headers["content-type"] ?? "", /^text\/css/);
+        assert.equal(styleResponse.headers["x-content-type-options"], "nosniff");
+        assert.equal(yield* styleResponse.text, style);
+
+        const scriptResponse = yield* HttpClient.get(assetUrl("assets/report.js"), {
+          headers: requestHeaders,
+        });
+        assert.equal(scriptResponse.status, 200);
+        assert.equal(scriptResponse.headers["content-encoding"], encoding);
+        assert.match(scriptResponse.headers["content-type"] ?? "", /javascript/);
+        assert.equal(scriptResponse.headers["x-content-type-options"], "nosniff");
+        assert.equal(yield* scriptResponse.text, script);
+      }
+
+      const headResponse = yield* HttpClient.head(issued.relativeUrl, {
+        headers: { "accept-encoding": "identity" },
+      });
+      assert.equal(headResponse.status, 200);
+      assert.equal(headResponse.headers["content-type"], "text/html; charset=utf-8");
+      assert.equal(headResponse.headers["content-length"], String(Buffer.byteLength(html)));
+      assert.equal(yield* headResponse.text, "");
+
+      const rangeResponse = yield* HttpClient.get(issued.relativeUrl, {
+        headers: { "accept-encoding": "br, gzip", range: "bytes=0-14" },
+      });
+      assert.equal(rangeResponse.status, 206);
+      assert.isUndefined(rangeResponse.headers["content-encoding"]);
+      assert.equal(rangeResponse.headers["content-type"], "text/html; charset=utf-8");
+      assert.equal(rangeResponse.headers["content-range"], `bytes 0-14/${Buffer.byteLength(html)}`);
+      assert.equal(yield* rangeResponse.text, "<!doctype html>");
+    }).pipe(Effect.provide(NodeHttpServer.layerTest), Effect.scoped),
   );
 
   it.effect("uploads image bytes through a signed URL issued by websocket rpc", () =>
