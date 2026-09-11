@@ -1,3 +1,4 @@
+// @vitest-environment happy-dom
 import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 
 import {
@@ -106,6 +107,8 @@ describe("static image byte actions", () => {
     const write = vi.fn().mockResolvedValue(undefined);
     const items: Array<Record<string, Blob | Promise<Blob>>> = [];
     let loadListener: (() => void) | undefined;
+    let imageSource: string | undefined;
+    const createObjectURL = vi.fn();
 
     class TestImage {
       decoding = "auto";
@@ -114,7 +117,8 @@ describe("static image byte actions", () => {
       addEventListener(type: string, listener: () => void) {
         if (type === "load") loadListener = listener;
       }
-      set src(_value: string) {
+      set src(value: string) {
+        imageSource = value;
         loadListener?.();
       }
     }
@@ -125,7 +129,7 @@ describe("static image byte actions", () => {
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: true, blob: async () => source }));
     vi.stubGlobal("Image", TestImage);
     vi.stubGlobal("URL", {
-      createObjectURL: () => "blob:test-image",
+      createObjectURL,
       revokeObjectURL: vi.fn(),
     });
     vi.stubGlobal("document", {
@@ -142,6 +146,8 @@ describe("static image byte actions", () => {
     await copyStaticImage("https://environment.test/figure.svg");
 
     expect(drawImage).toHaveBeenCalledWith(expect.any(TestImage), 0, 0, 600, 400);
+    expect(imageSource).toMatch(/^data:image\/svg\+xml[;,]/);
+    expect(createObjectURL).not.toHaveBeenCalled();
     expect(await items[0]?.["image/png"]).toBe(png);
     expect(write).toHaveBeenCalledOnce();
   });

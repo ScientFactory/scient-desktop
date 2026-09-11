@@ -1,3 +1,4 @@
+// @vitest-environment happy-dom
 import { describe, expect, it } from "vite-plus/test";
 
 import {
@@ -33,4 +34,14 @@ describe("diagram export helpers", () => {
     expect(exported).toContain("color-scheme:dark");
     expect(exported).toContain("background:#171717");
   });
+
+  // Mixed SVG/XHTML/MathML parsing, line breaks and actual PNG encoding are
+  // asserted in svg-export-smoke.mjs: happy-dom does not model those namespaces.
+
+  it.each(["", "<div>Not a diagram</div>", "<svg></svg><svg></svg>"])(
+    "rejects a non-diagram export: %s",
+    (source) => {
+      expect(() => prepareSvgForExport(source, "light")).toThrow(/not an SVG/);
+    },
+  );
 });
