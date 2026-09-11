@@ -31,10 +31,10 @@ runtime discovery succeed.
 
 Settings → Scientific Computing is the same grouped Settings card as other pages, with a Python
 row and a MATLAB row. Each row shows the current runtime and one action
-(Set up, Connect, or Repair). It is not an installation inventory. **Change runtime** is a single
-picker for the interpreter new sessions should use, plus path paste, an honest **Test** that
-starts and closes a session, and Scient-managed **Repair**/**Remove**. Scient does not silently
-replace a broken selected interpreter.
+(Set up, Connect, or Repair). It is not an installation inventory. **Change runtime** is a compact Settings menu for the interpreter new sessions should use, plus
+path paste, an honest **Test** that starts and closes a session, and Scient-managed **Repair**/**Remove**.
+The executable path is a tooltip on that menu, not a line on the card. **Test** sits with Repair
+and Remove. Scient does not silently replace a broken selected interpreter.
 
 **Change runtime** changes only which runtime new sessions prefer. Choosing an existing Python also
 releases Scient-managed precedence; it does not copy or modify packages. **Repair** builds and
@@ -48,7 +48,8 @@ The file header names the interpreter it found (**Python 3.12**, **MATLAB R2026a
 run. That listing is a package check, not proof a Jupyter or Engine session already started.
 **Python ready** / **MATLAB ready** appear only after a live session is up. The status is not a
 Settings link. Open the menu for the interpreter path, **Check again**, or **Scientific Computing**.
-**Check again** rechecks that exact project and bypasses the short runtime-probe cache, so an
+If setup fails, the header shows a one-line status with a copy control and a details toggle; it
+never wraps a stack or path across **Run**. **Check again** rechecks that exact project and bypasses the short runtime-probe cache, so an
 installation or environment change can be recognized without reloading the app. **Test** in
 **Change runtime** starts and closes a temporary session; a package check is not Test passed.
 **Repair** rebuilds a damaged Scient-managed generation; it is not how you recover from a failed
@@ -77,7 +78,9 @@ repairing an environment, rerun the code yourself; Scient never replays a failed
 
 Open a `.m` file and choose **Connect MATLAB** in the file header. Scient enables MATLAB for that
 server and, when needed, sets up a small private connection helper for the installation it finds.
-It does not install MATLAB or a license. If several copies are installed, open
+Opening the file does not start Scientific Python or provision its Toolkit. A helper failure stays
+a short header status with copy and details; **Connect MATLAB** remains available. It does not
+install MATLAB or a license. If several copies are installed, open
 **Settings → Scientific Computing**, expand **Change runtime**, and choose the installation, or
 leave automatic discovery selected.
 
@@ -204,9 +207,9 @@ full dataset browser. Unsupported or malformed rich output retains its available
 fallback. Viewing results does not enable executable HTML or widgets.
 
 The secondary **Variables** view describes the current live Python namespace with bounded names,
-types, shapes or sizes, and safe previews for simple values. It is available from the session
-overflow when a live session exists, and as a sibling of Results once the namespace has names.
-It refreshes after a run finishes,
+types, shapes or sizes, and safe previews for simple values. It is a sibling tab of **Results**
+whenever that pane is open. The session overflow is only **Restart session** and **Stop session**;
+**Interrupt** appears while code is running. It refreshes after a run finishes,
 including a failed run because assignments before the exception may remain. It is not saved in run
 history, cannot be attached to an older session, and clears when the session restarts. Unsupported
 objects remain visible by name and type without asking them to generate an arbitrary representation.

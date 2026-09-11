@@ -6,6 +6,7 @@ import {
 } from "@t3tools/contracts";
 import {
   computeCurrentRuntimeSummary,
+  computeRuntimePickerLabel,
   defaultComputeInstallation,
   selectExistingComputeInstallation,
 } from "./computeInstallationSettingsModel";
@@ -45,6 +46,18 @@ const inventory: ComputeLanguageRuntimeInventory = {
 };
 
 describe("installation selection", () => {
+  it("labels a runtime without its executable path", () => {
+    expect(computeRuntimePickerLabel(inventory.installations[0]!, "Python")).toBe(
+      "3.12.13 · Scient-managed",
+    );
+    expect(computeRuntimePickerLabel(inventory.installations[1]!, "Python")).toBe(
+      "Python · System installation",
+    );
+    expect(computeRuntimePickerLabel(inventory.installations[0]!, "Python")).not.toContain(
+      "/managed/python",
+    );
+  });
+
   it("uses managed precedence only for Python, independently of an existing path", () => {
     const preference = { enabled: true, executable: "/system/python" };
     expect(defaultComputeInstallation(inventory, preference, status)?.source).toBe("managed");

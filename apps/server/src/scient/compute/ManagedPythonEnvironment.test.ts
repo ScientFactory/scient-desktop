@@ -123,6 +123,22 @@ describe("ManagedPythonEnvironment", () => {
     expect(entries.filter((name) => name.startsWith("generation-"))).toHaveLength(1);
   });
 
+  it("names MATLAB helper provision failures separately from Scientific Python", async () => {
+    const helper = makeManagedPythonEnvironmentManager(
+      computeDir,
+      dependencies({
+        provision: async () => {
+          throw new Error("ENOENT: uv.lock");
+        },
+      }),
+      "matlab-connection",
+    );
+    await expect(helper.install(installInput({ toolkitIds: [] }))).rejects.toMatchObject({
+      reason: "provision-failed",
+      message: "Scient could not provision the MATLAB connection helper.",
+    });
+  });
+
   it("publishes only a provisioned and verified final-path generation", async () => {
     const verify = vi.fn(async () => undefined);
     const manager = makeManagedPythonEnvironmentManager(

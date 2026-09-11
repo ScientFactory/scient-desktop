@@ -771,13 +771,18 @@ export const ComputeFileActions = forwardRef<ComputeFileActionsHandle, ComputeFi
           <div
             className={
               pinRuntimeChrome
-                ? "min-w-0 flex-1"
-                : "hidden min-w-0 flex-1 @[9rem]/python-file-actions:block"
+                ? "flex min-w-0 flex-1 items-center gap-1 overflow-hidden"
+                : "hidden min-w-0 flex-1 overflow-hidden @[9rem]/python-file-actions:flex @[9rem]/python-file-actions:items-center @[9rem]/python-file-actions:gap-1"
             }
           >
             {setupProgress || managedRuntime.failure ? (
-              <ManagedRuntimeNotice runtime={managedRuntime} />
-            ) : capacityBlocked ? (
+              <ManagedRuntimeNotice
+                runtime={managedRuntime}
+                languageId={props.language.languageId}
+                variant="toolbar"
+              />
+            ) : null}
+            {setupProgress ? null : capacityBlocked ? (
               <Menu>
                 <MenuTrigger
                   render={
@@ -826,7 +831,7 @@ export const ComputeFileActions = forwardRef<ComputeFileActionsHandle, ComputeFi
             ) : runtimeToolbar.kind === "setup" ? (
               <Button
                 size="xs"
-                className="-ms-1 h-6 min-w-0 max-w-full px-1.5 text-[11px] font-normal"
+                className="-ms-1 h-6 min-w-0 max-w-full shrink-0 px-1.5 text-[11px] font-normal"
                 title={`Set up ${props.language.displayName} for this file`}
                 disabled={managedRuntime.busy || refreshing}
                 onClick={() => void handleSetup()}

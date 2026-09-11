@@ -1,5 +1,13 @@
 import { useRef, useState } from "react";
-import { Download, LoaderCircle, Trash2, Wrench } from "lucide-react";
+import {
+  CheckIcon,
+  ChevronDown,
+  CopyIcon,
+  Download,
+  LoaderCircle,
+  Trash2,
+  Wrench,
+} from "lucide-react";
 import type {
   ComputeLanguageId,
   ComputeManagedRuntimeAction,
@@ -10,6 +18,8 @@ import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime"
 import { computeEnvironment } from "~/state/compute";
 import { useEnvironmentQuery } from "~/state/query";
 import { useAtomCommand } from "~/state/use-atom-command";
+import { useCopyToClipboard } from "~/hooks/useCopyToClipboard";
+import { cn } from "~/lib/utils";
 import { Button } from "~/components/ui/button";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "~/components/ui/tooltip";
 import {
@@ -21,6 +31,7 @@ import {
   AlertDialogPopup,
   AlertDialogTitle,
 } from "~/components/ui/alert-dialog";
+import { computeRuntimeFailureHeadline } from "./computeFileSurfaceModel";
 
 export function managedRuntimeOperationLabel(status: ComputeManagedRuntimeStatus): string | null {
   const operation = status.operation;
@@ -121,11 +132,80 @@ export function useComputeManagedRuntime(input: {
 
 export type ComputeManagedRuntimeController = ReturnType<typeof useComputeManagedRuntime>;
 
-export function ManagedRuntimeNotice({ runtime }: { runtime: ComputeManagedRuntimeController }) {
+export function ManagedRuntimeNotice({
+  runtime,
+  languageId,
+  variant = "block",
+}: {
+  runtime: ComputeManagedRuntimeController;
+  languageId?: string;
+  variant?: "block" | "toolbar";
+}) {
   const progress = runtime.status && managedRuntimeOperationLabel(runtime.status);
-  if (!progress && !runtime.failure) return null;
+  const failure = runtime.failure;
+  const { copyToClipboard, isCopied } = useCopyToClipboard({ target: "runtime error" });
+  if (!progress && !failure) return null;
+  if (variant === "toolbar") {
+    const headline = failure
+      ? computeRuntimeFailureHeadline(languageId ?? "python", failure)
+      : null;
+    return (
+      <div
+        className="flex min-w-0 items-center gap-0.5 overflow-hidden"
+        data-compute-notice="toolbar"
+      >
+        {progress ? (
+          <div className="flex min-w-0 items-center gap-1" role="status">
+            <LoaderCircle className="size-3 shrink-0 animate-spin" aria-hidden />
+            <span className="truncate whitespace-nowrap text-xs text-muted-foreground">
+              {progress}
+            </span>
+            {runtime.status?.operation?.action !== "remove" ? (
+              <Button size="xs" variant="ghost-muted" onClick={() => void runtime.cancel()}>
+                Cancel
+              </Button>
+            ) : null}
+          </div>
+        ) : null}
+        {headline && failure ? (
+          <>
+            <p
+              className="min-w-0 truncate whitespace-nowrap text-xs text-destructive"
+              role="alert"
+              title={headline}
+            >
+              {headline}
+            </p>
+            <Button
+              size="icon-xs"
+              variant="ghost"
+              className="size-5 shrink-0"
+              aria-label="Copy error"
+              title="Copy the full error"
+              onClick={() => copyToClipboard(failure, undefined)}
+            >
+              {isCopied ? (
+                <CheckIcon aria-hidden className="size-3" />
+              ) : (
+                <CopyIcon aria-hidden className="size-3" />
+              )}
+            </Button>
+            <details className="relative shrink-0">
+              <summary className="flex cursor-pointer list-none items-center text-muted-foreground marker:content-none [&::-webkit-details-marker]:hidden">
+                <ChevronDown className="size-3" aria-hidden />
+                <span className="sr-only">Error details</span>
+              </summary>
+              <pre className="absolute right-0 z-30 mt-1 max-h-40 w-80 max-w-[min(20rem,calc(100vw-2rem))] overflow-auto whitespace-pre-wrap break-words rounded-md border border-border bg-popover p-2 text-[11px] text-destructive shadow-md">
+                {failure}
+              </pre>
+            </details>
+          </>
+        ) : null}
+      </div>
+    );
+  }
   return (
-    <div className="space-y-1 text-xs">
+    <div className="space-y-1 text-xs" data-compute-notice="block">
       {progress ? (
         <div className="flex flex-wrap items-center gap-1.5" role="status">
           <LoaderCircle className="size-3 animate-spin" aria-hidden />
@@ -137,9 +217,9 @@ export function ManagedRuntimeNotice({ runtime }: { runtime: ComputeManagedRunti
           ) : null}
         </div>
       ) : null}
-      {runtime.failure ? (
+      {failure ? (
         <p className="text-destructive" role="alert">
-          {runtime.failure}
+          {failure}
         </p>
       ) : null}
     </div>
@@ -152,12 +232,14 @@ export function ManagedRuntimeActions({
   canProvision = true,
   disabled = false,
   maintenanceOnly = false,
+  className,
 }: {
   runtime: ComputeManagedRuntimeController;
   connection?: boolean;
   canProvision?: boolean;
   disabled?: boolean;
   maintenanceOnly?: boolean;
+  className?: string;
 }) {
   const [confirmRemove, setConfirmRemove] = useState(false);
   const status = runtime.status;
@@ -167,7 +249,7 @@ export function ManagedRuntimeActions({
   if (maintenanceOnly && !status.installed) return null;
   return (
     <>
-      <div className="flex flex-wrap items-center gap-0.5">
+      <div className={cn("flex flex-wrap items-center gap-0.5", className)}>
         {!status.installed ? (
           <Button
             size="xs"

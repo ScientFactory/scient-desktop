@@ -12,6 +12,9 @@ Choose **Connect MATLAB** on that file when MATLAB is not ready yet. The Engine
 connection requires a compatible Python host. Scient can set up a small private
 **MATLAB connection helper**, or choose an existing compatible host from
 **Settings → Scientific Computing → Change runtime**.
+That helper is independent of Scientific Python. Opening a `.m` file does not
+provision the scientific Toolkit; a helper setup failure is a one-line header
+status with copy and details, not a wrapped stack across **Run**.
 Scient does not install MATLAB or its license. The file header names the detected
 release until a live session starts; **MATLAB ready** means that session is up.
 Use the status menu to **Check again** or open those settings.
@@ -27,7 +30,7 @@ retrying the session. Scient does not grant operating-system permissions for you
 
 Use **Run file**, **Run selection**, or **Run cell** for `%%` sections. Variables
 remain available between runs until the session stops or restarts. Open **Variables**
-from the session overflow; it is not a sibling of Results until the namespace has names.
+next to **Results**; it is always a sibling tab on that pane.
 Running code is not sandboxed.
 
 For saved-file batch execution and portable run artifacts, choose **Run as one-shot…**

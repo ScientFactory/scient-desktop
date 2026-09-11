@@ -66,6 +66,23 @@ export function computeRuntimeSetupActionLabel(languageId: string, languageName:
   return languageId === "matlab" ? `Connect ${languageName}` : `Set up ${languageName}`;
 }
 
+/** One-line file-header failure. The full text belongs behind copy / details. */
+export function computeRuntimeFailureHeadline(languageId: string, failure: string): string {
+  const trimmed = failure.trim();
+  if (trimmed.length === 0)
+    return languageId === "matlab" ? "Connection setup failed" : "Setup failed";
+  if (languageId === "matlab") return "Connection setup failed";
+  const firstLine = trimmed.split(/\r?\n/, 1)[0]?.trim() ?? "Setup failed";
+  if (
+    firstLine.length <= 40 &&
+    !firstLine.includes("/") &&
+    !/ENOENT|uv\.lock|pyproject/iu.test(firstLine)
+  ) {
+    return firstLine;
+  }
+  return "Python setup failed";
+}
+
 const SCIENTIFIC_PACKAGES_NOTE = "Figures libraries are not in this environment";
 
 export function isComputeCapacityReachedError(error: unknown): boolean {

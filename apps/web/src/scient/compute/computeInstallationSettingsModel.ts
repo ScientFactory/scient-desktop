@@ -22,6 +22,14 @@ export function runtimeSourceLabel(source: string): string {
   }
 }
 
+/** Short picker label. Never the executable path. */
+export function computeRuntimePickerLabel(
+  installation: ComputeSettingsInstallation,
+  languageName: string,
+): string {
+  return `${installation.version ?? languageName} · ${runtimeSourceLabel(installation.source)}`;
+}
+
 export function defaultComputeInstallation(
   language: ComputeLanguageRuntimeInventory,
   preference: ScientificComputingLanguageSettings,
