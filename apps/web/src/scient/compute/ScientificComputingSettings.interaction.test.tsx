@@ -237,6 +237,49 @@ describe("Scientific Computing settings interactions", () => {
     expect(button("Test").title).toBe("Starts and closes a test session.");
   });
 
+  it("keeps the grouped Settings card used by other Settings pages", async () => {
+    const matlabPath = "/MATLAB/bin/matlab";
+    mocks.preferences = {
+      python: { enabled: true, executable: "" },
+      matlab: { enabled: true, executable: matlabPath },
+    };
+    mocks.statuses = { python: status(), matlab: null };
+    mocks.languages = [
+      python(),
+      {
+        ...python(),
+        descriptor: {
+          ...python().descriptor,
+          languageId: ComputeLanguageId.make("matlab"),
+          displayName: "MATLAB",
+          sourceExtensions: [".m"],
+        },
+        managedRuntime: null,
+        configuredExecutable: matlabPath,
+        installations: [
+          { executable: matlabPath, source: "conventional", version: "R2026a", problem: null },
+        ],
+      },
+    ];
+    await render();
+    expect(container.querySelector("h2")?.textContent).toContain("Scientific Computing");
+    expect(container.textContent).not.toContain("Python & MATLAB");
+    expect(container.textContent).not.toContain("Advanced");
+    const rows = container.querySelectorAll("[data-slot=settings-row]");
+    expect(rows).toHaveLength(2);
+    const card = container.querySelector("div.rounded-xl.border");
+    expect(card).not.toBeNull();
+    expect(card?.className).toContain("bg-card/40");
+    expect(card?.querySelectorAll("[data-slot=settings-row]")).toHaveLength(2);
+    expect(container.querySelector("[data-compute-installation]")).toBeNull();
+    expect(container.querySelector("[data-compute-summary='python']")?.textContent).toContain(
+      "3.12.13",
+    );
+    expect(container.querySelector("[data-compute-summary='matlab']")?.textContent).toContain(
+      "R2026a",
+    );
+  });
+
   it("treats Test passed as a started-and-closed session, not a metadata probe", async () => {
     mocks.verify.mockImplementation(async ({ environmentId, input }) => {
       expect(environmentId).toBe("remote");

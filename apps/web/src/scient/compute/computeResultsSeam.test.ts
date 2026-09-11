@@ -143,7 +143,10 @@ describe("compute result surface seam", () => {
 
   it("keeps Scientific Computing settings to the current runtime, not an inventory dashboard", () => {
     expect(settingsSource).toContain("SettingsRow");
+    expect(settingsSource).toContain("SettingsSection");
     expect(settingsSource).not.toContain('variant="plain"');
+    expect(settingsSource).not.toContain("Python & MATLAB");
+    expect(settingsSource).not.toContain("Advanced");
     expect(settingsSource).toContain("Change runtime");
     expect(settingsSource).toContain("Choose ${language.descriptor.displayName} runtime");
     expect(settingsSource).not.toContain("ComputeInstallationRow");
