@@ -6,7 +6,7 @@ import type {
   EnvironmentId,
   ScientificComputingLanguageSettings,
 } from "@t3tools/contracts";
-import { ComputeLanguageId } from "@t3tools/contracts";
+import { ComputeLanguageDescriptor, ComputeLanguageId } from "@t3tools/contracts";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 
 import { useEnvironmentSettings } from "~/hooks/useSettings";
@@ -57,7 +57,7 @@ function LanguageRuntimeSummary({
   preference: ScientificComputingLanguageSettings;
   onChange: (next: ScientificComputingLanguageSettings) => Promise<boolean>;
   environmentId: EnvironmentId | null;
-  loading?: boolean;
+  loading: boolean;
   refreshing: boolean;
 }) {
   const languageId = language.descriptor.languageId;
@@ -163,7 +163,7 @@ function LanguageRuntimeRecovery({
   preference: ScientificComputingLanguageSettings;
   onChange: (next: ScientificComputingLanguageSettings) => Promise<boolean>;
   environmentId: EnvironmentId | null;
-  loading?: boolean;
+  loading: boolean;
   refreshing: boolean;
   runtime: ComputeManagedRuntimeController;
 }) {
@@ -448,20 +448,20 @@ function LanguageRuntimeRecovery({
   );
 }
 
-const PENDING_RUNTIME_DESCRIPTORS = [
-  {
+const PENDING_RUNTIME_DESCRIPTORS: ReadonlyArray<ComputeLanguageDescriptor> = [
+  ComputeLanguageDescriptor.make({
     languageId: ComputeLanguageId.make("python"),
     displayName: "Python",
     sourceExtensions: [".py"],
     capabilities: ["execute", "interrupt", "restart", "shutdown"],
-  },
-  {
+  }),
+  ComputeLanguageDescriptor.make({
     languageId: ComputeLanguageId.make("matlab"),
     displayName: "MATLAB",
     sourceExtensions: [".m"],
     capabilities: ["execute", "interrupt", "restart", "shutdown"],
-  },
-] as const;
+  }),
+];
 
 function pendingRuntimeInventory(
   preferences: Readonly<Record<string, ScientificComputingLanguageSettings>>,

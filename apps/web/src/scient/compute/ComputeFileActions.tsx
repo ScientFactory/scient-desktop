@@ -316,7 +316,7 @@ export const ComputeFileActions = forwardRef<ComputeFileActionsHandle, ComputeFi
       languageId: props.language.languageId,
       languageName: props.language.displayName,
       runtimeVersion:
-        readyRuntime?.profile.languageVersion ?? liveSession?.runtime?.languageVersion,
+        readyRuntime?.profile.languageVersion ?? liveSession?.runtime?.languageVersion ?? null,
       liveSession,
       runtimeInspectionPending: runtimes.isPending || refreshing,
       readyRuntimeAvailable: readyRuntime !== null,
