@@ -185,6 +185,16 @@ async function managedDirectorySafety(paths: ManagedPythonEnvironmentPaths): Pro
     return true;
   };
 
+  const realpathPresent = async (directory: string): Promise<string | null> => {
+    try {
+      return await NodeFSP.realpath(directory);
+    } catch (cause) {
+      const code = (cause as NodeJS.ErrnoException).code;
+      if (code === "ENOENT") return null;
+      throw cause;
+    }
+  };
+
   const environmentsPresent = await inspectDirectory(
     paths.environmentsRoot,
     "managed environments",
@@ -192,8 +202,16 @@ async function managedDirectorySafety(paths: ManagedPythonEnvironmentPaths): Pro
   if (!environmentsPresent) return { environmentsPresent: false, managedPresent: false };
   const managedPresent = await inspectDirectory(paths.managedRoot, "managed Python");
   if (!managedPresent) return { environmentsPresent: true, managedPresent: false };
-  const canonicalEnvironments = await NodeFSP.realpath(paths.environmentsRoot);
-  const canonicalManaged = await NodeFSP.realpath(paths.managedRoot);
+  // Removal renames the managed root to a sibling tombstone before deleting it.
+  // Inspect/status can run in that window; a vanished path is absence, not failure.
+  const canonicalEnvironments = await realpathPresent(paths.environmentsRoot);
+  if (canonicalEnvironments === null) {
+    return { environmentsPresent: false, managedPresent: false };
+  }
+  const canonicalManaged = await realpathPresent(paths.managedRoot);
+  if (canonicalManaged === null) {
+    return { environmentsPresent: true, managedPresent: false };
+  }
   if (
     canonicalManaged === canonicalEnvironments ||
     !isContained(canonicalEnvironments, canonicalManaged)
