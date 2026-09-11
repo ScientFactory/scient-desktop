@@ -24,7 +24,6 @@ import { splitPromptIntoComposerSegments } from "../composer-editor-mentions";
 import type { AssistantCitationSourceAnchor } from "~/lib/assistantTextSelection";
 
 vi.mock("./chat/AssistantCitationChip", () => ({
-  AssistantCitationChip: () => null,
   CitationChip: () => null,
 }));
 

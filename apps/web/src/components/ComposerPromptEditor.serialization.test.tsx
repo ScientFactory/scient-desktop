@@ -21,7 +21,6 @@ vi.mock("./chat/ComposerPendingTerminalContexts", () => ({
   ComposerPendingTerminalContextChip: () => null,
 }));
 vi.mock("./chat/AssistantCitationChip", () => ({
-  AssistantCitationChip: () => null,
   CitationChip: () => null,
 }));
 

@@ -1,4 +1,4 @@
-import { isFileCitation, type AssistantCitation, type ComposerCitation } from "@t3tools/contracts";
+import { isFileCitation, type ComposerCitation } from "@t3tools/contracts";
 import { serializeComposerCitation } from "@t3tools/shared/composerCitations";
 import {
   fileCitationHash,
@@ -221,11 +221,4 @@ export function CitationChip({
       ) : null}
     </span>
   );
-}
-
-/** Preserve the inherited assistant-only entry point and navigation contract. */
-export function AssistantCitationChip(
-  props: Omit<Parameters<typeof CitationChip>[0], "citation"> & { citation: AssistantCitation },
-) {
-  return <CitationChip {...props} />;
 }
