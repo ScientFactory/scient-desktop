@@ -570,7 +570,6 @@ export function ComputePanel(props: {
   const [variableSnapshot, setVariableSnapshot] = useState<ComputeVariableSnapshot | null>(null);
   const [variableError, setVariableError] = useState<string | null>(null);
   const [variablesLoading, setVariablesLoading] = useState(false);
-  const [variablesOpen, setVariablesOpen] = useState(false);
   const contextBinding = useComputeContextStore((state) =>
     props.contextId === undefined ? null : (state.bindings[props.contextId] ?? null),
   );
@@ -1163,60 +1162,43 @@ export function ComputePanel(props: {
     };
   }, [sessionConfirmation]);
 
-  const showVariablesTab =
-    variablesOpen ||
-    panelView === "variables" ||
-    (variableSnapshot !== null && variableSnapshot.variables.length > 0);
-
   return (
     <section className="flex min-h-0 flex-1 flex-col bg-background" aria-label="Scientific results">
       <header className="flex min-h-12 shrink-0 flex-wrap items-center gap-2 border-b border-border/60 px-3 py-1">
         <div className="min-w-0 flex-1">
           <div
             className="flex flex-wrap items-center gap-1"
-            role={showVariablesTab ? "tablist" : undefined}
-            aria-label={showVariablesTab ? "Compute view" : undefined}
+            role="tablist"
+            aria-label="Compute view"
           >
-            {showVariablesTab ? (
-              <button
-                type="button"
-                role="tab"
-                aria-selected={panelView === "results"}
-                className={cn(
-                  "cursor-pointer rounded-[4px] px-1.5 py-1 text-sm font-medium text-muted-foreground transition-colors hover:bg-muted/70 hover:text-foreground",
-                  panelView === "results" && "text-foreground",
-                )}
-                onClick={() => setPanelView("results")}
-              >
-                {props.embedded
-                  ? "Results"
-                  : props.contextId === undefined
-                    ? "Compute history"
-                    : "Extra session"}
-              </button>
-            ) : (
-              <span className="px-1.5 py-1 text-sm font-medium text-foreground">
-                {props.embedded
-                  ? "Results"
-                  : props.contextId === undefined
-                    ? "Compute history"
-                    : "Extra session"}
-              </span>
-            )}
-            {showVariablesTab ? (
-              <button
-                type="button"
-                role="tab"
-                aria-selected={panelView === "variables"}
-                className={cn(
-                  "cursor-pointer rounded-[4px] px-1.5 py-1 text-xs text-muted-foreground transition-colors hover:bg-muted/70 hover:text-foreground",
-                  panelView === "variables" && "text-foreground",
-                )}
-                onClick={() => setPanelView("variables")}
-              >
-                Variables
-              </button>
-            ) : null}
+            <button
+              type="button"
+              role="tab"
+              aria-selected={panelView === "results"}
+              className={cn(
+                "cursor-pointer rounded-[4px] px-1.5 py-1 text-sm font-medium text-muted-foreground transition-colors hover:bg-muted/70 hover:text-foreground",
+                panelView === "results" && "text-foreground",
+              )}
+              onClick={() => setPanelView("results")}
+            >
+              {props.embedded
+                ? "Results"
+                : props.contextId === undefined
+                  ? "Compute history"
+                  : "Extra session"}
+            </button>
+            <button
+              type="button"
+              role="tab"
+              aria-selected={panelView === "variables"}
+              className={cn(
+                "cursor-pointer rounded-[4px] px-1.5 py-1 text-sm font-medium text-muted-foreground transition-colors hover:bg-muted/70 hover:text-foreground",
+                panelView === "variables" && "text-foreground",
+              )}
+              onClick={() => setPanelView("variables")}
+            >
+              Variables
+            </button>
             {!props.embedded && contextBinding !== null ? (
               <span
                 className={cn(
@@ -1396,15 +1378,6 @@ export function ComputePanel(props: {
                 )}
               </MenuTrigger>
               <MenuPopup align="end" side="bottom" className="min-w-44">
-                <MenuItem
-                  onClick={() => {
-                    setVariablesOpen(true);
-                    setPanelView("variables");
-                  }}
-                >
-                  Variables
-                </MenuItem>
-                <MenuSeparator />
                 <MenuItem
                   disabled={operation !== null || liveSession?.status !== "ready"}
                   onClick={(event) => {

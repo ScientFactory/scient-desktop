@@ -16,6 +16,7 @@ import {
   resolveComputeRuntimeToolbarState,
   defaultComputeRuntime,
   isComputeCapacityReachedError,
+  computeRuntimeFailureHeadline,
 } from "./computeFileSurfaceModel";
 
 const pythonRuntime = {
@@ -139,6 +140,21 @@ describe("python compute surface model", () => {
         scientificPackagesMissing: false,
       }),
     ).toEqual({ kind: "setup", label: "Connect MATLAB", canRun: false });
+    expect(
+      computeRuntimeFailureHeadline(
+        "matlab",
+        "Scient could not provision the managed Python environment. ENOENT: open '/app/server/dist/scient-managed-python/matlab-connection/uv.lock'",
+      ),
+    ).toBe("Connection setup failed");
+    expect(
+      computeRuntimeFailureHeadline(
+        "python",
+        "Scient could not provision the managed Python environment. ENOENT: uv.lock",
+      ),
+    ).toBe("Python setup failed");
+    expect(computeRuntimeFailureHeadline("python", "Python packages missing")).toBe(
+      "Python packages missing",
+    );
     expect(isComputeCapacityReachedError({ reason: "capacity-reached" })).toBe(true);
     expect(isComputeCapacityReachedError(new Error("capacity-reached"))).toBe(false);
     expect(

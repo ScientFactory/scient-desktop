@@ -18,6 +18,13 @@ import { useAtomCommand } from "~/state/use-atom-command";
 import { cn } from "~/lib/utils";
 import { Button } from "~/components/ui/button";
 import { Input } from "~/components/ui/input";
+import {
+  Select,
+  SelectItem,
+  SelectPopup,
+  SelectTrigger,
+  SelectValue,
+} from "~/components/ui/select";
 import { Switch } from "~/components/ui/switch";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "~/components/ui/tooltip";
 import {
@@ -33,8 +40,8 @@ import {
 } from "./ComputeManagedRuntimeControls";
 import {
   computeCurrentRuntimeSummary,
+  computeRuntimePickerLabel,
   defaultComputeInstallation,
-  runtimeSourceLabel,
   selectExistingComputeInstallation,
 } from "./computeInstallationSettingsModel";
 
@@ -76,7 +83,6 @@ function LanguageRuntimeSummary({
     (Boolean(runtime.failure) &&
       (summary.kind === "setup" ||
         summary.kind === "repair" ||
-        summary.kind === "connect" ||
         (!isMatlab && runtime.status?.selection === "managed")));
   const story = loading
     ? "Checking…"
@@ -255,7 +261,7 @@ function LanguageRuntimeRecovery({
   };
 
   return (
-    <div className="mt-3 space-y-3" data-compute-recovery={languageId}>
+    <div className="mt-3 space-y-2" data-compute-recovery={languageId}>
       <div className="flex min-h-7 items-center justify-between gap-2">
         <span className="text-xs text-muted-foreground">
           Enable {language.descriptor.displayName}
@@ -276,92 +282,78 @@ function LanguageRuntimeRecovery({
           {preference.enabled ? "No installation detected" : "Disabled"}
         </p>
       ) : (
-        <div className="space-y-1.5">
-          <label className="block text-xs text-muted-foreground">
-            {language.descriptor.displayName} for new sessions
-            <select
-              className="mt-1 block h-8 w-full min-w-0 rounded-[var(--control-radius)] border border-input bg-background px-2 text-sm"
+        <div className="flex min-h-7 flex-wrap items-center justify-between gap-x-3 gap-y-1.5">
+          <span className="text-xs text-muted-foreground">For new sessions</span>
+          <Select
+            value={selectedInstallation?.executable ?? null}
+            onValueChange={(value) => {
+              if (!value || value === selectedInstallation?.executable) return;
+              void select(value);
+            }}
+            disabled={disabled || !preference.enabled}
+          >
+            <SelectTrigger
+              size="sm"
+              className="w-auto max-w-52"
               aria-label={`Choose ${language.descriptor.displayName} runtime`}
-              disabled={disabled || !preference.enabled}
-              value={selectedInstallation?.executable ?? ""}
-              onChange={(event) => {
-                const next = event.currentTarget.value;
-                if (next) void select(next);
-              }}
+              title={selectedInstallation?.executable}
+              data-compute-runtime={selectedInstallation?.executable ?? ""}
             >
-              {selectedInstallation === undefined ? (
-                <option value="">Choose a runtime</option>
-              ) : null}
+              <SelectValue>
+                {selectedInstallation
+                  ? computeRuntimePickerLabel(selectedInstallation, language.descriptor.displayName)
+                  : "Choose a runtime"}
+              </SelectValue>
+            </SelectTrigger>
+            <SelectPopup align="end" alignItemWithTrigger={false} matchTriggerWidth={false}>
               {language.installations.map((installation) => (
-                <option key={installation.executable} value={installation.executable}>
-                  {installation.version ?? language.descriptor.displayName} ·{" "}
-                  {runtimeSourceLabel(installation.source)}
-                </option>
-              ))}
-            </select>
-          </label>
-          {selectedInstallation?.executable ? (
-            <p className="font-mono text-[11px] break-all text-muted-foreground">
-              {selectedInstallation.executable}
-            </p>
-          ) : null}
-          {selectedInstallation?.problem ? (
-            <p className="text-xs text-destructive" role="alert">
-              {selectedInstallation.problem}
-            </p>
-          ) : null}
-          {preference.enabled && selectedInstallation ? (
-            <div className="flex flex-wrap items-center gap-1">
-              <Tooltip>
-                <TooltipTrigger
-                  render={
-                    <Button
-                      size="xs"
-                      variant="ghost-muted"
-                      disabled={disabled}
-                      title="Starts and closes a test session."
-                      onClick={() => void runTest()}
-                    />
-                  }
+                <SelectItem
+                  key={installation.executable}
+                  hideIndicator
+                  value={installation.executable}
+                  data-compute-runtime={installation.executable}
                 >
-                  {testing ? "Testing…" : testPassed ? "Test passed" : "Test"}
-                </TooltipTrigger>
-                <TooltipPopup>
-                  Starts and closes a test session. Repair is not the recovery for a failed Test.
-                </TooltipPopup>
-              </Tooltip>
-            </div>
-          ) : null}
-          {testError ? (
-            <p className="text-xs text-destructive" role="alert">
-              {testError}
-            </p>
-          ) : null}
+                  {computeRuntimePickerLabel(installation, language.descriptor.displayName)}
+                </SelectItem>
+              ))}
+            </SelectPopup>
+          </Select>
         </div>
       )}
-      {helperNeedsRetarget ? (
-        <div className="space-y-1">
-          <p className="text-xs text-muted-foreground">
-            The connection helper belongs to a different MATLAB. Set up a connection for this one.
-          </p>
-          <Button
-            size="xs"
-            variant="ghost"
-            disabled={disabled}
-            onClick={() => void runtime.act("repair")}
-          >
-            Set up connection
-          </Button>
-        </div>
+      {selectedInstallation?.problem ? (
+        <p className="text-xs text-destructive" role="alert">
+          {selectedInstallation.problem}
+        </p>
       ) : null}
-      <ManagedRuntimeActions
-        runtime={runtime}
-        connection={isMatlab}
-        maintenanceOnly
-        canProvision={!isMatlab || helperCanRepair}
-        disabled={selecting || refreshing || !environmentId}
-      />
-      <div className="flex flex-wrap items-center gap-1">
+      <div className="flex flex-wrap items-center gap-0.5" data-compute-actions={languageId}>
+        {preference.enabled && selectedInstallation ? (
+          <Tooltip>
+            <TooltipTrigger
+              render={
+                <Button
+                  size="xs"
+                  variant="ghost-muted"
+                  disabled={disabled}
+                  title="Starts and closes a test session."
+                  onClick={() => void runTest()}
+                />
+              }
+            >
+              {testing ? "Testing…" : testPassed ? "Test passed" : "Test"}
+            </TooltipTrigger>
+            <TooltipPopup>
+              Starts and closes a test session. Repair is not the recovery for a failed Test.
+            </TooltipPopup>
+          </Tooltip>
+        ) : null}
+        <ManagedRuntimeActions
+          className="contents"
+          runtime={runtime}
+          connection={isMatlab}
+          maintenanceOnly
+          canProvision={!isMatlab || helperCanRepair}
+          disabled={selecting || refreshing || !environmentId}
+        />
         <Button
           size="xs"
           variant="ghost-muted"
@@ -385,6 +377,26 @@ function LanguageRuntimeRecovery({
           </Button>
         ) : null}
       </div>
+      {testError ? (
+        <p className="text-xs text-destructive" role="alert">
+          {testError}
+        </p>
+      ) : null}
+      {helperNeedsRetarget ? (
+        <div className="space-y-1">
+          <p className="text-xs text-muted-foreground">
+            The connection helper belongs to a different MATLAB. Set up a connection for this one.
+          </p>
+          <Button
+            size="xs"
+            variant="ghost"
+            disabled={disabled}
+            onClick={() => void runtime.act("repair")}
+          >
+            Set up connection
+          </Button>
+        </div>
+      ) : null}
       {pathOpen ? (
         <form
           className="flex min-w-0 items-center gap-1.5"

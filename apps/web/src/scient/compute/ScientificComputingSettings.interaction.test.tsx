@@ -192,21 +192,22 @@ describe("Scientific Computing settings interactions", () => {
     );
   };
   const runtimeSelect = (languageName = "Python") => {
-    const match = container.querySelector<HTMLSelectElement>(
-      `select[aria-label="Choose ${languageName} runtime"]`,
+    const match = container.querySelector<HTMLElement>(
+      `[data-slot="select-trigger"][aria-label="Choose ${languageName} runtime"]`,
     );
     expect(match, `Choose ${languageName} runtime`).toBeDefined();
     return match!;
   };
+  const runtimeValue = (languageName = "Python") =>
+    runtimeSelect(languageName).getAttribute("data-compute-runtime");
   const chooseRuntime = async (path: string, languageName = "Python") => {
     const picker = runtimeSelect(languageName);
-    await act(() => {
-      Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, "value")!.set!.call(
-        picker,
-        path,
-      );
-      picker.dispatchEvent(new Event("change", { bubbles: true }));
-    });
+    await act(() => picker.click());
+    const item = [...document.querySelectorAll<HTMLElement>('[data-slot="select-item"]')].find(
+      (node) => node.getAttribute("data-compute-runtime") === path,
+    );
+    expect(item, `runtime option ${path}`).toBeDefined();
+    await act(() => item!.click());
   };
   const button = (label: string, scope: ParentNode = container) => {
     const match = [...scope.querySelectorAll<HTMLButtonElement>("button")].find(
@@ -233,8 +234,14 @@ describe("Scientific Computing settings interactions", () => {
     expect(container.textContent).toContain("3.12.13");
     expect(container.textContent).toContain("Scient-managed");
     expect(container.querySelectorAll("h3")).toHaveLength(1);
-    expect(runtimeSelect().value).toBe(managedPath);
+    expect(runtimeValue()).toBe(managedPath);
     expect(button("Test").title).toBe("Starts and closes a test session.");
+    expect(container.textContent).not.toContain(managedPath);
+    expect(container.querySelector("select")).toBeNull();
+    const actions = container.querySelector("[data-compute-actions='python']");
+    expect(actions?.textContent).toContain("Test");
+    expect(actions?.textContent).toContain("Repair");
+    expect(actions?.textContent).toContain("Remove");
   });
 
   it("keeps the grouped Settings card used by other Settings pages", async () => {
@@ -367,20 +374,16 @@ describe("Scientific Computing settings interactions", () => {
     expect(summary?.textContent).toContain("System installation");
     expect(summary?.textContent).not.toContain("ENOENT");
     expect(recovery?.textContent).toContain("ENOENT");
+    expect(recovery?.querySelector("[data-compute-notice]")).not.toBeNull();
   });
 
   it("selects system Python by saving first and releasing managed precedence exactly once", async () => {
     await render();
-    const picker = runtimeSelect();
-    await act(() => {
-      const setValue = Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, "value")!.set!;
-      setValue.call(picker, systemPath);
-      picker.dispatchEvent(new Event("change", { bubbles: true }));
-      picker.dispatchEvent(new Event("change", { bubbles: true }));
-    });
+    await chooseRuntime(systemPath);
+    await chooseRuntime(systemPath);
     expect(mocks.calls).toEqual(["save", "use-existing"]);
     expect(mocks.preferences.python?.executable).toBe(systemPath);
-    expect(runtimeSelect().value).toBe(systemPath);
+    expect(runtimeValue()).toBe(systemPath);
     expect(mocks.verify).not.toHaveBeenCalled();
   });
 
@@ -389,7 +392,7 @@ describe("Scientific Computing settings interactions", () => {
     await render();
     await chooseRuntime(systemPath);
     expect(mocks.calls).toEqual(["save"]);
-    expect(runtimeSelect().value).toBe(managedPath);
+    expect(runtimeValue()).toBe(managedPath);
     expect(container.textContent).toContain("Settings were not saved");
   });
 
@@ -397,11 +400,11 @@ describe("Scientific Computing settings interactions", () => {
     mocks.releaseFails = true;
     await render();
     await chooseRuntime(systemPath);
-    expect(runtimeSelect().value).toBe(managedPath);
+    expect(runtimeValue()).toBe(managedPath);
     expect(container.textContent).toContain("still selected");
     mocks.releaseFails = false;
     await chooseRuntime(systemPath);
-    expect(runtimeSelect().value).toBe(systemPath);
+    expect(runtimeValue()).toBe(systemPath);
     expect(container.textContent).not.toContain("still selected");
   });
 
@@ -411,7 +414,7 @@ describe("Scientific Computing settings interactions", () => {
     await click("Reset to automatic");
     expect(mocks.calls).toEqual(["save", "use-existing"]);
     expect(mocks.preferences.python?.executable).toBe("");
-    expect(runtimeSelect().value).toBe(systemPath);
+    expect(runtimeValue()).toBe(systemPath);
   });
 
   it("does not save a custom path on blur or Cancel; saves only on explicit submission", async () => {
@@ -542,9 +545,9 @@ describe("Scientific Computing settings interactions", () => {
     await render();
     for (let n = 0; n < 25; n++) {
       await chooseRuntime(systemPath);
-      expect(runtimeSelect().value).toBe(systemPath);
+      expect(runtimeValue()).toBe(systemPath);
       await chooseRuntime(managedPath);
-      expect(runtimeSelect().value).toBe(managedPath);
+      expect(runtimeValue()).toBe(managedPath);
     }
     expect(mocks.calls).toEqual(
       Array.from({ length: 25 }, () => ["save", "use-existing", "use-managed"]).flat(),

@@ -46,6 +46,11 @@ same pinned CPython as managed Scientific Python, but **not** that environment o
 its scientific packages. The two may be repaired/removed independently. Only
 Scient-owned generations are writable/removable. MATLAB and system/project Python
 remain user-owned. An installed helper may explicitly be deselected with Use existing.
+The release build stages the helper's `pyproject.toml` and `uv.lock` beside the
+Scientific Python specification (`dist/scient-managed-python/matlab-connection/`).
+Resolving the helper requires those nested files; a Scientific Python lock alone is
+not the MATLAB connection recipe. Opening or listing a `.m` file does not provision
+either environment.
 
 `MatlabConnectionHelper` builds the selected MATLAB installation's own Engine
 package into an unpublished private generation and validates its import and

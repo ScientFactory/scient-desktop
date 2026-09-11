@@ -61,8 +61,10 @@ describe("Scient file surface seams", () => {
     expect(results).not.toContain("<Pause");
     expect(results).toContain('aria-label="Compute session history"');
     expect(results).toContain("MenuRadioGroup");
-    expect(results).toContain("setVariablesOpen");
-    expect(results).toContain("showVariablesTab");
+    expect(results).toContain('role="tablist"');
+    expect(results).toContain('aria-label="Compute view"');
+    expect(results).not.toContain("setVariablesOpen");
+    expect(results).not.toContain("showVariablesTab");
     expect(output).toContain("useAssetUrlState");
     expect(output).toContain("<img");
     expect(output).toContain("StaticArtifactPresentationMenu");
