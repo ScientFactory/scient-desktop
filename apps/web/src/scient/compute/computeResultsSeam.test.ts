@@ -29,11 +29,39 @@ const imageActionButtonsSource = NodeFS.readFileSync(
   "utf8",
 );
 const pythonActionsSource = NodeFS.readFileSync(
-  NodePath.join(here, "PythonFileComputeActions.tsx"),
+  NodePath.join(here, "ComputeFileActions.tsx"),
+  "utf8",
+);
+const pythonSurfaceSource = NodeFS.readFileSync(
+  NodePath.join(here, "ScientComputeFileSurface.tsx"),
+  "utf8",
+);
+const settingsSource = NodeFS.readFileSync(
+  NodePath.join(here, "ScientificComputingSettings.tsx"),
+  "utf8",
+);
+const managedRuntimeSource = NodeFS.readFileSync(
+  NodePath.join(here, "ComputeManagedRuntimeControls.tsx"),
   "utf8",
 );
 
 describe("compute result surface seam", () => {
+  it("keys standalone controls by their owner and preserves producing result generations", () => {
+    const chat = NodeFS.readFileSync(NodePath.join(here, "../../components/ChatView.tsx"), "utf8");
+    expect(chat).toContain(
+      "key={`${activeThreadRef.environmentId}:${activeThreadRef.threadId}:${renderedRightPanelSurface.id}`}",
+    );
+    expect(panelSource).toContain("executionGeneration={props.execution.request.generation}");
+    expect(panelSource).toContain(
+      "executionGeneration={props.figureFallback.execution.request.generation}",
+    );
+    const actions = panelSource.slice(
+      panelSource.indexOf('aria-label="Session actions"'),
+      panelSource.indexOf('aria-label="Session actions"') + 400,
+    );
+    expect(actions).not.toContain("operation !== null");
+    expect(actions).toContain('operation === "stop"');
+  });
   it("keeps editing in the file surface and results focused on outputs", () => {
     const resultSource = `${panelSource}\n${outputSource}`;
     expect(resultSource).not.toContain("Submitted code");
@@ -42,11 +70,34 @@ describe("compute result surface seam", () => {
     expect(resultSource).not.toContain("<textarea");
   });
 
+  it("captures confirmation targets and keeps compact controls able to wrap", () => {
+    expect(panelSource).toContain('kind: "stop"');
+    expect(panelSource).toContain("anchorRect:");
+    expect(panelSource).toContain("x: bounds.right");
+    expect(panelSource).toContain("width: 0");
+    expect(panelSource).toContain("runSessionCommand(confirmation.kind, confirmation.session)");
+    expect(panelSource).toContain('role="alertdialog"');
+    expect(panelSource).toContain('className="w-72 max-w-[calc(100vw-1rem)]"');
+    expect(panelSource).toContain('align="center"');
+    expect(panelSource).toContain('side="left"');
+    expect(panelSource).not.toContain("<AlertDialog");
+    expect(panelSource).toContain(
+      "getComputeContext(props.contextId)?.sessionId !== target.sessionId",
+    );
+    expect(panelSource).toContain("sessionId: target.sessionId");
+    expect(panelSource).toContain("expectedGeneration: target.generation");
+    expect(panelSource).toContain("shrink-0 flex-wrap items-center gap-2");
+  });
+
   it("keeps text, errors, figures and live variables in one progressive result surface", () => {
     expect(outputSource).toContain('case "stream"');
     expect(outputSource).toContain('case "diagnostic"');
     expect(outputSource).toContain('case "image"');
     expect(panelSource).toContain("Variables");
+    expect(panelSource).toContain('role="tablist"');
+    expect(panelSource).toContain('aria-label="Compute view"');
+    expect(panelSource).not.toContain("setVariablesOpen");
+    expect(panelSource).not.toContain("showVariablesTab");
     expect(panelSource).toContain("not saved in run history");
     expect(outputSource).toContain("diagnostic.frames");
     expect(outputSource).not.toContain("traceback.match");
@@ -54,10 +105,99 @@ describe("compute result surface seam", () => {
   });
 
   it("keeps Python setup contextual to the file toolbar", () => {
-    expect(pythonActionsSource).toContain("resolvePythonRuntimeToolbarState");
-    expect(pythonActionsSource).toContain('title="Open Scientific Computing settings"');
+    expect(pythonActionsSource).toContain("resolveComputeRuntimeToolbarState");
+    expect(pythonActionsSource).toContain("Scientific Computing");
+    expect(pythonActionsSource).toContain("Check again");
+    expect(pythonActionsSource).toContain("handleSetup");
+    expect(pythonActionsSource).toContain('runtimeToolbar.kind === "switch"');
+    expect(pythonActionsSource).toContain("the next run uses the");
+    expect(pythonActionsSource).toContain(
+      "{props.language.displayName} selected in Scientific Computing settings",
+    );
     expect(pythonActionsSource).not.toContain("Settings2");
-    expect(panelSource).toContain("!props.embedded && allSessions.length > 0");
+    expect(pythonActionsSource).toContain("showMatlabOneShotSurface");
+    expect(pythonActionsSource).toContain("pinRuntimeChrome");
+    expect(pythonActionsSource).toContain(
+      'props.language.languageId !== "matlab" && !runtimeToolbar.canRun',
+    );
+    expect(panelSource).toContain("if (props.contextId === undefined) return allSessions;");
+    expect(panelSource).toContain(
+      "return allSessions.filter((session) => session.sessionId === contextBinding.sessionId);",
+    );
+    expect(panelSource).toContain("!props.embedded && contextSessions.length > 0");
+  });
+
+  it("keeps the Python file toolbar usable as its panel narrows", () => {
+    expect(pythonSurfaceSource).toContain("flex-wrap items-center gap-x-2 gap-y-1");
+    expect(pythonSurfaceSource).toContain('className="min-w-22 flex-1"');
+    expect(pythonActionsSource).toContain("@container/python-file-actions");
+    expect(pythonActionsSource).toContain("@[9rem]/python-file-actions:flex");
+    expect(pythonActionsSource).toContain("@[15rem]/python-file-actions:inline");
+    expect(pythonActionsSource).toContain("aria-label={primary.label}");
+    expect(pythonSurfaceSource).toContain('useState<ComputeFileView>("code")');
+    expect(pythonSurfaceSource).toContain(
+      "setView((current) => computeFileViewAfterRun(current, preferredResultsView))",
+    );
+    expect(pythonActionsSource).toContain("onRunRequested();");
+    expect(panelSource).toContain("onClick={props.onRunSource}");
+    expect(panelSource).toContain("<Play /> Run");
+    expect(panelSource).toContain("<span>to see results.</span>");
+    expect(panelSource).toContain("!props.embedded && contextBinding !== null");
+    expect(panelSource.indexOf("onClick={props.onRunSource}")).toBeLessThan(
+      panelSource.indexOf("Start an extra session"),
+    );
+    expect(pythonActionsSource).toContain("Switch {props.language.displayName} environment…");
+  });
+
+  it("keeps file-header runtime errors to one line with copy and details", () => {
+    expect(pythonActionsSource).toContain('variant="toolbar"');
+    expect(pythonActionsSource).toContain("setupProgress || managedRuntime.failure ? (");
+    expect(pythonActionsSource).not.toContain("setupProgress ? null : capacityBlocked");
+    expect(pythonActionsSource).toContain("connectionSetupFailed:");
+    expect(pythonActionsSource).toContain("onRetry={() => void handleSetup()}");
+    expect(pythonActionsSource).toContain("overflow-hidden");
+    expect(pythonActionsSource).toContain('className="flex shrink-0 items-center"');
+    expect(managedRuntimeSource).toContain("computeRuntimeFailureHeadline");
+    expect(managedRuntimeSource).toContain('aria-label="Copy error"');
+    expect(managedRuntimeSource).toContain("<details");
+    expect(managedRuntimeSource).toContain("whitespace-nowrap");
+    expect(managedRuntimeSource).not.toContain("title={onRetry");
+    expect(managedRuntimeSource).toContain("Copy the full error");
+  });
+
+  it("keeps Scientific Computing settings to the current runtime, not an inventory dashboard", () => {
+    expect(settingsSource).toContain("SettingsRow");
+    expect(settingsSource).toContain("SettingsSection");
+    expect(settingsSource).not.toContain('variant="plain"');
+    expect(settingsSource).not.toContain("Python & MATLAB");
+    expect(settingsSource).not.toContain("Advanced");
+    expect(settingsSource).toContain("Change runtime");
+    expect(settingsSource).toContain("SelectTrigger");
+    expect(settingsSource).toContain("computeRuntimePickerLabel");
+    expect(settingsSource).not.toContain("<select");
+    expect(settingsSource).not.toContain("break-all");
+    expect(settingsSource).toContain("data-compute-actions");
+    expect(settingsSource).not.toContain("ComputeInstallationRow");
+    expect(settingsSource).toContain("Starts and closes a test session");
+    expect(settingsSource).not.toContain("More scientific tools are coming soon");
+    expect(settingsSource).toContain('title="Scientific Computing"');
+    expect(pythonActionsSource).toContain("runtimeVersion:");
+  });
+
+  it("refreshes the current workspace tree after successful or failed executions", () => {
+    expect(panelSource).toContain(
+      "TERMINAL_COMPUTE_EXECUTION_STATUSES.has(execution.result.status)",
+    );
+    expect(panelSource).toContain("refreshProjectFiles(props.environmentId, props.cwd)");
+    expect(panelSource).not.toContain("getProjectEntriesQueryAtom");
+  });
+
+  it("focuses a new run in the session that actually owns it", () => {
+    expect(pythonActionsSource).toContain(
+      "props.onExecutionSubmitted(session.sessionId, executionId)",
+    );
+    expect(pythonSurfaceSource).toContain("focusSessionId={focusExecution?.sessionId ?? null}");
+    expect(panelSource).toContain("setSelectedSessionId(props.focusSessionId)");
   });
 
   it("follows only current stable figures through passive generic surfaces", () => {
@@ -86,8 +226,6 @@ describe("compute result surface seam", () => {
     expect(followerSource).not.toContain("openScientArtifact");
     expect(followerSource).not.toContain("openArtifact");
     expect(followerSource).toContain("if (events.data?.stale || latestSession === null) return;");
-    expect(followerSource).toContain(
-      "if (events.data?.stale || latestSession === null) return null;",
-    );
+    expect(followerSource).toContain("if (events.data?.stale) return null;");
   });
 });

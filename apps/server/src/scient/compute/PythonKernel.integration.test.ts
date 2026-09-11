@@ -20,11 +20,12 @@ import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Queue from "effect/Queue";
+import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 
 import { DuplexProcess, layer as duplexProcessLayer } from "../execution/LocalDuplexProcess.ts";
 import { processExists } from "../execution/LocalProcessTestSupport.ts";
-import { makeJupyterBridgeTransport } from "./JupyterBridgeTransport.ts";
+import { makeComputeBridgeTransport } from "./ComputeBridgeTransport.ts";
 import { buildLaunchPlan } from "./PythonRuntimeAdapter.ts";
 
 /**
@@ -117,7 +118,7 @@ const takeMatching = (
 const integration = Effect.fn("PythonKernel.integration")(function* () {
   if (!TEST_PYTHON) return yield* Effect.die("SCIENT_TEST_PYTHON is not set.");
   const processes = yield* DuplexProcess;
-  const transport = makeJupyterBridgeTransport(processes, {});
+  const transport = makeComputeBridgeTransport(processes, {});
   const profile: ComputeRuntimeProfile = {
     languageId: python,
     source: "configured",
@@ -178,6 +179,56 @@ const execute = Effect.fn("PythonKernel.execute")(function* (
 });
 
 describe.runIf(Boolean(TEST_PYTHON))("Python kernel integration", () => {
+  it.live(
+    "emits bounded dataframe previews and Plotly MIME without browser launch or namespace pollution",
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const harness = yield* integration();
+          const observed = yield* execute(
+            harness,
+            "table-and-plotly",
+            [
+              "import pandas as pd",
+              "from IPython.display import display",
+              "frame = pd.DataFrame({f'column_{i}': range(150) for i in range(30)})",
+              "display(frame)",
+              "display({'application/vnd.plotly.v1+json': {'data': [{'type': 'scatter', 'x': [1, 2], 'y': [3, 4]}]}}, raw=True)",
+              "assert 'table_preview' not in globals()",
+            ].join("\n"),
+          );
+          const outputs = observed.flatMap((event) =>
+            event._tag === "output" ? [event.output] : [],
+          );
+          const representations = outputs.flatMap((output) =>
+            output._tag === "display-data" ? output.bundle.representations : [],
+          );
+          const table = representations.find(
+            (item) => item.mediaType === "application/vnd.dataresource+json",
+          );
+          if (table?.data._tag !== "json") throw new Error("Expected bounded dataframe JSON");
+          const data = yield* Schema.decodeUnknownEffect(
+            Schema.fromJsonString(
+              Schema.Struct({
+                data: Schema.Array(Schema.Unknown),
+                schema: Schema.Struct({ fields: Schema.Array(Schema.Unknown) }),
+                scientPreview: Schema.Struct({ truncated: Schema.Boolean }),
+              }),
+            ),
+          )(table.data.json);
+          expect(data.data).toHaveLength(100);
+          expect(data.schema.fields).toHaveLength(21);
+          expect(data.scientPreview.truncated).toBe(true);
+          expect(
+            representations.some((item) => item.mediaType === "application/vnd.plotly.v1+json"),
+          ).toBe(true);
+          yield* harness.channel.shutdown({
+            expectedGeneration: INITIAL_COMPUTE_SESSION_GENERATION,
+          });
+        }),
+      ).pipe(Effect.provide(Live), Effect.timeout("60 seconds")),
+  );
+
   it.live("retains complete MIME bundles and projects display updates and delayed clears", () =>
     Effect.scoped(
       Effect.gen(function* () {
@@ -204,13 +255,14 @@ describe.runIf(Boolean(TEST_PYTHON))("Python kernel integration", () => {
         const outputs = observed.flatMap((event) =>
           event._tag === "output" ? [event.output] : [],
         );
-        expect(outputs.map(({ _tag }) => _tag)).toEqual([
+        const displayOutputs = outputs.filter((output) => output._tag !== "stream");
+        expect(displayOutputs.map(({ _tag }) => _tag)).toEqual([
           "display-data",
           "display-update",
           "clear-output",
           "display-data",
         ]);
-        const first = outputs[0];
+        const first = displayOutputs[0];
         if (first?._tag !== "display-data") throw new Error("Expected display data.");
         expect(first.bundle.representations.map(({ mediaType }) => mediaType)).toEqual([
           "text/plain",
@@ -218,7 +270,7 @@ describe.runIf(Boolean(TEST_PYTHON))("Python kernel integration", () => {
           "image/svg+xml",
         ]);
         expect(first.displayId).toBe("shared-display");
-        const projected = projectComputeOutputs(outputs);
+        const projected = projectComputeOutputs(displayOutputs);
         expect(projected).toHaveLength(1);
         expect(projected[0]).toMatchObject({
           _tag: "representation",
@@ -369,6 +421,23 @@ describe.runIf(Boolean(TEST_PYTHON))("Python kernel integration", () => {
           ),
         ).toBe(true);
 
+        const tableAfterRestart = yield* execute(
+          harness,
+          "table-after-restart",
+          "import pandas as pd\nfrom IPython.display import display\ndisplay(pd.DataFrame({'answer': [42]}))",
+          nextGeneration,
+        );
+        expect(
+          tableAfterRestart.some(
+            (event) =>
+              event._tag === "output" &&
+              event.output._tag === "display-data" &&
+              event.output.bundle.representations.some(
+                (item) => item.mediaType === "application/vnd.dataresource+json",
+              ),
+          ),
+        ).toBe(true);
+
         yield* harness.channel.shutdown({ expectedGeneration: nextGeneration });
         yield* Effect.logInfo("real-kernel: shutdown complete");
         yield* awaitProcessGone(bridgePid);
@@ -472,8 +541,11 @@ describe.runIf(Boolean(TEST_PYTHON))("Python kernel integration", () => {
           .join("");
         expect(text).toContain("line-0\n");
         expect(text).toContain("line-19999\n");
-        // Every line, in order, however the kernel chose to batch them.
-        expect(text.split("\n").filter((line) => line.length > 0)).toHaveLength(20000);
+        // Count only the flood lines. Older kernels can emit a leading stderr
+        // warning, which must not be mistaken for a dropped or extra payload line.
+        const lines = text.split("\n").filter((line) => /^line-\d+$/.test(line));
+        expect(lines).toHaveLength(20000);
+        expect(lines.find((line, index) => line !== `line-${index}`)).toBeUndefined();
 
         const afterwards = yield* execute(harness, "after-flood", "6 * 7");
         expect(afterwards.some((event) => outputText(event)?.includes("42") === true)).toBe(true);
