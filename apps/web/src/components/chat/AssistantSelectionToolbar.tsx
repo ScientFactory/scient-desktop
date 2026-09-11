@@ -126,7 +126,7 @@ export function SelectionCitationToolbar<T extends { readonly text: string }>({
       size="xs"
       variant="glass"
       disabled={tooLong}
-      aria-label={tooLong ? "Selection is too long to cite" : "Cite selection in composer"}
+      aria-label={tooLong ? "Selection is too long to cite" : "Ask in chat"}
       className="fixed z-50 max-w-[calc(100vw-1rem)] rounded-full px-2.5"
       style={{ left: selection.position.x, top: selection.position.y }}
       onPointerDown={(event) => event.preventDefault()}
@@ -140,7 +140,7 @@ export function SelectionCitationToolbar<T extends { readonly text: string }>({
       }}
     >
       <QuoteIcon aria-hidden="true" className="size-3.5" />
-      {tooLong ? "Shorten selection" : "Cite"}
+      {tooLong ? "Shorten selection" : "Ask in chat"}
     </Button>,
     document.body,
   );

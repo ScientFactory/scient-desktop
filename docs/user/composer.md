@@ -101,7 +101,7 @@ still come from the provider's own configuration.
 
 ## Quote a Markdown file
 
-In a workspace Markdown file's rendered view, select text and choose **Cite**.
+In a workspace Markdown file's rendered view, select text and choose **Ask in chat**.
 Scient adds a file-quote chip to the current chat and opens the same optional
 comment bubble used for assistant quotes. Text in paragraphs, lists, tables,
 and ordinary code blocks is supported; selecting an entire image, formula, or
@@ -126,7 +126,7 @@ same filename against the new workspace.
 
 ## Quote an assistant response
 
-On web and desktop, select text in an assistant response, then choose **Cite in composer** from the
+On web and desktop, select text in an assistant response, then choose **Ask in chat** from the
 menu that appears when you release the selection. This inserts an inline quote chip at your cursor
 and opens an optional comment bubble beside the selected text; press `Enter` or choose **Save** to
 attach the comment, or leave it blank to keep just the quote. You can type before and after the
@@ -146,7 +146,7 @@ or clear it early. If the source is unavailable or its text has changed, the sav
 readable and Scient shows a warning.
 
 Mobile shows the full saved quote and its comment in sent messages. It does not offer
-**Cite in composer** or navigation to a quote's source.
+**Ask in chat** or navigation to a quote's source.
 
 ## Images and videos in messages
 

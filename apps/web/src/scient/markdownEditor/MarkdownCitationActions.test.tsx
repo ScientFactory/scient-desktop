@@ -98,7 +98,7 @@ function Fixture({ initial = "My question. " }: { initial?: string }) {
   );
 }
 
-describe("select Markdown -> Cite -> real composer", () => {
+describe("select Markdown -> Ask in chat -> real composer", () => {
   let host: HTMLDivElement;
   let root: ReturnType<typeof createRoot>;
   let frames: Map<number, FrameRequestCallback>;
@@ -162,7 +162,7 @@ describe("select Markdown -> Cite -> real composer", () => {
       frames.clear();
       pending.forEach((callback) => callback(0));
     });
-    return document.querySelector<HTMLButtonElement>('[aria-label="Cite selection in composer"]');
+    return document.querySelector<HTMLButtonElement>('[aria-label="Ask in chat"]');
   }
 
   it("inserts one bound file quote, preserves the draft, opens comment, and can remove the whole citation", async () => {
