@@ -5135,6 +5135,7 @@ describe("agent browser access", () => {
           threadId: asThreadId("thread-browser-off"),
           capabilities: new Set([
             "documents:build",
+            "compute:read",
             "sources:read",
             "sources:write",
             "skills:read",
@@ -5157,6 +5158,7 @@ describe("agent browser access", () => {
           capabilities: new Set([
             "preview",
             "documents:build",
+            "compute:read",
             "sources:read",
             "sources:write",
             "skills:read",
@@ -5183,7 +5185,12 @@ describe("agent browser access", () => {
       assert.deepEqual(issued, [
         {
           threadId,
-          capabilities: new Set(["documents:build", "sources:read", "sources:write"]),
+          capabilities: new Set([
+            "documents:build",
+            "compute:read",
+            "sources:read",
+            "sources:write",
+          ]),
         },
       ]);
     }).pipe(Effect.provide(NodeServices.layer)),
@@ -5230,6 +5237,7 @@ describe("agent browser access", () => {
           threadId,
           capabilities: new Set([
             "documents:build",
+            "compute:read",
             "sources:read",
             "sources:write",
             "skills:read",
@@ -5259,7 +5267,13 @@ describe("agent browser access", () => {
       assert.equal(issued.length, 1);
       assert.deepEqual(
         issued[0]?.capabilities,
-        new Set(["documents:build", "sources:read", "sources:write", "skills:read"]),
+        new Set([
+          "documents:build",
+          "compute:read",
+          "sources:read",
+          "sources:write",
+          "skills:read",
+        ]),
       );
     }).pipe(Effect.provide(NodeServices.layer)),
   );
@@ -5279,7 +5293,14 @@ describe("agent browser access", () => {
       assert.equal(issued.length, 1);
       assert.deepEqual(
         issued[0]?.capabilities,
-        new Set(["preview", "documents:build", "sources:read", "sources:write", "skills:read"]),
+        new Set([
+          "preview",
+          "documents:build",
+          "compute:read",
+          "sources:read",
+          "sources:write",
+          "skills:read",
+        ]),
       );
     }).pipe(Effect.provide(NodeServices.layer)),
   );

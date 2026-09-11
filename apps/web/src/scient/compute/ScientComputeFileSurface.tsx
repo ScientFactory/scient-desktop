@@ -21,21 +21,25 @@ import { ScientTooltip } from "~/scient/presentation/ScientTooltip";
 import { ComputePanel } from "./ComputePanel";
 import type { ComputeSourceLanguage } from "./computeSourceLanguage";
 import { ComputeFileActions, type ComputeFileActionsHandle } from "./ComputeFileActions";
+import type { ComputeContextId } from "./computeContextStore";
 import { computeActiveCell } from "./computeSourceSlices";
 import {
   DEFAULT_COMPUTE_FILE_SPLIT,
   DEFAULT_COMPUTE_FILE_SPLIT_LAYOUT,
+  DEFAULT_COMPUTE_FILE_RESULTS_VIEW,
   MIN_COMPUTE_FILE_SPLIT,
   COMPUTE_FILE_SPLIT_KEYBOARD_STEP,
   COMPUTE_FILE_SPLIT_LAYOUT_STORAGE_KEY,
   COMPUTE_FILE_SPLIT_STORAGE_KEY,
   COMPUTE_FILE_VIEW_LABELS,
-  COMPUTE_FILE_VIEW_STORAGE_KEY,
+  COMPUTE_FILE_RESULTS_VIEW_STORAGE_KEY,
   COMPUTE_FILE_VIEWS,
+  computeFileViewAfterRun,
   normalizeComputeFileSplit,
   normalizeComputeFileSplitLayout,
-  normalizeComputeFileView,
+  normalizeComputeFileResultsView,
   type ComputeFileSplitLayout,
+  type ComputeFileResultsView,
   type ComputeFileView,
 } from "./computeFileSurfaceModel";
 
@@ -63,16 +67,17 @@ interface ScientComputeFileSurfaceProps {
   readonly onSaveConfirmed: (relativePath: string, contents: string, revision: string) => void;
   readonly onSaveResolutionApplied: () => void;
   readonly saveResolution: FileSaveResolution | null;
+  readonly contextId: ComputeContextId;
 }
 
-function initialView(): ComputeFileView {
+function initialResultsView(): ComputeFileResultsView {
   try {
-    return normalizeComputeFileView(
-      getLocalStorageItem(COMPUTE_FILE_VIEW_STORAGE_KEY, Schema.String),
+    return normalizeComputeFileResultsView(
+      getLocalStorageItem(COMPUTE_FILE_RESULTS_VIEW_STORAGE_KEY, Schema.String),
     );
   } catch (error) {
     console.error(error);
-    return normalizeComputeFileView(null);
+    return DEFAULT_COMPUTE_FILE_RESULTS_VIEW;
   }
 }
 
@@ -107,7 +112,9 @@ function persist<T, E>(key: string, value: T, schema: Schema.Codec<T, E>): void 
 }
 
 export function ScientComputeFileSurface(props: ScientComputeFileSurfaceProps) {
-  const [view, setView] = useState(initialView);
+  const [view, setView] = useState<ComputeFileView>("code");
+  const [preferredResultsView, setPreferredResultsView] =
+    useState<ComputeFileResultsView>(initialResultsView);
   const [split, setSplit] = useState(initialSplit);
   const [splitLayout, setSplitLayout] = useState<ComputeFileSplitLayout>(initialSplitLayout);
   const [selection, setSelection] = useState<{
@@ -132,7 +139,9 @@ export function ScientComputeFileSurface(props: ScientComputeFileSurfaceProps) {
 
   const selectView = useCallback((next: ComputeFileView) => {
     setView(next);
-    persist(COMPUTE_FILE_VIEW_STORAGE_KEY, next, Schema.String);
+    if (next === "code") return;
+    setPreferredResultsView(next);
+    persist(COMPUTE_FILE_RESULTS_VIEW_STORAGE_KEY, next, Schema.String);
   }, []);
   const selectSplitLayout = useCallback((next: ComputeFileSplitLayout) => {
     setSplitLayout(next);
@@ -152,11 +161,15 @@ export function ScientComputeFileSurface(props: ScientComputeFileSurfaceProps) {
     keyboardStep: COMPUTE_FILE_SPLIT_KEYBOARD_STEP,
     onCommit: commitSplit,
   });
+  const handleRunRequested = useCallback(() => {
+    setView((current) => computeFileViewAfterRun(current, preferredResultsView));
+  }, [preferredResultsView]);
+  const handleEmptyResultsRun = useCallback(() => {
+    actionsRef.current?.runPrimary();
+  }, []);
   const handleExecutionSubmitted = useCallback(
     (sessionId: ComputeSessionId, executionId: ComputeExecutionId) => {
       setFocusExecution({ sessionId, executionId });
-      // Reveal hidden results without overwriting a view chosen while startup was pending.
-      setView((current) => (current === "code" ? "split" : current));
     },
     [],
   );
@@ -241,6 +254,8 @@ export function ScientComputeFileSurface(props: ScientComputeFileSurfaceProps) {
             sourcePending={props.sourcePending}
             selection={selection}
             editorSelection={editorSelection}
+            contextId={props.contextId}
+            onRunRequested={handleRunRequested}
             onExecutionSubmitted={handleExecutionSubmitted}
           />
         </div>
@@ -327,9 +342,11 @@ export function ScientComputeFileSurface(props: ScientComputeFileSurfaceProps) {
               sourceLanguageId={props.language.languageId}
               sourceRevision={props.revision}
               sourcePending={props.sourcePending}
+              contextId={props.contextId}
               focusSessionId={focusExecution?.sessionId ?? null}
               focusExecutionId={focusExecution?.executionId ?? null}
               onFocusConsumed={handleFocusConsumed}
+              onRunSource={handleEmptyResultsRun}
               embedded
             />
           </div>

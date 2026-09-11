@@ -122,13 +122,34 @@ queued execution, output flooding, interrupt/recovery, restart and stop; the hel
 case also installs and removes the helper and refuses removal during a live session.
 The separate real Scientific Python install/run/remove test remains a regression gate.
 
-Phase two must still resolve stable MATLAB figure identity for changed-only emissions,
-cross-language session switching, ordinary `.m` file/path semantics, and parity with
-the older fresh-process artifacts/native FIG features. Do not delete the older engine
-until that parity is demonstrated. A connection being verified does not establish
+The next local candidate implements [independent Compute tabs](scient-compute-session-foundation.md#next-pass-independent-compute-tabs),
+including same/mixed-language sessions, owner-scoped controls, and measured host
+admission. That section owns the current implementation and qualification boundary;
+the historical phase-one tests above do not qualify the continuation. Saved-source
+semantics, MATLAB figure identity and bounded native artifacts are part of its
+cumulative review. Do not delete the older analysis engine merely because a session
+or a FIG download works; broader fresh-process parity remains a separate gate.
+A connection being verified does not establish
 feature parity, cross-platform release readiness, owner acceptance, or a license that
 will remain available indefinitely. Phase three is cumulative qualification/delivery
 after the bounded implementation and owner review; no release is authorized here.
+
+### Read-only agent inventory
+
+Authenticated provider sessions with `compute:read` may call
+`scient_compute_inventory`. Its handler reuses the exact Settings inventory gateway
+and shared service instance, with no project/session argument. Provider tool-name
+projection and capability-aware instructions use the existing registration seams.
+The inventory exposes configured choices, managed status, Toolkit metadata and
+existing executable candidates; it is not package verification, a selected running
+interpreter, or proof that execution will succeed. It cannot install, execute, attach
+to a user session or bypass the later operation-envelope/agent-execution gates.
+
+The linked interaction contract also covers a lightweight ordinary-file entry point,
+owned shutdown when its Compute tab closes, and compact actionable recovery instead
+of inert Run controls. Setup/repair paths must preserve ordinary Python development
+environments and unrelated sessions/processes. These are part of the next pass, not
+optional polish after adding tabs; their detailed policy remains in the Foundation ADR.
 
 The subsequent [runnable code-block follow-up](scient-compute-session-foundation.md#follow-up-runnable-code-blocks-in-chat-and-markdown)
 records the proposed Run action and inline results for Python/MATLAB in chat and

@@ -2,6 +2,8 @@ import { describe, expect, it } from "@effect/vitest";
 import { vi } from "vite-plus/test";
 import {
   ComputeLanguageId,
+  ComputeSessionId,
+  INITIAL_COMPUTE_SESSION_GENERATION,
   EnvironmentId,
   WS_METHODS,
   type ComputeManagedRuntimeStatus,
@@ -10,6 +12,7 @@ import {
   type ScientificComputingSettings,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
+import * as Deferred from "effect/Deferred";
 import * as Data from "effect/Data";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
@@ -57,6 +60,14 @@ const harness = Effect.gen(function* () {
   let statusAvailable = true;
   let inventoryReads = 0;
   let inventoryWait: Effect.Effect<void> = Effect.void;
+  const restartEntered = yield* Deferred.make<void>();
+  const stopEntered = yield* Deferred.make<void>();
+  const commandRelease = yield* Deferred.make<void>();
+  const settleCommand = Deferred.await(commandRelease).pipe(
+    Effect.andThen(
+      Effect.fail(new ManagedStatusUnavailable({ message: "Test command released." })),
+    ),
+  );
   const inspected: Array<{ environmentId: string; cwd: string | null }> = [];
   const statusTarget = { environmentId: ENV, input: { languageId: PYTHON } };
   const supervisor = EnvironmentSupervisor.of({
@@ -77,6 +88,10 @@ const harness = Effect.gen(function* () {
     session: yield* SubscriptionRef.make<Option.Option<RpcSession>>(
       Option.some({
         client: {
+          [WS_METHODS.computeRestartSession]: () =>
+            Deferred.succeed(restartEntered, undefined).pipe(Effect.andThen(settleCommand)),
+          [WS_METHODS.computeStopSession]: () =>
+            Deferred.succeed(stopEntered, undefined).pipe(Effect.andThen(settleCommand)),
           [WS_METHODS.computeRuntimeInventory]: () =>
             Effect.gen(function* () {
               inventoryReads += 1;
@@ -190,6 +205,9 @@ const harness = Effect.gen(function* () {
     read,
     observeStatus,
     inspected,
+    restartEntered,
+    stopEntered,
+    commandRelease,
     inventoryReads: () => inventoryReads,
     setInventoryWait: (value: Effect.Effect<void>) => {
       inventoryWait = value;
@@ -204,6 +222,35 @@ const harness = Effect.gen(function* () {
 });
 
 describe("shared compute runtime transitions", () => {
+  it.live("sends Stop while the same session's Restart RPC is still pending", () =>
+    Effect.gen(function* () {
+      const h = yield* harness;
+      const target = {
+        environmentId: ENV,
+        input: {
+          cwd: "/project",
+          sessionId: ComputeSessionId.make("closing-tab"),
+          expectedGeneration: INITIAL_COMPUTE_SESSION_GENERATION,
+        },
+      };
+      const restarting = h.atoms.restartSession.run(h.registry, target);
+      try {
+        yield* Deferred.await(h.restartEntered);
+        const stopping = h.atoms.stopSession.run(h.registry, target);
+        try {
+          yield* Deferred.await(h.stopEntered);
+        } finally {
+          yield* Deferred.succeed(h.commandRelease, undefined);
+          yield* Effect.promise(() => stopping);
+        }
+      } finally {
+        yield* Deferred.succeed(h.commandRelease, undefined);
+        yield* Effect.promise(() => restarting);
+        h.registry.dispose();
+      }
+    }),
+  );
+
   it.live(
     "polls active inventory operations, then stops after completion or leaving Settings",
     () =>

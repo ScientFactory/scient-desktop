@@ -10,7 +10,7 @@ import {
 } from "@t3tools/client-runtime/state/runtime";
 import { ChevronDown, LoaderCircle, Play, RefreshCwIcon } from "lucide-react";
 import { Link } from "@tanstack/react-router";
-import { forwardRef, useCallback, useImperativeHandle, useMemo, useState } from "react";
+import { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useState } from "react";
 
 import { Button } from "~/components/ui/button";
 import {
@@ -27,6 +27,7 @@ import { stackedThreadToast, toastManager } from "~/components/ui/toast";
 import { randomUUID } from "~/lib/utils";
 import { computeEnvironment } from "~/state/compute";
 import { useAtomCommand } from "~/state/use-atom-command";
+import { useAtomQueryRunner } from "~/state/use-atom-query-runner";
 import { useEnvironmentQuery } from "~/state/query";
 
 import {
@@ -37,10 +38,21 @@ import {
   type ComputeCodeSlice,
   type ComputeTextRange,
 } from "./computeSourceSlices";
+import { closeComputeContext, mergeComputeSessionRecords } from "./computeContextCoordinator";
 import {
   defaultComputeRuntime,
+  isComputeCapacityReachedError,
   resolveComputeRuntimeToolbarState,
 } from "./computeFileSurfaceModel";
+import {
+  computeSessionOwnerLabel,
+  ensureComputeContext,
+  getComputeContext,
+  INITIAL_COMPUTE_CONTEXT_GENERATION,
+  ownsLiveComputeSession,
+  useComputeContextStore,
+  type ComputeContextId,
+} from "./computeContextStore";
 
 import type { ComputeSourceLanguage } from "./computeSourceLanguage";
 
@@ -61,6 +73,8 @@ interface ComputeFileActionsProps {
   readonly sourcePending: boolean;
   readonly selection: { readonly start: number; readonly end: number } | null;
   readonly editorSelection: ComputeTextRange | null;
+  readonly contextId?: ComputeContextId;
+  readonly onRunRequested: () => void;
   readonly onExecutionSubmitted: (
     sessionId: ComputeSessionId,
     executionId: ComputeExecutionId,
@@ -83,13 +97,22 @@ function reportFailure(
 
 export const ComputeFileActions = forwardRef<ComputeFileActionsHandle, ComputeFileActionsProps>(
   function ComputeFileActions(props, ref) {
+    const onRunRequested = props.onRunRequested;
     const [operation, setOperation] = useState<ComputeRunKind | null>(null);
     const [refreshing, setRefreshing] = useState(false);
     const [switching, setSwitching] = useState(false);
+    const [stoppingUnusedSession, setStoppingUnusedSession] = useState<ComputeSessionId | null>(
+      null,
+    );
+    const [capacityBlocked, setCapacityBlocked] = useState(false);
+    const [startRetryAvailable, setStartRetryAvailable] = useState(false);
     const [switchTarget, setSwitchTarget] = useState<{
       readonly environmentId: EnvironmentId;
       readonly session: ComputeSessionRecord;
     } | null>(null);
+    const contextBinding = useComputeContextStore((state) =>
+      props.contextId === undefined ? null : (state.bindings[props.contextId] ?? null),
+    );
     const sessions = useEnvironmentQuery(
       computeEnvironment.sessions({
         environmentId: props.environmentId,
@@ -108,6 +131,17 @@ export const ComputeFileActions = forwardRef<ComputeFileActionsHandle, ComputeFi
         input: { cwd: props.cwd, refresh: false },
       }),
     );
+    const exactSessionQuery =
+      props.contextId !== undefined &&
+      contextBinding?.sessionId !== null &&
+      contextBinding?.sessionId !== undefined &&
+      typeof computeEnvironment.session === "function"
+        ? computeEnvironment.session({
+            environmentId: props.environmentId,
+            input: { cwd: props.cwd, sessionId: contextBinding.sessionId },
+          })
+        : null;
+    const exactSession = useEnvironmentQuery(exactSessionQuery);
     const refreshSessions = sessions.refresh;
     const refreshEvents = events.refresh;
     const refreshRuntimeInspection = runtimes.refresh;
@@ -119,19 +153,86 @@ export const ComputeFileActions = forwardRef<ComputeFileActionsHandle, ComputeFi
       reportFailure: false,
     });
     const stopSession = useAtomCommand(computeEnvironment.stopSession, { reportFailure: false });
+    const getSession = useAtomQueryRunner(computeEnvironment.session, {
+      reportFailure: false,
+      refresh: true,
+    });
+    const confirmFailedStart = useCallback(
+      async (sessionId: ComputeSessionId, generation: ComputeSessionRecord["generation"]) => {
+        if (props.contextId === undefined || typeof computeEnvironment.session !== "function")
+          return;
+        try {
+          const observed = await getSession({
+            environmentId: props.environmentId,
+            input: { cwd: props.cwd, sessionId },
+          });
+          if (
+            observed._tag !== "Success" ||
+            observed.value === null ||
+            observed.value.sessionId !== sessionId ||
+            observed.value.generation !== generation ||
+            !TERMINAL_COMPUTE_SESSION_STATUSES.has(observed.value.status)
+          ) {
+            return;
+          }
+          useComputeContextStore.getState().markSessionTerminal({
+            contextId: props.contextId,
+            sessionId,
+            generation,
+          });
+        } catch {
+          // A rejected read is not proof that the independent server startup stopped.
+        }
+      },
+      [getSession, props.contextId, props.cwd, props.environmentId],
+    );
 
+    const allSessions = useMemo(
+      () =>
+        mergeComputeSessionRecords(
+          sessions.data ?? [],
+          exactSession.data === null ? [] : [exactSession.data],
+          events.data?.sessions.values() ?? [],
+        ),
+      [events.data?.sessions, exactSession.data, sessions.data],
+    );
+    const ownedSession = allSessions.find(
+      (session) => session.sessionId === contextBinding?.sessionId,
+    );
+    useEffect(() => {
+      if (props.contextId !== undefined && ownedSession !== undefined) {
+        useComputeContextStore.getState().observeSession(props.contextId, ownedSession);
+      }
+    }, [props.contextId, ownedSession]);
+    const canRetryStart =
+      startRetryAvailable || (contextBinding?.lifecycle === "starting" && operation === null);
+    const capacitySessions = useMemo(
+      () =>
+        allSessions.filter(
+          (session) =>
+            !TERMINAL_COMPUTE_SESSION_STATUSES.has(session.status) &&
+            session.sessionId !== contextBinding?.sessionId,
+        ),
+      [allSessions, contextBinding?.sessionId],
+    );
     const liveSession = useMemo(() => {
-      const byId = new Map<string, ComputeSessionRecord>();
-      for (const session of sessions.data ?? []) byId.set(session.sessionId, session);
-      for (const session of events.data?.sessions.values() ?? []) {
-        byId.set(session.sessionId, session);
+      if (props.contextId !== undefined) {
+        if (contextBinding?.sessionId === null || contextBinding?.sessionId === undefined) {
+          return null;
+        }
+        return (
+          allSessions.find(
+            (session) =>
+              session.sessionId === contextBinding.sessionId &&
+              !TERMINAL_COMPUTE_SESSION_STATUSES.has(session.status),
+          ) ?? null
+        );
       }
       return (
-        [...byId.values()].find(
-          (session) => !TERMINAL_COMPUTE_SESSION_STATUSES.has(session.status),
-        ) ?? null
+        allSessions.find((session) => !TERMINAL_COMPUTE_SESSION_STATUSES.has(session.status)) ??
+        null
       );
-    }, [events.data?.sessions, sessions.data]);
+    }, [allSessions, contextBinding?.sessionId, props.contextId]);
     const readyRuntime = useMemo(
       () =>
         defaultComputeRuntime(
@@ -164,12 +265,76 @@ export const ComputeFileActions = forwardRef<ComputeFileActionsHandle, ComputeFi
       readyRuntimeAvailable: readyRuntime !== null,
       preferredRuntimeExecutable: readyRuntime?.profile.executable ?? null,
       scientificPackagesMissing: missingScientificPackages.length > 0,
+      capacityRecoveryAvailable: capacityBlocked,
+      startingRetryAvailable: canRetryStart,
+      ...(contextBinding?.lifecycle === undefined
+        ? {}
+        : { contextLifecycle: contextBinding.lifecycle }),
     });
     const requestRuntimeSwitch = () => {
       if (liveSession !== null) {
         setSwitchTarget({ environmentId: props.environmentId, session: liveSession });
       }
     };
+
+    const stopUnusedSession = useCallback(
+      async (session: ComputeSessionRecord) => {
+        if (stoppingUnusedSession !== null) return;
+        setStoppingUnusedSession(session.sessionId);
+        let result: Awaited<ReturnType<typeof stopSession>>;
+        try {
+          result = await stopSession({
+            environmentId: props.environmentId,
+            input: {
+              cwd: props.cwd,
+              sessionId: session.sessionId,
+              expectedGeneration: session.generation,
+            },
+          });
+        } catch (error) {
+          setStoppingUnusedSession(null);
+          toastManager.add({
+            type: "error",
+            title: `Unable to stop ${session.label}`,
+            description: error instanceof Error ? error.message : "The stop request failed.",
+          });
+          return;
+        }
+        setStoppingUnusedSession(null);
+        if (result._tag === "Success") {
+          for (const binding of Object.values(useComputeContextStore.getState().bindings)) {
+            if (
+              binding.environmentId === props.environmentId &&
+              binding.cwd === props.cwd &&
+              binding.sessionId === session.sessionId &&
+              binding.generation === session.generation
+            ) {
+              useComputeContextStore.getState().markSessionTerminal({
+                contextId: binding.contextId,
+                sessionId: result.value.sessionId,
+                generation: result.value.generation,
+              });
+            }
+          }
+          refreshSessions();
+          refreshEvents();
+          refreshRuntimeInspection();
+          return;
+        }
+        if (!isAtomCommandInterrupted(result)) {
+          reportFailure(`Unable to stop ${session.label}`, result);
+        }
+      },
+      [
+        props.cwd,
+        props.environmentId,
+        refreshEvents,
+        refreshRuntimeInspection,
+        refreshSessions,
+        stopSession,
+        stoppingUnusedSession,
+      ],
+    );
 
     const refreshRuntime = useCallback(async () => {
       if (refreshing) return;
@@ -196,13 +361,14 @@ export const ComputeFileActions = forwardRef<ComputeFileActionsHandle, ComputeFi
 
     const switchRuntime = useCallback(async () => {
       if (switchTarget === null || switching) return;
+      const target = switchTarget;
       setSwitching(true);
       const result = await stopSession({
-        environmentId: switchTarget.environmentId,
+        environmentId: target.environmentId,
         input: {
-          cwd: switchTarget.session.workingDirectory,
-          sessionId: switchTarget.session.sessionId,
-          expectedGeneration: switchTarget.session.generation,
+          cwd: target.session.workingDirectory,
+          sessionId: target.session.sessionId,
+          expectedGeneration: target.session.generation,
         },
       });
       setSwitching(false);
@@ -210,6 +376,13 @@ export const ComputeFileActions = forwardRef<ComputeFileActionsHandle, ComputeFi
         if (!isAtomCommandInterrupted(result))
           reportFailure(`Unable to switch ${props.language.displayName}`, result);
         return;
+      }
+      if (props.contextId !== undefined) {
+        useComputeContextStore.getState().markSessionTerminal({
+          contextId: props.contextId,
+          sessionId: target.session.sessionId,
+          generation: target.session.generation,
+        });
       }
       setSwitchTarget(null);
       refreshSessions();
@@ -221,6 +394,7 @@ export const ComputeFileActions = forwardRef<ComputeFileActionsHandle, ComputeFi
       refreshSessions,
       stopSession,
       props.language.displayName,
+      props.contextId,
       switchTarget,
       switching,
     ]);
@@ -231,41 +405,119 @@ export const ComputeFileActions = forwardRef<ComputeFileActionsHandle, ComputeFi
         setOperation(kind);
 
         let session = liveSession;
-        if (session !== null && session.languageId !== props.language.languageId) {
+        const currentBinding =
+          props.contextId === undefined
+            ? null
+            : (getComputeContext(props.contextId) ??
+              ensureComputeContext({
+                contextId: props.contextId,
+                environmentId: props.environmentId,
+                cwd: props.cwd,
+                ownerKey: `${props.environmentId}:${props.cwd}:${props.relativePath}`,
+                relativePath: props.relativePath,
+              }));
+        if (
+          currentBinding?.lifecycle === "closing" ||
+          currentBinding?.lifecycle === "close-failed" ||
+          (currentBinding?.lifecycle === "starting" && !capacityBlocked && !canRetryStart)
+        ) {
+          toastManager.add({
+            type: "info",
+            title: capacityBlocked
+              ? "Compute capacity reached"
+              : currentBinding.lifecycle === "starting"
+                ? "Compute is starting"
+                : "Compute is closing",
+            description: capacityBlocked
+              ? "Stop an unused session above, then retry with this same tab-owned session."
+              : currentBinding.lifecycle === "starting"
+                ? startRetryAvailable
+                  ? "Retry with the same tab-owned session ID."
+                  : "This tab already owns a start in progress."
+                : "Retry closing this tab before running it again.",
+          });
+          setOperation(null);
+          return;
+        }
+        if (
+          currentBinding?.sessionId !== null &&
+          currentBinding?.sessionId !== undefined &&
+          currentBinding.lifecycle === "live" &&
+          session === null
+        ) {
+          toastManager.add({
+            type: "info",
+            title: "Refreshing this compute tab",
+            description:
+              "The owned session is not in the current snapshot yet. Try Run again shortly.",
+          });
+          setOperation(null);
+          return;
+        }
+        if (session === null && readyRuntime === null) {
           toastManager.add(
             stackedThreadToast({
               type: "error",
-              title: "Another language is active",
-              description: `Stop the live compute session before running this ${props.language.displayName} file.`,
+              title: `${props.language.displayName} is not ready`,
+              description: `Enable and configure ${props.language.displayName} in Scientific Computing settings.`,
             }),
           );
           setOperation(null);
           return;
         }
+        onRunRequested();
         if (session === null) {
-          if (readyRuntime === null) {
-            toastManager.add(
-              stackedThreadToast({
-                type: "error",
-                title: `${props.language.displayName} is not ready`,
-                description: `Enable and configure ${props.language.displayName} in Scientific Computing settings.`,
-              }),
-            );
+          const runtime = readyRuntime;
+          if (runtime === null) {
             setOperation(null);
             return;
           }
+          const sessionId =
+            currentBinding?.lifecycle === "terminal" || currentBinding?.sessionId === null
+              ? ComputeSessionId.make(randomUUID())
+              : (currentBinding?.sessionId ?? ComputeSessionId.make(randomUUID()));
+          const requestedGeneration =
+            currentBinding?.lifecycle === "terminal" || currentBinding?.sessionId === null
+              ? INITIAL_COMPUTE_CONTEXT_GENERATION
+              : (currentBinding?.generation ?? INITIAL_COMPUTE_CONTEXT_GENERATION);
+          if (props.contextId !== undefined) {
+            const reserved = useComputeContextStore.getState().reserveSession({
+              contextId: props.contextId,
+              sessionId,
+              generation: requestedGeneration,
+            });
+            if (!reserved) {
+              setOperation(null);
+              return;
+            }
+          }
+          setStartRetryAvailable(false);
           const started = await startSession({
             environmentId: props.environmentId,
             input: {
               cwd: props.cwd,
-              sessionId: ComputeSessionId.make(randomUUID()),
-              languageId: readyRuntime.profile.languageId,
+              sessionId,
+              languageId: runtime.profile.languageId,
               // Resolve the current default on the server; a cached toolbar is not a user override.
               executable: null,
             },
           });
           if (started._tag !== "Success") {
             setOperation(null);
+            const capacityRejected = isComputeCapacityReachedError(
+              squashAtomCommandFailure(started),
+            );
+            setStartRetryAvailable(!capacityRejected);
+            setCapacityBlocked(capacityRejected);
+            if (capacityRejected && props.contextId !== undefined) {
+              useComputeContextStore.getState().releasePendingReservation({
+                contextId: props.contextId,
+                sessionId,
+                generation: requestedGeneration,
+              });
+            } else {
+              void confirmFailedStart(sessionId, requestedGeneration);
+            }
             if (!isAtomCommandInterrupted(started))
               reportFailure(`Unable to start ${props.language.displayName}`, started);
             refreshSessions();
@@ -273,7 +525,38 @@ export const ComputeFileActions = forwardRef<ComputeFileActionsHandle, ComputeFi
             return;
           }
           session = started.value;
+          setStartRetryAvailable(false);
+          setCapacityBlocked(false);
+          if (
+            props.contextId !== undefined &&
+            !useComputeContextStore.getState().bindSession({
+              contextId: props.contextId,
+              sessionId: session.sessionId,
+              generation: session.generation,
+            })
+          ) {
+            setOperation(null);
+            const current = getComputeContext(props.contextId);
+            if (
+              current?.sessionId === session.sessionId &&
+              (current.lifecycle === "closing" || current.lifecycle === "close-failed")
+            ) {
+              void closeComputeContext({
+                contextId: props.contextId,
+                stopSession,
+                getSession,
+              });
+            }
+            return;
+          }
           refreshSessions();
+        }
+
+        const currentOwner =
+          props.contextId === undefined ? null : getComputeContext(props.contextId);
+        if (props.contextId !== undefined && !ownsLiveComputeSession(currentOwner, session)) {
+          setOperation(null);
+          return;
         }
 
         const executionId = ComputeExecutionId.make(randomUUID());
@@ -309,6 +592,7 @@ export const ComputeFileActions = forwardRef<ComputeFileActionsHandle, ComputeFi
         props.cwd,
         props.environmentId,
         props.onExecutionSubmitted,
+        onRunRequested,
         props.language,
         props.relativePath,
         props.sourcePending,
@@ -320,6 +604,14 @@ export const ComputeFileActions = forwardRef<ComputeFileActionsHandle, ComputeFi
         startSession,
         submitExecution,
         switching,
+        contextBinding?.lifecycle,
+        capacityBlocked,
+        startRetryAvailable,
+        canRetryStart,
+        confirmFailedStart,
+        getSession,
+        props.contextId,
+        stopSession,
       ],
     );
 
@@ -338,7 +630,7 @@ export const ComputeFileActions = forwardRef<ComputeFileActionsHandle, ComputeFi
         ? null
         : computeCell(props.contents, caretLine + 1, props.language.cellMarker);
     const fileSlice = computeFile(props.contents);
-    const busy = operation !== null || refreshing || switching;
+    const busy = operation !== null || refreshing || switching || stoppingUnusedSession !== null;
 
     useImperativeHandle(
       ref,
@@ -362,7 +654,42 @@ export const ComputeFileActions = forwardRef<ComputeFileActionsHandle, ComputeFi
       <>
         <div className="@container/python-file-actions flex min-w-0 items-center justify-end gap-1.5">
           <div className="hidden min-w-0 flex-1 @[9rem]/python-file-actions:block">
-            {runtimeToolbar.kind === "switch" ? (
+            {capacityBlocked ? (
+              <Menu>
+                <MenuTrigger
+                  render={
+                    <Button
+                      size="xs"
+                      variant="ghost-muted"
+                      className="-ms-1 h-6 min-w-0 max-w-full px-1 text-[11px] font-normal"
+                      disabled={stoppingUnusedSession !== null}
+                      aria-label="Choose a compute session to stop"
+                      title="Stop an unused compute session to free host capacity"
+                    />
+                  }
+                >
+                  <span className="truncate">Capacity · choose session</span>
+                </MenuTrigger>
+                <MenuPopup align="start" side="bottom" className="min-w-64">
+                  {capacitySessions.length === 0 ? (
+                    <MenuItem disabled title="Stop a session in another project, then retry">
+                      No active sessions in this project
+                    </MenuItem>
+                  ) : (
+                    capacitySessions.map((session) => (
+                      <MenuItem
+                        key={`${session.sessionId}:${session.generation}`}
+                        disabled={stoppingUnusedSession !== null}
+                        onClick={() => void stopUnusedSession(session)}
+                      >
+                        Stop {computeSessionOwnerLabel(session, props.environmentId, props.cwd)} ·{" "}
+                        {session.status.replaceAll("-", " ")}
+                      </MenuItem>
+                    ))
+                  )}
+                </MenuPopup>
+              </Menu>
+            ) : runtimeToolbar.kind === "switch" ? (
               <Button
                 size="xs"
                 variant="ghost-muted"

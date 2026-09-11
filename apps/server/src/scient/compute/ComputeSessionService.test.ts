@@ -15,6 +15,7 @@ import {
   nextComputeSessionGeneration,
   createSimulatedComputeTransport,
   type ComputeCapability,
+  type ComputeChannel,
   type ComputeLanguageAdapter,
   type ComputeExecutionSource,
   type ComputeOutput,
@@ -34,6 +35,7 @@ import * as Effect from "effect/Effect";
 import * as Deferred from "effect/Deferred";
 import * as Exit from "effect/Exit";
 import * as FileSystem from "effect/FileSystem";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Scope from "effect/Scope";
 import * as Schema from "effect/Schema";
@@ -317,6 +319,8 @@ const withReportedCapabilities = (
 });
 
 interface HarnessOptions {
+  readonly beforeOpen?: (sessionId: ComputeSessionId) => Effect.Effect<void>;
+  readonly transformChannel?: (channel: ComputeChannel) => ComputeChannel;
   readonly adapter?: Partial<ComputeLanguageAdapter>;
   readonly additionalBindings?: ReadonlyArray<ComputeRuntimeBinding>;
   readonly analytics?: AnalyticsService["Service"];
@@ -371,7 +375,9 @@ const harness = (options: HarnessOptions = {}) =>
               operation: "handshake",
               message: "License unavailable",
             });
-          return yield* base.open(request);
+          if (options.beforeOpen !== undefined) yield* options.beforeOpen(request.sessionId);
+          const channel = yield* base.open(request);
+          return options.transformChannel?.(channel) ?? channel;
         });
       },
     };
@@ -398,7 +404,7 @@ const harness = (options: HarnessOptions = {}) =>
         },
         ...(options.additionalBindings ?? []),
       ]),
-      { ...DEFAULT_COMPUTE_SESSION_SERVICE_OPTIONS, ...options.service },
+      { ...DEFAULT_COMPUTE_SESSION_SERVICE_OPTIONS, maximumLiveSessions: 32, ...options.service },
       options.projectOutputs
         ? Layer.succeed(ComputeProjectOutputObserver, options.projectOutputs)
         : undefined,
@@ -696,6 +702,69 @@ describe("compute runtime inspection", () => {
         }),
       );
     }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect(
+    "keeps verification cancellable without blocking other sessions or allowing removal",
+    () =>
+      Effect.gen(function* () {
+        const entered = yield* Deferred.make<void>();
+        let removals = 0;
+        const managedStatus: ComputeManagedRuntimeStatus = {
+          installed: true,
+          selection: "managed",
+          updateAvailable: false,
+          runtimeVersion: "test",
+          toolkitRevision: "test",
+          operation: null,
+          failureMessage: null,
+        };
+        const test = yield* harness({
+          connection: "detected",
+          beforeOpen: (sessionId) =>
+            sessionId.startsWith("verify-")
+              ? Deferred.succeed(entered, undefined).pipe(Effect.andThen(Effect.never))
+              : Effect.void,
+          managedRuntime: {
+            isRemoving: () => false,
+            status: () => Effect.succeed(managedStatus),
+            manage: () =>
+              Effect.sync(() => {
+                removals += 1;
+                return managedStatus;
+              }),
+            cancel: () => Effect.succeed(managedStatus),
+          },
+        });
+        yield* test.use(
+          Effect.gen(function* () {
+            const service = yield* ComputeSessionService;
+            const verification = yield* service
+              .verifyRuntime({
+                languageId: PYTHON,
+                executable: PROFILE.executable,
+                workingDirectory: process.cwd(),
+                refresh: true,
+              })
+              .pipe(Effect.forkScoped);
+            yield* Deferred.await(entered);
+            expect((yield* Effect.flip(service.manageRuntime(PYTHON, "remove"))).reason).toBe(
+              "operation-failed",
+            );
+            // A native verification has a startup slot, not the global admission lock.
+            yield* start;
+            yield* service.stopSession({
+              projectId: PROJECT_ID,
+              sessionId: SESSION_ID,
+              expectedGeneration: INITIAL_COMPUTE_SESSION_GENERATION,
+            });
+            yield* Fiber.interrupt(verification);
+            yield* service.manageRuntime(PYTHON, "remove");
+            expect(removals).toBe(1);
+            expect(test.closed().toSorted()).toEqual(test.opened().toSorted());
+          }),
+        );
+      }).pipe(Effect.provide(NodeServices.layer)),
   );
 
   it.effect("closes every failed verification and reports a useful connection failure", () =>
@@ -1343,7 +1412,7 @@ describe("compute session startup", () => {
     }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
   );
 
-  it.effect("admits exactly one live session per project under a simultaneous start", () =>
+  it.effect("admits independent live sessions in one project under simultaneous starts", () =>
     Effect.gen(function* () {
       const test = yield* harness();
 
@@ -1366,9 +1435,9 @@ describe("compute session startup", () => {
           const failed = outcomes.flatMap((outcome) =>
             outcome._tag === "failed" ? [outcome.error] : [],
           );
-          expect(started).toHaveLength(1);
-          expect(failed.map((error) => error.reason)).toEqual(["session-conflict"]);
-          expect(test.opened()).toHaveLength(1);
+          expect(started).toHaveLength(2);
+          expect(failed).toEqual([]);
+          expect(test.opened()).toHaveLength(2);
 
           const winner = started[0]!;
           yield* service.stopSession({
@@ -1380,7 +1449,383 @@ describe("compute session startup", () => {
             startInput({ sessionId: ComputeSessionId.make("session-c") }),
           );
           expect(next.status).toBe("ready");
-          expect(test.opened()).toHaveLength(2);
+          expect(test.opened()).toHaveLength(3);
+        }),
+      );
+    }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+  );
+
+  it.effect("can stop a pending handshake while another tab starts and runs", () =>
+    Effect.gen(function* () {
+      const entered = yield* Deferred.make<void>();
+      const release = yield* Deferred.make<void>();
+      const test = yield* harness({
+        beforeOpen: (id) =>
+          id === SESSION_ID
+            ? Deferred.succeed(entered, undefined).pipe(Effect.andThen(Deferred.await(release)))
+            : Effect.void,
+      });
+      yield* test.use(
+        Effect.gen(function* () {
+          const service = yield* ComputeSessionService;
+          const opening = yield* start.pipe(Effect.flip, Effect.forkChild);
+          yield* Deferred.await(entered);
+          expect(
+            yield* service.getSession({ projectId: PROJECT_ID, sessionId: SESSION_ID }),
+          ).toMatchObject({ status: "starting", identity: null });
+          const second = yield* service.startSession(
+            startInput({ sessionId: ComputeSessionId.make("parallel") }),
+          );
+          const stopped = yield* service.stopSession({
+            projectId: PROJECT_ID,
+            sessionId: SESSION_ID,
+            expectedGeneration: INITIAL_COMPUTE_SESSION_GENERATION,
+          });
+          expect(stopped.status).toBe("stopped");
+          expect(test.closed()).toEqual([SESSION_ID]);
+          expect((yield* Fiber.join(opening)).reason).toBe("session-terminal");
+          yield* Deferred.succeed(release, undefined);
+          yield* service.submitExecution({
+            projectId: PROJECT_ID,
+            sessionId: second.sessionId,
+            executionId: ComputeExecutionId.make("parallel-result"),
+            expectedGeneration: second.generation,
+            code: "1",
+            source: { _tag: "console" },
+          });
+          const executions = yield* waitUntil(
+            service
+              .listExecutions({ projectId: PROJECT_ID, sessionId: second.sessionId })
+              .pipe(Effect.map((rows) => (rows[0]?.result?.status === "succeeded" ? rows : null))),
+          );
+          expect(executions).toHaveLength(1);
+          expect(
+            (yield* service.getSession({ projectId: PROJECT_ID, sessionId: SESSION_ID }))?.status,
+          ).toBe("stopped");
+        }),
+      );
+    }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+  );
+
+  it.effect("retains startup ownership after the requesting client disconnects", () =>
+    Effect.gen(function* () {
+      const entered = yield* Deferred.make<void>();
+      const release = yield* Deferred.make<void>();
+      const test = yield* harness({
+        beforeOpen: () =>
+          Deferred.succeed(entered, undefined).pipe(Effect.andThen(Deferred.await(release))),
+      });
+      yield* test.use(
+        Effect.gen(function* () {
+          const service = yield* ComputeSessionService;
+          const caller = yield* start.pipe(Effect.forkChild);
+          yield* Deferred.await(entered);
+          yield* Fiber.interrupt(caller);
+          expect(
+            (yield* service.getSession({ projectId: PROJECT_ID, sessionId: SESSION_ID }))?.status,
+          ).toBe("starting");
+          yield* service.stopSession({
+            projectId: PROJECT_ID,
+            sessionId: SESSION_ID,
+            expectedGeneration: INITIAL_COMPUTE_SESSION_GENERATION,
+          });
+          yield* Deferred.succeed(release, undefined);
+          expect(test.closed()).toEqual([SESSION_ID]);
+          expect(
+            (yield* service.getSession({ projectId: PROJECT_ID, sessionId: SESSION_ID }))?.status,
+          ).toBe("stopped");
+        }),
+      );
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("finishes an accepted Stop even when its client disconnects", () =>
+    Effect.gen(function* () {
+      const entered = yield* Deferred.make<void>();
+      const release = yield* Deferred.make<void>();
+      const test = yield* harness({
+        transformChannel: (channel) => ({
+          ...channel,
+          shutdown: (input) =>
+            Deferred.succeed(entered, undefined).pipe(
+              Effect.andThen(Deferred.await(release)),
+              Effect.andThen(channel.shutdown(input)),
+            ),
+        }),
+      });
+      yield* test.use(
+        Effect.gen(function* () {
+          const service = yield* ComputeSessionService;
+          yield* start;
+          const closing = yield* service
+            .stopSession({
+              projectId: PROJECT_ID,
+              sessionId: SESSION_ID,
+              expectedGeneration: INITIAL_COMPUTE_SESSION_GENERATION,
+            })
+            .pipe(Effect.forkChild);
+          yield* Deferred.await(entered);
+          const disconnected = yield* Fiber.interrupt(closing).pipe(Effect.forkChild);
+          yield* Effect.yieldNow;
+          yield* Deferred.succeed(release, undefined);
+          yield* Fiber.join(disconnected);
+          expect(test.closed()).toEqual([SESSION_ID]);
+          expect(
+            (yield* service.getSession({ projectId: PROJECT_ID, sessionId: SESSION_ID }))?.status,
+          ).toBe("stopped");
+        }),
+      );
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("stops discovery before any runtime is launched", () =>
+    Effect.gen(function* () {
+      const entered = yield* Deferred.make<void>();
+      const test = yield* harness({
+        adapter: {
+          discover: () => Deferred.succeed(entered, undefined).pipe(Effect.andThen(Effect.never)),
+        },
+      });
+      yield* test.use(
+        Effect.gen(function* () {
+          const service = yield* ComputeSessionService;
+          const opening = yield* start.pipe(Effect.flip, Effect.forkChild);
+          yield* Deferred.await(entered);
+          const stopped = yield* service.stopSession({
+            projectId: PROJECT_ID,
+            sessionId: SESSION_ID,
+            expectedGeneration: INITIAL_COMPUTE_SESSION_GENERATION,
+          });
+          expect(stopped.status).toBe("stopped");
+          expect((yield* Fiber.join(opening)).reason).toBe("session-terminal");
+          expect(test.opened()).toEqual([]);
+        }),
+      );
+    }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+  );
+
+  it.effect("keeps sixteen same-project queues isolated when one context closes", () =>
+    Effect.gen(function* () {
+      const test = yield* harness();
+      yield* test.use(
+        Effect.gen(function* () {
+          const service = yield* ComputeSessionService;
+          const sessions = yield* Effect.forEach(
+            Array.from({ length: 16 }, (_, index) => index),
+            (index) =>
+              service.startSession(
+                startInput({ sessionId: ComputeSessionId.make(`parallel-${index}`) }),
+              ),
+            { concurrency: "unbounded" },
+          );
+          yield* Effect.forEach(
+            sessions,
+            (session) =>
+              Effect.gen(function* () {
+                const target = {
+                  projectId: PROJECT_ID,
+                  sessionId: session.sessionId,
+                  expectedGeneration: session.generation,
+                  source: { _tag: "console" as const },
+                };
+                yield* service.submitExecution({
+                  ...target,
+                  code: "hold",
+                  executionId: ComputeExecutionId.make("same-active-id"),
+                });
+                yield* service.submitExecution({
+                  ...target,
+                  code: "1",
+                  executionId: ComputeExecutionId.make("same-queued-id"),
+                });
+              }),
+            { concurrency: "unbounded" },
+          );
+          const closing = sessions[0]!;
+          yield* service.stopSession({
+            projectId: PROJECT_ID,
+            sessionId: closing.sessionId,
+            expectedGeneration: closing.generation,
+          });
+          expect(test.closed()).toEqual([closing.sessionId]);
+          yield* Effect.forEach(
+            sessions.slice(1),
+            (session) =>
+              service.interruptSession({
+                projectId: PROJECT_ID,
+                sessionId: session.sessionId,
+                expectedGeneration: session.generation,
+              }),
+            { concurrency: "unbounded" },
+          );
+          for (const session of sessions.slice(1)) {
+            const executions = yield* waitUntil(
+              service
+                .listExecutions({ projectId: PROJECT_ID, sessionId: session.sessionId })
+                .pipe(
+                  Effect.map((rows) =>
+                    rows.find((row) => row.request.executionId === "same-queued-id")?.result
+                      ?.status === "succeeded"
+                      ? rows
+                      : null,
+                  ),
+                ),
+            );
+            expect(executions).toHaveLength(2);
+            expect(executions.every((row) => row.request.sessionId === session.sessionId)).toBe(
+              true,
+            );
+          }
+          const closedRows = yield* service.listExecutions({
+            projectId: PROJECT_ID,
+            sessionId: closing.sessionId,
+          });
+          expect(closedRows.every((row) => row.result?.status === "cancelled")).toBe(true);
+        }),
+      );
+      expect(test.closed().length).toBe(16);
+    }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+  );
+
+  it.effect("coalesces duplicate starts while discovery is pending", () =>
+    Effect.gen(function* () {
+      const entered = yield* Deferred.make<void>();
+      const release = yield* Deferred.make<void>();
+      const test = yield* harness({
+        beforeOpen: () =>
+          Deferred.succeed(entered, undefined).pipe(Effect.andThen(Deferred.await(release))),
+      });
+      yield* test.use(
+        Effect.gen(function* () {
+          const first = yield* start.pipe(Effect.forkChild);
+          yield* Deferred.await(entered);
+          const second = yield* start.pipe(Effect.forkChild);
+          yield* Effect.yieldNow;
+          yield* Deferred.succeed(release, undefined);
+          expect((yield* Fiber.join(first)).sessionId).toBe((yield* Fiber.join(second)).sessionId);
+          expect(test.opened()).toEqual([SESSION_ID]);
+        }),
+      );
+    }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+  );
+
+  it.effect("bounds host admission and lets Stop cancel a tab waiting for a startup slot", () =>
+    Effect.gen(function* () {
+      const entered = yield* Deferred.make<void>();
+      const release = yield* Deferred.make<void>();
+      const test = yield* harness({
+        service: { maximumLiveSessions: 2, maximumConcurrentStarts: 1 },
+        beforeOpen: (id) =>
+          id === SESSION_ID
+            ? Deferred.succeed(entered, undefined).pipe(Effect.andThen(Deferred.await(release)))
+            : Effect.void,
+      });
+      yield* test.use(
+        Effect.gen(function* () {
+          const service = yield* ComputeSessionService;
+          const first = yield* start.pipe(Effect.forkChild);
+          yield* Deferred.await(entered);
+          const queuedId = ComputeSessionId.make("startup-slot-queued");
+          const queued = yield* service
+            .startSession(startInput({ sessionId: queuedId }))
+            .pipe(Effect.flip, Effect.forkChild);
+          yield* waitUntil(
+            service
+              .getSession({ projectId: PROJECT_ID, sessionId: queuedId })
+              .pipe(Effect.map((record) => (record?.status === "starting" ? record : null))),
+          );
+          expect(test.opened()).toEqual([SESSION_ID]);
+          const refused = yield* Effect.flip(
+            service.startSession(
+              startInput({
+                projectId: ComputeProjectId.make("another-project"),
+                sessionId: ComputeSessionId.make("beyond-capacity"),
+              }),
+            ),
+          );
+          expect(refused.reason).toBe("capacity-reached");
+          const stopped = yield* service.stopSession({
+            projectId: PROJECT_ID,
+            sessionId: queuedId,
+            expectedGeneration: INITIAL_COMPUTE_SESSION_GENERATION,
+          });
+          expect(stopped.status).toBe("stopped");
+          expect((yield* Fiber.join(queued)).reason).toBe("session-terminal");
+          expect(test.opened()).toEqual([SESSION_ID]);
+          yield* Deferred.succeed(release, undefined);
+          expect((yield* Fiber.join(first)).status).toBe("ready");
+          const replacement = yield* service.startSession(
+            startInput({ sessionId: ComputeSessionId.make("after-capacity-release") }),
+          );
+          expect(replacement.status).toBe("ready");
+          expect(
+            (yield* service.getSession({ projectId: PROJECT_ID, sessionId: SESSION_ID }))?.status,
+          ).toBe("ready");
+        }),
+      );
+    }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+  );
+
+  it.effect("Stop is not blocked by a runtime's stalled variable inspection", () =>
+    Effect.gen(function* () {
+      const entered = yield* Deferred.make<void>();
+      const test = yield* harness({
+        transformChannel: (channel) => ({
+          ...channel,
+          inspectVariables: () =>
+            Deferred.succeed(entered, undefined).pipe(Effect.andThen(Effect.never)),
+        }),
+      });
+      yield* test.use(
+        Effect.gen(function* () {
+          const service = yield* ComputeSessionService;
+          yield* start;
+          const command = {
+            projectId: PROJECT_ID,
+            sessionId: SESSION_ID,
+            expectedGeneration: INITIAL_COMPUTE_SESSION_GENERATION,
+          };
+          const inspection = yield* service.inspectVariables(command).pipe(Effect.forkChild);
+          yield* Deferred.await(entered);
+          expect((yield* service.stopSession(command)).status).toBe("stopped");
+          expect(test.closed()).toEqual([SESSION_ID]);
+          yield* Fiber.interrupt(inspection);
+        }),
+      );
+    }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+  );
+
+  it.effect("Stop does not wait for a restarting runtime's acknowledgement", () =>
+    Effect.gen(function* () {
+      const entered = yield* Deferred.make<void>();
+      const test = yield* harness({
+        transformChannel: (channel) => ({
+          ...channel,
+          restart: () => Deferred.succeed(entered, undefined).pipe(Effect.andThen(Effect.never)),
+        }),
+      });
+      yield* test.use(
+        Effect.gen(function* () {
+          const service = yield* ComputeSessionService;
+          yield* start;
+          yield* submit("hold", "active-before-restart");
+          yield* waitUntil(
+            executionAt(ComputeExecutionId.make("active-before-restart"), "running"),
+          );
+          yield* submit("1", "queued-before-restart");
+          const command = {
+            projectId: PROJECT_ID,
+            sessionId: SESSION_ID,
+            expectedGeneration: INITIAL_COMPUTE_SESSION_GENERATION,
+          };
+          const restarting = yield* service.restartSession(command).pipe(Effect.forkChild);
+          yield* Deferred.await(entered);
+          expect((yield* service.stopSession(command)).status).toBe("stopped");
+          expect(test.closed()).toEqual([SESSION_ID]);
+          expect(test.submitted()).toEqual(["hold"]);
+          const executions = yield* service.listExecutions(command);
+          expect(executions.every((row) => row.result?.status === "cancelled")).toBe(true);
+          yield* Fiber.interrupt(restarting);
         }),
       );
     }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
@@ -1428,9 +1873,13 @@ describe("compute session startup", () => {
           const error = yield* Effect.flip(start);
           expect(error.reason).toBe("transport-failed");
           expect(error.message).toContain("interrupt");
-          // Nothing was written, because nothing was ever running.
+          // The accepted startup has durable failed history, never a phantom ready runtime.
           const store = yield* LocalComputeStore.LocalComputeStore;
-          expect(yield* store.loadSession(PROJECT_ID, SESSION_ID)).toBeNull();
+          expect(yield* store.loadSession(PROJECT_ID, SESSION_ID)).toMatchObject({
+            status: "failed",
+            identity: null,
+          });
+          expect(test.closed()).toEqual([SESSION_ID]);
         }),
       );
     }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),

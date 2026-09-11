@@ -383,19 +383,20 @@ describe("compute RPC gateway", () => {
     }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
   );
 
-  it.effect("bounds and orders durable session history at the product boundary", () =>
+  it.effect("bounds history without hiding older live sessions at the product boundary", () =>
     Effect.gen(function* () {
       const initialized = yield* project;
       const projectId = ComputeProjectId.make(initialized.identity.projectId);
-      const history = Array.from({ length: 130 }, (_, index) =>
-        record(
+      const history = Array.from({ length: 130 }, (_, index) => ({
+        ...record(
           projectId,
           ComputeSessionId.make(`session-${index}`),
           `2026-08-20T${String(12 + Math.floor(index / 60)).padStart(2, "0")}:${String(
             index % 60,
           ).padStart(2, "0")}:00.000Z`,
         ),
-      );
+        status: index === 0 ? ("ready" as const) : ("stopped" as const),
+      }));
       const gateway = makeComputeRpcGateway({
         compute: computeStub({ listSessions: () => Effect.succeed(history) }),
         serverSettings: { getSettings: Effect.succeed(DEFAULT_SERVER_SETTINGS) },
@@ -403,9 +404,10 @@ describe("compute RPC gateway", () => {
       });
 
       const listed = yield* gateway.listSessions({ cwd: initialized.root });
-      expect(listed).toHaveLength(100);
+      expect(listed).toHaveLength(101);
       expect(listed[0]?.sessionId).toBe("session-129");
-      expect(listed.at(-1)?.sessionId).toBe("session-30");
+      expect(listed.at(-2)?.sessionId).toBe("session-30");
+      expect(listed.at(-1)?.sessionId).toBe("session-0");
     }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
   );
 

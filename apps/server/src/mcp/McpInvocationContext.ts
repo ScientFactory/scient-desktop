@@ -11,6 +11,7 @@ import * as Effect from "effect/Effect";
 export type McpCapability =
   | "preview"
   | "documents:build"
+  | "compute:read"
   | "skills:read"
   | "sources:read"
   | "sources:write";

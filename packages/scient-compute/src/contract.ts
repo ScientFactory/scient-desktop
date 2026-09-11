@@ -152,7 +152,7 @@ export type ComputeDiagnostic = typeof ComputeDiagnostic.Type;
 export const ComputeImageMediaType = Schema.Literals(["image/png", "image/svg+xml"]);
 export type ComputeImageMediaType = typeof ComputeImageMediaType.Type;
 
-/** Why an image belongs to this execution, without coupling it to one runtime. */
+/** Capture provenance. A project-file is observed, not proven to be produced by the execution. */
 export const ComputeImageOrigin = Schema.Union([
   Schema.TaggedStruct("runtime-display", {}),
   Schema.TaggedStruct("project-file", {
@@ -441,10 +441,35 @@ export interface ComputeTransportOpenRequest {
   readonly requiredCapabilities: ReadonlyArray<ComputeCapability>;
 }
 
+/**
+ * Optional source facts forwarded with one execution.
+ *
+ * Paths are project-relative claims resolved by the server-owned bridge cwd.
+ * For a dirty file, cell, or selection, `sourceBytesHash` identifies the
+ * submitted `code` bytes; it is not a claim about the whole source document.
+ * A bridge may use a saved file path natively only when `saved` and
+ * `sourceBytesHash` are present and the on-disk bytes prove that identity.
+ * Dirty, cell, and selection submissions remain exact submitted bytes with
+ * their stated diagnostic context.
+ */
+export interface ComputeExecuteSourceContext {
+  readonly kind: "file" | "cell" | "selection";
+  readonly filePath?: string;
+  readonly fileName?: string;
+  readonly sourceBytesHash?: string;
+  readonly sourceRevision?: string;
+  readonly saved?: boolean;
+  readonly startLine?: number;
+  readonly startColumn?: number;
+  readonly endLine?: number;
+  readonly endColumn?: number;
+}
+
 export interface ComputeExecuteRequest {
   readonly requestId: ComputeRequestId;
   readonly expectedGeneration: ComputeSessionGeneration;
   readonly code: string;
+  readonly sourceContext?: ComputeExecuteSourceContext;
 }
 
 export interface ComputeInterruptRequest {

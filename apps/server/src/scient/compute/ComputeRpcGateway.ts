@@ -4,6 +4,7 @@ import * as NodeOS from "node:os";
 import { inspectScientProject, readScientProjectIdentity } from "@scientfactory/project-init";
 import {
   ComputeProjectId,
+  TERMINAL_COMPUTE_SESSION_STATUSES,
   type ComputeLanguageId,
   type ComputeSourceRange,
 } from "@scientfactory/compute";
@@ -283,7 +284,14 @@ export function makeComputeRpcGateway(input: {
   ) {
     const project = yield* projectFor("list", request.cwd);
     const sessions = yield* input.compute.listSessions({ projectId: project.projectId });
-    return sessions.slice(-100).toReversed();
+    const recent = new Set(sessions.slice(-100).map((session) => session.sessionId));
+    // History is bounded; live owners must never disappear behind newer history.
+    return sessions
+      .filter(
+        (session) =>
+          !TERMINAL_COMPUTE_SESSION_STATUSES.has(session.status) || recent.has(session.sessionId),
+      )
+      .toReversed();
   });
 
   const getSession = Effect.fn("ComputeRpcGateway.getSession")(function* (

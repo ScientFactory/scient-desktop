@@ -4,15 +4,18 @@ import { describe, expect, it } from "vite-plus/test";
 import {
   DEFAULT_COMPUTE_FILE_SPLIT,
   DEFAULT_COMPUTE_FILE_SPLIT_LAYOUT,
+  DEFAULT_COMPUTE_FILE_RESULTS_VIEW,
   MIN_COMPUTE_FILE_SPLIT,
   clampComputeFileSplit,
+  computeFileViewAfterRun,
   normalizeComputeFileSplit,
   normalizeComputeFileSplitLayout,
-  normalizeComputeFileView,
+  normalizeComputeFileResultsView,
   nudgeComputeFileSplit,
   computeFileSplitFromPointer,
   resolveComputeRuntimeToolbarState,
   defaultComputeRuntime,
+  isComputeCapacityReachedError,
 } from "./computeFileSurfaceModel";
 
 const pythonRuntime = {
@@ -62,9 +65,16 @@ describe("python compute surface model", () => {
     ).toBe("path");
     expect(defaultComputeRuntime([{ ...language, enabled: false }])).toBeNull();
   });
-  it("normalizes persisted modes and split ratios", () => {
-    expect(normalizeComputeFileView("results")).toBe("results");
-    expect(normalizeComputeFileView("console")).toBe("code");
+  it("remembers only a results layout and keeps the split readable", () => {
+    expect(normalizeComputeFileResultsView("split")).toBe("split");
+    expect(normalizeComputeFileResultsView("results")).toBe("results");
+    expect(normalizeComputeFileResultsView("code")).toBe(DEFAULT_COMPUTE_FILE_RESULTS_VIEW);
+    expect(normalizeComputeFileResultsView("console")).toBe(DEFAULT_COMPUTE_FILE_RESULTS_VIEW);
+    expect(MIN_COMPUTE_FILE_SPLIT).toBe(0.3);
+    expect(computeFileViewAfterRun("code", "results")).toBe("results");
+    expect(computeFileViewAfterRun("code", "split")).toBe("split");
+    expect(computeFileViewAfterRun("results", "split")).toBe("results");
+    expect(computeFileViewAfterRun("split", "results")).toBe("split");
     expect(normalizeComputeFileSplit(null)).toBe(DEFAULT_COMPUTE_FILE_SPLIT);
     expect(clampComputeFileSplit(0.01)).toBe(MIN_COMPUTE_FILE_SPLIT);
     expect(clampComputeFileSplit(0.99)).toBe(1 - MIN_COMPUTE_FILE_SPLIT);
@@ -117,6 +127,30 @@ describe("python compute surface model", () => {
         scientificPackagesMissing: false,
       }),
     ).toEqual({ kind: "setup", label: "Set up Python", canRun: false });
+    expect(isComputeCapacityReachedError({ reason: "capacity-reached" })).toBe(true);
+    expect(isComputeCapacityReachedError(new Error("capacity-reached"))).toBe(false);
+    expect(
+      resolveComputeRuntimeToolbarState({
+        contextLifecycle: "starting",
+        capacityRecoveryAvailable: true,
+        liveSession: null,
+        runtimeInspectionPending: false,
+        readyRuntimeAvailable: true,
+        preferredRuntimeExecutable: pythonRuntime.executable,
+        scientificPackagesMissing: false,
+      }),
+    ).toEqual({ kind: "status", label: "Python capacity reached", canRun: true });
+    expect(
+      resolveComputeRuntimeToolbarState({
+        contextLifecycle: "starting",
+        startingRetryAvailable: true,
+        liveSession: null,
+        runtimeInspectionPending: false,
+        readyRuntimeAvailable: true,
+        preferredRuntimeExecutable: pythonRuntime.executable,
+        scientificPackagesMissing: false,
+      }),
+    ).toEqual({ kind: "status", label: "Python retry start", canRun: true });
   });
 
   it("uses the active session as authority for Python run availability", () => {

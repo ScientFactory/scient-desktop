@@ -71,6 +71,7 @@ import {
 import { scientificSourceLanguageOverride } from "~/scient/analysis/sourceLanguage";
 import { ScientFileAuxiliarySurface } from "~/scient/fileSurfaces/ScientFileAuxiliarySurface";
 import { computeSourceLanguageForPath } from "~/scient/compute/computeSourceLanguage";
+import { computeFileContextId } from "~/scient/compute/computeContextStore";
 import { ScientMarkdownRenameButton } from "~/scient/markdownEditor/ui/ScientMarkdownRenameButton";
 import {
   isScientMarkdownDocumentPath,
@@ -1410,6 +1411,15 @@ export default function FilePreviewPanel({
   const breadcrumbRef = useRef<HTMLDivElement>(null);
   const computeSourceLanguage =
     relativePath === null ? null : computeSourceLanguageForPath(relativePath);
+  const computeContextId =
+    relativePath === null || computeSourceLanguage === null
+      ? null
+      : computeFileContextId({
+          environmentId,
+          threadId: threadRef.threadId,
+          cwd,
+          relativePath,
+        });
   const isMarkdownPreview = relativePath ? isMarkdownPreviewFile(relativePath) : false;
   const isRichMarkdown = relativePath ? isScientMarkdownDocumentPath(relativePath) : false;
   const isMarkdownDocument = isMarkdownPreview || isRichMarkdown;
@@ -2009,10 +2019,11 @@ export default function FilePreviewPanel({
                 }
               >
                 <ScientComputeFileSurface
-                  key={`${relativePath}:${resolvedTheme}`}
+                  key={`${computeContextId}:${resolvedTheme}`}
                   language={computeSourceLanguage}
                   environmentId={environmentId}
                   threadRef={threadRef}
+                  contextId={computeContextId!}
                   cwd={cwd}
                   relativePath={relativePath}
                   composerDraftTarget={composerDraftTarget}

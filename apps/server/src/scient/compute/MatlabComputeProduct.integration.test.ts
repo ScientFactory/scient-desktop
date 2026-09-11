@@ -10,12 +10,14 @@ import {
   ComputeSessionId,
   DEFAULT_SERVER_SETTINGS,
   INITIAL_COMPUTE_SESSION_GENERATION,
+  projectComputeOutputs,
   TERMINAL_COMPUTE_EXECUTION_STATUSES,
 } from "@t3tools/contracts";
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as Schema from "effect/Schema";
 
 import * as ServerConfig from "../../config.ts";
 import * as ServerSettings from "../../serverSettings.ts";
@@ -297,19 +299,31 @@ describe.runIf(Boolean(TEST_MATLAB))("MATLAB compute product backend", () => {
             sessionId,
             executionId: figureId,
           });
-          const figure = figureOutput.outputs.find(
-            (output) => output._tag === "image" && output.mediaType === "image/png",
+          const figure = projectComputeOutputs(figureOutput.outputs).find(
+            (output) =>
+              output._tag === "representation" &&
+              output.bundle.representations.some(
+                (representation) => representation.mediaType === "image/png",
+              ),
           );
-          expect(figure?._tag).toBe("image");
-          if (figure?._tag === "image") {
-            const retained = yield* compute.resolveOutputImage({
-              projectId: session.projectId,
-              sessionId,
-              executionId: figureId,
-              contentHash: figure.contentHash,
-            });
-            if (retained === null) return yield* Effect.die("MATLAB figure was not retained.");
-            expect((yield* fs.readFile(retained.path)).byteLength).toBeGreaterThan(100);
+          expect(figure?._tag).toBe("representation");
+          if (figure?._tag === "representation") {
+            expect(figure.displayId).toMatch(/^matlab-figure:/u);
+            for (const mediaType of ["image/png", "application/vnd.mathworks.matlab.figure"]) {
+              const resource = figure.bundle.representations.find(
+                (item) => item.mediaType === mediaType,
+              )?.data;
+              if (resource?._tag !== "resource")
+                return yield* Effect.die(`MATLAB ${mediaType} not retained.`);
+              const retained = yield* compute.resolveOutputResource({
+                projectId: session.projectId,
+                sessionId,
+                executionId: figureId,
+                contentHash: resource.contentHash,
+              });
+              if (retained === null) return yield* Effect.die("MATLAB figure was not retained.");
+              expect((yield* fs.readFile(retained.path)).byteLength).toBeGreaterThan(100);
+            }
           }
 
           const unchangedId = yield* submit(
@@ -326,7 +340,9 @@ describe.runIf(Boolean(TEST_MATLAB))("MATLAB compute product backend", () => {
               cwd: projectRoot,
               sessionId,
               executionId: unchangedId,
-            })).outputs.some((output) => output._tag === "image"),
+            })).outputs.some(
+              (output) => output._tag === "display-data" || output._tag === "display-update",
+            ),
           ).toBe(false);
           const changedFigureId = yield* submit(
             gateway,
@@ -343,10 +359,16 @@ describe.runIf(Boolean(TEST_MATLAB))("MATLAB compute product backend", () => {
             cwd: projectRoot,
             sessionId,
             executionId: changedFigureId,
-          })).outputs.find((output) => output._tag === "image");
-          expect(changedFigure?._tag).toBe("image");
-          if (changedFigure?._tag === "image" && figure?._tag === "image") {
-            expect(changedFigure.contentHash).not.toBe(figure.contentHash);
+          })).outputs.find((output) => output._tag === "display-update");
+          expect(changedFigure?._tag).toBe("display-update");
+          if (changedFigure?._tag === "display-update" && figure?._tag === "representation") {
+            expect(changedFigure.displayId).toBe(figure.displayId);
+            expect(
+              changedFigure.bundle.representations.find((item) => item.mediaType === "image/png")
+                ?.data,
+            ).not.toEqual(
+              figure.bundle.representations.find((item) => item.mediaType === "image/png")?.data,
+            );
           }
           const closeFiguresId = yield* submit(
             gateway,
@@ -357,6 +379,128 @@ describe.runIf(Boolean(TEST_MATLAB))("MATLAB compute product backend", () => {
             "close all force;",
           );
           yield* waitForTerminal(gateway, projectRoot, sessionId, closeFiguresId);
+          const reopenedId = yield* submit(
+            gateway,
+            projectRoot,
+            sessionId,
+            session.generation,
+            "matlab-figure-reopened",
+            "figure(1); plot(1:3); close(gcf); figure(1); plot(3:-1:1);",
+          );
+          expect(yield* waitForTerminal(gateway, projectRoot, sessionId, reopenedId)).toBe(
+            "succeeded",
+          );
+          const reopened = (yield* gateway.listOutputs({
+            cwd: projectRoot,
+            sessionId,
+            executionId: reopenedId,
+          })).outputs.find((output) => output._tag === "display-data");
+          expect(reopened?._tag).toBe("display-data");
+          if (reopened?._tag === "display-data" && figure?._tag === "representation") {
+            expect(reopened.displayId).not.toBe(figure.displayId);
+          }
+          const cleanupFiguresId = yield* submit(
+            gateway,
+            projectRoot,
+            sessionId,
+            session.generation,
+            "matlab-figures-cleanup",
+            "close all force;",
+          );
+          yield* waitForTerminal(gateway, projectRoot, sessionId, cleanupFiguresId);
+
+          // Exercise the complete gateway -> transport -> native-file path, not just helper text.
+          yield* workspaceFileSystem.writeFile({
+            cwd: projectRoot,
+            relativePath: "source/adjacent.txt",
+            contents: "adjacent-source",
+          });
+          yield* workspaceFileSystem.writeFile({
+            cwd: projectRoot,
+            relativePath: "source/sibling.m",
+            contents: "function value = sibling()\nvalue = 21;\nend\n",
+          });
+          const sourceCode = [
+            "source_name = mfilename('fullpath');",
+            "assert(endsWith(source_name, fullfile('source', 'native_identity')));",
+            "assert(strcmp(fileread(fullfile(fileparts(source_name), 'adjacent.txt')), 'adjacent-source'));",
+            "assert(local_double(sibling()) == 42);",
+            "disp('NATIVE_SOURCE_OK');",
+            "function result = local_double(value)",
+            "result = value * 2;",
+            "end",
+          ].join("\n");
+          const sourceFile = yield* workspaceFileSystem.writeFile({
+            cwd: projectRoot,
+            relativePath: "source/native_identity.m",
+            contents: sourceCode,
+          });
+          const sourceId = ComputeExecutionId.make("matlab-native-source");
+          yield* gateway.submitExecution({
+            cwd: projectRoot,
+            sessionId,
+            executionId: sourceId,
+            expectedGeneration: session.generation,
+            code: sourceCode,
+            source: {
+              _tag: "document",
+              origin: "file",
+              path: sourceFile.relativePath,
+              revision: sourceFile.revision,
+              bufferState: "saved",
+              range: null,
+            },
+          });
+          expect(yield* waitForTerminal(gateway, projectRoot, sessionId, sourceId)).toBe(
+            "succeeded",
+          );
+
+          const tableId = yield* submit(
+            gateway,
+            projectRoot,
+            sessionId,
+            session.generation,
+            "matlab-neutral-tables",
+            "qa_table = table((1:5000)', sin((1:5000)'), 'VariableNames', {'sample','value'}); qa_timetable = timetable(seconds((1:3)'), [1;NaN;3], 'VariableNames', {'value'});",
+          );
+          expect(yield* waitForTerminal(gateway, projectRoot, sessionId, tableId)).toBe(
+            "succeeded",
+          );
+          const tableOutputs = projectComputeOutputs(
+            (yield* gateway.listOutputs({ cwd: projectRoot, sessionId, executionId: tableId }))
+              .outputs,
+          );
+          const tablePreviewSchema = Schema.fromJsonString(
+            Schema.Struct({
+              schema: Schema.Struct({
+                fields: Schema.Array(Schema.Struct({ name: Schema.String })),
+              }),
+              data: Schema.Array(Schema.Record(Schema.String, Schema.Unknown)),
+              scientPreview: Schema.Struct({ truncated: Schema.Boolean }),
+            }),
+          );
+          for (const [name, rows, columns, truncated] of [
+            ["qa_table", 100, 2, true],
+            ["qa_timetable", 3, 2, false],
+          ] as const) {
+            const table = tableOutputs.find(
+              (output) =>
+                output._tag === "representation" && output.displayId === `matlab-table:${name}`,
+            );
+            if (table?._tag !== "representation")
+              return yield* Effect.die(`Missing structured ${name}`);
+            const representation = table.bundle.representations.find(
+              (entry) => entry.mediaType === "application/vnd.dataresource+json",
+            );
+            if (representation?.data._tag !== "json")
+              return yield* Effect.die(`Missing inline table preview: ${name}`);
+            const preview = yield* Schema.decodeUnknownEffect(tablePreviewSchema)(
+              representation.data.json,
+            );
+            expect(preview.data).toHaveLength(rows);
+            expect(preview.schema.fields).toHaveLength(columns);
+            expect(preview.scientPreview.truncated).toBe(truncated);
+          }
 
           const diagnosticCode = [
             "retained_after_failure = 7;",
@@ -364,7 +508,9 @@ describe.runIf(Boolean(TEST_MATLAB))("MATLAB compute product backend", () => {
           ].join("\n");
           const diagnosticFile = yield* workspaceFileSystem.writeFile({
             cwd: projectRoot,
-            relativePath: "diagnostic_test.m",
+            // Numbered scripts are common in ordered research folders but MATLAB's
+            // native run() cannot evaluate their stems as identifiers.
+            relativePath: "05_diagnostic_test.m",
             contents: diagnosticCode,
           });
           const failedId = ComputeExecutionId.make("matlab-expected-error");
@@ -394,7 +540,7 @@ describe.runIf(Boolean(TEST_MATLAB))("MATLAB compute product backend", () => {
                 diagnostic: expect.objectContaining({
                   errorName: "Scient:Expected",
                   frames: expect.arrayContaining([
-                    expect.objectContaining({ relativePath: "diagnostic_test.m", line: 2 }),
+                    expect.objectContaining({ relativePath: "05_diagnostic_test.m", line: 2 }),
                   ]),
                 }),
               }),

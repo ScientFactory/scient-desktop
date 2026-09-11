@@ -951,6 +951,7 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
         ScientSkillSession.scientSkillDeliveryForProvider(provider) === "mcp";
       const capabilities = new Set<McpCapability>([
         "documents:build",
+        "compute:read",
         "sources:read",
         "sources:write",
         ...(browserAccessEnabled ? (["preview"] satisfies ReadonlyArray<McpCapability>) : []),

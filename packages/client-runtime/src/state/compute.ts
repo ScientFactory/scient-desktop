@@ -288,6 +288,8 @@ export function createComputeEnvironmentAtoms<R, E>(
 ) {
   const runtimeScheduler = createAtomCommandScheduler();
   const sessionScheduler = createAtomCommandScheduler();
+  // Termination must not wait behind a restart it is intended to cancel.
+  const stopScheduler = createAtomCommandScheduler();
   const executionScheduler = createAtomCommandScheduler();
   const sessionKey = ({
     environmentId,
@@ -496,8 +498,8 @@ export function createComputeEnvironmentAtoms<R, E>(
     stopSession: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:compute:stop-session",
       tag: WS_METHODS.computeStopSession,
-      scheduler: sessionScheduler,
-      concurrency: { mode: "serial", key: sessionKey },
+      scheduler: stopScheduler,
+      concurrency: { mode: "singleFlight", key: sessionKey },
     }),
     interruptSession: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:compute:interrupt-session",

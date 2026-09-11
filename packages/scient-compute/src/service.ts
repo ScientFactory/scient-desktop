@@ -53,6 +53,7 @@ export class ComputeOperationError extends Schema.TaggedError<ComputeOperationEr
       "generation-stale",
       // The session is there and healthy but has nowhere to put the work.
       "queue-full",
+      "capacity-reached",
       // No usable runtime for the language, in terms a user can act on.
       "runtime-missing",
       "runtime-unusable",

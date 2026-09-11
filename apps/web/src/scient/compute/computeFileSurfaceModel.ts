@@ -14,12 +14,15 @@ import {
   type ScientSplitAxis,
 } from "~/scient/layout/scientSplitFraction";
 
-export const COMPUTE_FILE_VIEW_STORAGE_KEY = "scient.pythonComputeView";
+// Keep the existing key for compatibility. It now remembers only the layout to
+// reveal after Run; opening a source file itself always starts in Code.
+export const COMPUTE_FILE_RESULTS_VIEW_STORAGE_KEY = "scient.pythonComputeView";
 export const COMPUTE_FILE_SPLIT_STORAGE_KEY = "scient.pythonComputeSplitRatio";
 export const COMPUTE_FILE_SPLIT_LAYOUT_STORAGE_KEY = "scient.pythonComputeSplitLayout";
 
 export const COMPUTE_FILE_VIEWS = ["code", "split", "results"] as const;
 export type ComputeFileView = (typeof COMPUTE_FILE_VIEWS)[number];
+export type ComputeFileResultsView = Exclude<ComputeFileView, "code">;
 
 const COMPUTE_FILE_SPLIT_LAYOUTS = ["side-by-side", "stacked"] as const;
 export type ComputeFileSplitLayout = (typeof COMPUTE_FILE_SPLIT_LAYOUTS)[number];
@@ -30,10 +33,10 @@ export const COMPUTE_FILE_VIEW_LABELS: Readonly<Record<ComputeFileView, string>>
   results: "Results",
 };
 
-const DEFAULT_COMPUTE_FILE_VIEW: ComputeFileView = "code";
+export const DEFAULT_COMPUTE_FILE_RESULTS_VIEW: ComputeFileResultsView = "results";
 export const DEFAULT_COMPUTE_FILE_SPLIT_LAYOUT: ComputeFileSplitLayout = "side-by-side";
 export const DEFAULT_COMPUTE_FILE_SPLIT = 0.5;
-export const MIN_COMPUTE_FILE_SPLIT = 0.2;
+export const MIN_COMPUTE_FILE_SPLIT = 0.3;
 export const COMPUTE_FILE_SPLIT_KEYBOARD_STEP = 0.02;
 
 type ComputeRuntimeToolbarSession = Pick<
@@ -58,13 +61,31 @@ export type ComputeRuntimeToolbarState =
       readonly canRun: true;
     };
 
+export function isComputeCapacityReachedError(error: unknown): boolean {
+  return (
+    typeof error === "object" &&
+    error !== null &&
+    "reason" in error &&
+    error.reason === "capacity-reached"
+  );
+}
+
 const COMPUTE_FILE_SPLIT_BOUNDS = {
   minimum: MIN_COMPUTE_FILE_SPLIT,
   fallback: DEFAULT_COMPUTE_FILE_SPLIT,
 } as const;
 
-export function normalizeComputeFileView(value: string | null | undefined): ComputeFileView {
-  return COMPUTE_FILE_VIEWS.find((candidate) => candidate === value) ?? DEFAULT_COMPUTE_FILE_VIEW;
+export function normalizeComputeFileResultsView(
+  value: string | null | undefined,
+): ComputeFileResultsView {
+  return value === "split" ? "split" : DEFAULT_COMPUTE_FILE_RESULTS_VIEW;
+}
+
+export function computeFileViewAfterRun(
+  current: ComputeFileView,
+  preferredResultsView: ComputeFileResultsView,
+): ComputeFileView {
+  return current === "code" ? preferredResultsView : current;
 }
 
 export function normalizeComputeFileSplitLayout(
@@ -118,10 +139,34 @@ export function resolveComputeRuntimeToolbarState(input: {
   readonly readyRuntimeAvailable: boolean;
   readonly preferredRuntimeExecutable: string | null;
   readonly scientificPackagesMissing: boolean;
+  readonly capacityRecoveryAvailable?: boolean;
+  readonly startingRetryAvailable?: boolean;
+  readonly contextLifecycle?:
+    | "unbound"
+    | "starting"
+    | "live"
+    | "closing"
+    | "close-failed"
+    | "terminal";
 }): ComputeRuntimeToolbarState {
   const languageId = input.languageId ?? "python";
   const languageName = input.languageName ?? "Python";
   const session = input.liveSession;
+  if (input.contextLifecycle === "starting") {
+    if (input.capacityRecoveryAvailable) {
+      return { kind: "status", label: `${languageName} capacity reached`, canRun: true };
+    }
+    if (input.startingRetryAvailable) {
+      return { kind: "status", label: `${languageName} retry start`, canRun: true };
+    }
+    return { kind: "status", label: `${languageName} starting`, canRun: false };
+  }
+  if (input.contextLifecycle === "closing") {
+    return { kind: "status", label: `${languageName} closing`, canRun: false };
+  }
+  if (input.contextLifecycle === "close-failed") {
+    return { kind: "status", label: `${languageName} close needs retry`, canRun: false };
+  }
   if (session !== null) {
     if (session.languageId !== languageId) {
       return { kind: "status", label: `${session.label} active`, canRun: false };

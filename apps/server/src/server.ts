@@ -58,6 +58,7 @@ import { ProviderInstanceRegistryHydrationLive } from "./provider/Layers/Provide
 import * as TerminalManager from "./terminal/Manager.ts";
 import * as McpHttpServer from "./mcp/McpHttpServer.ts";
 import * as McpSessionRegistry from "./mcp/McpSessionRegistry.ts";
+import { ComputeMcpGatewayLive } from "./mcp/toolkits/compute/ComputeMcpGateway.ts";
 import * as PreviewAutomationBroker from "./mcp/PreviewAutomationBroker.ts";
 import * as ScientSkillSession from "./scient/skills/ScientSkillSession.ts";
 import * as ScientSkillManagement from "./scient/skills/ScientSkillManagement.ts";
@@ -670,6 +671,7 @@ export const makeRoutesLayer = Layer.mergeAll(
   // and mutations observed on WebSocket invalidate patches subsequently read over HTTP.
   Layer.provide(PullRequestServiceLive),
   Layer.provide(AnalysisServiceLive),
+  Layer.provide(ComputeMcpGatewayLive),
   Layer.provide(ComputeSessionServiceLive),
   Layer.provide(ScientificRuntimePreferencesLive),
   Layer.provide(ScientLatexServicesLive),

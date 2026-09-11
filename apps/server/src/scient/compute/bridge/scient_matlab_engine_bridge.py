@@ -39,14 +39,18 @@ from scient_compute_bridge import (
     MAX_DETAIL,
     MAX_DIAGNOSTIC,
     MAX_FRAME,
+    MAX_INLINE_REPRESENTATION,
+    MAX_REPRESENTATION_BUNDLE,
     MAX_STREAM_TEXT,
     PROTOCOL_VERSION,
     InboundReader,
     OutboundQueue,
     ProtocolViolation,
+    SourceConflict,
     detach_protocol_stream,
     encode_frame,
     truncate_utf8,
+    validate_source_context,
 )
 
 STARTUP_TIMEOUT = 180
@@ -59,7 +63,39 @@ MAX_SAFE_JSON_INTEGER = 9_007_199_254_740_991
 # Matches the shared legacy PNG payload bound (base64 for an 8 MiB image).
 MAX_PNG_BASE64 = 11 * 1024 * 1024
 MAX_PNG_BYTES = (MAX_PNG_BASE64 // 4) * 3
+MAX_NATIVE_FIG_BYTES = MAX_REPRESENTATION_BUNDLE
+MAX_TABLE_ROWS = 100
+MAX_TABLE_COLUMNS = 20
+MAX_TABLES = 50
+MAX_TABLE_TEXT = 256 * 1024
 PNG_SIGNATURE = b"\x89PNG\r\n\x1a\n"
+MATLAB_KEYWORDS = {
+    "arguments",
+    "break",
+    "case",
+    "catch",
+    "classdef",
+    "continue",
+    "else",
+    "elseif",
+    "end",
+    "enumeration",
+    "events",
+    "for",
+    "function",
+    "global",
+    "if",
+    "methods",
+    "otherwise",
+    "parfor",
+    "persistent",
+    "properties",
+    "return",
+    "spmd",
+    "switch",
+    "try",
+    "while",
+}
 
 SERVER_MESSAGE_TYPES = {
     "hello",
@@ -71,6 +107,27 @@ SERVER_MESSAGE_TYPES = {
     "shutdown",
 }
 REQUEST_ID_TYPES = {"execute", "interrupt", "inspect-variables"}
+
+
+def can_run_saved_matlab_source_natively(path: str) -> bool:
+    """Whether MATLAB's ``run`` can evaluate this file by its script name.
+
+    ``run`` ultimately evaluates the file stem as MATLAB code. Files whose
+    names start with a digit, contain punctuation, or are keywords therefore
+    fail before their contents run. Those files use Scient's trusted temporary
+    submission path instead; ordinary MATLAB names retain native path identity.
+    """
+    stem = Path(path).stem
+    return (
+        bool(stem)
+        and stem not in MATLAB_KEYWORDS
+        and stem[0].isascii()
+        and stem[0].isalpha()
+        and all(
+            character.isascii() and (character.isalnum() or character == "_")
+            for character in stem
+        )
+    )
 
 
 def png_content_hash(data: bytes) -> str:
@@ -94,45 +151,66 @@ def png_content_hash(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
 
 
-def read_captured_png(directory: str, reported_path: str) -> bytes:
-    """Reads one bounded regular PNG contained by a server-created directory."""
+def read_captured_artifact(directory: str, reported_path: str, maximum_bytes: int) -> bytes:
+    """Read one bounded regular artifact contained by a server-created directory."""
     if not os.path.isabs(reported_path):
-        raise ValueError("MATLAB returned a relative figure path.")
+        raise ValueError("MATLAB returned a relative artifact path.")
     root = os.path.normcase(os.path.realpath(directory))
     resolved = os.path.normcase(os.path.realpath(reported_path))
     if os.path.dirname(resolved) != root:
-        raise ValueError("MATLAB returned a figure outside the capture directory.")
+        raise ValueError("MATLAB returned an artifact outside the capture directory.")
 
     flags = os.O_RDONLY | getattr(os, "O_BINARY", 0) | getattr(os, "O_NOFOLLOW", 0)
     descriptor = os.open(resolved, flags)
     with os.fdopen(descriptor, "rb") as stream:
         metadata = os.fstat(stream.fileno())
         if not stat.S_ISREG(metadata.st_mode):
-            raise ValueError("MATLAB figure output is not a regular file.")
-        if metadata.st_size > MAX_PNG_BYTES:
-            raise ValueError("MATLAB PNG exceeded the retained-image limit.")
-        data = stream.read(MAX_PNG_BYTES + 1)
-    if len(data) > MAX_PNG_BYTES:
-        raise ValueError("MATLAB PNG exceeded the retained-image limit.")
+            raise ValueError("MATLAB artifact is not a regular file.")
+        if metadata.st_size > maximum_bytes:
+            raise ValueError("MATLAB artifact exceeded the retained-artifact limit.")
+        data = stream.read(maximum_bytes + 1)
+    if len(data) > maximum_bytes:
+        raise ValueError("MATLAB artifact exceeded the retained-artifact limit.")
+    return data
+
+
+def read_captured_png(directory: str, reported_path: str) -> bytes:
+    """Reads one bounded regular PNG contained by a server-created directory."""
+    data = read_captured_artifact(directory, reported_path, MAX_PNG_BYTES)
     if not data.startswith(PNG_SIGNATURE):
         raise ValueError("MATLAB figure output is not a PNG.")
     return data
 
 
-EVAL_HELPER = r"""function scientJson = __SCIENT_FUNCTION__(scientSubmissionPath)
+EVAL_HELPER = r"""function scientJson = __SCIENT_FUNCTION__(scientSubmissionPath, scientNativeFile)
 scientPayload = struct('ok', true, 'identifier', '', 'message', '', 'stack', []);
 try
-    [~, scientSubmissionName] = fileparts(scientSubmissionPath);
-    scientResolvedPath = builtin('which', scientSubmissionName);
-    if ispc
-        scientMatches = strcmpi(scientResolvedPath, scientSubmissionPath);
+    scientSubmissionPath = char(scientSubmissionPath);
+    if scientNativeFile
+        if ~isfile(scientSubmissionPath)
+            error('Scient:SourceMissing', 'Submitted MATLAB source is no longer available.');
+        end
+        % Saved files retain native path identity, sibling lookup and local
+        % function behavior.  The bridge has already checked the path and
+        % submitted bytes immediately before dispatch; this is not a rewrite.
+        scientEscapedPath = strrep(scientSubmissionPath, '''', '''''');
+        evalin('base', ['run(''' scientEscapedPath ''')']);
     else
-        scientMatches = strcmp(scientResolvedPath, scientSubmissionPath);
+        % Temporary snippets deliberately execute through the historical
+        % trusted-name path.  evalin('base', ...) keeps MATLAB's session cwd
+        % unchanged while preserving exact submitted bytes and script locals.
+        [~, scientSubmissionName] = fileparts(scientSubmissionPath);
+        scientResolvedPath = builtin('which', scientSubmissionName);
+        if ispc
+            scientMatches = strcmpi(scientResolvedPath, scientSubmissionPath);
+        else
+            scientMatches = strcmp(scientResolvedPath, scientSubmissionPath);
+        end
+        if ~scientMatches
+            error('Scient:SubmissionIdentity', 'Submitted MATLAB source did not resolve to the Scient-owned file.');
+        end
+        evalin('base', [scientSubmissionName ';']);
     end
-    if ~scientMatches
-        error('Scient:SubmissionIdentity', 'Submitted MATLAB source did not resolve to the Scient-owned file.');
-    end
-    evalin('base', [scientSubmissionName ';']);
 catch scientError
     scientPayload.ok = false;
     scientPayload.identifier = scientError.identifier;
@@ -171,8 +249,206 @@ scientJson = jsonencode(struct('variables', scientVariables, 'truncated', numel(
 end
 """
 
+TABLES_HELPER = r"""function scientJson = __SCIENT_FUNCTION__(scientMaximumRows, scientMaximumColumns)
+scientEntries = evalin('base', 'whos');
+scientTables = repmat(struct('name', '', 'json', '', 'text', '', 'warning', ''), 1, 0);
+scientTruncated = false;
+for scientIndex = 1:numel(scientEntries)
+    scientEntry = scientEntries(scientIndex);
+    if ~strcmp(scientEntry.class, 'table') && ~strcmp(scientEntry.class, 'timetable')
+        continue;
+    end
+    try
+        scientValue = evalin('base', scientEntry.name);
+        [scientDataJson, scientText, scientWasTruncated, scientWarning] = ...
+            scient_table_payload(scientValue, scientMaximumRows, scientMaximumColumns);
+        scientTables(end + 1) = struct( ...
+            'name', scientEntry.name, ...
+            'json', scientDataJson, ...
+            'text', scientText, ...
+            'warning', scientWarning); %#ok<AGROW>
+        scientTruncated = scientTruncated || scientWasTruncated;
+    catch scientTableError
+        scientTables(end + 1) = struct( ...
+            'name', scientEntry.name, 'json', '', 'text', '', ...
+            'warning', scientTableError.message(1:min(numel(scientTableError.message), 4096))); %#ok<AGROW>
+    end
+end
+scientJson = jsonencode(struct('tables', scientTables, 'truncated', scientTruncated));
+end
+
+function [scientDataJson, scientText, scientTruncated, scientWarning] = scient_table_payload(scientValue, scientMaximumRows, scientMaximumColumns)
+scientIsTimetable = isa(scientValue, 'timetable');
+scientHeight = height(scientValue);
+scientVariableWidth = width(scientValue);
+scientWidth = scientVariableWidth + double(scientIsTimetable);
+scientRowCount = min(scientHeight, max(0, floor(scientMaximumRows)));
+scientColumnCount = min(scientWidth, max(0, floor(scientMaximumColumns)));
+scientTruncated = scientHeight > scientRowCount || scientWidth > scientColumnCount;
+% Bound the MATLAB value before touching RowTimes or asking disp for text.
+% This keeps a large timetable from materializing its complete time axis or
+% formatting its complete value in the native workspace.
+scientRowIndices = 1:scientRowCount;
+scientIncludeRowTime = scientIsTimetable && scientColumnCount > 0;
+scientVariableCount = scientColumnCount - double(scientIncludeRowTime);
+scientVariableIndices = 1:scientVariableCount;
+scientDisplayValue = scientValue(scientRowIndices, scientVariableIndices);
+scientNames = cellstr(scientDisplayValue.Properties.VariableNames);
+scientRowTimes = [];
+if scientIncludeRowTime
+    scientDimensionNames = cellstr(scientDisplayValue.Properties.DimensionNames);
+    scientNames = [{scientDimensionNames{1}}, scientNames];
+    scientRowTimes = scientDisplayValue.Properties.RowTimes;
+end
+scientWarnings = strings(0, 1);
+scientTextRows = cell(1, scientRowCount + 1);
+scientTextRows{1} = strjoin(scientNames, char(9));
+
+scientFieldParts = cell(1, scientColumnCount);
+for scientColumn = 1:scientColumnCount
+    scientFieldParts{scientColumn} = ['{"name":' jsonencode(scientNames{scientColumn}) '}'];
+end
+scientRowParts = cell(1, scientRowCount);
+for scientRow = 1:scientRowCount
+    scientCellParts = cell(1, scientColumnCount);
+    for scientColumn = 1:scientColumnCount
+        if scientIncludeRowTime && scientColumn == 1
+            scientCell = scientRowTimes(scientRow);
+        else
+            scientValueColumn = scientColumn - double(scientIncludeRowTime);
+            scientCell = scientDisplayValue{scientRow, scientValueColumn};
+        end
+        [scientEncoded, scientCellWarning] = scient_json_scalar(scientCell);
+        if ~isempty(scientCellWarning)
+            scientWarnings(end + 1) = scientCellWarning; %#ok<AGROW>
+            scientTruncated = true;
+        end
+        scientCellParts{scientColumn} = [jsonencode(scientNames{scientColumn}) ':' scientEncoded];
+    end
+    scientRowParts{scientRow} = ['{' strjoin(scientCellParts, ',') '}'];
+    scientTextRows{scientRow + 1} = strjoin(scientCellParts, char(9));
+end
+scientDataJson = ['{"schema":{"fields":[' strjoin(scientFieldParts, ',') ']},' ...
+    '"data":[' strjoin(scientRowParts, ',') '],"scientPreview":{"truncated":' ...
+    char(string(scientTruncated)) '}}'];
+% The text fallback is built from the same bounded scalar values as JSON.  It
+% is intentionally neutral tab-delimited text, not parsed console output;
+% this also prevents disp from materializing a large cell string after slicing.
+scientText = strjoin(scientTextRows, char(10));
+if numel(scientText) > 256 * 1024
+    scientText = scientText(1:256 * 1024);
+    scientTruncated = true;
+end
+if isempty(scientWarnings)
+    scientWarning = '';
+else
+    scientWarning = char(join(unique(scientWarnings), ' '));
+end
+end
+
+function [scientEncoded, scientWarning] = scient_json_scalar(scientValue)
+scientWarning = '';
+scientMaximumText = 256;
+scientSafeInteger = 9007199254740991;
+try
+    if isempty(scientValue)
+        scientEncoded = 'null';
+    elseif ischar(scientValue)
+        if ~isvector(scientValue)
+            scientEncoded = 'null';
+            scientWarning = 'Nonscalar MATLAB table values were represented as null.';
+        else
+            scientText = char(scientValue);
+            if numel(scientText) > scientMaximumText
+                scientText = [scientText(1:scientMaximumText) char(8230)];
+                scientWarning = 'Oversized MATLAB text was truncated.';
+            end
+            scientEncoded = jsonencode(scientText);
+        end
+    elseif isstring(scientValue)
+        if ~isscalar(scientValue)
+            scientEncoded = 'null';
+            scientWarning = 'Nonscalar MATLAB table values were represented as null.';
+        elseif ismissing(scientValue)
+            scientEncoded = 'null';
+        else
+            if strlength(scientValue) > scientMaximumText
+                scientText = [char(extractBefore(scientValue, scientMaximumText + 1)) char(8230)];
+                scientWarning = 'Oversized MATLAB text was truncated.';
+            else
+                scientText = char(scientValue);
+            end
+            scientEncoded = jsonencode(scientText);
+        end
+    elseif iscategorical(scientValue)
+        if ~isscalar(scientValue)
+            scientEncoded = 'null';
+            scientWarning = 'Nonscalar MATLAB table values were represented as null.';
+        elseif ismissing(scientValue)
+            scientEncoded = 'null';
+        else
+            scientString = string(scientValue);
+            if strlength(scientString) > scientMaximumText
+                scientText = [char(extractBefore(scientString, scientMaximumText + 1)) char(8230)];
+                scientWarning = 'Oversized MATLAB text was truncated.';
+            else
+                scientText = char(scientString);
+            end
+            scientEncoded = jsonencode(scientText);
+        end
+    elseif isdatetime(scientValue) || isduration(scientValue)
+        if ~isscalar(scientValue)
+            scientEncoded = 'null';
+            scientWarning = 'Nonscalar MATLAB table values were represented as null.';
+        elseif ismissing(scientValue)
+            scientEncoded = 'null';
+        else
+            scientEncoded = jsonencode(char(string(scientValue)));
+        end
+    elseif iscell(scientValue)
+        if numel(scientValue) == 1
+            [scientEncoded, scientWarning] = scient_json_scalar(scientValue{1});
+        else
+            scientEncoded = 'null';
+            scientWarning = 'Nonscalar MATLAB table values were represented as null.';
+        end
+    elseif isnumeric(scientValue) || islogical(scientValue)
+        if ~isscalar(scientValue) || (isfloat(scientValue) && ~isreal(scientValue))
+            scientEncoded = 'null';
+            scientWarning = 'Nonscalar MATLAB table values were represented as null.';
+        elseif isfloat(scientValue) && ~isfinite(double(scientValue))
+            scientEncoded = 'null';
+        elseif isinteger(scientValue) && abs(double(scientValue)) > scientSafeInteger
+            scientEncoded = jsonencode(char(string(scientValue)));
+            scientWarning = 'Integer outside the JavaScript safe range was represented as text.';
+        elseif isfloat(scientValue) && fix(double(scientValue)) == double(scientValue) && abs(double(scientValue)) > scientSafeInteger
+            scientEncoded = jsonencode(char(string(scientValue)));
+            scientWarning = 'Integer outside the JavaScript safe range was represented as text.';
+        else
+            scientEncoded = jsonencode(scientValue);
+        end
+    else
+        scientEncoded = 'null';
+        scientWarning = 'Unsupported MATLAB table values were represented as null.';
+    end
+catch
+    scientEncoded = 'null';
+    scientWarning = 'Unsupported MATLAB table values were represented as null.';
+end
+end
+"""
+
 FIGURES_HELPER = r"""function scientJson = __SCIENT_FUNCTION__(scientDirectory, scientMaximum)
-scientFiles = repmat(struct('key', '', 'path', '', 'warning', ''), 1, 0);
+persistent scientNextIdentity scientKnownFigures scientKnownIdentities
+if isempty(scientNextIdentity)
+    scientNextIdentity = 0;
+    scientKnownFigures = gobjects(0);
+    scientKnownIdentities = [];
+end
+scientStillOpen = isgraphics(scientKnownFigures, 'figure');
+scientKnownFigures = scientKnownFigures(scientStillOpen);
+scientKnownIdentities = scientKnownIdentities(scientStillOpen);
+scientFiles = repmat(struct('key', '', 'path', '', 'nativePath', '', 'warning', ''), 1, 0);
 try
     drawnow;
     scientFigures = findall(groot, 'Type', 'figure');
@@ -184,8 +460,20 @@ try
     end
     scientCount = min(numel(scientFigures), scientMaximum);
     for scientIndex = 1:scientCount
+        % Figure numbers/handles can be reused after close. Identity belongs to
+        % this graphics object for this bridge helper's lifetime, not its number.
+        scientKnownIndex = find(scientKnownFigures == scientFigures(scientIndex), 1);
+        if isempty(scientKnownIndex)
+            scientNextIdentity = scientNextIdentity + 1;
+            scientKnownFigures(end + 1) = scientFigures(scientIndex);
+            scientKnownIdentities(end + 1) = scientNextIdentity;
+            scientKnownIndex = numel(scientKnownIdentities);
+        end
+        scientIdentity = scientKnownIdentities(scientKnownIndex);
         scientFinal = fullfile(scientDirectory, sprintf('figure-%03d.png', scientIndex));
         scientTemporary = fullfile(scientDirectory, sprintf('figure-%03d.partial.png', scientIndex));
+        scientNativeFinal = fullfile(scientDirectory, sprintf('figure-%03d.fig', scientIndex));
+        scientNativeTemporary = fullfile(scientDirectory, sprintf('figure-%03d.partial.fig', scientIndex));
         scientWarning = '';
         try
             try
@@ -194,21 +482,40 @@ try
                 print(scientFigures(scientIndex), scientTemporary, '-dpng', '-r144');
             end
             movefile(scientTemporary, scientFinal, 'f');
+            try
+                try
+                    savefig(scientFigures(scientIndex), scientNativeTemporary, 'compact');
+                catch
+                    savefig(scientFigures(scientIndex), scientNativeTemporary);
+                end
+                movefile(scientNativeTemporary, scientNativeFinal, 'f');
+            catch scientNativeError
+                if isfile(scientNativeTemporary)
+                    delete(scientNativeTemporary);
+                end
+                scientWarning = scientNativeError.message(1:min(numel(scientNativeError.message), 4096));
+                scientNativeFinal = '';
+            end
         catch scientCaptureError
             if isfile(scientTemporary)
                 delete(scientTemporary);
             end
+            if isfile(scientNativeTemporary)
+                delete(scientNativeTemporary);
+            end
             scientFinal = '';
+            scientNativeFinal = '';
             scientWarning = scientCaptureError.message(1:min(numel(scientCaptureError.message), 4096));
         end
         scientFiles(end + 1) = struct( ...
-            'key', sprintf('%.17g', double(scientFigures(scientIndex))), ...
-            'path', scientFinal, 'warning', scientWarning); %#ok<AGROW>
+            'key', sprintf('%.17g', scientIdentity), ...
+            'path', scientFinal, 'nativePath', scientNativeFinal, ...
+            'warning', scientWarning); %#ok<AGROW>
     end
     scientTruncated = numel(scientFigures) > scientCount;
 catch scientCaptureError
     scientMessage = scientCaptureError.message(1:min(numel(scientCaptureError.message), 4096));
-    scientFiles(end + 1) = struct('key', '', 'path', '', 'warning', scientMessage);
+    scientFiles(end + 1) = struct('key', '', 'path', '', 'nativePath', '', 'warning', scientMessage);
     scientTruncated = false;
 end
 scientJson = jsonencode(struct('figures', scientFiles, 'truncated', scientTruncated));
@@ -262,7 +569,7 @@ class MatlabEngineBridge:
         self._loop: Optional[asyncio.AbstractEventLoop] = None
         self._engine_module: Any = None
         self._engine: Any = None
-        self._working_directory = os.getcwd()
+        self._working_directory = os.path.realpath(os.getcwd())
         self._helper_directory: Optional[str] = None
         self._helper_names: dict[str, str] = {}
         self._active_request_id: Optional[str] = None
@@ -272,6 +579,7 @@ class MatlabEngineBridge:
         self._monitor_task: Optional[asyncio.Task[None]] = None
         self._transitioning = False
         self._figure_hashes: dict[str, str] = {}
+        self._figure_seen: set[str] = set()
 
     def _diag(self, message: str) -> None:
         bounded, _ = truncate_utf8(message, MAX_DIAGNOSTIC)
@@ -452,6 +760,7 @@ class MatlabEngineBridge:
         helpers = {
             "eval": (f"scient_compute_eval_{token}", EVAL_HELPER),
             "variables": (f"scient_compute_variables_{token}", VARIABLES_HELPER),
+            "tables": (f"scient_compute_tables_{token}", TABLES_HELPER),
             "figures": (f"scient_compute_figures_{token}", FIGURES_HELPER),
         }
         for kind, (name, source) in helpers.items():
@@ -525,7 +834,7 @@ class MatlabEngineBridge:
         helper_directory = self._write_helpers()
         await asyncio.to_thread(self._engine.addpath, helper_directory, nargout=0)
         await asyncio.to_thread(self._engine.cd, working_directory, nargout=0)
-        self._working_directory = working_directory
+        self._working_directory = os.path.realpath(working_directory)
         release, version = await asyncio.gather(
             asyncio.to_thread(self._engine.version, "-release", nargout=1),
             asyncio.to_thread(self._engine.version, nargout=1),
@@ -548,6 +857,56 @@ class MatlabEngineBridge:
             },
         )
         self._ensure_monitor()
+
+    def _resolve_source_path(
+        self, source_context: dict[str, Any], require_file: bool = True
+    ) -> str:
+        raw_path = source_context.get("filePath")
+        if not isinstance(raw_path, str) or not raw_path:
+            raise SourceConflict("The source context did not name a project file.")
+        root = os.path.normcase(os.path.realpath(self._working_directory))
+        candidate = os.path.realpath(
+            raw_path if os.path.isabs(raw_path) else os.path.join(root, raw_path)
+        )
+        try:
+            inside = os.path.normcase(os.path.commonpath([root, candidate])) == root
+        except ValueError:
+            inside = False
+        if not inside:
+            raise SourceConflict("The source context points outside the compute project.")
+        if require_file and not os.path.isfile(candidate):
+            raise SourceConflict(f"The source file '{raw_path}' is no longer available.")
+        return candidate
+
+    def _verify_saved_source(self, code: str, source_context: dict[str, Any]) -> str:
+        """Check bounded currently observable saved bytes against the request.
+
+        This is intentionally a pre/postflight check around MATLAB's native
+        path-based ``run``.  The file can still be replaced by another writer
+        after either read and before MATLAB consumes it, so this method never
+        claims immutable source or proof of the bytes MATLAB actually used.
+        """
+        path = self._resolve_source_path(source_context)
+        try:
+            with open(path, "rb") as source_file:
+                source_bytes = source_file.read(MAX_CODE + 1)
+        except OSError as error:
+            raise SourceConflict(f"The source file could not be read: {error}") from error
+        if len(source_bytes) > MAX_CODE:
+            raise SourceConflict(
+                f"The source file '{source_context.get('filePath')}' exceeds the bridge code limit."
+            )
+        expected = source_context.get("sourceBytesHash")
+        digest = hashlib.sha256(source_bytes).hexdigest()
+        if expected not in {digest, f"sha256:{digest}"}:
+            raise SourceConflict(
+                f"The saved source changed before execution: '{source_context.get('filePath')}'."
+            )
+        if source_bytes != code.encode("utf-8"):
+            raise SourceConflict(
+                f"The submitted bytes do not match the saved source: '{source_context.get('filePath')}'."
+            )
+        return path
 
     def _ensure_monitor(self) -> None:
         if self._monitor_task is None or self._monitor_task.done():
@@ -588,24 +947,84 @@ class MatlabEngineBridge:
             raise ProtocolViolation("execute code must be a string.")
         if len(code.encode("utf-8")) > MAX_CODE:
             raise ProtocolViolation(f"execute code exceeds {MAX_CODE} bytes.")
+        source_context = validate_source_context(payload.get("sourceContext"))
+        saved_file = (
+            source_context is not None
+            and source_context.get("kind") == "file"
+            and source_context.get("saved") is True
+        )
+        native_saved_file = saved_file and can_run_saved_matlab_source_natively(
+            str(source_context.get("filePath", ""))
+        )
+        try:
+            if source_context is not None and source_context.get("filePath") is not None:
+                if saved_file:
+                    self._verify_saved_source(code, source_context)
+                else:
+                    self._resolve_source_path(source_context, require_file=False)
+        except SourceConflict as error:
+            self._active_request_id = request_id
+            self._send("accepted", {}, request_id)
+            self._send(
+                "error",
+                {
+                    "name": "Scient:SourceConflict",
+                    "value": truncate_utf8(str(error), 16 * 1024)[0],
+                    "traceback": [
+                        truncate_utf8(
+                            str(source_context.get("filePath", "<source>")), 4096
+                        )[0]
+                    ],
+                },
+                request_id,
+            )
+            self._active_request_id = None
+            self._send("execution-complete", {"outcome": "failed"}, request_id)
+            await self._flush()
+            return
         evaluate = await self._trusted_helper("eval")
         self._active_request_id = request_id
         self._send("accepted", {}, request_id)
-        self._execution_task = asyncio.create_task(self._execute(code, request_id, evaluate))
-
-    async def _execute(self, code: str, request_id: str, evaluate: Any) -> None:
-        outcome = "succeeded"
-        descriptor, submission_path = tempfile.mkstemp(
-            prefix="scient_submission_", suffix=".m", dir=self._write_helpers()
+        self._execution_task = asyncio.create_task(
+            self._execute(code, request_id, evaluate, source_context, native_saved_file)
         )
-        os.close(descriptor)
-        submission_path = os.path.realpath(submission_path)
-        Path(submission_path).write_text(code, encoding="utf-8")
+
+    async def _execute(
+        self,
+        code: str,
+        request_id: str,
+        evaluate: Any,
+        source_context: Optional[dict[str, Any]],
+        native_saved_file: bool,
+    ) -> None:
+        outcome = "succeeded"
+        saved_file = (
+            source_context is not None
+            and source_context.get("kind") == "file"
+            and source_context.get("saved") is True
+        )
+        temporary_submission = not native_saved_file
+        submission_path: Optional[str] = None
         try:
+            verified_saved_path = None
+            if saved_file:
+                # Re-check immediately before dispatch so a write between
+                # acceptance and the worker thread cannot execute stale bytes.
+                verified_saved_path = self._verify_saved_source(code, source_context or {})
+            if temporary_submission:
+                descriptor, submission_path = tempfile.mkstemp(
+                    prefix="scient_submission_", suffix=".m", dir=self._write_helpers()
+                )
+                os.close(descriptor)
+                submission_path = os.path.realpath(submission_path)
+                Path(submission_path).write_bytes(code.encode("utf-8"))
+            else:
+                submission_path = verified_saved_path
             stdout = ProtocolStringIO(self, "stdout", request_id)
             stderr = ProtocolStringIO(self, "stderr", request_id)
             future = evaluate(
                 submission_path,
+                not temporary_submission,
                 nargout=1,
                 stdout=stdout,
                 stderr=stderr,
@@ -631,7 +1050,9 @@ class MatlabEngineBridge:
                         name = str(frame.get("name", ""))
                         normalized_file = (
                             "<submitted>"
-                            if os.path.realpath(file) == os.path.realpath(submission_path)
+                            if temporary_submission
+                            and submission_path is not None
+                            and os.path.realpath(file) == os.path.realpath(submission_path)
                             else file
                         )
                         traceback.append(f"{normalized_file}:{line}:{name}")
@@ -646,9 +1067,53 @@ class MatlabEngineBridge:
                     },
                     request_id,
                 )
+            if native_saved_file:
+                # MATLAB's native run has already been dispatched.  A second
+                # observable hash check can report a late write, but it cannot
+                # make this path atomic or establish which bytes MATLAB
+                # consumed if a writer changed and restored the file.
+                try:
+                    self._verify_saved_source(code, source_context or {})
+                except SourceConflict as error:
+                    outcome = "failed"
+                    self._send(
+                        "error",
+                        {
+                            "name": "Scient:SourceConflict",
+                            "value": truncate_utf8(
+                                "Native MATLAB execution completed, but the saved source "
+                                "changed during or after dispatch; the bytes MATLAB consumed "
+                                f"cannot be proven ({error}).",
+                                16 * 1024,
+                            )[0],
+                            "traceback": [
+                                truncate_utf8(
+                                    str((source_context or {}).get("filePath", "<source>")),
+                                    4096,
+                                )[0]
+                            ],
+                        },
+                        request_id,
+                    )
+            await self._capture_tables(request_id)
             await self._capture_figures(request_id)
         except asyncio.CancelledError:
             outcome = "cancelled"
+        except SourceConflict as error:
+            outcome = "failed"
+            self._send(
+                "error",
+                {
+                    "name": "Scient:SourceConflict",
+                    "value": truncate_utf8(str(error), 16 * 1024)[0],
+                    "traceback": [
+                        truncate_utf8(
+                            str((source_context or {}).get("filePath", "<source>")), 4096
+                        )[0]
+                    ],
+                },
+                request_id,
+            )
         except Exception as error:  # noqa: BLE001 - classified below
             name = error.__class__.__name__
             if name in {"CancelledError", "InterruptedError"}:
@@ -668,14 +1133,129 @@ class MatlabEngineBridge:
                     request_id,
                 )
         finally:
-            with contextlib.suppress(OSError):
-                os.unlink(submission_path)
+            if temporary_submission and submission_path is not None:
+                with contextlib.suppress(OSError):
+                    os.unlink(submission_path)
             self._active_future = None
             if self._active_request_id == request_id:
                 self._active_request_id = None
                 self._send("execution-complete", {"outcome": outcome}, request_id)
                 await self._flush()
             self._execution_task = None
+
+    async def _capture_tables(self, request_id: str) -> None:
+        """Publish bounded table/timetable values without parsing console text."""
+        try:
+            inspect_tables = await self._trusted_helper("tables")
+            raw = await asyncio.to_thread(
+                inspect_tables,
+                float(MAX_TABLE_ROWS),
+                float(MAX_TABLE_COLUMNS),
+                nargout=1,
+            )
+            payload = json.loads(str(raw))
+            tables = payload.get("tables", []) if isinstance(payload, dict) else []
+            if isinstance(tables, dict):
+                tables = [tables]
+            for entry in tables[:MAX_TABLES] if isinstance(tables, list) else []:
+                if not isinstance(entry, dict):
+                    continue
+                # Leave room for the stable display-id prefix and its separator.
+                name = truncate_utf8(entry.get("name", "table"), 220)[0] or "table"
+                warning = entry.get("warning")
+                if isinstance(warning, str) and warning:
+                    self._send_warning("runtime-warning", warning, request_id)
+                representations: list[dict[str, str]] = []
+                raw_json = entry.get("json")
+                if isinstance(raw_json, str) and raw_json:
+                    try:
+                        decoded = json.loads(raw_json)
+                        schema = decoded.get("schema") if isinstance(decoded, dict) else None
+                        fields = schema.get("fields") if isinstance(schema, dict) else None
+                        rows = decoded.get("data") if isinstance(decoded, dict) else None
+                        if (
+                            isinstance(decoded, dict)
+                            and isinstance(fields, list)
+                            and isinstance(rows, list)
+                            and len(fields) <= MAX_TABLE_COLUMNS
+                            and len(rows) <= MAX_TABLE_ROWS
+                        ):
+                            canonical = json.dumps(
+                                decoded, ensure_ascii=False, separators=(",", ":")
+                            )
+                            if len(canonical.encode("utf-8")) <= MAX_INLINE_REPRESENTATION:
+                                representations.append(
+                                    {
+                                        "mediaType": "application/vnd.dataresource+json",
+                                        "encoding": "json",
+                                        "data": canonical,
+                                    }
+                                )
+                            else:
+                                self._send_warning(
+                                    "output-truncated",
+                                    f"MATLAB table '{name}' JSON exceeded the inline limit.",
+                                    request_id,
+                                )
+                        else:
+                            self._send_warning(
+                                "runtime-warning",
+                                f"MATLAB table '{name}' returned an invalid table representation.",
+                                request_id,
+                            )
+                    except (TypeError, ValueError):
+                        self._send_warning(
+                            "runtime-warning",
+                            f"MATLAB table '{name}' returned invalid JSON.",
+                            request_id,
+                        )
+                raw_text = entry.get("text")
+                if isinstance(raw_text, str) and raw_text:
+                    text, truncated = truncate_utf8(raw_text, MAX_TABLE_TEXT)
+                    representations.append(
+                        {"mediaType": "text/plain", "encoding": "text", "data": text}
+                    )
+                    if truncated:
+                        self._send_warning(
+                            "output-truncated",
+                            f"MATLAB table '{name}' text was truncated.",
+                            request_id,
+                        )
+                if not representations:
+                    continue
+                metadata = json.dumps(
+                    {
+                        "language": "matlab",
+                        "variable": name,
+                        "truncated": bool(payload.get("truncated"))
+                        if isinstance(payload, dict)
+                        else False,
+                    },
+                    separators=(",", ":"),
+                )
+                try:
+                    self._send(
+                        "display",
+                        {
+                            "kind": "display-data",
+                            "bundle": {
+                                "representations": representations,
+                                "metadataJson": metadata,
+                            },
+                            "displayId": f"matlab-table:{name}",
+                        },
+                        request_id,
+                    )
+                except ValueError:
+                    self._send_warning(
+                        "output-truncated",
+                        f"MATLAB table '{name}' exceeded the bridge frame limit.",
+                        request_id,
+                    )
+        except Exception as error:  # noqa: BLE001 - table capture is optional
+            self._send_warning(
+                "runtime-warning", f"MATLAB table capture failed: {error}", request_id
+            )
 
     async def _capture_figures(self, request_id: str) -> None:
         directory = tempfile.mkdtemp(prefix="scient-matlab-figures-")
@@ -707,17 +1287,85 @@ class MatlabEngineBridge:
                     self._send_warning("runtime-warning", str(error), request_id)
                     continue
                 key = str(entry.get("key", ""))
-                if key:
-                    observed_keys.add(key)
-                    digest = png_content_hash(data)
-                    if self._figure_hashes.get(key) == digest:
-                        continue
-                    self._figure_hashes[key] = digest
+                native_data = b""
+                native_path = entry.get("nativePath")
+                if isinstance(native_path, str) and native_path:
+                    try:
+                        native_data = read_captured_artifact(
+                            directory, native_path, MAX_NATIVE_FIG_BYTES
+                        )
+                    except (OSError, ValueError) as error:
+                        self._send_warning("runtime-warning", str(error), request_id)
                 encoded = base64.b64encode(data).decode("ascii")
                 if len(encoded) > MAX_PNG_BASE64:
                     self._send_warning("output-truncated", "PNG exceeded limit.", request_id)
                     continue
-                self._send("display", {"mediaType": "image/png", "data": encoded}, request_id)
+                native_for_output = native_data
+                if native_data and len(data) + len(native_data) > MAX_REPRESENTATION_BUNDLE:
+                    self._send_warning(
+                        "output-truncated",
+                        "MATLAB FIG artifact was omitted because the figure bundle exceeded the retained limit.",
+                        request_id,
+                    )
+                    native_for_output = b""
+                representations = [
+                    {"mediaType": "image/png", "encoding": "base64", "data": encoded}
+                ]
+                if native_for_output:
+                    native_encoded = base64.b64encode(native_for_output).decode("ascii")
+                    representations.append(
+                        {
+                            "mediaType": "application/vnd.mathworks.matlab.figure",
+                            "encoding": "base64",
+                            "data": native_encoded,
+                        }
+                    )
+                if key:
+                    observed_keys.add(key)
+                    # FIG serialization includes volatile metadata. Follow visual
+                    # changes; retain the native file as that visual snapshot's
+                    # companion, not as a continuously serialized workspace.
+                    digest = png_content_hash(data)
+                    if self._figure_hashes.get(key) == digest:
+                        continue
+                    self._figure_hashes[key] = digest
+                    display_id = f"matlab-figure:{key}"
+                    kind = "display-update" if key in self._figure_seen else "display-data"
+                    self._figure_seen.add(key)
+                else:
+                    display_id = None
+                    kind = "display-data"
+                self._send(
+                    "display",
+                    {
+                        "kind": kind,
+                        "bundle": {"representations": representations, "metadataJson": None},
+                        "displayId": display_id,
+                    },
+                    request_id,
+                )
+            for closed_key in sorted(self._figure_seen - observed_keys):
+                self._send(
+                    "display",
+                    {
+                        "kind": "display-update",
+                        "bundle": {
+                            "representations": [
+                                {
+                                    "mediaType": "text/plain",
+                                    "encoding": "text",
+                                    "data": "MATLAB figure closed.",
+                                }
+                            ],
+                            "metadataJson": json.dumps(
+                                {"closed": True}, separators=(",", ":")
+                            ),
+                        },
+                        "displayId": f"matlab-figure:{closed_key}",
+                    },
+                    request_id,
+                )
+                self._figure_seen.discard(closed_key)
             self._figure_hashes = {
                 key: digest for key, digest in self._figure_hashes.items() if key in observed_keys
             }
@@ -846,6 +1494,7 @@ class MatlabEngineBridge:
             await self._cancel_active()
             await self._close_engine()
             self._figure_hashes.clear()
+            self._figure_seen.clear()
             await self._start_engine(self._working_directory)
             self._generation = next_generation
             self._send("restarted", {"kernelPid": None})

@@ -981,6 +981,70 @@ describe("jupyter bridge commands", () => {
     ),
   );
 
+  it.effect("sends exactly one shutdown despite a stalled restart and repeated Stop", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const bridge = yield* makeFakeBridge();
+        const healthy = healthyResponder(
+          (command) => (command.payload as { ownerToken: string }).ownerToken,
+        );
+        bridge.respond((command) => (command.type === "restart" ? [] : healthy(command)));
+        const channel = yield* openChannel(bridge);
+        const restarting = yield* channel
+          .restart({
+            expectedGeneration: INITIAL_COMPUTE_SESSION_GENERATION,
+            nextGeneration: nextComputeSessionGeneration(INITIAL_COMPUTE_SESSION_GENERATION),
+          })
+          .pipe(Effect.exit, Effect.forkChild);
+        while (!bridge.sent().some((command) => command.type === "restart")) yield* Effect.yieldNow;
+        yield* Effect.all(
+          [
+            channel.shutdown({ expectedGeneration: INITIAL_COMPUTE_SESSION_GENERATION }),
+            channel.shutdown({ expectedGeneration: INITIAL_COMPUTE_SESSION_GENERATION }),
+          ],
+          { concurrency: "unbounded" },
+        );
+        expect(bridge.sent().filter((command) => command.type === "shutdown")).toHaveLength(1);
+        yield* Effect.flip(
+          channel.execute({
+            requestId: request("late-execute"),
+            expectedGeneration: INITIAL_COMPUTE_SESSION_GENERATION,
+            code: "pass",
+          }),
+        );
+        expect(bridge.sent().filter((command) => command.type === "execute")).toHaveLength(0);
+        yield* Fiber.interrupt(restarting);
+      }),
+    ),
+  );
+
+  it.effect("forwards source metadata beside unchanged code bytes", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const { bridge, channel, reader } = yield* harness();
+        yield* reader.next;
+        const sourceContext = {
+          kind: "file" as const,
+          filePath: "analysis/script.py",
+          saved: true,
+          sourceBytesHash: `sha256:${"1".repeat(64)}`,
+        };
+        yield* channel.execute({
+          requestId: request("source-run"),
+          expectedGeneration: INITIAL_COMPUTE_SESSION_GENERATION,
+          code: "print(__file__)\n",
+          sourceContext,
+        });
+        expect(bridge.sent().find((command) => command.type === "execute")?.payload).toEqual({
+          code: "print(__file__)\n",
+          sourceContext,
+          silent: false,
+          storeHistory: true,
+        });
+      }),
+    ),
+  );
+
   it.effect("refuses a restart that does not advance exactly one generation", () =>
     Effect.scoped(
       Effect.gen(function* () {
