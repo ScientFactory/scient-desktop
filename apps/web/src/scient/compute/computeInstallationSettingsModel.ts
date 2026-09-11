@@ -50,7 +50,7 @@ export type ComputeCurrentRuntimeSummary = {
   readonly detail: string;
 };
 
-/** One-line current runtime for the default Settings chrome. Inventory stays Advanced. */
+/** One-line current runtime for the default Settings chrome. */
 export function computeCurrentRuntimeSummary(input: {
   readonly language: ComputeLanguageRuntimeInventory;
   readonly preference: ScientificComputingLanguageSettings;
@@ -81,6 +81,15 @@ export function computeCurrentRuntimeSummary(input: {
     };
   }
   if (isMatlab) {
+    // Inventory listing is skipped while MATLAB is disabled, so an empty list
+    // is not proof that MATLAB is missing on the machine.
+    if (!enabled) {
+      return {
+        kind: "connect",
+        title: "Not connected",
+        detail: "Connect the MATLAB already installed on this server.",
+      };
+    }
     if (language.installations.length === 0) {
       return {
         kind: "missing",
@@ -97,7 +106,7 @@ export function computeCurrentRuntimeSummary(input: {
   return {
     kind: "setup",
     title: "Not set up",
-    detail: "Set up Scientific Python here, or choose an existing runtime in Advanced.",
+    detail: "Set up Scientific Python here, or choose an existing runtime under Change runtime.",
   };
 }
 

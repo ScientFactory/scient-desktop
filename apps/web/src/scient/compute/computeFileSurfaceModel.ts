@@ -138,9 +138,19 @@ export function nudgeComputeFileSplit(
   );
 }
 
+export function computeRuntimePresenceLabel(
+  languageName: string,
+  version: string | null | undefined,
+): string {
+  const trimmed = version?.trim();
+  if (trimmed && trimmed !== "unknown") return `${languageName} ${trimmed}`;
+  return languageName;
+}
+
 export function resolveComputeRuntimeToolbarState(input: {
   readonly languageId?: string;
   readonly languageName?: string;
+  readonly runtimeVersion?: string | null;
   readonly liveSession: ComputeRuntimeToolbarSession | null;
   readonly runtimeInspectionPending: boolean;
   readonly readyRuntimeAvailable: boolean;
@@ -159,6 +169,7 @@ export function resolveComputeRuntimeToolbarState(input: {
   const languageId = input.languageId ?? "python";
   const languageName = input.languageName ?? "Python";
   const session = input.liveSession;
+  const presenceLabel = computeRuntimePresenceLabel(languageName, input.runtimeVersion);
   if (input.contextLifecycle === "starting") {
     if (input.capacityRecoveryAvailable) {
       return { kind: "status", label: `${languageName} capacity reached`, canRun: true };
@@ -199,10 +210,12 @@ export function resolveComputeRuntimeToolbarState(input: {
       ...(input.scientificPackagesMissing ? { note: SCIENTIFIC_PACKAGES_NOTE } : {}),
     };
   }
+  // Inspect is a package-metadata probe. Do not call that "ready"; Run still
+  // starts a real session. "Python ready" is reserved for a live session above.
   if (input.readyRuntimeAvailable) {
     return {
       kind: "status",
-      label: `${languageName} ready`,
+      label: presenceLabel,
       canRun: true,
       ...(input.scientificPackagesMissing ? { note: SCIENTIFIC_PACKAGES_NOTE } : {}),
     };

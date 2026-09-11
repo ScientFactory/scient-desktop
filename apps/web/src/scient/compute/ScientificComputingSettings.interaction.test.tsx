@@ -41,6 +41,7 @@ vi.mock("~/components/settings/settingsLayout", async (importOriginal) => ({
 vi.mock("~/hooks/useSettings", async () => {
   const { useSyncExternalStore } = await import("react");
   return {
+    usePrimarySettingsAvailable: () => true,
     useEnvironmentSettings: () => {
       useSyncExternalStore(
         (listener) => {
@@ -190,12 +191,22 @@ describe("Scientific Computing settings interactions", () => {
       root.render(<ScientificComputingSettings environmentId={EnvironmentId.make("remote")} />),
     );
   };
-  const row = (path: string) => {
-    const match = [...container.querySelectorAll<HTMLElement>("[data-compute-installation]")].find(
-      (node) => node.dataset.computeInstallation === path,
+  const runtimeSelect = (languageName = "Python") => {
+    const match = container.querySelector<HTMLSelectElement>(
+      `select[aria-label="Choose ${languageName} runtime"]`,
     );
-    expect(match).toBeDefined();
+    expect(match, `Choose ${languageName} runtime`).toBeDefined();
     return match!;
+  };
+  const chooseRuntime = async (path: string, languageName = "Python") => {
+    const picker = runtimeSelect(languageName);
+    await act(() => {
+      Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, "value")!.set!.call(
+        picker,
+        path,
+      );
+      picker.dispatchEvent(new Event("change", { bubbles: true }));
+    });
   };
   const button = (label: string, scope: ParentNode = container) => {
     const match = [...scope.querySelectorAll<HTMLButtonElement>("button")].find(
@@ -208,55 +219,146 @@ describe("Scientific Computing settings interactions", () => {
     await act(() => button(label, scope).click());
   };
 
-  it("uses one direct card row per installation and keeps language controls outside them", async () => {
+  it("shows the current runtime without an installation dashboard", async () => {
     await render();
-    expect(row(managedPath).parentElement).toBe(row(systemPath).parentElement);
-    expect(row(managedPath).querySelector('[role="switch"]')).toBeNull();
-    expect(container.querySelectorAll("h3")).toHaveLength(1);
-    expect(container.textContent).not.toContain(managedPath);
+    expect(container.querySelector("[data-compute-installation]")).toBeNull();
+    expect(container.querySelector("[data-compute-summary] button")).toBeNull();
+    expect(
+      [...container.querySelectorAll("button")].some(
+        (node) => node.textContent?.trim() === "Details",
+      ),
+    ).toBe(false);
     expect(container.textContent).not.toContain("More scientific tools are coming soon");
-    expect(container.textContent).toContain("Advanced");
-    await click("Details", row(managedPath));
-    expect(row(managedPath).textContent).toContain("Repair");
-    expect(row(managedPath).textContent).not.toContain("System installation");
-    expect(row(systemPath).textContent).not.toContain("Repair");
+    expect(container.textContent).toContain("Change runtime");
+    expect(container.textContent).toContain("3.12.13");
+    expect(container.textContent).toContain("Scient-managed");
+    expect(container.querySelectorAll("h3")).toHaveLength(1);
+    expect(runtimeSelect().value).toBe(managedPath);
+    expect(button("Test").title).toBe("Starts and closes a test session.");
+  });
+
+  it("treats Test passed as a started-and-closed session, not a metadata probe", async () => {
+    mocks.verify.mockImplementation(async ({ environmentId, input }) => {
+      expect(environmentId).toBe("remote");
+      mocks.calls.push("verify");
+      return {
+        _tag: "Success",
+        value: {
+          profile: {
+            languageId: input.languageId,
+            source: "managed",
+            executable: input.executable,
+            languageVersion: "3.12.13",
+            architecture: null,
+            displayName: "Python",
+          },
+          readiness: "ready",
+          connection: "verified",
+          missingRequirements: [],
+          packages: [],
+          message: "Connection verified. The test session was closed.",
+        },
+      };
+    });
+    await render();
+    await click("Test");
+    expect(mocks.calls).toEqual(["verify"]);
+    expect(button("Test passed")).toBeDefined();
+    expect(mocks.manage).not.toHaveBeenCalled();
+  });
+
+  it("does not treat a Python probe as Test passed or send people to Repair", async () => {
+    mocks.verify.mockImplementation(async () => ({
+      _tag: "Success",
+      value: {
+        profile: {
+          languageId: "python",
+          source: "managed",
+          executable: managedPath,
+          languageVersion: "3.12.13",
+          architecture: null,
+          displayName: "Python",
+        },
+        readiness: "ready",
+        missingRequirements: [],
+        packages: [],
+        message: null,
+      },
+    }));
+    await render();
+    await click("Test");
+    expect(container.textContent).not.toContain("Test passed");
+    expect(container.textContent).toContain("did not start a test session");
+    expect(mocks.manage).not.toHaveBeenCalled();
+  });
+
+  it("keeps a helper provision failure in Change runtime, not the default MATLAB story", async () => {
+    const matlab = "/MATLAB/bin/matlab";
+    const helper = {
+      ...status(),
+      displayName: "MATLAB connection helper",
+      installationExecutable: matlab,
+      failureMessage: "ENOENT: uv.lock",
+    };
+    mocks.preferences = { matlab: { enabled: true, executable: matlab } };
+    mocks.statuses = { matlab: helper };
+    mocks.languages = [
+      {
+        ...python(),
+        descriptor: {
+          ...python().descriptor,
+          languageId: ComputeLanguageId.make("matlab"),
+          displayName: "MATLAB",
+        },
+        managedRuntime: helper,
+        configuredExecutable: matlab,
+        installations: [
+          { executable: matlab, source: "conventional", version: "R2026a", problem: null },
+        ],
+      },
+    ];
+    await render();
+    const summary = container.querySelector("[data-compute-summary='matlab']");
+    const recovery = container.querySelector("[data-compute-recovery='matlab']");
+    expect(summary?.textContent).toContain("R2026a");
+    expect(summary?.textContent).toContain("System installation");
+    expect(summary?.textContent).not.toContain("ENOENT");
+    expect(recovery?.textContent).toContain("ENOENT");
   });
 
   it("selects system Python by saving first and releasing managed precedence exactly once", async () => {
     await render();
-    const use = button("Use", row(systemPath));
+    const picker = runtimeSelect();
     await act(() => {
-      use.click();
-      use.click();
+      const setValue = Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, "value")!.set!;
+      setValue.call(picker, systemPath);
+      picker.dispatchEvent(new Event("change", { bubbles: true }));
+      picker.dispatchEvent(new Event("change", { bubbles: true }));
     });
     expect(mocks.calls).toEqual(["save", "use-existing"]);
     expect(mocks.preferences.python?.executable).toBe(systemPath);
-    expect(row(systemPath).textContent).toContain("Default");
-    expect(row(systemPath).textContent).toContain("System installation");
-    expect(row(managedPath).textContent).not.toContain("Default");
+    expect(runtimeSelect().value).toBe(systemPath);
     expect(mocks.verify).not.toHaveBeenCalled();
   });
 
   it("does not switch or release managed Python when saving fails", async () => {
     mocks.saveFails = true;
     await render();
-    await click("Use", row(systemPath));
+    await chooseRuntime(systemPath);
     expect(mocks.calls).toEqual(["save"]);
-    expect(row(managedPath).textContent).toContain("Default");
-    expect(row(systemPath).textContent).not.toContain("Default");
+    expect(runtimeSelect().value).toBe(managedPath);
     expect(container.textContent).toContain("Settings were not saved");
   });
 
   it("keeps the real managed default when release fails and allows retry", async () => {
     mocks.releaseFails = true;
     await render();
-    await click("Use", row(systemPath));
-    expect(row(managedPath).textContent).toContain("Default");
-    expect(row(systemPath).textContent).not.toContain("Default");
+    await chooseRuntime(systemPath);
+    expect(runtimeSelect().value).toBe(managedPath);
     expect(container.textContent).toContain("still selected");
     mocks.releaseFails = false;
-    await click("Use", row(systemPath));
-    expect(row(systemPath).textContent).toContain("Default");
+    await chooseRuntime(systemPath);
+    expect(runtimeSelect().value).toBe(systemPath);
     expect(container.textContent).not.toContain("still selected");
   });
 
@@ -266,12 +368,12 @@ describe("Scientific Computing settings interactions", () => {
     await click("Reset to automatic");
     expect(mocks.calls).toEqual(["save", "use-existing"]);
     expect(mocks.preferences.python?.executable).toBe("");
-    expect(row(systemPath).textContent).toContain("Default");
+    expect(runtimeSelect().value).toBe(systemPath);
   });
 
   it("does not save a custom path on blur or Cancel; saves only on explicit submission", async () => {
     await render();
-    await click("Use another installation…");
+    await click("Use another path…");
     const input = container.querySelector<HTMLInputElement>(
       'input[aria-label="Python executable path"]',
     )!;
@@ -287,7 +389,7 @@ describe("Scientific Computing settings interactions", () => {
     expect(mocks.update).not.toHaveBeenCalled();
     await click("Cancel");
     expect(mocks.update).not.toHaveBeenCalled();
-    await click("Use another installation…");
+    await click("Use another path…");
     const next = container.querySelector<HTMLInputElement>(
       'input[aria-label="Python executable path"]',
     )!;
@@ -316,7 +418,7 @@ describe("Scientific Computing settings interactions", () => {
     expect(mocks.manage).not.toHaveBeenCalled();
   });
 
-  it("ties helper maintenance to its MATLAB installation, not to whichever row is selected", async () => {
+  it("ties helper maintenance to the selected MATLAB, not an inventory of rows", async () => {
     const a = "/MATLAB-A/bin/matlab";
     const b = "/MATLAB-B/bin/matlab";
     const helper = {
@@ -349,22 +451,18 @@ describe("Scientific Computing settings interactions", () => {
       },
     ];
     await render();
-    await click("Details", row(a));
-    await click("Details", row(b));
-    expect(row(a).textContent).toContain("Remove helper");
-    expect(row(b).textContent).not.toContain("Remove helper");
-    expect(row(b).textContent).toContain("Set up connection");
-    expect(button("Repair connection", row(a)).disabled).toBe(true);
-    await click("Use", row(a));
+    expect(container.textContent).toContain("Remove helper");
+    expect(container.textContent).toContain("Set up connection");
+    expect(button("Repair connection").disabled).toBe(true);
+    await chooseRuntime(a, "MATLAB");
     expect(mocks.calls).toEqual(["save"]);
-    expect(button("Repair connection", row(a)).disabled).toBe(false);
+    expect(button("Repair connection").disabled).toBe(false);
     expect(container.textContent).not.toContain("Set up connection");
   });
 
   it("requires confirmation before removal and keeps cancellation non-mutating", async () => {
     await render();
-    await click("Details", row(managedPath));
-    await click("Remove", row(managedPath));
+    await click("Remove");
     expect(mocks.manage).not.toHaveBeenCalled();
     const dialog = document.querySelector<HTMLElement>('[role="alertdialog"]')!;
     expect(dialog.textContent).toContain(
@@ -372,12 +470,12 @@ describe("Scientific Computing settings interactions", () => {
     );
     await click("Cancel", dialog);
     expect(mocks.manage).not.toHaveBeenCalled();
-    await click("Remove", row(managedPath));
+    await click("Remove");
     await click("Remove", document.querySelector<HTMLElement>('[role="alertdialog"]')!);
     expect(mocks.calls).toEqual(["remove"]);
   });
 
-  it("keeps repair reachable for a missing managed executable without offering Test or Use", async () => {
+  it("keeps repair reachable for a missing managed executable", async () => {
     mocks.languages = [
       {
         ...python(),
@@ -392,19 +490,18 @@ describe("Scientific Computing settings interactions", () => {
       },
     ];
     await render();
-    expect(button("Test", row(managedPath)).disabled).toBe(true);
-    await click("Details", row(managedPath));
-    expect(button("Repair", row(managedPath)).disabled).toBe(false);
-    expect(row(managedPath).textContent).toContain("needs repair");
+    expect(button("Repair").disabled).toBe(false);
+    expect(container.textContent).toContain("needs repair");
+    expect(mocks.manage).not.toHaveBeenCalled();
   });
 
   it("survives repeated changes between managed and existing Python without duplicate mutations", async () => {
     await render();
     for (let n = 0; n < 25; n++) {
-      await click("Use", row(systemPath));
-      expect(row(systemPath).textContent).toContain("Default");
-      await click("Use", row(managedPath));
-      expect(row(managedPath).textContent).toContain("Default");
+      await chooseRuntime(systemPath);
+      expect(runtimeSelect().value).toBe(systemPath);
+      await chooseRuntime(managedPath);
+      expect(runtimeSelect().value).toBe(managedPath);
     }
     expect(mocks.calls).toEqual(
       Array.from({ length: 25 }, () => ["save", "use-existing", "use-managed"]).flat(),

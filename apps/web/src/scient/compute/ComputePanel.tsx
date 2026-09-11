@@ -1188,11 +1188,19 @@ export function ComputePanel(props: {
                 )}
                 onClick={() => setPanelView("results")}
               >
-                {props.embedded ? "Results" : "Compute"}
+                {props.embedded
+                  ? "Results"
+                  : props.contextId === undefined
+                    ? "Compute history"
+                    : "Extra session"}
               </button>
             ) : (
               <span className="px-1.5 py-1 text-sm font-medium text-foreground">
-                {props.embedded ? "Results" : "Compute"}
+                {props.embedded
+                  ? "Results"
+                  : props.contextId === undefined
+                    ? "Compute history"
+                    : "Extra session"}
               </span>
             )}
             {showVariablesTab ? (
@@ -1463,7 +1471,7 @@ export function ComputePanel(props: {
               />
             }
           >
-            Python & MATLAB settings
+            Scientific Computing
           </Button>
         ) : null}
       </header>
@@ -1636,7 +1644,7 @@ export function ComputePanel(props: {
                     />
                   }
                 >
-                  <Settings2 /> Python & MATLAB settings
+                  <Settings2 /> Scientific Computing
                 </Button>
               </>
             ) : (

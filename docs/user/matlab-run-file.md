@@ -10,13 +10,12 @@ user-installed and licensed MATLAB in the selected project environment.
 The code/results controls above a `.m` file run it in a live MATLAB session.
 Choose **Connect MATLAB** on that file when MATLAB is not ready yet. The Engine
 connection requires a compatible Python host. Scient can set up a small private
-**MATLAB connection helper**, or use an existing compatible host from
-**Settings → Python & MATLAB → Advanced**.
-Scient does not install MATLAB or its license. **MATLAB ready** is a quiet status
-menu: use it to **Check again** or open those settings.
+**MATLAB connection helper**, or choose an existing compatible host from
+**Settings → Scientific Computing → Change runtime**.
+Scient does not install MATLAB or its license. The file header names the detected
+release until a live session starts; **MATLAB ready** means that session is up.
+Use the status menu to **Check again** or open those settings.
 
-In Advanced Settings, **Detected** means the Engine import is available; **Test**
-starts and closes a temporary native MATLAB session to check the license and startup.
 The executable preference is shared with fresh-process runs. Their older setup control
 now writes this same preference instead of maintaining a second runtime choice.
 See [Connect your MATLAB installation](scientific-computing.md#connect-your-matlab-installation)

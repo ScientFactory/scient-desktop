@@ -316,7 +316,7 @@ export function ComputeOutputView(props: {
                           />
                         }
                       >
-                        Python & MATLAB
+                        Scientific Computing
                       </Button>
                     ) : null}
                     <ComputeDiagnosticFrames

@@ -58,15 +58,18 @@ export function useComputeManagedRuntime(input: {
   const cancelCommand = useAtomCommand(computeEnvironment.cancelManagedRuntime, {
     reportFailure: false,
   });
+  // First-time file setup has no inventory status yet. Subscribe anyway so
+  // Set up Python / Connect MATLAB can show progress on the file, not only in Settings.
   const queried = useEnvironmentQuery(
-    input.environmentId && input.initialStatus !== null
+    input.environmentId
       ? computeEnvironment.managedRuntime({
           environmentId: input.environmentId,
           input: { languageId: input.languageId },
         })
       : null,
   );
-  const status = queried.data ?? input.initialStatus;
+  const [commandStatus, setCommandStatus] = useState<ComputeManagedRuntimeStatus | null>(null);
+  const status = queried.data ?? commandStatus ?? input.initialStatus;
   const [pending, setPending] = useState(false);
   const [localFailure, setLocalFailure] = useState<string | null>(null);
   const inFlight = useRef(false);
@@ -84,6 +87,7 @@ export function useComputeManagedRuntime(input: {
         input: { languageId: input.languageId, action },
       });
       if (result._tag === "Failure") throw squashAtomCommandFailure(result);
+      if (result.value) setCommandStatus(result.value);
       return true;
     } catch (cause) {
       setLocalFailure(
@@ -108,7 +112,7 @@ export function useComputeManagedRuntime(input: {
   };
   return {
     status,
-    busy: pending || status?.operation != null || queried.isPending,
+    busy: pending || status?.operation != null,
     failure: localFailure ?? queried.error ?? status?.failureMessage ?? null,
     act,
     cancel,
@@ -147,17 +151,20 @@ export function ManagedRuntimeActions({
   connection = false,
   canProvision = true,
   disabled = false,
+  maintenanceOnly = false,
 }: {
   runtime: ComputeManagedRuntimeController;
   connection?: boolean;
   canProvision?: boolean;
   disabled?: boolean;
+  maintenanceOnly?: boolean;
 }) {
   const [confirmRemove, setConfirmRemove] = useState(false);
   const status = runtime.status;
   if (!status) return null;
   const displayName = connection ? "MATLAB connection helper" : "Scient-managed Python";
   const busy = disabled || runtime.busy;
+  if (maintenanceOnly && !status.installed) return null;
   return (
     <>
       <div className="flex flex-wrap items-center gap-0.5">

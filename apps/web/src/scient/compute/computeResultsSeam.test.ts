@@ -98,16 +98,20 @@ describe("compute result surface seam", () => {
 
   it("keeps Python setup contextual to the file toolbar", () => {
     expect(pythonActionsSource).toContain("resolveComputeRuntimeToolbarState");
-    expect(pythonActionsSource).toContain("Python & MATLAB settings");
+    expect(pythonActionsSource).toContain("Scientific Computing");
     expect(pythonActionsSource).toContain("Check again");
     expect(pythonActionsSource).toContain("handleSetup");
     expect(pythonActionsSource).toContain('runtimeToolbar.kind === "switch"');
     expect(pythonActionsSource).toContain("the next run uses the");
     expect(pythonActionsSource).toContain(
-      "{props.language.displayName} selected in Python & MATLAB settings",
+      "{props.language.displayName} selected in Scientific Computing settings",
     );
     expect(pythonActionsSource).not.toContain("Settings2");
     expect(pythonActionsSource).toContain("showMatlabOneShotSurface");
+    expect(pythonActionsSource).toContain("pinRuntimeChrome");
+    expect(pythonActionsSource).toContain(
+      'props.language.languageId !== "matlab" && !runtimeToolbar.canRun',
+    );
     expect(panelSource).toContain("if (props.contextId === undefined) return allSessions;");
     expect(panelSource).toContain(
       "return allSessions.filter((session) => session.sessionId === contextBinding.sessionId);",
@@ -137,9 +141,16 @@ describe("compute result surface seam", () => {
     expect(pythonActionsSource).toContain("Switch {props.language.displayName} environment…");
   });
 
-  it("sizes shared setup-card actions by the panel rather than the window", () => {
-    expect(settingsSource).toContain("@container/managed-runtime");
-    expect(settingsSource).toContain("@[32rem]/managed-runtime:flex-row");
+  it("keeps Scientific Computing settings to the current runtime, not an inventory dashboard", () => {
+    expect(settingsSource).toContain("SettingsRow");
+    expect(settingsSource).not.toContain('variant="plain"');
+    expect(settingsSource).toContain("Change runtime");
+    expect(settingsSource).toContain("Choose ${language.descriptor.displayName} runtime");
+    expect(settingsSource).not.toContain("ComputeInstallationRow");
+    expect(settingsSource).toContain("Starts and closes a test session");
+    expect(settingsSource).not.toContain("More scientific tools are coming soon");
+    expect(settingsSource).toContain('title="Scientific Computing"');
+    expect(pythonActionsSource).toContain("runtimeVersion:");
   });
 
   it("refreshes the current workspace tree after successful or failed executions", () => {

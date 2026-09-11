@@ -189,6 +189,16 @@ describe("current runtime summary", () => {
     });
   });
 
+  it("points Python setup at Change runtime instead of an inventory", () => {
+    expect(
+      computeCurrentRuntimeSummary({
+        language: { ...inventory, installations: [] },
+        preference: { enabled: false, executable: "" },
+        managed: null,
+      }).detail,
+    ).toContain("Change runtime");
+  });
+
   it("asks MATLAB users to connect an installed runtime instead of setting one up", () => {
     const matlab = {
       ...inventory,
@@ -217,6 +227,17 @@ describe("current runtime summary", () => {
       computeCurrentRuntimeSummary({
         language: { ...matlab, installations: [] },
         preference: { enabled: false, executable: "" },
+        managed: null,
+      }),
+    ).toEqual({
+      kind: "connect",
+      title: "Not connected",
+      detail: "Connect the MATLAB already installed on this server.",
+    });
+    expect(
+      computeCurrentRuntimeSummary({
+        language: { ...matlab, installations: [] },
+        preference: { enabled: true, executable: "" },
         managed: null,
       }).kind,
     ).toBe("missing");

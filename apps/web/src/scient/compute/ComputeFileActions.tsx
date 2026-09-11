@@ -10,7 +10,15 @@ import {
 } from "@t3tools/client-runtime/state/runtime";
 import { ChevronDown, LoaderCircle, Play } from "lucide-react";
 import { Link } from "@tanstack/react-router";
-import { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useState } from "react";
+import {
+  forwardRef,
+  useCallback,
+  useEffect,
+  useImperativeHandle,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 
 import { Button } from "~/components/ui/button";
 import {
@@ -305,6 +313,8 @@ export const ComputeFileActions = forwardRef<ComputeFileActionsHandle, ComputeFi
     const runtimeToolbar = resolveComputeRuntimeToolbarState({
       languageId: props.language.languageId,
       languageName: props.language.displayName,
+      runtimeVersion:
+        readyRuntime?.profile.languageVersion ?? liveSession?.runtime?.languageVersion,
       liveSession,
       runtimeInspectionPending: runtimes.isPending || refreshing,
       readyRuntimeAvailable: readyRuntime !== null,
@@ -402,6 +412,35 @@ export const ComputeFileActions = forwardRef<ComputeFileActionsHandle, ComputeFi
       refreshing,
       refreshSessions,
       props.language.displayName,
+    ]);
+
+    const previousManagedOperation = useRef(false);
+    const rediscoveredAfterInstall = useRef(false);
+    useEffect(() => {
+      const operating = managedRuntime.status?.operation != null;
+      if (previousManagedOperation.current && !operating) {
+        rediscoveredAfterInstall.current = false;
+        void refreshRuntime();
+      }
+      previousManagedOperation.current = operating;
+    }, [managedRuntime.status?.operation, refreshRuntime]);
+    useEffect(() => {
+      if (rediscoveredAfterInstall.current) return;
+      if (
+        managedRuntime.status?.installed === true &&
+        managedRuntime.status.operation == null &&
+        readyRuntime === null &&
+        !runtimes.isPending
+      ) {
+        rediscoveredAfterInstall.current = true;
+        void refreshRuntime();
+      }
+    }, [
+      managedRuntime.status?.installed,
+      managedRuntime.status?.operation,
+      readyRuntime,
+      refreshRuntime,
+      runtimes.isPending,
     ]);
 
     const handleSetup = useCallback(async () => {
@@ -514,7 +553,7 @@ export const ComputeFileActions = forwardRef<ComputeFileActionsHandle, ComputeFi
             stackedThreadToast({
               type: "error",
               title: `${props.language.displayName} is not ready`,
-              description: `Use ${computeRuntimeSetupActionLabel(props.language.languageId, props.language.displayName)} on this file, or choose another runtime in Python & MATLAB settings.`,
+              description: `Use ${computeRuntimeSetupActionLabel(props.language.languageId, props.language.displayName)} on this file, or choose another runtime in Scientific Computing settings.`,
             }),
           );
           setOperation(null);
@@ -693,6 +732,15 @@ export const ComputeFileActions = forwardRef<ComputeFileActionsHandle, ComputeFi
       managedRuntime.busy;
     const setupProgress =
       managedRuntime.status === null ? null : managedRuntimeOperationLabel(managedRuntime.status);
+    const pinRuntimeChrome =
+      Boolean(setupProgress) ||
+      Boolean(managedRuntime.failure) ||
+      runtimeToolbar.kind === "setup" ||
+      runtimeToolbar.kind === "switch" ||
+      capacityBlocked;
+    const liveRunDisabled = busy || !runtimeToolbar.canRun;
+    const runMenuDisabled =
+      busy || (props.language.languageId !== "matlab" && !runtimeToolbar.canRun);
     const runtimeNote = runtimeToolbar.kind === "status" ? runtimeToolbar.note : undefined;
     const runtimeExecutable =
       liveSession?.runtime?.executable ??
@@ -720,7 +768,13 @@ export const ComputeFileActions = forwardRef<ComputeFileActionsHandle, ComputeFi
     return (
       <>
         <div className="@container/python-file-actions flex min-w-0 items-center justify-end gap-1.5">
-          <div className="hidden min-w-0 flex-1 @[9rem]/python-file-actions:block">
+          <div
+            className={
+              pinRuntimeChrome
+                ? "min-w-0 flex-1"
+                : "hidden min-w-0 flex-1 @[9rem]/python-file-actions:block"
+            }
+          >
             {setupProgress || managedRuntime.failure ? (
               <ManagedRuntimeNotice runtime={managedRuntime} />
             ) : capacityBlocked ? (
@@ -816,7 +870,7 @@ export const ComputeFileActions = forwardRef<ComputeFileActionsHandle, ComputeFi
                       />
                     }
                   >
-                    Python & MATLAB settings
+                    Scientific Computing
                   </MenuItem>
                 </MenuPopup>
               </Menu>
@@ -828,7 +882,7 @@ export const ComputeFileActions = forwardRef<ComputeFileActionsHandle, ComputeFi
               variant="outline"
               className="rounded-r-none px-1.5 @[15rem]/python-file-actions:px-[calc(--spacing(2)-1px)]"
               aria-label={primary.label}
-              disabled={busy || !runtimeToolbar.canRun || primary.slice === null}
+              disabled={liveRunDisabled || primary.slice === null}
               onClick={() => void run(primary.kind, primary.slice)}
             >
               {operation === primary.kind ? <LoaderCircle className="animate-spin" /> : <Play />}
@@ -841,7 +895,7 @@ export const ComputeFileActions = forwardRef<ComputeFileActionsHandle, ComputeFi
                     size="icon-xs"
                     variant="outline"
                     className="rounded-l-none border-l-0"
-                    disabled={busy || !runtimeToolbar.canRun}
+                    disabled={runMenuDisabled}
                     aria-label={`Choose ${props.language.displayName} code to run`}
                   />
                 }
@@ -850,15 +904,21 @@ export const ComputeFileActions = forwardRef<ComputeFileActionsHandle, ComputeFi
               </MenuTrigger>
               <MenuPopup align="end" side="bottom">
                 <MenuItem
-                  disabled={selectionSlice === null}
+                  disabled={liveRunDisabled || selectionSlice === null}
                   onClick={() => void run("selection", selectionSlice)}
                 >
                   Run selection
                 </MenuItem>
-                <MenuItem disabled={cellSlice === null} onClick={() => void run("cell", cellSlice)}>
+                <MenuItem
+                  disabled={liveRunDisabled || cellSlice === null}
+                  onClick={() => void run("cell", cellSlice)}
+                >
                   Run cell
                 </MenuItem>
-                <MenuItem disabled={fileSlice === null} onClick={() => void run("file", fileSlice)}>
+                <MenuItem
+                  disabled={liveRunDisabled || fileSlice === null}
+                  onClick={() => void run("file", fileSlice)}
+                >
                   Run file
                 </MenuItem>
                 {runtimeToolbar.kind === "switch" ? (
@@ -893,7 +953,7 @@ export const ComputeFileActions = forwardRef<ComputeFileActionsHandle, ComputeFi
               <AlertDialogDescription>
                 This stops the current {props.language.displayName} session and clears its in-memory
                 variables. Run history remains available, and the next run uses the{" "}
-                {props.language.displayName} selected in Python & MATLAB settings.
+                {props.language.displayName} selected in Scientific Computing settings.
               </AlertDialogDescription>
             </AlertDialogHeader>
             <AlertDialogFooter>
