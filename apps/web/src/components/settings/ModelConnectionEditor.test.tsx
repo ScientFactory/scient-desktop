@@ -34,6 +34,7 @@ import { Select } from "../ui/select";
 import { Choice, ModelConnectionEditor } from "./ModelConnectionEditor";
 import { CUSTOM_MODEL_PRESETS, customModelPresetId } from "./customModels";
 const pi = ProviderInstanceId.make("pi");
+const droid = ProviderInstanceId.make("droid");
 const connection: CustomModelConnection = {
   id: "shared",
   name: "Shared endpoint",
@@ -82,6 +83,7 @@ function editor(
     connections?: CustomModelConnection[];
     edit?: boolean;
     fail?: boolean;
+    agents?: ReadonlyArray<{ id: ProviderInstanceId; name: string }>;
   } = {},
 ) {
   const onSave = vi.fn(async (_input: CustomModelSaveInput) => {
@@ -96,8 +98,7 @@ function editor(
         ...(options.connection ? { connection: options.connection } : {}),
         ...(options.edit ? { model: (options.connection ?? connection).models[0]! } : {}),
       },
-      agents: [{ id: pi, name: "Pi" }],
-      defaultInstanceId: pi,
+      agents: options.agents ?? [{ id: pi, name: "Pi" }],
       onSave,
       onClose,
     });
@@ -316,8 +317,13 @@ describe("custom model editor", () => {
     ]);
     expect(editor().field("Model provider").props.value).toBe("openrouter");
   });
-  it("creates a redacted API-key submission with an explicit Pi attachment", async () => {
-    const f = editor();
+  it("creates a redacted API-key submission attached to every compatible agent by default", async () => {
+    const f = editor({
+      agents: [
+        { id: droid, name: "Droid" },
+        { id: pi, name: "Pi" },
+      ],
+    });
     f.change("Model ID", "model-id");
     f.change("API key", "synthetic-key");
     await f.submit();
@@ -327,9 +333,21 @@ describe("custom model editor", () => {
     expect(saved.connection.models[0]).toMatchObject({
       modelId: "model-id",
       name: "model-id",
-      instanceIds: [pi],
+      instanceIds: [droid, pi],
     });
     expect(f.onClose).toHaveBeenCalledOnce();
+  });
+  it("preserves an existing model's explicit agent attachments", async () => {
+    const f = editor({
+      connection,
+      edit: true,
+      agents: [
+        { id: droid, name: "Droid" },
+        { id: pi, name: "Pi" },
+      ],
+    });
+    await f.submit();
+    expect(f.onSave.mock.calls[0]![0].connection.models[0]!.instanceIds).toEqual([pi]);
   });
   it("adds a model to a saved connection without rewriting its key or other models", async () => {
     const f = editor({ connection });

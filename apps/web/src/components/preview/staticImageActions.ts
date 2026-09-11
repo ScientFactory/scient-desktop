@@ -1,3 +1,5 @@
+import { loadCanvasImage } from "~/scient/presentation/loadCanvasImage";
+
 const MAX_COPY_DIMENSION = 8_192;
 const MAX_COPY_PIXELS = 16_777_216;
 
@@ -45,41 +47,26 @@ async function fetchImageBlob(url: string): Promise<Blob> {
   return blob;
 }
 
-async function loadBlobImage(blob: Blob): Promise<HTMLImageElement> {
-  const url = URL.createObjectURL(blob);
-  try {
-    const image = new Image();
-    image.decoding = "async";
-    await new Promise<void>((resolve, reject) => {
-      image.addEventListener("load", () => resolve(), { once: true });
-      image.addEventListener(
-        "error",
-        () => reject(new Error("The browser could not decode the image.")),
-        { once: true },
-      );
-      image.src = url;
-    });
-    return image;
-  } finally {
-    URL.revokeObjectURL(url);
-  }
-}
-
 async function imageBlobToPng(blob: Blob): Promise<Blob> {
-  const image = await loadBlobImage(blob);
+  const image = await loadCanvasImage(blob);
   const dimensions = staticImageCopyDimensions(image.naturalWidth, image.naturalHeight);
   const canvas = document.createElement("canvas");
   canvas.width = dimensions.width;
   canvas.height = dimensions.height;
   const context = canvas.getContext("2d");
   if (!context) throw new Error("The browser could not create an image canvas.");
-  context.drawImage(image, 0, 0, dimensions.width, dimensions.height);
-  return new Promise<Blob>((resolve, reject) => {
-    canvas.toBlob((png) => {
-      if (png) resolve(png);
-      else reject(new Error("The browser could not encode the image as PNG."));
-    }, "image/png");
-  });
+  try {
+    context.drawImage(image, 0, 0, dimensions.width, dimensions.height);
+    return await new Promise<Blob>((resolve, reject) => {
+      canvas.toBlob((png) => {
+        if (png) resolve(png);
+        else reject(new Error("The browser could not encode the image as PNG."));
+      }, "image/png");
+    });
+  } finally {
+    canvas.width = 1;
+    canvas.height = 1;
+  }
 }
 
 export async function copyPngBlobToClipboard(png: Blob): Promise<void> {

@@ -241,6 +241,28 @@ export class ScientProseMirrorSession {
     return matchedIndex < 0 ? null : (this.projectedBlockRanges[matchedIndex]?.from ?? null);
   }
 
+  /** Current projected source, including unsaved structural edits. Read-only. */
+  sourceRangeForDocumentRange(from: number, to: number): { from: number; to: number } | null {
+    if (
+      !Number.isSafeInteger(from) ||
+      !Number.isSafeInteger(to) ||
+      from < 0 ||
+      to > this.editorState.doc.content.size ||
+      from >= to
+    )
+      return null;
+    let first: number | undefined;
+    let last: number | undefined;
+    this.editorState.doc.forEach((node, offset, index) => {
+      if (from >= offset + node.nodeSize || to <= offset) return;
+      const range = this.projectedBlockRanges[index];
+      if (!range) return;
+      first ??= range.from;
+      last = range.to;
+    });
+    return first === undefined || last === undefined ? null : { from: first, to: last };
+  }
+
   documentPositionForSourceOffset(sourceOffset: number): number | null {
     if (this.projectedBlockRanges.length === 0) return null;
     const clamped = Math.min(Math.max(0, sourceOffset), this.documentSession.draftSource.length);

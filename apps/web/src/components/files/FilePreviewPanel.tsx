@@ -36,6 +36,8 @@ import {
 } from "react";
 
 import { isBrowserPreviewFile, openFileInPreview } from "~/browser/openFileInPreview";
+import type { FileCitation } from "@t3tools/contracts";
+import type { MarkdownCiteHandler } from "~/scient/markdownEditor/markdownCitation";
 import { useAssetUrlRefresh, useAssetUrlState } from "~/assets/assetUrls";
 import { OpenInPicker } from "~/components/chat/OpenInPicker";
 import { PierreEntryIcon } from "~/components/chat/PierreEntryIcon";
@@ -128,6 +130,8 @@ import {
 } from "./projectFilesQueryState";
 
 interface FilePreviewPanelProps {
+  onCiteFile?: MarkdownCiteHandler;
+  fileCitation?: FileCitation | undefined;
   environmentId: EnvironmentId;
   cwd: string;
   projectName: string;
@@ -1328,6 +1332,8 @@ function initialExplorerOpen(): boolean {
 }
 
 export default function FilePreviewPanel({
+  onCiteFile,
+  fileCitation,
   environmentId,
   cwd,
   projectName,
@@ -1426,7 +1432,11 @@ export default function FilePreviewPanel({
   const revealHandled =
     revealLine === null ||
     (handledReveal?.path === relativePath && handledReveal.requestId === revealRequestId);
-  const renderMarkdown = isMarkdownDocument && renderMarkdownPreferred && revealHandled;
+  const [dismissedCitationReveal, setDismissedCitationReveal] = useState<number | null>(null);
+  const citationRevealActive =
+    fileCitation !== undefined && dismissedCitationReveal !== revealRequestId;
+  const renderMarkdown =
+    isMarkdownDocument && (renderMarkdownPreferred || citationRevealActive) && revealHandled;
   const requestedHtmlMode =
     htmlPresentationRequest?.id === revealRequestId ? htmlPresentationRequest.mode : null;
   const renderBrowserFile =
@@ -1514,6 +1524,7 @@ export default function FilePreviewPanel({
   const handleRenderMarkdownChange = useCallback(
     (pressed: boolean) => {
       const apply = () => {
+        setDismissedCitationReveal(revealRequestId);
         setRenderMarkdownPreferred(pressed);
         setHandledReveal(
           pressed && relativePath !== null
@@ -2060,6 +2071,9 @@ export default function FilePreviewPanel({
                   relativePath={relativePath}
                   threadRef={threadRef}
                   persistence={markdownLease}
+                  {...(onCiteFile ? { onCite: onCiteFile } : {})}
+                  citationReveal={citationRevealActive ? fileCitation : undefined}
+                  citationRevealId={revealRequestId}
                   resolvedTheme={resolvedTheme}
                   onOpenFile={onOpenFile}
                   onOpenFileSource={(path, line) =>

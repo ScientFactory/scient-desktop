@@ -1,4 +1,5 @@
-import { EnvironmentId } from "@t3tools/contracts";
+import { EnvironmentId, ThreadId, type FileCitation } from "@t3tools/contracts";
+import { serializeComposerCitation } from "@t3tools/shared/composerCitations";
 import { act, type ComponentProps, type ReactNode } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { create, type ReactTestRenderer } from "react-test-renderer";
@@ -10,6 +11,15 @@ import { Button } from "./ui/button";
 import { setMarkdownTaskChecked } from "./files/filePreviewMode";
 
 vi.mock("@effect/atom-react", () => ({ useAtomValue: () => null }));
+vi.mock("@tanstack/react-router", async (original) => ({
+  ...(await original<typeof import("@tanstack/react-router")>()),
+  useNavigate: () => vi.fn(),
+  Link: ({ children, className, "aria-label": label }: ComponentProps<"a">) => (
+    <a href="#source" className={className} aria-label={label}>
+      {children}
+    </a>
+  ),
+}));
 vi.mock("../hooks/useTheme", () => ({ useTheme: () => ({ resolvedTheme: "dark" }) }));
 vi.mock("../hooks/useSettings", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../hooks/useSettings")>();
@@ -43,6 +53,7 @@ vi.mock("../state/session", async (importOriginal) => ({
 vi.mock("../state/entities", () => ({
   readThreadShell: () => null,
   useProjects: () => [],
+  useServerConfigs: () => new Map(),
 }));
 vi.mock("../remoteOpen", () => ({
   useRemoteOpenResolution: () => ({ state: { mode: "local-exec" }, isResolved: true }),
@@ -52,8 +63,7 @@ vi.mock("../editorPreferences", () => ({
   usePreferredEditor: () => [null, vi.fn()],
 }));
 vi.mock("~/lib/openPullRequestLink", () => ({
-  findProjectForChangeRequest: () => undefined,
-  matchesLinkedPullRequestUrl: () => false,
+  findProjectOnChangeRequestHost: () => undefined,
   parseChangeRequestUrl: () => null,
   useOpenChangeRequestLink: () => vi.fn(),
 }));
@@ -71,6 +81,48 @@ function codeButton(renderer: ReactTestRenderer, label: string) {
   if (!button) throw new Error(`Missing code button: ${label}`);
   return button.props as ComponentProps<typeof Button>;
 }
+
+describe("Markdown file quote in sent messages", () => {
+  it("renders validated file links as the shared citation chip, but not inline code examples", () => {
+    const citation: FileCitation = {
+      kind: "file",
+      version: 1,
+      environmentId: EnvironmentId.make("local"),
+      threadId: ThreadId.make("source"),
+      cwd: "/workspace",
+      path: "notes.md",
+      revision: `sha256:${"a".repeat(64)}`,
+      origin: "draft",
+      from: 1,
+      to: 6,
+      sourceStart: 0,
+      sourceEnd: 10,
+      startLine: 1,
+      endLine: 1,
+      text: "Hello",
+      prefix: "",
+      suffix: "",
+    };
+    const token = serializeComposerCitation(citation);
+    const html = renderToStaticMarkup(<ChatMarkdown cwd="/workspace" text={token} />);
+    expect(html).toContain('data-file-citation-chip="true"');
+    expect(html).toContain("notes.md");
+    expect(html).toContain("Hello");
+    expect(html).not.toContain('data-assistant-citation-chip="true"');
+    const code = renderToStaticMarkup(<ChatMarkdown cwd="/workspace" text={`\`${token}\``} />);
+    expect(code).not.toContain('data-file-citation-chip="true"');
+    expect(code).toContain("scient-file-citation");
+    const invalid = renderToStaticMarkup(
+      <ChatMarkdown
+        cwd="/workspace"
+        text="[File quote](scient-file-citation://v1/?data=bad) [unsafe](javascript:alert)"
+      />,
+    );
+    expect(invalid).not.toContain("data-file-citation-chip");
+    expect(invalid).not.toContain('href="scient-file-citation');
+    expect(invalid).not.toContain('href="javascript:');
+  });
+});
 
 describe("ChatMarkdown favicon privacy", () => {
   it("suppresses private link images while preserving public links across updates", async () => {

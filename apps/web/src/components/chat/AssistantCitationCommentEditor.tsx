@@ -10,7 +10,7 @@ export function AssistantCitationCommentEditor({
   onSubmitAndSend,
   onCancel,
 }: {
-  citation: AssistantCitation;
+  citation: Pick<AssistantCitation, "comment">;
   inputRef?: Ref<HTMLTextAreaElement>;
   onSubmit: (comment: string) => boolean;
   onSubmitAndSend?: (comment: string) => boolean;

@@ -93,6 +93,17 @@ the same SVG/PNG export actions as the compact card. SVG download adds
 standalone namespaces and an appearance background. PNG copy/download
 rasterizes the same SVG at up to 2x, bounded to 8192 px per dimension.
 
+Export preparation parses Mermaid's sanitized HTML-compatible output in an inert
+template and serializes it as XML. This preserves XHTML/MathML namespaces and
+HTML line breaks without changing the Mermaid source or on-screen rendering.
+PNG conversion assigns an intrinsic viewport and uses the shared
+`loadCanvasImage` helper: SVG bytes become a self-contained data URL because
+blob-backed HTML labels can taint the canvas. The regular image viewer uses the
+same decoder; its authorized asset fetch and original-file download are unchanged.
+Raster formats retain object URLs, which are released after decoding. No remote
+renderer or relaxed browser security is required. SVG remains vector content;
+external editors still need support for its HTML labels.
+
 The inline card uses the renderer-independent `VisualCardToolbar` shared with
 workspace images and interactive charts. It removes the full-width header bar
 and reduces stage padding; the controls' default slot stays above the diagram.
@@ -125,6 +136,13 @@ exports, and external Markdown readers get the same fallback. This progressive
 representation is why no protocol negotiation or message migration is needed.
 
 ## Verification and upstream maintenance
+
+`pnpm --dir apps/desktop test:svg-export` exercises actual Chromium serialization,
+image decoding, PNG download/copy, and saved-SVG copying across the diagram corpus
+in both themes. CI runs it under Xvfb. It checks label painting, namespace and ID
+preservation, bounded output, and non-interactive image security. The test uses a
+temporary profile and captures output bytes without touching the user's clipboard.
+DOM mocks alone cannot establish these properties.
 
 Co-located unit tests cover source bounds, declaration-first parsing with
 accessibility metadata, SVG id/reference rebasing, portable

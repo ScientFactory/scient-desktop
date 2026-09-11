@@ -1,5 +1,10 @@
-import type { AssistantCitation } from "@t3tools/contracts";
-import { serializeAssistantCitation } from "@t3tools/shared/assistantCitations";
+import { isFileCitation, type ComposerCitation } from "@t3tools/contracts";
+import { serializeComposerCitation } from "@t3tools/shared/composerCitations";
+import {
+  fileCitationHash,
+  fileCitationNavigation,
+} from "~/scient/markdownEditor/fileCitationNavigation";
+import { basenameOfPath } from "~/pierre-icons";
 import { Link, useNavigate } from "@tanstack/react-router";
 import { PencilIcon, QuoteIcon, XIcon } from "lucide-react";
 import { useEffect, useEffectEvent, useRef, type MouseEvent as ReactMouseEvent } from "react";
@@ -30,12 +35,12 @@ const CITATION_ACTION_BUTTON_CLASS_NAME = cn(
   "text-primary/80 hover:bg-primary/10 hover:text-primary",
 );
 
-export function AssistantCitationChip({
+export function CitationChip({
   citation,
   onRemove,
   commentEditor,
 }: {
-  citation: AssistantCitation;
+  citation: ComposerCitation;
   onRemove?: () => void;
   commentEditor?: {
     open: boolean;
@@ -55,11 +60,13 @@ export function AssistantCitationChip({
   });
   useEffect(() => {
     if (!commentOpen) return;
-    const anchor = sourceAnchor ?? findAssistantCitationSourceAnchor(document, citation);
+    const anchor =
+      sourceAnchor ??
+      (isFileCitation(citation) ? null : findAssistantCitationSourceAnchor(document, citation));
     if (!anchor) return;
     return observeAssistantCitationCommentSource({
       anchor,
-      citation,
+      citation: isFileCitation(citation) ? undefined : citation,
       onUnavailable: onSourceUnavailable,
     });
   }, [citation, commentOpen, sourceAnchor]);
@@ -75,26 +82,36 @@ export function AssistantCitationChip({
       }
     : undefined;
   const preview = (citation.comment?.trim() || citation.text).replace(/\s+/g, " ");
-  const label = preview.length > 64 ? `${preview.slice(0, 64)}…` : preview;
+  const excerpt = preview.length > 64 ? `${preview.slice(0, 64)}…` : preview;
+  const label = isFileCitation(citation)
+    ? `${basenameOfPath(citation.path)} · ${excerpt}`
+    : excerpt;
   const sourceLinkProps = {
     to: "/$environmentId/$threadId" as const,
     params: { environmentId: citation.environmentId, threadId: citation.threadId },
-    hash: assistantCitationHash(citation),
-    "data-markdown-copy": serializeAssistantCitation(citation),
+    hash: isFileCitation(citation) ? fileCitationHash(citation) : assistantCitationHash(citation),
+    "data-markdown-copy": serializeComposerCitation(citation),
     resetScroll: false,
     onClick: (event: ReactMouseEvent<HTMLAnchorElement>) => {
       if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) {
         return;
       }
       event.preventDefault();
-      void navigate(assistantCitationNavigation(citation));
+      if (isFileCitation(citation)) {
+        void navigate(fileCitationNavigation(citation));
+      } else void navigate(assistantCitationNavigation(citation));
     },
   };
   const composerSourceLink = (
     <Link
       {...sourceLinkProps}
       className="inline-flex h-full min-w-0 items-center gap-[0.33em] rounded-sm text-inherit no-underline focus-visible:outline-2 focus-visible:outline-primary"
-      aria-label={`View cited assistant text: ${label}`}
+      aria-label={`View cited ${isFileCitation(citation) ? citation.path : "assistant text"}: ${label}`}
+      title={
+        isFileCitation(citation)
+          ? `${citation.path} · within lines ${citation.startLine}–${citation.endLine}${citation.origin === "draft" ? " · unsaved at capture" : ""}\n${citation.text}`
+          : undefined
+      }
     >
       <QuoteIcon aria-hidden="true" className={COMPOSER_INLINE_CHIP_ICON_CLASS_NAME} />
       <span className={cn(COMPOSER_INLINE_CHIP_LABEL_CLASS_NAME, "max-w-[16em]")}>{label}</span>
@@ -104,7 +121,12 @@ export function AssistantCitationChip({
     <Link
       {...sourceLinkProps}
       className="inline-flex h-full min-w-0 items-center gap-[0.33em] rounded-sm text-inherit no-underline hover:bg-primary/10 focus-visible:outline-2 focus-visible:outline-primary"
-      aria-label={`View cited assistant text: ${label}`}
+      aria-label={`View cited ${isFileCitation(citation) ? citation.path : "assistant text"}: ${label}`}
+      title={
+        isFileCitation(citation)
+          ? `${citation.path} · within lines ${citation.startLine}–${citation.endLine}${citation.origin === "draft" ? " · unsaved at capture" : ""}\n${citation.text}`
+          : undefined
+      }
     >
       <QuoteIcon aria-hidden="true" className={COMPOSER_INLINE_CHIP_ICON_CLASS_NAME} />
       <span className={cn(COMPOSER_INLINE_CHIP_LABEL_CLASS_NAME, "max-w-[16em]")}>{label}</span>
@@ -117,8 +139,9 @@ export function AssistantCitationChip({
         "border-primary/20 bg-primary/8 text-primary",
       )}
       contentEditable={false}
-      data-assistant-citation-chip="true"
-      data-markdown-copy={serializeAssistantCitation(citation)}
+      data-assistant-citation-chip={isFileCitation(citation) ? undefined : "true"}
+      data-file-citation-chip={isFileCitation(citation) ? "true" : undefined}
+      data-markdown-copy={serializeComposerCitation(citation)}
     >
       {onRemove ? (
         composerSourceLink
@@ -152,7 +175,7 @@ export function AssistantCitationChip({
               onPointerDown={(event) => event.stopPropagation()}
             >
               <AssistantCitationCommentEditor
-                key={serializeAssistantCitation(citation)}
+                key={serializeComposerCitation(citation)}
                 citation={citation}
                 inputRef={commentInputRef}
                 onSubmit={(comment) => {
@@ -185,7 +208,9 @@ export function AssistantCitationChip({
         <button
           type="button"
           onClick={onRemove}
-          aria-label="Remove assistant citation"
+          aria-label={
+            isFileCitation(citation) ? "Remove file citation" : "Remove assistant citation"
+          }
           className={cn(
             COMPOSER_INLINE_CHIP_DISMISS_BUTTON_CLASS_NAME,
             "text-primary/85 hover:bg-primary/10 hover:text-primary",

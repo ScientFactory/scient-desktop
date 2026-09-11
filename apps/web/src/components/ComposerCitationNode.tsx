@@ -1,9 +1,9 @@
 import { useLexicalComposerContext } from "@lexical/react/LexicalComposerContext";
-import type { AssistantCitation } from "@t3tools/contracts";
+import type { ComposerCitation } from "@t3tools/contracts";
 import {
-  serializeAssistantCitation,
-  withAssistantCitationComment,
-} from "@t3tools/shared/assistantCitations";
+  serializeComposerCitation,
+  withComposerCitationComment,
+} from "@t3tools/shared/composerCitations";
 import {
   $applyNodeReplacement,
   $getNodeByKey,
@@ -19,12 +19,12 @@ import {
 import { createContext, use, type ReactElement } from "react";
 import type { AssistantCitationSourceAnchor } from "~/lib/assistantTextSelection";
 
-import { AssistantCitationChip } from "./chat/AssistantCitationChip";
+import { CitationChip } from "./chat/AssistantCitationChip";
 import { COMPOSER_INLINE_CHIP_DECORATOR_CLASS_NAME } from "./composerInlineChip";
 
 type SerializedComposerCitationNode = Spread<
   {
-    citation: AssistantCitation;
+    citation: ComposerCitation;
     source: string;
     type: "composer-citation";
     version: 1;
@@ -80,7 +80,7 @@ export function $consumeComposerCitationCommentRequest(requestRef: {
   return null;
 }
 
-function ComposerCitationDecorator(props: { citation: AssistantCitation; nodeKey: NodeKey }) {
+function ComposerCitationDecorator(props: { citation: ComposerCitation; nodeKey: NodeKey }) {
   const [editor] = useLexicalComposerContext();
   const commentContext = use(ComposerCitationCommentContext);
   const commentTarget =
@@ -122,7 +122,7 @@ function ComposerCitationDecorator(props: { citation: AssistantCitation; nodeKey
       spellCheck={false}
       data-composer-citation-chip="true"
     >
-      <AssistantCitationChip
+      <CitationChip
         citation={props.citation}
         commentEditor={{
           open: commentTarget !== null,
@@ -146,7 +146,7 @@ function ComposerCitationDecorator(props: { citation: AssistantCitation; nodeKey
 }
 
 export class ComposerCitationNode extends DecoratorNode<ReactElement> {
-  __citation: AssistantCitation;
+  __citation: ComposerCitation;
   __source: string;
 
   static override getType(): string {
@@ -164,7 +164,7 @@ export class ComposerCitationNode extends DecoratorNode<ReactElement> {
     ).updateFromJSON(serializedNode);
   }
 
-  constructor(citation: AssistantCitation, source: string, key?: NodeKey) {
+  constructor(citation: ComposerCitation, source: string, key?: NodeKey) {
     super(key);
     this.__citation = citation;
     this.__source = source;
@@ -197,9 +197,9 @@ export class ComposerCitationNode extends DecoratorNode<ReactElement> {
 
   setComment(comment: string): this {
     const latest = this.getLatest();
-    const citation = withAssistantCitationComment(latest.__citation, comment);
+    const citation = withComposerCitationComment(latest.__citation, comment);
     if (citation.comment === latest.__citation.comment) return latest;
-    const source = serializeAssistantCitation(citation);
+    const source = serializeComposerCitation(citation);
     const writable = this.getWritable();
     writable.__citation = citation;
     writable.__source = source;
@@ -216,7 +216,7 @@ export class ComposerCitationNode extends DecoratorNode<ReactElement> {
 }
 
 export function $createComposerCitationNode(
-  citation: AssistantCitation,
+  citation: ComposerCitation,
   source: string,
 ): ComposerCitationNode {
   return $applyNodeReplacement(new ComposerCitationNode(citation, source));

@@ -37,26 +37,31 @@ revision remains literal ancestry of owned `main`; it is not merely a reviewed
 or observed tip.
 
 The current T3 alignment is recorded in
-[`docs/internals/2026-09-09-upstream-sync-6c583620.md`](docs/internals/2026-09-09-upstream-sync-6c583620.md)
-and in `upstream-state.json`. This local candidate preserves all 16 official commits after
-`12391bd0d38eef6655b7a9f8945d0cb5febadc2b` through
-`6c583620ff7ad3235b135af7107c0543467eecfa`. Merge
-`72a99fadb7d42c34fd470d82827583b239335a46` retains owned main
-`083993b13b42718873721fe90c92d8cd87fedd64` and the exact official target as its parents.
+[`docs/internals/2026-09-10-upstream-sync-f814983c.md`](docs/internals/2026-09-10-upstream-sync-f814983c.md)
+and in `upstream-state.json`. This local candidate preserves all 23 official commits after
+`6c583620ff7ad3235b135af7107c0543467eecfa` through
+`f814983c262b42bd79247bae377a709925c70d63`. Merge
+`b4fd31d503250e89bdd103f111ff20a16395e70a` retains owned main
+`7cefb603ef43fe0c4555826ceeb67b0e2338c668` and the exact official target as its parents.
 
 Automated qualification passed; the owner will test the isolated candidate before PR delivery.
 No push, PR, main merge, or publication is implied. The
-[preceding alignment](docs/internals/2026-09-08-upstream-sync-349ce301-review.md) remains in
+[preceding alignment](docs/internals/2026-09-09-upstream-sync-6c583620.md) remains in
 ancestry. Later observed upstream tips do not move `integrationBase` by themselves.
 
 ## Receiving T3 updates
 
-The local alignment through `6c583620` is documented in the
-[2026-09-09 review](docs/internals/2026-09-09-upstream-sync-6c583620.md).
-It adopts composer loading stability, shared setup wizards, terminal-link browser overrides,
-lazy keyring loading, bounded event-replay memory, mobile thread arrangement, and Android/iOS
-notification improvements. Scient provider lifecycle, fork behavior, identity, and cloud/mobile
-publication holds remain. The receipt records qualification and remaining platform/manual gates.
+The local alignment through `f814983c` is documented in the
+[2026-09-10 review](docs/internals/2026-09-10-upstream-sync-f814983c.md).
+It adopts multiple thread PR links, linked-thread search, GitHub stack actions, restart-safe PR
+read caching, model bulk controls, image zoom/pan, preview-close PiP, diff palettes, and desktop/mobile
+interaction fixes. Scient provider lifecycle, fork behavior, rich content, pending-save protection,
+identity, and cloud/mobile publication holds remain.
+
+Migration IDs are immutable local history, not an upstream synchronization counter. The new T3
+multi-PR migration is registered as Scient `53`, after existing `51` and `52`; retired development
+ID `50` is not reused. Never renumber recorded steps to match T3. The receipt records synthetic
+upgrade/backfill tests and the remaining platform/manual gates.
 
 The canonical procedure and stop conditions live in the
 [T3 upstream alignment protocol](docs/internals/upstream-alignment-protocol.md). The short form is:
@@ -554,6 +559,16 @@ positioner props on `ui/menu.tsx` and `ui/popover.tsx`, `useMediaActionUrl` in
 behavior, and Markdown transport must remain outside inherited T3 components;
 `index.css` inherited rule bodies stay byte-identical. See
 [Scient rich Markdown editor](docs/internals/scient-rich-markdown-editor.md).
+
+Markdown file quotes deliberately extend the inherited assistant Cite flow.
+Preserve the concrete `FileCitation` variant and `composerCitations` helpers,
+the shared composer node/comment and selection toolbar, and the small source
+capture/reveal mounts in `ChatView`, `FilePreviewPanel`, and the right-panel
+store. Source mapping and editor interaction remain in `scient/markdownEditor`;
+assistant v1 links and timeline navigation keep their original semantics.
+Provider expansion, prompt previews, and mobile fallback must handle both quote
+types. Do not reinstate an assistant-only parser in these shared entry points
+or turn file citations into file-read operations. The rich editor remains lazy.
 
 No upstream update authorizes public release, live cloud, mobile publication,
 production credentials, or user-data conversion. Those remain separate Scient

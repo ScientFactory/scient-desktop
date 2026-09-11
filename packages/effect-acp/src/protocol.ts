@@ -19,6 +19,25 @@ import * as AcpSchema from "./_generated/schema.gen.ts";
 import { CLIENT_METHODS } from "./_generated/meta.gen.ts";
 import * as AcpError from "./errors.ts";
 const isAcpError = Schema.is(AcpError.AcpError);
+const isProtocolError = Schema.is(AcpSchema.Error);
+
+/**
+ * Effect's generic JSON-RPC decoder represents a standard JSON-RPC error as a
+ * defect because it cannot know the declared error schema for the pending RPC.
+ * ACP does declare that schema, so restore matching defects to typed failures
+ * before the response reaches the generated client.
+ */
+const restoreAcpResponseError = (
+  message: RpcMessage.ResponseExitEncoded,
+): RpcMessage.ResponseExitEncoded => {
+  if (message.exit._tag !== "Failure") return message;
+  const cause = message.exit.cause.map((entry) =>
+    entry._tag === "Die" && isProtocolError(entry.defect)
+      ? ({ _tag: "Fail", error: entry.defect } as const)
+      : entry,
+  );
+  return { ...message, exit: { ...message.exit, cause } };
+};
 
 export interface AcpProtocolLogEvent {
   readonly direction: "incoming" | "outgoing";
@@ -377,7 +396,7 @@ export const makeAcpPatchedProtocol = Effect.fn("makeAcpPatchedProtocol")(functi
       Effect.flatMap((pending) => {
         const pendingRequest = pending.get(String(message.requestId));
         if (!pendingRequest) {
-          return Queue.offer(clientQueue, message).pipe(Effect.asVoid);
+          return Queue.offer(clientQueue, restoreAcpResponseError(message)).pipe(Effect.asVoid);
         }
         if (message.exit._tag === "Success") {
           return completeExtPendingSuccess(message.requestId, message.exit.value);
@@ -613,16 +632,3 @@ export const makeAcpPatchedProtocol = Effect.fn("makeAcpPatchedProtocol")(functi
     notify: sendNotification,
   } satisfies AcpPatchedProtocol;
 });
-
-function isProtocolError(
-  value: unknown,
-): value is { code: number; message: string; data?: unknown } {
-  return (
-    typeof value === "object" &&
-    value !== null &&
-    "code" in value &&
-    typeof value.code === "number" &&
-    "message" in value &&
-    typeof value.message === "string"
-  );
-}

@@ -13,6 +13,8 @@ export type AssistantCitationSourceAnchor = {
   source: HTMLElement;
   range: Range;
   viewport: HTMLElement;
+  /** A file reader owns re-resolving its live range; this is never serialized. */
+  resolveRange?: () => Range | null;
 };
 
 export function findAssistantCitationSourceAnchor(

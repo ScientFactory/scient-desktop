@@ -101,6 +101,9 @@ jobs:
       - name: Ensure Electron runtime is installed
         run: vp run --filter @t3tools/desktop ensure:electron
 
+      - name: Verify SVG and PNG exports in Chromium
+        run: xvfb-run --auto-servernum node apps/desktop/scripts/svg-export-smoke.mjs
+
       - uses: ./.github/actions/setup-apt-mirrors
 
       - name: Install browser secret helper build libraries

@@ -1,8 +1,8 @@
-import type { AssistantCitation } from "@t3tools/contracts";
+import type { AssistantCitation, ComposerCitation } from "@t3tools/contracts";
 import {
-  serializeAssistantCitation,
-  withAssistantCitationComment,
-} from "@t3tools/shared/assistantCitations";
+  serializeComposerCitation,
+  withComposerCitationComment,
+} from "@t3tools/shared/composerCitations";
 import {
   splitPromptIntoComposerSegments,
   type ComposerPromptSegment,
@@ -22,7 +22,11 @@ export interface ComposerTrigger {
 }
 
 export function formatAssistantCitationForComposer(citation: AssistantCitation, comment = "") {
-  return `${serializeAssistantCitation(withAssistantCitationComment(citation, comment))} `;
+  return formatCitationForComposer(citation, comment);
+}
+
+export function formatCitationForComposer(citation: ComposerCitation, comment = "") {
+  return `${serializeComposerCitation(withComposerCitationComment(citation, comment))} `;
 }
 
 export function composerSubmissionIntentForEnter(input: {

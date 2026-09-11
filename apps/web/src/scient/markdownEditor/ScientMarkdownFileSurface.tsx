@@ -1,4 +1,6 @@
 import type { EnvironmentId, ScopedThreadRef } from "@t3tools/contracts";
+import type { FileCitation } from "@t3tools/contracts";
+import type { MarkdownCiteHandler } from "./markdownCitation";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import { useLocalStorage } from "~/hooks/useLocalStorage";
 import { writeTextToClipboard } from "~/hooks/useCopyToClipboard";
@@ -56,6 +58,9 @@ function workspacePathParent(relativePath: string): {
 }
 
 export interface ScientMarkdownFileSurfaceProps {
+  readonly onCite?: MarkdownCiteHandler;
+  readonly citationReveal?: FileCitation | undefined;
+  readonly citationRevealId?: number;
   readonly environmentId: EnvironmentId;
   readonly cwd: string;
   readonly relativePath: string;
@@ -428,6 +433,10 @@ export function ScientMarkdownFileSurface(props: ScientMarkdownFileSurfaceProps)
     <ScientMarkdownWorkspaceSurface
       key={JSON.stringify([props.environmentId, props.cwd, props.relativePath])}
       persistence={props.persistence}
+      citationSource={{ ...props.threadRef, cwd: props.cwd, path: props.relativePath }}
+      {...(props.onCite ? { onCite: props.onCite } : {})}
+      citationReveal={props.citationReveal}
+      citationRevealId={props.citationRevealId}
       ariaLabel={`${props.relativePath} Markdown document`}
       resolvedTheme={props.resolvedTheme}
       workspaceResourceIndexKey={workspaceResourceIndexKey}
