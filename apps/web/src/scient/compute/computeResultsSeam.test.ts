@@ -161,6 +161,8 @@ describe("compute result surface seam", () => {
     expect(managedRuntimeSource).toContain('aria-label="Copy error"');
     expect(managedRuntimeSource).toContain("<details");
     expect(managedRuntimeSource).toContain("whitespace-nowrap");
+    expect(managedRuntimeSource).not.toContain("title={onRetry");
+    expect(managedRuntimeSource).toContain("Copy the full error");
   });
 
   it("keeps Scientific Computing settings to the current runtime, not an inventory dashboard", () => {

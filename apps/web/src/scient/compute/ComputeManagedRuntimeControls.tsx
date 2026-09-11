@@ -171,29 +171,41 @@ export function ManagedRuntimeNotice({
         ) : null}
         {headline && failure ? (
           <>
-            <button
-              type="button"
-              className="min-w-0 truncate whitespace-nowrap text-left text-xs text-destructive"
-              role="alert"
-              title={onRetry === undefined ? headline : `Retry ${headline}`}
-              onClick={onRetry}
-            >
-              {headline}
-            </button>
-            <Button
-              size="icon-xs"
-              variant="ghost"
-              className="size-5 shrink-0"
-              aria-label="Copy error"
-              title="Copy the full error"
-              onClick={() => copyToClipboard(failure, undefined)}
-            >
-              {isCopied ? (
-                <CheckIcon aria-hidden className="size-3" />
-              ) : (
-                <CopyIcon aria-hidden className="size-3" />
-              )}
-            </Button>
+            <Tooltip>
+              <TooltipTrigger
+                render={
+                  <button
+                    type="button"
+                    className="min-w-0 truncate whitespace-nowrap text-left text-xs text-destructive"
+                    role="alert"
+                    onClick={onRetry}
+                  />
+                }
+              >
+                {headline}
+              </TooltipTrigger>
+              <TooltipPopup>{onRetry === undefined ? headline : `Retry ${headline}`}</TooltipPopup>
+            </Tooltip>
+            <Tooltip>
+              <TooltipTrigger
+                render={
+                  <Button
+                    size="icon-xs"
+                    variant="ghost"
+                    className="size-5 shrink-0"
+                    aria-label="Copy error"
+                    onClick={() => copyToClipboard(failure, undefined)}
+                  />
+                }
+              >
+                {isCopied ? (
+                  <CheckIcon aria-hidden className="size-3" />
+                ) : (
+                  <CopyIcon aria-hidden className="size-3" />
+                )}
+              </TooltipTrigger>
+              <TooltipPopup>Copy the full error</TooltipPopup>
+            </Tooltip>
             <details className="relative shrink-0">
               <summary className="flex cursor-pointer list-none items-center text-muted-foreground marker:content-none [&::-webkit-details-marker]:hidden">
                 <ChevronDown className="size-3" aria-hidden />
