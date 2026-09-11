@@ -33,7 +33,7 @@ import {
   type ProviderRuntimeEvent,
   type ProviderSession,
 } from "@t3tools/contracts";
-import { expandAssistantCitationsForProvider } from "@t3tools/shared/assistantCitations";
+import { expandComposerCitationsForProvider } from "@t3tools/shared/composerCitations";
 import { causeErrorTag } from "@t3tools/shared/observability";
 import { getModelSelectionStringOptionValue } from "@t3tools/shared/model";
 import { resolveProjectAgentBrowserAccess } from "@t3tools/shared/serverSettings";
@@ -1574,7 +1574,7 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
     }
 
     const inputTextWithCitations =
-      parsed.input === undefined ? undefined : expandAssistantCitationsForProvider(parsed.input);
+      parsed.input === undefined ? undefined : expandComposerCitationsForProvider(parsed.input);
     if (inputTextWithCitations !== parsed.input) {
       yield* decodeInputOrValidationError({
         operation: "ProviderService.sendTurn",

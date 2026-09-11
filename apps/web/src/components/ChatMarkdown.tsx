@@ -74,8 +74,8 @@ import { defaultUrlTransform } from "react-markdown";
 import rehypeRaw from "rehype-raw";
 import rehypeSanitize, { defaultSchema } from "rehype-sanitize";
 import remarkBreaks from "remark-breaks";
-import { parseAssistantCitationHref } from "@t3tools/shared/assistantCitations";
-import { AssistantCitationChip } from "./chat/AssistantCitationChip";
+import { parseComposerCitationHref } from "@t3tools/shared/composerCitations";
+import { CitationChip } from "./chat/AssistantCitationChip";
 import remarkGfm from "remark-gfm";
 import { remarkGithubAlerts } from "../markdown-github-alerts";
 import {
@@ -503,7 +503,7 @@ const CHAT_MARKDOWN_SANITIZE_SCHEMA = {
   },
   protocols: {
     ...defaultSchema.protocols,
-    href: [...(defaultSchema.protocols?.href ?? []), "file", "t3-citation"],
+    href: [...(defaultSchema.protocols?.href ?? []), "file", "t3-citation", "scient-file-citation"],
     src: [...(defaultSchema.protocols?.src ?? []), "file"],
   },
 } satisfies Parameters<typeof rehypeSanitize>[0];
@@ -2179,7 +2179,7 @@ function useChatMarkdownState({
     return buildFileLinkParentSuffixByPath(filePaths);
   }, [inlineCodeFileLinkMetaByText, markdownFileLinkMetaByHref]);
   const markdownUrlTransform = useCallback((href: string) => {
-    if (parseAssistantCitationHref(href)) return href;
+    if (parseComposerCitationHref(href)) return href;
     if (isWindowsDrivePathHref(href)) return href;
     return rewriteMarkdownFileUriHref(href) ?? defaultUrlTransform(href);
   }, []);
@@ -2763,8 +2763,8 @@ const CHAT_MARKDOWN_COMPONENTS = {
       updateThreadPullRequestLink,
     } = use(ChatMarkdownRendererContext);
 
-    const citation = href ? parseAssistantCitationHref(href) : null;
-    if (citation) return <AssistantCitationChip citation={citation} />;
+    const citation = href ? parseComposerCitationHref(href) : null;
+    if (citation) return <CitationChip citation={citation} />;
     const normalizedHref = href ? normalizeMarkdownLinkHref(href) : "";
     const fileLinkMeta = normalizedHref
       ? (markdownFileLinkMetaByHref.get(markdownLinkLookupKey(normalizedHref)) ??

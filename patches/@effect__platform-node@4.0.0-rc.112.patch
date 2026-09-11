@@ -1,0 +1,49 @@
+diff --git a/dist/NodeHttpPlatform.js b/dist/NodeHttpPlatform.js
+index 172c06aff954eff6e07d0da9080eee3f13f7dc0b..0b2261b1c8a1b4a505aacd6040ab9da15f99b34f 100644
+--- a/dist/NodeHttpPlatform.js
++++ b/dist/NodeHttpPlatform.js
+@@ -34,7 +34,7 @@ const compression = /*#__PURE__*/NodeHttpCompression.make({
+         {
+           return Effect.succeed(compressedBody(response, HttpBody.stream(NodeStream.pipeThroughDuplex(body.stream, {
+             evaluate: () => NodeHttpCompression.compressTransform(algorithm, options)
+-          }), body.contentType)));
++          }), response.headers["content-type"] ?? body.contentType)));
+         }
+       case "Raw":
+         {
+@@ -44,7 +44,7 @@ const compression = /*#__PURE__*/NodeHttpCompression.make({
+           transform.on("error", cause => readable.destroy(cause));
+           transform.on("close", () => readable.destroy());
+           return Effect.succeed(compressedBody(response, HttpBody.raw(readable.pipe(transform), {
+-            contentType: body.contentType
++            contentType: response.headers["content-type"] ?? body.contentType
+           })));
+         }
+       default:
+diff --git a/src/NodeHttpPlatform.ts b/src/NodeHttpPlatform.ts
+index 8421b7c323256d52fef66ab036099ea4ec5c2428..88b4b01df2da4d70e913551b26028d280cd30324 100644
+--- a/src/NodeHttpPlatform.ts
++++ b/src/NodeHttpPlatform.ts
+@@ -43,7 +43,7 @@ const compression = NodeHttpCompression.make({
+             NodeStream.pipeThroughDuplex(body.stream, {
+               evaluate: () => NodeHttpCompression.compressTransform(algorithm, options)
+             }),
+-            body.contentType
++            response.headers["content-type"] ?? body.contentType
+           )
+         ))
+       }
+@@ -56,7 +56,12 @@ const compression = NodeHttpCompression.make({
+         transform.on("error", (cause) => readable.destroy(cause))
+         transform.on("close", () => readable.destroy())
+         return Effect.succeed(
+-          compressedBody(response, HttpBody.raw(readable.pipe(transform), { contentType: body.contentType }))
++          compressedBody(
++            response,
++            HttpBody.raw(readable.pipe(transform), {
++              contentType: response.headers["content-type"] ?? body.contentType
++            })
++          )
+         )
+       }
+       default: {

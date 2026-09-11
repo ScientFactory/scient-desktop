@@ -10,7 +10,7 @@ import type {
   ThreadId,
   TurnId,
 } from "@t3tools/contracts";
-import { renderAssistantCitationsAsText } from "@t3tools/shared/assistantCitations";
+import { renderComposerCitationsAsText } from "@t3tools/shared/composerCitations";
 import {
   codexArtifactTemplatePresentationLabel,
   type CodexArtifactTemplate,
@@ -1453,7 +1453,7 @@ function renderFeedEntry(
   if (entry.type === "message") {
     const { message } = entry;
     const isUser = message.role === "user";
-    const renderedText = renderAssistantCitationsAsText(message.text);
+    const renderedText = renderComposerCitationsAsText(message.text);
     const styles = isUser ? markdownStyles.user : markdownStyles.assistant;
     const timestampLabel = formatMessageTime(isUser ? message.createdAt : message.updatedAt);
     const attachments = message.attachments ?? [];

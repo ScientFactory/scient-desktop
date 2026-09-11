@@ -1,5 +1,5 @@
-import type { AssistantCitation } from "@t3tools/contracts";
-import { collectAssistantCitations } from "@t3tools/shared/assistantCitations";
+import type { ComposerCitation } from "@t3tools/contracts";
+import { collectComposerCitations } from "@t3tools/shared/composerCitations";
 import {
   INLINE_TERMINAL_CONTEXT_PLACEHOLDER,
   type TerminalContextDraft,
@@ -25,7 +25,7 @@ export type ComposerPromptSegment =
     }
   | {
       type: "citation";
-      citation: AssistantCitation;
+      citation: ComposerCitation;
       source: string;
     }
   | {
@@ -133,7 +133,7 @@ function forEachMentionMatch(
 
 export function collectComposerPromptInlineTokens(text: string) {
   const tokens = collectComposerInlineTokens(text);
-  const citations = collectAssistantCitations(text);
+  const citations = collectComposerCitations(text);
   if (citations.length === 0) return tokens;
 
   // An unfinished @ mention can otherwise consume the start of a citation's label.

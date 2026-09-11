@@ -195,6 +195,10 @@
       "types": "./src/assistantCitations.ts",
       "import": "./src/assistantCitations.ts"
     },
+    "./composerCitations": {
+      "types": "./src/composerCitations.ts",
+      "import": "./src/composerCitations.ts"
+    },
     "./terminalLabels": {
       "types": "./src/terminalLabels.ts",
       "import": "./src/terminalLabels.ts"

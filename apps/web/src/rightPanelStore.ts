@@ -12,6 +12,7 @@ import {
   EnvironmentId,
   ThreadId,
   type ChatFileAttachment,
+  type FileCitation,
   type ScopedThreadRef,
 } from "@t3tools/contracts";
 import { create } from "zustand";
@@ -52,6 +53,7 @@ export interface HtmlFilePresentationRequest {
 }
 
 export interface OpenFileOptions {
+  readonly fileCitation?: FileCitation;
   readonly htmlPreviewMode?: HtmlFilePresentationRequest["mode"];
   readonly latexPreviewMode?: LatexFilePresentationRequest["mode"];
 }
@@ -78,6 +80,8 @@ export type RightPanelSurface =
       revealRequestId: number;
       htmlPresentationRequest?: HtmlFilePresentationRequest;
       latexPresentationRequest?: LatexFilePresentationRequest;
+      /** Transient rendered-text reveal; the quote remains owned by the message. */
+      fileCitation?: FileCitation;
       /** Present when the file lives in the thread's attachment store rather
           than at a workspace or host path. */
       attachment?: ChatFileAttachment;
@@ -253,6 +257,7 @@ const fileSurface = (
   relativePath,
   revealLine,
   revealRequestId,
+  ...(options?.fileCitation ? { fileCitation: options.fileCitation } : {}),
   ...(options?.htmlPreviewMode === undefined
     ? {}
     : {
@@ -406,6 +411,7 @@ export function migratePersistedRightPanelState(persistedState: unknown): {
                       const {
                         htmlPresentationRequest: _transientHtmlPresentationRequest,
                         latexPresentationRequest: _transientLatexPresentationRequest,
+                        fileCitation: _transientFileCitation,
                         ...persistentSurface
                       } = surface;
                       const revealLine =
@@ -998,6 +1004,7 @@ export const useRightPanelStore = create<RightPanelStoreState>()(
                   const {
                     htmlPresentationRequest: _transientHtmlPresentationRequest,
                     latexPresentationRequest: _transientLatexPresentationRequest,
+                    fileCitation: _transientFileCitation,
                     ...persistentSurface
                   } = surface;
                   return persistentSurface;
