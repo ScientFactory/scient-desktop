@@ -42,7 +42,7 @@ export const MANAGED_PYTHON_LOCK_SHA256 =
   "abad91ab379a20092e8d3cb4e7c708d436d5fe4c889f569976ffa76f9c971b5f";
 export const MANAGED_PYTHON_PROJECT_SHA256 =
   "3cb52386aaa64eb93763cadb7c69b3cd6a174b1ec3f6245fa747cd00ebe1fa38";
-export const STAGED_MANAGED_PYTHON_DIRECTORY = "scient-managed-python";
+const STAGED_MANAGED_PYTHON_DIRECTORY = "scient-managed-python";
 export type ManagedPythonSpecPurpose = "python" | "matlab-connection";
 
 const PROCESS_TIMEOUT = Duration.minutes(30);

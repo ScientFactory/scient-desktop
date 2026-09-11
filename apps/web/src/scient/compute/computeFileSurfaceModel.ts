@@ -155,7 +155,7 @@ export function nudgeComputeFileSplit(
   );
 }
 
-export function computeRuntimePresenceLabel(
+function computeRuntimePresenceLabel(
   languageName: string,
   version: string | null | undefined,
 ): string {

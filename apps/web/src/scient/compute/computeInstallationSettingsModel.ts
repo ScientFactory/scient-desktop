@@ -6,7 +6,7 @@ import type {
 
 export type ComputeSettingsInstallation = ComputeLanguageRuntimeInventory["installations"][number];
 
-export function runtimeSourceLabel(source: string): string {
+function runtimeSourceLabel(source: string): string {
   switch (source) {
     case "managed":
       return "Scient-managed";
