@@ -407,12 +407,6 @@ function EditableCustomModelsContent({ environmentId, instanceId, addRequest }: 
                         </CollapsiblePanel>
                       </Collapsible>
                     ) : null}
-                    {rowNotice?.error ? (
-                      <p role="alert" className="flex items-start gap-1 text-xs text-destructive">
-                        <CircleAlertIcon className="mt-px size-3.5 shrink-0" />
-                        <span className="min-w-0 break-words">{rowNotice.text}</span>
-                      </p>
-                    ) : null}
                   </div>
                   {attachments.some(
                     (entry) => entry.label === "Needs setup" || entry.label === "Check agent",
@@ -426,7 +420,29 @@ function EditableCustomModelsContent({ environmentId, instanceId, addRequest }: 
                       Check again
                     </Button>
                   ) : null}
-                  {testInstance && rowNotice && !rowNotice.error ? (
+                  {testInstance && rowNotice?.error ? (
+                    <Tooltip>
+                      <TooltipTrigger
+                        render={
+                          <Button
+                            size="xs"
+                            variant="ghost"
+                            className="text-destructive hover:text-destructive"
+                            disabled={busy}
+                            aria-label={`Test failed. ${rowNotice.text} Select to try again.`}
+                            onClick={() => void runTest(connection, model, testInstance)}
+                          />
+                        }
+                      >
+                        <CircleAlertIcon />
+                        Failed
+                        <span role="alert" className="sr-only">
+                          {rowNotice.text}
+                        </span>
+                      </TooltipTrigger>
+                      <TooltipPopup>{rowNotice.text}</TooltipPopup>
+                    </Tooltip>
+                  ) : testInstance && rowNotice ? (
                     <span
                       role="status"
                       className="flex h-7 shrink-0 items-center gap-1 px-[calc(--spacing(2)-1px)] text-sm font-medium text-success sm:h-6 sm:text-xs"
@@ -487,7 +503,6 @@ function EditableCustomModelsContent({ environmentId, instanceId, addRequest }: 
           settings={editor.settings}
           target={editor.target}
           agents={agents}
-          defaultInstanceId={instanceId}
           onSave={onSave}
           onClose={() => setEditor(null)}
         />

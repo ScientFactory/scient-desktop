@@ -3,8 +3,14 @@ import {
   withUsageLimitsCommands,
 } from "@t3tools/shared/usageLimits";
 import * as Cause from "effect/Cause";
-import { CustomModelError, supportsModelConnections } from "@t3tools/contracts";
+import {
+  CustomModelError,
+  type ProviderDriverKind,
+  TextGenerationError,
+  supportsModelConnections,
+} from "@t3tools/contracts";
 import { createModelSelection } from "@t3tools/shared/model";
+import * as EffectAcpErrors from "effect-acp/errors";
 import { customModelProviderId } from "./customModels.ts";
 import { droidCustomModelId } from "./provider/droid/DroidCustomModels.ts";
 import { encodePiModelSlug } from "./provider/pi/PiModel.ts";
@@ -207,12 +213,34 @@ import * as SessionStore from "./auth/SessionStore.ts";
 import { failEnvironmentAuthInvalid, failEnvironmentInternal } from "./auth/http.ts";
 import * as RelayClient from "@t3tools/shared/relayClient";
 const isOrchestrationDispatchCommandError = Schema.is(OrchestrationDispatchCommandError);
+const isTextGenerationError = Schema.is(TextGenerationError);
+const isAcpRequestError = Schema.is(EffectAcpErrors.AcpRequestError);
 // SCIENT-FORK:START — preserve the typed, user-actionable provisioning reason.
 const isScientForkCompletionError = Schema.is(ScientForkReactor.ScientForkCompletionError);
 // SCIENT-FORK:END
 
 const nowIso = Effect.map(DateTime.now, DateTime.formatIso);
 const CONFIG_DISCOVERY_TIMEOUT = Duration.seconds(5);
+
+const compactProviderError = (value: unknown): string | null => {
+  if (typeof value !== "string") return null;
+  const compact = value.replace(/\s+/g, " ").trim();
+  if (!compact) return null;
+  return compact.length <= 500 ? compact : `${compact.slice(0, 497)}...`;
+};
+
+const customModelTestFailure = (driver: ProviderDriverKind, cause: unknown) => {
+  const agent = driver === "droid" ? "Droid" : "Pi";
+  if (isTextGenerationError(cause) && isAcpRequestError(cause.cause)) {
+    const providerDetail = compactProviderError(cause.cause.data);
+    if (providerDetail) return new CustomModelError({ message: `${agent}: ${providerDetail}` });
+    const providerMessage = compactProviderError(cause.cause.errorMessage);
+    if (providerMessage) return new CustomModelError({ message: `${agent}: ${providerMessage}` });
+  }
+  return new CustomModelError({
+    message: `${agent} could not use this model. Check the key, model ID and model settings.`,
+  });
+};
 
 const resolveDiscoveryForConfig = <A, E, R>(
   discovery: Effect.Effect<A, E, R>,
@@ -2376,12 +2404,7 @@ const makeWsRpcLayer = (
               })
               .pipe(
                 Effect.timeout("45 seconds"),
-                Effect.mapError(
-                  () =>
-                    new CustomModelError({
-                      message: `${instance.driverKind === "droid" ? "Droid" : "Pi"} could not use this model. Check the key, model ID and model settings.`,
-                    }),
-                ),
+                Effect.mapError((cause) => customModelTestFailure(instance.driverKind, cause)),
               );
             const latest = yield* serverSettings.getSettings;
             if (latest.customModels.revision !== input.revision)

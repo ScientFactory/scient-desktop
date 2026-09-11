@@ -27,6 +27,7 @@ import {
   type OrchestrationThreadActivity,
   type OrchestrationThreadShell,
   TerminalNotRunningError,
+  TextGenerationError,
   type OrchestrationCommand,
   type OrchestrationEvent,
   ORCHESTRATION_WS_METHODS,
@@ -72,6 +73,7 @@ import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
 import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
+import * as AcpErrors from "effect-acp/errors";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 import * as Tracer from "effect/Tracer";
@@ -5646,6 +5648,108 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
           assert.equal(result.failure.message, message);
         }).pipe(Effect.provide(NodeHttpServer.layerTest)),
     );
+
+  it.effect("returns actionable ACP model-test failures without disconnecting websocket rpc", () =>
+    Effect.gen(function* () {
+      const id = ProviderInstanceId.make("droid");
+      const catalog: CustomModelsSettings = {
+        revision: 1,
+        connections: [
+          {
+            id: "openrouter",
+            name: "OpenRouter",
+            baseUrl: "https://openrouter.ai/api/v1",
+            protocol: "openai-completions",
+            credentialId: "saved-key",
+            models: [
+              {
+                id: "restricted",
+                modelId: "meta/muse-spark-1.3",
+                name: "Muse Spark 1.3",
+                images: false,
+                reasoning: false,
+                instanceIds: [id],
+              },
+            ],
+          },
+        ],
+      };
+      const providerFailure = new AcpErrors.AcpRequestError({
+        code: -32603,
+        errorMessage: "Internal error: Agent error",
+        data: "403 Complete 18+ age confirmation in OpenRouter settings.",
+      });
+      const instance: ProviderInstance = {
+        instanceId: id,
+        driverKind: ProviderDriverKind.make("droid"),
+        enabled: true,
+        displayName: "Droid",
+        continuationIdentity: {
+          driverKind: ProviderDriverKind.make("droid"),
+          continuationKey: id,
+        },
+        get adapter(): never {
+          throw new Error("Must not start a chat");
+        },
+        get snapshot(): never {
+          throw new Error("Must not probe");
+        },
+        textGeneration: {
+          generateThreadTitle: () =>
+            Effect.fail(
+              new TextGenerationError({
+                operation: "generateThreadTitle",
+                detail: "Droid ACP request failed.",
+                cause: providerFailure,
+              }),
+            ),
+          generateBranchName: (): never => {
+            throw new Error("Unexpected generation");
+          },
+          generateCommitMessage: (): never => {
+            throw new Error("Unexpected generation");
+          },
+          generatePrContent: (): never => {
+            throw new Error("Unexpected generation");
+          },
+        },
+      };
+      yield* buildAppUnderTest({
+        layers: {
+          serverSettings: {
+            getSettings: Effect.succeed({ ...DEFAULT_SERVER_SETTINGS, customModels: catalog }),
+            resolveCustomModels: () =>
+              Effect.succeed([
+                { ...catalog.connections[0]!, apiKey: Redacted.make("synthetic-key") },
+              ]),
+          },
+          providerInstanceRegistry: { getInstance: () => Effect.succeed(instance) },
+        },
+      });
+      const wsUrl = yield* getWsServerUrl("/ws");
+      yield* Effect.scoped(
+        withWsRpcClient(wsUrl, (client) =>
+          Effect.gen(function* () {
+            const result = yield* client[WS_METHODS.serverTestCustomModel]({
+              revision: 1,
+              connectionId: "openrouter",
+              modelId: "restricted",
+              instanceId: id,
+            }).pipe(Effect.result);
+            if (result._tag !== "Failure" || result.failure._tag !== "CustomModelError")
+              assert.fail("Expected an actionable model-test failure");
+            assert.equal(
+              result.failure.message,
+              "Droid: 403 Complete 18+ age confirmation in OpenRouter settings.",
+            );
+
+            const settings = yield* client[WS_METHODS.serverGetSettings]({});
+            assert.equal(settings.customModels.revision, 1);
+          }),
+        ),
+      );
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
 
   it.effect("keeps agent session import project failures structured over websocket rpc", () =>
     Effect.gen(function* () {
