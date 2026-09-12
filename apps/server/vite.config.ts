@@ -39,6 +39,7 @@ export default mergeConfig(
       entry: [
         "src/bin.ts",
         "src/analytics-worker.ts",
+        "src/claudeHistoryWorker.ts",
         "src/pdf-validation-worker.ts",
         "src/pdf.worker.ts",
       ],

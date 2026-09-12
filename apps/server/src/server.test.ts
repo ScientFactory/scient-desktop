@@ -5,6 +5,7 @@ import * as NodeCrypto from "node:crypto";
 import { HostProcessEnvironment, HostProcessPlatform } from "@t3tools/shared/hostProcess";
 
 import {
+  type DeviceServiceState,
   AuthAccessTokenType,
   AuthStandardClientScopes,
   AuthEnvironmentBootstrapTokenType,
@@ -117,6 +118,7 @@ afterAll(() => {
 
 import * as BackgroundPolicy from "./background/BackgroundPolicy.ts";
 import * as ServerConfig from "./config.ts";
+import * as DeviceService from "./device/DeviceService.ts";
 import { HTTP_ROUTER_CONFIG, makeRoutesLayer } from "./server.ts";
 import {
   coalesceProviderStatusUpdates,
@@ -844,6 +846,11 @@ const buildAppUnderTest = (options?: {
             listThreadIds: () => Effect.succeed([]),
             listBindings: () => Effect.succeed([]),
             ...options?.layers?.providerSessionDirectory,
+          }),
+          Layer.mock(DeviceService.DeviceService)({
+            state: Effect.succeed(EMPTY_DEVICE_STATE),
+            currentReadiness: () => Effect.succeed(null),
+            sessionsForThread: () => Effect.succeed([]),
           }),
         ),
       ),
@@ -1735,6 +1742,18 @@ const NodeHttpServerTestWithWsDeflate = HttpServer.layerTestClient.pipe(
     ),
   ),
 );
+
+const EMPTY_DEVICE_STATE: DeviceServiceState = {
+  hosts: [],
+  hostStatus: "disabled",
+  hostStatuses: {},
+  devices: [],
+  sessions: [],
+  onboardingCompleted: false,
+  agentAccessEnabled: false,
+  hubBasePath: DeviceService.DEVICE_HUB_ROUTE_PREFIX,
+  revision: 0,
+};
 
 it.layer(NodeServices.layer)("server router seam", (it) => {
   it.effect("parks HTTP ingress until command readiness", () =>
@@ -5996,6 +6015,31 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       assert.equal(rangeResponse.headers["content-range"], `bytes 0-14/${Buffer.byteLength(html)}`);
       assert.equal(yield* rangeResponse.text, "<!doctype html>");
     }).pipe(Effect.provide(NodeHttpServer.layerTest), Effect.scoped),
+  );
+
+  it.effect("serves draft workspace files without a thread", () =>
+    Effect.gen(function* () {
+      yield* buildAppUnderTest();
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const wsUrl = yield* getWsServerUrl("/ws");
+      const directory = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-draft-media-" });
+      yield* fileSystem.writeFileString(path.join(directory, "note.html"), "<p>draft</p>");
+
+      yield* Effect.scoped(
+        withWsRpcClient(wsUrl, (client) =>
+          Effect.gen(function* () {
+            const issued = yield* client[WS_METHODS.assetsCreateUrl]({
+              resource: { _tag: "draft-workspace-file", cwd: directory, path: "note.html" },
+            });
+            const response = yield* HttpClient.get(issued.relativeUrl);
+            assert.equal(response.status, 200);
+            assert.equal(response.headers["content-type"], "text/html; charset=utf-8");
+            assert.equal(yield* response.text, "<p>draft</p>");
+          }),
+        ),
+      );
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 
   it.effect("uploads image bytes through a signed URL issued by websocket rpc", () =>

@@ -39,8 +39,9 @@ export const listEnvironmentScientThreadQueue = Effect.fn(
     method: "POST",
     url: (httpBaseUrl) => environmentEndpointUrl(httpBaseUrl, "/api/scient/thread-queue/v2/list"),
     timeoutMs: REQUEST_TIMEOUT_MS,
+    group: "scientThreadQueue",
     request: ({ client, headers }) =>
-      client.scientThreadQueue.list({
+      client.list({
         headers,
         payload: {
           threadId: input.threadId,
@@ -72,8 +73,9 @@ export const enqueueEnvironmentScientThreadQueueItem = Effect.fn(
     url: (httpBaseUrl) =>
       environmentEndpointUrl(httpBaseUrl, "/api/scient/thread-queue/v2/enqueue"),
     timeoutMs: REQUEST_TIMEOUT_MS,
+    group: "scientThreadQueue",
     request: ({ client, headers }) =>
-      client.scientThreadQueue.enqueue({
+      client.enqueue({
         headers,
         payload: {
           threadId: input.threadId,
@@ -104,8 +106,9 @@ export const removeEnvironmentScientThreadQueueItem = Effect.fn(
     method: "POST",
     url: (httpBaseUrl) => environmentEndpointUrl(httpBaseUrl, "/api/scient/thread-queue/v2/remove"),
     timeoutMs: REQUEST_TIMEOUT_MS,
+    group: "scientThreadQueue",
     request: ({ client, headers }) =>
-      client.scientThreadQueue.remove({
+      client.remove({
         headers,
         payload: { threadId: input.threadId, queueItemId: input.queueItemId },
       }),
@@ -134,8 +137,9 @@ export const updateEnvironmentScientThreadQueueItem = Effect.fn(
     method: "POST",
     url: (httpBaseUrl) => environmentEndpointUrl(httpBaseUrl, "/api/scient/thread-queue/v2/update"),
     timeoutMs: REQUEST_TIMEOUT_MS,
+    group: "scientThreadQueue",
     request: ({ client, headers }) =>
-      client.scientThreadQueue.update({
+      client.update({
         headers,
         payload: {
           threadId: input.threadId,
@@ -168,8 +172,9 @@ export const reorderEnvironmentScientThreadQueue = Effect.fn(
     url: (httpBaseUrl) =>
       environmentEndpointUrl(httpBaseUrl, "/api/scient/thread-queue/v2/reorder"),
     timeoutMs: REQUEST_TIMEOUT_MS,
+    group: "scientThreadQueue",
     request: ({ client, headers }) =>
-      client.scientThreadQueue.reorder({
+      client.reorder({
         headers,
         payload: { threadId: input.threadId, queueItemIds: input.queueItemIds },
       }),
@@ -192,8 +197,9 @@ export const controlEnvironmentScientThreadQueue = Effect.fn(
     url: (httpBaseUrl) =>
       environmentEndpointUrl(httpBaseUrl, "/api/scient/thread-queue/v2/control"),
     timeoutMs: REQUEST_TIMEOUT_MS,
+    group: "scientThreadQueue",
     request: ({ client, headers }) =>
-      client.scientThreadQueue.control({
+      client.control({
         headers,
         payload: input.payload,
       }),

@@ -184,6 +184,35 @@ it.effect("atomically replaces only the target thread's exact skill scope", () =
   }),
 );
 
+it.effect("gates pull-request, browser, and device access independently", () =>
+  Effect.gen(function* () {
+    const registry = yield* makeRegistry(() => 1_000);
+    const withPreview = yield* registry.issue({
+      threadId: ThreadId.make("thread-preview"),
+      providerInstanceId: ProviderInstanceId.make("codex"),
+      capabilities: new Set(["preview", "pull-requests"]),
+    });
+    const withoutPreview = yield* registry.issue({
+      threadId: ThreadId.make("thread-no-preview"),
+      providerInstanceId: ProviderInstanceId.make("codex"),
+      capabilities: new Set(["pull-requests"]),
+    });
+    const withDevice = yield* registry.issue({
+      threadId: ThreadId.make("thread-device"),
+      providerInstanceId: ProviderInstanceId.make("codex"),
+      capabilities: new Set(["device", "pull-requests"]),
+    });
+    const capabilitiesOf = (issued: typeof withPreview) =>
+      registry
+        .resolve(issued.config.authorizationHeader.replace(/^Bearer\s+/, ""))
+        .pipe(Effect.map((scope) => [...(scope?.capabilities ?? [])].sort()));
+
+    expect(yield* capabilitiesOf(withPreview)).toEqual(["preview", "pull-requests"]);
+    expect(yield* capabilitiesOf(withoutPreview)).toEqual(["pull-requests"]);
+    expect(yield* capabilitiesOf(withDevice)).toEqual(["device", "pull-requests"]);
+  }),
+);
+
 it.effect("builds MCP endpoints from the bound server host", () =>
   Effect.gen(function* () {
     const cases = [

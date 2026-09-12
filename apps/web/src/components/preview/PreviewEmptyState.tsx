@@ -4,6 +4,7 @@ import { useMemo, useState } from "react";
 
 import type { BrowserHistoryEntry } from "~/browserHistoryStore";
 import { Empty, EmptyDescription, EmptyMedia, EmptyTitle } from "~/components/ui/empty";
+import { DiscoveryList } from "../ui/discovery-list";
 
 import { PreviewLocalServerCard } from "./PreviewLocalServerCard";
 import { PreviewRecentUrlCard } from "./PreviewRecentUrlCard";
@@ -104,7 +105,7 @@ export function PreviewEmptyState({
               <History className="size-4 shrink-0" />
               <h2 className="font-medium">Recently used</h2>
             </div>
-            <div className="flex flex-col divide-y divide-border/60 overflow-hidden rounded-xl border border-border/70 bg-background">
+            <DiscoveryList>
               {recents.map((entry) => (
                 <PreviewRecentUrlCard
                   key={entry.url}
@@ -114,7 +115,7 @@ export function PreviewEmptyState({
                   onRemove={() => onRemoveRecent(entry.url)}
                 />
               ))}
-            </div>
+            </DiscoveryList>
           </div>
         ) : null}
         {otherServers.length > 0 ? (

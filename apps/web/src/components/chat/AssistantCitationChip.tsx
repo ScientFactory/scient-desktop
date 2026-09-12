@@ -23,6 +23,7 @@ import {
   COMPOSER_INLINE_CHIP_DISMISS_BUTTON_CLASS_NAME,
   COMPOSER_INLINE_CHIP_ICON_CLASS_NAME,
   COMPOSER_INLINE_CHIP_LABEL_CLASS_NAME,
+  CONTEXT_INLINE_CHIP_TONE_CLASS_NAMES,
 } from "../composerInlineChip";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { Popover, PopoverPopup, PopoverTrigger } from "../ui/popover";
@@ -32,16 +33,18 @@ import { composerFloatingLayerProps } from "./composerEventScope";
 
 const CITATION_ACTION_BUTTON_CLASS_NAME = cn(
   COMPOSER_INLINE_CHIP_DISMISS_BUTTON_CLASS_NAME,
-  "text-primary/80 hover:bg-primary/10 hover:text-primary",
+  "text-current hover:bg-[color-mix(in_oklab,var(--context-chip-accent)_17%,transparent)] hover:text-current",
 );
 
 export function CitationChip({
   citation,
+  composer = false,
   onRemove,
   commentEditor,
 }: {
   citation: ComposerCitation;
   onRemove?: () => void;
+  composer?: boolean;
   commentEditor?: {
     open: boolean;
     sourceAnchor?: AssistantCitationSourceAnchor | undefined;
@@ -105,7 +108,7 @@ export function CitationChip({
   const composerSourceLink = (
     <Link
       {...sourceLinkProps}
-      className="inline-flex h-full min-w-0 items-center gap-[0.33em] rounded-sm text-inherit no-underline focus-visible:outline-2 focus-visible:outline-primary"
+      className="inline-flex h-full min-w-0 items-center gap-[0.33em] rounded-sm text-inherit no-underline focus-visible:outline-2 focus-visible:outline-[var(--contrast-foreground)]"
       aria-label={`View cited ${isFileCitation(citation) ? citation.path : "assistant text"}: ${label}`}
       title={
         isFileCitation(citation)
@@ -120,7 +123,7 @@ export function CitationChip({
   const chatSourceLink = (
     <Link
       {...sourceLinkProps}
-      className="inline-flex h-full min-w-0 items-center gap-[0.33em] rounded-sm text-inherit no-underline hover:bg-primary/10 focus-visible:outline-2 focus-visible:outline-primary"
+      className="inline-flex h-full min-w-0 items-center gap-[0.33em] rounded-sm text-inherit no-underline hover:bg-[color-mix(in_oklab,var(--context-chip-accent)_17%,transparent)] focus-visible:outline-2 focus-visible:outline-[var(--contrast-foreground)]"
       aria-label={`View cited ${isFileCitation(citation) ? citation.path : "assistant text"}: ${label}`}
       title={
         isFileCitation(citation)
@@ -135,15 +138,15 @@ export function CitationChip({
   return (
     <span
       className={cn(
-        onRemove ? COMPOSER_INLINE_CHIP_CLASS_NAME : CHAT_INLINE_CHIP_CLASS_NAME,
-        "border-primary/20 bg-primary/8 text-primary",
+        composer ? COMPOSER_INLINE_CHIP_CLASS_NAME : CHAT_INLINE_CHIP_CLASS_NAME,
+        CONTEXT_INLINE_CHIP_TONE_CLASS_NAMES.citation,
       )}
       contentEditable={false}
       data-assistant-citation-chip={isFileCitation(citation) ? undefined : "true"}
       data-file-citation-chip={isFileCitation(citation) ? "true" : undefined}
       data-markdown-copy={serializeComposerCitation(citation)}
     >
-      {onRemove ? (
+      {composer ? (
         composerSourceLink
       ) : (
         <Tooltip>
@@ -211,10 +214,7 @@ export function CitationChip({
           aria-label={
             isFileCitation(citation) ? "Remove file citation" : "Remove assistant citation"
           }
-          className={cn(
-            COMPOSER_INLINE_CHIP_DISMISS_BUTTON_CLASS_NAME,
-            "text-primary/85 hover:bg-primary/10 hover:text-primary",
-          )}
+          className={CITATION_ACTION_BUTTON_CLASS_NAME}
         >
           <XIcon aria-hidden="true" className="size-[0.85em]" />
         </button>

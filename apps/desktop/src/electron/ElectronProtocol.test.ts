@@ -229,6 +229,7 @@ describe("ElectronProtocol", () => {
     assert.deepEqual(directives["font-src"], ["'self'", "t3code:", "data:"]);
     assert.deepEqual(directives["frame-src"], [
       "'self'",
+      "blob:",
       "http:",
       "https:",
       "https://challenges.cloudflare.com",

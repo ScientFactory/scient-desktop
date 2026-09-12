@@ -7,6 +7,7 @@ import {
 import { isDevProxiedPath } from "@t3tools/shared/devProxy";
 import { decodeOtlpTraceRecords } from "@t3tools/shared/observability";
 import * as Data from "effect/Data";
+import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
@@ -67,8 +68,8 @@ const DOWNLOAD_MIME_TYPE_PATTERN = /^[\w!#$&^.+-]+\/[\w!#$&^.+-]+$/;
 const isSafeDownloadMimeType = (mimeType: string): boolean =>
   DOWNLOAD_MIME_TYPE_PATTERN.test(mimeType) &&
   !/(?:^text\/html$|\/xml(?:$|-)|\+xml$)/i.test(mimeType.trim().toLowerCase());
-const isSafeInlineVideoMimeType = (mimeType: string): boolean =>
-  DOWNLOAD_MIME_TYPE_PATTERN.test(mimeType) && mimeType.toLowerCase().startsWith("video/");
+const isSafeInlineMediaMimeType = (mimeType: string): boolean =>
+  DOWNLOAD_MIME_TYPE_PATTERN.test(mimeType) && /^(?:audio|video)\//i.test(mimeType);
 const isSafeInlineDocumentMimeType = (mimeType: string): boolean =>
   mimeType.toLowerCase() === "application/pdf" || mimeType.toLowerCase() === "text/html";
 
@@ -118,7 +119,7 @@ export function assetResponseHeaders(
               ? options.mimeType
               : "application/octet-stream",
         }
-      : inlineMimeType !== undefined && isSafeInlineVideoMimeType(inlineMimeType)
+      : inlineMimeType !== undefined && isSafeInlineMediaMimeType(inlineMimeType)
         ? { "Content-Type": inlineMimeType }
         : inlineMimeType !== undefined && isSafeInlineDocumentMimeType(inlineMimeType)
           ? {
@@ -142,7 +143,7 @@ export function assetResponseHeaders(
   };
 }
 
-/** A single byte range for native video readers; unsupported range syntax uses the full file. */
+/** A single byte range for native media readers; unsupported range syntax uses the full file. */
 function assetByteRange(header: string, size: bigint) {
   const match = /^bytes=(\d*)-(\d*)$/i.exec(header.trim());
   if (!match || (!match[1] && !match[2])) return null;
@@ -178,108 +179,81 @@ export const assetFileResponse = Effect.fn("assetFileResponse")(function* (
     ...assetResponseHeaders(asset.path, asset),
   };
   const mediaFile = asset.file;
-  const isVideo = headers["Content-Type"]?.toLowerCase().startsWith("video/") === true;
+  const mediaInfo = mediaFile ? yield* statMediaFile(asset.path, mediaFile) : undefined;
+  const fs = yield* FileSystem.FileSystem;
+  const fileInfo = mediaInfo
+    ? undefined
+    : yield* fs.stat(asset.path).pipe(Effect.orElseSucceed(() => null));
+  if ((!mediaInfo && !fileInfo) || (fileInfo && fileInfo.type !== "File")) {
+    return HttpServerResponse.text("Not Found", { status: 404 });
+  }
+  const fileSize = mediaInfo?.size ?? fileInfo!.size;
 
-  if (mediaFile) {
-    const mediaInfo = yield* statMediaFile(asset.path, mediaFile);
-    const mediaEtag = isVideo
-      ? undefined
-      : `W/"${mediaInfo.size.toString(16)}-${mediaInfo.mtimeMs.toString(16)}"`;
-    headers["Content-Length"] = String(mediaInfo.size);
-    if (mediaEtag) {
-      headers["Last-Modified"] = mediaInfo.mtime.toUTCString();
-      headers.ETag = mediaEtag;
-    }
-    if (isVideo) {
-      // Host videos can change in place. Do not invite conditional range requests
-      // with validators that cannot establish byte-for-byte identity.
-      headers["Cache-Control"] = "private, no-store";
-    }
+  const fileMtimeMs = mediaInfo
+    ? Number(mediaInfo.mtimeMs)
+    : Option.match(fileInfo!.mtime, {
+        onNone: () => null,
+        onSome: (mtime) => mtime.getTime(),
+      });
+  if (
+    asset.revision &&
+    (asset.revision.size !== Number(fileSize) ||
+      (asset.revision.mtimeMs !== null && asset.revision.mtimeMs !== fileMtimeMs))
+  ) {
+    return HttpServerResponse.text("Asset changed", { status: 409 });
+  }
 
-    let status = 200;
-    let offset = 0n;
-    let bytesToRead = mediaInfo.size;
-    const supportsRanges = options?.allowRangesForAnyMimeType === true || isVideo;
-    if (supportsRanges) {
-      headers["Accept-Ranges"] = "bytes";
-      const ifRangeMatches =
-        ifRangeHeader === undefined || (mediaEtag !== undefined && ifRangeHeader === mediaEtag);
-      if (method === "GET" && rangeHeader && ifRangeMatches) {
-        const range = assetByteRange(rangeHeader, mediaInfo.size);
-        if (range?._tag === "Unsatisfiable") {
-          return HttpServerResponse.empty({
-            status: 416,
-            headers: { ...headers, "Content-Range": `bytes */${mediaInfo.size}` },
-          });
-        }
-        if (range?._tag === "Range") {
-          status = 206;
-          offset = range.offset;
-          bytesToRead = range.bytesToRead;
-          headers["Content-Length"] = String(bytesToRead);
-          headers["Content-Range"] = range.contentRange;
-        }
+  const isMedia = /^(?:audio|video)\//i.test(headers["Content-Type"] ?? "");
+  const etag = isMedia ? undefined : `W/"${fileSize}-${fileMtimeMs ?? 0}"`;
+  if (etag) headers.ETag = etag;
+  headers["Content-Length"] = String(fileSize);
+  if (fileMtimeMs !== null && !isMedia) {
+    headers["Last-Modified"] = DateTime.toDateUtc(DateTime.makeUnsafe(fileMtimeMs)).toUTCString();
+  }
+  if (isMedia) headers["Cache-Control"] = "private, no-store";
+
+  let status = 200;
+  let offset = 0n;
+  let bytesToRead = fileSize;
+  const supportsRanges = options?.allowRangesForAnyMimeType === true || isMedia;
+  if (supportsRanges) {
+    headers["Accept-Ranges"] = "bytes";
+    const ifRangeMatches =
+      ifRangeHeader === undefined || (etag !== undefined && ifRangeHeader === etag);
+    if (method === "GET" && rangeHeader && ifRangeMatches) {
+      const range = assetByteRange(rangeHeader, fileSize);
+      if (range?._tag === "Unsatisfiable") {
+        return HttpServerResponse.empty({
+          status: 416,
+          headers: { ...headers, "Content-Range": `bytes */${fileSize}` },
+        });
+      }
+      if (range?._tag === "Range") {
+        status = 206;
+        offset = range.offset;
+        bytesToRead = range.bytesToRead;
+        headers["Content-Length"] = String(bytesToRead);
+        headers["Content-Range"] = range.contentRange;
       }
     }
-    if (method === "HEAD" || bytesToRead === 0n) {
-      return HttpServerResponse.empty({ status, headers });
-    }
+  }
+  if (method === "HEAD" || bytesToRead === 0n) {
+    return HttpServerResponse.empty({ status, headers });
+  }
+  if (mediaFile) {
     const body = streamMediaFile(mediaFile, offset, bytesToRead);
     if (!body) {
       return HttpServerResponse.text("File is too large to preview.", { status: 413 });
     }
     return HttpServerResponse.stream(body, { status, headers });
   }
-
-  const fs = yield* FileSystem.FileSystem;
-  const info = yield* fs.stat(asset.path).pipe(Effect.orElseSucceed(() => null));
-  if (!info || info.type !== "File") {
-    return HttpServerResponse.text("Not Found", { status: 404 });
-  }
-
-  const fileMtimeMs = Option.match(info.mtime, {
-    onNone: () => null,
-    onSome: (mtime) => mtime.getTime(),
-  });
-  if (
-    asset.revision &&
-    (asset.revision.size !== Number(info.size) ||
-      (asset.revision.mtimeMs !== null && asset.revision.mtimeMs !== fileMtimeMs))
-  ) {
-    return HttpServerResponse.text("Asset changed", { status: 409 });
-  }
-
-  const etag = `W/"${info.size}-${fileMtimeMs ?? 0}"`;
-  headers.ETag = etag;
-  headers["Content-Length"] = String(info.size);
-  const supportsRanges = options?.allowRangesForAnyMimeType === true || isVideo;
-  if (supportsRanges) {
-    headers["Accept-Ranges"] = "bytes";
-    if (
-      method === "GET" &&
-      rangeHeader &&
-      (ifRangeHeader === undefined || ifRangeHeader === etag)
-    ) {
-      const range = assetByteRange(rangeHeader, info.size);
-      if (range?._tag === "Unsatisfiable") {
-        return HttpServerResponse.empty({
-          status: 416,
-          headers: { ...headers, "Content-Range": `bytes */${info.size}` },
-        });
-      }
-      if (range?._tag === "Range") {
-        headers["Content-Length"] = String(range.bytesToRead);
-        return yield* HttpServerResponse.file(asset.path, {
-          status: 206,
-          offset: range.offset,
-          bytesToRead: range.bytesToRead,
-          headers: { ...headers, "Content-Range": range.contentRange },
-        });
-      }
-    }
-  }
-  if (method === "HEAD") {
-    return HttpServerResponse.empty({ status: 200, headers });
+  if (status === 206) {
+    return yield* HttpServerResponse.file(asset.path, {
+      status,
+      offset,
+      bytesToRead,
+      headers,
+    });
   }
   return yield* HttpServerResponse.file(asset.path, { status: 200, headers });
 });

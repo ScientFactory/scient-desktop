@@ -121,3 +121,6 @@ export const VOICE_TRANSCRIBE_CHANNEL = "desktop:voice-transcribe";
 export const VOICE_CANCEL_TRANSCRIPTION_CHANNEL = "desktop:voice-cancel-transcription";
 
 export const SET_UNREAD_ANSWER_COUNT_CHANNEL = "scient:answer-attention:set-count";
+export const MAC_PERMISSION_HELPER_CHANNEL = "desktop:mac-permission-helper";
+
+export const CHECK_SYSTEM_PERMISSION_CHANNEL = "desktop:check-system-permission";

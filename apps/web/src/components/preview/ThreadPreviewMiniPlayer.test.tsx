@@ -4,7 +4,7 @@ import { act, cloneElement, type ReactElement, type ReactNode } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, expect, it, vi } from "vite-plus/test";
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
-import { usePreviewMiniPlayerStore } from "~/previewMiniPlayerStore";
+import { selectThreadPreviewMiniPlayer, usePreviewMiniPlayerStore } from "~/previewMiniPlayerStore";
 import type { PreviewStaticImageSurfaceDescriptor } from "~/previewStaticImageSurface";
 import { ThreadPreviewMiniPlayer } from "./ThreadPreviewMiniPlayer";
 
@@ -74,21 +74,38 @@ afterEach(async () => {
   vi.restoreAllMocks();
   vi.unstubAllGlobals();
 });
-const render = () =>
-  act(() => root.render(<ThreadPreviewMiniPlayer threadRef={threadRef} bottomInset={200} />));
-const player = () => document.querySelector<HTMLElement>('[aria-label="Floating preview"]')!;
+const render = async () => {
+  const miniPlayer = selectThreadPreviewMiniPlayer(
+    usePreviewMiniPlayerStore.getState().byThreadKey,
+    threadRef,
+  );
+  await act(async () => {
+    root.render(
+      miniPlayer ? (
+        <ThreadPreviewMiniPlayer
+          key={mocks.ready ? "ready" : "pending"}
+          threadRef={threadRef}
+          miniPlayer={miniPlayer}
+          composerOverlayElement={null}
+        />
+      ) : null,
+    );
+    await Promise.resolve();
+  });
+};
+const player = () => document.querySelector<HTMLElement>("[data-preview-mini-player]");
 async function key(target: Element, key: string) {
   await act(() => target.dispatchEvent(new KeyboardEvent("keydown", { key, bubbles: true })));
 }
 
 it("measures and mounts a browser surface when its session arrives after the first render", async () => {
-  usePreviewMiniPlayerStore.getState().open(threadRef, "browser");
+  usePreviewMiniPlayerStore.getState().open(threadRef, { kind: "browser", tabId: "browser" });
   await render();
   expect(player()).toBeNull();
   mocks.ready = true;
   await render();
   expect(container.querySelector("[data-browser-surface]")).not.toBeNull();
-  expect(parseFloat(player().style.top) + parseFloat(player().style.height)).toBeLessThanOrEqual(
+  expect(parseFloat(player()!.style.top) + parseFloat(player()!.style.height)).toBeLessThanOrEqual(
     500,
   );
 });
@@ -98,18 +115,21 @@ it("keeps artifact sizing independent and supports keyboard move, resize, and pa
   await render();
   expect(container.querySelector("[data-artifact-surface]")).toBeNull();
   expect(document.querySelector("[data-artifact-surface]")).not.toBeNull();
-  const originalX = parseFloat(player().style.left);
-  const originalHeight = player().style.height;
+  const originalX = parseFloat(player()!.style.left);
+  const originalHeight = player()!.style.height;
   await key(document.querySelector('[role="toolbar"]')!, "ArrowRight");
-  expect(parseFloat(player().style.left)).toBe(originalX + 8);
+  await render();
+  expect(parseFloat(player()!.style.left)).toBe(originalX + 8);
   await key(document.querySelector('[data-preview-mini-player-resize="east"]')!, "ArrowRight");
-  expect(player().style.width).toBe("412px");
-  expect(player().style.height).toBe(originalHeight);
+  await render();
+  expect(player()!.style.width).toBe("412px");
+  expect(player()!.style.height).toBe(originalHeight);
   await act(() =>
     document
       .querySelector<HTMLButtonElement>('[aria-label="Open preview in right panel"]')!
       .click(),
   );
+  await render();
   expect(mocks.openArtifact).toHaveBeenCalledWith(threadRef, artifact);
   expect(mocks.openBrowser).not.toHaveBeenCalled();
   expect(player()).toBeNull();
@@ -119,5 +139,6 @@ it("closes the shared floating surface with Escape without leaving a portal behi
   usePreviewMiniPlayerStore.getState().openArtifact(threadRef, artifact);
   await render();
   await key(document.querySelector('[role="toolbar"]')!, "Escape");
+  await render();
   expect(player()).toBeNull();
 });

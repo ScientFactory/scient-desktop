@@ -52,6 +52,9 @@ the thread opens and the files are attached in its composer, ready for
 your next message. The same per-message file limits apply as when attaching
 files directly; see [Attach files](./composer.md#attach-files).
 
+On web and desktop, pinning or unpinning a thread keeps the sidebar at your current
+scroll position instead of following the thread to its new place in the list.
+
 Pinning does not prevent automatic settlement. Settling a thread removes its pin.
 
 On web and desktop, drag a thread between sections to change its state. Drag a thread up into
@@ -105,6 +108,14 @@ If reordering is unavailable for one environment, update the Scient server
 running there using the version guidance shown in the app. Older servers can still pin and unpin
 threads, but do not understand synced ordering;
 their pinned threads keep the default newest-first order below the ones you have arranged.
+
+Change these rules in **Settings → General**. They continue to run when your apps
+are closed. On web and desktop, choose an environment at the top to change only
+its rules, or **All environments** to update connected environments together.
+Mixed values show where the selected environments disagree. Mobile applies these
+rules to connected environments that support shared settings. Offline environments
+and older servers keep their previous values. Changing a rule does not reopen
+already settled threads.
 
 ## Panel motion
 

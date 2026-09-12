@@ -3,6 +3,10 @@ import { MarkdownCodeBlock } from "~/scient/presentation/MarkdownCodeBlock";
 import { usePullRequestLinking } from "~/hooks/usePullRequestLinking";
 import { useAtomValue } from "@effect/atom-react";
 import {
+  COMPOSER_CONTEXT_CLIPBOARD_MIME,
+  encodeComposerContextClipboardHtml,
+} from "@t3tools/shared/composerContextClipboard";
+import {
   CheckIcon,
   ChevronRightIcon,
   CopyIcon,
@@ -70,12 +74,14 @@ import React, {
 } from "react";
 import type { Components, Options as ReactMarkdownOptions } from "react-markdown";
 import ReactMarkdown from "react-markdown";
+import { createIncrementalMarkdownPlugin } from "../markdown-incremental";
 import { defaultUrlTransform } from "react-markdown";
 import rehypeRaw from "rehype-raw";
 import rehypeSanitize, { defaultSchema } from "rehype-sanitize";
 import remarkBreaks from "remark-breaks";
 import { parseComposerCitationHref } from "@t3tools/shared/composerCitations";
 import { CitationChip } from "./chat/AssistantCitationChip";
+import { parseComposerContextHref } from "@t3tools/shared/composerContextReferences";
 import remarkGfm from "remark-gfm";
 import { remarkGithubAlerts } from "../markdown-github-alerts";
 import {
@@ -252,6 +258,14 @@ interface ChatMarkdownProps {
   imageCaptions?: boolean | undefined;
   onImageExpand?: ((preview: ExpandedImagePreview) => void) | undefined;
   extraRemarkPlugins?: NonNullable<ReactMarkdownOptions["remarkPlugins"]>;
+  /** Renders a `t3-context://` link as a chip; without it the link shows its label as text. */
+  renderContextReference?: ((reference: ChatMarkdownContextReference) => ReactNode) | undefined;
+}
+
+export interface ChatMarkdownContextReference {
+  kind: string;
+  contextId: string;
+  label: string;
 }
 
 export function canUseMarkdownFileShellActions(
@@ -503,8 +517,14 @@ const CHAT_MARKDOWN_SANITIZE_SCHEMA = {
   },
   protocols: {
     ...defaultSchema.protocols,
-    href: [...(defaultSchema.protocols?.href ?? []), "file", "t3-citation", "scient-file-citation"],
-    src: [...(defaultSchema.protocols?.src ?? []), "file"],
+    href: [
+      ...(defaultSchema.protocols?.href ?? []),
+      "file",
+      "t3-citation",
+      "scient-file-citation",
+      "t3-context",
+    ],
+    src: [...(defaultSchema.protocols?.src ?? []), "file", "t3-context"],
   },
 } satisfies Parameters<typeof rehypeSanitize>[0];
 
@@ -1300,7 +1320,7 @@ function ChatMarkdownVideo(props: {
   readonly style?: CSSProperties | undefined;
   readonly mediaIdentity?: string | undefined;
   readonly actionsSource?: MediaActionSource | undefined;
-  readonly onRetry?: (() => Promise<void>) | undefined;
+  readonly onRetry?: (() => Promise<unknown>) | undefined;
   readonly onImageExpand?: ((preview: ExpandedImagePreview) => void) | undefined;
 }) {
   return (
@@ -1479,6 +1499,20 @@ function plainHastText(node: unknown): string | null {
     return null;
   });
   return parts.every((part) => part !== null) ? parts.join("") : null;
+}
+
+/**
+ * The anchor's words, gathered through any nesting. A context label that picked up emphasis or a
+ * code span still has to read as its label; `plainHastText` gives up on the first non-text child,
+ * which would leave the raw context id showing in its place.
+ */
+function hastPlainTextDeep(node: unknown): string {
+  if (!node || typeof node !== "object") return "";
+  if ("type" in node && node.type === "text" && "value" in node && typeof node.value === "string") {
+    return node.value;
+  }
+  if (!("children" in node) || !Array.isArray(node.children)) return "";
+  return node.children.map(hastPlainTextDeep).join("");
 }
 
 /**
@@ -1984,18 +2018,22 @@ function useChatMarkdownState({
   imageCaptions = false,
   onImageExpand,
   extraRemarkPlugins = EMPTY_REMARK_PLUGINS,
+  renderContextReference,
 }: ChatMarkdownProps) {
   // Delimiter normalization is length-preserving, so offset-based behavior
   // (task-list toggling, list positions) stays correct on every surface. The
   // original text rides along so the refinement plugin can recover each
   // backslash pair's inline-versus-display intent after normalization.
   const text = useScientMathMarkdownText(textProp);
+  const incrementalParsing =
+    isStreaming && extraRemarkPlugins.length === 0 && /(?:^|\n) {0,3}(?:`{3}|~{3})/.test(text);
   const baseRemarkPlugins = useMemo(
     () => [
       ...(lineBreaks ? CHAT_MARKDOWN_REMARK_PLUGINS_WITH_BREAKS : CHAT_MARKDOWN_REMARK_PLUGINS),
       ...extraRemarkPlugins,
+      ...(incrementalParsing ? [createIncrementalMarkdownPlugin()] : []),
     ],
-    [extraRemarkPlugins, lineBreaks],
+    [extraRemarkPlugins, incrementalParsing, lineBreaks],
   );
   const remarkPlugins = useScientMathRemarkPlugins(baseRemarkPlugins, textProp);
   const scopedContentDirection = useContentDirection();
@@ -2140,6 +2178,7 @@ function useChatMarkdownState({
       NonNullable<ReturnType<typeof resolveMarkdownFileLinkMeta>>
     >();
     for (const href of extractMarkdownLinkHrefs(renderCodexFileCitationsAsMarkdown(text))) {
+      if (parseComposerContextHref(href)) continue;
       const normalizedHref = normalizeMarkdownLinkHref(href);
       const lookupKey = markdownLinkLookupKey(normalizedHref);
       if (metaByHref.has(lookupKey)) continue;
@@ -2180,6 +2219,7 @@ function useChatMarkdownState({
   }, [inlineCodeFileLinkMetaByText, markdownFileLinkMetaByHref]);
   const markdownUrlTransform = useCallback((href: string) => {
     if (parseComposerCitationHref(href)) return href;
+    if (parseComposerContextHref(href)) return href;
     if (isWindowsDrivePathHref(href)) return href;
     return rewriteMarkdownFileUriHref(href) ?? defaultUrlTransform(href);
   }, []);
@@ -2192,7 +2232,13 @@ function useChatMarkdownState({
     if (!payload) return;
     event.preventDefault();
     event.clipboardData.setData("text/plain", payload.text);
-    event.clipboardData.setData("text/html", payload.html);
+    const fragment = event.clipboardData.getData(COMPOSER_CONTEXT_CLIPBOARD_MIME);
+    event.clipboardData.setData(
+      "text/html",
+      fragment
+        ? encodeComposerContextClipboardHtml(payload.text, fragment, payload.html)
+        : payload.html,
+    );
   }, []);
   const openChangeRequestLink = useOpenChangeRequestLink(threadRef, pullRequestPanelRef);
   const openDeferredMarkdownLink = useOpenLink(threadRef);
@@ -2457,6 +2503,7 @@ function useChatMarkdownState({
       environmentId,
       expandMedia,
       fileLinkChip,
+      renderContextReference,
       imageBaseDir,
       imageCaptions,
       inlineCodeFileLinkMetaByText,
@@ -2487,6 +2534,7 @@ function useChatMarkdownState({
       environmentId,
       expandMedia,
       fileLinkChip,
+      renderContextReference,
       imageBaseDir,
       imageCaptions,
       inlineCodeFileLinkMetaByText,
@@ -2533,9 +2581,25 @@ const ChatMarkdownRendererContext = React.createContext<
 // Stable component types preserve image and rich-output state while tokens stream.
 const CHAT_MARKDOWN_COMPONENTS = {
   img: function MarkdownImg({ node, alt, src, title, ...props }) {
-    const { cwd, expandMedia, imageBaseDir, imageCaptions, isStreaming, threadRef } = use(
-      ChatMarkdownRendererContext,
-    );
+    const {
+      cwd,
+      expandMedia,
+      imageBaseDir,
+      imageCaptions,
+      isStreaming,
+      renderContextReference,
+      threadRef,
+    } = use(ChatMarkdownRendererContext);
+
+    const contextReference = typeof src === "string" ? parseComposerContextHref(src) : null;
+    if (contextReference) {
+      const label = alt || contextReference.contextId;
+      return renderContextReference ? (
+        renderContextReference({ ...contextReference, label })
+      ) : (
+        <span>{label}</span>
+      );
+    }
 
     const imageExpand = use(MarkdownLinkContext) ? undefined : expandMedia;
     const localSrc = node?.properties?.dataLocalSrc;
@@ -2761,10 +2825,19 @@ const CHAT_MARKDOWN_COMPONENTS = {
       serverConfig,
       threadRef,
       updateThreadPullRequestLink,
+      renderContextReference,
     } = use(ChatMarkdownRendererContext);
-
     const citation = href ? parseComposerCitationHref(href) : null;
     if (citation) return <CitationChip citation={citation} />;
+    const contextReference = href ? parseComposerContextHref(href) : null;
+    if (contextReference) {
+      const label = hastPlainTextDeep(node) || contextReference.contextId;
+      return renderContextReference ? (
+        renderContextReference({ ...contextReference, label })
+      ) : (
+        <span>{label}</span>
+      );
+    }
     const normalizedHref = href ? normalizeMarkdownLinkHref(href) : "";
     const fileLinkMeta = normalizedHref
       ? (markdownFileLinkMetaByHref.get(markdownLinkLookupKey(normalizedHref)) ??

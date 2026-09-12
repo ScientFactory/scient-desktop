@@ -332,7 +332,7 @@ export function AnalysisArtifactStrip(props: {
       if (mode === "pin") {
         usePreviewMiniPlayerStore
           .getState()
-          .open(props.threadRef, result.value.tabId, initialPosition);
+          .open(props.threadRef, { kind: "browser", tabId: result.value.tabId }, initialPosition);
       } else {
         useRightPanelStore.getState().openBrowser(props.threadRef, result.value.tabId);
       }

@@ -50,7 +50,7 @@
     "PreviewStaticImage",
     "StaticAssetImage",
     "static-artifact",
-    "miniPlayerBrowserTabId",
+    "selectThreadPreviewMiniPlayerTabId",
     "openScientArtifact",
     "ScientFileAuxiliarySurface",
     "ResizeSeparator",
@@ -169,8 +169,8 @@
     },
     {
       "path": "apps/web/src/components/preview/PreviewView.tsx",
-      "anchor": "miniPlayerBrowserTabId",
-      "purpose": "Keep inherited preview visibility in sync with tagged mini-player content."
+      "anchor": "selectThreadPreviewMiniPlayerTabId",
+      "purpose": "Keep inherited preview visibility in sync with the shared tagged mini-player selector."
     },
     {
       "path": "apps/web/src/components/preview/ThreadPreviewMiniPlayer.tsx",

@@ -31,8 +31,9 @@ export const getEnvironmentScientSourcesOverview = Effect.fn(
     method: "POST",
     url: (httpBaseUrl) => environmentEndpointUrl(httpBaseUrl, "/api/scient/sources/overview"),
     timeoutMs: REQUEST_TIMEOUT_MS,
+    group: "scientSources",
     request: ({ client, headers }) =>
-      client.scientSources.overview({
+      client.overview({
         headers,
         payload: { root: input.root },
       }),
@@ -55,8 +56,9 @@ export const getEnvironmentScientSourceDetail = Effect.fn(
     method: "POST",
     url: (httpBaseUrl) => environmentEndpointUrl(httpBaseUrl, "/api/scient/sources/detail"),
     timeoutMs: REQUEST_TIMEOUT_MS,
+    group: "scientSources",
     request: ({ client, headers }) =>
-      client.scientSources.detail({
+      client.detail({
         headers,
         payload: { root: input.root, sourceId: input.sourceId },
       }),
@@ -81,8 +83,9 @@ export const getEnvironmentScientSourceAttachmentPreview = Effect.fn(
     url: (httpBaseUrl) =>
       environmentEndpointUrl(httpBaseUrl, "/api/scient/sources/attachments/preview"),
     timeoutMs: REQUEST_TIMEOUT_MS,
+    group: "scientSources",
     request: ({ client, headers }) =>
-      client.scientSources.attachmentPreview({
+      client.attachmentPreview({
         headers,
         payload: {
           root: input.root,
@@ -109,8 +112,9 @@ export const getEnvironmentScientSourceJournalIcon = Effect.fn(
     method: "POST",
     url: (httpBaseUrl) => environmentEndpointUrl(httpBaseUrl, "/api/scient/sources/journal-icon"),
     timeoutMs: REQUEST_TIMEOUT_MS,
+    group: "scientSources",
     request: ({ client, headers }) =>
-      client.scientSources.journalIcon({
+      client.journalIcon({
         headers,
         payload: { root: input.root, sourceId: input.sourceId },
       }),
@@ -137,8 +141,9 @@ export const updateEnvironmentScientSourceMetadata = Effect.fn(
     url: (httpBaseUrl) =>
       environmentEndpointUrl(httpBaseUrl, "/api/scient/sources/metadata/update"),
     timeoutMs: REQUEST_TIMEOUT_MS,
+    group: "scientSources",
     request: ({ client, headers }) =>
-      client.scientSources.updateMetadata({
+      client.updateMetadata({
         headers,
         payload: {
           root: input.root,
@@ -171,8 +176,9 @@ export const refreshEnvironmentScientSourceMetadata = Effect.fn(
     url: (httpBaseUrl) =>
       environmentEndpointUrl(httpBaseUrl, "/api/scient/sources/metadata/refresh"),
     timeoutMs: METADATA_REFRESH_TIMEOUT_MS,
+    group: "scientSources",
     request: ({ client, headers }) =>
-      client.scientSources.refreshMetadata({
+      client.refreshMetadata({
         headers,
         payload: {
           root: input.root,
@@ -201,8 +207,9 @@ export const updateEnvironmentScientSourceNote = Effect.fn(
     method: "POST",
     url: (httpBaseUrl) => environmentEndpointUrl(httpBaseUrl, "/api/scient/sources/note/update"),
     timeoutMs: REQUEST_TIMEOUT_MS,
+    group: "scientSources",
     request: ({ client, headers }) =>
-      client.scientSources.updateNote({
+      client.updateNote({
         headers,
         payload: {
           root: input.root,
@@ -231,8 +238,9 @@ export const removeEnvironmentScientSource = Effect.fn(
     method: "POST",
     url: (httpBaseUrl) => environmentEndpointUrl(httpBaseUrl, "/api/scient/sources/remove"),
     timeoutMs: REQUEST_TIMEOUT_MS,
+    group: "scientSources",
     request: ({ client, headers }) =>
-      client.scientSources.remove({
+      client.remove({
         headers,
         payload: {
           root: input.root,
@@ -260,8 +268,9 @@ export const updateEnvironmentScientSourceReview = Effect.fn(
     method: "POST",
     url: (httpBaseUrl) => environmentEndpointUrl(httpBaseUrl, "/api/scient/sources/review/update"),
     timeoutMs: REQUEST_TIMEOUT_MS,
+    group: "scientSources",
     request: ({ client, headers }) =>
-      client.scientSources.updateReview({
+      client.updateReview({
         headers,
         payload: {
           root: input.root,
@@ -285,7 +294,8 @@ export const getEnvironmentZoteroStatus = Effect.fn(
     method: "POST",
     url: (httpBaseUrl) => environmentEndpointUrl(httpBaseUrl, "/api/scient/sources/zotero/status"),
     timeoutMs: REQUEST_TIMEOUT_MS,
-    request: ({ client, headers }) => client.scientSources.zoteroStatus({ headers, payload: {} }),
+    group: "scientSources",
+    request: ({ client, headers }) => client.zoteroStatus({ headers, payload: {} }),
   });
 });
 
@@ -307,8 +317,9 @@ export const listEnvironmentZoteroLibrary = Effect.fn(
     method: "POST",
     url: (httpBaseUrl) => environmentEndpointUrl(httpBaseUrl, "/api/scient/sources/zotero/library"),
     timeoutMs: REQUEST_TIMEOUT_MS,
+    group: "scientSources",
     request: ({ client, headers }) =>
-      client.scientSources.zoteroLibrary({
+      client.zoteroLibrary({
         headers,
         payload: {
           scope: input.scope,
@@ -333,8 +344,8 @@ export const listEnvironmentZoteroCollections = Effect.fn(
     url: (httpBaseUrl) =>
       environmentEndpointUrl(httpBaseUrl, "/api/scient/sources/zotero/collections"),
     timeoutMs: REQUEST_TIMEOUT_MS,
-    request: ({ client, headers }) =>
-      client.scientSources.zoteroCollections({ headers, payload: {} }),
+    group: "scientSources",
+    request: ({ client, headers }) => client.zoteroCollections({ headers, payload: {} }),
   });
 });
 
@@ -355,8 +366,9 @@ export const preflightEnvironmentZoteroImport = Effect.fn(
     url: (httpBaseUrl) =>
       environmentEndpointUrl(httpBaseUrl, "/api/scient/sources/import/preflight"),
     timeoutMs: IMPORT_STEP_TIMEOUT_MS,
+    group: "scientSources",
     request: ({ client, headers }) =>
-      client.scientSources.preflight({
+      client.preflight({
         headers,
         payload: { root: input.root, itemKeys: input.itemKeys },
       }),
@@ -381,8 +393,9 @@ export const beginEnvironmentZoteroImport = Effect.fn(
     method: "POST",
     url: (httpBaseUrl) => environmentEndpointUrl(httpBaseUrl, "/api/scient/sources/import/begin"),
     timeoutMs: REQUEST_TIMEOUT_MS,
+    group: "scientSources",
     request: ({ client, headers }) =>
-      client.scientSources.beginImport({
+      client.beginImport({
         headers,
         payload: {
           root: input.root,
@@ -412,8 +425,9 @@ export const beginEnvironmentZoteroScopedImport = Effect.fn(
     url: (httpBaseUrl) =>
       environmentEndpointUrl(httpBaseUrl, "/api/scient/sources/zotero/import-scope/begin"),
     timeoutMs: IMPORT_STEP_TIMEOUT_MS,
+    group: "scientSources",
     request: ({ client, headers }) =>
-      client.scientSources.beginScopedImport({
+      client.beginScopedImport({
         headers,
         payload: {
           root: input.root,
@@ -445,8 +459,9 @@ export const uploadEnvironmentLocalSourcePdf = Effect.fn(
     url: (httpBaseUrl) =>
       environmentEndpointUrl(httpBaseUrl, "/api/scient/sources/local-files/upload"),
     timeoutMs: IMPORT_STEP_TIMEOUT_MS,
+    group: "scientSources",
     request: ({ client, headers }) =>
-      client.scientSources.localPdfUpload({
+      client.localPdfUpload({
         headers,
         payload,
       }),
@@ -472,8 +487,9 @@ export const beginEnvironmentLocalSourceImport = Effect.fn(
     url: (httpBaseUrl) =>
       environmentEndpointUrl(httpBaseUrl, "/api/scient/sources/local-files/import/begin"),
     timeoutMs: REQUEST_TIMEOUT_MS,
+    group: "scientSources",
     request: ({ client, headers }) =>
-      client.scientSources.localBeginImport({
+      client.localBeginImport({
         headers,
         payload: {
           root: input.root,
@@ -502,8 +518,9 @@ export const discardEnvironmentLocalSourcePdfs = Effect.fn(
     url: (httpBaseUrl) =>
       environmentEndpointUrl(httpBaseUrl, "/api/scient/sources/local-files/discard"),
     timeoutMs: REQUEST_TIMEOUT_MS,
+    group: "scientSources",
     request: ({ client, headers }) =>
-      client.scientSources.localDiscard({
+      client.localDiscard({
         headers,
         payload: { root: input.root, itemKeys: input.itemKeys },
       }),
@@ -526,8 +543,9 @@ export const advanceEnvironmentScientSourcesImport = Effect.fn(
     method: "POST",
     url: (httpBaseUrl) => environmentEndpointUrl(httpBaseUrl, "/api/scient/sources/import/advance"),
     timeoutMs: IMPORT_STEP_TIMEOUT_MS,
+    group: "scientSources",
     request: ({ client, headers }) =>
-      client.scientSources.advanceImport({
+      client.advanceImport({
         headers,
         payload: { root: input.root, operationId: input.operationId },
       }),
@@ -550,8 +568,9 @@ export const cancelEnvironmentScientSourcesImport = Effect.fn(
     method: "POST",
     url: (httpBaseUrl) => environmentEndpointUrl(httpBaseUrl, "/api/scient/sources/import/cancel"),
     timeoutMs: REQUEST_TIMEOUT_MS,
+    group: "scientSources",
     request: ({ client, headers }) =>
-      client.scientSources.cancelImport({
+      client.cancelImport({
         headers,
         payload: { root: input.root, operationId: input.operationId },
       }),
@@ -575,8 +594,9 @@ export const retryEnvironmentScientSourcesImport = Effect.fn(
     method: "POST",
     url: (httpBaseUrl) => environmentEndpointUrl(httpBaseUrl, "/api/scient/sources/import/retry"),
     timeoutMs: REQUEST_TIMEOUT_MS,
+    group: "scientSources",
     request: ({ client, headers }) =>
-      client.scientSources.retryImport({
+      client.retryImport({
         headers,
         payload: {
           root: input.root,

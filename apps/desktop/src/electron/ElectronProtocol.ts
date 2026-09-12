@@ -87,7 +87,7 @@ export function makeDesktopContentSecurityPolicy(input: DesktopProtocolRegistrat
   // Environment origins are not known at protocol-registration time, just like
   // connection origins above. HTML remains isolated by the iframe sandbox and
   // the asset response's own CSP; this directive only permits that frame to load.
-  const frameSources = ["'self'", "http:", "https:", "https://challenges.cloudflare.com"];
+  const frameSources = ["'self'", "blob:", "http:", "https:", "https://challenges.cloudflare.com"];
 
   return [
     "default-src 'self'",

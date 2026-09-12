@@ -49,6 +49,8 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
   open?: boolean;
   triggerVariant?: VariantProps<typeof buttonVariants>["variant"];
   triggerClassName?: string;
+  /** Aggregate settings can show a neutral value without claiming one provider is selected. */
+  triggerLabel?: string;
   triggerAriaLabel?: string;
   onOpenChange?: (open: boolean) => void;
   onOpenProviderSetup?: (instanceId: ProviderInstanceId) => void;
@@ -202,7 +204,7 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
         <span
           className={cn("flex min-w-0 flex-1 items-center", size === "xs" ? "gap-1" : "gap-1.5")}
         >
-          {activeEntry ? (
+          {activeEntry && props.triggerLabel === undefined ? (
             <ProviderInstanceIcon
               driverKind={activeEntry.driverKind}
               displayName={activeEntry.displayName}
@@ -226,9 +228,9 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
                 />
               }
             >
-              {triggerTitle}
+              {props.triggerLabel ?? triggerTitle}
             </TooltipTrigger>
-            <TooltipPopup side="top">{triggerLabel}</TooltipPopup>
+            <TooltipPopup side="top">{props.triggerLabel ?? triggerLabel}</TooltipPopup>
           </Tooltip>
           {!props.statusLabel && selectedModel?.providerCostLabel ? (
             <Tooltip>
@@ -244,7 +246,9 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
               </TooltipPopup>
             </Tooltip>
           ) : null}
-          {!props.statusLabel && selectedModel?.isUnavailable ? (
+          {!props.statusLabel &&
+          props.triggerLabel === undefined &&
+          selectedModel?.isUnavailable ? (
             <Badge variant="outline" size="sm">
               Unavailable
             </Badge>
