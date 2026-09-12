@@ -37,26 +37,26 @@ revision remains literal ancestry of owned `main`; it is not merely a reviewed
 or observed tip.
 
 The current T3 alignment is recorded in
-[`docs/internals/2026-09-10-upstream-sync-f814983c.md`](docs/internals/2026-09-10-upstream-sync-f814983c.md)
-and in `upstream-state.json`. This local candidate preserves all 23 official commits after
-`6c583620ff7ad3235b135af7107c0543467eecfa` through
-`f814983c262b42bd79247bae377a709925c70d63`. Merge
-`b4fd31d503250e89bdd103f111ff20a16395e70a` retains owned main
-`7cefb603ef43fe0c4555826ceeb67b0e2338c668` and the exact official target as its parents.
+[`docs/internals/2026-09-12-upstream-sync-a43f9b45.md`](docs/internals/2026-09-12-upstream-sync-a43f9b45.md)
+and in `upstream-state.json`. This local candidate preserves all 83 official first-parent commits
+after `f814983c262b42bd79247bae377a709925c70d63` through
+`a43f9b45ae85caf37e0be8270ad3d27365ece2bd`. Merge
+`433a23e653246c65c68aadce50a04657117eb341` retains owned main
+`b9f26396fbf1754c16ecb50753c5e01a2232a36c` and the exact official target as its parents.
 
 Automated qualification passed; the owner will test the isolated candidate before PR delivery.
 No push, PR, main merge, or publication is implied. The
-[preceding alignment](docs/internals/2026-09-09-upstream-sync-6c583620.md) remains in
+[preceding alignment](docs/internals/2026-09-10-upstream-sync-f814983c.md) remains in
 ancestry. Later observed upstream tips do not move `integrationBase` by themselves.
 
 ## Receiving T3 updates
 
-The local alignment through `f814983c` is documented in the
-[2026-09-10 review](docs/internals/2026-09-10-upstream-sync-f814983c.md).
-It adopts multiple thread PR links, linked-thread search, GitHub stack actions, restart-safe PR
-read caching, model bulk controls, image zoom/pan, preview-close PiP, diff palettes, and desktop/mobile
-interaction fixes. Scient provider lifecycle, fork behavior, rich content, pending-save protection,
-identity, and cloud/mobile publication holds remain.
+The local alignment through `a43f9b45` is documented in the
+[2026-09-12 review](docs/internals/2026-09-12-upstream-sync-a43f9b45.md).
+It adopts typed composer context, incremental Markdown rendering, device hosts and floating streams,
+project-scoped settings, conversation rewind, generated license notices, and broad desktop/mobile,
+PR, usage, and performance improvements. Scient provider lifecycle, scientific surfaces, identity,
+state roots, and cloud/mobile publication holds remain.
 
 Migration IDs are immutable local history, not an upstream synchronization counter. The new T3
 multi-PR migration is registered as Scient `53`, after existing `51` and `52`; retired development
