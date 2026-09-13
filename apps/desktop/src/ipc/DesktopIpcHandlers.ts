@@ -2,6 +2,7 @@ import { setUnreadAnswerCount } from "../scient/answerAttention/ipc.ts";
 import * as Effect from "effect/Effect";
 
 import * as DesktopIpc from "./DesktopIpc.ts";
+import { installNotificationBadge } from "./methods/notificationBadge.ts";
 import { getClientSettings, setClientSettings } from "./methods/clientSettings.ts";
 import {
   clearConnectionCatalog,
@@ -72,6 +73,7 @@ import { getWslState, setWslBackendEnabled, setWslDistro, setWslOnly } from "./m
 
 export const installDesktopIpcHandlers = Effect.fn("desktop.ipc.installHandlers")(function* () {
   const ipc = yield* DesktopIpc.DesktopIpc;
+  yield* installNotificationBadge();
   yield* PreviewIpc.installPreviewEventForwarding();
 
   yield* ipc.handle(setUnreadAnswerCount);
