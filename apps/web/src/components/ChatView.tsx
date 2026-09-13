@@ -62,6 +62,8 @@ import {
 } from "@t3tools/contracts";
 import { type EnvironmentConnectionPresentation } from "@t3tools/client-runtime/connection";
 import { wasBootstrapThreadDeleted } from "@t3tools/client-runtime/errors";
+import { readPastedComposerContext } from "./composerInlineTokenPaste";
+import { isPasteAsTextShortcut } from "@t3tools/client-runtime/text-paste";
 import { type CodexArtifactTemplate } from "@t3tools/client-runtime/codex-artifact-templates";
 import { effectiveSnoozed, threadWokeAt } from "@t3tools/client-runtime/state/thread-settled";
 import {
@@ -112,6 +114,7 @@ import { useLocation, useNavigate } from "@tanstack/react-router";
 import { useFileCitationTarget } from "~/scient/markdownEditor/fileCitationNavigation";
 import { composerCitationsToPlainText } from "@t3tools/shared/composerCitations";
 import { assistantCitationFromLocation } from "../lib/assistantCitationNavigation";
+import { isMacPlatform } from "../lib/utils";
 import type { AssistantCitationSourceAnchor } from "~/lib/assistantTextSelection";
 import { useShallow } from "zustand/react/shallow";
 import {
@@ -1719,6 +1722,7 @@ function ChatViewContent(props: ChatViewProps) {
   const composerTerminalContextsRef = useRef<TerminalContextDraft[]>([]);
   const localComposerRef = useRef<ChatComposerHandle | null>(null);
   const composerRef = useComposerHandleContext() ?? localComposerRef;
+  const pasteAsTextShortcutUntilRef = useRef(0);
   const [restingComposerControlsHost, setRestingComposerControlsHost] =
     useState<HTMLDivElement | null>(null);
   const [restingComposerControlsVisible, setRestingComposerControlsVisible] = useState(false);
@@ -4698,10 +4702,11 @@ function ChatViewContent(props: ChatViewProps) {
   );
   const supportsThreadPullRequests =
     serverConfig?.environment.capabilities.threadPullRequests === true;
+  const visiblePullRequestCount = visibleThreadPullRequests(
+    (activeThreadShell ?? activeThread)?.pullRequests ?? [],
+  ).length;
   const pullRequestsSurfaceAvailable =
-    isServerThread &&
-    supportsThreadPullRequests &&
-    visibleThreadPullRequests((activeThreadShell ?? activeThread)?.pullRequests ?? []).length > 0;
+    isServerThread && supportsThreadPullRequests && visiblePullRequestCount > 0;
   const addPullRequestsSurface = useCallback(() => {
     if (!activeThreadRef || !pullRequestsSurfaceAvailable) return;
     runAfterPendingFileSave("pull-requests", () => {
@@ -7051,24 +7056,38 @@ function ChatViewContent(props: ChatViewProps) {
   // so a paste that follows has no editable target and would be dropped.
   // Route it to the composer like a typed key, which also expands it.
   useEffect(() => {
+    const keyHandler = (event: KeyboardEvent) => {
+      if (
+        shouldRedirectInputToComposer(event) &&
+        isPasteAsTextShortcut(event, isMacPlatform(navigator.platform))
+      ) {
+        pasteAsTextShortcutUntilRef.current = Date.now() + 1_000;
+      }
+    };
     const handler = (event: ClipboardEvent) => {
       if (!activeThreadId || isCommandPaletteOpen()) return;
       if (getTerminalFocusOwner() !== null) return;
       if (composerRef.current?.isModelPickerOpen()) return;
       const text = pasteTextToFocusComposer(event);
-      if (text === null) return;
+      const clipboardData = event.clipboardData;
+      if (text === null || clipboardData === null) return;
+      const bypassAutoAttachment = Date.now() <= pasteAsTextShortcutUntilRef.current;
+      pasteAsTextShortcutUntilRef.current = 0;
       if (
-        composerRef.current?.insertTextAtEnd(
-          text,
-          event.clipboardData ? { clipboardData: event.clipboardData } : undefined,
-        )
+        ((readPastedComposerContext(clipboardData)?.records.length ?? 0) === 0 &&
+          composerRef.current?.pasteTextAtEnd(text, { bypassAutoAttachment })) ||
+        composerRef.current?.insertTextAtEnd(text, { clipboardData })
       ) {
         event.preventDefault();
         event.stopPropagation();
       }
     };
+    window.addEventListener("keydown", keyHandler, true);
     window.addEventListener("paste", handler, true);
-    return () => window.removeEventListener("paste", handler, true);
+    return () => {
+      window.removeEventListener("keydown", keyHandler, true);
+      window.removeEventListener("paste", handler, true);
+    };
   }, [activeThreadId, composerRef]);
 
   const [pendingRevert, setPendingRevert] = useState<{
@@ -7926,6 +7945,7 @@ function ChatViewContent(props: ChatViewProps) {
             mimeType: attachment.mimeType,
             sizeBytes: attachment.sizeBytes,
             downloadable: false,
+            ...(attachment.source ? { source: attachment.source } : {}),
           },
     );
     const shouldAnchorFirstMessage =
@@ -9288,7 +9308,7 @@ function ChatViewContent(props: ChatViewProps) {
         }
         composerDraftTarget={composerDraftTarget}
         onBack={
-          activeThreadRef !== null && pullRequestsSurfaceAvailable
+          activeThreadRef !== null && pullRequestsSurfaceAvailable && visiblePullRequestCount > 1
             ? addPullRequestsSurface
             : undefined
         }

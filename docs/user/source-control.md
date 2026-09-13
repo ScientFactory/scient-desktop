@@ -16,6 +16,7 @@ Scient works with the platforms your team already uses:
 
 - **GitHub** – Pull requests, repository creation, and clone integration
 - **GitLab** – Merge requests, repository publishing, and hosted clones
+- **Forgejo and Gitea** – Pull requests, publishing, and clones through `fj` or `tea`
 - **Bitbucket** – Pull request workflows (via API token authentication)
 - **Azure DevOps** – Pull request support for Microsoft-hosted repositories
 
@@ -26,13 +27,13 @@ Scient works with the platforms your team already uses:
 **Clone repositories directly**
 
 - Open the Command Palette (`Cmd/Ctrl + K`) → **Add Project**
-- Choose **GitHub repository**, **GitLab repository**, **Bitbucket repository**, **Azure DevOps repository**, or paste any **Git URL**
+- Choose a connected source-control provider, or paste any **Git URL**
 - Enter the repository path (`owner/repo`, `group/project`, `workspace/repository`, or `project/repository`) or a full Git URL, pick a destination, and start working
 
 **Publish local projects to the cloud**
 
 - Have a local Git repository without a remote?
-- Use the **Publish Repository** action to create a new hosted repository (GitHub, GitLab, Bitbucket, or Azure DevOps), add it as your origin remote, and push, in one flow
+- Use the **Publish Repository** action to create a new hosted repository, add it as your origin remote, and push, in one flow
 - If the local repository has no commits yet, publishing creates the remote and wires it up but does not push. Make a commit, then push normally.
 
 ### Manage Code Reviews Without Context Switching
@@ -52,6 +53,7 @@ Scient works with the platforms your team already uses:
   PR/MR if background activity is enabled for that repository. Known reviews keep their normal
   refresh schedule.
 - Open several reviews from the **Pull requests** page as tabs in the right panel
+- Filter the Pull requests page by source-control provider when several hosts are connected
 - Your authored reviews stay at the top and use the selected sort within their group. By default,
   see passing and approved reviews first, passing reviews awaiting approval next, and conflicting
   reviews last. Smaller changes come first within each readiness group, and finished reviews follow
@@ -129,6 +131,19 @@ You can now clone, publish, and create pull requests.
    ```
 3. Check **Settings → Source Control** to confirm the connection
 
+### For Forgejo and Gitea
+
+Install [Forgejo CLI (`fj`)](https://codeberg.org/forgejo-contrib/forgejo-cli) or
+[Gitea CLI (`tea`)](https://gitea.com/gitea/tea) 0.16 or later in the environment
+where the project runs. Sign in with
+`fj --host https://your-server auth add-token` or `tea login add`, then rescan
+**Settings → Source Control**.
+
+Scient prefers a matching `fj` login and falls back to `tea` when needed. Use a
+full repository URL when several servers are configured. Servers hosted below a
+URL subpath use `tea`, because `fj` 0.6 does not preserve that subpath while
+checking accounts. Git clone and push still require Git credentials or an SSH key.
+
 ### For Bitbucket
 
 Bitbucket uses tokens instead of a CLI tool. Two options, both set as environment variables on the
@@ -190,7 +205,23 @@ Control settings**.
 
 - [GitHub CLI](https://cli.github.com/)
 - [GitLab CLI](https://gitlab.com/gitlab-org/cli)
+- [Forgejo CLI](https://codeberg.org/forgejo-contrib/forgejo-cli)
+- [Gitea CLI](https://gitea.com/gitea/tea)
 - [Azure CLI](https://learn.microsoft.com/en-us/cli/azure/)
+
+## Trusted GitHub routing
+
+GitHub routing is off by default. In **Settings → Connections** (or
+**Environments** on mobile), choose **Read PRs** or **Read and act** only for
+environments you trust to share GitHub access. Enable both the original
+environment and the environment answering its requests on that client.
+
+When enabled, GitHub review details, linked status, and permitted review actions
+can use another connected environment signed in to the same GitHub account.
+Credentials remain on their machines. **Read and act** may use broader GitHub
+permissions than the original environment, so enable it only for environments
+you control. An action with an uncertain result is never retried automatically
+on another environment.
 
 ## Linked pull requests
 

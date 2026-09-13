@@ -763,6 +763,28 @@ describe("ChatMarkdown standard web links", () => {
   });
 });
 
+describe("ChatMarkdown heading levels", () => {
+  it("exposes headings below the host heading without changing their tags", () => {
+    const html = renderToStaticMarkup(
+      <ChatMarkdown
+        cwd="/tmp/project"
+        text={"# Top\n\n## Section\n\n###### Fine print"}
+        headingLevelOffset={3}
+      />,
+    );
+
+    expect(html).toContain('<h1 dir="ltr" aria-level="4">Top</h1>');
+    expect(html).toContain('<h2 dir="ltr" aria-level="5">Section</h2>');
+    expect(html).toContain('<h6 dir="ltr" aria-level="6">Fine print</h6>');
+  });
+
+  it("leaves heading levels alone when the markdown is not nested", () => {
+    const html = renderToStaticMarkup(<ChatMarkdown cwd="/tmp/project" text="# Top" />);
+
+    expect(html).toContain('<h1 dir="ltr">Top</h1>');
+  });
+});
+
 describe("shouldUseMarkdownFileBrowserPrimaryAction", () => {
   it("uses the browser whenever the resolved file policy supplies it", () => {
     expect(

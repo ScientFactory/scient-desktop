@@ -26,7 +26,7 @@ import {
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
 import { mediaFileReference } from "@t3tools/client-runtime/media-reference";
-import { Code2, Eye, FolderTree, Globe2, Table2 } from "lucide-react";
+import { Code2, Eye, FolderTree, Globe2, Table2, WrapTextIcon } from "lucide-react";
 import * as Schema from "effect/Schema";
 import {
   lazy,
@@ -48,7 +48,7 @@ import { OpenInPicker } from "~/components/chat/OpenInPicker";
 import { MediaVideoPlayer } from "~/components/media/MediaVideoPlayer";
 import { MediaActions, type MediaActionSource } from "~/components/media/MediaActions";
 import { useRemoteOpenState } from "~/remoteOpen";
-import { useClientSettings } from "~/hooks/useSettings";
+import { useClientSettings, useUpdateClientSettings } from "~/hooks/useSettings";
 import { useTheme } from "~/hooks/useTheme";
 import { getLocalStorageItem, setLocalStorageItem, useLocalStorage } from "~/hooks/useLocalStorage";
 import { useWorkspaceMutationRefresh } from "~/hooks/useWorkspaceMutationRefresh";
@@ -1300,6 +1300,7 @@ export default function FilePreviewPanel({
 }: FilePreviewPanelProps) {
   const { resolvedTheme } = useTheme();
   const wordWrap = useClientSettings((settings) => settings.wordWrap);
+  const updateClientSettings = useUpdateClientSettings();
   const primaryEnvironmentId = usePrimaryEnvironmentId();
   const remoteOpenState = useRemoteOpenState(environmentId);
   const environmentHttpBaseUrl = useEnvironmentHttpBaseUrl(environmentId);
@@ -1454,6 +1455,16 @@ export default function FilePreviewPanel({
           },
         }
       : queriedFile;
+  // Rendered documents and media own their layout. Word wrap only applies to
+  // the raw text surfaces that feed the Pierre file renderer/editor.
+  const showsRawText =
+    relativePath !== null &&
+    file.data !== null &&
+    !(isMarkdownDocument && renderMarkdown) &&
+    !(tableDelimiter && renderTable) &&
+    !renderBrowserFile &&
+    !isMedia &&
+    !isPdf;
   const awaitingMarkdownLease =
     isRichMarkdown &&
     !isHostFile &&
@@ -1720,6 +1731,15 @@ export default function FilePreviewPanel({
               ) : (
                 <Eye className="size-3.5" />
               )}
+            </FileSurfaceAction>
+          ) : null}
+          {showsRawText ? (
+            <FileSurfaceAction
+              label={wordWrap ? "Disable word wrap" : "Enable word wrap"}
+              pressed={wordWrap}
+              onPress={() => updateClientSettings({ wordWrap: !wordWrap })}
+            >
+              <WrapTextIcon className="size-3.5" />
             </FileSurfaceAction>
           ) : null}
           {canOpenInBrowser ? (

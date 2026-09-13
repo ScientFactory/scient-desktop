@@ -27,6 +27,12 @@ On web and desktop, HEIC and HEIF photos are automatically converted to JPEG whe
 the composer or paste them into a message. On iOS, selecting them from **Photo Library** does the
 same. The 10 MB image limit applies to the converted photo.
 
+Pasting 32 KiB or more of text adds that fragment as a text-file attachment so
+the agent can inspect it without filling the model context. A smaller paste also
+becomes an attachment when inserting it would exceed the message limit. On a
+hardware keyboard, use `Cmd+Shift+V` on Apple devices or `Ctrl+Shift+V` elsewhere
+to keep a large paste editable in the composer instead.
+
 ## Attach files
 
 On web and desktop, attach files with the file picker, drag and drop, or paste.
