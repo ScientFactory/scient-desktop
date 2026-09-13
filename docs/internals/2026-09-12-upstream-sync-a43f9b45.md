@@ -1,6 +1,7 @@
 # T3 alignment through a43f9b45
 
-Status: automated qualification passed; owner visual review pending.
+Status: superseded as the interim qualification point of the same candidate by the
+[20363c32 receipt](2026-09-13-upstream-sync-20363c32.md).
 This is one complete, bounded alignment, not a selection of upstream changes.
 
 ## Frozen history
