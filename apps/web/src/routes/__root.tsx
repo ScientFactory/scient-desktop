@@ -218,7 +218,6 @@ function RootRouteView() {
           <SnapShotCoordinator />
           <ScientAnswerBadgeCoordinator />
           <ThreadNotificationCoordinator />
-          <ScientAnswerBadgeCoordinator />
           <ConfirmDialogHost />
           <SlowRpcRequestToastCoordinator />
           <HostedStaticEnvironmentBootstrap />
