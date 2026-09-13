@@ -37,12 +37,12 @@ revision remains literal ancestry of owned `main`; it is not merely a reviewed
 or observed tip.
 
 The current T3 alignment is recorded in
-[`docs/internals/2026-09-13-upstream-sync-e6286839.md`](docs/internals/2026-09-13-upstream-sync-e6286839.md)
-and in `upstream-state.json`. This local candidate preserves all 119 official first-parent commits
+[`docs/internals/2026-09-13-upstream-sync-77bca8b2.md`](docs/internals/2026-09-13-upstream-sync-77bca8b2.md)
+and in `upstream-state.json`. This local candidate preserves all 127 official first-parent commits
 after `f814983c262b42bd79247bae377a709925c70d63` through
-`e6286839369a29d829aee3c64dd64ce39c626d2f`. The candidate first incorporated current owned main
+`77bca8b2d76a1f42552e5eee7d277fcb1160347a`. The candidate first incorporated current owned main
 `39dd77cb5d2417f0c7c1eb6834e1bcafe8e60bba` in merge `42d774ca1399b1b8e68463e79c3644978ac0b285`;
-the final extension merge `df316cae0900dabaa6dffd62ed553d773ed20a12` retains the previously qualified
+the final extension merge `5d74e19265f900a272d4bf82b7b02d359e6dd1ea` retains the previously qualified
 candidate and the exact official target as its parents.
 
 Automated qualification passed; the owner will test the isolated candidate before PR delivery.
@@ -55,12 +55,14 @@ themselves.
 
 ## Receiving T3 updates
 
-The local alignment through `e6286839` is documented in the
-[2026-09-13 final review](docs/internals/2026-09-13-upstream-sync-e6286839.md).
+The local alignment through `77bca8b2` is documented in the
+[2026-09-13 final review](docs/internals/2026-09-13-upstream-sync-77bca8b2.md).
 It includes the earlier typed composer context, incremental Markdown, device, scoped-settings,
 rewind, and license work, then adds large-paste folding, clearer collapsed work, notifications,
 Forgejo/Gitea and multi-account GitHub routing, lazy file browsing, pull-request improvements,
-usage and mobile reliability, desktop lifecycle fixes, missing-page recovery, and startup retry.
+usage and mobile reliability, desktop lifecycle fixes, missing-page recovery, startup retry,
+optional compact sidebars and thread rows, environment-organized connections, opt-in in-app
+notifications, native/web notification badges, safer worktree fallback, and clearer Cursor failures.
 Scient provider lifecycle, scientific surfaces, identity, state roots, and cloud/mobile publication
 holds remain.
 
