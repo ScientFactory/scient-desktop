@@ -565,10 +565,17 @@ export const isPreviewEditingShortcut = (
   const isMac = platform === "darwin";
   if (isMac ? !input.meta || input.control : !input.control || input.meta) return false;
 
-  const key = input.key.toLowerCase();
-  // Option changes the DOM key for macOS Paste and Match Style (for example, to ◊).
-  if (isMac && input.alt && input.shift && input.code === "KeyV") return true;
-  if (key === "v" && input.shift) return input.alt === isMac;
+  const reportedKey = input.key.toLowerCase();
+  const physicalLetter = /^Key([A-Z])$/.exec(input.code)?.[1]?.toLowerCase();
+  // Editing shortcuts are physical key chords, but `key` follows the active
+  // keyboard layout and can therefore be a non-Latin character. Prefer its
+  // logical value when it is Latin (important for remapped layouts), then use
+  // `code` as the layout-independent fallback.
+  const key = /^[a-z]$/.test(reportedKey) ? reportedKey : (physicalLetter ?? reportedKey);
+  // Scient exposes Cmd+Shift+V as Paste as Text, while macOS also uses
+  // Cmd+Option+Shift+V for Paste and Match Style. Both must reach the native
+  // Edit menu when the preview guest owns focus.
+  if (key === "v" && input.shift) return isMac || !input.alt;
   if (input.alt) return false;
   if (key === "z") return !input.shift || platform !== "win32";
   if (input.shift) return false;
