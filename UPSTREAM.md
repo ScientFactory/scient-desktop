@@ -38,15 +38,16 @@ or observed tip.
 
 The current T3 alignment is recorded in
 [`docs/internals/2026-09-14-upstream-sync-01e05c15.md`](docs/internals/2026-09-14-upstream-sync-01e05c15.md)
-and in `upstream-state.json`. This extension preserves the 32 official first-parent commits after
+and in `upstream-state.json`. The cumulative alignment preserves 159 official first-parent commits
+after `f814983c262b42bd79247bae377a709925c70d63`, including the final 32-commit extension after
 `77bca8b2d76a1f42552e5eee7d277fcb1160347a` through
 `01e05c15268dedb76da95f442fbf5201cd8e7a44`. History-preserving merge
 `7f7937f8927a9bbb0cb6a17ed9a2c9133560347f` has the previously qualified candidate
 `5c13b7e1b3f070a5a3378ad452f4abd962999b51` as its first parent and the exact official target as
 its second parent.
 
-Automated qualification passed; the owner will test the isolated candidate before PR delivery.
-No push, PR, main merge, or publication is implied. The
+Automated qualification passed. The owner authorized PR delivery and auto-merge using a
+history-preserving merge commit; release publication remains a separate action. The
 [preceding alignment](docs/internals/2026-09-10-upstream-sync-f814983c.md) remains in ancestry. The
 [interim a43f9b45 receipt](docs/internals/2026-09-12-upstream-sync-a43f9b45.md) and
 [20363c32 receipt](docs/internals/2026-09-13-upstream-sync-20363c32.md) record earlier qualification
@@ -64,8 +65,9 @@ provider lifecycle, scientific surfaces, identity, signed npm-pinned server runt
 and cloud/mobile publication holds remain.
 
 Migration IDs are immutable local history, not an upstream synchronization counter. The new T3
-multi-PR migration is registered as Scient `53`, after existing `51` and `52`; retired development
-ID `50` is not reused. Never renumber recorded steps to match T3. The receipt records synthetic
+multi-PR migration is registered as Scient `53`, after existing `51` and `52`; composer-context
+migration follows at `54`. Retired development ID `50` is not reused. Never renumber recorded steps
+to match T3. The receipt records synthetic
 upgrade/backfill tests and the remaining platform/manual gates.
 
 The canonical procedure and stop conditions live in the

@@ -1,7 +1,8 @@
 # T3 alignment through 77bca8b2
 
-Status: automated qualification passed; owner visual review pending.
-This is the final receipt for one complete alignment, extended in place through eight additional
+Status: qualified interim receipt; superseded by the
+[01e05c15 extension](2026-09-14-upstream-sync-01e05c15.md).
+This records one complete alignment, extended in place through eight additional
 official commits rather than split, cherry-picked, or replayed.
 
 ## Frozen history
