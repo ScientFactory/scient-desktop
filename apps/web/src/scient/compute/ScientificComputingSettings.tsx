@@ -226,8 +226,17 @@ function LanguageRuntimeRecovery({
     Boolean(preference.executable.trim()) || (isPython && runtime.status?.selection === "managed");
   const helperCanRepair = !isMatlab || selectedInstallation?.executable === helperOwner;
   const verifyRuntime = useAtomCommand(computeEnvironment.verifyRuntime, { reportFailure: false });
-  const runtimeFingerprint = `${refreshVersion}\u0000${selectedInstallation?.executable ?? ""}\u0000${selectedInstallation?.version ?? ""}\u0000${selectedInstallation?.problem ?? ""}`;
+  const runtimeFingerprint = JSON.stringify([
+    refreshVersion,
+    selectedInstallation?.executable,
+    selectedInstallation?.version,
+    selectedInstallation?.problem,
+    runtime.status?.generationId,
+    runtime.status?.selection,
+    runtime.status?.operation?.operationId,
+  ]);
   const currentTestState = testState?.runtimeFingerprint === runtimeFingerprint ? testState : null;
+  if (testState !== null && currentTestState === null) setTestState(null);
   const testPassed =
     currentTestState?.result?.readiness === "ready" &&
     currentTestState.result.connection === "verified";
@@ -617,6 +626,8 @@ function EnvironmentScientificComputingSettings({
 
   const handleRefresh = useCallback(async () => {
     if (environmentId === null) return;
+    // Refresh is a new observation, not proof that an earlier Test still holds.
+    setRefreshVersion((current) => current + 1);
     setRefreshFailure(null);
     setRefreshing(true);
     const result = await refreshRuntimes({

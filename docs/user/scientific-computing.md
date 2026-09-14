@@ -68,9 +68,12 @@ instead. Removing the managed installation intentionally returns new sessions to
 discovery; it does not remove your other Python installations.
 
 An existing Python can run ordinary code without every scientific library. If the reviewed
-data-and-figures packages are missing, the status menu notes that figures libraries are not in this
-environment. Run remains available for code that does not need those packages; Scient does not
+data-and-figures packages are missing, the status menu notes that some scientific packages are missing.
+Run remains available for code that does not need those packages; Scient does not
 silently install them into a user-owned environment.
+An unrelated managed setup or removal failure does not disable a healthy existing runtime.
+**Runtime options** keeps **Check again** and **Scientific Computing** accessible during setup
+and failures; full errors are available under **Error details**.
 Hover or open the file's Python status to see which interpreter it refers to. A missing-module error
 also offers **Scientific Computing**, taking you to the right server's settings. After choosing or
 repairing an environment, rerun the code yourself; Scient never replays a failed run automatically.

@@ -73,6 +73,28 @@ describe("installation selection", () => {
     );
   });
 
+  it("distinguishes matching bin/python suffixes across equivalent system sources", () => {
+    const installations = [
+      { ...inventory.installations[1]!, executable: "/env/a/bin/python", source: "path" as const },
+      {
+        ...inventory.installations[1]!,
+        executable: "/env/b/bin/python",
+        source: "conventional" as const,
+      },
+    ];
+    expect(
+      installations.map((installation) =>
+        computeRuntimePickerLabel(installation, "Python", installations),
+      ),
+    ).toEqual([
+      "Python · System installation · a/bin/python",
+      "Python · System installation · b/bin/python",
+    ]);
+    expect(computeRuntimePickerLabel({ ...installations[0]! }, "Python", [installations[0]!])).toBe(
+      "Python · System installation",
+    );
+  });
+
   it("derives setup actions from managed ownership and status", () => {
     expect(computeManagedPrimaryAction(null)).toBe("install");
     expect(computeManagedPrimaryAction({ ...status, installed: false })).toBe("install");

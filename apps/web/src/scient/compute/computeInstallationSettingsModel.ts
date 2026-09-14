@@ -23,22 +23,32 @@ function runtimeSourceLabel(source: string): string {
   }
 }
 
-/** Short picker label. Never the executable path. */
+/** Short picker label, with the shortest distinguishing directory suffix when needed. */
 export function computeRuntimePickerLabel(
   installation: ComputeSettingsInstallation,
   languageName: string,
   installations: ReadonlyArray<ComputeSettingsInstallation> = [],
 ): string {
   const base = `${installation.version ?? languageName} · ${runtimeSourceLabel(installation.source)}`;
-  const duplicate = installations.some(
+  const duplicates = installations.filter(
     (candidate) =>
-      candidate !== installation &&
-      candidate.version === installation.version &&
-      candidate.source === installation.source,
+      candidate.executable !== installation.executable &&
+      (candidate.version ?? languageName) === (installation.version ?? languageName) &&
+      runtimeSourceLabel(candidate.source) === runtimeSourceLabel(installation.source),
   );
-  if (!duplicate) return base;
+  if (duplicates.length === 0) return base;
   const pathParts = installation.executable.split(/[\\/]/u).filter(Boolean);
-  return `${base} · ${pathParts.slice(-2).join("/") || installation.executable}`;
+  for (let length = 2; length <= pathParts.length; length++) {
+    const suffix = pathParts.slice(-length).join("/");
+    if (
+      duplicates.every(
+        (candidate) =>
+          candidate.executable.split(/[\\/]/u).filter(Boolean).slice(-length).join("/") !== suffix,
+      )
+    )
+      return `${base} · ${suffix}`;
+  }
+  return `${base} · ${installation.executable}`;
 }
 
 export type ComputeManagedPrimaryAction = Extract<

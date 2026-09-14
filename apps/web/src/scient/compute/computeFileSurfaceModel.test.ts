@@ -245,7 +245,7 @@ describe("python compute surface model", () => {
       kind: "status",
       label: "Python 3.12.13",
       canRun: true,
-      note: "Figures libraries are not in this environment",
+      note: "Some scientific packages are missing",
     });
   });
 
@@ -291,7 +291,6 @@ describe("python compute surface model", () => {
         languageId: "matlab",
         languageName: "MATLAB",
         runtimeVersion: "R2026a",
-        connectionSetupFailed: true,
         liveSession: {
           activity: "idle",
           label: "MATLAB",
@@ -310,7 +309,7 @@ describe("python compute surface model", () => {
         preferredRuntimeExecutable: "/MATLAB/bin/matlab",
         scientificPackagesMissing: false,
       }),
-    ).toEqual({ kind: "setup", label: "Connect MATLAB", canRun: false });
+    ).toEqual({ kind: "status", label: "MATLAB ready", canRun: true });
   });
 
   it("does not offer a switch from stale inspection data or while work is running", () => {

@@ -315,6 +315,26 @@ describe("Scientific Computing settings interactions", () => {
     expect(mocks.calls).toEqual(["verify"]);
     expect(button("Test passed")).toBeDefined();
     expect(mocks.manage).not.toHaveBeenCalled();
+    await act(() =>
+      container
+        .querySelector<HTMLButtonElement>('[aria-label="Refresh scientific runtimes"]')!
+        .click(),
+    );
+    expect(container.textContent).not.toContain("Test passed");
+    expect(button("Test")).toBeDefined();
+    expect(mocks.verify).toHaveBeenCalledOnce();
+    await click("Test");
+    expect(button("Test passed")).toBeDefined();
+    await act(() => {
+      mocks.statuses.python = { ...status(), generationId: "replacement-helper" };
+      notify();
+    });
+    expect(container.textContent).not.toContain("Test passed");
+    await act(() => {
+      mocks.statuses.python = status();
+      notify();
+    });
+    expect(container.textContent).not.toContain("Test passed");
   });
 
   it("does not treat a Python probe as Test passed or send people to Repair", async () => {

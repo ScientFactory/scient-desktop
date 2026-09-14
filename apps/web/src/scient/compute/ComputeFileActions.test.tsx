@@ -3,6 +3,7 @@ import {
   ComputeSessionId,
   EnvironmentId,
   type ComputeLanguageRuntimeInspection,
+  type ComputeManagedRuntimeStatus,
 } from "@t3tools/contracts";
 import type { ComponentProps, ReactNode } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
@@ -11,6 +12,7 @@ import { beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
 const mocks = vi.hoisted(() => ({
   languages: [] as ComputeLanguageRuntimeInspection[],
+  managedStatus: null as ComputeManagedRuntimeStatus | null,
   buttons: [] as Array<ComponentProps<"button">>,
   start: vi.fn(),
   submit: vi.fn(),
@@ -28,7 +30,7 @@ vi.mock("~/state/compute", () => ({
     stopSession: "stop",
     manageRuntime: "manage",
     cancelManagedRuntime: "cancel",
-    managedRuntime: () => null,
+    managedRuntime: () => "managed-status",
   },
 }));
 vi.mock("~/hooks/useSettings", () => ({
@@ -39,7 +41,14 @@ vi.mock("~/state/server", () => ({
 }));
 vi.mock("~/state/query", () => ({
   useEnvironmentQuery: (query: string) => ({
-    data: query === "runtimes" ? { languages: mocks.languages } : query === "sessions" ? [] : null,
+    data:
+      query === "runtimes"
+        ? { languages: mocks.languages }
+        : query === "sessions"
+          ? []
+          : query === "managed-status"
+            ? mocks.managedStatus
+            : null,
     isPending: false,
     error: null,
     refresh: vi.fn(),
@@ -151,6 +160,7 @@ describe("Python file run actions", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mocks.buttons = [];
+    mocks.managedStatus = null;
     mocks.start.mockResolvedValue({
       _tag: "Success",
       value: { sessionId: ComputeSessionId.make("new-session"), generation: 1 },
@@ -180,6 +190,33 @@ describe("Python file run actions", () => {
       code: "print(1)",
     });
   });
+
+  it.each(["failed", "operating"])(
+    "does not block a ready system runtime when managed setup is %s",
+    (state) => {
+      mocks.managedStatus = {
+        installed: true,
+        selection: "existing",
+        updateAvailable: false,
+        runtimeVersion: null,
+        toolkitRevision: null,
+        generationId: "g1",
+        operation:
+          state === "operating"
+            ? {
+                operationId: "operation-1",
+                action: "repair",
+                phase: "verifying",
+                startedAt: "2026-09-14T12:00:00.000Z",
+                downloadedBytes: null,
+                totalBytes: null,
+              }
+            : null,
+        failureMessage: state === "failed" ? "Could not remove managed runtime" : null,
+      };
+      expect(render([runtime("path")]).disabled).toBe(false);
+    },
+  );
 
   it("disables ordinary Run when selected managed Python is unusable despite another ready Python", () => {
     expect(render([runtime("managed", false), runtime("path")]).disabled).toBe(true);

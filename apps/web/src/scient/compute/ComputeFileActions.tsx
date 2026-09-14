@@ -317,7 +317,7 @@ export const ComputeFileActions = forwardRef<ComputeFileActionsHandle, ComputeFi
       languageId: props.language.languageId,
       languageName: props.language.displayName,
       runtimeVersion:
-        readyRuntime?.profile.languageVersion ?? liveSession?.runtime?.languageVersion ?? null,
+        liveSession?.runtime?.languageVersion ?? readyRuntime?.profile.languageVersion ?? null,
       liveSession,
       runtimeInspectionPending: runtimes.isPending || refreshing,
       readyRuntimeAvailable: readyRuntime !== null,
@@ -325,7 +325,6 @@ export const ComputeFileActions = forwardRef<ComputeFileActionsHandle, ComputeFi
       scientificPackagesMissing: missingScientificPackages.length > 0,
       capacityRecoveryAvailable: capacityBlocked,
       startingRetryAvailable: canRetryStart,
-      connectionSetupFailed: Boolean(managedRuntime.failure) && setupProgress === null,
       ...(contextBinding?.lifecycle === undefined
         ? {}
         : { contextLifecycle: contextBinding.lifecycle }),
@@ -703,12 +702,7 @@ export const ComputeFileActions = forwardRef<ComputeFileActionsHandle, ComputeFi
         ? null
         : computeCell(props.contents, caretLine + 1, props.language.cellMarker);
     const fileSlice = computeFile(props.contents);
-    const busy =
-      operation !== null ||
-      refreshing ||
-      switching ||
-      stoppingUnusedSession !== null ||
-      managedRuntime.busy;
+    const busy = operation !== null || refreshing || switching || stoppingUnusedSession !== null;
     const pinRuntimeChrome =
       Boolean(setupProgress) ||
       Boolean(managedRuntime.failure) ||
@@ -811,47 +805,48 @@ export const ComputeFileActions = forwardRef<ComputeFileActionsHandle, ComputeFi
                 {managedRuntime.busy ? <LoaderCircle className="animate-spin" /> : null}
                 <span className="truncate">{runtimeToolbar.label}</span>
               </Button>
-            ) : (
-              <Menu>
-                <MenuTrigger
+            ) : null}
+            <Menu>
+              <MenuTrigger
+                render={
+                  <Button
+                    size="xs"
+                    variant="ghost-muted"
+                    className="-ms-1 h-6 min-w-0 max-w-full px-1 text-[11px] font-normal"
+                    aria-label={pinRuntimeChrome ? "Runtime options" : undefined}
+                    title={
+                      runtimeNote === undefined
+                        ? runtimeExecutable
+                        : `${runtimeExecutable}. ${runtimeNote}`
+                    }
+                  />
+                }
+              >
+                {pinRuntimeChrome ? (
+                  <ChevronDown className="size-3" aria-hidden />
+                ) : (
+                  <span className="truncate">{runtimeToolbar.label}</span>
+                )}
+              </MenuTrigger>
+              <MenuPopup align="start" side="bottom" className="min-w-56">
+                <MenuItem disabled>{runtimeExecutable}</MenuItem>
+                {runtimeNote === undefined ? null : <MenuItem disabled>{runtimeNote}</MenuItem>}
+                <MenuSeparator />
+                <MenuItem disabled={refreshing || switching} onClick={() => void refreshRuntime()}>
+                  Check again
+                </MenuItem>
+                <MenuItem
                   render={
-                    <Button
-                      size="xs"
-                      variant="ghost-muted"
-                      className="-ms-1 h-6 min-w-0 max-w-full px-1 text-[11px] font-normal"
-                      title={
-                        runtimeNote === undefined
-                          ? runtimeExecutable
-                          : `${runtimeExecutable}. ${runtimeNote}`
-                      }
+                    <Link
+                      to="/settings/scientific-computing"
+                      search={{ environmentId: props.environmentId }}
                     />
                   }
                 >
-                  <span className="truncate">{runtimeToolbar.label}</span>
-                </MenuTrigger>
-                <MenuPopup align="start" side="bottom" className="min-w-56">
-                  <MenuItem disabled>{runtimeExecutable}</MenuItem>
-                  {runtimeNote === undefined ? null : <MenuItem disabled>{runtimeNote}</MenuItem>}
-                  <MenuSeparator />
-                  <MenuItem
-                    disabled={refreshing || switching}
-                    onClick={() => void refreshRuntime()}
-                  >
-                    Check again
-                  </MenuItem>
-                  <MenuItem
-                    render={
-                      <Link
-                        to="/settings/scientific-computing"
-                        search={{ environmentId: props.environmentId }}
-                      />
-                    }
-                  >
-                    Scientific Computing
-                  </MenuItem>
-                </MenuPopup>
-              </Menu>
-            )}
+                  Scientific Computing
+                </MenuItem>
+              </MenuPopup>
+            </Menu>
           </div>
           <div className="flex shrink-0 items-center">
             <Button

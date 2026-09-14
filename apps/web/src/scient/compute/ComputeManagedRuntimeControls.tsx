@@ -21,6 +21,7 @@ import { useAtomCommand } from "~/state/use-atom-command";
 import { useCopyToClipboard } from "~/hooks/useCopyToClipboard";
 import { cn } from "~/lib/utils";
 import { Button } from "~/components/ui/button";
+import { Popover, PopoverPopup, PopoverTrigger } from "~/components/ui/popover";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "~/components/ui/tooltip";
 import {
   AlertDialog,
@@ -42,27 +43,13 @@ function sameManagedRuntimeSnapshot(
   left: ComputeManagedRuntimeStatus,
   right: ComputeManagedRuntimeStatus,
 ): boolean {
-  return (
-    left.installed === right.installed &&
-    left.generationId === right.generationId &&
-    left.selection === right.selection &&
-    left.operation?.operationId === right.operation?.operationId &&
-    left.failure?.reason === right.failure?.reason &&
-    left.failureMessage === right.failureMessage
-  );
+  return managedRuntimeSnapshotKey(left) === managedRuntimeSnapshotKey(right);
 }
 
 function managedRuntimeSnapshotKey(status: ComputeManagedRuntimeStatus | null | undefined): string {
   if (status === undefined) return "pending";
   if (status === null) return "absent";
-  return JSON.stringify({
-    installed: status.installed,
-    generationId: status.generationId,
-    selection: status.selection,
-    operation: status.operation,
-    failure: status.failure,
-    failureMessage: status.failureMessage,
-  });
+  return JSON.stringify(status);
 }
 
 /**
@@ -157,7 +144,10 @@ export function useComputeManagedRuntime(input: {
     querySnapshot: commandState?.scopeKey === scopeKey ? commandState.querySnapshot : undefined,
     currentQuery: queried.data,
   });
-  const status = commandStatus ?? queried.data ?? input.initialStatus;
+  // Once superseded, a receipt must not reappear if the server later returns
+  // to its pre-command state (for example after cancellation or removal).
+  if (candidateCommandStatus !== null && commandStatus === null) setCommandState(null);
+  const status = commandStatus ?? (queried.data === undefined ? input.initialStatus : queried.data);
   const [pending, setPending] = useState(false);
   const [localFailureState, setLocalFailureState] = useState<{
     readonly scopeKey: string;
@@ -324,15 +314,22 @@ export function ManagedRuntimeNotice({
               </TooltipTrigger>
               <TooltipPopup>Copy the full error</TooltipPopup>
             </Tooltip>
-            <details className="relative shrink-0">
-              <summary className="flex cursor-pointer list-none items-center text-muted-foreground marker:content-none [&::-webkit-details-marker]:hidden">
+            <Popover>
+              <PopoverTrigger
+                render={<Button size="icon-xs" variant="ghost-muted" aria-label="Error details" />}
+              >
                 <ChevronDown className="size-3" aria-hidden />
-                <span className="sr-only">Error details</span>
-              </summary>
-              <pre className="absolute right-0 z-30 mt-1 max-h-40 w-80 max-w-[min(20rem,calc(100vw-2rem))] overflow-auto whitespace-pre-wrap break-words rounded-md border border-border bg-popover p-2 text-[11px] text-destructive shadow-md">
-                {failure.detail}
-              </pre>
-            </details>
+              </PopoverTrigger>
+              <PopoverPopup
+                align="end"
+                className="w-80 max-w-[calc(100vw-2rem)]"
+                viewportClassName="p-2"
+              >
+                <pre className="max-h-40 overflow-auto whitespace-pre-wrap break-words text-[11px] text-destructive">
+                  {failure.detail}
+                </pre>
+              </PopoverPopup>
+            </Popover>
           </>
         ) : null}
       </div>

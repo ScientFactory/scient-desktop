@@ -78,7 +78,13 @@ reason + action + short summary + full bounded detail
 `failureMessage` remains during compatibility transition. Current clients prefer the structured
 failure and fall back to the legacy field for older servers. A command result is an optimistic
 snapshot only. The client displays it while the watched query is unchanged; once that query
-advances, the query wins even when it differs from the command receipt.
+advances, the query wins even when it differs from the command receipt. Superseded receipts
+are retired permanently, including when cancellation/removal returns the server to its earlier
+state. Authoritative absence is not replaced with stale inventory.
+
+Managed-operation failures are not execution readiness. A healthy system runtime or live
+session remains runnable while an unrelated managed operation is pending or failed. Recovery
+options and error details stay reachable in that state.
 
 ### Shared setup intent
 
@@ -154,7 +160,8 @@ Automated acceptance must cover:
 - no repair action for configured, project, path, or conventional installations;
 - failed settings save preserving managed selection;
 - duplicate runtime labels remaining distinguishable;
-- Test passed clearing on runtime change and stale Test completion not blessing another runtime;
+- Test passed clearing on Refresh, runtime/helper generation or selection changes, and managed
+  operations; stale completion or returning to an earlier runtime must not restore an old pass;
 - one-shot state not crossing file tabs, projects, or environments;
 - ordinary file comments/annotations and save conflict behavior on Compute files;
 - direct secondary-session discovery without changing its ownership or close semantics; and
@@ -180,6 +187,12 @@ interactive widgets, a MATLAB replacement/fallback, or a new scheduler. It does 
 older fresh-process AnalysisRun domain. It does not claim Windows/Linux packaging, packaged-app
 native MATLAB, owner visual acceptance, security approval, or release readiness merely because
 local tests pass.
+
+One existing conservative boundary remains: managed-runtime removal waits for all live sessions
+and explicit verification of the same language, including sessions using user-owned installations.
+Narrowing this safely requires proving each session's managed-generation/helper ownership; it
+must not be weakened merely by checking the executable's display name or source label. This is
+a follow-up lifecycle improvement, not a prerequisite for comparing the current UI candidate.
 
 Before a PR is ready to replace PR #287, record exact-head automated results, before/after visual
 evidence, owner acceptance, and the remaining platform/release gates in the parent PR. Keep the
