@@ -123,6 +123,22 @@ describe("ManagedPythonEnvironment", () => {
     expect(entries.filter((name) => name.startsWith("generation-"))).toHaveLength(1);
   });
 
+  it("names MATLAB helper provision failures separately from Scientific Python", async () => {
+    const helper = makeManagedPythonEnvironmentManager(
+      computeDir,
+      dependencies({
+        provision: async () => {
+          throw new Error("ENOENT: uv.lock");
+        },
+      }),
+      "matlab-connection",
+    );
+    await expect(helper.install(installInput({ toolkitIds: [] }))).rejects.toMatchObject({
+      reason: "provision-failed",
+      message: "Scient could not provision the MATLAB connection helper.",
+    });
+  });
+
   it("publishes only a provisioned and verified final-path generation", async () => {
     const verify = vi.fn(async () => undefined);
     const manager = makeManagedPythonEnvironmentManager(
@@ -306,6 +322,33 @@ describe("ManagedPythonEnvironment", () => {
     expect(await manager.inspect()).toBeNull();
     await expect(NodeFSP.access(sibling)).resolves.toBeUndefined();
   });
+
+  it.live("inspects as absent while a private removal tombstone is still settling", () =>
+    Effect.gen(function* () {
+      const tombstoned = Promise.withResolvers<void>();
+      let release!: () => void;
+      const gate = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      const manager = makeManagedPythonEnvironmentManager(
+        computeDir,
+        dependencies({
+          generationId: () => "removing",
+          removeTree: async (root) => {
+            tombstoned.resolve();
+            await gate;
+            await NodeFSP.rm(root, { recursive: true, force: true });
+          },
+        }),
+      );
+      yield* Effect.promise(() => manager.install(installInput()));
+      const removing = manager.remove();
+      yield* Effect.promise(() => tombstoned.promise);
+      expect(yield* Effect.promise(() => manager.inspect())).toBeNull();
+      release();
+      expect(yield* Effect.promise(() => removing)).toBe(true);
+    }),
+  );
 
   it("rolls back atomic removal when deleting its tombstone fails", async () => {
     const manager = makeManagedPythonEnvironmentManager(

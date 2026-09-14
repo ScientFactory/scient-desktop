@@ -5,6 +5,9 @@ import {
   type ComputeManagedRuntimeStatus,
 } from "@t3tools/contracts";
 import {
+  computeCurrentRuntimeSummary,
+  computeManagedPrimaryAction,
+  computeRuntimePickerLabel,
   defaultComputeInstallation,
   selectExistingComputeInstallation,
 } from "./computeInstallationSettingsModel";
@@ -44,6 +47,52 @@ const inventory: ComputeLanguageRuntimeInventory = {
 };
 
 describe("installation selection", () => {
+  it("labels a runtime without its executable path", () => {
+    expect(computeRuntimePickerLabel(inventory.installations[0]!, "Python")).toBe(
+      "3.12.13 · Scient-managed",
+    );
+    expect(computeRuntimePickerLabel(inventory.installations[1]!, "Python")).toBe(
+      "Python · System installation",
+    );
+    expect(computeRuntimePickerLabel(inventory.installations[0]!, "Python")).not.toContain(
+      "/managed/python",
+    );
+  });
+
+  it("disambiguates only otherwise-identical runtime choices", () => {
+    const duplicate = {
+      ...inventory.installations[1]!,
+      executable: "/alternate/bin/python",
+    };
+    const installations = [inventory.installations[1]!, duplicate];
+    expect(computeRuntimePickerLabel(installations[0]!, "Python", installations)).toBe(
+      "Python · System installation · system/python",
+    );
+    expect(computeRuntimePickerLabel(duplicate, "Python", installations)).toBe(
+      "Python · System installation · bin/python",
+    );
+  });
+
+  it("derives setup actions from managed ownership and status", () => {
+    expect(computeManagedPrimaryAction(null)).toBe("install");
+    expect(computeManagedPrimaryAction({ ...status, installed: false })).toBe("install");
+    expect(computeManagedPrimaryAction({ ...status, selection: "existing" })).toBe("use-managed");
+    expect(computeManagedPrimaryAction(status)).toBe("use-managed");
+    expect(computeManagedPrimaryAction({ ...status, failureMessage: "broken" })).toBe("repair");
+    expect(
+      computeManagedPrimaryAction({
+        ...status,
+        failure: {
+          reason: "remove-failed",
+          action: "remove",
+          summary: "Scientific Python could not be removed",
+          detail: "Permission denied",
+        },
+        failureMessage: "Permission denied",
+      }),
+    ).toBe("use-managed");
+  });
+
   it("uses managed precedence only for Python, independently of an existing path", () => {
     const preference = { enabled: true, executable: "/system/python" };
     expect(defaultComputeInstallation(inventory, preference, status)?.source).toBe("managed");
@@ -170,5 +219,122 @@ describe("installation selection", () => {
       useExisting: release,
     });
     expect(release).not.toHaveBeenCalled();
+  });
+});
+
+describe("current runtime summary", () => {
+  it("describes the selected Python without listing other installations", () => {
+    expect(
+      computeCurrentRuntimeSummary({
+        language: inventory,
+        preference: { enabled: true, executable: "" },
+        managed: status,
+      }),
+    ).toEqual({
+      kind: "ready",
+      title: "3.12.13",
+      detail: "Scient-managed",
+    });
+  });
+
+  it("points Python setup at Change runtime instead of an inventory", () => {
+    expect(
+      computeCurrentRuntimeSummary({
+        language: { ...inventory, installations: [] },
+        preference: { enabled: false, executable: "" },
+        managed: null,
+      }).detail,
+    ).toContain("Change runtime");
+  });
+
+  it("repairs only a broken Scient-managed runtime", () => {
+    const brokenManaged = {
+      ...inventory,
+      installations: [
+        { ...inventory.installations[0]!, problem: "Managed runtime is unavailable" },
+      ],
+    };
+    expect(
+      computeCurrentRuntimeSummary({
+        language: brokenManaged,
+        preference: { enabled: true, executable: "" },
+        managed: status,
+      }).kind,
+    ).toBe("repair-managed");
+    const brokenSystem = {
+      ...inventory,
+      configuredExecutable: "/system/python",
+      installations: [{ ...inventory.installations[1]!, problem: "System runtime is unavailable" }],
+    };
+    expect(
+      computeCurrentRuntimeSummary({
+        language: brokenSystem,
+        preference: { enabled: true, executable: "/system/python" },
+        managed: { ...status, selection: "existing" },
+      }).kind,
+    ).toBe("unavailable");
+  });
+
+  it("keeps a failed removal behind the explicit Remove action", () => {
+    expect(
+      computeCurrentRuntimeSummary({
+        language: inventory,
+        preference: { enabled: true, executable: "" },
+        managed: {
+          ...status,
+          failure: {
+            reason: "remove-failed",
+            action: "remove",
+            summary: "Scientific Python could not be removed",
+            detail: "Permission denied",
+          },
+          failureMessage: "Permission denied",
+        },
+      }).kind,
+    ).toBe("ready");
+  });
+
+  it("asks MATLAB users to connect an installed runtime instead of setting one up", () => {
+    const matlab = {
+      ...inventory,
+      descriptor: { ...inventory.descriptor, languageId: ComputeLanguageId.make("matlab") },
+      installations: [
+        {
+          executable: "/MATLAB/bin/matlab",
+          source: "conventional" as const,
+          version: "R2026a",
+          problem: null,
+        },
+      ],
+    };
+    expect(
+      computeCurrentRuntimeSummary({
+        language: matlab,
+        preference: { enabled: false, executable: "" },
+        managed: null,
+      }),
+    ).toEqual({
+      kind: "connect",
+      title: "Not connected",
+      detail: "Connect the MATLAB already installed on this server.",
+    });
+    expect(
+      computeCurrentRuntimeSummary({
+        language: { ...matlab, installations: [] },
+        preference: { enabled: false, executable: "" },
+        managed: null,
+      }),
+    ).toEqual({
+      kind: "connect",
+      title: "Not connected",
+      detail: "Connect the MATLAB already installed on this server.",
+    });
+    expect(
+      computeCurrentRuntimeSummary({
+        language: { ...matlab, installations: [] },
+        preference: { enabled: true, executable: "" },
+        managed: null,
+      }).kind,
+    ).toBe("missing");
   });
 });

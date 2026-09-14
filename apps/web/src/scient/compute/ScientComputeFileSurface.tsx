@@ -68,6 +68,7 @@ interface ScientComputeFileSurfaceProps {
   readonly onSaveResolutionApplied: () => void;
   readonly saveResolution: FileSaveResolution | null;
   readonly contextId: ComputeContextId;
+  readonly onShowMatlabOneShot: () => void;
 }
 
 function initialResultsView(): ComputeFileResultsView {
@@ -256,6 +257,7 @@ export function ScientComputeFileSurface(props: ScientComputeFileSurfaceProps) {
             editorSelection={editorSelection}
             contextId={props.contextId}
             onRunRequested={handleRunRequested}
+            onShowMatlabOneShot={props.onShowMatlabOneShot}
             onExecutionSubmitted={handleExecutionSubmitted}
           />
         </div>
@@ -289,6 +291,7 @@ export function ScientComputeFileSurface(props: ScientComputeFileSurfaceProps) {
               onSelectionChange={setSelection}
               activeLineRange={activeCellRange}
               onEditorSelectionChange={setEditorSelection}
+              gutterUtilityVisibility="hover"
               {...(hasExplicitCells
                 ? {
                     renderEditorGutterAction: (

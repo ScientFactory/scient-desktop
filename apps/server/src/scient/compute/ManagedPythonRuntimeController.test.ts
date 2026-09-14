@@ -117,6 +117,32 @@ describe("ManagedPythonRuntimeController", () => {
     }),
   );
 
+  it.live("publishes a stable failure contract without parsing backend prose", () =>
+    Effect.gen(function* () {
+      const manager = makeManagedPythonEnvironmentManager(
+        computeDir,
+        dependencies({
+          provision: async () => {
+            throw new Error("private fixture detail");
+          },
+        }),
+      );
+      const controller = makeManagedPythonRuntimeController({ manager, toolkitIds: [TOOLKIT_ID] });
+
+      yield* controller.manage("install");
+      expect(yield* waitForSettled(controller)).toMatchObject({
+        installed: false,
+        failure: {
+          reason: "provision-failed",
+          action: "install",
+          summary: "Scientific Python setup failed",
+          detail: expect.stringContaining("private fixture detail"),
+        },
+      });
+      controller.dispose();
+    }),
+  );
+
   it.live("coalesces concurrent setup commands into one provisioned generation", () =>
     Effect.gen(function* () {
       let release!: () => void;
@@ -196,6 +222,11 @@ describe("ManagedPythonRuntimeController", () => {
         selection: "managed",
         generationId: installed.generationId,
         failureMessage: expect.stringContaining("Repair"),
+        failure: {
+          reason: "activation-failed",
+          action: "repair",
+          summary: "Scientific Python needs repair",
+        },
       });
       yield* controller.manage("repair");
       const repaired = yield* waitForSettled(controller);
@@ -204,6 +235,7 @@ describe("ManagedPythonRuntimeController", () => {
         installed: true,
         selection: "managed",
         failureMessage: null,
+        failure: null,
       });
       controller.dispose();
     }),

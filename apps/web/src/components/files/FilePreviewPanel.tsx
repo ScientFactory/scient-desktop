@@ -21,7 +21,7 @@ import {
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
 import { mediaFileReference } from "@t3tools/client-runtime/media-reference";
-import { Code2, Eye, FolderTree, Globe2 } from "lucide-react";
+import { Code2, Eye, FolderTree, Globe2, MessageSquarePlus } from "lucide-react";
 import * as Schema from "effect/Schema";
 import {
   lazy,
@@ -229,6 +229,15 @@ const FILE_EDITOR_ACTION_GUTTER_UNSAFE_CSS = `
     right: auto;
     left: 0;
     justify-content: flex-start;
+    opacity: 0;
+    pointer-events: none;
+  }
+
+  [data-line]:hover [data-gutter-utility-slot],
+  [data-line]:focus-within [data-gutter-utility-slot],
+  [data-gutter-utility-slot]:focus-within {
+    opacity: 1;
+    pointer-events: auto;
   }
 `;
 const ScientPdfReader = lazy(() =>
@@ -811,6 +820,10 @@ interface EditableFileSurfaceProps {
     getHoveredLine: () => GetHoveredLineResult<"file"> | undefined,
   ) => ReactNode;
   onRunShortcut?: (selection: EditorSelection | null) => void;
+  /** Inline review comments. Selection handlers may independently suppress auto-open. */
+  enableFileComments?: boolean;
+  /** Compute actions stay quiet until the corresponding source line is engaged. */
+  gutterUtilityVisibility?: "always" | "hover";
 }
 
 interface FileSelectionOverride {
@@ -860,6 +873,8 @@ function EditableFileEditor({
   onEditorSelectionChange,
   renderEditorGutterAction,
   onRunShortcut,
+  enableFileComments = true,
+  gutterUtilityVisibility = "always",
 }: Omit<
   EditableFileSurfaceProps,
   | "onPendingChange"
@@ -1108,11 +1123,11 @@ function EditableFileEditor({
   const handleLineSelectionEnd = useCallback(
     (range: SelectedLineRange | null) => {
       setSelectedRange(range);
-      if (range && onSelectionChange === undefined) {
+      if (range && onSelectionChange === undefined && enableFileComments) {
         beginComment(range);
       }
     },
-    [beginComment, onSelectionChange, setSelectedRange],
+    [beginComment, enableFileComments, onSelectionChange, setSelectedRange],
   );
   const handleGutterUtilityClick = useCallback(
     (range: SelectedLineRange) => {
@@ -1198,9 +1213,11 @@ function EditableFileEditor({
               }}
               options={{
                 disableFileHeader: true,
-                enableGutterUtility: renderEditorGutterAction !== undefined || !hasOpenCommentForm,
+                enableGutterUtility:
+                  renderEditorGutterAction !== undefined ||
+                  (enableFileComments && !hasOpenCommentForm),
                 enableLineSelection: !hasOpenCommentForm,
-                ...(renderEditorGutterAction === undefined
+                ...(renderEditorGutterAction === undefined && enableFileComments
                   ? { onGutterUtilityClick: handleGutterUtilityClick }
                   : {}),
                 onLineSelectionChange: setSelectedRange,
@@ -1210,13 +1227,13 @@ function EditableFileEditor({
                 preferredHighlighter: PREFERRED_HIGHLIGHTER,
                 themeType: resolvedTheme,
                 unsafeCSS:
-                  renderEditorGutterAction === undefined
-                    ? FILE_LINK_REVEAL_UNSAFE_CSS
-                    : FILE_EDITOR_ACTION_GUTTER_UNSAFE_CSS,
+                  gutterUtilityVisibility === "hover"
+                    ? FILE_EDITOR_ACTION_GUTTER_UNSAFE_CSS
+                    : FILE_LINK_REVEAL_UNSAFE_CSS,
                 onPostRender: handlePostRender,
               }}
               selectedLines={displayedRange}
-              lineAnnotations={lineAnnotations}
+              lineAnnotations={enableFileComments ? lineAnnotations : []}
               renderAnnotation={(annotation) => (
                 <div className="py-1">
                   {annotation.metadata.entries.map((entry) => (
@@ -1234,7 +1251,33 @@ function EditableFileEditor({
               )}
               {...(renderEditorGutterAction === undefined
                 ? {}
-                : { renderGutterUtility: renderEditorGutterAction })}
+                : {
+                    renderGutterUtility: (
+                      getHoveredLine: () => GetHoveredLineResult<"file"> | undefined,
+                    ) => (
+                      <div className="flex items-center gap-px">
+                        {renderEditorGutterAction(getHoveredLine)}
+                        {enableFileComments ? (
+                          <button
+                            type="button"
+                            className="flex size-5 cursor-pointer items-center justify-center rounded-[4px] text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+                            aria-label="Add comment"
+                            onClick={() => {
+                              const hoveredLine = getHoveredLine();
+                              if (hoveredLine !== undefined) {
+                                handleGutterUtilityClick({
+                                  start: hoveredLine.lineNumber,
+                                  end: hoveredLine.lineNumber,
+                                });
+                              }
+                            }}
+                          >
+                            <MessageSquarePlus className="size-3" />
+                          </button>
+                        ) : null}
+                      </div>
+                    ),
+                  })}
               className="min-h-full"
               contentEditable={!editingBlocked}
             />
@@ -1426,6 +1469,15 @@ export default function FilePreviewPanel({
           cwd,
           relativePath,
         });
+  const [matlabOneShot, setMatlabOneShot] = useState<{
+    readonly surfaceKey: string;
+    readonly visible: boolean;
+  } | null>(null);
+  const computeSurfaceKey = `${computeContextId ?? ""}:${revealRequestId}`;
+  const matlabOneShotVisible =
+    computeContextId !== null &&
+    matlabOneShot?.surfaceKey === computeSurfaceKey &&
+    matlabOneShot.visible;
   const isMarkdownPreview = relativePath ? isMarkdownPreviewFile(relativePath) : false;
   const isRichMarkdown = relativePath ? isScientMarkdownDocumentPath(relativePath) : false;
   const isMarkdownDocument = isMarkdownPreview || isRichMarkdown;
@@ -2054,6 +2106,9 @@ export default function FilePreviewPanel({
                   onSaveConfirmed={handleSaveConfirmed}
                   onSaveResolutionApplied={handleSaveResolutionApplied}
                   saveResolution={saveResolution}
+                  onShowMatlabOneShot={() =>
+                    setMatlabOneShot({ surfaceKey: computeSurfaceKey, visible: true })
+                  }
                 />
               </Suspense>
             ) : usesScientMarkdownEditor && markdownLease ? (
@@ -2155,6 +2210,7 @@ export default function FilePreviewPanel({
                 file.data.contents !== file.authoritativeData.contents)
             }
             truncated={file.data?.truncated ?? false}
+            matlabOneShotVisible={matlabOneShotVisible}
           />
         </div>
         {showExplorer ? (

@@ -206,7 +206,7 @@ export function scientRightPanelSurfaceTitle(surface: ScientRightPanelSurface): 
     case "sources":
       return "Sources";
     case "compute":
-      return surface.contextId === undefined ? "Compute history" : "Compute";
+      return surface.contextId === undefined ? "Compute history" : "Compute session";
     case "source-pdf":
       return surface.fileName;
     case "artifact":

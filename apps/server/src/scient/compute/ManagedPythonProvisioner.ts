@@ -27,6 +27,10 @@ import type {
   ManagedPythonProvisionProgress,
 } from "./ManagedPythonEnvironment.ts";
 import {
+  managedPythonSpecificationDirectory,
+  type ManagedPythonPurpose,
+} from "./managed-python/specifications.ts";
+import {
   buildProfile,
   checkReadiness,
   makePythonRuntimeAdapter,
@@ -151,15 +155,27 @@ const UV_ARTIFACTS: Readonly<Record<string, ManagedPythonUvArtifact>> = {
   },
 };
 
-export function managedPythonSpecPathCandidates(directory: string): ReadonlyArray<string> {
+export function managedPythonSpecPathCandidates(
+  directory: string,
+  purpose: ManagedPythonPurpose = "python",
+): ReadonlyArray<string> {
+  const relativeDirectory = managedPythonSpecificationDirectory(purpose);
+  const nested = relativeDirectory === "." ? [] : [relativeDirectory];
   return [
-    NodePath.join(directory, "managed-python"),
-    NodePath.join(directory, STAGED_MANAGED_PYTHON_DIRECTORY),
+    NodePath.join(directory, "managed-python", ...nested),
+    NodePath.join(directory, STAGED_MANAGED_PYTHON_DIRECTORY, ...nested),
   ];
 }
 
-export async function resolveManagedPythonSpecPath(directory: string): Promise<string> {
-  const candidates = managedPythonSpecPathCandidates(directory);
+export async function resolveManagedPythonSpecPath(
+  directory: string,
+  purpose: ManagedPythonPurpose = "python",
+): Promise<string> {
+  const candidates = managedPythonSpecPathCandidates(directory, purpose);
+  const noun =
+    purpose === "matlab-connection"
+      ? "MATLAB connection helper specification"
+      : "managed Python specification";
   for (const candidate of candidates) {
     const present = await Promise.all(
       ["pyproject.toml", "uv.lock"].map((file) =>
@@ -171,9 +187,7 @@ export async function resolveManagedPythonSpecPath(directory: string): Promise<s
     );
     if (present.every(Boolean)) return candidate;
   }
-  throw new Error(
-    `Unable to find the managed Python specification. Looked in: ${candidates.join(", ")}.`,
-  );
+  throw new Error(`Unable to find the ${noun}. Looked in: ${candidates.join(", ")}.`);
 }
 
 export function managedPythonUvArtifactForTarget(

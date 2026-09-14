@@ -4,6 +4,7 @@ import * as NodeCrypto from "node:crypto";
 import {
   ComputeOperationError,
   type ComputeManagedRuntimeAction,
+  type ComputeManagedRuntimeFailure,
   type ComputeManagedRuntimeStatus,
   type ComputeToolkitId,
 } from "@scientfactory/compute";
@@ -12,7 +13,10 @@ import * as DateTime from "effect/DateTime";
 import * as Schema from "effect/Schema";
 
 import type { ComputeRuntimeBinding } from "./ComputeSessionService.ts";
-import type { makeManagedPythonEnvironmentManager } from "./ManagedPythonEnvironment.ts";
+import {
+  ManagedPythonEnvironmentError,
+  type makeManagedPythonEnvironmentManager,
+} from "./ManagedPythonEnvironment.ts";
 import {
   MANAGED_PYTHON_PROVISIONER_VERSION,
   MANAGED_PYTHON_TOOLKIT_REVISION,
@@ -55,6 +59,34 @@ function shortMessage(value: unknown): string {
   return (messages.join(" ") || "Scientific runtime setup failed.").slice(0, 4096);
 }
 
+function managedRuntimeFailure(
+  value: unknown,
+  action: ComputeManagedRuntimeAction,
+  displayName: string,
+): ComputeManagedRuntimeFailure {
+  const detail = shortMessage(value);
+  const reason =
+    value instanceof ManagedPythonEnvironmentError && value.reason !== "cancelled"
+      ? value.reason
+      : "operation-failed";
+  const summary = (() => {
+    if (action === "remove") return `${displayName} could not be removed`;
+    switch (reason) {
+      case "invalid-request":
+        return `${displayName} setup could not start`;
+      case "verification-failed":
+        return `${displayName} verification failed`;
+      case "activation-failed":
+        return `${displayName} could not be activated`;
+      case "provision-failed":
+      case "operation-failed":
+      case "remove-failed":
+        return `${displayName} setup failed`;
+    }
+  })();
+  return { reason, action, summary, detail };
+}
+
 export function makeManagedPythonRuntimeController(input: {
   readonly manager: ManagedPythonManager;
   readonly toolkitIds: ReadonlyArray<ComputeToolkitId>;
@@ -68,6 +100,7 @@ export function makeManagedPythonRuntimeController(input: {
   const toolkitRevision = input.configuration?.toolkitRevision ?? MANAGED_PYTHON_TOOLKIT_REVISION;
   let operation: ActiveOperation | null = null;
   let failureMessage: string | null = null;
+  let failure: ComputeManagedRuntimeFailure | null = null;
 
   const readStatus = async (): Promise<ComputeManagedRuntimeStatus> => {
     for (;;) {
@@ -75,6 +108,15 @@ export function makeManagedPythonRuntimeController(input: {
       const current = await input.manager.inspect();
       if (operationSnapshot !== operation) continue;
       const active = current?.record.active ?? null;
+      const unavailableFailure =
+        current !== null && !current.available
+          ? ({
+              reason: "activation-failed",
+              action: "repair",
+              summary: `${displayName} needs repair`,
+              detail: `${displayName} is unavailable. Repair it or choose an existing environment.`,
+            } satisfies ComputeManagedRuntimeFailure)
+          : null;
       return {
         ...(input.configuration === undefined
           ? {}
@@ -103,11 +145,8 @@ export function makeManagedPythonRuntimeController(input: {
                 downloadedBytes: operationSnapshot.downloadedBytes,
                 totalBytes: operationSnapshot.totalBytes,
               },
-        failureMessage:
-          failureMessage ??
-          (current !== null && !current.available
-            ? `${displayName} is unavailable. Repair it or choose an existing environment.`
-            : null),
+        failure: failure ?? unavailableFailure,
+        failureMessage: failureMessage ?? unavailableFailure?.detail ?? null,
       };
     }
   };
@@ -154,6 +193,7 @@ export function makeManagedPythonRuntimeController(input: {
     };
     operation = activeOperation;
     failureMessage = null;
+    failure = null;
 
     const run =
       action === "remove"
@@ -174,9 +214,13 @@ export function makeManagedPythonRuntimeController(input: {
     void run
       .then(() => {
         failureMessage = null;
+        failure = null;
       })
       .catch((cause: unknown) => {
-        if (!controller.signal.aborted) failureMessage = shortMessage(cause);
+        if (!controller.signal.aborted) {
+          failureMessage = shortMessage(cause);
+          failure = managedRuntimeFailure(cause, action, displayName);
+        }
       })
       .finally(() => {
         if (operation === activeOperation) operation = null;
@@ -192,6 +236,7 @@ export function makeManagedPythonRuntimeController(input: {
           }
           await input.manager.select(action === "use-managed" ? "managed" : "existing");
           failureMessage = null;
+          failure = null;
         } else {
           await begin(action);
         }

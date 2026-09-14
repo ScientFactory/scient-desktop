@@ -10,6 +10,7 @@ interface ScientFileAuxiliarySurfaceProps {
   readonly sourceRevision: string | null;
   readonly sourcePending: boolean;
   readonly truncated: boolean;
+  readonly matlabOneShotVisible: boolean;
 }
 
 /**
@@ -21,13 +22,14 @@ export function ScientFileAuxiliarySurface(props: ScientFileAuxiliarySurfaceProp
     props.relativePath === null ||
     props.sourceRevision === null ||
     props.truncated ||
-    !props.relativePath.toLowerCase().endsWith(".m")
+    !props.relativePath.toLowerCase().endsWith(".m") ||
+    !props.matlabOneShotVisible
   ) {
     return null;
   }
 
   return (
-    <details className="shrink-0 border-t border-border/70">
+    <details open className="shrink-0 border-t border-border/70">
       <summary className="cursor-pointer px-3 py-2 text-xs text-muted-foreground">
         Fresh-process MATLAB runs
       </summary>

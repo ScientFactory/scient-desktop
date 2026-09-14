@@ -9,6 +9,8 @@ import {
 } from "@scientfactory/compute";
 import * as Schema from "effect/Schema";
 
+import type { ManagedPythonPurpose } from "./managed-python/specifications.ts";
+
 export const ManagedPythonSelection = Schema.Literals(["managed", "existing"]);
 export type ManagedPythonSelection = typeof ManagedPythonSelection.Type;
 
@@ -124,7 +126,11 @@ export interface ManagedPythonEnvironmentPaths {
 const decodeRecord = Schema.decodeUnknownSync(ManagedPythonEnvironmentRecord);
 const encodeRecord = Schema.encodeSync(Schema.fromJsonString(ManagedPythonEnvironmentRecord));
 
-export type ManagedPythonPurpose = "python" | "matlab-connection";
+function managedPurposeNoun(purpose: ManagedPythonPurpose): string {
+  return purpose === "matlab-connection"
+    ? "MATLAB connection helper"
+    : "managed Python environment";
+}
 
 export function managedPythonEnvironmentPaths(
   computeDir: string,
@@ -160,7 +166,10 @@ function executablePath(root: string, relativePath: string): string | null {
   return isContained(root, candidate) && candidate !== NodePath.resolve(root) ? candidate : null;
 }
 
-async function managedDirectorySafety(paths: ManagedPythonEnvironmentPaths): Promise<{
+async function managedDirectorySafety(
+  paths: ManagedPythonEnvironmentPaths,
+  purpose: ManagedPythonPurpose,
+): Promise<{
   readonly environmentsPresent: boolean;
   readonly managedPresent: boolean;
 }> {
@@ -179,35 +188,56 @@ async function managedDirectorySafety(paths: ManagedPythonEnvironmentPaths): Pro
     return true;
   };
 
+  const realpathPresent = async (directory: string): Promise<string | null> => {
+    try {
+      return await NodeFSP.realpath(directory);
+    } catch (cause) {
+      const code = (cause as NodeJS.ErrnoException).code;
+      if (code === "ENOENT") return null;
+      throw cause;
+    }
+  };
+
   const environmentsPresent = await inspectDirectory(
     paths.environmentsRoot,
     "managed environments",
   );
   if (!environmentsPresent) return { environmentsPresent: false, managedPresent: false };
-  const managedPresent = await inspectDirectory(paths.managedRoot, "managed Python");
+  const managedPresent = await inspectDirectory(paths.managedRoot, managedPurposeNoun(purpose));
   if (!managedPresent) return { environmentsPresent: true, managedPresent: false };
-  const canonicalEnvironments = await NodeFSP.realpath(paths.environmentsRoot);
-  const canonicalManaged = await NodeFSP.realpath(paths.managedRoot);
+  // Removal renames the managed root to a sibling tombstone before deleting it.
+  // Inspect/status can run in that window; a vanished path is absence, not failure.
+  const canonicalEnvironments = await realpathPresent(paths.environmentsRoot);
+  if (canonicalEnvironments === null) {
+    return { environmentsPresent: false, managedPresent: false };
+  }
+  const canonicalManaged = await realpathPresent(paths.managedRoot);
+  if (canonicalManaged === null) {
+    return { environmentsPresent: true, managedPresent: false };
+  }
   if (
     canonicalManaged === canonicalEnvironments ||
     !isContained(canonicalEnvironments, canonicalManaged)
   ) {
     throw new ManagedPythonEnvironmentError(
       "activation-failed",
-      "The managed Python directory escaped the app-owned environments root.",
+      `The ${managedPurposeNoun(purpose)} directory escaped the app-owned environments root.`,
     );
   }
   return { environmentsPresent: true, managedPresent: true };
 }
 
-async function ensureManagedDirectories(paths: ManagedPythonEnvironmentPaths): Promise<void> {
+async function ensureManagedDirectories(
+  paths: ManagedPythonEnvironmentPaths,
+  purpose: ManagedPythonPurpose,
+): Promise<void> {
   await NodeFSP.mkdir(paths.environmentsRoot, { recursive: true, mode: 0o700 });
   await NodeFSP.mkdir(paths.managedRoot, { recursive: true, mode: 0o700 });
-  const safety = await managedDirectorySafety(paths);
+  const safety = await managedDirectorySafety(paths, purpose);
   if (!safety.managedPresent) {
     throw new ManagedPythonEnvironmentError(
       "activation-failed",
-      "Scient could not prepare its private managed Python directory.",
+      `Scient could not prepare its private ${managedPurposeNoun(purpose)} directory.`,
     );
   }
 }
@@ -265,8 +295,9 @@ async function readRecord(
 
 async function readStatus(
   paths: ManagedPythonEnvironmentPaths,
+  purpose: ManagedPythonPurpose,
 ): Promise<ManagedPythonEnvironmentStatus | null> {
-  if (!(await managedDirectorySafety(paths)).managedPresent) return null;
+  if (!(await managedDirectorySafety(paths, purpose)).managedPresent) return null;
   const record = await readRecord(paths);
   if (record === null) return null;
   const root = generationRoot(paths.managedRoot, record.active.generationId);
@@ -321,10 +352,10 @@ export function makeManagedPythonEnvironmentManager(
   };
 
   const inspect = async (): Promise<ManagedPythonEnvironmentStatus | null> =>
-    await readStatus(paths);
+    await readStatus(paths, purpose);
 
   const cleanupAbandoned = async (record: ManagedPythonEnvironmentRecord | null): Promise<void> => {
-    const safety = await managedDirectorySafety(paths);
+    const safety = await managedDirectorySafety(paths, purpose);
     if (!safety.environmentsPresent) return;
     const keep = new Set(
       record === null
@@ -364,7 +395,7 @@ export function makeManagedPythonEnvironmentManager(
 
   const reconcile = () =>
     serialize(async () => {
-      const current = await readStatus(paths);
+      const current = await readStatus(paths, purpose);
       await cleanupAbandoned(current?.record ?? null);
       return current;
     });
@@ -398,8 +429,8 @@ export function makeManagedPythonEnvironmentManager(
         );
       }
 
-      await ensureManagedDirectories(paths);
-      const existing = await readStatus(paths);
+      await ensureManagedDirectories(paths, purpose);
+      const existing = await readStatus(paths, purpose);
       const generationId = nextGenerationId();
       const candidateRoot = generationRoot(paths.managedRoot, generationId);
       if (candidateRoot === null) {
@@ -438,7 +469,7 @@ export function makeManagedPythonEnvironmentManager(
             }
             throw new ManagedPythonEnvironmentError(
               "provision-failed",
-              "Scient could not provision the managed Python environment.",
+              `Scient could not provision the ${managedPurposeNoun(purpose)}.`,
               { cause },
             );
           });
@@ -504,7 +535,7 @@ export function makeManagedPythonEnvironmentManager(
             }
             throw new ManagedPythonEnvironmentError(
               "verification-failed",
-              "The managed Python environment did not pass verification.",
+              `The ${managedPurposeNoun(purpose)} did not pass verification.`,
               { cause },
             );
           });
@@ -533,7 +564,7 @@ export function makeManagedPythonEnvironmentManager(
         await commitState(paths.statePath, record).catch((cause) => {
           throw new ManagedPythonEnvironmentError(
             "activation-failed",
-            "Scient could not activate the verified managed Python environment.",
+            `Scient could not activate the verified ${managedPurposeNoun(purpose)}.`,
             { cause },
           );
         });
@@ -557,12 +588,14 @@ export function makeManagedPythonEnvironmentManager(
 
   const select = (selection: ManagedPythonSelection) =>
     serialize(async () => {
-      const current = await readStatus(paths);
+      const current = await readStatus(paths, purpose);
       if (current === null) {
         if (selection === "existing") return null;
         throw new ManagedPythonEnvironmentError(
           "invalid-request",
-          "Set up Scientific Python before selecting it.",
+          purpose === "matlab-connection"
+            ? "Set up the MATLAB connection helper before selecting it."
+            : "Set up Scientific Python before selecting it.",
         );
       }
       if (current.record.selection === selection) return current;
@@ -570,7 +603,9 @@ export function makeManagedPythonEnvironmentManager(
       await commitState(paths.statePath, record).catch((cause) => {
         throw new ManagedPythonEnvironmentError(
           "activation-failed",
-          "Scient could not change the selected Python environment.",
+          purpose === "matlab-connection"
+            ? "Scient could not change the selected MATLAB connection helper."
+            : "Scient could not change the selected Python environment.",
           { cause },
         );
       });
@@ -579,7 +614,7 @@ export function makeManagedPythonEnvironmentManager(
 
   const remove = () =>
     serialize(async () => {
-      const safety = await managedDirectorySafety(paths);
+      const safety = await managedDirectorySafety(paths, purpose);
       if (!safety.managedPresent) return false;
 
       const tombstone = NodePath.join(
@@ -589,7 +624,7 @@ export function makeManagedPythonEnvironmentManager(
       await NodeFSP.rename(paths.managedRoot, tombstone).catch((cause) => {
         throw new ManagedPythonEnvironmentError(
           "remove-failed",
-          "Scient could not prepare the managed Python environment for removal.",
+          `Scient could not prepare the ${managedPurposeNoun(purpose)} for removal.`,
           { cause },
         );
       });
@@ -601,13 +636,13 @@ export function makeManagedPythonEnvironmentManager(
         } catch (rollbackCause) {
           throw new ManagedPythonEnvironmentError(
             "remove-failed",
-            "Scient could not remove the managed Python environment or restore it.",
+            `Scient could not remove the ${managedPurposeNoun(purpose)} or restore it.`,
             { cause: new AggregateError([cause, rollbackCause]) },
           );
         }
         throw new ManagedPythonEnvironmentError(
           "remove-failed",
-          "Scient could not remove the managed Python environment; the previous environment was restored.",
+          `Scient could not remove the ${managedPurposeNoun(purpose)}; the previous environment was restored.`,
           { cause },
         );
       }

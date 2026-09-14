@@ -57,6 +57,10 @@ function managedRuntimeInspectionKey(status: ComputeManagedRuntimeStatus | null)
           status.runtimeVersion,
           status.toolkitRevision,
           status.operation?.operationId,
+          status.failure?.reason,
+          status.failure?.action,
+          status.failure?.summary,
+          status.failure?.detail,
           status.failureMessage,
         ],
   );

@@ -568,6 +568,24 @@ export const ComputeManagedRuntimeOperation = Schema.Struct({
 });
 export type ComputeManagedRuntimeOperation = typeof ComputeManagedRuntimeOperation.Type;
 
+export const ComputeManagedRuntimeFailureReason = Schema.Literals([
+  "invalid-request",
+  "provision-failed",
+  "verification-failed",
+  "activation-failed",
+  "remove-failed",
+  "operation-failed",
+]);
+export type ComputeManagedRuntimeFailureReason = typeof ComputeManagedRuntimeFailureReason.Type;
+
+export const ComputeManagedRuntimeFailure = Schema.Struct({
+  reason: ComputeManagedRuntimeFailureReason,
+  action: ComputeManagedRuntimeAction,
+  summary: ShortText,
+  detail: Schema.String.check(Schema.isMaxLength(4096)),
+});
+export type ComputeManagedRuntimeFailure = typeof ComputeManagedRuntimeFailure.Type;
+
 export const ComputeManagedRuntimeStatus = Schema.Struct({
   /** Labels belong to the reviewed adapter, not to a parallel UI provider switch. */
   displayName: Schema.optional(Label),
@@ -581,6 +599,8 @@ export const ComputeManagedRuntimeStatus = Schema.Struct({
   runtimeVersion: Schema.NullOr(Label),
   toolkitRevision: Schema.NullOr(Label),
   operation: Schema.NullOr(ComputeManagedRuntimeOperation),
+  /** Structured for current clients; failureMessage remains for older clients and logs. */
+  failure: Schema.optional(Schema.NullOr(ComputeManagedRuntimeFailure)),
   failureMessage: Schema.NullOr(Schema.String.check(Schema.isMaxLength(4096))),
 });
 export type ComputeManagedRuntimeStatus = typeof ComputeManagedRuntimeStatus.Type;
@@ -637,7 +657,7 @@ export const ComputeRuntimeVerification = Schema.Struct({
   readiness: ComputeRuntimeReadiness,
   missingRequirements: Schema.Array(Label),
   message: Schema.NullOr(ShortText),
-  /** Discovery is passive; only explicit verification starts a licensed runtime. */
+  /** Discovery is passive; only explicit verification starts and closes a real session. */
   connection: Schema.optional(Schema.Literals(["detected", "verified"])),
   // Optional on decode so retained fixtures and older attached clients remain
   // readable while current adapters always return the bounded observations.
