@@ -1,3 +1,4 @@
+// @vitest-environment happy-dom
 import {
   ComputeLanguageId,
   ComputeSessionId,
@@ -5,7 +6,8 @@ import {
   type ComputeLanguageRuntimeInspection,
   type ComputeManagedRuntimeStatus,
 } from "@t3tools/contracts";
-import type { ComponentProps, ReactNode } from "react";
+import { act, createRef, type ComponentProps, type ReactNode } from "react";
+import { createRoot } from "react-dom/client";
 import { renderToStaticMarkup } from "react-dom/server";
 import * as Cause from "effect/Cause";
 import { beforeEach, describe, expect, it, vi } from "vite-plus/test";
@@ -50,6 +52,7 @@ vi.mock("~/state/query", () => ({
             ? mocks.managedStatus
             : null,
     isPending: false,
+    isSuccess: true,
     error: null,
     refresh: vi.fn(),
   }),
@@ -83,7 +86,7 @@ vi.mock("~/components/ui/menu", () => ({
 
 import { PYTHON_COMPUTE_SOURCE } from "./computeSourceLanguage";
 
-import { ComputeFileActions } from "./ComputeFileActions";
+import { ComputeFileActions, type ComputeFileActionsHandle } from "./ComputeFileActions";
 import {
   ensureComputeContext,
   useComputeContextStore,
@@ -190,6 +193,56 @@ describe("Python file run actions", () => {
       code: "print(1)",
     });
   });
+
+  it.each([true, false])(
+    "keeps Run file literal and respects runtime availability (%s)",
+    async (ready) => {
+      render([runtime("managed", ready)]);
+      vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+      const container = document.createElement("div");
+      const root = createRoot(container);
+      const ref = createRef<ComputeFileActionsHandle>();
+      const contents = "# %% First\nprint(1)\n# %% Second\nprint(2)";
+      try {
+        await act(() =>
+          root.render(
+            <ComputeFileActions
+              ref={ref}
+              language={PYTHON_COMPUTE_SOURCE}
+              environmentId={testEnvironmentId}
+              cwd="/project"
+              relativePath="test.py"
+              contents={contents}
+              sourceRevision="revision-1"
+              sourcePending={false}
+              selection={{ start: 2, end: 2 }}
+              editorSelection={{ start: { line: 1, character: 0 }, end: { line: 1, character: 8 } }}
+              onRunRequested={mocks.runRequested}
+              onShowMatlabOneShot={vi.fn()}
+              onExecutionSubmitted={vi.fn()}
+            />,
+          ),
+        );
+        await act(async () => {
+          ref.current!.runFile();
+        });
+        if (ready) {
+          expect(mocks.submit).toHaveBeenCalledOnce();
+          expect(mocks.submit.mock.calls[0]?.[0].input).toMatchObject({
+            code: contents,
+            source: { origin: "file" },
+          });
+        } else {
+          expect(mocks.start).not.toHaveBeenCalled();
+          expect(mocks.submit).not.toHaveBeenCalled();
+          expect(mocks.runRequested).not.toHaveBeenCalled();
+        }
+      } finally {
+        await act(() => root.unmount());
+        vi.unstubAllGlobals();
+      }
+    },
+  );
 
   it.each(["failed", "operating"])(
     "does not block a ready system runtime when managed setup is %s",

@@ -9,7 +9,9 @@ import {
 } from "@t3tools/contracts";
 
 const mocks = vi.hoisted(() => ({
-  query: undefined as ComputeManagedRuntimeStatus | null | undefined,
+  query: null as ComputeManagedRuntimeStatus | null,
+  isSuccess: true,
+  initialStatus: null as ComputeManagedRuntimeStatus | null,
   manage: vi.fn(),
 }));
 vi.mock("~/state/compute", () => ({
@@ -20,7 +22,12 @@ vi.mock("~/state/compute", () => ({
   },
 }));
 vi.mock("~/state/query", () => ({
-  useEnvironmentQuery: () => ({ data: mocks.query, error: null }),
+  useEnvironmentQuery: () => ({
+    data: mocks.query,
+    isSuccess: mocks.isSuccess,
+    isPending: !mocks.isSuccess,
+    error: null,
+  }),
 }));
 vi.mock("~/state/use-atom-command", () => ({ useAtomCommand: () => mocks.manage }));
 
@@ -57,7 +64,7 @@ describe("managed runtime observation ownership", () => {
     const current = useComputeManagedRuntime({
       environmentId: EnvironmentId.make("test"),
       languageId: ComputeLanguageId.make("python"),
-      initialStatus: installed,
+      initialStatus: mocks.initialStatus,
       ensureEnabled: async () => true,
     });
     useLayoutEffect(() => {
@@ -71,6 +78,8 @@ describe("managed runtime observation ownership", () => {
   beforeEach(() => {
     vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
     mocks.query = absent;
+    mocks.isSuccess = true;
+    mocks.initialStatus = installed;
     mocks.manage.mockReset().mockResolvedValue({ _tag: "Success", value: installing });
     container = document.createElement("div");
     document.body.append(container);
@@ -99,6 +108,46 @@ describe("managed runtime observation ownership", () => {
     mocks.query = null;
     await render();
     expect(runtime.status).toBeNull();
+  });
+  it("keeps inventory while the first query is loading", async () => {
+    mocks.query = null;
+    mocks.isSuccess = false;
+    await render();
+    expect(runtime.status).toEqual(installed);
+    mocks.isSuccess = true;
+    await render();
+    expect(runtime.status).toBeNull();
+  });
+  it("does not allow setup before the first status observation", async () => {
+    mocks.query = null;
+    mocks.initialStatus = null;
+    mocks.isSuccess = false;
+    await render();
+    expect(runtime.busy).toBe(true);
+    await act(async () => {
+      expect(await runtime.act("install")).toBe(false);
+    });
+    expect(mocks.manage).not.toHaveBeenCalled();
+    mocks.query = absent;
+    mocks.isSuccess = true;
+    await render();
+    expect(runtime.busy).toBe(false);
+  });
+  it("keeps an accepted operation through an empty refetch, then accepts completion", async () => {
+    await render();
+    await act(async () => {
+      await runtime.act("install");
+    });
+    mocks.query = null;
+    mocks.isSuccess = false;
+    await render();
+    expect(runtime.status).toEqual(installing);
+    expect(runtime.busy).toBe(true);
+    mocks.query = installed;
+    mocks.isSuccess = true;
+    await render();
+    expect(runtime.status).toEqual(installed);
+    expect(runtime.busy).toBe(false);
   });
   it("accepts metadata-only server changes after a command receipt", async () => {
     mocks.query = installed;

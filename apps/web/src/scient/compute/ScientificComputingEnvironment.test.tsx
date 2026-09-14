@@ -41,7 +41,7 @@ vi.mock("~/state/query", () => ({
   useEnvironmentQuery: (atom: unknown) => ({
     data:
       atom === null || mocks.pending
-        ? undefined
+        ? null
         : {
             languages: [
               {
@@ -61,6 +61,7 @@ vi.mock("~/state/query", () => ({
             ],
           },
     isPending: mocks.pending,
+    isSuccess: atom !== null && !mocks.pending,
     error: null,
     refresh: vi.fn(),
   }),

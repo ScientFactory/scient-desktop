@@ -125,6 +125,9 @@ export function useComputeManagedRuntime(input: {
       : null,
   );
   const scopeKey = `${input.environmentId ?? ""}\u0000${input.languageId}`;
+  // The query hook uses null for both initial loading and successful absence.
+  // Only a successful empty response may supersede inventory or a command receipt.
+  const querySnapshot = queried.data ?? (queried.isSuccess ? null : undefined);
   const [commandState, setCommandState] = useState<{
     readonly scopeKey: string;
     readonly status: ComputeManagedRuntimeStatus;
@@ -134,7 +137,7 @@ export function useComputeManagedRuntime(input: {
   const commandStatus = reconcileManagedRuntimeCommandSnapshot({
     command: candidateCommandStatus,
     querySnapshot: commandState?.scopeKey === scopeKey ? commandState.querySnapshot : undefined,
-    currentQuery: queried.data,
+    currentQuery: querySnapshot,
   });
   // Once superseded, a receipt must not reappear if the server later returns
   // to its pre-command state (for example after cancellation or removal).
@@ -142,9 +145,12 @@ export function useComputeManagedRuntime(input: {
     if (candidateCommandStatus === null || commandStatus !== null) return;
     // This synchronizes an optimistic command receipt with newer server truth.
     // oxlint-disable-next-line react/set-state-in-effect
-    setCommandState((current) => (current?.scopeKey === scopeKey ? null : current));
+    setCommandState((current) =>
+      current?.scopeKey === scopeKey && current.status === candidateCommandStatus ? null : current,
+    );
   }, [candidateCommandStatus, commandStatus, scopeKey]);
-  const status = commandStatus ?? (queried.data === undefined ? input.initialStatus : queried.data);
+  const status =
+    commandStatus ?? (querySnapshot === undefined ? input.initialStatus : querySnapshot);
   const [pending, setPending] = useState(false);
   const [localFailureState, setLocalFailureState] = useState<{
     readonly scopeKey: string;
@@ -152,7 +158,7 @@ export function useComputeManagedRuntime(input: {
   } | null>(null);
   const localFailure = localFailureState?.scopeKey === scopeKey ? localFailureState.failure : null;
   const inFlight = useRef(false);
-  const unresolved = queried.data === undefined && queried.error === null && status === null;
+  const unresolved = querySnapshot === undefined && queried.error === null && status === null;
   const act = async (action: ComputeManagedRuntimeAction): Promise<boolean> => {
     if (!input.environmentId || inFlight.current || unresolved || status?.operation) return false;
     inFlight.current = true;
@@ -171,7 +177,7 @@ export function useComputeManagedRuntime(input: {
         setCommandState({
           scopeKey,
           status: result.value,
-          querySnapshot: queried.data,
+          querySnapshot,
         });
       }
       return true;

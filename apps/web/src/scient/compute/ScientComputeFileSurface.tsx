@@ -191,7 +191,7 @@ export function ScientComputeFileSurface(props: ScientComputeFileSurfaceProps) {
     setPanelView(props.contextId, "results");
   }, [preferredResultsView, props.contextId, setFileView, setPanelView]);
   const handleEmptyResultsRun = useCallback(() => {
-    actionsRef.current?.runPrimary();
+    actionsRef.current?.runFile();
   }, []);
   const handlePanelViewChange = useCallback(
     (next: ComputePanelView) => setPanelView(props.contextId, next),

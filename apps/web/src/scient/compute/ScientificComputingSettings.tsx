@@ -3,7 +3,6 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import type {
   ComputeLanguageRuntimeInventory,
   ComputeManagedRuntimeAction,
-  ComputeManagedRuntimeStatus,
   ComputeRuntimeVerification,
   EnvironmentId,
   ScientificComputingLanguageSettings,
@@ -242,7 +241,6 @@ function LanguageRuntimeRecovery({
   const [testing, setTesting] = useState(false);
   const [testState, setTestState] = useState<{
     readonly runtimeFingerprint: string;
-    readonly runtimeObservation: ComputeManagedRuntimeStatus | null;
     readonly result: ComputeRuntimeVerification | null;
     readonly error: string | null;
   } | null>(null);
@@ -266,18 +264,23 @@ function LanguageRuntimeRecovery({
   const verifyRuntime = useAtomCommand(computeEnvironment.verifyRuntime, { reportFailure: false });
   const runtimeFingerprint = JSON.stringify([
     refreshVersion,
+    preference.enabled,
     selectedInstallation?.executable,
     selectedInstallation?.version,
     selectedInstallation?.problem,
     runtime.status?.generationId,
     runtime.status?.selection,
     runtime.status?.operation?.operationId,
+    runtime.status?.installed,
+    runtime.status?.installationExecutable,
+    runtime.status?.failureMessage,
   ]);
-  const currentTestState =
-    testState?.runtimeFingerprint === runtimeFingerprint &&
-    testState.runtimeObservation === runtime.status
-      ? testState
-      : null;
+  // Retire proof when its runtime changes, not when polling allocates a new
+  // object for the same status. Returning to an old runtime must not revive it.
+  if (testState !== null && testState.runtimeFingerprint !== runtimeFingerprint) {
+    setTestState(null);
+  }
+  const currentTestState = testState?.runtimeFingerprint === runtimeFingerprint ? testState : null;
   const testPassed =
     currentTestState?.result?.readiness === "ready" &&
     currentTestState.result.connection === "verified";
@@ -323,33 +326,35 @@ function LanguageRuntimeRecovery({
   const runTest = async () => {
     if (!environmentId || !selectedInstallation || testing || loading || refreshing) return;
     setTesting(true);
-    const runtimeObservation = runtime.status;
-    setTestState({ runtimeFingerprint, runtimeObservation, result: null, error: null });
-    const result = await verifyRuntime({
-      environmentId,
-      input: { cwd: null, languageId, executable: selectedInstallation.executable },
-    });
-    setTesting(false);
-    if (result._tag === "Failure") {
-      const failure = squashAtomCommandFailure(result);
-      setTestState({
-        runtimeFingerprint,
-        runtimeObservation,
-        result: null,
-        error: failure instanceof Error ? failure.message : "The connection could not be verified.",
+    const pendingTest = { runtimeFingerprint, result: null, error: null };
+    setTestState(pendingTest);
+    const complete = (result: ComputeRuntimeVerification | null, error: string | null) => {
+      // A late reply cannot revive proof invalidated by a runtime change.
+      setTestState((current) =>
+        current === pendingTest ? { ...pendingTest, result, error } : current,
+      );
+    };
+    try {
+      const result = await verifyRuntime({
+        environmentId,
+        input: { cwd: null, languageId, executable: selectedInstallation.executable },
       });
-      return;
-    }
-    setTestState({ runtimeFingerprint, runtimeObservation, result: result.value, error: null });
-    if (result.value.readiness !== "ready" || result.value.connection !== "verified") {
-      setTestState({
-        runtimeFingerprint,
-        runtimeObservation,
-        result: result.value,
-        error:
-          result.value.message ??
-          "The connection could not be verified. Scient did not start a test session.",
-      });
+      if (result._tag === "Failure") throw squashAtomCommandFailure(result);
+      const verified = result.value.readiness === "ready" && result.value.connection === "verified";
+      complete(
+        result.value,
+        verified
+          ? null
+          : (result.value.message ??
+              "The connection could not be verified. Scient did not start a test session."),
+      );
+    } catch (cause) {
+      complete(
+        null,
+        cause instanceof Error ? cause.message : "The connection could not be verified.",
+      );
+    } finally {
+      setTesting(false);
     }
   };
 
@@ -622,7 +627,7 @@ function EnvironmentScientificComputingSettings({
       })
     : null;
   const runtimes = useEnvironmentQuery(runtimesAtom);
-  const inventoryPending = runtimes.data === undefined && runtimes.error === null;
+  const inventoryPending = runtimes.data === null && runtimes.error === null;
   const displayedLanguages =
     runtimes.data?.languages ?? pendingRuntimeInventory(preferences.languages);
 

@@ -77,6 +77,7 @@ import type { ComputeSourceLanguage } from "./computeSourceLanguage";
 type ComputeRunKind = "selection" | "cell" | "file";
 
 export interface ComputeFileActionsHandle {
+  readonly runFile: () => void;
   readonly runPrimary: (selection?: ComputeTextRange | null) => void;
   readonly runCellAtLine: (line: number) => void;
 }
@@ -479,6 +480,12 @@ export const ComputeFileActions = forwardRef<ComputeFileActionsHandle, ComputeFi
     const run = useCallback(
       async (kind: ComputeRunKind, slice: ComputeCodeSlice | null) => {
         if (slice === null || operation !== null || refreshing || switching) return;
+        // Keyboard shortcuts and the empty-results action use this same path;
+        // a disabled toolbar must not be bypassed through an imperative handle.
+        if (!runtimeToolbar.canRun) {
+          toastManager.add({ type: "info", title: runtimeToolbar.label });
+          return;
+        }
         if (kind === "file" && matlabFileCapability?.runnableAsFile === false) {
           toastManager.add({
             type: "info",
@@ -682,6 +689,8 @@ export const ComputeFileActions = forwardRef<ComputeFileActionsHandle, ComputeFi
         onRunRequested,
         props.language,
         matlabFileCapability,
+        runtimeToolbar.canRun,
+        runtimeToolbar.label,
         props.relativePath,
         props.sourcePending,
         props.sourceRevision,
@@ -743,6 +752,7 @@ export const ComputeFileActions = forwardRef<ComputeFileActionsHandle, ComputeFi
     useImperativeHandle(
       ref,
       () => ({
+        runFile: () => void run("file", computeFile(props.contents)),
         runPrimary: (selection) => {
           const target = resolveComputeRunTarget(
             props.contents,
@@ -878,13 +888,13 @@ export const ComputeFileActions = forwardRef<ComputeFileActionsHandle, ComputeFi
               </MenuTrigger>
               <MenuPopup align="end" side="bottom">
                 <MenuItem
-                  disabled={liveRunDisabled || selectionSlice === null}
+                  disabled={busy || !runtimeToolbar.canRun || selectionSlice === null}
                   onClick={() => void run("selection", selectionSlice)}
                 >
                   Run selection
                 </MenuItem>
                 <MenuItem
-                  disabled={liveRunDisabled || cellSlice === null}
+                  disabled={busy || !runtimeToolbar.canRun || cellSlice === null}
                   onClick={() => void run("cell", cellSlice)}
                 >
                   Run cell

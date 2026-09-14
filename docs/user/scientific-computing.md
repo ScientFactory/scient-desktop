@@ -89,10 +89,10 @@ the code yourself; Scient never replays a failed run automatically.
 
 ## Connect your MATLAB installation
 
-Open a `.m` file and choose **Connect MATLAB** in the file header. Scient enables MATLAB for that
-server and, when needed, sets up a small private connection helper for the installation it finds.
+Open a `.m` file and select its MATLAB status to open **Scientific Computing** for that server.
+Enable MATLAB there and choose **Connect MATLAB** when a connection helper is needed.
 Opening the file does not start Scientific Python or provision its Toolkit. A helper failure stays
-a short header status with copy and details; **Connect MATLAB** remains available. It does not
+a short header status with copy and details; setup and recovery remain available in Settings. Scient does not
 install MATLAB or a license. If several copies are installed, open
 **Settings → Scientific Computing**, expand **Change runtime**, and choose the installation, or
 leave automatic discovery selected.
@@ -107,8 +107,8 @@ Choosing an installation does not promise that the Engine works or a license is 
 file, or use **Test** under **Change runtime**, to prove the Engine host. A license/startup failure
 stays visible with recovery guidance.
 
-If an Engine host is missing, **Connect MATLAB** on the file installs a small
-private Python helper for your selected MATLAB, then checks its Engine import. It does
+If an Engine host is missing, **Connect MATLAB** on the file opens Scientific Computing settings.
+**Connect MATLAB** there installs a small private Python helper for your selected MATLAB, then checks its Engine import. It does
 not install MATLAB, activate a license, or install the scientific Python Toolkit. Assisted setup currently accepts
 MATLAB R2024b–R2026a; other releases may use an existing compatible Engine host. You still
 need MATLAB installed and licensed on the server where the code runs.

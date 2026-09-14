@@ -23,6 +23,20 @@ describe("MATLAB saved-file capability", () => {
       classifyMatlabSource({ path: "Measurement.m", code: "% doc\nclassdef Measurement\nend" }),
     ).toMatchObject({ kind: "class", runnableAsFile: false });
   });
+  it("does not mistake text inside nested comments for the first statement", () => {
+    expect(
+      classifyMatlabSource({
+        path: "analysis.m",
+        code: "%{\n%{\nexample\n%}\nfunction commentedOut\n%}\nx = 1;",
+      }),
+    ).toMatchObject({ kind: "script", runnableAsFile: true });
+    expect(
+      classifyMatlabSource({
+        path: "twice.m",
+        code: "%{\n%{\nexample\n%}\nx = 1;\n%}\nfunction y = twice(x)\ny = 2*x;\nend",
+      }),
+    ).toMatchObject({ kind: "function", runnableAsFile: false });
+  });
 
   it("treats MATLAB definition folders as non-runnable regardless of file contents", () => {
     expect(classifyMatlabSource({ path: "helpers/+qautils/normalize.m", code: "x = 1" }).kind).toBe(

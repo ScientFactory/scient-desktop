@@ -14,6 +14,7 @@ const mocks = vi.hoisted(() => ({
   preferences: {} as Record<string, ScientificComputingLanguageSettings>,
   languages: [] as ComputeLanguageRuntimeInventory[],
   statuses: {} as Record<string, ComputeManagedRuntimeStatus | null>,
+  inventoryPending: false,
   revision: 0,
   listeners: new Set<() => void>(),
   saveFails: false,
@@ -87,11 +88,14 @@ vi.mock("~/state/query", async () => {
       return {
         data:
           atom?.kind === "inventory"
-            ? { languages: mocks.languages }
+            ? mocks.inventoryPending
+              ? null
+              : { languages: mocks.languages }
             : atom?.languageId
-              ? mocks.statuses[atom.languageId]
-              : undefined,
-        isPending: false,
+              ? (mocks.statuses[atom.languageId] ?? null)
+              : null,
+        isPending: atom?.kind === "inventory" && mocks.inventoryPending,
+        isSuccess: atom?.kind !== "inventory" || !mocks.inventoryPending,
         error: null,
         refresh: vi.fn(),
       };
@@ -150,6 +154,7 @@ describe("Scientific Computing settings interactions", () => {
     mocks.preferences = { python: { enabled: true, executable: "" } };
     mocks.languages = [python()];
     mocks.statuses = { python: status() };
+    mocks.inventoryPending = false;
     mocks.saveFails = false;
     mocks.releaseFails = false;
     mocks.calls = [];
@@ -256,6 +261,22 @@ describe("Scientific Computing settings interactions", () => {
     expect(actions?.textContent).toContain("Repair");
     expect(actions?.textContent).toContain("Remove");
   });
+  it("renders language rows immediately without offering setup before inventory arrives", async () => {
+    mocks.inventoryPending = true;
+    await render();
+    expect(container.querySelector("h3")?.textContent).toContain("Python");
+    expect(container.textContent).toContain("Checking");
+    expect(
+      [...container.querySelectorAll("button")].some(
+        (node) => node.textContent?.trim() === "Set up Python" && !node.disabled,
+      ),
+    ).toBe(false);
+    await act(() => {
+      mocks.inventoryPending = false;
+      notify();
+    });
+    expect(container.textContent).toContain("3.12.13");
+  });
 
   it("keeps the grouped Settings card used by other Settings pages", async () => {
     const matlabPath = "/MATLAB/bin/matlab";
@@ -328,6 +349,11 @@ describe("Scientific Computing settings interactions", () => {
     expect(mocks.calls).toEqual(["verify"]);
     expect(button("Test passed")).toBeDefined();
     expect(mocks.manage).not.toHaveBeenCalled();
+    await act(() => {
+      mocks.statuses.python = { ...status() };
+      notify();
+    });
+    expect(button("Test passed")).toBeDefined();
     await act(() =>
       container
         .querySelector<HTMLButtonElement>('[aria-label="Refresh scientific runtimes"]')!
@@ -348,6 +374,39 @@ describe("Scientific Computing settings interactions", () => {
       notify();
     });
     expect(container.textContent).not.toContain("Test passed");
+  });
+
+  it("ignores a late test reply after the selected runtime changes and returns", async () => {
+    let finish!: (result: unknown) => void;
+    mocks.verify.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          finish = resolve;
+        }),
+    );
+    await render();
+    await click("Test");
+    await act(() => {
+      mocks.statuses.python = { ...status(), generationId: "replacement" };
+      notify();
+    });
+    await act(() => {
+      mocks.statuses.python = status();
+      notify();
+    });
+    await act(async () => {
+      finish({ _tag: "Success", value: { readiness: "ready", connection: "verified" } });
+    });
+    expect(container.textContent).not.toContain("Test passed");
+    expect(button("Test").disabled).toBe(false);
+  });
+
+  it("recovers from a rejected verification request", async () => {
+    mocks.verify.mockRejectedValueOnce(new Error("Connection lost"));
+    await render();
+    await click("Test");
+    expect(container.textContent).toContain("Connection lost");
+    expect(button("Test").disabled).toBe(false);
   });
 
   it("does not treat a Python probe as Test passed or send people to Repair", async () => {

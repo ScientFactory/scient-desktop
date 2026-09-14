@@ -23,15 +23,15 @@ function pathSegments(path: string): ReadonlyArray<string> {
  * conservative without attempting to parse the language.
  */
 function firstMatlabStatement(code: string): string | null {
-  let inBlockComment = false;
+  let blockDepth = 0;
   for (const rawLine of code.replace(/^\uFEFF/u, "").split(/\r?\n/u)) {
     const line = rawLine.trim();
-    if (inBlockComment) {
-      if (line === "%}") inBlockComment = false;
+    if (line === "%{") {
+      blockDepth++;
       continue;
     }
-    if (line === "%{") {
-      inBlockComment = true;
+    if (blockDepth > 0) {
+      if (line === "%}") blockDepth--;
       continue;
     }
     if (line === "" || line.startsWith("%")) continue;
@@ -41,9 +41,9 @@ function firstMatlabStatement(code: string): string | null {
 }
 
 /**
- * MATLAB runs scripts as files. Function, class, package, class-folder, and
- * private definitions are dependencies that must be called by executable code;
- * sending their path to `run(...)` is both misleading and guaranteed to fail.
+ * Scient's Run file action supports scripts, not function-call configuration.
+ * Definitions need an explicit call so required arguments and package/class
+ * context are supplied by the caller rather than guessed by the file action.
  */
 export function classifyMatlabSource(input: {
   readonly path: string;

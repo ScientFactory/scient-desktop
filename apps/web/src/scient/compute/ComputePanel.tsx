@@ -525,7 +525,7 @@ function ComputeSessionMessages(props: {
   );
 }
 
-function ComputeVariablesView(props: {
+export function ComputeVariablesView(props: {
   readonly snapshot: ComputeVariableSnapshot | null;
   readonly loading: boolean;
   readonly error: string | null;
@@ -603,28 +603,51 @@ function ComputeVariablesView(props: {
             No user variables in this session yet.
           </p>
         ) : (
-          <div className="@container/compute-variables min-w-0 overflow-hidden rounded-[6px] border border-border/70">
-            <div className="grid min-w-0 grid-cols-[minmax(0,1fr)_minmax(0,.8fr)_minmax(0,.9fr)] gap-2 border-b border-border/60 bg-muted/30 px-2 py-1.5 text-[10px] font-medium uppercase tracking-wide text-muted-foreground @[32rem]/compute-variables:grid-cols-[minmax(0,1fr)_minmax(0,.8fr)_minmax(0,.9fr)_minmax(0,1.2fr)]">
-              <span>Name</span>
-              <span>Type</span>
-              <span>Shape / size</span>
-              <span className="hidden @[32rem]/compute-variables:block">Preview</span>
-            </div>
-            {props.snapshot.variables.map((variable) => (
-              <div
-                key={variable.name}
-                className="grid min-w-0 grid-cols-[minmax(0,1fr)_minmax(0,.8fr)_minmax(0,.9fr)] gap-2 border-b border-border/50 px-2 py-1.5 text-xs last:border-b-0 @[32rem]/compute-variables:grid-cols-[minmax(0,1fr)_minmax(0,.8fr)_minmax(0,.9fr)_minmax(0,1.2fr)]"
-              >
-                <code className="truncate font-medium text-foreground">{variable.name}</code>
-                <span className="truncate text-muted-foreground">{variable.typeName}</span>
-                <span className="truncate font-mono text-[11px] text-muted-foreground">
-                  {variable.shape ?? (variable.size === null ? "—" : String(variable.size))}
-                </span>
-                <code className="hidden truncate text-[11px] text-muted-foreground @[32rem]/compute-variables:block">
-                  {variable.preview ?? "—"}
-                </code>
-              </div>
-            ))}
+          <div className="min-w-0 overflow-hidden rounded-[6px] border border-border/70">
+            <ScrollArea className="h-auto" aria-label="Current variables">
+              <table className="w-full min-w-[32rem] table-fixed text-left text-xs">
+                <thead className="border-b border-border/60 bg-muted/30 text-[10px] uppercase tracking-wide text-muted-foreground">
+                  <tr>
+                    <th scope="col" className="w-1/4 px-2 py-1.5 font-medium">
+                      Name
+                    </th>
+                    <th scope="col" className="w-1/5 px-2 py-1.5 font-medium">
+                      Type
+                    </th>
+                    <th scope="col" className="w-1/5 px-2 py-1.5 font-medium">
+                      Shape / size
+                    </th>
+                    <th scope="col" className="px-2 py-1.5 font-medium">
+                      Preview
+                    </th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {props.snapshot.variables.map((variable) => (
+                    <tr
+                      key={variable.name}
+                      className="border-b border-border/50 align-top last:border-b-0"
+                    >
+                      <th
+                        scope="row"
+                        className="break-words px-2 py-1.5 font-mono font-medium text-foreground"
+                      >
+                        {variable.name}
+                      </th>
+                      <td className="break-words px-2 py-1.5 text-muted-foreground">
+                        {variable.typeName}
+                      </td>
+                      <td className="break-words px-2 py-1.5 font-mono text-[11px] text-muted-foreground">
+                        {variable.shape ?? (variable.size === null ? "—" : String(variable.size))}
+                      </td>
+                      <td className="break-words px-2 py-1.5 font-mono text-[11px] text-muted-foreground">
+                        {variable.preview ?? "—"}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </ScrollArea>
             {props.snapshot.truncated ? (
               <p className="border-t border-border/60 px-3 py-2 text-[11px] text-muted-foreground">
                 Showing the first 200 variables.
