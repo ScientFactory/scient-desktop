@@ -64,3 +64,4 @@ export * from "./customModels.ts";
 export * from "./modelReasoning.ts";
 
 export * from "./scientAnswerAttention.ts";
+export * from "./worktreeSetup.ts";

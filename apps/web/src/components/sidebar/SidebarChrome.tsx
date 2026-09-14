@@ -202,12 +202,12 @@ export const SidebarUtilityMenu = memo(function SidebarUtilityMenu() {
   }, [canGoBack, closeMobileSidebar, navigate]);
 
   return (
-    <SidebarMenu className="flex-row items-center group-data-[collapsible=icon]:flex-col">
+    <SidebarMenu className="flex-row items-center">
       {currentFooterPage ? (
         <SidebarMenuItem className="min-w-0 flex-1">
-          <SidebarMenuButton onClick={handleBackClick} aria-label="Back" tooltip="Back">
+          <SidebarMenuButton onClick={handleBackClick}>
             <ArrowLeftIcon />
-            <span className="group-data-[collapsible=icon]:hidden">Back</span>
+            <span>Back</span>
           </SidebarMenuButton>
         </SidebarMenuItem>
       ) : (

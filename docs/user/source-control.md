@@ -218,10 +218,20 @@ environment and the environment answering its requests on that client.
 
 When enabled, GitHub review details, linked status, and permitted review actions
 can use another connected environment signed in to the same GitHub account.
+Each participating environment needs a project on that host. A connected local
+environment is preferred for actions and can answer slow or failed reads. Browser
+and mobile clients need a paired environment to use its GitHub CLI credentials.
 Credentials remain on their machines. **Read and act** may use broader GitHub
 permissions than the original environment, so enable it only for environments
-you control. An action with an uncertain result is never retried automatically
-on another environment.
+you control. Previously verified credentials remain usable for routing for ten
+minutes during a GitHub outage; new credentials must be verified first. An action
+with an uncertain result is never retried automatically on another environment.
+Changing a saved endpoint or removing an environment clears its routing permission.
+Listings, diffs, and checkout or PR creation from Git actions continue to use the
+project's environment.
+
+For Azure DevOps, use the host website to view diffs or change comments. Bitbucket does not support
+reopening a declined pull request.
 
 ## Linked pull requests
 

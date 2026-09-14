@@ -3239,6 +3239,8 @@ function ChatMarkdown(props: ChatMarkdownProps) {
       )}
       dir={resolvedContentDirection}
       data-scient-content-direction={resolvedContentDirection}
+      // Gates the fade-in for blocks that arrive while the response streams.
+      data-streaming={componentState.isStreaming ? "" : undefined}
       onCopy={handleCopy}
     >
       <ChatMarkdownRendererContext value={componentState}>
