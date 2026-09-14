@@ -19,10 +19,9 @@ enables Python and selects that exact environment for new sessions.
 The managed environment is optional. To use Python you already maintain instead:
 
 1. Open **Settings → Scientific Computing** for the server environment you want to use.
-2. Expand **Change runtime**.
+2. Expand **Runtime**.
 3. Enable Python if it is off.
-4. Choose the installation from the runtime menu, or **Use another path…** to enter its executable.
-   **Reset to automatic** restores discovery instead of pinning an installation.
+4. Choose **Automatic**, a detected installation, or **Custom executable…** from the runtime menu.
 
 A ready Python needs CPython 3.10 or newer, `jupyter_client` 8.6 or newer, and `ipykernel` 6.29 or
 newer. Install missing requirements with your own environment tooling, then use the page refresh
@@ -33,9 +32,9 @@ runtime discovery succeed.
 
 Settings → Scientific Computing has one quiet row for Python and one for MATLAB. The enable switch
 is always available. When an enabled language needs attention, the row offers one contextual action
-(Set up, Connect, Repair, or Choose runtime). **Change runtime** contains the interpreter for new
-sessions, path entry, an honest **Test** that starts and closes a session, and managed-runtime
-maintenance. Runtime labels stay short; path suffixes appear only when otherwise-identical
+(Set up, Connect, Repair, or Choose runtime). A ready language keeps the compact **Test** action
+beside its enable switch. **Runtime** contains the interpreter for new sessions; its overflow menu
+holds infrequent managed-runtime maintenance. Runtime labels stay short; path suffixes appear only when otherwise-identical
 installations must be distinguished, and the explicit path field remains available when needed.
 Removing a managed runtime uses a compact confirmation beside the action; it does not obscure the
 whole Settings page. Scient does not silently replace a broken selected interpreter.
@@ -44,7 +43,8 @@ When Scient updates its locked Python Toolkit, an existing selected managed envi
 **Update** action on the row. The current environment is not modified silently; completing the
 update produces and verifies a new managed generation.
 
-**Change runtime** changes only which runtime new sessions prefer. Choosing an existing Python also
+**Runtime** changes only which runtime new sessions prefer. **Automatic** restores discovery instead
+of pinning an installation. Choosing an existing Python also
 releases Scient-managed precedence; it does not copy or modify packages. **Repair** builds and
 verifies a fresh managed generation before activating it; an existing generation remains available
 if setup fails. **Update** appears only when Scient ships a newer reviewed Python or Toolkit
@@ -61,8 +61,8 @@ If setup fails, the header shows a one-line status with a copy control and a det
 never wraps a stack or path across **Run**. A code error remains a result of that execution; it does
 not make a healthy Python or MATLAB runtime unready. The refresh control in Scientific Computing
 performs lightweight runtime rediscovery so an installation or environment change can be recognized
-without reloading the app. **Test** in
-**Change runtime** starts and closes a temporary session; a package check is not Test passed.
+without reloading the app. **Test** beside the enable switch starts and closes a temporary session;
+a package check is not a successful test.
 **Repair** rebuilds a damaged Scient-managed generation; it is not how you recover from a failed
 Test. Scient never swaps the interpreter beneath a live session. If the selected Python changes
 while a session is open, the header offers **Switch Python**; confirmation stops the old namespace,
@@ -94,7 +94,7 @@ Enable MATLAB there and choose **Connect MATLAB** when a connection helper is ne
 Opening the file does not start Scientific Python or provision its Toolkit. A helper failure stays
 a short header status with copy and details; setup and recovery remain available in Settings. Scient does not
 install MATLAB or a license. If several copies are installed, open
-**Settings → Scientific Computing**, expand **Change runtime**, and choose the installation, or
+**Settings → Scientific Computing**, expand **Runtime**, and choose the installation, or
 leave automatic discovery selected.
 
 The same executable preference is used by live Compute sessions and fresh-process
@@ -104,7 +104,7 @@ does not reintroduce an older path.
 Opening Settings and its refresh control only look for installations and read their metadata; they do not
 import MATLAB Engine or start Python/MATLAB. Recent status stays visible while being rechecked.
 Choosing an installation does not promise that the Engine works or a license is available. Run the
-file, or use **Test** under **Change runtime**, to prove the Engine host. A license/startup failure
+file, or use **Test** beside the enable switch, to prove the Engine host. A license/startup failure
 stays visible with recovery guidance.
 
 If an Engine host is missing, **Connect MATLAB** on the file opens Scientific Computing settings.
@@ -117,12 +117,15 @@ The helper stays tied to the MATLAB installation it was built for. Selecting ano
 MATLAB does not pretend the helper already matches it; **Set up connection**
 can prepare a replacement for the new default.
 
-**Use existing host** returns to compatible Python hosts you maintain. **Repair connection** prepares a
-fresh private helper for the selected MATLAB and activates it only after verification.
-Use it after changing your MATLAB installation. **Remove helper** removes only this helper, never
+**Use existing MATLAB Engine setup** returns to a compatible Engine host you maintain.
+**Rebuild connection** prepares a fresh private helper for the selected MATLAB and activates it only
+after verification. Use it after changing your MATLAB installation. **Remove connection helper**
+removes only this helper, never
 MATLAB, its license, your projects, or Scientific Python. Removal is blocked while a live
 MATLAB Compute session uses the language. A broken selected helper is reported instead
-of silently choosing another Python host. Setup and repair can be cancelled.
+of silently choosing another Python host. These maintenance actions live in the **Runtime** overflow
+menu; when the selected MATLAB needs a new helper, **Set up connection** is promoted to the main row.
+Setup and repair can be cancelled.
 
 The helper and Scientific Python are independent: installing, selecting, repairing, or
 removing one does not select or remove the other. No MATLAB-to-Python translation or

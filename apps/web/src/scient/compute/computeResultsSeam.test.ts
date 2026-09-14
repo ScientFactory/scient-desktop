@@ -175,12 +175,12 @@ describe("compute result surface seam", () => {
     expect(settingsSource).not.toContain('variant="plain"');
     expect(settingsSource).not.toContain("Python & MATLAB");
     expect(settingsSource).not.toContain("Advanced");
-    expect(settingsSource).toContain("Change runtime");
+    expect(settingsSource).toContain(">Runtime</summary>");
     expect(settingsSource).toContain("SelectTrigger");
     expect(settingsSource).toContain("computeRuntimePickerLabel");
     expect(settingsSource).not.toContain("<select");
     expect(settingsSource).not.toContain("break-all");
-    expect(settingsSource).toContain("data-compute-actions");
+    expect(settingsSource).toContain("ManagedRuntimeMaintenanceMenu");
     expect(settingsSource).not.toContain("ComputeInstallationRow");
     expect(settingsSource).toContain("Starts and closes a test session");
     expect(settingsSource).not.toContain("More scientific tools are coming soon");

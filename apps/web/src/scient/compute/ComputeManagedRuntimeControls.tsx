@@ -4,6 +4,7 @@ import {
   ChevronDown,
   CopyIcon,
   Download,
+  EllipsisIcon,
   LoaderCircle,
   Trash2,
   Wrench,
@@ -22,6 +23,7 @@ import { useCopyToClipboard } from "~/hooks/useCopyToClipboard";
 import { cn } from "~/lib/utils";
 import { Button } from "~/components/ui/button";
 import { ContextualConfirmation } from "~/components/ui/contextual-confirmation";
+import { Menu, MenuItem, MenuPopup, MenuSeparator, MenuTrigger } from "~/components/ui/menu";
 import { Popover, PopoverPopup, PopoverTrigger } from "~/components/ui/popover";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "~/components/ui/tooltip";
 
@@ -78,9 +80,17 @@ function fallbackManagedRuntimeFailure(
   };
 }
 
-export function managedRuntimeOperationLabel(status: ComputeManagedRuntimeStatus): string | null {
+export function managedRuntimeOperationLabel(
+  status: ComputeManagedRuntimeStatus,
+  languageId?: ComputeLanguageId,
+): string | null {
   const operation = status.operation;
   if (!operation) return null;
+  if (languageId === "matlab") {
+    return operation.phase === "removing"
+      ? "Removing MATLAB connection…"
+      : "Preparing MATLAB connection…";
+  }
   switch (operation.phase) {
     case "downloading": {
       if (operation.downloadedBytes === null || operation.totalBytes === null)
@@ -228,6 +238,7 @@ export function useComputeManagedRuntime(input: {
       ? null
       : fallbackManagedRuntimeFailure(input.languageId, queried.error, null);
   return {
+    languageId: input.languageId,
     status,
     busy: pending || unresolved || status?.operation != null,
     failure: localFailure ?? queryFailure ?? statusFailure,
@@ -247,7 +258,8 @@ export function ManagedRuntimeNotice({
   variant?: "block" | "toolbar";
   onRetry?: () => void;
 }) {
-  const progress = runtime.status && managedRuntimeOperationLabel(runtime.status);
+  const progress =
+    runtime.status && managedRuntimeOperationLabel(runtime.status, runtime.languageId);
   const failure = runtime.failure;
   // Removal always stays behind its confirmation dialog, including retries.
   const retryAction = failure?.retryAction === "remove" ? null : (failure?.retryAction ?? null);
@@ -388,112 +400,102 @@ export function ManagedRuntimeNotice({
   );
 }
 
-export function ManagedRuntimeActions({
+export function ManagedRuntimeMaintenanceMenu({
   runtime,
   connection = false,
   canProvision = true,
   disabled = false,
-  maintenanceOnly = false,
   omitAction = null,
+  connectionNeedsRetarget = false,
   className,
 }: {
   runtime: ComputeManagedRuntimeController;
   connection?: boolean;
   canProvision?: boolean;
   disabled?: boolean;
-  maintenanceOnly?: boolean;
   omitAction?: ComputeManagedRuntimeAction | null;
+  connectionNeedsRetarget?: boolean;
   className?: string;
 }) {
   const [confirmRemove, setConfirmRemove] = useState(false);
+  const menuAnchor = useRef<HTMLButtonElement>(null);
   const status = runtime.status;
-  if (!status) return null;
+  if (!status?.installed) return null;
   const displayName = connection ? "MATLAB connection helper" : "Scient-managed Python";
   const busy = disabled || runtime.busy;
-  if (maintenanceOnly && !status.installed) return null;
+  const connectionAction =
+    status.selection === "managed"
+      ? "use-existing"
+      : connectionNeedsRetarget
+        ? "repair"
+        : "use-managed";
+  const connectionLabel =
+    status.selection === "managed"
+      ? "Use existing MATLAB Engine setup"
+      : connectionNeedsRetarget
+        ? "Set up Scient connection"
+        : "Use Scient connection";
+  const showUpdate = status.updateAvailable && omitAction !== "update";
+  const showRepair = omitAction !== "repair";
+  const hasNonDestructiveAction = connection || showUpdate || showRepair;
+
   return (
-    <>
-      <div className={cn("flex flex-wrap items-center gap-0.5", className)}>
-        {!status.installed ? (
-          <Button
-            size="xs"
-            disabled={busy || !canProvision}
-            onClick={() => void runtime.act("install")}
-          >
-            <Download /> {connection ? "Set up connection" : "Set up Python"}
-          </Button>
-        ) : (
-          <>
-            {connection ? (
-              <Button
-                size="xs"
-                variant="ghost-muted"
-                disabled={busy || (!canProvision && status.selection !== "managed")}
-                onClick={() =>
-                  void runtime.act(status.selection === "managed" ? "use-existing" : "use-managed")
-                }
-              >
-                {status.selection === "managed" ? "Use existing host" : "Use helper"}
-              </Button>
-            ) : null}
-            {status.updateAvailable && omitAction !== "update" ? (
-              <Button
-                size="xs"
-                variant="ghost"
-                disabled={busy || !canProvision}
-                onClick={() => void runtime.act("update")}
-              >
-                <Download /> Update
-              </Button>
-            ) : null}
-            {omitAction !== "repair" ? (
-              <Tooltip>
-                <TooltipTrigger
-                  render={
-                    <Button
-                      size="xs"
-                      variant="ghost"
-                      disabled={busy || !canProvision}
-                      onClick={() => void runtime.act("repair")}
-                    />
-                  }
-                >
-                  <Wrench /> {connection ? "Repair connection" : "Repair"}
-                </TooltipTrigger>
-                <TooltipPopup>
-                  {canProvision
-                    ? "Rebuild and verify the Scient-managed setup."
-                    : "Select this installation before repairing its connection."}
-                </TooltipPopup>
-              </Tooltip>
-            ) : null}
-            <ContextualConfirmation
-              open={confirmRemove}
-              onOpenChange={setConfirmRemove}
-              trigger={
-                <Button
-                  size="xs"
-                  variant="ghost-muted"
-                  disabled={busy}
-                  aria-label={`Remove ${displayName}`}
-                >
-                  <Trash2 /> {connection ? "Remove helper" : "Remove"}
-                </Button>
-              }
-              title={`Remove ${displayName}?`}
-              description={
-                connection
-                  ? "This removes Scient’s connection helper. Your MATLAB installation and license are untouched."
-                  : "This removes Scient’s private Python environment. System installations and project environments are untouched."
-              }
-              confirmLabel="Remove"
-              destructive
-              busy={busy}
-              onConfirm={() => void runtime.act("remove")}
+    <div className={cn("flex items-center", className)} data-compute-maintenance>
+      <Menu>
+        <MenuTrigger
+          render={
+            <Button
+              ref={menuAnchor}
+              type="button"
+              size="icon-xs"
+              variant="ghost-muted"
+              disabled={busy}
+              aria-label={`More ${connection ? "MATLAB connection" : "Python runtime"} actions`}
             />
-          </>
-        )}
-      </div>
-    </>
+          }
+        >
+          <EllipsisIcon aria-hidden />
+        </MenuTrigger>
+        <MenuPopup align="end" className="min-w-56">
+          {connection ? (
+            <MenuItem
+              disabled={busy || !canProvision}
+              onClick={() => void runtime.act(connectionAction)}
+            >
+              {connectionLabel}
+            </MenuItem>
+          ) : null}
+          {showUpdate ? (
+            <MenuItem disabled={busy || !canProvision} onClick={() => void runtime.act("update")}>
+              <Download /> Update managed Python
+            </MenuItem>
+          ) : null}
+          {showRepair ? (
+            <MenuItem disabled={busy || !canProvision} onClick={() => void runtime.act("repair")}>
+              <Wrench /> {connection ? "Rebuild connection" : "Rebuild managed Python"}
+            </MenuItem>
+          ) : null}
+          {hasNonDestructiveAction ? <MenuSeparator /> : null}
+          <MenuItem variant="destructive" disabled={busy} onClick={() => setConfirmRemove(true)}>
+            <Trash2 /> {connection ? "Remove connection helper…" : "Remove managed Python…"}
+          </MenuItem>
+        </MenuPopup>
+      </Menu>
+      <ContextualConfirmation
+        open={confirmRemove}
+        onOpenChange={setConfirmRemove}
+        anchor={menuAnchor}
+        title={`Remove ${displayName}?`}
+        description={
+          connection
+            ? "This removes Scient’s connection helper. Your MATLAB installation and license are untouched."
+            : "This removes Scient’s private Python environment. System installations and project environments are untouched."
+        }
+        confirmLabel="Remove"
+        destructive
+        busy={busy}
+        onConfirm={() => void runtime.act("remove")}
+      />
+    </div>
   );
 }

@@ -315,7 +315,9 @@ export const ComputeFileActions = forwardRef<ComputeFileActionsHandle, ComputeFi
         ? scientificToolkit.missingRequirements
         : [];
     const setupProgress =
-      managedRuntime.status === null ? null : managedRuntimeOperationLabel(managedRuntime.status);
+      managedRuntime.status === null
+        ? null
+        : managedRuntimeOperationLabel(managedRuntime.status, props.language.languageId);
     const runtimeToolbar = resolveComputeRuntimeToolbarState({
       languageId: props.language.languageId,
       languageName: props.language.displayName,

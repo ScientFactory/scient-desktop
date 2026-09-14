@@ -1,4 +1,4 @@
-import { ExternalLinkIcon, RefreshCwIcon, SigmaIcon } from "lucide-react";
+import { CheckIcon, ExternalLinkIcon, RefreshCwIcon, SigmaIcon } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import type {
   ComputeLanguageRuntimeInventory,
@@ -23,6 +23,7 @@ import {
   Select,
   SelectItem,
   SelectPopup,
+  SelectSeparator,
   SelectTrigger,
   SelectValue,
 } from "~/components/ui/select";
@@ -36,7 +37,7 @@ import {
 import {
   useComputeManagedRuntime,
   ManagedRuntimeNotice,
-  ManagedRuntimeActions,
+  ManagedRuntimeMaintenanceMenu,
   type ComputeManagedRuntimeController,
 } from "./ComputeManagedRuntimeControls";
 import {
@@ -46,6 +47,84 @@ import {
   defaultComputeInstallation,
   selectExistingComputeInstallation,
 } from "./computeInstallationSettingsModel";
+
+const AUTOMATIC_RUNTIME_OPTION = "scient-runtime:automatic";
+const CUSTOM_RUNTIME_OPTION = "scient-runtime:custom";
+
+function RuntimeTestAction({
+  environmentId,
+  languageId,
+  executable,
+  disabled,
+}: {
+  environmentId: EnvironmentId;
+  languageId: ComputeLanguageRuntimeInventory["descriptor"]["languageId"];
+  executable: string;
+  disabled: boolean;
+}) {
+  const verifyRuntime = useAtomCommand(computeEnvironment.verifyRuntime, { reportFailure: false });
+  const [testing, setTesting] = useState(false);
+  const [result, setResult] = useState<ComputeRuntimeVerification | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const passed = result?.readiness === "ready" && result.connection === "verified";
+  const runTest = async () => {
+    if (testing || disabled) return;
+    setTesting(true);
+    setResult(null);
+    setError(null);
+    try {
+      const verification = await verifyRuntime({
+        environmentId,
+        input: { cwd: null, languageId, executable },
+      });
+      if (verification._tag === "Failure") throw squashAtomCommandFailure(verification);
+      const verified =
+        verification.value.readiness === "ready" && verification.value.connection === "verified";
+      setResult(verification.value);
+      setError(
+        verified
+          ? null
+          : (verification.value.message ??
+              "The connection could not be verified. Scient did not start a test session."),
+      );
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "The connection could not be verified.");
+    } finally {
+      setTesting(false);
+    }
+  };
+  const label = testing ? "Testing…" : passed ? "Tested" : error ? "Test failed" : "Test";
+  return (
+    <Tooltip>
+      <TooltipTrigger
+        render={
+          <Button
+            size="xs"
+            variant="ghost-muted"
+            disabled={disabled || testing}
+            aria-label={error ? `Test failed: ${error.slice(0, 200)}` : label}
+            onClick={() => void runTest()}
+          />
+        }
+      >
+        {passed ? (
+          <>
+            <CheckIcon aria-hidden /> {label}
+          </>
+        ) : (
+          label
+        )}
+      </TooltipTrigger>
+      <TooltipPopup>
+        {error
+          ? error
+          : passed
+            ? "Connection verified. Test again."
+            : "Starts and closes a test session."}
+      </TooltipPopup>
+    </Tooltip>
+  );
+}
 
 function LanguageRuntimeSummary({
   language,
@@ -79,8 +158,29 @@ function LanguageRuntimeSummary({
     preference,
     managed: runtime.status,
   });
+  const selectedInstallation = defaultComputeInstallation(language, preference, runtime.status);
+  const connectionNeedsRetarget =
+    languageId === "matlab" &&
+    runtime.status?.installed === true &&
+    runtime.status.installationExecutable !== undefined &&
+    selectedInstallation !== undefined &&
+    runtime.status.installationExecutable !== selectedInstallation.executable;
+  const helperNeedsRetarget = connectionNeedsRetarget && runtime.status?.selection === "managed";
   const [recoveryOpen, setRecoveryOpen] = useState(false);
   const disabled = Boolean(loading || refreshing || runtime.busy || !environmentId);
+  const runtimeFingerprint = JSON.stringify([
+    refreshVersion,
+    preference.enabled,
+    selectedInstallation?.executable,
+    selectedInstallation?.version,
+    selectedInstallation?.problem,
+    runtime.status?.generationId,
+    runtime.status?.selection,
+    runtime.status?.operation?.operationId,
+    runtime.status?.installed,
+    runtime.status?.installationExecutable,
+    runtime.status?.failureMessage,
+  ]);
   const setup = () => void runtime.act(computeManagedPrimaryAction(runtime.status));
   const operationId = runtime.status?.operation?.operationId ?? null;
   const previousOperationId = useRef<string | null>(null);
@@ -91,16 +191,36 @@ function LanguageRuntimeSummary({
   const showManagedNotice = runtime.status?.operation != null || Boolean(runtime.failure);
   const story = loading
     ? "Checking…"
-    : summary.kind === "disabled"
-      ? "Off"
-      : summary.kind === "ready" ||
-          summary.kind === "update-managed" ||
-          summary.kind === "repair-managed" ||
-          summary.kind === "unavailable"
-        ? `${summary.title} · ${summary.detail}`
-        : summary.title;
+    : helperNeedsRetarget
+      ? `${selectedInstallation.version ?? "MATLAB"} · Connection needs update`
+      : summary.kind === "disabled"
+        ? "Off"
+        : summary.kind === "ready" ||
+            summary.kind === "update-managed" ||
+            summary.kind === "repair-managed" ||
+            summary.kind === "unavailable"
+          ? `${summary.title} · ${summary.detail}`
+          : summary.title;
   const action = (() => {
-    if (loading || summary.kind === "ready" || summary.kind === "disabled") return null;
+    if (loading || summary.kind === "disabled" || runtime.busy) return null;
+    if (helperNeedsRetarget) {
+      return (
+        <Button size="sm" disabled={disabled} onClick={() => void runtime.act("repair")}>
+          Set up connection
+        </Button>
+      );
+    }
+    if (summary.kind === "ready") {
+      return environmentId && selectedInstallation ? (
+        <RuntimeTestAction
+          key={runtimeFingerprint}
+          environmentId={environmentId}
+          languageId={languageId}
+          executable={selectedInstallation.executable}
+          disabled={disabled}
+        />
+      ) : null;
+    }
     if (summary.kind === "setup" || summary.kind === "repair-managed") {
       return (
         <Button size="sm" disabled={disabled} onClick={setup}>
@@ -153,8 +273,9 @@ function LanguageRuntimeSummary({
     }
     return null;
   })();
-  const primaryManagedAction: ComputeManagedRuntimeAction | null =
-    summary.kind === "update-managed"
+  const primaryManagedAction: ComputeManagedRuntimeAction | null = helperNeedsRetarget
+    ? "repair"
+    : summary.kind === "update-managed"
       ? "update"
       : summary.kind === "repair-managed"
         ? "repair"
@@ -188,9 +309,7 @@ function LanguageRuntimeSummary({
         open={recoveryOpen}
         onToggle={(event) => setRecoveryOpen(event.currentTarget.open)}
       >
-        <summary className="w-fit cursor-pointer text-xs text-muted-foreground">
-          Change runtime
-        </summary>
+        <summary className="w-fit cursor-pointer text-xs text-muted-foreground">Runtime</summary>
         <LanguageRuntimeRecovery
           language={language}
           preference={preference}
@@ -200,8 +319,8 @@ function LanguageRuntimeSummary({
           refreshing={refreshing}
           runtime={runtime}
           onRefresh={onRefresh}
-          refreshVersion={refreshVersion}
           primaryManagedAction={primaryManagedAction}
+          connectionNeedsRetarget={connectionNeedsRetarget}
         />
       </details>
     </SettingsRow>
@@ -217,8 +336,8 @@ function LanguageRuntimeRecovery({
   refreshing,
   runtime,
   onRefresh,
-  refreshVersion,
   primaryManagedAction,
+  connectionNeedsRetarget,
 }: {
   language: ComputeLanguageRuntimeInventory;
   preference: ScientificComputingLanguageSettings;
@@ -228,8 +347,8 @@ function LanguageRuntimeRecovery({
   refreshing: boolean;
   runtime: ComputeManagedRuntimeController;
   onRefresh: () => Promise<void>;
-  refreshVersion: number;
   primaryManagedAction: ComputeManagedRuntimeAction | null;
+  connectionNeedsRetarget: boolean;
 }) {
   const languageId = language.descriptor.languageId;
   const isPython = languageId === "python";
@@ -238,60 +357,23 @@ function LanguageRuntimeRecovery({
   const [pathDraft, setPathDraft] = useState("");
   const [selecting, setSelecting] = useState(false);
   const [selectionFailure, setSelectionFailure] = useState<string | null>(null);
-  const [testing, setTesting] = useState(false);
-  const [testState, setTestState] = useState<{
-    readonly runtimeFingerprint: string;
-    readonly result: ComputeRuntimeVerification | null;
-    readonly error: string | null;
-  } | null>(null);
   const selectionLock = useRef(false);
   const selectedInstallation = defaultComputeInstallation(language, preference, runtime.status);
   const managedInstallation = language.installations.find(
     (installation) => installation.source === "managed",
   );
-  const disabled = Boolean(
-    loading || refreshing || selecting || testing || runtime.busy || !environmentId,
-  );
-  const helperOwner = runtime.status?.installationExecutable;
-  const helperNeedsRetarget =
-    isMatlab &&
-    runtime.status?.installed &&
-    helperOwner &&
-    helperOwner !== selectedInstallation?.executable;
+  const disabled = Boolean(loading || refreshing || selecting || runtime.busy || !environmentId);
   const hasExplicitSelection =
     Boolean(preference.executable.trim()) || (isPython && runtime.status?.selection === "managed");
-  const helperCanRepair = !isMatlab || selectedInstallation?.executable === helperOwner;
-  const verifyRuntime = useAtomCommand(computeEnvironment.verifyRuntime, { reportFailure: false });
-  const runtimeFingerprint = JSON.stringify([
-    refreshVersion,
-    preference.enabled,
-    selectedInstallation?.executable,
-    selectedInstallation?.version,
-    selectedInstallation?.problem,
-    runtime.status?.generationId,
-    runtime.status?.selection,
-    runtime.status?.operation?.operationId,
-    runtime.status?.installed,
-    runtime.status?.installationExecutable,
-    runtime.status?.failureMessage,
-  ]);
-  // Retire proof when its runtime changes, not when polling allocates a new
-  // object for the same status. Returning to an old runtime must not revive it.
-  if (testState !== null && testState.runtimeFingerprint !== runtimeFingerprint) {
-    setTestState(null);
-  }
-  const currentTestState = testState?.runtimeFingerprint === runtimeFingerprint ? testState : null;
-  const testPassed =
-    currentTestState?.result?.readiness === "ready" &&
-    currentTestState.result.connection === "verified";
-  const testError = currentTestState?.error ?? null;
+  const runtimePickerValue = hasExplicitSelection
+    ? (selectedInstallation?.executable ?? null)
+    : AUTOMATIC_RUNTIME_OPTION;
 
   const select = async (executable: string | null) => {
     if (selectionLock.current || runtime.busy || loading || refreshing) return;
     selectionLock.current = true;
     setSelecting(true);
     setSelectionFailure(null);
-    setTestState(null);
     try {
       if (executable !== null && executable === managedInstallation?.executable) {
         if (!(await runtime.act("use-managed")))
@@ -323,176 +405,107 @@ function LanguageRuntimeRecovery({
     }
   };
 
-  const runTest = async () => {
-    if (!environmentId || !selectedInstallation || testing || loading || refreshing) return;
-    setTesting(true);
-    const pendingTest = { runtimeFingerprint, result: null, error: null };
-    setTestState(pendingTest);
-    const complete = (result: ComputeRuntimeVerification | null, error: string | null) => {
-      // A late reply cannot revive proof invalidated by a runtime change.
-      setTestState((current) =>
-        current === pendingTest ? { ...pendingTest, result, error } : current,
-      );
-    };
-    try {
-      const result = await verifyRuntime({
-        environmentId,
-        input: { cwd: null, languageId, executable: selectedInstallation.executable },
-      });
-      if (result._tag === "Failure") throw squashAtomCommandFailure(result);
-      const verified = result.value.readiness === "ready" && result.value.connection === "verified";
-      complete(
-        result.value,
-        verified
-          ? null
-          : (result.value.message ??
-              "The connection could not be verified. Scient did not start a test session."),
-      );
-    } catch (cause) {
-      complete(
-        null,
-        cause instanceof Error ? cause.message : "The connection could not be verified.",
-      );
-    } finally {
-      setTesting(false);
-    }
-  };
-
   return (
     <div className="mt-3 space-y-2" data-compute-recovery={languageId}>
       {loading ? (
         <p className="text-xs text-muted-foreground" role="status">
           Checking…
         </p>
-      ) : language.installations.length === 0 ? (
-        <p className="text-xs text-muted-foreground">No runtime detected</p>
       ) : (
         <div className="flex min-h-7 flex-wrap items-center justify-between gap-x-3 gap-y-1.5">
           <span className="text-xs text-muted-foreground">For new sessions</span>
-          <Select
-            value={selectedInstallation?.executable ?? null}
-            onValueChange={(value) => {
-              if (!value || value === selectedInstallation?.executable) return;
-              void select(value);
-            }}
-            disabled={disabled || !preference.enabled}
-          >
-            <SelectTrigger
-              size="sm"
-              className="w-auto max-w-52"
-              aria-label={`Choose ${language.descriptor.displayName} runtime`}
-              data-compute-runtime={selectedInstallation?.executable ?? ""}
+          <div className="flex min-w-0 items-center gap-1">
+            <Select
+              value={runtimePickerValue}
+              onValueChange={(value) => {
+                if (!value || value === runtimePickerValue) return;
+                if (value === CUSTOM_RUNTIME_OPTION) {
+                  setPathOpen(true);
+                  setPathDraft("");
+                  setSelectionFailure(null);
+                  return;
+                }
+                if (value === AUTOMATIC_RUNTIME_OPTION) {
+                  void select(null);
+                  return;
+                }
+                void select(value);
+              }}
+              disabled={disabled || !preference.enabled}
             >
-              <SelectValue>
-                {selectedInstallation
-                  ? computeRuntimePickerLabel(
-                      selectedInstallation,
-                      language.descriptor.displayName,
-                      language.installations,
-                    )
-                  : "Choose a runtime"}
-              </SelectValue>
-            </SelectTrigger>
-            <SelectPopup
-              align="end"
-              alignItemWithTrigger={false}
-              matchTriggerWidth={false}
-              className="max-w-[calc(100vw-1rem)]"
-            >
-              {language.installations.map((installation) => (
+              <SelectTrigger
+                size="sm"
+                className="w-auto max-w-52"
+                aria-label={`Choose ${language.descriptor.displayName} runtime`}
+                data-compute-runtime={selectedInstallation?.executable ?? ""}
+              >
+                <SelectValue>
+                  {!hasExplicitSelection
+                    ? `Automatic${selectedInstallation?.version ? ` · ${selectedInstallation.version}` : ""}`
+                    : selectedInstallation
+                      ? computeRuntimePickerLabel(
+                          selectedInstallation,
+                          language.descriptor.displayName,
+                          language.installations,
+                        )
+                      : "Choose a runtime"}
+                </SelectValue>
+              </SelectTrigger>
+              <SelectPopup
+                align="end"
+                alignItemWithTrigger={false}
+                matchTriggerWidth={false}
+                className="max-w-[calc(100vw-1rem)]"
+              >
                 <SelectItem
-                  key={installation.executable}
                   hideIndicator
-                  value={installation.executable}
-                  data-compute-runtime={installation.executable}
+                  value={AUTOMATIC_RUNTIME_OPTION}
+                  data-compute-runtime={AUTOMATIC_RUNTIME_OPTION}
                 >
-                  <span className="block max-w-[calc(100vw-3rem)] truncate sm:max-w-80">
-                    {computeRuntimePickerLabel(
-                      installation,
-                      language.descriptor.displayName,
-                      language.installations,
-                    )}
-                  </span>
+                  Automatic
                 </SelectItem>
-              ))}
-            </SelectPopup>
-          </Select>
+                {language.installations.length > 0 ? <SelectSeparator /> : null}
+                {language.installations.map((installation) => (
+                  <SelectItem
+                    key={installation.executable}
+                    hideIndicator
+                    value={installation.executable}
+                    data-compute-runtime={installation.executable}
+                  >
+                    <span className="block max-w-[calc(100vw-3rem)] truncate sm:max-w-80">
+                      {computeRuntimePickerLabel(
+                        installation,
+                        language.descriptor.displayName,
+                        language.installations,
+                      )}
+                    </span>
+                  </SelectItem>
+                ))}
+                <SelectSeparator />
+                <SelectItem
+                  hideIndicator
+                  value={CUSTOM_RUNTIME_OPTION}
+                  data-compute-runtime={CUSTOM_RUNTIME_OPTION}
+                >
+                  Custom executable…
+                </SelectItem>
+              </SelectPopup>
+            </Select>
+            <ManagedRuntimeMaintenanceMenu
+              runtime={runtime}
+              connection={isMatlab}
+              omitAction={primaryManagedAction}
+              canProvision={selectedInstallation !== undefined}
+              disabled={selecting || refreshing || !environmentId}
+              connectionNeedsRetarget={connectionNeedsRetarget}
+            />
+          </div>
         </div>
       )}
       {selectedInstallation?.problem ? (
         <p className="text-xs text-destructive" role="alert">
           {selectedInstallation.problem}
         </p>
-      ) : null}
-      <div className="flex flex-wrap items-center gap-0.5" data-compute-actions={languageId}>
-        {preference.enabled && selectedInstallation ? (
-          <Tooltip>
-            <TooltipTrigger
-              render={
-                <Button
-                  size="xs"
-                  variant="ghost-muted"
-                  disabled={disabled}
-                  onClick={() => void runTest()}
-                />
-              }
-            >
-              {testing ? "Testing…" : testPassed ? "Test passed" : "Test"}
-            </TooltipTrigger>
-            <TooltipPopup>Starts and closes a test session.</TooltipPopup>
-          </Tooltip>
-        ) : null}
-        <ManagedRuntimeActions
-          className="contents"
-          runtime={runtime}
-          connection={isMatlab}
-          maintenanceOnly
-          omitAction={primaryManagedAction}
-          canProvision={!isMatlab || helperCanRepair}
-          disabled={selecting || refreshing || !environmentId}
-        />
-        <Button
-          size="xs"
-          variant="ghost-muted"
-          disabled={disabled || !preference.enabled}
-          onClick={() => {
-            setPathOpen(!pathOpen);
-            setPathDraft("");
-            setSelectionFailure(null);
-          }}
-        >
-          Use another path…
-        </Button>
-        {hasExplicitSelection ? (
-          <Button
-            size="xs"
-            variant="ghost-muted"
-            disabled={disabled || !preference.enabled}
-            onClick={() => void select(null)}
-          >
-            Reset to automatic
-          </Button>
-        ) : null}
-      </div>
-      {testError ? (
-        <p className="text-xs text-destructive" role="alert">
-          {testError}
-        </p>
-      ) : null}
-      {helperNeedsRetarget ? (
-        <div className="space-y-1">
-          <p className="text-xs text-muted-foreground">
-            The connection helper belongs to a different MATLAB. Set up a connection for this one.
-          </p>
-          <Button
-            size="xs"
-            variant="ghost"
-            disabled={disabled}
-            onClick={() => void runtime.act("repair")}
-          >
-            Set up connection
-          </Button>
-        </div>
       ) : null}
       {pathOpen ? (
         <form

@@ -1,4 +1,4 @@
-import { type ComputeManagedRuntimeStatus } from "@t3tools/contracts";
+import { ComputeLanguageId, type ComputeManagedRuntimeStatus } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 import { managedRuntimeOperationLabel } from "./ComputeManagedRuntimeControls";
 
@@ -33,5 +33,11 @@ describe("scientific computing installation presentation", () => {
       "locked scientific packages",
     );
     expect(managedRuntimeOperationLabel(status("verifying"))).toContain("Verifying Python");
+    expect(
+      managedRuntimeOperationLabel(status("installing-python"), ComputeLanguageId.make("matlab")),
+    ).toBe("Preparing MATLAB connection…");
+    expect(
+      managedRuntimeOperationLabel(status("installing-packages"), ComputeLanguageId.make("matlab")),
+    ).toBe("Preparing MATLAB connection…");
   });
 });

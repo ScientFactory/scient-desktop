@@ -116,6 +116,8 @@ import { ScientificComputingSettings } from "./ScientificComputingSettings";
 
 const managedPath = "/scient/python";
 const systemPath = "/system/python";
+const automaticRuntimeOption = "scient-runtime:automatic";
+const customRuntimeOption = "scient-runtime:custom";
 const status = (): ComputeManagedRuntimeStatus => ({
   installed: true,
   selection: "managed",
@@ -225,7 +227,11 @@ describe("Scientific Computing settings interactions", () => {
       (node) => node.getAttribute("data-compute-runtime") === path,
     );
     expect(item, `runtime option ${path}`).toBeDefined();
-    await act(() => item!.click());
+    await act(async () => {
+      item!.click();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
   };
   const button = (label: string, scope: ParentNode = container) => {
     const match = [...scope.querySelectorAll<HTMLButtonElement>("button")].find(
@@ -235,7 +241,27 @@ describe("Scientific Computing settings interactions", () => {
     return match!;
   };
   const click = async (label: string, scope?: ParentNode) => {
-    await act(() => button(label, scope).click());
+    await act(async () => {
+      button(label, scope).click();
+      await Promise.resolve();
+    });
+  };
+  const openMaintenance = async (languageName: string) => {
+    const trigger = container.querySelector<HTMLButtonElement>(
+      `[aria-label="More ${languageName} actions"]`,
+    );
+    expect(trigger, `More ${languageName} actions`).toBeDefined();
+    await act(async () => trigger!.click());
+  };
+  const menuItem = (label: string) => {
+    const match = [...document.querySelectorAll<HTMLElement>('[data-slot="menu-item"]')].find(
+      (node) => node.textContent?.trim() === label,
+    );
+    expect(match, label).toBeDefined();
+    return match!;
+  };
+  const clickMenuItem = async (label: string) => {
+    await act(async () => menuItem(label).click());
   };
 
   it("shows the current runtime without an installation dashboard", async () => {
@@ -248,7 +274,7 @@ describe("Scientific Computing settings interactions", () => {
       ),
     ).toBe(false);
     expect(container.textContent).not.toContain("More scientific tools are coming soon");
-    expect(container.textContent).toContain("Change runtime");
+    expect(container.textContent).toContain("Runtime");
     expect(container.textContent).toContain("3.12.13");
     expect(container.textContent).toContain("Scient-managed");
     expect(container.querySelectorAll("h3")).toHaveLength(1);
@@ -256,10 +282,13 @@ describe("Scientific Computing settings interactions", () => {
     expect(button("Test").hasAttribute("title")).toBe(false);
     expect(container.textContent).not.toContain(managedPath);
     expect(container.querySelector("select")).toBeNull();
-    const actions = container.querySelector("[data-compute-actions='python']");
-    expect(actions?.textContent).toContain("Test");
-    expect(actions?.textContent).toContain("Repair");
-    expect(actions?.textContent).toContain("Remove");
+    expect(button("Test")).toBeDefined();
+    expect(container.querySelector('[aria-label="More Python runtime actions"]')).not.toBeNull();
+    expect(container.textContent).not.toContain("Rebuild managed Python");
+    expect(container.textContent).not.toContain("Remove managed Python");
+    await openMaintenance("Python runtime");
+    expect(menuItem("Rebuild managed Python")).toBeDefined();
+    expect(menuItem("Remove managed Python…")).toBeDefined();
   });
   it("renders language rows immediately without offering setup before inventory arrives", async () => {
     mocks.inventoryPending = true;
@@ -321,7 +350,7 @@ describe("Scientific Computing settings interactions", () => {
     );
   });
 
-  it("treats Test passed as a started-and-closed session, not a metadata probe", async () => {
+  it("treats Tested as a started-and-closed session, not a metadata probe", async () => {
     mocks.verify.mockImplementation(async ({ environmentId, input }) => {
       expect(environmentId).toBe("remote");
       mocks.calls.push("verify");
@@ -347,33 +376,33 @@ describe("Scientific Computing settings interactions", () => {
     await render();
     await click("Test");
     expect(mocks.calls).toEqual(["verify"]);
-    expect(button("Test passed")).toBeDefined();
+    expect(button("Tested")).toBeDefined();
     expect(mocks.manage).not.toHaveBeenCalled();
     await act(() => {
       mocks.statuses.python = { ...status() };
       notify();
     });
-    expect(button("Test passed")).toBeDefined();
+    expect(button("Tested")).toBeDefined();
     await act(() =>
       container
         .querySelector<HTMLButtonElement>('[aria-label="Refresh scientific runtimes"]')!
         .click(),
     );
-    expect(container.textContent).not.toContain("Test passed");
+    expect(container.textContent).not.toContain("Tested");
     expect(button("Test")).toBeDefined();
     expect(mocks.verify).toHaveBeenCalledOnce();
     await click("Test");
-    expect(button("Test passed")).toBeDefined();
+    expect(button("Tested")).toBeDefined();
     await act(() => {
       mocks.statuses.python = { ...status(), generationId: "replacement-helper" };
       notify();
     });
-    expect(container.textContent).not.toContain("Test passed");
+    expect(container.textContent).not.toContain("Tested");
     await act(() => {
       mocks.statuses.python = status();
       notify();
     });
-    expect(container.textContent).not.toContain("Test passed");
+    expect(container.textContent).not.toContain("Tested");
   });
 
   it("ignores a late test reply after the selected runtime changes and returns", async () => {
@@ -397,7 +426,7 @@ describe("Scientific Computing settings interactions", () => {
     await act(async () => {
       finish({ _tag: "Success", value: { readiness: "ready", connection: "verified" } });
     });
-    expect(container.textContent).not.toContain("Test passed");
+    expect(container.textContent).not.toContain("Tested");
     expect(button("Test").disabled).toBe(false);
   });
 
@@ -405,11 +434,11 @@ describe("Scientific Computing settings interactions", () => {
     mocks.verify.mockRejectedValueOnce(new Error("Connection lost"));
     await render();
     await click("Test");
-    expect(container.textContent).toContain("Connection lost");
-    expect(button("Test").disabled).toBe(false);
+    expect(button("Test failed").getAttribute("aria-label")).toContain("Connection lost");
+    expect(button("Test failed").disabled).toBe(false);
   });
 
-  it("does not treat a Python probe as Test passed or send people to Repair", async () => {
+  it("does not treat a Python probe as Tested or send people to Repair", async () => {
     mocks.verify.mockImplementation(async () => ({
       _tag: "Success",
       value: {
@@ -429,8 +458,10 @@ describe("Scientific Computing settings interactions", () => {
     }));
     await render();
     await click("Test");
-    expect(container.textContent).not.toContain("Test passed");
-    expect(container.textContent).toContain("did not start a test session");
+    expect(container.textContent).not.toContain("Tested");
+    expect(button("Test failed").getAttribute("aria-label")).toContain(
+      "did not start a test session",
+    );
     expect(mocks.manage).not.toHaveBeenCalled();
   });
 
@@ -503,7 +534,8 @@ describe("Scientific Computing settings interactions", () => {
       },
     ];
     await render();
-    expect(container.textContent?.match(/Preparing the connection helper/gu)).toHaveLength(1);
+    expect(container.textContent?.match(/Preparing MATLAB connection/gu)).toHaveLength(1);
+    expect(container.textContent).not.toContain("Installing private Python");
     expect(
       container.querySelector('[aria-label="Enable MATLAB"]')?.closest("[data-compute-recovery]"),
     ).toBeNull();
@@ -534,11 +566,12 @@ describe("Scientific Computing settings interactions", () => {
       },
     ];
     await render();
-    await click("Remove helper");
+    await openMaintenance("MATLAB connection");
+    await clickMenuItem("Remove connection helper…");
     await click("Remove", document.querySelector<HTMLElement>('[role="alertdialog"]')!);
     await vi.waitFor(() => expect(button("Connect MATLAB")).toBeDefined());
     expect(mocks.calls).toEqual(["remove"]);
-    expect(container.textContent?.match(/Preparing the connection helper/gu)).toBeNull();
+    expect(container.textContent?.match(/Preparing MATLAB connection/gu)).toBeNull();
   });
 
   it("surfaces one update action for an older selected managed toolkit", async () => {
@@ -591,7 +624,7 @@ describe("Scientific Computing settings interactions", () => {
   it("resets automatic discovery without leaving managed precedence active", async () => {
     mocks.preferences.python = { enabled: true, executable: "/old/python" };
     await render();
-    await click("Reset to automatic");
+    await chooseRuntime(automaticRuntimeOption);
     expect(mocks.calls).toEqual(["save", "use-existing"]);
     expect(mocks.preferences.python?.executable).toBe("");
     expect(runtimeValue()).toBe(systemPath);
@@ -599,7 +632,7 @@ describe("Scientific Computing settings interactions", () => {
 
   it("does not save a custom path on blur or Cancel; saves only on explicit submission", async () => {
     await render();
-    await click("Use another path…");
+    await chooseRuntime(customRuntimeOption);
     const input = container.querySelector<HTMLInputElement>(
       'input[aria-label="Python executable path"]',
     )!;
@@ -615,7 +648,7 @@ describe("Scientific Computing settings interactions", () => {
     expect(mocks.update).not.toHaveBeenCalled();
     await click("Cancel");
     expect(mocks.update).not.toHaveBeenCalled();
-    await click("Use another path…");
+    await chooseRuntime(customRuntimeOption);
     const next = container.querySelector<HTMLInputElement>(
       'input[aria-label="Python executable path"]',
     )!;
@@ -640,7 +673,8 @@ describe("Scientific Computing settings interactions", () => {
     mocks.languages = [{ ...python(), enabled: false, installations: [] }];
     await render();
     expect(container.textContent).not.toContain("needs repair");
-    expect(button("Remove").disabled).toBe(false);
+    await openMaintenance("Python runtime");
+    expect(menuItem("Remove managed Python…").getAttribute("data-disabled")).toBeNull();
     expect(mocks.manage).not.toHaveBeenCalled();
   });
 
@@ -677,18 +711,96 @@ describe("Scientific Computing settings interactions", () => {
       },
     ];
     await render();
-    expect(container.textContent).toContain("Remove helper");
     expect(container.textContent).toContain("Set up connection");
-    expect(button("Repair connection").disabled).toBe(true);
+    await openMaintenance("MATLAB connection");
+    expect(menuItem("Remove connection helper…")).toBeDefined();
+    expect(document.body.textContent).not.toContain("Rebuild connection");
+    await openMaintenance("MATLAB connection");
     await chooseRuntime(a, "MATLAB");
     expect(mocks.calls).toEqual(["save"]);
-    expect(button("Repair connection").disabled).toBe(false);
     expect(container.textContent).not.toContain("Set up connection");
+    await openMaintenance("MATLAB connection");
+    expect(menuItem("Rebuild connection")).toBeDefined();
+  });
+
+  it("repairs a helper for the newly selected MATLAB instead of activating a stale helper", async () => {
+    const previousMatlab = "/MATLAB-A/bin/matlab";
+    const selectedMatlab = "/MATLAB-B/bin/matlab";
+    const helper = {
+      ...status(),
+      displayName: "MATLAB connection helper",
+      installationExecutable: previousMatlab,
+      selection: "existing" as const,
+    };
+    mocks.preferences = { matlab: { enabled: true, executable: selectedMatlab } };
+    mocks.statuses = { matlab: helper };
+    mocks.languages = [
+      {
+        ...python(),
+        descriptor: {
+          ...python().descriptor,
+          languageId: ComputeLanguageId.make("matlab"),
+          displayName: "MATLAB",
+        },
+        managedRuntime: helper,
+        configuredExecutable: selectedMatlab,
+        installations: [
+          {
+            executable: selectedMatlab,
+            source: "conventional",
+            version: "R2026a",
+            problem: null,
+          },
+        ],
+      },
+    ];
+    await render();
+    await openMaintenance("MATLAB connection");
+    await clickMenuItem("Set up Scient connection");
+    expect(mocks.calls).toEqual(["repair"]);
+    expect(mocks.calls).not.toContain("use-managed");
+  });
+
+  it("promotes a mismatched active MATLAB connection to the main row", async () => {
+    const previousMatlab = "/MATLAB-A/bin/matlab";
+    const selectedMatlab = "/MATLAB-B/bin/matlab";
+    const helper = {
+      ...status(),
+      displayName: "MATLAB connection helper",
+      installationExecutable: previousMatlab,
+    };
+    mocks.preferences = { matlab: { enabled: true, executable: selectedMatlab } };
+    mocks.statuses = { matlab: helper };
+    mocks.languages = [
+      {
+        ...python(),
+        descriptor: {
+          ...python().descriptor,
+          languageId: ComputeLanguageId.make("matlab"),
+          displayName: "MATLAB",
+        },
+        managedRuntime: helper,
+        configuredExecutable: selectedMatlab,
+        installations: [
+          {
+            executable: selectedMatlab,
+            source: "conventional",
+            version: "R2026a",
+            problem: null,
+          },
+        ],
+      },
+    ];
+    await render();
+    expect(container.textContent).toContain("Connection needs update");
+    await click("Set up connection");
+    expect(mocks.calls).toEqual(["repair"]);
   });
 
   it("requires confirmation before removal and keeps cancellation non-mutating", async () => {
     await render();
-    await click("Remove");
+    await openMaintenance("Python runtime");
+    await clickMenuItem("Remove managed Python…");
     expect(mocks.manage).not.toHaveBeenCalled();
     const dialog = document.querySelector<HTMLElement>('[role="alertdialog"]')!;
     expect(dialog.textContent).toContain(
@@ -696,7 +808,8 @@ describe("Scientific Computing settings interactions", () => {
     );
     await click("Cancel", dialog);
     expect(mocks.manage).not.toHaveBeenCalled();
-    await click("Remove");
+    await openMaintenance("Python runtime");
+    await clickMenuItem("Remove managed Python…");
     await click("Remove", document.querySelector<HTMLElement>('[role="alertdialog"]')!);
     expect(mocks.calls).toEqual(["remove"]);
   });
