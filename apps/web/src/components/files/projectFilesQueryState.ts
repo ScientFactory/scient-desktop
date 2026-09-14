@@ -62,7 +62,7 @@ export interface ProjectFileQueryState extends ProjectQueryState<ProjectReadFile
   readonly authoritativeData: ProjectReadFileResult | null;
 }
 
-export function getProjectEntriesQueryAtom(
+function getProjectEntriesQueryAtom(
   environmentId: EnvironmentId,
   cwd: string,
   directoryPath?: string,
