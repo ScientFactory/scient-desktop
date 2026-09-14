@@ -126,6 +126,8 @@ afterEach(async () => {
   await Promise.all([...terminationPromises, stopped]);
   unsubscribe();
   await disposeHighlighter();
+  // Drain the pool's final state broadcast before removing the animation frame stubs.
+  await new Promise<void>((resolve) => setImmediate(resolve));
   vi.unstubAllGlobals();
 });
 

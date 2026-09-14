@@ -37,3 +37,17 @@ index ee181aef5007e4bf34a49479c089ca30f73a320b..46189e8d5314e0907376671dec7fa7e7
          }
      }
      catch {
+diff --git a/package.json b/package.json
+--- a/package.json
++++ b/package.json
+@@ -8,8 +8,9 @@
+   "types": "dist/src/index.d.ts",
+   "exports": {
+     ".": {
++      "types": "./dist/src/index.d.ts",
+       "import": "./dist/src/index.js",
+-      "types": "./dist/src/index.d.ts"
++      "require": "./dist/src/index.js"
+     }
+   },
+   "files": [

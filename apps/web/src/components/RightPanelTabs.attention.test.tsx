@@ -61,6 +61,7 @@ it("offers an accessible inactive issue tab without adding routine Markdown indi
     onAddAgents: noop,
     onAddSources: noop,
     onAddCompute: noop,
+    onAddDevice: noop,
     browserAvailable: false,
     terminalAvailable: false,
     diffAvailable: true,
@@ -70,6 +71,7 @@ it("offers an accessible inactive issue tab without adding routine Markdown indi
     agentsAvailable: false,
     sourcesAvailable: false,
     computeAvailable: false,
+    deviceAvailable: false,
     liveAgentCount: 0,
     children: <div>Editor</div>,
   };

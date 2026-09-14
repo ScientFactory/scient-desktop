@@ -1,5 +1,5 @@
 import { scopedThreadKey } from "@t3tools/client-runtime/environment";
-import type { ScopedThreadRef } from "@t3tools/contracts";
+import type { DevicePlatform, ScopedThreadRef } from "@t3tools/contracts";
 import { create } from "zustand";
 
 import {
@@ -25,6 +25,14 @@ export interface PreviewMiniPlayerRect {
 export type PreviewMiniPlayerContent =
   | { readonly kind: "browser"; readonly id: string; readonly tabId: string }
   | {
+      readonly kind: "device";
+      readonly id: string;
+      readonly hostId: string;
+      readonly deviceId: string;
+      readonly platform: DevicePlatform;
+      readonly name: string;
+    }
+  | {
       readonly kind: "static-artifact";
       readonly id: string;
       readonly artifact: PreviewStaticImageSurfaceDescriptor;
@@ -37,11 +45,22 @@ export interface PreviewMiniPlayerState {
   readonly size: PreviewMiniPlayerSize | null;
 }
 
+/** What the floating player mirrors: a browser tab or a device stream. */
+export type PreviewMiniPlayerSource =
+  | { readonly kind: "browser"; readonly tabId: string }
+  | {
+      readonly kind: "device";
+      readonly hostId: string;
+      readonly deviceId: string;
+      readonly platform: DevicePlatform;
+      readonly name: string;
+    };
+
 interface PreviewMiniPlayerStoreState {
   readonly byThreadKey: Record<string, PreviewMiniPlayerState>;
   readonly open: (
     ref: ScopedThreadRef,
-    tabId: string,
+    source: PreviewMiniPlayerSource,
     position?: PreviewMiniPlayerPosition,
   ) => void;
   readonly openArtifact: (
@@ -62,6 +81,23 @@ interface PreviewMiniPlayerStoreState {
   readonly resize: (ref: ScopedThreadRef, contentId: string, size: PreviewMiniPlayerSize) => void;
   readonly setRect: (ref: ScopedThreadRef, contentId: string, rect: PreviewMiniPlayerRect) => void;
   readonly removeThread: (ref: ScopedThreadRef) => void;
+}
+
+function previewMiniPlayerSourceKey(source: PreviewMiniPlayerSource): string {
+  return source.kind === "browser"
+    ? `browser:${source.tabId}`
+    : `device:${encodeURIComponent(source.hostId)}:${encodeURIComponent(source.deviceId)}`;
+}
+
+export const browserMiniPlayerSource = (tabId: string): PreviewMiniPlayerSource => ({
+  kind: "browser",
+  tabId,
+});
+
+function sourceContent(source: PreviewMiniPlayerSource): PreviewMiniPlayerContent {
+  return source.kind === "browser"
+    ? { ...source, id: previewMiniPlayerSourceKey(source) }
+    : { ...source, id: previewMiniPlayerSourceKey(source) };
 }
 
 function artifactContent(artifact: PreviewStaticImageSurfaceDescriptor): PreviewMiniPlayerContent {
@@ -89,14 +125,14 @@ function openContent(
 
 export const usePreviewMiniPlayerStore = create<PreviewMiniPlayerStoreState>()((set) => ({
   byThreadKey: {},
-  open: (ref, tabId, position) =>
+  open: (ref, source, position) =>
     set((state) => {
       const threadKey = scopedThreadKey(ref);
       const current = state.byThreadKey[threadKey];
       const nextPosition = position ?? current?.position ?? null;
+      const content = sourceContent(source);
       if (
-        current?.content.kind === "browser" &&
-        current.content.tabId === tabId &&
+        current?.content.id === content.id &&
         current.position?.x === nextPosition?.x &&
         current.position?.y === nextPosition?.y
       ) {
@@ -105,7 +141,7 @@ export const usePreviewMiniPlayerStore = create<PreviewMiniPlayerStoreState>()((
       return {
         byThreadKey: {
           ...state.byThreadKey,
-          [threadKey]: openContent(current, { kind: "browser", id: tabId, tabId }, position),
+          [threadKey]: openContent(current, content, position),
         },
       };
     }),
@@ -215,4 +251,13 @@ export function selectThreadPreviewMiniPlayer(
 ): PreviewMiniPlayerState | null {
   if (!ref) return null;
   return byThreadKey[scopedThreadKey(ref)] ?? null;
+}
+
+/** The floating browser tab, or null when nothing floats or a device does. */
+export function selectThreadPreviewMiniPlayerTabId(
+  byThreadKey: Record<string, PreviewMiniPlayerState>,
+  ref: ScopedThreadRef | null | undefined,
+): string | null {
+  const content = selectThreadPreviewMiniPlayer(byThreadKey, ref)?.content;
+  return content?.kind === "browser" ? content.tabId : null;
 }

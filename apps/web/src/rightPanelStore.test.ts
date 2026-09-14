@@ -22,11 +22,13 @@ import {
   useRightPanelStore,
 } from "./rightPanelStore";
 import {
+  scientComputeSurface,
   scientEnvironmentFileSurface,
   scientGeneratedPdfSurface,
   scientSourcePdfSurface,
   scientSourcesSurface,
 } from "./scient/rightPanel/surfaces";
+import type { ComputeContextId } from "./scient/compute/computeContextStore";
 
 const refA = scopeThreadRef("env-1" as EnvironmentId, ThreadId.make("thread-A"));
 const refB = scopeThreadRef("env-1" as EnvironmentId, ThreadId.make("thread-B"));
@@ -70,6 +72,26 @@ beforeEach(() => {
 });
 
 describe("rightPanelStore", () => {
+  it("preserves both parallel v16 surface families when migrating to the combined schema", () => {
+    const compute = scientComputeSurface({
+      cwd: "/project",
+      contextId: "owner-1" as ComputeContextId,
+    });
+    const device = {
+      id: "device:host:phone",
+      kind: "device",
+      target: { hostId: "host", deviceId: "phone", name: "Phone", platform: "ios" },
+    } as const;
+    for (const surfaces of [[compute], [device], [compute, device]]) {
+      const state = migratePersistedRightPanelState({
+        byThreadKey: {
+          "env-1:thread-A": { isOpen: true, activeSurfaceId: surfaces[0]!.id, surfaces },
+        },
+      });
+      expect(state.byThreadKey["env-1:thread-A"]?.surfaces).toEqual(surfaces);
+      expect(state.byThreadKey["env-1:thread-A"]?.activeSurfaceId).toBe(surfaces[0]!.id);
+    }
+  });
   it("migrates an active revision-keyed PDF tab to stable artifact identity", () => {
     const source = generatedPdf(1);
     const legacyId = "scient:generated-pdf:env-1:artifact-1:revision-1";
@@ -94,6 +116,87 @@ describe("rightPanelStore", () => {
       },
     });
   });
+
+  it("gives each host/device its own tab and preserves renamed tabs", () => {
+    const store = useRightPanelStore.getState();
+    const android = {
+      hostId: "nucbox",
+      deviceId: "emulator-5580",
+      name: "Pixel",
+      platform: "android",
+    } as const;
+    const ios = { hostId: "macmini", deviceId: "ios-1", name: "iPhone", platform: "ios" } as const;
+    store.open(refA, "device");
+    store.openDevice(refA, android);
+    store.open(refA, "device");
+    expect(
+      selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, refA).surfaces,
+    ).toHaveLength(2);
+    store.openDevice(refA, ios);
+    let state = selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, refA);
+    expect(state.surfaces.map((surface) => surface.id)).toEqual([
+      "device:nucbox:emulator-5580",
+      "device:macmini:ios-1",
+    ]);
+    store.renameDevice(refA, "device:nucbox:emulator-5580", "Android test");
+    store.openDevice(refA, android);
+    state = selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, refA);
+    expect(state.surfaces).toHaveLength(2);
+    expect(state.surfaces[0]).toMatchObject({ title: "Android test", target: android });
+    expect(state.activeSurfaceId).toBe("device:nucbox:emulator-5580");
+    store.closeSurface(refA, state.activeSurfaceId!);
+    expect(
+      selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, refA).surfaces,
+    ).toEqual([expect.objectContaining({ target: ios })]);
+  });
+
+  it("does not collide when two hosts expose the same device id", () => {
+    const store = useRightPanelStore.getState();
+    const device = { deviceId: "emulator-5554", name: "Pixel", platform: "android" } as const;
+    store.openDevice(refA, { ...device, hostId: "a:b" });
+    store.openDevice(refA, { ...device, hostId: "a" });
+    expect(
+      selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, refA).surfaces,
+    ).toHaveLength(2);
+    expect(
+      selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, refB).surfaces,
+    ).toHaveLength(0);
+  });
+
+  it.each(["one", "all", "others", "right"])(
+    "keeps device tabs dismissed across reload after closing %s",
+    (mode) => {
+      const store = useRightPanelStore.getState();
+      const target = {
+        hostId: "nucbox",
+        deviceId: "emulator-5580",
+        name: "Pixel",
+        platform: "android",
+      } as const;
+      store.open(refA, "files");
+      store.openDevice(refA, target);
+      if (mode === "one") store.closeSurface(refA, "device:nucbox:emulator-5580");
+      if (mode === "all") store.closeAllSurfaces(refA);
+      if (mode === "others") store.closeOtherSurfaces(refA, "files");
+      if (mode === "right") store.closeSurfacesToRight(refA, "files");
+      const persisted = JSON.parse(
+        JSON.stringify({ byThreadKey: useRightPanelStore.getState().byThreadKey }),
+      );
+      useRightPanelStore.setState(migratePersistedRightPanelState(persisted));
+      store.openDevice(refA, target, true);
+      expect(
+        selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, refA).surfaces.some(
+          (surface) => surface.kind === "device",
+        ),
+      ).toBe(false);
+      store.openDevice(refA, target);
+      expect(
+        selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, refA).surfaces.some(
+          (surface) => surface.kind === "device",
+        ),
+      ).toBe(true);
+    },
+  );
 
   const completedDiff = { id: "diff", kind: "diff" } as const;
   const linkedPullRequest = pullRequestSurface({

@@ -27,7 +27,8 @@ function notify() {
   mocks.revision++;
   for (const listener of mocks.listeners) listener();
 }
-vi.mock("@t3tools/client-runtime/state/runtime", () => ({
+vi.mock("@t3tools/client-runtime/state/runtime", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@t3tools/client-runtime/state/runtime")>()),
   squashAtomCommandFailure: (result: { cause: Error }) => result.cause,
 }));
 vi.mock("~/state/environments", () => ({

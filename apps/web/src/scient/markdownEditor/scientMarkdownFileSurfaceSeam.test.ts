@@ -147,8 +147,8 @@ describe("Scient Markdown file-preview seam", () => {
   it("keeps the inline filename and formatting rows on the same rhythm as the tab row", () => {
     expect(panelSource).toContain("const usesScientMarkdownEditor =");
     expect(panelSource).toContain("in-data-[preview-panel-mode=inline]:mb-2");
-    expect(panelSource).toMatch(
-      /usesScientMarkdownEditor\s*\?\s*"in-data-\[preview-panel-mode=inline\]:mb-2"\s*:\s*"in-data-\[preview-panel-mode=inline\]:mb-3"/u,
+    expect(panelSource).toContain(
+      'usesScientMarkdownEditor && "in-data-[preview-panel-mode=inline]:mb-2"',
     );
   });
 });

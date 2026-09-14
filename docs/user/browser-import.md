@@ -20,3 +20,11 @@ On Linux, Chromium-based browsers use your desktop keyring to protect their cook
 includes the keyring reader; no separate command-line tool is needed. Allow the desktop unlock
 prompt if one appears. If the keyring cannot be accessed, Scient reports that failure when no
 cookies can be imported. Partitioned cookies are skipped.
+On macOS, Safari imports need Full Disk Access. Choose **Allow**, drag Scient into the
+System Settings permission list, and turn access on. **Continue** becomes available when access
+is detected. macOS may require you to quit and reopen Scient before the grant applies; reopen
+the import wizard afterward. You can revoke Full Disk Access once the import is done.
+
+On Windows, import supports Firefox and Helium profiles that use standard profile encryption.
+Other Chromium-based browsers use app-bound encryption and cannot be imported. Partitioned cookies
+are skipped on all platforms.

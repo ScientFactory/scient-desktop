@@ -80,6 +80,7 @@ const makeHarness = Effect.fn("ProjectCommandsTest.makeHarness")(function* (meth
     reconcilePlatform: () => Effect.void,
     remove: () => Effect.void,
     removeRelayEnvironments: () => Effect.void,
+    setEnabled: () => Effect.die("Unexpected environment toggle"),
     retryNow: () => Effect.void,
     state: () => SubscriptionRef.get(state),
     stateChanges: () => SubscriptionRef.changes(state),

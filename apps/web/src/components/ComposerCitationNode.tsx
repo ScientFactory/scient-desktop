@@ -100,6 +100,7 @@ function ComposerCitationDecorator(props: { citation: ComposerCitation; nodeKey:
     );
     return accepted;
   };
+  /** Cancelling a comment on a just-created citation removes the chip the cite action added. */
   const onRemove = () => {
     if (!editor.isEditable()) return;
     editor.update(
@@ -114,7 +115,6 @@ function ComposerCitationDecorator(props: { citation: ComposerCitation; nodeKey:
     );
     editor.getRootElement()?.focus({ preventScroll: true });
   };
-
   return (
     <span
       className="inline-flex min-w-0 max-w-full"
@@ -124,6 +124,8 @@ function ComposerCitationDecorator(props: { citation: ComposerCitation; nodeKey:
     >
       <CitationChip
         citation={props.citation}
+        composer
+        onRemove={onRemove}
         commentEditor={{
           open: commentTarget !== null,
           sourceAnchor: commentTarget?.sourceAnchor,
@@ -139,7 +141,6 @@ function ComposerCitationDecorator(props: { citation: ComposerCitation; nodeKey:
             return true;
           },
         }}
-        onRemove={onRemove}
       />
     </span>
   );

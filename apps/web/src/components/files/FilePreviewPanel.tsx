@@ -6,13 +6,18 @@ import type {
   ResolvedKeybindingsConfig,
   ScopedThreadRef,
 } from "@t3tools/contracts";
+import { filePreviewDelimiter } from "@t3tools/shared/delimitedPreview";
 import {
   VirtualizedFile,
   type EditorSelection,
   type GetHoveredLineResult,
   type SelectedLineRange,
 } from "@pierre/diffs";
-import { isWorkspaceVideoPreviewPath } from "@t3tools/shared/filePreview";
+import {
+  isWorkspaceAudioPreviewPath,
+  isWorkspaceImagePreviewPath,
+  isWorkspaceVideoPreviewPath,
+} from "@t3tools/shared/filePreview";
 import { Editor } from "@pierre/diffs/editor";
 import { EditProvider, File, type FileOptions, Virtualizer } from "@pierre/diffs/react";
 import { DiffWorkerPoolProvider } from "../DiffWorkerPoolProvider";
@@ -21,7 +26,15 @@ import {
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
 import { mediaFileReference } from "@t3tools/client-runtime/media-reference";
-import { Code2, Eye, FolderTree, Globe2, MessageSquarePlus } from "lucide-react";
+import {
+  Code2,
+  Eye,
+  FolderTree,
+  Globe2,
+  MessageSquarePlus,
+  Table2,
+  WrapTextIcon,
+} from "lucide-react";
 import * as Schema from "effect/Schema";
 import {
   lazy,
@@ -40,23 +53,21 @@ import type { FileCitation } from "@t3tools/contracts";
 import type { MarkdownCiteHandler } from "~/scient/markdownEditor/markdownCitation";
 import { useAssetUrlRefresh, useAssetUrlState } from "~/assets/assetUrls";
 import { OpenInPicker } from "~/components/chat/OpenInPicker";
-import { PierreEntryIcon } from "~/components/chat/PierreEntryIcon";
 import { MediaVideoPlayer } from "~/components/media/MediaVideoPlayer";
 import { MediaActions, type MediaActionSource } from "~/components/media/MediaActions";
 import { useRemoteOpenState } from "~/remoteOpen";
-import { useClientSettings } from "~/hooks/useSettings";
+import { useClientSettings, useUpdateClientSettings } from "~/hooks/useSettings";
 import { useTheme } from "~/hooks/useTheme";
 import { getLocalStorageItem, setLocalStorageItem, useLocalStorage } from "~/hooks/useLocalStorage";
-import { DIFF_SURFACE_THEME_UNSAFE_CSS, resolveDiffThemeName } from "~/lib/diffRendering";
+import { useWorkspaceMutationRefresh } from "~/hooks/useWorkspaceMutationRefresh";
+import { resolveDiffThemeName } from "~/lib/diffRendering";
 import { PREFERRED_HIGHLIGHTER } from "~/lib/syntaxHighlighting";
 import { cn } from "~/lib/utils";
 import { isPreviewSupportedInRuntime } from "~/previewStateStore";
 import type { HtmlFilePresentationRequest, LatexFilePresentationRequest } from "~/rightPanelStore";
 import { isAbsolutePath, resolvePathLinkTarget } from "~/terminal-links";
 import { ScrollArea } from "~/components/ui/scroll-area";
-import { Toggle } from "~/components/ui/toggle";
 import { Button } from "~/components/ui/button";
-import { Tooltip, TooltipPopup, TooltipTrigger } from "~/components/ui/tooltip";
 import { stackedThreadToast, toastManager } from "~/components/ui/toast";
 import { type DraftId, useComposerDraftStore } from "~/composerDraftStore";
 import { buildFileReviewComment } from "~/reviewCommentContext";
@@ -96,6 +107,10 @@ import {
 } from "~/scient/fileSurfaces/useWorkspaceFileRefresh";
 import { usePendingSurfaceDeparture } from "~/scient/fileSurfaces/usePendingSurfaceDeparture";
 
+import { AttachmentFilePreview } from "./AttachmentFilePreview";
+import { AudioPreview } from "./AudioPreview";
+import { BrowserDocumentFrame, isPdfPreviewFile } from "./BrowserDocumentFrame";
+import { DelimitedTablePreview } from "./DelimitedTablePreview";
 import FileBrowserPanel from "./FileBrowserPanel";
 import { FileBreadcrumbs } from "./FileBreadcrumbs";
 import { FileMarkdownPreview } from "./FileMarkdownPreview";
@@ -109,6 +124,15 @@ import {
   remapFileCommentAnnotations,
 } from "./fileCommentAnnotations";
 import { installFileEditorDismissal } from "./fileEditorDismissal";
+import {
+  FILE_LINK_REVEAL_ATTRIBUTE,
+  FILE_LINK_REVEAL_UNSAFE_CSS,
+  FILE_SURFACE_SUBHEADER_CLASS,
+  FileSurfaceAction,
+  FileSurfaceFailure,
+  FileSurfaceLoading,
+} from "./fileSurfaceChrome";
+import SourceFilePreview from "./ReadOnlySourcePreview";
 import { resolveCenteredFileLineScrollTop } from "./fileLineReveal";
 import { DiffCommentAnnotation } from "../diffs/DiffCommentAnnotation";
 import { projectFileCacheKey, projectFileEditorCacheKey } from "./fileContentRevision";
@@ -117,7 +141,6 @@ import {
   isLatexPreviewFile,
   isMarkdownPreviewFile,
   resolveMarkdownTaskPreviewUpdate,
-  resolveFilePreviewKind,
   shouldLoadFileAsText,
   shouldShowFileExplorer,
 } from "./filePreviewMode";
@@ -163,50 +186,9 @@ interface FilePreviewPanelProps {
 const FILE_EXPLORER_STORAGE_KEY = "t3code.fileExplorerOpen";
 const RENDER_MARKDOWN_STORAGE_KEY = "t3code.renderMarkdown";
 const RENDER_BROWSER_FILE_STORAGE_KEY = "t3code.renderBrowserFile";
-const FILE_LINK_REVEAL_ATTRIBUTE = "data-file-link-reveal";
 const FILE_ACTIVE_RANGE_ATTRIBUTE = "data-scient-active-range";
-const FILE_LINK_REVEAL_UNSAFE_CSS = `
-  ${DIFF_SURFACE_THEME_UNSAFE_CSS}
-
-  diffs-container {
-    --diffs-bg: var(--code-background, var(--background)) !important;
-    --diffs-light-bg: var(--code-background, var(--background)) !important;
-    --diffs-dark-bg: var(--code-background, var(--background)) !important;
-    background-color: var(--code-background, var(--background)) !important;
-    color: var(--code-foreground, var(--foreground)) !important;
-  }
-
-  [${FILE_LINK_REVEAL_ATTRIBUTE}][data-line] {
-    background-color: light-dark(
-      color-mix(
-        in lab,
-        var(--diffs-computed-diff-line-bg) 82%,
-        var(--diffs-bg-selection-override, var(--diffs-selection-base))
-      ),
-      color-mix(
-        in lab,
-        var(--diffs-computed-diff-line-bg) 75%,
-        var(--diffs-bg-selection-override, var(--diffs-selection-base))
-      )
-    ) !important;
-  }
-
-  [${FILE_LINK_REVEAL_ATTRIBUTE}][data-column-number] {
-    background-color: light-dark(
-      color-mix(
-        in lab,
-        var(--diffs-computed-diff-line-bg) 75%,
-        var(--diffs-bg-selection-number-override, var(--diffs-selection-base))
-      ),
-      color-mix(
-        in lab,
-        var(--diffs-computed-diff-line-bg) 60%,
-        var(--diffs-bg-selection-number-override, var(--diffs-selection-base))
-      )
-    ) !important;
-    color: var(--diffs-selection-number-fg) !important;
-  }
-
+const SCIENT_FILE_UNSAFE_CSS = `
+  ${FILE_LINK_REVEAL_UNSAFE_CSS}
   :host([${FILE_ACTIVE_RANGE_ATTRIBUTE}]) [data-line][data-selected-line] {
     background-color: light-dark(
       color-mix(in srgb, var(--primary) 8%, transparent),
@@ -223,7 +205,7 @@ const FILE_LINK_REVEAL_UNSAFE_CSS = `
   }
 `;
 const FILE_EDITOR_ACTION_GUTTER_UNSAFE_CSS = `
-  ${FILE_LINK_REVEAL_UNSAFE_CSS}
+  ${SCIENT_FILE_UNSAFE_CSS}
 
   [data-gutter-utility-slot] {
     right: auto;
@@ -260,6 +242,7 @@ const ScientMarkdownFileSurface = lazy(() =>
     default: module.ScientMarkdownFileSurface,
   })),
 );
+const RENDER_TABLE_STORAGE_KEY = "t3code.renderTable";
 type FilePostRender = NonNullable<FileOptions<unknown>["onPostRender"]>;
 
 function StaticTextFileSurface(props: {
@@ -289,7 +272,7 @@ function StaticTextFileSurface(props: {
             theme: resolveDiffThemeName(props.resolvedTheme),
             preferredHighlighter: PREFERRED_HIGHLIGHTER,
             themeType: props.resolvedTheme,
-            unsafeCSS: FILE_LINK_REVEAL_UNSAFE_CSS,
+            unsafeCSS: SCIENT_FILE_UNSAFE_CSS,
             onPostRender: props.onPostRender,
           }}
           className="min-h-full"
@@ -369,70 +352,6 @@ function WorkspaceImagePreview(props: {
   );
 }
 
-const isPdfPreviewFile = (path: string): boolean => /\.pdf$/i.test(path.split(/[?#]/, 1)[0] ?? "");
-
-function BrowserDocumentFrame(props: {
-  readonly src: string;
-  readonly title: string;
-  readonly pdf: boolean;
-}) {
-  const className = "min-h-0 flex-1 border-0 bg-white";
-  // The built-in PDF viewer needs an unsandboxed frame; a PDF runs no scripts.
-  return props.pdf ? (
-    // oxlint-disable-next-line react/iframe-missing-sandbox
-    <iframe key={props.src} src={props.src} title={props.title} className={className} />
-  ) : (
-    <iframe
-      key={props.src}
-      src={props.src}
-      title={props.title}
-      className={className}
-      sandbox="allow-scripts allow-forms allow-popups allow-modals"
-    />
-  );
-}
-
-function AttachmentBrowserPreview(props: {
-  readonly environmentId: EnvironmentId;
-  readonly attachment: ChatFileAttachment;
-}) {
-  const resource = useMemo(
-    () => ({
-      _tag: "attachment" as const,
-      attachmentId: props.attachment.id,
-      fileName: props.attachment.name,
-      mimeType: props.attachment.mimeType,
-      disposition: "inline" as const,
-    }),
-    [props.attachment.id, props.attachment.mimeType, props.attachment.name],
-  );
-  const assetUrl = useAssetUrlState(props.environmentId, resource);
-
-  if (assetUrl._tag === "Failure") {
-    return (
-      <div className="flex min-h-0 flex-1 items-center justify-center px-6 text-center text-xs leading-relaxed text-destructive">
-        Unable to load attachment preview.
-      </div>
-    );
-  }
-  if (assetUrl._tag !== "Success") {
-    return (
-      <div className="flex min-h-0 flex-1 items-center justify-center text-muted-foreground">
-        <Spinner className="size-5" />
-      </div>
-    );
-  }
-  return (
-    <BrowserDocumentFrame
-      src={assetUrl.url}
-      title={props.attachment.name}
-      pdf={
-        isPdfPreviewFile(props.attachment.name) ||
-        props.attachment.mimeType.split(";", 1)[0]?.trim().toLowerCase() === "application/pdf"
-      }
-    />
-  );
-}
 /**
  * Renders an HTML or PDF file in place from its signed asset URL. HTML runs in
  * a sandboxed frame with an opaque origin, so a page cannot reach the app's
@@ -578,6 +497,51 @@ function WorkspaceVideoPreview(props: {
       />
     </div>
   );
+}
+
+function WorkspaceAudioPreview(props: {
+  readonly environmentId: EnvironmentId;
+  readonly threadRef: ScopedThreadRef;
+  readonly absolutePath: string;
+  readonly name: string;
+  readonly workspaceMutationId: string | null;
+}) {
+  const resource = useMemo(
+    () => ({
+      _tag: "media-file" as const,
+      threadId: props.threadRef.threadId,
+      path: props.absolutePath,
+    }),
+    [props.threadRef.threadId, props.absolutePath],
+  );
+  const assetUrl = useAssetUrlState(props.environmentId, resource);
+  const refreshAssetUrl = useAssetUrlRefresh(props.environmentId, resource);
+  const [failedUrl, setFailedUrl] = useState<string | null>(null);
+  useWorkspaceMutationRefresh({
+    mutationId: props.workspaceMutationId,
+    resourceKey: JSON.stringify([props.environmentId, resource]),
+    refresh: () => {
+      void refreshAssetUrl().catch(() => undefined);
+    },
+  });
+  const revisionSuffix =
+    props.workspaceMutationId === null
+      ? ""
+      : `${assetUrl._tag === "Success" && assetUrl.url.includes("?") ? "&" : "?"}workspace-revision=${encodeURIComponent(props.workspaceMutationId)}`;
+  const url = assetUrl._tag === "Success" ? `${assetUrl.url}${revisionSuffix}` : null;
+  if (assetUrl._tag === "Failure" || (url !== null && failedUrl === url)) {
+    return (
+      <FileSurfaceFailure
+        message="Unable to load audio."
+        onRetry={() => {
+          setFailedUrl(null);
+          void refreshAssetUrl().catch(() => undefined);
+        }}
+      />
+    );
+  }
+  if (url === null) return <FileSurfaceLoading />;
+  return <AudioPreview src={url} name={props.name} onError={() => setFailedUrl(url)} />;
 }
 
 function clampFileLine(contents: string, requestedLine: number): number {
@@ -1229,7 +1193,7 @@ function EditableFileEditor({
                 unsafeCSS:
                   gutterUtilityVisibility === "hover"
                     ? FILE_EDITOR_ACTION_GUTTER_UNSAFE_CSS
-                    : FILE_LINK_REVEAL_UNSAFE_CSS,
+                    : SCIENT_FILE_UNSAFE_CSS,
                 onPostRender: handlePostRender,
               }}
               selectedLines={displayedRange}
@@ -1358,8 +1322,9 @@ function RenderedMarkdownSurface({
   );
 }
 
-function renderedToggleLabel(isMarkdown: boolean, rendered: boolean): string {
-  if (isMarkdown) return rendered ? "Show markdown source" : "Show rendered markdown";
+function renderedToggleLabel(mode: "markdown" | "html" | "table", rendered: boolean): string {
+  if (mode === "markdown") return rendered ? "Show markdown source" : "Show rendered markdown";
+  if (mode === "table") return rendered ? "Show source" : "Show table";
   return rendered ? "Show HTML source" : "Show rendered page";
 }
 
@@ -1400,6 +1365,7 @@ export default function FilePreviewPanel({
 }: FilePreviewPanelProps) {
   const { resolvedTheme } = useTheme();
   const wordWrap = useClientSettings((settings) => settings.wordWrap);
+  const updateClientSettings = useUpdateClientSettings();
   const primaryEnvironmentId = usePrimaryEnvironmentId();
   const remoteOpenState = useRemoteOpenState(environmentId);
   const environmentHttpBaseUrl = useEnvironmentHttpBaseUrl(environmentId);
@@ -1409,11 +1375,12 @@ export default function FilePreviewPanel({
   const openPreview = useAtomCommand(previewEnvironment.open, {
     reportFailure: false,
   });
-  const previewKind = resolveFilePreviewKind(relativePath);
   const isVideo = relativePath !== null && isWorkspaceVideoPreviewPath(relativePath);
-  const isImage = previewKind === "image" && !isVideo;
-  const isMedia = isImage || isVideo;
-  const isPdf = previewKind === "pdf";
+  const isAudio = relativePath !== null && !isVideo && isWorkspaceAudioPreviewPath(relativePath);
+  const isImage = relativePath !== null && !isVideo && isWorkspaceImagePreviewPath(relativePath);
+  const isMedia = isImage || isVideo || isAudio;
+  // PDFs have no text to show; HTML has, and can toggle between page and source.
+  const isPdf = relativePath !== null && isPdfPreviewFile(relativePath);
   const isHtml = relativePath !== null && !isPdf && isBrowserPreviewFile(relativePath);
   // Attachments and absolute host paths are preview-only and never enter the
   // workspace editor or explorer.
@@ -1453,7 +1420,14 @@ export default function FilePreviewPanel({
     true,
     Schema.Boolean,
   );
-  // A reveal still wins over the preference: the line only exists in the source.
+  const [renderTablePreferred, setRenderTablePreferred] = useLocalStorage(
+    RENDER_TABLE_STORAGE_KEY,
+    true,
+    Schema.Boolean,
+  );
+  // Paired with the path on purpose: each file surface counts its reveals from
+  // one, so a bare id would let a dismissed reveal on one file swallow the first
+  // reveal on the next.
   const [handledReveal, setHandledReveal] = useState<{ path: string; requestId: number } | null>(
     null,
   );
@@ -1495,9 +1469,19 @@ export default function FilePreviewPanel({
     isHtml &&
     resolveHtmlRenderedState(renderBrowserFilePreferred, requestedHtmlMode) &&
     revealHandled;
-  const canToggleRendered = isMarkdownDocument || isHtml;
   const rendered = isMarkdownDocument ? renderMarkdown : isHtml ? renderBrowserFile : false;
-  const canToggleRenderedForSurface = attachment === undefined && canToggleRendered;
+  const tableDelimiter =
+    relativePath && attachment === undefined ? filePreviewDelimiter({ name: relativePath }) : null;
+  const renderTable = tableDelimiter !== null && renderTablePreferred && revealHandled;
+  const renderedMode = isMarkdownDocument
+    ? ("markdown" as const)
+    : tableDelimiter
+      ? ("table" as const)
+      : isHtml
+        ? ("html" as const)
+        : null;
+  const canToggleRenderedForSurface = attachment === undefined && renderedMode !== null;
+  const surfaceRendered = tableDelimiter ? renderTable : rendered;
   const {
     automaticRefreshUnavailable,
     cancelReloadNotice,
@@ -1556,6 +1540,16 @@ export default function FilePreviewPanel({
           },
         }
       : queriedFile;
+  // Rendered documents and media own their layout. Word wrap only applies to
+  // the raw text surfaces that feed the Pierre file renderer/editor.
+  const showsRawText =
+    relativePath !== null &&
+    file.data !== null &&
+    !(isMarkdownDocument && renderMarkdown) &&
+    !(tableDelimiter && renderTable) &&
+    !renderBrowserFile &&
+    !isMedia &&
+    !isPdf;
   const awaitingMarkdownLease =
     isRichMarkdown &&
     !isHostFile &&
@@ -1598,6 +1592,15 @@ export default function FilePreviewPanel({
         handleRenderMarkdownChange(pressed);
         return;
       }
+      if (tableDelimiter !== null) {
+        setRenderTablePreferred(pressed);
+        setHandledReveal(
+          pressed && relativePath !== null
+            ? { path: relativePath, requestId: revealRequestId }
+            : null,
+        );
+        return;
+      }
       if (!isHtml) return;
       if (relativePath !== null && htmlPresentationRequest !== null) {
         onHtmlPresentationRequestHandled(relativePath, htmlPresentationRequest);
@@ -1618,6 +1621,8 @@ export default function FilePreviewPanel({
       relativePath,
       revealRequestId,
       setRenderBrowserFilePreferred,
+      setRenderTablePreferred,
+      tableDelimiter,
     ],
   );
   const canOpenInBrowser =
@@ -1711,35 +1716,23 @@ export default function FilePreviewPanel({
 
   return (
     <div className="flex min-h-0 flex-1 flex-col overflow-hidden bg-background">
-      {relativePath ? (
+      {relativePath && attachment === undefined ? (
         <div
           className={cn(
-            "flex h-10 min-h-10 shrink-0 items-center gap-2 border-b border-border/60 bg-background px-3 in-data-[preview-panel-mode=inline]:h-7 in-data-[preview-panel-mode=inline]:min-h-7 in-data-[preview-panel-mode=inline]:border-b-transparent",
-            usesScientMarkdownEditor
-              ? "in-data-[preview-panel-mode=inline]:mb-2"
-              : "in-data-[preview-panel-mode=inline]:mb-3",
+            FILE_SURFACE_SUBHEADER_CLASS,
+            usesScientMarkdownEditor && "in-data-[preview-panel-mode=inline]:mb-2",
           )}
           data-surface-subheader
         >
-          {attachment ? (
-            <div className="flex min-w-0 flex-1 items-center gap-1.5 text-xs">
-              <PierreEntryIcon
-                pathValue={attachment.name}
-                kind="file"
-                theme={resolvedTheme}
-                className="size-3.5"
-              />
-              <span className="truncate font-medium">{attachment.name}</span>
-            </div>
-          ) : (
-            <ScrollArea
-              ref={breadcrumbRef}
-              hideScrollbars
-              scrollFade
-              className="min-w-0 flex-1 rounded-none"
-              data-file-breadcrumbs
-            >
-              {isHostFile ? (
+          <ScrollArea
+            ref={breadcrumbRef}
+            hideScrollbars
+            scrollFade
+            className="min-w-0 flex-1 rounded-none"
+            data-file-breadcrumbs
+          >
+            {isHostFile ? (
+              <div className="flex h-full w-max min-w-full items-center text-xs">
                 <FileBreadcrumbs
                   cwd={cwd}
                   environmentId={environmentId}
@@ -1748,57 +1741,57 @@ export default function FilePreviewPanel({
                   relativePath={relativePath}
                   workspaceMutationId={workspaceMutationId}
                 />
-              ) : (
-                <FileBreadcrumbNavigator
-                  environmentId={environmentId}
-                  cwd={cwd}
-                  projectName={projectName}
-                  relativePath={relativePath}
-                  onOpenFile={onOpenFile}
-                  currentFileControl={
-                    isRichMarkdown && !file.data?.readOnly ? (
-                      <ScientMarkdownRenameButton
-                        {...(markdownLease
-                          ? { beforeRename: () => markdownLease.holdForRename() }
-                          : {})}
-                        environmentId={environmentId}
-                        cwd={cwd}
-                        relativePath={relativePath}
-                        revision={
-                          markdownSnapshot?.baselineRevision ?? file.data?.revision ?? "unavailable"
-                        }
-                        disabled={
-                          effectiveSourcePending ||
-                          file.data === null ||
-                          (file.data?.truncated ?? false)
-                        }
-                        label={relativePath.slice(relativePath.lastIndexOf("/") + 1)}
-                        onRenamed={(destinationRelativePath, revision) => {
-                          markdownPersistenceRegistry.forgetClean({
+              </div>
+            ) : (
+              <FileBreadcrumbNavigator
+                environmentId={environmentId}
+                cwd={cwd}
+                projectName={projectName}
+                relativePath={relativePath}
+                onOpenFile={onOpenFile}
+                currentFileControl={
+                  isRichMarkdown && !file.data?.readOnly ? (
+                    <ScientMarkdownRenameButton
+                      {...(markdownLease
+                        ? { beforeRename: () => markdownLease.holdForRename() }
+                        : {})}
+                      environmentId={environmentId}
+                      cwd={cwd}
+                      relativePath={relativePath}
+                      revision={
+                        markdownSnapshot?.baselineRevision ?? file.data?.revision ?? "unavailable"
+                      }
+                      disabled={
+                        effectiveSourcePending ||
+                        file.data === null ||
+                        (file.data?.truncated ?? false)
+                      }
+                      label={relativePath.slice(relativePath.lastIndexOf("/") + 1)}
+                      onRenamed={(destinationRelativePath, revision) => {
+                        markdownPersistenceRegistry.forgetClean({
+                          environmentId,
+                          cwd,
+                          relativePath,
+                        });
+                        if (file.data) {
+                          setProjectFileQueryData(
                             environmentId,
                             cwd,
-                            relativePath,
-                          });
-                          if (file.data) {
-                            setProjectFileQueryData(
-                              environmentId,
-                              cwd,
-                              destinationRelativePath,
-                              file.data.contents,
-                              revision,
-                            );
-                          }
-                          clearProjectFileQueryData(environmentId, cwd, relativePath);
-                          refreshProjectEntriesQuery(environmentId, cwd);
-                          onOpenFile(destinationRelativePath);
-                        }}
-                      />
-                    ) : undefined
-                  }
-                />
-              )}
-            </ScrollArea>
-          )}
+                            destinationRelativePath,
+                            file.data.contents,
+                            revision,
+                          );
+                        }
+                        clearProjectFileQueryData(environmentId, cwd, relativePath);
+                        refreshProjectEntriesQuery(environmentId, cwd);
+                        onOpenFile(destinationRelativePath);
+                      }}
+                    />
+                  ) : undefined
+                }
+              />
+            )}
+          </ScrollArea>
           {absolutePath &&
           (environmentId === primaryEnvironmentId || remoteOpenState.mode !== "local-exec") ? (
             <OpenInPicker
@@ -1811,42 +1804,33 @@ export default function FilePreviewPanel({
             />
           ) : null}
           {canToggleRenderedForSurface ? (
-            <Tooltip>
-              <TooltipTrigger
-                render={
-                  <Toggle
-                    className="shrink-0"
-                    pressed={rendered}
-                    onPressedChange={handleRenderedChange}
-                    aria-label={renderedToggleLabel(isMarkdownDocument, rendered)}
-                    variant="ghost"
-                    size="sm"
-                  >
-                    {rendered ? <Code2 className="size-3.5" /> : <Eye className="size-3.5" />}
-                  </Toggle>
-                }
-              />
-              <TooltipPopup>{renderedToggleLabel(isMarkdownDocument, rendered)}</TooltipPopup>
-            </Tooltip>
+            <FileSurfaceAction
+              label={renderedToggleLabel(renderedMode!, surfaceRendered)}
+              pressed={surfaceRendered}
+              onPress={() => handleRenderedChange(!surfaceRendered)}
+            >
+              {surfaceRendered ? (
+                <Code2 className="size-3.5" />
+              ) : renderedMode === "table" ? (
+                <Table2 className="size-3.5" />
+              ) : (
+                <Eye className="size-3.5" />
+              )}
+            </FileSurfaceAction>
+          ) : null}
+          {showsRawText ? (
+            <FileSurfaceAction
+              label={wordWrap ? "Disable word wrap" : "Enable word wrap"}
+              pressed={wordWrap}
+              onPress={() => updateClientSettings({ wordWrap: !wordWrap })}
+            >
+              <WrapTextIcon className="size-3.5" />
+            </FileSurfaceAction>
           ) : null}
           {canOpenInBrowser ? (
-            <Tooltip>
-              <TooltipTrigger
-                render={
-                  <Toggle
-                    className="shrink-0"
-                    pressed={false}
-                    onPressedChange={handleOpenInBrowser}
-                    aria-label="Open file in preview browser"
-                    variant="ghost"
-                    size="sm"
-                  >
-                    <Globe2 className="size-3.5" />
-                  </Toggle>
-                }
-              />
-              <TooltipPopup>Open file in preview browser</TooltipPopup>
-            </Tooltip>
+            <FileSurfaceAction label="Open file in preview browser" onPress={handleOpenInBrowser}>
+              <Globe2 className="size-3.5" />
+            </FileSurfaceAction>
           ) : null}
           {attachment === undefined ? (
             <ScientFileReloadButton
@@ -1862,25 +1846,13 @@ export default function FilePreviewPanel({
             />
           ) : null}
           {!isHostFile ? (
-            <Tooltip>
-              <TooltipTrigger
-                render={
-                  <Toggle
-                    className="shrink-0"
-                    pressed={effectiveExplorerOpen}
-                    onPressedChange={toggleExplorer}
-                    aria-label={effectiveExplorerOpen ? "Hide file explorer" : "Show file explorer"}
-                    variant="ghost"
-                    size="sm"
-                  >
-                    <FolderTree className="size-3.5" />
-                  </Toggle>
-                }
-              />
-              <TooltipPopup>
-                {effectiveExplorerOpen ? "Hide file explorer" : "Show file explorer"}
-              </TooltipPopup>
-            </Tooltip>
+            <FileSurfaceAction
+              label={effectiveExplorerOpen ? "Hide file explorer" : "Show file explorer"}
+              pressed={effectiveExplorerOpen}
+              onPress={toggleExplorer}
+            >
+              <FolderTree className="size-3.5" />
+            </FileSurfaceAction>
           ) : null}
         </div>
       ) : null}
@@ -1906,7 +1878,12 @@ export default function FilePreviewPanel({
           This file is read-only in Files.
         </div>
       ) : null}
-      {relativePath && !markdownLease && !isMedia && !renderBrowserFile && file.data?.truncated ? (
+      {relativePath &&
+      attachment === undefined &&
+      !markdownLease &&
+      !isMedia &&
+      !renderBrowserFile &&
+      file.data?.truncated ? (
         <div className="shrink-0 border-b border-warning/20 bg-warning-surface px-3 py-1.5 text-[11px] text-warning-foreground">
           Read-only preview limited to the first 1 MB of a {file.data.byteLength.toLocaleString()}{" "}
           byte file.
@@ -1920,7 +1897,13 @@ export default function FilePreviewPanel({
           )}
         >
           {relativePath && attachment ? (
-            <AttachmentBrowserPreview environmentId={environmentId} attachment={attachment} />
+            <AttachmentFilePreview
+              key={`${environmentId}:${attachment.id}`}
+              name={attachment.name}
+              mimeType={attachment.mimeType}
+              sizeBytes={attachment.sizeBytes}
+              asset={{ environmentId, attachmentId: attachment.id }}
+            />
           ) : relativePath && isVideo && absolutePath ? (
             <WorkspaceVideoPreview
               key={`${environmentId}:${threadRef.threadId}:${absolutePath}`}
@@ -1931,6 +1914,15 @@ export default function FilePreviewPanel({
               relativePath={relativePath}
               name={relativePath}
               refreshKey={viewerRefreshKey}
+            />
+          ) : relativePath && isAudio && absolutePath ? (
+            <WorkspaceAudioPreview
+              key={`${environmentId}:${threadRef.threadId}:${absolutePath}`}
+              environmentId={environmentId}
+              threadRef={threadRef}
+              absolutePath={absolutePath}
+              name={relativePath}
+              workspaceMutationId={workspaceMutationId}
             />
           ) : relativePath && isImage && absolutePath ? (
             <WorkspaceImagePreview
@@ -2013,7 +2005,14 @@ export default function FilePreviewPanel({
             </div>
           ) : relativePath && file.data ? (
             file.data.readOnly && !markdownLease ? (
-              isMarkdownDocument && renderMarkdown ? (
+              tableDelimiter && renderTable ? (
+                <DelimitedTablePreview
+                  key={relativePath}
+                  name={relativePath}
+                  text={file.data.contents}
+                  delimiter={tableDelimiter}
+                />
+              ) : isMarkdownDocument && renderMarkdown ? (
                 <RenderedMarkdownSurface
                   key={relativePath}
                   environmentId={environmentId}
@@ -2166,6 +2165,13 @@ export default function FilePreviewPanel({
                 onSaveResolutionApplied={handleSaveResolutionApplied}
                 saveResolution={saveResolution}
               />
+            ) : tableDelimiter && renderTable ? (
+              <DelimitedTablePreview
+                key={relativePath}
+                name={relativePath}
+                text={file.data.contents}
+                delimiter={tableDelimiter}
+              />
             ) : file.data.truncated ? (
               <StaticTextFileSurface
                 key={`${relativePath}:${resolvedTheme}:${file.data.revision}`}
@@ -2174,6 +2180,13 @@ export default function FilePreviewPanel({
                 contents={file.data.contents}
                 resolvedTheme={resolvedTheme}
                 wordWrap={wordWrap}
+                onPostRender={onFilePostRender}
+              />
+            ) : isHostFile ? (
+              <SourceFilePreview
+                name={relativePath}
+                text={file.data.contents}
+                cacheKey={projectFileCacheKey(cwd, relativePath, file.data.contents)}
                 onPostRender={onFilePostRender}
               />
             ) : (

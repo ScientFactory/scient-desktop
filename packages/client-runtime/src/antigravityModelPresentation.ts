@@ -50,8 +50,8 @@ export function getAntigravityModelGroups(
     const order = ["low", "medium", "high"];
     result.push({
       name: first.name,
-      models: entries
-        .toSorted((a, b) => order.indexOf(a.level) - order.indexOf(b.level))
+      models: [...entries]
+        .sort((a, b) => order.indexOf(a.level) - order.indexOf(b.level))
         .map(({ model, level }) => ({
           slug: model.slug,
           label: level[0]!.toUpperCase() + level.slice(1),

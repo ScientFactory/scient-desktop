@@ -28,11 +28,15 @@ for (const previousId of [49, 50, 52] as const) {
           assert.deepStrictEqual(
             executed,
             previousId === 52
-              ? [[53, "ProjectionThreadPullRequests"]]
+              ? [
+                  [53, "ProjectionThreadPullRequests"],
+                  [54, "ProjectionThreadMessageContext"],
+                ]
               : [
                   [51, "ProjectionThreadBranchPullRequest"],
                   [52, "ProjectionThreadsActiveOrderKey"],
                   [53, "ProjectionThreadPullRequests"],
+                  [54, "ProjectionThreadMessageContext"],
                 ],
           );
           assert.deepStrictEqual(
@@ -67,6 +71,7 @@ it.layer(Layer.fresh(NodeSqliteClient.layerMemory()))("fresh migration compatibi
         { migration_id: 51, name: "ProjectionThreadBranchPullRequest" },
         { migration_id: 52, name: "ProjectionThreadsActiveOrderKey" },
         { migration_id: 53, name: "ProjectionThreadPullRequests" },
+        { migration_id: 54, name: "ProjectionThreadMessageContext" },
       ]);
       assert.deepStrictEqual(yield* sql`SELECT * FROM projection_thread_pull_requests`, []);
       assert.isEmpty(yield* runMigrations());

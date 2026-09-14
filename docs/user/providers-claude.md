@@ -236,7 +236,14 @@ Anthropic credentials instead of the OpenRouter token.
 
 ### Pick OpenRouter Models
 
-OpenRouter can route Claude Code's default model roles to OpenRouter model IDs.
+Select the model you want in Scient. For an OpenRouter model outside the built-in
+list, open that Claude provider in **Settings > Providers**, add its full model ID
+with **Add custom model**, and select it in the chat model picker. Custom models may
+have fewer effort, thinking, or context controls than built-in models.
+
+`ANTHROPIC_DEFAULT_*_MODEL` variables map Claude Code aliases such as `sonnet`; they
+do not replace an explicit model ID selected in Scient. They remain useful when you
+want stable defaults for Claude Code's internal model roles.
 
 Example:
 

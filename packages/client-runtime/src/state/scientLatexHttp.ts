@@ -39,8 +39,9 @@ export const getEnvironmentLatexBuild = Effect.fn("clientRuntime.state.getEnviro
       method: "POST",
       url: (httpBaseUrl) => environmentEndpointUrl(httpBaseUrl, "/api/scient/latex/build"),
       timeoutMs: REQUEST_TIMEOUT_MS,
+      group: "scientLatex",
       request: ({ client, headers }) =>
-        client.scientLatex.build({
+        client.build({
           headers,
           payload: {
             workspaceRoot: input.workspaceRoot,
@@ -66,8 +67,9 @@ export const getEnvironmentLatexStatus = Effect.fn("clientRuntime.state.getEnvir
       method: "POST",
       url: (httpBaseUrl) => environmentEndpointUrl(httpBaseUrl, "/api/scient/latex/status"),
       timeoutMs: REQUEST_TIMEOUT_MS,
+      group: "scientLatex",
       request: ({ client, headers }) =>
-        client.scientLatex.status({
+        client.status({
           headers,
           payload: {
             workspaceRoot: input.workspaceRoot,
@@ -93,8 +95,9 @@ export const getEnvironmentLatexCancel = Effect.fn("clientRuntime.state.getEnvir
       method: "POST",
       url: (httpBaseUrl) => environmentEndpointUrl(httpBaseUrl, "/api/scient/latex/cancel"),
       timeoutMs: REQUEST_TIMEOUT_MS,
+      group: "scientLatex",
       request: ({ client, headers }) =>
-        client.scientLatex.cancel({
+        client.cancel({
           headers,
           payload: {
             workspaceRoot: input.workspaceRoot,
@@ -120,8 +123,9 @@ export const getEnvironmentLatexForwardSync = Effect.fn(
     method: "POST",
     url: (httpBaseUrl) => environmentEndpointUrl(httpBaseUrl, "/api/scient/latex/synctex/forward"),
     timeoutMs: REQUEST_TIMEOUT_MS,
+    group: "scientLatex",
     request: ({ client, headers }) =>
-      client.scientLatex.forwardSync({
+      client.forwardSync({
         headers,
         payload: input.request,
       }),
@@ -143,8 +147,9 @@ export const getEnvironmentLatexInverseSync = Effect.fn(
     method: "POST",
     url: (httpBaseUrl) => environmentEndpointUrl(httpBaseUrl, "/api/scient/latex/synctex/inverse"),
     timeoutMs: REQUEST_TIMEOUT_MS,
+    group: "scientLatex",
     request: ({ client, headers }) =>
-      client.scientLatex.inverseSync({
+      client.inverseSync({
         headers,
         payload: input.request,
       }),
@@ -164,10 +169,11 @@ export const getEnvironmentLatexInstallToolchain = Effect.fn(
     url: (httpBaseUrl) =>
       environmentEndpointUrl(httpBaseUrl, "/api/scient/latex/toolchain/install"),
     timeoutMs: REQUEST_TIMEOUT_MS,
+    group: "scientLatex",
     request: ({ client, headers }) =>
       // The server only starts the install and answers with the state it left
       // behind, so this request is as short as the rest of the group.
-      client.scientLatex.installToolchain({ headers }),
+      client.installToolchain({ headers }),
   });
 });
 
@@ -186,8 +192,9 @@ export const getEnvironmentLatexToolchain = Effect.fn(
     method: "POST",
     url: (httpBaseUrl) => environmentEndpointUrl(httpBaseUrl, "/api/scient/latex/toolchain"),
     timeoutMs: TOOLCHAIN_TIMEOUT_MS,
+    group: "scientLatex",
     request: ({ client, headers }) =>
-      client.scientLatex.toolchain({
+      client.toolchain({
         headers,
         payload: { refresh: input.refresh },
       }),

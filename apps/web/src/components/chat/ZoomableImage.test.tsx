@@ -44,10 +44,15 @@ async function mountImage() {
   return { viewport, image, ref, onError, zoom, key };
 }
 
-it("leaves gallery arrows available at fit and consumes them only when zoomed", async () => {
+it("leaves gallery arrows available at fit and consumes them only when zoomed with overflow", async () => {
   const { viewport, ref, zoom, key } = await mountImage();
   expect(ref.current!.pan("ArrowRight")).toBe(false);
   expect(zoom()).toBe("100% zoom");
+
+  Object.defineProperties(viewport, {
+    offsetWidth: { configurable: true, value: 100 },
+    scrollWidth: { configurable: true, value: 200 },
+  });
 
   expect((await key("Enter")).defaultPrevented).toBe(true);
   expect(zoom()).toBe("200% zoom");

@@ -154,7 +154,7 @@ layer("053_ProjectionThreadPullRequests", (it) => {
         PRAGMA index_list(projection_thread_pull_requests)
       `;
       assert.ok(indexes.some((index) => index.name === "idx_projection_thread_pull_requests_pr"));
-      assert.isEmpty(yield* runMigrations());
+      assert.isEmpty(yield* runMigrations({ toMigrationInclusive: 53 }));
     }),
   );
 });

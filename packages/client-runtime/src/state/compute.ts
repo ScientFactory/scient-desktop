@@ -112,7 +112,7 @@ function setBoundedSession(
   next.set(session.sessionId, session);
   const terminal = [...next.values()]
     .filter((candidate) => TERMINAL_COMPUTE_SESSION_STATUSES.has(candidate.status))
-    .toSorted((left, right) => right.createdAt.localeCompare(left.createdAt));
+    .sort((left, right) => right.createdAt.localeCompare(left.createdAt));
   for (const expired of terminal.slice(MAXIMUM_TERMINAL_SESSIONS)) {
     next.delete(expired.sessionId);
   }
@@ -167,7 +167,7 @@ function setBoundedExecution(
           candidate.result !== null &&
           TERMINAL_COMPUTE_EXECUTION_STATUSES.has(candidate.result.status),
       )
-      .toSorted((left, right) => left.request.submittedAt.localeCompare(right.request.submittedAt));
+      .sort((left, right) => left.request.submittedAt.localeCompare(right.request.submittedAt));
     for (const expired of terminal) {
       if (sessionExecutions.size <= MAXIMUM_EXECUTIONS_PER_SESSION) break;
       sessionExecutions.delete(expired.request.executionId);

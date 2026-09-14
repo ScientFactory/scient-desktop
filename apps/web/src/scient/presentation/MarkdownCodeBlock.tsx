@@ -1,6 +1,9 @@
-import { Suspense, use, useEffect, useMemo, type ReactNode } from "react";
+import { Suspense, use, useEffect, useMemo, useState, type ReactNode } from "react";
+import { toHtml } from "hast-util-to-html";
 import { RenderErrorBoundary } from "~/components/RenderErrorBoundary";
+import { HighlightedCodeLines } from "~/components/chat/HighlightedCodeLines";
 import { fnv1a32, resolveDiffThemeName, type DiffThemeName } from "~/lib/diffRendering";
+import { createIncrementalHighlightedDocument } from "~/lib/incrementalHighlighting";
 import { LRUCache } from "~/lib/lruCache";
 import { getSyntaxHighlighterPromise } from "~/lib/syntaxHighlighting";
 import { cn } from "~/lib/utils";
@@ -86,8 +89,12 @@ interface HighlightedCodeProps {
 }
 
 function HighlightedCode({ code, language, themeName, isStreaming }: HighlightedCodeProps) {
+  const [hasStreamed, setHasStreamed] = useState(isStreaming);
+  if (isStreaming && !hasStreamed) setHasStreamed(true);
   const cacheKey = `${fnv1a32(code).toString(36)}:${code.length}:${language}:${themeName}`;
-  const cached = !isStreaming ? highlightedCodeCache.get(cacheKey) : null;
+  // Once lines are mounted individually, retain that renderer after streaming
+  // finishes so replacing the whole pre cannot clear an active selection.
+  const cached = !isStreaming && !hasStreamed ? highlightedCodeCache.get(cacheKey) : null;
   if (cached != null) {
     return <div className="chat-markdown-shiki" dangerouslySetInnerHTML={{ __html: cached }} />;
   }
@@ -98,6 +105,7 @@ function HighlightedCode({ code, language, themeName, isStreaming }: Highlighted
       themeName={themeName}
       isStreaming={isStreaming}
       cacheKey={cacheKey}
+      preserveLines={isStreaming || hasStreamed}
     />
   );
 }
@@ -108,31 +116,47 @@ function UncachedHighlightedCode({
   themeName,
   cacheKey,
   isStreaming,
-}: HighlightedCodeProps & { cacheKey: string }) {
+  preserveLines,
+}: HighlightedCodeProps & { cacheKey: string; preserveLines: boolean }) {
   const highlighter = use(getSyntaxHighlighterPromise(language));
-  const highlightedHtml = useMemo(() => {
+  const incrementalHighlight = useMemo(
+    () =>
+      preserveLines ? createIncrementalHighlightedDocument(highlighter, language, themeName) : null,
+    [highlighter, language, preserveLines, themeName],
+  );
+  const highlighted = useMemo(() => {
     try {
-      return highlighter.codeToHtml(code, { lang: language, theme: themeName });
+      if (incrementalHighlight) return incrementalHighlight(code);
+      return preserveLines
+        ? highlighter.codeToHast(code, { lang: language, theme: themeName })
+        : highlighter.codeToHtml(code, { lang: language, theme: themeName });
     } catch (error) {
       console.warn(
         `Code highlighting failed for language "${language}", falling back to plain text.`,
         error instanceof Error ? error.message : error,
       );
-      return highlighter.codeToHtml(code, { lang: "text", theme: themeName });
+      return preserveLines
+        ? highlighter.codeToHast(code, { lang: "text", theme: themeName })
+        : highlighter.codeToHtml(code, { lang: "text", theme: themeName });
     }
-  }, [code, highlighter, language, themeName]);
+  }, [code, highlighter, incrementalHighlight, language, preserveLines, themeName]);
 
   useEffect(() => {
     if (!isStreaming) {
+      const highlightedHtml = typeof highlighted === "string" ? highlighted : toHtml(highlighted);
       highlightedCodeCache.set(
         cacheKey,
         highlightedHtml,
         Math.max(highlightedHtml.length * 2, code.length * 3),
       );
     }
-  }, [cacheKey, code, highlightedHtml, isStreaming]);
+  }, [cacheKey, code, highlighted, isStreaming]);
 
-  return (
-    <div className="chat-markdown-shiki" dangerouslySetInnerHTML={{ __html: highlightedHtml }} />
+  return typeof highlighted === "string" ? (
+    <div className="chat-markdown-shiki" dangerouslySetInnerHTML={{ __html: highlighted }} />
+  ) : (
+    <div className="chat-markdown-shiki">
+      <HighlightedCodeLines root={highlighted} />
+    </div>
   );
 }

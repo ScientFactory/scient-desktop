@@ -84,11 +84,10 @@ function Fixture({ initial = "My question. " }: { initial?: string }) {
       <ComposerPromptEditor
         value={draft}
         cursor={collapseExpandedComposerCursor(draft, draft.length)}
-        terminalContexts={[]}
+        contextRecords={new Map()}
         skills={[]}
         disabled={false}
         placeholder="Write a prompt"
-        onRemoveTerminalContext={() => {}}
         onChange={setDraft}
         onPaste={() => {}}
         editorRef={editor}

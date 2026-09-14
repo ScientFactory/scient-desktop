@@ -44,6 +44,7 @@ require a cosmetic folder migration.
 - [Appearance and themes](./user/appearance.md)
 - [SnapShots](./user/snap-shot.md)
 - [Import browser sessions](./user/browser-import.md)
+- [Devices](./user/devices.md)
 - [Usage and limits](./user/usage.md)
 - [Product usage data](./user/telemetry.md)
 - [Review usage](./user/usage.md)
@@ -142,6 +143,12 @@ Follow their linked successors for current behavior.
 - [Provider lifecycle unification delivery proposal](./internals/provider-lifecycle-unification-proposal.md)
 - [Conversation-fork modernization PR drafts](./internals/scient-fork-pr-descriptions.md)
 - [v0.6.0 migration rehearsal](./operations/v060-migration-rehearsal.md)
+- [Assistant citations](./internals/assistant-citations.md)
+- [Mobile navigation](./internals/mobile-navigation.md)
+- [Mobile development lifecycle](./internals/mobile-development.md)
+- [Terminal runtime](./internals/terminal-runtime.md)
+- [Devices](./internals/devices.md)
+- [Voice input](./internals/voice-input.md)
 
 ### Runbooks
 

@@ -28,7 +28,8 @@ describe("Scient Markdown image asset seam", () => {
     expect(contractSource.match(/\/api\/scient\/markdown\/images\/upload/gu)).toHaveLength(1);
     expect(serverSource).toContain("requireEnvironmentScope(AuthOrchestrationOperateScope)");
     expect(clientSource).toContain("const payload = new FormData()");
-    expect(clientSource).toContain("client.scientMarkdown.imageUpload({ headers, payload })");
+    expect(clientSource).toContain('group: "scientMarkdown"');
+    expect(clientSource).toContain("client.imageUpload({ headers, payload })");
   });
 
   it("inserts only the portable server-returned Markdown path", () => {

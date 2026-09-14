@@ -15,6 +15,13 @@ import { CLAUDE_SCIENT_TOOL_PROJECTION } from "./ScientToolProjection.ts";
 const wordCount = (value: string): number => value.trim().split(/\s+/u).length;
 
 describe("Scient awareness", () => {
+  it("composes device and read-only compute awareness without granting either implicitly", () => {
+    const combined = buildScientAwareness(new Set(["compute:read", "device"]));
+    expect(combined).toContain(SCIENT_COMPUTE_AWARENESS);
+    expect(combined).toContain("## Scient devices");
+    expect(buildScientAwareness(new Set(["device"]))).not.toContain(SCIENT_COMPUTE_AWARENESS);
+    expect(buildScientAwareness(new Set(["compute:read"]))).not.toContain("## Scient devices");
+  });
   it("keeps the always-on identity compact and product-level", () => {
     expect(wordCount(SCIENT_CORE_AWARENESS)).toBeLessThanOrEqual(120);
     expect(SCIENT_CORE_AWARENESS).toContain("project workspace");

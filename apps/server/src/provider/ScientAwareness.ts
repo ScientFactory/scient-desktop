@@ -17,6 +17,10 @@ Scient renders LaTeX math, workspace-relative Markdown images, and fenced \`merm
 export const SCIENT_PREVIEW_AWARENESS = `## Scient browser
 The \`preview_*\` tools control Scient's browser shared with the user. Prefer them for browser work. Start with \`preview_status\`; call \`preview_open\` if no automation-capable tab is attached. Use another browser system only when these tools are unavailable, explicitly unsupported, or the user requests it.`;
 
+/** Included only when the session may drive the environment's mobile devices. */
+const SCIENT_DEVICE_AWARENESS = `## Scient devices
+The \`device_*\` tools control iOS Simulators and Android Emulators on this environment. For mobile verification, call \`device_list\`, then \`device_open\` so the user can watch the device in Scient's Device panel. Drive it with the \`agent-device\` CLI placed on PATH for this session, preserving the host configuration and session flags returned by \`device_open\`. Prefer interactive snapshot refs over coordinates, and use \`device_screenshot\` when visual inspection is needed. Do not call simctl, adb, xcrun, or serve-sim while these tools are available. If \`device_list\` reports a platform unavailable, report that instead of bypassing Scient's device system.`;
+
 /** Included only when the session may build project documents. */
 const buildScientDocumentAwareness = (tools: ScientToolProjection): string => `## Scient PDF builds
 For a requested PDF deliverable, use \`${tools.pdfBuild}\` to build an existing project HTML source and \`${tools.latexBuild}\` to build an existing project LaTeX source.${tools.deferred ? ` If either is deferred, load its exact name through \`ToolSearch\` first.` : ""}`;
@@ -45,6 +49,7 @@ export function buildScientAwareness(
     SCIENT_CORE_AWARENESS,
     ...(capabilities?.has("preview") ? [SCIENT_PREVIEW_AWARENESS] : []),
     ...(capabilities?.has("compute:read") ? [buildScientComputeAwareness(tools)] : []),
+    ...(capabilities?.has("device") ? [SCIENT_DEVICE_AWARENESS] : []),
     ...(capabilities?.has("documents:build") ? [buildScientDocumentAwareness(tools)] : []),
     ...(capabilities?.has("skills:read") ? [SCIENT_SKILLS_AWARENESS] : []),
   ].join("\n\n");

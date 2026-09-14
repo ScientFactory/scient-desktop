@@ -313,7 +313,6 @@ export async function restoreQueueEditStash(
       }),
     ],
     terminalContexts: [...current.terminalContexts, ...restored.terminalContexts],
-    elementContexts: [...current.elementContexts, ...restored.elementContexts],
     previewAnnotations: [...current.previewAnnotations, ...restored.previewAnnotations],
     reviewComments: [...current.reviewComments, ...restored.reviewComments],
   });
