@@ -73,6 +73,7 @@ describe("isPreviewEditingShortcut", () => {
     ({
       type: "keyDown",
       key,
+      code: /^[a-z]$/i.test(key) ? `Key${key.toUpperCase()}` : "",
       meta: platform === "darwin",
       control: platform !== "darwin",
       shift: false,
@@ -90,11 +91,16 @@ describe("isPreviewEditingShortcut", () => {
         platform === "win32" ? input(platform, "y") : input(platform, "z", { shift: true });
       expect(PreviewManager.isPreviewEditingShortcut(redo, platform)).toBe(true);
       expect(
-        PreviewManager.isPreviewEditingShortcut(
-          input(platform, "v", { shift: true, alt: platform === "darwin" }),
-          platform,
-        ),
+        PreviewManager.isPreviewEditingShortcut(input(platform, "v", { shift: true }), platform),
       ).toBe(true);
+      if (platform === "darwin") {
+        expect(
+          PreviewManager.isPreviewEditingShortcut(
+            input(platform, "v", { shift: true, alt: true }),
+            platform,
+          ),
+        ).toBe(true);
+      }
 
       for (const key of ["k", ",", "w", "j", "q", "+", "=", "-", "0", "r", "F12"]) {
         expect(PreviewManager.isPreviewEditingShortcut(input(platform, key), platform)).toBe(false);
@@ -104,7 +110,7 @@ describe("isPreviewEditingShortcut", () => {
         { meta: true, control: true },
         { meta: platform !== "darwin", control: platform === "darwin" },
         { alt: true },
-        { shift: true, alt: platform !== "darwin" },
+        ...(platform === "darwin" ? [] : [{ shift: true, alt: true }]),
       ]) {
         expect(
           PreviewManager.isPreviewEditingShortcut(input(platform, "v", modifiers), platform),
@@ -119,17 +125,32 @@ describe("isPreviewEditingShortcut", () => {
   it("recognizes macOS Paste and Match Style when Option changes the key to a symbol", () => {
     const pasteAndMatchStyle = input("darwin", "◊", { code: "KeyV", alt: true, shift: true });
     expect(PreviewManager.isPreviewEditingShortcut(pasteAndMatchStyle, "darwin")).toBe(true);
-    for (const modifiers of [
-      { code: "KeyC" },
-      { alt: false },
-      { shift: false },
-      { control: true },
-    ]) {
+    for (const modifiers of [{ code: "KeyC" }, { shift: false }, { control: true }]) {
       expect(
         PreviewManager.isPreviewEditingShortcut({ ...pasteAndMatchStyle, ...modifiers }, "darwin"),
       ).toBe(false);
     }
   });
+
+  it.each(["darwin", "linux", "win32"] as const)(
+    "recognizes editing chords from their physical key on a non-Latin layout on %s",
+    (platform) => {
+      for (const [key, code] of [
+        ["ש", "KeyA"],
+        ["ב", "KeyC"],
+        ["ה", "KeyV"],
+        ["ס", "KeyX"],
+        ["ז", "KeyZ"],
+      ] as const) {
+        expect(
+          PreviewManager.isPreviewEditingShortcut(input(platform, key, { code }), platform),
+        ).toBe(true);
+      }
+      expect(
+        PreviewManager.isPreviewEditingShortcut(input(platform, "ה", { code: "KeyK" }), platform),
+      ).toBe(false);
+    },
+  );
 });
 
 describe("previewWindowOpenAction", () => {

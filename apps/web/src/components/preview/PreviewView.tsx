@@ -819,9 +819,9 @@ export function PreviewView({
             controller={controller}
           />
         ) : null}
-        {controller !== "none" ? (
+        {controller === "agent" ? (
           <div className="pointer-events-none absolute left-3 top-3 z-40 rounded-full border border-border/70 bg-background/90 px-2.5 py-1 text-[11px] font-medium shadow-sm backdrop-blur">
-            {controller === "agent" ? "Agent controlling browser" : "Human control"}
+            Agent controlling browser
           </div>
         ) : null}
         {navStatus._tag === "LoadFailed" ? (
