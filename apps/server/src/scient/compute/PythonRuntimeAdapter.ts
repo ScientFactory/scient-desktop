@@ -57,8 +57,10 @@ const OBSERVED_PYTHON_PACKAGES = [
   "ipykernel",
   "jupyter_client",
   "matplotlib",
+  "nbformat",
   "numpy",
   "pandas",
+  "plotly",
   "scipy",
 ] as const;
 

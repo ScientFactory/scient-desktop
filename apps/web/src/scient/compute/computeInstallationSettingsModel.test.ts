@@ -259,14 +259,35 @@ describe("current runtime summary", () => {
     });
   });
 
-  it("points Python setup at Change runtime instead of an inventory", () => {
+  it("offers one explicit update for an older selected managed toolkit", () => {
+    expect(
+      computeCurrentRuntimeSummary({
+        language: inventory,
+        preference: { enabled: true, executable: "" },
+        managed: { ...status, updateAvailable: true },
+      }),
+    ).toEqual({
+      kind: "update-managed",
+      title: "3.12.13",
+      detail: "Toolkit update available",
+    });
+    expect(
+      computeCurrentRuntimeSummary({
+        language: inventory,
+        preference: { enabled: true, executable: "/system/python" },
+        managed: { ...status, selection: "existing", updateAvailable: true },
+      }).kind,
+    ).toBe("ready");
+  });
+
+  it("keeps a disabled Python row quiet until it is enabled", () => {
     expect(
       computeCurrentRuntimeSummary({
         language: { ...inventory, installations: [] },
         preference: { enabled: false, executable: "" },
         managed: null,
-      }).detail,
-    ).toContain("Change runtime");
+      }),
+    ).toEqual({ kind: "disabled", title: "Off", detail: "" });
   });
 
   it("repairs only a broken Scient-managed runtime", () => {
@@ -316,7 +337,7 @@ describe("current runtime summary", () => {
     ).toBe("ready");
   });
 
-  it("asks MATLAB users to connect an installed runtime instead of setting one up", () => {
+  it("keeps disabled MATLAB quiet, then offers the correct enabled recovery", () => {
     const matlab = {
       ...inventory,
       descriptor: { ...inventory.descriptor, languageId: ComputeLanguageId.make("matlab") },
@@ -335,22 +356,21 @@ describe("current runtime summary", () => {
         preference: { enabled: false, executable: "" },
         managed: null,
       }),
-    ).toEqual({
-      kind: "connect",
-      title: "Not connected",
-      detail: "Connect the MATLAB already installed on this server.",
-    });
+    ).toEqual({ kind: "disabled", title: "Off", detail: "" });
     expect(
       computeCurrentRuntimeSummary({
         language: { ...matlab, installations: [] },
         preference: { enabled: false, executable: "" },
         managed: null,
       }),
-    ).toEqual({
-      kind: "connect",
-      title: "Not connected",
-      detail: "Connect the MATLAB already installed on this server.",
-    });
+    ).toEqual({ kind: "disabled", title: "Off", detail: "" });
+    expect(
+      computeCurrentRuntimeSummary({
+        language: matlab,
+        preference: { enabled: true, executable: "" },
+        managed: null,
+      }).kind,
+    ).toBe("connect");
     expect(
       computeCurrentRuntimeSummary({
         language: { ...matlab, installations: [] },

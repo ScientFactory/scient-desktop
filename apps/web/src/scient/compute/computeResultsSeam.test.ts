@@ -104,11 +104,12 @@ describe("compute result surface seam", () => {
     expect(outputSource).not.toContain("File \\\\s+");
   });
 
-  it("keeps Python setup contextual to the file toolbar", () => {
+  it("keeps runtime recovery contextual to the file toolbar", () => {
     expect(pythonActionsSource).toContain("resolveComputeRuntimeToolbarState");
     expect(pythonActionsSource).toContain("Scientific Computing");
-    expect(pythonActionsSource).toContain("Check again");
-    expect(pythonActionsSource).toContain("handleSetup");
+    expect(pythonActionsSource).toContain('to="/settings/scientific-computing"');
+    expect(pythonActionsSource).not.toContain("Check again");
+    expect(pythonActionsSource).toContain("computeRuntimeSetupActionLabel");
     expect(pythonActionsSource).toContain('runtimeToolbar.kind === "switch"');
     expect(pythonActionsSource).toContain("the next run uses the");
     expect(pythonActionsSource).toContain(
@@ -133,17 +134,19 @@ describe("compute result surface seam", () => {
     expect(pythonActionsSource).toContain("@container/python-file-actions");
     expect(pythonActionsSource).toContain("@[9rem]/python-file-actions:flex");
     expect(pythonActionsSource).toContain("@[15rem]/python-file-actions:inline");
-    expect(pythonActionsSource).toContain("aria-label={primary.label}");
-    expect(pythonSurfaceSource).toContain('useState<ComputeFileView>("code")');
-    expect(pythonSurfaceSource).toContain(
-      "setView((current) => computeFileViewAfterRun(current, preferredResultsView))",
+    expect(pythonActionsSource).toContain(
+      'aria-label={primaryRunBlocked ? "MATLAB definition file" : primary.label}',
     );
+    expect(pythonSurfaceSource).toContain("useComputeFilePresentationStore");
+    expect(pythonSurfaceSource).toContain(
+      "setFileView(props.contextId, computeFileViewAfterRun(currentView, preferredResultsView))",
+    );
+    expect(pythonSurfaceSource).toContain('setPanelView(props.contextId, "results")');
     expect(pythonActionsSource).toContain("onRunRequested();");
-    expect(panelSource).toContain("onClick={props.onRunSource}");
-    expect(panelSource).toContain("<Play /> Run");
-    expect(panelSource).toContain("<span>to see results.</span>");
+    expect(panelSource).toContain("<EmptyComputeResults");
+    expect(panelSource).toContain("<Play /> Run file");
     expect(panelSource).toContain("!props.embedded && contextBinding !== null");
-    expect(panelSource.indexOf("onClick={props.onRunSource}")).toBeLessThan(
+    expect(panelSource.indexOf("<EmptyComputeResults")).toBeLessThan(
       panelSource.indexOf("Start an extra session"),
     );
     expect(pythonActionsSource).toContain("Switch {props.language.displayName} environment…");
@@ -194,9 +197,7 @@ describe("compute result surface seam", () => {
   });
 
   it("focuses a new run in the session that actually owns it", () => {
-    expect(pythonActionsSource).toContain(
-      "props.onExecutionSubmitted(session.sessionId, executionId)",
-    );
+    expect(pythonActionsSource).toContain("onExecutionSubmitted(session.sessionId, executionId)");
     expect(pythonSurfaceSource).toContain("focusSessionId={focusExecution?.sessionId ?? null}");
     expect(panelSource).toContain("setSelectedSessionId(props.focusSessionId)");
   });

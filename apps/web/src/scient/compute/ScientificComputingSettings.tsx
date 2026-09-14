@@ -1,7 +1,9 @@
 import { ExternalLinkIcon, RefreshCwIcon, SigmaIcon } from "lucide-react";
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import type {
   ComputeLanguageRuntimeInventory,
+  ComputeManagedRuntimeAction,
+  ComputeManagedRuntimeStatus,
   ComputeRuntimeVerification,
   EnvironmentId,
   ScientificComputingLanguageSettings,
@@ -66,7 +68,6 @@ function LanguageRuntimeSummary({
   refreshVersion: number;
 }) {
   const languageId = language.descriptor.languageId;
-  const isMatlab = languageId === "matlab";
   const runtime = useComputeManagedRuntime({
     environmentId,
     languageId,
@@ -82,25 +83,36 @@ function LanguageRuntimeSummary({
   const [recoveryOpen, setRecoveryOpen] = useState(false);
   const disabled = Boolean(loading || refreshing || runtime.busy || !environmentId);
   const setup = () => void runtime.act(computeManagedPrimaryAction(runtime.status));
-  const showManagedNotice =
-    runtime.status?.operation != null ||
-    (Boolean(runtime.failure) &&
-      (summary.kind === "setup" ||
-        summary.kind === "repair-managed" ||
-        (!isMatlab && runtime.status?.selection === "managed")));
+  const operationId = runtime.status?.operation?.operationId ?? null;
+  const previousOperationId = useRef<string | null>(null);
+  useEffect(() => {
+    if (previousOperationId.current !== null && operationId === null) void onRefresh();
+    previousOperationId.current = operationId;
+  }, [onRefresh, operationId]);
+  const showManagedNotice = runtime.status?.operation != null || Boolean(runtime.failure);
   const story = loading
     ? "Checking…"
-    : summary.kind === "ready" ||
-        summary.kind === "repair-managed" ||
-        summary.kind === "unavailable"
-      ? `${summary.title} · ${summary.detail}`
-      : summary.detail;
-  const control = (() => {
-    if (loading || summary.kind === "ready") return null;
+    : summary.kind === "disabled"
+      ? "Off"
+      : summary.kind === "ready" ||
+          summary.kind === "update-managed" ||
+          summary.kind === "repair-managed" ||
+          summary.kind === "unavailable"
+        ? `${summary.title} · ${summary.detail}`
+        : summary.title;
+  const action = (() => {
+    if (loading || summary.kind === "ready" || summary.kind === "disabled") return null;
     if (summary.kind === "setup" || summary.kind === "repair-managed") {
       return (
         <Button size="sm" disabled={disabled} onClick={setup}>
           {summary.kind === "repair-managed" ? "Repair" : "Set up Python"}
+        </Button>
+      );
+    }
+    if (summary.kind === "update-managed") {
+      return (
+        <Button size="sm" disabled={disabled} onClick={() => void runtime.act("update")}>
+          Update
         </Button>
       );
     }
@@ -142,6 +154,28 @@ function LanguageRuntimeSummary({
     }
     return null;
   })();
+  const primaryManagedAction: ComputeManagedRuntimeAction | null =
+    summary.kind === "update-managed"
+      ? "update"
+      : summary.kind === "repair-managed"
+        ? "repair"
+        : null;
+  const control = (
+    <div className="flex items-center gap-2">
+      {action}
+      <Switch
+        size="sm"
+        checked={preference.enabled}
+        disabled={disabled}
+        onCheckedChange={(enabled) => {
+          void onChange({ ...preference, enabled }).then((saved) => {
+            if (saved) void onRefresh();
+          });
+        }}
+        aria-label={`Enable ${language.descriptor.displayName}`}
+      />
+    </div>
+  );
   return (
     <SettingsRow
       id={`${languageId}-runtime`}
@@ -168,6 +202,7 @@ function LanguageRuntimeSummary({
           runtime={runtime}
           onRefresh={onRefresh}
           refreshVersion={refreshVersion}
+          primaryManagedAction={primaryManagedAction}
         />
       </details>
     </SettingsRow>
@@ -184,6 +219,7 @@ function LanguageRuntimeRecovery({
   runtime,
   onRefresh,
   refreshVersion,
+  primaryManagedAction,
 }: {
   language: ComputeLanguageRuntimeInventory;
   preference: ScientificComputingLanguageSettings;
@@ -194,6 +230,7 @@ function LanguageRuntimeRecovery({
   runtime: ComputeManagedRuntimeController;
   onRefresh: () => Promise<void>;
   refreshVersion: number;
+  primaryManagedAction: ComputeManagedRuntimeAction | null;
 }) {
   const languageId = language.descriptor.languageId;
   const isPython = languageId === "python";
@@ -205,6 +242,7 @@ function LanguageRuntimeRecovery({
   const [testing, setTesting] = useState(false);
   const [testState, setTestState] = useState<{
     readonly runtimeFingerprint: string;
+    readonly runtimeObservation: ComputeManagedRuntimeStatus | null;
     readonly result: ComputeRuntimeVerification | null;
     readonly error: string | null;
   } | null>(null);
@@ -235,8 +273,11 @@ function LanguageRuntimeRecovery({
     runtime.status?.selection,
     runtime.status?.operation?.operationId,
   ]);
-  const currentTestState = testState?.runtimeFingerprint === runtimeFingerprint ? testState : null;
-  if (testState !== null && currentTestState === null) setTestState(null);
+  const currentTestState =
+    testState?.runtimeFingerprint === runtimeFingerprint &&
+    testState.runtimeObservation === runtime.status
+      ? testState
+      : null;
   const testPassed =
     currentTestState?.result?.readiness === "ready" &&
     currentTestState.result.connection === "verified";
@@ -268,6 +309,7 @@ function LanguageRuntimeRecovery({
       }
       setPathOpen(false);
       setPathDraft("");
+      await onRefresh();
     } catch (cause) {
       setSelectionFailure(
         cause instanceof Error ? cause.message : "The installation could not be selected.",
@@ -281,7 +323,8 @@ function LanguageRuntimeRecovery({
   const runTest = async () => {
     if (!environmentId || !selectedInstallation || testing || loading || refreshing) return;
     setTesting(true);
-    setTestState({ runtimeFingerprint, result: null, error: null });
+    const runtimeObservation = runtime.status;
+    setTestState({ runtimeFingerprint, runtimeObservation, result: null, error: null });
     const result = await verifyRuntime({
       environmentId,
       input: { cwd: null, languageId, executable: selectedInstallation.executable },
@@ -291,15 +334,17 @@ function LanguageRuntimeRecovery({
       const failure = squashAtomCommandFailure(result);
       setTestState({
         runtimeFingerprint,
+        runtimeObservation,
         result: null,
         error: failure instanceof Error ? failure.message : "The connection could not be verified.",
       });
       return;
     }
-    setTestState({ runtimeFingerprint, result: result.value, error: null });
+    setTestState({ runtimeFingerprint, runtimeObservation, result: result.value, error: null });
     if (result.value.readiness !== "ready" || result.value.connection !== "verified") {
       setTestState({
         runtimeFingerprint,
+        runtimeObservation,
         result: result.value,
         error:
           result.value.message ??
@@ -310,25 +355,12 @@ function LanguageRuntimeRecovery({
 
   return (
     <div className="mt-3 space-y-2" data-compute-recovery={languageId}>
-      <div className="flex min-h-7 items-center justify-between gap-2">
-        <span className="text-xs text-muted-foreground">
-          Enable {language.descriptor.displayName}
-        </span>
-        <Switch
-          checked={preference.enabled}
-          disabled={disabled}
-          onCheckedChange={(enabled) => void onChange({ ...preference, enabled })}
-          aria-label={`Enable ${language.descriptor.displayName}`}
-        />
-      </div>
       {loading ? (
         <p className="text-xs text-muted-foreground" role="status">
           Checking…
         </p>
       ) : language.installations.length === 0 ? (
-        <p className="text-sm text-muted-foreground">
-          {preference.enabled ? "No installation detected" : "Disabled"}
-        </p>
+        <p className="text-xs text-muted-foreground">No runtime detected</p>
       ) : (
         <div className="flex min-h-7 flex-wrap items-center justify-between gap-x-3 gap-y-1.5">
           <span className="text-xs text-muted-foreground">For new sessions</span>
@@ -344,7 +376,6 @@ function LanguageRuntimeRecovery({
               size="sm"
               className="w-auto max-w-52"
               aria-label={`Choose ${language.descriptor.displayName} runtime`}
-              title={selectedInstallation?.executable}
               data-compute-runtime={selectedInstallation?.executable ?? ""}
             >
               <SelectValue>
@@ -357,7 +388,12 @@ function LanguageRuntimeRecovery({
                   : "Choose a runtime"}
               </SelectValue>
             </SelectTrigger>
-            <SelectPopup align="end" alignItemWithTrigger={false} matchTriggerWidth={false}>
+            <SelectPopup
+              align="end"
+              alignItemWithTrigger={false}
+              matchTriggerWidth={false}
+              className="max-w-[calc(100vw-1rem)]"
+            >
               {language.installations.map((installation) => (
                 <SelectItem
                   key={installation.executable}
@@ -365,11 +401,13 @@ function LanguageRuntimeRecovery({
                   value={installation.executable}
                   data-compute-runtime={installation.executable}
                 >
-                  {computeRuntimePickerLabel(
-                    installation,
-                    language.descriptor.displayName,
-                    language.installations,
-                  )}
+                  <span className="block max-w-[calc(100vw-3rem)] truncate sm:max-w-80">
+                    {computeRuntimePickerLabel(
+                      installation,
+                      language.descriptor.displayName,
+                      language.installations,
+                    )}
+                  </span>
                 </SelectItem>
               ))}
             </SelectPopup>
@@ -390,7 +428,6 @@ function LanguageRuntimeRecovery({
                   size="xs"
                   variant="ghost-muted"
                   disabled={disabled}
-                  title="Starts and closes a test session."
                   onClick={() => void runTest()}
                 />
               }
@@ -405,6 +442,7 @@ function LanguageRuntimeRecovery({
           runtime={runtime}
           connection={isMatlab}
           maintenanceOnly
+          omitAction={primaryManagedAction}
           canProvision={!isMatlab || helperCanRepair}
           disabled={selecting || refreshing || !environmentId}
         />
@@ -430,14 +468,6 @@ function LanguageRuntimeRecovery({
             Reset to automatic
           </Button>
         ) : null}
-        <Button
-          size="xs"
-          variant="ghost-muted"
-          disabled={disabled}
-          onClick={() => void onRefresh()}
-        >
-          Refresh
-        </Button>
       </div>
       {testError ? (
         <p className="text-xs text-destructive" role="alert">
@@ -500,7 +530,6 @@ function LanguageRuntimeRecovery({
           {selectionFailure}
         </p>
       ) : null}
-      <ManagedRuntimeNotice runtime={runtime} />
       {language.failureMessage ? (
         <p className="text-xs text-destructive" role="alert">
           {language.failureMessage}
@@ -672,7 +701,7 @@ function EnvironmentScientificComputingSettings({
                   </Button>
                 }
               />
-              <TooltipPopup side="top">Refresh runtimes</TooltipPopup>
+              <TooltipPopup side="top">Find runtimes again</TooltipPopup>
             </Tooltip>
           </div>
         }

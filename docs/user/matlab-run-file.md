@@ -8,18 +8,20 @@ user-installed and licensed MATLAB in the selected project environment.
 ## Live session
 
 The code/results controls above a `.m` file run it in a live MATLAB session.
-Choose **Connect MATLAB** on that file when MATLAB is not ready yet. The Engine
-connection requires a compatible Python host. Scient can set up a small private
+Choose **Connect MATLAB** on that file when MATLAB is not connected yet. This opens the correct
+server's Scientific Computing settings, where the same action starts setup. The Engine connection
+requires a compatible Python host. Scient can set up a small private
 **MATLAB connection helper**, or choose an existing compatible host from
 **Settings → Scientific Computing → Change runtime**.
 That helper is independent of Scientific Python. Opening a `.m` file does not
 provision the scientific Toolkit; a helper setup failure is a one-line header
-status with copy and details, not a wrapped stack across **Run**, and not
-**MATLAB ready**. Retry from that status; the header shows one of **Connect MATLAB**,
-the short failure, or ready after the helper can start.
-Scient does not install MATLAB or its license. The file header names the detected
-release until a live session starts; **MATLAB ready** means that session is up.
-Use the status menu to **Check again** or open those settings.
+status with copy and details, not a wrapped stack across **Run**. The compact
+MATLAB status opens Scientific Computing directly; it does not expand into an
+executable-path menu. Scient does not install MATLAB or its license. The file
+header names the detected release before startup and uses the shorter **MATLAB**
+label while a live session is idle. Use the refresh control in Scientific
+Computing to rediscover installations, and **Test** under **Change runtime** when
+you explicitly want to start and close a temporary connection.
 
 The executable preference is shared with fresh-process runs. Their older setup control
 now writes this same preference instead of maintaining a second runtime choice.
@@ -43,9 +45,9 @@ from the file's Run menu. This is the existing workflow:
 1. Open an initialized Scient project and select a text `.m` file.
 2. Wait for any pending save to finish. Scient runs the exact saved version,
    not an unsaved editor buffer.
-3. If MATLAB was not found, choose **Set up MATLAB**, enter the path to the
-   MATLAB executable, and choose **Use path**. You can also ask Scient to scan
-   again.
+3. If MATLAB was not found, open **Scientific Computing**, enable MATLAB, then
+   choose a detected installation or use **Use another path…**. The page refresh
+   control scans again.
 4. Use **Verify** when you want to confirm that MATLAB can start or understand
    a setup failure. Scient reports the detected release and explains problems
    such as sign-in, licensing, a missing dependency, startup failure, or a

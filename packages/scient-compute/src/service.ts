@@ -58,6 +58,7 @@ export class ComputeOperationError extends Schema.TaggedError<ComputeOperationEr
       "runtime-missing",
       "runtime-unusable",
       "capability-missing",
+      "source-not-runnable",
       // The execution is not there, or has already ended.
       "execution-not-found",
       "execution-already-finished",

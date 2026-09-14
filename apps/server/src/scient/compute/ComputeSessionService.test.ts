@@ -47,7 +47,6 @@ import { AnalyticsService, type AnalyticsStatus } from "../../telemetry/Analytic
 import {
   ComputeSessionService,
   DEFAULT_COMPUTE_SESSION_SERVICE_OPTIONS,
-  layerWithRuntimes,
   type ComputeRuntimeBinding,
   layerWithRuntimeBindings,
   type ComputeSessionServiceOptions,
@@ -65,6 +64,7 @@ const PROJECT_ID = ComputeProjectId.make("project-1");
 const OTHER_PROJECT_ID = ComputeProjectId.make("project-2");
 const SESSION_ID = ComputeSessionId.make("session-1");
 const PYTHON = ComputeLanguageId.make("python");
+const MATLAB = ComputeLanguageId.make("matlab");
 const BRIDGE = ComputeTransportKind.make("jupyter-bridge");
 
 const FULL_CAPABILITIES: ReadonlyArray<ComputeCapability> = [
@@ -329,6 +329,7 @@ interface HarnessOptions {
   readonly reportedCapabilities?: ReadonlyArray<ComputeCapability>;
   readonly readiness?: ComputeRuntimeReadiness;
   readonly runtimeProfiles?: ReadonlyArray<ComputeRuntimeProfile>;
+  readonly runtimeIdentity?: ComputeRuntimeIdentity;
   readonly service?: Partial<ComputeSessionServiceOptions>;
   readonly toolkitSupport?: ComputeRuntimeBinding["toolkitSupport"];
   readonly managedRuntime?: ComputeRuntimeBinding["managedRuntime"];
@@ -352,7 +353,7 @@ const harness = (options: HarnessOptions = {}) =>
     const opened: Array<ComputeSessionId> = [];
     const closed: Array<ComputeSessionId> = [];
     const simulated = createSimulatedComputeTransport({
-      runtime: IDENTITY,
+      runtime: options.runtimeIdentity ?? IDENTITY,
       capabilities: options.capabilities ?? FULL_CAPABILITIES,
       resolveExecution: (code) => {
         submitted.push(code);
@@ -1928,6 +1929,57 @@ describe("compute session startup", () => {
 });
 
 describe("compute session execution", () => {
+  it.effect("rejects MATLAB definition files before they reach the runtime", () =>
+    Effect.gen(function* () {
+      const matlabProfile: ComputeRuntimeProfile = {
+        ...PROFILE,
+        languageId: MATLAB,
+        executable: "/Applications/MATLAB.app/bin/matlab",
+        languageVersion: "R2026a",
+        displayName: "MATLAB R2026a",
+      };
+      const test = yield* harness({
+        adapter: { languageId: MATLAB },
+        runtimeProfiles: [matlabProfile],
+        runtimeIdentity: {
+          ...IDENTITY,
+          languageId: MATLAB,
+          languageVersion: "R2026a",
+        },
+      });
+
+      yield* test.use(
+        Effect.gen(function* () {
+          const service = yield* ComputeSessionService;
+          yield* service.startSession(startInput({ languageId: MATLAB }));
+          const error = yield* Effect.flip(
+            service.submitExecution({
+              projectId: PROJECT_ID,
+              sessionId: SESSION_ID,
+              executionId: ComputeExecutionId.make("matlab-definition"),
+              expectedGeneration: INITIAL_COMPUTE_SESSION_GENERATION,
+              code: "function output = normalize(input)\noutput = input;\nend",
+              source: {
+                _tag: "document",
+                origin: "file",
+                path: "helpers/+qautils/normalize.m",
+                bufferState: "saved",
+                revision: "revision-1",
+                range: null,
+              },
+            }),
+          );
+          expect(error).toBeInstanceOf(ComputeOperationError);
+          expect(error.reason).toBe("source-not-runnable");
+          expect(test.submitted()).toEqual([]);
+          expect(
+            yield* service.listExecutions({ projectId: PROJECT_ID, sessionId: SESSION_ID }),
+          ).toEqual([]);
+        }),
+      );
+    }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+  );
+
   it.effect("runs code, keeps its transcript, and records how it ended", () =>
     Effect.gen(function* () {
       const test = yield* harness();

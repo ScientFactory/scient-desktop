@@ -166,7 +166,19 @@ describe("Scientific Computing settings interactions", () => {
       mocks.calls.push(input.action);
       if (mocks.releaseFails) return { _tag: "Failure", cause: new Error("Busy operation") };
       const current = mocks.statuses[input.languageId];
-      if (current && ["use-managed", "use-existing"].includes(input.action))
+      if (current && input.action === "remove") {
+        mocks.statuses = {
+          ...mocks.statuses,
+          [input.languageId]: {
+            ...current,
+            installed: false,
+            selection: "existing",
+            runtimeVersion: null,
+            toolkitRevision: null,
+            generationId: null,
+          },
+        };
+      } else if (current && ["use-managed", "use-existing"].includes(input.action))
         mocks.statuses = {
           ...mocks.statuses,
           [input.languageId]: {
@@ -236,7 +248,7 @@ describe("Scientific Computing settings interactions", () => {
     expect(container.textContent).toContain("Scient-managed");
     expect(container.querySelectorAll("h3")).toHaveLength(1);
     expect(runtimeValue()).toBe(managedPath);
-    expect(button("Test").title).toBe("Starts and closes a test session.");
+    expect(button("Test").hasAttribute("title")).toBe(false);
     expect(container.textContent).not.toContain(managedPath);
     expect(container.querySelector("select")).toBeNull();
     const actions = container.querySelector("[data-compute-actions='python']");
@@ -363,7 +375,7 @@ describe("Scientific Computing settings interactions", () => {
     expect(mocks.manage).not.toHaveBeenCalled();
   });
 
-  it("keeps a helper provision failure in Change runtime, not the default MATLAB story", async () => {
+  it("shows a helper failure once without replacing the selected MATLAB summary", async () => {
     const matlab = "/MATLAB/bin/matlab";
     const helper = {
       ...status(),
@@ -394,8 +406,96 @@ describe("Scientific Computing settings interactions", () => {
     expect(summary?.textContent).toContain("R2026a");
     expect(summary?.textContent).toContain("System installation");
     expect(summary?.textContent).not.toContain("ENOENT");
-    expect(recovery?.textContent).toContain("ENOENT");
-    expect(recovery?.querySelector("[data-compute-notice]")).not.toBeNull();
+    expect(container.textContent?.match(/ENOENT/gu)).toHaveLength(1);
+    expect(recovery?.querySelector("[data-compute-notice]")).toBeNull();
+    expect(container.querySelector("[data-compute-notice]")).not.toBeNull();
+  });
+
+  it("shows one connection-helper progress line and keeps Enable outside advanced controls", async () => {
+    const matlab = "/MATLAB/bin/matlab";
+    const helper = {
+      ...status(),
+      displayName: "MATLAB connection helper",
+      installationExecutable: matlab,
+      operation: {
+        operationId: "helper-operation",
+        action: "repair" as const,
+        phase: "installing-packages" as const,
+        startedAt: "2026-09-14T12:00:00.000Z",
+        downloadedBytes: null,
+        totalBytes: null,
+      },
+    };
+    mocks.preferences = { matlab: { enabled: true, executable: matlab } };
+    mocks.statuses = { matlab: helper };
+    mocks.languages = [
+      {
+        ...python(),
+        descriptor: {
+          ...python().descriptor,
+          languageId: ComputeLanguageId.make("matlab"),
+          displayName: "MATLAB",
+        },
+        managedRuntime: helper,
+        configuredExecutable: matlab,
+        installations: [
+          { executable: matlab, source: "conventional", version: "R2026a", problem: null },
+        ],
+      },
+    ];
+    await render();
+    expect(container.textContent?.match(/Preparing the connection helper/gu)).toHaveLength(1);
+    expect(
+      container.querySelector('[aria-label="Enable MATLAB"]')?.closest("[data-compute-recovery]"),
+    ).toBeNull();
+  });
+
+  it("returns directly to Connect MATLAB after its helper is removed", async () => {
+    const matlab = "/MATLAB/bin/matlab";
+    const helper = {
+      ...status(),
+      displayName: "MATLAB connection helper",
+      installationExecutable: matlab,
+    };
+    mocks.preferences = { matlab: { enabled: true, executable: matlab } };
+    mocks.statuses = { matlab: helper };
+    mocks.languages = [
+      {
+        ...python(),
+        descriptor: {
+          ...python().descriptor,
+          languageId: ComputeLanguageId.make("matlab"),
+          displayName: "MATLAB",
+        },
+        managedRuntime: helper,
+        configuredExecutable: matlab,
+        installations: [
+          { executable: matlab, source: "conventional", version: "R2026a", problem: null },
+        ],
+      },
+    ];
+    await render();
+    await click("Remove helper");
+    await click("Remove", document.querySelector<HTMLElement>('[role="alertdialog"]')!);
+    await vi.waitFor(() => expect(button("Connect MATLAB")).toBeDefined());
+    expect(mocks.calls).toEqual(["remove"]);
+    expect(container.textContent?.match(/Preparing the connection helper/gu)).toBeNull();
+  });
+
+  it("surfaces one update action for an older selected managed toolkit", async () => {
+    mocks.statuses.python = { ...status(), updateAvailable: true };
+    mocks.languages = [{ ...python(), managedRuntime: mocks.statuses.python }];
+    await render();
+    expect(container.querySelector("[data-compute-summary='python']")?.textContent).toContain(
+      "Toolkit update available",
+    );
+    expect(
+      [...container.querySelectorAll("button")].filter(
+        (candidate) => candidate.textContent?.trim() === "Update",
+      ),
+    ).toHaveLength(1);
+    await click("Update");
+    expect(mocks.calls).toEqual(["update"]);
   });
 
   it("selects system Python by saving first and releasing managed precedence exactly once", async () => {
@@ -558,6 +658,11 @@ describe("Scientific Computing settings interactions", () => {
     ];
     await render();
     expect(button("Repair").disabled).toBe(false);
+    expect(
+      [...container.querySelectorAll("button")].filter(
+        (candidate) => candidate.textContent?.trim() === "Repair",
+      ),
+    ).toHaveLength(1);
     expect(container.textContent).toContain("needs repair");
     expect(mocks.manage).not.toHaveBeenCalled();
   });

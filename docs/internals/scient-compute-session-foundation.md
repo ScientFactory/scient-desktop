@@ -1308,9 +1308,12 @@ back. Kernel restart reapplies the formatter.
 
 `application/vnd.plotly.v1+json` reuses the existing lazy Plotly card and its
 schema limits, graphics quota, theme, export and error handling. Python defaults
-Plotly to its MIME renderer, respecting explicit renderer overrides. This does
-not install Plotly or add it to the locked Toolkit. MATLAB does not acquire a
-Plotly library merely because the renderer is language-neutral.
+Plotly to its MIME renderer, respecting explicit renderer overrides. The reviewed,
+locked Scient-managed Python Toolkit includes Plotly and verifies a representative
+figure during provisioning. Discovery and verification never install Plotly into a
+user-owned runtime; those environments truthfully report it as an optional missing
+Toolkit requirement. MATLAB does not acquire a Plotly library merely because the
+renderer is language-neutral.
 
 Both consume the existing display-update/clear projection and retained record;
 neither adds a resource store or authority scheme. PNG/SVG/plain fallback remains
@@ -3403,6 +3406,12 @@ These are automated qualification mechanisms, not a claim of completed visual re
   MATLAB's pre/post file checks catch observable conflicts, but cannot prove the
   bytes consumed during an arbitrary external write-and-restore race; this is an
   explicit native-file limitation, not atomic provenance.
+- MATLAB full-file admission classifies saved source before dispatch. Scripts,
+  including scripts with local functions, remain runnable. Top-level functions,
+  classes, package members, class-folder members and `private` members are definition
+  dependencies and receive typed `source-not-runnable` rejection. The same pure
+  classifier drives the toolbar hint, while the service remains authoritative against
+  stale or alternate clients.
 - MATLAB table/timetable capture bounds row/column selection before text/row-time
   conversion and emits the neutral table representation. Unsupported nonscalars,
   huge values and unsafe integers have bounded explicit representations/warnings.
@@ -3446,13 +3455,21 @@ Code hides results, not execution ownership. An independent session tab and a pl
 history/file/figure viewer must have distinct ownership even if they show the same file.
 
 An unrun source file opens in Code regardless of another file's current view. Choosing
-Split or Results is passive and shows only a quiet `Run` action with `to see results.`;
-that action delegates to the same file-run command as the toolbar rather than creating
-a second execution path.
+Split or Results is passive and shows only a quiet **Run file** action; that action
+delegates to the same file-run command as the toolbar rather than creating a second
+execution path.
 Run reveals Results by default, or Split when Split was the last explicitly selected
 results layout. This happens directly from the Run action; a delayed startup or result
 cannot later override a view the user chose. Code does not replace the remembered
 results layout, and neither layout selection nor opening a file starts a runtime.
+
+The owning tab's outer Code/Split/Results choice and inner Results/Variables choice
+live in a small ephemeral presentation store keyed by the stable Compute context ID.
+They survive component remounts caused by thread, right-panel and theme navigation,
+but are not session truth and are not written into run history. Explicit close removes
+only that context's presentation after its session is known closed; a failed close keeps
+both the context and the reachable UI. A full app restart may return to Code without
+stopping or replaying durable session work.
 
 Reuse the existing file-tab surfaces and `ComputeSession` service. Distinguish a
 lightweight view, its stable Compute-context binding, and a lazily started live

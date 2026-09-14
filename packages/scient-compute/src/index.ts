@@ -1,6 +1,7 @@
 export * from "./capabilities.ts";
 export * from "./contract.ts";
 export * from "./executionStateMachine.ts";
+export * from "./matlabSource.ts";
 export * from "./outputProjection.ts";
 export * from "./protocolCodec.ts";
 export * from "./queue.ts";

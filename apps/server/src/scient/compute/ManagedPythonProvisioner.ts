@@ -41,11 +41,11 @@ import { assessPythonToolkits } from "./PythonToolkitCatalog.ts";
 export const MANAGED_PYTHON_VERSION = "3.12.13";
 export const MANAGED_PYTHON_UV_VERSION = "0.11.16";
 export const MANAGED_PYTHON_PROVISIONER_VERSION = `uv-${MANAGED_PYTHON_UV_VERSION}`;
-export const MANAGED_PYTHON_TOOLKIT_REVISION = "scientific-python-2026-08-30.1";
+export const MANAGED_PYTHON_TOOLKIT_REVISION = "scientific-python-2026-09-14.1";
 export const MANAGED_PYTHON_LOCK_SHA256 =
-  "abad91ab379a20092e8d3cb4e7c708d436d5fe4c889f569976ffa76f9c971b5f";
+  "5aeeaabfe9bf1c084eecd0affefd5d517a3a03bf9ff4a65d91293210cff3a3d8";
 export const MANAGED_PYTHON_PROJECT_SHA256 =
-  "3cb52386aaa64eb93763cadb7c69b3cd6a174b1ec3f6245fa747cd00ebe1fa38";
+  "122d932164a4fa48bd47458f8169fa58eaee452c59ab96f79a01577c8652d0b7";
 const STAGED_MANAGED_PYTHON_DIRECTORY = "scient-managed-python";
 
 const PROCESS_TIMEOUT = Duration.minutes(30);
@@ -63,8 +63,10 @@ const REPRESENTATIVE_SCIENTIFIC_CHECK = [
   "import matplotlib",
   'matplotlib.use("Agg")',
   "import matplotlib.pyplot as plt",
+  "import nbformat",
   "import numpy as np",
   "import pandas as pd",
+  "import plotly.graph_objects as go",
   "from scipy import stats",
   "x = np.arange(6, dtype=float)",
   'frame = pd.DataFrame({"x": x, "y": x ** 2})',
@@ -76,6 +78,9 @@ const REPRESENTATIVE_SCIENTIFIC_CHECK = [
   'figure.savefig(buffer, format="png")',
   "plt.close(figure)",
   "assert len(buffer.getvalue()) > 100",
+  "chart = go.Figure(data=go.Scatter(x=[1, 2], y=[3, 4]))",
+  'assert chart.to_plotly_json()["data"][0]["type"] == "scatter"',
+  'assert tuple(int(part) for part in nbformat.__version__.split(".")[:2]) >= (4, 2)',
   'print(json.dumps({"ok": True}))',
 ].join("\n");
 

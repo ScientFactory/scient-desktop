@@ -14,6 +14,7 @@ import {
   TERMINAL_COMPUTE_EXECUTION_STATUSES,
   TERMINAL_COMPUTE_SESSION_STATUSES,
   admitComputeExecution,
+  classifyMatlabSource,
   cancelComputeExecution,
   checkComputeSessionGeneration,
   computeOutputByteLength,
@@ -2497,6 +2498,20 @@ const make = Effect.gen(function* () {
           "session-not-running",
           `This session is ${record.status} and cannot run code.`,
         );
+      }
+      if (
+        record.languageId === "matlab" &&
+        input.source._tag === "document" &&
+        input.source.origin === "file"
+      ) {
+        const capability = classifyMatlabSource({ path: input.source.path, code: input.code });
+        if (!capability.runnableAsFile) {
+          return yield* computeError(
+            "submit",
+            "source-not-runnable",
+            capability.reason ?? "This MATLAB definition cannot be run as a script.",
+          );
+        }
       }
       const sameSubmission = (request: ComputeExecutionRequestRecord) =>
         request.sessionId === live.sessionId &&

@@ -5,6 +5,7 @@ import type {
   EnvironmentId,
   ScopedThreadRef,
 } from "@t3tools/contracts";
+import { classifyMatlabSource } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
 import { Columns2, Play, Rows2 } from "lucide-react";
 import { useCallback, useMemo, useRef, useState } from "react";
@@ -19,6 +20,11 @@ import { useScientSplit } from "~/scient/layout/useScientSplit";
 import { ScientTooltip } from "~/scient/presentation/ScientTooltip";
 
 import { ComputePanel } from "./ComputePanel";
+import {
+  getComputeFilePresentation,
+  useComputeFilePresentationStore,
+  type ComputePanelView,
+} from "./computeFilePresentationStore";
 import type { ComputeSourceLanguage } from "./computeSourceLanguage";
 import { ComputeFileActions, type ComputeFileActionsHandle } from "./ComputeFileActions";
 import type { ComputeContextId } from "./computeContextStore";
@@ -113,7 +119,14 @@ function persist<T, E>(key: string, value: T, schema: Schema.Codec<T, E>): void 
 }
 
 export function ScientComputeFileSurface(props: ScientComputeFileSurfaceProps) {
-  const [view, setView] = useState<ComputeFileView>("code");
+  const view = useComputeFilePresentationStore(
+    (state) => state.presentations[props.contextId]?.view ?? "code",
+  );
+  const panelView = useComputeFilePresentationStore(
+    (state) => state.presentations[props.contextId]?.panelView ?? "results",
+  );
+  const setFileView = useComputeFilePresentationStore((state) => state.setFileView);
+  const setPanelView = useComputeFilePresentationStore((state) => state.setPanelView);
   const [preferredResultsView, setPreferredResultsView] =
     useState<ComputeFileResultsView>(initialResultsView);
   const [split, setSplit] = useState(initialSplit);
@@ -137,13 +150,23 @@ export function ScientComputeFileSurface(props: ScientComputeFileSurfaceProps) {
     () => props.contents.split(/\r?\n/).some((line) => props.language.cellMarker.test(line)),
     [props.contents, props.language.cellMarker],
   );
+  const sourceRunUnavailableReason = useMemo(
+    () =>
+      props.language.languageId === "matlab"
+        ? classifyMatlabSource({ path: props.relativePath, code: props.contents }).reason
+        : null,
+    [props.contents, props.language.languageId, props.relativePath],
+  );
 
-  const selectView = useCallback((next: ComputeFileView) => {
-    setView(next);
-    if (next === "code") return;
-    setPreferredResultsView(next);
-    persist(COMPUTE_FILE_RESULTS_VIEW_STORAGE_KEY, next, Schema.String);
-  }, []);
+  const selectView = useCallback(
+    (next: ComputeFileView) => {
+      setFileView(props.contextId, next);
+      if (next === "code") return;
+      setPreferredResultsView(next);
+      persist(COMPUTE_FILE_RESULTS_VIEW_STORAGE_KEY, next, Schema.String);
+    },
+    [props.contextId, setFileView],
+  );
   const selectSplitLayout = useCallback((next: ComputeFileSplitLayout) => {
     setSplitLayout(next);
     persist(COMPUTE_FILE_SPLIT_LAYOUT_STORAGE_KEY, next, Schema.String);
@@ -163,11 +186,17 @@ export function ScientComputeFileSurface(props: ScientComputeFileSurfaceProps) {
     onCommit: commitSplit,
   });
   const handleRunRequested = useCallback(() => {
-    setView((current) => computeFileViewAfterRun(current, preferredResultsView));
-  }, [preferredResultsView]);
+    const currentView = getComputeFilePresentation(props.contextId).view;
+    setFileView(props.contextId, computeFileViewAfterRun(currentView, preferredResultsView));
+    setPanelView(props.contextId, "results");
+  }, [preferredResultsView, props.contextId, setFileView, setPanelView]);
   const handleEmptyResultsRun = useCallback(() => {
     actionsRef.current?.runPrimary();
   }, []);
+  const handlePanelViewChange = useCallback(
+    (next: ComputePanelView) => setPanelView(props.contextId, next),
+    [props.contextId, setPanelView],
+  );
   const handleExecutionSubmitted = useCallback(
     (sessionId: ComputeSessionId, executionId: ComputeExecutionId) => {
       setFocusExecution({ sessionId, executionId });
@@ -342,6 +371,7 @@ export function ScientComputeFileSurface(props: ScientComputeFileSurfaceProps) {
               cwd={props.cwd}
               threadRef={props.threadRef}
               sourcePath={props.relativePath}
+              sourceRunUnavailableReason={sourceRunUnavailableReason}
               sourceLanguageId={props.language.languageId}
               sourceRevision={props.revision}
               sourcePending={props.sourcePending}
@@ -350,6 +380,8 @@ export function ScientComputeFileSurface(props: ScientComputeFileSurfaceProps) {
               focusExecutionId={focusExecution?.executionId ?? null}
               onFocusConsumed={handleFocusConsumed}
               onRunSource={handleEmptyResultsRun}
+              panelView={panelView}
+              onPanelViewChange={handlePanelViewChange}
               embedded
             />
           </div>

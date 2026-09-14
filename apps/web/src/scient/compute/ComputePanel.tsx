@@ -64,6 +64,11 @@ import { refreshProjectFiles } from "~/components/files/projectFilesQueryState";
 
 import { ComputeOutputView } from "./ComputeOutputView";
 import { ComputeSavedFileAction } from "./ComputeSavedFileAction";
+import type { ComputePanelView } from "./computeFilePresentationStore";
+import {
+  resolveComputeEmptyResultsState,
+  type ComputeEmptyResultsState,
+} from "./computePanelPresentation";
 import { defaultComputeRuntime, isComputeCapacityReachedError } from "./computeFileSurfaceModel";
 import { closeComputeContext, mergeComputeSessionRecords } from "./computeContextCoordinator";
 import {
@@ -115,6 +120,107 @@ function ResultLoadError(props: { readonly error: string; readonly noun: "result
         <summary className="cursor-pointer">Details</summary>
         <p className="mt-1 break-words">{props.error}</p>
       </details>
+    </div>
+  );
+}
+
+function ComputePanelTabs(props: {
+  readonly value: ComputePanelView;
+  readonly resultsLabel: string;
+  readonly onChange: (view: ComputePanelView) => void;
+}) {
+  const resultsRef = useRef<HTMLButtonElement>(null);
+  const variablesRef = useRef<HTMLButtonElement>(null);
+  const tabs: ReadonlyArray<{ value: ComputePanelView; label: string }> = [
+    { value: "results", label: props.resultsLabel },
+    { value: "variables", label: "Variables" },
+  ];
+  const focus = (view: ComputePanelView) => {
+    props.onChange(view);
+    (view === "results" ? resultsRef : variablesRef).current?.focus();
+  };
+  return (
+    <div className="flex items-center gap-1" role="tablist" aria-label="Compute view">
+      {tabs.map((tab) => (
+        <button
+          key={tab.value}
+          ref={tab.value === "results" ? resultsRef : variablesRef}
+          type="button"
+          role="tab"
+          tabIndex={props.value === tab.value ? 0 : -1}
+          aria-selected={props.value === tab.value}
+          className={cn(
+            "cursor-pointer rounded-[4px] px-1.5 py-0.5 text-sm font-medium text-muted-foreground outline-none transition-colors hover:bg-muted/70 hover:text-foreground focus-visible:ring-1 focus-visible:ring-ring",
+            props.value === tab.value && "text-foreground",
+          )}
+          onClick={() => props.onChange(tab.value)}
+          onKeyDown={(event) => {
+            if (event.key === "ArrowLeft" || event.key === "ArrowRight") {
+              event.preventDefault();
+              focus(tab.value === "results" ? "variables" : "results");
+            } else if (event.key === "Home") {
+              event.preventDefault();
+              focus("results");
+            } else if (event.key === "End") {
+              event.preventDefault();
+              focus("variables");
+            }
+          }}
+        >
+          {tab.label}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+function EmptyComputeResults(props: {
+  readonly state: ComputeEmptyResultsState;
+  readonly onRun?: () => void;
+  readonly runUnavailableReason?: string | null;
+}) {
+  const pendingLabel =
+    props.state === "loading-history"
+      ? "Loading history…"
+      : props.state === "starting-session"
+        ? "Starting…"
+        : props.state === "stopping-session"
+          ? "Stopping…"
+          : "Running…";
+  if (
+    props.state === "loading-history" ||
+    props.state === "starting-session" ||
+    props.state === "stopping-session" ||
+    props.state === "running"
+  ) {
+    return (
+      <div
+        className="flex min-h-40 items-center justify-center gap-2 text-xs text-muted-foreground"
+        role="status"
+      >
+        <LoaderCircle className="size-3.5 animate-spin" /> {pendingLabel}
+      </div>
+    );
+  }
+  if (props.state === "idle-file") {
+    if (props.runUnavailableReason) {
+      return (
+        <div className="flex min-h-40 items-center justify-center px-4 text-center text-xs text-muted-foreground">
+          {props.runUnavailableReason}
+        </div>
+      );
+    }
+    return (
+      <div className="flex min-h-40 items-center justify-center">
+        <Button size="xs" variant="outline" onClick={props.onRun}>
+          <Play /> Run file
+        </Button>
+      </div>
+    );
+  }
+  return (
+    <div className="flex min-h-40 items-center justify-center text-center text-xs text-muted-foreground">
+      Run code from a source file to begin this session.
     </div>
   );
 }
@@ -497,24 +603,24 @@ function ComputeVariablesView(props: {
             No user variables in this session yet.
           </p>
         ) : (
-          <div className="overflow-x-auto rounded-[6px] border border-border/70">
-            <div className="grid min-w-[34rem] grid-cols-[minmax(7rem,1fr)_minmax(6rem,0.8fr)_minmax(7rem,1fr)_minmax(8rem,1.4fr)] gap-3 border-b border-border/60 bg-muted/30 px-3 py-2 text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
+          <div className="@container/compute-variables min-w-0 overflow-hidden rounded-[6px] border border-border/70">
+            <div className="grid min-w-0 grid-cols-[minmax(0,1fr)_minmax(0,.8fr)_minmax(0,.9fr)] gap-2 border-b border-border/60 bg-muted/30 px-2 py-1.5 text-[10px] font-medium uppercase tracking-wide text-muted-foreground @[32rem]/compute-variables:grid-cols-[minmax(0,1fr)_minmax(0,.8fr)_minmax(0,.9fr)_minmax(0,1.2fr)]">
               <span>Name</span>
               <span>Type</span>
               <span>Shape / size</span>
-              <span>Preview</span>
+              <span className="hidden @[32rem]/compute-variables:block">Preview</span>
             </div>
             {props.snapshot.variables.map((variable) => (
               <div
                 key={variable.name}
-                className="grid min-w-[34rem] grid-cols-[minmax(7rem,1fr)_minmax(6rem,0.8fr)_minmax(7rem,1fr)_minmax(8rem,1.4fr)] gap-3 border-b border-border/50 px-3 py-2 text-xs last:border-b-0"
+                className="grid min-w-0 grid-cols-[minmax(0,1fr)_minmax(0,.8fr)_minmax(0,.9fr)] gap-2 border-b border-border/50 px-2 py-1.5 text-xs last:border-b-0 @[32rem]/compute-variables:grid-cols-[minmax(0,1fr)_minmax(0,.8fr)_minmax(0,.9fr)_minmax(0,1.2fr)]"
               >
                 <code className="truncate font-medium text-foreground">{variable.name}</code>
                 <span className="truncate text-muted-foreground">{variable.typeName}</span>
                 <span className="truncate font-mono text-[11px] text-muted-foreground">
                   {variable.shape ?? (variable.size === null ? "—" : String(variable.size))}
                 </span>
-                <code className="truncate text-[11px] text-muted-foreground">
+                <code className="hidden truncate text-[11px] text-muted-foreground @[32rem]/compute-variables:block">
                   {variable.preview ?? "—"}
                 </code>
               </div>
@@ -545,9 +651,14 @@ export function ComputePanel(props: {
   readonly contextId?: ComputeContextId;
   readonly onRetryClose?: () => void;
   readonly onRunSource?: () => void;
+  readonly sourceRunUnavailableReason?: string | null;
+  readonly panelView?: ComputePanelView;
+  readonly onPanelViewChange?: (view: ComputePanelView) => void;
   readonly embedded?: boolean;
 }) {
-  const [panelView, setPanelView] = useState<"results" | "variables">("results");
+  const [localPanelView, setLocalPanelView] = useState<ComputePanelView>("results");
+  const panelView = props.panelView ?? localPanelView;
+  const setPanelView = props.onPanelViewChange ?? setLocalPanelView;
   const [selectedSessionId, setSelectedSessionId] = useState<string | null>(null);
   const [selectedExecutionId, setSelectedExecutionId] = useState<string | null>(null);
   const [runtimeKey, setRuntimeKey] = useState("");
@@ -775,6 +886,14 @@ export function ComputePanel(props: {
   const rehydrationToken = events.data?.observedGap
     ? `${events.data.observedGap.expected}:${events.data.observedGap.received}`
     : null;
+  const emptyResultsState = resolveComputeEmptyResultsState({
+    contextLifecycle: contextBinding?.lifecycle ?? null,
+    sessionStatus: selectedSession?.status ?? null,
+    sessionActivity: selectedSession?.activity ?? null,
+    historyPending: sessions.isPending || exactSession.isPending || executions.isPending,
+    focusExecutionPending: props.focusExecutionId !== undefined && props.focusExecutionId !== null,
+    sourceFile: props.sourcePath !== undefined,
+  });
   const variablesRefreshToken = useMemo(() => {
     if (liveSession === null) return null;
     const latest = [...(events.data?.executions.get(liveSession.sessionId)?.values() ?? [])]
@@ -1164,41 +1283,20 @@ export function ComputePanel(props: {
 
   return (
     <section className="flex min-h-0 flex-1 flex-col bg-background" aria-label="Scientific results">
-      <header className="flex min-h-12 shrink-0 flex-wrap items-center gap-2 border-b border-border/60 px-3 py-1">
+      <header className="flex min-h-10 shrink-0 flex-wrap items-center gap-2 border-b border-border/60 px-3 py-0.5">
         <div className="min-w-0 flex-1">
-          <div
-            className="flex flex-wrap items-center gap-1"
-            role="tablist"
-            aria-label="Compute view"
-          >
-            <button
-              type="button"
-              role="tab"
-              aria-selected={panelView === "results"}
-              className={cn(
-                "cursor-pointer rounded-[4px] px-1.5 py-1 text-sm font-medium text-muted-foreground transition-colors hover:bg-muted/70 hover:text-foreground",
-                panelView === "results" && "text-foreground",
-              )}
-              onClick={() => setPanelView("results")}
-            >
-              {props.embedded
-                ? "Results"
-                : props.contextId === undefined
-                  ? "Compute history"
-                  : "Compute session"}
-            </button>
-            <button
-              type="button"
-              role="tab"
-              aria-selected={panelView === "variables"}
-              className={cn(
-                "cursor-pointer rounded-[4px] px-1.5 py-1 text-sm font-medium text-muted-foreground transition-colors hover:bg-muted/70 hover:text-foreground",
-                panelView === "variables" && "text-foreground",
-              )}
-              onClick={() => setPanelView("variables")}
-            >
-              Variables
-            </button>
+          <div className="flex flex-wrap items-center gap-1">
+            <ComputePanelTabs
+              value={panelView}
+              resultsLabel={
+                props.embedded
+                  ? "Results"
+                  : props.contextId === undefined
+                    ? "Compute history"
+                    : "Compute session"
+              }
+              onChange={setPanelView}
+            />
             {!props.embedded && contextBinding !== null ? (
               <span
                 className={cn(
@@ -1506,13 +1604,11 @@ export function ComputePanel(props: {
               />
             ) : null}
             {selectedExecutions.length === 0 ? (
-              <div className="flex min-h-40 items-center justify-center text-center text-xs text-muted-foreground">
-                {executions.isPending
-                  ? "Loading history…"
-                  : props.sourcePath
-                    ? "Run this file to see its results."
-                    : "Run code from a source file to begin this session."}
-              </div>
+              <EmptyComputeResults
+                state={emptyResultsState}
+                runUnavailableReason={props.sourceRunUnavailableReason ?? null}
+                {...(props.onRunSource === undefined ? {} : { onRun: props.onRunSource })}
+              />
             ) : (
               <>
                 {selectedExecutions.length > 1 ? (
@@ -1568,34 +1664,16 @@ export function ComputePanel(props: {
             )}
           </div>
         </ScrollArea>
+      ) : props.embedded ? (
+        <EmptyComputeResults
+          state={emptyResultsState}
+          runUnavailableReason={props.sourceRunUnavailableReason ?? null}
+          {...(props.onRunSource === undefined ? {} : { onRun: props.onRunSource })}
+        />
       ) : (
         <div className="flex min-h-0 flex-1 items-start justify-center overflow-y-auto px-4 pb-6 pt-12">
           <div className="w-full max-w-md text-center">
-            {props.embedded ? (
-              <div className="flex items-center justify-center gap-2 text-xs text-muted-foreground">
-                {contextBinding?.lifecycle === "starting" ? (
-                  <>
-                    <LoaderCircle className="size-3.5 animate-spin" /> Starting…
-                  </>
-                ) : contextBinding?.lifecycle === "closing" ? (
-                  <>
-                    <LoaderCircle className="size-3.5 animate-spin" /> Stopping…
-                  </>
-                ) : (
-                  <>
-                    <Button
-                      size="xs"
-                      variant="outline"
-                      className="h-6 px-2"
-                      onClick={props.onRunSource}
-                    >
-                      <Play /> Run
-                    </Button>
-                    <span>to see results.</span>
-                  </>
-                )}
-              </div>
-            ) : props.contextId === undefined ? (
+            {props.contextId === undefined ? (
               <p className="text-sm text-muted-foreground">No compute history yet.</p>
             ) : runtimes.isPending ? (
               <LoaderCircle className="mx-auto size-5 animate-spin text-muted-foreground" />

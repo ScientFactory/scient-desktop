@@ -24,6 +24,8 @@ export const PYTHON_DATA_AND_FIGURES_TOOLKIT: ComputeToolkitDescriptor = {
     { name: "pandas", displayName: "pandas", minimumVersion: null },
     { name: "scipy", displayName: "SciPy", minimumVersion: null },
     { name: "matplotlib", displayName: "Matplotlib", minimumVersion: null },
+    { name: "nbformat", displayName: "nbformat", minimumVersion: "4.2" },
+    { name: "plotly", displayName: "Plotly", minimumVersion: null },
   ],
 };
 

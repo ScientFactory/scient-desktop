@@ -1,5 +1,6 @@
 import type { ComputeSessionRecord, EnvironmentId } from "@t3tools/contracts";
 import {
+  classifyMatlabSource,
   ComputeExecutionId,
   ComputeSessionId,
   TERMINAL_COMPUTE_SESSION_STATUSES,
@@ -39,6 +40,7 @@ import { serverEnvironment } from "~/state/server";
 import { useAtomCommand } from "~/state/use-atom-command";
 import { useAtomQueryRunner } from "~/state/use-atom-query-runner";
 import { useEnvironmentQuery } from "~/state/query";
+import { ScientTooltip } from "~/scient/presentation/ScientTooltip";
 
 import {
   computeCell,
@@ -60,7 +62,6 @@ import {
   ManagedRuntimeNotice,
   useComputeManagedRuntime,
 } from "./ComputeManagedRuntimeControls";
-import { computeManagedPrimaryAction } from "./computeInstallationSettingsModel";
 import {
   computeSessionOwnerLabel,
   ensureComputeContext,
@@ -269,15 +270,16 @@ export const ComputeFileActions = forwardRef<ComputeFileActionsHandle, ComputeFi
         ),
       [allSessions, contextBinding?.sessionId],
     );
+    const contextSessionId = contextBinding?.sessionId;
     const liveSession = useMemo(() => {
       if (props.contextId !== undefined) {
-        if (contextBinding?.sessionId === null || contextBinding?.sessionId === undefined) {
+        if (contextSessionId === null || contextSessionId === undefined) {
           return null;
         }
         return (
           allSessions.find(
             (session) =>
-              session.sessionId === contextBinding.sessionId &&
+              session.sessionId === contextSessionId &&
               !TERMINAL_COMPUTE_SESSION_STATUSES.has(session.status),
           ) ?? null
         );
@@ -286,7 +288,7 @@ export const ComputeFileActions = forwardRef<ComputeFileActionsHandle, ComputeFi
         allSessions.find((session) => !TERMINAL_COMPUTE_SESSION_STATUSES.has(session.status)) ??
         null
       );
-    }, [allSessions, contextBinding?.sessionId, props.contextId]);
+    }, [allSessions, contextSessionId, props.contextId]);
     const readyRuntime = useMemo(
       () =>
         defaultComputeRuntime(
@@ -329,6 +331,13 @@ export const ComputeFileActions = forwardRef<ComputeFileActionsHandle, ComputeFi
         ? {}
         : { contextLifecycle: contextBinding.lifecycle }),
     });
+    const matlabFileCapability = useMemo(
+      () =>
+        props.language.languageId === "matlab"
+          ? classifyMatlabSource({ path: props.relativePath, code: props.contents })
+          : null,
+      [props.contents, props.language.languageId, props.relativePath],
+    );
     const requestRuntimeSwitch = () => {
       if (liveSession !== null) {
         setSwitchTarget({ environmentId: props.environmentId, session: liveSession });
@@ -426,11 +435,6 @@ export const ComputeFileActions = forwardRef<ComputeFileActionsHandle, ComputeFi
       previousManagedOperation.current = operating;
     }, [managedRuntime.status?.operation, refreshRuntime]);
 
-    const handleSetup = useCallback(async () => {
-      if (managedRuntime.busy) return;
-      await managedRuntime.act(computeManagedPrimaryAction(managedRuntime.status));
-    }, [managedRuntime]);
-
     const switchRuntime = useCallback(async () => {
       if (switchTarget === null || switching) return;
       const target = switchTarget;
@@ -471,9 +475,20 @@ export const ComputeFileActions = forwardRef<ComputeFileActionsHandle, ComputeFi
       switching,
     ]);
 
+    const onExecutionSubmitted = props.onExecutionSubmitted;
     const run = useCallback(
       async (kind: ComputeRunKind, slice: ComputeCodeSlice | null) => {
         if (slice === null || operation !== null || refreshing || switching) return;
+        if (kind === "file" && matlabFileCapability?.runnableAsFile === false) {
+          toastManager.add({
+            type: "info",
+            title: "This MATLAB file is a definition",
+            description:
+              matlabFileCapability.reason ??
+              "Run a MATLAB script that calls this definition, or run a selection instead.",
+          });
+          return;
+        }
         setOperation(kind);
 
         let session = liveSession;
@@ -652,7 +667,7 @@ export const ComputeFileActions = forwardRef<ComputeFileActionsHandle, ComputeFi
         });
         setOperation(null);
         if (submitted._tag === "Success") {
-          props.onExecutionSubmitted(session.sessionId, executionId);
+          onExecutionSubmitted(session.sessionId, executionId);
         } else if (!isAtomCommandInterrupted(submitted)) {
           reportFailure(`Unable to run ${props.language.displayName}`, submitted);
           refreshSessions();
@@ -663,9 +678,10 @@ export const ComputeFileActions = forwardRef<ComputeFileActionsHandle, ComputeFi
         operation,
         props.cwd,
         props.environmentId,
-        props.onExecutionSubmitted,
+        onExecutionSubmitted,
         onRunRequested,
         props.language,
+        matlabFileCapability,
         props.relativePath,
         props.sourcePending,
         props.sourceRevision,
@@ -676,7 +692,6 @@ export const ComputeFileActions = forwardRef<ComputeFileActionsHandle, ComputeFi
         startSession,
         submitExecution,
         switching,
-        contextBinding?.lifecycle,
         capacityBlocked,
         startRetryAvailable,
         canRetryStart,
@@ -702,6 +717,7 @@ export const ComputeFileActions = forwardRef<ComputeFileActionsHandle, ComputeFi
         ? null
         : computeCell(props.contents, caretLine + 1, props.language.cellMarker);
     const fileSlice = computeFile(props.contents);
+    const fileRunBlocked = matlabFileCapability?.runnableAsFile === false;
     const busy = operation !== null || refreshing || switching || stoppingUnusedSession !== null;
     const pinRuntimeChrome =
       Boolean(setupProgress) ||
@@ -709,14 +725,20 @@ export const ComputeFileActions = forwardRef<ComputeFileActionsHandle, ComputeFi
       runtimeToolbar.kind === "setup" ||
       runtimeToolbar.kind === "switch" ||
       capacityBlocked;
-    const liveRunDisabled = busy || !runtimeToolbar.canRun;
+    const primaryRunBlocked = primary.kind === "file" && fileRunBlocked;
+    const liveRunDisabled = busy || !runtimeToolbar.canRun || primaryRunBlocked;
     const runMenuDisabled =
       busy || (props.language.languageId !== "matlab" && !runtimeToolbar.canRun);
     const runtimeNote = runtimeToolbar.kind === "status" ? runtimeToolbar.note : undefined;
-    const runtimeExecutable =
-      liveSession?.runtime?.executable ??
-      readyRuntime?.profile.executable ??
-      `${props.language.displayName} is unavailable`;
+    const primaryRunTooltip = primaryRunBlocked
+      ? (matlabFileCapability?.reason ?? "This definition is called from a script.")
+      : primary.slice === null
+        ? "Nothing to run"
+        : !runtimeToolbar.canRun
+          ? runtimeToolbar.label
+          : busy
+            ? "Another compute action is finishing"
+            : primary.label;
 
     useImperativeHandle(
       ref,
@@ -755,7 +777,7 @@ export const ComputeFileActions = forwardRef<ComputeFileActionsHandle, ComputeFi
                     <Button
                       size="xs"
                       variant="ghost-muted"
-                      className="-ms-1 h-6 min-w-0 max-w-full px-1 text-[11px] font-normal"
+                      className="h-6 min-w-0 max-w-full px-1 text-[11px] font-normal"
                       disabled={stoppingUnusedSession !== null}
                       aria-label="Choose a compute session to stop"
                       title="Stop an unused compute session to free host capacity"
@@ -787,55 +809,20 @@ export const ComputeFileActions = forwardRef<ComputeFileActionsHandle, ComputeFi
               <Button
                 size="xs"
                 variant="ghost-muted"
-                className="-ms-1 h-6 min-w-0 max-w-full px-1 text-[11px] font-normal"
+                className="h-6 min-w-0 max-w-full px-1 text-[11px] font-normal"
                 title={`Stop the current session and use the selected ${props.language.displayName}`}
                 disabled={switching}
                 onClick={requestRuntimeSwitch}
               >
                 <span className="truncate">{runtimeToolbar.label}</span>
               </Button>
-            ) : runtimeToolbar.kind === "setup" ? (
-              <Button
-                size="xs"
-                className="-ms-1 h-6 min-w-0 max-w-full shrink-0 px-1.5 text-[11px] font-normal"
-                title={`Set up ${props.language.displayName} for this file`}
-                disabled={managedRuntime.busy || refreshing}
-                onClick={() => void handleSetup()}
-              >
-                {managedRuntime.busy ? <LoaderCircle className="animate-spin" /> : null}
-                <span className="truncate">{runtimeToolbar.label}</span>
-              </Button>
-            ) : null}
-            <Menu>
-              <MenuTrigger
-                render={
-                  <Button
-                    size="xs"
-                    variant="ghost-muted"
-                    className="-ms-1 h-6 min-w-0 max-w-full px-1 text-[11px] font-normal"
-                    aria-label={pinRuntimeChrome ? "Runtime options" : undefined}
-                    title={
-                      runtimeNote === undefined
-                        ? runtimeExecutable
-                        : `${runtimeExecutable}. ${runtimeNote}`
-                    }
-                  />
-                }
-              >
-                {pinRuntimeChrome ? (
-                  <ChevronDown className="size-3" aria-hidden />
-                ) : (
-                  <span className="truncate">{runtimeToolbar.label}</span>
-                )}
-              </MenuTrigger>
-              <MenuPopup align="start" side="bottom" className="min-w-56">
-                <MenuItem disabled>{runtimeExecutable}</MenuItem>
-                {runtimeNote === undefined ? null : <MenuItem disabled>{runtimeNote}</MenuItem>}
-                <MenuSeparator />
-                <MenuItem disabled={refreshing || switching} onClick={() => void refreshRuntime()}>
-                  Check again
-                </MenuItem>
-                <MenuItem
+            ) : (
+              <ScientTooltip content={runtimeNote ?? "Open Scientific Computing"}>
+                <Button
+                  size="xs"
+                  variant="ghost-muted"
+                  className="h-6 min-w-0 max-w-full shrink px-1.5 text-[11px] font-normal"
+                  aria-label={`${runtimeToolbar.label}. Open Scientific Computing`}
                   render={
                     <Link
                       to="/settings/scientific-computing"
@@ -843,23 +830,38 @@ export const ComputeFileActions = forwardRef<ComputeFileActionsHandle, ComputeFi
                     />
                   }
                 >
-                  Scientific Computing
-                </MenuItem>
-              </MenuPopup>
-            </Menu>
+                  {runtimeToolbar.kind === "status" && runtimeToolbar.canRun ? (
+                    <span className="size-1.5 shrink-0 rounded-full bg-success" aria-hidden />
+                  ) : runtimeToolbar.kind === "status" && runtimeToolbar.label.includes("…") ? (
+                    <LoaderCircle className="animate-spin" aria-hidden />
+                  ) : null}
+                  <span className="truncate">{runtimeToolbar.label}</span>
+                </Button>
+              </ScientTooltip>
+            )}
           </div>
           <div className="flex shrink-0 items-center">
-            <Button
-              size="xs"
-              variant="outline"
-              className="rounded-r-none px-1.5 @[15rem]/python-file-actions:px-[calc(--spacing(2)-1px)]"
-              aria-label={primary.label}
-              disabled={liveRunDisabled || primary.slice === null}
-              onClick={() => void run(primary.kind, primary.slice)}
-            >
-              {operation === primary.kind ? <LoaderCircle className="animate-spin" /> : <Play />}
-              <span className="hidden @[15rem]/python-file-actions:inline">{primary.label}</span>
-            </Button>
+            <ScientTooltip content={primaryRunTooltip}>
+              <span className="inline-flex">
+                <Button
+                  size="xs"
+                  variant="outline"
+                  className="rounded-r-none px-1.5 @[15rem]/python-file-actions:px-[calc(--spacing(2)-1px)]"
+                  aria-label={primaryRunBlocked ? "MATLAB definition file" : primary.label}
+                  disabled={liveRunDisabled || primary.slice === null}
+                  onClick={() => void run(primary.kind, primary.slice)}
+                >
+                  {operation === primary.kind ? (
+                    <LoaderCircle className="animate-spin" />
+                  ) : (
+                    <Play />
+                  )}
+                  <span className="hidden @[15rem]/python-file-actions:inline">
+                    {primaryRunBlocked ? "Definition" : primary.label}
+                  </span>
+                </Button>
+              </span>
+            </ScientTooltip>
             <Menu>
               <MenuTrigger
                 render={
@@ -888,7 +890,8 @@ export const ComputeFileActions = forwardRef<ComputeFileActionsHandle, ComputeFi
                   Run cell
                 </MenuItem>
                 <MenuItem
-                  disabled={liveRunDisabled || fileSlice === null}
+                  disabled={busy || !runtimeToolbar.canRun || fileRunBlocked || fileSlice === null}
+                  title={fileRunBlocked ? (matlabFileCapability.reason ?? undefined) : undefined}
                   onClick={() => void run("file", fileSlice)}
                 >
                   Run file
@@ -904,7 +907,15 @@ export const ComputeFileActions = forwardRef<ComputeFileActionsHandle, ComputeFi
                 {props.language.languageId === "matlab" ? (
                   <>
                     <MenuSeparator />
-                    <MenuItem onClick={props.onShowMatlabOneShot}>Run as one-shot…</MenuItem>
+                    <MenuItem
+                      disabled={fileRunBlocked}
+                      title={
+                        fileRunBlocked ? (matlabFileCapability.reason ?? undefined) : undefined
+                      }
+                      onClick={props.onShowMatlabOneShot}
+                    >
+                      Run as one-shot…
+                    </MenuItem>
                   </>
                 ) : null}
               </MenuPopup>

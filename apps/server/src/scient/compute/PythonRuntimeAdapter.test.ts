@@ -38,8 +38,10 @@ const validProbeOutput = JSON.stringify({
     jupyter_client: "8.6.1",
     ipykernel: "6.29.0",
     matplotlib: "3.9.0",
+    nbformat: "5.10.4",
     numpy: "1.26.0",
     pandas: "2.2.0",
+    plotly: "6.3.0",
     scipy: null,
   },
 });
@@ -359,6 +361,8 @@ describe("python fingerprint", () => {
     expect(fp.contributors).toContain("prefix");
     expect(fp.contributors).toContain("jupyter_client");
     expect(fp.contributors).toContain("ipykernel");
+    expect(fp.contributors).toContain("nbformat");
+    expect(fp.contributors).toContain("plotly");
     expect(fp.contributors).toContain("scipy");
   });
 
@@ -644,8 +648,10 @@ describe("python runtime adapter", () => {
         { name: "ipykernel", version: "6.29.0" },
         { name: "jupyter_client", version: "8.6.1" },
         { name: "matplotlib", version: "3.9.0" },
+        { name: "nbformat", version: "5.10.4" },
         { name: "numpy", version: "1.26.0" },
         { name: "pandas", version: "2.2.0" },
+        { name: "plotly", version: "6.3.0" },
         { name: "scipy", version: null },
       ]);
     }),
@@ -663,6 +669,7 @@ describe("python runtime adapter", () => {
               matplotlib: null,
               numpy: null,
               pandas: null,
+              plotly: null,
             },
           }),
         ),

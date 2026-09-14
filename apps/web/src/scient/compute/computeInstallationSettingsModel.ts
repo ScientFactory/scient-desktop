@@ -95,7 +95,15 @@ export function defaultComputeInstallation(
 }
 
 export type ComputeCurrentRuntimeSummary = {
-  readonly kind: "ready" | "setup" | "connect" | "repair-managed" | "unavailable" | "missing";
+  readonly kind:
+    | "disabled"
+    | "ready"
+    | "setup"
+    | "connect"
+    | "update-managed"
+    | "repair-managed"
+    | "unavailable"
+    | "missing";
   readonly title: string;
   readonly detail: string;
 };
@@ -110,17 +118,29 @@ export function computeCurrentRuntimeSummary(input: {
   const isMatlab = language.descriptor.languageId === "matlab";
   const selected = defaultComputeInstallation(language, preference, managed);
   const source = selected === undefined ? null : runtimeSourceLabel(selected.source);
-  const enabled =
-    preference.enabled ||
-    (language.descriptor.languageId === "python" &&
-      managed?.installed === true &&
-      managed.selection === "managed");
+  const enabled = preference.enabled;
+
+  if (!enabled) {
+    return { kind: "disabled", title: "Off", detail: "" };
+  }
 
   if (selected?.problem && selected.source === "managed") {
     return {
       kind: "repair-managed",
       title: selected.problem,
       detail: source ?? language.descriptor.displayName,
+    };
+  }
+  if (
+    selected?.source === "managed" &&
+    managed?.installed === true &&
+    managed.selection === "managed" &&
+    managed.updateAvailable
+  ) {
+    return {
+      kind: "update-managed",
+      title: selected.version ?? "Scient-managed Python",
+      detail: "Toolkit update available",
     };
   }
   if (selected?.problem) {
@@ -141,6 +161,13 @@ export function computeCurrentRuntimeSummary(input: {
       detail: "Scient-managed",
     };
   }
+  if (isMatlab && managed !== null && !managed.installed && selected !== undefined) {
+    return {
+      kind: "connect",
+      title: "Not connected",
+      detail: "Connect Scient to this MATLAB installation.",
+    };
+  }
   if (selected !== undefined && enabled) {
     return {
       kind: "ready",
@@ -149,15 +176,6 @@ export function computeCurrentRuntimeSummary(input: {
     };
   }
   if (isMatlab) {
-    // Inventory listing is skipped while MATLAB is disabled, so an empty list
-    // is not proof that MATLAB is missing on the machine.
-    if (!enabled) {
-      return {
-        kind: "connect",
-        title: "Not connected",
-        detail: "Connect the MATLAB already installed on this server.",
-      };
-    }
     if (language.installations.length === 0) {
       return {
         kind: "missing",
@@ -174,7 +192,7 @@ export function computeCurrentRuntimeSummary(input: {
   return {
     kind: "setup",
     title: "Not set up",
-    detail: "Set up Scientific Python here, or choose an existing runtime under Change runtime.",
+    detail: "Set up Scientific Python or choose an existing runtime.",
   };
 }
 

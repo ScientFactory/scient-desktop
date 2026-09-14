@@ -5,6 +5,7 @@ import {
   ComputeExecutionSource,
   computeOutputByteLength,
   ComputeLanguageId,
+  classifyMatlabSource,
   ComputeManagedRuntimeAction,
   ComputeManagedRuntimeStatus,
   ComputeOperationError,
@@ -25,6 +26,7 @@ import {
   ComputeToolkitDescriptor,
   ComputeVariableSnapshot,
   type ComputeProjectedOutput,
+  type MatlabSourceCapability,
   ComputeExecutionOutputs,
   INITIAL_COMPUTE_SESSION_GENERATION,
   TERMINAL_COMPUTE_EXECUTION_STATUSES,
@@ -213,6 +215,7 @@ export const ComputeGetProjectSessionResult = Schema.NullOr(ComputeSessionRecord
 export const ComputeListProjectExecutionsResult = Schema.Array(ComputeExecutionRecord);
 
 export {
+  classifyMatlabSource,
   computeOutputByteLength,
   ComputeExecutionId,
   ComputeExecutionRecord,
@@ -236,6 +239,7 @@ export {
   ComputeToolkitDescriptor,
   ComputeVariableSnapshot,
   type ComputeProjectedOutput,
+  type MatlabSourceCapability,
   INITIAL_COMPUTE_SESSION_GENERATION,
   TERMINAL_COMPUTE_EXECUTION_STATUSES,
   TERMINAL_COMPUTE_SESSION_STATUSES,

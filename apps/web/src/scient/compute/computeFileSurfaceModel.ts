@@ -205,13 +205,13 @@ export function resolveComputeRuntimeToolbarState(input: {
     }
     return {
       kind: "status",
-      label: `${languageName} ready`,
+      label: languageName,
       canRun: true,
       ...(input.scientificPackagesMissing ? { note: SCIENTIFIC_PACKAGES_NOTE } : {}),
     };
   }
-  // Inspect is a package-metadata probe. Do not call that "ready"; Run still
-  // starts a real session. "Python ready" is reserved for a live session above.
+  // Inspect is a package-metadata probe, not proof that a live kernel already
+  // exists. Keep the compact language/version label and let Run own startup.
   if (input.readyRuntimeAvailable) {
     return {
       kind: "status",

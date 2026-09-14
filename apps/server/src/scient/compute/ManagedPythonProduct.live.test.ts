@@ -121,6 +121,7 @@ describe.runIf(ENABLED)("Scient-managed Python product", () => {
               "import matplotlib.pyplot as plt",
               "import numpy as np",
               "import pandas as pd",
+              "import plotly.graph_objects as go",
               "from IPython.display import display",
               "from scipy import stats",
               "x = np.arange(6, dtype=float)",
@@ -130,6 +131,7 @@ describe.runIf(ENABLED)("Scient-managed Python product", () => {
               "axis.plot(frame['x'], frame['z'])",
               "display(figure)",
               "plt.close(figure)",
+              "go.Figure(data=go.Scatter(x=frame['x'], y=frame['z'])).show()",
             ].join("\n"),
             source: { _tag: "console" },
           });
@@ -137,6 +139,15 @@ describe.runIf(ENABLED)("Scient-managed Python product", () => {
           expect(execution.result?.status).toBe("succeeded");
           const outputs = yield* gateway.listOutputs({ cwd: projectRoot, sessionId, executionId });
           expect(outputs.outputs.some((output) => output._tag === "display-data")).toBe(true);
+          expect(
+            outputs.outputs.some(
+              (output) =>
+                output._tag === "display-data" &&
+                output.bundle.representations.some(
+                  (representation) => representation.mediaType === "application/vnd.plotly.v1+json",
+                ),
+            ),
+          ).toBe(true);
 
           const blocked = yield* Effect.flip(
             gateway.manageRuntime({ languageId: PYTHON, action: "remove" }),

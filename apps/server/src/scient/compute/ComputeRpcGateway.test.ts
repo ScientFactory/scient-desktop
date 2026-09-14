@@ -274,8 +274,10 @@ describe("compute RPC gateway", () => {
           { name: "ipykernel", version: "6.29.5" },
           { name: "jupyter_client", version: "8.6.3" },
           { name: "matplotlib", version: "3.9.1" },
+          { name: "nbformat", version: "5.10.4" },
           { name: "numpy", version: "2.0.1" },
           { name: "pandas", version: "2.2.2" },
+          { name: "plotly", version: "6.3.0" },
           { name: "scipy", version: null },
         ],
       };

@@ -580,6 +580,7 @@ import {
   useComputeContextStore,
   type ComputeContextId,
 } from "~/scient/compute/computeContextStore";
+import { useComputeFilePresentationStore } from "~/scient/compute/computeFilePresentationStore";
 import { computeSourceLanguageForPath } from "~/scient/compute/computeSourceLanguage";
 
 const EMPTY_ACTIVITIES: OrchestrationThreadActivity[] = [];
@@ -5387,6 +5388,7 @@ function ChatViewContent(props: ChatViewProps) {
         });
         if (!result.closed) return false;
         useComputeContextStore.getState().removeContext(contextId);
+        useComputeFilePresentationStore.getState().remove(contextId);
       }
       return true;
     },

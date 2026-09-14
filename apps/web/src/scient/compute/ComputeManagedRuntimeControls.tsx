@@ -1,4 +1,4 @@
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   CheckIcon,
   ChevronDown,
@@ -21,17 +21,9 @@ import { useAtomCommand } from "~/state/use-atom-command";
 import { useCopyToClipboard } from "~/hooks/useCopyToClipboard";
 import { cn } from "~/lib/utils";
 import { Button } from "~/components/ui/button";
+import { ContextualConfirmation } from "~/components/ui/contextual-confirmation";
 import { Popover, PopoverPopup, PopoverTrigger } from "~/components/ui/popover";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "~/components/ui/tooltip";
-import {
-  AlertDialog,
-  AlertDialogClose,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogPopup,
-  AlertDialogTitle,
-} from "~/components/ui/alert-dialog";
 
 export interface ComputeManagedRuntimeFailureView {
   readonly summary: string;
@@ -146,7 +138,12 @@ export function useComputeManagedRuntime(input: {
   });
   // Once superseded, a receipt must not reappear if the server later returns
   // to its pre-command state (for example after cancellation or removal).
-  if (candidateCommandStatus !== null && commandStatus === null) setCommandState(null);
+  useEffect(() => {
+    if (candidateCommandStatus === null || commandStatus !== null) return;
+    // This synchronizes an optimistic command receipt with newer server truth.
+    // oxlint-disable-next-line react/set-state-in-effect
+    setCommandState((current) => (current?.scopeKey === scopeKey ? null : current));
+  }, [candidateCommandStatus, commandStatus, scopeKey]);
   const status = commandStatus ?? (queried.data === undefined ? input.initialStatus : queried.data);
   const [pending, setPending] = useState(false);
   const [localFailureState, setLocalFailureState] = useState<{
@@ -391,6 +388,7 @@ export function ManagedRuntimeActions({
   canProvision = true,
   disabled = false,
   maintenanceOnly = false,
+  omitAction = null,
   className,
 }: {
   runtime: ComputeManagedRuntimeController;
@@ -398,6 +396,7 @@ export function ManagedRuntimeActions({
   canProvision?: boolean;
   disabled?: boolean;
   maintenanceOnly?: boolean;
+  omitAction?: ComputeManagedRuntimeAction | null;
   className?: string;
 }) {
   const [confirmRemove, setConfirmRemove] = useState(false);
@@ -431,7 +430,7 @@ export function ManagedRuntimeActions({
                 {status.selection === "managed" ? "Use existing host" : "Use helper"}
               </Button>
             ) : null}
-            {status.updateAvailable ? (
+            {status.updateAvailable && omitAction !== "update" ? (
               <Button
                 size="xs"
                 variant="ghost"
@@ -441,62 +440,54 @@ export function ManagedRuntimeActions({
                 <Download /> Update
               </Button>
             ) : null}
-            <Tooltip>
-              <TooltipTrigger
-                render={
-                  <Button
-                    size="xs"
-                    variant="ghost"
-                    disabled={busy || !canProvision}
-                    onClick={() => void runtime.act("repair")}
-                  />
-                }
-              >
-                <Wrench /> {connection ? "Repair connection" : "Repair"}
-              </TooltipTrigger>
-              <TooltipPopup>
-                {canProvision
-                  ? "Rebuild and verify the Scient-managed setup."
-                  : "Select this installation before repairing its connection."}
-              </TooltipPopup>
-            </Tooltip>
-            <Button
-              size="xs"
-              variant="ghost-muted"
-              disabled={busy}
-              onClick={() => setConfirmRemove(true)}
-              aria-label={`Remove ${displayName}`}
-            >
-              <Trash2 /> {connection ? "Remove helper" : "Remove"}
-            </Button>
+            {omitAction !== "repair" ? (
+              <Tooltip>
+                <TooltipTrigger
+                  render={
+                    <Button
+                      size="xs"
+                      variant="ghost"
+                      disabled={busy || !canProvision}
+                      onClick={() => void runtime.act("repair")}
+                    />
+                  }
+                >
+                  <Wrench /> {connection ? "Repair connection" : "Repair"}
+                </TooltipTrigger>
+                <TooltipPopup>
+                  {canProvision
+                    ? "Rebuild and verify the Scient-managed setup."
+                    : "Select this installation before repairing its connection."}
+                </TooltipPopup>
+              </Tooltip>
+            ) : null}
+            <ContextualConfirmation
+              open={confirmRemove}
+              onOpenChange={setConfirmRemove}
+              trigger={
+                <Button
+                  size="xs"
+                  variant="ghost-muted"
+                  disabled={busy}
+                  aria-label={`Remove ${displayName}`}
+                >
+                  <Trash2 /> {connection ? "Remove helper" : "Remove"}
+                </Button>
+              }
+              title={`Remove ${displayName}?`}
+              description={
+                connection
+                  ? "This removes Scient’s connection helper. Your MATLAB installation and license are untouched."
+                  : "This removes Scient’s private Python environment. System installations and project environments are untouched."
+              }
+              confirmLabel="Remove"
+              destructive
+              busy={busy}
+              onConfirm={() => void runtime.act("remove")}
+            />
           </>
         )}
       </div>
-      <AlertDialog open={confirmRemove} onOpenChange={setConfirmRemove}>
-        <AlertDialogPopup>
-          <AlertDialogHeader>
-            <AlertDialogTitle>Remove {displayName}?</AlertDialogTitle>
-            <AlertDialogDescription>
-              {connection
-                ? "This removes Scient’s connection helper. Your MATLAB installation and license are untouched."
-                : "This removes Scient’s private Python environment. System installations and project environments are untouched."}
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogClose render={<Button variant="outline" />}>Cancel</AlertDialogClose>
-            <Button
-              variant="destructive"
-              disabled={busy}
-              onClick={() => {
-                setConfirmRemove(false);
-                void runtime.act("remove");
-              }}
-            >
-              Remove
-            </Button>
-          </AlertDialogFooter>
-        </AlertDialogPopup>
-      </AlertDialog>
     </>
   );
 }

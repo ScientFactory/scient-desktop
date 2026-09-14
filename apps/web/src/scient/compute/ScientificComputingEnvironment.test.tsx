@@ -11,6 +11,7 @@ const mocks = vi.hoisted(() => ({
   toggle: null as null | ((enabled: boolean) => void),
   known: true,
   pending: false,
+  refreshRuntimeInventory: vi.fn(),
 }));
 vi.mock("~/state/environments", () => ({
   usePrimaryEnvironmentId: () => "local-server",
@@ -29,7 +30,7 @@ vi.mock("~/state/compute", () => ({
       mocks.query(target);
       return {};
     },
-    refreshRuntimeInventory: {},
+    refreshRuntimeInventory: mocks.refreshRuntimeInventory,
     managedRuntime: () => null,
     verifyRuntime: {},
     manageRuntime: {},
@@ -65,7 +66,8 @@ vi.mock("~/state/query", () => ({
   }),
 }));
 vi.mock("~/state/use-atom-command", () => ({
-  useAtomCommand: (atom: unknown) => (atom === mocks.updateAtom ? mocks.updateSettings : vi.fn()),
+  useAtomCommand: (atom: unknown) =>
+    atom === mocks.updateAtom ? mocks.updateSettings : mocks.refreshRuntimeInventory,
 }));
 vi.mock("~/components/ui/switch", () => ({
   Switch: ({ onCheckedChange }: { onCheckedChange: (enabled: boolean) => void }) => {
@@ -116,6 +118,7 @@ describe("Scientific Computing environment ownership", () => {
     mocks.pending = false;
     mocks.toggle = null;
     mocks.updateSettings.mockResolvedValue({ _tag: "Success", value: null });
+    mocks.refreshRuntimeInventory.mockResolvedValue({ _tag: "Success", value: null });
   });
 
   it("reads, edits, and inspects the requested remote server, not the primary", () => {
