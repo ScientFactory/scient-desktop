@@ -34,6 +34,7 @@ const mocks = vi.hoisted(() => ({
   pictureInPicture: false,
   showEmptyState: false,
   loading: false,
+  controller: "none" as "human" | "agent" | "none",
   recordVisitForThread: vi.fn(),
 }));
 
@@ -114,7 +115,7 @@ vi.mock("~/previewStateStore", () => ({
         colorScheme: "system",
         audioMuted: false,
         audible: false,
-        controller: "none",
+        controller: mocks.controller,
       },
     },
     recentlySeenUrls: [],
@@ -359,7 +360,23 @@ describe("PreviewView navigation", () => {
     mocks.pictureInPicture = false;
     mocks.showEmptyState = false;
     mocks.loading = false;
+    mocks.controller = "none";
     mocks.recordVisitForThread.mockClear();
+  });
+
+  it("only shows control status while the agent is controlling the browser", () => {
+    mocks.controller = "human";
+    const humanMarkup = renderToStaticMarkup(
+      <PreviewView threadRef={TEST_THREAD_REF} tabId="tab-1" visible />,
+    );
+    expect(humanMarkup).not.toContain("Human control");
+    expect(humanMarkup).not.toContain("Agent controlling browser");
+
+    mocks.controller = "agent";
+    const agentMarkup = renderToStaticMarkup(
+      <PreviewView threadRef={TEST_THREAD_REF} tabId="tab-1" visible />,
+    );
+    expect(agentMarkup).toContain("Agent controlling browser");
   });
 
   it("does not rerender while loading time passes", async () => {

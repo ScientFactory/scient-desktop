@@ -524,6 +524,12 @@ this hierarchy rather than joining both with an inline separator. Providers with
 a label retain the account row without an empty subscription row. The shared
 `ProviderInstanceCard.test.ts` covers the layout independently of provider kind.
 
+Scient keeps ordinary browser interaction visually quiet: `PreviewView` shows
+the control badge only during agent control. Preserve the underlying human-input
+interruption and cursor behavior. The desktop preview editing-shortcut gate also
+accepts non-Latin physical-key equivalents and both macOS shifted-paste chords;
+native page handling and focused-guest checks remain authoritative.
+
 LaTeX compilation is isolated under `apps/server/src/scient/latex` and
 `apps/web/src/scient/latex`, with `packages/contracts/src/scientLatex.ts` and
 `packages/client-runtime/src/state/scientLatexHttp.ts` as the two owned files
