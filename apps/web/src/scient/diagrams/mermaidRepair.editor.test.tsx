@@ -118,11 +118,10 @@ function RepairEditorFixture({
         <ComposerPromptEditor
           value={draft}
           cursor={draft.length}
-          terminalContexts={[]}
+          contextRecords={new Map()}
           skills={[]}
           disabled={false}
           placeholder="Write a prompt"
-          onRemoveTerminalContext={() => {}}
           onChange={setPrompt}
           onPaste={() => {}}
           editorRef={editor}

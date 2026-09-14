@@ -21,7 +21,8 @@ export const getEnvironmentScientAnalyticsStatus = Effect.fn(
     method: "GET",
     url: (httpBaseUrl) => environmentEndpointUrl(httpBaseUrl, "/api/scient/analytics/status"),
     timeoutMs: REQUEST_TIMEOUT_MS,
-    request: ({ client, headers }) => client.scientAnalytics.status({ headers }),
+    group: "scientAnalytics",
+    request: ({ client, headers }) => client.status({ headers }),
   });
 });
 
@@ -40,8 +41,9 @@ export const updateEnvironmentScientAnalyticsPreference = Effect.fn(
     method: "POST",
     url: (httpBaseUrl) => environmentEndpointUrl(httpBaseUrl, "/api/scient/analytics/preferences"),
     timeoutMs: REQUEST_TIMEOUT_MS,
+    group: "scientAnalytics",
     request: ({ client, headers }) =>
-      client.scientAnalytics.preferences({ headers, payload: { consent: input.consent } }),
+      client.preferences({ headers, payload: { consent: input.consent } }),
   });
 });
 
@@ -60,8 +62,8 @@ export const recordEnvironmentScientAnalyticsEvent = Effect.fn(
     method: "POST",
     url: (httpBaseUrl) => environmentEndpointUrl(httpBaseUrl, "/api/scient/analytics/events"),
     timeoutMs: REQUEST_TIMEOUT_MS,
-    request: ({ client, headers }) =>
-      client.scientAnalytics.record({ headers, payload: input.event }),
+    group: "scientAnalytics",
+    request: ({ client, headers }) => client.record({ headers, payload: input.event }),
   });
 });
 
@@ -77,6 +79,7 @@ export const deleteEnvironmentScientAnalyticsData = Effect.fn(
     method: "POST",
     url: (httpBaseUrl) => environmentEndpointUrl(httpBaseUrl, "/api/scient/analytics/delete"),
     timeoutMs: REQUEST_TIMEOUT_MS,
-    request: ({ client, headers }) => client.scientAnalytics.deleteData({ headers }),
+    group: "scientAnalytics",
+    request: ({ client, headers }) => client.deleteData({ headers }),
   });
 });

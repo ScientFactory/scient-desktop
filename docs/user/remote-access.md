@@ -64,7 +64,8 @@ expose an unauthenticated Scient server port to the public internet.
 
 Auto balance is off by default. On web and desktop, enable it in
 **Settings → Connections → Load balancing** to automatically choose a machine for
-new threads in projects grouped across connected environments.
+new threads in projects grouped across connected environments. The section
+appears once two or more machines are switched on.
 Each machine starts at **Normal**. Choose **Prefer** to favor it when it has CPU and
 memory available, **Less often** to reduce its share, or **Manual only** to exclude
 it from automatic selection. These are preferences, not fixed traffic percentages.
@@ -153,3 +154,18 @@ package or version can produce an incompatible server.
 Scient does not currently provide a public hosted relay for remote projects.
 Use desktop-managed SSH or a separately secured direct/private-network
 deployment.
+
+If SSH reconnecting fails after an app update, retry the launch once. Removing
+the connection stops a server that Scient launched; a server that was already
+running is left alone.
+
+## Use the desktop app only for remote environments
+
+If this computer should only control work running elsewhere, turn off **Local
+environment** in **Settings → Connections**. Scient restarts without a local
+server: local providers and terminals stop, WSL backends stay off, and other
+devices can no longer connect to this computer. Existing local projects, history,
+and saved connections are kept.
+
+Turn **Local environment** back on in the same place to restore the previous local
+environment.

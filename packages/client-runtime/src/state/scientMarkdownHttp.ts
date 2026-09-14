@@ -34,6 +34,7 @@ export const uploadEnvironmentMarkdownImage = Effect.fn(
     method: "POST",
     url: (httpBaseUrl) => environmentEndpointUrl(httpBaseUrl, path),
     timeoutMs: IMAGE_UPLOAD_TIMEOUT_MS,
-    request: ({ client, headers }) => client.scientMarkdown.imageUpload({ headers, payload }),
+    group: "scientMarkdown",
+    request: ({ client, headers }) => client.imageUpload({ headers, payload }),
   });
 });

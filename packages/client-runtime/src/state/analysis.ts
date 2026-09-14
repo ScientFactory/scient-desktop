@@ -25,7 +25,7 @@ function setBoundedRun(
   next.set(run.receipt.runId, run);
   const terminal = [...next.values()]
     .filter(isTerminalRun)
-    .toSorted((left, right) => right.receipt.startedAt.localeCompare(left.receipt.startedAt));
+    .sort((left, right) => right.receipt.startedAt.localeCompare(left.receipt.startedAt));
   for (const expired of terminal.slice(MAXIMUM_TERMINAL_SUBSCRIPTION_RUNS)) {
     next.delete(expired.receipt.runId);
   }
@@ -69,9 +69,7 @@ export function applyAnalysisRunStreamEvent(
     output =
       newChunks.length === 0
         ? currentOutput
-        : [...currentOutput, ...newChunks].toSorted(
-            (left, right) => left.sequence - right.sequence,
-          );
+        : [...currentOutput, ...newChunks].sort((left, right) => left.sequence - right.sequence);
   }
   if (
     output === currentOutput &&
@@ -131,7 +129,7 @@ export function createAnalysisEnvironmentAtoms<R, E>(
         stream.pipe(
           Stream.scan(new Map<string, AnalysisRunSnapshot>(), applyAnalysisRunStreamEvent),
           Stream.map((runs) =>
-            [...runs.values()].toSorted((left, right) =>
+            [...runs.values()].sort((left, right) =>
               right.receipt.startedAt.localeCompare(left.receipt.startedAt),
             ),
           ),

@@ -51,7 +51,7 @@ export function useMediaActionUrl() {
   );
 }
 
-export function useMediaActions(source: MediaActionSource) {
+function useMediaActions(source: MediaActionSource) {
   const resolveActionUrl = useMediaActionUrl();
   const actionUrl = useCallback(() => resolveActionUrl(source), [resolveActionUrl, source]);
   const save = useCallback(async () => {

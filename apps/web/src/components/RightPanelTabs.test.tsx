@@ -127,6 +127,7 @@ function renderTabs(
       onAddAgents={() => undefined}
       onAddSources={() => undefined}
       onAddCompute={() => undefined}
+      onAddDevice={() => undefined}
       liveAgentCount={0}
       browserAvailable
       terminalAvailable={false}
@@ -137,6 +138,7 @@ function renderTabs(
       agentsAvailable={false}
       sourcesAvailable={false}
       computeAvailable={false}
+      deviceAvailable={false}
     >
       <div>content</div>
     </RightPanelTabs>,

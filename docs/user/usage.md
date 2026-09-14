@@ -22,12 +22,18 @@ an unrecognized model remain in token totals but add no estimated cost. Scient r
 table at most daily and can use its cached copy offline; without either copy, affected records are
 shown as unpriced rather than guessed.
 
+Usage includes each configured account's history, including disabled accounts. Custom homes follow
+the account's home setting or its `CODEX_HOME`, `CLAUDE_CONFIG_DIR`, or `GROK_HOME` environment
+variable. Use absolute paths or `~/` paths in the account's environment settings; relative
+environment paths depend on each project's working directory and cannot be reliably discovered
+by Usage. Accounts sharing a history directory count once.
+
+On web and desktop, use the environment dropdown to filter costs, tokens, and limits. All
+environments are selected by default. The dropdown shows which environments are still scanning;
+results appear as each one responds.
+
 A Grok turn appears only after the provider writes a completed usage record.
 Unfinished turns may not appear.
-
-On web and desktop, filter costs, tokens, and limits with the environment dropdown. All environments
-are initially selected. Results appear as each environment responds, with scanning status shown
-for those still loading.
 
 ## Set custom model prices
 
@@ -99,3 +105,10 @@ Use **Past 24h** for an hourly chart covering the exact rolling 24-hour period. 
 headline and chart. Refreshing rescans every connected environment and refetches model pricing on
 each of them, so a newly released model that showed $0.00 gets a price without waiting for the daily
 pricing update.
+
+## Subscription usage widget
+
+Add **Subscription usage** from your iOS or Android widget gallery to see remaining Codex and
+Claude quotas. Tap it to open **Usage → Limits**. On iOS, use **Edit Widget** to choose Session,
+Weekly, or both for each provider. Reopen the retained mobile client to refresh
+expired readings.

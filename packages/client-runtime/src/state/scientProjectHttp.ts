@@ -24,8 +24,8 @@ export const inspectEnvironmentScientProject = Effect.fn(
     method: "POST",
     url: (httpBaseUrl) => environmentEndpointUrl(httpBaseUrl, "/api/scient/projects/inspect"),
     timeoutMs: input.timeoutMs ?? DEFAULT_SCIENT_PROJECT_REQUEST_TIMEOUT_MS,
-    request: ({ client, headers }) =>
-      client.scientProject.inspect({ headers, payload: { root: input.root } }),
+    group: "scientProject",
+    request: ({ client, headers }) => client.inspect({ headers, payload: { root: input.root } }),
   });
 });
 
@@ -46,8 +46,9 @@ export const initializeEnvironmentScientProject = Effect.fn(
     method: "POST",
     url: (httpBaseUrl) => environmentEndpointUrl(httpBaseUrl, "/api/scient/projects/initialize"),
     timeoutMs: input.timeoutMs ?? DEFAULT_SCIENT_PROJECT_REQUEST_TIMEOUT_MS,
+    group: "scientProject",
     request: ({ client, headers }) =>
-      client.scientProject.initialize({
+      client.initialize({
         headers,
         payload: {
           root: input.root,

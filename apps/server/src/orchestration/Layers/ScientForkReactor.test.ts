@@ -91,6 +91,8 @@ function makeGitWorkflowFake(
   createWorktreeCalls: Array<VcsCreateWorktreeInput>,
 ) {
   return Layer.succeed(GitWorkflowService, {
+    isRepository: () => Effect.die("unused in ScientForkReactor test"),
+    hasCommit: () => Effect.die("unused in ScientForkReactor test"),
     status: () => Effect.die("unused in ScientForkReactor test"),
     localStatus: () => Effect.die("unused in ScientForkReactor test"),
     remoteStatus: () => Effect.die("unused in ScientForkReactor test"),

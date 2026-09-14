@@ -4,10 +4,10 @@ A permission mode controls how much the AI can do on its own and when it stops
 to ask you. It changes the approval boundary, not the quality of the model or
 the instructions you gave it.
 
-The mode is set per thread, from the mode control in the message composer. Changing it in one
-thread does not change any other thread. A thread created from inside another thread keeps that
-thread's mode; otherwise new threads start in **Full access** unless you pick something else
-before sending.
+Set the default for new threads in **Settings → General → New threads → Permissions**.
+Projects can override the environment default. New threads use this setting rather than the
+mode of the thread you were viewing. The initial default is **Full access**; existing threads
+and modes you choose in a draft keep their permissions.
 
 ## The Modes
 
