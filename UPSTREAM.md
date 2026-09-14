@@ -37,13 +37,13 @@ revision remains literal ancestry of owned `main`; it is not merely a reviewed
 or observed tip.
 
 The current T3 alignment is recorded in
-[`docs/internals/2026-09-13-upstream-sync-77bca8b2.md`](docs/internals/2026-09-13-upstream-sync-77bca8b2.md)
-and in `upstream-state.json`. This local candidate preserves all 127 official first-parent commits
-after `f814983c262b42bd79247bae377a709925c70d63` through
-`77bca8b2d76a1f42552e5eee7d277fcb1160347a`. The candidate first incorporated current owned main
-`39dd77cb5d2417f0c7c1eb6834e1bcafe8e60bba` in merge `42d774ca1399b1b8e68463e79c3644978ac0b285`;
-the final extension merge `5d74e19265f900a272d4bf82b7b02d359e6dd1ea` retains the previously qualified
-candidate and the exact official target as its parents.
+[`docs/internals/2026-09-14-upstream-sync-01e05c15.md`](docs/internals/2026-09-14-upstream-sync-01e05c15.md)
+and in `upstream-state.json`. This extension preserves the 32 official first-parent commits after
+`77bca8b2d76a1f42552e5eee7d277fcb1160347a` through
+`01e05c15268dedb76da95f442fbf5201cd8e7a44`. History-preserving merge
+`7f7937f8927a9bbb0cb6a17ed9a2c9133560347f` has the previously qualified candidate
+`5c13b7e1b3f070a5a3378ad452f4abd962999b51` as its first parent and the exact official target as
+its second parent.
 
 Automated qualification passed; the owner will test the isolated candidate before PR delivery.
 No push, PR, main merge, or publication is implied. The
@@ -55,16 +55,13 @@ themselves.
 
 ## Receiving T3 updates
 
-The local alignment through `77bca8b2` is documented in the
-[2026-09-13 final review](docs/internals/2026-09-13-upstream-sync-77bca8b2.md).
-It includes the earlier typed composer context, incremental Markdown, device, scoped-settings,
-rewind, and license work, then adds large-paste folding, clearer collapsed work, notifications,
-Forgejo/Gitea and multi-account GitHub routing, lazy file browsing, pull-request improvements,
-usage and mobile reliability, desktop lifecycle fixes, missing-page recovery, startup retry,
-optional compact sidebars and thread rows, environment-organized connections, opt-in in-app
-notifications, native/web notification badges, safer worktree fallback, and clearer Cursor failures.
-Scient provider lifecycle, scientific surfaces, identity, state roots, and cloud/mobile publication
-holds remain.
+The local alignment through `01e05c15` is documented in the
+[2026-09-14 final review](docs/internals/2026-09-14-upstream-sync-01e05c15.md).
+It extends the prior candidate with paragraph-aware response streaming, visible and cancellable
+worktree setup, simpler environment management, safer multi-environment checks, reusable trusted
+dev authentication, mobile widget fixes, and a smaller bundled desktop main process. Scient's
+provider lifecycle, scientific surfaces, identity, signed npm-pinned server runtime, state roots,
+and cloud/mobile publication holds remain.
 
 Migration IDs are immutable local history, not an upstream synchronization counter. The new T3
 multi-PR migration is registered as Scient `53`, after existing `51` and `52`; retired development
