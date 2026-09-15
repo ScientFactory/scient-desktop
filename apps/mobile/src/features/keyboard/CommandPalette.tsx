@@ -227,7 +227,7 @@ export function CommandPalette(props: {
     const projectByKey = new Map(
       projects.map((project) => [scopedProjectKey(project.environmentId, project.id), project]),
     );
-    const activeProject = activeThread
+    const activeProject = activeThread?.projectId
       ? projectByKey.get(scopedProjectKey(activeThread.environmentId, activeThread.projectId))
       : null;
     if (activeProject) {
@@ -287,23 +287,28 @@ export function CommandPalette(props: {
           left.latestUserMessageAt ?? left.updatedAt,
         ),
       )
-      .map((thread) => {
+      .flatMap((thread) => {
+        // Scient is project-first. The shared shell schema remains tolerant of
+        // legacy projectless records, but they must not become mobile targets.
+        if (thread.projectId === null) return [];
         const project = projectByKey.get(scopedProjectKey(thread.environmentId, thread.projectId));
         const environment =
           savedConnectionsById[thread.environmentId]?.environmentLabel ?? thread.environmentId;
-        return {
-          key: scopedThreadKey(thread.environmentId, thread.id),
-          kind: "thread",
-          title: thread.title || "Untitled thread",
-          detail: [project?.title, environment].filter(Boolean).join(" · "),
-          searchTerms: [
-            project?.title ?? "",
-            environment,
-            thread.branch ?? "",
-            ...threadPullRequestSearchTerms(thread),
-          ],
-          run: () => selectThread(thread),
-        };
+        return [
+          {
+            key: scopedThreadKey(thread.environmentId, thread.id),
+            kind: "thread",
+            title: thread.title || "Untitled thread",
+            detail: [project?.title, environment].filter(Boolean).join(" · "),
+            searchTerms: [
+              project?.title ?? "",
+              environment,
+              thread.branch ?? "",
+              ...threadPullRequestSearchTerms(thread),
+            ],
+            run: () => selectThread(thread),
+          },
+        ];
       });
     return [...actions, ...projectItems, ...threadItems];
   }, [

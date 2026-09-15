@@ -12629,6 +12629,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
         withWsRpcClient(wsUrl, (client) =>
           client[ORCHESTRATION_WS_METHODS.dispatchCommand]({
             type: "thread.turn.start",
+            queueProtocolVersion: 2,
             commandId: CommandId.make(`cmd-bootstrap-${async ? "async" : "sync"}-setup`),
             threadId,
             message: {

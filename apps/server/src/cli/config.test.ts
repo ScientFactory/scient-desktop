@@ -895,7 +895,9 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
         authorization: "Bearer abc==",
         "x-tenant": "t3",
       });
-      expect(resolved.otlpTracesUrl).toBe("http://collector.internal:4318");
+      // Scient keeps outbound telemetry disabled even when inherited OTLP
+      // configuration is present. Header parsing remains independently useful.
+      expect(resolved.otlpTracesUrl).toBeUndefined();
     }),
   );
 

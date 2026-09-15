@@ -14,11 +14,7 @@
     },
     "scripts": {
       // Knip loads its preprocessor through a CLI option, not a source import.
-      "entry": [
-        "knip-schemas.ts",
-        "qualify-managed-runtime-catalog.ts",
-        "mobile-native-client.ts",
-      ],
+      "entry": ["knip-schemas.ts", "qualify-managed-runtime-catalog.ts", "mobile-native-client.ts"],
     },
     "apps/server": {
       // Vite+ pack entries and the launcher used by installed background services.

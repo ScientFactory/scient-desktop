@@ -1415,7 +1415,8 @@ describe("deriveMessagesTimelineRows", () => {
       },
     ]);
 
-    // A failed setup never handed off, so the card stays under the send.
+    // A failed setup never handed off, so the card stays under the send and
+    // remains authoritative over a stale working flag.
     const withMessages = deriveMessagesTimelineRows({
       timelineEntries: [userEntry, assistantEntry],
       isWorking: true,
@@ -1424,12 +1425,7 @@ describe("deriveMessagesTimelineRows", () => {
       supportsConversationRollback: false,
       worktreeSetup: { ...snapshot, phase: "failed" },
     });
-    expect(withMessages.map((row) => row.kind)).toEqual([
-      "message",
-      "worktree-setup",
-      "working",
-      "message",
-    ]);
+    expect(withMessages.map((row) => row.kind)).toEqual(["message", "worktree-setup", "message"]);
 
     // Once the agent stage is done the setup script may still be running in
     // the background: the turn owns the header and the script row follows it.
