@@ -236,7 +236,14 @@ export function useComputeManagedRuntime(input: {
   const queryFailure =
     queried.error === null
       ? null
-      : fallbackManagedRuntimeFailure(input.languageId, queried.error, null);
+      : {
+          summary:
+            input.languageId === "matlab"
+              ? "MATLAB status unavailable"
+              : "Python status unavailable",
+          detail: queried.error,
+          retryAction: null,
+        };
   return {
     languageId: input.languageId,
     status,

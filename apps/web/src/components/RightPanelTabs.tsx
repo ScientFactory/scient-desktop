@@ -966,14 +966,6 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
       onClick: props.onAddSources,
     },
     {
-      label: "Compute",
-      icon: Sigma,
-      shortcut: "C",
-      available: props.computeAvailable,
-      disabledReason: SURFACE_DISABLED_REASONS.compute,
-      onClick: props.onAddCompute,
-    },
-    {
       label: "Browser",
       icon: Globe2,
       shortcut: "B",

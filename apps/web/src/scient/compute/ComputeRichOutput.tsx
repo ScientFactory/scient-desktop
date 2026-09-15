@@ -1,5 +1,6 @@
 import { lazy, Suspense } from "react";
 import { useTheme } from "~/hooks/useTheme";
+import { ScrollArea } from "~/components/ui/scroll-area";
 import type { ComputeRichRepresentation, ComputeTablePreview } from "./computeRichRepresentation";
 
 const PlotlyChartCard = lazy(() =>
@@ -11,7 +12,7 @@ const PlotlyChartCard = lazy(() =>
 export function ComputeTable(props: { readonly table: ComputeTablePreview }) {
   return (
     <figure className="min-w-0 overflow-hidden rounded-md border border-border/70">
-      <div className="max-h-80 overflow-auto">
+      <ScrollArea className="h-auto max-h-80" scrollbarGutter>
         <table className="w-full border-collapse text-xs" aria-label="Result table">
           <thead className="sticky top-0 bg-muted">
             <tr>
@@ -48,7 +49,7 @@ export function ComputeTable(props: { readonly table: ComputeTablePreview }) {
             ))}
           </tbody>
         </table>
-      </div>
+      </ScrollArea>
       <figcaption className="border-t border-border/60 px-3 py-1.5 text-[11px] text-muted-foreground">
         {props.table.rows.length} rows · {props.table.columns.length} columns
         {props.table.truncated ? " · Limited preview" : ""}

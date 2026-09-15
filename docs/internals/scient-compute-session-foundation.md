@@ -3433,7 +3433,7 @@ These are automated qualification mechanisms, not a claim of completed visual re
   not producer proof. Normal terminal/IDE Python and user MATLAB installations are
   not adopted, modified or stopped by Compute ownership cleanup.
 - `scient_compute_inventory` exposes the same lightweight Settings inventory
-  through explicit `compute:read` capability checks. It takes no code, project,
+  through explicit `compute:inventory` capability checks. It takes no code, project,
   session or install input and grants no execute/install/attach authority.
 
 The temporary QA folder's `NEXT_PASS_QA.md` is the current manual review guide.

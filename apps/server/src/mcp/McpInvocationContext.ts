@@ -14,7 +14,8 @@ export type McpCapability =
   | "device"
   | "pull-requests"
   | "documents:build"
-  | "compute:read"
+  /** Read-only runtime discovery. Execution requires a separate, future authority. */
+  | "compute:inventory"
   | "skills:read"
   | "sources:read"
   | "sources:write";

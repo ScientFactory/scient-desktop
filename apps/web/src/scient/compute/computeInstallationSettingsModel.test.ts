@@ -379,4 +379,42 @@ describe("current runtime summary", () => {
       }).kind,
     ).toBe("missing");
   });
+
+  it("makes a failed MATLAB connection helper the current runtime truth", () => {
+    const matlab = {
+      ...inventory,
+      descriptor: { ...inventory.descriptor, languageId: ComputeLanguageId.make("matlab") },
+      configuredExecutable: "/MATLAB/bin/matlab",
+      installations: [
+        {
+          executable: "/MATLAB/bin/matlab",
+          source: "conventional" as const,
+          version: "R2026a",
+          problem: null,
+        },
+      ],
+    };
+    expect(
+      computeCurrentRuntimeSummary({
+        language: matlab,
+        preference: { enabled: true, executable: "/MATLAB/bin/matlab" },
+        managed: {
+          ...status,
+          selection: "managed",
+          installationExecutable: "/MATLAB/bin/matlab",
+          failure: {
+            reason: "provision-failed",
+            action: "repair",
+            summary: "MATLAB connection failed",
+            detail: "ENOENT: uv.lock",
+          },
+          failureMessage: "ENOENT: uv.lock",
+        },
+      }),
+    ).toEqual({
+      kind: "repair-connection",
+      title: "MATLAB connection failed",
+      detail: "ENOENT: uv.lock",
+    });
+  });
 });

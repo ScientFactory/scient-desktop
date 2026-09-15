@@ -100,6 +100,7 @@ export type ComputeCurrentRuntimeSummary = {
     | "ready"
     | "setup"
     | "connect"
+    | "repair-connection"
     | "update-managed"
     | "repair-managed"
     | "unavailable"
@@ -148,6 +149,13 @@ export function computeCurrentRuntimeSummary(input: {
       kind: "unavailable",
       title: selected.problem,
       detail: source ?? language.descriptor.displayName,
+    };
+  }
+  if (isMatlab && managed !== null && managedFailureNeedsRepair(managed)) {
+    return {
+      kind: "repair-connection",
+      title: managed.failure?.summary ?? "MATLAB connection failed",
+      detail: managed.failure?.detail ?? managed.failureMessage ?? "Repair the connection helper.",
     };
   }
   if (

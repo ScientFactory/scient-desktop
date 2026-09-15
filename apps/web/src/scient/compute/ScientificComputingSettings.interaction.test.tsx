@@ -14,6 +14,7 @@ const mocks = vi.hoisted(() => ({
   preferences: {} as Record<string, ScientificComputingLanguageSettings>,
   languages: [] as ComputeLanguageRuntimeInventory[],
   statuses: {} as Record<string, ComputeManagedRuntimeStatus | null>,
+  queryErrors: {} as Record<string, string | null>,
   inventoryPending: false,
   revision: 0,
   listeners: new Set<() => void>(),
@@ -96,7 +97,7 @@ vi.mock("~/state/query", async () => {
               : null,
         isPending: atom?.kind === "inventory" && mocks.inventoryPending,
         isSuccess: atom?.kind !== "inventory" || !mocks.inventoryPending,
-        error: null,
+        error: atom?.languageId ? (mocks.queryErrors[atom.languageId] ?? null) : null,
         refresh: vi.fn(),
       };
     },
@@ -156,6 +157,7 @@ describe("Scientific Computing settings interactions", () => {
     mocks.preferences = { python: { enabled: true, executable: "" } };
     mocks.languages = [python()];
     mocks.statuses = { python: status() };
+    mocks.queryErrors = {};
     mocks.inventoryPending = false;
     mocks.saveFails = false;
     mocks.releaseFails = false;
@@ -465,7 +467,7 @@ describe("Scientific Computing settings interactions", () => {
     expect(mocks.manage).not.toHaveBeenCalled();
   });
 
-  it("shows a helper failure once without replacing the selected MATLAB summary", async () => {
+  it("promotes a helper failure to the MATLAB summary with one recovery action", async () => {
     const matlab = "/MATLAB/bin/matlab";
     const helper = {
       ...status(),
@@ -493,12 +495,83 @@ describe("Scientific Computing settings interactions", () => {
     await render();
     const summary = container.querySelector("[data-compute-summary='matlab']");
     const recovery = container.querySelector("[data-compute-recovery='matlab']");
-    expect(summary?.textContent).toContain("R2026a");
-    expect(summary?.textContent).toContain("System installation");
-    expect(summary?.textContent).not.toContain("ENOENT");
+    expect(summary?.textContent).toContain("MATLAB connection failed");
+    expect(summary?.textContent).toContain("ENOENT");
+    expect(summary?.textContent).not.toContain("R2026a");
+    expect(button("Repair connection")).not.toBeNull();
     expect(container.textContent?.match(/ENOENT/gu)).toHaveLength(1);
     expect(recovery?.querySelector("[data-compute-notice]")).toBeNull();
     expect(container.querySelector("[data-compute-notice]")).not.toBeNull();
+  });
+
+  it("replaces the MATLAB installation summary when connection setup fails immediately", async () => {
+    const matlab = "/MATLAB/bin/matlab";
+    const helper = {
+      ...status(),
+      installed: false,
+      selection: "existing" as const,
+      displayName: "MATLAB connection helper",
+      installationExecutable: matlab,
+    };
+    mocks.preferences = { matlab: { enabled: true, executable: matlab } };
+    mocks.statuses = { matlab: helper };
+    mocks.languages = [
+      {
+        ...python(),
+        descriptor: {
+          ...python().descriptor,
+          languageId: ComputeLanguageId.make("matlab"),
+          displayName: "MATLAB",
+        },
+        managedRuntime: helper,
+        configuredExecutable: matlab,
+        installations: [
+          { executable: matlab, source: "conventional", version: "R2026a", problem: null },
+        ],
+      },
+    ];
+    mocks.releaseFails = true;
+    await render();
+    await click("Connect MATLAB");
+    const summary = container.querySelector("[data-compute-summary='matlab']");
+    expect(summary?.textContent).toContain("MATLAB connection failed");
+    expect(summary?.textContent).toContain("Busy operation");
+    expect(summary?.textContent).not.toContain("R2026a");
+    expect(button("Repair connection")).not.toBeNull();
+  });
+
+  it("reports a MATLAB status-query failure without mislabeling the connection", async () => {
+    const matlab = "/MATLAB/bin/matlab";
+    const helper = {
+      ...status(),
+      displayName: "MATLAB connection helper",
+      installationExecutable: matlab,
+    };
+    mocks.preferences = { matlab: { enabled: true, executable: matlab } };
+    mocks.statuses = { matlab: helper };
+    mocks.queryErrors = { matlab: "Status request timed out" };
+    mocks.languages = [
+      {
+        ...python(),
+        descriptor: {
+          ...python().descriptor,
+          languageId: ComputeLanguageId.make("matlab"),
+          displayName: "MATLAB",
+        },
+        managedRuntime: helper,
+        configuredExecutable: matlab,
+        installations: [
+          { executable: matlab, source: "conventional", version: "R2026a", problem: null },
+        ],
+      },
+    ];
+    await render();
+    expect(container.querySelector("[data-compute-summary='matlab']")?.textContent).toContain(
+      "R2026a",
+    );
+    expect(container.textContent).toContain("MATLAB status unavailable");
+    expect(container.textContent).not.toContain("MATLAB connection failed");
+    expect(() => button("Repair connection")).toThrow();
   });
 
   it("shows one connection-helper progress line and keeps Enable outside advanced controls", async () => {

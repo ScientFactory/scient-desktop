@@ -24,7 +24,7 @@ const makeInvocation = (
   issuedAt: 1,
 });
 
-it.effect("requires compute:read before touching the gateway", () => {
+it.effect("requires compute:inventory before touching the gateway", () => {
   const runtimeInventory = vi.fn(() => Effect.succeed({ languages: [] }));
   const gateway = { runtimeInventory } satisfies ComputeMcpGateway["Service"];
 
@@ -50,7 +50,7 @@ it.effect("reads only the existing gateway inventory operation", () => {
     const result = yield* listScientComputeInventory().pipe(
       Effect.provideService(
         McpInvocationContext.McpInvocationContext,
-        makeInvocation(new Set(["compute:read"])),
+        makeInvocation(new Set(["compute:inventory"])),
       ),
       Effect.provideService(ComputeMcpGateway, gateway),
     );
@@ -76,7 +76,7 @@ it.effect("maps gateway failures without exposing host details", () => {
     const error = yield* listScientComputeInventory().pipe(
       Effect.provideService(
         McpInvocationContext.McpInvocationContext,
-        makeInvocation(new Set(["compute:read"])),
+        makeInvocation(new Set(["compute:inventory"])),
       ),
       Effect.provideService(ComputeMcpGateway, gateway),
       Effect.flip,

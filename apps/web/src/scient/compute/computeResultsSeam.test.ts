@@ -44,8 +44,21 @@ const managedRuntimeSource = NodeFS.readFileSync(
   NodePath.join(here, "ComputeManagedRuntimeControls.tsx"),
   "utf8",
 );
+const rightPanelTabsSource = NodeFS.readFileSync(
+  NodePath.join(here, "../../components/RightPanelTabs.tsx"),
+  "utf8",
+);
 
 describe("compute result surface seam", () => {
+  it("keeps one secondary Compute-session command in the add-surface menu", () => {
+    const primaryActions = rightPanelTabsSource.slice(
+      rightPanelTabsSource.indexOf("const addSurfaceActions"),
+      rightPanelTabsSource.indexOf("const extraSessionAction"),
+    );
+    expect(primaryActions).not.toContain('label: "Compute"');
+    expect(rightPanelTabsSource).toContain('label: "New compute session"');
+  });
+
   it("keys standalone controls by their owner and preserves producing result generations", () => {
     const chat = NodeFS.readFileSync(NodePath.join(here, "../../components/ChatView.tsx"), "utf8");
     expect(chat).toContain(

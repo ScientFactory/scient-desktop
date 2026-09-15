@@ -12,7 +12,7 @@ Choose **Connect MATLAB** on that file when MATLAB is not connected yet. This op
 server's Scientific Computing settings, where the same action starts setup. The Engine connection
 requires a compatible Python host. Scient can set up a small private
 **MATLAB connection helper**, or choose an existing compatible host from
-**Settings → Scientific Computing → Change runtime**.
+**Settings → Scientific Computing → Runtime**.
 That helper is independent of Scientific Python. Opening a `.m` file does not
 provision the scientific Toolkit; a helper setup failure is a one-line header
 status with copy and details, not a wrapped stack across **Run**. The compact
@@ -20,7 +20,7 @@ MATLAB status opens Scientific Computing directly; it does not expand into an
 executable-path menu. Scient does not install MATLAB or its license. The file
 header names the detected release before startup and uses the shorter **MATLAB**
 label while a live session is idle. Use the refresh control in Scientific
-Computing to rediscover installations, and **Test** under **Change runtime** when
+Computing to rediscover installations, and **Test** beside the enable switch when
 you explicitly want to start and close a temporary connection.
 
 The executable preference is shared with fresh-process runs. Their older setup control

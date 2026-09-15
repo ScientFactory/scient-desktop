@@ -9,9 +9,9 @@ const toolError = (
   message: string,
 ) => new ScientComputeInventoryToolError({ code, message });
 
-const requireComputeRead = Effect.fn("ScientComputeToolkit.requireRead")(function* () {
+const requireComputeInventory = Effect.fn("ScientComputeToolkit.requireInventory")(function* () {
   const invocation = yield* McpInvocationContext.McpInvocationContext;
-  if (!invocation.capabilities.has("compute:read")) {
+  if (!invocation.capabilities.has("compute:inventory")) {
     return yield* toolError(
       "capability-unavailable",
       "This provider session does not grant read access to Scient Compute inventory.",
@@ -21,7 +21,7 @@ const requireComputeRead = Effect.fn("ScientComputeToolkit.requireRead")(functio
 });
 
 export const listScientComputeInventory = Effect.fn("ScientComputeToolkit.inventory")(function* () {
-  yield* requireComputeRead();
+  yield* requireComputeInventory();
   const gateway = yield* ComputeMcpGateway;
   return yield* gateway
     .runtimeInventory()

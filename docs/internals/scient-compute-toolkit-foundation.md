@@ -33,13 +33,13 @@ This continuation completes the setup/connection slice, not the later MATLAB
 session/result parity work. The implementation deliberately reuses a private
 **Python environment** mechanism rather than introducing a general package manager.
 
-| Responsibility                | Shared mechanism                                                                                                                                                                          | Language-specific policy                                                                                                                                               |
-| ----------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Private environment lifecycle | `ManagedPythonEnvironment`, provisioner, controller: serialized generations, activation, rollback, cancellation, removal and startup reconciliation                                       | Separate `python` and `matlab-connection` roots/receipts; independent selection and revisions                                                                          |
-| Download/provisioning         | Pinned uv artifact, private CPython, locked specification and owned process runner                                                                                                        | Scientific Python's data Toolkit versus a minimal MATLAB helper with setuptools/wheel and the selected installation's Engine                                           |
-| Runtime settings              | `ScientificRuntimePreferences`, server-scoped Settings and existing generic runtime RPCs                                                                                                  | MATLAB's canonical executable is also read/written by the older analysis service; absent canonical settings read through the legacy choice without a migration write   |
-| Native connection proof       | Existing adapter prepare/open/shutdown path, serialized with session mutations                                                                                                            | MATLAB and Python advertise passive `detected` after a successful probe so `compute.verifyRuntime` starts and closes a real session. Inspect never opens that session. |
-| UI                            | Settings → Scientific Computing is the ordinary grouped Settings card (`SettingsSection` + `SettingsRow`), one current runtime per language; Change runtime is a picker, not an inventory | File header names the probed interpreter; **ready** is reserved for a live session. Repair is for a damaged managed generation, not a skipped Test.                    |
+| Responsibility                | Shared mechanism                                                                                                                                                                   | Language-specific policy                                                                                                                                               |
+| ----------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Private environment lifecycle | `ManagedPythonEnvironment`, provisioner, controller: serialized generations, activation, rollback, cancellation, removal and startup reconciliation                                | Separate `python` and `matlab-connection` roots/receipts; independent selection and revisions                                                                          |
+| Download/provisioning         | Pinned uv artifact, private CPython, locked specification and owned process runner                                                                                                 | Scientific Python's data Toolkit versus a minimal MATLAB helper with setuptools/wheel and the selected installation's Engine                                           |
+| Runtime settings              | `ScientificRuntimePreferences`, server-scoped Settings and existing generic runtime RPCs                                                                                           | MATLAB's canonical executable is also read/written by the older analysis service; absent canonical settings read through the legacy choice without a migration write   |
+| Native connection proof       | Existing adapter prepare/open/shutdown path, serialized with session mutations                                                                                                     | MATLAB and Python advertise passive `detected` after a successful probe so `compute.verifyRuntime` starts and closes a real session. Inspect never opens that session. |
+| UI                            | Settings → Scientific Computing is the ordinary grouped Settings card (`SettingsSection` + `SettingsRow`), one current runtime per language; Runtime is a picker, not an inventory | File header names the probed interpreter; **ready** is reserved for a live session. Repair is for a damaged managed generation, not a skipped Test.                    |
 
 The helper lives under `<computeDir>/environments/matlab-connection/`. It uses the
 same pinned CPython as managed Scientific Python, but **not** that environment or
@@ -141,14 +141,16 @@ after the bounded implementation and owner review; no release is authorized here
 
 ### Read-only agent inventory
 
-Authenticated provider sessions with `compute:read` may call
+Authenticated provider sessions with `compute:inventory` may call
 `scient_compute_inventory`. Its handler reuses the exact Settings inventory gateway
 and shared service instance, with no project/session argument. Provider tool-name
 projection and capability-aware instructions use the existing registration seams.
 The inventory exposes configured choices, managed status, Toolkit metadata and
 existing executable candidates; it is not package verification, a selected running
 interpreter, or proof that execution will succeed. It cannot install, execute, attach
-to a user session or bypass the later operation-envelope/agent-execution gates.
+to a user session, authorize launching a listed executable path, or bypass the later
+operation-envelope/agent-execution gates. Agent execution must use a separate future
+capability and a narrower gateway rather than widening this inventory grant.
 
 The linked interaction contract also covers a lightweight ordinary-file entry point,
 owned shutdown when its Compute tab closes, and compact actionable recovery instead

@@ -28,7 +28,6 @@ import {
   ProviderUploadFeedbackInput,
   ThreadId,
   TurnId,
-  type ProjectId,
   type ProviderInstanceId,
   type ProviderDriverKind,
   type ProviderRuntimeEvent,
@@ -917,9 +916,11 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
   /**
    * Attach the provider-scoped MCP server to the session that is about to
    * start. The capability set is the complete authority carried by the
-   * credential. Project Sources and document building are baseline Scient
-   * capabilities; preview-browser control remains optional, and Scient skill
-   * delivery depends on provider support.
+   * credential. Pull requests, project Sources, document building, and
+   * read-only Compute inventory are baseline Scient capabilities;
+   * preview-browser control remains optional, and Scient skill delivery
+   * depends on provider support. Compute execution is deliberately not part of
+   * the inventory grant.
    *
    * Fail closed for the optional preview capability when settings cannot be
    * read. The baseline project capabilities are intentionally independent of
@@ -971,7 +972,7 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
     const capabilities = new Set<McpInvocationContext.McpCapability>([
       "pull-requests",
       "documents:build",
-      "compute:read",
+      "compute:inventory",
       "sources:read",
       "sources:write",
       ...(supportsScientSkills ? (["skills:read"] satisfies ReadonlyArray<McpCapability>) : []),

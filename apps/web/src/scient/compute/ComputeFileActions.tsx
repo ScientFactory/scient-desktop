@@ -842,9 +842,7 @@ export const ComputeFileActions = forwardRef<ComputeFileActionsHandle, ComputeFi
                     />
                   }
                 >
-                  {runtimeToolbar.kind === "status" && runtimeToolbar.canRun ? (
-                    <span className="size-1.5 shrink-0 rounded-full bg-success" aria-hidden />
-                  ) : runtimeToolbar.kind === "status" && runtimeToolbar.label.includes("…") ? (
+                  {runtimeToolbar.kind === "status" && runtimeToolbar.label.includes("…") ? (
                     <LoaderCircle className="animate-spin" aria-hidden />
                   ) : null}
                   <span className="truncate">{runtimeToolbar.label}</span>

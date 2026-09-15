@@ -5348,7 +5348,7 @@ describe("agent browser access", () => {
           capabilities: new Set([
             "pull-requests",
             "documents:build",
-            "compute:read",
+            "compute:inventory",
             "sources:read",
             "sources:write",
             "skills:read",
@@ -5372,7 +5372,7 @@ describe("agent browser access", () => {
             "preview",
             "pull-requests",
             "documents:build",
-            "compute:read",
+            "compute:inventory",
             "sources:read",
             "sources:write",
             "skills:read",
@@ -5414,7 +5414,7 @@ describe("agent browser access", () => {
           capabilities: new Set([
             "pull-requests",
             "documents:build",
-            "compute:read",
+            "compute:inventory",
             "sources:read",
             "sources:write",
           ]),
@@ -5465,7 +5465,7 @@ describe("agent browser access", () => {
           capabilities: new Set([
             "pull-requests",
             "documents:build",
-            "compute:read",
+            "compute:inventory",
             "sources:read",
             "sources:write",
             "skills:read",
@@ -5498,7 +5498,7 @@ describe("agent browser access", () => {
         new Set([
           "pull-requests",
           "documents:build",
-          "compute:read",
+          "compute:inventory",
           "sources:read",
           "sources:write",
           "skills:read",
@@ -5544,7 +5544,7 @@ describe("agent browser access", () => {
           "preview",
           "pull-requests",
           "documents:build",
-          "compute:read",
+          "compute:inventory",
           "sources:read",
           "sources:write",
           "skills:read",

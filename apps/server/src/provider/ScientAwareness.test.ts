@@ -16,11 +16,11 @@ const wordCount = (value: string): number => value.trim().split(/\s+/u).length;
 
 describe("Scient awareness", () => {
   it("composes device and read-only compute awareness without granting either implicitly", () => {
-    const combined = buildScientAwareness(new Set(["compute:read", "device"]));
+    const combined = buildScientAwareness(new Set(["compute:inventory", "device"]));
     expect(combined).toContain(SCIENT_COMPUTE_AWARENESS);
     expect(combined).toContain("## Scient devices");
     expect(buildScientAwareness(new Set(["device"]))).not.toContain(SCIENT_COMPUTE_AWARENESS);
-    expect(buildScientAwareness(new Set(["compute:read"]))).not.toContain("## Scient devices");
+    expect(buildScientAwareness(new Set(["compute:inventory"]))).not.toContain("## Scient devices");
   });
   it("keeps the always-on identity compact and product-level", () => {
     expect(wordCount(SCIENT_CORE_AWARENESS)).toBeLessThanOrEqual(120);
@@ -74,14 +74,14 @@ describe("Scient awareness", () => {
     expect(SCIENT_COMPUTE_AWARENESS).toContain("does not install, run, execute, or attach");
     expect(buildScientAwareness()).toBe(SCIENT_CORE_AWARENESS);
     expect(buildScientAwareness(new Set(["sources:read"]))).toBe(SCIENT_CORE_AWARENESS);
-    expect(buildScientAwareness(new Set(["compute:read"]))).toBe(
+    expect(buildScientAwareness(new Set(["compute:inventory"]))).toBe(
       `${SCIENT_CORE_AWARENESS}\n\n${SCIENT_COMPUTE_AWARENESS}`,
     );
   });
 
   it("projects the Compute inventory name for Claude's MCP namespace", () => {
     const awareness = buildScientAwareness(
-      new Set(["compute:read"]),
+      new Set(["compute:inventory"]),
       CLAUDE_SCIENT_TOOL_PROJECTION,
     );
 

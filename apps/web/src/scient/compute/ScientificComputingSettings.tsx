@@ -46,6 +46,7 @@ import {
   computeRuntimePickerLabel,
   defaultComputeInstallation,
   selectExistingComputeInstallation,
+  type ComputeManagedPrimaryAction,
 } from "./computeInstallationSettingsModel";
 
 const AUTOMATIC_RUNTIME_OPTION = "scient-runtime:automatic";
@@ -166,6 +167,15 @@ function LanguageRuntimeSummary({
     selectedInstallation !== undefined &&
     runtime.status.installationExecutable !== selectedInstallation.executable;
   const helperNeedsRetarget = connectionNeedsRetarget && runtime.status?.selection === "managed";
+  const connectionFailure =
+    languageId === "matlab" &&
+    runtime.failure?.retryAction != null &&
+    runtime.failure.retryAction !== "remove"
+      ? runtime.failure
+      : null;
+  const connectionNeedsRepair = summary.kind === "repair-connection" || connectionFailure !== null;
+  const connectionRepairAction: ComputeManagedPrimaryAction =
+    connectionFailure?.retryAction === "install" ? "install" : "repair";
   const [recoveryOpen, setRecoveryOpen] = useState(false);
   const disabled = Boolean(loading || refreshing || runtime.busy || !environmentId);
   const runtimeFingerprint = JSON.stringify([
@@ -207,6 +217,17 @@ function LanguageRuntimeSummary({
       return (
         <Button size="sm" disabled={disabled} onClick={() => void runtime.act("repair")}>
           Set up connection
+        </Button>
+      );
+    }
+    if (connectionNeedsRepair) {
+      return (
+        <Button
+          size="sm"
+          disabled={disabled}
+          onClick={() => void runtime.act(connectionRepairAction)}
+        >
+          Repair connection
         </Button>
       );
     }
@@ -279,7 +300,9 @@ function LanguageRuntimeSummary({
       ? "update"
       : summary.kind === "repair-managed"
         ? "repair"
-        : null;
+        : connectionNeedsRepair
+          ? connectionRepairAction
+          : null;
   const control = (
     <div className="flex items-center gap-2">
       {action}
@@ -300,10 +323,21 @@ function LanguageRuntimeSummary({
     <SettingsRow
       id={`${languageId}-runtime`}
       title={language.descriptor.displayName}
-      description={<span data-compute-summary={languageId}>{story}</span>}
+      description={
+        connectionNeedsRepair ? undefined : <span data-compute-summary={languageId}>{story}</span>
+      }
+      status={
+        connectionNeedsRepair ? (
+          <div data-compute-summary={languageId}>
+            <ManagedRuntimeNotice runtime={runtime} />
+          </div>
+        ) : undefined
+      }
       control={control}
     >
-      {showManagedNotice ? <ManagedRuntimeNotice runtime={runtime} /> : null}
+      {showManagedNotice && !connectionNeedsRepair ? (
+        <ManagedRuntimeNotice runtime={runtime} />
+      ) : null}
       <details
         className="mt-2"
         open={recoveryOpen}
