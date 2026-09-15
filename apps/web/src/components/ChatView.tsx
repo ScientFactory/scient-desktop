@@ -364,13 +364,6 @@ import {
   reviewCommentContextLabel,
   terminalContextReference,
 } from "../lib/composerContextRecords";
-import {
-  isQueuedMessageDue,
-  latestCompletedToolActivityId,
-  type QueuedComposerMessage,
-  useQueuedMessages,
-  useQueuedMessageStore,
-} from "../queuedMessageStore";
 import { type ReviewCommentContext } from "../reviewCommentContext";
 import { environmentCatalog } from "../connection/catalog";
 import { isDesktopLocalConnectionTarget } from "../connection/desktopLocal";
@@ -589,7 +582,6 @@ import {
 } from "./chat/composerPromptHistory";
 
 const EMPTY_ACTIVITIES: OrchestrationThreadActivity[] = [];
-const EMPTY_QUEUED_MESSAGES: QueuedComposerMessage[] = [];
 const EMPTY_PROVIDERS: ServerProvider[] = [];
 const EMPTY_USAGE_LIMIT_SOURCES: UsageLimitSourceSnapshots = [];
 const EMPTY_PROVIDER_SKILLS: ServerProvider["skills"] = [];
@@ -4351,18 +4343,10 @@ function ChatViewContent(props: ChatViewProps) {
   }, [activeThreadKey, composerIdentity, composerRef]);
   const interruptContextRef = useRef({ activeThread, phase, setThreadError });
   interruptContextRef.current = { activeThread, phase, setThreadError };
-  const restoreQueuedMessagesRef = useRef<(messages: ReadonlyArray<QueuedComposerMessage>) => void>(
-    () => {},
-  );
   const onInterrupt = useCallback(async () => {
     const { activeThread, phase, setThreadError } = interruptContextRef.current;
     const input = buildRunningThreadTurnInterruptInput(activeThread, phase);
     if (!input || !activeThread) return;
-    restoreQueuedMessagesRef.current(
-      useQueuedMessageStore
-        .getState()
-        .drain(scopedThreadKey(scopeThreadRef(activeThread.environmentId, activeThread.id))),
-    );
     const result = await interruptThreadTurn({
       environmentId: activeThread.environmentId,
       input,
@@ -7621,81 +7605,6 @@ function ChatViewContent(props: ChatViewProps) {
     }
   };
 
-  const queuedMessages = useQueuedMessages(activeThreadKey ?? "");
-  // Puts queued messages back into the composer, e.g. after Stop or a failed
-  // send. Prompts join with blank lines; attachments and contexts are added.
-  const restoreQueuedMessagesToComposer = (messages: ReadonlyArray<QueuedComposerMessage>) => {
-    if (messages.length === 0) return;
-    const prompts = [promptRef.current, ...messages.map((message) => message.prompt)]
-      .map((prompt) => prompt.trim())
-      .filter((prompt) => prompt.length > 0);
-    const nextPrompt = prompts.join("\n\n");
-    promptRef.current = nextPrompt;
-    setComposerDraftPrompt(composerDraftTarget, nextPrompt);
-    // The draft store silently drops attachments over the per-turn cap. Split
-    // the overflow back into the queue so nothing is lost; the user can send
-    // the first batch and the rest follows as a queued message.
-    const attachmentRoom = Math.max(
-      0,
-      PROVIDER_SEND_TURN_MAX_ATTACHMENTS -
-        composerImagesRef.current.length -
-        composerFilesRef.current.length,
-    );
-    const attachments = messages.flatMap((message) => [...message.images, ...message.files]);
-    const restored = attachments.slice(0, attachmentRoom);
-    const overflow = attachments.slice(attachmentRoom);
-    const restoredImages = restored.filter((attachment) => attachment.type === "image");
-    const restoredFiles = restored.filter((attachment) => attachment.type === "file");
-    // The composer syncs these refs from the draft in an effect; a send before
-    // that effect runs must already see the restored content.
-    composerImagesRef.current = [...composerImagesRef.current, ...restoredImages];
-    composerFilesRef.current = [...composerFilesRef.current, ...restoredFiles];
-    if (restoredImages.length > 0) addComposerDraftImages(composerDraftTarget, restoredImages);
-    if (restoredFiles.length > 0) addComposerDraftFiles(composerDraftTarget, restoredFiles);
-    if (overflow.length > 0 && activeThreadKey) {
-      useQueuedMessageStore.getState().enqueue(activeThreadKey, {
-        prompt: "",
-        images: overflow.filter((attachment) => attachment.type === "image"),
-        files: overflow.filter((attachment) => attachment.type === "file"),
-        terminalContexts: [],
-        previewAnnotations: [],
-        reviewComments: [],
-        submissionIntent: "foreground",
-        queuedAfterToolActivityId: latestCompletedToolActivityId(threadActivities),
-        // Restoration is not a send. The user decides when the overflow goes.
-        holdUntilUserAction: true,
-        createdAt: new Date().toISOString(),
-      });
-      toastManager.add(
-        stackedThreadToast({
-          type: "info",
-          title: "Some attachments stayed queued",
-          description: `A message holds at most ${PROVIDER_SEND_TURN_MAX_ATTACHMENTS} attachments. Use Send now on the queued row when you want the rest to go.`,
-        }),
-      );
-    }
-    const restoredTerminalContexts = [
-      ...composerTerminalContextsRef.current,
-      ...messages.flatMap((message) => message.terminalContexts),
-    ];
-    composerTerminalContextsRef.current = restoredTerminalContexts;
-    setComposerDraftTerminalContexts(composerDraftTarget, restoredTerminalContexts);
-    const draft = useComposerDraftStore.getState().getComposerDraft(composerDraftTarget);
-    setComposerDraftPreviewAnnotations(composerDraftTarget, [
-      ...(draft?.previewAnnotations ?? []),
-      ...messages.flatMap((message) => message.previewAnnotations),
-    ]);
-    setComposerDraftReviewComments(composerDraftTarget, [
-      ...(draft?.reviewComments ?? []),
-      ...messages.flatMap((message) => message.reviewComments),
-    ]);
-    composerRef.current?.resetCursorState({
-      cursor: collapseExpandedComposerCursor(nextPrompt, nextPrompt.length),
-      prompt: nextPrompt,
-      detectTrigger: true,
-    });
-  };
-
   const onSend = async (
     e?: { preventDefault: () => void },
     submissionIntent: ComposerSubmissionIntent = "foreground",
@@ -7715,7 +7624,6 @@ function ChatViewContent(props: ChatViewProps) {
       usageLimitsOffered &&
       usageLimitsKey !== null &&
       !directAnnotation &&
-      !queuedMessage &&
       !composerHasNonPromptContent &&
       isUsageLimitsCommand(promptRef.current)
     ) {
@@ -7796,8 +7704,6 @@ function ChatViewContent(props: ChatViewProps) {
       terminalContexts: composerTerminalContexts,
       previewAnnotations: sendContextPreviewAnnotations,
       reviewComments: composerReviewComments,
-    } = queuedMessage ?? sendCtx;
-    const {
       selectedProvider: ctxSelectedProvider,
       selectedModel: ctxSelectedModel,
       selectedProviderModels: ctxSelectedProviderModels,
@@ -7884,7 +7790,7 @@ function ChatViewContent(props: ChatViewProps) {
       composerReviewComments.length === 0
         ? parseCodexFeedbackCommand(trimmed)
         : null;
-    if (feedbackCommand && !queuedMessage) {
+    if (feedbackCommand) {
       if (!isServerThread || activeThread.session === null) {
         toastManager.add(
           stackedThreadToast({
@@ -7940,7 +7846,6 @@ function ChatViewContent(props: ChatViewProps) {
     if (
       !queueEdit &&
       !directAnnotation &&
-      !queuedMessage &&
       sendInteractionModeEnabled &&
       showPlanFollowUpPrompt &&
       activeProposedPlan &&
@@ -8013,7 +7918,7 @@ function ChatViewContent(props: ChatViewProps) {
       composerReviewComments.length === 0
         ? parseStandaloneComposerSlashCommand(trimmed)
         : null;
-    if (standaloneSlashCommand && !queuedMessage) {
+    if (standaloneSlashCommand) {
       handleInteractionModeChange(standaloneSlashCommand);
       promptRef.current = "";
       clearComposerDraftContent(composerDraftTarget);
@@ -8034,12 +7939,6 @@ function ChatViewContent(props: ChatViewProps) {
           }),
         );
       }
-      // A queued message whose only content expired would retry on every
-      // boundary and block the rest of the queue. Nothing sendable is left
-      // in it, so drop it and let the queue move on.
-      if (queuedMessage && activeThreadKey) {
-        useQueuedMessageStore.getState().remove(activeThreadKey, queuedMessage.id);
-      }
       return;
     }
     if (activeThread.projectId !== null && !activeProject) {
@@ -8050,36 +7949,6 @@ function ChatViewContent(props: ChatViewProps) {
           description: "This draft no longer points to an available project.",
         }),
       );
-      return;
-    }
-    // A send during a running turn waits in the queue. It leaves on the next
-    // tool boundary, when the turn ends, or when the user clicks Steer. The
-    // provider treats a mid-turn send as a steer of the active turn, so the
-    // dispatch below is the same either way.
-    if (!queuedMessage && !directAnnotation && phase === "running" && activeThreadKey) {
-      if (composerRef.current?.validateProviderInput(promptForSend) === false) {
-        return;
-      }
-      useQueuedMessageStore.getState().enqueue(activeThreadKey, {
-        prompt: promptForSend,
-        images: [...composerImages],
-        files: [...composerFiles],
-        terminalContexts: [...composerTerminalContexts],
-        previewAnnotations: [...composerPreviewAnnotations],
-        reviewComments: [...composerReviewComments],
-        submissionIntent,
-        queuedAfterToolActivityId: latestCompletedToolActivityId(threadActivities),
-        createdAt: new Date().toISOString(),
-      });
-      promptRef.current = "";
-      // Attachments move with the message; their uploads stay pending. The
-      // refs clear now too, so a Stop before the composer's sync effect runs
-      // does not restore the moved attachments twice.
-      composerImagesRef.current = [];
-      composerFilesRef.current = [];
-      composerTerminalContextsRef.current = [];
-      clearComposerDraftContent(composerDraftTarget);
-      composerRef.current?.resetCursorState();
       return;
     }
     const threadIdForSend = activeThread.id;
@@ -8137,11 +8006,6 @@ function ChatViewContent(props: ChatViewProps) {
       text: messageTextForSend || ATTACHMENT_ONLY_BOOTSTRAP_PROMPT,
     });
     if (composerRef.current?.validateProviderInput(outgoingMessageText) === false) {
-      // A queued message that no longer fits is held at the head for the
-      // user to edit via Cancel, instead of failing on every boundary.
-      if (queuedMessage && activeThreadKey) {
-        useQueuedMessageStore.getState().holdAtFront(activeThreadKey, queuedMessage);
-      }
       return;
     }
 
@@ -8168,7 +8032,6 @@ function ChatViewContent(props: ChatViewProps) {
       sendInFlightRef.current = false;
       if (queueEdit) resetLocalDispatch();
       setThreadError(threadIdForSend, attachmentCapabilitiesBeforeUpload.fileBlockReason);
-      abortQueuedReplay();
       return;
     }
     const turnUsesAttachmentUploads =
@@ -8189,25 +8052,14 @@ function ChatViewContent(props: ChatViewProps) {
         sendInFlightRef.current = false;
         if (queueEdit) resetLocalDispatch();
         setThreadError(threadIdForSend, attachmentCapabilitiesAfterUpload.fileBlockReason);
-        abortQueuedReplay();
         return;
       }
       if (getUploadedAttachments({ environmentId, images: composerAttachmentsSnapshot }) === null) {
         sendInFlightRef.current = false;
         if (queueEdit) resetLocalDispatch();
         setThreadError(threadIdForSend, "Retry or remove failed uploads before sending.");
-        abortQueuedReplay();
         return;
       }
-    }
-
-    if (
-      queuedMessage &&
-      useQueuedMessageStore.getState().drainGeneration !== drainGenerationAtTake
-    ) {
-      sendInFlightRef.current = false;
-      restoreQueuedMessagesToComposer([queuedMessage]);
-      return;
     }
 
     const resolvedSubmissionIntent =
@@ -8243,7 +8095,6 @@ function ChatViewContent(props: ChatViewProps) {
       setDockedDraftHeroThreadKey((currentThreadKey) =>
         currentThreadKey === activeThreadKey ? null : currentThreadKey,
       );
-      abortQueuedReplay();
       return;
     }
     beginLocalDispatch({
@@ -10197,9 +10048,6 @@ function ChatViewContent(props: ChatViewProps) {
                 hideEmptyPlaceholder={isDraftHeroState || threadDetailLoading}
                 topFadeEnabled={!hasTimelineTopBanner}
                 loadEarlier={paintOnlyDisplayedTimeline ? null : loadEarlierTurns}
-                queuedMessages={paintOnlyDisplayedTimeline ? EMPTY_QUEUED_MESSAGES : queuedMessages}
-                onSteerQueuedMessage={onSteerQueuedMessage}
-                onRemoveQueuedMessage={onRemoveQueuedMessage}
               />
 
               {/* scroll to end pill — shown when user has scrolled away from the live edge */}
