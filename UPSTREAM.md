@@ -37,38 +37,33 @@ revision remains literal ancestry of owned `main`; it is not merely a reviewed
 or observed tip.
 
 The current T3 alignment is recorded in
-[`docs/internals/2026-09-14-upstream-sync-01e05c15.md`](docs/internals/2026-09-14-upstream-sync-01e05c15.md)
-and in `upstream-state.json`. The cumulative alignment preserves 159 official first-parent commits
-after `f814983c262b42bd79247bae377a709925c70d63`, including the final 32-commit extension after
-`77bca8b2d76a1f42552e5eee7d277fcb1160347a` through
-`01e05c15268dedb76da95f442fbf5201cd8e7a44`. History-preserving merge
-`7f7937f8927a9bbb0cb6a17ed9a2c9133560347f` has the previously qualified candidate
-`5c13b7e1b3f070a5a3378ad452f4abd962999b51` as its first parent and the exact official target as
-its second parent.
+[`docs/internals/2026-09-15-upstream-sync-50ff4c37.md`](docs/internals/2026-09-15-upstream-sync-50ff4c37.md)
+and in `upstream-state.json`. It preserves 49 official first-parent commits after
+`01e05c15268dedb76da95f442fbf5201cd8e7a44` through
+`50ff4c371eab927a9650c114975241999f4cd7b1`. History-preserving merge
+`6f5593ec52e78a066ddf1f0aee9a9bdbdbebda33` has the exact owned base
+`fc5134619e183b95d29008db286566c03091aa59` as its first parent and the exact official target as its
+second parent.
 
-Automated qualification passed. The owner authorized PR delivery and auto-merge using a
-history-preserving merge commit; release publication remains a separate action. The
-[preceding alignment](docs/internals/2026-09-10-upstream-sync-f814983c.md) remains in ancestry. The
-[interim a43f9b45 receipt](docs/internals/2026-09-12-upstream-sync-a43f9b45.md) and
-[20363c32 receipt](docs/internals/2026-09-13-upstream-sync-20363c32.md) record earlier qualification
-points of this same candidate. Later observed upstream tips do not move `integrationBase` by
-themselves.
+Automated qualification passed; owner manual review is pending. Pull-request delivery, merge, and
+release publication remain separate actions. The
+[preceding alignment](docs/internals/2026-09-14-upstream-sync-01e05c15.md) remains in ancestry.
+Later observed upstream tips do not move `integrationBase` by themselves.
 
 ## Receiving T3 updates
 
-The local alignment through `01e05c15` is documented in the
-[2026-09-14 final review](docs/internals/2026-09-14-upstream-sync-01e05c15.md).
-It extends the prior candidate with paragraph-aware response streaming, visible and cancellable
-worktree setup, simpler environment management, safer multi-environment checks, reusable trusted
-dev authentication, mobile widget fixes, and a smaller bundled desktop main process. Scient's
-provider lifecycle, scientific surfaces, identity, signed npm-pinned server runtime, state roots,
-and cloud/mobile publication holds remain.
+The local alignment through `50ff4c37` is documented in the
+[2026-09-15 review](docs/internals/2026-09-15-upstream-sync-50ff4c37.md). It adds background project
+cloning, durable worktree setup progress, title-intent refinement, mobile keyboard workflows,
+custom snooze controls, responsive Git and terminal operations, safer fork-preview staging, and
+attachment/UI reliability improvements. Scient's provider lifecycle, scientific surfaces, identity,
+signed npm-pinned server runtime, durable queue, state roots, and cloud/mobile publication holds
+remain.
 
-Migration IDs are immutable local history, not an upstream synchronization counter. The new T3
-multi-PR migration is registered as Scient `53`, after existing `51` and `52`; composer-context
-migration follows at `54`. Retired development ID `50` is not reused. Never renumber recorded steps
-to match T3. The receipt records synthetic
-upgrade/backfill tests and the remaining platform/manual gates.
+Migration IDs are immutable local history, not an upstream synchronization counter. T3's multi-PR
+migration is registered as Scient `53`, composer-context migration follows at `54`, and title-state
+migration is appended at `55`. Retired development ID `50` is not reused. Never renumber recorded
+steps to match T3. The receipt records compatibility tests and the remaining platform/manual gates.
 
 The canonical procedure and stop conditions live in the
 [T3 upstream alignment protocol](docs/internals/upstream-alignment-protocol.md). The short form is:
