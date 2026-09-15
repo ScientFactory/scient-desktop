@@ -154,6 +154,24 @@
   "packageOverrides": [
     {
       "license": "MIT",
+      "name": "@napi-rs/wasm-runtime",
+      "sourceUrl": "https://github.com/napi-rs/napi-rs/tree/main/wasm-runtime",
+      "generatedNotice": {
+        "licenseId": "MIT",
+        "copyrights": ["Copyright (c) 2020-present LongYinan", "Copyright (c) 2018 GitHub"]
+      }
+    },
+    {
+      "license": "MIT",
+      "name": "@tybys/wasm-util",
+      "sourceUrl": "https://github.com/toyobayashi/wasm-util",
+      "generatedNotice": {
+        "licenseId": "MIT",
+        "copyrights": ["Copyright (c) 2022-present Toyobayashi"]
+      }
+    },
+    {
+      "license": "MIT",
       "name": "@react-grab/cli",
       "sourceUrl": "https://github.com/aidenybai/react-grab/tree/main/packages/cli",
       "generatedNotice": {

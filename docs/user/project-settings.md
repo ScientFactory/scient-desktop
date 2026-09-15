@@ -96,6 +96,10 @@ Automatic preview is available in the Scient desktop app. Other clients still ru
 not open the embedded Browser. Actions that run automatically during worktree creation start on the
 server and do not currently trigger this client-side Browser opening.
 
+When no image is found, web and desktop show a two-character monogram with colors
+derived from the saved project name. For example, `Nebula` becomes `NA`,
+`Silver Orchard` becomes `SO`, and `M7 Forge` becomes `M7`.
+
 ## Keep the default branch current
 
 In **Source Control**, turn on **Automatically pull** to keep the default-branch checkout current.

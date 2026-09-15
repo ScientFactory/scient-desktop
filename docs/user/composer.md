@@ -54,6 +54,8 @@ Click a video attachment to play it. If its format cannot play in the app, use
 **Download video**. Sent PDF and HTML attachments open in the file viewer;
 other files keep their filename and can be downloaded.
 
+## Queue messages offline on mobile
+
 In the retained mobile client (not yet a public Scient release), tap **+** for **Photo Library**
 or, when the connected server supports file uploads, **Choose Files**. Photos, videos, and files can
 also arrive through the system share sheet. Mobile keeps a local draft copy, allows previewing and

@@ -576,7 +576,12 @@ export function deriveWorkLogEntries(
   }
   const entries: DerivedWorkLogEntry[] = [];
   for (const activity of foldUserInputActivities(ordered)) {
-    if (activity.tone !== "error" && isWorktreeSetupActivity(activity.kind)) continue;
+    if (
+      isWorktreeSetupActivity(activity.kind) &&
+      (activity.tone !== "error" || activity.kind === "worktree-setup")
+    ) {
+      continue;
+    }
     if (activity.kind === "tool.started") continue;
     // Hide configuration notices persisted by older builds without rewriting history.
     if (activity.kind === "reasoning.applied") continue;

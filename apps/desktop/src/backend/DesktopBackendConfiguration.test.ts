@@ -933,10 +933,14 @@ describe("DesktopBackendConfiguration", () => {
       const previousWslEnv = process.env.WSLENV;
       const previousOpenAiKey = process.env.OPENAI_API_KEY;
       const previousAnthropicKey = process.env.ANTHROPIC_API_KEY;
+      const previousOtlpHeaders = process.env.T3CODE_OTLP_HEADERS;
+      const previousOtlpProtocol = process.env.T3CODE_OTLP_PROTOCOL;
       try {
         process.env.WSLENV = "GOPATH/p:OPENAI_API_KEY/u:EMPTY::AZURE_DEVOPS_EXT_PAT/u";
         process.env.OPENAI_API_KEY = "openai-key";
         process.env.ANTHROPIC_API_KEY = "anthropic-key";
+        process.env.T3CODE_OTLP_HEADERS = 'authorization="Bearer%20my-token"';
+        process.env.T3CODE_OTLP_PROTOCOL = "http/protobuf";
 
         yield* Effect.gen(function* () {
           const configuration = yield* DesktopBackendConfiguration.DesktopBackendConfiguration;
@@ -960,13 +964,14 @@ describe("DesktopBackendConfiguration", () => {
           assert.equal(config.env.T3CODE_HOME, "~/.scient-next");
           assert.equal(config.env.SCIENT_NEXT_HOME, "~/.scient-next");
           assert.equal(config.env.SCIENT_NEXT_SAFETY_ENVELOPE, "true");
+          assert.equal(config.env.T3CODE_OTLP_PROTOCOL, "http/protobuf");
           // The existing WSLENV is preserved byte-for-byte (note the empty
           // "::" segment survives — WSL ignores it, so we don't normalize
           // it away) and ANTHROPIC_API_KEY is appended. OPENAI_API_KEY is
           // already declared, so it isn't forwarded twice.
           assert.equal(
             config.env.WSLENV,
-            "GOPATH/p:OPENAI_API_KEY/u:EMPTY::AZURE_DEVOPS_EXT_PAT/u:SCIENT_ANALYTICS_APP_VERSION:SCIENT_ANALYTICS_BUILD_CHANNEL:SCIENT_ANALYTICS_ENABLED:T3CODE_HOME:SCIENT_NEXT_HOME:SCIENT_NEXT_DEVELOPMENT_STATE:SCIENT_NEXT_SAFETY_ENVELOPE:ANTHROPIC_API_KEY",
+            "GOPATH/p:OPENAI_API_KEY/u:EMPTY::AZURE_DEVOPS_EXT_PAT/u:SCIENT_ANALYTICS_APP_VERSION:SCIENT_ANALYTICS_BUILD_CHANNEL:SCIENT_ANALYTICS_ENABLED:T3CODE_HOME:SCIENT_NEXT_HOME:SCIENT_NEXT_DEVELOPMENT_STATE:SCIENT_NEXT_SAFETY_ENVELOPE:ANTHROPIC_API_KEY:T3CODE_OTLP_HEADERS:T3CODE_OTLP_PROTOCOL",
           );
         }).pipe(
           Effect.provide(
@@ -989,6 +994,8 @@ describe("DesktopBackendConfiguration", () => {
         restoreEnv("WSLENV", previousWslEnv);
         restoreEnv("OPENAI_API_KEY", previousOpenAiKey);
         restoreEnv("ANTHROPIC_API_KEY", previousAnthropicKey);
+        restoreEnv("T3CODE_OTLP_HEADERS", previousOtlpHeaders);
+        restoreEnv("T3CODE_OTLP_PROTOCOL", previousOtlpProtocol);
       }
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
