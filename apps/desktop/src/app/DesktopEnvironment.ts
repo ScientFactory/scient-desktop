@@ -17,6 +17,7 @@ import { resolveLinuxDesktopEntryName } from "./DesktopEarlyElectronStartup.ts";
 import { resolveDesktopBaseDir, resolveDesktopStateDir } from "./DesktopStatePaths.ts";
 import { isNightlyDesktopVersion } from "../updates/updateChannels.ts";
 import { SCIENT_DESKTOP_IDENTITY } from "@t3tools/shared/scientDesktopIdentity";
+import type { OtlpProtocol } from "@t3tools/shared/observability";
 
 export interface MakeDesktopEnvironmentInput {
   readonly dirname: string;
@@ -74,6 +75,8 @@ export class DesktopEnvironment extends Context.Service<
     readonly otlpTracesUrl: Option.Option<string>;
     readonly otlpExportIntervalMs: number;
     readonly safetyEnvelopeEnabled: boolean;
+    readonly otlpHeaders: Option.Option<Record<string, string>>;
+    readonly otlpProtocol: OtlpProtocol;
     readonly branding: DesktopAppBranding;
     readonly displayName: string;
     readonly appUserModelId: string;
@@ -264,6 +267,8 @@ const make = Effect.fn("desktop.environment.make")(function* (
     // exercise inherited T3 behavior without weakening the actual candidate
     // process boundary.
     safetyEnvelopeEnabled: config.safetyEnvelopeEnabled,
+    otlpHeaders: config.otlpHeaders,
+    otlpProtocol: config.otlpProtocol,
     branding,
     displayName,
     appUserModelId: resolveCandidateAppUserModelId({

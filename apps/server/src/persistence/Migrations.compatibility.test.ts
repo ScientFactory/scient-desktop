@@ -31,12 +31,14 @@ for (const previousId of [49, 50, 52] as const) {
               ? [
                   [53, "ProjectionThreadPullRequests"],
                   [54, "ProjectionThreadMessageContext"],
+                  [55, "ProjectionThreadTitleState"],
                 ]
               : [
                   [51, "ProjectionThreadBranchPullRequest"],
                   [52, "ProjectionThreadsActiveOrderKey"],
                   [53, "ProjectionThreadPullRequests"],
                   [54, "ProjectionThreadMessageContext"],
+                  [55, "ProjectionThreadTitleState"],
                 ],
           );
           assert.deepStrictEqual(
@@ -52,6 +54,7 @@ for (const previousId of [49, 50, 52] as const) {
           const columns = yield* sql<{ name: string }>`PRAGMA table_info(projection_threads)`;
           assert.ok(columns.some((column) => column.name === "branch_pull_request_json"));
           assert.ok(columns.some((column) => column.name === "active_order_key"));
+          assert.ok(columns.some((column) => column.name === "title_state_json"));
           assert.deepStrictEqual(yield* sql`SELECT * FROM projection_thread_pull_requests`, []);
           assert.isEmpty(yield* runMigrations());
         }),
@@ -72,6 +75,7 @@ it.layer(Layer.fresh(NodeSqliteClient.layerMemory()))("fresh migration compatibi
         { migration_id: 52, name: "ProjectionThreadsActiveOrderKey" },
         { migration_id: 53, name: "ProjectionThreadPullRequests" },
         { migration_id: 54, name: "ProjectionThreadMessageContext" },
+        { migration_id: 55, name: "ProjectionThreadTitleState" },
       ]);
       assert.deepStrictEqual(yield* sql`SELECT * FROM projection_thread_pull_requests`, []);
       assert.isEmpty(yield* runMigrations());

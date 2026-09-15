@@ -96,11 +96,16 @@ const DESKTOP_BACKEND_ENV_NAMES = [
   "SCIENT_NEXT_DEVELOPMENT_STATE",
 ] as const;
 
-// Sensitive env vars that the WSL backend needs but Windows process.env won't
-// forward across the wsl.exe boundary without WSLENV. The dev-server URL is
-// handled separately via a `--dev-url` CLI flag because WSLENV translation of
+// Env vars that the WSL backend needs but Windows process.env won't forward
+// across the wsl.exe boundary without WSLENV. The dev-server URL is handled
+// separately via a `--dev-url` CLI flag because WSLENV translation of
 // URL-shaped values (colons / slashes) is unreliable.
-const WSL_FORWARDED_ENV_NAMES = ["OPENAI_API_KEY", "ANTHROPIC_API_KEY"] as const;
+const WSL_FORWARDED_ENV_NAMES = [
+  "OPENAI_API_KEY",
+  "ANTHROPIC_API_KEY",
+  "T3CODE_OTLP_HEADERS",
+  "T3CODE_OTLP_PROTOCOL",
+] as const;
 const WSL_CANDIDATE_ENV_NAMES = [
   ...SCIENT_ANALYTICS_METADATA_ENV_NAMES,
   "T3CODE_HOME",

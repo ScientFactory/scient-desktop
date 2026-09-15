@@ -188,6 +188,7 @@ it.effect("resolveAutoBootstrapWelcomeTargets returns existing project and threa
       } as never),
       Effect.provideService(ProjectionSnapshotQuery.ProjectionSnapshotQuery, {
         getUserInputActivity: () => Effect.die("unused"),
+        listActivitiesByKind: () => Effect.succeed([]),
         getCommandReadModel: () => Effect.die("unused"),
         getSnapshot: () => Effect.die("unused"),
         getShellSnapshot: () => Effect.die("unused"),
@@ -317,6 +318,7 @@ it.effect.each([
       } as never),
       Effect.provideService(ProjectionSnapshotQuery.ProjectionSnapshotQuery, {
         getUserInputActivity: () => Effect.die("unused"),
+        listActivitiesByKind: () => Effect.succeed([]),
         getCommandReadModel: () => Effect.die("unused"),
         getSnapshot: () => Effect.die("unused"),
         getShellSnapshot: () => Effect.die("unused"),
@@ -402,6 +404,7 @@ it.effect(
         } as never),
         Effect.provideService(ProjectionSnapshotQuery.ProjectionSnapshotQuery, {
           getUserInputActivity: () => Effect.die("unused"),
+          listActivitiesByKind: () => Effect.succeed([]),
           getCommandReadModel: () => Effect.die("unused"),
           getSnapshot: () => Effect.die("unused"),
           getShellSnapshot: () => Effect.die("unused"),
@@ -465,6 +468,7 @@ it.effect("resolveAutoBootstrapWelcomeTargets preserves typed UUID generation fa
       } as never),
       Effect.provideService(ProjectionSnapshotQuery.ProjectionSnapshotQuery, {
         getUserInputActivity: () => Effect.die("unused"),
+        listActivitiesByKind: () => Effect.succeed([]),
         getCommandReadModel: () => Effect.die("unused"),
         getSnapshot: () => Effect.die("unused"),
         getShellSnapshot: () => Effect.die("unused"),

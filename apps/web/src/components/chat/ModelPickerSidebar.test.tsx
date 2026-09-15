@@ -49,6 +49,7 @@ function render(setupAvailable: boolean): string {
       setupAvailableInstanceIds={setupAvailable ? new Set([INSTANCE_ID]) : new Set()}
       showFavorites={false}
       onSelectInstance={() => undefined}
+      onFocusSearch={() => undefined}
     />,
   );
 }
@@ -61,6 +62,7 @@ describe("ModelPickerSidebar provider setup", () => {
         selectedInstanceId="favorites"
         showFavorites
         onSelectInstance={() => undefined}
+        onFocusSearch={() => undefined}
       />,
     );
 
@@ -72,13 +74,15 @@ describe("ModelPickerSidebar provider setup", () => {
 
     expect(markup).toContain('aria-label="Claude needs setup. Select it to install or reconnect."');
     expect(markup).not.toContain("/private/runtime/claude");
-    expect(markup).not.toContain("disabled");
+    expect(markup).toContain('aria-disabled="false"');
+    expect(markup).not.toContain('disabled=""');
   });
 
   it("keeps unsupported not-ready providers disabled", () => {
     const markup = render(false);
 
-    expect(markup).toContain("disabled");
+    expect(markup).toContain('aria-disabled="true"');
+    expect(markup).toContain('disabled=""');
     expect(markup).toContain(
       "Claude is unavailable. Open Settings → Providers to install or reconnect it.",
     );
@@ -107,6 +111,7 @@ describe("ModelPickerSidebar provider lock", () => {
         }
         showFavorites={false}
         onSelectInstance={() => undefined}
+        onFocusSearch={() => undefined}
       />,
     );
 
@@ -126,6 +131,7 @@ describe("ModelPickerSidebar provider lock", () => {
         }
         showFavorites={false}
         onSelectInstance={() => undefined}
+        onFocusSearch={() => undefined}
       />,
     );
 
