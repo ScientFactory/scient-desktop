@@ -180,3 +180,16 @@ The badge uses the macOS app-icon badge permission. If macOS suppresses it, chec
 Scient's notification settings and allow app-icon badges. No banner or sound is
 sent by this feature. Closing the last window pauses badge updates until a window
 is reopened; the last displayed count remains. Quitting Scient stops updates.
+
+## Tool details
+
+Expand a tool call in the conversation to see its full command and output.
+Summaries shorten shell wrappers and can still describe the latest call after it
+finishes; the call's own result shows its status.
+
+## Snooze until later
+
+Choose **Snooze → Custom…** from a thread's menu to pick a date and time in your
+local time zone, or a duration in minutes, hours, or days. Durations start when
+you confirm; one day means 24 hours. On web and desktop, you can also snooze
+several selected threads together. Choose **Wake thread** to bring a thread back early.

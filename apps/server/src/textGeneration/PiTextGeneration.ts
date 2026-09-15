@@ -317,7 +317,12 @@ export const makePiTextGeneration = Effect.fn("makePiTextGeneration")(function* 
       prompt: built.prompt,
       outputSchema: built.outputSchema,
       modelSelection: input.modelSelection,
-    }).pipe(Effect.map((value) => ({ title: sanitizeThreadTitle(value.title) })));
+    }).pipe(
+      Effect.map((value) => ({
+        title: sanitizeThreadTitle(value.title),
+        ...(value.needsRefinement ? { needsRefinement: true } : {}),
+      })),
+    );
   };
   return {
     generateCommitMessage,

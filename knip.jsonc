@@ -14,7 +14,11 @@
     },
     "scripts": {
       // Knip loads its preprocessor through a CLI option, not a source import.
-      "entry": ["knip-schemas.ts", "qualify-managed-runtime-catalog.ts"],
+      "entry": [
+        "knip-schemas.ts",
+        "qualify-managed-runtime-catalog.ts",
+        "mobile-native-client.ts",
+      ],
     },
     "apps/server": {
       // Vite+ pack entries and the launcher used by installed background services.
@@ -28,6 +32,7 @@
         "scripts/agy-stream-mock.ts",
         // Invoked inside the native-qualification workflow's repetition loop.
         "scripts/qualify-antigravity-acp-catalog.ts",
+        "scripts/evaluate-thread-titles.ts",
         "src/provider/testFixtures/*.mjs",
       ],
       // Keep the transitive Effect runtime pinned for standalone npm installs.

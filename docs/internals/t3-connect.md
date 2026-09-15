@@ -76,34 +76,31 @@ personal developer stage.
 
 ## Headless CLI OAuth Application
 
-The `t3 connect` commands authorize a headless environment with a separate Clerk OAuth application.
-This uses an OAuth public client with PKCE, so the CLI stores no client secret.
+The `t3 connect` commands authorize an environment with a separate Clerk OAuth application. The
+CLI is a public client and stores no client secret. Interactive login uses authorization-code PKCE;
+headless and SSH login use Clerk's device authorization grant.
 
 In **Clerk Dashboard > OAuth applications**:
 
 1. Create an OAuth application for the T3 CLI.
 2. Enable the **Public** option so authorization-code exchange uses PKCE.
-3. Add **both** allowed redirect URIs:
-   - `http://127.0.0.1:34338/callback` for the loopback listener;
-   - `https://app.t3.codes/connect/callback` for the hosted out-of-band flow. This is
-     `connectCallbackUrl(DEFAULT_HOSTED_APP_URL)` from `packages/shared/src/connectAuth.ts`, so a
-     custom `T3CODE_HOSTED_APP_URL` means `$T3CODE_HOSTED_APP_URL/connect/callback` instead.
-     Omitting it breaks headless and SSH authorization.
-4. Enable the `openid`, `profile`, and `email` scopes.
-5. Set `T3CODE_CLERK_CLI_OAUTH_CLIENT_ID` in the repository-root `.env` file and release build
+3. Add `http://127.0.0.1:34338/callback` as an allowed redirect URI for the loopback listener.
+4. Enable the OAuth device authorization grant for headless and SSH login.
+5. Enable the `openid`, `profile`, and `email` scopes.
+6. Set `T3CODE_CLERK_CLI_OAUTH_CLIENT_ID` in the repository-root `.env` file and release build
    environment to the generated public client ID.
 
-Both CLI flows start at the hosted `/connect` page (`buildConnectAuthorizeRequestUrl` in
+Interactive login starts at the hosted `/connect` page (`buildConnectAuthorizeRequestUrl` in
 `packages/shared/src/connectAuth.ts`), which waits for a Clerk session and then forwards the request
 to Clerk's `/oauth/authorize`. The CLI never opens `/oauth/authorize` directly: a signed-out browser
 sent there goes through Clerk's sign-in redirect, which drops the authorize query parameters and
-fails the flow with `unsupported_response_type` or an empty `state` (#5051). The loopback flow marks
-the request with a `port` fragment parameter so the hosted page asks Clerk to redirect the
-authorization code straight to `http://127.0.0.1:<port>/callback`; the out-of-band flow omits it and
-uses the hosted `/connect/callback` page instead. The CLI derives Clerk's frontend API URL from the
-publishable key and calls only the `/oauth/token` endpoint directly. The relay is not involved in
-the OAuth handshake; it only validates the issued Clerk bearer token when the CLI manages an
-environment link.
+fails the flow with `unsupported_response_type` or an empty `state` (#5051). The hosted page
+preserves PKCE and state and redirects the authorization code to the loopback callback.
+
+The headless flow requests a device code from Clerk and polls Clerk's token endpoint while the user
+approves the short code on Clerk's hosted device page. The hosted Scient/T3 app, redirect URIs, and
+PKCE are not involved in that flow. The relay is not involved in either OAuth handshake; it only
+validates the issued Clerk bearer token when the CLI manages an environment link.
 
 The connect command group is:
 
@@ -135,16 +132,9 @@ logout leaves it running; manage it with `t3 service status`, `install`, `update
 
 The loopback OAuth callback listener binds to port `34338`. That path only works when a browser on
 the same machine can reach it, so `authorizeCli` in `apps/server/src/cli/connect.ts` automatically
-selects the out-of-band flow when `--headless` is passed or when it detects SSH through
-`SSH_CONNECTION` or `SSH_TTY`. The out-of-band flow prints the hosted `/connect` authorization URL
-and accepts a pasted authorization code, so no port is involved.
-
-Port forwarding is therefore optional, not required. Forward the port only if you specifically want
-the loopback flow over SSH:
-
-```sh
-ssh -L 34338:127.0.0.1:34338 <host>
-```
+selects the device authorization flow when `--headless` is passed or when it detects SSH through
+`SSH_CONNECTION` or `SSH_TTY`. The CLI prints Clerk's verification URL and a short code, then
+continues automatically after approval; no callback port or pasted authorization code is involved.
 
 ## JWT Template
 
