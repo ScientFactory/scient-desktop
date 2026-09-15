@@ -1,27 +1,139 @@
 # Scientific computing
 
-Scient can run Python from an initialized project without turning the project into a notebook or
-installing a second copy of its files. Python is the first supported stateful runtime; the compute
-contracts and settings are language-neutral so later languages can remain independently optional.
+Scient can run Python and MATLAB from an initialized project without turning the project into a
+notebook or installing a second copy of its files. Both use the same session, source, results, and
+history controls. Each language remains optional; MATLAB requires a user-installed, licensed
+runtime and a compatible Engine host. See [Run a MATLAB file](matlab-run-file.md) for its setup and
+**Run MATLAB batch**, available in the same file's Run menu and Results pane.
 
 ## Set up a runtime
 
-1. Open **Settings → Scientific Computing** for the server environment you want to use.
-2. Enable Python. This enables discovery only: Scient does not download Python, install packages,
-   create an environment, accept a license, or change the selected interpreter.
-3. Leave the executable on **Automatic**, or enter an interpreter path when you want to pin one.
-4. Choose **Refresh** to inspect existing runtimes. A ready Python needs CPython 3.10 or newer,
-   `jupyter_client` 8.6 or newer, and `ipykernel` 6.29 or newer. Install missing requirements with
-   your own environment tooling, then refresh again.
+The quickest path is to open a `.py` file and choose **Set up Python** in the file header. That
+opens the correct server's Scientific Computing settings, where **Set up Python** starts the
+installation. Scient downloads a verified installer and creates one private, shared Python
+environment for that Scient server. Setup includes a reviewed, locked
+data-and-figures Toolkit with NumPy, pandas, SciPy, Matplotlib, Plotly, Jupyter Client,
+ipykernel, and the notebook-format support Plotly uses for normal `figure.show()` output. It also
+enables Python and selects that exact environment for new sessions.
 
-Prefer a project `.venv` or another virtual environment you control. Scient detects a project's
+The managed environment is optional. To use Python you already maintain instead:
+
+1. Open **Settings → Scientific Computing** for the server environment you want to use.
+2. Expand **Runtime**.
+3. Enable Python if it is off.
+4. Choose **Automatic**, a detected installation, or **Custom executable…** from the runtime menu.
+
+A ready Python needs CPython 3.10 or newer, `jupyter_client` 8.6 or newer, and `ipykernel` 6.29 or
+newer. Install missing requirements with your own environment tooling, then use the page refresh
+control. Prefer a project `.venv` or another virtual environment you control. Scient detects a project's
 `.venv` when that project is open. The isolated compute bridge does not load packages installed
 with `pip --user`; do not force packages into a Homebrew- or system-managed Python merely to make
 runtime discovery succeed.
 
-The settings inventory is environment-wide. When a project is open, its Compute panel also checks
-that project's `.venv`. A configured interpreter that is missing or unusable remains visible as a
-problem; Scient does not silently replace it with another interpreter.
+Settings → Scientific Computing has one quiet row for Python and one for MATLAB. The enable switch
+is always available. When an enabled language needs attention, the row offers one contextual action
+(Set up, Connect, Repair, or Choose runtime). A ready language keeps the compact **Test** action
+beside its enable switch. **Runtime** contains the interpreter for new sessions; its overflow menu
+holds infrequent managed-runtime maintenance. Runtime labels stay short; path suffixes appear only when otherwise-identical
+installations must be distinguished, and the explicit path field remains available when needed.
+Removing a managed runtime uses a compact confirmation beside the action; it does not obscure the
+whole Settings page. Scient does not silently replace a broken selected interpreter.
+
+When Scient updates its locked Python Toolkit, an existing selected managed environment shows one
+**Update** action on the row. The current environment is not modified silently; completing the
+update produces and verifies a new managed generation.
+
+**Runtime** changes only which runtime new sessions prefer. **Automatic** restores discovery instead
+of pinning an installation. Choosing an existing Python also
+releases Scient-managed precedence; it does not copy or modify packages. **Repair** builds and
+verifies a fresh managed generation before activating it; an existing generation remains available
+if setup fails. **Update** appears only when Scient ships a newer reviewed Python or Toolkit
+revision. **Remove** deletes only Scient's private environment and is refused while a live Python
+session may still be using it. Project `.venv`, configured, system, Homebrew, Conda, pyenv, and
+other user-owned installations are never repaired or removed.
+
+Before a session starts, the file header names the interpreter it found (**Python 3.12**,
+**MATLAB R2026a**) when you can run. That listing is a package check, not proof a Jupyter or Engine
+session already started. A live idle session uses the shorter **Python** or **MATLAB** status, and a
+busy session says it is running. Selecting this compact status always opens Scientific Computing for
+that server; it never expands into a full-path card.
+If setup fails for the runtime the file needs, the header shows a one-line status with a copy control and a details toggle; it
+never wraps a stack or path across **Run**. A code error remains a result of that execution; it does
+not make a healthy Python or MATLAB runtime unready. The refresh control in Scientific Computing
+performs lightweight runtime rediscovery so an installation or environment change can be recognized
+without reloading the app. **Test** beside the enable switch starts and closes a temporary session;
+a package check is not a successful test.
+**Repair** rebuilds a damaged Scient-managed generation; it is not how you recover from a failed
+Test. Scient never swaps the interpreter beneath a live session. If the selected Python changes
+while a session is open, the header offers **Switch Python**; confirmation stops the old namespace,
+keeps its run history, and lets the next run start with the newly selected environment.
+
+Setup, repair, removal, and runtime-selection changes update open compute views automatically,
+even if you leave Settings before setup finishes. Use the Settings refresh after Python, MATLAB, or
+their packages change outside Scient. Settings opened from a project always manages that project's
+server.
+
+If a selected managed installation is damaged, Scient keeps it visible for **Repair** rather than
+quietly running your code with a different Python. You can explicitly choose an existing environment
+instead. Removing the managed installation intentionally returns new sessions to existing-runtime
+discovery; it does not remove your other Python installations.
+
+An existing Python can run ordinary code without every scientific library. If the reviewed
+data-and-figures packages are missing, the status tooltip notes that some scientific packages are missing.
+Run remains available for code that does not need those packages; Scient does not
+silently install them into a user-owned environment.
+An unrelated managed setup or removal failure does not disable or replace the status of a usable
+independent runtime. The file keeps its healthy live session status, or the independent runtime's
+status before startup. A cached probe alone does not clear a failure of the managed runtime itself.
+Setup failures remain available in Settings under **Error details**; active setup progress and Cancel
+remain visible on the file. Select the file's Python status to open
+the right server's Scientific Computing settings. After choosing or repairing an environment, rerun
+the code yourself; Scient never replays a failed run automatically.
+
+## Connect your MATLAB installation
+
+Open a `.m` file and select its MATLAB status to open **Scientific Computing** for that server.
+Enable MATLAB there and choose **Connect MATLAB** when a connection helper is needed.
+Opening the file does not start Scientific Python or provision its Toolkit. When the file needs the
+failed helper, its failure appears as a short header status with copy and details;
+setup and recovery remain available in Settings. Scient does not
+install MATLAB or a license. If several copies are installed, open
+**Settings → Scientific Computing**, expand **Runtime**, and choose the installation, or
+leave automatic discovery selected.
+
+The same executable preference is used by live Compute sessions and fresh-process
+MATLAB runs. Existing preferences are respected; saving a new choice or clearing it
+does not reintroduce an older path.
+
+Opening Settings and its refresh control only look for installations and read their metadata; they do not
+import MATLAB Engine or start Python/MATLAB. Recent status stays visible while being rechecked.
+Choosing an installation does not promise that the Engine works or a license is available. Run the
+file, or use **Test** beside the enable switch, to prove the Engine host. A license/startup failure
+stays visible with recovery guidance.
+
+If an Engine host is missing, **Connect MATLAB** on the file opens Scientific Computing settings.
+**Connect MATLAB** there installs a small private Python helper for your selected MATLAB, then checks its Engine import. It does
+not install MATLAB, activate a license, or install the scientific Python Toolkit. Assisted setup currently accepts
+MATLAB R2024b–R2026a; other releases may use an existing compatible Engine host. You still
+need MATLAB installed and licensed on the server where the code runs.
+
+The helper stays tied to the MATLAB installation it was built for. Selecting another
+MATLAB does not pretend the helper already matches it; **Set up connection**
+can prepare a replacement for the new default.
+
+**Use existing MATLAB Engine setup** returns to a compatible Engine host you maintain.
+**Rebuild connection** prepares a fresh private helper for the selected MATLAB and activates it only
+after verification. Use it after changing your MATLAB installation. **Remove connection helper**
+removes only this helper, never
+MATLAB, its license, your projects, or Scientific Python. Removal is blocked while a live
+MATLAB Compute session uses the language. A broken selected helper is reported instead
+of silently choosing another Python host. These maintenance actions live in the **Runtime** overflow
+menu; when the selected MATLAB needs a new helper, **Set up connection** is promoted to the main row.
+Setup and repair can be cancelled.
+
+The helper and Scientific Python are independent: installing, selecting, repairing, or
+removing one does not select or remove the other. No MATLAB-to-Python translation or
+automatic Octave fallback takes place.
 
 ## Run code and view results
 
@@ -46,10 +158,26 @@ background and a gutter run action while normal caret placement and editing cont
 Selecting text removes the cell treatment because the exact selection becomes the run target;
 moving the pointer alone never changes the active cell.
 
-The first run starts a ready project session when necessary and changes the file to **Split**, so
-the result appears beside the source that produced it. A project has at most one live session.
-Values defined by one successful execution are available to later executions until you restart or
-stop the session.
+MATLAB `.m` files use the same controls with MATLAB `%%` sections instead of Python cell markers.
+Scripts, including scripts with local functions, can use **Run file**. A top-level function, class,
+package member, class-folder member, or `private` function is a definition rather than an executable
+script, so the file action says **Definition** and explains that it must be called from a script.
+The server enforces the same rule even if a stale client attempts the submission.
+
+The first run starts this file tab's session when necessary and reveals **Results** by default, or
+**Split** when that was the last results layout you chose. Each Compute tab owns its own session, so
+several Python and MATLAB files can run independently within the server's capacity. Values defined
+by one successful execution remain available to later executions in that tab until you restart or
+stop its session.
+
+Code/Split/Results and Results/Variables are presentation choices owned by the file tab. Switching
+to another right-panel tab or thread and returning preserves them; it does not stop, restart, or
+replay the session. Explicitly closing the owning file tab stops that tab's live session and clears
+its temporary presentation state while preserving run history.
+
+Compute sessions use the opened Scient project as their working directory, as terminals and other
+project tools do. A saved full-file run still receives native source identity: use `__file__` in
+Python or `mfilename('fullpath')` in MATLAB when data should be resolved beside the source file.
 
 Running an unsaved buffer does not save it. History records the exact submitted code and its saved
 base revision, and labels the run as unsaved. A saved submission is accepted only when its
@@ -65,8 +193,11 @@ recorded revision and source range still match the project file.
 The results surface shows one selected run rather than an ever-growing feed. Its compact history
 selector lets you revisit earlier runs of the same file. Static PNG and SVG figures emitted with
 normal display behavior such as `plt.show()` or IPython's `display(...)` appear inline at a useful
-size and open in Scient's existing full static-image viewer when selected. A compact action on each
-figure moves it into the shared movable, resizable floating viewer. Moving a figure between the full
+size and open directly in Scient's existing full static-image viewer when selected. The small image
+toolbar's menu offers copy, original download, available MATLAB FIG download, and the floating viewer;
+figure details stay in the menu. If a preview cannot load, **Try again** retries the image without
+rerunning your code. Original and native downloads remain available independently of preview decoding.
+Moving a figure between the full
 and floating viewers preserves one presentation owner rather than showing two copies; closing that
 viewer stops its updates and later runs never reopen it.
 
@@ -102,12 +233,21 @@ run. Compact context remains visible when it matters, such as for a selection, c
 running execution, or failure. The separate Compute history keeps source labels because it can span
 multiple files.
 
-The separate **Compute** project surface is secondary: use it to inspect sessions and history that
-are not tied to the file currently open, or to restart, interrupt, and stop the live session. It is
+The separate **Compute** project surface is secondary: use **New compute session** from the
+right-panel add menu when you need a kernel that is not tied to the open file, or open project
+history once more than one session exists. It is
 not a second editor and has no generic code composer.
 
+Supported scalar tables appear as bounded previews, and Plotly outputs use Scient's existing
+interactive chart viewer. Plotly is part of Scient-managed Python; a user-owned Python must provide
+its own Plotly package. A **Limited preview** label identifies clipped tables; this is not a
+full dataset browser. Unsupported or malformed rich output retains its available plain-text
+fallback. Viewing results does not enable executable HTML or widgets.
+
 The secondary **Variables** view describes the current live Python namespace with bounded names,
-types, shapes or sizes, and safe previews for simple values. It refreshes after a run finishes,
+types, shapes or sizes, and safe previews for simple values. It is a sibling tab of **Results**
+whenever that pane is open. The session overflow is only **Restart session** and **Stop session**;
+**Interrupt** appears while code is running. It refreshes after a run finishes,
 including a failed run because assignments before the exception may remain. It is not saved in run
 history, cannot be attached to an older session, and clears when the session restarts. Unsupported
 objects remain visible by name and type without asking them to generate an arbitrary representation.
@@ -131,7 +271,34 @@ package.
 Scientific code runs with the filesystem and network authority of the selected Scient server
 environment. It is not sandboxed. Only run code you trust, especially when the server is remote.
 
-Python is disabled by default. R, Julia, MATLAB stateful sessions, package management, notebook
-editing, rich executable HTML/widgets, rich variable drill-down/table browsing, and portable
-compute-result promotion remain future work. MATLAB's existing isolated **Run file** workflow is
-separate from a stateful compute session.
+Python is disabled by default until a user enables it or explicitly starts managed setup. R, Julia,
+arbitrary package installation, notebook editing, rich executable HTML/widgets, rich variable
+drill-down/table browsing, and portable stateful compute-result promotion remain future work.
+
+### Run fresh and MATLAB batch
+
+**Run file** reuses this tab's session. Choose **Run fresh** from the Run menu to execute the
+whole buffer in a new Python or MATLAB session. Its variables start empty; your existing
+session is untouched. Scient retains the results, then closes the temporary session.
+Fresh does not mean sandboxed: it uses the same selected runtime, packages, project files,
+and server permissions. It can still modify files.
+
+After a fresh or batch run, the compact results selector lets you return to **Session** or
+view a previous run without executing anything. Switching threads or views does not stop
+work. Closing the owning file/Compute tab stops its session and any fresh or batch runs;
+if shutdown cannot be confirmed, the tab stays available with an error.
+
+MATLAB also offers **Run MATLAB batch** for the exact saved `.m` file. This uses MATLAB's
+native `-batch` process, not the Engine connection helper. It needs enabled, installed,
+licensed MATLAB but does not require **Connect MATLAB** or an Engine connection test.
+Results appear in the same pane, with the existing batch history and **Save to project**
+action. Batch runs remain queued per MATLAB runtime; interactive and fresh sessions can
+run concurrently within the host's resource limit.
+
+Sessions, fresh runs, connection tests, and MATLAB batch share one host budget. The default allows
+one slot per 4 GiB of total host memory, with a minimum of one and maximum of sixteen. This limits
+simultaneous runtimes, not open tabs, and does not reserve or enforce memory for individual programs.
+On a one-slot host, a live session leaves no room for Run fresh. Scient never stops it automatically:
+the capacity menu offers **Stop this session and run fresh…**, with confirmation that its variables
+will be lost. Cancel keeps the session. Fresh execution begins only after shutdown is confirmed;
+another operation may take the freed slot, in which case the capacity warning remains actionable.

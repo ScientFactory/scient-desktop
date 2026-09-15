@@ -26,7 +26,15 @@ import {
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
 import { mediaFileReference } from "@t3tools/client-runtime/media-reference";
-import { Code2, Eye, FolderTree, Globe2, Table2, WrapTextIcon } from "lucide-react";
+import {
+  Code2,
+  Eye,
+  FolderTree,
+  Globe2,
+  MessageSquarePlus,
+  Table2,
+  WrapTextIcon,
+} from "lucide-react";
 import * as Schema from "effect/Schema";
 import {
   lazy,
@@ -74,7 +82,8 @@ import {
   resolveInitialFileExplorerOpen,
 } from "~/scient/fileOpening/fileOpeningPolicy";
 import { scientificSourceLanguageOverride } from "~/scient/analysis/sourceLanguage";
-import { ScientFileAuxiliarySurface } from "~/scient/fileSurfaces/ScientFileAuxiliarySurface";
+import { computeSourceLanguageForPath } from "~/scient/compute/computeSourceLanguage";
+import { computeFileContextId } from "~/scient/compute/computeContextStore";
 import { ScientMarkdownRenameButton } from "~/scient/markdownEditor/ui/ScientMarkdownRenameButton";
 import {
   isScientMarkdownDocumentPath,
@@ -194,6 +203,24 @@ const SCIENT_FILE_UNSAFE_CSS = `
     color: var(--diffs-fg-number) !important;
   }
 `;
+const FILE_EDITOR_ACTION_GUTTER_UNSAFE_CSS = `
+  ${SCIENT_FILE_UNSAFE_CSS}
+
+  [data-gutter-utility-slot] {
+    right: auto;
+    left: 0;
+    justify-content: flex-start;
+    opacity: 0;
+    pointer-events: none;
+  }
+
+  [data-line]:hover [data-gutter-utility-slot],
+  [data-line]:focus-within [data-gutter-utility-slot],
+  [data-gutter-utility-slot]:focus-within {
+    opacity: 1;
+    pointer-events: auto;
+  }
+`;
 const ScientPdfReader = lazy(() =>
   import("~/scient/pdf/ScientPdfReader").then((module) => ({
     default: module.ScientPdfReader,
@@ -204,9 +231,9 @@ const ScientLatexSurface = lazy(() =>
     default: module.ScientLatexSurface,
   })),
 );
-const ScientPythonComputeSurface = lazy(() =>
-  import("~/scient/compute/ScientPythonComputeSurface").then((module) => ({
-    default: module.ScientPythonComputeSurface,
+const ScientComputeFileSurface = lazy(() =>
+  import("~/scient/compute/ScientComputeFileSurface").then((module) => ({
+    default: module.ScientComputeFileSurface,
   })),
 );
 const ScientMarkdownFileSurface = lazy(() =>
@@ -756,6 +783,10 @@ interface EditableFileSurfaceProps {
     getHoveredLine: () => GetHoveredLineResult<"file"> | undefined,
   ) => ReactNode;
   onRunShortcut?: (selection: EditorSelection | null) => void;
+  /** Inline review comments. Selection handlers may independently suppress auto-open. */
+  enableFileComments?: boolean;
+  /** Compute actions stay quiet until the corresponding source line is engaged. */
+  gutterUtilityVisibility?: "always" | "hover";
 }
 
 interface FileSelectionOverride {
@@ -805,6 +836,8 @@ function EditableFileEditor({
   onEditorSelectionChange,
   renderEditorGutterAction,
   onRunShortcut,
+  enableFileComments = true,
+  gutterUtilityVisibility = "always",
 }: Omit<
   EditableFileSurfaceProps,
   | "onPendingChange"
@@ -1053,11 +1086,11 @@ function EditableFileEditor({
   const handleLineSelectionEnd = useCallback(
     (range: SelectedLineRange | null) => {
       setSelectedRange(range);
-      if (range && onSelectionChange === undefined) {
+      if (range && onSelectionChange === undefined && enableFileComments) {
         beginComment(range);
       }
     },
-    [beginComment, onSelectionChange, setSelectedRange],
+    [beginComment, enableFileComments, onSelectionChange, setSelectedRange],
   );
   const handleGutterUtilityClick = useCallback(
     (range: SelectedLineRange) => {
@@ -1143,9 +1176,11 @@ function EditableFileEditor({
               }}
               options={{
                 disableFileHeader: true,
-                enableGutterUtility: renderEditorGutterAction !== undefined || !hasOpenCommentForm,
+                enableGutterUtility:
+                  renderEditorGutterAction !== undefined ||
+                  (enableFileComments && !hasOpenCommentForm),
                 enableLineSelection: !hasOpenCommentForm,
-                ...(renderEditorGutterAction === undefined
+                ...(renderEditorGutterAction === undefined && enableFileComments
                   ? { onGutterUtilityClick: handleGutterUtilityClick }
                   : {}),
                 onLineSelectionChange: setSelectedRange,
@@ -1154,11 +1189,14 @@ function EditableFileEditor({
                 theme: resolveDiffThemeName(resolvedTheme),
                 preferredHighlighter: PREFERRED_HIGHLIGHTER,
                 themeType: resolvedTheme,
-                unsafeCSS: SCIENT_FILE_UNSAFE_CSS,
+                unsafeCSS:
+                  gutterUtilityVisibility === "hover"
+                    ? FILE_EDITOR_ACTION_GUTTER_UNSAFE_CSS
+                    : SCIENT_FILE_UNSAFE_CSS,
                 onPostRender: handlePostRender,
               }}
               selectedLines={displayedRange}
-              lineAnnotations={lineAnnotations}
+              lineAnnotations={enableFileComments ? lineAnnotations : []}
               renderAnnotation={(annotation) => (
                 <div className="py-1">
                   {annotation.metadata.entries.map((entry) => (
@@ -1176,7 +1214,33 @@ function EditableFileEditor({
               )}
               {...(renderEditorGutterAction === undefined
                 ? {}
-                : { renderGutterUtility: renderEditorGutterAction })}
+                : {
+                    renderGutterUtility: (
+                      getHoveredLine: () => GetHoveredLineResult<"file"> | undefined,
+                    ) => (
+                      <div className="flex items-center gap-px">
+                        {renderEditorGutterAction(getHoveredLine)}
+                        {enableFileComments ? (
+                          <button
+                            type="button"
+                            className="flex size-5 cursor-pointer items-center justify-center rounded-[4px] text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+                            aria-label="Add comment"
+                            onClick={() => {
+                              const hoveredLine = getHoveredLine();
+                              if (hoveredLine !== undefined) {
+                                handleGutterUtilityClick({
+                                  start: hoveredLine.lineNumber,
+                                  end: hoveredLine.lineNumber,
+                                });
+                              }
+                            }}
+                          >
+                            <MessageSquarePlus className="size-3" />
+                          </button>
+                        ) : null}
+                      </div>
+                    ),
+                  })}
               className="min-h-full"
               contentEditable={!editingBlocked}
             />
@@ -1367,6 +1431,17 @@ export default function FilePreviewPanel({
     null,
   );
   const breadcrumbRef = useRef<HTMLDivElement>(null);
+  const computeSourceLanguage =
+    relativePath === null ? null : computeSourceLanguageForPath(relativePath);
+  const computeContextId =
+    relativePath === null || computeSourceLanguage === null
+      ? null
+      : computeFileContextId({
+          environmentId,
+          threadId: threadRef.threadId,
+          cwd,
+          relativePath,
+        });
   const isMarkdownPreview = relativePath ? isMarkdownPreviewFile(relativePath) : false;
   const isRichMarkdown = relativePath ? isScientMarkdownDocumentPath(relativePath) : false;
   const isMarkdownDocument = isMarkdownPreview || isRichMarkdown;
@@ -1987,7 +2062,7 @@ export default function FilePreviewPanel({
                   saveResolution={saveResolution}
                 />
               </Suspense>
-            ) : relativePath.toLowerCase().endsWith(".py") && !file.data.truncated ? (
+            ) : computeSourceLanguage !== null && !file.data.truncated ? (
               <Suspense
                 fallback={
                   <div className="flex min-h-0 flex-1 items-center justify-center text-muted-foreground">
@@ -1995,10 +2070,12 @@ export default function FilePreviewPanel({
                   </div>
                 }
               >
-                <ScientPythonComputeSurface
-                  key={`${relativePath}:${resolvedTheme}`}
+                <ScientComputeFileSurface
+                  key={`${computeContextId}:${resolvedTheme}`}
+                  language={computeSourceLanguage}
                   environmentId={environmentId}
                   threadRef={threadRef}
+                  contextId={computeContextId!}
                   cwd={cwd}
                   relativePath={relativePath}
                   composerDraftTarget={composerDraftTarget}
@@ -2120,20 +2197,6 @@ export default function FilePreviewPanel({
               />
             )
           ) : null}
-          <ScientFileAuxiliarySurface
-            environmentId={environmentId}
-            threadRef={threadRef}
-            cwd={cwd}
-            relativePath={relativePath}
-            sourceRevision={file.data?.revision ?? null}
-            sourcePending={
-              sourcePending ||
-              (file.data !== null &&
-                file.authoritativeData !== null &&
-                file.data.contents !== file.authoritativeData.contents)
-            }
-            truncated={file.data?.truncated ?? false}
-          />
         </div>
         {showExplorer ? (
           <aside

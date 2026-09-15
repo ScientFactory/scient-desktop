@@ -5,6 +5,9 @@ import {
   ComputeExecutionSource,
   computeOutputByteLength,
   ComputeLanguageId,
+  classifyMatlabSource,
+  ComputeManagedRuntimeAction,
+  ComputeManagedRuntimeStatus,
   ComputeOperationError,
   ComputeOutput,
   ComputeProjectId,
@@ -12,14 +15,18 @@ import {
   sameComputeRepresentationBundle,
   selectComputeRepresentation,
   ComputeRuntimeProfile,
+  ComputeRuntimeInstallation,
   ComputeRuntimeVerification,
   ComputeSessionGeneration,
   ComputeSessionId,
   ComputeSessionRecord,
   ComputeSessionStreamEvent,
   ComputeTransportKind,
+  ComputeToolkitAssessment,
+  ComputeToolkitDescriptor,
   ComputeVariableSnapshot,
   type ComputeProjectedOutput,
+  type MatlabSourceCapability,
   ComputeExecutionOutputs,
   INITIAL_COMPUTE_SESSION_GENERATION,
   TERMINAL_COMPUTE_EXECUTION_STATUSES,
@@ -46,6 +53,9 @@ export type ComputeLanguageDescriptor = typeof ComputeLanguageDescriptor.Type;
 export const ComputeRuntimeCandidate = Schema.Struct({
   profile: ComputeRuntimeProfile,
   verification: ComputeRuntimeVerification,
+  toolkits: Schema.Array(ComputeToolkitAssessment)
+    .check(Schema.isMaxLength(64))
+    .pipe(Schema.withDecodingDefaultKey(Effect.succeed([]))),
 });
 export type ComputeRuntimeCandidate = typeof ComputeRuntimeCandidate.Type;
 
@@ -53,6 +63,12 @@ export const ComputeLanguageRuntimeInspection = Schema.Struct({
   descriptor: ComputeLanguageDescriptor,
   enabled: Schema.Boolean,
   configuredExecutable: Schema.NullOr(ComputeExecutable),
+  managedRuntime: Schema.NullOr(ComputeManagedRuntimeStatus).pipe(
+    Schema.withDecodingDefaultKey(Effect.succeed(null)),
+  ),
+  toolkits: Schema.Array(ComputeToolkitDescriptor)
+    .check(Schema.isMaxLength(64))
+    .pipe(Schema.withDecodingDefaultKey(Effect.succeed([]))),
   runtimes: Schema.Array(ComputeRuntimeCandidate).check(Schema.isMaxLength(64)),
 });
 export type ComputeLanguageRuntimeInspection = typeof ComputeLanguageRuntimeInspection.Type;
@@ -64,12 +80,30 @@ export const ComputeRuntimeInspection = Schema.Struct({
 });
 export type ComputeRuntimeInspection = typeof ComputeRuntimeInspection.Type;
 
+/** Cheap Settings data, deliberately separate from runnable candidates. */
+export const ComputeLanguageRuntimeInventory = Schema.Struct({
+  descriptor: ComputeLanguageDescriptor,
+  enabled: Schema.Boolean,
+  configuredExecutable: Schema.NullOr(ComputeExecutable),
+  managedRuntime: Schema.NullOr(ComputeManagedRuntimeStatus),
+  toolkits: Schema.Array(ComputeToolkitDescriptor).check(Schema.isMaxLength(64)),
+  installations: Schema.Array(ComputeRuntimeInstallation).check(Schema.isMaxLength(64)),
+  failureMessage: Schema.NullOr(Schema.String.check(Schema.isMaxLength(4096))),
+});
+export type ComputeLanguageRuntimeInventory = typeof ComputeLanguageRuntimeInventory.Type;
+
+export const ComputeRuntimeInventory = Schema.Struct({
+  languages: Schema.Array(ComputeLanguageRuntimeInventory).check(Schema.isMaxLength(32)),
+});
+export type ComputeRuntimeInventory = typeof ComputeRuntimeInventory.Type;
+
 export class ComputeGatewayError extends Schema.TaggedError<ComputeGatewayError>()(
   "ComputeGatewayError",
   {
     operation: Schema.Literals([
       "inspect",
       "verify",
+      "manage",
       "start",
       "list",
       "get",
@@ -109,11 +143,29 @@ export const ComputeVerifyRuntimeInput = Schema.Struct({
 });
 export type ComputeVerifyRuntimeInput = typeof ComputeVerifyRuntimeInput.Type;
 
+export const ComputeManagedRuntimeInput = Schema.Struct({
+  languageId: ComputeLanguageId,
+  action: ComputeManagedRuntimeAction,
+});
+export type ComputeManagedRuntimeInput = typeof ComputeManagedRuntimeInput.Type;
+
+export const ComputeManagedRuntimeStatusInput = Schema.Struct({
+  languageId: ComputeLanguageId,
+});
+export type ComputeManagedRuntimeStatusInput = typeof ComputeManagedRuntimeStatusInput.Type;
+
 export const ComputeStartProjectSessionInput = Schema.Struct({
   cwd: ComputeCwd,
   sessionId: ComputeSessionId,
   languageId: ComputeLanguageId,
   executable: Schema.NullOr(ComputeExecutable),
+  runOnce: Schema.optional(
+    Schema.Struct({
+      executionId: ComputeExecutionId,
+      code: ComputeCode,
+      source: ComputeExecutionSource,
+    }),
+  ),
 });
 export type ComputeStartProjectSessionInput = typeof ComputeStartProjectSessionInput.Type;
 
@@ -170,11 +222,14 @@ export const ComputeGetProjectSessionResult = Schema.NullOr(ComputeSessionRecord
 export const ComputeListProjectExecutionsResult = Schema.Array(ComputeExecutionRecord);
 
 export {
+  classifyMatlabSource,
   computeOutputByteLength,
   ComputeExecutionId,
   ComputeExecutionRecord,
   ComputeExecutionOutputs,
   ComputeLanguageId,
+  ComputeManagedRuntimeAction,
+  ComputeManagedRuntimeStatus,
   ComputeOperationError,
   ComputeOutput,
   ComputeProjectId,
@@ -187,8 +242,11 @@ export {
   ComputeSessionRecord,
   ComputeSessionStreamEvent,
   ComputeTransportKind,
+  ComputeToolkitAssessment,
+  ComputeToolkitDescriptor,
   ComputeVariableSnapshot,
   type ComputeProjectedOutput,
+  type MatlabSourceCapability,
   INITIAL_COMPUTE_SESSION_GENERATION,
   TERMINAL_COMPUTE_EXECUTION_STATUSES,
   TERMINAL_COMPUTE_SESSION_STATUSES,

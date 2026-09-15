@@ -2,6 +2,7 @@
   "schemaVersion": 2,
   "owner": "ScientFactory",
   "ownedRoots": [
+    "apps/server/src/mcp/toolkits/compute",
     "apps/server/src/scient/analysis",
     "apps/server/src/scient/compute",
     "apps/server/src/scient/execution",
@@ -52,7 +53,6 @@
     "static-artifact",
     "selectThreadPreviewMiniPlayerTabId",
     "openScientArtifact",
-    "ScientFileAuxiliarySurface",
     "ResizeSeparator",
     "useScientHorizontalSplit",
     "analysis(Start|Cancel|Verify|List|Get|Cleanup|Promote)",
@@ -129,7 +129,7 @@
     },
     {
       "path": "apps/web/src/components/files/FilePreviewPanel.tsx",
-      "anchor": "ScientFileAuxiliarySurface",
+      "anchor": "ScientComputeFileSurface",
       "purpose": "Mount additive analysis and compute actions plus generic freshness controls in the file viewer."
     },
     {

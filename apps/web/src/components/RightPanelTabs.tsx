@@ -56,6 +56,7 @@ import {
   Menu,
   MenuItem,
   MenuPopup,
+  MenuSeparator,
   MenuShortcut,
   MenuSub,
   MenuSubPopup,
@@ -404,16 +405,6 @@ function RightPanelEmptyState(props: {
       badgeCount: 0,
     },
     {
-      label: "Compute",
-      description: "Run and inspect scientific code.",
-      icon: Sigma,
-      shortcut: "C",
-      available: props.computeAvailable,
-      disabledReason: SURFACE_DISABLED_REASONS.compute,
-      onClick: props.onAddCompute,
-      badgeCount: 0,
-    },
-    {
       label: "Browser",
       icon: Globe2,
       shortcut: "B",
@@ -678,6 +669,17 @@ function RightPanelEmptyState(props: {
             ),
           )}
         </div>
+        {props.computeAvailable ? (
+          <div className="mt-3 text-center">
+            <button
+              type="button"
+              className="cursor-pointer text-xs text-muted-foreground hover:text-foreground"
+              onClick={props.onAddCompute}
+            >
+              New compute session
+            </button>
+          </div>
+        ) : null}
       </div>
     </div>
   );
@@ -964,14 +966,6 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
       onClick: props.onAddSources,
     },
     {
-      label: "Compute",
-      icon: Sigma,
-      shortcut: "C",
-      available: props.computeAvailable,
-      disabledReason: SURFACE_DISABLED_REASONS.compute,
-      onClick: props.onAddCompute,
-    },
-    {
       label: "Browser",
       icon: Globe2,
       shortcut: "B",
@@ -1037,8 +1031,20 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
     },
   ] as const;
 
+  const extraSessionAction = {
+    label: "New compute session",
+    icon: Sigma,
+    shortcut: "C",
+    available: props.computeAvailable,
+    disabledReason: SURFACE_DISABLED_REASONS.compute,
+    onClick: props.onAddCompute,
+  } as const;
+
   const handleAddSurfaceMenuKeyDown = (event: ReactKeyboardEvent<HTMLDivElement>) => {
-    const action = surfaceShortcutActionForKey(addSurfaceActions, event.nativeEvent);
+    const action = surfaceShortcutActionForKey(
+      [...addSurfaceActions, extraSessionAction],
+      event.nativeEvent,
+    );
     if (!action) return;
     event.preventDefault();
     event.stopPropagation();
@@ -1435,6 +1441,16 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
                       </SurfaceMenuItem>
                     );
                   })}
+                  <MenuSeparator />
+                  <SurfaceMenuItem
+                    available={extraSessionAction.available}
+                    disabledReason={extraSessionAction.disabledReason}
+                    shortcut={extraSessionAction.shortcut}
+                    onClick={extraSessionAction.onClick}
+                  >
+                    <Sigma />
+                    New compute session
+                  </SurfaceMenuItem>
                 </MenuPopup>
               </Menu>
             ) : null}

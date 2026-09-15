@@ -353,7 +353,7 @@ export function PlotlyChartCard({
               />
               <MenuItem disabled={activeAction != null} onClick={handleCopySource}>
                 {actionMessage === "Source copied" ? <CheckIcon /> : <CopyIcon />}
-                Copy source
+                Copy Plotly JSON
               </MenuItem>
               <RichFenceSourceMenuItem
                 authoringActions={authoringActions}
