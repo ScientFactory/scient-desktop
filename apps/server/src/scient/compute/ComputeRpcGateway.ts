@@ -268,6 +268,7 @@ export function makeComputeRpcGateway(input: {
   ) {
     const project = yield* projectFor("start", request.cwd);
     const { descriptor, preference } = yield* requireEnabledLanguage("start", request.languageId);
+    if (request.runOnce !== undefined) yield* validateSource(project.root, request.runOnce);
     return yield* input.compute.startSession({
       projectId: project.projectId,
       sessionId: request.sessionId,
@@ -276,6 +277,7 @@ export function makeComputeRpcGateway(input: {
       workingDirectory: project.root,
       configuredExecutable: preference.executable.length === 0 ? null : preference.executable,
       ...(request.executable === null ? {} : { requestedExecutable: request.executable }),
+      ...(request.runOnce === undefined ? {} : { runOnce: request.runOnce }),
     });
   });
 
@@ -326,14 +328,14 @@ export function makeComputeRpcGateway(input: {
     });
   });
 
-  const submitExecution = Effect.fn("ComputeRpcGateway.submitExecution")(function* (
-    request: ComputeSubmitProjectExecutionInput,
+  const validateSource = Effect.fn("ComputeRpcGateway.validateSource")(function* (
+    projectRoot: string,
+    request: Pick<ComputeSubmitProjectExecutionInput, "source" | "code">,
   ) {
-    const project = yield* projectFor("submit", request.cwd);
     const source = request.source;
     if (source._tag === "document") {
       const file = yield* input.workspaceFileSystem
-        .readFile({ cwd: project.root, relativePath: source.path })
+        .readFile({ cwd: projectRoot, relativePath: source.path })
         .pipe(
           Effect.mapError((cause) =>
             gatewayError(
@@ -369,6 +371,18 @@ export function makeComputeRpcGateway(input: {
         }
       }
     }
+  });
+
+  const submitExecution = Effect.fn("ComputeRpcGateway.submitExecution")(function* (
+    request: ComputeSubmitProjectExecutionInput,
+  ) {
+    const project = yield* projectFor("submit", request.cwd);
+    const session = yield* input.compute.getSession({
+      projectId: project.projectId,
+      sessionId: request.sessionId,
+    });
+    if (session !== null) yield* requireEnabledLanguage("submit", session.languageId);
+    yield* validateSource(project.root, request);
     return yield* input.compute.submitExecution({
       ...request,
       projectId: project.projectId,

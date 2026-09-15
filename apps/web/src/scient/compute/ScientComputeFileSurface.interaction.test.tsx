@@ -86,7 +86,6 @@ describe("Compute file navigation", () => {
           onSaveConfirmed={vi.fn()}
           onSaveResolutionApplied={vi.fn()}
           saveResolution={null}
-          onShowMatlabOneShot={vi.fn()}
         />,
       ),
     );

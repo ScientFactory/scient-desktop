@@ -2,6 +2,7 @@ import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import {
   ComputeSessionGeneration,
+  AnalysisRunId,
   ComputeSessionId,
   EnvironmentId,
   TERMINAL_COMPUTE_SESSION_STATUSES,
@@ -32,6 +33,8 @@ export type ComputeContextLifecycle =
 
 export interface ComputeContextBinding {
   readonly contextId: ComputeContextId;
+  readonly parentContextId?: ComputeContextId | undefined;
+  readonly batchRunId?: typeof AnalysisRunId.Type | undefined;
   readonly environmentId: EnvironmentId;
   readonly cwd: string;
   readonly ownerKey: string;
@@ -50,6 +53,8 @@ interface ComputeContextStoreState {
   ) => void;
   ensureContext: (input: {
     readonly contextId: ComputeContextId;
+    readonly parentContextId?: ComputeContextId;
+    readonly batchRunId?: typeof AnalysisRunId.Type;
     readonly environmentId: EnvironmentId;
     readonly cwd: string;
     readonly ownerKey: string;
@@ -96,6 +101,8 @@ const MAX_TERMINAL_COMPUTE_CONTEXT_BINDINGS = 64;
 
 const ComputeContextBindingFields = {
   contextId: ComputeContextId,
+  parentContextId: Schema.optional(ComputeContextId),
+  batchRunId: Schema.optional(AnalysisRunId),
   environmentId: EnvironmentId,
   cwd: Schema.NonEmptyString.check(Schema.isMaxLength(MAX_COMPUTE_CONTEXT_PATH_LENGTH)),
   ownerKey: Schema.NonEmptyString.check(Schema.isMaxLength(MAX_COMPUTE_CONTEXT_OWNER_KEY_LENGTH)),
@@ -108,8 +115,15 @@ const PersistedComputeContextBindingSchema = Schema.Union([
     ...ComputeContextBindingFields,
     sessionId: Schema.Null,
     generation: Schema.Null,
-    lifecycle: Schema.Literal("unbound"),
+    lifecycle: Schema.Literals(["unbound", "starting", "live", "terminal", "closing"]),
     closeError: Schema.Null,
+  }),
+  Schema.Struct({
+    ...ComputeContextBindingFields,
+    sessionId: Schema.Null,
+    generation: Schema.Null,
+    lifecycle: Schema.Literal("close-failed"),
+    closeError: Schema.NonEmptyString.check(Schema.isMaxLength(4096)),
   }),
   Schema.Struct({
     ...ComputeContextBindingFields,
@@ -144,7 +158,12 @@ function pruneTerminalBindings(
   bindings: Readonly<Record<string, ComputeContextBinding>>,
 ): Record<string, ComputeContextBinding> {
   const terminalIds = Object.entries(bindings)
-    .filter(([, binding]) => binding.lifecycle === "terminal")
+    .filter(
+      ([, binding]) =>
+        binding.lifecycle === "terminal" &&
+        binding.parentContextId === undefined &&
+        !Object.values(bindings).some((child) => child.parentContextId === binding.contextId),
+    )
     .map(([contextId]) => contextId);
   if (terminalIds.length <= MAX_TERMINAL_COMPUTE_CONTEXT_BINDINGS) return { ...bindings };
   const next = { ...bindings };
@@ -199,6 +218,8 @@ export function computeFileContextId(input: {
 
 export function computeContextBindingForSurface(input: {
   readonly contextId: ComputeContextId;
+  readonly parentContextId?: ComputeContextId;
+  readonly batchRunId?: typeof AnalysisRunId.Type;
   readonly environmentId: EnvironmentId;
   readonly cwd: string;
   readonly ownerKey?: string;
@@ -206,13 +227,15 @@ export function computeContextBindingForSurface(input: {
 }): ComputeContextBinding {
   return {
     contextId: input.contextId,
+    ...(input.parentContextId === undefined ? {} : { parentContextId: input.parentContextId }),
+    ...(input.batchRunId === undefined ? {} : { batchRunId: input.batchRunId }),
     environmentId: input.environmentId,
     cwd: input.cwd,
     ownerKey: input.ownerKey ?? input.contextId,
     relativePath: input.relativePath ?? null,
     sessionId: null,
     generation: null,
-    lifecycle: "unbound",
+    lifecycle: input.batchRunId === undefined ? "unbound" : "starting",
     closeError: null,
   };
 }
@@ -281,6 +304,17 @@ export const useComputeContextStore = create<ComputeContextStoreState>()(
         let reserved = false;
         set((state) => {
           const current = state.bindings[input.contextId];
+          const parent =
+            current?.parentContextId === undefined
+              ? undefined
+              : state.bindings[current.parentContextId];
+          if (
+            current?.parentContextId !== undefined &&
+            (parent === undefined ||
+              parent.lifecycle === "closing" ||
+              parent.lifecycle === "close-failed")
+          )
+            return state;
           if (
             current === undefined ||
             current.lifecycle === "live" ||
@@ -464,6 +498,9 @@ export const useComputeContextStore = create<ComputeContextStoreState>()(
           removed = true;
           const next = { ...state.bindings };
           delete next[contextId];
+          for (const child of Object.values(next)) {
+            if (child.parentContextId === contextId) delete next[child.contextId];
+          }
           return { bindings: next };
         });
         return removed;
@@ -520,6 +557,8 @@ export function ownsLiveComputeSession(
 
 export function ensureComputeContext(input: {
   readonly contextId: ComputeContextId;
+  readonly parentContextId?: ComputeContextId;
+  readonly batchRunId?: typeof AnalysisRunId.Type;
   readonly environmentId: EnvironmentId;
   readonly cwd: string;
   readonly ownerKey?: string;

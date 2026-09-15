@@ -9,23 +9,22 @@ describe("Scient file surface seams", () => {
       new URL("../../components/files/FilePreviewPanel.tsx", import.meta.url),
       "utf8",
     );
-    expect(source).toContain("ScientFileAuxiliarySurface");
-    expect(source.match(/<ScientFileAuxiliarySurface/gu)).toHaveLength(1);
+    expect(source).not.toContain("ScientFileAuxiliarySurface");
     expect(source).toContain("ScientComputeFileSurface");
     expect(source.match(/<ScientComputeFileSurface/gu)).toHaveLength(1);
     expect(source.match(/useWorkspaceFileRefresh\(/gu)).toHaveLength(1);
     expect(source).not.toMatch(/-batch|AnalysisRunFilePanel/iu);
-    expect(source).toContain("matlabOneShotVisible");
+    expect(source).not.toContain("matlabOneShotVisible");
   });
 
-  it("keeps fresh-process MATLAB off the default .m surface until Run as one-shot", () => {
+  it("places batch in the same Results surface without another execution panel", () => {
     const auxiliary = NodeFS.readFileSync(
-      new URL("./ScientFileAuxiliarySurface.tsx", import.meta.url),
+      new URL("../compute/ScientComputeFileSurface.tsx", import.meta.url),
       "utf8",
     );
-    expect(auxiliary).toContain("props.matlabOneShotVisible");
-    expect(auxiliary).toContain("Fresh-process MATLAB runs");
-    expect(auxiliary).toContain("!props.matlabOneShotVisible");
+    expect(auxiliary).toContain("showingBatch");
+    expect(auxiliary).toContain("<ComputeBatchResults");
+    expect(auxiliary).not.toContain("AnalysisRunFilePanel");
   });
 
   it("keeps Python execution controls in the Scient-owned file surface", () => {

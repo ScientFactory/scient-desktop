@@ -16,6 +16,7 @@ import {
   INITIAL_COMPUTE_CONTEXT_GENERATION,
   useComputeContextStore,
   type ComputeContextId,
+  type ComputeContextBinding,
 } from "./computeContextStore";
 
 type StopResult = AtomCommandResult<ComputeSessionRecord, unknown>;
@@ -46,6 +47,12 @@ export function mergeComputeSessionRecords(
 
 export interface ComputeContextCloseInput {
   readonly contextId: ComputeContextId;
+  readonly cancelBatchRun?: (input: {
+    readonly environmentId: EnvironmentId;
+    readonly cwd: string;
+    readonly runId: NonNullable<ComputeContextBinding["batchRunId"]>;
+    readonly waitForExit: true;
+  }) => Promise<boolean>;
   readonly stopSession: (input: {
     readonly environmentId: EnvironmentId;
     readonly input: {
@@ -95,7 +102,52 @@ function thrownError(error: unknown): string {
 export async function closeComputeContext(
   input: ComputeContextCloseInput,
 ): Promise<ComputeContextCloseResult> {
+  // Mark the owner before awaiting any child, so a Run click cannot add work
+  // while close is in flight. Navigation never calls this explicit-close path.
+  useComputeContextStore.getState().markClosing(input.contextId);
+  const children = Object.values(useComputeContextStore.getState().bindings).filter(
+    (binding) => binding.parentContextId === input.contextId,
+  );
+  const results = await Promise.all([
+    stopComputeContext(input),
+    ...children.map((child) => stopComputeContext({ ...input, contextId: child.contextId })),
+  ]);
+  const failure = results.find((result) => !result.closed);
+  if (failure !== undefined) {
+    const error = failure.error ?? "Unable to stop all work owned by this tab.";
+    useComputeContextStore.getState().markCloseFailed({ contextId: input.contextId, error });
+    return { closed: false, contextId: input.contextId, error };
+  }
+  return { closed: true, contextId: input.contextId, error: null };
+}
+
+/** Stop the displayed context only; closing its tab also stops all owned children. */
+export async function stopComputeContext(
+  input: ComputeContextCloseInput,
+): Promise<ComputeContextCloseResult> {
   const binding = getComputeContext(input.contextId);
+  if (binding?.batchRunId !== undefined) {
+    useComputeContextStore.getState().markClosing(input.contextId);
+    let closed = false;
+    try {
+      closed =
+        input.cancelBatchRun !== undefined &&
+        (await input.cancelBatchRun({
+          environmentId: binding.environmentId,
+          cwd: binding.cwd,
+          runId: binding.batchRunId,
+          waitForExit: true,
+        }));
+    } catch {
+      /* Keep the owner when shutdown cannot be confirmed. */
+    }
+    if (!closed) {
+      const error = "Unable to confirm that this tab's MATLAB batch run has stopped.";
+      useComputeContextStore.getState().markCloseFailed({ contextId: input.contextId, error });
+      return { closed: false, contextId: input.contextId, error };
+    }
+    return { closed: true, contextId: input.contextId, error: null };
+  }
   if (binding === null || binding.sessionId === null) {
     return { closed: true, contextId: input.contextId, error: null };
   }
@@ -134,8 +186,8 @@ export async function closeComputeContext(
       return { closed: false, contextId: input.contextId, error };
     }
 
-    // Stop may have lost a race with restart. Re-read this exact owned id before
-    // retrying; a terminal record is already a confirmed close.
+    // Re-read this exact owner after a lost response or generation race. The
+    // server confirms physical cleanup before returning a terminal exact read.
     let current: GetResult;
     try {
       current = await input.getSession({

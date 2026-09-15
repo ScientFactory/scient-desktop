@@ -159,6 +159,13 @@ export const ComputeStartProjectSessionInput = Schema.Struct({
   sessionId: ComputeSessionId,
   languageId: ComputeLanguageId,
   executable: Schema.NullOr(ComputeExecutable),
+  runOnce: Schema.optional(
+    Schema.Struct({
+      executionId: ComputeExecutionId,
+      code: ComputeCode,
+      source: ComputeExecutionSource,
+    }),
+  ),
 });
 export type ComputeStartProjectSessionInput = typeof ComputeStartProjectSessionInput.Type;
 

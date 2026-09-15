@@ -9,6 +9,12 @@ Created: 2026-09-14
 Purpose: Records which Compute simplification concepts are being adopted, the architecture required to make them reliable, and the evidence needed before this work can replace the current PR #287 candidate.
 Authority: This is an implementation ledger subordinate to `scient-compute-session-foundation.md` and `scient-compute-toolkit-foundation.md`. Those ADRs remain authoritative when this plan is incomplete or ambiguous.
 
+Execution continuation: [the session foundation's execution consolidation](scient-compute-session-foundation.md)
+extends this candidate with Run fresh and a native MATLAB batch adapter in the common Results
+surface. It supersedes the separate one-shot panel, not MATLAB batch itself or its stored history.
+Settings and image/table presentation remain independently reviewed workstreams; their visual
+acceptance is not established by execution tests.
+
 ## Outcome
 
 Preserve the independent Compute-tab and managed-runtime foundations already qualified on

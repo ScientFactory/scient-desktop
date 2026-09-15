@@ -1,9 +1,9 @@
 // @effect-diagnostics nodeBuiltinImport:off -- submitted code is hashed with host SHA-256.
 import * as NodeCrypto from "node:crypto";
-import * as NodeOS from "node:os";
 
 import {
   ComputeExecutionId,
+  ComputeExecutionSource,
   ComputeOperationError,
   ComputeRequestId,
   ComputeSessionId,
@@ -83,6 +83,7 @@ import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Ref from "effect/Ref";
 import * as Scope from "effect/Scope";
+import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
 
@@ -94,6 +95,7 @@ import {
 } from "./ComputeProjectOutputObserver.ts";
 import * as LocalComputeStore from "./LocalComputeStore.ts";
 import { makeComputeSessionNotifications } from "./ComputeSessionNotifications.ts";
+import * as ComputeHostCapacity from "./ComputeHostCapacity.ts";
 import type {
   ResolvedComputeOutputImage,
   ResolvedComputeOutputResource,
@@ -135,6 +137,17 @@ const TRANSPORT_FAILED_REASON = "The connection to the runtime failed.";
 const RESTART_DETAIL = "The session was restarted before this ran.";
 const STOP_DETAIL = "The session was stopped before this ran.";
 const INTERRUPT_TIMEOUT_DETAIL = "The runtime did not answer an interrupt.";
+const sameExecutionSource = Schema.toEquivalence(ComputeExecutionSource);
+const sameRunOnce = (
+  left: ComputeStartSessionInput["runOnce"],
+  right: ComputeStartSessionInput["runOnce"],
+): boolean =>
+  left === undefined
+    ? right === undefined
+    : right !== undefined &&
+      left.executionId === right.executionId &&
+      left.code === right.code &&
+      sameExecutionSource(left.source, right.source);
 
 /** A language and the transport that can carry it, paired at wiring time. */
 export interface ComputeRuntimeBinding {
@@ -227,7 +240,7 @@ export const DEFAULT_COMPUTE_SESSION_SERVICE_OPTIONS: ComputeSessionServiceOptio
   // Native qualification measured ~1.2–1.4 GiB idle per MATLAB engine versus
   // ~0.1 GiB per Python kernel. Budget 4 GiB per active context to leave working
   // headroom; this is admission protection, not a memory sandbox or a tab limit.
-  maximumLiveSessions: Math.max(1, Math.min(16, Math.floor(NodeOS.totalmem() / (4 * 1024 ** 3)))),
+  maximumLiveSessions: ComputeHostCapacity.DEFAULT_COMPUTE_HOST_CAPACITY,
   maximumConcurrentStarts: 2,
   idleTimeoutMs: null,
   maximumExecutionOutputBytes: 8 * 1024 * 1024,
@@ -333,7 +346,9 @@ interface LiveComputeSession {
   readonly workingDirectory: string;
   readonly adapter: ComputeLanguageAdapter;
   readonly scope: Scope.Closeable;
+  readonly releaseCapacity: Effect.Effect<void>;
   channel: ComputeChannel | null;
+  cleanup: Deferred.Deferred<void, ComputeOperationError> | null;
   startupFiber: Fiber.Fiber<void, ComputeOperationError> | null;
   /** Orders short wire dispatch against stop/restart admission, never output draining. */
   readonly dispatchLock: Semaphore.Semaphore;
@@ -345,12 +360,13 @@ interface LiveComputeSession {
     ReadonlyMap<ComputeExecutionId, ComputeProjectOutputObservation>
   >;
   readonly readyRef: Ref.Ref<Deferred.Deferred<ComputeSessionRecord, ComputeOperationError> | null>;
+  readonly runOnceDone: Deferred.Deferred<void>;
   readonly capabilitiesRef: Ref.Ref<ReadonlySet<ComputeCapability>>;
   readonly journalRef: Ref.Ref<number>;
   readonly sessionOutputRef: Ref.Ref<{ readonly bytes: number; readonly truncated: boolean }>;
   readonly startRequest: Pick<
     ComputeStartSessionInput,
-    "languageId" | "workingDirectory" | "configuredExecutable" | "requestedExecutable"
+    "languageId" | "workingDirectory" | "configuredExecutable" | "requestedExecutable" | "runOnce"
   >;
 }
 
@@ -453,6 +469,7 @@ class ComputeSessionServiceConfig extends Context.Reference<ComputeSessionServic
 ) {}
 
 const make = Effect.gen(function* () {
+  const hostCapacity = yield* ComputeHostCapacity.ComputeHostCapacity;
   const observeOperation = yield* makeOperationAnalytics;
   const observeComputeOutputs = yield* makeComputeOutputAnalytics;
   const bindings = yield* ComputeRuntimeBindings;
@@ -732,29 +749,27 @@ const make = Effect.gen(function* () {
       }
       // Explicit verification exercises the same launch and shutdown as a real
       // session, without creating project history or keeping a licensed session.
-      return yield* Effect.scoped(
-        Effect.gen(function* () {
-          const launch = yield* binding.adapter.prepareLaunch({
-            profile,
-            cwd: workingDirectory,
-            environment,
-          });
-          const channel = yield* binding.transport.open({
-            sessionId: ComputeSessionId.make(`verify-${NodeCrypto.randomUUID()}`),
-            generation: INITIAL_COMPUTE_SESSION_GENERATION,
-            languageId: binding.adapter.languageId,
-            transportKind: binding.adapter.transportKind,
-            launch,
-            requiredCapabilities: [...REQUIRED_COMPUTE_CAPABILITIES],
-          });
-          yield* channel.shutdown({ expectedGeneration: INITIAL_COMPUTE_SESSION_GENERATION });
-          return {
-            ...verification,
-            connection: "verified" as const,
-            message: "Connection verified. The test session was closed.",
-          };
-        }),
-      ).pipe(
+      return yield* Effect.gen(function* () {
+        const launch = yield* binding.adapter.prepareLaunch({
+          profile,
+          cwd: workingDirectory,
+          environment,
+        });
+        const channel = yield* binding.transport.open({
+          sessionId: ComputeSessionId.make(`verify-${NodeCrypto.randomUUID()}`),
+          generation: INITIAL_COMPUTE_SESSION_GENERATION,
+          languageId: binding.adapter.languageId,
+          transportKind: binding.adapter.transportKind,
+          launch,
+          requiredCapabilities: [...REQUIRED_COMPUTE_CAPABILITIES],
+        });
+        yield* channel.shutdown({ expectedGeneration: INITIAL_COMPUTE_SESSION_GENERATION });
+        return {
+          ...verification,
+          connection: "verified" as const,
+          message: "Connection verified. The test session was closed.",
+        };
+      }).pipe(
         Effect.catch((cause) =>
           Effect.succeed({
             ...verification,
@@ -778,20 +793,28 @@ const make = Effect.gen(function* () {
                 "runtime-unusable",
                 "Wait for runtime removal to finish before verifying the connection.",
               );
+            const releaseCapacity = yield* hostCapacity.acquire(maximumLiveSessions);
             yield* Ref.update(verifyingRef, (counts) =>
               new Map(counts).set(input.languageId, (counts.get(input.languageId) ?? 0) + 1),
             );
+            return { releaseCapacity, scope: yield* Scope.make("sequential") };
           }),
         ),
-        () => verification.pipe(startupSlots.withPermits(1)),
-        () =>
-          Ref.update(verifyingRef, (counts) => {
-            const next = new Map(counts);
-            const count = (next.get(input.languageId) ?? 1) - 1;
-            if (count === 0) next.delete(input.languageId);
-            else next.set(input.languageId, count);
-            return next;
-          }),
+        ({ scope }) =>
+          verification.pipe(Effect.provideService(Scope.Scope, scope), startupSlots.withPermits(1)),
+        ({ releaseCapacity, scope }, exit) =>
+          Scope.close(scope, exit).pipe(
+            Effect.andThen(
+              Ref.update(verifyingRef, (counts) => {
+                const next = new Map(counts);
+                const count = (next.get(input.languageId) ?? 1) - 1;
+                if (count === 0) next.delete(input.languageId);
+                else next.set(input.languageId, count);
+                return next;
+              }),
+            ),
+            Effect.andThen(releaseCapacity),
+          ),
       ),
     );
 
@@ -1017,6 +1040,9 @@ const make = Effect.gen(function* () {
         return updated;
       });
       yield* publishExecution(live, execution);
+      if (terminal && live.startRequest.runOnce?.executionId === executionId) {
+        yield* Deferred.succeed(live.runOnceDone, undefined);
+      }
       return execution;
     });
 
@@ -1654,7 +1680,7 @@ const make = Effect.gen(function* () {
                       live,
                       "Execution admission timed out; the runtime was closed to avoid uncertain execution.",
                     ).pipe(
-                      Effect.ensuring(Scope.close(live.scope, Exit.void)),
+                      Effect.ensuring(closeRuntimeScope(live).pipe(Effect.orDie)),
                       Effect.andThen(
                         Effect.fail(
                           computeError(
@@ -1769,11 +1795,44 @@ const make = Effect.gen(function* () {
   const endSessionUnderLease = (live: LiveComputeSession, reason: string) =>
     live.mutation.withPermits(1)(endSession(live, reason));
 
+  const closeRuntimeScope = Effect.fn("ComputeSessionService.closeRuntimeScope")(function* (
+    live: LiveComputeSession,
+  ) {
+    if (live.cleanup !== null) return yield* Deferred.await(live.cleanup);
+    const completion = Deferred.makeUnsafe<void, ComputeOperationError>();
+    live.cleanup = completion;
+    yield* Deferred.complete(
+      completion,
+      Scope.close(live.scope, Exit.void).pipe(
+        Effect.catchCause((cause) =>
+          Effect.gen(function* () {
+            const error = computeError(
+              "stop",
+              "transport-failed",
+              "Runtime cleanup failed. Its host reservation is retained; shutdown could not be confirmed.",
+              cause,
+            );
+            yield* live.mutation.withPermits(1)(
+              Effect.gen(function* () {
+                const record = { ...(yield* Ref.get(live.recordRef)), lostReason: error.message };
+                yield* persistSession("stop", record);
+                yield* Ref.set(live.recordRef, record);
+                yield* publishSession(record);
+              }),
+            );
+            return yield* error;
+          }),
+        ),
+      ),
+    );
+    return yield* Deferred.await(completion);
+  }, Effect.uninterruptible);
+
   const failClosedOnPersistenceError = (live: LiveComputeSession, error: ComputeOperationError) =>
     error.reason !== "persistence-failed"
       ? Effect.void
       : endSessionUnderLease(live, "Unable to persist compute session state.").pipe(
-          Effect.ensuring(Scope.close(live.scope, Exit.void)),
+          Effect.ensuring(closeRuntimeScope(live).pipe(Effect.orDie)),
           Effect.ignore,
         );
 
@@ -1781,7 +1840,7 @@ const make = Effect.gen(function* () {
     Effect.gen(function* () {
       // Keep ownership until physical cleanup finishes, including failed startup.
       // Removal and tab-close acknowledgement must not race a still-live process.
-      yield* Scope.close(live.scope, Exit.void);
+      yield* closeRuntimeScope(live);
       yield* endSessionUnderLease(live, TRANSPORT_CLOSED_REASON);
       yield* failPendingReady(
         live,
@@ -1793,8 +1852,9 @@ const make = Effect.gen(function* () {
         if (next.get(key) === live) next.delete(key);
         return next;
       });
+      yield* live.releaseCapacity;
     }).pipe(
-      Effect.catchCause((cause) =>
+      Effect.tapCause((cause) =>
         Effect.logError("compute session retirement failed", {
           projectId: live.projectId,
           sessionId: live.sessionId,
@@ -1840,7 +1900,6 @@ const make = Effect.gen(function* () {
                 `This ${live.adapter.languageId} runtime cannot ${missing.join(", ")}, which a session needs.`,
               ),
             );
-            yield* Scope.close(live.scope, Exit.void);
             return false;
           }
           yield* Ref.set(live.capabilitiesRef, new Set(event.capabilities));
@@ -1947,7 +2006,17 @@ const make = Effect.gen(function* () {
     live.mutation
       .withPermits(1)(applyEvent(live, event))
       .pipe(
-        Effect.flatMap((advance) => (advance ? advanceQueue("submit", live) : Effect.void)),
+        Effect.flatMap((advance) =>
+          advance
+            ? advanceQueue("submit", live)
+            : event._tag === "ready"
+              ? Effect.gen(function* () {
+                  // A rejected handshake must close outside the mutation lease.
+                  if ((yield* Ref.get(live.recordRef)).status === "failed")
+                    yield* retireLiveSession(live);
+                })
+              : Effect.void,
+        ),
         Effect.catchCause((cause) =>
           Effect.logError("compute session event handling failed", {
             projectId: live.projectId,
@@ -1973,7 +2042,7 @@ const make = Effect.gen(function* () {
       ),
       // However the stream ended -- a `lost` event, a transport failure, or a
       // clean shutdown -- this is the one place a session stops being live.
-      Effect.ensuring(retireLiveSession(live)),
+      Effect.ensuring(retireLiveSession(live).pipe(Effect.orDie)),
     );
 
   // -------------------------------------------------------------------------
@@ -2306,6 +2375,7 @@ const make = Effect.gen(function* () {
   const reserveSession = Effect.fn("ComputeSessionService.reserveSession")(function* (
     input: ComputeStartSessionInput,
     binding: ComputeRuntimeBinding,
+    releaseCapacity: Effect.Effect<void>,
   ) {
     const projectRoot = yield* runtimeDirectory("start", input.workingDirectory);
     const createdAt = yield* nowIso;
@@ -2338,6 +2408,7 @@ const make = Effect.gen(function* () {
       lastActivityAt: createdAt,
       closedAt: null,
       lostReason: null,
+      ...(input.runOnce === undefined ? {} : { lifetime: "fresh" as const }),
     };
     const ready = yield* Deferred.make<ComputeSessionRecord, ComputeOperationError>();
     const live: LiveComputeSession = {
@@ -2346,7 +2417,9 @@ const make = Effect.gen(function* () {
       workingDirectory: projectRoot,
       adapter: binding.adapter,
       scope: yield* Scope.make("sequential"),
+      releaseCapacity,
       channel: null,
+      cleanup: null,
       startupFiber: null,
       dispatchLock: yield* Semaphore.make(1),
       mutation: yield* Semaphore.make(1),
@@ -2362,6 +2435,7 @@ const make = Effect.gen(function* () {
         ComputeSessionRecord,
         ComputeOperationError
       > | null>(ready),
+      runOnceDone: yield* Deferred.make<void>(),
       capabilitiesRef: yield* Ref.make<ReadonlySet<ComputeCapability>>(new Set()),
       journalRef: yield* Ref.make(0),
       sessionOutputRef: yield* Ref.make({ bytes: 0, truncated: false }),
@@ -2370,6 +2444,7 @@ const make = Effect.gen(function* () {
         workingDirectory: input.workingDirectory,
         configuredExecutable: input.configuredExecutable,
         requestedExecutable: input.requestedExecutable,
+        ...(input.runOnce === undefined ? {} : { runOnce: input.runOnce }),
       },
     };
     yield* persistSession("start", record).pipe(
@@ -2387,7 +2462,7 @@ const make = Effect.gen(function* () {
       Effect.catch((error) =>
         Effect.gen(function* () {
           yield* Ref.set(live.readyRef, null);
-          yield* Scope.close(live.scope, Exit.void);
+          yield* closeRuntimeScope(live);
           yield* live.mutation
             .withPermits(1)(
               Effect.gen(function* () {
@@ -2403,12 +2478,15 @@ const make = Effect.gen(function* () {
                 yield* appendJournal("start", live, "session-failed", error.message, null);
               }),
             )
-            .pipe(Effect.ensuring(retireLiveSession(live)));
+            .pipe(Effect.ensuring(retireLiveSession(live).pipe(Effect.orDie)));
         }).pipe(Effect.ensuring(Deferred.fail(ready, error))),
       ),
-      Effect.onInterrupt(() => retireLiveSession(live)),
+      Effect.onInterrupt(() => retireLiveSession(live).pipe(Effect.orDie)),
       Effect.forkIn(serviceScope),
     );
+    if (input.runOnce !== undefined) {
+      yield* runOnceSession(live, ready, input.runOnce).pipe(Effect.forkIn(serviceScope));
+    }
     return { live, ready };
   });
 
@@ -2432,7 +2510,8 @@ const make = Effect.gen(function* () {
                 existing.startRequest.languageId !== input.languageId ||
                 existing.startRequest.workingDirectory !== input.workingDirectory ||
                 existing.startRequest.configuredExecutable !== input.configuredExecutable ||
-                existing.startRequest.requestedExecutable !== input.requestedExecutable
+                existing.startRequest.requestedExecutable !== input.requestedExecutable ||
+                !sameRunOnce(existing.startRequest.runOnce, input.runOnce)
               ) {
                 return yield* computeError(
                   "start",
@@ -2471,25 +2550,42 @@ const make = Effect.gen(function* () {
               "The Scient-managed runtime is being removed. Wait for removal to finish, then refresh runtimes.",
             );
           }
-          if ((yield* Ref.get(sessionsRef)).size >= maximumLiveSessions) {
-            return yield* computeError(
-              "start",
-              "capacity-reached",
-              `This host has ${maximumLiveSessions} active or starting compute sessions. Stop an unused session and try again.`,
-            );
-          }
           // Once ownership is persisted, interruption of the requesting RPC must
           // not strand a reservation before its independent startup fiber exists.
-          return yield* reserveSession(input, binding).pipe(Effect.uninterruptible);
+          return yield* Effect.gen(function* () {
+            const releaseCapacity = yield* hostCapacity.acquire(maximumLiveSessions);
+            return yield* reserveSession(input, binding, releaseCapacity).pipe(
+              Effect.onError(() =>
+                Effect.gen(function* () {
+                  if (!(yield* Ref.get(sessionsRef)).has(key)) yield* releaseCapacity;
+                }),
+              ),
+            );
+          }).pipe(Effect.uninterruptible);
         }),
       );
-      return admitted.ready === null
+      // Fresh execution is server-owned once admitted. Returning the starting
+      // record lets the owner cancel native startup without waiting for it.
+      return input.runOnce !== undefined || admitted.ready === null
         ? yield* Ref.get(admitted.live.recordRef)
         : yield* Deferred.await(admitted.ready);
     });
 
   const admitSubmission = (live: LiveComputeSession, input: ComputeSubmitExecutionInput) =>
     Effect.gen(function* () {
+      const once = live.startRequest.runOnce;
+      if (
+        once !== undefined &&
+        (once.executionId !== input.executionId ||
+          once.code !== input.code ||
+          !sameExecutionSource(once.source, input.source))
+      ) {
+        return yield* computeError(
+          "submit",
+          "execution-conflict",
+          "A fresh session accepts only its original execution.",
+        );
+      }
       const record = yield* Ref.get(live.recordRef);
       yield* requireCurrentGeneration("submit", live, record, input.expectedGeneration);
       if (record.status !== "starting" && record.status !== "ready") {
@@ -2824,6 +2920,13 @@ const make = Effect.gen(function* () {
   const restartSession = (input: ComputeSessionCommandInput) =>
     Effect.gen(function* () {
       const live = yield* requireLiveSession("restart", input.projectId, input.sessionId);
+      if (live.startRequest.runOnce !== undefined) {
+        return yield* computeError(
+          "restart",
+          "session-conflict",
+          "Run fresh again to start a new runtime; a fresh run cannot be restarted.",
+        );
+      }
       const plan = yield* live.mutation
         .withPermits(1)(
           Effect.gen(function* () {
@@ -2901,7 +3004,7 @@ const make = Effect.gen(function* () {
       // Ending the stream may already have retired the session through the
       // drain; `endSession` is written so whichever arrives second finds a
       // terminal record and returns it unchanged.
-      yield* Scope.close(live.scope, Exit.void);
+      yield* closeRuntimeScope(live);
       const record = yield* endSessionUnderLease(live, STOP_DETAIL);
       yield* retireLiveSession(live);
       return record;
@@ -2949,6 +3052,48 @@ const make = Effect.gen(function* () {
   // -------------------------------------------------------------------------
   // Reads
   // -------------------------------------------------------------------------
+
+  /** One owned lifetime using the ordinary transport, transcript and stop path. */
+  const runOnceSession = (
+    live: LiveComputeSession,
+    ready: Deferred.Deferred<ComputeSessionRecord, ComputeOperationError>,
+    request: NonNullable<ComputeStartSessionInput["runOnce"]>,
+  ): Effect.Effect<void, ComputeOperationError> =>
+    Effect.gen(function* () {
+      const record = yield* Deferred.await(ready);
+      yield* submitExecution({
+        projectId: live.projectId,
+        sessionId: live.sessionId,
+        expectedGeneration: record.generation,
+        ...request,
+      });
+      // Completion is signalled only after the result/output receipts are durable.
+      yield* Deferred.await(live.runOnceDone);
+    }).pipe(
+      Effect.tapError((error) =>
+        live.mutation.withPermits(1)(
+          Effect.gen(function* () {
+            const record = yield* Ref.get(live.recordRef);
+            if (
+              TERMINAL_COMPUTE_SESSION_STATUSES.has(record.status) ||
+              record.status === "stopping"
+            )
+              return;
+            const next = { ...record, lostReason: shortText(error.message) };
+            yield* persistSession("stop", next);
+            yield* Ref.set(live.recordRef, next);
+            yield* publishSession(next);
+          }),
+        ),
+      ),
+      Effect.ensuring(
+        Effect.gen(function* () {
+          const generation = yield* live.mutation.withPermits(1)(beginStop(live));
+          if (generation === null) yield* retireLiveSession(live);
+          else yield* closeLiveSession(live, generation);
+        }).pipe(Effect.orDie),
+      ),
+    );
 
   const listSessions = (input: ComputeListSessionsInput) =>
     Effect.gen(function* () {
@@ -3155,6 +3300,7 @@ export const layerWithRuntimeBindings = <E, R>(
   projectOutputObserverLayer: Layer.Layer<ComputeProjectOutputObserver> = disabledProjectOutputObserverLayer,
 ) =>
   Layer.effect(ComputeSessionService, make).pipe(
+    Layer.provide(ComputeHostCapacity.layer),
     Layer.provide(Layer.effect(ComputeRuntimeBindings, bindings)),
     Layer.provide(Layer.succeed(ComputeSessionServiceConfig, options)),
     Layer.provide(projectOutputObserverLayer),
@@ -3168,5 +3314,6 @@ export const layerWithRuntimes = (
 
 /** @public Service construction is part of the canonical Effect module API. */
 export const layer = Layer.effect(ComputeSessionService, make).pipe(
+  Layer.provide(ComputeHostCapacity.layer),
   Layer.provide(disabledProjectOutputObserverLayer),
 );

@@ -20,6 +20,7 @@ import { useScientSplit } from "~/scient/layout/useScientSplit";
 import { ScientTooltip } from "~/scient/presentation/ScientTooltip";
 
 import { ComputePanel } from "./ComputePanel";
+import { ComputeResultPicker } from "./ComputeResultPicker";
 import {
   getComputeFilePresentation,
   useComputeFilePresentationStore,
@@ -27,7 +28,19 @@ import {
 } from "./computeFilePresentationStore";
 import type { ComputeSourceLanguage } from "./computeSourceLanguage";
 import { ComputeFileActions, type ComputeFileActionsHandle } from "./ComputeFileActions";
-import type { ComputeContextId } from "./computeContextStore";
+import {
+  createComputeContextId,
+  ensureComputeContext,
+  getComputeContext,
+  useComputeContextStore,
+  type ComputeContextId,
+} from "./computeContextStore";
+import {
+  ComputeBatchResults,
+  useComputeBatchRun,
+  type ComputeBatchRunModel,
+} from "./ComputeBatchResults";
+import { useCancelComputeBatchRun } from "./useCancelComputeBatchRun";
 import { computeActiveCell } from "./computeSourceSlices";
 import {
   DEFAULT_COMPUTE_FILE_SPLIT,
@@ -74,7 +87,6 @@ interface ScientComputeFileSurfaceProps {
   readonly onSaveResolutionApplied: () => void;
   readonly saveResolution: FileSaveResolution | null;
   readonly contextId: ComputeContextId;
-  readonly onShowMatlabOneShot: () => void;
 }
 
 function initialResultsView(): ComputeFileResultsView {
@@ -119,6 +131,93 @@ function persist<T, E>(key: string, value: T, schema: Schema.Codec<T, E>): void 
 }
 
 export function ScientComputeFileSurface(props: ScientComputeFileSurfaceProps) {
+  return props.language.languageId === "matlab" ? (
+    <MatlabComputeFileSurface {...props} />
+  ) : (
+    <ComputeFileSurfaceContent {...props} />
+  );
+}
+
+function MatlabComputeFileSurface(props: ScientComputeFileSurfaceProps) {
+  const resultContextId = useComputeFilePresentationStore(
+    (state) => state.presentations[props.contextId]?.resultsContextId ?? null,
+  );
+  const batchRunId = useComputeContextStore((state) =>
+    resultContextId === null ? null : (state.bindings[resultContextId]?.batchRunId ?? null),
+  );
+  const cancelBatchRun = useCancelComputeBatchRun();
+  const batch = useComputeBatchRun(
+    {
+      environmentId: props.environmentId,
+      threadRef: props.threadRef,
+      cwd: props.cwd,
+      relativePath: props.relativePath,
+      sourceRevision: props.revision,
+      sourcePending: props.sourcePending,
+      runtimeKind: "matlab",
+      runtimeLabel: "MATLAB",
+    },
+    {
+      runId: batchRunId,
+      onRunReserved: (runId) => {
+        const parent =
+          getComputeContext(props.contextId) ??
+          ensureComputeContext({
+            contextId: props.contextId,
+            environmentId: props.environmentId,
+            cwd: props.cwd,
+            relativePath: props.relativePath,
+            ownerKey: props.contextId,
+          });
+        if (parent.lifecycle === "closing" || parent.lifecycle === "close-failed") return false;
+        const childId = createComputeContextId();
+        ensureComputeContext({
+          contextId: childId,
+          parentContextId: props.contextId,
+          batchRunId: runId,
+          environmentId: props.environmentId,
+          cwd: props.cwd,
+          relativePath: props.relativePath,
+          ownerKey: props.contextId,
+        });
+        useComputeFilePresentationStore.getState().setResultsContext(props.contextId, childId);
+        return true;
+      },
+      onRunStarted: (run) => {
+        const binding = Object.values(useComputeContextStore.getState().bindings).find(
+          (candidate) =>
+            candidate.parentContextId === props.contextId &&
+            candidate.batchRunId === run.receipt.runId,
+        );
+        if (binding?.lifecycle === "closing" || binding?.lifecycle === "close-failed") {
+          void cancelBatchRun({
+            environmentId: props.environmentId,
+            cwd: props.cwd,
+            runId: run.receipt.runId,
+            waitForExit: true,
+          });
+        }
+      },
+      onStartRejected: (runId) => {
+        const binding = Object.values(useComputeContextStore.getState().bindings).find(
+          (candidate) =>
+            candidate.parentContextId === props.contextId && candidate.batchRunId === runId,
+        );
+        if (binding === undefined) return;
+        useComputeContextStore.getState().removeContext(binding.contextId);
+        const presentation = getComputeFilePresentation(props.contextId);
+        if (presentation.resultsContextId === binding.contextId) {
+          useComputeFilePresentationStore.getState().setResultsContext(props.contextId, null);
+        }
+      },
+    },
+  );
+  return <ComputeFileSurfaceContent {...props} batch={batch} />;
+}
+
+function ComputeFileSurfaceContent(
+  props: ScientComputeFileSurfaceProps & { readonly batch?: ComputeBatchRunModel },
+) {
   const view = useComputeFilePresentationStore(
     (state) => state.presentations[props.contextId]?.view ?? "code",
   );
@@ -127,6 +226,12 @@ export function ScientComputeFileSurface(props: ScientComputeFileSurfaceProps) {
   );
   const setFileView = useComputeFilePresentationStore((state) => state.setFileView);
   const setPanelView = useComputeFilePresentationStore((state) => state.setPanelView);
+  const resultsContextId = useComputeFilePresentationStore(
+    (state) => state.presentations[props.contextId]?.resultsContextId ?? props.contextId,
+  );
+  const showingBatch = useComputeContextStore(
+    (state) => state.bindings[resultsContextId]?.batchRunId !== undefined,
+  );
   const [preferredResultsView, setPreferredResultsView] =
     useState<ComputeFileResultsView>(initialResultsView);
   const [split, setSplit] = useState(initialSplit);
@@ -186,6 +291,7 @@ export function ScientComputeFileSurface(props: ScientComputeFileSurfaceProps) {
     onCommit: commitSplit,
   });
   const handleRunRequested = useCallback(() => {
+    useComputeFilePresentationStore.getState().setResultsContext(props.contextId, null);
     const currentView = getComputeFilePresentation(props.contextId).view;
     setFileView(props.contextId, computeFileViewAfterRun(currentView, preferredResultsView));
     setPanelView(props.contextId, "results");
@@ -286,7 +392,11 @@ export function ScientComputeFileSurface(props: ScientComputeFileSurfaceProps) {
             editorSelection={editorSelection}
             contextId={props.contextId}
             onRunRequested={handleRunRequested}
-            onShowMatlabOneShot={props.onShowMatlabOneShot}
+            onShowMatlabOneShot={() => {
+              handleRunRequested();
+              void props.batch?.start();
+            }}
+            batchCanStart={props.batch?.canStart ?? false}
             onExecutionSubmitted={handleExecutionSubmitted}
           />
         </div>
@@ -366,24 +476,34 @@ export function ScientComputeFileSurface(props: ScientComputeFileSurfaceProps) {
                 {...separatorHandlers}
               />
             ) : null}
-            <ComputePanel
-              environmentId={props.environmentId}
-              cwd={props.cwd}
-              threadRef={props.threadRef}
-              sourcePath={props.relativePath}
-              sourceRunUnavailableReason={sourceRunUnavailableReason}
-              sourceLanguageId={props.language.languageId}
-              sourceRevision={props.revision}
-              sourcePending={props.sourcePending}
-              contextId={props.contextId}
-              focusSessionId={focusExecution?.sessionId ?? null}
-              focusExecutionId={focusExecution?.executionId ?? null}
-              onFocusConsumed={handleFocusConsumed}
-              onRunSource={handleEmptyResultsRun}
-              panelView={panelView}
-              onPanelViewChange={handlePanelViewChange}
-              embedded
-            />
+            {showingBatch && props.batch !== undefined ? (
+              <ComputeBatchResults
+                key={resultsContextId}
+                model={props.batch}
+                resultPicker={<ComputeResultPicker contextId={props.contextId} />}
+              />
+            ) : (
+              <ComputePanel
+                key={resultsContextId}
+                resultPicker={<ComputeResultPicker contextId={props.contextId} />}
+                environmentId={props.environmentId}
+                cwd={props.cwd}
+                threadRef={props.threadRef}
+                sourcePath={props.relativePath}
+                sourceRunUnavailableReason={sourceRunUnavailableReason}
+                sourceLanguageId={props.language.languageId}
+                sourceRevision={props.revision}
+                sourcePending={props.sourcePending}
+                contextId={resultsContextId}
+                focusSessionId={focusExecution?.sessionId ?? null}
+                focusExecutionId={focusExecution?.executionId ?? null}
+                onFocusConsumed={handleFocusConsumed}
+                onRunSource={handleEmptyResultsRun}
+                panelView={panelView}
+                onPanelViewChange={handlePanelViewChange}
+                embedded
+              />
+            )}
           </div>
         ) : null}
       </div>

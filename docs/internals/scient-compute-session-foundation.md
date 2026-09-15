@@ -11,6 +11,55 @@ Release maturity: The continuation is not approved for release; historical basel
 
 ## Current implementation boundary
 
+### Execution consolidation candidate (2026-09-15)
+
+This continuation evolves the existing session system; it does not introduce a universal
+execution framework. This section supersedes older roadmap wording below that treats
+Run fresh as a separate execution product. Qualification is candidate-specific, not release approval.
+
+| Action                  | Execution and readiness                                                                                                           | Ownership and retained results                                                                                                |
+| ----------------------- | --------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------- |
+| Run file/cell/selection | Existing interactive session; normal language/runtime checks                                                                      | Existing tab-owned `ComputeSession` and transcript                                                                            |
+| Run fresh               | `startSession.runOnce`: new ordinary Python Jupyter or MATLAB Engine session, one submission                                      | Invisible child of the initiating tab, `lifetime: fresh`, ordinary transcript, automatic stop after output/result persistence |
+| Run MATLAB batch        | Native `-batch` adapter; enabled language and saved source, installed executable; never gated by Engine helper or connection test | Invisible tab-owned `AnalysisRun` ID, existing receipt/diagnostics/output bounds/artifact IDs and PNG/FIG representations     |
+
+Fresh is a clean namespace/runtime lifetime, not filesystem, network, package, or security isolation.
+Native Python subprocess execution remains out of scope. No extra execution home or plus-menu
+entry is added. A passive results selector returns to the interactive session or retained child
+results without running code. Scientific Computing remains the runtime preference owner.
+
+The server validates source identity and action prerequisites. Discovery cannot guarantee licensing
+or successful startup. Native batch keeps its own diagnostics and serial runtime queue; it is not
+converted into Jupyter MIME or a second session history writer. Existing session and AnalysisRun
+records remain readable without rewriting historical data.
+
+`ComputeHostCapacity` is a shared admission counter, not a scheduler: interactive sessions, fresh
+sessions, connection tests, and native batch processes reserve host capacity. Session admission is
+atomic; batch acquires capacity when dequeued and reports rejection instead of spawning beyond
+the budget. Reservations release only after physical process-scope cleanup. Failed cleanup retains
+ownership and its reservation, and is exposed to the caller. Existing managed-runtime removal
+guards include fresh sessions; MATLAB batch does not depend on the Engine helper, so helper
+removal does not acquire an artificial batch dependency.
+
+The client records a fresh session or batch run ID before sending start. The initiating tab owns
+all child work across component unmounts and thread navigation. Explicit close blocks new child
+admission, stops the parent and children, and retains the tab if any shutdown cannot be confirmed.
+Stopping the displayed session alone does not cancel independent child runs; closing the tab does.
+Native batch's normal Cancel acknowledges the request; `waitForExit` is the stricter tab-close
+contract. Exact terminal session reads confirm cleanup rather than merely consulting a receipt.
+Ambiguous start responses keep their reserved identity; they are not permission to replay code.
+
+The old `AnalysisRunFilePanel` and `ScientFileAuxiliarySurface` are retired from the file viewer.
+`ScientComputeFileSurface` hosts the native adapter's Results alongside session Results. Artifact
+renderers, downloads, bounds and historical snapshots remain transport-specific where necessary;
+the parallel presentation work may improve those renderers without owning execution/cancellation.
+
+Validation covers source checks, fresh admission/retries/startup cancellation, concurrent success
+and error results, namespace preservation, exact-owner close, delayed/failed cleanup, native batch
+idempotence, and shared admission. Native tests require explicit interpreter paths and disposable
+state. Packaged Windows/Linux, MATLAB release/license variations, and combined visual acceptance
+remain separate gates; simulation is not evidence for them.
+
 The local continuation builds on the merged Python baseline rather than replacing
 its session, history, or project-file ownership. It implements:
 

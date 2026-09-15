@@ -22,6 +22,7 @@ import { describe, expect, it } from "@effect/vitest";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
+import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Queue from "effect/Queue";
@@ -117,6 +118,7 @@ const makeServiceTestLayer = Effect.fn("makeServiceTestLayer")(function* (
   transformStore?: (
     store: LocalAnalysisStore.LocalAnalysisStore["Service"],
   ) => LocalAnalysisStore.LocalAnalysisStore["Service"],
+  onProcessClose?: Effect.Effect<void>,
 ) {
   const fileSystem = yield* FileSystem.FileSystem;
   const projectRoot = yield* fileSystem.makeTempDirectoryScoped({
@@ -143,6 +145,7 @@ const makeServiceTestLayer = Effect.fn("makeServiceTestLayer")(function* (
           };
         }
         const exitCode = yield* Deferred.make<number>();
+        if (onProcessClose !== undefined) yield* Effect.addFinalizer(() => onProcessClose);
         processExits.set(request.runId, exitCode);
         yield* Queue.offer(startedRuns, request.runId);
         return {
@@ -191,7 +194,9 @@ const makeServiceTestLayer = Effect.fn("makeServiceTestLayer")(function* (
         Effect.map(LocalAnalysisStore.LocalAnalysisStore, transformStore),
       ).pipe(Layer.provide(localStoreLayer))
     : localStoreLayer;
-  const settingsLayer = ServerSettings.layerTest();
+  const settingsLayer = ServerSettings.layerTest({
+    scientificComputing: { languages: { [ComputeLanguageId.make("matlab")]: { enabled: true } } },
+  });
   const analysisLayer = layerWithAdapters([adapter]).pipe(
     Layer.provide(
       ScientificRuntimePreferences.layer.pipe(
@@ -775,6 +780,127 @@ describe("analysis restart recovery", () => {
 });
 
 describe("analysis service coordination", () => {
+  it.effect("reports native cleanup failure instead of acknowledging a completed close", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeServiceTestLayer(
+        testAdapter,
+        undefined,
+        Effect.die(new Error("synthetic process cleanup failure")),
+      );
+      yield* Effect.gen(function* () {
+        const service = yield* AnalysisService;
+        const run = yield* service.startRun({
+          cwd: harness.projectRoot,
+          relativePath: "cleanup.m",
+          sourceRevision,
+          runtimeId,
+        });
+        yield* Queue.take(harness.startedRuns);
+        const close = { cwd: harness.projectRoot, runId: run.receipt.runId, waitForExit: true };
+        expect((yield* Effect.flip(service.cancelRun(close))).reason).toBe("process-failed");
+        expect((yield* service.getRun(close)).receipt.failureMessage).toContain(
+          "could not be cleaned up",
+        );
+        expect((yield* Effect.flip(service.cancelRun(close))).reason).toBe("process-failed");
+      }).pipe(Effect.provide(harness.analysisLayer), Effect.scoped);
+    }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+  );
+  it.effect("retries a caller-owned batch identity without replaying its process", () =>
+    Effect.gen(function* () {
+      const harness = yield* serviceTestLayer;
+      yield* Effect.gen(function* () {
+        const service = yield* AnalysisService;
+        const input = {
+          cwd: harness.projectRoot,
+          relativePath: "owned.m",
+          sourceRevision,
+          runtimeId,
+          runId: ExecutionRunId.make("owned-batch"),
+        };
+        const first = yield* service.startRun(input);
+        yield* Queue.take(harness.startedRuns);
+        expect((yield* service.startRun(input)).receipt.runId).toBe(first.receipt.runId);
+        const stopped = yield* service.cancelRun({
+          cwd: harness.projectRoot,
+          runId: first.receipt.runId,
+          waitForExit: true,
+        });
+        expect(stopped.receipt.status).toBe("cancelled");
+        expect((yield* service.startRun(input)).receipt.status).toBe("cancelled");
+        expect(yield* Ref.get(harness.processStartCount)).toBe(1);
+        expect(
+          (yield* service.cancelRun({
+            cwd: harness.projectRoot,
+            runId: first.receipt.runId,
+            waitForExit: true,
+          })).receipt.status,
+        ).toBe("cancelled");
+      }).pipe(Effect.provide(harness.analysisLayer), Effect.scoped);
+    }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+  );
+
+  it.effect("tab close waits for the native process scope, not only its terminal receipt", () =>
+    Effect.gen(function* () {
+      const cleanupEntered = yield* Deferred.make<void>();
+      const cleanupRelease = yield* Deferred.make<void>();
+      const harness = yield* makeServiceTestLayer(
+        testAdapter,
+        undefined,
+        Deferred.succeed(cleanupEntered, undefined).pipe(
+          Effect.andThen(Deferred.await(cleanupRelease)),
+        ),
+      );
+      yield* Effect.gen(function* () {
+        const service = yield* AnalysisService;
+        const run = yield* service.startRun({
+          cwd: harness.projectRoot,
+          relativePath: "wait.m",
+          sourceRevision,
+          runtimeId,
+        });
+        yield* Queue.take(harness.startedRuns);
+        const returned = yield* Ref.make(false);
+        const closing = yield* service
+          .cancelRun({ cwd: harness.projectRoot, runId: run.receipt.runId, waitForExit: true })
+          .pipe(
+            Effect.tap(() => Ref.set(returned, true)),
+            Effect.forkChild,
+          );
+        yield* Deferred.await(cleanupEntered);
+        expect(yield* Ref.get(returned)).toBe(false);
+        yield* Deferred.succeed(cleanupRelease, undefined);
+        expect((yield* Fiber.join(closing)).receipt.status).toBe("cancelled");
+      }).pipe(Effect.provide(harness.analysisLayer), Effect.scoped);
+    }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+  );
+
+  it.effect(
+    "enforces the shared language enable setting without requiring an Engine connection",
+    () =>
+      Effect.gen(function* () {
+        const harness = yield* serviceTestLayer;
+        yield* Effect.gen(function* () {
+          const settings = yield* ServerSettings.ServerSettingsService;
+          yield* settings.updateSettings({
+            scientificComputing: {
+              languages: { [ComputeLanguageId.make("matlab")]: { enabled: false } },
+            },
+          });
+          const service = yield* AnalysisService;
+          const error = yield* Effect.flip(
+            service.startRun({
+              cwd: harness.projectRoot,
+              relativePath: "disabled.m",
+              sourceRevision,
+              runtimeId,
+            }),
+          );
+          expect(error.message).toContain("Enable matlab");
+          expect(yield* Ref.get(harness.processStartCount)).toBe(0);
+        }).pipe(Effect.provide(harness.analysisLayer), Effect.scoped);
+      }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+  );
+
   it.effect("serializes concurrent starts so one file cannot acquire two active runs", () =>
     Effect.gen(function* () {
       const harness = yield* serviceTestLayer;

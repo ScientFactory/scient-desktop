@@ -31,7 +31,7 @@ import {
   Square,
 } from "lucide-react";
 import { Link } from "@tanstack/react-router";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 
 import { Button } from "~/components/ui/button";
 import { Popover, PopoverDescription, PopoverPopup, PopoverTitle } from "~/components/ui/popover";
@@ -70,7 +70,7 @@ import {
   type ComputeEmptyResultsState,
 } from "./computePanelPresentation";
 import { defaultComputeRuntime, isComputeCapacityReachedError } from "./computeFileSurfaceModel";
-import { closeComputeContext, mergeComputeSessionRecords } from "./computeContextCoordinator";
+import { stopComputeContext, mergeComputeSessionRecords } from "./computeContextCoordinator";
 import {
   computeSessionOwnerLabel,
   ensureComputeContext,
@@ -678,6 +678,7 @@ export function ComputePanel(props: {
   readonly panelView?: ComputePanelView;
   readonly onPanelViewChange?: (view: ComputePanelView) => void;
   readonly embedded?: boolean;
+  readonly resultPicker?: ReactNode;
 }) {
   const [localPanelView, setLocalPanelView] = useState<ComputePanelView>("results");
   const panelView = props.panelView ?? localPanelView;
@@ -1173,7 +1174,7 @@ export function ComputePanel(props: {
           current?.sessionId === result.value.sessionId &&
           (current.lifecycle === "closing" || current.lifecycle === "close-failed")
         ) {
-          void closeComputeContext({
+          void stopComputeContext({
             contextId: props.contextId,
             stopSession,
             getSession,
@@ -1222,7 +1223,7 @@ export function ComputePanel(props: {
     }
     setOperation(kind);
     if (kind === "stop" && props.contextId !== undefined) {
-      await closeComputeContext({ contextId: props.contextId, stopSession, getSession });
+      await stopComputeContext({ contextId: props.contextId, stopSession, getSession });
       setOperation((current) => (current === kind ? null : current));
       sessions.refresh();
       executions.refresh();
@@ -1309,6 +1310,7 @@ export function ComputePanel(props: {
       <header className="flex min-h-10 shrink-0 flex-wrap items-center gap-2 border-b border-border/60 px-3 py-0.5">
         <div className="min-w-0 flex-1">
           <div className="flex flex-wrap items-center gap-1">
+            {props.resultPicker}
             <ComputePanelTabs
               value={panelView}
               resultsLabel={
@@ -1500,7 +1502,16 @@ export function ComputePanel(props: {
               </MenuTrigger>
               <MenuPopup align="end" side="bottom" className="min-w-44">
                 <MenuItem
-                  disabled={operation !== null || liveSession?.status !== "ready"}
+                  disabled={
+                    operation !== null ||
+                    liveSession?.status !== "ready" ||
+                    liveSession.lifetime === "fresh"
+                  }
+                  title={
+                    liveSession?.lifetime === "fresh"
+                      ? "Use Run fresh to start another clean session"
+                      : undefined
+                  }
                   onClick={(event) => {
                     const bounds = event.currentTarget.getBoundingClientRect();
                     setSessionConfirmation({

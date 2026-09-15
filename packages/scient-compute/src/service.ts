@@ -90,6 +90,14 @@ export const ComputeStartSessionInput = Schema.Struct({
   configuredExecutable: Schema.NullOr(ShortText),
   /** An explicit per-session choice, distinct from the environment's default preference. */
   requestedExecutable: Schema.optional(ShortText),
+  /** One execution in a new runtime lifetime; the coordinator retains results and closes it. */
+  runOnce: Schema.optional(
+    Schema.Struct({
+      executionId: ComputeExecutionId,
+      code: StreamText,
+      source: ComputeExecutionSource,
+    }),
+  ),
 });
 export type ComputeStartSessionInput = typeof ComputeStartSessionInput.Type;
 

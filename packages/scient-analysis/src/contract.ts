@@ -6,6 +6,7 @@ import {
 } from "@scientfactory/execution";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
+export { ExecutionRunId as AnalysisRunId };
 
 const Identifier = Schema.NonEmptyString.check(Schema.isMaxLength(128));
 const PathString = Schema.NonEmptyString.check(Schema.isMaxLength(32 * 1024));
@@ -301,6 +302,8 @@ export const AnalysisVerifyRuntimeInput = Schema.Struct({
 export type AnalysisVerifyRuntimeInput = typeof AnalysisVerifyRuntimeInput.Type;
 
 export const AnalysisStartRunInput = Schema.Struct({
+  /** Caller-owned identity permits retries without starting another native process. */
+  runId: Schema.optional(ExecutionRunId),
   cwd: PathString,
   relativePath: PathString,
   sourceRevision: AnalysisSourceRevision,
@@ -311,6 +314,8 @@ export type AnalysisStartRunInput = typeof AnalysisStartRunInput.Type;
 export const AnalysisCancelRunInput = Schema.Struct({
   cwd: PathString,
   runId: ExecutionRunId,
+  /** Tab close requires physical cleanup, not only cancellation acceptance. */
+  waitForExit: Schema.optional(Schema.Boolean),
 });
 export type AnalysisCancelRunInput = typeof AnalysisCancelRunInput.Type;
 

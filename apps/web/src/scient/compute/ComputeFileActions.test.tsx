@@ -16,6 +16,7 @@ const mocks = vi.hoisted(() => ({
   languages: [] as ComputeLanguageRuntimeInspection[],
   managedStatus: null as ComputeManagedRuntimeStatus | null,
   buttons: [] as Array<ComponentProps<"button">>,
+  menuItems: [] as Array<ComponentProps<"button">>,
   start: vi.fn(),
   submit: vi.fn(),
   refresh: vi.fn(),
@@ -79,8 +80,11 @@ vi.mock("~/components/ui/alert-dialog", () => ({
 vi.mock("~/components/ui/menu", () => ({
   Menu: ({ children }: { children: ReactNode }) => <>{children}</>,
   MenuTrigger: () => null,
-  MenuPopup: () => null,
-  MenuItem: () => null,
+  MenuPopup: ({ children }: { children: ReactNode }) => <>{children}</>,
+  MenuItem: (props: ComponentProps<"button">) => {
+    mocks.menuItems.push(props);
+    return null;
+  },
   MenuSeparator: () => null,
 }));
 
@@ -163,6 +167,7 @@ describe("Python file run actions", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mocks.buttons = [];
+    mocks.menuItems = [];
     mocks.managedStatus = null;
     mocks.start.mockResolvedValue({
       _tag: "Success",
@@ -192,6 +197,44 @@ describe("Python file run actions", () => {
       sessionId: "new-session",
       code: "print(1)",
     });
+  });
+
+  it("reserves a fresh child before its single start-and-run request without replacing the session", async () => {
+    ensureComputeContext({
+      contextId: testContextId,
+      environmentId: testEnvironmentId,
+      cwd: "/project",
+      ownerKey: "file",
+    });
+    const persistent = ComputeSessionId.make("persistent");
+    useComputeContextStore
+      .getState()
+      .reserveSession({ contextId: testContextId, sessionId: persistent });
+    mocks.start.mockImplementation(
+      async ({ input }: { input: { sessionId: ComputeSessionId } }) => {
+        expect(
+          Object.values(useComputeContextStore.getState().bindings).some(
+            (binding) =>
+              binding.parentContextId === testContextId && binding.sessionId === input.sessionId,
+          ),
+        ).toBe(true);
+        return {
+          _tag: "Success",
+          value: { sessionId: input.sessionId, generation: 1, status: "starting" },
+        };
+      },
+    );
+    render(undefined, testContextId);
+    const fresh = mocks.menuItems.findLast((item) => item.children === "Run fresh")!;
+    expect(fresh.disabled).toBe(false);
+    fresh.onClick?.({} as Parameters<NonNullable<typeof fresh.onClick>>[0]);
+    await vi.waitFor(() => expect(mocks.start).toHaveBeenCalledOnce());
+    expect(mocks.start.mock.calls[0]?.[0].input.runOnce).toMatchObject({
+      code: "print(1)",
+      source: { origin: "file", path: "test.py", bufferState: "saved" },
+    });
+    expect(mocks.submit).not.toHaveBeenCalled();
+    expect(useComputeContextStore.getState().bindings[testContextId]?.sessionId).toBe(persistent);
   });
 
   it.each([true, false])(

@@ -130,7 +130,7 @@
     },
     {
       "path": "apps/web/src/components/files/FilePreviewPanel.tsx",
-      "anchor": "ScientFileAuxiliarySurface",
+      "anchor": "ScientComputeFileSurface",
       "purpose": "Mount additive analysis and compute actions plus generic freshness controls in the file viewer."
     },
     {

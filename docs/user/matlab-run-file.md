@@ -23,8 +23,8 @@ label while a live session is idle. Use the refresh control in Scientific
 Computing to rediscover installations, and **Test** beside the enable switch when
 you explicitly want to start and close a temporary connection.
 
-The executable preference is shared with fresh-process runs. Their older setup control
-now writes this same preference instead of maintaining a second runtime choice.
+The executable preference is shared with native batch runs. Scientific Computing is the
+single place to choose it; there is no separate batch setup form.
 See [Connect your MATLAB installation](scientific-computing.md#connect-your-matlab-installation)
 for setup, repair, removal, and the distinction between the helper and MATLAB itself.
 
@@ -37,10 +37,14 @@ remain available between runs until the session stops or restarts. Open **Variab
 next to **Results**; it is always a sibling tab on that pane.
 Running code is not sandboxed.
 
-For saved-file batch execution and portable run artifacts, choose **Run as one-shot…**
-from the file's Run menu. This is the existing workflow:
+Choose **Run fresh** from the Run menu to execute the buffer in a new Engine-backed session
+without clearing your existing session's variables. Scient keeps the results and closes that
+temporary session automatically. It uses the same packages and filesystem, not a sandbox.
 
-## Fresh-process file run
+For saved-file batch execution and portable run artifacts, choose **Run MATLAB batch**
+from that same Run menu. Batch does not require the Engine connection helper:
+
+## Native batch file run
 
 1. Open an initialized Scient project and select a text `.m` file.
 2. Wait for any pending save to finish. Scient runs the exact saved version,
@@ -48,18 +52,15 @@ from the file's Run menu. This is the existing workflow:
 3. If MATLAB was not found, open **Scientific Computing**, enable MATLAB, then
    choose a detected installation or use **Use another path…**. The page refresh
    control scans again.
-4. Use **Verify** when you want to confirm that MATLAB can start or understand
-   a setup failure. Scient reports the detected release and explains problems
-   such as sign-in, licensing, a missing dependency, startup failure, or a
-   timeout.
-5. Choose **Run file**. Standard output, errors, status, figures, and the
-   file's recent run history appear in the panel.
-6. If another MATLAB run is active, the new run waits in the queue and shows
+4. Choose **Run MATLAB batch**. Standard output, errors, status, figures, and the
+   file's recent run history appear in Results. Discovery is not proof of a working license;
+   sign-in, licensing, dependency, and startup failures are reported by the run.
+5. If another MATLAB batch run is active, the new run waits in the queue and shows
    its position. **Stop** cancels a waiting run or stops the active run.
-7. Select a captured figure to inspect it as a static view or floating card.
+6. Select a captured figure to inspect it as a static view or floating card.
    You can drag a thumbnail into the conversation, resize the floating card,
    or download its FIG representation for continued work in MATLAB.
-8. Choose **Save to project** when a useful run should become an ordinary
+7. Choose **Save to project** when a useful run should become an ordinary
    project result. Scient creates a folder under
    `results/<source>/<run>/` containing readable output, figures, continuation
    files, notes, and a machine-readable manifest. Repeating the action reopens
@@ -91,9 +92,11 @@ overwrite it instead of silently discarding either version. Figure-capture
 failure is reported separately from calculation failure, and long output shows
 an explicit truncation notice.
 
-The fresh-process workflow runs a complete `.m` file in noninteractive batch
+The native batch workflow runs a complete `.m` file in noninteractive batch
 mode, independently of a live Compute session. Neither workflow adds debugging,
-MATLAB notebooks, or viewers for `.mlx` and `.mat` files. Use **Verify** in each
-environment to confirm that its installed MATLAB
-version, architecture, license, and dependencies are ready before relying on a
-run.
+MATLAB notebooks, or viewers for `.mlx` and `.mat` files. An Engine connection test is
+not a prerequisite or a substitute for proving native batch execution on that environment.
+
+The results selector changes only what you view. Navigation does not stop work; closing
+the owning tab stops all of its runs and waits for cleanup. A cleanup failure stays visible
+instead of silently closing the tab. Both execution methods count toward the host's capacity.

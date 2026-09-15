@@ -120,6 +120,8 @@ export const ComputeSessionRecord = Schema.Struct({
   sessionId: ComputeSessionId,
   projectId: ComputeProjectId,
   label: Label,
+  /** Absent on historical and persistent sessions. Fresh is a lifetime, not a sandbox. */
+  lifetime: Schema.optional(Schema.Literal("fresh")),
   languageId: ComputeLanguageId,
   transportKind: ComputeTransportKind,
   workingDirectory: ShortText,

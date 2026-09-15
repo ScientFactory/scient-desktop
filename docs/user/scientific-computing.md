@@ -270,6 +270,23 @@ environment. It is not sandboxed. Only run code you trust, especially when the s
 Python is disabled by default until a user enables it or explicitly starts managed setup. R, Julia,
 arbitrary package installation, notebook editing, rich executable HTML/widgets, rich variable
 drill-down/table browsing, and portable stateful compute-result promotion remain future work.
-MATLAB's fresh-process **Run file** workflow remains separate from a stateful compute
-session. Open it from the live session's **Run as one-shot…** menu on a `.m` file; it already
-offers its own **Save to project** action.
+
+### Run fresh and MATLAB batch
+
+**Run file** reuses this tab's session. Choose **Run fresh** from the Run menu to execute the
+whole buffer in a new Python or MATLAB session. Its variables start empty; your existing
+session is untouched. Scient retains the results, then closes the temporary session.
+Fresh does not mean sandboxed: it uses the same selected runtime, packages, project files,
+and server permissions. It can still modify files.
+
+After a fresh or batch run, the compact results selector lets you return to **Session** or
+view a previous run without executing anything. Switching threads or views does not stop
+work. Closing the owning file/Compute tab stops its session and any fresh or batch runs;
+if shutdown cannot be confirmed, the tab stays available with an error.
+
+MATLAB also offers **Run MATLAB batch** for the exact saved `.m` file. This uses MATLAB's
+native `-batch` process, not the Engine connection helper. It needs enabled, installed,
+licensed MATLAB but does not require **Connect MATLAB** or an Engine connection test.
+Results appear in the same pane, with the existing batch history and **Save to project**
+action. Batch runs remain queued per MATLAB runtime; interactive and fresh sessions can
+run concurrently within the host's resource limit.

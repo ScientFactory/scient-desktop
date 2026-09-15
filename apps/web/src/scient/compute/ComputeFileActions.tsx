@@ -50,7 +50,7 @@ import {
   type ComputeCodeSlice,
   type ComputeTextRange,
 } from "./computeSourceSlices";
-import { closeComputeContext, mergeComputeSessionRecords } from "./computeContextCoordinator";
+import { stopComputeContext, mergeComputeSessionRecords } from "./computeContextCoordinator";
 import {
   defaultComputeRuntime,
   isComputeCapacityReachedError,
@@ -69,10 +69,12 @@ import {
   INITIAL_COMPUTE_CONTEXT_GENERATION,
   ownsLiveComputeSession,
   useComputeContextStore,
+  createComputeContextId,
   type ComputeContextId,
 } from "./computeContextStore";
 
 import type { ComputeSourceLanguage } from "./computeSourceLanguage";
+import { useComputeFilePresentationStore } from "./computeFilePresentationStore";
 
 type ComputeRunKind = "selection" | "cell" | "file";
 
@@ -95,6 +97,7 @@ interface ComputeFileActionsProps {
   readonly contextId?: ComputeContextId;
   readonly onRunRequested: () => void;
   readonly onShowMatlabOneShot: () => void;
+  readonly batchCanStart?: boolean;
   readonly onExecutionSubmitted: (
     sessionId: ComputeSessionId,
     executionId: ComputeExecutionId,
@@ -118,7 +121,7 @@ function reportFailure(
 export const ComputeFileActions = forwardRef<ComputeFileActionsHandle, ComputeFileActionsProps>(
   function ComputeFileActions(props, ref) {
     const onRunRequested = props.onRunRequested;
-    const [operation, setOperation] = useState<ComputeRunKind | null>(null);
+    const [operation, setOperation] = useState<ComputeRunKind | "fresh" | null>(null);
     const [refreshing, setRefreshing] = useState(false);
     const [switching, setSwitching] = useState(false);
     const [stoppingUnusedSession, setStoppingUnusedSession] = useState<ComputeSessionId | null>(
@@ -637,7 +640,7 @@ export const ComputeFileActions = forwardRef<ComputeFileActionsHandle, ComputeFi
               current?.sessionId === session.sessionId &&
               (current.lifecycle === "closing" || current.lifecycle === "close-failed")
             ) {
-              void closeComputeContext({
+              void stopComputeContext({
                 contextId: props.contextId,
                 stopSession,
                 getSession,
@@ -728,6 +731,129 @@ export const ComputeFileActions = forwardRef<ComputeFileActionsHandle, ComputeFi
         ? null
         : computeCell(props.contents, caretLine + 1, props.language.cellMarker);
     const fileSlice = computeFile(props.contents);
+    const runFresh = async () => {
+      if (
+        props.contextId === undefined ||
+        operation !== null ||
+        fileSlice === null ||
+        !languagePreference.enabled ||
+        readyRuntime === null ||
+        matlabFileCapability?.runnableAsFile === false
+      )
+        return;
+      const parent =
+        getComputeContext(props.contextId) ??
+        ensureComputeContext({
+          contextId: props.contextId,
+          environmentId: props.environmentId,
+          cwd: props.cwd,
+          relativePath: props.relativePath,
+          ownerKey: props.contextId,
+        });
+      if (parent.lifecycle === "closing" || parent.lifecycle === "close-failed") return;
+      const childId = createComputeContextId();
+      const sessionId = ComputeSessionId.make(randomUUID());
+      const executionId = ComputeExecutionId.make(randomUUID());
+      useComputeContextStore.getState().ensureContext({
+        contextId: childId,
+        parentContextId: props.contextId,
+        environmentId: props.environmentId,
+        cwd: props.cwd,
+        relativePath: props.relativePath,
+        ownerKey: props.contextId,
+      });
+      if (!useComputeContextStore.getState().reserveSession({ contextId: childId, sessionId }))
+        return;
+      setOperation("fresh");
+      onRunRequested();
+      useComputeFilePresentationStore.getState().setResultsContext(props.contextId, childId);
+      try {
+        const started = await startSession({
+          environmentId: props.environmentId,
+          input: {
+            cwd: props.cwd,
+            sessionId,
+            languageId: props.language.languageId,
+            executable: null,
+            runOnce: {
+              executionId,
+              code: fileSlice.code,
+              source: {
+                _tag: "document",
+                origin: "file",
+                path: props.relativePath,
+                bufferState: props.sourcePending ? "dirty" : "saved",
+                revision: props.sourceRevision,
+                range: fileSlice.range,
+              },
+            },
+          },
+        });
+        if (started._tag !== "Success") {
+          const error = squashAtomCommandFailure(started);
+          if (isComputeCapacityReachedError(error)) {
+            useComputeContextStore.getState().releasePendingReservation({
+              contextId: childId,
+              sessionId,
+              generation: INITIAL_COMPUTE_CONTEXT_GENERATION,
+            });
+            setCapacityBlocked(true);
+          }
+          // These rejections happen before admission. Network/startup failures
+          // retain the exact owner until Stop confirms cleanup.
+          if (
+            typeof error === "object" &&
+            error !== null &&
+            "reason" in error &&
+            ["capacity-reached", "language-disabled", "source-invalid"].includes(
+              String(error.reason),
+            )
+          ) {
+            useComputeContextStore.getState().removeContext(childId);
+            useComputeFilePresentationStore.getState().setResultsContext(props.contextId, null);
+          }
+          if (!isAtomCommandInterrupted(started)) reportFailure("Unable to run fresh", started);
+          return;
+        }
+        if (started.value.sessionId !== sessionId) {
+          toastManager.add(
+            stackedThreadToast({
+              type: "error",
+              title: "Unable to confirm fresh run",
+              description:
+                "The server returned a different session. The requested owner is retained.",
+            }),
+          );
+          return;
+        }
+        if (
+          !useComputeContextStore.getState().bindSession({
+            contextId: childId,
+            sessionId,
+            generation: started.value.generation,
+          })
+        ) {
+          await stopComputeContext({ contextId: childId, stopSession, getSession });
+          return;
+        }
+        useComputeContextStore.getState().observeSession(childId, started.value);
+        onExecutionSubmitted(sessionId, executionId);
+      } catch (error) {
+        toastManager.add(
+          stackedThreadToast({
+            type: "error",
+            title: "Unable to confirm fresh run",
+            description:
+              error instanceof Error
+                ? error.message
+                : "The connection failed. Stop the owned run before closing this tab.",
+          }),
+        );
+      } finally {
+        setOperation(null);
+        refreshSessions();
+      }
+    };
     const fileRunBlocked = matlabFileCapability?.runnableAsFile === false;
     const busy = operation !== null || refreshing || switching || stoppingUnusedSession !== null;
     const pinRuntimeChrome =
@@ -739,7 +865,8 @@ export const ComputeFileActions = forwardRef<ComputeFileActionsHandle, ComputeFi
     const primaryRunBlocked = primary.kind === "file" && fileRunBlocked;
     const liveRunDisabled = busy || !runtimeToolbar.canRun || primaryRunBlocked;
     const runMenuDisabled =
-      busy || (props.language.languageId !== "matlab" && !runtimeToolbar.canRun);
+      busy ||
+      (props.language.languageId !== "matlab" && !runtimeToolbar.canRun && readyRuntime === null);
     const runtimeNote = runtimeToolbar.kind === "status" ? runtimeToolbar.note : undefined;
     const primaryRunTooltip = primaryRunBlocked
       ? (matlabFileCapability?.reason ?? "This definition is called from a script.")
@@ -906,6 +1033,21 @@ export const ComputeFileActions = forwardRef<ComputeFileActionsHandle, ComputeFi
                 >
                   Run file
                 </MenuItem>
+                {props.contextId !== undefined ? (
+                  <MenuItem
+                    disabled={
+                      busy ||
+                      !languagePreference.enabled ||
+                      readyRuntime === null ||
+                      fileRunBlocked ||
+                      fileSlice === null
+                    }
+                    title="Run in a new session without clearing the current session’s variables"
+                    onClick={() => void runFresh()}
+                  >
+                    Run fresh
+                  </MenuItem>
+                ) : null}
                 {runtimeToolbar.kind === "switch" ? (
                   <>
                     <MenuSeparator />
@@ -918,13 +1060,13 @@ export const ComputeFileActions = forwardRef<ComputeFileActionsHandle, ComputeFi
                   <>
                     <MenuSeparator />
                     <MenuItem
-                      disabled={fileRunBlocked}
+                      disabled={fileRunBlocked || props.batchCanStart === false}
                       title={
                         fileRunBlocked ? (matlabFileCapability.reason ?? undefined) : undefined
                       }
                       onClick={props.onShowMatlabOneShot}
                     >
-                      Run as one-shot…
+                      Run MATLAB batch
                     </MenuItem>
                   </>
                 ) : null}

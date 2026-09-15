@@ -574,6 +574,7 @@ import {
   recallableComposerPrompt,
 } from "./chat/composerPromptHistory";
 import { closeComputeContext } from "~/scient/compute/computeContextCoordinator";
+import { useCancelComputeBatchRun } from "~/scient/compute/useCancelComputeBatchRun";
 import {
   computeFileContextId,
   createComputeContextId,
@@ -1607,6 +1608,7 @@ function ChatViewContent(props: ChatViewProps) {
   });
   const openPreview = useAtomCommand(previewEnvironment.open, { reportFailure: false });
   const closePreview = useAtomCommand(previewEnvironment.close, "preview close");
+  const cancelComputeBatchRun = useCancelComputeBatchRun();
   const stopComputeSession = useAtomCommand(computeEnvironment.stopSession, {
     reportFailure: false,
   });
@@ -5385,6 +5387,7 @@ function ChatViewContent(props: ChatViewProps) {
           contextId,
           stopSession: stopComputeSession,
           getSession: getComputeSession,
+          cancelBatchRun: cancelComputeBatchRun,
         });
         if (!result.closed) return false;
         useComputeContextStore.getState().removeContext(contextId);
@@ -5392,7 +5395,7 @@ function ChatViewContent(props: ChatViewProps) {
       }
       return true;
     },
-    [computeContextIdForSurface, getComputeSession, stopComputeSession],
+    [computeContextIdForSurface, getComputeSession, stopComputeSession, cancelComputeBatchRun],
   );
   const closeAfterAgentBrowserConfirmation = useCallback(
     (surfaces: readonly RightPanelSurface[], closeSurfaces: () => void) => {

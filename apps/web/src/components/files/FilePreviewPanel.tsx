@@ -82,7 +82,6 @@ import {
   resolveInitialFileExplorerOpen,
 } from "~/scient/fileOpening/fileOpeningPolicy";
 import { scientificSourceLanguageOverride } from "~/scient/analysis/sourceLanguage";
-import { ScientFileAuxiliarySurface } from "~/scient/fileSurfaces/ScientFileAuxiliarySurface";
 import { computeSourceLanguageForPath } from "~/scient/compute/computeSourceLanguage";
 import { computeFileContextId } from "~/scient/compute/computeContextStore";
 import { ScientMarkdownRenameButton } from "~/scient/markdownEditor/ui/ScientMarkdownRenameButton";
@@ -1443,15 +1442,6 @@ export default function FilePreviewPanel({
           cwd,
           relativePath,
         });
-  const [matlabOneShot, setMatlabOneShot] = useState<{
-    readonly surfaceKey: string;
-    readonly visible: boolean;
-  } | null>(null);
-  const computeSurfaceKey = `${computeContextId ?? ""}:${revealRequestId}`;
-  const matlabOneShotVisible =
-    computeContextId !== null &&
-    matlabOneShot?.surfaceKey === computeSurfaceKey &&
-    matlabOneShot.visible;
   const isMarkdownPreview = relativePath ? isMarkdownPreviewFile(relativePath) : false;
   const isRichMarkdown = relativePath ? isScientMarkdownDocumentPath(relativePath) : false;
   const isMarkdownDocument = isMarkdownPreview || isRichMarkdown;
@@ -2105,9 +2095,6 @@ export default function FilePreviewPanel({
                   onSaveConfirmed={handleSaveConfirmed}
                   onSaveResolutionApplied={handleSaveResolutionApplied}
                   saveResolution={saveResolution}
-                  onShowMatlabOneShot={() =>
-                    setMatlabOneShot({ surfaceKey: computeSurfaceKey, visible: true })
-                  }
                 />
               </Suspense>
             ) : usesScientMarkdownEditor && markdownLease ? (
@@ -2210,21 +2197,6 @@ export default function FilePreviewPanel({
               />
             )
           ) : null}
-          <ScientFileAuxiliarySurface
-            environmentId={environmentId}
-            threadRef={threadRef}
-            cwd={cwd}
-            relativePath={relativePath}
-            sourceRevision={file.data?.revision ?? null}
-            sourcePending={
-              sourcePending ||
-              (file.data !== null &&
-                file.authoritativeData !== null &&
-                file.data.contents !== file.authoritativeData.contents)
-            }
-            truncated={file.data?.truncated ?? false}
-            matlabOneShotVisible={matlabOneShotVisible}
-          />
         </div>
         {showExplorer ? (
           <aside

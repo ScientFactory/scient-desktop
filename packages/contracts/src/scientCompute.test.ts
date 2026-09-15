@@ -2,12 +2,28 @@ import { describe, expect, it } from "@effect/vitest";
 import * as Schema from "effect/Schema";
 import { ComputeManagedRuntimeStatus, ComputeRuntimeInstallation } from "@scientfactory/compute";
 
-import { ComputeRuntimeInspection, ComputeRuntimeInventory } from "./scientCompute.ts";
+import {
+  ComputeRuntimeInspection,
+  ComputeRuntimeInventory,
+  ComputeStartProjectSessionInput,
+} from "./scientCompute.ts";
 
 const decodeRuntimeInspection = Schema.decodeUnknownSync(ComputeRuntimeInspection);
 const decodeRuntimeInventory = Schema.decodeUnknownSync(ComputeRuntimeInventory);
 
 describe("scient compute contracts", () => {
+  it("keeps ordinary starts compatible and requires a complete atomic fresh request", () => {
+    const decode = Schema.decodeUnknownSync(ComputeStartProjectSessionInput);
+    const start = { cwd: "/project", sessionId: "owned", languageId: "python", executable: null };
+    expect(decode(start)).not.toHaveProperty("runOnce");
+    const runOnce = {
+      executionId: "fresh-execution",
+      code: "print(1)",
+      source: { _tag: "console" },
+    };
+    expect(decode({ ...start, runOnce }).runOnce).toEqual(runOnce);
+    expect(() => decode({ ...start, runOnce: { code: "print(1)" } })).toThrow();
+  });
   it("keeps installation-selection and helper-ownership metadata optional for older payloads", () => {
     const installation = {
       executable: "/system/python",

@@ -468,6 +468,52 @@ describe("compute RPC gateway", () => {
 });
 
 describe("compute saved-source validation", () => {
+  it.effect("validates fresh-run source before admitting its native lifetime", () =>
+    Effect.gen(function* () {
+      const initialized = yield* project;
+      let startCalls = 0;
+      const gateway = makeComputeRpcGateway({
+        compute: computeStub({
+          startSession: (input) => {
+            startCalls += 1;
+            return Effect.succeed(record(input.projectId, input.sessionId));
+          },
+        }),
+        serverSettings: {
+          getSettings: Effect.succeed({
+            ...DEFAULT_SERVER_SETTINGS,
+            scientificComputing: {
+              ...DEFAULT_SERVER_SETTINGS.scientificComputing,
+              languages: { [PYTHON]: { enabled: true, executable: "" } },
+            },
+          }),
+        },
+        workspaceFileSystem: workspace("actual", "sha256:saved"),
+      });
+      const input = {
+        cwd: initialized.root,
+        sessionId: ComputeSessionId.make("fresh"),
+        languageId: PYTHON,
+        executable: null,
+        runOnce: {
+          executionId: ComputeExecutionId.make("fresh-code"),
+          code: "different",
+          source: {
+            _tag: "document" as const,
+            origin: "file" as const,
+            path: "analysis.py",
+            bufferState: "saved" as const,
+            revision: "sha256:saved",
+            range: null,
+          },
+        },
+      };
+      expect((yield* Effect.flip(gateway.startSession(input))).reason).toBe("source-invalid");
+      expect(startCalls).toBe(0);
+      yield* gateway.startSession({ ...input, runOnce: { ...input.runOnce, code: "actual" } });
+      expect(startCalls).toBe(1);
+    }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+  );
   it("extracts exact LF and CRLF editor ranges and rejects invalid coordinates", () => {
     expect(
       extractComputeSourceRange("first\r\nsecond\r\nthird", {

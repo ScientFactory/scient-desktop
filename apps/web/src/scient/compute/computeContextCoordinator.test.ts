@@ -1,10 +1,23 @@
 import type { ComputeSessionRecord } from "@t3tools/contracts";
-import { ComputeSessionGeneration, ComputeSessionId, EnvironmentId } from "@t3tools/contracts";
+import {
+  AnalysisRunId,
+  ComputeSessionGeneration,
+  ComputeSessionId,
+  EnvironmentId,
+} from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import { beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
-import { closeComputeContext, mergeComputeSessionRecords } from "./computeContextCoordinator";
-import { ensureComputeContext, useComputeContextStore } from "./computeContextStore";
+import {
+  closeComputeContext,
+  stopComputeContext,
+  mergeComputeSessionRecords,
+} from "./computeContextCoordinator";
+import {
+  ComputeContextId,
+  ensureComputeContext,
+  useComputeContextStore,
+} from "./computeContextStore";
 
 const environmentId = EnvironmentId.make("environment-1");
 const contextId = "context-close" as Parameters<typeof ensureComputeContext>[0]["contextId"];
@@ -39,6 +52,130 @@ beforeEach(() => {
 });
 
 describe("compute context close coordinator", () => {
+  it("stops the displayed session without cancelling independent child runs", async () => {
+    const child = ComputeContextId.make("independent-batch");
+    ensureComputeContext({
+      contextId: child,
+      parentContextId: contextId,
+      batchRunId: AnalysisRunId.make("batch-still-running"),
+      environmentId,
+      cwd: "/project",
+      ownerKey: contextId,
+    });
+    const childBefore = useComputeContextStore.getState().bindings[child];
+    const stopSession = vi.fn().mockResolvedValue({ _tag: "Success", value: record(1, "stopped") });
+    const cancelBatchRun = vi.fn();
+    expect(
+      (await stopComputeContext({ contextId, stopSession, getSession: vi.fn(), cancelBatchRun }))
+        .closed,
+    ).toBe(true);
+    expect(stopSession).toHaveBeenCalledTimes(1);
+    expect(cancelBatchRun).not.toHaveBeenCalled();
+    expect(useComputeContextStore.getState().bindings[child]).toBe(childBefore);
+  });
+  it("requires native batch cleanup confirmation before dismissing its parent", async () => {
+    const child = ComputeContextId.make("batch-child");
+    const runId = AnalysisRunId.make("batch-owned");
+    ensureComputeContext({
+      contextId: child,
+      parentContextId: contextId,
+      batchRunId: runId,
+      environmentId,
+      cwd: "/project",
+      ownerKey: contextId,
+    });
+    const stopSession = vi.fn().mockResolvedValue({ _tag: "Success", value: record(1, "stopped") });
+    const getSession = vi.fn();
+    const cancelBatchRun = vi.fn().mockResolvedValueOnce(false).mockResolvedValueOnce(true);
+    expect(
+      (await closeComputeContext({ contextId, stopSession, getSession, cancelBatchRun })).closed,
+    ).toBe(false);
+    expect(cancelBatchRun).toHaveBeenCalledWith({
+      environmentId,
+      cwd: "/project",
+      runId,
+      waitForExit: true,
+    });
+    expect(useComputeContextStore.getState().bindings[contextId]?.lifecycle).toBe("close-failed");
+    expect(
+      (await closeComputeContext({ contextId, stopSession, getSession, cancelBatchRun })).closed,
+    ).toBe(true);
+  });
+  it("closes the persistent session and every fresh child, not another tab", async () => {
+    const children = ["fresh-one", "fresh-two"].map((name) => {
+      const childId = ComputeContextId.make(name);
+      const childSessionId = ComputeSessionId.make(name);
+      ensureComputeContext({
+        contextId: childId,
+        parentContextId: contextId,
+        environmentId,
+        cwd: "/project",
+        ownerKey: contextId,
+      });
+      useComputeContextStore
+        .getState()
+        .reserveSession({ contextId: childId, sessionId: childSessionId });
+      return childSessionId;
+    });
+    const stopSession = vi
+      .fn()
+      .mockImplementation(
+        async ({ input }: { input: { sessionId: ComputeSessionRecord["sessionId"] } }) => ({
+          _tag: "Success" as const,
+          value: record(1, "stopped", input.sessionId),
+        }),
+      );
+    const getSession = vi.fn();
+    const result = await closeComputeContext({ contextId, stopSession, getSession });
+    expect(result.closed).toBe(true);
+    expect(stopSession.mock.calls.map(([request]) => request.input.sessionId).sort()).toEqual(
+      [sessionId, ...children].sort(),
+    );
+    expect(getSession).not.toHaveBeenCalled();
+    useComputeContextStore.getState().removeContext(contextId);
+    expect(Object.keys(useComputeContextStore.getState().bindings)).toEqual([]);
+  });
+
+  it("retains the owning tab when a fresh child cannot be stopped", async () => {
+    const childId = ComputeContextId.make("fresh-failure");
+    ensureComputeContext({
+      contextId: childId,
+      parentContextId: contextId,
+      environmentId,
+      cwd: "/project",
+      ownerKey: contextId,
+    });
+    useComputeContextStore
+      .getState()
+      .reserveSession({ contextId: childId, sessionId: otherSessionId });
+    const stopSession = vi
+      .fn()
+      .mockImplementation(
+        async ({ input }: { input: { sessionId: ComputeSessionRecord["sessionId"] } }) =>
+          input.sessionId === sessionId
+            ? { _tag: "Success" as const, value: record(1, "stopped") }
+            : { _tag: "Failure" as const, cause: Cause.fail(new Error("cleanup failed")) },
+      );
+    const getSession = vi
+      .fn()
+      .mockResolvedValue({ _tag: "Success", value: record(1, "ready", otherSessionId) });
+    expect((await closeComputeContext({ contextId, stopSession, getSession })).closed).toBe(false);
+    expect(useComputeContextStore.getState().bindings[contextId]?.lifecycle).toBe("close-failed");
+    const another = ComputeContextId.make("too-late");
+    ensureComputeContext({
+      contextId: another,
+      parentContextId: contextId,
+      environmentId,
+      cwd: "/project",
+      ownerKey: contextId,
+    });
+    expect(
+      useComputeContextStore
+        .getState()
+        .reserveSession({ contextId: another, sessionId: ComputeSessionId.make("late") }),
+    ).toBe(false);
+  });
+
   it("does not replace a newer observed session with a stale exact-id cache", () => {
     const earlier = { ...record(1, "ready"), lastActivityAt: "2026-09-10T00:00:00Z" };
     const later = {

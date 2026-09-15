@@ -1,9 +1,13 @@
+import { Link } from "@tanstack/react-router";
 import { useAtomRefresh, useAtomValue } from "@effect/atom-react";
 import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
-import { AnalysisSourceRevision } from "@t3tools/contracts";
+import { AnalysisRunId, AnalysisSourceRevision, ComputeLanguageId } from "@t3tools/contracts";
+import { useEnvironmentSettings } from "~/hooks/useSettings";
+import { useCancelComputeBatchRun } from "./useCancelComputeBatchRun";
+import { randomUUID } from "~/lib/utils";
 import type {
   AnalysisRunSnapshot,
   AnalysisRunSummary,
@@ -20,21 +24,20 @@ import {
   FolderDown,
   LoaderCircle,
   Play,
-  RotateCcw,
   Square,
 } from "lucide-react";
 import * as Option from "effect/Option";
 import { AsyncResult } from "effect/unstable/reactivity";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 
 import { Button } from "~/components/ui/button";
-import { Input } from "~/components/ui/input";
 import { Menu, MenuPopup, MenuRadioGroup, MenuRadioItem, MenuTrigger } from "~/components/ui/menu";
 import { ScrollArea } from "~/components/ui/scroll-area";
 import { stackedThreadToast, toastManager } from "~/components/ui/toast";
 import { ScientTooltip } from "../presentation/ScientTooltip";
 import { analysisEnvironment } from "~/state/analysis";
 import { useAtomCommand } from "~/state/use-atom-command";
+import { useEnvironmentQuery } from "~/state/query";
 import { useComposerDraftStore } from "~/composerDraftStore";
 import { useRightPanelStore } from "~/rightPanelStore";
 
@@ -43,11 +46,14 @@ import {
   analysisRunIdToAutoExpand,
   emptyAnalysisRunOutputLabel,
   isTerminalAnalysisRunStatus,
-} from "./analysisRunUiState";
-import { AnalysisArtifactStrip } from "./AnalysisArtifactStrip";
-import { artifactDisplayStatus, runForArtifactDisplay } from "./analysisArtifactPresentation";
+} from "../analysis/analysisRunUiState";
+import { AnalysisArtifactStrip } from "../analysis/AnalysisArtifactStrip";
+import {
+  artifactDisplayStatus,
+  runForArtifactDisplay,
+} from "../analysis/analysisArtifactPresentation";
 
-interface AnalysisRunFilePanelProps {
+export interface ComputeBatchSource {
   readonly environmentId: EnvironmentId;
   readonly threadRef: ScopedThreadRef;
   readonly cwd: string;
@@ -308,6 +314,11 @@ function RunOutputView(props: {
         ) : (
           output
         )}
+        {props.run.receipt.outputTruncated ? (
+          <p className="text-xs text-muted-foreground">
+            Output was truncated at the run capture limit.
+          </p>
+        ) : null}
         {props.run.receipt.failureMessage ? (
           <p className="text-xs text-destructive">{props.run.receipt.failureMessage}</p>
         ) : null}
@@ -372,13 +383,297 @@ function runtimeStatus(profile: AnalysisRuntimeProfile | null, runtimeLabel: str
   return profile.detail ?? `${runtimeLabel} is unavailable.`;
 }
 
-export function AnalysisRunFilePanel(props: AnalysisRunFilePanelProps) {
+const EMPTY_RUNS: ReadonlyArray<AnalysisRunSnapshot> = [];
+
+export interface ComputeBatchRunOptions {
+  /** Reserve the identity in the tab owner before sending the start RPC. */
+  readonly onRunReserved?: (runId: AnalysisRunSnapshot["receipt"]["runId"]) => boolean;
+  readonly onStartRejected?: (runId: AnalysisRunSnapshot["receipt"]["runId"]) => void;
+  /** Persist this AnalysisRun ID in the parent owner, independently of the Results mount. */
+  readonly runId?: AnalysisRunSnapshot["receipt"]["runId"] | null;
+  /** Called before start() resolves so the owner can retain the accepted transport identity. */
+  readonly onRunStarted?: (run: AnalysisRunSnapshot) => void;
+}
+
+/**
+ * Own this hook in the tab lifecycle, keyed by environment, cwd, path and runtime kind.
+ * Mounting results never starts a process. Await cancel() before disposing the owner.
+ * Cancellation success means the request was accepted, not that the process has exited.
+ */
+export function useComputeBatchRun(
+  source: ComputeBatchSource,
+  options: ComputeBatchRunOptions = {},
+) {
+  const onRunStarted = options.onRunStarted;
+  const onRunReserved = options.onRunReserved;
+  const onStartRejected = options.onStartRejected;
+  const enabled = useEnvironmentSettings(
+    source.environmentId,
+    (settings) =>
+      settings.scientificComputing.languages[ComputeLanguageId.make(source.runtimeKind)]?.enabled ??
+      false,
+  );
+  const runtimeAtom = analysisEnvironment.runtimes({
+    environmentId: source.environmentId,
+    input: { cwd: source.cwd },
+  });
+  const eventsAtom = analysisEnvironment.runEvents({
+    environmentId: source.environmentId,
+    input: { cwd: source.cwd, relativePath: source.relativePath },
+  });
+  const runtimeResult = useAtomValue(runtimeAtom);
+  const eventResult = useAtomValue(eventsAtom);
+  const refreshRuntime = useAtomRefresh(runtimeAtom);
+  const startRun = useAtomCommand(analysisEnvironment.startRun, { reportFailure: false });
+  const cancelById = useCancelComputeBatchRun();
+  const restoredRun = useEnvironmentQuery(
+    options.runId
+      ? analysisEnvironment.run({
+          environmentId: source.environmentId,
+          input: { cwd: source.cwd, runId: options.runId },
+        })
+      : null,
+  ).data;
+  const inspection = resultValue(runtimeResult);
+  const profile =
+    inspection?.runtimes.find((runtime) => runtime.kind === source.runtimeKind) ?? null;
+  const streamedRunValue = resultValue(eventResult);
+  const streamedRuns = streamedRunValue ?? EMPTY_RUNS;
+  const [submittedRun, setSubmittedRun] = useState<AnalysisRunSnapshot | null>(null);
+  const [isStarting, setIsStarting] = useState(false);
+  const [isCancelling, setIsCancelling] = useState(false);
+  const pendingStart = useRef<Promise<AnalysisRunSnapshot | null> | null>(null);
+  const pendingCancel = useRef<Promise<boolean> | null>(null);
+  const submittedRunRef = useRef<AnalysisRunSnapshot | null>(null);
+  const streamedRunsRef = useRef(streamedRuns);
+  useEffect(() => {
+    streamedRunsRef.current = streamedRuns;
+    const observed = streamedRuns.find(
+      (run) => run.receipt.runId === submittedRunRef.current?.receipt.runId,
+    );
+    if (observed) {
+      submittedRunRef.current = observed;
+      // Keep a terminal fallback when the bounded subscription later evicts this run.
+      if (isTerminalAnalysisRunStatus(observed.receipt.status)) {
+        setSubmittedRun((current) =>
+          current && !isTerminalAnalysisRunStatus(current.receipt.status) ? observed : current,
+        );
+      }
+    }
+  }, [streamedRuns]);
+  const runId = options.runId ?? submittedRun?.receipt.runId ?? null;
+  const latestSubmittedRun =
+    streamedRuns.find((run) => run.receipt.runId === runId) ??
+    (restoredRun?.receipt.runId === runId ? restoredRun : null) ??
+    (submittedRun?.receipt.runId === runId ? submittedRun : null);
+  const activeRun =
+    (onRunReserved === undefined
+      ? streamedRuns.find((run) => !isTerminalAnalysisRunStatus(run.receipt.status))
+      : null) ??
+    (latestSubmittedRun && !isTerminalAnalysisRunStatus(latestSubmittedRun.receipt.status)
+      ? latestSubmittedRun
+      : null);
+  const canStart =
+    enabled &&
+    !source.sourcePending &&
+    profile?.availability === "available" &&
+    streamedRunValue !== null &&
+    (!options.runId || latestSubmittedRun !== null) &&
+    !activeRun &&
+    !isStarting &&
+    !isCancelling;
+
+  const start = useCallback((): Promise<AnalysisRunSnapshot | null> => {
+    if (pendingStart.current) return pendingStart.current;
+    const submitted = submittedRunRef.current;
+    const current =
+      streamedRunsRef.current.find((run) => run.receipt.runId === submitted?.receipt.runId) ??
+      submitted;
+    if (
+      !canStart ||
+      pendingCancel.current ||
+      (current && !isTerminalAnalysisRunStatus(current.receipt.status)) ||
+      !profile
+    ) {
+      return Promise.resolve(null);
+    }
+    setIsStarting(true);
+    const requestedRunId = AnalysisRunId.make(randomUUID());
+    if (onRunReserved?.(requestedRunId) === false) {
+      setIsStarting(false);
+      return Promise.resolve(null);
+    }
+    const promise = (async () => {
+      const result = await startRun({
+        environmentId: source.environmentId,
+        input: {
+          runId: requestedRunId,
+          cwd: source.cwd,
+          relativePath: source.relativePath,
+          sourceRevision: AnalysisSourceRevision.make(source.sourceRevision),
+          runtimeId: profile.id,
+        },
+      });
+      if (result._tag === "Success") {
+        if (onRunReserved !== undefined && result.value.receipt.runId !== requestedRunId) {
+          toastManager.add(
+            stackedThreadToast({
+              type: "error",
+              title: "Unable to confirm batch run",
+              description: "The server returned a different run. The requested owner is retained.",
+            }),
+          );
+          return null;
+        }
+        submittedRunRef.current = result.value;
+        setSubmittedRun(result.value);
+        onRunStarted?.(result.value);
+        return result.value;
+      }
+      if (!isAtomCommandInterrupted(result)) {
+        const reason = analysisOperationReason(result);
+        if (
+          reason !== null &&
+          [
+            "invalid-source",
+            "source-changed",
+            "runtime-invalid",
+            "runtime-missing",
+            "run-already-active",
+          ].includes(reason)
+        ) {
+          onStartRejected?.(requestedRunId);
+        }
+        reportFailure(`Unable to run ${source.runtimeLabel} file`, result);
+        refreshRuntime();
+      }
+      return null;
+    })()
+      .catch(() => {
+        // A disconnected response does not prove the server rejected the run.
+        // Keep the reserved owner so closing the tab can reconcile/cancel it.
+        toastManager.add(
+          stackedThreadToast({
+            type: "error",
+            title: "Unable to confirm batch run",
+            description:
+              "Check the connection before trying again. The run remains owned by this tab.",
+          }),
+        );
+        return null;
+      })
+      .finally(() => {
+        pendingStart.current = null;
+        setIsStarting(false);
+      });
+    pendingStart.current = promise;
+    return promise;
+  }, [
+    canStart,
+    profile,
+    refreshRuntime,
+    source.environmentId,
+    source.cwd,
+    source.relativePath,
+    source.sourceRevision,
+    source.runtimeLabel,
+    startRun,
+    onRunStarted,
+    onRunReserved,
+    onStartRejected,
+  ]);
+
+  const cancel = useCallback((): Promise<boolean> => {
+    if (pendingCancel.current) return pendingCancel.current;
+    setIsCancelling(true);
+    const promise = (async () => {
+      // A tab can close before startRun has returned its run ID.
+      const starting = pendingStart.current;
+      const started = starting ? await starting : submittedRunRef.current;
+      const latest =
+        streamedRunsRef.current.find((run) => run.receipt.runId === started?.receipt.runId) ??
+        started;
+      // The parent's controlled ID may still name the preceding run in this microtask.
+      const ownedRunId =
+        starting || (latest && !isTerminalAnalysisRunStatus(latest.receipt.status))
+          ? started?.receipt.runId
+          : options.runId;
+      const target = ownedRunId
+        ? (streamedRunsRef.current.find((run) => run.receipt.runId === ownedRunId) ??
+          (latest?.receipt.runId === ownedRunId
+            ? latest
+            : restoredRun?.receipt.runId === ownedRunId
+              ? restoredRun
+              : null))
+        : (streamedRunsRef.current.find(
+            (run) => !isTerminalAnalysisRunStatus(run.receipt.status),
+          ) ?? latest);
+      if (
+        target &&
+        (isTerminalAnalysisRunStatus(target.receipt.status) || target.receipt.cancellationRequested)
+      )
+        return true;
+      const targetId = ownedRunId ?? target?.receipt.runId;
+      if (!targetId) return true;
+      return cancelById({
+        environmentId: source.environmentId,
+        cwd: source.cwd,
+        runId: targetId,
+      });
+    })().finally(() => {
+      pendingCancel.current = null;
+      setIsCancelling(false);
+    });
+    pendingCancel.current = promise;
+    return promise;
+  }, [cancelById, source.environmentId, source.cwd, options.runId, restoredRun]);
+
+  return {
+    source,
+    runtimeResult,
+    profile,
+    streamedRunValue,
+    streamedRuns,
+    activeRun,
+    submittedRun,
+    runId,
+    restoredRun,
+    isStarting,
+    isCancelling,
+    canStart,
+    start,
+    cancel,
+  };
+}
+
+export type ComputeBatchRunModel = ReturnType<typeof useComputeBatchRun>;
+
+export interface ComputeBatchResultsProps {
+  readonly model: ComputeBatchRunModel;
+  /** The parent toolbar may own Run/Stop while results retain history and saving. */
+  readonly showRunControls?: boolean;
+  readonly resultPicker?: ReactNode;
+}
+
+function reportFailure(
+  title: string,
+  result: { readonly cause: Parameters<typeof squashAtomCommandFailure>[0]["cause"] },
+) {
+  toastManager.add(
+    stackedThreadToast({ type: "error", title, description: failureMessage(result) }),
+  );
+}
+
+export function ComputeBatchResults({
+  model,
+  showRunControls = false,
+  resultPicker,
+}: ComputeBatchResultsProps) {
+  const props = model.source;
+  const { runtimeResult, profile, streamedRunValue, streamedRuns, activeRun } = model;
+  const inspection = resultValue(runtimeResult);
   const [historyCursor, setHistoryCursor] = useState<string | null>(null);
   const [loadedHistory, setLoadedHistory] = useState<ReadonlyArray<AnalysisRunSummary>>([]);
-  const runtimeAtom = analysisEnvironment.runtimes({
-    environmentId: props.environmentId,
-    input: { cwd: props.cwd },
-  });
   const runsAtom = analysisEnvironment.runs({
     environmentId: props.environmentId,
     input: {
@@ -388,63 +683,48 @@ export function AnalysisRunFilePanel(props: AnalysisRunFilePanelProps) {
       ...(historyCursor === null ? {} : { cursor: historyCursor }),
     },
   });
-  const eventsAtom = analysisEnvironment.runEvents({
-    environmentId: props.environmentId,
-    input: { cwd: props.cwd, relativePath: props.relativePath },
-  });
   const storageAtom = analysisEnvironment.storage({
     environmentId: props.environmentId,
     input: { cwd: props.cwd },
   });
-  const runtimeResult = useAtomValue(runtimeAtom);
   const runsResult = useAtomValue(runsAtom);
-  const eventResult = useAtomValue(eventsAtom);
   const storageResult = useAtomValue(storageAtom);
-  const refreshRuntime = useAtomRefresh(runtimeAtom);
   const refreshRuns = useAtomRefresh(runsAtom);
   const refreshStorage = useAtomRefresh(storageAtom);
-  const startRun = useAtomCommand(analysisEnvironment.startRun, { reportFailure: false });
-  const cancelRun = useAtomCommand(analysisEnvironment.cancelRun, { reportFailure: false });
-  const configureRuntime = useAtomCommand(analysisEnvironment.configureRuntime, {
-    reportFailure: false,
-  });
-  const verifyRuntime = useAtomCommand(analysisEnvironment.verifyRuntime, { reportFailure: false });
   const cleanupRun = useAtomCommand(analysisEnvironment.cleanupRun, { reportFailure: false });
   const cleanupProject = useAtomCommand(analysisEnvironment.cleanupProject, {
     reportFailure: false,
   });
   const promoteRun = useAtomCommand(analysisEnvironment.promoteRun, { reportFailure: false });
-  const [expanded, setExpanded] = useState(false);
-  const [showRuntimeDetails, setShowRuntimeDetails] = useState(false);
+  const [expanded, setExpanded] = useState(true);
   const [selectedRunId, setSelectedRunId] = useState<string | null>(null);
-  const [runtimePath, setRuntimePath] = useState("");
-  const [operation, setOperation] = useState<
-    "configure" | "verify" | "run" | "cancel" | "cleanup-run" | "cleanup-project" | "promote" | null
-  >(null);
+  const [operation, setOperation] = useState<"cleanup-run" | "cleanup-project" | "promote" | null>(
+    null,
+  );
   const refreshedTerminalRunIdRef = useRef<string | null>(null);
   const observedStreamRunIdsRef = useRef<Set<string> | null>(null);
 
-  const inspection = resultValue(runtimeResult);
-  const profile =
-    inspection?.runtimes.find((runtime) => runtime.kind === props.runtimeKind) ?? null;
   const historyPage = resultValue(runsResult);
   const history = loadedHistory;
-  const streamedRunValue = resultValue(eventResult);
-  const streamedRuns = streamedRunValue ?? [];
   const runs = useMemo(() => {
     const byId = new Map<string, AnalysisRunSummary | AnalysisRunSnapshot>(
       history.map((run) => [run.receipt.runId, run]),
     );
+    if (model.restoredRun) byId.set(model.restoredRun.receipt.runId, model.restoredRun);
+    if (model.submittedRun && !byId.has(model.submittedRun.receipt.runId)) {
+      byId.set(model.submittedRun.receipt.runId, model.submittedRun);
+    }
     for (const run of streamedRuns) byId.set(run.receipt.runId, run);
     return [...byId.values()].toSorted((left, right) =>
       right.receipt.startedAt.localeCompare(left.receipt.startedAt),
     );
-  }, [history, streamedRuns]);
-  const selectedRun = runs.find((run) => run.receipt.runId === selectedRunId) ?? runs[0] ?? null;
+  }, [history, streamedRuns, model.submittedRun, model.restoredRun]);
+  const selectedRun =
+    runs.find((run) => run.receipt.runId === (selectedRunId ?? model.runId)) ?? runs[0] ?? null;
   const selectedLiveRun =
-    streamedRuns.find((run) => run.receipt.runId === selectedRun?.receipt.runId) ?? null;
-  const activeRun =
-    streamedRuns.find((run) => !isTerminalAnalysisRunStatus(run.receipt.status)) ?? null;
+    streamedRuns.find((run) => run.receipt.runId === selectedRun?.receipt.runId) ??
+    (model.submittedRun === selectedRun ? model.submittedRun : null) ??
+    (model.restoredRun === selectedRun ? model.restoredRun : null);
   const latestTerminalRunId =
     streamedRuns.find((run) => isTerminalAnalysisRunStatus(run.receipt.status))?.receipt.runId ??
     null;
@@ -459,10 +739,6 @@ export function AnalysisRunFilePanel(props: AnalysisRunFilePanelProps) {
     : null;
   const storage = resultValue(storageResult);
   const projectNotInitialized = analysisOperationReason(runsResult) === "project-not-initialized";
-
-  useEffect(() => {
-    if (profile?.executablePath) setRuntimePath(profile.executablePath);
-  }, [profile?.executablePath]);
 
   useEffect(() => {
     setHistoryCursor(null);
@@ -483,16 +759,17 @@ export function AnalysisRunFilePanel(props: AnalysisRunFilePanelProps) {
 
   useEffect(() => {
     if (streamedRunValue === null) return;
+    // Other tabs may run the same file. Their events do not change this owner's view.
+    if (model.runId !== null) return;
     const nextObserved = new Set(streamedRuns.map((run) => run.receipt.runId));
     const previousObserved = observedStreamRunIdsRef.current;
     observedStreamRunIdsRef.current = new Set([...(previousObserved ?? []), ...nextObserved]);
-    // The subscription starts with the latest persisted run. Keep its figures visible,
-    // but do not force old console output open every time the user revisits the file.
+    // Selecting history stays passive; only newly observed runs reopen collapsed output.
     const runIdToExpand = analysisRunIdToAutoExpand(streamedRuns, previousObserved);
     if (!runIdToExpand) return;
     setSelectedRunId(runIdToExpand);
     setExpanded(true);
-  }, [streamedRunValue, streamedRuns]);
+  }, [streamedRunValue, streamedRuns, model.runId]);
 
   useEffect(() => {
     if (!latestTerminalRunId || refreshedTerminalRunIdRef.current === latestTerminalRunId) return;
@@ -501,89 +778,6 @@ export function AnalysisRunFilePanel(props: AnalysisRunFilePanelProps) {
     setLoadedHistory([]);
     refreshRuns();
   }, [latestTerminalRunId, refreshRuns]);
-
-  const reportFailure = (
-    title: string,
-    result: { readonly cause: Parameters<typeof squashAtomCommandFailure>[0]["cause"] },
-  ) => {
-    toastManager.add(
-      stackedThreadToast({ type: "error", title, description: failureMessage(result) }),
-    );
-  };
-
-  const handleRun = async () => {
-    if (!profile || profile.availability !== "available") {
-      setExpanded(true);
-      return;
-    }
-    setOperation("run");
-    const result = await startRun({
-      environmentId: props.environmentId,
-      input: {
-        cwd: props.cwd,
-        relativePath: props.relativePath,
-        sourceRevision: AnalysisSourceRevision.make(props.sourceRevision),
-        runtimeId: profile.id,
-      },
-    });
-    setOperation(null);
-    if (result._tag === "Success") {
-      setSelectedRunId(result.value.receipt.runId);
-      setExpanded(true);
-      setHistoryCursor(null);
-      setLoadedHistory([]);
-      refreshRuns();
-    } else if (!isAtomCommandInterrupted(result)) {
-      reportFailure(`Unable to run ${props.runtimeLabel} file`, result);
-      refreshRuntime();
-    }
-  };
-
-  const handleCancel = async () => {
-    if (!activeRun) return;
-    setOperation("cancel");
-    const result = await cancelRun({
-      environmentId: props.environmentId,
-      input: { cwd: props.cwd, runId: activeRun.receipt.runId },
-    });
-    setOperation(null);
-    if (result._tag !== "Success" && !isAtomCommandInterrupted(result)) {
-      reportFailure(`Unable to stop ${props.runtimeLabel}`, result);
-    }
-  };
-
-  const handleConfigure = async () => {
-    setOperation("configure");
-    const result = await configureRuntime({
-      environmentId: props.environmentId,
-      input: {
-        cwd: props.cwd,
-        runtimeKind: props.runtimeKind,
-        executablePath: runtimePath.trim() || null,
-      },
-    });
-    setOperation(null);
-    if (result._tag === "Success") {
-      refreshRuntime();
-    } else if (!isAtomCommandInterrupted(result)) {
-      reportFailure(`Unable to configure ${props.runtimeLabel}`, result);
-    }
-  };
-
-  const handleVerify = async () => {
-    if (!profile) return;
-    setOperation("verify");
-    const result = await verifyRuntime({
-      environmentId: props.environmentId,
-      input: { cwd: props.cwd, runtimeId: profile.id, refresh: true },
-    });
-    setOperation(null);
-    if (result._tag === "Success") {
-      refreshRuntime();
-    } else if (!isAtomCommandInterrupted(result)) {
-      reportFailure(`Unable to verify ${props.runtimeLabel}`, result);
-    }
-  };
 
   const handleCleanupRun = async () => {
     if (!selectedRun || selectedRun.localStorage.status !== "retained") return;
@@ -705,55 +899,77 @@ export function AnalysisRunFilePanel(props: AnalysisRunFilePanelProps) {
       projectNotInitialized ||
       activeRun !== null ||
       operation !== null ||
-      !runtimeReady;
-  const verificationReady = profile?.verification?.status === "ready";
+      !model.canStart;
   const runtimeStatusText =
     runtimeResult._tag === "Failure" && profile === null
       ? `Unable to check ${props.runtimeLabel}`
       : runtimeStatus(profile, props.runtimeLabel);
-  const operationStatus =
-    operation === "run"
-      ? "Verifying source"
-      : operation === "verify"
-        ? `Verifying ${props.runtimeLabel}…`
-        : operation === "configure"
-          ? `Saving ${props.runtimeLabel} path…`
-          : operation === "promote"
-            ? "Saving result to project…"
-            : operation === "cleanup-run" || operation === "cleanup-project"
-              ? "Removing local data…"
-              : null;
 
+  const busy = operation !== null || model.isStarting || model.isCancelling;
+  const operationStatus = model.isStarting
+    ? "Verifying source"
+    : model.isCancelling
+      ? "Stopping"
+      : operation === "promote"
+        ? "Saving result to project…"
+        : operation
+          ? "Removing local data…"
+          : null;
+  const submittedRunId = model.runId;
+  useEffect(() => {
+    if (!submittedRunId) return;
+    setSelectedRunId(submittedRunId);
+    setExpanded(true);
+    setHistoryCursor(null);
+    refreshRuns();
+  }, [submittedRunId, refreshRuns]);
   return (
     <section
       className="shrink-0 border-t border-border bg-muted/20"
-      aria-label={`${props.runtimeLabel} Run File`}
+      aria-label={`${props.runtimeLabel} batch Results`}
     >
       <div className="flex min-h-10 items-center gap-2 px-3 py-1.5">
-        {activeRun ? (
-          <Button
-            size="xs"
-            variant="outline"
-            disabled={operation !== null || activeRun.receipt.cancellationRequested}
-            onClick={handleCancel}
-          >
-            {operation === "cancel" ? <LoaderCircle className="animate-spin" /> : <Square />}
-            Stop
-          </Button>
-        ) : (
-          <Button size="xs" disabled={primaryActionDisabled} onClick={handleRun}>
-            {operation === "run" ? (
-              <LoaderCircle className="animate-spin" />
-            ) : primaryActionIsSetup ? null : (
-              <Play />
-            )}
-            {primaryActionIsSetup
-              ? `Set up ${props.runtimeLabel}`
-              : props.sourcePending
-                ? "Saving…"
-                : "Run file"}
-          </Button>
-        )}
+        {resultPicker}
+        {showRunControls ? (
+          activeRun || model.isStarting ? (
+            <Button
+              size="xs"
+              variant="outline"
+              disabled={model.isCancelling || activeRun?.receipt.cancellationRequested}
+              onClick={() => void model.cancel()}
+            >
+              {model.isCancelling ? <LoaderCircle className="animate-spin" /> : <Square />}
+              Stop
+            </Button>
+          ) : (
+            <Button
+              size="xs"
+              disabled={primaryActionDisabled || busy}
+              onClick={primaryActionIsSetup ? undefined : () => void model.start()}
+              {...(primaryActionIsSetup
+                ? {
+                    render: (
+                      <Link
+                        to="/settings/scientific-computing"
+                        search={{ environmentId: props.environmentId }}
+                      />
+                    ),
+                  }
+                : {})}
+            >
+              {model.isStarting ? (
+                <LoaderCircle className="animate-spin" />
+              ) : primaryActionIsSetup ? null : (
+                <Play />
+              )}
+              {primaryActionIsSetup
+                ? `Set up ${props.runtimeLabel}`
+                : props.sourcePending
+                  ? "Saving…"
+                  : "Run MATLAB batch"}
+            </Button>
+          )
+        ) : null}
         <ScientTooltip content={runtimeStatusText}>
           <span className="min-w-0 flex-1 truncate text-xs text-muted-foreground">
             {activeRun
@@ -765,16 +981,6 @@ export function AnalysisRunFilePanel(props: AnalysisRunFilePanelProps) {
                   : runtimeStatusText}
           </span>
         </ScientTooltip>
-        {runtimeReady ? (
-          <Button
-            size="xs"
-            variant="ghost"
-            aria-expanded={showRuntimeDetails}
-            onClick={() => setShowRuntimeDetails((value) => !value)}
-          >
-            Details
-          </Button>
-        ) : null}
         {runs.length > 1 ? (
           <Menu>
             <MenuTrigger
@@ -830,82 +1036,6 @@ export function AnalysisRunFilePanel(props: AnalysisRunFilePanelProps) {
         </Button>
       </div>
 
-      {runtimeReady && showRuntimeDetails ? (
-        <div className="space-y-2 border-t border-border px-3 py-2 text-[11px]">
-          <dl className="grid grid-cols-[auto_minmax(0,1fr)] gap-x-3 gap-y-1">
-            <dt className="text-muted-foreground">Working folder</dt>
-            <ScientTooltip content={props.cwd}>
-              <dd className="truncate font-mono">{props.cwd}</dd>
-            </ScientTooltip>
-            <dt className="text-muted-foreground">Executable</dt>
-            {profile?.executablePath ? (
-              <ScientTooltip content={profile.executablePath}>
-                <dd className="truncate font-mono">{profile.executablePath}</dd>
-              </ScientTooltip>
-            ) : (
-              <dd className="truncate font-mono">{profile?.executablePath}</dd>
-            )}
-            <dt className="text-muted-foreground">Release</dt>
-            <dd>{profile?.verification?.release ?? profile?.version ?? "Not reported"}</dd>
-            <dt className="text-muted-foreground">Architecture</dt>
-            <dd>{profile?.verification?.architecture ?? "Not checked"}</dd>
-            <dt className="text-muted-foreground">Java</dt>
-            <dd>
-              {profile?.verification?.javaAvailable === null || !profile?.verification
-                ? "Not checked"
-                : profile.verification.javaAvailable
-                  ? (profile.verification.javaVersion ?? "Available")
-                  : "Unavailable"}
-            </dd>
-            <dt className="text-muted-foreground">Toolboxes</dt>
-            <dd>
-              {profile?.verification
-                ? `${profile.verification.toolboxes.length} detected`
-                : "Not checked"}
-            </dd>
-          </dl>
-          <div className="flex flex-wrap gap-2 border-t border-border/60 pt-2">
-            <Input
-              className="min-w-48 flex-1"
-              size="sm"
-              value={runtimePath}
-              placeholder={`Path to ${props.runtimeLabel} executable`}
-              onValueChange={setRuntimePath}
-              aria-label={`${props.runtimeLabel} executable path`}
-            />
-            <Button
-              size="sm"
-              variant="outline"
-              disabled={operation !== null || activeRun !== null}
-              onClick={handleConfigure}
-            >
-              {operation === "configure" ? <LoaderCircle className="animate-spin" /> : null}
-              Use path
-            </Button>
-            <Button
-              size="icon-sm"
-              variant="ghost"
-              disabled={operation !== null || activeRun !== null}
-              onClick={() => refreshRuntime()}
-              aria-label={`Scan for ${props.runtimeLabel} again`}
-            >
-              <RotateCcw />
-            </Button>
-            {verificationReady ? (
-              <Button
-                size="sm"
-                variant="outline"
-                disabled={operation !== null || activeRun !== null}
-                onClick={handleVerify}
-              >
-                {operation === "verify" ? <LoaderCircle className="animate-spin" /> : null}
-                Verify again
-              </Button>
-            ) : null}
-          </div>
-        </div>
-      ) : null}
-
       {artifactRun && artifactStatus && artifactRun.localStorage.status === "retained" ? (
         <AnalysisArtifactStrip
           environmentId={props.environmentId}
@@ -933,62 +1063,13 @@ export function AnalysisRunFilePanel(props: AnalysisRunFilePanelProps) {
               editing remain available.
             </div>
           ) : !runtimeReady ? (
-            <div className="space-y-2 p-3">
-              <p className="text-xs text-muted-foreground">
-                {runtimeResult._tag === "Failure"
-                  ? `Unable to inspect ${props.runtimeLabel} on this environment.`
-                  : (profile?.detail ?? `Checking for ${props.runtimeLabel} on this environment.`)}
-              </p>
-              <div className="flex flex-wrap gap-2">
-                <Input
-                  className="min-w-48 flex-1"
-                  size="sm"
-                  value={runtimePath}
-                  placeholder={`Path to ${props.runtimeLabel} executable`}
-                  onValueChange={setRuntimePath}
-                  aria-label={`${props.runtimeLabel} executable path`}
-                />
-                <Button
-                  size="sm"
-                  variant="outline"
-                  disabled={operation !== null}
-                  onClick={handleConfigure}
-                >
-                  {operation === "configure" ? <LoaderCircle className="animate-spin" /> : null}
-                  Use path
-                </Button>
-                <Button
-                  size="icon-sm"
-                  variant="ghost"
-                  disabled={operation !== null}
-                  onClick={() => refreshRuntime()}
-                  aria-label={`Scan for ${props.runtimeLabel} again`}
-                >
-                  <RotateCcw />
-                </Button>
-              </div>
-              <p className="text-[11px] text-muted-foreground">
-                Viewing and editing the file does not require {props.runtimeLabel}. Scient launches
-                it only when you press Run file.
-              </p>
-            </div>
-          ) : !verificationReady ? (
-            <div className="border-b border-border px-3 py-2 text-xs">
-              <div className="flex items-start gap-2">
-                <span className="min-w-0 flex-1 leading-relaxed text-muted-foreground">
-                  {profile?.verification?.detail ??
-                    `${props.runtimeLabel} was found. You can run now or verify the installation first.`}
-                </span>
-                <Button
-                  size="xs"
-                  variant="outline"
-                  disabled={operation !== null || activeRun !== null}
-                  onClick={handleVerify}
-                >
-                  {operation === "verify" ? <LoaderCircle className="animate-spin" /> : null}
-                  {profile?.verification ? "Verify again" : "Verify"}
-                </Button>
-              </div>
+            <div className="p-3 text-xs text-muted-foreground">
+              <Link
+                to="/settings/scientific-computing"
+                search={{ environmentId: props.environmentId }}
+              >
+                Open Scientific Computing
+              </Link>
             </div>
           ) : null}
           {!projectNotInitialized && selectedLiveRun ? (
@@ -1010,7 +1091,7 @@ export function AnalysisRunFilePanel(props: AnalysisRunFilePanelProps) {
             />
           ) : !projectNotInitialized && runtimeReady ? (
             <div className="p-3 text-xs text-muted-foreground">
-              Run this project-owned source file to stream {props.runtimeLabel} output here.
+              Run {props.runtimeLabel} batch to see output here.
             </div>
           ) : null}
           {!projectNotInitialized && selectedRun?.localStorage.status === "metadata-only" ? (
@@ -1026,12 +1107,7 @@ export function AnalysisRunFilePanel(props: AnalysisRunFilePanelProps) {
               <span className="min-w-0 flex-1">
                 Keep this run, its receipt, output, and figures with the project.
               </span>
-              <Button
-                size="xs"
-                variant="ghost"
-                disabled={operation !== null}
-                onClick={handlePromoteRun}
-              >
+              <Button size="xs" variant="ghost" disabled={busy} onClick={handlePromoteRun}>
                 {operation === "promote" ? (
                   <LoaderCircle className="animate-spin" />
                 ) : (
@@ -1054,9 +1130,7 @@ export function AnalysisRunFilePanel(props: AnalysisRunFilePanelProps) {
                 <Button
                   size="xs"
                   variant="ghost"
-                  disabled={
-                    operation !== null || !isTerminalAnalysisRunStatus(selectedRun.receipt.status)
-                  }
+                  disabled={busy || !isTerminalAnalysisRunStatus(selectedRun.receipt.status)}
                   onClick={handleCleanupRun}
                 >
                   {operation === "cleanup-run" ? <LoaderCircle className="animate-spin" /> : null}
@@ -1066,7 +1140,7 @@ export function AnalysisRunFilePanel(props: AnalysisRunFilePanelProps) {
               <Button
                 size="xs"
                 variant="ghost"
-                disabled={operation !== null || activeRun !== null}
+                disabled={busy || activeRun !== null}
                 onClick={handleCleanupProject}
               >
                 {operation === "cleanup-project" ? <LoaderCircle className="animate-spin" /> : null}

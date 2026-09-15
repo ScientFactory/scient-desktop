@@ -319,7 +319,7 @@ const withReportedCapabilities = (
 });
 
 interface HarnessOptions {
-  readonly beforeOpen?: (sessionId: ComputeSessionId) => Effect.Effect<void>;
+  readonly beforeOpen?: (sessionId: ComputeSessionId) => Effect.Effect<void, never, Scope.Scope>;
   readonly transformChannel?: (channel: ComputeChannel) => ComputeChannel;
   readonly adapter?: Partial<ComputeLanguageAdapter>;
   readonly additionalBindings?: ReadonlyArray<ComputeRuntimeBinding>;
@@ -766,6 +766,35 @@ describe("compute runtime inspection", () => {
           }),
         );
       }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("retains verification capacity when its process cannot be confirmed closed", () =>
+    Effect.gen(function* () {
+      const test = yield* harness({
+        connection: "detected",
+        service: { maximumLiveSessions: 1 },
+        beforeOpen: () =>
+          Effect.addFinalizer(() => Effect.die(new Error("verification cleanup failed"))),
+      });
+      yield* test.use(
+        Effect.gen(function* () {
+          const service = yield* ComputeSessionService;
+          const verification = yield* service
+            .verifyRuntime({
+              languageId: PYTHON,
+              executable: PROFILE.executable,
+              workingDirectory: process.cwd(),
+              refresh: true,
+            })
+            .pipe(Effect.exit);
+          expect(Exit.isFailure(verification)).toBe(true);
+          expect((yield* Effect.flip(service.startSession(startInput()))).reason).toBe(
+            "capacity-reached",
+          );
+          expect(test.opened()).toHaveLength(1);
+        }),
+      );
+    }).pipe(Effect.provide(NodeServices.layer)),
   );
 
   it.effect("closes every failed verification and reports a useful connection failure", () =>
@@ -1296,6 +1325,233 @@ describe("compute outcome analytics", () => {
 });
 
 describe("compute session startup", () => {
+  it.effect(
+    "does not release host capacity or acknowledge shutdown after process cleanup fails",
+    () =>
+      Effect.gen(function* () {
+        const test = yield* harness({
+          service: { maximumLiveSessions: 1 },
+          beforeOpen: () =>
+            Effect.addFinalizer(() => Effect.die(new Error("simulated cleanup failure"))),
+        });
+        yield* test.use(
+          Effect.gen(function* () {
+            const service = yield* ComputeSessionService;
+            yield* service.startSession(startInput());
+            const stopped = yield* service
+              .stopSession({
+                projectId: PROJECT_ID,
+                sessionId: SESSION_ID,
+                expectedGeneration: INITIAL_COMPUTE_SESSION_GENERATION,
+              })
+              .pipe(Effect.exit);
+            expect(Exit.isFailure(stopped)).toBe(true);
+            expect(
+              (yield* Effect.flip(
+                service.startSession(
+                  startInput({ sessionId: ComputeSessionId.make("must-not-admit") }),
+                ),
+              )).reason,
+            ).toBe("capacity-reached");
+            const store = yield* LocalComputeStore.LocalComputeStore;
+            expect((yield* store.loadSession(PROJECT_ID, SESSION_ID))?.lostReason).toContain(
+              "cleanup failed",
+            );
+            const observed = yield* service
+              .getSession({ projectId: PROJECT_ID, sessionId: SESSION_ID })
+              .pipe(Effect.exit);
+            if (Exit.isSuccess(observed)) {
+              expect(observed.value?.status).toBe("stopping");
+              expect(observed.value?.lostReason).toContain("cleanup failed");
+            }
+          }),
+        );
+      }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+  );
+  it.effect(
+    "fresh runs retain output, close their runtime, and leave an interactive session untouched",
+    () =>
+      Effect.gen(function* () {
+        const test = yield* harness();
+        yield* test.use(
+          Effect.gen(function* () {
+            const service = yield* ComputeSessionService;
+            const persistentId = ComputeSessionId.make("persistent");
+            yield* service.startSession(startInput({ sessionId: persistentId }));
+            const executionId = ComputeExecutionId.make("fresh-output");
+            const admitted = yield* service.startSession(
+              startInput({
+                runOnce: { executionId, code: "figure", source: { _tag: "console" } },
+              }),
+            );
+            expect(admitted.lifetime).toBe("fresh");
+            yield* waitUntil(sessionAt("stopped"));
+            expect(test.closed()).toEqual([SESSION_ID]);
+            expect(
+              (yield* service.getSession({ projectId: PROJECT_ID, sessionId: persistentId }))
+                ?.status,
+            ).toBe("ready");
+            const executions = yield* service.listExecutions({
+              projectId: PROJECT_ID,
+              sessionId: SESSION_ID,
+            });
+            expect(executions).toHaveLength(1);
+            expect(executions[0]?.result?.status).toBe("succeeded");
+            const outputs = yield* service.listOutputs({
+              projectId: PROJECT_ID,
+              sessionId: SESSION_ID,
+              executionId,
+            });
+            expect(outputs.outputs.length).toBeGreaterThan(0);
+            expect(test.submitted()).toEqual(["figure"]);
+          }),
+        );
+      }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+  );
+
+  it.effect(
+    "fresh admission is idempotent and cancellable during startup without submitting code",
+    () =>
+      Effect.gen(function* () {
+        const entered = yield* Deferred.make<void>();
+        const test = yield* harness({
+          beforeOpen: () => Deferred.succeed(entered, undefined).pipe(Effect.andThen(Effect.never)),
+        });
+        yield* test.use(
+          Effect.gen(function* () {
+            const service = yield* ComputeSessionService;
+            const input = startInput({
+              runOnce: {
+                executionId: ComputeExecutionId.make("fresh-cancelled"),
+                code: "figure",
+                source: { _tag: "console" },
+              },
+            });
+            const admitted = yield* service.startSession(input);
+            expect(admitted.status).toBe("starting");
+            yield* Deferred.await(entered);
+            expect((yield* service.startSession(input)).sessionId).toBe(SESSION_ID);
+            const stopped = yield* service.stopSession({
+              projectId: PROJECT_ID,
+              sessionId: SESSION_ID,
+              expectedGeneration: admitted.generation,
+            });
+            expect(stopped.status).toBe("stopped");
+            expect(test.closed()).toEqual([SESSION_ID]);
+            expect(test.submitted()).toEqual([]);
+          }),
+        );
+      }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+  );
+
+  it.effect(
+    "settles concurrent fresh successes and failures with exactly one execution and cleanup each",
+    () =>
+      Effect.gen(function* () {
+        const test = yield* harness({ service: { maximumLiveSessions: 20 } });
+        yield* test.use(
+          Effect.gen(function* () {
+            const service = yield* ComputeSessionService;
+            const inputs = Array.from({ length: 16 }, (_, index) =>
+              startInput({
+                sessionId: ComputeSessionId.make(`stress-fresh-${index}`),
+                runOnce: {
+                  executionId: ComputeExecutionId.make(`stress-execution-${index}`),
+                  code: index % 2 === 0 ? "figure" : "boom",
+                  source: { _tag: "console" },
+                },
+              }),
+            );
+            yield* Effect.forEach(inputs, (input) => service.startSession(input), {
+              concurrency: 8,
+            });
+            yield* waitUntil(
+              service
+                .listSessions({ projectId: PROJECT_ID })
+                .pipe(
+                  Effect.map((sessions) =>
+                    sessions.length === 16 &&
+                    sessions.every((session) => session.status === "stopped")
+                      ? true
+                      : null,
+                  ),
+                ),
+            );
+            for (const [index, input] of inputs.entries()) {
+              const session = yield* service.getSession({
+                projectId: PROJECT_ID,
+                sessionId: input.sessionId,
+              });
+              expect(session?.status).toBe("stopped");
+              const executions = yield* service.listExecutions({
+                projectId: PROJECT_ID,
+                sessionId: input.sessionId,
+              });
+              expect(executions).toHaveLength(1);
+              expect(executions[0]?.result?.status).toBe(index % 2 === 0 ? "succeeded" : "failed");
+            }
+            expect(new Set(test.closed()).size).toBe(16);
+            expect(test.submitted()).toHaveLength(16);
+          }),
+        );
+      }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+  );
+
+  it.effect("fresh runs use host admission limits and cannot become interactive sessions", () =>
+    Effect.gen(function* () {
+      const test = yield* harness({ service: { maximumLiveSessions: 1 } });
+      yield* test.use(
+        Effect.gen(function* () {
+          const service = yield* ComputeSessionService;
+          yield* service.startSession(
+            startInput({
+              runOnce: {
+                executionId: ComputeExecutionId.make("fresh-hold"),
+                code: "chart-hold",
+                source: { _tag: "console" },
+              },
+            }),
+          );
+          yield* waitUntil(executionAt(ComputeExecutionId.make("fresh-hold"), "running"));
+          expect(
+            (yield* Effect.flip(
+              service.startSession(startInput({ sessionId: ComputeSessionId.make("another") })),
+            )).reason,
+          ).toBe("capacity-reached");
+          expect(
+            (yield* Effect.flip(
+              service.restartSession({
+                projectId: PROJECT_ID,
+                sessionId: SESSION_ID,
+                expectedGeneration: INITIAL_COMPUTE_SESSION_GENERATION,
+              }),
+            )).reason,
+          ).toBe("session-conflict");
+          expect(
+            (yield* Effect.flip(
+              service.submitExecution({
+                projectId: PROJECT_ID,
+                sessionId: SESSION_ID,
+                expectedGeneration: INITIAL_COMPUTE_SESSION_GENERATION,
+                executionId: ComputeExecutionId.make("injected"),
+                code: "figure",
+                source: { _tag: "console" },
+              }),
+            )).reason,
+          ).toBe("execution-conflict");
+          yield* service.cancelExecution({
+            projectId: PROJECT_ID,
+            sessionId: SESSION_ID,
+            expectedGeneration: INITIAL_COMPUTE_SESSION_GENERATION,
+            executionId: ComputeExecutionId.make("fresh-hold"),
+          });
+          yield* waitUntil(sessionAt("stopped"));
+          expect(test.closed()).toEqual([SESSION_ID]);
+        }),
+      );
+    }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+  );
+
   it.effect("keeps explicit session choices separate from the managed default", () =>
     Effect.gen(function* () {
       const managed: ComputeRuntimeProfile = {

@@ -49,6 +49,7 @@ import * as Clock from "effect/Clock";
 import * as Crypto from "effect/Crypto";
 import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
@@ -67,6 +68,11 @@ import * as AnalysisRunIndex from "./AnalysisRunIndex.ts";
 import { promoteAnalysisRun } from "./AnalysisRunPromotion.ts";
 import * as LocalAnalysisStore from "./LocalAnalysisStore.ts";
 import { ScientificRuntimePreferences } from "../compute/ScientificRuntimePreferences.ts";
+import * as ComputeHostCapacity from "../compute/ComputeHostCapacity.ts";
+import {
+  ComputeLanguageId,
+  DEFAULT_SCIENTIFIC_COMPUTING_LANGUAGE_SETTINGS,
+} from "@t3tools/contracts";
 import type { ResolvedAnalysisArtifactRepresentation } from "./LocalAnalysisStore.ts";
 import * as LocalExecutionProcess from "../execution/LocalExecutionProcess.ts";
 import {
@@ -192,6 +198,7 @@ class AnalysisRuntimeAdapters extends Context.Reference<ReadonlyArray<AnalysisRu
 ) {}
 
 const make = Effect.gen(function* () {
+  const hostCapacity = yield* ComputeHostCapacity.ComputeHostCapacity;
   const observeOperation = yield* makeOperationAnalytics;
   const runtimeAdapters = yield* AnalysisRuntimeAdapters;
   const crypto = yield* Crypto.Crypto;
@@ -224,6 +231,10 @@ const make = Effect.gen(function* () {
   const dirtyIndexProjectsRef = yield* Ref.make(new Set<string>());
   const runtimeQueuesRef = yield* Ref.make(new Map<string, ReadonlyArray<string>>());
   const handlesRef = yield* Ref.make(new Map<string, ExecutionProcessHandle>());
+  const completions = new Map<string, Deferred.Deferred<void, AnalysisOperationError>>();
+  // Includes the launch window before handlesRef contains a process. A queued
+  // receipt can be stale while its update is being persisted.
+  const claimedRuns = new Set<string>();
   const runtimeProfilesRef = yield* Ref.make(
     new Map<
       string,
@@ -651,7 +662,22 @@ const make = Effect.gen(function* () {
                     { stream: "stderr" as const, text: cause.message },
                   ]).pipe(Effect.as({ exitCode: null, timedOut: false as const })),
                 ),
-                Effect.scoped,
+                (check) =>
+                  Effect.acquireUseRelease(
+                    Effect.gen(function* () {
+                      const release = yield* hostCapacity
+                        .acquire()
+                        .pipe(
+                          Effect.mapError((cause) =>
+                            analysisError("verify", "process-failed", cause.message, cause),
+                          ),
+                        );
+                      return { release, scope: yield* Scope.make("sequential") };
+                    }),
+                    ({ scope }) => check.pipe(Effect.provideService(Scope.Scope, scope)),
+                    ({ release, scope }, exit) =>
+                      Scope.close(scope, exit).pipe(Effect.andThen(release)),
+                  ),
               );
             const outputs = yield* Ref.get(outputsRef);
             const finishedAt = yield* Clock.currentTimeMillis;
@@ -1016,8 +1042,10 @@ const make = Effect.gen(function* () {
     profile: AnalysisRuntimeProfile,
     absoluteSourcePath: string,
   ) => {
-    const execute = Effect.scoped(
-      Effect.gen(function* () {
+    let cleanupFailed = false;
+    const execute = Effect.gen(function* () {
+      const processScope = yield* Scope.make("sequential");
+      return yield* Effect.gen(function* () {
         const startingRun = yield* updateReceipt(runId, "start", (run) => ({
           ...run,
           phase: "launching",
@@ -1184,10 +1212,30 @@ const make = Effect.gen(function* () {
             `${profile.label} exited with code ${exitCode}.`,
           );
         }
-      }),
-    ).pipe(
+      }).pipe(
+        Effect.provideService(Scope.Scope, processScope),
+        Effect.onExit((exit) =>
+          Scope.close(processScope, exit).pipe(
+            Effect.tapCause(() =>
+              Effect.sync(() => {
+                cleanupFailed = true;
+              }),
+            ),
+          ),
+        ),
+      );
+    }).pipe(
       Effect.catchCause((cause) =>
         Effect.gen(function* () {
+          if (cleanupFailed) {
+            const message =
+              "The batch process could not be cleaned up. Its host reservation is retained.";
+            yield* updateReceipt(runId, "cancel", (run) => ({
+              ...run,
+              receipt: { ...run.receipt, failureMessage: message },
+            }));
+            return yield* analysisError("cancel", "process-failed", message, cause);
+          }
           let latest = (yield* Ref.get(runsRef)).get(runId);
           if (!latest || isTerminal(latest.receipt.status)) return;
           const status = latest.receipt.cancellationRequested
@@ -1233,11 +1281,13 @@ const make = Effect.gen(function* () {
       Effect.ensuring(
         Effect.all([
           Ref.update(handlesRef, (handles) => {
+            if (cleanupFailed) return handles;
             const next = new Map(handles);
             next.delete(runId);
             return next;
           }),
           Effect.gen(function* () {
+            if (cleanupFailed) return;
             const run = (yield* Ref.get(runsRef)).get(runId);
             if (run) {
               yield* store
@@ -1259,6 +1309,7 @@ const make = Effect.gen(function* () {
     if (!semaphore) return execute;
     return semaphore.withPermits(1)(
       Effect.gen(function* () {
+        claimedRuns.add(runId);
         yield* removeQueuedRun(adapter.id, runId);
         const run = (yield* Ref.get(runsRef)).get(runId);
         if (!run || isTerminal(run.receipt.status)) return;
@@ -1266,7 +1317,17 @@ const make = Effect.gen(function* () {
           yield* finishRun(runId, "cancelled", null, null);
           return;
         }
-        yield* execute;
+        // Batch does not need the Engine helper, but its native process still
+        // consumes the same host budget as a live or fresh Compute session.
+        yield* Effect.acquireUseRelease(
+          hostCapacity.acquire(),
+          () => execute,
+          (release) => (cleanupFailed ? Effect.void : release),
+        ).pipe(
+          Effect.catch((error) =>
+            cleanupFailed ? Effect.fail(error) : finishRun(runId, "failed", null, error.message),
+          ),
+        );
       }),
     );
   };
@@ -1282,6 +1343,20 @@ const make = Effect.gen(function* () {
             "The selected analysis runtime is unavailable.",
           );
         }
+        const settings = yield* runtimePreferences.getSettings.pipe(
+          Effect.mapError((cause) =>
+            analysisError("start", "operation-failed", "Unable to read runtime settings.", cause),
+          ),
+        );
+        const preference =
+          settings.scientificComputing.languages[ComputeLanguageId.make(adapter.kind)] ??
+          DEFAULT_SCIENTIFIC_COMPUTING_LANGUAGE_SETTINGS;
+        if (!preference.enabled)
+          return yield* analysisError(
+            "start",
+            "runtime-invalid",
+            `Enable ${adapter.kind} in Scientific Computing settings before running it.`,
+          );
         const lowerPath = input.relativePath.toLowerCase();
         if (!adapter.fileExtensions.some((extension) => lowerPath.endsWith(extension))) {
           return yield* analysisError(
@@ -1300,13 +1375,44 @@ const make = Effect.gen(function* () {
         }
         const identity = yield* identityForCwd("start", input.cwd);
         yield* ensureProjectRunsLoaded(identity.projectId);
+        if (input.runId !== undefined) {
+          const existing =
+            (yield* Ref.get(runsRef)).get(input.runId) ??
+            (yield* store
+              .loadRun(identity.projectId, input.runId)
+              .pipe(
+                Effect.mapError((cause) =>
+                  analysisError(
+                    "start",
+                    "persistence-failed",
+                    "Unable to resolve the requested run.",
+                    cause,
+                  ),
+                ),
+              ));
+          if (existing !== null && existing !== undefined) {
+            if (
+              existing.projectId !== identity.projectId ||
+              existing.source.relativePath !== input.relativePath ||
+              existing.source.revision !== input.sourceRevision ||
+              existing.runtime.id !== input.runtimeId
+            ) {
+              return yield* analysisError(
+                "start",
+                "run-already-active",
+                "This run identity belongs to a different request.",
+              );
+            }
+            return existing;
+          }
+        }
         const activeRun = [...(yield* Ref.get(runsRef)).values()].find(
           (run) =>
             run.projectId === identity.projectId &&
             run.source.relativePath === input.relativePath &&
             !isTerminal(run.receipt.status),
         );
-        if (activeRun) {
+        if (activeRun && input.runId === undefined) {
           return yield* analysisError(
             "start",
             "run-already-active",
@@ -1364,18 +1470,20 @@ const make = Effect.gen(function* () {
               analysisError("start", "invalid-source", "The source path is invalid.", cause),
             ),
           );
-        const runId = ExecutionRunId.make(
-          yield* crypto.randomUUIDv4.pipe(
-            Effect.mapError((cause) =>
-              analysisError(
-                "start",
-                "operation-failed",
-                "Unable to create the analysis run identifier.",
-                cause,
+        const runId =
+          input.runId ??
+          ExecutionRunId.make(
+            yield* crypto.randomUUIDv4.pipe(
+              Effect.mapError((cause) =>
+                analysisError(
+                  "start",
+                  "operation-failed",
+                  "Unable to create the analysis run identifier.",
+                  cause,
+                ),
               ),
             ),
-          ),
-        );
+          );
         const startedAt = yield* nowIso;
         const queuedRunCount = (yield* Ref.get(runtimeQueuesRef)).get(adapter.id)?.length ?? 0;
         if (queuedRunCount >= MAXIMUM_QUEUED_RUNS_PER_RUNTIME) {
@@ -1425,31 +1533,35 @@ const make = Effect.gen(function* () {
             output: [],
           },
         };
-        yield* putRun("start", run);
-        yield* Ref.update(runtimeQueuesRef, (queues) => {
-          const next = new Map(queues);
-          next.set(adapter.id, [...(next.get(adapter.id) ?? []), runId]);
-          return next;
-        });
-        const runtimeWorkQueue = runtimeWorkQueues.get(adapter.id);
-        if (!runtimeWorkQueue) {
-          return yield* analysisError(
-            "start",
-            "runtime-invalid",
-            `${profile.label} has no local execution queue.`,
-          );
-        }
-        yield* Queue.offer(runtimeWorkQueue, {
-          runId,
-          adapter,
-          profile,
-          absoluteSourcePath: target.absolutePath,
-        });
-        return run;
+        return yield* Effect.gen(function* () {
+          const completion = yield* Deferred.make<void, AnalysisOperationError>();
+          yield* putRun("start", run);
+          completions.set(runId, completion);
+          yield* Ref.update(runtimeQueuesRef, (queues) => {
+            const next = new Map(queues);
+            next.set(adapter.id, [...(next.get(adapter.id) ?? []), runId]);
+            return next;
+          });
+          const runtimeWorkQueue = runtimeWorkQueues.get(adapter.id);
+          if (!runtimeWorkQueue) {
+            return yield* analysisError(
+              "start",
+              "runtime-invalid",
+              `${profile.label} has no local execution queue.`,
+            );
+          }
+          yield* Queue.offer(runtimeWorkQueue, {
+            runId,
+            adapter,
+            profile,
+            absoluteSourcePath: target.absolutePath,
+          });
+          return run;
+        }).pipe(Effect.uninterruptible);
       }),
     );
 
-  const cancelRun = (input: AnalysisCancelRunInput) =>
+  const requestRunCancellation = (input: AnalysisCancelRunInput) =>
     Effect.gen(function* () {
       const identity = yield* identityForCwd("cancel", input.cwd);
       yield* ensureProjectRunsLoaded(identity.projectId);
@@ -1473,9 +1585,14 @@ const make = Effect.gen(function* () {
         receipt: { ...current.receipt, cancellationRequested: true },
       }));
       const handle = (yield* Ref.get(handlesRef)).get(input.runId);
-      if (updated.receipt.status === "queued" && !handle) {
+      if (updated.receipt.status === "queued" && !handle && !claimedRuns.has(input.runId)) {
         yield* removeQueuedRun(updated.runtime.id, input.runId);
         const finished = yield* finishRun(input.runId, "cancelled", null, null);
+        const completion = completions.get(input.runId);
+        if (completion !== undefined) {
+          yield* Deferred.succeed(completion, undefined);
+          completions.delete(input.runId);
+        }
         yield* Ref.update(runsRef, (runs) => {
           const next = new Map(runs);
           next.delete(input.runId);
@@ -1497,6 +1614,44 @@ const make = Effect.gen(function* () {
       }
       return (yield* Ref.get(runsRef)).get(input.runId) ?? updated;
     });
+
+  const cancelRun = Effect.fn("AnalysisService.cancelRun")(function* (
+    input: AnalysisCancelRunInput,
+  ) {
+    if (input.waitForExit) yield* startLock.withPermits(1)(Effect.void);
+    const completion = completions.get(input.runId);
+    const result = yield* requestRunCancellation(input).pipe(
+      Effect.catch((error) =>
+        input.waitForExit &&
+        (error.reason === "run-not-found" || error.reason === "run-already-finished")
+          ? getRun({ cwd: input.cwd, runId: input.runId })
+          : Effect.fail(error),
+      ),
+    );
+    if (!input.waitForExit) return result;
+    if (completion !== undefined)
+      yield* Deferred.await(completion).pipe(
+        Effect.timeoutOrElse({
+          duration: "30 seconds",
+          orElse: () =>
+            Effect.fail(
+              analysisError(
+                "cancel",
+                "process-failed",
+                "The batch process has not finished stopping. Keep this tab open and retry.",
+              ),
+            ),
+        }),
+      );
+    const stopped = yield* getRun({ cwd: input.cwd, runId: input.runId });
+    if (!isTerminal(stopped.receipt.status))
+      return yield* analysisError(
+        "cancel",
+        "process-failed",
+        "Unable to confirm that this batch run has stopped.",
+      );
+    return stopped;
+  });
 
   const listRuns = (input: AnalysisListRunsInput) =>
     Effect.gen(function* () {
@@ -1877,6 +2032,26 @@ const make = Effect.gen(function* () {
       Stream.fromQueue(runtimeWorkQueue).pipe(
         Stream.runForEach((queued) =>
           runProcess(queued.runId, queued.adapter, queued.profile, queued.absoluteSourcePath).pipe(
+            Effect.onExit((exit) =>
+              Effect.gen(function* () {
+                claimedRuns.delete(queued.runId);
+                const completion = completions.get(queued.runId);
+                if (completion === undefined) return;
+                if (Exit.isSuccess(exit)) {
+                  yield* Deferred.succeed(completion, undefined);
+                  completions.delete(queued.runId);
+                } else
+                  yield* Deferred.fail(
+                    completion,
+                    analysisError(
+                      "cancel",
+                      "process-failed",
+                      "Batch cleanup failed; shutdown could not be confirmed.",
+                      exit.cause,
+                    ),
+                  );
+              }),
+            ),
             Effect.catchCause((cause) =>
               Effect.logError("analysis runtime queue worker failed", {
                 runId: queued.runId,
@@ -1911,7 +2086,10 @@ const make = Effect.gen(function* () {
 /** Adapter injection keeps orchestration testable and lets future runtimes share one coordinator. */
 export const layerWithAdapters = (runtimeAdapters: ReadonlyArray<AnalysisRuntimeAdapter>) =>
   Layer.effect(AnalysisService, make).pipe(
+    Layer.provide(ComputeHostCapacity.layer),
     Layer.provide(Layer.succeed(AnalysisRuntimeAdapters, runtimeAdapters)),
   );
 
-export const layer = Layer.effect(AnalysisService, make);
+export const layer = Layer.effect(AnalysisService, make).pipe(
+  Layer.provide(ComputeHostCapacity.layer),
+);
