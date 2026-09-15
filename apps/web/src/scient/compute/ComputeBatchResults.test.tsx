@@ -276,6 +276,30 @@ afterEach(async () => {
 });
 
 describe("Compute batch lifecycle", () => {
+  it("stops a reserved run without waiting for the start response", async () => {
+    const pending = deferred<ReturnType<typeof success>>();
+    mocks.start.mockReturnValue(pending.promise);
+    mocks.cancel.mockImplementation(async ({ input }) => success(run(input.runId, "cancelled")));
+    const onRunReserved = vi.fn(() => true);
+    await render(<Harness options={{ onRunReserved }} />);
+    let started!: ReturnType<ComputeBatchRunModel["start"]>;
+    await act(async () => {
+      started = batch.start();
+      expect(await batch.cancel()).toBe(true);
+    });
+    const reservedId = mocks.start.mock.calls[0]![0].input.runId;
+    expect(mocks.cancel).toHaveBeenCalledExactlyOnceWith({
+      environmentId: source.environmentId,
+      input: { cwd: source.cwd, runId: reservedId, waitForExit: true },
+    });
+    expect(batch.isStarting).toBe(true);
+    await act(async () => {
+      pending.resolve(success(run(reservedId, "cancelled")));
+      await started;
+    });
+    expect(batch.activeRun).toBeNull();
+  });
+
   it("keeps the reserved identity after a disconnected start response without replaying", async () => {
     const onRunReserved = vi.fn(() => true);
     const onStartRejected = vi.fn();
@@ -549,6 +573,55 @@ describe("Compute batch lifecycle", () => {
 });
 
 describe("Compute batch results", () => {
+  it("keeps Stop available in embedded results and targets the controlled run", async () => {
+    const owned = run("owned");
+    mocks.values.set("events", AsyncResult.success([owned, run("other")]));
+    await render(
+      <Harness
+        controls={false}
+        options={{ runId: owned.receipt.runId, onRunReserved: () => true }}
+      />,
+    );
+    await click("Stop");
+    expect(mocks.cancel).toHaveBeenCalledExactlyOnceWith({
+      environmentId: source.environmentId,
+      input: { cwd: source.cwd, runId: owned.receipt.runId },
+    });
+  });
+
+  it("does not substitute another run's output while restoring the owned run", async () => {
+    const other = run("other", "succeeded");
+    mocks.values.set(
+      "events",
+      AsyncResult.success([
+        {
+          ...other,
+          artifacts: [{ artifactId: "other-figure", kind: "figure", representations: [] }],
+          receipt: {
+            ...other.receipt,
+            output: [{ sequence: 1, stream: "stdout", text: "OTHER_RUN_OUTPUT" }],
+          },
+        },
+      ]),
+    );
+    await render(
+      <Harness
+        controls={false}
+        options={{ runId: run("pending").receipt.runId, onRunReserved: () => true }}
+      />,
+    );
+    expect(container.textContent).not.toContain("OTHER_RUN_OUTPUT");
+    expect(mocks.artifacts).not.toHaveBeenCalled();
+    expect(container.querySelector('[aria-label="Local MATLAB run history"]')).toBeNull();
+    expect(container.textContent).toContain("Waiting for this batch run");
+    expect(container.textContent).not.toContain("Run MATLAB batch to see output");
+    await click("Stop");
+    expect(mocks.cancel).toHaveBeenCalledExactlyOnceWith({
+      environmentId: source.environmentId,
+      input: { cwd: source.cwd, runId: "pending" },
+    });
+  });
+
   it("hides its own execution controls by default", async () => {
     function DefaultResults() {
       const model = useComputeBatchRun(source);

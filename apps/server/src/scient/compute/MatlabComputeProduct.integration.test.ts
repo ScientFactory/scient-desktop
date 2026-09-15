@@ -28,6 +28,7 @@ import * as WorkspaceFileSystem from "../../workspace/WorkspaceFileSystem.ts";
 import * as WorkspacePaths from "../../workspace/WorkspacePaths.ts";
 import * as LocalDuplexProcess from "../execution/LocalDuplexProcess.ts";
 import * as LocalExecutionProcess from "../execution/LocalExecutionProcess.ts";
+import { processExists } from "../execution/LocalProcessTestSupport.ts";
 import * as ComputeSessionService from "./ComputeSessionService.ts";
 import { makeComputeRpcGateway } from "./ComputeRpcGateway.ts";
 import * as LocalComputeStore from "./LocalComputeStore.ts";
@@ -637,6 +638,88 @@ describe.runIf(Boolean(TEST_MATLAB))("MATLAB compute product backend", () => {
             "disp('after interrupt');",
           );
           expect(yield* waitForTerminal(gateway, projectRoot, sessionId, afterInterruptId)).toBe(
+            "succeeded",
+          );
+
+          // Fresh lifetimes must retain their output before reaping the Engine,
+          // without touching the interactive session's workspace.
+          for (const [index, code] of [
+            "assert(~exist('rapid_counter', 'var')); figure; plot(1:3); disp('FRESH_MATLAB_OK');",
+            "error('Scient:ExpectedFreshFailure', 'EXPECTED_FRESH_FAILURE');",
+            "pause(60);",
+          ].entries()) {
+            const freshId = ComputeSessionId.make(`matlab-fresh-${index}`);
+            const executionId = ComputeExecutionId.make(`matlab-fresh-result-${index}`);
+            const pidPath = `${projectRoot}/fresh-${index}.pid`;
+            const capturePid = `fid = fopen('${pidPath.replaceAll("'", "''")}', 'w'); fprintf(fid, '%d', feature('getpid')); fclose(fid);`;
+            const fresh = yield* gateway.startSession({
+              cwd: projectRoot,
+              sessionId: freshId,
+              languageId: MATLAB,
+              executable: null,
+              runOnce: { executionId, code: `${capturePid}\n${code}`, source: { _tag: "console" } },
+            });
+            expect(fresh.lifetime).toBe("fresh");
+            if (index === 2) {
+              yield* waitForBusy(gateway, projectRoot, freshId);
+              for (let attempt = 0; attempt < 1_200 && !(yield* fs.exists(pidPath)); attempt += 1) {
+                yield* Effect.sleep("50 millis");
+              }
+              expect(yield* fs.exists(pidPath)).toBe(true);
+              yield* gateway.stopSession({
+                cwd: projectRoot,
+                sessionId: freshId,
+                expectedGeneration: fresh.generation,
+              });
+            }
+            expect(yield* waitForTerminal(gateway, projectRoot, freshId, executionId)).toBe(
+              index === 0 ? "succeeded" : index === 1 ? "failed" : "cancelled",
+            );
+            const closed = yield* Effect.gen(function* () {
+              for (let attempt = 0; attempt < 1_200; attempt += 1) {
+                const record = yield* gateway.getSession({ cwd: projectRoot, sessionId: freshId });
+                if (record?.status === "stopped") return record;
+                yield* Effect.sleep("50 millis");
+              }
+              return yield* Effect.die("Fresh MATLAB Engine did not close.");
+            });
+            expect(closed.identity?.transportProcessId).toBeTypeOf("number");
+            expect(processExists(closed.identity!.transportProcessId!)).toBe(false);
+            // Independently capture the native PID inside the actual runtime, so
+            // cleanup qualification cannot pass by checking only the bridge PID.
+            const matlabPid = Number(yield* fs.readFileString(pidPath));
+            expect(Number.isSafeInteger(matlabPid) && matlabPid > 0).toBe(true);
+            expect(closed.identity?.runtimeProcessId).toBe(matlabPid);
+            expect(processExists(matlabPid)).toBe(false);
+            if (index === 0) {
+              const retained = yield* gateway.listOutputs({
+                cwd: projectRoot,
+                sessionId: freshId,
+                executionId,
+              });
+              expect(
+                retained.outputs.some(
+                  (output) => output._tag === "stream" && output.text.includes("FRESH_MATLAB_OK"),
+                ),
+              ).toBe(true);
+              expect(
+                projectComputeOutputs(retained.outputs).some(
+                  (output) =>
+                    output._tag === "representation" &&
+                    output.bundle.representations.some((item) => item.mediaType === "image/png"),
+                ),
+              ).toBe(true);
+            }
+          }
+          const preservedId = yield* submit(
+            gateway,
+            projectRoot,
+            sessionId,
+            session.generation,
+            "matlab-after-fresh",
+            "assert(rapid_counter == 40);",
+          );
+          expect(yield* waitForTerminal(gateway, projectRoot, sessionId, preservedId)).toBe(
             "succeeded",
           );
 

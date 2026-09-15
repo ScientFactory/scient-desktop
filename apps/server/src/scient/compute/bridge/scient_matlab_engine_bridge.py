@@ -55,6 +55,7 @@ from scient_compute_bridge import (
 
 STARTUP_TIMEOUT = 180
 SHUTDOWN_TIMEOUT = 15
+NATIVE_EXIT_GRACE = 3
 INTERRUPT_SETTLE_TIMEOUT = 10
 LIVENESS_INTERVAL = 1.0
 MAX_VARIABLES = 200
@@ -107,6 +108,82 @@ SERVER_MESSAGE_TYPES = {
     "shutdown",
 }
 REQUEST_ID_TYPES = {"execute", "interrupt", "inspect-variables"}
+
+
+class MatlabProcessExit:
+    """Observe this Engine's process without signalling any other MATLAB instance."""
+
+    def __init__(self, pid: int) -> None:
+        if not isinstance(pid, int) or pid <= 0:
+            raise ValueError("MATLAB returned an invalid process ID.")
+        self.pid = pid
+        self._exited = False
+        self._handle = None
+        self._kernel32 = None
+        self._group = os.getpgid(pid) if os.name != "nt" else None
+        if os.name == "nt":
+            # Capture a handle while the process is alive; unlike a later PID
+            # lookup, this cannot accidentally observe a recycled Windows PID.
+            import ctypes
+            from ctypes import wintypes
+
+            kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+            kernel32.OpenProcess.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
+            kernel32.OpenProcess.restype = wintypes.HANDLE
+            kernel32.WaitForSingleObject.argtypes = [wintypes.HANDLE, wintypes.DWORD]
+            kernel32.WaitForSingleObject.restype = wintypes.DWORD
+            kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
+            kernel32.CloseHandle.restype = wintypes.BOOL
+            kernel32.TerminateProcess.argtypes = [wintypes.HANDLE, wintypes.UINT]
+            kernel32.TerminateProcess.restype = wintypes.BOOL
+            self._handle = kernel32.OpenProcess(0x00100001, False, pid)  # SYNCHRONIZE | PROCESS_TERMINATE
+            if not self._handle:
+                raise ctypes.WinError(ctypes.get_last_error())
+            self._kernel32 = kernel32
+
+    def exited(self) -> bool:
+        if self._exited:
+            return True
+        if self._kernel32 is not None:
+            result = self._kernel32.WaitForSingleObject(self._handle, 0)
+            if result == 0:  # WAIT_OBJECT_0
+                self._exited = True
+                return True
+            if result == 258:  # WAIT_TIMEOUT
+                return False
+            raise RuntimeError("Unable to observe MATLAB process exit.")
+        try:
+            # Reap it if the Engine API left its exited child for us to collect.
+            if os.waitpid(self.pid, os.WNOHANG)[0] == self.pid:
+                self._exited = True
+                return True
+        except ChildProcessError:
+            pass  # MATLAB may have launched through a native intermediary.
+        try:
+            os.kill(self.pid, 0)  # POSIX liveness probe, never a termination signal.
+            return False
+        except ProcessLookupError:
+            self._exited = True
+            return True
+
+    def close(self) -> None:
+        if self._kernel32 is not None and self._handle is not None:
+            self._kernel32.CloseHandle(self._handle)
+            self._handle = None
+
+    def terminate(self, *, force: bool) -> None:
+        if self.exited():
+            return
+        if self._kernel32 is not None:
+            if not self._kernel32.TerminateProcess(self._handle, 1) and not self.exited():
+                raise RuntimeError("Unable to terminate the owned MATLAB process.")
+            return
+        try:
+            if os.getpgid(self.pid) != self._group:
+                raise RuntimeError("MATLAB process ownership changed during shutdown.")
+            os.kill(self.pid, signal.SIGKILL if force else signal.SIGTERM)
+        except ProcessLookupError:
+            pass
 
 
 def can_run_saved_matlab_source_natively(path: str) -> bool:
@@ -569,6 +646,7 @@ class MatlabEngineBridge:
         self._loop: Optional[asyncio.AbstractEventLoop] = None
         self._engine_module: Any = None
         self._engine: Any = None
+        self._engine_process: Optional[MatlabProcessExit] = None
         self._working_directory = os.path.realpath(os.getcwd())
         self._helper_directory: Optional[str] = None
         self._helper_names: dict[str, str] = {}
@@ -831,14 +909,29 @@ class MatlabEngineBridge:
             os.path.realpath(self._expected_matlab_root)
         ):
             raise RuntimeError("MATLAB Engine started a different installation than the selected runtime.")
-        helper_directory = self._write_helpers()
-        await asyncio.to_thread(self._engine.addpath, helper_directory, nargout=0)
-        await asyncio.to_thread(self._engine.cd, working_directory, nargout=0)
-        self._working_directory = os.path.realpath(working_directory)
         release, version = await asyncio.gather(
             asyncio.to_thread(self._engine.version, "-release", nargout=1),
             asyncio.to_thread(self._engine.version, nargout=1),
         )
+        # matlabProcessID is public since R2025a. Older supported installations
+        # use the compatibility query recommended by MathWorks support.
+        pid = (
+            await asyncio.to_thread(self._engine.builtin, "matlabProcessID", nargout=1)
+            if str(release).lstrip("R") >= "2025a"
+            else await asyncio.to_thread(self._engine.builtin, "feature", "getpid", nargout=1)
+        )
+        if (
+            isinstance(pid, bool)
+            or not isinstance(pid, (int, float))
+            or not math.isfinite(pid)
+            or int(pid) != pid
+        ):
+            raise RuntimeError("MATLAB returned an invalid process ID.")
+        self._engine_process = MatlabProcessExit(int(pid))
+        helper_directory = self._write_helpers()
+        await asyncio.to_thread(self._engine.addpath, helper_directory, nargout=0)
+        await asyncio.to_thread(self._engine.cd, working_directory, nargout=0)
+        self._working_directory = os.path.realpath(working_directory)
         return str(release), str(version)
 
     async def _handle_start(self, payload: dict[str, Any]) -> None:
@@ -849,7 +942,7 @@ class MatlabEngineBridge:
         self._send(
             "kernel-ready",
             {
-                "kernelPid": None,
+                "kernelPid": self._engine_process.pid if self._engine_process else None,
                 "languageId": "matlab",
                 "languageVersion": release or version or "unknown",
                 "protocolVersion": PROTOCOL_VERSION,
@@ -917,12 +1010,16 @@ class MatlabEngineBridge:
             while self._running:
                 await asyncio.sleep(LIVENESS_INTERVAL)
                 engine = self._engine
+                if engine is None or self._transitioning:
+                    continue
+                if self._engine_process is not None and self._engine_process.exited():
+                    await self._fail_fatal("The MATLAB Engine process exited.")
+                    return
                 # Engine liveness may cross a native IPC boundary. Keep it off
                 # the protocol loop so a slow check cannot block output,
                 # interruption, or parent-disconnect handling.
-                if engine is not None and not await asyncio.to_thread(
-                    engine._check_matlab
-                ):
+                reachable = await asyncio.to_thread(engine._check_matlab)
+                if not reachable and engine is self._engine and not self._transitioning:
                     await self._fail_fatal("The MATLAB Engine process exited.")
                     return
         except asyncio.CancelledError:
@@ -1464,15 +1561,44 @@ class MatlabEngineBridge:
     async def _close_engine(self) -> None:
         engine = self._engine
         self._engine = None
+        process = self._engine_process
+        self._engine_process = None
         if engine is None:
             return
+        quit_returned = False
+
+        async def close_and_wait() -> None:
+            nonlocal quit_returned
+            await asyncio.to_thread(engine.quit)
+            quit_returned = True
+            # Engine.quit acknowledges a request, not necessarily native exit.
+            # Do not release the session/capacity or start its replacement early.
+            if process is not None:
+                for escalation in (None, False, True):
+                    if escalation is not None:
+                        process.terminate(force=escalation)
+                    deadline = time.monotonic() + NATIVE_EXIT_GRACE
+                    while not process.exited():
+                        if time.monotonic() >= deadline:
+                            break
+                        await asyncio.sleep(0.05)
+                    else:
+                        return
+                raise RuntimeError("The owned MATLAB process survived forced shutdown")
+
         try:
-            await asyncio.wait_for(asyncio.to_thread(engine.quit), timeout=SHUTDOWN_TIMEOUT)
+            await asyncio.wait_for(close_and_wait(), timeout=SHUTDOWN_TIMEOUT)
         except Exception as error:
             # A restart may never place a replacement beside an engine whose
             # exit is uncertain. Propagating ends the bridge; its supervised
             # process group then remains the final cleanup authority.
-            raise RuntimeError("MATLAB Engine did not stop cleanly.") from error
+            detail = str(error)
+            if isinstance(error, asyncio.TimeoutError):
+                detail = "native process exit timed out" if quit_returned else "Engine.quit timed out"
+            raise RuntimeError(f"MATLAB Engine did not stop cleanly: {detail}.") from error
+        finally:
+            if process is not None:
+                process.close()
 
     async def _cancel_active(self) -> None:
         future = self._active_future
@@ -1497,7 +1623,9 @@ class MatlabEngineBridge:
             self._figure_seen.clear()
             await self._start_engine(self._working_directory)
             self._generation = next_generation
-            self._send("restarted", {"kernelPid": None})
+            self._send(
+                "restarted", {"kernelPid": self._engine_process.pid if self._engine_process else None}
+            )
         finally:
             self._transitioning = False
 

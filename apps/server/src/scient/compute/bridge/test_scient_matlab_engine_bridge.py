@@ -13,7 +13,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
-from unittest.mock import AsyncMock, Mock
+from unittest.mock import AsyncMock, Mock, patch
 
 sys.path.insert(0, os.path.dirname(__file__))
 
@@ -151,6 +151,92 @@ def make_bridge(test_case, engine):
 
 
 class TestMatlabBridge(unittest.IsolatedAsyncioTestCase):
+    async def test_monitor_detects_native_exit_even_with_a_retained_engine_object(self):
+        instance, _ = make_bridge(self, FakeEngine(figure=False))
+        observer = Mock()
+        observer.exited.return_value = True
+        instance._engine_process = observer
+        instance._fail_fatal = AsyncMock()
+        with patch.object(matlab_bridge, "LIVENESS_INTERVAL", 0.001):
+            await asyncio.wait_for(instance._monitor_engine(), timeout=1)
+        instance._fail_fatal.assert_awaited_once_with("The MATLAB Engine process exited.")
+
+    async def test_monitor_does_not_classify_intentional_shutdown_as_loss(self):
+        instance, _ = make_bridge(self, FakeEngine(figure=False))
+        observer = Mock()
+        instance._engine_process = observer
+        instance._transitioning = True
+        instance._fail_fatal = AsyncMock()
+        async def end_monitor(_delay):
+            instance._running = False
+        with patch.object(matlab_bridge.asyncio, "sleep", end_monitor):
+            await instance._monitor_engine()
+        observer.exited.assert_not_called()
+        instance._fail_fatal.assert_not_awaited()
+
+    async def test_shutdown_acknowledges_native_exit_not_just_engine_quit(self):
+        instance, output = make_bridge(self, FakeEngine(figure=False))
+        observer = Mock()
+        observer.exited.return_value = False
+        instance._engine_process = observer
+        closing = asyncio.create_task(instance._shutdown())
+        try:
+            await asyncio.sleep(0.01)
+            self.assertFalse(closing.done())
+            self.assertFalse(any(message["type"] == "shutdown-complete" for message in decode_frames(output.getvalue())))
+            observer.exited.return_value = True
+            await closing
+            await instance._flush()
+            self.assertEqual(decode_frames(output.getvalue())[-1]["type"], "shutdown-complete")
+            observer.close.assert_called_once()
+        finally:
+            if not closing.done():
+                closing.cancel()
+                with self.assertRaises(asyncio.CancelledError):
+                    await closing
+
+    async def test_native_exit_timeout_never_acknowledges_shutdown(self):
+        instance, output = make_bridge(self, FakeEngine(figure=False))
+        observer = Mock()
+        observer.exited.return_value = False
+        instance._engine_process = observer
+        with patch.object(matlab_bridge, "SHUTDOWN_TIMEOUT", 0.01):
+            with self.assertRaisesRegex(RuntimeError, "did not stop cleanly"):
+                await instance._shutdown()
+        self.assertFalse(any(message["type"] == "shutdown-complete" for message in decode_frames(output.getvalue())))
+        observer.close.assert_called_once()
+
+    async def test_shutdown_escalates_only_the_captured_native_process(self):
+        instance, output = make_bridge(self, FakeEngine(figure=False))
+        observer = Mock()
+        observer.exited.return_value = False
+        def terminate(*, force):
+            if force:
+                observer.exited.return_value = True
+        observer.terminate.side_effect = terminate
+        instance._engine_process = observer
+        with patch.object(matlab_bridge, "NATIVE_EXIT_GRACE", 0.001):
+            await instance._shutdown()
+        await instance._flush()
+        self.assertEqual([call.kwargs for call in observer.terminate.call_args_list], [{"force": False}, {"force": True}])
+        self.assertEqual(decode_frames(output.getvalue())[-1]["type"], "shutdown-complete")
+        observer.close.assert_called_once()
+
+    def test_native_process_observer_does_not_stop_the_process(self):
+        child = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)"])
+        observer = matlab_bridge.MatlabProcessExit(child.pid)
+        try:
+            self.assertFalse(observer.exited())
+            self.assertIsNone(child.poll())
+            observer.terminate(force=False)
+            child.wait(timeout=5)
+            self.assertTrue(observer.exited())
+        finally:
+            observer.close()
+            if child.poll() is None:
+                child.kill()
+                child.wait(timeout=5)
+
     async def test_parent_disconnect_and_stop_cancel_pending_startup(self):
         for reason in ("eof", "signal"):
             with self.subTest(reason=reason):

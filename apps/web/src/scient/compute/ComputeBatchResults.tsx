@@ -443,6 +443,7 @@ export function useComputeBatchRun(
   const [isStarting, setIsStarting] = useState(false);
   const [isCancelling, setIsCancelling] = useState(false);
   const pendingStart = useRef<Promise<AnalysisRunSnapshot | null> | null>(null);
+  const pendingOwnedRunId = useRef<AnalysisRunSnapshot["receipt"]["runId"] | null>(null);
   const pendingCancel = useRef<Promise<boolean> | null>(null);
   const submittedRunRef = useRef<AnalysisRunSnapshot | null>(null);
   const streamedRunsRef = useRef(streamedRuns);
@@ -503,6 +504,7 @@ export function useComputeBatchRun(
       setIsStarting(false);
       return Promise.resolve(null);
     }
+    pendingOwnedRunId.current = onRunReserved ? requestedRunId : null;
     const promise = (async () => {
       const result = await startRun({
         environmentId: source.environmentId,
@@ -564,6 +566,7 @@ export function useComputeBatchRun(
       })
       .finally(() => {
         pendingStart.current = null;
+        pendingOwnedRunId.current = null;
         setIsStarting(false);
       });
     pendingStart.current = promise;
@@ -587,6 +590,17 @@ export function useComputeBatchRun(
     if (pendingCancel.current) return pendingCancel.current;
     setIsCancelling(true);
     const promise = (async () => {
+      // The tab has already reserved this identity. Do not wait for a delayed
+      // start response before sending Stop; server admission serializes the two.
+      const pendingId = pendingOwnedRunId.current;
+      if (pendingId !== null) {
+        return cancelById({
+          environmentId: source.environmentId,
+          cwd: source.cwd,
+          runId: pendingId,
+          waitForExit: true,
+        });
+      }
       // A tab can close before startRun has returned its run ID.
       const starting = pendingStart.current;
       const started = starting ? await starting : submittedRunRef.current;
@@ -637,6 +651,7 @@ export function useComputeBatchRun(
     activeRun,
     submittedRun,
     runId,
+    isOwned: options.runId !== undefined || onRunReserved !== undefined,
     restoredRun,
     isStarting,
     isCancelling,
@@ -650,7 +665,7 @@ export type ComputeBatchRunModel = ReturnType<typeof useComputeBatchRun>;
 
 export interface ComputeBatchResultsProps {
   readonly model: ComputeBatchRunModel;
-  /** The parent toolbar may own Run/Stop while results retain history and saving. */
+  /** The parent toolbar may own Run; stopping an owned batch remains available here. */
   readonly showRunControls?: boolean;
   readonly resultPicker?: ReactNode;
 }
@@ -719,8 +734,15 @@ export function ComputeBatchResults({
       right.receipt.startedAt.localeCompare(left.receipt.startedAt),
     );
   }, [history, streamedRuns, model.submittedRun, model.restoredRun]);
+  const targetRunId = model.isOwned ? model.runId : (selectedRunId ?? model.runId);
   const selectedRun =
-    runs.find((run) => run.receipt.runId === (selectedRunId ?? model.runId)) ?? runs[0] ?? null;
+    (targetRunId === null
+      ? model.isOwned
+        ? null
+        : runs[0]
+      : runs.find((run) => run.receipt.runId === targetRunId)) ?? null;
+  const awaitingOwnedRun =
+    model.runId !== null && !runs.some((run) => run.receipt.runId === model.runId);
   const selectedLiveRun =
     streamedRuns.find((run) => run.receipt.runId === selectedRun?.receipt.runId) ??
     (model.submittedRun === selectedRun ? model.submittedRun : null) ??
@@ -728,7 +750,13 @@ export function ComputeBatchResults({
   const latestTerminalRunId =
     streamedRuns.find((run) => isTerminalAnalysisRunStatus(run.receipt.status))?.receipt.runId ??
     null;
-  const artifactRun = runForArtifactDisplay(runs, selectedRun);
+  // A controlled child owns one exact result, including its figures. The legacy
+  // history view may retain an older visual during a rerun, but not another child.
+  const artifactRun = model.isOwned
+    ? selectedRun && selectedRun.artifacts.length > 0
+      ? selectedRun
+      : null
+    : runForArtifactDisplay(runs, selectedRun);
   const artifactStatus = artifactRun
     ? artifactDisplayStatus({
         artifactRun,
@@ -930,45 +958,43 @@ export function ComputeBatchResults({
     >
       <div className="flex min-h-10 items-center gap-2 px-3 py-1.5">
         {resultPicker}
-        {showRunControls ? (
-          activeRun || model.isStarting ? (
-            <Button
-              size="xs"
-              variant="outline"
-              disabled={model.isCancelling || activeRun?.receipt.cancellationRequested}
-              onClick={() => void model.cancel()}
-            >
-              {model.isCancelling ? <LoaderCircle className="animate-spin" /> : <Square />}
-              Stop
-            </Button>
-          ) : (
-            <Button
-              size="xs"
-              disabled={primaryActionDisabled || busy}
-              onClick={primaryActionIsSetup ? undefined : () => void model.start()}
-              {...(primaryActionIsSetup
-                ? {
-                    render: (
-                      <Link
-                        to="/settings/scientific-computing"
-                        search={{ environmentId: props.environmentId }}
-                      />
-                    ),
-                  }
-                : {})}
-            >
-              {model.isStarting ? (
-                <LoaderCircle className="animate-spin" />
-              ) : primaryActionIsSetup ? null : (
-                <Play />
-              )}
-              {primaryActionIsSetup
-                ? `Set up ${props.runtimeLabel}`
-                : props.sourcePending
-                  ? "Saving…"
-                  : "Run MATLAB batch"}
-            </Button>
-          )
+        {activeRun || model.isStarting || awaitingOwnedRun ? (
+          <Button
+            size="xs"
+            variant="outline"
+            disabled={model.isCancelling || activeRun?.receipt.cancellationRequested}
+            onClick={() => void model.cancel()}
+          >
+            {model.isCancelling ? <LoaderCircle className="animate-spin" /> : <Square />}
+            Stop
+          </Button>
+        ) : showRunControls ? (
+          <Button
+            size="xs"
+            disabled={primaryActionDisabled || busy}
+            onClick={primaryActionIsSetup ? undefined : () => void model.start()}
+            {...(primaryActionIsSetup
+              ? {
+                  render: (
+                    <Link
+                      to="/settings/scientific-computing"
+                      search={{ environmentId: props.environmentId }}
+                    />
+                  ),
+                }
+              : {})}
+          >
+            {model.isStarting ? (
+              <LoaderCircle className="animate-spin" />
+            ) : primaryActionIsSetup ? null : (
+              <Play />
+            )}
+            {primaryActionIsSetup
+              ? `Set up ${props.runtimeLabel}`
+              : props.sourcePending
+                ? "Saving…"
+                : "Run MATLAB batch"}
+          </Button>
         ) : null}
         <ScientTooltip content={runtimeStatusText}>
           <span className="min-w-0 flex-1 truncate text-xs text-muted-foreground">
@@ -981,7 +1007,7 @@ export function ComputeBatchResults({
                   : runtimeStatusText}
           </span>
         </ScientTooltip>
-        {runs.length > 1 ? (
+        {!model.isOwned && runs.length > 1 ? (
           <Menu>
             <MenuTrigger
               render={
@@ -1089,6 +1115,10 @@ export function ComputeBatchResults({
               onAskAboutDiagnostic={askAboutDiagnostic}
               storageStatus={selectedRun.localStorage.status}
             />
+          ) : !projectNotInitialized && (model.isStarting || awaitingOwnedRun) ? (
+            <div role="status" className="p-3 text-xs text-muted-foreground">
+              {model.isStarting ? "Starting MATLAB batch…" : "Waiting for this batch run…"}
+            </div>
           ) : !projectNotInitialized && runtimeReady ? (
             <div className="p-3 text-xs text-muted-foreground">
               Run {props.runtimeLabel} batch to see output here.

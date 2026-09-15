@@ -49,6 +49,19 @@ Native batch's normal Cancel acknowledges the request; `waitForExit` is the stri
 contract. Exact terminal session reads confirm cleanup rather than merely consulting a receipt.
 Ambiguous start responses keep their reserved identity; they are not permission to replay code.
 
+MATLAB Engine's `quit()` can return before its native process exits, including after a
+figure-heavy session. The bridge captures its own native process identity at startup and
+confirms exit before acknowledging shutdown or starting a replacement. Bounded graceful
+shutdown escalates only that owned process; failure to confirm exit is an error, not success.
+The existing process-group supervisor remains the final containment boundary. This does not
+authorize signalling a user's separately opened MATLAB or discovering targets by process name.
+
+An owned native batch's Results remains bound to its exact ID while admission or recovery is
+pending. It never substitutes another run's text or figures. Its Stop control is independent
+of the parent toolbar's Run control and can cancel the reserved ID before the start response
+arrives. The shared result selector owns navigation between child results; the legacy
+unowned history view remains available without introducing a second picker inside an owned child.
+
 The old `AnalysisRunFilePanel` and `ScientFileAuxiliarySurface` are retired from the file viewer.
 `ScientComputeFileSurface` hosts the native adapter's Results alongside session Results. Artifact
 renderers, downloads, bounds and historical snapshots remain transport-specific where necessary;

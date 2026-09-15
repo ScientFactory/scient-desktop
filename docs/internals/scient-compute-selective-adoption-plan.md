@@ -12,8 +12,8 @@ Authority: This is an implementation ledger subordinate to `scient-compute-sessi
 Execution continuation: [the session foundation's execution consolidation](scient-compute-session-foundation.md)
 extends this candidate with Run fresh and a native MATLAB batch adapter in the common Results
 surface. It supersedes the separate one-shot panel, not MATLAB batch itself or its stored history.
-Settings and image/table presentation remain independently reviewed workstreams; their visual
-acceptance is not established by execution tests.
+Settings, image/table presentation, and execution are integrated in the same candidate; their
+combined visual acceptance remains separate from automated execution tests.
 
 ## Outcome
 
@@ -115,9 +115,12 @@ and product wording.
 ### File and auxiliary surface ownership
 
 The ordinary `.py`/`.m` editor remains the owner of Code/Split/Results and its independent
-Compute context. The optional MATLAB fresh-process panel is local view state initiated by that
-file's Run menu. It is not durable compute state, a global registry, or a reason to change
-ordinary file opening.
+Compute context. Run fresh and native MATLAB batch reserve child identities before dispatch
+and display their results in that file's existing Results surface. Navigation preserves those
+owners; explicit tab close stops the parent and every child before removing the tab. The
+separate MATLAB fresh-process panel is retired, not the native batch transport or its history.
+An owned batch displays only its exact receipt, output, and figures; older unrelated runs never
+stand in for a pending child. Stop remains available independently of where Run is displayed.
 
 The inherited editor keeps comments and annotations enabled. Compute supplies a scoped gutter
 presentation policy and a run-cell action. Where that action occupies the shared gutter slot, the
@@ -141,7 +144,7 @@ slot also exposes the ordinary comment action rather than deleting the capabilit
    - Disambiguate duplicate runtime labels only when necessary.
    - Keep short failure summaries with Details and Copy.
 4. **Secondary surfaces and editor capabilities**
-   - Scope MATLAB one-shot state to the active file surface.
+   - Own fresh sessions and MATLAB batch runs as children of the initiating file context.
    - Keep Compute gutter actions hover-only without removing comments.
    - Expose New compute session directly from the add-surface menu.
 5. **Documentation and qualification**
@@ -168,7 +171,8 @@ Automated acceptance must cover:
 - duplicate runtime labels remaining distinguishable;
 - Test passed clearing on Refresh, runtime/helper generation or selection changes, and managed
   operations; stale completion or returning to an earlier runtime must not restore an old pass;
-- one-shot state not crossing file tabs, projects, or environments;
+- fresh and native batch results not crossing file tabs, projects, environments, or child IDs;
+- Stop remaining reachable during startup and with parent-owned Run controls;
 - ordinary file comments/annotations and save conflict behavior on Compute files;
 - direct secondary-session discovery without changing its ownership or close semantics; and
 - existing independent Python/MATLAB session, stop, restart, interrupt, close, history, variables,
@@ -180,8 +184,9 @@ Manual comparison should focus on the delta, not requalify every foundation feat
 2. Compare file-first setup, toolbar wrapping, Code/Split/Results, empty Results Run, and failures.
 3. Compare Settings initial paint, current-runtime rows, Runtime, duplicate choices, Test,
    Refresh, Repair/Remove ownership, and MATLAB helper retargeting.
-4. Confirm Run as one-shot appears only after explicit selection and does not appear in another
-   file or app candidate.
+4. Run fresh and Run MATLAB batch explicitly from Run. Confirm the passive Results selector
+   switches among the interactive session and exact child results without starting anything.
+   Navigate away and back, stop a displayed child, then close its owning tab while another tab runs.
 5. Confirm cell Run and Add comment are both reachable on hover.
 6. Confirm New compute session is directly reachable and independent file tabs still run in
    parallel.
