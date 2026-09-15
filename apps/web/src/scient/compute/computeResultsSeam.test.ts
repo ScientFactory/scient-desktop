@@ -21,10 +21,6 @@ const artifactViewerActionsSource = NodeFS.readFileSync(
   NodePath.join(here, "../artifacts/staticArtifactViewerActions.ts"),
   "utf8",
 );
-const artifactMenusSource = NodeFS.readFileSync(
-  NodePath.join(here, "../artifacts/StaticArtifactMenus.tsx"),
-  "utf8",
-);
 const imageActionButtonsSource = NodeFS.readFileSync(
   NodePath.join(here, "../../components/preview/StaticImageActionButtons.tsx"),
   "utf8",
@@ -225,13 +221,11 @@ describe("compute result surface seam", () => {
     expect(figureSource).toContain("presentation.viewer");
     expect(figureSource).toContain("presentation.inline.resource");
     expect(figureSource).toContain("ScientImageActionMenu");
-    expect(artifactMenusSource).toContain("Open in viewer");
-    expect(artifactMenusSource).toContain("Floating card");
     expect(imageActionButtonsSource).toContain("Copy image");
     expect(imageActionButtonsSource).toContain("Download original");
-    expect(artifactMenusSource).not.toContain("Interactive");
-    expect(artifactMenusSource).toContain("toggleStaticArtifactFloating");
-    expect(artifactMenusSource).toContain("openStaticArtifactInPanel");
+    expect(figureSource).toContain("toggleStaticArtifactFloating");
+    expect(figureSource).toContain("Floating card");
+    expect(artifactPreviewSource).toContain("StaticImageActionButtons");
     expect(artifactPreviewSource).toContain("toggleStaticArtifactFloating");
     expect(artifactViewerActionsSource).toContain("openScientArtifact");
     expect(artifactViewerActionsSource).toContain("openArtifact");
