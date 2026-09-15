@@ -37,13 +37,14 @@ revision remains literal ancestry of owned `main`; it is not merely a reviewed
 or observed tip.
 
 The current T3 alignment is recorded in
-[`docs/internals/2026-09-15-upstream-sync-50ff4c37.md`](docs/internals/2026-09-15-upstream-sync-50ff4c37.md)
-and in `upstream-state.json`. It preserves 49 official first-parent commits after
+[`docs/internals/2026-09-15-upstream-sync-c1b22104.md`](docs/internals/2026-09-15-upstream-sync-c1b22104.md)
+and in `upstream-state.json`. It preserves 54 official first-parent commits after
 `01e05c15268dedb76da95f442fbf5201cd8e7a44` through
-`50ff4c371eab927a9650c114975241999f4cd7b1`. History-preserving merge
-`6f5593ec52e78a066ddf1f0aee9a9bdbdbebda33` has the exact owned base
-`fc5134619e183b95d29008db286566c03091aa59` as its first parent and the exact official target as its
-second parent.
+`c1b2210411da79350a3f9f5a65a4a64971e4acad`. The final history-preserving extension merge
+`093d1f7e193dda423266acc22d41ee24771db4e7` has the qualified initial candidate
+`22dcfd85b8c9920e14ba95a9573f47edacd3448a` as its first parent and the exact final official target
+as its second parent. The receipt also records the initial merge from the owned base through
+`50ff4c371eab927a9650c114975241999f4cd7b1`.
 
 Automated qualification passed; owner manual review is pending. Pull-request delivery, merge, and
 release publication remain separate actions. The
@@ -52,13 +53,15 @@ Later observed upstream tips do not move `integrationBase` by themselves.
 
 ## Receiving T3 updates
 
-The local alignment through `50ff4c37` is documented in the
-[2026-09-15 review](docs/internals/2026-09-15-upstream-sync-50ff4c37.md). It adds background project
+The local alignment through `c1b22104` is documented in the
+[2026-09-15 review](docs/internals/2026-09-15-upstream-sync-c1b22104.md). It adds background project
 cloning, durable worktree setup progress, title-intent refinement, mobile keyboard workflows,
 custom snooze controls, responsive Git and terminal operations, safer fork-preview staging, and
-attachment/UI reliability improvements. Scient's provider lifecycle, scientific surfaces, identity,
-signed npm-pinned server runtime, durable queue, state roots, and cloud/mobile publication holds
-remain.
+attachment/UI reliability improvements. Its final extension keeps the composer ready during
+background setup, restores focus safely after option menus close, aligns native macOS window
+controls across zoom levels, and finishes small mobile/device-state presentation fixes. Scient's
+provider lifecycle, scientific surfaces, identity, signed npm-pinned server runtime, durable queue,
+state roots, and cloud/mobile publication holds remain.
 
 Migration IDs are immutable local history, not an upstream synchronization counter. T3's multi-PR
 migration is registered as Scient `53`, composer-context migration follows at `54`, and title-state
