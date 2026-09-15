@@ -4,7 +4,7 @@ Scient can run Python and MATLAB from an initialized project without turning the
 notebook or installing a second copy of its files. Both use the same session, source, results, and
 history controls. Each language remains optional; MATLAB requires a user-installed, licensed
 runtime and a compatible Engine host. See [Run a MATLAB file](matlab-run-file.md) for its setup and
-the separate fresh-process workflow.
+**Run MATLAB batch**, available in the same file's Run menu and Results pane.
 
 ## Set up a runtime
 
@@ -294,3 +294,11 @@ licensed MATLAB but does not require **Connect MATLAB** or an Engine connection 
 Results appear in the same pane, with the existing batch history and **Save to project**
 action. Batch runs remain queued per MATLAB runtime; interactive and fresh sessions can
 run concurrently within the host's resource limit.
+
+Sessions, fresh runs, connection tests, and MATLAB batch share one host budget. The default allows
+one slot per 4 GiB of total host memory, with a minimum of one and maximum of sixteen. This limits
+simultaneous runtimes, not open tabs, and does not reserve or enforce memory for individual programs.
+On a one-slot host, a live session leaves no room for Run fresh. Scient never stops it automatically:
+the capacity menu offers **Stop this session and run fresh…**, with confirmation that its variables
+will be lost. Cancel keeps the session. Fresh execution begins only after shutdown is confirmed;
+another operation may take the freed slot, in which case the capacity warning remains actionable.

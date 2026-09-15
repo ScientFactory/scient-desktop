@@ -229,7 +229,6 @@ export interface ComputeRuntimeVerificationRequest {
  * needs to be told which one it is looking at.
  */
 export interface ComputeSessionServiceOptions {
-  readonly maximumLiveSessions: number;
   readonly maximumConcurrentStarts: number;
   readonly idleTimeoutMs: number | null;
   readonly maximumExecutionOutputBytes: number;
@@ -237,10 +236,6 @@ export interface ComputeSessionServiceOptions {
 }
 
 export const DEFAULT_COMPUTE_SESSION_SERVICE_OPTIONS: ComputeSessionServiceOptions = {
-  // Native qualification measured ~1.2–1.4 GiB idle per MATLAB engine versus
-  // ~0.1 GiB per Python kernel. Budget 4 GiB per active context to leave working
-  // headroom; this is admission protection, not a memory sandbox or a tab limit.
-  maximumLiveSessions: ComputeHostCapacity.DEFAULT_COMPUTE_HOST_CAPACITY,
   maximumConcurrentStarts: 2,
   idleTimeoutMs: null,
   maximumExecutionOutputBytes: 8 * 1024 * 1024,
@@ -475,10 +470,6 @@ const make = Effect.gen(function* () {
   const bindings = yield* ComputeRuntimeBindings;
   const options = yield* ComputeSessionServiceConfig;
   const hostEnvironment = yield* HostProcessEnvironment;
-  const maximumLiveSessions = positiveHostLimit(
-    hostEnvironment.SCIENT_COMPUTE_MAX_LIVE_SESSIONS,
-    options.maximumLiveSessions,
-  );
   const startupSlots = yield* Semaphore.make(
     positiveHostLimit(
       hostEnvironment.SCIENT_COMPUTE_MAX_CONCURRENT_STARTS,
@@ -793,7 +784,7 @@ const make = Effect.gen(function* () {
                 "runtime-unusable",
                 "Wait for runtime removal to finish before verifying the connection.",
               );
-            const releaseCapacity = yield* hostCapacity.acquire(maximumLiveSessions);
+            const releaseCapacity = yield* hostCapacity.acquire();
             yield* Ref.update(verifyingRef, (counts) =>
               new Map(counts).set(input.languageId, (counts.get(input.languageId) ?? 0) + 1),
             );
@@ -2553,7 +2544,7 @@ const make = Effect.gen(function* () {
           // Once ownership is persisted, interruption of the requesting RPC must
           // not strand a reservation before its independent startup fiber exists.
           return yield* Effect.gen(function* () {
-            const releaseCapacity = yield* hostCapacity.acquire(maximumLiveSessions);
+            const releaseCapacity = yield* hostCapacity.acquire();
             return yield* reserveSession(input, binding, releaseCapacity).pipe(
               Effect.onError(() =>
                 Effect.gen(function* () {

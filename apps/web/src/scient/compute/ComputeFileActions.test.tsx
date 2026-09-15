@@ -1,6 +1,7 @@
 // @vitest-environment happy-dom
 import {
   ComputeLanguageId,
+  ComputeSessionGeneration,
   ComputeSessionId,
   EnvironmentId,
   type ComputeLanguageRuntimeInspection,
@@ -20,6 +21,12 @@ const mocks = vi.hoisted(() => ({
   buttons: [] as Array<ComponentProps<"button">>,
   menuItems: [] as Array<ComponentProps<"button">>,
   start: vi.fn(),
+  stop: vi.fn(),
+  confirmation: null as null | {
+    open: boolean;
+    onOpenChange: (open: boolean) => void;
+    onConfirm: () => void;
+  },
   submit: vi.fn(),
   refresh: vi.fn(),
   runRequested: vi.fn(),
@@ -62,7 +69,13 @@ vi.mock("~/state/query", () => ({
 }));
 vi.mock("~/state/use-atom-command", () => ({
   useAtomCommand: (command: string) =>
-    command === "start" ? mocks.start : command === "submit" ? mocks.submit : mocks.refresh,
+    command === "start"
+      ? mocks.start
+      : command === "stop"
+        ? mocks.stop
+        : command === "submit"
+          ? mocks.submit
+          : mocks.refresh,
 }));
 vi.mock("~/components/ui/button", () => ({
   Button: (props: ComponentProps<"button">) => {
@@ -78,6 +91,12 @@ vi.mock("~/components/ui/alert-dialog", () => ({
   AlertDialogHeader: () => null,
   AlertDialogPopup: () => null,
   AlertDialogTitle: () => null,
+}));
+vi.mock("~/components/ui/contextual-confirmation", () => ({
+  ContextualConfirmation: (props: NonNullable<typeof mocks.confirmation>) => {
+    mocks.confirmation = props;
+    return null;
+  },
 }));
 vi.mock("~/components/ui/menu", () => ({
   Menu: ({ children }: { children: ReactNode }) => <>{children}</>,
@@ -174,6 +193,8 @@ describe("Python file run actions", () => {
     mocks.managedStatus = null;
     mocks.sessions = [];
     mocks.markup = "";
+    mocks.confirmation = null;
+    mocks.stop.mockReset();
     mocks.start.mockResolvedValue({
       _tag: "Success",
       value: { sessionId: ComputeSessionId.make("new-session"), generation: 1 },
@@ -241,6 +262,149 @@ describe("Python file run actions", () => {
     expect(mocks.submit).not.toHaveBeenCalled();
     expect(useComputeContextStore.getState().bindings[testContextId]?.sessionId).toBe(persistent);
   });
+
+  it.each([
+    "success",
+    "cancel",
+    "failed",
+    "thrown",
+    "nonterminal",
+    "wrong-owner",
+    "wrong-generation",
+    "closed-during-stop",
+    "changed-before-stop",
+  ])(
+    "recovers a one-slot fresh rejection only after explicit, exact shutdown (%s)",
+    async (outcome) => {
+      render();
+      const sessionId = ComputeSessionId.make("retained-session");
+      ensureComputeContext({
+        contextId: testContextId,
+        environmentId: testEnvironmentId,
+        cwd: "/project",
+        ownerKey: "file",
+      });
+      useComputeContextStore.getState().reserveSession({ contextId: testContextId, sessionId });
+      useComputeContextStore.getState().bindSession({
+        contextId: testContextId,
+        sessionId,
+        generation: ComputeSessionGeneration.make(1),
+      });
+      mocks.sessions = [
+        {
+          sessionId,
+          generation: 1,
+          languageId: "python",
+          label: "Python",
+          workingDirectory: "/project",
+          status: "ready",
+          activity: "idle",
+          runtime: runtime("managed").profile,
+          updatedAt: "2026-09-15T00:00:00.000Z",
+        },
+      ];
+      mocks.start.mockResolvedValueOnce({
+        _tag: "Failure",
+        cause: Cause.fail({ reason: "capacity-reached", message: "One slot in use" }),
+      });
+      mocks.start.mockImplementation(async ({ input }) => ({
+        _tag: "Success",
+        value: { sessionId: input.sessionId, generation: 1, status: "starting" },
+      }));
+      let finishStop: ((value: unknown) => void) | undefined;
+      mocks.stop.mockImplementation(
+        () =>
+          new Promise((resolve) => {
+            finishStop = resolve;
+          }),
+      );
+      vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+      const container = document.createElement("div");
+      const root = createRoot(container);
+      try {
+        await act(() =>
+          root.render(
+            <ComputeFileActions
+              language={PYTHON_COMPUTE_SOURCE}
+              environmentId={testEnvironmentId}
+              cwd="/project"
+              relativePath="test.py"
+              contents="print(1)"
+              sourceRevision="revision-1"
+              sourcePending={false}
+              selection={null}
+              editorSelection={null}
+              contextId={testContextId}
+              onRunRequested={mocks.runRequested}
+              onShowMatlabOneShot={vi.fn()}
+              onExecutionSubmitted={vi.fn()}
+            />,
+          ),
+        );
+        await act(async () => {
+          mocks.menuItems.findLast((item) => item.children === "Run fresh")!.onClick?.({} as never);
+        });
+        expect(mocks.start).toHaveBeenCalledTimes(1);
+        expect(mocks.stop).not.toHaveBeenCalled();
+        expect(
+          mocks.menuItems.some((item) => item.children === "No active sessions in this project"),
+        ).toBe(false);
+        await act(() => {
+          mocks.menuItems
+            .findLast((item) => item.children === "Stop this session and run fresh…")!
+            .onClick?.({} as never);
+        });
+        expect(mocks.confirmation?.open).toBe(true);
+        expect(mocks.stop).not.toHaveBeenCalled();
+        if (outcome === "cancel") {
+          await act(() => mocks.confirmation!.onOpenChange(false));
+          expect(mocks.stop).not.toHaveBeenCalled();
+          return;
+        }
+        if (outcome === "changed-before-stop") {
+          useComputeContextStore.setState({ bindings: {} });
+        }
+        if (outcome === "thrown") mocks.stop.mockRejectedValueOnce(new Error("Disconnected"));
+        await act(async () => {
+          const confirm = mocks.confirmation!;
+          confirm.onOpenChange(false);
+          confirm.onConfirm();
+          if (outcome === "success") confirm.onConfirm();
+        });
+        expect(mocks.start).toHaveBeenCalledTimes(1);
+        if (outcome === "changed-before-stop") {
+          expect(mocks.stop).not.toHaveBeenCalled();
+          return;
+        }
+        expect(mocks.stop).toHaveBeenCalledWith({
+          environmentId: testEnvironmentId,
+          input: { cwd: "/project", sessionId, expectedGeneration: 1 },
+        });
+        expect(mocks.stop).toHaveBeenCalledTimes(1);
+        if (outcome === "thrown") return;
+        if (outcome === "closed-during-stop") useComputeContextStore.setState({ bindings: {} });
+        await act(async () => {
+          finishStop!(
+            outcome === "failed"
+              ? { _tag: "Failure", cause: Cause.fail(new Error("Cleanup failed")) }
+              : {
+                  _tag: "Success",
+                  value: {
+                    sessionId: outcome === "wrong-owner" ? "another-session" : sessionId,
+                    generation: outcome === "wrong-generation" ? 2 : 1,
+                    status: outcome === "nonterminal" ? "closing" : "stopped",
+                  },
+                },
+          );
+        });
+        expect(mocks.start).toHaveBeenCalledTimes(outcome === "success" ? 2 : 1);
+        expect(mocks.submit).not.toHaveBeenCalled();
+      } finally {
+        await act(() => root.unmount());
+        vi.unstubAllGlobals();
+      }
+    },
+  );
 
   it.each([true, false])(
     "keeps Run file literal and respects runtime availability (%s)",

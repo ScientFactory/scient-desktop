@@ -1,3 +1,4 @@
+import { HostProcessEnvironment } from "@t3tools/shared/hostProcess";
 import {
   ComputeExecutionId,
   ComputeLanguageId,
@@ -319,6 +320,7 @@ const withReportedCapabilities = (
 });
 
 interface HarnessOptions {
+  readonly capacity?: number;
   readonly beforeOpen?: (sessionId: ComputeSessionId) => Effect.Effect<void, never, Scope.Scope>;
   readonly transformChannel?: (channel: ComputeChannel) => ComputeChannel;
   readonly adapter?: Partial<ComputeLanguageAdapter>;
@@ -405,11 +407,17 @@ const harness = (options: HarnessOptions = {}) =>
         },
         ...(options.additionalBindings ?? []),
       ]),
-      { ...DEFAULT_COMPUTE_SESSION_SERVICE_OPTIONS, maximumLiveSessions: 32, ...options.service },
+      { ...DEFAULT_COMPUTE_SESSION_SERVICE_OPTIONS, ...options.service },
       options.projectOutputs
         ? Layer.succeed(ComputeProjectOutputObserver, options.projectOutputs)
         : undefined,
     ).pipe(
+      Layer.provide(
+        Layer.succeed(HostProcessEnvironment, {
+          ...process.env,
+          SCIENT_COMPUTE_MAX_LIVE_SESSIONS: String(options.capacity ?? 32),
+        }),
+      ),
       // Merged rather than provided, so a test can read the disk the
       // coordinator wrote to and check that the two agree.
       Layer.provideMerge(LocalComputeStore.layer),
@@ -772,7 +780,7 @@ describe("compute runtime inspection", () => {
     Effect.gen(function* () {
       const test = yield* harness({
         connection: "detected",
-        service: { maximumLiveSessions: 1 },
+        capacity: 1,
         beforeOpen: () =>
           Effect.addFinalizer(() => Effect.die(new Error("verification cleanup failed"))),
       });
@@ -1330,7 +1338,7 @@ describe("compute session startup", () => {
     () =>
       Effect.gen(function* () {
         const test = yield* harness({
-          service: { maximumLiveSessions: 1 },
+          capacity: 1,
           beforeOpen: () =>
             Effect.addFinalizer(() => Effect.die(new Error("simulated cleanup failure"))),
         });
@@ -1448,7 +1456,7 @@ describe("compute session startup", () => {
     "settles concurrent fresh successes and failures with exactly one execution and cleanup each",
     () =>
       Effect.gen(function* () {
-        const test = yield* harness({ service: { maximumLiveSessions: 20 } });
+        const test = yield* harness({ capacity: 20 });
         yield* test.use(
           Effect.gen(function* () {
             const service = yield* ComputeSessionService;
@@ -1499,7 +1507,7 @@ describe("compute session startup", () => {
 
   it.effect("fresh runs use host admission limits and cannot become interactive sessions", () =>
     Effect.gen(function* () {
-      const test = yield* harness({ service: { maximumLiveSessions: 1 } });
+      const test = yield* harness({ capacity: 1 });
       yield* test.use(
         Effect.gen(function* () {
           const service = yield* ComputeSessionService;
@@ -1971,7 +1979,8 @@ describe("compute session startup", () => {
       const entered = yield* Deferred.make<void>();
       const release = yield* Deferred.make<void>();
       const test = yield* harness({
-        service: { maximumLiveSessions: 2, maximumConcurrentStarts: 1 },
+        capacity: 2,
+        service: { maximumConcurrentStarts: 1 },
         beforeOpen: (id) =>
           id === SESSION_ID
             ? Deferred.succeed(entered, undefined).pipe(Effect.andThen(Deferred.await(release)))

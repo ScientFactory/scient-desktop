@@ -22,6 +22,7 @@ import {
 } from "react";
 
 import { Button } from "~/components/ui/button";
+import { ContextualConfirmation } from "~/components/ui/contextual-confirmation";
 import {
   AlertDialog,
   AlertDialogClose,
@@ -128,6 +129,13 @@ export const ComputeFileActions = forwardRef<ComputeFileActionsHandle, ComputeFi
       null,
     );
     const [capacityBlocked, setCapacityBlocked] = useState(false);
+    const [freshCapacityBlocked, setFreshCapacityBlocked] = useState(false);
+    const [freshStopTarget, setFreshStopTarget] = useState<{
+      readonly contextId: ComputeContextId;
+      readonly session: ComputeSessionRecord;
+    } | null>(null);
+    const capacityAnchor = useRef<HTMLButtonElement | null>(null);
+    const stoppingForFresh = useRef(false);
     const [startRetryAvailable, setStartRetryAvailable] = useState(false);
     const [switchTarget, setSwitchTarget] = useState<{
       readonly environmentId: EnvironmentId;
@@ -608,6 +616,7 @@ export const ComputeFileActions = forwardRef<ComputeFileActionsHandle, ComputeFi
             );
             setStartRetryAvailable(!capacityRejected);
             setCapacityBlocked(capacityRejected);
+            setFreshCapacityBlocked(false);
             if (capacityRejected && props.contextId !== undefined) {
               useComputeContextStore.getState().releasePendingReservation({
                 contextId: props.contextId,
@@ -798,6 +807,7 @@ export const ComputeFileActions = forwardRef<ComputeFileActionsHandle, ComputeFi
               generation: INITIAL_COMPUTE_CONTEXT_GENERATION,
             });
             setCapacityBlocked(true);
+            setFreshCapacityBlocked(true);
           }
           // These rejections happen before admission. Network/startup failures
           // retain the exact owner until Stop confirms cleanup.
@@ -837,6 +847,8 @@ export const ComputeFileActions = forwardRef<ComputeFileActionsHandle, ComputeFi
           return;
         }
         useComputeContextStore.getState().observeSession(childId, started.value);
+        setCapacityBlocked(false);
+        setFreshCapacityBlocked(false);
         onExecutionSubmitted(sessionId, executionId);
       } catch (error) {
         toastManager.add(
@@ -852,6 +864,79 @@ export const ComputeFileActions = forwardRef<ComputeFileActionsHandle, ComputeFi
       } finally {
         setOperation(null);
         refreshSessions();
+      }
+    };
+    const stopAndRunFresh = async () => {
+      const target = freshStopTarget;
+      if (
+        target === null ||
+        stoppingForFresh.current ||
+        operation !== null ||
+        !languagePreference.enabled ||
+        readyRuntime === null ||
+        fileSlice === null ||
+        matlabFileCapability?.runnableAsFile === false
+      )
+        return;
+      const binding = getComputeContext(target.contextId);
+      // Approval concerns this exact session and generation, never a replacement.
+      if (
+        target.contextId !== props.contextId ||
+        binding?.environmentId !== props.environmentId ||
+        binding.cwd !== props.cwd ||
+        binding.sessionId !== target.session.sessionId ||
+        binding.generation !== target.session.generation ||
+        binding.lifecycle === "closing" ||
+        binding.lifecycle === "close-failed"
+      )
+        return;
+      stoppingForFresh.current = true;
+      setSwitching(true);
+      try {
+        const result = await stopSession({
+          environmentId: binding.environmentId,
+          input: {
+            cwd: binding.cwd,
+            sessionId: target.session.sessionId,
+            expectedGeneration: target.session.generation,
+          },
+        });
+        if (result._tag !== "Success") {
+          if (!isAtomCommandInterrupted(result))
+            reportFailure("Unable to stop this session", result);
+          return;
+        }
+        if (
+          result.value.sessionId !== target.session.sessionId ||
+          result.value.generation !== target.session.generation ||
+          !TERMINAL_COMPUTE_SESSION_STATUSES.has(result.value.status)
+        )
+          throw new Error("The session has not confirmed shutdown. Run fresh was not started.");
+        const current = getComputeContext(target.contextId);
+        if (
+          current?.sessionId !== target.session.sessionId ||
+          current.generation !== target.session.generation ||
+          current.lifecycle === "closing" ||
+          current.lifecycle === "close-failed"
+        )
+          return;
+        useComputeContextStore.getState().markSessionTerminal({
+          contextId: target.contextId,
+          sessionId: target.session.sessionId,
+          generation: target.session.generation,
+        });
+        await runFresh();
+      } catch (error) {
+        toastManager.add({
+          type: "error",
+          title: "Unable to run fresh",
+          description: error instanceof Error ? error.message : "Shutdown could not be confirmed.",
+        });
+      } finally {
+        stoppingForFresh.current = false;
+        setSwitching(false);
+        refreshSessions();
+        refreshEvents();
       }
     };
     const fileRunBlocked = matlabFileCapability?.runnableAsFile === false;
@@ -938,6 +1023,7 @@ export const ComputeFileActions = forwardRef<ComputeFileActionsHandle, ComputeFi
                       className="h-6 min-w-0 max-w-full px-1 text-[11px] font-normal"
                       disabled={stoppingUnusedSession !== null}
                       aria-label="Choose a compute session to stop"
+                      ref={capacityAnchor}
                       title="Stop an unused compute session to free host capacity"
                     />
                   }
@@ -945,9 +1031,24 @@ export const ComputeFileActions = forwardRef<ComputeFileActionsHandle, ComputeFi
                   <span className="truncate">Capacity · choose session</span>
                 </MenuTrigger>
                 <MenuPopup align="start" side="bottom" className="min-w-64">
+                  {freshCapacityBlocked && liveSession !== null && props.contextId !== undefined ? (
+                    <MenuItem
+                      disabled={switching || operation !== null}
+                      onClick={() =>
+                        setFreshStopTarget({ contextId: props.contextId!, session: liveSession })
+                      }
+                    >
+                      Stop this session and run fresh…
+                    </MenuItem>
+                  ) : null}
                   {capacitySessions.length === 0 ? (
-                    <MenuItem disabled title="Stop a session in another project, then retry">
-                      No active sessions in this project
+                    <MenuItem
+                      disabled
+                      title="Other slots may be held by sessions, tests, or batch runs on this host"
+                    >
+                      {liveSession !== null
+                        ? "This tab already has an active session"
+                        : "Capacity is in use elsewhere on this host"}
                     </MenuItem>
                   ) : (
                     capacitySessions.map((session) => (
@@ -1093,6 +1194,19 @@ export const ComputeFileActions = forwardRef<ComputeFileActionsHandle, ComputeFi
             </Menu>
           </div>
         </div>
+        <ContextualConfirmation
+          open={freshStopTarget !== null}
+          onOpenChange={(open) => {
+            if (!open) setFreshStopTarget(null);
+          }}
+          anchor={capacityAnchor}
+          title="Stop this session and run fresh?"
+          description="Current variables will be lost. Run history is kept."
+          confirmLabel="Stop and run fresh"
+          destructive
+          busy={switching}
+          onConfirm={() => void stopAndRunFresh()}
+        />
         <AlertDialog
           open={switchTarget !== null}
           onOpenChange={(open) => {

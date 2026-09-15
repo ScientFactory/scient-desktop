@@ -3404,15 +3404,23 @@ kernel manager or generic workflow scheduler is introduced.
   recent-history window. Runtime settings affect future starts, not another context's
   running interpreter or namespace.
 
-**Host policy:** `maximumLiveSessions` defaults to `max(1, min(16, floor(host RAM /
-4 GiB)))`; `maximumConcurrentStarts` defaults to 2. Operators can override them with
+**Host policy:** the shared `ComputeHostCapacity` service resolves its budget once at construction,
+defaulting to `max(1, min(16, floor(host RAM / 4 GiB)))`;
+`maximumConcurrentStarts` defaults to 2. Operators can override them with
 positive integer `SCIENT_COMPUTE_MAX_LIVE_SESSIONS` and
 `SCIENT_COMPUTE_MAX_CONCURRENT_STARTS`. Reservations count across projects until owned
-cleanup finishes. Explicit connection verification shares startup slots but does not
-consume a persistent session reservation. Reaching capacity returns typed
+cleanup finishes. Sessions, fresh runs, verification, and native batch acquire from the same
+counter and ceiling; callers cannot supply a per-acquisition limit. Explicit connection verification
+shares startup slots and holds a host lease until cleanup, without a persistent session record. Reaching capacity returns typed
 `capacity-reached`; it never evicts a namespace. This is coarse admission protection,
 not an open-tab limit, a resource sandbox, a guarantee that heavy user code fits, or
 a MATLAB-license entitlement check.
+
+Run fresh needs a slot beyond its retained interactive session. Capacity recovery includes the
+current session, with explicit confirmation before losing its namespace. It pins the approved
+session/generation, requires a terminal shutdown receipt, and never starts a replacement after
+failed cleanup or a changed/closed owner. Tests inject host configuration in their Effect scope:
+one-slot rejection/recovery and multi-slot isolation are qualified independently of runner RAM.
 
 The initial macOS measurements motivating conservative headroom were about 0.1 GiB
 idle per Python kernel and 1.1–1.4 GiB per MATLAB engine. Native qualification uses
