@@ -8,6 +8,7 @@ import { describe, expect, it } from "vite-plus/test";
 const here = NodePath.dirname(NodeURL.fileURLToPath(import.meta.url));
 const panelSource = NodeFS.readFileSync(NodePath.join(here, "ComputePanel.tsx"), "utf8");
 const outputSource = NodeFS.readFileSync(NodePath.join(here, "ComputeOutputView.tsx"), "utf8");
+const figureSource = NodeFS.readFileSync(NodePath.join(here, "ComputeFigure.tsx"), "utf8");
 const followerSource = NodeFS.readFileSync(
   NodePath.join(here, "ComputeFigureFollower.tsx"),
   "utf8",
@@ -219,12 +220,11 @@ describe("compute result surface seam", () => {
     expect(panelSource).toContain("selectedIsCurrentResult");
     expect(panelSource).toContain("allowFigureFollowing={selectedIsCurrentResult}");
     expect(outputSource).toContain("computeFigurePresentation");
-    expect(outputSource).toContain("StaticArtifactPresentationMenu");
-    expect(outputSource).toContain("StaticArtifactPresentationActionMenu");
-    expect(outputSource).toContain("StaticImageCopyButton");
-    expect(outputSource).toContain("StaticImageDownloadButton");
-    expect(outputSource).toContain("artifact={props.presentation.viewer}");
-    expect(outputSource).toContain('assetUrl={asset._tag === "Success" ? asset.url : null}');
+    expect(outputSource).toContain("ComputeFigure");
+    expect(figureSource).toContain("openStaticArtifactInPanel");
+    expect(figureSource).toContain("presentation.viewer");
+    expect(figureSource).toContain("presentation.inline.resource");
+    expect(figureSource).toContain("ScientImageActionMenu");
     expect(artifactMenusSource).toContain("Open in viewer");
     expect(artifactMenusSource).toContain("Floating card");
     expect(imageActionButtonsSource).toContain("Copy image");

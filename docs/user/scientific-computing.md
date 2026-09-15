@@ -189,8 +189,11 @@ recorded revision and source range still match the project file.
 The results surface shows one selected run rather than an ever-growing feed. Its compact history
 selector lets you revisit earlier runs of the same file. Static PNG and SVG figures emitted with
 normal display behavior such as `plt.show()` or IPython's `display(...)` appear inline at a useful
-size and open in Scient's existing full static-image viewer when selected. A compact action on each
-figure moves it into the shared movable, resizable floating viewer. Moving a figure between the full
+size and open directly in Scient's existing full static-image viewer when selected. The small image
+toolbar's menu offers copy, original download, available MATLAB FIG download, and the floating viewer;
+figure details stay in the menu. If a preview cannot load, **Try again** retries the image without
+rerunning your code. Original and native downloads remain available independently of preview decoding.
+Moving a figure between the full
 and floating viewers preserves one presentation owner rather than showing two copies; closing that
 viewer stops its updates and later runs never reopen it.
 

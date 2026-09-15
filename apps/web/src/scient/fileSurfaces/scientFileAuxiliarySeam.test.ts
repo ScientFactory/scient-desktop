@@ -45,8 +45,8 @@ describe("Scient file surface seams", () => {
       new URL("../artifacts/staticArtifactViewerActions.ts", import.meta.url),
       "utf8",
     );
-    const artifactMenus = NodeFS.readFileSync(
-      new URL("../artifacts/StaticArtifactMenus.tsx", import.meta.url),
+    const figure = NodeFS.readFileSync(
+      new URL("../compute/ComputeFigure.tsx", import.meta.url),
       "utf8",
     );
 
@@ -66,14 +66,14 @@ describe("Scient file surface seams", () => {
     expect(results).toContain('aria-label="Compute view"');
     expect(results).not.toContain("setVariablesOpen");
     expect(results).not.toContain("showVariablesTab");
-    expect(output).toContain("useAssetUrlState");
-    expect(output).toContain("<img");
-    expect(output).toContain("StaticArtifactPresentationMenu");
-    expect(output).toContain("StaticArtifactPresentationActionMenu");
-    expect(output).toContain("StaticImageCopyButton");
-    expect(output).toContain("StaticImageDownloadButton");
-    expect(artifactMenus).toContain("openStaticArtifactInPanel");
-    expect(artifactMenus).toContain("toggleStaticArtifactFloating");
+    expect(output).toContain("<ComputeFigure");
+    expect(figure).toContain("useAssetUrlState");
+    expect(figure).toContain("<img");
+    expect(figure).toContain("ScientImageActionMenu");
+    expect(figure).toContain("copyStaticImage");
+    expect(figure).toContain("downloadStaticImage");
+    expect(figure).toContain("openStaticArtifactInPanel");
+    expect(figure).toContain("toggleStaticArtifactFloating");
     expect(artifactActions).toContain("openScientArtifact");
   });
 });

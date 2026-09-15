@@ -1,4 +1,3 @@
-import type { ReactNode } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vite-plus/test";
 import {
@@ -14,21 +13,23 @@ import {
 } from "@t3tools/contracts";
 
 vi.mock("~/assets/assetUrls", () => ({
-  useAssetUrlState: () => ({ _tag: "Success", url: "https://synthetic.invalid/resource" }),
+  useAssetUrlRefresh: () => vi.fn(),
+  useAssetUrlState: () => ({
+    _tag: "Success",
+    url: "https://synthetic.invalid/resource",
+    expiresAt: Date.now() + 60_000,
+    refresh: vi.fn(),
+  }),
 }));
 vi.mock("~/rightPanelStore", () => ({ useRightPanelStore: {} }));
 vi.mock("./ComputeRichOutput", () => ({ ComputeRichOutput: () => null }));
-vi.mock("~/scient/artifacts/StaticArtifactMenus", () => ({
-  StaticArtifactPresentationMenu: ({ children }: { children: ReactNode }) => <div>{children}</div>,
-  StaticArtifactPresentationActionMenu: () => null,
-}));
 
 import { ComputeOutputView } from "./ComputeOutputView";
 import { COMPUTE_NATIVE_FIGURE_MEDIA_TYPE } from "./computeResultPresentation";
 
-describe("native figure result actions", () => {
+describe("figure result projection", () => {
   it.each([true, false])(
-    "shows the FIG action only when a retained FIG is present: %s",
+    "renders the shared figure controls with or without a retained FIG: %s",
     (hasNative) => {
       const output: ComputeOutput = {
         _tag: "display-update",
@@ -81,8 +82,9 @@ describe("native figure result actions", () => {
         />,
       );
       expect(markup).toContain("<img");
-      expect(markup).toContain("Download original");
-      expect(markup.includes("Download MATLAB FIG")).toBe(hasNative);
+      expect(markup).toContain("Figure actions");
+      expect(markup).toContain("More image actions");
+      expect(markup).toContain("Loading figure");
     },
   );
 });
