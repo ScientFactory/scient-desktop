@@ -113,6 +113,8 @@ export interface ManagedPythonEnvironmentInstallInput {
   readonly toolkitRevision: string;
   readonly pythonVersion: string;
   readonly provisionerVersion: string;
+  /** Used only when no prior managed record exists; updates preserve its selection. */
+  readonly selectionAfterInstall?: ManagedPythonSelection;
   readonly signal: AbortSignal;
   readonly onProgress?: ((progress: ManagedPythonProvisionProgress) => void) | undefined;
 }
@@ -557,7 +559,7 @@ export function makeManagedPythonEnvironmentManager(
         };
         const record: ManagedPythonEnvironmentRecord = {
           schemaVersion: 1,
-          selection: existing?.record.selection ?? "managed",
+          selection: existing?.record.selection ?? input.selectionAfterInstall ?? "managed",
           active,
           previous: existing?.record.active ?? null,
         };

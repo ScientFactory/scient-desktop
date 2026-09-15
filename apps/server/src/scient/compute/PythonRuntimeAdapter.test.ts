@@ -19,6 +19,7 @@ import {
   discoverCandidates,
   makePythonRuntimeAdapter,
   parseProbeOutput,
+  OBSERVED_PYTHON_PACKAGES,
   PYTHON_LANGUAGE_ID,
   JUPYTER_BRIDGE_TRANSPORT_KIND,
   PROBE_SCRIPT,
@@ -644,16 +645,10 @@ describe("python runtime adapter", () => {
       expect(verification.readiness).toBe("ready");
       expect(verification.connection).toBe("detected");
       expect(verification.message).toBeNull();
-      expect(verification.packages).toEqual([
-        { name: "ipykernel", version: "6.29.0" },
-        { name: "jupyter_client", version: "8.6.1" },
-        { name: "matplotlib", version: "3.9.0" },
-        { name: "nbformat", version: "5.10.4" },
-        { name: "numpy", version: "1.26.0" },
-        { name: "pandas", version: "2.2.0" },
-        { name: "plotly", version: "6.3.0" },
-        { name: "scipy", version: null },
-      ]);
+      const reported = JSON.parse(validProbeOutput).packages as Record<string, string | null>;
+      expect(verification.packages).toEqual(
+        OBSERVED_PYTHON_PACKAGES.map((name) => ({ name, version: reported[name] ?? null })),
+      );
     }),
   );
 

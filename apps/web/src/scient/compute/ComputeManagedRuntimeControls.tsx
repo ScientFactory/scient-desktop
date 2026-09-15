@@ -13,6 +13,7 @@ import type {
   ComputeLanguageId,
   ComputeManagedRuntimeAction,
   ComputeManagedRuntimeStatus,
+  ComputeToolkitId,
   EnvironmentId,
 } from "@t3tools/contracts";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
@@ -31,6 +32,11 @@ export interface ComputeManagedRuntimeFailureView {
   readonly summary: string;
   readonly detail: string;
   readonly retryAction: ComputeManagedRuntimeAction | null;
+}
+
+export interface ComputeManagedRuntimeProvisionOptions {
+  readonly toolkitIds?: ReadonlyArray<ComputeToolkitId>;
+  readonly selectionAfterInstall?: "managed" | "existing";
 }
 
 function sameManagedRuntimeSnapshot(
@@ -169,18 +175,31 @@ export function useComputeManagedRuntime(input: {
   const localFailure = localFailureState?.scopeKey === scopeKey ? localFailureState.failure : null;
   const inFlight = useRef(false);
   const unresolved = querySnapshot === undefined && queried.error === null && status === null;
-  const act = async (action: ComputeManagedRuntimeAction): Promise<boolean> => {
+  const act = async (
+    action: ComputeManagedRuntimeAction,
+    options?: ComputeManagedRuntimeProvisionOptions,
+  ): Promise<boolean> => {
     if (!input.environmentId || inFlight.current || unresolved || status?.operation) return false;
     inFlight.current = true;
     setPending(true);
     setLocalFailureState(null);
     try {
-      if ((action === "install" || action === "use-managed") && !(await input.ensureEnabled())) {
+      const activatesManaged =
+        action === "use-managed" ||
+        (action === "install" && options?.selectionAfterInstall !== "existing");
+      if (activatesManaged && !(await input.ensureEnabled())) {
         throw new Error("The language could not be enabled. Settings were not saved.");
       }
       const result = await manage({
         environmentId: input.environmentId,
-        input: { languageId: input.languageId, action },
+        input: {
+          languageId: input.languageId,
+          action,
+          ...(options?.toolkitIds === undefined ? {} : { toolkitIds: options.toolkitIds }),
+          ...(options?.selectionAfterInstall === undefined
+            ? {}
+            : { selectionAfterInstall: options.selectionAfterInstall }),
+        },
       });
       if (result._tag === "Failure") throw squashAtomCommandFailure(result);
       if (result.value) {

@@ -36,16 +36,22 @@ import {
   makePythonRuntimeAdapter,
   parseProbeOutput,
 } from "./PythonRuntimeAdapter.ts";
-import { assessPythonToolkits } from "./PythonToolkitCatalog.ts";
+import {
+  assessPythonToolkits,
+  PYTHON_BIOINFORMATICS_TOOLKIT,
+  PYTHON_IMAGE_ANALYSIS_TOOLKIT,
+  PYTHON_LARGE_DATA_TOOLKIT,
+  PYTHON_TOOLKIT_EXTRAS,
+} from "./PythonToolkitCatalog.ts";
 
 export const MANAGED_PYTHON_VERSION = "3.12.13";
 export const MANAGED_PYTHON_UV_VERSION = "0.11.16";
 export const MANAGED_PYTHON_PROVISIONER_VERSION = `uv-${MANAGED_PYTHON_UV_VERSION}`;
-export const MANAGED_PYTHON_TOOLKIT_REVISION = "scientific-python-2026-09-14.1";
+export const MANAGED_PYTHON_TOOLKIT_REVISION = "scientific-python-2026-09-15.2";
 export const MANAGED_PYTHON_LOCK_SHA256 =
-  "5aeeaabfe9bf1c084eecd0affefd5d517a3a03bf9ff4a65d91293210cff3a3d8";
+  "886d2252869ffaa9fb619a1b84e64772fa253711526e5f17dc4d478c07e3b356";
 export const MANAGED_PYTHON_PROJECT_SHA256 =
-  "122d932164a4fa48bd47458f8169fa58eaee452c59ab96f79a01577c8652d0b7";
+  "b215879df117043d7ced48b9b96c9837b42883bdb6a9688c615e78d9799a0cd8";
 const STAGED_MANAGED_PYTHON_DIRECTORY = "scient-managed-python";
 
 const PROCESS_TIMEOUT = Duration.minutes(30);
@@ -67,6 +73,11 @@ const REPRESENTATIVE_SCIENTIFIC_CHECK = [
   "import numpy as np",
   "import pandas as pd",
   "import plotly.graph_objects as go",
+  "import openpyxl",
+  "import seaborn as sns",
+  "import statsmodels.api as sm",
+  "import sympy",
+  "from sklearn.linear_model import LinearRegression",
   "from scipy import stats",
   "x = np.arange(6, dtype=float)",
   'frame = pd.DataFrame({"x": x, "y": x ** 2})',
@@ -80,9 +91,41 @@ const REPRESENTATIVE_SCIENTIFIC_CHECK = [
   "assert len(buffer.getvalue()) > 100",
   "chart = go.Figure(data=go.Scatter(x=[1, 2], y=[3, 4]))",
   'assert chart.to_plotly_json()["data"][0]["type"] == "scatter"',
+  "assert LinearRegression().fit([[0], [1]], [0, 1]).predict([[2]])[0] > 1.9",
+  "assert sympy.diff(sympy.Symbol('x') ** 2).subs({'x': 3}) == 6",
+  "assert sm.add_constant([1, 2]).shape == (2, 2)",
+  "assert sns.color_palette(n_colors=3)",
+  "assert openpyxl.Workbook().active.max_row == 1",
   'assert tuple(int(part) for part in nbformat.__version__.split(".")[:2]) >= (4, 2)',
   'print(json.dumps({"ok": True}))',
 ].join("\n");
+
+const TOOLKIT_SCIENTIFIC_CHECKS: Readonly<Record<string, ReadonlyArray<string>>> = {
+  [PYTHON_LARGE_DATA_TOOLKIT.toolkitId]: [
+    "import dask.array as da",
+    "import h5netcdf, h5py, pyarrow as pa, xarray as xr, zarr",
+    "assert int(da.arange(6, chunks=3).sum().compute()) == 15",
+    "assert xr.DataArray([1, 2]).sum().item() == 3",
+    "assert pa.table({'x': [1]}).num_rows == 1",
+  ],
+  [PYTHON_IMAGE_ANALYSIS_TOOLKIT.toolkitId]: [
+    "import imageio, skimage, tifffile",
+    "from skimage import filters",
+    "assert filters.sobel(np.eye(3)).shape == (3, 3)",
+  ],
+  [PYTHON_BIOINFORMATICS_TOOLKIT.toolkitId]: [
+    "from Bio.Seq import Seq",
+    "import pyfaidx",
+    "assert str(Seq('ATGC').reverse_complement()) == 'GCAT'",
+  ],
+};
+
+function representativeScientificCheck(toolkitIds: ReadonlyArray<ComputeToolkitId>): string {
+  return [
+    REPRESENTATIVE_SCIENTIFIC_CHECK,
+    ...toolkitIds.flatMap((toolkitId) => TOOLKIT_SCIENTIFIC_CHECKS[toolkitId] ?? []),
+  ].join("\n");
+}
 
 export interface ManagedPythonUvArtifact {
   readonly assetName: string;
@@ -91,6 +134,19 @@ export interface ManagedPythonUvArtifact {
   readonly archiveFormat: "tar.gz" | "zip";
   readonly executablePath: string;
   readonly auxiliaryExecutablePath: string;
+}
+
+/** Resolve only server-reviewed Toolkit identities to locked uv extras. */
+export function managedPythonExtrasForToolkits(
+  toolkitIds: ReadonlyArray<ComputeToolkitId>,
+): ReadonlyArray<string> {
+  return toolkitIds.flatMap((toolkitId) => {
+    const extra = PYTHON_TOOLKIT_EXTRAS[toolkitId];
+    if (extra === undefined) {
+      throw new Error(`Unknown Scientific Python Toolkit: ${toolkitId}.`);
+    }
+    return extra === null ? [] : [extra];
+  });
 }
 
 const UV_ARTIFACTS: Readonly<Record<string, ManagedPythonUvArtifact>> = {
@@ -487,6 +543,7 @@ export function makeManagedPythonProvisioner(
   };
 
   const provision = async (input: ManagedPythonProvisionInput) => {
+    const extras = managedPythonExtrasForToolkits(input.toolkitIds);
     await verifySpecification(options.specDirectory, options.recipe);
     const uv = await ensureUv(input.signal, input.onProgress);
     const projectRoot = NodePath.join(input.targetRoot, "project");
@@ -540,6 +597,7 @@ export function makeManagedPythonProvisioner(
           "sync",
           "--locked",
           "--no-dev",
+          ...extras.flatMap((extra) => ["--extra", extra]),
           "--no-install-project",
           "--managed-python",
           "--no-python-downloads",
@@ -612,7 +670,7 @@ export function makeManagedPythonProvisioner(
     }
     await run(
       input.executable,
-      ["-I", "-c", REPRESENTATIVE_SCIENTIFIC_CHECK],
+      ["-I", "-c", representativeScientificCheck(input.toolkitIds)],
       options.specDirectory,
       options.environment,
       input.signal,

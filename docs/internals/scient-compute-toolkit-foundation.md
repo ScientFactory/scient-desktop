@@ -36,7 +36,7 @@ session/result parity work. The implementation deliberately reuses a private
 | Responsibility                | Shared mechanism                                                                                                                                                                   | Language-specific policy                                                                                                                                               |
 | ----------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Private environment lifecycle | `ManagedPythonEnvironment`, provisioner, controller: serialized generations, activation, rollback, cancellation, removal and startup reconciliation                                | Separate `python` and `matlab-connection` roots/receipts; independent selection and revisions                                                                          |
-| Download/provisioning         | Pinned uv artifact, private CPython, locked specification and owned process runner                                                                                                 | Scientific Python's data Toolkit versus a minimal MATLAB helper with setuptools/wheel and the selected installation's Engine                                           |
+| Download/provisioning         | Pinned uv artifact, private CPython, locked specification and owned process runner                                                                                                 | Scientific Python's reviewed Toolkit catalog versus a minimal MATLAB helper with setuptools/wheel and the selected installation's Engine                               |
 | Runtime settings              | `ScientificRuntimePreferences`, server-scoped Settings and existing generic runtime RPCs                                                                                           | MATLAB's canonical executable is also read/written by the older analysis service; absent canonical settings read through the legacy choice without a migration write   |
 | Native connection proof       | Existing adapter prepare/open/shutdown path, serialized with session mutations                                                                                                     | MATLAB and Python advertise passive `detected` after a successful probe so `compute.verifyRuntime` starts and closes a real session. Inspect never opens that session. |
 | UI                            | Settings → Scientific Computing is the ordinary grouped Settings card (`SettingsSection` + `SettingsRow`), one current runtime per language; Runtime is a picker, not an inventory | File header names the probed interpreter; **ready** is reserved for a live session. Repair is for a damaged managed generation, not a skipped Test.                    |
@@ -174,7 +174,7 @@ not relax ownership, verification, refresh, comments, source, or lifecycle contr
 Most users want to work with data, create figures, fit a model, or prepare a
 lesson. They should not need to choose a collection of low-level package names
 before they can express that intent. A **Toolkit** is a reviewed, bounded
-capability bundle such as **Data analysis and figures**.
+capability bundle such as **Scientific Python** or **Image analysis**.
 
 The Toolkit descriptor says what capability Scient can assess. It does not
 grant installation authority and does not itself define how packages are
@@ -197,15 +197,9 @@ an existing `.venv` without pretending Scient installed or owns it.
 
 ### Bounded runtime observations
 
-Python verification now observes only the reviewed packages needed by current
-compute readiness and the first Toolkit candidate:
-
-- `ipykernel`;
-- `jupyter_client`;
-- `matplotlib`;
-- `numpy`;
-- `pandas`; and
-- `scipy`.
+Python verification observes only package metadata named by base compute or the
+reviewed Toolkit catalog. The catalog is the allowlist; discovery never turns
+into arbitrary environment enumeration.
 
 The probe reads package metadata without importing scientific packages and
 runs through the existing isolated interpreter probe. It does not enumerate
@@ -213,12 +207,19 @@ the full environment or run `pip freeze`. The observations are transient
 inspection data; durable execution identity remains the bounded environment
 fingerprint.
 
-### First Toolkit candidate
+### Reviewed Python Toolkit catalog
 
-The first descriptor is **Data analysis and figures**, requiring NumPy,
-pandas, SciPy, and Matplotlib. Its current compatibility assessment requires
-presence only. Exact minimums should be added only when supported workflows or
-the managed lock provide evidence for them.
+Every managed generation includes **Scientific Python**: NumPy, pandas, SciPy,
+Matplotlib, Plotly, Seaborn, statsmodels, SymPy, scikit-learn, openpyxl, and the
+Jupyter bridge dependencies. Users may explicitly add reviewed optional groups
+for large and multidimensional data, image analysis, and bioinformatics. The UI
+names capabilities first and keeps exact package membership visible as secondary
+information.
+
+One universal `uv.lock` resolves the base and every optional group. Provisioning
+selects only reviewed extras from a server-owned Toolkit-to-extra map. This
+avoids a lockfile per combination without allowing the client to submit package
+names, indexes, URLs, or versions.
 
 Toolkit readiness is projected for each exact runtime candidate:
 
@@ -242,8 +243,8 @@ Its app-owned generations live under:
 <computeDir>/environments/python/
 ```
 
-The environment is shared by projects connected to that server because the
-reviewed default Toolkit is immutable and identical for each project. A fresh
+The environment is shared by projects connected to that server. Its selected
+reviewed Toolkit set is recorded in each immutable generation. A fresh
 setup provisions directly into a new final generation directory. This is
 intentional: Python virtual environments embed absolute paths and must not be
 built in a temporary location and renamed afterward.
@@ -281,21 +282,29 @@ locked packages.
 
 ### Concrete distribution and lock
 
-The first slice pins:
+The managed Scientific Python recipe pins:
 
 - CPython `3.12.13`, installed and owned inside the fresh generation;
 - `uv 0.11.16` as the installer and resolver;
-- a universal `uv.lock` plus its exact `pyproject.toml` checksum; and
-- the direct scientific set `ipykernel 7.3.0`, `jupyter-client 8.10.0`,
-  `matplotlib 3.11.1`, `numpy 2.5.2`, `pandas 3.0.5`, and `scipy 1.18.1`.
+- a universal `uv.lock` plus its exact `pyproject.toml` checksum;
+- a required broad base covering Jupyter execution, NumPy, pandas, SciPy,
+  Matplotlib, Plotly, Seaborn, statsmodels, SymPy, scikit-learn, and openpyxl;
+  and
+- optional locked groups for large and multidimensional data (`xarray`,
+  PyArrow, `h5py`, `h5netcdf`, Zarr, and Dask), image analysis
+  (`scikit-image`, `imageio`, and `tifffile`), and sequence/bioinformatics work
+  (Biopython and `pyfaidx`).
 
 Scient does not run a remote shell installer. It downloads the pinned uv
 release asset over HTTPS from an explicit host allowlist, checks exact byte
 length and SHA-256, extracts it with entry and expanded-size limits, and checks
 the reported uv version. Target manifests currently cover macOS arm64/x64,
-Linux glibc and musl arm64/x64, and Windows arm64/x64. Listing a target is an
-implementation claim, not cross-platform release evidence; every target still
-needs packaged-app qualification.
+Linux glibc and musl arm64/x64, and Windows arm64/x64. The complete lock has
+wheel-only resolution evidence for macOS arm64/x64, Linux glibc arm64/x64, and
+Windows x64. The current base does not have a complete wheel set on musl Linux
+or Windows arm64; those assisted paths must remain unqualified until the
+product records an explicit availability policy. Listing a uv target is not
+packaged-app release evidence.
 
 Cancelling a check of the cached installer leaves that cache intact and does
 not start a replacement download. A completed check that proves a version
@@ -317,9 +326,10 @@ concrete manager and controller; languages without acquisition support retain
 their existing discovery and execution behavior.
 
 Settings and the no-ready-runtime Compute panel use the same status and action
-contract. Setup is one explicit click, automatically enables Python, and
-selects the verified managed generation for new sessions. Users can switch to
-existing runtimes without reinstalling. Update appears only when the pinned
+contract. First-use setup activates the verified managed generation. Optional
+setup from Settings can preserve an already selected existing runtime, so users
+can prepare Scient-managed Python without changing new-session behavior. Users
+can switch between existing and managed runtimes without reinstalling. Update appears only when the pinned
 Python, provisioner, or Toolkit revision changes; repair, cancellation, and
 private removal remain explicit. Missing managed assets or an unsupported
 platform disable only the assisted path, never existing Python compute.
@@ -414,7 +424,7 @@ not permission to silently choose system Python. Intentional successful removal
 clears the receipt and returns selection to existing-runtime discovery.
 
 Base compute readiness is not Toolkit readiness. The file status and Settings
-surface the existing exact-runtime data-and-figures assessment, without
+surface the exact-runtime Scientific Python assessment, without
 disabling ordinary Python or trying to infer arbitrary dependencies from source
 imports. Missing packages remain an explicit managed-setup or user-owned
 environment choice. The file-status tooltip identifies the exact interpreter;
@@ -436,9 +446,10 @@ provider CLI archive.
 
 ### User and agent authority
 
-Settings and first use are authorized user surfaces. The server resolves the
-fixed Toolkit, target, artifacts, and paths; the client never submits a package
-or URL. A future agent request must use this same fixed operation envelope and
+Settings and first use are authorized user surfaces. The client may submit only
+reviewed Toolkit IDs from the server-projected catalog; the server resolves
+those IDs to fixed lock groups, target artifacts, and paths. It never accepts a
+package, version, index, command, or URL. A future agent request must use this same fixed operation envelope and
 must have separately accepted user-visible authority. Arbitrary package
 installation is a different and much broader capability and must not be
 smuggled into the reviewed Toolkit path.
@@ -464,8 +475,8 @@ Deliberately deferred:
    manually accepted.
 2. Agent requests, until the operation-envelope authority and receipt model is
    separately accepted.
-3. Additional managed Toolkits or languages, until real product demand proves
-   their dependency and ownership model.
+3. Hardware-bound or unusually large Toolkits such as deep learning, until
+   platform-specific installation and resource policy are qualified.
 
 Notebook authoring and further renderers remain independent tracks under the
 accepted compute ADR. This local continuation already includes a stateful MATLAB

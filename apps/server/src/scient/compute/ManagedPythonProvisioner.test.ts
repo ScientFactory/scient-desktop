@@ -5,6 +5,7 @@ import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 
 import type { ExecutionProcessPort } from "@scientfactory/execution";
+import { ComputeToolkitId } from "@scientfactory/compute";
 import { downloadManagedRuntime, type ManagedRuntimeTarget } from "@scientfactory/provider-runtime";
 import * as Effect from "effect/Effect";
 import * as Stream from "effect/Stream";
@@ -16,11 +17,18 @@ import {
   MANAGED_PYTHON_UV_VERSION,
   MANAGED_PYTHON_VERSION,
   makeManagedPythonProvisioner,
+  managedPythonExtrasForToolkits,
   managedPythonProvisioningEnvironment,
   managedPythonSpecPathCandidates,
   managedPythonUvArtifactForTarget,
   resolveManagedPythonSpecPath,
 } from "./ManagedPythonProvisioner.ts";
+import {
+  PYTHON_BIOINFORMATICS_TOOLKIT,
+  PYTHON_DATA_AND_FIGURES_TOOLKIT,
+  PYTHON_IMAGE_ANALYSIS_TOOLKIT,
+  PYTHON_LARGE_DATA_TOOLKIT,
+} from "./PythonToolkitCatalog.ts";
 
 vi.mock("@scientfactory/provider-runtime", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@scientfactory/provider-runtime")>()),
@@ -137,6 +145,20 @@ describe("ManagedPythonProvisioner", () => {
       const contents = await NodeFSP.readFile(new URL(`./managed-python/${name}`, import.meta.url));
       expect(NodeCrypto.createHash("sha256").update(contents).digest("hex")).toBe(expected);
     }
+  });
+
+  it("maps only reviewed Toolkit identities to optional lock groups", () => {
+    expect(
+      managedPythonExtrasForToolkits([
+        PYTHON_DATA_AND_FIGURES_TOOLKIT.toolkitId,
+        PYTHON_LARGE_DATA_TOOLKIT.toolkitId,
+        PYTHON_IMAGE_ANALYSIS_TOOLKIT.toolkitId,
+        PYTHON_BIOINFORMATICS_TOOLKIT.toolkitId,
+      ]),
+    ).toEqual(["large-data", "image-analysis", "bioinformatics"]);
+    expect(() => managedPythonExtrasForToolkits([ComputeToolkitId.make("python-unknown")])).toThrow(
+      "Unknown Scientific Python Toolkit: python-unknown.",
+    );
   });
 
   it("maps every reviewed platform target to a pinned bounded artifact", () => {

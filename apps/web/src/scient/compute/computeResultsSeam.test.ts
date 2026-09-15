@@ -184,7 +184,7 @@ describe("compute result surface seam", () => {
     expect(settingsSource).not.toContain('variant="plain"');
     expect(settingsSource).not.toContain("Python & MATLAB");
     expect(settingsSource).not.toContain("Advanced");
-    expect(settingsSource).toContain(">Runtime</summary>");
+    expect(settingsSource).toContain('title="Runtime"');
     expect(settingsSource).toContain("SelectTrigger");
     expect(settingsSource).toContain("computeRuntimePickerLabel");
     expect(settingsSource).not.toContain("<select");

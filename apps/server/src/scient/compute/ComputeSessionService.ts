@@ -42,6 +42,7 @@ import {
   type ComputeLanguageId,
   type ComputeManagedRuntimeAction,
   type ComputeManagedRuntimeStatus,
+  type ComputeToolkitId,
   type ComputeListExecutionsInput,
   type ComputeListOutputsInput,
   type ComputeListSessionsInput,
@@ -168,10 +169,16 @@ export interface ComputeRuntimeBinding {
         readonly status: () => Effect.Effect<ComputeManagedRuntimeStatus, ComputeOperationError>;
         readonly manage: (
           action: ComputeManagedRuntimeAction,
+          options?: ComputeManagedRuntimeProvisionOptions,
         ) => Effect.Effect<ComputeManagedRuntimeStatus, ComputeOperationError>;
         readonly cancel: () => Effect.Effect<ComputeManagedRuntimeStatus, ComputeOperationError>;
       }
     | undefined;
+}
+
+export interface ComputeManagedRuntimeProvisionOptions {
+  readonly toolkitIds?: ReadonlyArray<ComputeToolkitId>;
+  readonly selectionAfterInstall?: "managed" | "existing";
 }
 
 /** Data-only adapter metadata safe to expose through the shared product UI. */
@@ -392,6 +399,7 @@ export class ComputeSessionService extends Context.Service<
     readonly manageRuntime: (
       languageId: ComputeLanguageId,
       action: ComputeManagedRuntimeAction,
+      options?: ComputeManagedRuntimeProvisionOptions,
     ) => Effect.Effect<ComputeManagedRuntimeStatus, ComputeOperationError>;
     readonly cancelManagedRuntime: (
       languageId: ComputeLanguageId,
@@ -662,7 +670,11 @@ const make = Effect.gen(function* () {
   const managedRuntimeStatus = (languageId: ComputeLanguageId) =>
     managedController(languageId).pipe(Effect.flatMap((controller) => controller.status()));
 
-  const manageRuntime = (languageId: ComputeLanguageId, action: ComputeManagedRuntimeAction) =>
+  const manageRuntime = (
+    languageId: ComputeLanguageId,
+    action: ComputeManagedRuntimeAction,
+    options?: ComputeManagedRuntimeProvisionOptions,
+  ) =>
     Effect.gen(function* () {
       if (action === "remove") {
         const liveSessions = yield* Ref.get(sessionsRef);
@@ -678,7 +690,7 @@ const make = Effect.gen(function* () {
         }
       }
       const controller = yield* managedController(languageId);
-      return yield* controller.manage(action);
+      return yield* controller.manage(action, options);
     }).pipe(startLock.withPermits(1));
 
   const cancelManagedRuntime = (languageId: ComputeLanguageId) =>

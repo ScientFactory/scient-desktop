@@ -26,6 +26,10 @@ export type ComputeSessionId = typeof ComputeSessionId.Type;
 export const ComputeExecutionId = EntityId.pipe(Schema.brand("ComputeExecutionId"));
 export type ComputeExecutionId = typeof ComputeExecutionId.Type;
 
+/** Stable product identity for a reviewed scientific-computing Toolkit. */
+export const ComputeToolkitId = Slug.pipe(Schema.brand("ComputeToolkitId"));
+export type ComputeToolkitId = typeof ComputeToolkitId.Type;
+
 /**
  * Correlates one command with the events it causes.
  *
@@ -598,6 +602,10 @@ export const ComputeManagedRuntimeStatus = Schema.Struct({
   updateAvailable: Schema.Boolean,
   runtimeVersion: Schema.NullOr(Label),
   toolkitRevision: Schema.NullOr(Label),
+  /** Reviewed Toolkits installed in the active immutable generation. */
+  toolkitIds: Schema.optional(Schema.Array(ComputeToolkitId).check(Schema.isMaxLength(64))).pipe(
+    Schema.withDecodingDefaultKey(Effect.succeed([])),
+  ),
   operation: Schema.NullOr(ComputeManagedRuntimeOperation),
   /** Structured for current clients; failureMessage remains for older clients and logs. */
   failure: Schema.optional(Schema.NullOr(ComputeManagedRuntimeFailure)),

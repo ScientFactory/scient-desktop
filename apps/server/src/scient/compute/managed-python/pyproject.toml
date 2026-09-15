@@ -11,7 +11,24 @@ dependencies = [
   "pandas==3.0.5",
   "plotly==7.0.0",
   "scipy==1.18.1",
+  "scikit-learn==1.9.1",
+  "seaborn==0.13.2",
+  "statsmodels==0.15.0",
+  "sympy==1.14.0",
+  "openpyxl==3.1.5",
 ]
+
+[project.optional-dependencies]
+large-data = [
+  "xarray==2026.7.0",
+  "pyarrow==25.0.1",
+  "h5py==3.16.0",
+  "h5netcdf==1.8.1",
+  "zarr==3.3.0",
+  "dask[array]==2026.8.0",
+]
+image-analysis = ["scikit-image==0.26.0", "imageio==2.37.4", "tifffile==2026.9.15"]
+bioinformatics = ["biopython==1.86", "pyfaidx==0.9.0.4"]
 
 [tool.uv]
 package = false

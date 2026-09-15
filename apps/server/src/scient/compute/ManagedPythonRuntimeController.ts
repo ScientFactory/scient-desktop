@@ -12,7 +12,10 @@ import * as Effect from "effect/Effect";
 import * as DateTime from "effect/DateTime";
 import * as Schema from "effect/Schema";
 
-import type { ComputeRuntimeBinding } from "./ComputeSessionService.ts";
+import type {
+  ComputeManagedRuntimeProvisionOptions,
+  ComputeRuntimeBinding,
+} from "./ComputeSessionService.ts";
 import {
   ManagedPythonEnvironmentError,
   type makeManagedPythonEnvironmentManager,
@@ -89,7 +92,10 @@ function managedRuntimeFailure(
 
 export function makeManagedPythonRuntimeController(input: {
   readonly manager: ManagedPythonManager;
+  /** Every Toolkit this reviewed recipe knows how to provision. */
   readonly toolkitIds: ReadonlyArray<ComputeToolkitId>;
+  /** Toolkits present in every generation and therefore not user-removable. */
+  readonly requiredToolkitIds?: ReadonlyArray<ComputeToolkitId>;
   readonly configuration?: {
     readonly displayName: string;
     readonly description: string;
@@ -101,6 +107,34 @@ export function makeManagedPythonRuntimeController(input: {
   let operation: ActiveOperation | null = null;
   let failureMessage: string | null = null;
   let failure: ComputeManagedRuntimeFailure | null = null;
+  const availableToolkitIds = new Set(input.toolkitIds);
+  const requiredToolkitIds = input.requiredToolkitIds ?? input.toolkitIds;
+  if (availableToolkitIds.size !== input.toolkitIds.length) {
+    throw new Error("Managed runtime Toolkit configuration contains duplicate IDs.");
+  }
+  if (
+    new Set(requiredToolkitIds).size !== requiredToolkitIds.length ||
+    requiredToolkitIds.some((toolkitId) => !availableToolkitIds.has(toolkitId))
+  ) {
+    throw new Error("Managed runtime required Toolkits must be distinct catalog entries.");
+  }
+
+  const selectedToolkitIds = (
+    requested: ReadonlyArray<ComputeToolkitId> | undefined,
+    active: ReadonlyArray<ComputeToolkitId> | undefined,
+  ): ReadonlyArray<ComputeToolkitId> => {
+    const chosen = requested ?? active ?? requiredToolkitIds;
+    if (new Set(chosen).size !== chosen.length) {
+      throw operationError("Choose each Scientific Python Toolkit only once.");
+    }
+    for (const toolkitId of chosen) {
+      if (!availableToolkitIds.has(toolkitId)) {
+        throw operationError(`Unknown Scientific Python Toolkit: ${toolkitId}.`);
+      }
+    }
+    const selected = new Set([...requiredToolkitIds, ...chosen]);
+    return input.toolkitIds.filter((toolkitId) => selected.has(toolkitId));
+  };
 
   const readStatus = async (): Promise<ComputeManagedRuntimeStatus> => {
     for (;;) {
@@ -134,6 +168,7 @@ export function makeManagedPythonRuntimeController(input: {
             active.provisionerVersion !== MANAGED_PYTHON_PROVISIONER_VERSION),
         runtimeVersion: active === null ? null : `Python ${active.pythonVersion}`,
         toolkitRevision: active?.toolkitRevision ?? null,
+        toolkitIds: active?.toolkitIds ?? [],
         operation:
           operationSnapshot === null
             ? null
@@ -159,6 +194,7 @@ export function makeManagedPythonRuntimeController(input: {
 
   const begin = async (
     action: Extract<ComputeManagedRuntimeAction, "install" | "update" | "repair" | "remove">,
+    options?: ComputeManagedRuntimeProvisionOptions,
   ): Promise<void> => {
     if (operation !== null) return;
     const current = await input.manager.inspect();
@@ -166,12 +202,15 @@ export function makeManagedPythonRuntimeController(input: {
     // Recheck before publishing the operation so one server owns one mutation.
     if (operation !== null) return;
     if (action === "install" && current !== null) return;
+    const toolkitIds = selectedToolkitIds(options?.toolkitIds, current?.record.active.toolkitIds);
     if (action === "update" && current !== null) {
       const active = current.record.active;
       if (
         active.toolkitRevision === toolkitRevision &&
         active.pythonVersion === MANAGED_PYTHON_VERSION &&
-        active.provisionerVersion === MANAGED_PYTHON_PROVISIONER_VERSION
+        active.provisionerVersion === MANAGED_PYTHON_PROVISIONER_VERSION &&
+        active.toolkitIds.length === toolkitIds.length &&
+        active.toolkitIds.every((toolkitId, index) => toolkitId === toolkitIds[index])
       ) {
         return;
       }
@@ -199,10 +238,13 @@ export function makeManagedPythonRuntimeController(input: {
       action === "remove"
         ? input.manager.remove()
         : input.manager[action === "repair" ? "repair" : "install"]({
-            toolkitIds: input.toolkitIds,
+            toolkitIds,
             toolkitRevision,
             pythonVersion: MANAGED_PYTHON_VERSION,
             provisionerVersion: MANAGED_PYTHON_PROVISIONER_VERSION,
+            ...(options?.selectionAfterInstall === undefined
+              ? {}
+              : { selectionAfterInstall: options.selectionAfterInstall }),
             signal: controller.signal,
             onProgress: (progress) => {
               if (operation !== activeOperation) return;
@@ -227,9 +269,23 @@ export function makeManagedPythonRuntimeController(input: {
       });
   };
 
-  const manage = (action: ComputeManagedRuntimeAction) =>
+  const manage = (
+    action: ComputeManagedRuntimeAction,
+    options?: ComputeManagedRuntimeProvisionOptions,
+  ) =>
     Effect.tryPromise({
       try: async () => {
+        if (options?.selectionAfterInstall !== undefined && action !== "install") {
+          throw operationError("Runtime selection can be chosen only during first setup.");
+        }
+        if (
+          options?.toolkitIds !== undefined &&
+          action !== "install" &&
+          action !== "update" &&
+          action !== "repair"
+        ) {
+          throw operationError("Toolkits can be chosen only while provisioning a runtime.");
+        }
         if (action === "use-managed" || action === "use-existing") {
           if (operation !== null) {
             throw operationError(`Wait for the current ${displayName} operation to finish.`);
@@ -238,7 +294,7 @@ export function makeManagedPythonRuntimeController(input: {
           failureMessage = null;
           failure = null;
         } else {
-          await begin(action);
+          await begin(action, options);
         }
         return await readStatus();
       },

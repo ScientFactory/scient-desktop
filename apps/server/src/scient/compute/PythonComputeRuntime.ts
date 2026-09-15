@@ -314,6 +314,9 @@ export const pythonRuntimeBinding: Effect.Effect<
       managedRuntime: makeManagedPythonRuntimeController({
         manager,
         toolkitIds: PYTHON_TOOLKIT_CATALOG.map((toolkit) => toolkit.toolkitId),
+        requiredToolkitIds: PYTHON_TOOLKIT_CATALOG.filter((toolkit) => toolkit.required).map(
+          (toolkit) => toolkit.toolkitId,
+        ),
       }),
     };
   }).pipe(

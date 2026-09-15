@@ -91,6 +91,7 @@ describe.runIf(ENABLED)("Scient-managed Python product", () => {
             updateAvailable: false,
             failureMessage: null,
           });
+          expect(installed.toolkitIds).toEqual(["python-data-and-figures"]);
 
           const inventoried = (yield* gateway.runtimeInventory()).languages[0]?.installations[0];
           expect(inventoried).toMatchObject({ source: "managed", problem: null });
@@ -101,7 +102,12 @@ describe.runIf(ENABLED)("Scient-managed Python product", () => {
             .find((language) => language.descriptor.languageId === PYTHON)
             ?.runtimes.find((runtime) => runtime.profile.source === "managed");
           expect(managed?.verification.readiness).toBe("ready");
-          expect(managed?.toolkits.every((toolkit) => toolkit.readiness === "ready")).toBe(true);
+          const installedToolkitIds = new Set(installed.toolkitIds);
+          expect(
+            managed?.toolkits
+              .filter((toolkit) => installedToolkitIds.has(toolkit.toolkitId))
+              .every((toolkit) => toolkit.readiness === "ready"),
+          ).toBe(true);
           if (managed === undefined) return yield* Effect.die("Managed Python was not discovered.");
 
           const sessionId = ComputeSessionId.make("managed-python-live-session");
@@ -171,6 +177,7 @@ describe.runIf(ENABLED)("Scient-managed Python product", () => {
           ).toBe(false);
         }).pipe(Effect.provide(Layer.merge(computeLayer, workspaceLayer)), Effect.scoped);
       }).pipe(Effect.provide(NodeServices.layer), Effect.scoped, Effect.timeout("40 minutes")),
+    180_000,
   );
 });
 

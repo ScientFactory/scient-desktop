@@ -254,7 +254,12 @@ export function makeComputeRpcGateway(input: {
   const manageRuntime = Effect.fn("ComputeRpcGateway.manageRuntime")(function* (
     request: ComputeManagedRuntimeInput,
   ) {
-    return yield* input.compute.manageRuntime(request.languageId, request.action);
+    return yield* input.compute.manageRuntime(request.languageId, request.action, {
+      ...(request.toolkitIds === undefined ? {} : { toolkitIds: request.toolkitIds }),
+      ...(request.selectionAfterInstall === undefined
+        ? {}
+        : { selectionAfterInstall: request.selectionAfterInstall }),
+    });
   });
 
   const cancelManagedRuntime = Effect.fn("ComputeRpcGateway.cancelManagedRuntime")(function* (

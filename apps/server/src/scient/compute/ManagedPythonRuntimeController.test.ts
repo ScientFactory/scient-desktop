@@ -19,6 +19,7 @@ import {
 import { makeManagedPythonRuntimeController } from "./ManagedPythonRuntimeController.ts";
 
 const TOOLKIT_ID = ComputeToolkitId.make("python-data-and-figures");
+const OPTIONAL_TOOLKIT_ID = ComputeToolkitId.make("python-image-analysis");
 
 describe("ManagedPythonRuntimeController", () => {
   let temporaryRoot: string;
@@ -205,6 +206,92 @@ describe("ManagedPythonRuntimeController", () => {
       expect(
         (yield* Effect.promise(() => manager.inspect()))?.record.active.provisionerVersion,
       ).toBe(MANAGED_PYTHON_PROVISIONER_VERSION);
+      controller.dispose();
+    }),
+  );
+
+  it.live("provisions an explicit Toolkit set and preserves an existing runtime selection", () =>
+    Effect.gen(function* () {
+      let provisionedToolkitIds: ReadonlyArray<ComputeToolkitId> = [];
+      const manager = makeManagedPythonEnvironmentManager(
+        computeDir,
+        dependencies({
+          provision: async ({ targetRoot, toolkitIds }) => {
+            provisionedToolkitIds = toolkitIds;
+            return await executableAt(targetRoot);
+          },
+        }),
+      );
+      const controller = makeManagedPythonRuntimeController({
+        manager,
+        toolkitIds: [TOOLKIT_ID, OPTIONAL_TOOLKIT_ID],
+        requiredToolkitIds: [TOOLKIT_ID],
+      });
+
+      yield* controller.manage("install", {
+        toolkitIds: [OPTIONAL_TOOLKIT_ID],
+        selectionAfterInstall: "existing",
+      });
+      const settled = yield* waitForSettled(controller);
+      expect(settled).toMatchObject({
+        installed: true,
+        selection: "existing",
+        toolkitIds: [TOOLKIT_ID, OPTIONAL_TOOLKIT_ID],
+      });
+      expect(provisionedToolkitIds).toEqual([TOOLKIT_ID, OPTIONAL_TOOLKIT_ID]);
+      controller.dispose();
+    }),
+  );
+
+  it.live("rebuilds only when the requested Toolkit set changes", () =>
+    Effect.gen(function* () {
+      let provisions = 0;
+      const manager = makeManagedPythonEnvironmentManager(
+        computeDir,
+        dependencies({
+          provision: async ({ targetRoot }) => {
+            provisions += 1;
+            return await executableAt(targetRoot);
+          },
+        }),
+      );
+      const controller = makeManagedPythonRuntimeController({
+        manager,
+        toolkitIds: [TOOLKIT_ID, OPTIONAL_TOOLKIT_ID],
+        requiredToolkitIds: [TOOLKIT_ID],
+      });
+
+      yield* controller.manage("install");
+      yield* waitForSettled(controller);
+      yield* controller.manage("update", { toolkitIds: [TOOLKIT_ID] });
+      expect((yield* controller.status()).operation).toBeNull();
+      yield* controller.manage("update", { toolkitIds: [OPTIONAL_TOOLKIT_ID] });
+      expect((yield* waitForSettled(controller)).toolkitIds).toEqual([
+        TOOLKIT_ID,
+        OPTIONAL_TOOLKIT_ID,
+      ]);
+      expect(provisions).toBe(2);
+      controller.dispose();
+    }),
+  );
+
+  it.live("rejects provisioning options on actions that cannot use them", () =>
+    Effect.gen(function* () {
+      const manager = makeManagedPythonEnvironmentManager(computeDir, dependencies());
+      const controller = makeManagedPythonRuntimeController({ manager, toolkitIds: [TOOLKIT_ID] });
+
+      const toolkitError = yield* Effect.flip(
+        controller.manage("use-existing", { toolkitIds: [TOOLKIT_ID] }),
+      );
+      expect(toolkitError).toMatchObject({
+        message: "Toolkits can be chosen only while provisioning a runtime.",
+      });
+      const selectionError = yield* Effect.flip(
+        controller.manage("repair", { selectionAfterInstall: "existing" }),
+      );
+      expect(selectionError).toMatchObject({
+        message: "Runtime selection can be chosen only during first setup.",
+      });
       controller.dispose();
     }),
   );

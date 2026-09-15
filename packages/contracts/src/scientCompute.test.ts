@@ -5,6 +5,7 @@ import { ComputeManagedRuntimeStatus, ComputeRuntimeInstallation } from "@scient
 import {
   ComputeRuntimeInspection,
   ComputeRuntimeInventory,
+  ComputeManagedRuntimeInput,
   ComputeStartProjectSessionInput,
 } from "./scientCompute.ts";
 
@@ -12,6 +13,27 @@ const decodeRuntimeInspection = Schema.decodeUnknownSync(ComputeRuntimeInspectio
 const decodeRuntimeInventory = Schema.decodeUnknownSync(ComputeRuntimeInventory);
 
 describe("scient compute contracts", () => {
+  it("accepts only bounded reviewed Toolkit identities and explicit first-install selection", () => {
+    const decode = Schema.decodeUnknownSync(ComputeManagedRuntimeInput);
+    expect(
+      decode({
+        languageId: "python",
+        action: "install",
+        toolkitIds: ["python-data-and-figures", "python-image-analysis"],
+        selectionAfterInstall: "existing",
+      }),
+    ).toMatchObject({
+      toolkitIds: ["python-data-and-figures", "python-image-analysis"],
+      selectionAfterInstall: "existing",
+    });
+    expect(() =>
+      decode({ languageId: "python", action: "install", toolkitIds: ["x".repeat(65)] }),
+    ).toThrow();
+    expect(() =>
+      decode({ languageId: "python", action: "install", selectionAfterInstall: "automatic" }),
+    ).toThrow();
+  });
+
   it("keeps ordinary starts compatible and requires a complete atomic fresh request", () => {
     const decode = Schema.decodeUnknownSync(ComputeStartProjectSessionInput);
     const start = { cwd: "/project", sessionId: "owned", languageId: "python", executable: null };

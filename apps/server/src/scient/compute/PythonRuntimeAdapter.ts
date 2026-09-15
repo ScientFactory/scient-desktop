@@ -49,11 +49,11 @@ const MIN_JUPYTER_CLIENT_VERSION = "8.6";
 const MIN_IPYKERNEL_VERSION = "6.29";
 
 /**
- * Reviewed packages needed by current compute readiness and the first proposed
- * data-and-figures Toolkit. The probe stays bounded and does not enumerate an
- * arbitrary user environment.
+ * Reviewed packages used by current compute readiness and the Python Toolkit
+ * catalog. The probe stays bounded and does not enumerate an arbitrary user
+ * environment.
  */
-const OBSERVED_PYTHON_PACKAGES = [
+export const OBSERVED_PYTHON_PACKAGES = [
   "ipykernel",
   "jupyter_client",
   "matplotlib",
@@ -62,6 +62,22 @@ const OBSERVED_PYTHON_PACKAGES = [
   "pandas",
   "plotly",
   "scipy",
+  "scikit-learn",
+  "seaborn",
+  "statsmodels",
+  "sympy",
+  "openpyxl",
+  "xarray",
+  "pyarrow",
+  "h5py",
+  "h5netcdf",
+  "zarr",
+  "dask",
+  "scikit-image",
+  "imageio",
+  "tifffile",
+  "biopython",
+  "pyfaidx",
 ] as const;
 
 // ---------------------------------------------------------------------------

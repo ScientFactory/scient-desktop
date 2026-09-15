@@ -26,9 +26,17 @@ describe("compute contract", () => {
       failureMessage: null,
     };
     expect(decode(previousStatus).generationId).toBeUndefined();
+    expect(decode(previousStatus).toolkitIds).toEqual([]);
     expect(decode({ ...previousStatus, generationId: "repaired-1" }).generationId).toBe(
       "repaired-1",
     );
+    expect(
+      decode({
+        ...previousStatus,
+        generationId: "repaired-2",
+        toolkitIds: ["python-data-and-figures"],
+      }).toolkitIds,
+    ).toEqual(["python-data-and-figures"]);
     expect(
       decode({ ...previousStatus, installed: false, generationId: null }).generationId,
     ).toBeNull();

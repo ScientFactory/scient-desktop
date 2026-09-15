@@ -279,6 +279,11 @@ describe("compute RPC gateway", () => {
           { name: "pandas", version: "2.2.2" },
           { name: "plotly", version: "6.3.0" },
           { name: "scipy", version: null },
+          { name: "scikit-learn", version: "1.9.1" },
+          { name: "seaborn", version: "0.13.2" },
+          { name: "statsmodels", version: "0.15.0" },
+          { name: "sympy", version: "1.14.0" },
+          { name: "openpyxl", version: "3.1.5" },
         ],
       };
       const compute = computeStub({
@@ -319,7 +324,7 @@ describe("compute RPC gateway", () => {
       expect(inspection.languages[0]?.toolkits).toMatchObject([
         {
           toolkitId: "python-data-and-figures",
-          displayName: "Data analysis and figures",
+          displayName: "Scientific Python",
         },
       ]);
       expect(inspection.languages[0]?.runtimes[0]?.toolkits).toMatchObject([

@@ -1,11 +1,8 @@
 import * as Schema from "effect/Schema";
+import * as Effect from "effect/Effect";
 
-import { ComputeLanguageId, ComputeRuntimeProfile } from "./contract.ts";
+import { ComputeLanguageId, ComputeRuntimeProfile, ComputeToolkitId } from "./contract.ts";
 import { Label, ShortText, Slug } from "./primitives.ts";
-
-/** Stable product identity for a reviewed scientific-computing Toolkit. */
-export const ComputeToolkitId = Slug.pipe(Schema.brand("ComputeToolkitId"));
-export type ComputeToolkitId = typeof ComputeToolkitId.Type;
 
 /**
  * A package requirement used to assess an existing runtime.
@@ -30,6 +27,10 @@ export const ComputeToolkitDescriptor = Schema.Struct({
   languageId: ComputeLanguageId,
   displayName: Label,
   summary: ShortText,
+  /** Required Toolkits are part of every managed generation and cannot be removed. */
+  required: Schema.optional(Schema.Boolean).pipe(
+    Schema.withDecodingDefaultKey(Effect.succeed(false)),
+  ),
   packageRequirements: Schema.Array(ComputeToolkitPackageRequirement).check(Schema.isMaxLength(64)),
 });
 export type ComputeToolkitDescriptor = typeof ComputeToolkitDescriptor.Type;

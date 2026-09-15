@@ -11,15 +11,19 @@ runtime and a compatible Engine host. See [Run a MATLAB file](matlab-run-file.md
 The quickest path is to open a `.py` file and choose **Set up Python** in the file header. That
 opens the correct server's Scientific Computing settings, where **Set up Python** starts the
 installation. Scient downloads a verified installer and creates one private, shared Python
-environment for that Scient server. Setup includes a reviewed, locked
-data-and-figures Toolkit with NumPy, pandas, SciPy, Matplotlib, Plotly, Jupyter Client,
-ipykernel, and the notebook-format support Plotly uses for normal `figure.show()` output. It also
-enables Python and selects that exact environment for new sessions.
+environment for that Scient server. The included **Scientific Python** Toolkit covers numerical
+data, tables, statistics, machine learning, symbolic math, spreadsheets, and figures. Optional
+reviewed Toolkits add large and multidimensional data, image analysis, or bioinformatics without
+turning package management into a list of individual dependencies.
+
+Setting up managed Python from a file that has no usable runtime enables Python and selects the new
+environment. Setting it up from Settings while an existing Python is already selected leaves that
+selection unchanged; the managed environment becomes another explicit runtime choice.
 
 The managed environment is optional. To use Python you already maintain instead:
 
 1. Open **Settings → Scientific Computing** for the server environment you want to use.
-2. Expand **Runtime**.
+2. Select **Python** in the language strip.
 3. Enable Python if it is off.
 4. Choose **Automatic**, a detected installation, or **Custom executable…** from the runtime menu.
 
@@ -30,18 +34,17 @@ control. Prefer a project `.venv` or another virtual environment you control. Sc
 with `pip --user`; do not force packages into a Homebrew- or system-managed Python merely to make
 runtime discovery succeed.
 
-Settings → Scientific Computing has one quiet row for Python and one for MATLAB. The enable switch
-is always available. When an enabled language needs attention, the row offers one contextual action
-(Set up, Connect, Repair, or Choose runtime). A ready language keeps the compact **Test** action
-beside its enable switch. **Runtime** contains the interpreter for new sessions; its overflow menu
-holds infrequent managed-runtime maintenance. Runtime labels stay short; path suffixes appear only when otherwise-identical
-installations must be distinguished, and the explicit path field remains available when needed.
+Settings → Scientific Computing has a compact language selector and shows one language at a time.
+Each language uses the same ordinary rows for Enable and Runtime, while language-owned rows handle
+Scient-managed Python, Toolkits, or the MATLAB connection. A ready runtime keeps a compact **Test**
+action. Runtime labels stay short; path suffixes appear only when otherwise-identical installations
+must be distinguished, and the explicit path field remains available when needed.
 Removing a managed runtime uses a compact confirmation beside the action; it does not obscure the
 whole Settings page. Scient does not silently replace a broken selected interpreter.
 
-When Scient updates its locked Python Toolkit, an existing selected managed environment shows one
-**Update** action on the row. The current environment is not modified silently; completing the
-update produces and verifies a new managed generation.
+Changing Toolkits or accepting a reviewed Toolkit update never mutates the active environment in
+place. **Apply changes**, **Update**, and **Repair** each build and verify a fresh generation before
+it becomes available. Existing sessions keep the exact generation they started with.
 
 **Runtime** changes only which runtime new sessions prefer. **Automatic** restores discovery instead
 of pinning an installation. Choosing an existing Python also
@@ -79,7 +82,7 @@ instead. Removing the managed installation intentionally returns new sessions to
 discovery; it does not remove your other Python installations.
 
 An existing Python can run ordinary code without every scientific library. If the reviewed
-data-and-figures packages are missing, the status tooltip notes that some scientific packages are missing.
+Scientific Python packages are missing, the status tooltip notes that some scientific packages are missing.
 Run remains available for code that does not need those packages; Scient does not
 silently install them into a user-owned environment.
 An unrelated managed setup or removal failure does not disable or replace the status of a usable
@@ -98,7 +101,7 @@ Opening the file does not start Scientific Python or provision its Toolkit. When
 failed helper, its failure appears as a short header status with copy and details;
 setup and recovery remain available in Settings. Scient does not
 install MATLAB or a license. If several copies are installed, open
-**Settings → Scientific Computing**, expand **Runtime**, and choose the installation, or
+**Settings → Scientific Computing**, select **MATLAB**, and choose the installation, or
 leave automatic discovery selected.
 
 The same executable preference is used by live Compute sessions and fresh-process

@@ -4,6 +4,7 @@ import { createRoot } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 import {
   ComputeLanguageId,
+  ComputeToolkitId,
   EnvironmentId,
   type ComputeLanguageRuntimeInventory,
   type ComputeManagedRuntimeStatus,
@@ -149,6 +150,28 @@ function python(): ComputeLanguageRuntimeInventory {
   };
 }
 
+const pythonToolkits = () =>
+  [
+    {
+      toolkitId: ComputeToolkitId.make("python-data-and-figures"),
+      languageId: ComputeLanguageId.make("python"),
+      displayName: "Scientific Python",
+      summary: "Data and figures.",
+      required: true,
+      packageRequirements: [{ name: "numpy", displayName: "NumPy", minimumVersion: null }],
+    },
+    {
+      toolkitId: ComputeToolkitId.make("python-image-analysis"),
+      languageId: ComputeLanguageId.make("python"),
+      displayName: "Image analysis",
+      summary: "Scientific images.",
+      required: false,
+      packageRequirements: [
+        { name: "scikit-image", displayName: "scikit-image", minimumVersion: null },
+      ],
+    },
+  ] as ComputeLanguageRuntimeInventory["toolkits"];
+
 describe("Scientific Computing settings interactions", () => {
   let container: HTMLDivElement;
   let root: ReturnType<typeof createRoot>;
@@ -199,6 +222,7 @@ describe("Scientific Computing settings interactions", () => {
       return { _tag: "Success", value: mocks.statuses[input.languageId] };
     });
     mocks.verify.mockReset();
+    window.localStorage.clear();
     container = document.createElement("div");
     document.body.append(container);
     root = createRoot(container);
@@ -279,7 +303,7 @@ describe("Scientific Computing settings interactions", () => {
     expect(container.textContent).toContain("Runtime");
     expect(container.textContent).toContain("3.12.13");
     expect(container.textContent).toContain("Scient-managed");
-    expect(container.querySelectorAll("h3")).toHaveLength(1);
+    expect(container.querySelectorAll("h3")).toHaveLength(3);
     expect(runtimeValue()).toBe(managedPath);
     expect(button("Test").hasAttribute("title")).toBe(false);
     expect(container.textContent).not.toContain(managedPath);
@@ -307,6 +331,49 @@ describe("Scientific Computing settings interactions", () => {
       notify();
     });
     expect(container.textContent).toContain("3.12.13");
+  });
+
+  it("sets up managed Python beside a working system runtime without switching it", async () => {
+    const uninstalled = {
+      ...status(),
+      installed: false,
+      selection: "existing" as const,
+      generationId: null,
+      runtimeVersion: null,
+      toolkitIds: [],
+    };
+    mocks.preferences.python = { enabled: true, executable: systemPath };
+    mocks.statuses.python = uninstalled;
+    mocks.languages = [
+      {
+        ...python(),
+        configuredExecutable: systemPath,
+        managedRuntime: uninstalled,
+        installations: [
+          { executable: systemPath, source: "path", version: "3.12.13", problem: null },
+        ],
+        toolkits: pythonToolkits(),
+      },
+    ];
+    await render();
+    await click("Manage");
+    const imageToolkit = container.querySelector<HTMLButtonElement>(
+      '[aria-label="Include Image analysis"]',
+    );
+    expect(imageToolkit).not.toBeNull();
+    await act(() => imageToolkit!.click());
+    await click("Set up");
+    expect(mocks.manage).toHaveBeenLastCalledWith({
+      environmentId: "remote",
+      input: {
+        languageId: "python",
+        action: "install",
+        toolkitIds: ["python-data-and-figures", "python-image-analysis"],
+        selectionAfterInstall: "existing",
+      },
+    });
+    expect(mocks.calls).toEqual(["install"]);
+    expect(mocks.preferences.python?.executable).toBe(systemPath);
   });
 
   it("keeps the grouped Settings card used by other Settings pages", async () => {
@@ -338,15 +405,28 @@ describe("Scientific Computing settings interactions", () => {
     expect(container.textContent).not.toContain("Python & MATLAB");
     expect(container.textContent).not.toContain("Advanced");
     const rows = container.querySelectorAll("[data-slot=settings-row]");
-    expect(rows).toHaveLength(2);
+    expect(rows).toHaveLength(3);
     const card = container.querySelector("div.rounded-xl.border");
     expect(card).not.toBeNull();
     expect(card?.className).toContain("bg-card/40");
-    expect(card?.querySelectorAll("[data-slot=settings-row]")).toHaveLength(2);
+    expect(card?.querySelectorAll("[data-slot=settings-row]")).toHaveLength(3);
     expect(container.querySelector("[data-compute-installation]")).toBeNull();
     expect(container.querySelector("[data-compute-summary='python']")?.textContent).toContain(
       "3.12.13",
     );
+    expect(container.querySelector("[data-compute-summary='matlab']")).toBeNull();
+    const tabs = [...container.querySelectorAll<HTMLButtonElement>('[role="tab"]')];
+    const pythonTab = tabs.find((candidate) => candidate.textContent?.startsWith("Python"));
+    const matlabTab = tabs.find((candidate) => candidate.textContent?.startsWith("MATLAB"));
+    expect(pythonTab?.getAttribute("aria-selected")).toBe("true");
+    expect(pythonTab?.tabIndex).toBe(0);
+    expect(matlabTab?.tabIndex).toBe(-1);
+    expect(matlabTab).toBeDefined();
+    await act(() =>
+      pythonTab!.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowRight", bubbles: true })),
+    );
+    expect(matlabTab?.getAttribute("aria-selected")).toBe("true");
+    expect(matlabTab?.tabIndex).toBe(0);
     expect(container.querySelector("[data-compute-summary='matlab']")?.textContent).toContain(
       "R2026a",
     );
@@ -496,7 +576,7 @@ describe("Scientific Computing settings interactions", () => {
     const summary = container.querySelector("[data-compute-summary='matlab']");
     const recovery = container.querySelector("[data-compute-recovery='matlab']");
     expect(summary?.textContent).toContain("MATLAB connection failed");
-    expect(summary?.textContent).toContain("ENOENT");
+    expect(container.textContent).toContain("ENOENT");
     expect(summary?.textContent).not.toContain("R2026a");
     expect(button("Repair connection")).not.toBeNull();
     expect(container.textContent?.match(/ENOENT/gu)).toHaveLength(1);
@@ -533,10 +613,8 @@ describe("Scientific Computing settings interactions", () => {
     mocks.releaseFails = true;
     await render();
     await click("Connect MATLAB");
-    const summary = container.querySelector("[data-compute-summary='matlab']");
-    expect(summary?.textContent).toContain("MATLAB connection failed");
-    expect(summary?.textContent).toContain("Busy operation");
-    expect(summary?.textContent).not.toContain("R2026a");
+    expect(container.textContent).toContain("MATLAB connection failed");
+    expect(container.textContent).toContain("Busy operation");
     expect(button("Repair connection")).not.toBeNull();
   });
 

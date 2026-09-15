@@ -6,8 +6,13 @@ import {
   ComputeToolkitId,
 } from "@scientfactory/compute";
 
-import { PYTHON_LANGUAGE_ID } from "./PythonRuntimeAdapter.ts";
-import { PYTHON_DATA_AND_FIGURES_TOOLKIT, assessPythonToolkit } from "./PythonToolkitCatalog.ts";
+import { OBSERVED_PYTHON_PACKAGES, PYTHON_LANGUAGE_ID } from "./PythonRuntimeAdapter.ts";
+import {
+  PYTHON_DATA_AND_FIGURES_TOOLKIT,
+  PYTHON_TOOLKIT_CATALOG,
+  PYTHON_TOOLKIT_EXTRAS,
+  assessPythonToolkit,
+} from "./PythonToolkitCatalog.ts";
 
 const verification = (
   input: Partial<ComputeRuntimeVerification> = {},
@@ -32,11 +37,27 @@ const verification = (
     { name: "pandas", version: "2.2.2" },
     { name: "plotly", version: "6.3.0" },
     { name: "scipy", version: "1.14.0" },
+    { name: "scikit-learn", version: "1.9.1" },
+    { name: "seaborn", version: "0.13.2" },
+    { name: "statsmodels", version: "0.15.0" },
+    { name: "sympy", version: "1.14.0" },
+    { name: "openpyxl", version: "3.1.5" },
   ],
   ...input,
 });
 
 describe("Python Toolkit catalog", () => {
+  it("keeps every catalog package observable and every Toolkit provisionable", () => {
+    const ids = PYTHON_TOOLKIT_CATALOG.map((toolkit) => toolkit.toolkitId);
+    expect(new Set(ids).size).toBe(ids.length);
+    expect(Object.keys(PYTHON_TOOLKIT_EXTRAS)).toEqual(ids);
+    for (const toolkit of PYTHON_TOOLKIT_CATALOG) {
+      for (const requirement of toolkit.packageRequirements) {
+        expect(OBSERVED_PYTHON_PACKAGES).toContain(requirement.name);
+      }
+    }
+  });
+
   it("marks the Toolkit ready only when the exact verified runtime has every package", () => {
     expect(assessPythonToolkit(PYTHON_DATA_AND_FIGURES_TOOLKIT, verification())).toMatchObject({
       toolkitId: "python-data-and-figures",
