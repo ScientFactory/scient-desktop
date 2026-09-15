@@ -259,15 +259,18 @@ export type ComputeManagedRuntimeController = ReturnType<typeof useComputeManage
 export function ManagedRuntimeNotice({
   runtime,
   variant = "block",
+  showFailure = true,
   onRetry,
 }: {
   runtime: ComputeManagedRuntimeController;
   variant?: "block" | "toolbar";
+  /** A file can use a healthy runtime despite an unrelated setup/maintenance failure. */
+  showFailure?: boolean;
   onRetry?: () => void;
 }) {
   const progress =
     runtime.status && managedRuntimeOperationLabel(runtime.status, runtime.languageId);
-  const failure = runtime.failure;
+  const failure = showFailure ? runtime.failure : null;
   // Removal always stays behind its confirmation dialog, including retries.
   const retryAction = failure?.retryAction === "remove" ? null : (failure?.retryAction ?? null);
   const retry =

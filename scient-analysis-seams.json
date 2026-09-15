@@ -53,7 +53,6 @@
     "static-artifact",
     "selectThreadPreviewMiniPlayerTabId",
     "openScientArtifact",
-    "ScientFileAuxiliarySurface",
     "ResizeSeparator",
     "useScientHorizontalSplit",
     "analysis(Start|Cancel|Verify|List|Get|Cleanup|Promote)",

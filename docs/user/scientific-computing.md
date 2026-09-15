@@ -57,7 +57,7 @@ Before a session starts, the file header names the interpreter it found (**Pytho
 session already started. A live idle session uses the shorter **Python** or **MATLAB** status, and a
 busy session says it is running. Selecting this compact status always opens Scientific Computing for
 that server; it never expands into a full-path card.
-If setup fails, the header shows a one-line status with a copy control and a details toggle; it
+If setup fails for the runtime the file needs, the header shows a one-line status with a copy control and a details toggle; it
 never wraps a stack or path across **Run**. A code error remains a result of that execution; it does
 not make a healthy Python or MATLAB runtime unready. The refresh control in Scientific Computing
 performs lightweight runtime rediscovery so an installation or environment change can be recognized
@@ -82,8 +82,11 @@ An existing Python can run ordinary code without every scientific library. If th
 data-and-figures packages are missing, the status tooltip notes that some scientific packages are missing.
 Run remains available for code that does not need those packages; Scient does not
 silently install them into a user-owned environment.
-An unrelated managed setup or removal failure does not disable a healthy existing runtime.
-Full setup errors remain available under **Error details**. Select the file's Python status to open
+An unrelated managed setup or removal failure does not disable or replace the status of a usable
+independent runtime. The file keeps its healthy live session status, or the independent runtime's
+status before startup. A cached probe alone does not clear a failure of the managed runtime itself.
+Setup failures remain available in Settings under **Error details**; active setup progress and Cancel
+remain visible on the file. Select the file's Python status to open
 the right server's Scientific Computing settings. After choosing or repairing an environment, rerun
 the code yourself; Scient never replays a failed run automatically.
 
@@ -91,8 +94,9 @@ the code yourself; Scient never replays a failed run automatically.
 
 Open a `.m` file and select its MATLAB status to open **Scientific Computing** for that server.
 Enable MATLAB there and choose **Connect MATLAB** when a connection helper is needed.
-Opening the file does not start Scientific Python or provision its Toolkit. A helper failure stays
-a short header status with copy and details; setup and recovery remain available in Settings. Scient does not
+Opening the file does not start Scientific Python or provision its Toolkit. When the file needs the
+failed helper, its failure appears as a short header status with copy and details;
+setup and recovery remain available in Settings. Scient does not
 install MATLAB or a license. If several copies are installed, open
 **Settings → Scientific Computing**, expand **Runtime**, and choose the installation, or
 leave automatic discovery selected.

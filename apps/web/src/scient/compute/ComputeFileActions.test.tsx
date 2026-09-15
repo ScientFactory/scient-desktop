@@ -15,6 +15,8 @@ import { beforeEach, describe, expect, it, vi } from "vite-plus/test";
 const mocks = vi.hoisted(() => ({
   languages: [] as ComputeLanguageRuntimeInspection[],
   managedStatus: null as ComputeManagedRuntimeStatus | null,
+  sessions: [] as unknown[],
+  markup: "",
   buttons: [] as Array<ComponentProps<"button">>,
   menuItems: [] as Array<ComponentProps<"button">>,
   start: vi.fn(),
@@ -48,7 +50,7 @@ vi.mock("~/state/query", () => ({
       query === "runtimes"
         ? { languages: mocks.languages }
         : query === "sessions"
-          ? []
+          ? mocks.sessions
           : query === "managed-status"
             ? mocks.managedStatus
             : null,
@@ -88,7 +90,7 @@ vi.mock("~/components/ui/menu", () => ({
   MenuSeparator: () => null,
 }));
 
-import { PYTHON_COMPUTE_SOURCE } from "./computeSourceLanguage";
+import { MATLAB_COMPUTE_SOURCE, PYTHON_COMPUTE_SOURCE } from "./computeSourceLanguage";
 
 import { ComputeFileActions, type ComputeFileActionsHandle } from "./ComputeFileActions";
 import {
@@ -127,13 +129,14 @@ function runtime(
 function render(
   candidates = [runtime("managed")],
   contextId: ComputeContextId | undefined = undefined,
+  language = PYTHON_COMPUTE_SOURCE,
 ) {
   mocks.languages = [
     {
       descriptor: {
-        languageId: ComputeLanguageId.make("python"),
-        displayName: "Python",
-        sourceExtensions: [".py"],
+        languageId: language.languageId,
+        displayName: language.displayName,
+        sourceExtensions: [],
         capabilities: [],
       },
       enabled: true,
@@ -143,9 +146,9 @@ function render(
       runtimes: candidates,
     },
   ];
-  renderToStaticMarkup(
+  mocks.markup = renderToStaticMarkup(
     <ComputeFileActions
-      language={PYTHON_COMPUTE_SOURCE}
+      language={language}
       environmentId={testEnvironmentId}
       cwd="/project"
       relativePath="test.py"
@@ -169,6 +172,8 @@ describe("Python file run actions", () => {
     mocks.buttons = [];
     mocks.menuItems = [];
     mocks.managedStatus = null;
+    mocks.sessions = [];
+    mocks.markup = "";
     mocks.start.mockResolvedValue({
       _tag: "Success",
       value: { sessionId: ComputeSessionId.make("new-session"), generation: 1 },
@@ -311,6 +316,124 @@ describe("Python file run actions", () => {
         failureMessage: state === "failed" ? "Could not remove managed runtime" : null,
       };
       expect(render([runtime("path")]).disabled).toBe(false);
+      expect(mocks.markup).not.toContain("Could not remove managed runtime");
+      expect(mocks.markup.includes('data-compute-notice="toolbar"')).toBe(state === "operating");
+      if (state === "operating") expect(mocks.markup).toContain("Cancel");
+    },
+  );
+
+  it.each(["managed", "path"] as const)(
+    "scopes maintenance failures to the selected %s runtime instead of trusting a cached probe",
+    (source) => {
+      mocks.managedStatus = {
+        installed: true,
+        selection: "managed",
+        updateAvailable: false,
+        runtimeVersion: null,
+        toolkitRevision: null,
+        generationId: "g1",
+        operation: null,
+        failureMessage: "Maintenance failed",
+      };
+      expect(render([runtime(source)]).disabled).toBe(false);
+      expect(mocks.markup.includes('data-compute-notice="toolbar"')).toBe(source === "managed");
+      // Display filtering must not discard the authoritative Settings failure.
+      expect(mocks.managedStatus.failureMessage).toBe("Maintenance failed");
+    },
+  );
+
+  it("keeps recovery visible when the selected runtime is broken despite an unrelated usable runtime", () => {
+    mocks.managedStatus = {
+      installed: true,
+      selection: "managed",
+      updateAvailable: false,
+      runtimeVersion: null,
+      toolkitRevision: null,
+      generationId: "g1",
+      operation: null,
+      failureMessage: "Setup failed",
+    };
+    expect(render([runtime("managed", false), runtime("path")]).disabled).toBe(true);
+    expect(mocks.markup).toContain('data-compute-notice="toolbar"');
+  });
+
+  it.each([
+    { ready: true, selection: "existing" as const, notice: false },
+    { ready: false, selection: "existing" as const, notice: true },
+    { ready: true, selection: "managed" as const, notice: true },
+    { ready: false, selection: "managed" as const, notice: true },
+  ])(
+    "scopes MATLAB helper failures to its Engine host ($selection, ready=$ready)",
+    ({ ready, selection, notice }) => {
+      mocks.managedStatus = {
+        installed: true,
+        selection,
+        updateAvailable: false,
+        runtimeVersion: null,
+        toolkitRevision: null,
+        generationId: "helper-1",
+        operation: null,
+        failureMessage: "Helper repair failed",
+      };
+      const candidate = runtime("path", ready);
+      const profile = { ...candidate.profile, languageId: MATLAB_COMPUTE_SOURCE.languageId };
+      render(
+        [{ ...candidate, profile, verification: { ...candidate.verification, profile } }],
+        undefined,
+        MATLAB_COMPUTE_SOURCE,
+      );
+      expect(mocks.markup.includes('data-compute-notice="toolbar"')).toBe(notice);
+    },
+  );
+
+  it("keeps active setup cancellable without displaying an unrelated prior failure", () => {
+    mocks.managedStatus = {
+      installed: true,
+      selection: "managed",
+      updateAvailable: false,
+      runtimeVersion: null,
+      toolkitRevision: null,
+      generationId: "g1",
+      failureMessage: "Previous repair failed",
+      operation: {
+        operationId: "new-repair",
+        action: "repair",
+        phase: "verifying",
+        startedAt: "2026-09-15T12:00:00.000Z",
+        downloadedBytes: null,
+        totalBytes: null,
+      },
+    };
+    render([runtime("path")]);
+    expect(mocks.markup).toContain("Cancel");
+    expect(mocks.markup).not.toContain("Previous repair failed");
+  });
+
+  it.each(["ready", "error"])(
+    "uses the live session's health (%s), not a replacement runtime's health",
+    (status) => {
+      mocks.managedStatus = {
+        installed: true,
+        selection: "managed",
+        updateAvailable: false,
+        runtimeVersion: null,
+        toolkitRevision: null,
+        generationId: "g1",
+        operation: null,
+        failureMessage: "Repair failed",
+      };
+      mocks.sessions = [
+        {
+          sessionId: "live",
+          languageId: "python",
+          label: "Python",
+          status,
+          activity: "idle",
+          runtime: runtime("managed").profile,
+        },
+      ];
+      render([runtime("path", status !== "ready")]);
+      expect(mocks.markup.includes('data-compute-notice="toolbar"')).toBe(status !== "ready");
     },
   );
 

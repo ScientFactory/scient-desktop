@@ -1,6 +1,6 @@
 # Run a MATLAB file
 
-Use Scient's MATLAB panel to run a project analysis, inspect its output and
+Use a MATLAB file's Results pane to inspect its output and
 figures, and save useful results beside the rest of the project. Scient can
 always open and edit a `.m` file. Running it additionally requires a
 user-installed and licensed MATLAB in the selected project environment.
@@ -14,8 +14,8 @@ requires a compatible Python host. Scient can set up a small private
 **MATLAB connection helper**, or choose an existing compatible host from
 **Settings → Scientific Computing → Runtime**.
 That helper is independent of Scientific Python. Opening a `.m` file does not
-provision the scientific Toolkit; a helper setup failure is a one-line header
-status with copy and details, not a wrapped stack across **Run**. The compact
+provision the scientific Toolkit. If the file needs the failed helper, its setup failure is a
+one-line header status with copy and details, not a wrapped stack across **Run**. The compact
 MATLAB status opens Scientific Computing directly; it does not expand into an
 executable-path menu. Scient does not install MATLAB or its license. The file
 header names the detected release before startup and uses the shorter **MATLAB**
@@ -50,7 +50,7 @@ from that same Run menu. Batch does not require the Engine connection helper:
 2. Wait for any pending save to finish. Scient runs the exact saved version,
    not an unsaved editor buffer.
 3. If MATLAB was not found, open **Scientific Computing**, enable MATLAB, then
-   choose a detected installation or use **Use another path…**. The page refresh
+   expand **Runtime** and choose a detected installation or **Custom executable…**. The page refresh
    control scans again.
 4. Choose **Run MATLAB batch**. Standard output, errors, status, figures, and the
    file's recent run history appear in Results. Discovery is not proof of a working license;

@@ -856,9 +856,24 @@ export const ComputeFileActions = forwardRef<ComputeFileActionsHandle, ComputeFi
     };
     const fileRunBlocked = matlabFileCapability?.runnableAsFile === false;
     const busy = operation !== null || refreshing || switching || stoppingUnusedSession !== null;
+    // Setup receipts describe maintenance, not the health of this file's runtime.
+    // A cached probe cannot disprove a failure of the managed runtime itself.
+    // MATLAB's executable source does not identify its Engine host; its helper
+    // selection determines whether a detected connection is independent.
+    const hasIndependentRuntime =
+      readyRuntime !== null &&
+      (props.language.languageId === "python"
+        ? readyRuntime.profile.source !== "managed"
+        : managedRuntime.status?.selection === "existing");
+    // A live session takes precedence over discovery of a replacement runtime.
+    const managedFailureUnrelated =
+      liveSession !== null
+        ? liveSession.languageId === props.language.languageId && liveSession.status === "ready"
+        : hasIndependentRuntime;
+    const showManagedFailure = Boolean(managedRuntime.failure) && !managedFailureUnrelated;
+    const showManagedNotice = Boolean(setupProgress) || showManagedFailure;
     const pinRuntimeChrome =
-      Boolean(setupProgress) ||
-      Boolean(managedRuntime.failure) ||
+      showManagedNotice ||
       runtimeToolbar.kind === "setup" ||
       runtimeToolbar.kind === "switch" ||
       capacityBlocked;
@@ -907,8 +922,12 @@ export const ComputeFileActions = forwardRef<ComputeFileActionsHandle, ComputeFi
                 : "hidden min-w-0 flex-1 overflow-hidden @[9rem]/python-file-actions:flex @[9rem]/python-file-actions:items-center @[9rem]/python-file-actions:gap-1"
             }
           >
-            {setupProgress || managedRuntime.failure ? (
-              <ManagedRuntimeNotice runtime={managedRuntime} variant="toolbar" />
+            {showManagedNotice ? (
+              <ManagedRuntimeNotice
+                runtime={managedRuntime}
+                variant="toolbar"
+                showFailure={showManagedFailure}
+              />
             ) : capacityBlocked ? (
               <Menu>
                 <MenuTrigger

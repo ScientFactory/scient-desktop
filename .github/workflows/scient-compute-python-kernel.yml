@@ -93,4 +93,5 @@ jobs:
           export SCIENT_TEST_PYTHON
           vp test run \
             src/scient/compute/PythonKernel.integration.test.ts \
-            src/scient/compute/PythonComputeService.integration.test.ts
+            src/scient/compute/PythonComputeService.integration.test.ts \
+            src/scient/compute/FreshCompute.integration.test.ts
