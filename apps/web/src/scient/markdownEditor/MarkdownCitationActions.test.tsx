@@ -187,6 +187,13 @@ describe("select Markdown -> Ask in chat -> real composer", () => {
     expect(expandComposerCitationsForProvider(value)).toContain('"text": "selected"');
     expect(controller.createSaveIntent()).toBeNull();
     expect(onUserSourceChange).not.toHaveBeenCalled();
+    const addToChat = [...document.querySelectorAll<HTMLButtonElement>("button")].find(
+      (button) => button.textContent?.trim() === "Add to chat",
+    );
+    expect(addToChat).toBeDefined();
+    await act(() => addToChat!.click());
+    expect(document.querySelector('textarea[aria-label="Comment on selected text"]')).toBeNull();
+    expect(collectComposerCitations(editor.current!.readSnapshot().value)).toHaveLength(1);
     const remove = host.querySelector<HTMLButtonElement>('[aria-label="Remove file citation"]')!;
     await act(() => remove.click());
     expect(collectComposerCitations(editor.current!.readSnapshot().value)).toHaveLength(0);
