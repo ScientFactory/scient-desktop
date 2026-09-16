@@ -4969,9 +4969,10 @@ function ChatViewContent(props: ChatViewProps) {
   );
   const supportsThreadPullRequests =
     serverConfig?.environment.capabilities.threadPullRequests === true;
-  const visiblePullRequestCount = visibleThreadPullRequests(
+  const visiblePullRequests = visibleThreadPullRequests(
     (activeThreadShell ?? activeThread)?.pullRequests ?? [],
-  ).length;
+  );
+  const visiblePullRequestCount = visiblePullRequests.length;
   const pullRequestsSurfaceAvailable =
     isServerThread && supportsThreadPullRequests && visiblePullRequestCount > 0;
   const addPullRequestsSurface = useCallback(() => {
@@ -5092,6 +5093,7 @@ function ChatViewContent(props: ChatViewProps) {
   );
   // The shell carries server PR updates even while thread detail is still loading.
   const activeThreadMetadata = activeThreadShell ?? activeThread;
+  const hasLinkedPullRequestDetail = activeThreadMetadata?.linkedPullRequest != null;
   const linkedThreadPullRequest =
     activeThreadMetadata?.linkedPullRequest ?? activeThreadMetadata?.branchPullRequest ?? null;
   const activeProjectRepository = activeProject?.repositoryIdentity?.displayName ?? null;
@@ -5102,6 +5104,11 @@ function ChatViewContent(props: ChatViewProps) {
         linkedThreadPullRequest.number,
       ])
     : null;
+  const proactivePullRequestsKey = pullRequestsSurfaceAvailable
+    ? JSON.stringify(
+        visiblePullRequests.map((link) => [link.host, link.repository, link.number]).sort(),
+      )
+    : linkedThreadPullRequestKey;
   const observedThreadPullRequestRef = useRef<{
     readonly threadKey: string;
     readonly reference: ThreadLinkedPullRequest | null;
@@ -5176,7 +5183,40 @@ function ChatViewContent(props: ChatViewProps) {
         userActionRevision,
       );
     }
-    if (!clientSettingsHydrated || threadDetailLoading) return;
+    if (!clientSettingsHydrated) return;
+
+    const proactivePanelsEnabled = settings.proactivePanelsEnabled && !shouldUseRightPanelSheet;
+    const eligibleLink =
+      proactivePanelsEnabled &&
+      shouldOpenProactivePullRequest(previousTargetKey, proactivePullRequestsKey);
+    const shouldDeferLink = eligibleLink && !pullRequestsCapabilityKnown;
+    proactivePanelObservationRef.current = {
+      ...observation,
+      targetKey: shouldDeferLink ? (previousTargetKey ?? null) : proactivePullRequestsKey,
+    };
+    if (eligibleLink && pullRequestsCapabilityKnown) {
+      if (
+        pullRequestsSurfaceAvailable &&
+        (visiblePullRequestCount > 1 || !hasLinkedPullRequestDetail || !supportsPullRequests)
+      ) {
+        panels.openProactive(
+          activeThreadRef,
+          { id: "pull-requests", kind: "pull-requests" },
+          userActionRevision,
+        );
+      } else if (
+        !followSelectedPullRequest &&
+        supportsPullRequests &&
+        linkedThreadPullRequest !== null
+      ) {
+        panels.openProactive(
+          activeThreadRef,
+          pullRequestSurface(linkedThreadPullRequest),
+          userActionRevision,
+        );
+      }
+    }
+    if (threadDetailLoading) return;
 
     const settledTurnId = latestTurnSettled ? (activeLatestTurn?.turnId ?? null) : null;
     const newlyCompletedTurnId = shouldOpenProactiveTurnDiff({
@@ -5187,8 +5227,13 @@ function ChatViewContent(props: ChatViewProps) {
     })
       ? settledTurnId
       : null;
-    const proactivePanelsEnabled = settings.proactivePanelsEnabled && !shouldUseRightPanelSheet;
-    const eligibleCompletion = proactivePanelsEnabled && newlyCompletedTurnId !== null;
+    const eligibleCompletion =
+      proactivePanelsEnabled &&
+      newlyCompletedTurnId !== null &&
+      !(
+        proactivePullRequestsKey !== null &&
+        (!pullRequestsCapabilityKnown || supportsPullRequests || pullRequestsSurfaceAvailable)
+      );
     const completedCheckpoint = eligibleCompletion
       ? activeThread?.checkpoints.find((checkpoint) => checkpoint.turnId === newlyCompletedTurnId)
       : undefined;
@@ -5198,30 +5243,12 @@ function ChatViewContent(props: ChatViewProps) {
           isGitRepo: gitStatusQuery.data?.isRepo,
         })
       : "ignore";
-    const eligibleLink =
-      proactivePanelsEnabled &&
-      shouldOpenProactivePullRequest(previousTargetKey, linkedThreadPullRequestKey);
-    const shouldDeferLink = eligibleLink && !pullRequestsCapabilityKnown;
     proactivePanelObservationRef.current = {
-      ...observation,
-      // Preserve first-entry eligibility while the checkpoint or repository is loading.
-      runningTurnId: diffAction === "defer" ? previousRunningTurnId : activeRunningTurnId,
-      targetKey: shouldDeferLink ? (previousTargetKey ?? null) : linkedThreadPullRequestKey,
+      ...proactivePanelObservationRef.current,
+      // Preserve first-entry eligibility while capabilities, checkpoint or repository load.
+      runningTurnId:
+        diffAction === "defer" || shouldDeferLink ? previousRunningTurnId : activeRunningTurnId,
     };
-
-    if (
-      !followSelectedPullRequest &&
-      eligibleLink &&
-      pullRequestsCapabilityKnown &&
-      supportsPullRequests &&
-      linkedThreadPullRequest !== null
-    ) {
-      panels.openProactive(
-        activeThreadRef,
-        pullRequestSurface(linkedThreadPullRequest),
-        userActionRevision,
-      );
-    }
     if (diffAction !== "open" || newlyCompletedTurnId === null) return;
     if (!panels.openProactive(activeThreadRef, { id: "diff", kind: "diff" }, userActionRevision)) {
       return;
@@ -5240,9 +5267,12 @@ function ChatViewContent(props: ChatViewProps) {
     isServerThread,
     latestTurnSettled,
     linkedThreadPullRequest,
-    linkedThreadPullRequestKey,
+    proactivePullRequestsKey,
+    hasLinkedPullRequestDetail,
     onDiffPanelOpen,
     pullRequestsCapabilityKnown,
+    pullRequestsSurfaceAvailable,
+    visiblePullRequestCount,
     settings.proactivePanelsEnabled,
     shouldUseRightPanelSheet,
     supportsPullRequests,
