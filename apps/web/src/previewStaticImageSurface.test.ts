@@ -79,6 +79,11 @@ describe("previewStaticImageRevisionKey", () => {
       { _tag: "environment-file", path: "/project/figure.png", access: "exact" },
       { _tag: "media-file", threadId: "thread-a", path: "/tmp/figure.png" },
       { _tag: "native-app-icon", app: { _tag: "app-id", appId: "com.example.app" } },
+      {
+        _tag: "github-media",
+        cwd: "/project",
+        url: "https://raw.githubusercontent.com/owner/repo/main/figure.png",
+      },
     ].map((resource) => resource as Resource);
     const keys = [...resources, computeOutput()].map(keyFor);
 

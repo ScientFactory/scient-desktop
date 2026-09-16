@@ -106,6 +106,13 @@ export const AssetResource = Schema.Union([
   Schema.TaggedStruct("native-app-icon", {
     app: ToolActivityNativeAppReference,
   }),
+  // An upload a pull request body points at on GitHub. A private repository serves these only
+  // to a request that carries a credential, which the client has none of, so the server fetches
+  // them with the `gh` credential the repository at `cwd` authenticates with.
+  Schema.TaggedStruct("github-media", {
+    cwd: TrimmedNonEmptyString.check(Schema.isMaxLength(WORKSPACE_ASSET_PATH_MAX_LENGTH)),
+    url: TrimmedNonEmptyString.check(Schema.isMaxLength(2048)),
+  }),
 ]);
 export type AssetResource = typeof AssetResource.Type;
 
@@ -458,6 +465,15 @@ export class AssetEnvironmentFileNotFoundError extends Schema.TaggedError<AssetE
   }
 }
 
+export class AssetGitHubMediaUrlValidationError extends Schema.TaggedError<AssetGitHubMediaUrlValidationError>()(
+  "AssetGitHubMediaUrlValidationError",
+  {},
+) {
+  override get message(): string {
+    return "Only media hosted by GitHub can be fetched with a GitHub credential.";
+  }
+}
+
 export const AssetAccessError = Schema.Union([
   AssetWorkspaceContextNotFoundError,
   AssetWorkspaceContextResolutionError,
@@ -481,6 +497,7 @@ export const AssetAccessError = Schema.Union([
   AssetEnvironmentFilePathValidationError,
   AssetEnvironmentFileInspectionError,
   AssetEnvironmentFileNotFoundError,
+  AssetGitHubMediaUrlValidationError,
   AssetSigningKeyLoadError,
 ]);
 export type AssetAccessError = typeof AssetAccessError.Type;
