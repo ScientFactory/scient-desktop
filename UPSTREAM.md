@@ -38,12 +38,13 @@ or observed tip.
 
 The current T3 alignment is recorded in
 [`docs/internals/2026-09-17-upstream-sync-d1a64489.md`](docs/internals/2026-09-17-upstream-sync-d1a64489.md)
-and in `upstream-state.json`. It preserves 47 more official first-parent commits after
+and in `upstream-state.json`. It preserves 49 more official first-parent commits after
 `c1b2210411da79350a3f9f5a65a4a64971e4acad` through
-`d1a644897119300688cbd8bf26e0b64aeb92c382`. The history-preserving merge
+`32e8b2584556c0c55ce0d1d8f72b506cb771d60d`. The initial history-preserving merge
 `65d6a5100ced1098f91b1c7256a70f5d9616bca3` has the exact owned base
-`8a293f0836684c6e381d1b228e3aa02e2ea360ac` as its first parent and the exact official target as
-its second parent.
+`8a293f0836684c6e381d1b228e3aa02e2ea360ac` as its first parent. The final extension merge
+`a0628627d8da25788af9d8c200ba0751ac189562` has the reviewed candidate as its first parent and the
+exact final official target as its second.
 
 Automated qualification passed; owner manual review is pending. Pull-request delivery, merge, and
 release publication remain separate actions. The
@@ -52,11 +53,12 @@ Later observed upstream tips do not move `integrationBase` by themselves.
 
 ## Receiving T3 updates
 
-The local alignment through `d1a64489` is documented in the
+The local alignment through `32e8b258` is documented in the
 [2026-09-17 review](docs/internals/2026-09-17-upstream-sync-d1a64489.md). It adds configurable send
 shortcuts and follow-up behavior, provider thinking traces and native slash commands, provider usage
 limits, safer folder drops, connection compatibility handling, project monograms, pull-request and
-mobile reliability improvements, and lower-overhead checkpoint and GitHub refresh paths. Scient's
+mobile reliability improvements, lower-overhead checkpoint and GitHub refresh paths, authenticated
+private-repository pull-request media, and width-aware provider settings. Scient's
 provider lifecycle, scientific surfaces, identity, signed npm-pinned server runtime, durable
 server-authoritative queue, state roots, and cloud/mobile publication holds remain.
 
