@@ -38,12 +38,13 @@ or observed tip.
 
 The current T3 alignment is recorded in
 [`docs/internals/2026-09-17-upstream-sync-d1a64489.md`](docs/internals/2026-09-17-upstream-sync-d1a64489.md)
-and in `upstream-state.json`. It preserves 49 more official first-parent commits after
+and in `upstream-state.json`. It preserves 50 more official first-parent commits after
 `c1b2210411da79350a3f9f5a65a4a64971e4acad` through
-`32e8b2584556c0c55ce0d1d8f72b506cb771d60d`. The initial history-preserving merge
+`aae361c4ef6478e4dcf970d574f3fd38d908e6b9`. The initial history-preserving merge
 `65d6a5100ced1098f91b1c7256a70f5d9616bca3` has the exact owned base
 `8a293f0836684c6e381d1b228e3aa02e2ea360ac` as its first parent. The final extension merge
-`a0628627d8da25788af9d8c200ba0751ac189562` has the reviewed candidate as its first parent and the
+`a0628627d8da25788af9d8c200ba0751ac189562` extends through `32e8b258`; the final extension merge
+`157a2a167b23cf53e60583256172351780059f43` has the reviewed candidate as its first parent and the
 exact final official target as its second.
 
 Automated qualification passed; owner manual review is pending. Pull-request delivery, merge, and
@@ -53,12 +54,13 @@ Later observed upstream tips do not move `integrationBase` by themselves.
 
 ## Receiving T3 updates
 
-The local alignment through `32e8b258` is documented in the
+The local alignment through `aae361c4` is documented in the
 [2026-09-17 review](docs/internals/2026-09-17-upstream-sync-d1a64489.md). It adds configurable send
 shortcuts and follow-up behavior, provider thinking traces and native slash commands, provider usage
 limits, safer folder drops, connection compatibility handling, project monograms, pull-request and
 mobile reliability improvements, lower-overhead checkpoint and GitHub refresh paths, authenticated
-private-repository pull-request media, and width-aware provider settings. Scient's
+private-repository pull-request media, width-aware provider settings, and progressive complete
+large-diff review loading across web and mobile. Scient's
 provider lifecycle, scientific surfaces, identity, signed npm-pinned server runtime, durable
 server-authoritative queue, state roots, and cloud/mobile publication holds remain.
 
