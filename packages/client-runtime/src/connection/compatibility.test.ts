@@ -51,4 +51,13 @@ describe("orchestration protocol compatibility", () => {
     expect(error).toMatchObject({ reason: "unsupported" });
     expect(error?.message).toContain("This client is not supported");
   });
+
+  it("uses Scient guidance when an older server must be updated", () => {
+    const error = orchestrationProtocolCompatibilityError(
+      descriptor(ORCHESTRATION_PROTOCOL_VERSION - 1),
+    );
+    expect(error).toMatchObject({ reason: "unsupported" });
+    expect(error?.message).toContain("Update Scient on Build Mac");
+    expect(error?.message).not.toContain("T3 Code");
+  });
 });
