@@ -65,6 +65,8 @@ export function previewStaticImageRevisionKey(image: PreviewStaticImageSurfaceDe
       return JSON.stringify([resource._tag, resource.cwd, resource.path]);
     case "native-app-icon":
       return JSON.stringify([resource._tag, resource.app]);
+    case "github-media":
+      return JSON.stringify([resource._tag, resource.cwd, resource.url]);
   }
 }
 
