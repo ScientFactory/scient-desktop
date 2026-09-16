@@ -38,12 +38,12 @@ or observed tip.
 
 The current T3 alignment is recorded in
 [`docs/internals/2026-09-17-upstream-sync-d1a64489.md`](docs/internals/2026-09-17-upstream-sync-d1a64489.md)
-and in `upstream-state.json`. It preserves 51 more official first-parent commits after
+and in `upstream-state.json`. It preserves 53 more official first-parent commits after
 `c1b2210411da79350a3f9f5a65a4a64971e4acad` through
-`52ad70ec43b5dcfcdc72ac79c0964da8e4d163db`. The initial history-preserving merge
+`01e64193d9d2abfae8f7b3d20f66824e38397bd6`. The initial history-preserving merge
 `65d6a5100ced1098f91b1c7256a70f5d9616bca3` has the exact owned base
 `8a293f0836684c6e381d1b228e3aa02e2ea360ac` as its first parent. The final extension merge
-`664c68a103d6e5713b902f99565f6bcbd086589d` has the reviewed candidate as its first parent and the
+`00e25964c2625c0beac6b54d08af861afd0a49dc` has the reviewed candidate as its first parent and the
 exact final official target as its second.
 
 Automated qualification passed; owner manual review is pending. Pull-request delivery, merge, and
@@ -53,15 +53,16 @@ Later observed upstream tips do not move `integrationBase` by themselves.
 
 ## Receiving T3 updates
 
-The local alignment through `52ad70ec` is documented in the
+The local alignment through `01e64193` is documented in the
 [2026-09-17 review](docs/internals/2026-09-17-upstream-sync-d1a64489.md). It adds configurable send
 shortcuts and follow-up behavior, provider thinking traces and native slash commands, provider usage
 limits, safer folder drops, connection compatibility handling, project monograms, pull-request and
 mobile reliability improvements, lower-overhead checkpoint and GitHub refresh paths, authenticated
 private-repository pull-request media, width-aware provider settings, progressive complete
-large-diff review loading across web and mobile, and pull-request-first proactive panel behavior. Scient's
-provider lifecycle, scientific surfaces, identity, signed npm-pinned server runtime, durable
-server-authoritative queue, state roots, and cloud/mobile publication holds remain.
+large-diff review loading across web and mobile, pull-request-first proactive panel behavior, and
+clearer agent approval prompts. Scient's provider lifecycle, scientific surfaces, identity, signed
+npm-pinned server runtime, durable server-authoritative queue, state roots, and cloud/mobile
+publication holds remain.
 
 Migration IDs are immutable local history, not an upstream synchronization counter. T3's multi-PR
 migration is registered as Scient `53`, composer-context migration follows at `54`, and title-state
