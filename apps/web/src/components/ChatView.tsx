@@ -3830,7 +3830,9 @@ function ChatViewContent(props: ChatViewProps) {
     live: liveWorktreeSetup,
     recorded: recordedWorktreeSetup,
     turnStarted: activeThread?.latestTurn?.startedAt != null,
-    isWorking,
+    // Counts the optimistic send too, so the row retires the moment the
+    // follow-up is on screen rather than when the server echoes it back.
+    followUpSent: timelineMessages.filter((message) => message.role === "user").length > 1,
   });
   // Sends wait for the agent handoff, not for the setup script: an async
   // script keeps the snapshot running while the agent already works, and a
@@ -7294,6 +7296,19 @@ function ChatViewContent(props: ChatViewProps) {
         return;
       }
 
+      if (command === "thread.steerQueuedMessage") {
+        const message = threadQueue.items[0];
+        if (!message) return;
+        event.preventDefault();
+        event.stopPropagation();
+        if (!event.repeat) {
+          void threadQueue.control("steer", message.queueItemId).catch((cause) => {
+            if (activeThreadId) setThreadError(activeThreadId, chatActionErrorMessage(cause));
+          });
+        }
+        return;
+      }
+
       if (command === "thread.stop") {
         // An unavailable command should not shadow contextual shortcuts such as Escape to close a dialog.
         if (!canInterruptRunningThread) return;
@@ -7323,6 +7338,7 @@ function ChatViewContent(props: ChatViewProps) {
     activeThreadPinned,
     activeThreadSettled,
     canInterruptRunningThread,
+    activeThreadKey,
     terminalUiState.terminalOpen,
     terminalUiState.activeTerminalId,
     activeThreadId,
@@ -7350,6 +7366,8 @@ function ChatViewContent(props: ChatViewProps) {
     toggleRightPanelMaximized,
     toggleTerminalVisibility,
     composerRef,
+    threadQueue,
+    setThreadError,
   ]);
 
   // Paste-to-focus: the resting composer blurs on a click into the timeline,
@@ -9867,6 +9885,7 @@ function ChatViewContent(props: ChatViewProps) {
   const workspaceFileDropHandlers = makeWorkspaceFileDropHandlers({
     setDragActive: setIsWorkspaceFileDragActive,
     addFiles: (files) => composerRef.current?.addDroppedFiles(files),
+    addFolders: (folders) => composerRef.current?.addDroppedFolders(folders),
   });
 
   return (

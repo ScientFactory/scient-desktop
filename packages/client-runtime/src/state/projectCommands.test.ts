@@ -81,6 +81,7 @@ const makeHarness = Effect.fn("ProjectCommandsTest.makeHarness")(function* (meth
     remove: () => Effect.void,
     removeRelayEnvironments: () => Effect.void,
     setEnabled: () => Effect.die("Unexpected environment toggle"),
+    setCompatibility: () => Effect.die("Unexpected compatibility update"),
     retryNow: () => Effect.void,
     state: () => SubscriptionRef.get(state),
     stateChanges: () => SubscriptionRef.changes(state),

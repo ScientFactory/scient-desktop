@@ -1355,7 +1355,7 @@ describe("resolveAssistantMessageCopyState", () => {
 });
 
 describe("deriveMessagesTimelineRows", () => {
-  it("shows the worktree setup card instead of the working placeholder", () => {
+  it("leads the worktree setup card with the working header", () => {
     const snapshot: WorktreeSetupSnapshot = {
       threadId: ThreadId.make("thread-setup"),
       phase: "running",
@@ -1406,6 +1406,7 @@ describe("deriveMessagesTimelineRows", () => {
       worktreeSetup: snapshot,
     });
     expect(withoutMessages).toEqual([
+      { kind: "working", id: "working-indicator-row", createdAt: "2026-01-01T00:00:00Z" },
       {
         kind: "worktree-setup",
         id: WORKTREE_SETUP_ROW_ID,
@@ -1415,8 +1416,25 @@ describe("deriveMessagesTimelineRows", () => {
       },
     ]);
 
-    // A failed setup never handed off, so the card stays under the send and
-    // remains authoritative over a stale working flag.
+    // The main pass already places the working header after the send while a
+    // bootstrap counts as working; the card slots under that one header.
+    const withUserMessage = deriveMessagesTimelineRows({
+      timelineEntries: [userEntry],
+      isWorking: true,
+      activeTurnStartedAt: "2026-01-01T00:00:00Z",
+      turnDiffSummaries: [],
+      supportsConversationRollback: false,
+      worktreeSetup: snapshot,
+    });
+    expect(withUserMessage.map((row) => row.kind)).toEqual([
+      "message",
+      "working",
+      "worktree-setup",
+    ]);
+
+    // A failed setup never handed off, so the card stays under the send. The
+    // rest of the timeline is untouched: a running send still gets its
+    // working and thinking rows.
     const withMessages = deriveMessagesTimelineRows({
       timelineEntries: [userEntry, assistantEntry],
       isWorking: true,
@@ -1425,10 +1443,16 @@ describe("deriveMessagesTimelineRows", () => {
       supportsConversationRollback: false,
       worktreeSetup: { ...snapshot, phase: "failed" },
     });
-    expect(withMessages.map((row) => row.kind)).toEqual(["message", "worktree-setup", "message"]);
+    expect(withMessages.map((row) => row.kind)).toEqual([
+      "message",
+      "worktree-setup",
+      "working",
+      "message",
+      "thinking",
+    ]);
 
-    // Once the agent stage is done the setup script may still be running in
-    // the background: the turn owns the header and the script row follows it.
+    // Once the agent stage is done and the turn is live, Scient keeps the
+    // still-running setup script visible beneath the stable working header.
     const stage = (id: "agent" | "setup-script", status: "done" | "running") =>
       ({
         id,
@@ -1476,11 +1500,26 @@ describe("deriveMessagesTimelineRows", () => {
       supportsConversationRollback: false,
       worktreeSetup: asyncSnapshot,
     });
-    expect(handoffRows.map((row) => row.kind)).toEqual(["message", "worktree-setup"]);
-    expect(handoffRows[1]).toMatchObject({ kind: "worktree-setup", embedded: false });
+    expect(handoffRows.map((row) => row.kind)).toEqual(["message", "working", "worktree-setup"]);
+    expect(handoffRows[2]).toMatchObject({ kind: "worktree-setup", embedded: false });
 
-    // A script that already finished has nothing left to show once the turn is live.
-    const finishedRows = deriveMessagesTimelineRows({
+    // A script that outlives the reply remains visible after the assistant.
+    const outlivedRows = deriveMessagesTimelineRows({
+      timelineEntries: [
+        userEntry,
+        { ...assistantEntry, message: { ...assistantEntry.message, streaming: false } },
+      ],
+      latestTurn: { ...liveTurn, state: "completed", completedAt: "2026-01-01T00:00:40Z" },
+      isWorking: false,
+      activeTurnStartedAt: null,
+      turnDiffSummaries: [],
+      supportsConversationRollback: false,
+      worktreeSetup: asyncSnapshot,
+    });
+    expect(outlivedRows.map((row) => row.kind)).toEqual(["message", "message", "worktree-setup"]);
+
+    // A failed script after the handoff keeps its row under the send.
+    const failedRows = deriveMessagesTimelineRows({
       timelineEntries: [userEntry],
       latestTurn: liveTurn,
       isWorking: true,
@@ -1489,10 +1528,18 @@ describe("deriveMessagesTimelineRows", () => {
       supportsConversationRollback: false,
       worktreeSetup: {
         ...asyncSnapshot,
-        stages: [stage("setup-script", "done"), stage("agent", "done")],
+        phase: "done",
+        endedAt: "2026-01-01T00:00:20Z",
+        stages: [{ ...stage("setup-script", "done"), status: "failed" }, stage("agent", "done")],
       },
     });
-    expect(finishedRows.map((row) => row.kind)).toEqual(["message", "working", "thinking"]);
+    expect(failedRows.map((row) => row.kind)).toEqual([
+      "message",
+      "working",
+      "worktree-setup",
+      "thinking",
+    ]);
+    expect(failedRows[2]).toMatchObject({ kind: "worktree-setup", embedded: true });
   });
 
   it("keeps source navigation available for a fork of the first user message", () => {
@@ -2178,6 +2225,118 @@ describe("deriveMessagesTimelineRows", () => {
     });
 
     expect(rows.map((row) => row.id)).toEqual(["turn-fold:turn-1", "assistant-final-entry"]);
+  });
+
+  const reasoningEntry = (id: string, at: string, turnId: string | null) => ({
+    id,
+    kind: "message" as const,
+    createdAt: at,
+    message: {
+      id: id as never,
+      role: "reasoning" as const,
+      text: "weighing it up",
+      turnId: turnId as never,
+      createdAt: at,
+      updatedAt: at,
+      streaming: false,
+    },
+  });
+
+  const answerEntry = (id: string, at: string, turnId: string) => ({
+    id,
+    kind: "message" as const,
+    createdAt: at,
+    message: {
+      id: id as never,
+      role: "assistant" as const,
+      text: "the answer",
+      turnId: turnId as never,
+      createdAt: at,
+      updatedAt: at,
+      streaming: false,
+    },
+  });
+
+  const toolEntry = (id: string, at: string, turnId: string) => ({
+    id,
+    kind: "work" as const,
+    createdAt: at,
+    entry: {
+      id,
+      createdAt: at,
+      turnId: turnId as never,
+      label: "Ran a command",
+      tone: "tool" as const,
+    },
+  });
+
+  it("keeps a thought-only turn out of the work fold", () => {
+    const rows = deriveMessagesTimelineRows({
+      timelineEntries: [
+        reasoningEntry("reasoning-entry", "2026-01-01T00:00:01Z", "turn-1"),
+        answerEntry("assistant-entry", "2026-01-01T00:00:02Z", "turn-1"),
+      ],
+      isWorking: false,
+      activeTurnStartedAt: null,
+      turnDiffSummaries: [],
+      supportsConversationRollback: false,
+    });
+
+    expect(rows.some((row) => row.kind === "turn-fold")).toBe(false);
+    expect(rows.map((row) => row.id)).toContain("reasoning-entry");
+  });
+
+  it("folds a thinking block away with the tool work beside it", () => {
+    const rows = deriveMessagesTimelineRows({
+      timelineEntries: [
+        reasoningEntry("reasoning-entry", "2026-01-01T00:00:01Z", "turn-1"),
+        toolEntry("tool-entry", "2026-01-01T00:00:02Z", "turn-1"),
+        answerEntry("assistant-entry", "2026-01-01T00:00:03Z", "turn-1"),
+      ],
+      isWorking: false,
+      activeTurnStartedAt: null,
+      turnDiffSummaries: [],
+      supportsConversationRollback: false,
+    });
+
+    expect(rows.some((row) => row.kind === "turn-fold")).toBe(true);
+    expect(rows.map((row) => row.id)).not.toContain("reasoning-entry");
+  });
+
+  it("still folds a lone trailing tool call when a thought follows the answer", () => {
+    const rows = deriveMessagesTimelineRows({
+      timelineEntries: [
+        toolEntry("tool-before", "2026-01-01T00:00:01Z", "turn-1"),
+        answerEntry("assistant-entry", "2026-01-01T00:00:02Z", "turn-1"),
+        reasoningEntry("reasoning-after", "2026-01-01T00:00:03Z", "turn-1"),
+        toolEntry("tool-after", "2026-01-01T00:00:04Z", "turn-1"),
+      ],
+      isWorking: false,
+      activeTurnStartedAt: null,
+      turnDiffSummaries: [],
+      supportsConversationRollback: false,
+    });
+
+    const ids = rows.map((row) => row.id);
+    expect(ids).not.toContain("tool-after");
+    expect(ids).not.toContain("reasoning-after");
+  });
+
+  it("does not let a stranded streaming thought hold a settled turn open", () => {
+    const stranded = reasoningEntry("reasoning-stranded", "2026-01-01T00:00:01Z", "turn-1");
+    const rows = deriveMessagesTimelineRows({
+      timelineEntries: [
+        { ...stranded, message: { ...stranded.message, streaming: true } },
+        toolEntry("tool-entry", "2026-01-01T00:00:02Z", "turn-1"),
+        answerEntry("assistant-entry", "2026-01-01T00:00:03Z", "turn-1"),
+      ],
+      isWorking: false,
+      activeTurnStartedAt: null,
+      turnDiffSummaries: [],
+      supportsConversationRollback: false,
+    });
+
+    expect(rows.some((row) => row.kind === "turn-fold")).toBe(true);
   });
 
   it("derives a sane duration for a steer-superseded turn with one instant commentary message", () => {
