@@ -133,7 +133,12 @@ function ComposerCitationDecorator(props: { citation: ComposerCitation; nodeKey:
             if (open && !editor.isEditable()) return;
             commentContext.onOpenChange(props.nodeKey, open);
           },
-          ...(commentTarget?.removeOnCancel ? { onCancel: onRemove } : {}),
+          ...(commentTarget?.removeOnCancel
+            ? {
+                onCancel: onRemove,
+                mode: "create" as const,
+              }
+            : {}),
           onSave: onSaveComment,
           onSaveAndSend: (comment) => {
             if (!onSaveComment(comment)) return false;

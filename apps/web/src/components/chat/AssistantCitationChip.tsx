@@ -47,6 +47,7 @@ export function CitationChip({
   composer?: boolean;
   commentEditor?: {
     open: boolean;
+    mode?: "create" | "edit";
     sourceAnchor?: AssistantCitationSourceAnchor | undefined;
     onOpenChange: (open: boolean) => void;
     onCancel?: () => void;
@@ -172,7 +173,9 @@ export function CitationChip({
                 commentInputRef.current?.focus({ preventScroll: true });
                 return false;
               }}
-              aria-label="Edit citation comment"
+              aria-label={
+                commentEditor.mode === "create" ? "Add citation to chat" : "Edit citation comment"
+              }
               className="w-72 max-w-[calc(100vw-1rem)]"
               viewportClassName="p-3"
               onPointerDown={(event) => event.stopPropagation()}
@@ -180,6 +183,7 @@ export function CitationChip({
               <AssistantCitationCommentEditor
                 key={serializeComposerCitation(citation)}
                 citation={citation}
+                {...(commentEditor.mode ? { mode: commentEditor.mode } : {})}
                 inputRef={commentInputRef}
                 onSubmit={(comment) => {
                   if (!commentEditor.onSave(comment)) return false;
