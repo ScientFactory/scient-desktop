@@ -20,6 +20,10 @@ official target below. It is not a split, cherry-pick, squash, or replay.
   target. The first parent incorporates owned main `cee69d80373272fce40d0e1f866193164066c852`
   and its updated PDF authoring guidance.
 - `upstream` remains fetch-only (`https://github.com/pingdotgg/t3code.git`, push `DISABLED`).
+- During PR delivery, Scient main advanced to `5efa7360c11ed01c6070bfd1bdba45567e6c45b4`
+  (Ask in chat citation/voice improvements, #294). Merge
+  `c12158ff08d5f813d4828ccc6e74b67a7ed1288e` incorporates it without textual conflicts;
+  the official integration target remains unchanged.
 
 ## Adopted behavior
 
@@ -134,6 +138,9 @@ body/action row. The user update guide no longer advertises an unsupported Night
   shared, scripts, relay, and Scient package suites.
 - Initial web failures exposed the working-header composition and outdated search/toast assumptions
   described above. After repair, the complete web rerun passed 684 files and 7,912 tests.
+- After incorporating Scient main's #294 during delivery, the complete web suite passed again:
+  685 files and 7,926 tests. Web typecheck and build, formatting, lint, preservation seams, and
+  upstream provenance were rechecked for the composed result.
 - Focused stable-only updater coverage passed 67 tests across four files; focused mobile favorites
   and preview picking coverage passed 125 tests across four files.
 - Mobile native source discovery found 11 Swift and 23 Kotlin files. SwiftLint, ktlint, and detekt
