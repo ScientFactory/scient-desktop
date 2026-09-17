@@ -1,6 +1,6 @@
 import ChatMarkdown from "./ChatMarkdown";
 import { ReadOnlySourcePreview } from "./files/AttachmentFilePreview";
-import type { PreviewAnnotationPayload } from "@t3tools/contracts";
+import type { PreviewAnnotationPayload, ServerProviderSkill } from "@t3tools/contracts";
 import { formatAttachmentSize } from "@t3tools/client-runtime/state/attachments";
 import { videoMimeType } from "@t3tools/shared/video";
 import { MessageCircleIcon, MousePointerClickIcon } from "lucide-react";
@@ -70,6 +70,7 @@ export interface ComposerContextActions {
   expandVideo: (fileId: string) => void;
   openFile: (fileId: string) => void;
   openMention: (path: string) => void;
+  openSkill: (skill: ServerProviderSkill) => void;
   openPullRequest: (event: MouseEvent<HTMLElement>, url: string) => void;
 }
 
@@ -78,6 +79,7 @@ export const ComposerContextActionsContext = createContext<ComposerContextAction
   expandVideo: () => {},
   openFile: () => {},
   openMention: () => {},
+  openSkill: () => {},
   openPullRequest: () => {},
 });
 

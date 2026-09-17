@@ -9,6 +9,8 @@ import {
 import * as Effect from "effect/Effect";
 
 import * as McpInvocationContext from "./McpInvocationContext.ts";
+import { AgentInvocationContext } from "../scient/operations/AgentInvocationContext.ts";
+import { scientInvocationForMcp } from "./ScientMcpInvocation.ts";
 
 it.effect("reports the scoped credential context when preview capability is unavailable", () => {
   const invocation: McpInvocationContext.McpInvocationScope = {
@@ -36,6 +38,23 @@ it.effect("reports the scoped credential context when preview capability is unav
     });
     expect(error.message).toBe("MCP credential does not grant the preview capability.");
   });
+});
+
+it("projects explicit Scient grants without conflating transport and native contexts", () => {
+  expect(AgentInvocationContext.key).not.toBe(McpInvocationContext.McpInvocationContext.key);
+  const source: McpInvocationContext.McpInvocationScope = {
+    environmentId: EnvironmentId.make("projection-environment"),
+    threadId: ThreadId.make("projection-thread"),
+    providerInstanceId: ProviderInstanceId.make("codex"),
+    providerSessionId: "projection-provider",
+    issuedAt: 1,
+    capabilities: new Set(["sources:read"]),
+  };
+  const projected = scientInvocationForMcp(source);
+  expect(projected).toEqual(source);
+  expect(projected.capabilities).not.toBe(source.capabilities);
+  expect(projected.capabilities.has("documents:build")).toBe(false);
+  expect(projected.nativeSessionId).toBeUndefined();
 });
 
 it.effect("reports other missing capabilities with the neutral error", () => {

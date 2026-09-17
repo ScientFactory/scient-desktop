@@ -27,7 +27,7 @@ import {
 } from "../../../attachmentStore.ts";
 import { resolveAttachmentRelativePath } from "../../../attachmentPaths.ts";
 import * as ServerConfig from "../../../config.ts";
-import * as McpInvocationContext from "../../McpInvocationContext.ts";
+import * as AgentInvocationContext from "../../../scient/operations/AgentInvocationContext.ts";
 import * as PreviewAutomationBroker from "../../PreviewAutomationBroker.ts";
 import { PreviewSnapshotToolkit, PreviewStandardToolkit, PreviewToolkit } from "./tools.ts";
 
@@ -58,9 +58,9 @@ const invoke = Effect.fn("PreviewToolkit.invoke")(function* <A>(
 ): Effect.fn.Return<
   { result: A; toolIcon?: ToolActivityIcon },
   import("@t3tools/contracts").PreviewAutomationError,
-  McpInvocationContext.McpInvocationContext | PreviewAutomationBroker.PreviewAutomationBroker
+  AgentInvocationContext.AgentInvocationContext | PreviewAutomationBroker.PreviewAutomationBroker
 > {
-  const scope = yield* McpInvocationContext.requireMcpCapability("preview");
+  const scope = yield* AgentInvocationContext.requirePreviewCapability();
   const broker = yield* PreviewAutomationBroker.PreviewAutomationBroker;
   let targetTabId = tabId;
   const result = yield* broker.invoke<A>({
@@ -217,7 +217,7 @@ const handlers = {
     invokeTargeted<PreviewAutomationRecordingStatus>("recordingStart", input ?? {}),
   preview_recording_stop: (input) =>
     Effect.gen(function* () {
-      const scope = yield* McpInvocationContext.requireMcpCapability("preview");
+      const scope = yield* AgentInvocationContext.requirePreviewCapability();
       const { tabId, ...operationInput } = input;
       const response = yield* invoke<unknown>(
         "recordingStop",

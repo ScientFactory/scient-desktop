@@ -216,7 +216,7 @@ export const PersistedComposerDraftFileAttachment = Schema.Struct({
 export type PersistedComposerDraftFileAttachment = typeof PersistedComposerDraftFileAttachment.Type;
 const isPersistedComposerDraftFileAttachment = Schema.is(PersistedComposerDraftFileAttachment);
 
-const PersistedTerminalContextDraft = Schema.Struct({
+export const PersistedTerminalContextDraft = Schema.Struct({
   id: Schema.String,
   threadId: ThreadId,
   createdAt: Schema.String,
@@ -378,6 +378,9 @@ export type ComposerContextInsertionHandler = (
 const contextInsertionHandlers = new Map<string, ComposerContextInsertionHandler>();
 
 export interface ComposerThreadDraftState {
+  /** Context editing for a queue-owned hidden draft; not project/server authority.
+   * Its queue journal owns persistence, not the new-project draft registry. */
+  contextThreadId?: ThreadId;
   prompt: string;
   images: ComposerImageAttachment[];
   files: ComposerFileAttachment[];
@@ -1488,7 +1491,11 @@ function resolveComposerThreadId(
   if (typeof normalizedTarget !== "string") {
     return normalizedTarget.threadId;
   }
-  return state.draftThreadsByThreadKey[normalizedTarget]?.threadId ?? null;
+  return (
+    state.draftThreadsByThreadKey[normalizedTarget]?.threadId ??
+    state.draftsByThreadKey[normalizedTarget]?.contextThreadId ??
+    null
+  );
 }
 
 function getComposerDraftState(

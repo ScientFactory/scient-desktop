@@ -6,8 +6,8 @@ import {
 } from "@scientfactory/scient-skills";
 import * as Effect from "effect/Effect";
 
-import * as McpInvocationContext from "../../McpInvocationContext.ts";
-import { ScientSkillToolError, ScientSkillsToolkit } from "./tools.ts";
+import * as AgentInvocationContext from "../../../scient/operations/AgentInvocationContext.ts";
+import { ScientSkillToolError, ScientSkillsToolkit, type ScientSkillListInput } from "./tools.ts";
 
 const compareStrings = (left: string, right: string): number =>
   left < right ? -1 : left > right ? 1 : 0;
@@ -18,7 +18,7 @@ const toolError = (
 ) => new ScientSkillToolError({ code, message });
 
 const requireSkillScope = Effect.fn("ScientSkillsToolkit.requireSkillScope")(function* () {
-  const invocation = yield* McpInvocationContext.McpInvocationContext;
+  const invocation = yield* AgentInvocationContext.AgentInvocationContext;
   if (!invocation.capabilities.has("skills:read") || !invocation.skillScope) {
     return yield* toolError(
       "capability-unavailable",
@@ -73,7 +73,9 @@ const resolveAllowedRelease = Effect.fn("ScientSkillsToolkit.resolveAllowedRelea
   };
 });
 
-export const listScientSkillsForInvocation = Effect.fn("ScientSkillsToolkit.list")(function* () {
+export const listScientSkillsForInvocation = Effect.fn("ScientSkillsToolkit.list")(function* (
+  input: ScientSkillListInput = {},
+) {
   const skillScope = yield* requireSkillScope();
   const descriptorByReleaseKey = new Map(
     skillScope.skills.map((skill) => [skill.releaseKey, skill] as const),
@@ -88,7 +90,7 @@ export const listScientSkillsForInvocation = Effect.fn("ScientSkillsToolkit.list
         entry,
       ): entry is {
         readonly release: SkillRelease;
-        readonly descriptor: McpInvocationContext.McpScientSkillDescriptor;
+        readonly descriptor: AgentInvocationContext.AgentSkillDescriptor;
       } => entry !== undefined,
     )
     .sort(
@@ -99,7 +101,17 @@ export const listScientSkillsForInvocation = Effect.fn("ScientSkillsToolkit.list
     .map(({ release, descriptor }) =>
       summary(release, descriptor.invocationPolicy, descriptor.activationScope),
     );
-  return { skills };
+  const terms = (input.query ?? "").trim().toLowerCase().split(/\s+/u).filter(Boolean);
+  const matches = skills.filter((skill) =>
+    terms.every((term) => `${skill.name} ${skill.description}`.toLowerCase().includes(term)),
+  );
+  const offset = input.offset ?? 0;
+  const page = matches.slice(offset, offset + (input.limit ?? 20));
+  return {
+    skills: page,
+    total: matches.length,
+    nextOffset: offset + page.length < matches.length ? offset + page.length : null,
+  };
 });
 
 export const loadScientSkillForInvocation = Effect.fn("ScientSkillsToolkit.load")(

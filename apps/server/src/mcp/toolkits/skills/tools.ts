@@ -1,20 +1,24 @@
 import * as Schema from "effect/Schema";
 import { Tool, Toolkit } from "effect/unstable/ai";
+import { ScientOperation, type OperationMetadata } from "../../ScientOperationTool.ts";
 
-import * as McpInvocationContext from "../../McpInvocationContext.ts";
+import * as AgentInvocationContext from "../../../scient/operations/AgentInvocationContext.ts";
 
 const NonEmptyString = Schema.Trimmed.check(Schema.isMinLength(1));
-// Effect models an empty Struct as the broad `{}` TypeScript type, so its JSON
-// Schema accepts both objects and arrays. MCP tool inputs must be objects; an
-// invalid definition can make a client discard the server's entire tool list.
-const EmptyToolInput = Schema.Record(Schema.String, Schema.Never);
+// Optional fields retain the existing {} call while keeping MCP inputs objects.
+export const ScientSkillListInput = Schema.Struct({
+  query: Schema.optional(Schema.String.check(Schema.isMaxLength(200))),
+  offset: Schema.optional(Schema.Int.check(Schema.isGreaterThanOrEqualTo(0))),
+  limit: Schema.optional(Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 50 }))),
+});
+export type ScientSkillListInput = typeof ScientSkillListInput.Type;
 const SkillName = Schema.Trimmed.check(
   Schema.isMinLength(1),
   Schema.isMaxLength(64),
   Schema.isPattern(/^[a-z0-9]+(?:-[a-z0-9]+)*$/u),
 );
 const Digest = Schema.String.pipe(Schema.check(Schema.isPattern(/^sha256:[0-9a-f]{64}$/u)));
-const dependencies = [McpInvocationContext.McpInvocationContext];
+const dependencies = [AgentInvocationContext.AgentInvocationContext];
 
 export class ScientSkillToolError extends Schema.TaggedError<ScientSkillToolError>()(
   "ScientSkillToolError",
@@ -28,6 +32,15 @@ export class ScientSkillToolError extends Schema.TaggedError<ScientSkillToolErro
     message: NonEmptyString,
   },
 ) {}
+
+const skillOperation = (id: string): OperationMetadata => ({
+  id,
+  family: "skills",
+  scope: "skill-release",
+  requiredCapabilities: ["skills:read"],
+  approval: "session-grant",
+  documentation: "docs/internals/scient-skills.md",
+});
 
 export const ScientSkillSummary = Schema.Struct({
   releaseKey: NonEmptyString,
@@ -50,10 +63,12 @@ export const ScientSkillResource = Schema.Struct({
 
 export const ScientSkillsListTool = Tool.make("scient_skills_list", {
   description:
-    "List exact Scient-managed skill releases selected for this session and whether each may be chosen automatically or only when explicitly named. Provider-native skills remain separate. Skills never grant tools, credentials, or permissions.",
-  parameters: EmptyToolInput,
+    "Search or browse exact Scient-managed skills available in this turn. Query matches name and description; default page size is 20, maximum 50. Follow nextOffset until null. Provider-native skills remain separate. Skills never grant tools, credentials, or permissions.",
+  parameters: ScientSkillListInput,
   success: Schema.Struct({
-    skills: Schema.Array(ScientSkillSummary).pipe(Schema.check(Schema.isMaxLength(500))),
+    skills: Schema.Array(ScientSkillSummary).pipe(Schema.check(Schema.isMaxLength(50))),
+    total: Schema.Int,
+    nextOffset: Schema.NullOr(Schema.Int),
   }),
   failure: ScientSkillToolError,
   dependencies,
@@ -62,7 +77,8 @@ export const ScientSkillsListTool = Tool.make("scient_skills_list", {
   .annotate(Tool.Readonly, true)
   .annotate(Tool.Destructive, false)
   .annotate(Tool.Idempotent, true)
-  .annotate(Tool.OpenWorld, false);
+  .annotate(Tool.OpenWorld, false)
+  .annotate(ScientOperation, skillOperation("skills.list"));
 
 export const ScientSkillLoadTool = Tool.make("scient_skill_load", {
   description:
@@ -80,7 +96,8 @@ export const ScientSkillLoadTool = Tool.make("scient_skill_load", {
   .annotate(Tool.Readonly, true)
   .annotate(Tool.Destructive, false)
   .annotate(Tool.Idempotent, true)
-  .annotate(Tool.OpenWorld, false);
+  .annotate(Tool.OpenWorld, false)
+  .annotate(ScientOperation, skillOperation("skills.load"));
 
 export const ScientSkillReadResourceTool = Tool.make("scient_skill_read_resource", {
   description:
@@ -98,7 +115,8 @@ export const ScientSkillReadResourceTool = Tool.make("scient_skill_read_resource
   .annotate(Tool.Readonly, true)
   .annotate(Tool.Destructive, false)
   .annotate(Tool.Idempotent, true)
-  .annotate(Tool.OpenWorld, false);
+  .annotate(Tool.OpenWorld, false)
+  .annotate(ScientOperation, skillOperation("skills.resource.read"));
 
 export const ScientSkillsToolkit = Toolkit.make(
   ScientSkillsListTool,

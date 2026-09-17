@@ -1,5 +1,19 @@
 import { sha256 } from "@noble/hashes/sha2";
 import { randomUUID } from "../../lib/utils";
+import type { OrchestrationMessageContext } from "@t3tools/contracts";
+import { serializeLegacyContextMessage } from "@t3tools/shared/composerContextLegacySend";
+
+/** Queue context support is independent of immediate-turn context support. */
+export function prepareQueueMessage(
+  text: string,
+  context: OrchestrationMessageContext | undefined,
+  supportsContext: boolean,
+): { text: string; context?: OrchestrationMessageContext } {
+  if (!context) return { text };
+  return supportsContext
+    ? { text, context }
+    : { text: serializeLegacyContextMessage({ text, records: context.records }) };
+}
 
 /** Keep the same SHA-256 identity on HTTPS, localhost, and plain HTTP. */
 async function payloadFingerprint(payload: unknown): Promise<string> {

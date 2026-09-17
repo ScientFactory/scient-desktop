@@ -23,6 +23,7 @@ import type { SqlError } from "effect/unstable/sql/SqlError";
 
 import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 import { runMigrations } from "../../persistence/Migrations.ts";
+import Migration013 from "./migrations/013_WorkspaceBindingRootFileSystemIdentity.ts";
 import { runScientMigrations, SCIENT_MIGRATIONS } from "./scientMigrator.ts";
 
 // ---------------------------------------------------------------------------
@@ -65,7 +66,7 @@ const QuarantinePayloadEvidence = Schema.fromJsonString(
 );
 const decodeQuarantinePayload = Schema.decodeSync(QuarantinePayloadEvidence);
 
-const SCIENT_MIGRATION_IDS = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11];
+const SCIENT_MIGRATION_IDS = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13];
 const SCIENT_MIGRATION_NAMES = [
   "durable-thread-forks",
   "durable-provider-bootstrap",
@@ -78,6 +79,8 @@ const SCIENT_MIGRATION_NAMES = [
   "copied-fork-boundary-manifest",
   "retire-projectless-thread-lineage",
   "thread-queue",
+  "workspace-bindings",
+  "workspace-binding-root-filesystem-identity",
 ];
 const SCIENT_MIGRATIONS_AFTER_BOOTSTRAP = SCIENT_MIGRATION_IDS.slice(2);
 
@@ -218,6 +221,86 @@ it.effect("fresh install creates canonical Scient schema with ledger and indexes
       assert.deepStrictEqual(
         (yield* tableInfo(sql, "scient_analysis_run_index_state")).map((column) => column.name),
         ["project_id", "revision", "clean", "indexed_at"],
+      );
+
+      const bindingColumns = yield* tableInfo(sql, "scient_workspace_bindings");
+      const bindingColumnNames = new Set(bindingColumns.map((column) => column.name));
+      for (const required of [
+        "binding_id",
+        "schema_version",
+        "environment_id",
+        "host_project_id",
+        "canonical_root",
+        "root_filesystem_identity_json",
+        "scient_project_id",
+        "repository_identity_json",
+        "worktree_identity_json",
+        "lineage_binding_id",
+        "trust_state",
+        "authority_generation",
+        "created_at",
+        "last_verified_at",
+        "superseded_by",
+      ]) {
+        assert.isTrue(
+          bindingColumnNames.has(required),
+          `Missing workspace binding column: ${required}`,
+        );
+      }
+      const bindingIndexes = new Set(
+        (yield* indexList(sql, "scient_workspace_bindings")).map((index) => index.name),
+      );
+      for (const required of [
+        "scient_workspace_bindings_active_authority",
+        "scient_workspace_bindings_active_root",
+        "scient_workspace_bindings_logical_project",
+        "scient_workspace_bindings_lineage",
+      ]) {
+        assert.isTrue(bindingIndexes.has(required), `Missing workspace binding index: ${required}`);
+      }
+    }),
+  ),
+);
+
+it.effect(
+  "rejects the saved foundation ledger without interpreting its migration 11 as thread queue",
+  () =>
+    withMemory(
+      Effect.gen(function* () {
+        const sql = yield* SqlClient.SqlClient;
+        yield* runScientMigrations(sql);
+        yield* sql`UPDATE scient_schema_migrations SET name = 'workspace-bindings' WHERE migration_id = 11`;
+        const before = yield* sql`SELECT * FROM scient_schema_migrations ORDER BY migration_id`;
+        const error = yield* runScientMigrations(sql).pipe(Effect.flip);
+        assert.strictEqual(error._tag, "ScientMigrationError");
+        if (error._tag !== "ScientMigrationError") return;
+        assert.strictEqual(error.kind, "BadState");
+        assert.include(error.message, "workspace-bindings");
+        assert.deepEqual(
+          yield* sql`SELECT * FROM scient_schema_migrations ORDER BY migration_id`,
+          before,
+        );
+      }),
+    ),
+);
+
+it.effect("migration 13 adds root identity once and converges an earlier candidate table", () =>
+  withMemory(
+    Effect.gen(function* () {
+      const sql = yield* SqlClient.SqlClient;
+      yield* sql`
+        CREATE TABLE scient_workspace_bindings (
+          binding_id TEXT PRIMARY KEY NOT NULL
+        )
+      `;
+
+      yield* Migration013;
+      yield* Migration013;
+
+      const columns = yield* tableInfo(sql, "scient_workspace_bindings");
+      assert.strictEqual(
+        columns.filter((column) => column.name === "root_filesystem_identity_json").length,
+        1,
       );
     }),
   ),
@@ -502,6 +585,8 @@ it.effect("only unapplied migrations run in ascending order", () =>
           [9, "copied-fork-boundary-manifest"],
           [10, "retire-projectless-thread-lineage"],
           [11, "thread-queue"],
+          [12, "workspace-bindings"],
+          [13, "workspace-binding-root-filesystem-identity"],
         ] as const,
       );
 
@@ -750,7 +835,7 @@ it.effect("migration 4 repairs databases that already recorded migration 3", () 
       const executed = yield* runScientMigrations(sql);
       assert.deepStrictEqual(
         executed.map(([id]) => id),
-        [4, 5, 6, 7, 8, 9, 10, 11],
+        [4, 5, 6, 7, 8, 9, 10, 11, 12, 13],
       );
 
       const active = yield* sql<{ readonly thread_id: string }>`
@@ -1919,6 +2004,8 @@ it.effect("migration 9 converges a development database that already recorded mi
         [9, "copied-fork-boundary-manifest"],
         [10, "retire-projectless-thread-lineage"],
         [11, "thread-queue"],
+        [12, "workspace-bindings"],
+        [13, "workspace-binding-root-filesystem-identity"],
       ]);
       const columns = yield* sql<{
         readonly name: string;
@@ -1950,7 +2037,9 @@ it.effect("a ledger from a newer build (unknown future ID) fails closed", () =>
       yield* sql`INSERT INTO scient_schema_migrations (migration_id, name) VALUES (9, 'copied-fork-boundary-manifest')`;
       yield* sql`INSERT INTO scient_schema_migrations (migration_id, name) VALUES (10, 'retire-projectless-thread-lineage')`;
       yield* sql`INSERT INTO scient_schema_migrations (migration_id, name) VALUES (11, 'thread-queue')`;
-      yield* sql`INSERT INTO scient_schema_migrations (migration_id, name) VALUES (12, 'future-migration')`;
+      yield* sql`INSERT INTO scient_schema_migrations (migration_id, name) VALUES (12, 'workspace-bindings')`;
+      yield* sql`INSERT INTO scient_schema_migrations (migration_id, name) VALUES (13, 'workspace-binding-root-filesystem-identity')`;
+      yield* sql`INSERT INTO scient_schema_migrations (migration_id, name) VALUES (14, 'future-migration')`;
 
       const error = yield* Effect.flip(runScientMigrations(sql));
       if (error._tag !== "ScientMigrationError") {
@@ -1958,7 +2047,7 @@ it.effect("a ledger from a newer build (unknown future ID) fails closed", () =>
       } else {
         assert.strictEqual(error.kind, "BadState");
         assert.isTrue(
-          error.message.includes("unknown migration 12"),
+          error.message.includes("unknown migration 14"),
           `Unexpected message: ${error.message}`,
         );
       }
@@ -1969,7 +2058,7 @@ it.effect("a ledger from a newer build (unknown future ID) fails closed", () =>
       `;
       assert.deepStrictEqual(
         ledger.map((row) => row.migration_id),
-        [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12],
+        [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14],
       );
     }),
   ),

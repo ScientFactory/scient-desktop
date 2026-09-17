@@ -509,7 +509,9 @@ server. Older servers retain their previous fork behavior and recovery limits.
 ## Queue or steer while an agent is working
 
 On desktop and web, press **Enter** while an answer is running to queue your
-message and images in that thread. Messages start one at a time after the
+message, images, and selected context in that thread. Terminal excerpts, review
+selections, and browser annotations stay with the queued message, including
+when you edit it. Messages start one at a time after the
 previous answer has fully finished. They continue in their original thread when
 you visit another thread or close its view. Sending while other messages are
 waiting normally adds your message behind them. After **Stop**, an ordinary new

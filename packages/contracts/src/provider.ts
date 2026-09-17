@@ -1,4 +1,5 @@
 import * as Schema from "effect/Schema";
+import { SelectedScientSkillNames } from "./scientSkillSelection.ts";
 import { TrimmedNonEmptyString } from "./baseSchemas.ts";
 import {
   ApprovalRequestId,
@@ -68,6 +69,7 @@ export type ProviderSessionStartInput = typeof ProviderSessionStartInput.Type;
 
 export const ProviderSendTurnInput = Schema.Struct({
   threadId: ThreadId,
+  selectedScientSkillNames: Schema.optional(SelectedScientSkillNames),
   /** Internal recovery signal. Allows an empty turn only for adapters that
       explicitly support promptless continuation. */
   continuation: Schema.optional(Schema.Boolean),

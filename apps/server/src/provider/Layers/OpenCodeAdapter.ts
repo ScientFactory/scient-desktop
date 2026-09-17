@@ -4038,6 +4038,7 @@ export function makeOpenCodeAdapter(
       provider: PROVIDER,
       capabilities: {
         sessionModelSwitch: "in-session",
+        ...(openCodeSettings.serverUrl.trim().length === 0 ? { mcpSessionInjection: true } : {}),
       },
       startSession,
       sendTurn,

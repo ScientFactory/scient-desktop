@@ -123,13 +123,79 @@ handler checks the capability and exact turn allowlist. Loading returns
 instructions and resource metadata; resources remain separate and are read on
 demand.
 
-Codex, Claude, Droid, Grok, OpenCode, and Pi currently support the full Phase 1
-delivery path. Their stable private awareness explains the routing rule; a
+Codex, Claude, Droid, Grok, Scient-managed OpenCode, and Pi currently support
+the full Phase 1 delivery path. An externally managed OpenCode server does not
+receive Scient's per-session MCP connection and is therefore unsupported for
+this path. Their stable private awareness explains the routing rule; a
 turn-local private index supplies only the exact automatic and selected skills
 available now. A visible `$skill-name` token adds the selected exact release to
 that index and allowlist without altering the message stored in the
 conversation. **Only with $name** is therefore enforced by omission, not by a
 secondary denial after discovery.
+
+### Candidate bounded discovery
+
+The capability foundation carries explicit `selectedScientSkillNames` from
+the composer through turn commands/events, the durable queue and provider
+preparation. It is collected before appending selected context; provider text,
+fork history, citations, terminal output and attachment/SnapShot descriptions
+are not scanned for `$name` authority. Inline context-reference labels are also
+excluded from Skill/mention tokenization: a filename or terminal label containing
+`$name` is still data, not a newly selected Skill. The server still intersects names with
+the current eligible immutable releases. Missing metadata means no explicit
+selection; older callers must supply the optional field to invoke explicit
+Scient Skills. Automatic discovery is unchanged. Fork/bootstrap formatting
+does not replace or infer this metadata.
+
+Plan approval derives selection only from the actual follow-up draft. An empty
+composer approving an assistant-generated plan supplies no new explicit Skill
+selection, even if that plan names Skills.
+
+Web queue edits restore a versioned raw composer/context snapshot through the
+existing draft journal; they do not put captured terminal/preview/review text
+back into the selection source. Older queue edits with `$names` but no such
+snapshot are preserved and reported as requiring a newly composed selection,
+not guessed. The two mobile outbox start producers collect names from their
+stored raw composer text before server augmentation. This is source/test
+coverage, not fresh native mobile or provider-device qualification.
+
+The final provider-input character bound is checked after attachments and Skill
+orientation are prepared. If needed, automatic catalog entry lines are omitted
+first with a discovery continuation message; eligible releases and selected
+entries remain intact. Still-over-limit requests report that nothing was sent;
+they neither silently omit selected attachments nor replace the current Skill
+scope. The bound is not a model-token or full-conversation budget. Combined
+fixtures cover attachment identity, capture text, citations, context blocks,
+fork wrapping, explicit scope and exact character-boundary cases. Real-provider
+task quality, loaded resource/result cost and compaction remain separate proofs.
+
+The capability foundation limits the **automatic** private index
+to 2,800 UTF-8 bytes of entry lines, with a small routing/continuation message.
+Entries use locale-independent code-point name/ID ordering, matching discovery,
+not an unproven semantic ranker. Valid names are ASCII kebab-case.
+Explicitly selected entries remain present even beyond that budget, and the
+complete selected instruction body is still loaded separately without truncation.
+The turn's authorized release snapshot is not reduced when its short index is.
+
+`scient_skills_list` still accepts `{}`. Optional `query` matches all supplied
+terms against name and description; `offset` and `limit` browse deterministic
+pages (20 entries by default, at most 50). `total` counts matching entries and
+`nextOffset: null` means the last page. Search is within the current authorized
+turn, not a global catalog, installer, native-provider search or new grant.
+The private index explains how to find omitted entries. Tool-name projection
+uses the registered canonical name; Claude receives its existing MCP prefix
+for the list/load tools and Browser/Documents guidance alike.
+
+The scale fixture covers 28/100/500 synthetic entries, explicitly verifies that
+a rare name is absent from ordinary orientation, then discovers and loads it
+through the host-composed executor using that ordinary turn's scope. It also
+covers explicit selection beyond the short index and paging without omissions. It
+measures preparation and bytes, not model reasoning quality or consumed tokens.
+Immutable built-in release snapshots remain reused. Mutable project skills and
+lock trust are still verified at turn preparation; no timestamp-only or watcher-
+only cache is introduced that could silently serve edited bytes as a new trusted
+release. A project-scan cache and provider-native lazy delivery need their own
+invalidation/performance evidence before adoption.
 
 Antigravity's official ACP sessions receive Scient's authenticated HTTP MCP
 connection, including on resume. This transport alone does not qualify Scient
@@ -233,3 +299,7 @@ Automated coverage must continue to prove:
 
 The fork-owned roots and inherited integration points are recorded in
 `scient-skills-seams.json` and checked by `pnpm skills:seams:check`.
+The inventory includes shared operation dispatch and queued/immediate turn
+delivery: classification records their Skill integration, not exclusive Skill
+ownership. Inherited command, event, provider, and composer paths remain
+explicit upstream mounts rather than being reclassified as fork-owned code.

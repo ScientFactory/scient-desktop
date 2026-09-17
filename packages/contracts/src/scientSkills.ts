@@ -48,6 +48,18 @@ export const ScientSkillListInput = Schema.Struct({
   threadId: Schema.optional(ThreadId),
 });
 
+export const ScientSkillReadDocumentInput = Schema.Struct({
+  releaseKey: TrimmedNonEmptyString,
+});
+
+export const ScientSkillDocument = Schema.Struct({
+  releaseKey: TrimmedNonEmptyString,
+  name: TrimmedNonEmptyString,
+  description: TrimmedNonEmptyString,
+  instructions: TrimmedNonEmptyString,
+});
+export type ScientSkillDocument = typeof ScientSkillDocument.Type;
+
 export const ScientSkillSetUserActivationInput = Schema.Struct({
   releaseKey: TrimmedNonEmptyString,
   active: Schema.Boolean,

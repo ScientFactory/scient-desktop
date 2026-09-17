@@ -429,6 +429,33 @@ never through a broad merge into this repository.
 
 ## Post-D4 Scient-owned feature seams
 
+The agent-capability foundation keeps workspace authority under
+`scient/projectScope`, not in T3's host project schema. Scient's existing
+thread-queue migration remains 011; binding migrations occupy 012–013.
+MCP uses the existing server with Scient-owned admission and request-local
+`tools/list` filtering. Effect retains wire schemas and result encoding;
+explicitly declared host tools keep their own policy. Preserve Browser snapshot
+image responses and the transport-to-domain context projection. The Preview
+error contract permits native caller identities without inventing provider IDs.
+Provider adapters explicitly opt in only when their exact configured runtime can
+attach Scient's thread-scoped MCP session. Omission fails closed: the service
+does not mint a credential or advertise MCP-delivered Skills. Managed OpenCode
+opts in; an externally managed OpenCode server does not.
+See [workspace authority and agent capabilities](docs/internals/scient-workspace-binding.md).
+
+Explicit Skill selections travel as optional `selectedScientSkillNames`
+metadata through composer, turn commands/events, queue and provider preparation.
+Do not infer them from augmented prompts, captured text or assistant plans.
+Keep main's typed message context and legacy readers; queue support advertises
+`threadQueueMessageContext` independently of immediate-turn support.
+Preserve queue snapshot/journal migrations and attachment identity. Oversized
+requests may omit optional Skill index entries, not selected user context.
+
+This foundation does not import the separate Compute toolkit branch or change
+Compute/Analysis runtime, UI or history ownership. Future consumers must
+deliberately reconcile workspace authority and tool ownership against their
+current implementation. No unmerged Orchestration V2 code is imported.
+
 Review previews preserve the source Git index timestamp when preparing a temporary
 index for untracked files. A freshly timestamped copy can bypass Git's racy-clean
 content checks and omit rapid same-size tracked edits. Keep the source index read-only,

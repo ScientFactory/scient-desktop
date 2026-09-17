@@ -15,10 +15,12 @@ import {
 } from "@t3tools/contracts";
 import { afterEach, describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
-import * as Option from "effect/Option";
-
-import * as ProjectionSnapshotQuery from "../../../orchestration/Services/ProjectionSnapshotQuery.ts";
-import * as McpInvocationContext from "../../McpInvocationContext.ts";
+import { WorkspaceBindingResolver } from "../../../scient/projectScope/WorkspaceBindingResolver.ts";
+import {
+  workspaceResolverForTest,
+  workspaceScopeForTest,
+} from "../../../scient/projectScope/WorkspaceBindingTestUtils.ts";
+import * as AgentInvocationContext from "../../../scient/operations/AgentInvocationContext.ts";
 import {
   addScientSourceForInvocation,
   attachScientSourcePdfForInvocation,
@@ -126,17 +128,36 @@ const makeThread = (input: {
 const makeQuery = (input: {
   readonly project: OrchestrationProjectShell;
   readonly thread: OrchestrationThreadShell;
-}) =>
-  ({
-    getThreadShellById: () => Effect.succeed(Option.some(input.thread)),
-    getProjectShellById: () => Effect.succeed(Option.some(input.project)),
-  }) as unknown as ProjectionSnapshotQuery.ProjectionSnapshotQueryShape;
+}): WorkspaceBindingResolver["Service"] => {
+  const root = input.project.workspaceRoot;
+  const base = workspaceResolverForTest(
+    new Map([
+      [
+        root,
+        { projectId: input.project.id, scope: workspaceScopeForTest(`binding:${root}`, root) },
+      ],
+    ]),
+  );
+  const resolveThread = () =>
+    base.resolveWorkspaceRoot(root).pipe(
+      Effect.map((resolved) => ({
+        ...resolved,
+        binding: { ...resolved.binding, environmentId, hostProjectId: input.project.id },
+      })),
+    );
+  return {
+    ...base,
+    resolveThread,
+    assertCurrentThreadScope: () =>
+      resolveThread().pipe(Effect.map((resolved) => resolved.binding)),
+  };
+};
 
 const makeInvocation = (
   threadId: ThreadId,
-  capabilities: ReadonlySet<McpInvocationContext.McpCapability>,
+  capabilities: ReadonlySet<AgentInvocationContext.OperationCapability>,
 ) =>
-  McpInvocationContext.McpInvocationContext.of({
+  AgentInvocationContext.AgentInvocationContext.of({
     environmentId,
     threadId,
     providerSessionId: "session-sources-write-test",
@@ -148,13 +169,13 @@ const makeInvocation = (
 const provideContext = <A, E, R>(
   effect: Effect.Effect<A, E, R>,
   input: {
-    readonly invocation: McpInvocationContext.McpInvocationScope;
-    readonly query: ProjectionSnapshotQuery.ProjectionSnapshotQueryShape;
+    readonly invocation: AgentInvocationContext.AgentInvocationScope;
+    readonly query: WorkspaceBindingResolver["Service"];
   },
 ) =>
   effect.pipe(
-    Effect.provideService(McpInvocationContext.McpInvocationContext, input.invocation),
-    Effect.provideService(ProjectionSnapshotQuery.ProjectionSnapshotQuery, input.query),
+    Effect.provideService(AgentInvocationContext.AgentInvocationContext, input.invocation),
+    Effect.provideService(WorkspaceBindingResolver, input.query),
   );
 
 afterEach(async () => {

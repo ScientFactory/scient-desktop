@@ -4,6 +4,7 @@ import {
   MessageId,
   ThreadId,
   TurnId,
+  ComposerContextId,
   type OrchestrationCommand,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
@@ -127,6 +128,55 @@ const finish = (id: string) =>
   });
 
 describe("server queue ordering and admission", () => {
+  it.effect(
+    "persists selected Skill intent and replaces it when an edit removes the selection",
+    () =>
+      run(
+        Effect.gen(function* () {
+          yield* change((doc) =>
+            enqueueQueue(
+              {
+                threadId,
+                queueItemId: "qitem_A",
+                text: "$pdf-authoring",
+                attachments: [],
+                selectedScientSkillNames: ["pdf-authoring"],
+                composerSnapshot: '{"version":1,"prompt":"$pdf-authoring"}',
+                context: {
+                  version: 1,
+                  records: [
+                    {
+                      version: 1,
+                      kind: "terminal",
+                      contextId: ComposerContextId.make("ctx_terminal"),
+                      label: "Terminal",
+                      terminalId: "default",
+                      terminalLabel: "Terminal",
+                      lineStart: 1,
+                      lineEnd: 1,
+                      text: "keep this context",
+                    },
+                  ],
+                },
+              },
+              doc,
+            ),
+          );
+          expect((yield* readQueue(threadId)).items[0]?.selectedScientSkillNames).toEqual([
+            "pdf-authoring",
+          ]);
+          expect((yield* readQueue(threadId)).items[0]?.composerSnapshot).toContain('"version":1');
+          expect((yield* readQueue(threadId)).items[0]?.context?.records[0]).toMatchObject({
+            text: "keep this context",
+          });
+          yield* edit("A");
+          yield* update("A");
+          expect((yield* readQueue(threadId)).items[0]?.selectedScientSkillNames).toBeUndefined();
+          expect((yield* readQueue(threadId)).items[0]?.composerSnapshot).toBeUndefined();
+          expect((yield* readQueue(threadId)).items[0]?.context).toBeUndefined();
+        }),
+      ),
+  );
   it.effect("keeps the hidden edit slot while visible messages are dragged", () =>
     run(
       Effect.gen(function* () {

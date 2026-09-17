@@ -312,17 +312,19 @@ function ComposerSkillNodeView({ node }: NodeViewProps) {
           </>
         }
       >
-        <div className="space-y-3 p-2 text-sm">
-          <p className="font-medium">{skillLabel}</p>
-          <p>
+        <div className="space-y-2 p-1.5 text-sm">
+          <p className="font-medium leading-none">{skillLabel}</p>
+          <p className="rounded-md border border-border/60 bg-muted/35 px-2.5 py-2 font-mono text-[11px] leading-relaxed text-muted-foreground select-text">
             {skill?.description ??
               skillDescription ??
               "No description is available for this skill."}
           </p>
-          {skill?.path ? (
-            <Button variant="outline" size="sm" onClick={() => actions.openMention(skill.path)}>
-              View instructions
-            </Button>
+          {skill ? (
+            <div className="flex justify-end">
+              <Button variant="ghost-muted" size="micro" onClick={() => actions.openSkill(skill)}>
+                View Skill
+              </Button>
+            </div>
           ) : null}
         </div>
       </ContextChipPopover>

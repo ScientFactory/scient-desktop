@@ -1270,7 +1270,11 @@ export function makeCursorAdapter(
 
     return {
       provider: PROVIDER,
-      capabilities: { sessionModelSwitch: "in-session", supportsConversationRollback: false },
+      capabilities: {
+        sessionModelSwitch: "in-session",
+        supportsConversationRollback: false,
+        mcpSessionInjection: true,
+      },
       compaction: { type: "slash-command", command: "/compress" },
       startSession,
       sendTurn,

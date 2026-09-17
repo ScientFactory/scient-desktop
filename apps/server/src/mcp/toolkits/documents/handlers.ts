@@ -25,6 +25,7 @@ import * as GeneratedDocumentStore from "../../../scient/documentArtifacts/Gener
 import * as PreviewAutomationBroker from "../../PreviewAutomationBroker.ts";
 import { buildScientLatexForInvocation } from "./latexHandler.ts";
 import {
+  assertCurrentDocumentBuildProject,
   commitStagedProjectPdfOutput,
   isWindowsAbsolutePath,
   type ProjectDocumentBuildBoundaryError,
@@ -74,7 +75,11 @@ const resolveHtmlSource = Effect.fn("ScientPdfBuild.resolveHtmlSource")(function
 ) {
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
-  if (path.isAbsolute(requestedPath) || isWindowsAbsolutePath(requestedPath)) {
+  if (
+    requestedPath.includes("\0") ||
+    path.isAbsolute(requestedPath) ||
+    isWindowsAbsolutePath(requestedPath)
+  ) {
     return yield* toolError(
       "invalid-source-path",
       "sourcePath must be relative to the current Scient project.",
@@ -157,9 +162,8 @@ const failQuietly = (
 export const buildScientPdfForInvocation = Effect.fn("ScientPdfBuild.build")(function* (
   input: ScientPdfBuildInput,
 ) {
-  const { invocation, root } = yield* resolveDocumentBuildProject().pipe(
-    Effect.mapError(boundaryToolError),
-  );
+  const authority = yield* resolveDocumentBuildProject().pipe(Effect.mapError(boundaryToolError));
+  const { invocation, root } = authority;
   const initial = yield* resolveHtmlSource(root, input.sourcePath);
   const output = yield* resolveProjectPdfOutput(root, input.outputPath).pipe(
     Effect.mapError(boundaryToolError),
@@ -272,8 +276,18 @@ export const buildScientPdfForInvocation = Effect.fn("ScientPdfBuild.build")(fun
     .replace(/\.[^.]+$/u, "")
     .slice(0, 512);
   const title = rendered.title.trim() || fallbackTitle || "Document";
-  const { source, projectOutputWritten } = yield* Effect.scoped(
+  const { source, projectOutputState } = yield* Effect.scoped(
     Effect.gen(function* () {
+      yield* assertCurrentDocumentBuildProject(authority).pipe(
+        Effect.mapError(boundaryToolError),
+        Effect.tapError(() =>
+          abandonQuietly(
+            generatedDocuments,
+            handle,
+            "The project workspace changed before the PDF output was staged.",
+          ),
+        ),
+      );
       const staged = yield* stageProjectPdfOutput(output, bytes).pipe(
         Effect.mapError(boundaryToolError),
         Effect.tapError(() =>
@@ -281,6 +295,16 @@ export const buildScientPdfForInvocation = Effect.fn("ScientPdfBuild.build")(fun
             generatedDocuments,
             handle,
             "The requested project output could not be staged.",
+          ),
+        ),
+      );
+      yield* assertCurrentDocumentBuildProject(authority).pipe(
+        Effect.mapError(boundaryToolError),
+        Effect.tapError(() =>
+          abandonQuietly(
+            generatedDocuments,
+            handle,
+            "The project workspace changed before the generated PDF was published.",
           ),
         ),
       );
@@ -305,19 +329,43 @@ export const buildScientPdfForInvocation = Effect.fn("ScientPdfBuild.build")(fun
         return yield* toolError("publication-failed", "Scient returned an unsupported PDF source.");
       }
 
-      const projectOutputWritten = yield* commitStagedProjectPdfOutput(staged).pipe(
+      const projectOutputState = yield* assertCurrentDocumentBuildProject(authority).pipe(
         Effect.mapError(boundaryToolError),
-        Effect.as(true),
+        Effect.andThen(
+          commitStagedProjectPdfOutput(staged).pipe(Effect.mapError(boundaryToolError)),
+        ),
+        Effect.as("written" as const),
         Effect.catch((cause) =>
-          Effect.logWarning("published HTML PDF could not replace its project output", {
+          Effect.logWarning("published HTML PDF could not safely replace its project output", {
             errorCode: cause.code,
             outputPath: output.outputPath,
-          }).pipe(Effect.as(false)),
+          }).pipe(
+            Effect.as(
+              cause.code === "project-changed"
+                ? ("authority-stale" as const)
+                : ("write-failed" as const),
+            ),
+          ),
         ),
       );
-      return { source, projectOutputWritten };
+      return { source, projectOutputState };
     }),
   );
+
+  const authorityStillCurrent = yield* assertCurrentDocumentBuildProject(authority).pipe(
+    Effect.as(true),
+    Effect.orElseSucceed(() => false),
+  );
+  if (projectOutputState === "authority-stale" || !authorityStillCurrent) {
+    const outputWasWritten = projectOutputState === "written";
+    return yield* toolError(
+      outputWasWritten ? "project-changed" : "partial-publication",
+      outputWasWritten
+        ? "Scient wrote the PDF to the workspace where the build began, but the active workspace changed before presentation. The PDF was not opened in the new workspace."
+        : "Scient stored an immutable PDF revision, but could not safely write the requested project file. The publishedSource receipt identifies the available revision; outputPath was not written.",
+      { publishedSource: source, outputPath: output.outputPath },
+    );
+  }
 
   const presented = yield* broker
     .invoke({
@@ -335,10 +383,10 @@ export const buildScientPdfForInvocation = Effect.fn("ScientPdfBuild.build")(fun
       ),
     );
 
-  if (!projectOutputWritten) {
+  if (projectOutputState === "write-failed") {
     return yield* toolError(
       "partial-publication",
-      "Scient stored an immutable PDF revision, but could not write the requested project file. The publishedSource receipt identifies the available revision; outputPath was not written.",
+      "Scient stored an immutable PDF revision, but could not safely write the requested project file. The publishedSource receipt identifies the available revision; outputPath was not written.",
       { publishedSource: source, outputPath: output.outputPath },
     );
   }

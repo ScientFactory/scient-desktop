@@ -14,6 +14,13 @@ export const scientSkillsInventory = createEnvironmentRpcQueryAtomFamily(connect
   idleTtlMs: 60_000,
 });
 
+export const scientSkillDocument = createEnvironmentRpcQueryAtomFamily(connectionAtomRuntime, {
+  label: "environment-data:skills:document",
+  tag: WS_METHODS.skillsReadDocument,
+  staleTimeMs: 60_000,
+  idleTtlMs: 60_000,
+});
+
 export const setScientSkillUserActivation = createEnvironmentRpcCommand(connectionAtomRuntime, {
   label: "environment-command:skills:set-user-activation",
   tag: WS_METHODS.skillsSetUserActivation,

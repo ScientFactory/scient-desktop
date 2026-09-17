@@ -78,7 +78,7 @@ describe("new thread on an existing branch", () => {
         commandId: "command",
         messageId: "message",
         createdAt: "2026-09-06T00:00:00Z",
-        text: "Start fresh",
+        text: "$pdf-authoring start fresh",
         uploadedAttachments: [],
         modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5.6-sol" },
         runtimeMode: "full-access",
@@ -98,6 +98,7 @@ describe("new thread on an existing branch", () => {
       expect(input.bootstrap).not.toHaveProperty("prepareWorktree");
       expect(input.bootstrap).not.toHaveProperty("runSetupScript");
       expect(input.threadId).toBe("new-thread");
+      expect(input.selectedScientSkillNames).toEqual(["pdf-authoring"]);
     },
   );
 });

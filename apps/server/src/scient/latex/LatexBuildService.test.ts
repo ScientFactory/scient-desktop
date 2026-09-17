@@ -917,6 +917,7 @@ describe("LatexBuildService", () => {
           const queued = yield* service.requestBuild(harness.buildInput);
           expect(queued.rootRelativePath).toBe("main.tex");
           expect(queued.logicalDocumentKey.startsWith("latex:")).toBe(true);
+          expect(queued.logicalDocumentKey).not.toContain(harness.buildInput.workspaceRoot);
           expect(queued.toolchain?.kind).toBe("latexmk");
 
           const finished = yield* awaitTerminal(service, harness.buildInput);

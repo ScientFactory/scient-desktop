@@ -2,10 +2,13 @@ import { expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import { McpServer } from "effect/unstable/ai";
+import { WorkspaceBindingResolver } from "../../../scient/projectScope/WorkspaceBindingResolver.ts";
+import { workspaceResolverForTest } from "../../../scient/projectScope/WorkspaceBindingTestUtils.ts";
 
 import { ScientSourcesToolkitRegistrationLive } from "../../McpHttpServer.ts";
 
 const TestLayer = ScientSourcesToolkitRegistrationLive.pipe(
+  Layer.provide(Layer.succeed(WorkspaceBindingResolver, workspaceResolverForTest(new Map()))),
   Layer.provideMerge(McpServer.McpServer.layer),
 );
 

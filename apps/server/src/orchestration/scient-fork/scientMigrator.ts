@@ -32,6 +32,7 @@
  */
 import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
+import * as Semaphore from "effect/Semaphore";
 import * as Migrator from "effect/unstable/sql/Migrator";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 import type { SqlError } from "effect/unstable/sql/SqlError";
@@ -45,9 +46,10 @@ import Migration006 from "./migrations/006_AnalysisRunProjectionState.ts";
 import Migration007 from "./migrations/007_AnalysisRunStorageStatus.ts";
 import Migration008 from "./migrations/008_ForkDeliveryAndBoundaries.ts";
 import Migration009 from "./migrations/009_CopiedForkBoundaryManifest.ts";
-import Migration011 from "./migrations/011_ThreadQueue.ts";
 import Migration010 from "./migrations/010_RetireProjectlessThreadLineage.ts";
-
+import Migration011 from "./migrations/011_ThreadQueue.ts";
+import Migration012 from "./migrations/012_WorkspaceBindings.ts";
+import Migration013 from "./migrations/013_WorkspaceBindingRootFileSystemIdentity.ts";
 // ---------------------------------------------------------------------------
 // Error types
 // ---------------------------------------------------------------------------
@@ -99,6 +101,8 @@ export const SCIENT_MIGRATIONS: ReadonlyArray<ScientMigration> = [
   { id: 9, name: "copied-fork-boundary-manifest", effect: Migration009 },
   { id: 10, name: "retire-projectless-thread-lineage", effect: Migration010 },
   { id: 11, name: "thread-queue", effect: Migration011 },
+  { id: 12, name: "workspace-bindings", effect: Migration012 },
+  { id: 13, name: "workspace-binding-root-filesystem-identity", effect: Migration013 },
 ] as const;
 
 const loader = Migrator.fromRecord(
@@ -223,6 +227,11 @@ const validateLedger = Effect.fn("validateScientLedger")(function* (sql: SqlClie
 // ---------------------------------------------------------------------------
 
 const migrator = Migrator.make({});
+// Multiple service layers may initialize separate connections concurrently.
+// Serialize the complete preflight + migration in this host process: SQLite's
+// reservation rows alone do not protect the earlier ledger reconciliation.
+// Cross-process ownership remains the database/isolated-state boundary.
+const migrationLock = Semaphore.makeUnsafe(1);
 
 /**
  * Run all pending Scient schema migrations.
@@ -268,4 +277,4 @@ export const runScientMigrations = Effect.fn("runScientMigrations")(function* (
       );
 
   return executed;
-});
+}, migrationLock.withPermits(1));

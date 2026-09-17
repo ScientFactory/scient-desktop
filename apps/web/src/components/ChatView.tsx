@@ -1,5 +1,10 @@
 import { useAcknowledgeAnswer } from "../scient/answerAttention/useAcknowledgeAnswer";
-import { queueSubmissionId, acknowledgeQueueSubmission } from "../scient/threadQueue/submission";
+import { collectSelectedScientSkillNames } from "@t3tools/shared/composerInlineTokens";
+import {
+  queueSubmissionId,
+  acknowledgeQueueSubmission,
+  prepareQueueMessage,
+} from "../scient/threadQueue/submission";
 import {
   beginQueueEdit,
   stashQueueEdit,
@@ -363,6 +368,10 @@ import {
   type TerminalContextSelection,
 } from "../lib/terminalContext";
 import {
+  encodeQueueComposerSnapshot,
+  assertQueueEditSelectionProvenance,
+} from "../scient/threadQueue/composerSnapshot";
+import {
   ensureInlineContextReferences,
   removeInlineContextReference,
   stripInlineContextReferences,
@@ -587,6 +596,7 @@ import {
 } from "../versionSkew";
 import { useAssetUrls } from "../assets/assetUrls";
 import { mergeEffectiveProviderSkills } from "../scient/skills/effectiveSkills";
+import { resolveScientSkillListInput } from "../scient/skills/scientSkillListInput";
 import { scientSkillsInventory } from "../scient/skills/scientSkillsState";
 import {
   ATTACHMENT_ONLY_BOOTSTRAP_PROMPT,
@@ -701,6 +711,11 @@ const GeneratedPdfPreview = lazy(() =>
   })),
 );
 const EnvironmentFilePreview = lazy(() => import("../scient/fileOpening/EnvironmentFilePreview"));
+const ScientSkillDocumentPreview = lazy(() =>
+  import("../scient/skills/ScientSkillDocumentPreview").then((module) => ({
+    default: module.ScientSkillDocumentPreview,
+  })),
+);
 const ComputePanel = lazy(() =>
   import("../scient/compute/ComputePanel").then((module) => ({
     default: module.ComputePanel,
@@ -4018,14 +4033,11 @@ function ChatViewContent(props: ChatViewProps) {
   const scientSkills = useEnvironmentQuery(
     scientSkillsInventory({
       environmentId,
-      input: activeThreadId
-        ? {
-            threadId: activeThreadId,
-            ...(activeProject?.id ? { projectId: activeProject.id } : {}),
-          }
-        : activeProject?.id
-          ? { projectId: activeProject.id }
-          : {},
+      input: resolveScientSkillListInput({
+        routeKind,
+        threadId: activeThreadId,
+        projectId: activeProject?.id ?? null,
+      }),
     }),
   ).data;
   const effectiveActiveProviderSkills = useMemo(
@@ -7993,6 +8005,7 @@ function ChatViewContent(props: ChatViewProps) {
           previewAnnotations: composerPreviewAnnotations,
         }),
         interactionMode: followUp.interactionMode,
+        selectedScientSkillNames: followUp.selectedScientSkillNames,
       });
       if (!followUpSent) {
         promptRef.current = followUpPromptSnapshot;
@@ -8077,6 +8090,15 @@ function ChatViewContent(props: ChatViewProps) {
     }
 
     const composerImagesSnapshot = [...composerImages];
+    if (queueEdit) {
+      try {
+        assertQueueEditSelectionProvenance(queueEdit.composerSeparated, promptForSend);
+      } catch (cause) {
+        setThreadError(threadIdForSend, cause instanceof Error ? cause.message : String(cause));
+        return;
+      }
+    }
+    const selectedScientSkillNames = collectSelectedScientSkillNames(promptForSend);
     const composerFilesSnapshot = [...composerFiles];
     const composerAttachmentsSnapshot = [...composerImagesSnapshot, ...composerFilesSnapshot];
     const composerTerminalContextsSnapshot = [...sendableComposerTerminalContexts];
@@ -8293,10 +8315,12 @@ function ChatViewContent(props: ChatViewProps) {
         Promise.all(
           composerImagesSnapshot.map(async (image) => ({
             type: "image" as const,
+            id: image.id,
             name: image.name,
             mimeType: image.mimeType,
             sizeBytes: image.sizeBytes,
             dataUrl: await readFileAsDataUrl(image.file),
+            ...(image.source ? { source: image.source } : {}),
           })),
         ),
       );
@@ -8304,6 +8328,19 @@ function ChatViewContent(props: ChatViewProps) {
         try {
           let acceptedQueueId: string | undefined;
           const queueSettings = {
+            ...prepareQueueMessage(
+              outgoingMessageText,
+              outgoingMessageContext,
+              appAtomRegistry.get(environmentServerConfigsAtom).get(environmentId)?.environment
+                .capabilities.threadQueueMessageContext === true,
+            ),
+            composerSnapshot: encodeQueueComposerSnapshot({
+              prompt: promptForSend,
+              terminalContexts: composerTerminalContextsSnapshot,
+              previewAnnotations: composerPreviewAnnotationsSnapshot,
+              reviewComments: composerReviewCommentsSnapshot,
+            }),
+            selectedScientSkillNames,
             modelSelection: ctxSelectedModelSelection,
             runtimeMode: composerRuntimeMode ?? activeThread.runtimeMode,
             interactionMode: sendInteractionMode,
@@ -8315,19 +8352,20 @@ function ChatViewContent(props: ChatViewProps) {
               queueItemId: queueEdit.queueItemId,
               editToken: queueEdit.editToken,
               ...queueSettings,
-              text: outgoingMessageText,
               attachments: queueAttachmentsResult.value,
             });
             await finishQueueEdit(queueEdit, draftSnapshotForSend ?? undefined);
           } else {
             const queuePayload = {
               ...queueSettings,
-              text: outgoingMessageText,
               attachments: queueAttachmentsResult.value,
             };
+            const { text: _wireText, context: _wireContext, ...queueIdentity } = queuePayload;
             const queueId = await queueSubmissionId(
               composerTargetKey(composerDraftTarget),
-              queuePayload,
+              // A reconnect may change the wire fallback, not the user's intent.
+              // Keep lost-response retries on the same queue identity.
+              { ...queueIdentity, text: outgoingMessageText, context: outgoingMessageContext },
             );
             await threadQueue.enqueue({ queueItemId: queueId, ...queuePayload });
             acceptedQueueId = queueId;
@@ -8844,6 +8882,7 @@ function ChatViewContent(props: ChatViewProps) {
         input: {
           threadId: threadIdForSend,
           sendIntent: options?.steer || directAnnotation ? "steer" : "normal",
+          selectedScientSkillNames,
           message: {
             messageId: messageIdForSend,
             role: "user",
@@ -9337,10 +9376,12 @@ function ChatViewContent(props: ChatViewProps) {
       text,
       context,
       interactionMode: nextInteractionMode,
+      selectedScientSkillNames,
     }: {
       text: string;
       context?: ReturnType<typeof buildMessageContext>;
       interactionMode: "default" | "plan";
+      selectedScientSkillNames: ReadonlyArray<string>;
       // Whether the message actually went out. A `false` return tells the caller to put the
       // composer back, because it cleared it before awaiting this.
     }): Promise<boolean> => {
@@ -9427,6 +9468,7 @@ function ChatViewContent(props: ChatViewProps) {
           environmentId,
           input: {
             threadId: threadIdForSend,
+            selectedScientSkillNames,
             message: {
               messageId: messageIdForSend,
               role: "user",
@@ -10160,6 +10202,16 @@ function ChatViewContent(props: ChatViewProps) {
           environmentId={activeThreadRef.environmentId}
           keybindings={keybindings}
           surface={renderedRightPanelSurface}
+          threadRef={activeThreadRef}
+        />
+      </Suspense>
+    ) : renderedRightPanelSurface?.kind === "scient" &&
+      renderedRightPanelSurface.module === "skill" &&
+      activeThreadRef ? (
+      <Suspense fallback={null}>
+        <ScientSkillDocumentPreview
+          environmentId={activeThreadRef.environmentId}
+          releaseKey={renderedRightPanelSurface.releaseKey}
           threadRef={activeThreadRef}
         />
       </Suspense>

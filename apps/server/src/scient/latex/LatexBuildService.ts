@@ -326,6 +326,13 @@ function normalizeWorkspaceRoot(workspaceRoot: string): string {
   return posix.length > 1 ? posix.replace(/\/+$/u, "") : posix;
 }
 
+/** Stable server-private workspace identity that does not expose the host path. */
+function workspaceIdentityDigest(workspaceRoot: string): string {
+  return NodeCrypto.createHash("sha256")
+    .update(normalizeWorkspaceRoot(workspaceRoot))
+    .digest("hex");
+}
+
 /** `/etc/passwd`, `C:/other/x.tex` — what `path.relative` returns when it cannot stay relative. */
 const ABSOLUTE_PATH_PATTERN = /^(?:\/|[A-Za-z]:)/u;
 
@@ -1528,7 +1535,7 @@ export const make = Effect.gen(function* () {
         rootRelativePath: string,
         failureSummary: string | null,
       ): Effect.Effect<ResolvedLatexTarget, LatexBuildError> => {
-        const logicalDocumentKey = `latex:${normalizeWorkspaceRoot(workspaceRoot)}:${rootRelativePath}`;
+        const logicalDocumentKey = `latex:${workspaceIdentityDigest(workspaceRoot)}:${rootRelativePath}`;
         if (logicalDocumentKey.length > MAX_LOGICAL_DOCUMENT_KEY_LENGTH) {
           return Effect.fail(
             new LatexBuildError({

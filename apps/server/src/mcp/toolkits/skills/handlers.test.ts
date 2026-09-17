@@ -9,7 +9,7 @@ import { afterEach, describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 
 import * as ScientSkillRegistry from "../../../scient/skills/ScientSkillRegistry.ts";
-import * as McpInvocationContext from "../../McpInvocationContext.ts";
+import * as AgentInvocationContext from "../../../scient/operations/AgentInvocationContext.ts";
 import {
   listScientSkillsForInvocation,
   loadScientSkillForInvocation,
@@ -53,10 +53,10 @@ async function makeCatalogFixture() {
 
 const makeInvocation = (
   releases: ReadonlyArray<SkillRelease>,
-  capabilities: ReadonlySet<McpInvocationContext.McpCapability> = new Set(["skills:read"]),
+  capabilities: ReadonlySet<AgentInvocationContext.OperationCapability> = new Set(["skills:read"]),
   invocationPolicy: "automatic" | "explicit" = "automatic",
 ) =>
-  McpInvocationContext.McpInvocationContext.of({
+  AgentInvocationContext.AgentInvocationContext.of({
     environmentId: EnvironmentId.make("environment-skills-test"),
     threadId: ThreadId.make("thread-skills-test"),
     providerSessionId: "session-skills-test",
@@ -81,11 +81,11 @@ const provideContext = <A, E, R>(
   effect: Effect.Effect<A, E, R>,
   input: {
     readonly catalog: Awaited<ReturnType<typeof makeCatalogFixture>>;
-    readonly invocation: McpInvocationContext.McpInvocationScope;
+    readonly invocation: AgentInvocationContext.AgentInvocationScope;
   },
 ) =>
   effect.pipe(
-    Effect.provideService(McpInvocationContext.McpInvocationContext, input.invocation),
+    Effect.provideService(AgentInvocationContext.AgentInvocationContext, input.invocation),
     Effect.provide(ScientSkillRegistry.layerFromCatalog(input.catalog)),
   );
 
@@ -176,7 +176,7 @@ describe("Scient skills MCP handlers", () => {
 
       const invocation = makeInvocation([catalog.releases[0]!]);
       const descriptor = invocation.skillScope!.skills[0]!;
-      const ambiguous = McpInvocationContext.McpInvocationContext.of({
+      const ambiguous = AgentInvocationContext.AgentInvocationContext.of({
         ...invocation,
         skillScope: {
           releases: invocation.skillScope!.releases,
