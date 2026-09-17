@@ -2,6 +2,7 @@ import type {
   ComputeExecutionRecord,
   ComputeLanguageRuntimeInspection,
   ComputeOutput,
+  ComputeRuntimeInspection,
   ComputeSessionRecord,
   ComputeVariableSnapshot,
   EnvironmentId,
@@ -226,6 +227,7 @@ function EmptyComputeResults(props: {
 }
 
 function ComputeExecutionCard(props: {
+  readonly runtimeInspection: ComputeRuntimeInspection | null;
   readonly allowFigureFollowing: boolean;
   readonly cwd: string;
   readonly environmentId: EnvironmentId;
@@ -356,6 +358,7 @@ function ComputeExecutionCard(props: {
           </p>
         ) : (
           <ComputeOutputView
+            runtimeInspection={props.runtimeInspection}
             allowFigureFollowing={props.allowFigureFollowing}
             cwd={props.cwd}
             environmentId={props.environmentId}
@@ -1671,6 +1674,9 @@ export function ComputePanel(props: {
                 ) : null}
                 {selectedExecution ? (
                   <ComputeExecutionCard
+                    runtimeInspection={
+                      runtimes.isSuccess && !runtimes.isPending ? runtimes.data : null
+                    }
                     allowFigureFollowing={selectedIsCurrentResult}
                     key={selectedExecution.request.executionId}
                     cwd={props.cwd}

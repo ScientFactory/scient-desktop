@@ -1,4 +1,5 @@
 import { renderToStaticMarkup } from "react-dom/server";
+import type { ReactNode } from "react";
 import { describe, expect, it, vi } from "vite-plus/test";
 import {
   ComputeExecutionId,
@@ -23,9 +24,62 @@ vi.mock("~/assets/assetUrls", () => ({
 }));
 vi.mock("~/rightPanelStore", () => ({ useRightPanelStore: {} }));
 vi.mock("./ComputeRichOutput", () => ({ ComputeRichOutput: () => null }));
+vi.mock("@tanstack/react-router", () => ({
+  Link: ({ children, search }: { children: ReactNode; search: { environmentId: string } }) => (
+    <a href="/settings/scientific-computing" data-environment={search.environmentId}>
+      {children}
+    </a>
+  ),
+}));
 
 import { ComputeOutputView } from "./ComputeOutputView";
 import { COMPUTE_NATIVE_FIGURE_MEDIA_TYPE } from "./computeResultPresentation";
+
+describe("dependency recovery presentation", () => {
+  const renderDiagnostic = (languageId: string, message: string) =>
+    renderToStaticMarkup(
+      <ComputeOutputView
+        cwd="/synthetic"
+        environmentId={EnvironmentId.make("remote-scient-host")}
+        executionId={ComputeExecutionId.make("failed-execution")}
+        session={
+          { languageId: ComputeLanguageId.make(languageId), runtime: null } as ComputeSessionRecord
+        }
+        outputs={[
+          {
+            _tag: "diagnostic",
+            sequence: 1,
+            observedAt: "2026-09-17T00:00:00Z",
+            diagnostic: {
+              errorName: "ModuleNotFoundError",
+              message,
+              traceback: ["Original traceback retained"],
+              frames: [],
+            },
+          },
+        ]}
+        threadRef={{} as ScopedThreadRef}
+      />,
+    );
+  it("keeps the actual error and links to the execution host's settings without running anything", () => {
+    const markup = renderDiagnostic("python", "No module named 'pandas'");
+    expect(markup).toContain("ModuleNotFoundError");
+    expect(markup).toContain("Original traceback retained");
+    expect(markup).toContain("Choose Python environment…");
+    expect(markup).toContain('data-environment="remote-scient-host"');
+    expect(markup).toContain("Changing the default does not switch an existing session.");
+    expect(markup).not.toContain("reports pandas installed");
+  });
+  it.each([
+    ["python", "No module named 'project_utils'"],
+    ["python", "No module named 'pandas.compat'"],
+    ["matlab", "No module named 'pandas'"],
+  ])("does not suggest an environment change for %s / %s", (language, message) => {
+    const markup = renderDiagnostic(language, message);
+    expect(markup).not.toContain("Choose Python environment");
+    expect(markup).toContain("Original traceback retained");
+  });
+});
 
 describe("figure result projection", () => {
   it.each([true, false])(

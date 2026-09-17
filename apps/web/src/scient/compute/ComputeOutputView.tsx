@@ -3,6 +3,7 @@ import type {
   ComputeExecutionRecord,
   ComputeOutput,
   ComputeProjectedOutput,
+  ComputeRuntimeInspection,
   ComputeSessionRecord,
   EnvironmentId,
   ScopedThreadRef,
@@ -23,6 +24,7 @@ import {
 } from "./computeResultPresentation";
 import { computeRichRepresentation } from "./computeRichRepresentation";
 import { ComputeRichOutput } from "./ComputeRichOutput";
+import { computeDependencyRecovery } from "./computeDependencyRecovery";
 
 type ComputeExecutionSource = ComputeExecutionRecord["request"]["source"];
 
@@ -118,6 +120,7 @@ export function ComputeOutputView(props: {
   readonly clipped?: boolean;
   readonly threadRef: ScopedThreadRef;
   readonly source?: ComputeExecutionSource | null;
+  readonly runtimeInspection?: ComputeRuntimeInspection | null;
 }) {
   if (props.outputs.length === 0 && !props.corruptLineCount && !props.clipped) {
     return <p className="text-xs text-muted-foreground">{props.emptyLabel ?? "No output."}</p>;
@@ -152,7 +155,12 @@ export function ComputeOutputView(props: {
                   {output.text}
                 </pre>
               );
-            case "diagnostic":
+            case "diagnostic": {
+              const recovery = computeDependencyRecovery({
+                diagnostic: output.diagnostic,
+                session: props.session,
+                inspection: props.runtimeInspection ?? null,
+              });
               return (
                 <div
                   key={outputKey(output, index)}
@@ -164,20 +172,28 @@ export function ComputeOutputView(props: {
                       <p className="font-medium text-destructive">
                         {output.diagnostic.errorName}: {output.diagnostic.message}
                       </p>
-                      {output.diagnostic.errorName === "ModuleNotFoundError" ? (
-                        <Button
-                          size="xs"
-                          variant="ghost-muted"
-                          className="mt-1"
-                          render={
-                            <Link
-                              to="/settings/scientific-computing"
-                              search={{ environmentId: props.environmentId }}
-                            />
-                          }
-                        >
-                          Scientific Computing
-                        </Button>
+                      {recovery !== null ? (
+                        <div className="mt-1 text-muted-foreground">
+                          <p>
+                            {recovery.managedHasPackage
+                              ? `Scient-managed Python reports ${recovery.moduleName} installed.`
+                              : `Check the Python environment and its ${recovery.moduleName} installation.`}{" "}
+                            Changing the default does not switch an existing session.
+                          </p>
+                          <Button
+                            size="xs"
+                            variant="ghost-muted"
+                            className="mt-1"
+                            render={
+                              <Link
+                                to="/settings/scientific-computing"
+                                search={{ environmentId: props.environmentId }}
+                              />
+                            }
+                          >
+                            Choose Python environment…
+                          </Button>
+                        </div>
                       ) : null}
                       <ComputeDiagnosticFrames
                         frames={output.diagnostic.frames}
@@ -195,6 +211,7 @@ export function ComputeOutputView(props: {
                   </div>
                 </div>
               );
+            }
             case "image": {
               const presentation = computeFigurePresentation({
                 allowFollowing: props.allowFigureFollowing ?? false,

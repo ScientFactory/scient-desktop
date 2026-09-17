@@ -152,6 +152,13 @@ remain visible on the file. Select the file's Python status to open
 the right server's Scientific Computing settings. After choosing or repairing an environment, rerun
 the code yourself; Scient never replays a failed run automatically.
 
+For a missing, recognized Python dependency, the error offers **Choose Python environment…**.
+It can report that Scient-managed Python has the corresponding package installed when current
+runtime inspection supports that suggestion; package presence is not a guarantee that the script
+will succeed. Unknown project imports and missing submodules do not get this suggestion. Choose
+the environment in Settings, then use **Switch Python** for an existing file session before running
+again. This guidance neither installs packages nor changes a running session automatically.
+
 ## Connect your MATLAB installation
 
 Open a `.m` file and select its MATLAB status to open **Scientific Computing** for that server.
