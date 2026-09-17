@@ -30,7 +30,7 @@ export function ResizeSeparator({
       aria-orientation={orientation}
       className={cn(
         "group relative z-20 shrink-0 touch-none select-none outline-none",
-        vertical ? "w-2 cursor-col-resize" : "h-2 cursor-row-resize",
+        vertical ? "cursor-platform-col-resize w-2" : "cursor-platform-row-resize h-2",
         className,
       )}
     >
@@ -38,9 +38,7 @@ export function ResizeSeparator({
         aria-hidden
         className={cn(
           "pointer-events-none absolute bg-transparent transition-colors duration-150 group-hover:bg-border group-focus-visible:bg-ring group-active:bg-primary/60",
-          vertical
-            ? "inset-y-0 left-1/2 w-px -translate-x-1/2"
-            : "inset-x-0 top-1/2 h-px -translate-y-1/2",
+          vertical ? "inset-y-0 left-1/2 w-px" : "inset-x-0 top-1/2 h-px",
         )}
       />
     </div>
