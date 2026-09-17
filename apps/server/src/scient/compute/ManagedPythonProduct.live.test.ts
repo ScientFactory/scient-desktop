@@ -2,6 +2,7 @@
 import * as NodeProcess from "node:process";
 
 import { initializeScientProject } from "@scientfactory/project-init";
+import { HostProcessEnvironment } from "@t3tools/shared/hostProcess";
 import {
   ComputeExecutionId,
   ComputeLanguageId,
@@ -354,7 +355,17 @@ describe.runIf(ENABLED)("Scient-managed Python product", () => {
             ),
           ).toBe(false);
         }).pipe(Effect.provide(Layer.merge(computeLayer, workspaceLayer)), Effect.scoped);
-      }).pipe(Effect.provide(NodeServices.layer), Effect.scoped, Effect.timeout("20 minutes")),
+      }).pipe(
+        Effect.provide(NodeServices.layer),
+        // One base kernel, one retained all-Toolkit kernel, and one current
+        // verification kernel. Runner RAM must not choose this test's budget.
+        Effect.provideService(HostProcessEnvironment, {
+          ...NodeProcess.env,
+          SCIENT_COMPUTE_MAX_LIVE_SESSIONS: "3",
+        }),
+        Effect.scoped,
+        Effect.timeout("20 minutes"),
+      ),
     1_260_000,
   );
 });
