@@ -25,12 +25,17 @@ import {
   type ComputeTransportOpenRequest,
   type ComputeVariableSnapshot,
 } from "@scientfactory/compute";
-import { DuplexProcessId, type DuplexProcessPort } from "@scientfactory/execution";
+import {
+  DuplexProcessId,
+  type DuplexProcessHandle,
+  type DuplexProcessPort,
+} from "@scientfactory/execution";
 import * as Cause from "effect/Cause";
 import * as Clock from "effect/Clock";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as MutableRef from "effect/MutableRef";
 import * as Option from "effect/Option";
 import * as Queue from "effect/Queue";
@@ -44,6 +49,7 @@ import {
   validateBridgeSequence,
   type BridgeMessage,
   type DisplayPayload,
+  type KernelPortsPayload,
 } from "./BridgeProtocol.ts";
 import { inspectComputeStaticImage } from "./ComputeStaticImage.ts";
 
@@ -71,6 +77,18 @@ type RichDisplayPayload = Extract<DisplayPayload, { readonly kind: unknown }>;
  */
 export interface ComputeBridgeTransportOptions {
   readonly startupTimeoutMs?: number;
+  /**
+   * Reserves the private endpoints a Jupyter kernel will bind. The lease must
+   * remain protected until the entire bridge process tree is confirmed gone.
+   */
+  readonly prepareKernelEndpoints?: (request: ComputeTransportOpenRequest) => Effect.Effect<
+    {
+      readonly ports: KernelPortsPayload;
+      readonly handoff: Effect.Effect<void, ComputeTransportError>;
+      readonly release: Effect.Effect<void>;
+    },
+    ComputeTransportError
+  >;
   /**
    * How many bytes of undelivered events one session may hold.
    *
@@ -333,20 +351,92 @@ export function makeComputeBridgeTransport(
     open(request: ComputeTransportOpenRequest) {
       return Effect.gen(function* () {
         const ownerToken = NodeCrypto.randomBytes(32).toString("hex");
-        const handle = yield* processes
-          .start({
-            processId: DuplexProcessId.make(request.sessionId),
-            executable: request.launch.executable,
-            args: [...request.launch.args],
-            cwd: request.launch.cwd,
-            environment: request.launch.environment,
-            extendEnv: false,
-          })
-          .pipe(
-            Effect.mapError((cause) =>
-              transportError("open", "Failed to start the bridge process.", cause),
-            ),
-          );
+        const { cleanupOwnedProcess, endpointLease, handle } = yield* Effect.uninterruptible(
+          Effect.gen(function* () {
+            const endpointLease = options.prepareKernelEndpoints
+              ? yield* options.prepareKernelEndpoints(request)
+              : null;
+            const cleanupGate = yield* Semaphore.make(1);
+            const cleanupComplete = MutableRef.make(false);
+            const handleRef = MutableRef.make<DuplexProcessHandle | null>(null);
+
+            const cleanupOwnedProcess = (
+              operation: ComputeTransportError["operation"],
+            ): Effect.Effect<void, ComputeTransportError> =>
+              cleanupGate.withPermits(1)(
+                Effect.suspend(() => {
+                  if (MutableRef.get(cleanupComplete)) return Effect.void;
+                  const handle = MutableRef.get(handleRef);
+                  const cleanup =
+                    handle === null
+                      ? (endpointLease?.release ?? Effect.void)
+                      : handle.cancelProcessTree.pipe(
+                          Effect.mapError((cause) =>
+                            transportError(
+                              operation,
+                              "Failed to stop the compute bridge process tree.",
+                              cause,
+                            ),
+                          ),
+                          Effect.tap(() => endpointLease?.release ?? Effect.void),
+                        );
+                  return cleanup.pipe(
+                    Effect.tap(() =>
+                      Effect.sync(() => {
+                        MutableRef.set(cleanupComplete, true);
+                      }),
+                    ),
+                  );
+                }),
+              );
+
+            const setup = Effect.gen(function* () {
+              const handle = yield* processes
+                .start({
+                  processId: DuplexProcessId.make(request.sessionId),
+                  executable: request.launch.executable,
+                  args: [...request.launch.args],
+                  cwd: request.launch.cwd,
+                  environment: request.launch.environment,
+                  extendEnv: false,
+                })
+                .pipe(
+                  Effect.mapError((cause) =>
+                    transportError("open", "Failed to start the bridge process.", cause),
+                  ),
+                );
+              MutableRef.set(handleRef, handle);
+
+              // Registered before startup becomes interruptible. If a caller
+              // leaves while the protocol handshake is pending, the bridge
+              // tree is still stopped before its private ports are unprotected.
+              yield* Effect.addFinalizer(() =>
+                cleanupOwnedProcess("shutdown").pipe(
+                  Effect.catch((cause) =>
+                    Effect.logWarning(
+                      "compute process cleanup failed; retaining private endpoint protection",
+                      { cause, sessionId: request.sessionId },
+                    ),
+                  ),
+                ),
+              );
+              return handle;
+            });
+            const setupExit = yield* Effect.exit(setup);
+            if (Exit.isFailure(setupExit)) {
+              yield* cleanupOwnedProcess("open").pipe(
+                Effect.catch((cause) =>
+                  Effect.logWarning(
+                    "compute startup cleanup failed; retaining private endpoint protection",
+                    { cause, sessionId: request.sessionId },
+                  ),
+                ),
+              );
+              return yield* Effect.failCause(setupExit.cause);
+            }
+            return { cleanupOwnedProcess, endpointLease, handle: setupExit.value };
+          }),
+        );
 
         const decoder = makeComputeFrameDecoder();
         const inboundSequence = makeBridgeSequenceTracker("bridge-to-server");
@@ -480,7 +570,7 @@ export function makeComputeBridgeTransport(
             return failPending(error).pipe(
               Effect.andThen(Queue.offer(events, { event: lostEvent, byteLength })),
               Effect.andThen(Queue.fail(events, error)),
-              Effect.andThen(handle.cancelProcessTree.pipe(Effect.ignore)),
+              Effect.andThen(cleanupOwnedProcess("shutdown").pipe(Effect.ignore)),
               Effect.asVoid,
             );
           });
@@ -1056,6 +1146,11 @@ export function makeComputeBridgeTransport(
                 return yield* transportError("handshake", "Bridge capabilities are incomplete.");
               }
 
+              // The reservations stay bound until the bridge is authenticated.
+              // Protection was registered before reservation, so from this
+              // handoff onward the scanner can never race the private protocol.
+              if (endpointLease !== null) yield* endpointLease.handoff;
+
               const ready = yield* requestResponse(
                 "handshake",
                 {
@@ -1065,7 +1160,11 @@ export function makeComputeBridgeTransport(
                   // is already running it, which is what a Python session wants.
                   // A future language ships its own kernel spec name here without
                   // the bridge having to guess from the launch plan.
-                  payload: { workingDirectory: request.launch.cwd, kernelName: null },
+                  payload: {
+                    workingDirectory: request.launch.cwd,
+                    kernelName: null,
+                    ...(endpointLease === null ? {} : { kernelPorts: endpointLease.ports }),
+                  },
                 },
                 { type: "kernel-ready", generation: request.generation },
                 yield* remainingStartupMs,
@@ -1102,7 +1201,7 @@ export function makeComputeBridgeTransport(
               yield* emit({ _tag: "ready", runtime, capabilities: payload.capabilities });
             }),
           )
-          .pipe(Effect.tapError(() => handle.cancelProcessTree.pipe(Effect.ignore)));
+          .pipe(Effect.tapError(() => cleanupOwnedProcess("handshake").pipe(Effect.ignore)));
         yield* handshake;
 
         const ensureGeneration = (
@@ -1345,12 +1444,20 @@ export function makeComputeBridgeTransport(
                 ),
               ),
               Effect.andThen(
+                cleanupOwnedProcess("shutdown").pipe(
+                  Effect.tapError((error) =>
+                    Effect.sync(() => {
+                      MutableRef.set(stopping, false);
+                    }).pipe(Effect.andThen(lose(error))),
+                  ),
+                ),
+              ),
+              Effect.andThen(
                 Effect.sync(() => {
                   MutableRef.set(closed, true);
                 }),
               ),
               Effect.andThen(Queue.end(events)),
-              Effect.andThen(handle.cancelProcessTree.pipe(Effect.ignore)),
               Effect.asVoid,
             );
           }).pipe(shutdownGate.withPermits(1));
@@ -1376,7 +1483,14 @@ export function makeComputeBridgeTransport(
               Effect.ignore,
             );
             yield* Queue.end(events).pipe(Effect.ignore);
-            yield* handle.cancelProcessTree.pipe(Effect.ignore);
+            yield* cleanupOwnedProcess("shutdown").pipe(
+              Effect.catch((cause) =>
+                Effect.logWarning(
+                  "compute process cleanup failed; retaining private endpoint protection",
+                  { cause, sessionId: request.sessionId },
+                ),
+              ),
+            );
           }),
         );
 

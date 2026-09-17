@@ -5,7 +5,11 @@ import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 import * as NodeURL from "node:url";
 
-import { ComputeRuntimeError, REQUIRED_COMPUTE_CAPABILITIES } from "@scientfactory/compute";
+import {
+  ComputeRuntimeError,
+  ComputeTransportError,
+  REQUIRED_COMPUTE_CAPABILITIES,
+} from "@scientfactory/compute";
 import { ExecutionRunId, type ExecutionProcessPort } from "@scientfactory/execution";
 import {
   HostProcessArchitecture,
@@ -23,6 +27,7 @@ import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 
 import { ServerConfig } from "../../config.ts";
+import { OwnedLocalEndpointRegistry } from "../../localEndpoints/OwnedLocalEndpointRegistry.ts";
 import { ExecutionProcess } from "../execution/LocalExecutionProcess.ts";
 import { DuplexProcess } from "../execution/LocalDuplexProcess.ts";
 import { sanitizeComputeEnvironment } from "./ComputeEnvironmentPolicy.ts";
@@ -268,11 +273,17 @@ export const makeSpawnProbe = (
 export const pythonRuntimeBinding: Effect.Effect<
   ComputeRuntimeBinding,
   ComputeRuntimeError,
-  DuplexProcess | ExecutionProcess | FileSystem.FileSystem | Scope.Scope | ServerConfig
+  | DuplexProcess
+  | ExecutionProcess
+  | FileSystem.FileSystem
+  | Scope.Scope
+  | ServerConfig
+  | OwnedLocalEndpointRegistry
 > = Effect.gen(function* () {
   const bridgePath = yield* resolveBridgePath(moduleDirectory());
   const processes = yield* ExecutionProcess;
   const duplexProcesses = yield* DuplexProcess;
+  const ownedLocalEndpoints = yield* OwnedLocalEndpointRegistry;
   const config = yield* ServerConfig;
   const hostEnvironment = yield* HostProcessEnvironment;
   const hostPlatform = yield* HostProcessPlatform;
@@ -361,9 +372,63 @@ export const pythonRuntimeBinding: Effect.Effect<
             ),
         },
   );
+  const transport = makeComputeBridgeTransport(duplexProcesses, {
+    prepareKernelEndpoints: (request) =>
+      ownedLocalEndpoints
+        .reserveProtectedLoopbackTcpPorts({
+          owner: `compute/${request.sessionId}`,
+          purpose: "jupyter-kernel-channels",
+          count: 5,
+        })
+        .pipe(
+          Effect.mapError(
+            (cause) =>
+              new ComputeTransportError({
+                operation: "open",
+                message: "Unable to reserve private kernel endpoints.",
+                cause,
+              }),
+          ),
+          Effect.flatMap((lease) => {
+            const [shell, iopub, stdin, heartbeat, control] = lease.ports;
+            if (
+              shell === undefined ||
+              iopub === undefined ||
+              stdin === undefined ||
+              heartbeat === undefined ||
+              control === undefined
+            ) {
+              return lease.release.pipe(
+                Effect.andThen(
+                  Effect.fail(
+                    new ComputeTransportError({
+                      operation: "open",
+                      message: "The private kernel endpoint reservation was incomplete.",
+                    }),
+                  ),
+                ),
+              );
+            }
+            return Effect.succeed({
+              ports: { ip: "127.0.0.1" as const, shell, iopub, stdin, heartbeat, control },
+              handoff: lease.handoff.pipe(
+                Effect.mapError(
+                  (cause) =>
+                    new ComputeTransportError({
+                      operation: "handshake",
+                      message: "Unable to hand private endpoints to the Python kernel.",
+                      cause,
+                    }),
+                ),
+              ),
+              release: lease.release,
+            });
+          }),
+        ),
+  });
   return {
     adapter,
-    transport: makeComputeBridgeTransport(duplexProcesses, {}),
+    transport,
     descriptor: {
       languageId: PYTHON_LANGUAGE_ID,
       displayName: "Python",

@@ -19,6 +19,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 
 import * as ServerConfig from "../../config.ts";
+import * as OwnedLocalEndpoints from "../../localEndpoints/OwnedLocalEndpointRegistry.ts";
 import * as WorkspaceEntries from "../../workspace/WorkspaceEntries.ts";
 import * as WorkspaceFileSystem from "../../workspace/WorkspaceFileSystem.ts";
 import * as WorkspacePaths from "../../workspace/WorkspacePaths.ts";
@@ -90,6 +91,7 @@ describe.runIf(Boolean(TEST_PYTHON))("compute product backend", () => {
         Layer.provide(LocalComputeStore.layer),
         Layer.provide(LocalExecutionProcess.layer),
         Layer.provide(LocalDuplexProcess.layer),
+        Layer.provide(OwnedLocalEndpoints.layer),
         Layer.provide(ServerConfig.layerTest(projectRoot, stateRoot)),
         Layer.provide(NodeServices.layer),
       );

@@ -1098,6 +1098,41 @@ class TestBridgeCorrelation(unittest.IsolatedAsyncioTestCase):
         await self.b._correlate("req-1", "msg-1")
         self.assertEqual([m["type"] for m in self._messages()], ["execution-complete"])
 
+    async def test_routes_known_late_output_while_another_execution_is_active(self):
+        self.b._kernel_client = FakeKernelClient(
+            iopub=[
+                iopub(
+                    "stream",
+                    {"name": "stdout", "text": "late\n"},
+                    parent="msg-old",
+                ),
+                iopub("status", {"execution_state": "idle"}),
+            ],
+            shell=[shell_reply({"status": "ok"})],
+        )
+        self.b._recent_msg_ids["msg-old"] = "req-old"
+        self.b._mapping.active_request_id = "req-1"
+        await self.b._correlate("req-1", "msg-1")
+        messages = self._messages()
+        self.assertEqual([message["type"] for message in messages], ["stream", "execution-complete"])
+        self.assertEqual(messages[0]["requestId"], "req-old")
+        self.assertEqual(messages[1]["requestId"], "req-1")
+
+    async def test_keeps_parentless_output_at_session_scope_while_execution_is_active(self):
+        self.b._kernel_client = FakeKernelClient(
+            iopub=[
+                iopub("stream", {"name": "stderr", "text": "kernel notice\n"}, parent=None),
+                iopub("status", {"execution_state": "idle"}),
+            ],
+            shell=[shell_reply({"status": "ok"})],
+        )
+        self.b._mapping.active_request_id = "req-1"
+        await self.b._correlate("req-1", "msg-1")
+        messages = self._messages()
+        self.assertEqual(messages[0]["type"], "stream")
+        self.assertIsNone(messages[0]["requestId"])
+        self.assertEqual(messages[-1]["requestId"], "req-1")
+
     async def test_drains_late_output_after_an_execution_is_idle(self):
         self.b._kernel_client = FakeKernelClient(
             iopub=[
@@ -1368,6 +1403,52 @@ class TestBridgeLifecycle(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(msgs[1]["type"], "restarted")
         self.assertEqual(msgs[1]["generation"], 2)
         self.assertEqual(msgs[1]["payload"], {"kernelPid": 4321})
+
+
+class TestKernelEndpointAssignment(unittest.IsolatedAsyncioTestCase):
+    def setUp(self):
+        self.b, _ = make_bridge()
+
+    def test_assigns_host_reserved_ports_and_disables_jupyter_port_cache(self):
+        try:
+            import jupyter_client  # noqa: F401
+        except ImportError:
+            self.skipTest("jupyter_client is unavailable")
+
+        ports = {
+            "ip": "127.0.0.1",
+            "shell": 41001,
+            "iopub": 41002,
+            "stdin": 41003,
+            "heartbeat": 41004,
+            "control": 41005,
+        }
+        manager = self.b._make_kernel_manager(None, ports)
+        self.assertEqual(manager.ip, "127.0.0.1")
+        self.assertEqual(manager.shell_port, 41001)
+        self.assertEqual(manager.iopub_port, 41002)
+        self.assertEqual(manager.stdin_port, 41003)
+        self.assertEqual(manager.hb_port, 41004)
+        self.assertEqual(manager.control_port, 41005)
+        self.assertFalse(manager.cache_ports)
+
+    async def test_rejects_duplicate_host_reserved_ports_before_starting(self):
+        with tempfile.TemporaryDirectory() as directory:
+            with self.assertRaisesRegex(bridge.ProtocolViolation, "distinct"):
+                await self.b._start_kernel(
+                    {
+                        "workingDirectory": directory,
+                        "kernelName": None,
+                        "kernelPorts": {
+                            "ip": "127.0.0.1",
+                            "shell": 41001,
+                            "iopub": 41001,
+                            "stdin": 41003,
+                            "heartbeat": 41004,
+                            "control": 41005,
+                        },
+                    }
+                )
 
 
 class TestInboundReader(unittest.IsolatedAsyncioTestCase):

@@ -166,6 +166,19 @@ export const HelloAckPayload = Schema.Struct({
 });
 export type HelloAckPayload = typeof HelloAckPayload.Type;
 
+const TcpPort = Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 65_535 }));
+
+/** Exact loopback endpoints reserved by the host for one Jupyter kernel. */
+export const KernelPortsPayload = Schema.Struct({
+  ip: Schema.Literal("127.0.0.1"),
+  shell: TcpPort,
+  iopub: TcpPort,
+  stdin: TcpPort,
+  heartbeat: TcpPort,
+  control: TcpPort,
+});
+export type KernelPortsPayload = typeof KernelPortsPayload.Type;
+
 export const StartKernelPayload = Schema.Struct({
   workingDirectory: Schema.NonEmptyString.check(Schema.isMaxLength(MaxPathLength)),
   /**
@@ -178,6 +191,11 @@ export const StartKernelPayload = Schema.Struct({
    * language reuses this transport without the bridge knowing the language.
    */
   kernelName: Schema.NullOr(Label),
+  /**
+   * Optional because non-Jupyter bridges share this envelope. The Python host
+   * supplies it so private ZeroMQ listeners are known before they exist.
+   */
+  kernelPorts: Schema.optional(KernelPortsPayload),
 });
 export type StartKernelPayload = typeof StartKernelPayload.Type;
 

@@ -172,6 +172,7 @@ import * as LocalAnalysisStore from "./scient/analysis/LocalAnalysisStore.ts";
 import * as AnalysisRunIndex from "./scient/analysis/AnalysisRunIndex.ts";
 import * as LocalDuplexProcess from "./scient/execution/LocalDuplexProcess.ts";
 import * as LocalExecutionProcess from "./scient/execution/LocalExecutionProcess.ts";
+import * as OwnedLocalEndpoints from "./localEndpoints/OwnedLocalEndpointRegistry.ts";
 import * as LocalComputeStore from "./scient/compute/LocalComputeStore.ts";
 import * as ComputeRuntimeRegistry from "./scient/compute/ComputeRuntimeRegistry.ts";
 import * as ScientificRuntimePreferences from "./scient/compute/ScientificRuntimePreferences.ts";
@@ -492,7 +493,11 @@ const CheckpointingLayerLive = Layer.empty.pipe(
   Layer.provideMerge(CheckpointStore.layer.pipe(Layer.provide(VcsDriverRegistryLayerLive))),
 );
 
-const PortScannerLayerLive = PortScanner.layer.pipe(Layer.provide(ProcessRunner.layer));
+const OwnedLocalEndpointRegistryLive = OwnedLocalEndpoints.layer;
+const PortScannerLayerLive = PortScanner.layer.pipe(
+  Layer.provide(ProcessRunner.layer),
+  Layer.provide(OwnedLocalEndpointRegistryLive),
+);
 
 const TerminalLayerLive = TerminalManager.layer.pipe(
   Layer.provide(PtyAdapterLive),
@@ -694,6 +699,7 @@ const ComputeSessionServiceLive = ComputeRuntimeRegistry.layer.pipe(
   Layer.provide(LocalComputeStore.layer),
   Layer.provide(LocalExecutionProcess.layer),
   Layer.provide(LocalDuplexProcess.layer),
+  Layer.provide(OwnedLocalEndpointRegistryLive),
 );
 
 // The build coordinator owns its execution port the way the analysis runtime

@@ -21,6 +21,7 @@ import * as TestClock from "effect/testing/TestClock";
 import { expect } from "vite-plus/test";
 import { FetchHttpClient } from "effect/unstable/http";
 
+import * as OwnedLocalEndpoints from "../localEndpoints/OwnedLocalEndpointRegistry.ts";
 import * as ProcessRunner from "../processRunner.ts";
 import * as PortScanner from "./PortScanner.ts";
 const processProbeFailure: ProcessRunner.ProcessRunner["Service"]["run"] = (input) =>
@@ -41,6 +42,7 @@ const processProbeFailure: ProcessRunner.ProcessRunner["Service"]["run"] = (inpu
 const TestProcessRunner = Layer.succeed(ProcessRunner.ProcessRunner, {
   run: processProbeFailure,
 });
+const TestOwnedLocalEndpointsLive = OwnedLocalEndpoints.layer;
 
 let integrationListeningPort: number | null = null;
 
@@ -69,6 +71,7 @@ const makeProbeFailureLayer = (
         }),
         Layer.succeed(HostProcessPlatform, "linux"),
         FetchHttpClient.layer.pipe(Layer.provide(Layer.succeed(FetchHttpClient.Fetch, fetch))),
+        TestOwnedLocalEndpointsLive,
       ),
     ),
   );
@@ -80,6 +83,7 @@ const TestPortDiscoveryLive = PortScanner.layer.pipe(
       TestIntegrationNet,
       Layer.succeed(HostProcessPlatform, "win32"),
       FetchHttpClient.layer,
+      TestOwnedLocalEndpointsLive,
     ),
   ),
 );
@@ -88,7 +92,10 @@ const LSOF_TEST_PORT = 43_123;
 
 const makeLsofScannerLayer = (input: {
   readonly pid: () => number;
+  readonly port?: () => number;
+  readonly listeners?: () => ReadonlyArray<{ readonly pid: number; readonly port: number }>;
   readonly fetch: typeof globalThis.fetch;
+  readonly ownedLocalEndpointsLayer?: Layer.Layer<OwnedLocalEndpoints.OwnedLocalEndpointRegistry>;
 }) =>
   PortScanner.layer.pipe(
     Layer.provide(
@@ -96,7 +103,13 @@ const makeLsofScannerLayer = (input: {
         Layer.succeed(ProcessRunner.ProcessRunner, {
           run: () =>
             Effect.succeed({
-              stdout: `p${input.pid()}\ncnode\nn*:${LSOF_TEST_PORT}\n`,
+              stdout: (
+                input.listeners?.() ?? [
+                  { pid: input.pid(), port: input.port?.() ?? LSOF_TEST_PORT },
+                ]
+              )
+                .map(({ pid, port }) => `p${pid}\ncnode\nn*:${port}\n`)
+                .join(""),
               stderr: "",
               code: null,
               timedOut: false,
@@ -117,6 +130,7 @@ const makeLsofScannerLayer = (input: {
         FetchHttpClient.layer.pipe(
           Layer.provide(Layer.succeed(FetchHttpClient.Fetch, input.fetch)),
         ),
+        input.ownedLocalEndpointsLayer ?? TestOwnedLocalEndpointsLive,
       ),
     ),
   );
@@ -269,6 +283,107 @@ effectIt.effect("revalidates a successful HTML probe after its cache entry expir
       `http://localhost:${LSOF_TEST_PORT}/`,
       `https://localhost:${LSOF_TEST_PORT}/`,
     ]);
+  }).pipe(Effect.provide(layer));
+});
+
+effectIt.effect("never sends HTTP bytes to a protected internal endpoint", () => {
+  const requests: string[] = [];
+  let protectedPort = 0;
+  const ownedLocalEndpointsLayer = OwnedLocalEndpoints.layer;
+  const scannerLayer = makeLsofScannerLayer({
+    pid: () => 7_777,
+    port: () => protectedPort,
+    fetch: ((input: Parameters<typeof globalThis.fetch>[0]) => {
+      requests.push(String(input));
+      return Promise.resolve(new Response("hello", { headers: { "content-type": "text/html" } }));
+    }) as typeof globalThis.fetch,
+    ownedLocalEndpointsLayer,
+  });
+  const layer = Layer.merge(scannerLayer, ownedLocalEndpointsLayer);
+
+  return Effect.gen(function* () {
+    const registry = yield* OwnedLocalEndpoints.OwnedLocalEndpointRegistry;
+    const lease = yield* registry.reserveProtectedLoopbackTcpPorts({
+      owner: "compute-test",
+      purpose: "private-protocol",
+      count: 1,
+    });
+    protectedPort = lease.ports[0] ?? 0;
+    yield* lease.handoff;
+
+    const scanner = yield* PortScanner.PortDiscovery;
+    expect(yield* scanner.scan()).toEqual([]);
+    expect(requests).toEqual([]);
+
+    yield* lease.release;
+    expect(yield* scanner.scan()).toHaveLength(1);
+    expect(requests).toEqual([`http://localhost:${protectedPort}/`]);
+  }).pipe(Effect.provide(layer));
+});
+
+effectIt.effect("still discovers a normal web port owned by the same process", () => {
+  const requests: string[] = [];
+  let protectedPort = 0;
+  const ownedLocalEndpointsLayer = OwnedLocalEndpoints.layer;
+  const scannerLayer = makeLsofScannerLayer({
+    pid: () => 7_778,
+    listeners: () => [
+      { pid: 7_778, port: protectedPort },
+      { pid: 7_778, port: LSOF_TEST_PORT },
+    ],
+    fetch: ((input: Parameters<typeof globalThis.fetch>[0]) => {
+      requests.push(String(input));
+      return Promise.resolve(new Response("hello", { headers: { "content-type": "text/html" } }));
+    }) as typeof globalThis.fetch,
+    ownedLocalEndpointsLayer,
+  });
+  const layer = Layer.merge(scannerLayer, ownedLocalEndpointsLayer);
+
+  return Effect.gen(function* () {
+    const registry = yield* OwnedLocalEndpoints.OwnedLocalEndpointRegistry;
+    const lease = yield* registry.reserveProtectedLoopbackTcpPorts({
+      owner: "compute-test",
+      purpose: "private-protocol",
+      count: 1,
+    });
+    protectedPort = lease.ports[0] ?? 0;
+    yield* lease.handoff;
+
+    const scanner = yield* PortScanner.PortDiscovery;
+    expect((yield* scanner.scan()).map(({ port }) => port)).toEqual([LSOF_TEST_PORT]);
+    expect(requests).toEqual([`http://localhost:${LSOF_TEST_PORT}/`]);
+    yield* lease.release;
+  }).pipe(Effect.provide(layer));
+});
+
+effectIt.effect("invalidates cached classifications when endpoint ownership changes", () => {
+  const requests: string[] = [];
+  const ownedLocalEndpointsLayer = OwnedLocalEndpoints.layer;
+  const scannerLayer = makeLsofScannerLayer({
+    pid: () => 8_888,
+    fetch: ((input: Parameters<typeof globalThis.fetch>[0]) => {
+      requests.push(String(input));
+      return Promise.resolve(new Response("hello", { headers: { "content-type": "text/html" } }));
+    }) as typeof globalThis.fetch,
+    ownedLocalEndpointsLayer,
+  });
+  const layer = Layer.merge(scannerLayer, ownedLocalEndpointsLayer);
+
+  return Effect.gen(function* () {
+    const scanner = yield* PortScanner.PortDiscovery;
+    const registry = yield* OwnedLocalEndpoints.OwnedLocalEndpointRegistry;
+    expect(yield* scanner.scan()).toHaveLength(1);
+    expect(yield* scanner.scan()).toHaveLength(1);
+    expect(requests).toHaveLength(1);
+
+    const lease = yield* registry.reserveProtectedLoopbackTcpPorts({
+      owner: "another-service",
+      purpose: "private-protocol",
+      count: 1,
+    });
+    expect(yield* scanner.scan()).toHaveLength(1);
+    expect(requests).toHaveLength(2);
+    yield* lease.release;
   }).pipe(Effect.provide(layer));
 });
 

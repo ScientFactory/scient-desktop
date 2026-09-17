@@ -15,6 +15,7 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as ServerConfig from "../../config.ts";
+import * as OwnedLocalEndpoints from "../../localEndpoints/OwnedLocalEndpointRegistry.ts";
 import * as LocalDuplexProcess from "../execution/LocalDuplexProcess.ts";
 import * as LocalExecutionProcess from "../execution/LocalExecutionProcess.ts";
 import { processExists } from "../execution/LocalProcessTestSupport.ts";
@@ -49,6 +50,7 @@ describe.runIf(Boolean(PYTHON))("native Run fresh", () => {
             Layer.provide(LocalComputeStore.layer),
             Layer.provide(LocalExecutionProcess.layer),
             Layer.provide(LocalDuplexProcess.layer),
+            Layer.provide(OwnedLocalEndpoints.layer),
             Layer.provide(ServerConfig.layerTest(cwd, state)),
             Layer.provide(NodeServices.layer),
           );

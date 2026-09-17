@@ -9,6 +9,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 
 import * as ServerConfig from "../../config.ts";
+import * as OwnedLocalEndpoints from "../../localEndpoints/OwnedLocalEndpointRegistry.ts";
 import * as ServerSettings from "../../serverSettings.ts";
 import * as LocalAnalysisStore from "../analysis/LocalAnalysisStore.ts";
 import * as LocalDuplexProcess from "../execution/LocalDuplexProcess.ts";
@@ -45,6 +46,7 @@ describe.runIf(Boolean(TEST_PYTHON))("Python Compute service integration", () =>
           Layer.provide(LocalComputeStore.layer),
           Layer.provide(LocalExecutionProcess.layer),
           Layer.provide(LocalDuplexProcess.layer),
+          Layer.provide(OwnedLocalEndpoints.layer),
           Layer.provide(ServerConfig.layerTest(cwd, state)),
           Layer.provide(NodeServices.layer),
         );

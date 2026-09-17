@@ -38,6 +38,7 @@ import * as Scope from "effect/Scope";
 import * as Semaphore from "effect/Semaphore";
 import { FetchHttpClient, HttpClient } from "effect/unstable/http";
 
+import { OwnedLocalEndpointRegistry } from "../localEndpoints/OwnedLocalEndpointRegistry.ts";
 import * as ProcessRunner from "../processRunner.ts";
 
 export class PortDiscovery extends Context.Service<
@@ -106,6 +107,7 @@ interface WebProbeCacheEntry {
   readonly pid: number | null;
   readonly isWeb: boolean;
   readonly expiresAtMillis: number;
+  readonly ownershipRevision: number;
 }
 
 interface WebProbeGroup {
@@ -294,6 +296,7 @@ export const make = Effect.gen(function* PortDiscoveryMake() {
   const net = yield* Net.NetService;
   const processRunner = yield* ProcessRunner.ProcessRunner;
   const hostPlatform = yield* HostProcessPlatform;
+  const ownedLocalEndpoints = yield* OwnedLocalEndpointRegistry;
   const httpClient = (yield* HttpClient.HttpClient).pipe(HttpClient.withScope);
   const stateRef = yield* Ref.make<ScannerState>({
     listeners: new Map(),
@@ -327,26 +330,46 @@ export const make = Effect.gen(function* PortDiscoveryMake() {
       }));
   });
 
-  const probeWebUrl = Effect.fn("PortDiscovery.probeWebUrl")((url: string) =>
-    httpClient.get(url).pipe(
-      Effect.map((response) => {
-        const location = response.headers.location?.trim();
-        if (NAVIGATION_REDIRECT_STATUSES.has(response.status) && location) return url;
-        if (response.status < 200 || response.status >= 300) return null;
-        if (response.status === 204 || response.status === 205) return null;
-        const contentType = response.headers["content-type"]
-          ?.split(";", 1)[0]
-          ?.trim()
-          .toLowerCase();
-        return contentType === "text/html" || contentType === "application/xhtml+xml" ? url : null;
+  const probeWebUrl = Effect.fn("PortDiscovery.probeWebUrl")(function* (url: string) {
+    const parsed = new URL(url);
+    const port = urlPort(parsed);
+    const probe = yield* ownedLocalEndpoints.runLoopbackTcpProbe(
+      port,
+      Effect.gen(function* () {
+        const before = yield* ownedLocalEndpoints.snapshot;
+        const visibleUrl = yield* httpClient.get(url).pipe(
+          Effect.map((response) => {
+            const location = response.headers.location?.trim();
+            if (NAVIGATION_REDIRECT_STATUSES.has(response.status) && location) return url;
+            if (response.status < 200 || response.status >= 300) return null;
+            if (response.status === 204 || response.status === 205) return null;
+            const contentType = response.headers["content-type"]
+              ?.split(";", 1)[0]
+              ?.trim()
+              .toLowerCase();
+            return contentType === "text/html" || contentType === "application/xhtml+xml"
+              ? url
+              : null;
+          }),
+          Effect.scoped,
+          Effect.timeoutOption(WEB_PROBE_TIMEOUT),
+          Effect.map(Option.getOrNull),
+          Effect.orElseSucceed(() => null),
+          Effect.provideService(FetchHttpClient.RequestInit, { redirect: "manual" }),
+        );
+
+        // Ownership changes are serialized against the probe. Keep the
+        // revision check as a defensive cache invariant if that coordination
+        // is ever relaxed independently of this scanner.
+        const after = yield* ownedLocalEndpoints.snapshot;
+        if (after.revision !== before.revision || after.protectedLoopbackTcpPorts.has(port)) {
+          return null;
+        }
+        return { visibleUrl, ownershipRevision: after.revision };
       }),
-      Effect.scoped,
-      Effect.timeoutOption(WEB_PROBE_TIMEOUT),
-      Effect.map(Option.getOrNull),
-      Effect.orElseSucceed(() => null),
-      Effect.provideService(FetchHttpClient.RequestInit, { redirect: "manual" }),
-    ),
-  );
+    );
+    return probe._tag === "protected" ? null : probe.value;
+  });
 
   const makeWebProbeGroups = (
     servers: ReadonlyArray<DiscoveredLocalServer>,
@@ -395,11 +418,14 @@ export const make = Effect.gen(function* PortDiscoveryMake() {
     configuredUrls: ReadonlyArray<string>,
   ) {
     const nowMillis = yield* Clock.currentTimeMillis;
+    const ownershipAtStart = yield* ownedLocalEndpoints.snapshot;
     const cached = yield* Ref.get(webProbeCacheRef);
-    const groups = makeWebProbeGroups(servers, configuredUrls);
+    const groups = makeWebProbeGroups(servers, configuredUrls).filter(
+      (group) => !ownershipAtStart.protectedLoopbackTcpPorts.has(group.server.port),
+    );
     const batchProbes = new Map<
       string,
-      Effect.Effect<{ readonly probe: WebProbeCacheEntry; readonly fresh: boolean }>
+      Effect.Effect<{ readonly probe: WebProbeCacheEntry | null; readonly fresh: boolean }>
     >();
     const batchProbeSemaphore = yield* Semaphore.make(1);
     const getProbe = (url: string, pid: number | null) => {
@@ -410,15 +436,30 @@ export const make = Effect.gen(function* PortDiscoveryMake() {
           Effect.gen(function* () {
             const existing = batchProbes.get(identity);
             if (existing) return [existing] as const;
+            const ownership = yield* ownedLocalEndpoints.snapshot;
+            const port = urlPort(new URL(url));
+            if (ownership.protectedLoopbackTcpPorts.has(port)) {
+              return [Effect.succeed({ probe: null, fresh: false })] as const;
+            }
             const cachedProbe = cached.get(key);
             const cachedIsCurrent =
-              cachedProbe?.pid === pid && cachedProbe.expiresAtMillis > nowMillis;
+              cachedProbe?.pid === pid &&
+              cachedProbe.ownershipRevision === ownership.revision &&
+              cachedProbe.expiresAtMillis > nowMillis;
             const memoized = yield* Effect.cached(
               cachedIsCurrent
                 ? Effect.succeed({ probe: cachedProbe, fresh: false })
                 : probeWebUrl(url).pipe(
                     Effect.map((result) => ({
-                      probe: { pid, isWeb: result !== null, expiresAtMillis: 0 },
+                      probe:
+                        result === null
+                          ? null
+                          : {
+                              pid,
+                              isWeb: result.visibleUrl !== null,
+                              expiresAtMillis: 0,
+                              ownershipRevision: result.ownershipRevision,
+                            },
                       fresh: true,
                     })),
                   ),
@@ -438,6 +479,7 @@ export const make = Effect.gen(function* PortDiscoveryMake() {
           for (const url of group.urls) {
             const key = webProbeCacheKey(url);
             const { probe, fresh } = yield* getProbe(url, group.server.pid);
+            if (probe === null) continue;
             probes.push([key, probe, fresh]);
             if (probe.isWeb) {
               visibleUrl = url;
@@ -449,12 +491,18 @@ export const make = Effect.gen(function* PortDiscoveryMake() {
       { concurrency: WEB_PROBE_CONCURRENCY },
     );
     const completedAtMillis = yield* Clock.currentTimeMillis;
+    const ownershipAtCompletion = yield* ownedLocalEndpoints.snapshot;
     const nextCache = new Map(
-      [...cached].filter(([, probe]) => probe.expiresAtMillis > completedAtMillis),
+      [...cached].filter(
+        ([, probe]) =>
+          probe.expiresAtMillis > completedAtMillis &&
+          probe.ownershipRevision === ownershipAtCompletion.revision,
+      ),
     );
     const discovered: DiscoveredLocalServer[] = [];
     const configured = new Map<string, DiscoveredLocalServer>();
     for (const { group, probes, visibleUrl } of probed) {
+      if (ownershipAtCompletion.protectedLoopbackTcpPorts.has(group.server.port)) continue;
       for (const [key, probe, fresh] of probes) {
         nextCache.set(
           key,

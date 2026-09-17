@@ -936,7 +936,9 @@ class ScientBridge:
     # -- kernel lifecycle ---------------------------------------------------
 
     @staticmethod
-    def _make_kernel_manager(kernel_name: Optional[str]) -> Any:
+    def _make_kernel_manager(
+        kernel_name: Optional[str], kernel_ports: Optional[dict[str, Any]] = None
+    ) -> Any:
         """Build the manager for this session's kernel.
 
         ``None`` means Python, and launches ``ipykernel`` inside this very
@@ -949,34 +951,50 @@ class ScientBridge:
         from jupyter_client import AsyncKernelManager
 
         if kernel_name is not None:
-            return AsyncKernelManager(kernel_name=kernel_name)
+            manager = AsyncKernelManager(kernel_name=kernel_name)
+        else:
+            from jupyter_client.kernelspec import KernelSpec, KernelSpecManager
 
-        from jupyter_client.kernelspec import KernelSpec, KernelSpecManager
+            class SelectedInterpreterKernelSpecManager(KernelSpecManager):
+                def __init__(self, spec: Any) -> None:
+                    super().__init__()
+                    self._spec = spec
 
-        class SelectedInterpreterKernelSpecManager(KernelSpecManager):
-            def __init__(self, spec: Any) -> None:
-                super().__init__()
-                self._spec = spec
+                def get_kernel_spec(self, _kernel_name: str) -> Any:
+                    return self._spec
 
-            def get_kernel_spec(self, _kernel_name: str) -> Any:
-                return self._spec
+            spec = KernelSpec(
+                argv=[
+                    sys.executable,
+                    "-m",
+                    "ipykernel_launcher",
+                    "--IPKernelApp.exec_lines="
+                    + json.dumps(
+                        ["exec(" + repr(PYTHON_RICH_DISPLAY_SETUP) + ", {})"]
+                    ),
+                    "-f",
+                    "{connection_file}",
+                ],
+                display_name="Scient Python",
+                language="python",
+            )
+            manager = AsyncKernelManager(
+                kernel_name="scient-python",
+                kernel_spec_manager=SelectedInterpreterKernelSpecManager(spec),
+            )
 
-        spec = KernelSpec(
-            argv=[
-                sys.executable,
-                "-m",
-                "ipykernel_launcher",
-                "--IPKernelApp.exec_lines=" + json.dumps(["exec(" + repr(PYTHON_RICH_DISPLAY_SETUP) + ", {})"]),
-                "-f",
-                "{connection_file}",
-            ],
-            display_name="Scient Python",
-            language="python",
-        )
-        return AsyncKernelManager(
-            kernel_name="scient-python",
-            kernel_spec_manager=SelectedInterpreterKernelSpecManager(spec),
-        )
+        if kernel_ports is not None:
+            # These sockets were reserved and registered as private before the
+            # bridge was started. Disable jupyter_client's own port cache so it
+            # cannot silently replace the host-owned endpoint set.
+            manager.ip = kernel_ports["ip"]
+            manager.shell_port = kernel_ports["shell"]
+            manager.iopub_port = kernel_ports["iopub"]
+            manager.stdin_port = kernel_ports["stdin"]
+            manager.hb_port = kernel_ports["heartbeat"]
+            manager.control_port = kernel_ports["control"]
+            manager.cache_ports = False
+        return manager
 
     def _read_kernel_pid(self) -> int:
         pid = getattr(getattr(self._kernel_manager, "provisioner", None), "pid", None)
@@ -1017,10 +1035,26 @@ class ScientBridge:
         kernel_name = payload.get("kernelName")
         if kernel_name is not None and (not isinstance(kernel_name, str) or not kernel_name):
             raise ProtocolViolation("start-kernel kernelName must be a non-empty string or null.")
+        kernel_ports = payload.get("kernelPorts")
+        if kernel_ports is not None:
+            names = ("shell", "iopub", "stdin", "heartbeat", "control")
+            if not isinstance(kernel_ports, dict) or kernel_ports.get("ip") != "127.0.0.1":
+                raise ProtocolViolation(
+                    "start-kernel kernelPorts must contain IPv4 loopback endpoints."
+                )
+            ports = [kernel_ports.get(name) for name in names]
+            if any(type(port) is not int or port <= 0 or port >= 65536 for port in ports):
+                raise ProtocolViolation(
+                    "start-kernel kernelPorts must contain valid TCP ports."
+                )
+            if len(set(ports)) != len(ports):
+                raise ProtocolViolation(
+                    "start-kernel kernelPorts must contain five distinct TCP ports."
+                )
 
         self._working_directory = os.path.realpath(working_directory)
 
-        self._kernel_manager = self._make_kernel_manager(kernel_name)
+        self._kernel_manager = self._make_kernel_manager(kernel_name, kernel_ports)
         # ``stdout=DEVNULL`` is the other half of keeping the protocol intact.
         # ``detach_protocol_stream`` already moved the real pipe out of reach, so
         # this only stops the kernel from inheriting whatever now sits on fd 1 --
@@ -1458,15 +1492,15 @@ class ScientBridge:
 
     async def _drain_iopub(self, request_id: str, msg_id: str) -> bool:
         drained = 0
-        pending_stream: Optional[tuple[str, str]] = None
+        pending_stream: Optional[tuple[Optional[str], str, str]] = None
 
         async def flush_stream() -> None:
             nonlocal pending_stream
             if pending_stream is None:
                 return
-            name, text = pending_stream
+            target_request_id, name, text = pending_stream
             pending_stream = None
-            self._map_stream({"name": name, "text": text}, request_id)
+            self._map_stream({"name": name, "text": text}, target_request_id)
             if self._outbound.pressured():
                 await self._flush()
 
@@ -1477,32 +1511,41 @@ class ScientBridge:
                 break
             drained += 1
             parent_id = message.get("parent_header", {}).get("msg_id")
-            if parent_id == msg_id:
-                msg_type = message.get("msg_type")
-                content = message.get("content", {})
-                if msg_type == "stream" and isinstance(content, dict):
-                    name = content.get("name", "stdout")
-                    if name not in {"stdout", "stderr"}:
-                        name = "stdout"
-                    text = content.get("text", "")
-                    if not isinstance(text, str):
-                        text = str(text)
-                    if pending_stream is not None:
-                        prior_name, prior_text = pending_stream
-                        combined = prior_text + text
-                        if prior_name == name and len(combined.encode("utf-8")) <= MAX_STREAM_TEXT:
-                            pending_stream = (name, combined)
-                            continue
-                        await flush_stream()
-                    pending_stream = (name, text)
-                else:
+            target_request_id = (
+                request_id
+                if parent_id == msg_id
+                else None
+                if parent_id is None
+                else self._recent_msg_ids.get(parent_id)
+            )
+            # Unknown parents can be stale Jupyter control traffic. Consuming
+            # them is necessary, but claiming them as user output is not.
+            if parent_id is not None and target_request_id is None:
+                continue
+            msg_type = message.get("msg_type")
+            content = message.get("content", {})
+            if msg_type == "stream" and isinstance(content, dict):
+                name = content.get("name", "stdout")
+                if name not in {"stdout", "stderr"}:
+                    name = "stdout"
+                text = content.get("text", "")
+                if not isinstance(text, str):
+                    text = str(text)
+                if pending_stream is not None:
+                    prior_request, prior_name, prior_text = pending_stream
+                    combined = prior_text + text
+                    if (
+                        prior_request == target_request_id
+                        and prior_name == name
+                        and len(combined.encode("utf-8")) <= MAX_STREAM_TEXT
+                    ):
+                        pending_stream = (target_request_id, name, combined)
+                        continue
                     await flush_stream()
-                    self._handle_iopub(msg_type, content, request_id)
-            elif parent_id is None:
+                pending_stream = (target_request_id, name, text)
+            else:
                 await flush_stream()
-                # A kernel-level message that no execution caused.  Worth
-                # reporting, but not against work that did not produce it.
-                self._handle_iopub(message.get("msg_type"), message.get("content", {}), None)
+                self._handle_iopub(msg_type, content, target_request_id)
             if self._outbound.pressured():
                 await self._flush()
         await flush_stream()

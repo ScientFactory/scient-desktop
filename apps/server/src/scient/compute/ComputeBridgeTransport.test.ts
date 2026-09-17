@@ -28,7 +28,10 @@ import * as Queue from "effect/Queue";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 
-import { makeComputeBridgeTransport } from "./ComputeBridgeTransport.ts";
+import {
+  makeComputeBridgeTransport,
+  type ComputeBridgeTransportOptions,
+} from "./ComputeBridgeTransport.ts";
 
 // ---------------------------------------------------------------------------
 // A bridge that never runs
@@ -64,6 +67,7 @@ interface FakeBridge {
   readonly endStdout: Effect.Effect<void>;
   readonly exitWith: (code: number) => Effect.Effect<void>;
   readonly cancels: () => number;
+  readonly failCancellation: () => void;
   readonly respond: (responder: Responder) => void;
 }
 
@@ -157,6 +161,7 @@ const makeFakeBridge = Effect.fn("makeFakeBridge")(function* () {
   const inboundDecoder = makeComputeFrameDecoder();
   let outboundSequence = 0;
   let cancels = 0;
+  let cancellationFails = false;
   let responder: Responder = healthyResponder(
     (command) => (command.payload as { ownerToken: string }).ownerToken,
   );
@@ -196,8 +201,13 @@ const makeFakeBridge = Effect.fn("makeFakeBridge")(function* () {
         }
       }),
     exitCode: Deferred.await(exited),
-    cancelProcessTree: Effect.sync(() => {
+    cancelProcessTree: Effect.suspend(() => {
       cancels += 1;
+      return cancellationFails
+        ? Effect.fail(
+            new DuplexProcessError({ operation: "cancel", message: "simulated cleanup failure" }),
+          )
+        : Effect.void;
     }),
   };
 
@@ -210,6 +220,9 @@ const makeFakeBridge = Effect.fn("makeFakeBridge")(function* () {
     endStdout: Queue.end(stdout).pipe(Effect.asVoid),
     exitWith: (code) => Deferred.succeed(exited, code).pipe(Effect.asVoid),
     cancels: () => cancels,
+    failCancellation: () => {
+      cancellationFails = true;
+    },
     respond: (next) => {
       responder = next;
     },
@@ -218,7 +231,7 @@ const makeFakeBridge = Effect.fn("makeFakeBridge")(function* () {
 
 const openChannel = Effect.fn("openChannel")(function* (
   bridge: FakeBridge,
-  options: { readonly maxEventQueueBytes?: number } = {},
+  options: Omit<ComputeBridgeTransportOptions, "startupTimeoutMs"> = {},
 ) {
   const transport = makeComputeBridgeTransport(bridge.port, {
     startupTimeoutMs: 2_000,
@@ -307,6 +320,132 @@ describe("jupyter bridge handshake", () => {
         expect(sent[1]?.payload).toEqual({ workingDirectory: "/project", kernelName: null });
       }),
     ),
+  );
+
+  it.effect(
+    "hands host-reserved kernel endpoints to the bridge and releases them after cleanup",
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const bridge = yield* makeFakeBridge();
+          let handoffs = 0;
+          let releases = 0;
+          const ports = {
+            ip: "127.0.0.1" as const,
+            shell: 41_001,
+            iopub: 41_002,
+            stdin: 41_003,
+            heartbeat: 41_004,
+            control: 41_005,
+          };
+          const channel = yield* openChannel(bridge, {
+            prepareKernelEndpoints: () =>
+              Effect.succeed({
+                ports,
+                handoff: Effect.sync(() => {
+                  handoffs += 1;
+                }),
+                release: Effect.sync(() => {
+                  releases += 1;
+                }),
+              }),
+          });
+
+          expect(handoffs).toBe(1);
+          expect(releases).toBe(0);
+          expect(bridge.sent().find((message) => message.type === "start-kernel")?.payload).toEqual(
+            {
+              workingDirectory: "/project",
+              kernelName: null,
+              kernelPorts: ports,
+            },
+          );
+
+          yield* channel.shutdown({ expectedGeneration: INITIAL_COMPUTE_SESSION_GENERATION });
+          expect(releases).toBe(1);
+        }),
+      ),
+  );
+
+  it.effect("cleans process ownership when opening is interrupted during process startup", () =>
+    Effect.gen(function* () {
+      const bridge = yield* makeFakeBridge();
+      const startEntered = yield* Deferred.make<void>();
+      const allowStart = yield* Deferred.make<void>();
+      let releases = 0;
+      const slowBridge: FakeBridge = {
+        ...bridge,
+        port: {
+          start: () =>
+            Deferred.succeed(startEntered, undefined).pipe(
+              Effect.andThen(Deferred.await(allowStart)),
+              Effect.andThen(bridge.port.start()),
+            ),
+        },
+      };
+      const opening = yield* Effect.scoped(
+        openChannel(slowBridge, {
+          prepareKernelEndpoints: () =>
+            Effect.succeed({
+              ports: {
+                ip: "127.0.0.1" as const,
+                shell: 41_101,
+                iopub: 41_102,
+                stdin: 41_103,
+                heartbeat: 41_104,
+                control: 41_105,
+              },
+              handoff: Effect.void,
+              release: Effect.sync(() => {
+                releases += 1;
+              }),
+            }),
+        }),
+      ).pipe(Effect.forkChild);
+
+      yield* Deferred.await(startEntered);
+      const interrupting = yield* Fiber.interrupt(opening).pipe(Effect.forkChild);
+      yield* Deferred.succeed(allowStart, undefined);
+      yield* Fiber.join(interrupting);
+
+      expect(bridge.cancels()).toBe(1);
+      expect(releases).toBe(1);
+    }),
+  );
+
+  it.effect("retains endpoint protection when process-tree cleanup is unconfirmed", () =>
+    Effect.gen(function* () {
+      const bridge = yield* makeFakeBridge();
+      bridge.failCancellation();
+      let releases = 0;
+      yield* Effect.scoped(
+        Effect.gen(function* () {
+          const channel = yield* openChannel(bridge, {
+            prepareKernelEndpoints: () =>
+              Effect.succeed({
+                ports: {
+                  ip: "127.0.0.1" as const,
+                  shell: 42_001,
+                  iopub: 42_002,
+                  stdin: 42_003,
+                  heartbeat: 42_004,
+                  control: 42_005,
+                },
+                handoff: Effect.void,
+                release: Effect.sync(() => {
+                  releases += 1;
+                }),
+              }),
+          });
+          const result = yield* Effect.exit(
+            channel.shutdown({ expectedGeneration: INITIAL_COMPUTE_SESSION_GENERATION }),
+          );
+          expect(result._tag).toBe("Failure");
+        }),
+      );
+      expect(bridge.cancels()).toBeGreaterThan(0);
+      expect(releases).toBe(0);
+    }),
   );
 
   it.effect("gives up on a bridge that never says hello", () =>

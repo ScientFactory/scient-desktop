@@ -23,6 +23,7 @@ import * as Queue from "effect/Queue";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 
+import * as OwnedLocalEndpoints from "../../localEndpoints/OwnedLocalEndpointRegistry.ts";
 import { DuplexProcess, layer as duplexProcessLayer } from "../execution/LocalDuplexProcess.ts";
 import { processExists } from "../execution/LocalProcessTestSupport.ts";
 import { makeComputeBridgeTransport } from "./ComputeBridgeTransport.ts";
@@ -40,7 +41,10 @@ import { buildLaunchPlan } from "./PythonRuntimeAdapter.ts";
 const TEST_PYTHON = NodeProcess.env.SCIENT_TEST_PYTHON;
 const here = NodePath.dirname(NodeURL.fileURLToPath(import.meta.url));
 const bridgePath = NodePath.join(here, "bridge", "scient_compute_bridge.py");
-const Live = duplexProcessLayer.pipe(Layer.provideMerge(NodeServices.layer));
+const Live = Layer.merge(
+  duplexProcessLayer.pipe(Layer.provideMerge(NodeServices.layer)),
+  OwnedLocalEndpoints.layer,
+);
 
 const sessionId = ComputeSessionId.make("python-integration-session");
 const python = ComputeLanguageId.make("python");
@@ -118,7 +122,33 @@ const takeMatching = (
 const integration = Effect.fn("PythonKernel.integration")(function* () {
   if (!TEST_PYTHON) return yield* Effect.die("SCIENT_TEST_PYTHON is not set.");
   const processes = yield* DuplexProcess;
-  const transport = makeComputeBridgeTransport(processes, {});
+  const ownedLocalEndpoints = yield* OwnedLocalEndpoints.OwnedLocalEndpointRegistry;
+  const transport = makeComputeBridgeTransport(processes, {
+    prepareKernelEndpoints: () =>
+      ownedLocalEndpoints
+        .reserveProtectedLoopbackTcpPorts({
+          owner: `compute-test/${sessionId}`,
+          purpose: "jupyter-kernel-channels",
+          count: 5,
+        })
+        .pipe(
+          Effect.orDie,
+          Effect.map((lease) => {
+            const [shell, iopub, stdin, heartbeat, control] = lease.ports as [
+              number,
+              number,
+              number,
+              number,
+              number,
+            ];
+            return {
+              ports: { ip: "127.0.0.1" as const, shell, iopub, stdin, heartbeat, control },
+              handoff: lease.handoff.pipe(Effect.orDie),
+              release: lease.release,
+            };
+          }),
+        ),
+  });
   const profile: ComputeRuntimeProfile = {
     languageId: python,
     source: "configured",

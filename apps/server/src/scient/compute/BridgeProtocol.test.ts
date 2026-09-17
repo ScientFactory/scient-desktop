@@ -28,9 +28,11 @@ import {
   HelloAckPayload,
   HelloPayload,
   InterruptResultPayload,
+  KernelPortsPayload,
   KernelReadyPayload,
   RestartedPayload,
   StreamPayload,
+  StartKernelPayload,
   VariablesPayload,
   WarningPayload,
   type BridgeMessage,
@@ -65,6 +67,8 @@ const loadFixture = (name: string): string =>
 // Compiled once: `decodeUnknownSync` rebuilds the decoder on every call.
 const decodeHello = Schema.decodeUnknownSync(HelloPayload);
 const decodeHelloAck = Schema.decodeUnknownSync(HelloAckPayload);
+const decodeKernelPorts = Schema.decodeUnknownSync(KernelPortsPayload);
+const decodeStartKernel = Schema.decodeUnknownSync(StartKernelPayload);
 const decodeExecute = Schema.decodeUnknownSync(ExecutePayload);
 const decodeStream = Schema.decodeUnknownSync(StreamPayload);
 const decodeDisplay = Schema.decodeUnknownSync(DisplayPayload);
@@ -103,6 +107,46 @@ describe("bridge protocol payload schemas", () => {
         pid: 0,
         platform: "darwin",
         capabilities: [],
+      }),
+    ).toThrow();
+  });
+
+  it("accepts exact IPv4 loopback endpoints for a Jupyter kernel", () => {
+    const kernelPorts = decodeKernelPorts({
+      ip: "127.0.0.1",
+      shell: 41_001,
+      iopub: 41_002,
+      stdin: 41_003,
+      heartbeat: 41_004,
+      control: 41_005,
+    });
+    const payload = decodeStartKernel({
+      workingDirectory: "/project",
+      kernelName: null,
+      kernelPorts,
+    });
+    expect(payload.kernelPorts?.control).toBe(41_005);
+  });
+
+  it("rejects external or invalid kernel endpoint assignments", () => {
+    expect(() =>
+      decodeKernelPorts({
+        ip: "0.0.0.0",
+        shell: 41_001,
+        iopub: 41_002,
+        stdin: 41_003,
+        heartbeat: 41_004,
+        control: 41_005,
+      }),
+    ).toThrow();
+    expect(() =>
+      decodeKernelPorts({
+        ip: "127.0.0.1",
+        shell: 0,
+        iopub: 41_002,
+        stdin: 41_003,
+        heartbeat: 41_004,
+        control: 41_005,
       }),
     ).toThrow();
   });

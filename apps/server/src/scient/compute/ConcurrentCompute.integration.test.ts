@@ -19,6 +19,7 @@ import * as Logger from "effect/Logger";
 import * as Schema from "effect/Schema";
 
 import * as ServerConfig from "../../config.ts";
+import * as OwnedLocalEndpoints from "../../localEndpoints/OwnedLocalEndpointRegistry.ts";
 import * as ServerSettings from "../../serverSettings.ts";
 import * as LocalAnalysisStore from "../analysis/LocalAnalysisStore.ts";
 import * as LocalDuplexProcess from "../execution/LocalDuplexProcess.ts";
@@ -91,6 +92,7 @@ describe.runIf(Boolean(PYTHON && MATLAB))("native independent Compute contexts",
           Layer.provide(LocalComputeStore.layer),
           Layer.provide(LocalExecutionProcess.layer),
           Layer.provide(LocalDuplexProcess.layer),
+          Layer.provide(OwnedLocalEndpoints.layer),
           Layer.provide(ServerConfig.layerTest(cwd, state)),
           Layer.provide(NodeServices.layer),
         );
