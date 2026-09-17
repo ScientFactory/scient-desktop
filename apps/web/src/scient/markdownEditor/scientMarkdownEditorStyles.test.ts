@@ -23,6 +23,14 @@ const previewRendererSource = NodeFS.readFileSync(
 );
 
 describe("rich Markdown preview presentation parity", () => {
+  it("lets the platform choose the pointer over the Markdown canvas", () => {
+    expect(cssSource).not.toMatch(/\.scient-markdown-document-shell\s*\{[^}]*cursor:\s*text/su);
+    expect(cssSource).not.toMatch(/\.scient-markdown-document\.is-read\s*\{[^}]*cursor:\s*text/su);
+    expect(cssSource).toMatch(
+      /\.scient-markdown-document\.is-write\s*\{[^}]*caret-color:\s*var\(--foreground\)/su,
+    );
+  });
+
   it("retains the established preview table expansion and export controls", () => {
     for (const label of [
       '"Collapse table cells"',

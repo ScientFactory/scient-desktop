@@ -15,14 +15,39 @@ describe("Scient split seams", () => {
     expect(rightPanelHandle).not.toMatch(/~\/scient\//u);
     expect(rightPanelHandle).not.toContain("ResizeSeparator");
     for (const visualToken of [
-      "w-2 cursor-col-resize",
-      "inset-y-0 left-1/2 w-px -translate-x-1/2",
+      "cursor-platform-col-resize",
+      "inset-y-0 left-1/2 w-px",
       "group-hover:bg-border",
       "group-active:bg-primary/60",
     ]) {
       expect(separator).toContain(visualToken);
       expect(rightPanelHandle).toContain(visualToken);
     }
+    expect(separator).toContain("cursor-platform-row-resize");
+    expect(separator).toContain("inset-x-0 top-1/2 h-px");
+    expect(separator).not.toContain("-translate-x-1/2");
+    expect(separator).not.toContain("-translate-y-1/2");
+    expect(rightPanelHandle).not.toContain("-translate-x-1/2");
+  });
+
+  it("preserves barred resize cursors except on Windows", () => {
+    const appStyles = readSource("../../index.css");
+
+    expect(appStyles).toMatch(/\.cursor-platform-col-resize\s*\{\s*cursor: col-resize;/u);
+    expect(appStyles).toMatch(/\.cursor-platform-row-resize\s*\{\s*cursor: row-resize;/u);
+    expect(appStyles).toMatch(
+      /\.electron-windows \.cursor-platform-col-resize\s*\{\s*cursor: ew-resize;/u,
+    );
+    expect(appStyles).toMatch(
+      /\.electron-windows \.cursor-platform-row-resize\s*\{\s*cursor: ns-resize;/u,
+    );
+  });
+
+  it("uses platform-aware cursors for the complete split drag", () => {
+    const split = readSource("./useScientSplit.ts");
+
+    expect(split).toContain("resizeCursorForPlatform(");
+    expect(split).toContain('axis === "y" ? "vertical" : "horizontal"');
   });
 
   it("keeps the LaTeX split on the shared Scient-owned behavior", () => {

@@ -1693,6 +1693,22 @@ body {
   --desktop-window-right-resize-inset: 6px;
 }
 
+.cursor-platform-col-resize {
+  cursor: col-resize;
+}
+
+.cursor-platform-row-resize {
+  cursor: row-resize;
+}
+
+.electron-windows .cursor-platform-col-resize {
+  cursor: ew-resize;
+}
+
+.electron-windows .cursor-platform-row-resize {
+  cursor: ns-resize;
+}
+
 /* App-chrome grain. Baked into each surface's own background (behind
    content) rather than a fixed overlay on top: a full-viewport overlay
    forces the compositor to re-blend every frame any animation produces,

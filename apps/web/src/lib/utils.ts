@@ -16,6 +16,16 @@ export function isWindowsPlatform(platform: string): boolean {
   return /^win(dows)?/i.test(platform);
 }
 
+export function resizeCursorForPlatform(
+  axis: "horizontal" | "vertical",
+  platform: string,
+): "col-resize" | "row-resize" | "ew-resize" | "ns-resize" {
+  if (isWindowsPlatform(platform)) {
+    return axis === "horizontal" ? "ew-resize" : "ns-resize";
+  }
+  return axis === "horizontal" ? "col-resize" : "row-resize";
+}
+
 export function normalizeSearchText(value: string): string {
   return value.normalize("NFKD").replace(/\p{M}/gu, "").toLowerCase().replace(/\s+/g, " ").trim();
 }
