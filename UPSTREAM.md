@@ -37,14 +37,13 @@ revision remains literal ancestry of owned `main`; it is not merely a reviewed
 or observed tip.
 
 The current T3 alignment is recorded in
-[`docs/internals/2026-09-17-upstream-sync-d1a64489.md`](docs/internals/2026-09-17-upstream-sync-d1a64489.md)
-and in `upstream-state.json`. It preserves 53 more official first-parent commits after
-`c1b2210411da79350a3f9f5a65a4a64971e4acad` through
-`01e64193d9d2abfae8f7b3d20f66824e38397bd6`. The initial history-preserving merge
-`65d6a5100ced1098f91b1c7256a70f5d9616bca3` has the exact owned base
-`8a293f0836684c6e381d1b228e3aa02e2ea360ac` as its first parent. The final extension merge
-`00e25964c2625c0beac6b54d08af861afd0a49dc` has the reviewed candidate as its first parent and the
-exact final official target as its second.
+[`docs/internals/2026-09-17-upstream-sync-dd9528a9.md`](docs/internals/2026-09-17-upstream-sync-dd9528a9.md)
+and in `upstream-state.json`. It preserves 35 more official first-parent commits after
+`01e64193d9d2abfae8f7b3d20f66824e38397bd6` through
+`dd9528a974ba534faa8d1588f3f137fa2a281860`. The history-preserving merge
+`f3a0406a28fe7122fdf3ad0932942ed38e401d1b` has the exact owned base
+`cbd99c95fbb07cf5c3575b9a5058c6749ae17ca5` as its first parent and the exact official target as
+its second.
 
 Automated qualification passed; owner manual review is pending. Pull-request delivery, merge, and
 release publication remain separate actions. The
@@ -53,16 +52,14 @@ Later observed upstream tips do not move `integrationBase` by themselves.
 
 ## Receiving T3 updates
 
-The local alignment through `01e64193` is documented in the
-[2026-09-17 review](docs/internals/2026-09-17-upstream-sync-d1a64489.md). It adds configurable send
-shortcuts and follow-up behavior, provider thinking traces and native slash commands, provider usage
-limits, safer folder drops, connection compatibility handling, project monograms, pull-request and
-mobile reliability improvements, lower-overhead checkpoint and GitHub refresh paths, authenticated
-private-repository pull-request media, width-aware provider settings, progressive complete
-large-diff review loading across web and mobile, pull-request-first proactive panel behavior, and
-clearer agent approval prompts. Scient's provider lifecycle, scientific surfaces, identity, signed
-npm-pinned server runtime, durable server-authoritative queue, state roots, and cloud/mobile
-publication holds remain.
+The local alignment through `dd9528a9` is documented in the
+[2026-09-17 review](docs/internals/2026-09-17-upstream-sync-dd9528a9.md). It adds the rich-text
+composer default, multi-model thread creation in separate worktrees, automatic storage cleanup,
+directory-safe file navigation, broader command-palette discovery, improved pull-request and chat
+presentation, checkpoint and settlement reliability, Android Material surfaces, mobile worktree
+handoff, and dictation wake-lock behavior. Scient's provider lifecycle, scientific surfaces,
+identity, signed npm-pinned server runtime, durable server-authoritative queue, project-first
+policy, state roots, and cloud/mobile publication holds remain.
 
 Migration IDs are immutable local history, not an upstream synchronization counter. T3's multi-PR
 migration is registered as Scient `53`, composer-context migration follows at `54`, and title-state
