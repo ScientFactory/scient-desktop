@@ -186,17 +186,22 @@ export const makeSpawnProbe = (
     readonly cwd: string;
     readonly timeout?: Duration.Duration;
   },
-): Effect.Effect<(executable: string) => Effect.Effect<string, ComputeRuntimeError>> =>
+): Effect.Effect<
+  (
+    executable: string,
+    acquireUsage?: Effect.Effect<() => void, ComputeRuntimeError>,
+  ) => Effect.Effect<string, ComputeRuntimeError>
+> =>
   Effect.gen(function* () {
     // The port wants an id per run. Nothing reads it here; it only has to tell
     // two probes apart in a trace.
     const runCounter = yield* Ref.make(0);
     const timeout = options.timeout ?? PROBE_TIMEOUT;
 
-    return (executable: string) =>
+    return (executable: string, acquireUsage?: Effect.Effect<() => void, ComputeRuntimeError>) =>
       Effect.gen(function* () {
         const count = yield* Ref.updateAndGet(runCounter, (value) => value + 1);
-        const handle = yield* processes
+        const start = processes
           .start({
             runId: ExecutionRunId.make(`scient-compute-probe-${String(count)}`),
             executable,
@@ -206,6 +211,28 @@ export const makeSpawnProbe = (
             extendEnv: false,
           })
           .pipe(Effect.mapError((cause) => runtimeError(`Unable to run ${executable}.`, cause)));
+        const handle = yield* acquireUsage === undefined
+          ? start
+          : Effect.uninterruptible(
+              Effect.gen(function* () {
+                const release = yield* acquireUsage;
+                const handle = yield* start.pipe(Effect.onError(() => Effect.sync(release)));
+                // Scope closure is not proof that the process tree stopped. Keep
+                // its generation reserved if cleanup fails, even on cancellation.
+                yield* Effect.addFinalizer(() =>
+                  handle.cancel.pipe(
+                    Effect.andThen(Effect.sync(release)),
+                    Effect.catchCause((cause) =>
+                      Effect.logWarning(
+                        "Python probe cleanup failed; its managed environment remains protected",
+                        { cause },
+                      ),
+                    ),
+                  ),
+                );
+                return handle;
+              }),
+            );
         // Drained on its own fiber, so an interpreter that writes more than a
         // pipe holds cannot block on a reader that is waiting for it to exit.
         const stdoutRef = yield* Ref.make("");
@@ -315,7 +342,9 @@ export const pythonRuntimeBinding: Effect.Effect<
         }),
       catch: (cause) => runtimeError("Scientific Python is unavailable on this platform.", cause),
     });
-    const manager = makeManagedPythonEnvironmentManager(config.computeDir, provisioner);
+    const manager = makeManagedPythonEnvironmentManager(config.computeDir, provisioner, "python", {
+      trackUsage: true,
+    });
     yield* Effect.tryPromise({
       try: () => manager.reconcile(),
       catch: (cause) => runtimeError("Unable to reconcile Scientific Python.", cause),
@@ -343,8 +372,17 @@ export const pythonRuntimeBinding: Effect.Effect<
   if (managedSetup !== null) {
     yield* Effect.addFinalizer(() => Effect.sync(() => managedSetup.managedRuntime.dispose()));
   }
+  const retain = (executable: string) =>
+    Effect.tryPromise({
+      try: () =>
+        managedSetup === null
+          ? Promise.resolve(() => undefined)
+          : managedSetup.manager.acquire(executable),
+      catch: (cause) =>
+        runtimeError("The requested Python environment is unavailable or being removed.", cause),
+    });
   const adapter = makePythonRuntimeAdapter(
-    spawnProbe,
+    (executable) => spawnProbe(executable, retain(executable)),
     bridgePath,
     managedSetup === null
       ? {}
@@ -374,57 +412,74 @@ export const pythonRuntimeBinding: Effect.Effect<
   );
   const transport = makeComputeBridgeTransport(duplexProcesses, {
     prepareKernelEndpoints: (request) =>
-      ownedLocalEndpoints
-        .reserveProtectedLoopbackTcpPorts({
-          owner: `compute/${request.sessionId}`,
-          purpose: "jupyter-kernel-channels",
-          count: 5,
-        })
-        .pipe(
-          Effect.mapError(
-            (cause) =>
-              new ComputeTransportError({
-                operation: "open",
-                message: "Unable to reserve private kernel endpoints.",
-                cause,
-              }),
-          ),
-          Effect.flatMap((lease) => {
-            const [shell, iopub, stdin, heartbeat, control] = lease.ports;
-            if (
-              shell === undefined ||
-              iopub === undefined ||
-              stdin === undefined ||
-              heartbeat === undefined ||
-              control === undefined
-            ) {
-              return lease.release.pipe(
-                Effect.andThen(
-                  Effect.fail(
-                    new ComputeTransportError({
-                      operation: "open",
-                      message: "The private kernel endpoint reservation was incomplete.",
-                    }),
-                  ),
-                ),
-              );
-            }
-            return Effect.succeed({
-              ports: { ip: "127.0.0.1" as const, shell, iopub, stdin, heartbeat, control },
-              handoff: lease.handoff.pipe(
-                Effect.mapError(
-                  (cause) =>
-                    new ComputeTransportError({
-                      operation: "handshake",
-                      message: "Unable to hand private endpoints to the Python kernel.",
-                      cause,
-                    }),
-                ),
+      Effect.uninterruptible(
+        Effect.gen(function* () {
+          const releaseUsage = yield* retain(request.launch.executable).pipe(
+            Effect.mapError(
+              (cause) =>
+                new ComputeTransportError({
+                  operation: "open",
+                  message: cause.message,
+                  cause,
+                }),
+            ),
+          );
+          return yield* ownedLocalEndpoints
+            .reserveProtectedLoopbackTcpPorts({
+              owner: `compute/${request.sessionId}`,
+              purpose: "jupyter-kernel-channels",
+              count: 5,
+            })
+            .pipe(
+              Effect.mapError(
+                (cause) =>
+                  new ComputeTransportError({
+                    operation: "open",
+                    message: "Unable to reserve private kernel endpoints.",
+                    cause,
+                  }),
               ),
-              release: lease.release,
-            });
-          }),
-        ),
+              Effect.flatMap((lease) => {
+                const [shell, iopub, stdin, heartbeat, control] = lease.ports;
+                if (
+                  shell === undefined ||
+                  iopub === undefined ||
+                  stdin === undefined ||
+                  heartbeat === undefined ||
+                  control === undefined
+                ) {
+                  return lease.release.pipe(
+                    Effect.andThen(
+                      Effect.fail(
+                        new ComputeTransportError({
+                          operation: "open",
+                          message: "The private kernel endpoint reservation was incomplete.",
+                        }),
+                      ),
+                    ),
+                  );
+                }
+                return Effect.succeed({
+                  ports: { ip: "127.0.0.1" as const, shell, iopub, stdin, heartbeat, control },
+                  handoff: lease.handoff.pipe(
+                    Effect.mapError(
+                      (cause) =>
+                        new ComputeTransportError({
+                          operation: "handshake",
+                          message: "Unable to hand private endpoints to the Python kernel.",
+                          cause,
+                        }),
+                    ),
+                  ),
+                  // The transport releases this composite lease only after the
+                  // process tree is confirmed stopped (or never started).
+                  release: lease.release.pipe(Effect.andThen(Effect.sync(releaseUsage))),
+                });
+              }),
+              Effect.onError(() => Effect.sync(releaseUsage)),
+            );
+        }),
+      ),
   });
   return {
     adapter,
@@ -439,7 +494,9 @@ export const pythonRuntimeBinding: Effect.Effect<
       descriptors: PYTHON_TOOLKIT_CATALOG,
       assess: assessPythonToolkits,
     },
-    ...(managedSetup === null ? {} : { managedRuntime: managedSetup.managedRuntime }),
+    ...(managedSetup === null
+      ? {}
+      : { managedRuntime: { ...managedSetup.managedRuntime, tracksUsage: true } }),
   };
 });
 

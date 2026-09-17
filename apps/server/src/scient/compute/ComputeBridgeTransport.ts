@@ -1147,7 +1147,7 @@ export function makeComputeBridgeTransport(
               }
 
               // The reservations stay bound until the bridge is authenticated.
-              // Protection was registered before reservation, so from this
+              // Protection was registered while the ports were reserved, so from this
               // handoff onward the scanner can never race the private protocol.
               if (endpointLease !== null) yield* endpointLease.handoff;
 
