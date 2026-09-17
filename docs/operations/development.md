@@ -146,7 +146,11 @@ vp run --filter <package> typecheck
 ```
 
 Use `vp run lint:mobile` for native mobile changes. Scient's final local verification gate is
-defined in [AGENTS.md](../../AGENTS.md#verification); focused checks do not replace it.
+defined in [AGENTS.md](../../AGENTS.md#verification). Use focused checks while iterating, then run
+the complete gate after the candidate stabilizes. Record completed checks against the exact
+revision or working diff and reuse that evidence while the candidate is unchanged. If a later edit
+can invalidate a result, rerun the affected check; broad shared-runtime, orchestration, packaging,
+or test-harness changes normally need wider requalification.
 See [ci.yml](../../.github/workflows/ci.yml) for hosted checks.
 The [manual Windows lane](../../.github/workflows/windows-tests.yml) is available for focused
 Windows investigation while that suite is not a required gate.

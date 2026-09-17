@@ -150,9 +150,25 @@ jobs:
           run-install: true
 
       - name: Test
-        run: vp run --filter @t3tools/web test --shard ${{ matrix.shard }}/${{ strategy.job-total }}
+        env:
+          TEST_REPORT: ${{ runner.temp }}/vitest-web-${{ matrix.shard }}.json
+        run: >-
+          vp run --filter @t3tools/web test
+          --shard ${{ matrix.shard }}/${{ strategy.job-total }}
+          --reporter=default
+          --reporter=json
+          --outputFile.json="$TEST_REPORT"
 
-  # apps/server sets `fileParallelism: false`, so its 239 files run strictly
+      - name: Upload test result
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: vitest-web-${{ matrix.shard }}-attempt-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/vitest-web-${{ matrix.shard }}.json
+          if-no-files-found: ignore
+          retention-days: 14
+
+  # apps/server sets `fileParallelism: false`, so its test files run strictly
   # one at a time. Sharding spreads them over separate runners instead of
   # separate workers, so no two server test files ever share a machine and the
   # isolation that flag buys is preserved exactly.
@@ -187,7 +203,22 @@ jobs:
         env:
           T3CODE_TRANSFER_BUDGET_REPORT_PATH: ${{ runner.temp }}/t3code-transfer-budget.md
           T3CODE_TRANSFER_BUDGET_RESULT_PATH: ${{ runner.temp }}/thread-transfer-result.json
-        run: vp run --filter t3 test --shard ${{ matrix.shard }}/${{ strategy.job-total }}
+          TEST_REPORT: ${{ runner.temp }}/vitest-server-${{ matrix.shard }}.json
+        run: >-
+          vp run --filter t3 test
+          --shard ${{ matrix.shard }}/${{ strategy.job-total }}
+          --reporter=default
+          --reporter=json
+          --outputFile.json="$TEST_REPORT"
+
+      - name: Upload test result
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: vitest-server-${{ matrix.shard }}-attempt-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/vitest-server-${{ matrix.shard }}.json
+          if-no-files-found: ignore
+          retention-days: 14
 
       # src/server.test.ts writes the budget report, so exactly one shard
       # produces these files. Gating the upload on their presence keeps a
@@ -361,14 +392,25 @@ jobs:
         uses: voidzero-dev/setup-vp@v1
         with:
           node-version-file: package.json
-          cache: true
-          run-install: true
+          cache: false
+          run-install: |
+            args:
+              - --filter=@t3tools/scripts...
 
       - name: Install mobile native static analysis tools
         run: brew bundle install --file apps/mobile/Brewfile
 
+      - name: Verify mobile native static analysis tools
+        run: |
+          for tool in swiftlint ktlint detekt; do
+            command -v "$tool" >/dev/null || {
+              echo "Required mobile native static analysis tool is unavailable: $tool" >&2
+              exit 1
+            }
+          done
+
       - name: Lint mobile native sources
-        run: vp run lint:mobile
+        run: node scripts/mobile-native-static-check.ts
 
   release_smoke:
     name: Release Smoke
