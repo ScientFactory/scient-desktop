@@ -129,4 +129,5 @@ jobs:
           vp test run \
             src/scient/compute/PythonKernel.integration.test.ts \
             src/scient/compute/PythonComputeService.integration.test.ts \
-            src/scient/compute/FreshCompute.integration.test.ts
+            src/scient/compute/FreshCompute.integration.test.ts \
+            src/preview/PortScannerPythonCompute.integration.test.ts
