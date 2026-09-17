@@ -249,6 +249,58 @@ describe("WorkspaceBindingResolver", () => {
     },
   );
 
+  it.effect("reassociates a root after its former project moves elsewhere", () => {
+    const state = stateFor({ parentRoot: null });
+    state.evidence.set("/projects/moved", observed("/projects/moved"));
+    return Effect.gen(function* () {
+      const resolver = yield* WorkspaceBindingResolver;
+      const first = yield* resolver.resolveThread(PARENT_THREAD_ID);
+      state.projects.set(PROJECT_ID, project("/projects/moved"));
+      const replacementId = ProjectId.make("replacement-project");
+      state.projects.set(replacementId, { ...project("/projects/example"), id: replacementId });
+      state.threads.set(
+        PARENT_THREAD_ID,
+        thread({
+          id: PARENT_THREAD_ID,
+          projectId: replacementId,
+          worktreePath: null,
+        }),
+      );
+      state.scopeRevisions.set(PARENT_THREAD_ID, 2);
+
+      const reassociated = yield* resolver.resolveThread(PARENT_THREAD_ID);
+      expect(reassociated.binding.bindingId).toBe(first.binding.bindingId);
+      expect(reassociated.binding.hostProjectId).toBe(replacementId);
+      expect(reassociated.binding.authorityGeneration).toBe(first.binding.authorityGeneration + 1);
+    }).pipe(Effect.provide(makeResolverLayer(state)));
+  });
+
+  it.effect("rejects reassociation while another registered project still claims the root", () => {
+    const state = stateFor({ parentRoot: null });
+    state.evidence.set("/projects/moved", observed("/projects/moved"));
+    return Effect.gen(function* () {
+      const resolver = yield* WorkspaceBindingResolver;
+      yield* resolver.resolveThread(PARENT_THREAD_ID);
+      state.projects.set(PROJECT_ID, project("/projects/moved"));
+      const competingId = ProjectId.make("competing-project");
+      state.projects.set(competingId, { ...project("/projects/example"), id: competingId });
+      const replacementId = ProjectId.make("replacement-project");
+      state.projects.set(replacementId, { ...project("/projects/example"), id: replacementId });
+      state.threads.set(
+        PARENT_THREAD_ID,
+        thread({
+          id: PARENT_THREAD_ID,
+          projectId: replacementId,
+          worktreePath: null,
+        }),
+      );
+
+      expect(yield* resolver.resolveThread(PARENT_THREAD_ID).pipe(Effect.flip)).toMatchObject({
+        kind: "root-conflict",
+      });
+    }).pipe(Effect.provide(makeResolverLayer(state)));
+  });
+
   it.effect("resolves registered UI roots and aliases without making cwd an authority", () => {
     const state = stateFor({ parentRoot: null });
     state.evidence.set("/alias", observed("/projects/example"));

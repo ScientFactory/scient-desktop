@@ -69,6 +69,9 @@ export interface ScientSkillSessionPlannerShape {
   readonly resolve: (input: {
     readonly provider: ProviderDriverKind;
     readonly projectRoot?: string;
+    /** Whether this exact configured adapter can attach the host-issued MCP
+     * session. Provider kind alone is insufficient for external runtimes. */
+    readonly mcpSessionAvailable?: boolean;
   }) => Effect.Effect<ScientSkillSessionPlan>;
 }
 
@@ -240,10 +243,13 @@ const make = Effect.fn("ScientSkillSessionPlanner.make")(function* () {
         diagnostics,
       };
     }
-    if (scientSkillDeliveryForProvider(input.provider) === "unsupported") {
+    if (
+      input.mcpSessionAvailable === false ||
+      scientSkillDeliveryForProvider(input.provider) === "unsupported"
+    ) {
       diagnostics.push({
         code: "provider-unsupported",
-        message: `Scient skills are not yet deliverable to provider '${input.provider}'.`,
+        message: `Scient skills are not deliverable to this '${input.provider}' provider session.`,
       });
       return {
         delivery: "unsupported" as const,

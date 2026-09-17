@@ -964,10 +964,11 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
 
   const agentAccessCapabilities = Effect.fn("ProviderService.agentAccessCapabilities")(function* (
     threadId: ThreadId,
-    provider: ProviderDriverKind,
+    adapter: ProviderAdapterShape<unknown>,
   ) {
     const supportsScientSkills =
-      ScientSkillSession.scientSkillDeliveryForProvider(provider) === "mcp";
+      adapter.capabilities.mcpSessionInjection === true &&
+      ScientSkillSession.scientSkillDeliveryForProvider(adapter.provider) === "mcp";
     const capabilities = new Set<McpInvocationContext.McpCapability>([
       "pull-requests",
       "documents:build",
@@ -1011,10 +1012,15 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
   const prepareMcpSession = (
     threadId: ThreadId,
     providerInstanceId: ProviderInstanceId,
-    provider: ProviderDriverKind,
+    adapter: ProviderAdapterShape<unknown>,
   ) =>
     Effect.gen(function* () {
-      const capabilities = yield* agentAccessCapabilities(threadId, provider);
+      if (adapter.capabilities.mcpSessionInjection !== true) {
+        yield* McpSessionRegistry.revokeActiveMcpThread(threadId);
+        yield* Effect.sync(() => McpProviderSession.clearMcpProviderSession(threadId));
+        return undefined;
+      }
+      const capabilities = yield* agentAccessCapabilities(threadId, adapter);
       const supportsScientSkills = capabilities.has("skills:read");
       const credential = yield* issueMcpCredential({
         threadId,
@@ -1347,7 +1353,7 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
       const persistedCwd = readPersistedCwd(input.binding.runtimePayload);
       const persistedModelSelection = readPersistedModelSelection(input.binding.runtimePayload);
 
-      yield* prepareMcpSession(input.binding.threadId, bindingInstanceId, input.binding.provider);
+      yield* prepareMcpSession(input.binding.threadId, bindingInstanceId, adapter);
       const resumed = yield* adapter
         .startSession({
           threadId: input.binding.threadId,
@@ -1581,7 +1587,7 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
         }
         const adapter = yield* registry.getByInstance(resolvedInstanceId);
         yield* clearTurnAnalyticsSession(resolvedInstanceId, threadId);
-        yield* prepareMcpSession(threadId, resolvedInstanceId, resolvedProvider);
+        yield* prepareMcpSession(threadId, resolvedInstanceId, adapter);
         const session = yield* adapter
           .startSession({
             ...input,
@@ -1801,6 +1807,7 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
       yield* McpSessionRegistry.touchActiveMcpThread(input.threadId);
       const skillPlan = yield* skillSessionPlanner.resolve({
         provider: routed.adapter.provider,
+        mcpSessionAvailable: routed.adapter.capabilities.mcpSessionInjection === true,
         ...(routed.projectRoot ? { projectRoot: routed.projectRoot } : {}),
       });
       yield* Effect.forEach(
@@ -1841,7 +1848,10 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
           "The message, selected context, attachments and Scient instructions exceed the provider input limit. Shorten the message or remove a context selection and retry; nothing was sent.",
         );
       }
-      if (ScientSkillSession.scientSkillDeliveryForProvider(routed.adapter.provider) === "mcp") {
+      if (
+        routed.adapter.capabilities.mcpSessionInjection === true &&
+        ScientSkillSession.scientSkillDeliveryForProvider(routed.adapter.provider) === "mcp"
+      ) {
         // The bearer token remains stable for the provider process, but its
         // exact skill authority is replaced immediately before this turn.
         // Policy changes made while it runs therefore apply only to the next

@@ -437,6 +437,10 @@ MCP uses the existing server with Scient-owned admission and request-local
 explicitly declared host tools keep their own policy. Preserve Browser snapshot
 image responses and the transport-to-domain context projection. The Preview
 error contract permits native caller identities without inventing provider IDs.
+Provider adapters explicitly opt in only when their exact configured runtime can
+attach Scient's thread-scoped MCP session. Omission fails closed: the service
+does not mint a credential or advertise MCP-delivered Skills. Managed OpenCode
+opts in; an externally managed OpenCode server does not.
 See [workspace authority and agent capabilities](docs/internals/scient-workspace-binding.md).
 
 Explicit Skill selections travel as optional `selectedScientSkillNames`

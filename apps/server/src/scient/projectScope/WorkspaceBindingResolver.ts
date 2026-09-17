@@ -70,6 +70,37 @@ const make = Effect.gen(function* () {
   const bindings = yield* WorkspaceBindingStore.WorkspaceBindingStore;
   const fs = yield* FileSystem.FileSystem;
 
+  const registeredRootMatches = Effect.fn("WorkspaceBindingResolver.registeredRootMatches")(
+    function* (registeredRoot: string, canonicalRoot: string) {
+      if (registeredRoot === canonicalRoot) return true;
+      return yield* fs.realPath(registeredRoot).pipe(
+        Effect.map((resolved) => resolved === canonicalRoot),
+        Effect.catch((cause) =>
+          cause.reason._tag === "NotFound"
+            ? Effect.succeed(false)
+            : Effect.fail(
+                new WorkspaceBindingResolutionError({
+                  operation: "canonicalize-registered-workspace",
+                  kind: "workspace-unavailable",
+                  cause,
+                }),
+              ),
+        ),
+      );
+    },
+  );
+
+  const rootHasConflictingRegistration = Effect.fn(
+    "WorkspaceBindingResolver.rootHasConflictingRegistration",
+  )(function* (canonicalRoot: string, hostProjectId: WorkspaceBindingRecordV1["hostProjectId"]) {
+    const roots = yield* authorityProjection.listRegisteredRoots();
+    for (const root of roots) {
+      if (root.projectId === hostProjectId) continue;
+      if (yield* registeredRootMatches(root.workspaceRoot, canonicalRoot)) return true;
+    }
+    return false;
+  });
+
   const verifyObserved = Effect.fn("WorkspaceBindingResolver.verifyObserved")(function* (
     input: WorkspaceBindingStore.VerifyObservedWorkspaceInput,
   ) {
@@ -82,8 +113,10 @@ const make = Effect.gen(function* () {
             canonicalRoot: input.evidence.canonicalRoot,
           });
           if (!previous || previous.hostProjectId === input.hostProjectId) return yield* error;
-          const registration = yield* authorityProjection.getProjectContext(previous.hostProjectId);
-          if (Option.isSome(registration)) return yield* error;
+          if (
+            yield* rootHasConflictingRegistration(input.evidence.canonicalRoot, input.hostProjectId)
+          )
+            return yield* error;
           return yield* bindings.verifyObserved({
             ...input,
             reassociateBindingId: previous.bindingId,
@@ -200,10 +233,11 @@ const make = Effect.gen(function* () {
               root.workspaceRoot === workspaceRoot
             )
               return root;
-            const canonical = yield* fs.realPath(root.workspaceRoot).pipe(Effect.option);
-            return Option.isSome(canonical) && canonical.value === selected.canonicalRoot
-              ? root
-              : null;
+            const matches = yield* registeredRootMatches(
+              root.workspaceRoot,
+              selected.canonicalRoot,
+            ).pipe(Effect.orElseSucceed(() => false));
+            return matches ? root : null;
           }),
         { concurrency: 8 },
       )).filter((root) => root !== null);

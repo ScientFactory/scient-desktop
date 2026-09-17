@@ -2766,6 +2766,7 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
     capabilities: {
       sessionModelSwitch: "in-session",
       promptlessTurnContinuation: true,
+      mcpSessionInjection: true,
     },
     startSession,
     sendTurn,

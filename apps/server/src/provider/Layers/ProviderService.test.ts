@@ -150,6 +150,7 @@ type LegacyProviderRuntimeEvent = {
 function makeFakeCodexAdapter(
   provider: ProviderDriverKind = CODEX_DRIVER,
   supportsConversationRollback?: boolean,
+  mcpSessionInjection = true,
 ) {
   const sessions = new Map<ThreadId, ProviderSession>();
   const runtimeEventPubSub = Effect.runSync(PubSub.unbounded<ProviderRuntimeEvent>());
@@ -285,6 +286,7 @@ function makeFakeCodexAdapter(
     provider,
     capabilities: {
       sessionModelSwitch: "in-session",
+      ...(mcpSessionInjection ? { mcpSessionInjection: true as const } : {}),
       ...(supportsConversationRollback !== undefined ? { supportsConversationRollback } : {}),
       ...(provider === CODEX_DRIVER ? { promptlessTurnContinuation: true } : {}),
     },
@@ -5050,7 +5052,11 @@ describe("agent browser access", () => {
     ) => void,
     providerDriver: ProviderDriverKind = CODEX_DRIVER,
     projectOverride?: boolean | { readonly browser?: boolean; readonly device?: boolean },
-    options?: { readonly withoutOrchestration?: boolean },
+    options?: {
+      readonly withoutOrchestration?: boolean;
+      readonly sendTurn?: boolean;
+      readonly withoutMcpSession?: boolean;
+    },
   ) =>
     Effect.gen(function* () {
       const enableAgentBrowserAccess = typeof access === "boolean" ? access : access.browser;
@@ -5064,7 +5070,11 @@ describe("agent browser access", () => {
           readonly skills: ReadonlyArray<ScientSkillSession.ScientSkillSessionSkill>;
         };
       }> = [];
-      const codex = makeFakeCodexAdapter(providerDriver);
+      const codex = makeFakeCodexAdapter(
+        providerDriver,
+        undefined,
+        options?.withoutMcpSession !== true,
+      );
       const providerAdapterLayer = Layer.succeed(
         ProviderAdapterRegistry.ProviderAdapterRegistry,
         makeAdapterRegistryMock({ [providerDriver]: codex.adapter }),
@@ -5188,13 +5198,16 @@ describe("agent browser access", () => {
 
       yield* Effect.gen(function* () {
         const provider = yield* ProviderService.ProviderService;
-        return yield* provider.startSession(threadId, {
+        yield* provider.startSession(threadId, {
           provider: providerDriver,
           providerInstanceId,
           threadId,
           runtimeMode: "full-access",
           ...(sessionCwd ? { cwd: sessionCwd } : {}),
         });
+        if (options?.sendTurn) {
+          yield* provider.sendTurn({ threadId, input: "Inspect this project." });
+        }
       }).pipe(Effect.provide(providerLayer));
 
       return issued;
@@ -5428,6 +5441,7 @@ describe("agent browser access", () => {
         resolved.slice(0, 3),
         Array.from({ length: 3 }, () => ({
           provider: CODEX_DRIVER,
+          mcpSessionAvailable: true,
           projectRoot,
         })),
       );
@@ -5529,6 +5543,32 @@ describe("agent browser access", () => {
           ]),
         },
       ]);
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("withholds the session toolkit when the configured adapter cannot attach it", () =>
+    Effect.gen(function* () {
+      const threadId = asThreadId("thread-without-scient-mcp");
+      const providerDriver = ProviderDriverKind.make("opencode");
+      const resolved: Array<
+        Parameters<ScientSkillSession.ScientSkillSessionPlannerShape["resolve"]>[0]
+      > = [];
+
+      const issued = yield* startSessionWith(
+        false,
+        threadId,
+        undefined,
+        undefined,
+        (input) => void resolved.push(input),
+        providerDriver,
+        undefined,
+        { sendTurn: true, withoutMcpSession: true },
+      );
+
+      assert.deepEqual(issued, []);
+      assert.lengthOf(resolved, 1);
+      assert.equal(resolved[0]?.provider, providerDriver);
+      assert.isFalse(resolved[0]?.mcpSessionAvailable);
     }).pipe(Effect.provide(NodeServices.layer)),
   );
 

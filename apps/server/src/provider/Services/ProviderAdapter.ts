@@ -58,6 +58,9 @@ export interface ProviderAdapterCapabilities {
   readonly promptlessTurnContinuation?: boolean;
   /** False when native conversation history cannot be rewound. */
   readonly supportsConversationRollback?: boolean;
+  /** The adapter can inject Scient's current thread-scoped MCP session into
+      the provider runtime. Omission is fail-closed and means unsupported. */
+  readonly mcpSessionInjection?: true;
 }
 
 export interface ProviderThreadTurnSnapshot {

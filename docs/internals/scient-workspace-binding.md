@@ -75,7 +75,9 @@ Provider adapters retain their supported delivery mechanisms and exact tool-name
 projection. No prompt rewriting, provider-native skill-file copying, or persistent
 configuration workaround is added for unsupported providers. See
 [Skills](./scient-skills.md) for the delivery matrix and turn-local release
-allowlist.
+allowlist. Adapter capability declares whether the exact configured runtime can
+receive the host-issued session MCP; externally managed OpenCode servers fail
+closed instead of receiving Skill guidance for tools Scient did not attach.
 
 Automatic Skill entry lines are bounded to 2,800 UTF-8 bytes. Omitted entries
 remain discoverable through paginated/searchable `scient_skills_list`; selected

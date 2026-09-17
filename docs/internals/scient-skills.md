@@ -123,8 +123,10 @@ handler checks the capability and exact turn allowlist. Loading returns
 instructions and resource metadata; resources remain separate and are read on
 demand.
 
-Codex, Claude, Droid, Grok, OpenCode, and Pi currently support the full Phase 1
-delivery path. Their stable private awareness explains the routing rule; a
+Codex, Claude, Droid, Grok, Scient-managed OpenCode, and Pi currently support
+the full Phase 1 delivery path. An externally managed OpenCode server does not
+receive Scient's per-session MCP connection and is therefore unsupported for
+this path. Their stable private awareness explains the routing rule; a
 turn-local private index supplies only the exact automatic and selected skills
 available now. A visible `$skill-name` token adds the selected exact release to
 that index and allowlist without altering the message stored in the

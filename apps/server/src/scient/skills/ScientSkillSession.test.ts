@@ -210,6 +210,16 @@ describe("Scient skill session planning", () => {
         expect(antigravity.diagnostics.map((entry) => entry.code)).toContain(
           "provider-unsupported",
         );
+
+        const externalOpenCode = yield* resolvePlan(catalog, snapshot, {
+          provider: ProviderDriverKind.make("opencode"),
+          mcpSessionAvailable: false,
+        });
+        expect(externalOpenCode.delivery).toBe("unsupported");
+        expect(externalOpenCode.releases).toEqual(new Map());
+        expect(externalOpenCode.diagnostics).toContainEqual(
+          expect.objectContaining({ code: "provider-unsupported" }),
+        );
       }),
   );
 
