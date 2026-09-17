@@ -96,6 +96,7 @@ export function captureMarkdownCitation(
   let from: number;
   let to: number;
   const codeDom = startElement?.closest<HTMLElement>(".cm-editor");
+  const selectedVisibleCodeSource = codeDom !== null;
   if (codeDom) {
     if (!codeDom.contains(range.endContainer)) return null;
     const code = CodeMirrorView.findFromDOM(codeDom);
@@ -128,7 +129,14 @@ export function captureMarkdownCitation(
       return null;
     }
   }
-  if (!isMarkdownCitationTextRange(controller, { from, to })) return null;
+  if (
+    !isMarkdownCitationTextRange(
+      controller,
+      { from, to },
+      { allowRichFenceSource: selectedVisibleCodeSource },
+    )
+  )
+    return null;
   const citation = createMarkdownCitation(controller.session, source, from, to);
   return citation
     ? {
@@ -151,6 +159,7 @@ export function captureMarkdownCitation(
 export function isMarkdownCitationTextRange(
   controller: ScientMarkdownEditorView,
   range: { from: number; to: number },
+  options: { readonly allowRichFenceSource?: boolean } = {},
 ): boolean {
   const view = controller.view;
   if (!view || range.from < 0 || range.to > view.state.doc.content.size || range.to <= range.from)
@@ -159,8 +168,12 @@ export function isMarkdownCitationTextRange(
   view.state.doc.nodesBetween(range.from, range.to, (node, position) => {
     if (node.type.name !== "code_block") return;
     const element = view.nodeDOM(position);
-    if (element instanceof HTMLElement && element.hasAttribute("data-scient-markdown-rich-fence"))
-      supported = false;
+    if (element instanceof HTMLElement && element.hasAttribute("data-scient-markdown-rich-fence")) {
+      const contentFrom = position + 1;
+      const contentTo = contentFrom + node.content.size;
+      if (!options.allowRichFenceSource || range.from < contentFrom || range.to > contentTo)
+        supported = false;
+    }
     return false;
   });
   return supported;
@@ -171,7 +184,8 @@ export function markdownCitationDomRange(
   match: { from: number; to: number },
 ): Range | null {
   const view = controller.view;
-  if (!view || !isMarkdownCitationTextRange(controller, match)) return null;
+  if (!view || !isMarkdownCitationTextRange(controller, match, { allowRichFenceSource: true }))
+    return null;
   const start = view.state.doc.resolve(match.from);
   const blockPosition = start.parent.type.name === "code_block" ? start.before() : null;
   const block = blockPosition === null ? null : view.nodeDOM(blockPosition);

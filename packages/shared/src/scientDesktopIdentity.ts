@@ -1,3 +1,5 @@
+export type DesktopUpdateChannelPolicy = "stable-only" | "user-selectable";
+
 /**
  * Scient Desktop's product label plus its production and development runtime identity.
  *
@@ -29,6 +31,7 @@ export const SCIENT_DESKTOP_IDENTITY = {
   safetyEnvelopeEnabled: true,
   cloudEnabled: false,
   autoUpdateEnabled: true,
+  desktopUpdateChannelPolicy: "stable-only" as DesktopUpdateChannelPolicy,
   outboundTelemetryEnabled: false,
 } as const;
 

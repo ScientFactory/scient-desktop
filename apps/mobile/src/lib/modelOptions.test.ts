@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vite-plus/test";
 
 import { ProviderInstanceId, type ModelSelection, type ServerConfig } from "@t3tools/contracts";
+import { favoritesFirst } from "../features/threads/thread-settings-sheet-state";
 
 import {
   buildModelOptions,
@@ -63,6 +64,21 @@ describe("mobile model options", () => {
     expect(rows).toHaveLength(1);
     expect(rows[0]?.label).toBe("Gemini 3.8 Flash");
     expect(rows[0]?.selection).toEqual(saved);
+    const favoriteKeys = new Set([
+      options.find((option) => option.selection.model === saved.model)!.key,
+    ]);
+    const favoriteRows = groupModelOptionsForDisplay(
+      favoritesFirst(
+        options.filter((option) => favoriteKeys.has(option.key)),
+        favoriteKeys,
+      ),
+      "gemini-3.8-flash-high",
+    );
+    // Filtering a favorite must not substitute another reasoning variant, even
+    // when the selected/default model is outside the filtered catalog.
+    expect(favoriteRows).toHaveLength(1);
+    expect(favoriteRows[0]?.selection).toEqual(saved);
+    expect(options).toHaveLength(3);
     const control = modelOptionReasoningControl(rows[0]);
     expect(control?.currentValue).toBe(saved.model);
     const high = options.find((option) => option.selection.model === control?.options[2]?.id)!;

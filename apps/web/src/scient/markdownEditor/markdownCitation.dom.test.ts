@@ -10,6 +10,12 @@ import {
 } from "./markdownCitation";
 import { ScientMarkdownEditorView } from "./prosemirror/view";
 import { revealMarkdownCitation } from "./markdownCitationReveal";
+import { openScientRichFenceSource } from "./nodes/codeBlockNodeView";
+
+vi.mock("~/scient/diagrams/mermaidRuntime", async (original) => ({
+  ...(await original<typeof import("~/scient/diagrams/mermaidRuntime")>()),
+  renderMermaidDiagram: vi.fn(async () => ({ svg: "<svg />", diagramType: "flowchart" })),
+}));
 
 const source = {
   environmentId: EnvironmentId.make("local"),
@@ -64,6 +70,9 @@ describe("Markdown citation in the mounted editor", () => {
     const paragraphs = view.dom.querySelectorAll("p");
     const selection = select(paragraphs[0]!.firstChild!, 0, paragraphs[1]!.firstChild!, 6);
     expect(captureMarkdownCitation(controller, source, selection)).toBeNull();
+    expect(
+      markdownCitationDomRange(controller, { from: 1, to: view.state.doc.content.size - 1 }),
+    ).toBeNull();
     expect(controller.createSaveIntent()).toBeNull();
   });
   it("captures a native selection across inline markup without changing source/history", async () => {
@@ -120,6 +129,44 @@ describe("Markdown citation in the mounted editor", () => {
     expect(onUserSourceChange).not.toHaveBeenCalled();
   });
 
+  it("captures selected source from the real editable Mermaid fence", async () => {
+    const { controller, view, onUserSourceChange } = await mount(
+      "```mermaid\nflowchart LR\n  A[Start] --> B[Done]\n```\n",
+    );
+    const richFence = await vi.waitFor(() => {
+      const element = view.dom.querySelector<HTMLElement>(
+        "[data-scient-markdown-rich-fence='mermaid']",
+      );
+      expect(element).not.toBeNull();
+      return element!;
+    });
+    await act(async () => {
+      expect(openScientRichFenceSource(richFence)).toBe(true);
+      await Promise.resolve();
+    });
+    const codeDom = await vi.waitFor(() => {
+      const element = richFence.querySelector<HTMLElement>(".cm-editor");
+      expect(element).not.toBeNull();
+      return element!;
+    });
+    const code = CodeMirrorView.findFromDOM(codeDom)!;
+    const from = code.state.doc.toString().indexOf("A[Start]");
+    const to = from + "A[Start]".length;
+    await act(() => code.dispatch({ selection: { anchor: from, head: to } }));
+    const first = code.domAtPos(from);
+    const last = code.domAtPos(to);
+    const captured = captureMarkdownCitation(
+      controller,
+      source,
+      select(first.node, first.offset, last.node, last.offset),
+    );
+
+    expect(captured?.citation.text).toBe("A[Start]");
+    expect(captured?.sourceAnchor.resolveRange()?.toString()).toBe("A[Start]");
+    expect(controller.createSaveIntent()).toBeNull();
+    expect(onUserSourceChange).not.toHaveBeenCalled();
+  });
+
   it("rejects a cross-surface selection or controls", async () => {
     const { controller, view } = await mount("Only this document.\n");
     const outside = document.createTextNode("Other surface");
@@ -168,6 +215,48 @@ describe("Markdown citation in the mounted editor", () => {
     expect(markdownCitationDomRange(controller, citation)?.toString()).toBe("Quoted");
     expect(view.state.selection).toBe(selection);
     expect(controller.session.session).toBe(before);
+    expect(onUserSourceChange).not.toHaveBeenCalled();
+    stop();
+  });
+
+  it("opens editable Mermaid source before revealing an exact source citation", async () => {
+    const { controller, view, onUserSourceChange } = await mount(
+      "```mermaid\nflowchart LR\n  A[Start] --> B[Done]\n```\n",
+    );
+    await vi.waitFor(() => {
+      expect(view.dom.querySelector("[data-scient-markdown-rich-fence='mermaid']")).not.toBeNull();
+    });
+    expect(view.dom.querySelector(".cm-editor")).toBeNull();
+    const citation = createMarkdownCitation(controller.session, source, 1, 10)!;
+    const registry = new Map<string, Set<Range>>();
+    vi.stubGlobal("CSS", { highlights: registry });
+    vi.stubGlobal(
+      "Highlight",
+      class extends Set<Range> {
+        constructor(...ranges: Range[]) {
+          super(ranges);
+        }
+      },
+    );
+    vi.spyOn(HTMLElement.prototype, "scrollIntoView").mockImplementation(() => {});
+    const pending: FrameRequestCallback[] = [];
+    vi.stubGlobal("requestAnimationFrame", (callback: FrameRequestCallback) => {
+      pending.push(callback);
+      return pending.length;
+    });
+    vi.stubGlobal("cancelAnimationFrame", vi.fn());
+
+    let stop = () => {};
+    await act(async () => {
+      stop = revealMarkdownCitation(controller, citation);
+      await Promise.resolve();
+    });
+    await vi.waitFor(() => expect(view.dom.querySelector(".cm-editor")).not.toBeNull());
+    await act(() => pending.splice(0).forEach((callback) => callback(0)));
+
+    expect(registry.get("scient-file-citation")?.size).toBe(1);
+    expect([...registry.get("scient-file-citation")!][0]!.toString()).toBe("flowchart");
+    expect(controller.createSaveIntent()).toBeNull();
     expect(onUserSourceChange).not.toHaveBeenCalled();
     stop();
   });

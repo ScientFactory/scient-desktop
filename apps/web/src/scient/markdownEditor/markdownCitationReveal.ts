@@ -2,6 +2,7 @@ import { EditorView as CodeMirrorView } from "@codemirror/view";
 import type { FileCitation } from "@t3tools/contracts";
 import { toastManager } from "~/components/ui/toast";
 import { isMarkdownCitationTextRange, resolveMarkdownCitation } from "./markdownCitation";
+import { openScientRichFenceSource } from "./nodes/codeBlockNodeView";
 import type { ScientMarkdownEditorView } from "./prosemirror/view";
 
 /** Paint a transient range, without selecting text, entering edit mode or writing the file. */
@@ -11,7 +12,11 @@ export function revealMarkdownCitation(
 ): () => void {
   const view = controller.view;
   const match = resolveMarkdownCitation(controller.session, citation);
-  if (!view || !match || !isMarkdownCitationTextRange(controller, match)) {
+  if (
+    !view ||
+    !match ||
+    !isMarkdownCitationTextRange(controller, match, { allowRichFenceSource: true })
+  ) {
     toastManager.add({
       type: "warning",
       title: "The quoted text has changed",
@@ -24,19 +29,17 @@ export function revealMarkdownCitation(
   const start = doc.resolve(match.from);
   const codePosition = start.parent.type.name === "code_block" ? start.before() : null;
   const block = codePosition === null ? null : view.nodeDOM(codePosition);
-  const codeDom =
-    block instanceof HTMLElement ? block.querySelector<HTMLElement>(".cm-editor") : null;
-  const code = codeDom ? CodeMirrorView.findFromDOM(codeDom) : null;
-  if (code && codePosition !== null) {
-    (block as HTMLElement).scrollIntoView({ block: "nearest" });
-    code.dispatch({
-      effects: CodeMirrorView.scrollIntoView(match.from - codePosition - 1, { y: "center" }),
+  const richFence =
+    block instanceof HTMLElement && block.hasAttribute("data-scient-markdown-rich-fence")
+      ? block
+      : null;
+  if (richFence && !openScientRichFenceSource(richFence)) {
+    toastManager.add({
+      type: "warning",
+      title: "Open the diagram source to show this quote",
+      description: "The saved quote is unchanged, but its source editor is not available here.",
     });
-  } else {
-    const anchor = view.domAtPos(match.from).node;
-    (anchor instanceof HTMLElement ? anchor : anchor.parentElement)?.scrollIntoView({
-      block: "center",
-    });
+    return () => {};
   }
   const registry = typeof CSS !== "undefined" ? CSS.highlights : undefined;
   let highlight: Highlight | undefined;
@@ -44,6 +47,28 @@ export function revealMarkdownCitation(
   let disposed = false;
   const frame = requestAnimationFrame(() => {
     if (disposed || view.state.doc !== doc || !view.dom.isConnected) return;
+    const currentBlock = codePosition === null ? null : view.nodeDOM(codePosition);
+    const currentBlockElement = currentBlock instanceof HTMLElement ? currentBlock : null;
+    const codeDom = currentBlockElement?.querySelector<HTMLElement>(".cm-editor") ?? null;
+    const code = codeDom ? CodeMirrorView.findFromDOM(codeDom) : null;
+    if (code && codePosition !== null && currentBlockElement) {
+      currentBlockElement.scrollIntoView({ block: "nearest" });
+      code.dispatch({
+        effects: CodeMirrorView.scrollIntoView(match.from - codePosition - 1, { y: "center" }),
+      });
+    } else if (richFence) {
+      toastManager.add({
+        type: "warning",
+        title: "Could not open the diagram source",
+        description: "The saved quote is unchanged. Try opening the source and selecting it again.",
+      });
+      return;
+    } else {
+      const anchor = view.domAtPos(match.from).node;
+      (anchor instanceof HTMLElement ? anchor : anchor.parentElement)?.scrollIntoView({
+        block: "center",
+      });
+    }
     const ranges: Range[] = [];
     const add = (first: { node: Node; offset: number }, last: { node: Node; offset: number }) => {
       const range = view.dom.ownerDocument.createRange();

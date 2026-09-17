@@ -50,9 +50,9 @@ it("opts into a full-width body and shared action row without changing other sta
     expect(compactTitle).toBeTruthy();
     expect(originalTitle).toBeTruthy();
     expect(compactTitle.parentElement!.querySelector('[data-slot="toast-description"]')).toBeNull();
-    expect(
-      originalTitle.parentElement!.querySelector('[data-slot="toast-description"]')?.textContent,
-    ).toBe("Original description");
+    expect(originalTitle.parentElement!.nextElementSibling?.textContent).toBe(
+      "Original description",
+    );
     const header = compactTitle.parentElement!.parentElement!;
     expect(header.querySelector('[data-slot="toast-icon"]')).not.toBeNull();
     expect(header.nextElementSibling?.getAttribute("data-slot")).toBe("toast-description");

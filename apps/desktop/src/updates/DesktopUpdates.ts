@@ -931,22 +931,27 @@ export const make = Effect.gen(function* () {
           return state;
         }
 
-        yield* desktopSettings
+        const settingsChange = yield* desktopSettings
           .setUpdateChannel(nextChannel)
           .pipe(
             Effect.mapError(
               (cause) => new DesktopUpdateChannelPersistenceError({ channel: nextChannel, cause }),
             ),
           );
+        const effectiveChannel = settingsChange.settings.updateChannel;
+        yield* Effect.annotateCurrentSpan({ effectiveChannel });
+        if (effectiveChannel === state.channel) {
+          return state;
+        }
 
         const enabled = yield* shouldEnableAutoUpdates;
-        yield* setState(createBaseUpdateState(nextChannel, enabled, environment));
+        yield* setState(createBaseUpdateState(effectiveChannel, enabled, environment));
 
         if (!enabled || !(yield* Ref.get(updaterConfiguredRef))) {
           return yield* Ref.get(updateStateRef);
         }
 
-        yield* applyAutoUpdaterChannel(nextChannel);
+        yield* applyAutoUpdaterChannel(effectiveChannel);
         const allowDowngrade = yield* electronUpdater.allowDowngrade;
         yield* electronUpdater.setAllowDowngrade(true);
         yield* checkForUpdates("channel-change", "held").pipe(

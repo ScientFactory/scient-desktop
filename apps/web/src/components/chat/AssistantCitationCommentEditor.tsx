@@ -1,5 +1,8 @@
 import { ASSISTANT_CITATION_MAX_COMMENT_LENGTH, type AssistantCitation } from "@t3tools/contracts";
-import { useState, type Ref } from "react";
+import { useImperativeHandle, useRef, useState, type Ref } from "react";
+
+import { ScientVoiceCommentControl } from "~/scient/voice/ScientVoiceCommentControl";
+import { buildVoiceDraftReplacement } from "~/scient/voice/voiceComposerInsert";
 
 import { Button } from "../ui/button";
 
@@ -11,7 +14,7 @@ export function AssistantCitationCommentEditor({
   onSubmitAndSend,
   onCancel,
 }: {
-  citation: Pick<AssistantCitation, "comment">;
+  citation: Pick<AssistantCitation, "comment" | "environmentId">;
   mode?: "create" | "edit";
   inputRef?: Ref<HTMLTextAreaElement>;
   onSubmit: (comment: string) => boolean;
@@ -19,6 +22,9 @@ export function AssistantCitationCommentEditor({
   onCancel: () => void;
 }) {
   const [comment, setComment] = useState(citation.comment ?? "");
+  const [voiceBusy, setVoiceBusy] = useState(false);
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
+  useImperativeHandle(inputRef, () => textareaRef.current!, []);
   const commentTooLong = comment.length > ASSISTANT_CITATION_MAX_COMMENT_LENGTH;
   const submit = () => {
     if (!commentTooLong) onSubmit(comment);
@@ -40,6 +46,7 @@ export function AssistantCitationCommentEditor({
   return (
     <div
       data-citation-comment-editor="true"
+      aria-busy={voiceBusy || undefined}
       onKeyDown={(event) => {
         event.stopPropagation();
         if (event.nativeEvent.isComposing || event.keyCode === 229) return;
@@ -50,7 +57,7 @@ export function AssistantCitationCommentEditor({
       }}
     >
       <textarea
-        ref={inputRef}
+        ref={textareaRef}
         aria-label="Comment on selected text"
         aria-description={keyboardDescription}
         aria-invalid={commentTooLong || undefined}
@@ -81,23 +88,37 @@ export function AssistantCitationCommentEditor({
           characters.
         </p>
       ) : null}
-      <div className="mt-2 flex items-center justify-end gap-2">
-        <Button
-          variant="outline"
-          size="xs"
-          onPointerDown={(event) => event.preventDefault()}
-          onClick={onCancel}
-        >
-          Cancel
-        </Button>
-        <Button
-          size="xs"
+      <div className="mt-2 flex items-center gap-2">
+        <ScientVoiceCommentControl
+          className="relative min-w-0 flex-1"
           disabled={commentTooLong}
-          onPointerDown={(event) => event.preventDefault()}
-          onClick={submit}
-        >
-          {commentTooLong ? "Shorten comment" : submitLabel}
-        </Button>
+          environmentId={citation.environmentId}
+          onBusyChange={setVoiceBusy}
+          onTranscript={(transcript) => {
+            setComment((current) => buildVoiceDraftReplacement(current, transcript).replacement);
+            queueMicrotask(() => textareaRef.current?.focus({ preventScroll: true }));
+          }}
+        />
+        {voiceBusy ? null : (
+          <div className="ml-auto flex items-center gap-2">
+            <Button
+              variant="outline"
+              size="xs"
+              onPointerDown={(event) => event.preventDefault()}
+              onClick={onCancel}
+            >
+              Cancel
+            </Button>
+            <Button
+              size="xs"
+              disabled={commentTooLong}
+              onPointerDown={(event) => event.preventDefault()}
+              onClick={submit}
+            >
+              {commentTooLong ? "Shorten comment" : submitLabel}
+            </Button>
+          </div>
+        )}
       </div>
     </div>
   );
