@@ -4,6 +4,7 @@ import { isLocalEnvironmentDisabled } from "../../localEnvironment";
 import { usePrimaryEnvironmentId } from "../../state/environments";
 import { runtimeModeConfig, runtimeModeOptions } from "./runtimeModeConfig";
 import { useRightPanelStore } from "~/rightPanelStore";
+import { scientSkillSurface } from "~/scient/rightPanel/surfaces";
 import { AttachmentFilePreview } from "../files/AttachmentFilePreview";
 import { Dialog, DialogPopup, DialogTitle } from "../ui/dialog";
 import { filterComposerPullRequestMatches } from "@t3tools/shared/composerPullRequestMatches";
@@ -35,6 +36,7 @@ import type {
   RuntimeMode,
   ScopedThreadRef,
   ServerProvider,
+  ServerProviderSkill,
   ThreadId,
   SnapShotSource,
 } from "@t3tools/contracts";
@@ -999,6 +1001,7 @@ import {
   getProviderSkillsForSlashMenu,
   resolveProviderSkillsForCwd,
   resolveProviderSlashCommandsForCwd,
+  scientManagedSkillReleaseKey,
 } from "@t3tools/client-runtime/providerSkills";
 import { searchProviderSkills } from "../../providerSkillSearch";
 import { useMediaQuery } from "../../hooks/useMediaQuery";
@@ -1690,6 +1693,16 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   const openPrLink = useOpenPrLink(routeThreadRef);
   const [previewFileId, setPreviewFileId] = useState<string | null>(null);
   const previewFile = composerFiles.find((file) => file.id === previewFileId);
+  const scientSkills = useEnvironmentQuery(
+    scientSkillsInventory({
+      environmentId,
+      input: resolveScientSkillListInput({
+        routeKind,
+        threadId: activeThreadId,
+        projectId: activeProjectId,
+      }),
+    }),
+  ).data;
   const composerContextActions = useMemo(
     () => ({
       expandImage: (imageId: string) => {
@@ -1698,6 +1711,27 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       },
       openFile: setPreviewFileId,
       openMention: (path: string) => useRightPanelStore.getState().openFile(routeThreadRef, path),
+      openSkill: (skill: ServerProviderSkill) => {
+        const releaseKey = scientManagedSkillReleaseKey(skill);
+        if (releaseKey === null) {
+          useRightPanelStore.getState().openFile(routeThreadRef, skill.path);
+          return;
+        }
+        const managedSkill = scientSkills?.skills.find(
+          (candidate) => candidate.releaseKey === releaseKey,
+        );
+        if (managedSkill?.path) {
+          useRightPanelStore.getState().openFile(routeThreadRef, managedSkill.path);
+          return;
+        }
+        useRightPanelStore.getState().openScient(
+          routeThreadRef,
+          scientSkillSurface({
+            releaseKey,
+            title: formatProviderSkillDisplayName(skill),
+          }),
+        );
+      },
       expandVideo: (fileId: string) => {
         const file = composerFiles.find((candidate) => candidate.id === fileId);
         if (!file || !isVideoAttachment(file)) return;
@@ -1722,7 +1756,15 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         openPrLink(event, url);
       },
     }),
-    [composerFiles, composerImages, environmentId, onExpandImage, openPrLink, routeThreadRef],
+    [
+      composerFiles,
+      composerImages,
+      environmentId,
+      onExpandImage,
+      openPrLink,
+      routeThreadRef,
+      scientSkills,
+    ],
   );
   const composerContextRecords = useMemo(
     () =>
@@ -2049,16 +2091,6 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   const selectedProviderSlashCommands = selectedProviderStatus
     ? resolveProviderSlashCommandsForCwd(selectedProviderStatus, gitCwd)
     : [];
-  const scientSkills = useEnvironmentQuery(
-    scientSkillsInventory({
-      environmentId,
-      input: resolveScientSkillListInput({
-        routeKind,
-        threadId: activeThreadId,
-        projectId: activeProjectId,
-      }),
-    }),
-  ).data;
   const effectiveSelectedProviderSkills = useMemo(
     () =>
       mergeEffectiveProviderSkills({
@@ -7146,7 +7178,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                     contextRecords={composerContextRecords}
                     buildContextClipboardFragment={buildContextClipboardFragment}
                     importContextFragment={importContextFragment}
-                    skills={selectedProviderSkills}
+                    skills={effectiveSelectedProviderSkills}
                     containerClassName={cn(isComposerResting && "min-w-0 flex-1")}
                     className={cn(
                       showMobilePendingAnswerActions && "max-sm:pb-11",

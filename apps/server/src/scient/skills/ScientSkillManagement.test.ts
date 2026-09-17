@@ -70,6 +70,16 @@ describe("Scient skill management", () => {
         expect(initial.supportedProviders).not.toContain("antigravity");
         expect(initial.supportedProviders).not.toContain("cursor");
 
+        const htmlPdf = initial.skills.find((skill) => skill.name === "html-pdf-authoring")!;
+        const document = yield* management.readDocument(htmlPdf.releaseKey);
+        expect(document).toMatchObject({
+          releaseKey: htmlPdf.releaseKey,
+          name: "html-pdf-authoring",
+          description:
+            "Create or revise HTML when it is the editable source for a PDF requested in Scient. Do not use for ordinary webpage work.",
+        });
+        expect(document.instructions).toContain("# HTML-to-PDF Authoring");
+
         const selected = initial.skills.find((skill) => skill.name === "scient-skill-authoring")!;
         const updated = yield* management.setUserActivation({
           releaseKey: selected.releaseKey,
@@ -92,6 +102,16 @@ describe("Scient skill management", () => {
           active: true,
           invocationPolicy: "explicit",
         }),
+      );
+      expect(error.message).toContain("not available");
+    }).pipe(Effect.provide(ScientSkillManagement.layer)),
+  );
+
+  it.effect("does not expose instructions for an unknown managed release", () =>
+    Effect.gen(function* () {
+      const management = yield* ScientSkillManagement.ScientSkillManagement;
+      const error = yield* Effect.flip(
+        management.readDocument("scient.missing@0.1.0#sha256:missing"),
       );
       expect(error.message).toContain("not available");
     }).pipe(Effect.provide(ScientSkillManagement.layer)),
@@ -136,7 +156,7 @@ describe("Scient skill management", () => {
         const initial = yield* management.list(projectRoot);
         expect(initial.skills.find((skill) => skill.name === "project-method")).toMatchObject({
           scope: "project",
-          path: ".scient/skills/project-method",
+          path: ".scient/skills/project-method/SKILL.md",
           active: true,
           invocationPolicy: "automatic",
         });

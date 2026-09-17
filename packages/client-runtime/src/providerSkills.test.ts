@@ -9,6 +9,7 @@ import {
   resolveProviderSkillsForCwd,
   resolveProviderSlashCommandsForCwd,
   resolveProviderSkillSourceKind,
+  scientManagedSkillReleaseKey,
 } from "./providerSkills.ts";
 
 const provider = {
@@ -305,6 +306,21 @@ describe("resolveProviderSkillSourceKind", () => {
         path: "/opt/skills/team-review/SKILL.md",
       }),
     ).toBe("other");
+  });
+});
+
+describe("scientManagedSkillReleaseKey", () => {
+  it("recovers the exact managed release identity", () => {
+    expect(
+      scientManagedSkillReleaseKey({
+        path: "scient://skills/scient.review%400.1.0%23sha256%3Aabc",
+      }),
+    ).toBe("scient.review@0.1.0#sha256:abc");
+  });
+
+  it("rejects ordinary paths and malformed encoded identities", () => {
+    expect(scientManagedSkillReleaseKey({ path: "/workspace/SKILL.md" })).toBeNull();
+    expect(scientManagedSkillReleaseKey({ path: "scient://skills/%E0%A4%A" })).toBeNull();
   });
 });
 

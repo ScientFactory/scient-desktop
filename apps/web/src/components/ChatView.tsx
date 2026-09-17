@@ -711,6 +711,11 @@ const GeneratedPdfPreview = lazy(() =>
   })),
 );
 const EnvironmentFilePreview = lazy(() => import("../scient/fileOpening/EnvironmentFilePreview"));
+const ScientSkillDocumentPreview = lazy(() =>
+  import("../scient/skills/ScientSkillDocumentPreview").then((module) => ({
+    default: module.ScientSkillDocumentPreview,
+  })),
+);
 const ComputePanel = lazy(() =>
   import("../scient/compute/ComputePanel").then((module) => ({
     default: module.ComputePanel,
@@ -10197,6 +10202,16 @@ function ChatViewContent(props: ChatViewProps) {
           environmentId={activeThreadRef.environmentId}
           keybindings={keybindings}
           surface={renderedRightPanelSurface}
+          threadRef={activeThreadRef}
+        />
+      </Suspense>
+    ) : renderedRightPanelSurface?.kind === "scient" &&
+      renderedRightPanelSurface.module === "skill" &&
+      activeThreadRef ? (
+      <Suspense fallback={null}>
+        <ScientSkillDocumentPreview
+          environmentId={activeThreadRef.environmentId}
+          releaseKey={renderedRightPanelSurface.releaseKey}
           threadRef={activeThreadRef}
         />
       </Suspense>

@@ -87,6 +87,20 @@ export function isScientManagedSkill(skill: Pick<ServerProviderSkill, "path">): 
   return normalizePathSeparators(skill.path).startsWith(SCIENT_SKILL_PATH_PREFIX);
 }
 
+export function scientManagedSkillReleaseKey(
+  skill: Pick<ServerProviderSkill, "path">,
+): string | null {
+  const normalizedPath = normalizePathSeparators(skill.path);
+  if (!normalizedPath.startsWith(SCIENT_SKILL_PATH_PREFIX)) return null;
+  const encodedReleaseKey = normalizedPath.slice(SCIENT_SKILL_PATH_PREFIX.length);
+  if (!encodedReleaseKey) return null;
+  try {
+    return decodeURIComponent(encodedReleaseKey) || null;
+  } catch {
+    return null;
+  }
+}
+
 export function resolveProviderSkillSourceKind(
   skill: Pick<ServerProviderSkill, "path" | "scope">,
 ): ProviderSkillSourceKind {

@@ -7,6 +7,7 @@ import {
   scientEnvironmentFileSurface,
   scientGeneratedPdfSurface,
   scientRightPanelSurfaceTitle,
+  scientSkillSurface,
   scientSourcePdfSurface,
   scientSourcesSurface,
 } from "./surfaces";
@@ -97,6 +98,20 @@ describe("Scient right-panel surfaces", () => {
         cwd: "/research/Study\0bad",
       }),
     ).toBeNull();
+    expect(
+      normalizeScientRightPanelSurface({
+        id: "stale-skill-id",
+        kind: "scient",
+        module: "skill",
+        releaseKey: "scient.review@0.1.0#sha256:abc",
+        title: "Review",
+      }),
+    ).toEqual(
+      scientSkillSurface({
+        releaseKey: "scient.review@0.1.0#sha256:abc",
+        title: "Review",
+      }),
+    );
   });
 
   it("normalizes recognized persisted descriptors and rejects unsafe ones", () => {
@@ -207,6 +222,29 @@ describe("Scient right-panel surfaces", () => {
         scientEnvironmentFileSurface({ path: "C:\\Research\\figures\\result.svg" }),
       ),
     ).toBe("result.svg");
+    expect(
+      scientRightPanelSurfaceTitle(
+        scientSkillSurface({
+          releaseKey: "scient.review@0.1.0#sha256:abc",
+          title: "Review",
+        }),
+      ),
+    ).toBe("Review");
+  });
+
+  it("builds stable skill descriptors from exact release identities", () => {
+    expect(
+      scientSkillSurface({
+        releaseKey: "scient.review@0.1.0#sha256:abc",
+        title: "Review",
+      }),
+    ).toEqual({
+      id: "scient:skill:scient.review%400.1.0%23sha256%3Aabc",
+      kind: "scient",
+      module: "skill",
+      releaseKey: "scient.review@0.1.0#sha256:abc",
+      title: "Review",
+    });
   });
 
   it("builds stable direct-file descriptors without embedding authorized URLs", () => {
