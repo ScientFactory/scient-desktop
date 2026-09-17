@@ -96,6 +96,21 @@ pnpm run test:desktop-smoke
 git diff --check
 ```
 
+Run the complete local gate once the candidate has stabilized. Record the
+commands, revision or working diff, environment, results, and any remaining
+gaps so later reviews can reuse evidence for the same candidate. After a
+subsequent change, rerun the checks whose evidence the change can invalidate;
+shared contracts, test setup, orchestration, packaging, and broad dependency
+changes usually require wider requalification. Formatting-only or maintainer
+documentation-only edits do not by themselves invalidate runtime-test results,
+but runtime-loaded Markdown, fixtures, generated inputs, and user-facing Help
+must be treated according to how the product consumes them.
+
+Hosted CI qualifies the final pushed revision in a clean environment. It does
+not replace local platform checks such as desktop smoke tests when the changed
+behavior depends on that platform. Avoid running multiple heavy local suites
+concurrently; other agents and development apps may share the machine.
+
 Run `pnpm brand:check` after branding changes and upstream merges.
 An interim review can precede full qualification; identify remaining checks.
 
