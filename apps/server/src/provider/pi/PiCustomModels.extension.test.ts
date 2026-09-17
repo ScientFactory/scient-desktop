@@ -152,6 +152,52 @@ it.each([false, true])(
   },
 );
 
+it("preserves native input capabilities for an older automatic alias payload", async () => {
+  const source = {
+    id: "fixture",
+    api: "openai-responses",
+    provider: "openai",
+    name: "Native",
+    input: ["text", "image"],
+    contextWindow: 200000,
+    maxTokens: 64000,
+  };
+  const pi = { registerProvider: vi.fn(), registerCommand: vi.fn(), on: vi.fn() };
+  const install = NodeVM.runInNewContext(
+    `(${PI_CUSTOM_MODELS_EXTENSION.replace(/^import .*;$/gm, "").replace("export default", "")})`,
+    {
+      process: { env: {} },
+      AbortSignal,
+      builtinProviders: () => [{ id: "openai", getModels: () => [source] }],
+      getApiProvider: () => {
+        throw new Error("Discovery must not generate a request");
+      },
+      fetch: async () => ({
+        ok: true,
+        json: async () => [
+          {
+            id: "scient_fixture",
+            nativeProviderId: "openai",
+            literalKey: "synthetic",
+            config: {
+              api: "openai-responses",
+              baseUrl: "https://api.openai.com/v1",
+              models: [{ id: "fixture", name: "Saved", automatic: true }],
+            },
+          },
+        ],
+      }),
+    },
+  ) as (runtime: typeof pi) => Promise<void>;
+
+  await install(pi);
+
+  const provider = pi.registerProvider.mock.calls[0]![0] as {
+    getModels: () => Array<typeof source>;
+  };
+  expect(provider.getModels()[0]?.input).toEqual(["text", "image"]);
+});
+
 it("uses the native transport for an exact service model supplied by newer endpoint metadata", async () => {
   const nativeStream = vi.fn((model: { provider: string }) => model.provider);
   const native = {

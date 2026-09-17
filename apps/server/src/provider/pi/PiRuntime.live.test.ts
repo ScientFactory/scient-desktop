@@ -23,6 +23,7 @@ import { checkPiProviderStatus } from "../Layers/PiProvider.ts";
 import { clearMcpProviderSession, setMcpProviderSession } from "../../mcp/McpProviderSession.ts";
 import { prepareScientSkillTurn } from "../../scient/skills/ScientSkillInvocation.ts";
 import { BUILT_IN_SKILL_RELEASES } from "../../scient/skills/BuiltInSkillReleases.ts";
+import { rejectNonPostRequest } from "./PiLiveTestHelpers.ts";
 
 const binary = process.env.SCIENT_PI_TEST_BINARY;
 const decodePiSettings = Schema.decodeSync(PiSettings);
@@ -257,6 +258,7 @@ it.effect.skipIf(!binary)(
         const calls: Array<Record<string, unknown>> = [];
         const modelRequests: string[] = [];
         const server = NodeHttp.createServer(async (request, response) => {
+          if (rejectNonPostRequest(request, response)) return;
           let body = "";
           for await (const chunk of request) body += String(chunk);
           const parsed = decodeRecord(body);
@@ -446,6 +448,7 @@ it.effect.skipIf(!binary)(
         const requests: string[] = [];
         let completeFirstResponse: (() => void) | undefined;
         const server = NodeHttp.createServer(async (request, response) => {
+          if (rejectNonPostRequest(request, response)) return;
           let body = "";
           for await (const chunk of request) body += String(chunk);
           requests.push(body);

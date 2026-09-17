@@ -4,6 +4,7 @@
 import * as NodeFSP from "node:fs/promises";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
+import * as NodeChildProcess from "node:child_process";
 
 import {
   ManagedAntigravityRuntime,
@@ -39,11 +40,46 @@ function argument(name: string): string | undefined {
 }
 
 const provider = argument("--provider") as ManagedRuntimeProvider | undefined;
+const runPiLiveTests = process.argv.includes("--pi-live-tests");
 const catalogPath = NodePath.resolve(
   argument("--catalog") ??
     "apps/server/src/scient/providerLifecycle/bundled-managed-runtime-catalog.json",
 );
 if (!provider) throw new Error("--provider is required.");
+if (runPiLiveTests && provider !== "pi") {
+  throw new Error("--pi-live-tests is valid only for Pi qualification.");
+}
+
+async function verifyPiIntegration(binary: string, platform: NodeJS.Platform): Promise<void> {
+  const tests = [
+    "apps/server/src/provider/pi/PiCustomModels.live.test.ts",
+    "apps/server/src/provider/pi/PiNativeProvider.live.test.ts",
+    "apps/server/src/provider/pi/PiReasoning.live.test.ts",
+    "apps/server/src/provider/pi/PiRuntime.live.test.ts",
+    "apps/server/src/provider/pi/PiXai.live.test.ts",
+  ];
+  await new Promise<void>((resolve, reject) => {
+    const child = NodeChildProcess.spawn("vp", ["test", "run", "--no-file-parallelism", ...tests], {
+      cwd: process.cwd(),
+      env: { ...process.env, SCIENT_PI_TEST_BINARY: binary },
+      // Windows cannot execute a package-manager .cmd shim directly through spawn.
+      // The shell is needed only to resolve the fixed `vp` command; all arguments are static.
+      shell: platform === "win32",
+      stdio: "inherit",
+      windowsHide: true,
+    });
+    child.once("error", reject);
+    child.once("exit", (code, signal) => {
+      if (code === 0) resolve();
+      else
+        reject(
+          new Error(
+            `Pi integration qualification failed${signal ? ` with signal ${signal}` : ` with exit code ${String(code)}`}.`,
+          ),
+        );
+    });
+  });
+}
 
 const providerFactories: Readonly<
   Record<
@@ -134,6 +170,9 @@ try {
   const status = await runtime.status(artifact);
   if (!status.installed || !status.selected || status.activeVersion !== artifact.version) {
     throw new Error(`${provider} ${targetKey} did not activate the qualified release.`);
+  }
+  if (runPiLiveTests) {
+    await verifyPiIntegration(runtime.launchPath(artifact), target.platform);
   }
   if (process.argv.includes("--repair")) {
     await runtime.install({ artifact, signal: AbortSignal.timeout(15 * 60_000) });

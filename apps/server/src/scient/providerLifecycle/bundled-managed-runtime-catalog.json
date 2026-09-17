@@ -493,6 +493,51 @@
             "digest": "d5f70e3c0cf7398eac239fd0261ee074d98b7ba7f6b43fe3617f052ed5b79d06"
           },
           "size": 31035676
+        },
+        "darwin-x64": {
+          "artifactName": "pi-darwin-x64.tar.gz",
+          "url": "https://github.com/earendil-works/pi/releases/download/v0.85.1/pi-darwin-x64.tar.gz",
+          "checksum": {
+            "algorithm": "sha256",
+            "digest": "adb918b845625f184d8bea408d55eacaf21aa87238793c0f5b4f3b9737bce62b"
+          },
+          "size": 33544584
+        },
+        "linux-arm64-glibc": {
+          "artifactName": "pi-linux-arm64.tar.gz",
+          "url": "https://github.com/earendil-works/pi/releases/download/v0.85.1/pi-linux-arm64.tar.gz",
+          "checksum": {
+            "algorithm": "sha256",
+            "digest": "042d20ae885ee4f3b102815f3280b962c377b2e9fb44de4037908cc530eae4d4"
+          },
+          "size": 42628180
+        },
+        "linux-x64-glibc": {
+          "artifactName": "pi-linux-x64.tar.gz",
+          "url": "https://github.com/earendil-works/pi/releases/download/v0.85.1/pi-linux-x64.tar.gz",
+          "checksum": {
+            "algorithm": "sha256",
+            "digest": "494e498f47d74d21f40b3386f6a5e921a3d49531a169cab55bbdaca0ea1fe25a"
+          },
+          "size": 42560927
+        },
+        "win32-arm64": {
+          "artifactName": "pi-windows-arm64.zip",
+          "url": "https://github.com/earendil-works/pi/releases/download/v0.85.1/pi-windows-arm64.zip",
+          "checksum": {
+            "algorithm": "sha256",
+            "digest": "b25e96fe64c9f41f75a924c0d36f395abb98d6c6fec0b78aaa0b86926f938bb4"
+          },
+          "size": 43556369
+        },
+        "win32-x64": {
+          "artifactName": "pi-windows-x64.zip",
+          "url": "https://github.com/earendil-works/pi/releases/download/v0.85.1/pi-windows-x64.zip",
+          "checksum": {
+            "algorithm": "sha256",
+            "digest": "002fa95b90d521245b9985d8f168caebc237ad56e7e30b319807dee1b2e17e1c"
+          },
+          "size": 45009021
         }
       }
     }
