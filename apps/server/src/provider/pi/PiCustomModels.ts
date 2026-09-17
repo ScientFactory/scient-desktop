@@ -114,7 +114,9 @@ export default async function(pi) {
       // Unknown automatic models have no invented fallback capacity.
       if (automatic && !inherited && !(manual.contextWindow > 0 && manual.maxTokens > 0)) return [];
       return [{ ...(inherited || manual),
-        input: imageInput === "automatic" && source ? source.input : manual.input,
+        // Older generated payloads did not carry imageInput. Preserve the native
+        // model's declared inputs instead of erasing them during an automatic alias.
+        input: imageInput === "automatic" && source ? source.input : manual.input ?? inherited?.input,
         // Manual capacity does not opt out of native reasoning capabilities.
         ...(source && !reasoningOverride ? { reasoning: source.reasoning,
           thinkingLevelMap: source.thinkingLevelMap, compat: source.compat } : {}),

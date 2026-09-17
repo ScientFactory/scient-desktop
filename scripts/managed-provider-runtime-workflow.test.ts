@@ -117,4 +117,25 @@ describe("managed provider runtime update workflow", () => {
     expect(exercise.run).toContain("args+=(--repair)");
     expect(exercise.run).toContain("attempt <= QUALIFICATION_RUNS");
   });
+
+  it("qualifies Pi on every official native target and proves its live integration once", () => {
+    const reusable = workflow("managed-provider-runtime-update-provider.yml");
+    const runners = reusable.jobs.qualify.strategy.matrix.runner as string;
+    expect(runners).not.toContain("inputs.provider == 'pi'");
+    expect(runners).toContain(
+      '["macos-26","macos-15-intel","ubuntu-24.04","ubuntu-24.04-arm","windows-2025","windows-11-arm"]',
+    );
+    const dependencies = reusable.jobs.qualify.steps.find(
+      (step: { name: string }) => step.name === "Install Pi integration qualification dependencies",
+    );
+    expect(dependencies.if).toBe("inputs.provider == 'pi'");
+    expect(dependencies.run).toBe("vp install --frozen-lockfile --ignore-scripts --filter=t3...");
+    const exercise = reusable.jobs.qualify.steps.find(
+      (step: { name: string }) =>
+        step.name === "Exercise download, verification, smoke, activation, and removal",
+    );
+    expect(exercise.run).toContain(
+      'if [[ "$PROVIDER" == pi && "$attempt" == 1 ]]; then args+=(--pi-live-tests); fi',
+    );
+  });
 });

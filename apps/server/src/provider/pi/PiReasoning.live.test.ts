@@ -12,6 +12,7 @@ import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 
 import { makePiCustomModelsClientFactory } from "./PiCustomModels.ts";
+import { rejectNonPostRequest } from "./PiLiveTestHelpers.ts";
 import { applyPiModelSelection } from "./PiModelSelection.ts";
 import { piDiscoveredModelToServerProviderModel } from "./PiModel.ts";
 
@@ -158,7 +159,7 @@ export default function() {
   { timeout: 30_000 },
 );
 
-// The installed 0.84.4 bundle uses baseUrl.includes("api.x.ai") for its xAI heuristic.
+// The managed 0.85.1 bundle uses baseUrl.includes("api.x.ai") for its xAI heuristic.
 // A path segment triggers that heuristic while the network destination remains loopback.
 for (const basePath of ["/v1", "/api.x.ai/v1"]) {
   const explicitOnly = basePath !== "/v1";
@@ -171,6 +172,7 @@ for (const basePath of ["/v1", "/api.x.ai/v1"]) {
           const root = yield* fs.makeTempDirectoryScoped({ prefix: "scient-pi-reasoning-" });
           const requests: Array<{ path: string | undefined; body: Record<string, unknown> }> = [];
           const server = NodeHttp.createServer(async (request, response) => {
+            if (rejectNonPostRequest(request, response)) return;
             let body = "";
             for await (const chunk of request) body += String(chunk);
             requests.push({ path: request.url, body: decodeBody(body) });
@@ -349,6 +351,7 @@ for (const protocol of ["openai-responses", "anthropic-messages"] as const) {
           const requests: Array<{ path: string | undefined; body: Record<string, unknown> }> = [];
           const rejection = "Synthetic wire capture only; intentional HTTP 400";
           const server = NodeHttp.createServer(async (request, response) => {
+            if (rejectNonPostRequest(request, response)) return;
             let body = "";
             for await (const chunk of request) body += String(chunk);
             requests.push({ path: request.url, body: decodeBody(body) });
@@ -477,7 +480,7 @@ for (const protocol of ["openai-responses", "anthropic-messages"] as const) {
                   body: { model: "synthetic", reasoning: { effort: "high" } },
                 }
               : {
-                  path: "/v1/messages",
+                  path: "/v1/messages?beta=true",
                   body: {
                     model: "synthetic",
                     output_config: { effort: "high" },

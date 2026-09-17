@@ -138,6 +138,23 @@ endpoint, generic-file attachment paths, queued-message steering through complet
 favorites, and the corrected model-entry/runtime-management presentation. Hosted models and the
 other unqualified cases above remain separate acceptance gates.
 
+### Managed runtime platform expansion — 2026-09-17
+
+The managed Pi catalog is updated to official Pi 0.85.1 artifacts for macOS ARM64 and Intel,
+Linux ARM64 and x64 with glibc, and Windows ARM64 and x64. Linux musl remains intentionally
+unsupported because Pi does not publish a corresponding native artifact. Existing Pi-owned
+configuration, credentials, model discovery, sessions, and Scient custom-model connections are
+unchanged.
+
+The six targets passed hosted download, checksum, extraction, smoke, activation, live native
+integration, and removal qualification in
+[GitHub Actions run 35242575495](https://github.com/ScientFactory/scient-desktop/actions/runs/35242575495).
+The live suite covers native and custom model traffic, reasoning, xAI compatibility, and runtime
+behavior. Windows qualification additionally repeated the managed lifecycle five times on each
+architecture. Catalog promotion permits this same-version expansion only when it preserves every
+previously published artifact exactly and adds app-approved targets; any artifact mutation or
+incomplete expansion is rejected.
+
 ## Lifecycle dimensions
 
 Provider parity should be evaluated across independent dimensions rather than one generic connected
