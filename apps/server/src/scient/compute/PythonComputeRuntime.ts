@@ -44,6 +44,7 @@ import {
   resolveManagedPythonSpecPath,
 } from "./ManagedPythonProvisioner.ts";
 import { makeManagedPythonRuntimeController } from "./ManagedPythonRuntimeController.ts";
+import { ComputeRecipeNetwork, makeComputeRecipeSource } from "./ComputeRecipeSource.ts";
 import {
   PROBE_SCRIPT,
   PYTHON_LANGUAGE_ID,
@@ -315,6 +316,7 @@ export const pythonRuntimeBinding: Effect.Effect<
   const hostEnvironment = yield* HostProcessEnvironment;
   const hostPlatform = yield* HostProcessPlatform;
   const hostArchitecture = yield* HostProcessArchitecture;
+  const recipeNetwork = yield* ComputeRecipeNetwork;
   const { environment } = sanitizeComputeEnvironment(definedEnvironment(hostEnvironment));
   const spawnProbe = yield* makeSpawnProbe(processes, {
     environment,
@@ -352,6 +354,13 @@ export const pythonRuntimeBinding: Effect.Effect<
     return {
       manager,
       managedRuntime: makeManagedPythonRuntimeController({
+        recipes: makeComputeRecipeSource({
+          computeDir: config.computeDir,
+          specDirectory: managedPythonSpecPath,
+          purpose: "python",
+          target: `${hostPlatform}-${hostArchitecture}`,
+          network: recipeNetwork,
+        }),
         manager,
         toolkitIds: PYTHON_TOOLKIT_CATALOG.map((toolkit) => toolkit.toolkitId),
         requiredToolkitIds: PYTHON_TOOLKIT_CATALOG.filter((toolkit) => toolkit.required).map(

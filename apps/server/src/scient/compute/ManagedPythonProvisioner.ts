@@ -39,15 +39,15 @@ import {
   parseProbeOutput,
 } from "./PythonRuntimeAdapter.ts";
 import { assessPythonToolkits, PYTHON_TOOLKIT_EXTRAS } from "./PythonToolkitCatalog.ts";
+import bundledRecipeData from "./managed-python/bundled-recipes.json" with { type: "json" };
 
-export const MANAGED_PYTHON_VERSION = "3.14.7";
-export const MANAGED_PYTHON_UV_VERSION = "0.12.15";
+const bundledRecipe = bundledRecipeData.recipes.find((entry) => entry.purpose === "python")!;
+export const MANAGED_PYTHON_VERSION = bundledRecipe.pythonVersion;
+export const MANAGED_PYTHON_UV_VERSION = bundledRecipe.uvVersion;
 export const MANAGED_PYTHON_PROVISIONER_VERSION = `uv-${MANAGED_PYTHON_UV_VERSION}-shared-python-v1`;
-export const MANAGED_PYTHON_TOOLKIT_REVISION = "scientific-python-2026-09-17.2";
-export const MANAGED_PYTHON_LOCK_SHA256 =
-  "b1470dc4f8d0ee92106504bc98f970c97f781d022686b3c90ae65cd28d121577";
-export const MANAGED_PYTHON_PROJECT_SHA256 =
-  "b7c6b99e2200e510c27ec6c9944d8bc2cd949fdcf37137080cab5f050d7cae2e";
+export const MANAGED_PYTHON_TOOLKIT_REVISION = bundledRecipe.toolkitRevision;
+export const MANAGED_PYTHON_LOCK_SHA256 = bundledRecipe.lockSha256;
+export const MANAGED_PYTHON_PROJECT_SHA256 = bundledRecipe.projectSha256;
 const STAGED_MANAGED_PYTHON_DIRECTORY = "scient-managed-python";
 
 const PROCESS_TIMEOUT = Duration.minutes(30);
@@ -378,7 +378,7 @@ export function managedPythonProvisioningEnvironment(
 
 async function verifySpecification(
   specDirectory: string,
-  recipe?: ManagedPythonProvisionerOptions["recipe"],
+  recipe?: { readonly lockSha256: string; readonly projectSha256: string },
 ): Promise<void> {
   await Promise.all([
     verifyManagedRuntimeChecksum(NodePath.join(specDirectory, "uv.lock"), {
@@ -605,7 +605,8 @@ export function makeManagedPythonProvisioner(
 
   const provision = async (input: ManagedPythonProvisionInput) => {
     const extras = managedPythonExtrasForToolkits(input.toolkitIds);
-    await verifySpecification(options.specDirectory, options.recipe);
+    const specDirectory = input.specDirectory ?? options.specDirectory;
+    await verifySpecification(specDirectory, input.recipe ?? options.recipe);
     const uv = await ensureUv(input.signal, input.onProgress);
     // Reuse the pinned installer's CPython build; package environments stay private.
     const cacheRoot = NodePath.join(options.computeDir, "cache", "python");
@@ -641,10 +642,7 @@ export function makeManagedPythonProvisioner(
     await NodeFSP.mkdir(projectRoot, { recursive: false, mode: 0o700 });
     await Promise.all(
       ["pyproject.toml", "uv.lock"].map((file) =>
-        NodeFSP.copyFile(
-          NodePath.join(options.specDirectory, file),
-          NodePath.join(projectRoot, file),
-        ),
+        NodeFSP.copyFile(NodePath.join(specDirectory, file), NodePath.join(projectRoot, file)),
       ),
     );
     const environment = managedPythonProvisioningEnvironment(options.environment, {

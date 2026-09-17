@@ -99,11 +99,25 @@ First-time downloads and verification still take time; the inline status reports
 of pinning an installation. Choosing an existing Python also
 releases Scient-managed precedence; it does not copy or modify packages. **Repair** builds and
 verifies a fresh managed generation before activating it; an existing generation remains available
-if setup fails. **Update** appears only when Scient ships a newer reviewed Python or Toolkit
-revision. It appears as a small **Update** button beside the managed row's menu, including when
+if setup fails. **Update** appears when Scient's release catalog offers a newer compatible,
+qualified Python or Toolkit recipe. It appears as a small **Update** button beside the managed row's menu, including when
 that installation is not selected; progress replaces the button while updating. The MATLAB
 connection row follows the same rule for Scient's helper only, not the MATLAB application or
-licensed toolboxes. Rebuild and Remove remain in the menu.
+licensed toolboxes. Repair and Remove remain in the menu.
+
+First-time setup checks for the newest compatible qualified recipe and installs it directly;
+there is no required install-then-update step. Opening Settings checks for releases in the
+background but never changes installed packages. **Update** preserves the optional Toolkits you
+have installed. Adding/removing a Toolkit and **Repair** stay on your installed recipe instead of
+silently updating unrelated packages. An unrecognized older installation may need an explicit
+Update before it can be repaired with this app's supported recipe contract.
+
+If the release check is unavailable, Settings says so without marking a working runtime broken.
+Cached releases remain usable. A first installation can fall back to Scient's bundled recipe if
+the latest recipe files cannot be downloaded; package downloads still require the network unless
+already cached. An Update never substitutes an older environment. Recipes withdrawn for safety
+are not offered for new installs, repair, or Toolkit changes; existing sessions are not killed.
+
 **Remove** deletes only Scient's private environment and is refused while a Scient-owned
 session or probe is using that environment. Sessions using unrelated Python installations do not
 block removal. Scient tracks environment usage, not individual Python imports: an idle session can

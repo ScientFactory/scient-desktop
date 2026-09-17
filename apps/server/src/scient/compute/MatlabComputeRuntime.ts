@@ -27,6 +27,7 @@ import { ExecutionProcess } from "../execution/LocalExecutionProcess.ts";
 import { ServerConfig } from "../../config.ts";
 import { ScientificRuntimePreferences } from "./ScientificRuntimePreferences.ts";
 import { makeMatlabConnectionHelper } from "./MatlabConnectionHelper.ts";
+import { ComputeRecipeNetwork, makeComputeRecipeSource } from "./ComputeRecipeSource.ts";
 import { resolveManagedPythonSpecPath } from "./ManagedPythonProvisioner.ts";
 import { sanitizeComputeEnvironment } from "./ComputeEnvironmentPolicy.ts";
 import type { ComputeRuntimeBinding } from "./ComputeSessionService.ts";
@@ -314,6 +315,7 @@ export const matlabRuntimeBinding: Effect.Effect<
   const hostEnvironment = yield* HostProcessEnvironment;
   const platform = yield* HostProcessPlatform;
   const arch = yield* HostProcessArchitecture;
+  const recipeNetwork = yield* ComputeRecipeNetwork;
   const { environment } = sanitizeComputeEnvironment(definedEnvironment(hostEnvironment));
   const helper = yield* Effect.tryPromise({
     try: async () => {
@@ -322,6 +324,13 @@ export const matlabRuntimeBinding: Effect.Effect<
         "matlab-connection",
       );
       const helper = makeMatlabConnectionHelper({
+        recipes: makeComputeRecipeSource({
+          computeDir: config.computeDir,
+          specDirectory,
+          purpose: "matlab-connection",
+          target: `${platform}-${arch}`,
+          network: recipeNetwork,
+        }),
         computeDir: config.computeDir,
         specDirectory,
         processes,

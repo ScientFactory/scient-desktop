@@ -356,10 +356,53 @@ Settings and the no-ready-runtime Compute panel use the same status and action
 contract. First-use setup activates the verified managed generation. Optional
 setup from Settings can preserve an already selected existing runtime, so users
 can prepare Scient-managed Python without changing new-session behavior. Users
-can switch between existing and managed runtimes without reinstalling. Update appears only when the pinned
-Python, provisioner, or Toolkit revision changes; repair, cancellation, and
+can switch between existing and managed runtimes without reinstalling. Update appears only when a newer
+compatible qualified recipe is available; repair, cancellation, and
 private removal remain explicit. Missing managed assets or an unsupported
 platform disable only the assisted path, never existing Python compute.
+
+### Qualified recipe updates
+
+`ComputeRecipeSource` is one bounded release-source/cache instance per language binding. Status
+reads trigger a deduplicated background check (one hour after success, five minutes after
+failure); no timer installs packages or starts runtimes. Shared client state polls only while a
+check or operation is active. Update-check failure is separate from runtime readiness.
+Explicit Install and Update revalidate the catalog regardless of that background cooldown.
+
+`ComputeRecipe` owns the versioned metadata and manifest-validation boundary. Releases identify
+exact project/lock hashes, interpreter and installer versions, capability-set fingerprint,
+native qualification targets, monotonic revision, and immutable repository source commit.
+The approved HTTPS repository is the catalog authority; hashes bind the fetched specifications,
+not a claim of a separately signed release. Contracts and capability fingerprints must match
+the app. Installer changes require the app's reviewed artifact/checksum table; MATLAB's private
+CPython host must match its separately qualified vendor compatibility. Neither release metadata
+nor clients may supply arbitrary commands, project paths, indexes, or build hooks.
+
+Install/Update resolve a compatible recipe before entering the existing generation transaction.
+Toolkit changes and Repair resolve the active receipt instead. The manager stores the recipe
+alongside its existing generation record and snapshots of `pyproject.toml` and `uv.lock`.
+Existing records without recipe metadata remain readable; exact matching bundled/catalog
+revisions can be recovered. Unknown legacy recipes fail explicitly instead of guessing an
+upgrade during Repair. Current package-membership contracts remain app-owned.
+
+Cancellation does not wait for a shared HTTP check, and one caller cannot abort another caller's
+check. No candidate activates until the existing scientific/verifier checks pass. In-use old
+generations, previous-generation recovery, interpreter reuse, bounded download cache, and
+per-Toolkit operation queues retain their existing ownership guarantees.
+
+The catalog keeps at most 32 recent recipes per runtime and 256 monotonic withdrawal identities. Installed
+receipts and their specification snapshots do not rely on catalog history retention. Withdrawal
+blocks future provisioning, not existing execution. This is not an automatic downgrade or
+revocation of running sessions. Last-good metadata survives network/malformed-feed failures;
+first installation may use bundled specifications offline. Other operations never silently
+fall back to a different recipe. Bundled setup retains the provisioner's existing platform
+support; downloaded recipes are offered only on their explicitly qualified targets.
+
+Build metadata is sealed from manifest/lock content and their last Git change (full history is
+required for changed recipes). Unrelated commits do not create package updates. The same sealing
+command runs before native qualification, general server tests, and desktop bundling.
+Dependency proposals, promotion, withdrawal, and external setup are described in
+[managed Compute recipe operations](../operations/managed-compute-recipes.md).
 
 ## Intentional boundaries
 

@@ -447,7 +447,13 @@ function LanguageRuntimeSummary({
         disabled={disabled || !preference.enabled}
         id={`${languageId}-managed-runtime`}
         title={isPython ? "Scient-managed Python" : "MATLAB connection"}
-        description={connectionNeedsRepair ? null : managedDescription}
+        description={
+          connectionNeedsRepair
+            ? null
+            : runtime.status?.updateCheck === "unavailable"
+              ? `${managedDescription} · Update check unavailable`
+              : managedDescription
+        }
         status={
           showManagedNotice && !toolkitOwnsNotice && (!inlineManagedProgress || runtime.failure) ? (
             <ManagedRuntimeNotice runtime={runtime} showProgress={!inlineManagedProgress} />

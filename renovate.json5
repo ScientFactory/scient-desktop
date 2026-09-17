@@ -1,0 +1,24 @@
+{
+  $schema: "https://docs.renovatebot.com/renovate-schema.json",
+  enabledManagers: ["pep621"],
+  includePaths: ["apps/server/src/scient/compute/managed-python/**"],
+  schedule: ["before 6am on monday"],
+  timezone: "Etc/UTC",
+  prConcurrentLimit: 2,
+  automerge: false,
+  dependencyDashboard: true,
+  lockFileMaintenance: { enabled: true },
+  packageRules: [
+    {
+      matchManagers: ["pep621"],
+      matchUpdateTypes: ["patch", "minor"],
+      groupName: "scientific Python compatible dependency candidates",
+      minimumReleaseAge: "3 days",
+    },
+    {
+      matchFileNames: ["**/matlab-connection/**"],
+      groupName: "MATLAB helper dependency candidates",
+    },
+    { matchPackageNames: ["python"], dependencyDashboardApproval: true },
+  ],
+}

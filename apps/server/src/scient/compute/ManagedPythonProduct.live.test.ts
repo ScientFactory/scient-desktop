@@ -31,6 +31,7 @@ import { makeComputeRpcGateway } from "./ComputeRpcGateway.ts";
 import * as LocalComputeStore from "./LocalComputeStore.ts";
 import { MANAGED_PYTHON_VERSION } from "./ManagedPythonProvisioner.ts";
 import * as PythonComputeRuntime from "./PythonComputeRuntime.ts";
+import { ComputeRecipeNetwork } from "./ComputeRecipeSource.ts";
 import { managedPythonFileCheck } from "./ManagedPythonScientificChecks.ts";
 
 const ENABLED = NodeProcess.env.SCIENT_TEST_MANAGED_PYTHON === "1";
@@ -87,6 +88,7 @@ describe.runIf(ENABLED)("Scient-managed Python product", () => {
         yield* Effect.promise(() => initializeScientProject({ root: projectRoot }));
 
         const computeLayer = PythonComputeRuntime.layer.pipe(
+          Layer.provide(Layer.succeed(ComputeRecipeNetwork)(false)),
           Layer.provide(LocalComputeStore.layer),
           Layer.provide(LocalExecutionProcess.layer),
           Layer.provide(LocalDuplexProcess.layer),

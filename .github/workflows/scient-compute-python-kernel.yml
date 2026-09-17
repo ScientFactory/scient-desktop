@@ -17,11 +17,13 @@
 name: Scient Compute Python Kernel
 
 on:
+  workflow_call:
   workflow_dispatch:
   pull_request:
     paths:
       - ".github/workflows/scient-compute-python-kernel.yml"
       - "apps/server/src/scient/compute/**"
+      - "apps/server/scripts/compute-recipes.ts"
       - "apps/server/src/preview/PortScanner*"
       - "apps/server/src/localEndpoints/**"
       - "apps/server/src/scient/execution/LocalDuplexProcess.ts"
@@ -42,11 +44,16 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        runner: [ubuntu-24.04, macos-15]
+        include:
+          - runner: ubuntu-24.04
+            target: linux-x64
+          - runner: macos-15
+            target: darwin-arm64
     steps:
       - name: Checkout
         uses: actions/checkout@v6
         with:
+          fetch-depth: 0
           sparse-checkout: |
             /*
             !/.repos/
@@ -61,12 +68,18 @@ jobs:
               - --filter=t3...
       # The production provisioner downloads pinned private uv/CPython and uses
       # the checked-in lock. No ambient pip environment can satisfy this test.
+      - name: Seal candidate recipe metadata
+        run: node apps/server/scripts/compute-recipes.ts seal
+      - name: Assert native qualification target
+        env:
+          EXPECTED_TARGET: ${{ matrix.target }}
+        run: node -e 'require("node:assert/strict").equal(`${process.platform}-${process.arch}`, process.env.EXPECTED_TARGET)'
       - name: Qualify base, every toolkit combination, and retained kernels
         working-directory: apps/server
         env:
           SCIENT_TEST_MANAGED_PYTHON: "1"
           MPLBACKEND: Agg
-        run: vp test run src/scient/compute/ManagedPythonProduct.live.test.ts --maxWorkers=1
+        run: vp test run src/scient/compute/ManagedPythonProduct.live.test.ts src/scient/compute/ComputeRecipe.live.test.ts --maxWorkers=1
 
   real_kernel:
     name: Real kernel / ${{ matrix.runner }} / Python ${{ matrix.python }}

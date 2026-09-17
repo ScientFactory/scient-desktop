@@ -605,7 +605,7 @@ describe("shared compute runtime transitions", () => {
     }),
   );
 
-  it.each(["running", "queued"] as const)(
+  it.each(["running", "queued", "checking"] as const)(
     "polls %s work and cancels the timer on disposal",
     async (phase) => {
       vi.useFakeTimers();
@@ -613,17 +613,19 @@ describe("shared compute runtime transitions", () => {
       let current: ComputeManagedRuntimeStatus =
         phase === "running"
           ? { ...initialStatus, operation }
-          : {
-              ...initialStatus,
-              toolkitChanges: [
-                {
-                  toolkitId: ComputeToolkitId.make("python-image-analysis"),
-                  install: true,
-                  state: "queued",
-                  error: null,
-                },
-              ],
-            };
+          : phase === "checking"
+            ? { ...initialStatus, updateCheck: "checking" }
+            : {
+                ...initialStatus,
+                toolkitChanges: [
+                  {
+                    toolkitId: ComputeToolkitId.make("python-image-analysis"),
+                    install: true,
+                    state: "queued",
+                    error: null,
+                  },
+                ],
+              };
       let reads = 0;
       const source = Atom.make(() => {
         reads += 1;
@@ -635,7 +637,7 @@ describe("shared compute runtime transitions", () => {
         expect(reads).toBe(1);
         await vi.advanceTimersByTimeAsync(1_000);
         expect(reads).toBe(2);
-        current = { ...current, operation: null, toolkitChanges: [] };
+        current = { ...current, operation: null, toolkitChanges: [], updateCheck: "current" };
         await vi.advanceTimersByTimeAsync(1_000);
         const settledReads = reads;
         await vi.advanceTimersByTimeAsync(10_000);

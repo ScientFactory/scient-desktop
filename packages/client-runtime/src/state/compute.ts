@@ -34,6 +34,7 @@ export function withManagedRuntimePolling<A extends ComputeManagedRuntimeStatus 
     source,
     (status) =>
       status?.operation != null ||
+      status?.updateCheck === "checking" ||
       status?.toolkitChanges?.some((entry) => entry.state !== "failed") === true,
   );
 }
@@ -61,6 +62,8 @@ function managedRuntimeInspectionKey(status: ComputeManagedRuntimeStatus | null)
           status.generationId,
           status.runtimeVersion,
           status.toolkitRevision,
+          status.updateAvailable,
+          status.updateCheck,
           status.operation?.operationId,
           status.failure?.reason,
           status.failure?.action,
@@ -382,6 +385,7 @@ export function createComputeEnvironmentAtoms<R, E>(
         inventory.languages.some(
           (language) =>
             language.managedRuntime?.operation != null ||
+            language.managedRuntime?.updateCheck === "checking" ||
             language.managedRuntime?.toolkitChanges?.some((entry) => entry.state !== "failed") ===
               true,
         ),

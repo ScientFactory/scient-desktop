@@ -10,6 +10,7 @@ import {
 import * as Schema from "effect/Schema";
 
 import type { ManagedPythonPurpose } from "./managed-python/specifications.ts";
+import { ComputeRecipe } from "./ComputeRecipe.ts";
 
 export const ManagedPythonSelection = Schema.Literals(["managed", "existing"]);
 export type ManagedPythonSelection = typeof ManagedPythonSelection.Type;
@@ -23,6 +24,7 @@ const ManagedPythonGeneration = Schema.Struct({
   provisionerVersion: Schema.NonEmptyString.check(Schema.isMaxLength(64)),
   activatedAtEpochMs: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),
   interpreterRelativePath: Schema.optional(Schema.NonEmptyString.check(Schema.isMaxLength(1024))),
+  recipe: Schema.optional(ComputeRecipe),
 });
 export type ManagedPythonGeneration = typeof ManagedPythonGeneration.Type;
 
@@ -75,6 +77,8 @@ export interface ManagedPythonProvisionProgress {
 }
 
 export interface ManagedPythonProvisionInput {
+  readonly recipe?: ComputeRecipe;
+  readonly specDirectory?: string;
   /** Final, fresh app-owned generation directory. Do not build elsewhere and move a venv. */
   readonly targetRoot: string;
   /** Reuse the previously verified private interpreter unless repairing it. */
@@ -115,6 +119,8 @@ export interface ManagedPythonEnvironmentDependencies {
 }
 
 export interface ManagedPythonEnvironmentInstallInput {
+  readonly recipe?: ComputeRecipe;
+  readonly specDirectory?: string;
   readonly toolkitIds: ReadonlyArray<ComputeToolkitIdType>;
   readonly toolkitRevision: string;
   readonly pythonVersion: string;
@@ -603,6 +609,8 @@ export function makeManagedPythonEnvironmentManager(
       try {
         const provisioned = await dependencies
           .provision({
+            ...(input.recipe ? { recipe: input.recipe } : {}),
+            ...(input.specDirectory ? { specDirectory: input.specDirectory } : {}),
             targetRoot: candidateRoot,
             interpreterRelativePath: existing?.record.active.interpreterRelativePath,
             freshInterpreter,
@@ -707,6 +715,7 @@ export function makeManagedPythonEnvironmentManager(
         }
 
         const active: ManagedPythonGeneration = {
+          ...(input.recipe ? { recipe: input.recipe } : {}),
           generationId,
           executableRelativePath: provisioned.executableRelativePath,
           toolkitIds,

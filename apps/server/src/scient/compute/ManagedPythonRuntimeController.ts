@@ -17,6 +17,7 @@ import type {
   ComputeManagedRuntimeProvisionOptions,
   ComputeRuntimeBinding,
 } from "./ComputeSessionService.ts";
+import type { ComputeRecipeSource } from "./ComputeRecipeSource.ts";
 import {
   ManagedPythonEnvironmentError,
   type makeManagedPythonEnvironmentManager,
@@ -92,6 +93,9 @@ function managedRuntimeFailure(
 }
 
 export function makeManagedPythonRuntimeController(input: {
+  readonly recipes?: ComputeRecipeSource;
+  /** Runtime-specific prerequisites must precede remote recipe resolution. */
+  readonly preflight?: () => Promise<void>;
   readonly manager: ManagedPythonManager;
   /** Every Toolkit this reviewed recipe knows how to provision. */
   readonly toolkitIds: ReadonlyArray<ComputeToolkitId>;
@@ -151,12 +155,29 @@ export function makeManagedPythonRuntimeController(input: {
   };
 
   const readStatus = async (): Promise<ComputeManagedRuntimeStatus> => {
+    // Refresh never blocks Settings or changes an installed environment.
+    void input.recipes?.refresh();
     for (;;) {
       const operationSnapshot = operation;
       const observedRevision = revision;
       const current = await input.manager.inspect();
       if (operationSnapshot !== operation || observedRevision !== revision) continue;
       const active = current?.record.active ?? null;
+      const latest = input.recipes?.latest();
+      const updateAvailable = input.recipes
+        ? active !== null &&
+          latest !== null &&
+          latest !== undefined &&
+          latest.pythonVersion.localeCompare(active.pythonVersion, "en", { numeric: true }) >= 0 &&
+          (active.recipe
+            ? latest.revision > active.recipe.revision
+            : latest.toolkitRevision.localeCompare(active.toolkitRevision, "en", {
+                numeric: true,
+              }) > 0)
+        : active !== null &&
+          (active.toolkitRevision !== toolkitRevision ||
+            active.pythonVersion !== pythonVersion ||
+            active.provisionerVersion !== MANAGED_PYTHON_PROVISIONER_VERSION);
       const unavailableFailure =
         current !== null && !current.available
           ? ({
@@ -176,11 +197,8 @@ export function makeManagedPythonRuntimeController(input: {
         installed: current !== null,
         generationId: active?.generationId ?? null,
         selection: current?.record.selection ?? "existing",
-        updateAvailable:
-          active !== null &&
-          (active.toolkitRevision !== toolkitRevision ||
-            active.pythonVersion !== pythonVersion ||
-            active.provisionerVersion !== MANAGED_PYTHON_PROVISIONER_VERSION),
+        updateAvailable,
+        ...(input.recipes ? { updateCheck: input.recipes.state() } : {}),
         runtimeVersion: active === null ? null : `Python ${active.pythonVersion}`,
         toolkitRevision: active?.toolkitRevision ?? null,
         toolkitIds: active?.toolkitIds ?? [],
@@ -222,7 +240,7 @@ export function makeManagedPythonRuntimeController(input: {
     if (operation !== null) return;
     if (action === "install" && current !== null) return;
     const toolkitIds = selectedToolkitIds(options?.toolkitIds, current?.record.active.toolkitIds);
-    if (action === "update" && current !== null) {
+    if (!input.recipes && action === "update" && current !== null) {
       const active = current.record.active;
       if (
         active.toolkitRevision === toolkitRevision &&
@@ -258,22 +276,42 @@ export function makeManagedPythonRuntimeController(input: {
     const run =
       action === "remove"
         ? input.manager.remove()
-        : input.manager[action === "repair" ? "repair" : "install"]({
-            toolkitIds,
-            toolkitRevision,
-            pythonVersion,
-            provisionerVersion: MANAGED_PYTHON_PROVISIONER_VERSION,
-            ...(options?.selectionAfterInstall === undefined
-              ? {}
-              : { selectionAfterInstall: options.selectionAfterInstall }),
-            signal: controller.signal,
-            onProgress: (progress) => {
-              if (operation !== activeOperation) return;
-              activeOperation.phase = progress.phase;
-              activeOperation.downloadedBytes = progress.downloadedBytes;
-              activeOperation.totalBytes = progress.totalBytes;
-            },
-          });
+        : (async () => {
+            await input.preflight?.();
+            controller.signal.throwIfAborted();
+            const prepared = await input.recipes?.prepare(
+              batch.length > 0 ? "toolkits" : action,
+              current,
+              controller.signal,
+            );
+            controller.signal.throwIfAborted();
+            if (
+              action === "update" &&
+              batch.length === 0 &&
+              current?.record.active.recipe &&
+              prepared &&
+              prepared.recipe.revision <= current.record.active.recipe.revision &&
+              options?.toolkitIds === undefined
+            )
+              return;
+            return input.manager[action === "repair" ? "repair" : "install"]({
+              toolkitIds,
+              toolkitRevision: prepared?.recipe.toolkitRevision ?? toolkitRevision,
+              pythonVersion: prepared?.recipe.pythonVersion ?? pythonVersion,
+              ...prepared,
+              provisionerVersion: MANAGED_PYTHON_PROVISIONER_VERSION,
+              ...(options?.selectionAfterInstall === undefined
+                ? {}
+                : { selectionAfterInstall: options.selectionAfterInstall }),
+              signal: controller.signal,
+              onProgress: (progress) => {
+                if (operation !== activeOperation) return;
+                activeOperation.phase = progress.phase;
+                activeOperation.downloadedBytes = progress.downloadedBytes;
+                activeOperation.totalBytes = progress.totalBytes;
+              },
+            });
+          })();
     const settle = (cause?: unknown) =>
       serial(async () => {
         if (operation !== activeOperation) return;
@@ -440,6 +478,7 @@ export function makeManagedPythonRuntimeController(input: {
     manage,
     cancel,
     dispose: () => {
+      input.recipes?.dispose();
       disposed = true;
       changes.clear();
       revision++;

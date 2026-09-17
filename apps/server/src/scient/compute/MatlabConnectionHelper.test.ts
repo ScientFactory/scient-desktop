@@ -152,7 +152,12 @@ describe("MATLAB connection helper prerequisites", () => {
         expect(start).not.toHaveBeenCalled();
         expect(yield* Effect.promise(() => helper.manager.inspect())).toBeNull();
         const entries = yield* Effect.promise(() =>
-          NodeFSP.readdir(NodePath.join(root, "compute", "environments", "matlab-connection")),
+          NodeFSP.readdir(
+            NodePath.join(root, "compute", "environments", "matlab-connection"),
+          ).catch((cause: NodeJS.ErrnoException) => {
+            if (cause.code === "ENOENT") return [];
+            throw cause;
+          }),
         );
         expect(entries.filter((name) => name.startsWith("generation-"))).toEqual([]);
         if (scenario === "unsupported")

@@ -17,6 +17,7 @@ import {
   MANAGED_PYTHON_VERSION,
 } from "./ManagedPythonProvisioner.ts";
 import { makeManagedPythonRuntimeController } from "./ManagedPythonRuntimeController.ts";
+import { bundledRecipes, type ComputeRecipeSource } from "./ComputeRecipeSource.ts";
 
 const TOOLKIT_ID = ComputeToolkitId.make("python-data-and-figures");
 const OPTIONAL_TOOLKIT_ID = ComputeToolkitId.make("python-image-analysis");
@@ -50,6 +51,122 @@ describe("ManagedPythonRuntimeController", () => {
     verify: async () => undefined,
     ...overrides,
   });
+
+  it.live(
+    "pins Toolkit changes and repair, preserves selections on update, and keeps a live old generation",
+    () =>
+      Effect.gen(function* () {
+        const first = bundledRecipes.recipes[0]!;
+        const second = {
+          ...first,
+          revision: first.revision + 1,
+          toolkitRevision: "scientific-python-2099-01-01.1",
+        };
+        let latest = first;
+        const actions: string[] = [];
+        const recipes: ComputeRecipeSource = {
+          latest: () => latest,
+          state: () => "current",
+          refresh: async () => {},
+          dispose: () => {},
+          prepare: async (action, current) => {
+            actions.push(action);
+            return {
+              recipe:
+                action === "repair" || action === "toolkits"
+                  ? current!.record.active.recipe!
+                  : latest,
+              specDirectory: temporaryRoot,
+            };
+          },
+        };
+        const manager = makeManagedPythonEnvironmentManager(computeDir, dependencies(), "python", {
+          trackUsage: true,
+        });
+        const controller = makeManagedPythonRuntimeController({
+          manager,
+          recipes,
+          toolkitIds: [TOOLKIT_ID, OPTIONAL_TOOLKIT_ID],
+          requiredToolkitIds: [TOOLKIT_ID],
+        });
+        try {
+          yield* controller.manage("install");
+          expect((yield* waitForSettled(controller)).toolkitRevision).toBe(first.toolkitRevision);
+          latest = second;
+          yield* controller.manage("update", {
+            toolkitChange: { toolkitId: OPTIONAL_TOOLKIT_ID, action: "install" },
+          });
+          const changed = yield* waitForSettled(controller);
+          expect(changed.toolkitRevision).toBe(first.toolkitRevision);
+          expect(changed.updateAvailable).toBe(true);
+          yield* controller.manage("repair");
+          expect((yield* waitForSettled(controller)).toolkitRevision).toBe(first.toolkitRevision);
+          const old = yield* Effect.promise(() => manager.inspect());
+          const release = yield* Effect.promise(() => manager.acquire(old!.executable));
+          try {
+            yield* controller.manage("update");
+            const updated = yield* waitForSettled(controller);
+            expect(updated.toolkitRevision).toBe(second.toolkitRevision);
+            expect(updated.toolkitIds).toEqual([TOOLKIT_ID, OPTIONAL_TOOLKIT_ID]);
+            expect(updated.updateAvailable).toBe(false);
+            yield* Effect.promise(() => NodeFSP.access(old!.executable));
+            const installed = yield* Effect.promise(() => manager.inspect());
+            expect(installed!.record.active.recipe).toEqual(second);
+            yield* controller.manage("update");
+            expect((yield* waitForSettled(controller)).generationId).toBe(updated.generationId);
+          } finally {
+            release();
+          }
+          expect(actions).toEqual(["install", "toolkits", "repair", "update", "update"]);
+        } finally {
+          controller.dispose();
+          yield* Effect.promise(() => manager.collect());
+        }
+      }),
+  );
+
+  it.live("cancels catalog preparation before any generation is provisioned", () =>
+    Effect.gen(function* () {
+      let entered = false;
+      let provisions = 0;
+      const manager = makeManagedPythonEnvironmentManager(
+        computeDir,
+        dependencies({
+          provision: async ({ targetRoot }) => {
+            provisions++;
+            return executableAt(targetRoot);
+          },
+        }),
+      );
+      const recipes: ComputeRecipeSource = {
+        latest: () => bundledRecipes.recipes[0]!,
+        state: () => "checking",
+        refresh: async () => {},
+        dispose: () => {},
+        prepare: (_action, _current, signal) =>
+          new Promise((_resolve, reject) => {
+            entered = true;
+            signal.addEventListener("abort", () => reject(signal.reason), { once: true });
+          }),
+      };
+      const controller = makeManagedPythonRuntimeController({
+        manager,
+        recipes,
+        toolkitIds: [TOOLKIT_ID],
+      });
+      try {
+        yield* controller.manage("install");
+        yield* waitForStatus(controller, () => entered);
+        yield* controller.cancel();
+        const cancelled = yield* waitForSettled(controller);
+        expect(cancelled.installed).toBe(false);
+        expect(cancelled.failureMessage).toBeNull();
+        expect(provisions).toBe(0);
+      } finally {
+        controller.dispose();
+      }
+    }),
+  );
 
   it.live("explains an in-use removal refusal without starting an operation", () =>
     Effect.gen(function* () {

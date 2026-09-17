@@ -14,14 +14,19 @@ import {
 } from "./ManagedPythonEnvironment.ts";
 import { makeManagedPythonProvisioner, runOwnedProcess } from "./ManagedPythonProvisioner.ts";
 import { makeManagedPythonRuntimeController } from "./ManagedPythonRuntimeController.ts";
+import type { ComputeRecipeSource } from "./ComputeRecipeSource.ts";
+import bundledRecipeData from "./managed-python/bundled-recipes.json" with { type: "json" };
 import { discoverMatlabCandidates, matlabInstallationRoot } from "./MatlabRuntimeAdapter.ts";
 
+const bundledRecipe = bundledRecipeData.recipes.find(
+  (entry) => entry.purpose === "matlab-connection",
+)!;
 export const MATLAB_CONNECTION_SPECIFICATION = {
-  lockSha256: "8d437f53f63d52d266b8288b647254d28c8c5a0fa0f02e14da6a0adb30cac057",
-  projectSha256: "beeae8338729362227297b8abf8c4356c042ee072339b979406d526722663237",
+  lockSha256: bundledRecipe.lockSha256,
+  projectSha256: bundledRecipe.projectSha256,
 };
-export const MATLAB_CONNECTION_PYTHON_VERSION = "3.12.13";
-export const MATLAB_CONNECTION_TOOLKIT_REVISION = "matlab-connection-2026-09-10.1";
+export const MATLAB_CONNECTION_PYTHON_VERSION = bundledRecipe.pythonVersion;
+export const MATLAB_CONNECTION_TOOLKIT_REVISION = bundledRecipe.toolkitRevision;
 const Installation = Schema.Struct({ root: Schema.String, release: Schema.String });
 const decodeInstallation = Schema.decodeUnknownSync(Schema.fromJsonString(Installation));
 const encodeInstallation = Schema.encodeSync(Schema.fromJsonString(Installation));
@@ -33,6 +38,7 @@ function generationRoot(executable: string): string {
 
 /** A reviewed helper, not a second copy of MATLAB or of Scientific Python. */
 export function makeMatlabConnectionHelper(input: {
+  readonly recipes?: ComputeRecipeSource;
   readonly computeDir: string;
   readonly specDirectory: string;
   readonly processes: ExecutionProcessPort;
@@ -91,32 +97,30 @@ export function makeMatlabConnectionHelper(input: {
     ...input,
     recipe: { ...MATLAB_CONNECTION_SPECIFICATION, verify },
   });
+  const resolveInstallation = async () => {
+    const configured = await input.selectedExecutable();
+    const candidate = discoverMatlabCandidates(configured, input.environment, input.platform)[0];
+    if (candidate === undefined)
+      throw new Error(
+        "Install and activate MATLAB first, then set up its Scient connection. Scient does not install MATLAB or provide a license.",
+      );
+    const executable = await NodeFSP.realpath(candidate.executable);
+    const root = matlabInstallationRoot(executable);
+    const xml = await NodeFSP.readFile(NodePath.join(root, "VersionInfo.xml"), "utf8");
+    const release = /<release>(R\d{4}[ab])<\/release>/u.exec(xml)?.[1];
+    // Independent vendor-qualified Engine compatibility; no optimistic future releases.
+    if (!release || !["R2024b", "R2025a", "R2025b", "R2026a"].includes(release))
+      throw new Error(
+        "Assisted MATLAB connection supports R2024b–R2026a. Other releases can use an existing compatible Engine host.",
+      );
+    return { root, release };
+  };
   const manager = makeManagedPythonEnvironmentManager(
     input.computeDir,
     {
       verify: base.verify,
       provision: async (request) => {
-        const configured = await input.selectedExecutable();
-        const candidate = discoverMatlabCandidates(
-          configured,
-          input.environment,
-          input.platform,
-        )[0];
-        if (candidate === undefined)
-          throw new Error(
-            "Install and activate MATLAB first, then set up its Scient connection. Scient does not install MATLAB or provide a license.",
-          );
-        const executable = await NodeFSP.realpath(candidate.executable);
-        const root = matlabInstallationRoot(executable);
-        const xml = await NodeFSP.readFile(NodePath.join(root, "VersionInfo.xml"), "utf8");
-        const release = /<release>(R\d{4}[ab])<\/release>/u.exec(xml)?.[1];
-        // CPython 3.12 is a vendor-supported Engine host for these releases.
-        // Future releases need qualification, not an optimistic version comparison.
-        if (!release || !["R2024b", "R2025a", "R2025b", "R2026a"].includes(release)) {
-          throw new Error(
-            "Assisted MATLAB connection supports R2024b–R2026a. Other releases can use an existing compatible Engine host.",
-          );
-        }
+        const { root, release } = await resolveInstallation();
         const result = await base.provision(request);
         const host = NodePath.join(request.targetRoot, result.executableRelativePath);
         // Use the selected release's own build command, with output outside MATLAB.
@@ -146,6 +150,10 @@ export function makeMatlabConnectionHelper(input: {
   );
 
   const controller = makeManagedPythonRuntimeController({
+    preflight: async () => {
+      await resolveInstallation();
+    },
+    ...(input.recipes ? { recipes: input.recipes } : {}),
     manager,
     toolkitIds: [],
     configuration: {

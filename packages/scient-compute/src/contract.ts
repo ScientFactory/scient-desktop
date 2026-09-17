@@ -615,6 +615,8 @@ export const ComputeManagedRuntimeStatus = Schema.Struct({
   generationId: Schema.optional(Schema.NullOr(Label)),
   selection: ComputeManagedRuntimeSelection,
   updateAvailable: Schema.Boolean,
+  /** Catalog freshness is separate from runtime readiness. */
+  updateCheck: Schema.optional(Schema.Literals(["current", "checking", "cached", "unavailable"])),
   runtimeVersion: Schema.NullOr(Label),
   toolkitRevision: Schema.NullOr(Label),
   /** Reviewed Toolkits installed in the active immutable generation. */
