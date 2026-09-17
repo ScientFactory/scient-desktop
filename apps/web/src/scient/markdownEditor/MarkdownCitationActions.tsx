@@ -11,6 +11,10 @@ import {
 import { revealMarkdownCitation } from "./markdownCitationReveal";
 import type { ScientMarkdownEditorView } from "./prosemirror/view";
 
+function isNestedCodeSelectionTarget(target: EventTarget | null): boolean {
+  return target instanceof Element && target.closest(".cm-editor") !== null;
+}
+
 export function MarkdownCitationActions({
   controller,
   source,
@@ -48,6 +52,7 @@ export function MarkdownCitationActions({
     <SelectionCitationToolbar
       viewport={viewport}
       capture={capture}
+      allowPreventedSelectionStart={isNestedCodeSelectionTarget}
       onCite={(citation, anchor) => {
         // A toolbar may still be visible after an external update. Never silently
         // replace its captured quote with a newly selected or edited passage.

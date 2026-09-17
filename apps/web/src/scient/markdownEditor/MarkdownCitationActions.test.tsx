@@ -12,6 +12,7 @@ import {
 import { createRoot } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 import { EnvironmentId, ThreadId } from "@t3tools/contracts";
+import { EditorView as CodeMirrorView } from "@codemirror/view";
 import {
   collectComposerCitations,
   expandComposerCitationsForProvider,
@@ -142,6 +143,14 @@ describe("select Markdown -> Ask in chat -> real composer", () => {
     vi.restoreAllMocks();
     vi.unstubAllGlobals();
   });
+  async function flushSelectionToolbar() {
+    await act(async () => {
+      await new Promise<void>((resolve) => setTimeout(resolve, 10));
+      const pending = [...frames.values()];
+      frames.clear();
+      pending.forEach((callback) => callback(0));
+    });
+  }
   async function selectAndShowToolbar() {
     const node = controller.view!.dom.querySelector("p")!.firstChild!;
     const selection = window.getSelection()!;
@@ -155,12 +164,7 @@ describe("select Markdown -> Ask in chat -> real composer", () => {
     });
     // The real selection observer defers until gesture completion. Only layout
     // measurements and animation scheduling are stubbed in this DOM test.
-    await act(async () => {
-      await new Promise<void>((resolve) => setTimeout(resolve, 10));
-      const pending = [...frames.values()];
-      frames.clear();
-      pending.forEach((callback) => callback(0));
-    });
+    await flushSelectionToolbar();
     return document.querySelector<HTMLButtonElement>('[aria-label="Ask in chat"]');
   }
 
@@ -208,6 +212,109 @@ describe("select Markdown -> Ask in chat -> real composer", () => {
     await act(() => cite!.click());
     expect(host.querySelector("output")!.textContent).toBe("My question. ");
     expect(window.getSelection()!.toString()).toBe("selected");
+  });
+
+  it("opens Ask in chat for a CodeMirror selection even when CodeMirror consumes the press", async () => {
+    controller = new ScientMarkdownEditorView({
+      source: "```text\nzero one two\n```\n",
+      revision: "code-fixture",
+      mode: "write",
+      ariaLabel: "Markdown",
+      onUserSourceChange,
+    });
+    await act(() => root.render(<Fixture />));
+    const codeDom = controller.view!.dom.querySelector<HTMLElement>(".cm-editor")!;
+    const code = CodeMirrorView.findFromDOM(codeDom)!;
+    await act(() => code.dispatch({ selection: { anchor: 5, head: 8 } }));
+    const first = code.domAtPos(5);
+    const last = code.domAtPos(8);
+    const selection = window.getSelection()!;
+    const range = document.createRange();
+    range.setStart(first.node, first.offset);
+    range.setEnd(last.node, last.offset);
+    selection.removeAllRanges();
+    selection.addRange(range);
+    // CodeMirror's deferred geometry measurement is outside this interaction;
+    // the toolbar's release frame is the only frame this assertion advances.
+    frames.clear();
+
+    const press = Object.assign(new Event("pointerdown", { bubbles: true, cancelable: true }), {
+      button: 0,
+      isPrimary: true,
+    });
+    press.preventDefault();
+    codeDom.dispatchEvent(press);
+    window.dispatchEvent(Object.assign(new Event("pointerup"), { button: 0, isPrimary: true }));
+    window.dispatchEvent(
+      Object.assign(new Event("mouseup"), { button: 0, clientX: 240, clientY: 160, detail: 1 }),
+    );
+    await flushSelectionToolbar();
+
+    const cite = document.querySelector<HTMLButtonElement>('[aria-label="Ask in chat"]');
+    expect(cite).not.toBeNull();
+    await act(() => cite!.click());
+    expect(
+      collectComposerCitations(editor.current!.readSnapshot().value)[0]?.citation,
+    ).toMatchObject({
+      kind: "file",
+      path: "notes.md",
+      text: "one",
+    });
+    expect(controller.createSaveIntent()).toBeNull();
+    expect(onUserSourceChange).not.toHaveBeenCalled();
+  });
+
+  it("opens Ask in chat for visible code source when its parent is a rich fence", async () => {
+    controller = new ScientMarkdownEditorView({
+      source: "```text\nflowchart LR\n  A[Start] --> B[Done]\n```\n",
+      revision: "mermaid-fixture",
+      mode: "write",
+      ariaLabel: "Markdown",
+      onUserSourceChange,
+    });
+    await act(() => root.render(<Fixture />));
+    const codeDom = controller.view!.dom.querySelector<HTMLElement>(".cm-editor")!;
+    codeDom
+      .closest<HTMLElement>("[data-scient-markdown-code-block]")!
+      .setAttribute("data-scient-markdown-rich-fence", "mermaid");
+    const code = CodeMirrorView.findFromDOM(codeDom)!;
+    const from = code.state.doc.toString().indexOf("A[Start]");
+    const to = from + "A[Start]".length;
+    await act(() => code.dispatch({ selection: { anchor: from, head: to } }));
+    const first = code.domAtPos(from);
+    const last = code.domAtPos(to);
+    const selection = window.getSelection()!;
+    const range = document.createRange();
+    range.setStart(first.node, first.offset);
+    range.setEnd(last.node, last.offset);
+    selection.removeAllRanges();
+    selection.addRange(range);
+    frames.clear();
+
+    const press = Object.assign(new Event("pointerdown", { bubbles: true, cancelable: true }), {
+      button: 0,
+      isPrimary: true,
+    });
+    press.preventDefault();
+    codeDom.dispatchEvent(press);
+    window.dispatchEvent(Object.assign(new Event("pointerup"), { button: 0, isPrimary: true }));
+    window.dispatchEvent(
+      Object.assign(new Event("mouseup"), { button: 0, clientX: 240, clientY: 160, detail: 1 }),
+    );
+    await flushSelectionToolbar();
+
+    const cite = document.querySelector<HTMLButtonElement>('[aria-label="Ask in chat"]');
+    expect(cite).not.toBeNull();
+    await act(() => cite!.click());
+    expect(
+      collectComposerCitations(editor.current!.readSnapshot().value)[0]?.citation,
+    ).toMatchObject({
+      kind: "file",
+      path: "notes.md",
+      text: "A[Start]",
+    });
+    expect(controller.createSaveIntent()).toBeNull();
+    expect(onUserSourceChange).not.toHaveBeenCalled();
   });
 
   it("reveals once settled under Strict Mode and removes its highlight on unmount", async () => {

@@ -40,6 +40,7 @@ import {
   makeVoiceTranscriptCorrectionClient,
   voiceTranscriptCorrectionCommand,
 } from "./voiceTranscriptCorrectionClient.ts";
+import { hasReadySelectedVoiceModel } from "./voiceModelReadiness.ts";
 
 export { describeVoiceError } from "./voiceErrorPresentation.ts";
 export { describeVoiceRecorderError, formatVoiceTimer } from "./useScientVoiceController.ts";
@@ -51,6 +52,9 @@ export interface ScientVoiceComposerControlProps {
   readonly onTranscript: (text: string) => void;
   readonly onRequestSubmit?: () => void;
   readonly className?: string;
+  readonly ariaLabel?: string;
+  readonly presentation?: "composer" | "compact";
+  readonly readyModelOnly?: boolean;
 }
 
 export const EMPTY_TRANSCRIPT_MESSAGE = "No speech detected";
@@ -176,6 +180,9 @@ export function ScientVoiceComposerControl({
   onBusyChange,
   onRequestSubmit,
   className,
+  ariaLabel = "Dictate a voice message",
+  presentation = "composer",
+  readyModelOnly = false,
 }: ScientVoiceComposerControlProps): ReactNode {
   const client = useMemo(() => getVoiceBridge(), []);
   const correctionEnabled = useClientSettings(
@@ -208,14 +215,25 @@ export function ScientVoiceComposerControl({
     );
   }, [controller.phase, onBusyChange]);
 
-  if (!client) return null;
+  const readyModelBecameUnavailable =
+    readyModelOnly &&
+    (controller.phase === "setup-prompt" ||
+      (controller.modelSnapshot !== null &&
+        !hasReadySelectedVoiceModel(controller.modelSnapshot)) ||
+      (controller.modelSnapshot === null && controller.errorMessage !== null));
+  if (!client || readyModelBecameUnavailable) return null;
 
   const recordingSurface =
     controller.phase === "requesting-permission" ||
     controller.phase === "recording" ||
     controller.phase === "transcribing" ||
     controller.phase === "correcting" ? (
-      <div className="absolute inset-0 z-10 flex items-center gap-2 bg-background px-3 pb-3 sm:px-4 sm:pb-4">
+      <div
+        className={cn(
+          "absolute inset-0 z-10 flex items-center gap-2 bg-background",
+          presentation === "composer" ? "px-3 pb-3 sm:px-4 sm:pb-4" : null,
+        )}
+      >
         {controller.phase === "recording" ? (
           <>
             <div className="flex min-w-0 flex-1 items-center gap-2">
@@ -360,7 +378,7 @@ export function ScientVoiceComposerControl({
       ) : (
         <>
           <ComposerControl
-            aria-label="Dictate a voice message"
+            aria-label={ariaLabel}
             disabled={disabled || controller.phase !== "idle"}
             onClick={() => void controller.activate()}
           >
