@@ -107,6 +107,7 @@ describe("ComposerCommandMenu", () => {
     expect(markup).toContain(">Scient Skill</span>");
     expect(markup).toContain(">Project Skill</span>");
     expect(markup).not.toContain(">App Skill</span>");
+    expect(markup).toContain('<img aria-hidden="true" class="shrink-0 size-3.5 sm:size-3"');
   });
 
   it("shows the repo source for a slash skill", () => {

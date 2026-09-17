@@ -25,6 +25,7 @@ import { type ComposerSlashCommand, type ComposerTriggerKind } from "../../compo
 import { cn } from "~/lib/utils";
 import { Badge } from "../ui/badge";
 import { Command, CommandGroup, CommandItem, CommandList } from "../ui/command";
+import { ScientSymbol } from "../ScientSymbol";
 import { PierreEntryIcon } from "./PierreEntryIcon";
 import { ComposerBanner } from "./ComposerBanner";
 import { resolvePullRequestState } from "../pullRequest/pullRequestPresentation";
@@ -214,6 +215,7 @@ const ComposerCommandMenuItem = memo(function ComposerCommandMenuItem(props: {
           <SkillSourceBadge
             kind={skillSourceKind}
             label={skillSourceLabel}
+            showScientSymbol={skillSourceLabel === "Scient"}
             showSkillSuffix={props.triggerKind === "skill"}
           />
         ) : null}
@@ -243,12 +245,17 @@ const SKILL_SOURCE_LABEL_BY_KIND: Record<ProviderSkillSourceKind, string> = {
 function SkillSourceBadge(props: {
   kind: ProviderSkillSourceKind;
   label: string | undefined;
+  showScientSymbol: boolean;
   showSkillSuffix: boolean;
 }) {
   const Icon = SKILL_SOURCE_ICON_BY_KIND[props.kind];
   return (
     <Badge className="ms-auto" variant="secondary">
-      <Icon aria-hidden="true" className="text-current" />
+      {props.showScientSymbol ? (
+        <ScientSymbol className="size-3.5 sm:size-3" weight="strong" />
+      ) : (
+        <Icon aria-hidden="true" className="text-current" />
+      )}
       {props.label ?? SKILL_SOURCE_LABEL_BY_KIND[props.kind]}
       {props.showSkillSuffix ? " Skill" : null}
     </Badge>
