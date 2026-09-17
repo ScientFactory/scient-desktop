@@ -7,6 +7,7 @@ import {
   type VoiceModelId,
 } from "@t3tools/contracts";
 import { fromLenientJson } from "@t3tools/shared/schemaJson";
+import { SCIENT_DESKTOP_IDENTITY } from "@t3tools/shared/scientDesktopIdentity";
 import * as Context from "effect/Context";
 import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
@@ -201,7 +202,10 @@ export class DesktopAppSettings extends Context.Service<
 export function resolveDefaultDesktopSettings(appVersion: string): DesktopSettings {
   return {
     ...DEFAULT_DESKTOP_SETTINGS,
-    updateChannel: resolveDefaultDesktopUpdateChannel(appVersion),
+    updateChannel:
+      SCIENT_DESKTOP_IDENTITY.desktopUpdateChannelPolicy === "stable-only"
+        ? "latest"
+        : resolveDefaultDesktopUpdateChannel(appVersion),
   };
 }
 
@@ -230,6 +234,18 @@ function normalizeDesktopSettingsDocument(
   const updateChannelConfiguredByUser =
     parsed.updateChannelConfiguredByUser === true ||
     (isLegacySettings && Option.contains(parsedUpdateChannel, "nightly"));
+  const normalizedUpdateChannel =
+    SCIENT_DESKTOP_IDENTITY.desktopUpdateChannelPolicy === "stable-only"
+      ? {
+          updateChannel: "latest" as const,
+          updateChannelConfiguredByUser: false,
+        }
+      : {
+          updateChannel: updateChannelConfiguredByUser
+            ? Option.getOrElse(parsedUpdateChannel, () => defaultSettings.updateChannel)
+            : defaultSettings.updateChannel,
+          updateChannelConfiguredByUser,
+        };
 
   // Newer form wins when both are present; otherwise fall back to the legacy
   // `wslMode === "wsl"` signal so users coming off the swap-mode build keep
@@ -247,10 +263,7 @@ function normalizeDesktopSettingsDocument(
       parsed.serverExposureMode === "network-accessible" ? "network-accessible" : "local-only",
     tailscaleServeEnabled: parsed.tailscaleServeEnabled === true,
     tailscaleServePort: normalizeTailscaleServePort(parsed.tailscaleServePort),
-    updateChannel: updateChannelConfiguredByUser
-      ? Option.getOrElse(parsedUpdateChannel, () => defaultSettings.updateChannel)
-      : defaultSettings.updateChannel,
-    updateChannelConfiguredByUser,
+    ...normalizedUpdateChannel,
     wslBackendEnabled,
     wslDistro: normalizeWslDistro(parsed.wslDistro),
     voiceSelectedModelId: isVoiceModelId(parsed.voiceSelectedModelId)
@@ -368,6 +381,23 @@ function setUpdateChannel(
       };
 }
 
+function setProductUpdateChannel(
+  settings: DesktopSettings,
+  requestedChannel: DesktopUpdateChannel,
+): DesktopSettings {
+  if (SCIENT_DESKTOP_IDENTITY.desktopUpdateChannelPolicy !== "stable-only") {
+    return setUpdateChannel(settings, requestedChannel);
+  }
+
+  return settings.updateChannel === "latest" && !settings.updateChannelConfiguredByUser
+    ? settings
+    : {
+        ...settings,
+        updateChannel: "latest",
+        updateChannelConfiguredByUser: false,
+      };
+}
+
 function setWslBackendEnabled(settings: DesktopSettings, enabled: boolean): DesktopSettings {
   return settings.wslBackendEnabled === enabled
     ? settings
@@ -422,18 +452,27 @@ function readSettings(
   fileSystem: FileSystem.FileSystem,
   settingsPath: string,
   appVersion: string,
-): Effect.Effect<DesktopSettings> {
+): Effect.Effect<{
+  readonly settings: DesktopSettings;
+  readonly shouldRewrite: boolean;
+}> {
   const defaultSettings = resolveDefaultDesktopSettings(appVersion);
 
   return fileSystem.readFileString(settingsPath).pipe(
     Effect.option,
     Effect.flatMap(
       Option.match({
-        onNone: () => Effect.succeed(defaultSettings),
+        onNone: () => Effect.succeed({ settings: defaultSettings, shouldRewrite: false }),
         onSome: (raw) =>
           decodeDesktopSettingsJson(raw).pipe(
-            Effect.map((parsed) => normalizeDesktopSettingsDocument(parsed, appVersion)),
-            Effect.orElseSucceed(() => defaultSettings),
+            Effect.map((parsed) => ({
+              settings: normalizeDesktopSettingsDocument(parsed, appVersion),
+              shouldRewrite:
+                SCIENT_DESKTOP_IDENTITY.desktopUpdateChannelPolicy === "stable-only" &&
+                (parsed.updateChannel !== undefined ||
+                  parsed.updateChannelConfiguredByUser !== undefined),
+            })),
+            Effect.orElseSucceed(() => ({ settings: defaultSettings, shouldRewrite: false })),
           ),
       }),
     ),
@@ -502,6 +541,29 @@ export const make = Effect.gen(function* () {
   const crypto = yield* Crypto.Crypto;
   const settingsRef = yield* SynchronizedRef.make(environment.defaultDesktopSettings);
 
+  const writeSettingsAtomically = (settings: DesktopSettings) =>
+    crypto.randomUUIDv4.pipe(
+      Effect.map((uuid) => uuid.replace(/-/g, "")),
+      Effect.mapError(
+        (cause) =>
+          new DesktopSettingsWriteError({
+            operation: "create-temporary-file-name",
+            path: environment.desktopSettingsPath,
+            cause,
+          }),
+      ),
+      Effect.flatMap((suffix) =>
+        writeSettings({
+          fileSystem,
+          path,
+          settingsPath: environment.desktopSettingsPath,
+          settings,
+          defaultSettings: environment.defaultDesktopSettings,
+          suffix,
+        }),
+      ),
+    );
+
   const updateInMemory = (update: (settings: DesktopSettings) => DesktopSettings) =>
     SynchronizedRef.modify(settingsRef, (settings) => {
       const nextSettings = update(settings);
@@ -517,26 +579,7 @@ export const make = Effect.gen(function* () {
         return Effect.succeed([settingsChange(settings, false), settings] as const);
       }
 
-      return crypto.randomUUIDv4.pipe(
-        Effect.map((uuid) => uuid.replace(/-/g, "")),
-        Effect.mapError(
-          (cause) =>
-            new DesktopSettingsWriteError({
-              operation: "create-temporary-file-name",
-              path: environment.desktopSettingsPath,
-              cause,
-            }),
-        ),
-        Effect.flatMap((suffix) =>
-          writeSettings({
-            fileSystem,
-            path,
-            settingsPath: environment.desktopSettingsPath,
-            settings: nextSettings,
-            defaultSettings: environment.defaultDesktopSettings,
-            suffix,
-          }),
-        ),
+      return writeSettingsAtomically(nextSettings).pipe(
         Effect.as([settingsChange(nextSettings, true), nextSettings] as const),
       );
     });
@@ -544,12 +587,22 @@ export const make = Effect.gen(function* () {
   return DesktopAppSettings.of({
     get: SynchronizedRef.get(settingsRef),
     load: Effect.gen(function* () {
-      const settings = yield* readSettings(
+      const loaded = yield* readSettings(
         fileSystem,
         environment.desktopSettingsPath,
         environment.appVersion,
       );
-      return yield* SynchronizedRef.setAndGet(settingsRef, settings);
+      if (loaded.shouldRewrite) {
+        yield* writeSettingsAtomically(loaded.settings).pipe(
+          Effect.catch((error) =>
+            Effect.logWarning("Could not persist normalized desktop update settings.", {
+              error: error.message,
+              settingsPath: environment.desktopSettingsPath,
+            }),
+          ),
+        );
+      }
+      return yield* SynchronizedRef.setAndGet(settingsRef, loaded.settings);
     }).pipe(Effect.withSpan("desktop.settings.load")),
     setMainWindowBounds: (bounds, isMaximized) =>
       persist((settings) => setMainWindowBounds(settings, bounds, isMaximized)).pipe(
@@ -572,7 +625,7 @@ export const make = Effect.gen(function* () {
         Effect.withSpan("desktop.settings.setTailscaleServe", { attributes: input }),
       ),
     setUpdateChannel: (channel) =>
-      persist((settings) => setUpdateChannel(settings, channel)).pipe(
+      persist((settings) => setProductUpdateChannel(settings, channel)).pipe(
         Effect.withSpan("desktop.settings.setUpdateChannel", { attributes: { channel } }),
       ),
     setWslBackendEnabled: (enabled) =>

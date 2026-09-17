@@ -128,7 +128,7 @@ describe("DesktopSettings", () => {
     ),
   );
 
-  it("defaults packaged nightly builds to the nightly update channel", () => {
+  it("keeps packaged Scient builds on the stable update channel", () => {
     assert.deepEqual(
       DesktopAppSettings.resolveDefaultDesktopSettings("0.0.17-nightly.20260415.1"),
       {
@@ -139,7 +139,7 @@ describe("DesktopSettings", () => {
         serverExposureMode: "local-only",
         tailscaleServeEnabled: false,
         tailscaleServePort: 443,
-        updateChannel: "nightly",
+        updateChannel: "latest",
         updateChannelConfiguredByUser: false,
         wslBackendEnabled: false,
         wslOnly: false,
@@ -196,7 +196,7 @@ describe("DesktopSettings", () => {
           tailscaleServeEnabled: true,
           tailscaleServePort: 8443,
           updateChannel: "latest",
-          updateChannelConfiguredByUser: true,
+          updateChannelConfiguredByUser: false,
           wslBackendEnabled: false,
           wslOnly: false,
           wslDistro: null,
@@ -215,9 +215,9 @@ describe("DesktopSettings", () => {
         assert.equal(tailscale.settings.tailscaleServePort, 9443);
 
         const updateChannel = yield* settings.setUpdateChannel("nightly");
-        assert.isTrue(updateChannel.changed);
-        assert.equal(updateChannel.settings.updateChannel, "nightly");
-        assert.equal(updateChannel.settings.updateChannelConfiguredByUser, true);
+        assert.isFalse(updateChannel.changed);
+        assert.equal(updateChannel.settings.updateChannel, "latest");
+        assert.equal(updateChannel.settings.updateChannelConfiguredByUser, false);
       }),
     ),
   );
@@ -260,6 +260,11 @@ describe("DesktopSettings", () => {
         const updateChannel = yield* settings.setUpdateChannel("latest");
         assert.isFalse(updateChannel.changed);
         assert.equal(updateChannel.settings.updateChannelConfiguredByUser, false);
+
+        const nightly = yield* settings.setUpdateChannel("nightly");
+        assert.isFalse(nightly.changed);
+        assert.equal(nightly.settings.updateChannel, "latest");
+        assert.equal(nightly.settings.updateChannelConfiguredByUser, false);
       }),
     ),
   );
@@ -362,13 +367,22 @@ describe("DesktopSettings", () => {
             serverExposureMode: "network-accessible",
             tailscaleServeEnabled: true,
             tailscaleServePort: 8443,
-            updateChannel: "nightly",
-            updateChannelConfiguredByUser: true,
+            updateChannel: "latest",
+            updateChannelConfiguredByUser: false,
             wslBackendEnabled: false,
             wslOnly: false,
             wslDistro: null,
             voiceSelectedModelId: null,
           } satisfies DesktopAppSettings.DesktopSettings);
+
+          const persisted = yield* decodeDesktopSettingsPatch(
+            yield* fileSystem.readFileString(environment.desktopSettingsPath),
+          );
+          assert.deepEqual(persisted, {
+            serverExposureMode: "network-accessible",
+            tailscaleServeEnabled: true,
+            tailscaleServePort: 8443,
+          } satisfies typeof DesktopSettingsPatch.Type);
         }),
       ),
   );
@@ -395,13 +409,15 @@ describe("DesktopSettings", () => {
     ),
   );
 
-  it.effect("migrates legacy implicit update channels to the runtime default", () =>
+  it.effect("removes legacy update channel overrides while preserving other settings", () =>
     withSettings(
       Effect.gen(function* () {
+        const environment = yield* DesktopEnvironment.DesktopEnvironment;
+        const fileSystem = yield* FileSystem.FileSystem;
         const settings = yield* DesktopAppSettings.DesktopAppSettings;
         yield* writeSettingsPatch({
-          serverExposureMode: "local-only",
-          updateChannel: "latest",
+          serverExposureMode: "network-accessible",
+          updateChannel: "nightly",
         });
 
         assert.deepEqual(yield* settings.load, {
@@ -409,24 +425,33 @@ describe("DesktopSettings", () => {
           localEnvironmentEnabled: true,
           mainWindowBounds: null,
           mainWindowMaximized: false,
-          serverExposureMode: "local-only",
+          serverExposureMode: "network-accessible",
           tailscaleServeEnabled: false,
           tailscaleServePort: 443,
-          updateChannel: "nightly",
+          updateChannel: "latest",
           updateChannelConfiguredByUser: false,
           wslBackendEnabled: false,
           wslOnly: false,
           wslDistro: null,
           voiceSelectedModelId: null,
         } satisfies DesktopAppSettings.DesktopSettings);
+
+        assert.deepEqual(
+          yield* decodeDesktopSettingsPatch(
+            yield* fileSystem.readFileString(environment.desktopSettingsPath),
+          ),
+          { serverExposureMode: "network-accessible" } satisfies typeof DesktopSettingsPatch.Type,
+        );
       }),
       { appVersion: "0.0.17-nightly.20260415.1" },
     ),
   );
 
-  it.effect("preserves explicit stable update channel on nightly builds", () =>
+  it.effect("removes explicit stable overrides because Scient has one release track", () =>
     withSettings(
       Effect.gen(function* () {
+        const environment = yield* DesktopEnvironment.DesktopEnvironment;
+        const fileSystem = yield* FileSystem.FileSystem;
         const settings = yield* DesktopAppSettings.DesktopAppSettings;
         yield* writeSettingsPatch({
           serverExposureMode: "local-only",
@@ -443,12 +468,19 @@ describe("DesktopSettings", () => {
           tailscaleServeEnabled: false,
           tailscaleServePort: 443,
           updateChannel: "latest",
-          updateChannelConfiguredByUser: true,
+          updateChannelConfiguredByUser: false,
           wslBackendEnabled: false,
           wslOnly: false,
           wslDistro: null,
           voiceSelectedModelId: null,
         } satisfies DesktopAppSettings.DesktopSettings);
+
+        assert.deepEqual(
+          yield* decodeDesktopSettingsPatch(
+            yield* fileSystem.readFileString(environment.desktopSettingsPath),
+          ),
+          {} satisfies typeof DesktopSettingsPatch.Type,
+        );
       }),
       { appVersion: "0.0.17-nightly.20260415.1" },
     ),

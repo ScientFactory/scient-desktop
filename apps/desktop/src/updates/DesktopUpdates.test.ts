@@ -180,7 +180,7 @@ describe("DesktopUpdates", () => {
   });
 
   it.effect("enables nightly full changelog release notes and broadcasts summaries", () => {
-    const harness = makeHarness();
+    const harness = makeHarness({ beforeSetUpdateChannel: Effect.void });
 
     return Effect.scoped(
       Effect.gen(function* () {
@@ -511,6 +511,7 @@ describe("DesktopUpdates", () => {
   it.effect("recovers download state after an unexpected setup failure", () => {
     let disableDifferentialCalls = 0;
     const harness = makeHarness({
+      beforeSetUpdateChannel: Effect.void,
       setDisableDifferentialDownload: Effect.suspend(() => {
         disableDifferentialCalls += 1;
         return disableDifferentialCalls === 1
@@ -583,6 +584,7 @@ describe("DesktopUpdates", () => {
 
   it.effect("clears quitting state after an unexpected install setup failure", () => {
     const harness = makeHarness({
+      beforeSetUpdateChannel: Effect.void,
       stopBackend: Effect.die(new Error("backend stop failed")),
     });
 
@@ -724,7 +726,7 @@ describe("DesktopUpdates", () => {
     ).pipe(Effect.provide(Layer.merge(TestClock.layer(), harness.layer)));
   });
 
-  it.effect("persists channel changes through the settings service", () => {
+  it.effect("honors the product update-channel policy returned by the settings service", () => {
     const harness = makeHarness();
 
     return Effect.scoped(
@@ -736,9 +738,9 @@ describe("DesktopUpdates", () => {
         const state = yield* updates.setChannel("nightly");
         const persistedSettings = yield* settings.get;
 
-        assert.equal(state.channel, "nightly");
-        assert.equal(persistedSettings.updateChannel, "nightly");
-        assert.equal(persistedSettings.updateChannelConfiguredByUser, true);
+        assert.equal(state.channel, "latest");
+        assert.equal(persistedSettings.updateChannel, "latest");
+        assert.equal(persistedSettings.updateChannelConfiguredByUser, false);
       }),
     ).pipe(Effect.provide(Layer.merge(TestClock.layer(), harness.layer)));
   });

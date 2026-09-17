@@ -598,6 +598,14 @@ hosted-web aliases, or release bot. The owned manual workflow packages the
 exact promoted Scient tree, embeds the owned updater repository, and
 distributes the exact server runtime as a GitHub release asset.
 
+Scient publishes one desktop update track: stable. Preserve T3's internal
+channel contracts and updater implementation for alignment compatibility, but
+do not expose the inherited Stable/Nightly selector in the Scient desktop.
+Desktop settings normalize and remove stale saved channel overrides before the
+updater is configured, so users who previously selected Nightly return to the
+owned stable feed. This product-policy boundary must not fork Electron update
+discovery, download, installation, or the release workflow.
+
 The downloaded-update notification links to the exact version under the shared
 `SCIENT_DESKTOP_RELEASE_REPOSITORY` in `packages/shared/src/scientRelease.ts`.
 It must not combine a Scient version with T3's release repository. The brand
