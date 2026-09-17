@@ -147,6 +147,13 @@ body/action row. The user update guide no longer advertises an unsupported Night
   The unused wrapper was removed; Tiptap still calls the unchanged DOM direction helper, now in
   `applyComposerDirection.ts`. The exact `knip:check` and `vp check` gates pass, along with web
   typecheck and 54 bidi tests covering RTL/LTR, return to Automatic, and newly inserted paragraphs.
+- A subsequent server CI failure exposed a real review-index race: copying the index with a newer
+  filesystem timestamp could hide a same-size tracked edit. The temporary copy now retains the
+  source timestamp before Git expands/adds entries. A deterministic regression failed before the
+  fix and passes after it, including assertions that the real index bytes and timestamp are unchanged.
+  All 83 Git core tests passed; the new regression and original combined-patch-limit test also
+  passed ten repeated runs. The broader VCS suite passed 163 tests across seven files.
+  Server typecheck, bundle build, and `vp check` passed.
 - Mobile native source discovery found 11 Swift and 23 Kotlin files. SwiftLint, ktlint, and detekt
   are unavailable on this host and were reported as skipped.
 - No computer use, visual acceptance, live-provider qualification, Windows execution, or native

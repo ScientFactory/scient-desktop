@@ -429,6 +429,12 @@ never through a broad merge into this repository.
 
 ## Post-D4 Scient-owned feature seams
 
+Review previews preserve the source Git index timestamp when preparing a temporary
+index for untracked files. A freshly timestamped copy can bypass Git's racy-clean
+content checks and omit rapid same-size tracked edits. Keep the source index read-only,
+retain split-index handling, and preserve the deterministic regression in
+`GitVcsDriverCore.test.ts`; do not replace it with a timing delay or size-changing fixture.
+
 Unread-answer attention stays in Scient-owned `scient/answerAttention` modules.
 Preserve the optional durable completion marker in shell/detail snapshots, its
 shell-authoritative merge, focus-aware read acknowledgement, and validated native

@@ -1320,6 +1320,48 @@ it.layer(TestLayer)("GitVcsDriver core integration", (it) => {
       }),
     );
 
+    it.effect(
+      "retains racily clean tracked edits when adding untracked files to the review index",
+      () =>
+        Effect.gen(function* () {
+          const cwd = yield* makeTmpDir();
+          yield* initRepoWithCommit(cwd);
+          const driver = yield* GitVcsDriver.GitVcsDriver;
+          const fs = yield* FileSystem.FileSystem;
+          const path = yield* Path.Path;
+          // Model a filesystem where same-size edits share the cached stat timestamp.
+          yield* git(cwd, ["config", "core.trustctime", "false"]);
+          yield* git(cwd, ["config", "core.checkStat", "minimal"]);
+          const timestamp = 1_577_836_800;
+          const trackedPath = path.join(cwd, "tracked.txt");
+          yield* writeTextFile(cwd, "tracked.txt", "before\n");
+          yield* fs.utimes(trackedPath, timestamp, timestamp);
+          yield* git(cwd, ["add", "tracked.txt"]);
+          yield* git(cwd, ["commit", "-m", "add tracked fixture"]);
+          const indexPath = path.resolve(
+            cwd,
+            (yield* git(cwd, ["rev-parse", "--git-path", "index"])).trim(),
+          );
+          yield* fs.utimes(indexPath, timestamp, timestamp);
+          const indexBefore = yield* fs.readFile(indexPath);
+          const indexMtimeBefore = (yield* fs.stat(indexPath)).mtime;
+          yield* writeTextFile(cwd, "tracked.txt", "after!\n");
+          yield* fs.utimes(trackedPath, timestamp, timestamp);
+          yield* writeTextFile(cwd, "untracked.txt", "new\n");
+
+          const preview = yield* driver.getReviewDiffPreview({ cwd });
+          const dirty = preview.sources.find((source) => source.kind === "working-tree")!;
+          assert.deepStrictEqual(dirty.files, [
+            { path: "tracked.txt", previousPath: null, additions: 1, deletions: 1 },
+            { path: "untracked.txt", previousPath: null, additions: 1, deletions: 0 },
+          ]);
+          assert.include(dirty.diff, "-before");
+          assert.include(dirty.diff, "+after!");
+          assert.deepStrictEqual(yield* fs.readFile(indexPath), indexBefore);
+          assert.deepStrictEqual((yield* fs.stat(indexPath)).mtime, indexMtimeBefore);
+        }),
+    );
+
     it.effect("keeps complete stats for files beyond the combined patch limit", () =>
       Effect.gen(function* () {
         const cwd = yield* makeTmpDir();
