@@ -16,8 +16,20 @@ import {
   normalizeServerBackgroundActivitySettings,
   resolveServerBackgroundActivitySettings,
 } from "@t3tools/shared/backgroundActivitySettings";
+import type { DesktopUpdateChannelPolicy } from "@t3tools/shared/scientDesktopIdentity";
 import * as Duration from "effect/Duration";
 import * as Equal from "effect/Equal";
+
+export function shouldShowDesktopUpdateChannelSelector(input: {
+  readonly hasDesktopBridge: boolean;
+  readonly policy: DesktopUpdateChannelPolicy;
+}): boolean {
+  return input.hasDesktopBridge && input.policy === "user-selectable";
+}
+
+export function formatAboutVersionLabel(version: string, stageLabel: string | null): string {
+  return stageLabel === "Dev" ? `${version} · Dev` : version;
+}
 
 export function isProjectGroupingEnabled(mode: SidebarProjectGroupingMode): boolean {
   return mode !== "separate";

@@ -6,7 +6,7 @@ app, while an SSH or manually managed environment may run its own Scient server.
 
 ## Update the desktop app
 
-Packaged Scient releases check the selected update channel after startup and
+Packaged Scient releases check for stable releases after startup and
 periodically while the app is open. Updates are deliberate:
 
 1. Select the update control near the bottom of the sidebar, or use
@@ -22,9 +22,9 @@ Scient does not install an update silently while work is running. Let active
 agent turns and terminal commands finish before restarting. Threads, settings,
 and project files remain in their existing locations.
 
-**Settings → General → Desktop updates** selects **Stable** or **Nightly**.
-Stable follows full public releases. Nightly is a preview channel and can move
-more often; switch back to Stable when you no longer want preview builds.
+Scient publishes one desktop update track: stable. If you previously selected
+Nightly, Scient automatically returns to stable updates when you run a version
+with this policy. No settings change is needed.
 
 Automatic update checks require an official packaged build and a configured
 release feed. On Linux they additionally require running the AppImage. If the
@@ -79,16 +79,6 @@ request is accepted. A failure remains visible for review and retry.
 An older service installation may require one local repair or update first.
 Use the exact command supplied by Scient or the procedure
 in [Run Scient in the background](./background-service.md).
-
-## Nightly desktop release notes
-
-The desktop app shows a compact release-notes preview when a nightly update is available. Changes
-appear newest first within each release. Each release links to its exact page on GitHub, even when
-all changes fit in the preview.
-
-The preview shows up to eight changes from each of six releases. When it leaves out changes or older
-releases, it shows the exact number and links to the rest. Contributor credits do not count as
-changes.
 
 ## Troubleshooting
 

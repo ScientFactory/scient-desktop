@@ -37,6 +37,13 @@ that names it. Choose **Apply to all** to write your current values to the envir
 the warning. The same applies to the new-thread workspace mode and the source control writing
 style.
 
+To send the same prompt to several models on web or desktop, **Shift-click** models
+in a new thread's model picker to add or remove them. A regular click returns to a
+single model. Choose a base branch and send. Each selection starts a separate thread
+and worktree while you stay in the new thread composer. This requires a Git project.
+
+## Pin and reorder threads
+
 A settings change affects future settlement and does not reopen a settled thread. Settings saved
 by older clients on one device no longer control this behavior.
 

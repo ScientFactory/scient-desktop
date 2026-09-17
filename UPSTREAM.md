@@ -37,32 +37,33 @@ revision remains literal ancestry of owned `main`; it is not merely a reviewed
 or observed tip.
 
 The current T3 alignment is recorded in
-[`docs/internals/2026-09-17-upstream-sync-d1a64489.md`](docs/internals/2026-09-17-upstream-sync-d1a64489.md)
-and in `upstream-state.json`. It preserves 53 more official first-parent commits after
-`c1b2210411da79350a3f9f5a65a4a64971e4acad` through
-`01e64193d9d2abfae8f7b3d20f66824e38397bd6`. The initial history-preserving merge
-`65d6a5100ced1098f91b1c7256a70f5d9616bca3` has the exact owned base
-`8a293f0836684c6e381d1b228e3aa02e2ea360ac` as its first parent. The final extension merge
-`00e25964c2625c0beac6b54d08af861afd0a49dc` has the reviewed candidate as its first parent and the
-exact final official target as its second.
+[`docs/internals/2026-09-17-upstream-sync-dd9528a9.md`](docs/internals/2026-09-17-upstream-sync-dd9528a9.md)
+and in `upstream-state.json`. It preserves 37 more official first-parent commits after
+`01e64193d9d2abfae8f7b3d20f66824e38397bd6` through
+`1ab2dfb5a7bd2996f79407b5d02cae6132a7626c`. Initial merge
+`f3a0406a28fe7122fdf3ad0932942ed38e401d1b` is extended on the same branch by
+`86b5bb723178ec1959e916d6722e958e5268859e`, whose second parent is the exact final official
+target. Its first parent `d1a8574362d2f64038e06aa0d8d1b26f67482855` also incorporates owned
+main `cee69d80373272fce40d0e1f866193164066c852`.
 
-Automated qualification passed; owner manual review is pending. Pull-request delivery, merge, and
-release publication remain separate actions. The
+Automated qualification passed; the owner requested PR delivery and history-preserving auto-merge.
+No additional visual acceptance or release publication is implied. The
 [preceding alignment](docs/internals/2026-09-15-upstream-sync-c1b22104.md) remains in ancestry.
 Later observed upstream tips do not move `integrationBase` by themselves.
 
 ## Receiving T3 updates
 
-The local alignment through `01e64193` is documented in the
-[2026-09-17 review](docs/internals/2026-09-17-upstream-sync-d1a64489.md). It adds configurable send
-shortcuts and follow-up behavior, provider thinking traces and native slash commands, provider usage
-limits, safer folder drops, connection compatibility handling, project monograms, pull-request and
-mobile reliability improvements, lower-overhead checkpoint and GitHub refresh paths, authenticated
-private-repository pull-request media, width-aware provider settings, progressive complete
-large-diff review loading across web and mobile, pull-request-first proactive panel behavior, and
-clearer agent approval prompts. Scient's provider lifecycle, scientific surfaces, identity, signed
-npm-pinned server runtime, durable server-authoritative queue, state roots, and cloud/mobile
-publication holds remain.
+The local alignment through `1ab2dfb5` is documented in the
+[2026-09-17 review](docs/internals/2026-09-17-upstream-sync-dd9528a9.md). It adds the rich-text
+composer default, multi-model thread creation in separate worktrees, automatic storage cleanup,
+directory-safe file navigation, broader command-palette discovery, improved pull-request and chat
+presentation, checkpoint and settlement reliability, Android Material surfaces, mobile worktree
+handoff, dictation wake-lock behavior, mobile model favorites, and the preview-picker navigation
+fix. Scient's approved stable-only update policy also removes the unsupported track selector and
+normalizes stale Nightly preferences without replacing download or install mechanics.
+Scient's provider lifecycle, scientific surfaces,
+identity, signed npm-pinned server runtime, durable server-authoritative queue, project-first
+policy, state roots, and cloud/mobile publication holds remain.
 
 Migration IDs are immutable local history, not an upstream synchronization counter. T3's multi-PR
 migration is registered as Scient `53`, composer-context migration follows at `54`, and title-state
@@ -428,6 +429,12 @@ never through a broad merge into this repository.
 
 ## Post-D4 Scient-owned feature seams
 
+Review previews preserve the source Git index timestamp when preparing a temporary
+index for untracked files. A freshly timestamped copy can bypass Git's racy-clean
+content checks and omit rapid same-size tracked edits. Keep the source index read-only,
+retain split-index handling, and preserve the deterministic regression in
+`GitVcsDriverCore.test.ts`; do not replace it with a timing delay or size-changing fixture.
+
 Unread-answer attention stays in Scient-owned `scient/answerAttention` modules.
 Preserve the optional durable completion marker in shell/detail snapshots, its
 shell-authoritative merge, focus-aware read acknowledgement, and validated native
@@ -601,6 +608,14 @@ does not enable T3's tag/nightly workflow, npm publication, relay deployment,
 hosted-web aliases, or release bot. The owned manual workflow packages the
 exact promoted Scient tree, embeds the owned updater repository, and
 distributes the exact server runtime as a GitHub release asset.
+
+Scient publishes one desktop update track: stable. Preserve T3's internal
+channel contracts and updater implementation for alignment compatibility, but
+do not expose the inherited Stable/Nightly selector in the Scient desktop.
+Desktop settings normalize and remove stale saved channel overrides before the
+updater is configured, so users who previously selected Nightly return to the
+owned stable feed. This product-policy boundary must not fork Electron update
+discovery, download, installation, or the release workflow.
 
 The downloaded-update notification links to the exact version under the shared
 `SCIENT_DESKTOP_RELEASE_REPOSITORY` in `packages/shared/src/scientRelease.ts`.

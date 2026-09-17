@@ -148,13 +148,13 @@ describe("clientPersistenceStorage", () => {
     );
   });
 
-  it("keeps the default diff file state across reloads and defaults it to expanded", async () => {
+  it("keeps the default diff file state across reloads and defaults it to collapsed", async () => {
     const testWindow = getTestWindow();
     const { readBrowserClientSettings, writeBrowserClientSettings } =
       await import("./clientPersistenceStorage");
 
     testWindow.localStorage.setItem("scient-next:client-settings:v1", JSON.stringify({}));
-    expect(readBrowserClientSettings()?.diffFilesCollapsed).toBe(false);
+    expect(readBrowserClientSettings()?.diffFilesCollapsed).toBe(true);
 
     writeBrowserClientSettings({ ...DEFAULT_CLIENT_SETTINGS, diffFilesCollapsed: true });
     expect(readBrowserClientSettings()?.diffFilesCollapsed).toBe(true);

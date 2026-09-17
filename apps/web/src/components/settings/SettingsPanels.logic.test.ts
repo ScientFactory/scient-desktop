@@ -11,6 +11,7 @@ import { describe, expect, it } from "vite-plus/test";
 import {
   backgroundActivitySharedPolicySettings,
   buildProviderInstanceUpdatePatch,
+  formatAboutVersionLabel,
   formatDiagnosticsDescription,
   getChangedBrowserSettingLabels,
   getChangedTypographySettingLabels,
@@ -18,7 +19,41 @@ import {
   isProjectGroupingEnabled,
   projectGroupingModeFromToggle,
   resolveBackgroundActivityProfileOption,
+  shouldShowDesktopUpdateChannelSelector,
 } from "./SettingsPanels.logic";
+
+describe("about version label", () => {
+  it("distinguishes development builds without changing release version labels", () => {
+    expect(formatAboutVersionLabel("0.0.42", "Dev")).toBe("0.0.42 · Dev");
+    expect(formatAboutVersionLabel("0.6.13", null)).toBe("0.6.13");
+  });
+});
+
+describe("desktop update channel selector", () => {
+  it("stays hidden for Scient's stable-only updater policy", () => {
+    expect(
+      shouldShowDesktopUpdateChannelSelector({
+        hasDesktopBridge: true,
+        policy: "stable-only",
+      }),
+    ).toBe(false);
+  });
+
+  it("remains available to products that deliberately expose channel selection", () => {
+    expect(
+      shouldShowDesktopUpdateChannelSelector({
+        hasDesktopBridge: true,
+        policy: "user-selectable",
+      }),
+    ).toBe(true);
+    expect(
+      shouldShowDesktopUpdateChannelSelector({
+        hasDesktopBridge: false,
+        policy: "user-selectable",
+      }),
+    ).toBe(false);
+  });
+});
 
 describe("typography settings restore", () => {
   it("detects family and size changes by font row", () => {

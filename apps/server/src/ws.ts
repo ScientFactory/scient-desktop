@@ -228,9 +228,6 @@ import * as RelayClient from "@t3tools/shared/relayClient";
 const isOrchestrationDispatchCommandError = Schema.is(OrchestrationDispatchCommandError);
 const isTextGenerationError = Schema.is(TextGenerationError);
 const isAcpRequestError = Schema.is(EffectAcpErrors.AcpRequestError);
-// SCIENT-FORK:START — preserve the typed, user-actionable provisioning reason.
-const isScientForkCompletionError = Schema.is(ScientForkReactor.ScientForkCompletionError);
-// SCIENT-FORK:END
 
 const nowIso = Effect.map(DateTime.now, DateTime.formatIso);
 const CONFIG_DISCOVERY_TIMEOUT = Duration.seconds(5);
@@ -1616,6 +1613,12 @@ const makeWsRpcLayer = (
             }
 
             if (prepareWorktree && !shouldPrepareWorktree) {
+              if (prepareWorktree.requireWorktree) {
+                return yield* new OrchestrationDispatchCommandError({
+                  message:
+                    "A separate worktree requires a Git repository and a base branch with a commit.",
+                });
+              }
               // Not a git repo, or the base has no commit: the thread runs in
               // the project checkout instead. The card says so and moves on.
               yield* track(
@@ -1648,8 +1651,8 @@ const makeWsRpcLayer = (
               // every delete for the prior incarnation committed before it.
               // Drain through that event before setup or turn start can own
               // terminals and provider sessions under the reused thread id.
-              yield* threadDeletionReactor.drainThrough(created.sequence);
               createdThread = true;
+              yield* threadDeletionReactor.drainThrough(created.sequence);
               // Persist the send now rather than with the turn: the thread is
               // real from here on, so any client (or a reload) sees the message
               // while the worktree is still being prepared. The turn start
@@ -1853,13 +1856,16 @@ const makeWsRpcLayer = (
                   ),
                 onSuccess: (threadDeleted) =>
                   Effect.fail(
-                    threadDeleted
+                    threadDeleted ||
+                      (bootstrap?.createThread &&
+                        bootstrap.prepareWorktree?.requireWorktree === true &&
+                        !createdThread)
                       ? new OrchestrationDispatchCommandError({
                           message: dispatchError.message,
                           ...(dispatchError.cause !== undefined
                             ? { cause: dispatchError.cause }
                             : {}),
-                          bootstrapThreadDisposition: "deleted",
+                          bootstrapThreadDisposition: threadDeleted ? "deleted" : "not-created",
                         })
                       : dispatchError,
                   ),
@@ -1867,6 +1873,7 @@ const makeWsRpcLayer = (
             );
 
           const settledBootstrapProgram = bootstrapProgram.pipe(
+            Effect.interruptible,
             Effect.catchCause((cause) => {
               const dispatchError = toBootstrapDispatchCommandCauseError(cause);
               if (Cause.hasInterruptsOnly(cause)) {
@@ -1934,6 +1941,8 @@ const makeWsRpcLayer = (
                   ),
               ).pipe(Effect.andThen(cleanupAndFail(cause, dispatchError)));
             }),
+            // Cancellation must finish recording and rollback after the bootstrap is interrupted.
+            Effect.uninterruptible,
           );
 
           // The bootstrap outlives the connection that asked for it: a reload
@@ -2157,38 +2166,37 @@ const makeWsRpcLayer = (
               }
               return result;
             }).pipe(
-              Effect.catch((cause) =>
-                Effect.gen(function* () {
-                  if (command.type === "thread.fork") {
-                    if (
-                      isOrchestrationDispatchCommandError(cause) &&
-                      cause.forkDisposition === "rejected"
-                    )
-                      return yield* cause;
-                    const forkDisposition = yield* scientForkReactor
-                      .getDisposition(command.newThreadId)
-                      .pipe(Effect.catch(() => Effect.succeed(undefined)));
-                    return yield* new OrchestrationDispatchCommandError({
-                      message:
-                        cause instanceof Error ? cause.message : "Unable to complete this fork.",
-                      cause,
-                      ...(forkDisposition === undefined ? {} : { forkDisposition }),
-                    });
+              Effect.catch((cause) => {
+                // Preserve upstream's typed non-fork failures verbatim. Forks
+                // alone need Scient's asynchronous provisioning disposition.
+                if (command.type !== "thread.fork") {
+                  return Effect.fail(
+                    isOrchestrationDispatchCommandError(cause)
+                      ? cause
+                      : new OrchestrationDispatchCommandError({
+                          message: "Failed to dispatch orchestration command",
+                          cause,
+                        }),
+                  );
+                }
+                return Effect.gen(function* () {
+                  if (
+                    isOrchestrationDispatchCommandError(cause) &&
+                    cause.forkDisposition === "rejected"
+                  ) {
+                    return yield* cause;
                   }
-                  return yield* isOrchestrationDispatchCommandError(cause)
-                    ? cause
-                    : new OrchestrationDispatchCommandError({
-                        // SCIENT-FORK:START — generic dispatch failures retain T3's
-                        // existing message; fork provisioning failures are safe and
-                        // actionable, so do not hide their typed explanation.
-                        message: isScientForkCompletionError(cause)
-                          ? cause.message
-                          : "Failed to dispatch orchestration command",
-                        // SCIENT-FORK:END
-                        cause,
-                      });
-                }),
-              ),
+                  const forkDisposition = yield* scientForkReactor
+                    .getDisposition(command.newThreadId)
+                    .pipe(Effect.catch(() => Effect.succeed(undefined)));
+                  return yield* new OrchestrationDispatchCommandError({
+                    message:
+                      cause instanceof Error ? cause.message : "Unable to complete this fork.",
+                    cause,
+                    ...(forkDisposition === undefined ? {} : { forkDisposition }),
+                  });
+                });
+              }),
             ),
             { "rpc.aggregate": "orchestration" },
           ),
@@ -3253,7 +3261,7 @@ const makeWsRpcLayer = (
         [WS_METHODS.pullRequestsInvalidate]: (input) =>
           observeRpcEffect(
             WS_METHODS.pullRequestsInvalidate,
-            pullRequests.invalidate(input).pipe(
+            pullRequests.invalidate(input, { notifyReaders: true }).pipe(
               // A reader asking for fresh host state also wants the thread badges it feeds to
               // catch up, including a merged link the sweep would otherwise never revisit.
               Effect.andThen(

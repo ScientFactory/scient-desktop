@@ -28,6 +28,7 @@ describe("Scient desktop identity", () => {
   it("keeps cloud and telemetry closed while enabling the owned updater", () => {
     assert.isFalse(SCIENT_DESKTOP_IDENTITY.outboundTelemetryEnabled);
     assert.isTrue(SCIENT_DESKTOP_IDENTITY.autoUpdateEnabled);
+    assert.equal(SCIENT_DESKTOP_IDENTITY.desktopUpdateChannelPolicy, "stable-only");
     assert.isTrue(SCIENT_DESKTOP_IDENTITY.safetyEnvelopeEnabled);
     assert.isFalse(SCIENT_DESKTOP_IDENTITY.cloudEnabled);
   });
