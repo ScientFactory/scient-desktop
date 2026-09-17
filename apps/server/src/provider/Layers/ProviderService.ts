@@ -1685,11 +1685,10 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
       const candidate = inputTextWithAttachmentContext
         ? `${inputTextWithAttachmentContext}\n\n${context}`
         : context;
-      if (candidate.length <= PROVIDER_SEND_TURN_MAX_INPUT_CHARS) {
-        inputTextWithAttachmentContext = candidate;
-        return true;
-      }
-      return false;
+      // Preserve selected data. The final prepared-input check can omit optional
+      // Skill discovery, but must reject rather than silently drop attachments.
+      inputTextWithAttachmentContext = candidate;
+      return candidate.length <= PROVIDER_SEND_TURN_MAX_INPUT_CHARS;
     };
     for (const attachment of attachments) {
       const attachmentPath = resolveAttachmentPath({
@@ -1816,16 +1815,32 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
         { discard: true },
       );
       const scientTools = scientToolProjectionForProvider(routed.adapter.provider);
-      const skillTurn = prepareScientSkillTurn(
-        input.input,
-        skillPlan.delivery === "mcp" ? skillPlan.skills : [],
-        skillPlan.delivery === "mcp" ? skillPlan.releases : new Map(),
-        {
-          skillLoadToolName: scientTools.skillLoad,
-          providerNativeSkillTool: scientTools.providerNativeSkillTool,
-          deferred: scientTools.deferred,
-        },
-      );
+      const skillProjection = {
+        skillLoadToolName: scientTools.name("scient_skill_load"),
+        skillListToolName: scientTools.name("scient_skills_list"),
+        providerNativeSkillTool: scientTools.providerNativeSkillTool,
+        deferred: scientTools.deferred,
+      };
+      const prepareSkills = (omitAutomaticIndex: boolean) =>
+        prepareScientSkillTurn(
+          input.input,
+          skillPlan.delivery === "mcp" ? skillPlan.skills : [],
+          skillPlan.delivery === "mcp" ? skillPlan.releases : new Map(),
+          { ...skillProjection, omitAutomaticIndex },
+          parsed.selectedScientSkillNames ?? [],
+        );
+      let skillTurn = prepareSkills(false);
+      if ((skillTurn.input?.length ?? 0) > PROVIDER_SEND_TURN_MAX_INPUT_CHARS) {
+        // Drop only optional catalog lines, preserving selection/context and the
+        // full callable scope. Discovery explains omissions through the list tool.
+        skillTurn = prepareSkills(true);
+      }
+      if ((skillTurn.input?.length ?? 0) > PROVIDER_SEND_TURN_MAX_INPUT_CHARS) {
+        return yield* toValidationError(
+          "ProviderService.sendTurn",
+          "The message, selected context, attachments and Scient instructions exceed the provider input limit. Shorten the message or remove a context selection and retry; nothing was sent.",
+        );
+      }
       if (ScientSkillSession.scientSkillDeliveryForProvider(routed.adapter.provider) === "mcp") {
         // The bearer token remains stable for the provider process, but its
         // exact skill authority is replaced immediately before this turn.

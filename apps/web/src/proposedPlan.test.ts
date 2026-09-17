@@ -71,6 +71,7 @@ describe("resolvePlanFollowUpSubmission", () => {
       expect(resolvePlanFollowUpSubmission({ draftText, planMarkdown: "# Plan" })).toEqual({
         text: draftText,
         interactionMode: "plan",
+        selectedScientSkillNames: [],
       });
     },
   );
@@ -78,23 +79,25 @@ describe("resolvePlanFollowUpSubmission", () => {
     expect(
       resolvePlanFollowUpSubmission({
         draftText: "   ",
-        planMarkdown: "## Ship it\n\n- step 1\n",
+        planMarkdown: "## Ship it\n\n- use $contextskill\n",
       }),
     ).toEqual({
-      text: "PLEASE IMPLEMENT THIS PLAN:\n## Ship it\n\n- step 1",
+      text: "PLEASE IMPLEMENT THIS PLAN:\n## Ship it\n\n- use $contextskill",
       interactionMode: "default",
+      selectedScientSkillNames: [],
     });
   });
 
   it("stays in plan mode when the user adds a follow-up prompt", () => {
     expect(
       resolvePlanFollowUpSubmission({
-        draftText: "Refine step 2 first",
+        draftText: "$requested refine step 2 first",
         planMarkdown: "## Ship it\n\n- step 1\n",
       }),
     ).toEqual({
-      text: "Refine step 2 first",
+      text: "$requested refine step 2 first",
       interactionMode: "plan",
+      selectedScientSkillNames: ["requested"],
     });
   });
 });

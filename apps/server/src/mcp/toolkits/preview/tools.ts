@@ -22,13 +22,14 @@ import {
 import * as Schema from "effect/Schema";
 import * as FileSystem from "effect/FileSystem";
 import { Tool, Toolkit } from "effect/unstable/ai";
+import { ScientOperation, type OperationMetadata } from "../../ScientOperationTool.ts";
 
-import * as McpInvocationContext from "../../McpInvocationContext.ts";
+import * as AgentInvocationContext from "../../../scient/operations/AgentInvocationContext.ts";
 import * as PreviewAutomationBroker from "../../PreviewAutomationBroker.ts";
 import * as ServerConfig from "../../../config.ts";
 
 const dependencies = [
-  McpInvocationContext.McpInvocationContext,
+  AgentInvocationContext.AgentInvocationContext,
   PreviewAutomationBroker.PreviewAutomationBroker,
 ];
 
@@ -50,6 +51,15 @@ const safeBrowserTool = <T extends Tool.Any>(tool: T): T =>
 const readonlyBrowserTool = <T extends Tool.Any>(tool: T): T =>
   safeBrowserTool(tool).annotate(Tool.Readonly, true).annotate(Tool.Idempotent, true) as T;
 
+const previewOperation = (id: string): OperationMetadata => ({
+  id,
+  family: "browser",
+  scope: "thread",
+  requiredCapabilities: ["preview"],
+  approval: "session-grant",
+  documentation: "docs/user/composer.md",
+});
+
 const PreviewStatusTool = Tool.make("preview_status", {
   description:
     "Report whether a collaborative browser tab is automation-capable, including its URL, title, visibility, loading state, viewport mode, and measured CSS-pixel size. Pass tabId to inspect a specific tab; omit it to use this agent session's current tab.",
@@ -61,7 +71,8 @@ const PreviewStatusTool = Tool.make("preview_status", {
   .annotate(Tool.Title, "Get preview status")
   .annotate(Tool.Readonly, true)
   .annotate(Tool.Destructive, false)
-  .annotate(Tool.Idempotent, true);
+  .annotate(Tool.Idempotent, true)
+  .annotate(ScientOperation, previewOperation("browser.status"));
 
 const PreviewOpenTool = browserTool(
   Tool.make("preview_open", {
@@ -74,7 +85,7 @@ const PreviewOpenTool = browserTool(
   })
     .annotate(Tool.Title, "Open browser preview")
     .annotate(Tool.Destructive, false),
-);
+).annotate(ScientOperation, previewOperation("browser.open"));
 
 const PreviewNavigateTool = safeBrowserTool(
   Tool.make("preview_navigate", {
@@ -85,7 +96,7 @@ const PreviewNavigateTool = safeBrowserTool(
     failure: PreviewAutomationError,
     dependencies,
   }).annotate(Tool.Title, "Navigate browser preview"),
-);
+).annotate(ScientOperation, previewOperation("browser.navigate"));
 
 const PreviewResizeTool = safeBrowserTool(
   Tool.make("preview_resize", {
@@ -98,7 +109,7 @@ const PreviewResizeTool = safeBrowserTool(
   })
     .annotate(Tool.Title, "Resize browser viewport")
     .annotate(Tool.Idempotent, true),
-);
+).annotate(ScientOperation, previewOperation("browser.resize"));
 
 const PreviewSetAppearanceTool = safeBrowserTool(
   Tool.make("preview_set_appearance", {
@@ -114,7 +125,7 @@ const PreviewSetAppearanceTool = safeBrowserTool(
   })
     .annotate(Tool.Title, "Set preview appearance")
     .annotate(Tool.Idempotent, true),
-);
+).annotate(ScientOperation, previewOperation("browser.set-appearance"));
 
 export const PreviewSnapshotTool = readonlyBrowserTool(
   Tool.make("preview_snapshot", {
@@ -139,7 +150,7 @@ export const PreviewSnapshotTool = readonlyBrowserTool(
     failure: PreviewAutomationError,
     dependencies,
   }).annotate(Tool.Title, "Inspect browser page"),
-);
+).annotate(ScientOperation, previewOperation("browser.snapshot"));
 
 const PreviewClickTool = browserTool(
   Tool.make("preview_click", {
@@ -150,7 +161,7 @@ const PreviewClickTool = browserTool(
     failure: PreviewAutomationError,
     dependencies,
   }).annotate(Tool.Title, "Click preview page"),
-);
+).annotate(ScientOperation, previewOperation("browser.click"));
 
 const PreviewTypeTool = browserTool(
   Tool.make("preview_type", {
@@ -161,7 +172,7 @@ const PreviewTypeTool = browserTool(
     failure: PreviewAutomationError,
     dependencies,
   }).annotate(Tool.Title, "Type into preview page"),
-);
+).annotate(ScientOperation, previewOperation("browser.type"));
 
 const PreviewPressTool = browserTool(
   Tool.make("preview_press", {
@@ -172,7 +183,7 @@ const PreviewPressTool = browserTool(
     failure: PreviewAutomationError,
     dependencies,
   }).annotate(Tool.Title, "Press key in preview page"),
-);
+).annotate(ScientOperation, previewOperation("browser.press"));
 
 const PreviewScrollTool = safeBrowserTool(
   Tool.make("preview_scroll", {
@@ -183,7 +194,7 @@ const PreviewScrollTool = safeBrowserTool(
     failure: PreviewAutomationError,
     dependencies,
   }).annotate(Tool.Title, "Scroll preview page"),
-);
+).annotate(ScientOperation, previewOperation("browser.scroll"));
 
 /**
  * MCP `structuredContent` must be a JSON object, and Claude Code rejects the
@@ -206,7 +217,7 @@ const PreviewEvaluateTool = browserTool(
     failure: PreviewAutomationError,
     dependencies,
   }).annotate(Tool.Title, "Evaluate JavaScript in preview"),
-);
+).annotate(ScientOperation, previewOperation("browser.evaluate"));
 
 const PreviewWaitForTool = readonlyBrowserTool(
   Tool.make("preview_wait_for", {
@@ -217,7 +228,7 @@ const PreviewWaitForTool = readonlyBrowserTool(
     failure: PreviewAutomationError,
     dependencies,
   }).annotate(Tool.Title, "Wait for preview page condition"),
-);
+).annotate(ScientOperation, previewOperation("browser.wait-for"));
 
 const PreviewRecordingStartTool = safeBrowserTool(
   Tool.make("preview_recording_start", {
@@ -228,7 +239,7 @@ const PreviewRecordingStartTool = safeBrowserTool(
     failure: PreviewAutomationError,
     dependencies,
   }).annotate(Tool.Title, "Start browser recording"),
-);
+).annotate(ScientOperation, previewOperation("browser.recording.start"));
 
 const PreviewRecordingStopTool = safeBrowserTool(
   Tool.make("preview_recording_stop", {
@@ -239,7 +250,7 @@ const PreviewRecordingStopTool = safeBrowserTool(
     failure: PreviewAutomationError,
     dependencies: [...dependencies, FileSystem.FileSystem, ServerConfig.ServerConfig],
   }).annotate(Tool.Title, "Stop browser recording"),
-);
+).annotate(ScientOperation, previewOperation("browser.recording.stop"));
 
 export const PreviewToolkit = Toolkit.make(
   PreviewStatusTool,

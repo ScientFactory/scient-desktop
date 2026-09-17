@@ -649,7 +649,10 @@ export class PreviewAutomationUnavailableError extends Schema.TaggedError<Previe
   "PreviewAutomationUnavailableError",
   {
     capability: Schema.Literal("preview"),
-    ...McpCapabilityErrorFields,
+    environmentId: EnvironmentId,
+    threadId: ThreadId,
+    providerSessionId: Schema.optional(TrimmedNonEmptyString),
+    providerInstanceId: Schema.optional(ProviderInstanceId),
   },
 ) {
   override get message(): string {
@@ -674,8 +677,8 @@ const PreviewAutomationScopeErrorFields = {
   operation: PreviewAutomationOperation,
   environmentId: EnvironmentId,
   threadId: ThreadId,
-  providerSessionId: TrimmedNonEmptyString,
-  providerInstanceId: ProviderInstanceId,
+  providerSessionId: Schema.optional(TrimmedNonEmptyString),
+  providerInstanceId: Schema.optional(ProviderInstanceId),
 };
 
 const PreviewAutomationRequestErrorFields = {

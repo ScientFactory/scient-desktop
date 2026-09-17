@@ -12,6 +12,8 @@ This is a living glossary for Scient. It explains what common terms mean in this
 - [Provider runtime](#provider-runtime)
 - [Checkpointing](#checkpointing)
 - [Appearance](#appearance)
+- [Pull requests](#pull-requests)
+- [Composer context](#composer-context)
 
 ## Concepts
 
@@ -19,7 +21,7 @@ This is a living glossary for Scient. It explains what common terms mean in this
 
 #### Project
 
-The top-level workspace record in the app. In [the orchestration contracts][1], a project has a `workspaceRoot` and a title. It does not contain threads: `OrchestrationProject` and `OrchestrationThread` are separate arrays on the read model, and a project can have zero threads. See [workspace-layout.md][2].
+The top-level host workspace record in the app. In [the orchestration contracts][1], a project has a `workspaceRoot` and a title. It does not contain threads: `OrchestrationProject` and `OrchestrationThread` are separate arrays on the read model, and a project can have zero threads. This host record is environment-specific; it is not the portable Scient project identity. See [workspace-layout.md][2] and [Scient workspace binding][28].
 
 #### Workspace root
 
@@ -28,6 +30,28 @@ The root filesystem path for a project. In [the orchestration model][1], it is t
 #### Worktree
 
 A Git worktree used as an isolated workspace for a thread. If a thread has a `worktreePath` in [the contracts][1], it runs there instead of in the main working tree. Git operations live behind the VCS driver contract in `apps/server/src/vcs/VcsDriver.ts`, implemented by [GitVcsDriverCore.ts][3].
+
+#### Scient project identity
+
+The portable UUID stored in `.scient/project.json`. Scient-owned project
+records may use it to describe logical lineage, but copying the UUID does not
+grant access to a physical root or its live execution state. See [Scient
+workspace binding][28].
+
+#### Workspace binding
+
+An app-private server record for one exact workspace root in one environment.
+It combines the host project, canonical root, optional Scient project identity,
+optional host filesystem identity, repository/worktree evidence, trust state,
+and an authority generation. It is the current candidate key for
+workspace-specific Scient authority. See [Scient workspace binding][28].
+
+#### Authority generation
+
+A monotonically increasing binding generation retained by protected operations.
+Before committing an effect, the server re-resolves the active thread and
+requires the same current generation; a stale receipt cannot authorize the
+write. See [Scient workspace binding][28].
 
 ### Thread timeline
 
@@ -187,6 +211,25 @@ a theme again.
 - If you see `checkpoint`, think "workspace snapshot for diff/restore".
 - If you see `quiesced`, think "all relevant follow-up work has gone idle".
 
+## Pull requests
+
+| Term                 | Meaning                                                                                                                                                                                  |
+| -------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Pull request link    | A persisted thread association identified by host, repository, and number. Links can cross projects within an environment and carry a server-maintained snapshot.                        |
+| Pull request sync    | The reactor that refreshes each distinct linked review once per cadence and discovers native stack layers. Explicit refreshes and failed stack reads trigger another read.               |
+| Current pull request | The link used by single-review controls and older clients. Open work takes precedence; a completed single chain points at its top layer. Unrelated terminal links use the latest update. |
+
+## Composer context
+
+| Term                 | Meaning                                                                                                                             |
+| -------------------- | ----------------------------------------------------------------------------------------------------------------------------------- |
+| Context record       | The typed payload behind a composer chip, keyed by `contextId` in `message.context.records`. It never holds bytes.                  |
+| Context reference    | One occurrence of a record in message text: `[label](t3-context://v1/<kind>/<contextId>)`. Several references can share one record. |
+| Attachment binding   | The link from an image or file record to its server-owned attachment. Its attachment ID can change without changing `contextId`.    |
+| Attachment inventory | The ordered image records shown as thumbnails above the prose, including images with no inline references.                          |
+
+See [composer context references](./composer-context-references.md) for the contract and lifecycle.
+
 ## Related Docs
 
 - [Architecture overview][24]
@@ -222,22 +265,4 @@ a theme again.
 [25]: ./provider-lifecycle.md
 [26]: ../../apps/server/src/environmentTheme.ts
 [27]: ../user/environment-theme.md
-
-## Pull requests
-
-| Term                 | Meaning                                                                                                                                                                                  |
-| -------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Pull request link    | A persisted thread association identified by host, repository, and number. Links can cross projects within an environment and carry a server-maintained snapshot.                        |
-| Pull request sync    | The reactor that refreshes each distinct linked review once per cadence and discovers native stack layers. Explicit refreshes and failed stack reads trigger another read.               |
-| Current pull request | The link used by single-review controls and older clients. Open work takes precedence; a completed single chain points at its top layer. Unrelated terminal links use the latest update. |
-
-## Composer context
-
-| Term                 | Meaning                                                                                                                             |
-| -------------------- | ----------------------------------------------------------------------------------------------------------------------------------- |
-| Context record       | The typed payload behind a composer chip, keyed by `contextId` in `message.context.records`. It never holds bytes.                  |
-| Context reference    | One occurrence of a record in message text: `[label](t3-context://v1/<kind>/<contextId>)`. Several references can share one record. |
-| Attachment binding   | The link from an image or file record to its server-owned attachment. Its attachment ID can change without changing `contextId`.    |
-| Attachment inventory | The ordered image records shown as thumbnails above the prose, including images with no inline references.                          |
-
-See [composer context references](./composer-context-references.md) for the contract and lifecycle.
+[28]: ./scient-workspace-binding.md

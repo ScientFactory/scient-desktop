@@ -11,10 +11,16 @@ import * as Schema from "effect/Schema";
 import * as Sink from "effect/Sink";
 import * as Stream from "effect/Stream";
 import type * as Types from "effect/Types";
-import { McpProtocol, McpSchema, McpServer, Tool } from "effect/unstable/ai";
+import { McpSchema, McpServer, Tool } from "effect/unstable/ai";
 import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/unstable/http";
 
 import packageJson from "../../package.json" with { type: "json" };
+import { registerScientToolkit } from "./ScientToolkitRegistration.ts";
+import { makeScientToolExecutor } from "../scient/operations/AgentOperationDispatcher.ts";
+import { AgentInvocationContext } from "../scient/operations/AgentInvocationContext.ts";
+import { scientInvocationForMcp } from "./ScientMcpInvocation.ts";
+import { WorkspaceBindingResolver } from "../scient/projectScope/WorkspaceBindingResolver.ts";
+import { makeScientToolListLayer, ScientMcpProtocol } from "./ScientMcpProtocol.ts";
 import * as ServerConfig from "../config.ts";
 import * as DeviceService from "../device/DeviceService.ts";
 import * as McpInvocationContext from "./McpInvocationContext.ts";
@@ -45,6 +51,7 @@ import {
   DeviceScreenshotTool,
   DeviceScreenshotToolkit,
   DeviceStandardToolkit,
+  DeviceToolkit,
 } from "./toolkits/device/tools.ts";
 
 const unauthorized = HttpServerResponse.jsonUnsafe(
@@ -352,11 +359,13 @@ const previewSnapshotFailure = <E>(cause: Cause.Cause<E>) => {
 const registerPreviewSnapshot = Effect.fn("McpHttpServer.registerPreviewSnapshot")(function* () {
   const server = yield* McpServer.McpServer;
   const broker = yield* PreviewAutomationBroker.PreviewAutomationBroker;
+  const resolver = yield* WorkspaceBindingResolver;
   // The MCP tool runner only supplies the client, so hand the save path its services here.
   const saveServices = yield* Effect.context<
     ServerConfig.ServerConfig | FileSystem.FileSystem | Path.Path
   >();
   const built = yield* PreviewSnapshotToolkit;
+  const execute = yield* makeScientToolExecutor(built).pipe(Effect.orDie);
   const tool = PreviewSnapshotTool;
   yield* server.addTool({
     tool: new McpSchema.Tool({
@@ -381,12 +390,10 @@ const registerPreviewSnapshot = Effect.fn("McpHttpServer.registerPreviewSnapshot
           fiber.context,
           McpInvocationContext.McpInvocationContext,
         );
-        return built.handle("preview_snapshot", payload).pipe(
-          Stream.unwrap,
-          Stream.run(Sink.last()),
-          Effect.flatMap(Effect.fromOption),
+        return execute("preview_snapshot", payload).pipe(
+          Effect.provideService(WorkspaceBindingResolver, resolver),
           Effect.provideService(PreviewAutomationBroker.PreviewAutomationBroker, broker),
-          Effect.provideService(McpInvocationContext.McpInvocationContext, invocation),
+          Effect.provideService(AgentInvocationContext, scientInvocationForMcp(invocation)),
           Effect.flatMap(({ encodedResult }) =>
             Effect.gen(function* () {
               const snapshot = encodedResult as SnapshotMetadata & {
@@ -597,7 +604,7 @@ const registerDeviceScreenshot = Effect.fn("McpHttpServer.registerDeviceScreensh
   );
 });
 
-const PreviewStandardToolkitRegistrationLive = McpServer.toolkit(PreviewStandardToolkit).pipe(
+const PreviewStandardToolkitRegistrationLive = registerScientToolkit(PreviewStandardToolkit).pipe(
   Layer.provide(PreviewStandardToolkitHandlersLive),
 );
 
@@ -610,15 +617,15 @@ export const PreviewToolkitRegistrationLive = Layer.mergeAll(
   PreviewSnapshotRegistrationLive,
 );
 
-export const ScientSourcesToolkitRegistrationLive = McpServer.toolkit(ScientSourcesToolkit).pipe(
-  Layer.provide(ScientSourcesToolkitHandlersLive),
-);
+export const ScientSourcesToolkitRegistrationLive = registerScientToolkit(
+  ScientSourcesToolkit,
+).pipe(Layer.provide(ScientSourcesToolkitHandlersLive));
 
-const ScientSkillsToolkitRegistrationLive = McpServer.toolkit(ScientSkillsToolkit).pipe(
+export const ScientSkillsToolkitRegistrationLive = registerScientToolkit(ScientSkillsToolkit).pipe(
   Layer.provide(ScientSkillsToolkitHandlersLive),
 );
 
-export const ScientDocumentsToolkitRegistrationLive = McpServer.toolkit(
+export const ScientDocumentsToolkitRegistrationLive = registerScientToolkit(
   ScientDocumentsToolkit,
 ).pipe(Layer.provide(ScientDocumentsToolkitHandlersLive));
 
@@ -637,12 +644,16 @@ export const DeviceToolkitRegistrationLive = Layer.mergeAll(
   DeviceStandardToolkitRegistrationLive,
   DeviceScreenshotRegistrationLive,
 );
+const McpToolListLive = makeScientToolListLayer([
+  ...Object.values(PullRequestsToolkit.tools),
+  ...Object.values(DeviceToolkit.tools),
+]);
 const McpTransportLive = McpServer.layerHttp({
   name: "Scient",
   version: packageJson.version,
   path: "/mcp",
-  protocols: [McpProtocol.v2025_06_18],
-}).pipe(Layer.provide(McpAuthMiddlewareLive));
+  protocols: [ScientMcpProtocol],
+}).pipe(Layer.provide(McpAuthMiddlewareLive), Layer.provide(McpToolListLive));
 
 export const layer = Layer.mergeAll(
   PreviewToolkitRegistrationLive,

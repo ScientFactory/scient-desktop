@@ -117,6 +117,7 @@ export function buildLatexInvocation(input: {
     command: input.toolchain.executable,
     args: [
       "-pdf",
+      "-norc",
       "-interaction=nonstopmode",
       "-file-line-error",
       "-no-shell-escape",

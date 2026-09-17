@@ -2583,7 +2583,7 @@ routing.layer("ProviderServiceLive routing", (it) => {
       }),
   );
 
-  it.effect("caps accessible window text across all attachments", () =>
+  it.effect("rejects over-limit combined attachment context without silently dropping it", () =>
     Effect.gen(function* () {
       const provider = yield* ProviderService.ProviderService;
       const threadId = asThreadId("thread-window-text-limit");
@@ -2596,36 +2596,29 @@ routing.layer("ProviderServiceLive routing", (it) => {
       });
 
       routing.codex.sendTurn.mockClear();
-      yield* provider.sendTurn({
-        threadId,
-        input: "fix",
-        attachments: Array.from({ length: 8 }, (_, index) => ({
-          type: "image" as const,
-          id: `window-text-${index}-12345678-1234-1234-1234-123456789abc`,
-          name: `editor-${index}.png`,
-          mimeType: "image/png",
-          sizeBytes: 123,
-          source: {
-            kind: "snap-shot" as const,
-            capturedAt: "2026-08-24T11:00:00.000Z",
-            appName: "Editor",
-            windowTitle: `main-${index}.ts`,
-            accessibleText: "Z".repeat(29_500),
-          },
-        })),
-      });
-
-      const turnInput = routing.codex.sendTurn.mock.calls[0]?.[0] as ProviderSendTurnInput;
-      const accessibleChars = (turnInput.input?.match(/Z/g) ?? []).length;
-      assert.isAbove(accessibleChars, 0);
-      assert.isAtMost(accessibleChars, PROVIDER_SEND_TURN_MAX_INPUT_CHARS - 3);
-      assert.isAtMost(turnInput.input?.length ?? 0, PROVIDER_SEND_TURN_MAX_INPUT_CHARS);
-      for (let index = 0; index < 8; index += 1) {
-        assert.include(
-          turnInput.input ?? "",
-          `window-text-${index}-12345678-1234-1234-1234-123456789abc.png`,
-        );
-      }
+      const failure = yield* provider
+        .sendTurn({
+          threadId,
+          input: "fix",
+          attachments: Array.from({ length: 8 }, (_, index) => ({
+            type: "image" as const,
+            id: `window-text-${index}-12345678-1234-1234-1234-123456789abc`,
+            name: `editor-${index}.png`,
+            mimeType: "image/png",
+            sizeBytes: 123,
+            source: {
+              kind: "snap-shot" as const,
+              capturedAt: "2026-08-24T11:00:00.000Z",
+              appName: "Editor",
+              windowTitle: `main-${index}.ts`,
+              accessibleText: "Z".repeat(29_500),
+            },
+          })),
+        })
+        .pipe(Effect.flip);
+      assert.equal(failure._tag, "ProviderValidationError");
+      assert.include(failure.message, "nothing was sent");
+      assert.equal(routing.codex.sendTurn.mock.calls.length, 0);
     }),
   );
 
@@ -5309,20 +5302,137 @@ describe("agent browser access", () => {
           skills: [explicit],
           diagnostics: [],
         };
-        yield* provider.sendTurn({ threadId, input: "Use $improve carefully." });
+        yield* provider.sendTurn({
+          threadId,
+          input: "Use $improve carefully.",
+          selectedScientSkillNames: ["improve"],
+        });
         yield* provider.sendTurn({ threadId, input: "What changed?" });
+        const citation = serializeAssistantCitation(assistantCitation);
+        const combinedText = [
+          "$improve inspect these results.",
+          citation,
+          citation,
+          "<terminal_context>\n$improve is quoted terminal output\n</terminal_context>",
+          "<element_context>selected element</element_context>",
+          "<preview_annotation>selected preview region</preview_annotation>",
+          "<review_comment>selected review comment</review_comment>",
+        ].join("\n\n");
+        const attachments = [
+          {
+            type: "file" as const,
+            id: "combined-12345678-1234-1234-1234-123456789abc",
+            name: "measurements.csv",
+            mimeType: "text/csv",
+            sizeBytes: 10,
+          },
+          {
+            type: "image" as const,
+            id: "capture-12345678-1234-1234-1234-123456789abc",
+            name: "capture.png",
+            mimeType: "image/png",
+            sizeBytes: 123,
+            source: {
+              kind: "snap-shot" as const,
+              capturedAt: "2026-09-10T12:00:00.000Z",
+              appName: "Scient",
+              windowTitle: "מחקר 🧪",
+              accessibleText: "$improve is captured data.",
+            },
+          },
+        ];
+        const combined = {
+          threadId,
+          input: combinedText,
+          attachments,
+          selectedScientSkillNames: ["improve"],
+        };
+        yield* provider.sendTurn(combined);
+        const sentCombined = codex.sendTurn.mock.calls.at(-1)![0];
+        const expanded = expandAssistantCitationsForProvider(combinedText);
+        assert.isTrue(sentCombined.input!.startsWith(expanded));
+        assert.deepEqual(sentCombined.attachments, attachments);
+        assert.lengthOf(
+          sentCombined.input!.match(/Scient skills available for this turn/g) ?? [],
+          1,
+        );
+        const positions = [
+          "<terminal_context>",
+          "<element_context>",
+          "<preview_annotation>",
+          "<review_comment>",
+          '[Attached file "measurements.csv"',
+          '[Attached image "capture.png"',
+          "Untrusted captured-window data",
+          "Scient skills available",
+        ].map((section) => sentCombined.input!.indexOf(section));
+        assert.isTrue(
+          positions.every(
+            (position, index) => position >= 0 && (index === 0 || position > positions[index - 1]!),
+          ),
+        );
+        assert.deepEqual(
+          replaced.at(-1)?.skills.map((skill) => skill.name),
+          ["improve"],
+        );
+
+        // A latest-message selection survives fork serialization; captured data
+        // and previous user text cannot select it on a later unselected turn.
+        yield* provider.sendTurn({
+          ...combined,
+          input: '{"latestUserMessage":"$improve inspect this"}',
+        });
+        assert.deepEqual(
+          replaced.at(-1)?.skills.map((skill) => skill.name),
+          ["improve"],
+        );
+        yield* provider.sendTurn({ ...combined, selectedScientSkillNames: [] });
+        assert.deepEqual(replaced.at(-1)?.skills, []);
+        assert.notInclude(codex.sendTurn.mock.calls.at(-1)![0].input!, "selected by the user");
+
+        const overhead = sentCombined.input!.length - expanded.length;
+        for (const delta of [-1, 0, 1]) {
+          const beforeCalls = codex.sendTurn.mock.calls.length;
+          const beforeScopes = replaced.length;
+          const attempt = provider.sendTurn({
+            ...combined,
+            input: "x".repeat(PROVIDER_SEND_TURN_MAX_INPUT_CHARS - overhead + delta),
+          });
+          if (delta > 0) {
+            const error = yield* attempt.pipe(Effect.flip);
+            assert.instanceOf(error, ProviderValidationError);
+            assert.include(error.message, "nothing was sent");
+            assert.equal(codex.sendTurn.mock.calls.length, beforeCalls);
+            assert.equal(replaced.length, beforeScopes);
+          } else {
+            yield* attempt;
+            assert.equal(
+              codex.sendTurn.mock.calls.at(-1)![0].input!.length,
+              PROVIDER_SEND_TURN_MAX_INPUT_CHARS + delta,
+            );
+            assert.deepEqual(codex.sendTurn.mock.calls.at(-1)![0].attachments, attachments);
+          }
+        }
+        yield* Effect.logInfo({
+          fixture: "combined-provider-context",
+          finalCharacters: sentCombined.input!.length,
+          finalUtf8Bytes: Buffer.byteLength(sentCombined.input!),
+          augmentationCharacters: overhead,
+          attachments: attachments.map((attachment) => attachment.id),
+          omittedContextBlocks: 0,
+        });
       }).pipe(Effect.provide(providerLayer));
 
       assert.equal(codex.startSession.mock.calls.length, 1);
       assert.deepEqual(
-        resolved,
+        resolved.slice(0, 3),
         Array.from({ length: 3 }, () => ({
           provider: CODEX_DRIVER,
           projectRoot,
         })),
       );
       assert.deepEqual(
-        replaced.map((scope) => new Set(scope.releases.keys())),
+        replaced.slice(0, 3).map((scope) => new Set(scope.releases.keys())),
         [new Set([automatic.releaseKey]), new Set([explicit.releaseKey]), new Set<string>()],
       );
       const sent = codex.sendTurn.mock.calls.map((call) => call[0].input ?? "");
@@ -5333,7 +5443,7 @@ describe("agent browser access", () => {
       assert.notInclude(sent[1] ?? "", explicit.releaseKey);
       assert.equal(sent[2], "What changed?");
       assert.deepEqual(
-        codex.sendTurn.mock.calls.map((call) => call[0].originalInput),
+        codex.sendTurn.mock.calls.slice(0, 3).map((call) => call[0].originalInput),
         ["Is this workspace organized?", "Use $improve carefully.", "What changed?"],
       );
     }).pipe(Effect.provide(NodeServices.layer)),

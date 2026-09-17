@@ -23,6 +23,10 @@ import {
 } from "../../composerDraftStore";
 import { controlThreadQueue } from "./client";
 import { restoreQueuedImages } from "./queueImageRestore";
+import {
+  decodeQueueComposerSnapshot,
+  assertQueueEditSelectionProvenance,
+} from "./composerSnapshot";
 
 const isQueueOperationError = Schema.is(ScientThreadQueueOperationError);
 export const useQueueEditSessions = create<{
@@ -92,7 +96,10 @@ export function loadQueueEdits() {
       for (const session of sessions) {
         if (session.stashed || !(await acquireEditLease(session.key))) continue;
         const ordinary = revive(session.ordinary);
-        const edited = revive(session.edited);
+        const edited = revive({
+          ...session.edited,
+          contextThreadId: session.originalTarget.threadId,
+        });
         installDraft(session.originalTarget, ordinary);
         installDraft(session.editTarget, edited);
         useQueueEditSessions.setState((state) => ({
@@ -127,9 +134,16 @@ export async function beginQueueEdit(target: ScopedThreadRef, item: ScientThread
       throw new Error("An image could not be restored. The queued message was left intact.");
     const editToken = randomUUID();
     const editTarget = DraftId.make(`queue-edit-${editToken}`);
+    const composer =
+      item.composerSnapshot === undefined
+        ? undefined
+        : decodeQueueComposerSnapshot(item.composerSnapshot);
+    if (!composer) assertQueueEditSelectionProvenance(false, item.text);
     const edited = {
       ...createEmptyThreadDraft(),
       prompt: item.text,
+      ...composer,
+      contextThreadId: target.threadId,
       images,
       modelSelectionByProvider: item.modelSelection
         ? { [item.modelSelection.instanceId]: item.modelSelection }
@@ -147,6 +161,7 @@ export async function beginQueueEdit(target: ScopedThreadRef, item: ScientThread
       editToken,
       ordinary,
       edited,
+      composerSeparated: composer !== undefined,
     };
     // Persist both complete drafts (including File/Blob bytes) before withdrawal.
     await save(session);
@@ -289,6 +304,7 @@ export async function restoreQueueEditStash(
   const current =
     useComposerDraftStore.getState().getComposerDraft(target) ?? createEmptyThreadDraft();
   const restored = revive(session.edited);
+  assertQueueEditSelectionProvenance(session.composerSeparated, restored.prompt);
   if (restored.files.some((file) => !file.file && file.uploadEnvironmentId !== environmentId))
     throw new Error(
       "This stash has a file available only in its original environment. Restore it there or attach the file again.",

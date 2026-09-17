@@ -5,10 +5,11 @@ import {
   type ProviderInstanceId,
   type ThreadId,
 } from "@t3tools/contracts";
-import type { SkillRelease } from "@scientfactory/scient-skills";
-import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
+import * as Context from "effect/Context";
+import type { AgentSkillScope } from "../scient/operations/AgentInvocationContext.ts";
 
+/** Authenticated external-provider transport grants, owned by the MCP host. */
 export type McpCapability =
   | "preview"
   | "device"
@@ -18,29 +19,13 @@ export type McpCapability =
   | "sources:read"
   | "sources:write";
 
-export interface McpScientSkillDescriptor {
-  readonly releaseKey: string;
-  readonly id: string;
-  readonly name: string;
-  readonly description: string;
-  readonly origin: string;
-  readonly activationScope: "project" | "user";
-  readonly invocationPolicy: "automatic" | "explicit";
-}
-
-export interface McpScientSkillScope {
-  /** Exact immutable snapshots authorized for this turn. */
-  readonly releases: ReadonlyMap<string, SkillRelease>;
-  readonly skills: ReadonlyArray<McpScientSkillDescriptor>;
-}
-
 export interface McpInvocationScope {
   readonly environmentId: EnvironmentId;
   readonly threadId: ThreadId;
   readonly providerSessionId: string;
   readonly providerInstanceId: ProviderInstanceId;
   readonly capabilities: ReadonlySet<McpCapability>;
-  readonly skillScope?: McpScientSkillScope;
+  readonly skillScope?: AgentSkillScope;
   readonly issuedAt: number;
 }
 
@@ -48,6 +33,11 @@ export class McpInvocationContext extends Context.Service<
   McpInvocationContext,
   McpInvocationScope
 >()("t3/mcp/McpInvocationContext") {}
+
+export type {
+  AgentSkillDescriptor as McpScientSkillDescriptor,
+  AgentSkillScope as McpScientSkillScope,
+} from "../scient/operations/AgentInvocationContext.ts";
 
 /** The error a missing capability surfaces as; preview keeps its own so the broker can route it. */
 export type McpCapabilityError<C extends McpCapability> = C extends "preview"

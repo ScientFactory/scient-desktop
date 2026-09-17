@@ -15,10 +15,13 @@ import {
 } from "@t3tools/contracts";
 import { afterEach, describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
-import * as Option from "effect/Option";
-
-import * as ProjectionSnapshotQuery from "../../../orchestration/Services/ProjectionSnapshotQuery.ts";
-import * as McpInvocationContext from "../../McpInvocationContext.ts";
+import { WorkspaceBindingResolver } from "../../../scient/projectScope/WorkspaceBindingResolver.ts";
+import { WorkspaceBindingResolutionError } from "../../../scient/projectScope/WorkspaceBinding.ts";
+import {
+  workspaceResolverForTest,
+  workspaceScopeForTest,
+} from "../../../scient/projectScope/WorkspaceBindingTestUtils.ts";
+import * as AgentInvocationContext from "../../../scient/operations/AgentInvocationContext.ts";
 import { AnalyticsService } from "../../../telemetry/AnalyticsService.ts";
 import {
   getScientSourceForInvocation,
@@ -157,22 +160,61 @@ const makeThread = (input: {
 const makeQuery = (input: {
   readonly thread: OrchestrationThreadShell | null;
   readonly project: OrchestrationProjectShell | null;
-}) =>
-  ProjectionSnapshotQuery.ProjectionSnapshotQuery.of({
-    getThreadShellById: () =>
-      Effect.succeed(input.thread === null ? Option.none() : Option.some(input.thread)),
-    getProjectShellById: () =>
-      Effect.succeed(input.project === null ? Option.none() : Option.some(input.project)),
-  } as unknown as ProjectionSnapshotQuery.ProjectionSnapshotQueryShape);
+}): WorkspaceBindingResolver["Service"] => {
+  const resolveThread = Effect.fn("SourcesTest.resolveThread")(function* () {
+    if (!input.thread || input.thread.projectId === null)
+      return yield* new WorkspaceBindingResolutionError({
+        operation: "test-resolve",
+        kind: "project-required",
+      });
+    if (!input.project)
+      return yield* new WorkspaceBindingResolutionError({
+        operation: "test-resolve",
+        kind: "project-not-found",
+      });
+    const root = input.thread.worktreePath ?? input.project.workspaceRoot;
+    const fixture = workspaceResolverForTest(
+      new Map([
+        [
+          root,
+          { projectId: input.project.id, scope: workspaceScopeForTest(`binding:${root}`, root) },
+        ],
+      ]),
+    );
+    const resolved = yield* fixture.resolveWorkspaceRoot(root);
+    return {
+      ...resolved,
+      binding: { ...resolved.binding, environmentId, hostProjectId: input.project.id },
+    };
+  });
+  return {
+    ...workspaceResolverForTest(new Map()),
+    resolveThread,
+    assertCurrentThreadScope: (scope) =>
+      resolveThread().pipe(
+        Effect.flatMap((resolved) =>
+          resolved.binding.bindingId === scope.bindingId &&
+          resolved.binding.authorityGeneration === scope.authorityGeneration
+            ? Effect.succeed(resolved.binding)
+            : Effect.fail(
+                new WorkspaceBindingResolutionError({
+                  operation: "test-assert",
+                  kind: "stale-authority",
+                }),
+              ),
+        ),
+      ),
+  };
+};
 
 const makeInvocation = (
   threadId: ThreadId,
-  capabilities: ReadonlySet<McpInvocationContext.McpCapability> = new Set([
+  capabilities: ReadonlySet<AgentInvocationContext.OperationCapability> = new Set([
     "sources:read",
     "sources:write",
   ]),
 ) =>
-  McpInvocationContext.McpInvocationContext.of({
+  AgentInvocationContext.AgentInvocationContext.of({
     environmentId,
     threadId,
     providerSessionId: "session-sources-test",
@@ -184,13 +226,13 @@ const makeInvocation = (
 const provideContext = <A, E, R>(
   effect: Effect.Effect<A, E, R>,
   input: {
-    readonly invocation: McpInvocationContext.McpInvocationScope;
-    readonly query: ProjectionSnapshotQuery.ProjectionSnapshotQueryShape;
+    readonly invocation: AgentInvocationContext.AgentInvocationScope;
+    readonly query: WorkspaceBindingResolver["Service"];
   },
 ) =>
   effect.pipe(
-    Effect.provideService(McpInvocationContext.McpInvocationContext, input.invocation),
-    Effect.provideService(ProjectionSnapshotQuery.ProjectionSnapshotQuery, input.query),
+    Effect.provideService(AgentInvocationContext.AgentInvocationContext, input.invocation),
+    Effect.provideService(WorkspaceBindingResolver, input.query),
   );
 
 afterEach(async () => {

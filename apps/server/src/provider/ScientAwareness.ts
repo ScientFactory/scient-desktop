@@ -14,8 +14,12 @@ Project \`.tex\` files open in Scient's editable LaTeX source/PDF workspace and 
 Scient renders LaTeX math, workspace-relative Markdown images, and fenced \`mermaid\`, \`vega-lite\`, and \`plotly\` blocks inline. Put Mermaid's diagram declaration before its contents. Use Vega-Lite JSON or self-contained Plotly figure JSON. Use these formats directly, without HTML or JavaScript wrappers. Avoid embedded base64 images. Explain visuals nearby when useful. Create workspace files when the user needs a standalone deliverable.`;
 
 /** Included only when the session credential actually grants preview access. */
-export const SCIENT_PREVIEW_AWARENESS = `## Scient browser
-The \`preview_*\` tools control Scient's browser shared with the user. Prefer them for browser work. Start with \`preview_status\`; call \`preview_open\` if no automation-capable tab is attached. Use another browser system only when these tools are unavailable, explicitly unsupported, or the user requests it.`;
+const buildScientPreviewAwareness = (tools: ScientToolProjection): string => `## Scient browser
+Scient's preview tools control the browser shared with the user. Prefer them for browser work. Start with \`${tools.name("preview_status")}\`; call \`${tools.name("preview_open")}\` if no automation-capable tab is attached. Use another browser system only when these tools are unavailable, explicitly unsupported, or the user requests it.`;
+
+export const SCIENT_PREVIEW_AWARENESS = buildScientPreviewAwareness(
+  CANONICAL_SCIENT_TOOL_PROJECTION,
+);
 
 /** Included only when the session may drive the environment's mobile devices. */
 const SCIENT_DEVICE_AWARENESS = `## Scient devices
@@ -23,7 +27,7 @@ The \`device_*\` tools control iOS Simulators and Android Emulators on this envi
 
 /** Included only when the session may build project documents. */
 const buildScientDocumentAwareness = (tools: ScientToolProjection): string => `## Scient PDF builds
-For a requested PDF deliverable, use \`${tools.pdfBuild}\` to build an existing project HTML source and \`${tools.latexBuild}\` to build an existing project LaTeX source.${tools.deferred ? ` If either is deferred, load its exact name through \`ToolSearch\` first.` : ""}`;
+For a requested PDF deliverable, use \`${tools.name("scient_pdf_build")}\` to build an existing project HTML source and \`${tools.name("scient_latex_build")}\` to build an existing project LaTeX source.${tools.deferred ? ` If either is deferred, load its exact name through \`ToolSearch\` first.` : ""}`;
 
 export const SCIENT_DOCUMENT_BUILD_AWARENESS = buildScientDocumentAwareness(
   CANONICAL_SCIENT_TOOL_PROJECTION,
@@ -40,7 +44,7 @@ export function buildScientAwareness(
 ): string {
   return [
     SCIENT_CORE_AWARENESS,
-    ...(capabilities?.has("preview") ? [SCIENT_PREVIEW_AWARENESS] : []),
+    ...(capabilities?.has("preview") ? [buildScientPreviewAwareness(tools)] : []),
     ...(capabilities?.has("device") ? [SCIENT_DEVICE_AWARENESS] : []),
     ...(capabilities?.has("documents:build") ? [buildScientDocumentAwareness(tools)] : []),
     ...(capabilities?.has("skills:read") ? [SCIENT_SKILLS_AWARENESS] : []),

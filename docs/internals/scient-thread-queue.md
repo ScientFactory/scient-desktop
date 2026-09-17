@@ -180,6 +180,45 @@ rewritten by this conversion. No live application data is needed for tests.
 
 ## Composer draft ownership and recovery
 
+The capability foundation adds optional `selectedScientSkillNames`
+and `composerSnapshot` to queue items. The latter is bounded versioned JSON
+(4 MiB per item, also within the existing thread-byte cap), retained opaquely by
+the server and decoded by the client with the existing draft-context codecs.
+It contains raw composer text and terminal/preview/review selections;
+images and delivery settings remain in their existing fields. It is edit data,
+not provider input or authority. Delivery uses `text`, the same typed message
+`context` as immediate turns, attachments, and independently captured Skill
+selections. The worker never interprets the edit snapshot. There is no second
+queue or database migration.
+
+`threadQueueMessageContext` advertises typed queue support separately from
+`inlineMessageContext`: older hosts can understand immediate context without
+preserving queued records. Clients use the existing legacy-context serializer
+when queue support is absent. Image IDs and capture metadata survive queueing
+and editing; the normal attachment pipeline rebinds client IDs at admission.
+
+New edit snapshots use version 2. Version 1 snapshots and older edit journals
+migrate saved element picks into preview annotations and terminal placeholders
+into references. Migration reuses the ordinary composer's conversion helpers;
+malformed selections are reported rather than discarded, and reading a journal
+does not rewrite its original bytes.
+
+Editing restores those typed context fields and raw text, then recomputes
+explicit selections and materializes context once on resend. The existing
+journal carries `composerSeparated` through reload and stash recovery. Malformed
+snapshots leave the item untouched. Legacy items/journals without separated
+context cannot safely infer `$name` selections: an affected edit is retained
+with an explanation to compose a new selected-Skill message. Plain legacy text
+remains editable, and already queued delivery does not require an edit snapshot.
+An update replaces/removes optional context and selection fields rather than
+retaining stale data or selection intent from the previous version.
+
+The hidden edit draft carries a client-only `contextThreadId` restored from the
+journal's original target. Existing context setters can therefore reorder,
+remove or add chips without registering a new project draft or redirecting
+changes into the ordinary composer. It is excluded from the queue snapshot and
+is not a server workspace/operation receipt.
+
 `editSession.ts` maintains a local IndexedDB journal containing both full drafts,
 including File/Blob bytes, image metadata, settings and structured composer
 context. The ordinary draft keeps its original scoped identity. The edit has an

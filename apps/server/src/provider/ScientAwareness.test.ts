@@ -80,12 +80,15 @@ describe("Scient awareness", () => {
 
   it("projects exact provider tool names without changing capability gating", () => {
     const awareness = buildScientAwareness(
-      new Set(["documents:build", "skills:read"]),
+      new Set(["documents:build", "skills:read", "preview"]),
       CLAUDE_SCIENT_TOOL_PROJECTION,
     );
 
     expect(awareness).toContain("`mcp__t3-code__scient_pdf_build`");
     expect(awareness).toContain("`mcp__t3-code__scient_latex_build`");
+    expect(awareness).toContain("`mcp__t3-code__preview_status`");
+    expect(awareness).toContain("`mcp__t3-code__preview_open`");
+    expect(awareness).not.toContain("`preview_status`");
     expect(awareness).not.toContain("`ToolSearch`");
     expect(awareness).not.toContain("use `scient_pdf_build`");
     expect(awareness).toContain(SCIENT_SKILLS_AWARENESS);

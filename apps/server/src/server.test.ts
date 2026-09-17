@@ -186,6 +186,7 @@ import * as ProjectSetupScriptRunner from "./project/ProjectSetupScriptRunner.ts
 import * as RepositoryIdentityResolver from "./project/RepositoryIdentityResolver.ts";
 import * as ServerEnvironment from "./environment/ServerEnvironment.ts";
 import * as GeneratedDocumentStore from "./scient/documentArtifacts/GeneratedDocumentStore.ts";
+import * as WorkspaceBindingResolver from "./scient/projectScope/WorkspaceBindingResolver.ts";
 import * as WorkspaceEntries from "./workspace/WorkspaceEntries.ts";
 import * as WorkspaceFileSystem from "./workspace/WorkspaceFileSystem.ts";
 import * as WorkspacePaths from "./workspace/WorkspacePaths.ts";
@@ -579,6 +580,9 @@ const buildAppUnderTest = (options?: {
     serverLifecycleEvents?: Partial<ServerLifecycleEvents.ServerLifecycleEvents["Service"]>;
     serverRuntimeStartup?: Partial<ServerRuntimeStartup.ServerRuntimeStartup["Service"]>;
     serverEnvironment?: Partial<ServerEnvironment.ServerEnvironment["Service"]>;
+    workspaceBindingResolver?: Partial<
+      WorkspaceBindingResolver.WorkspaceBindingResolver["Service"]
+    >;
     repositoryIdentityResolver?: Partial<
       RepositoryIdentityResolver.RepositoryIdentityResolver["Service"]
     >;
@@ -781,6 +785,18 @@ const buildAppUnderTest = (options?: {
     );
     const serviceLauncherClientLayer = ServiceLauncherClient.layer.pipe(
       Layer.provide(Layer.succeed(HostProcessEnvironment, {})),
+    );
+    const workspaceBindingResolverLayer = Layer.succeed(
+      WorkspaceBindingResolver.WorkspaceBindingResolver,
+      WorkspaceBindingResolver.WorkspaceBindingResolver.of({
+        resolveWorkspaceRoot: () => Effect.die("Workspace root resolution is not stubbed"),
+        assertCurrentWorkspaceScope: () => Effect.die("Workspace root revalidation is not stubbed"),
+        resolveThread: () => Effect.die("Workspace binding resolution is not stubbed"),
+        resolveTrustedChild: () => Effect.die("Workspace child binding resolution is not stubbed"),
+        assertCurrentThreadScope: () => Effect.die("Workspace binding revalidation is not stubbed"),
+        diagnosticsForThread: () => Effect.die("Workspace binding diagnostics are not stubbed"),
+        ...options?.layers?.workspaceBindingResolver,
+      }),
     );
 
     const servedRoutesLayer = HttpRouter.serve(
@@ -1100,6 +1116,7 @@ const buildAppUnderTest = (options?: {
 
     const appLayer = servedRoutesLayer
       .pipe(
+        Layer.provide(workspaceBindingResolverLayer),
         Layer.provide(GeneratedDocumentStore.layer),
         Layer.provide(
           Layer.mock(ScientForkReactor.ScientForkReactor)({

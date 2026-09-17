@@ -60,7 +60,7 @@
     },
     {
       "path": "apps/server/src/mcp/McpInvocationContext.ts",
-      "anchor": "skills:read",
+      "anchor": "McpScientSkillScope",
       "purpose": "Carry the semantic capability and exact per-turn skill scope."
     },
     {

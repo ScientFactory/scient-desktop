@@ -7,6 +7,8 @@ import {
   TurnId,
   ProviderInstanceId,
   MessageId,
+  ComposerContextId,
+  type OrchestrationMessageContext,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -54,6 +56,22 @@ const testLayer = ScientQueueWorkerLive.pipe(
 const now = "2026-09-04T00:00:00.000Z";
 const threadId = ThreadId.make("background-queue");
 const projectId = ProjectId.make("queue-project");
+const messageContext: OrchestrationMessageContext = {
+  version: 1,
+  records: [
+    {
+      version: 1,
+      kind: "terminal",
+      contextId: ComposerContextId.make("ctx_terminal"),
+      label: "Terminal",
+      terminalId: "default",
+      terminalLabel: "Terminal",
+      lineStart: 1,
+      lineEnd: 1,
+      text: "measured value 42",
+    },
+  ],
+};
 
 it.effect.each([
   "normal",
@@ -90,11 +108,17 @@ it.effect.each([
       createdAt: now,
     });
     const starts = yield* Queue.unbounded<string>();
+    const selectedByMessage = new Map<string, ReadonlyArray<string> | undefined>();
     const events = yield* engine.subscribeDomainEvents;
     yield* events.pipe(
       Stream.runForEach((event) =>
         event.type === "thread.turn-start-requested"
-          ? Queue.offer(starts, event.payload.messageId).pipe(Effect.asVoid)
+          ? Effect.sync(() =>
+              selectedByMessage.set(
+                event.payload.messageId,
+                event.payload.selectedScientSkillNames,
+              ),
+            ).pipe(Effect.andThen(Queue.offer(starts, event.payload.messageId)), Effect.asVoid)
           : Effect.void,
       ),
       Effect.forkScoped,
@@ -112,6 +136,8 @@ it.effect.each([
               threadId,
               queueItemId: `qitem_${id}`,
               text: id,
+              selectedScientSkillNames: id === "A" ? ["pdf-authoring"] : [],
+              context: messageContext,
               attachments: [],
               runtimeMode: "approval-required",
               interactionMode: "plan",
@@ -184,8 +210,13 @@ it.effect.each([
       yield* finalizeQueueTurn(threadId, "restart-answer", true, "checkpoint");
     }
     expect(yield* Queue.take(starts)).toBe("queue:qitem_A");
+    expect(selectedByMessage.get("queue:qitem_A")).toEqual(["pdf-authoring"]);
     expect((yield* readQueue(threadId)).items.map((item) => item.text)).toEqual(["B"]);
     const detail = yield* query.getThreadDetailById(threadId);
+    expect(
+      Option.isSome(detail) &&
+        detail.value.messages.find((message) => message.id === "queue:qitem_A")?.context,
+    ).toEqual(messageContext);
     expect(Option.isSome(detail) && detail.value.modelSelection.model).toBe("gpt-5.5");
     expect(Option.isSome(detail) && detail.value.runtimeMode).toBe("approval-required");
     expect(Option.isSome(detail) && detail.value.interactionMode).toBe("plan");
@@ -285,6 +316,7 @@ it.effect.each([
     expect((yield* readQueue(threadId)).blocked).toBe(true);
     yield* finalizeQueueTurn(threadId, finalTurn, true, "checkpoint");
     expect(yield* Queue.take(starts)).toBe("queue:qitem_B");
+    expect(selectedByMessage.get("queue:qitem_B")).toEqual([]);
     // Receipt order above proves delivery order; projection order uses client timestamps.
     const final = yield* query.getThreadDetailById(threadId);
     expect(

@@ -1,6 +1,7 @@
 import { ScientCompletedAnswer } from "./scientAnswerAttention.ts";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
+import { SelectedScientSkillNames } from "./scientSkillSelection.ts";
 import * as SchemaIssue from "effect/SchemaIssue";
 import * as SchemaTransformation from "effect/SchemaTransformation";
 import * as Struct from "effect/Struct";
@@ -1334,6 +1335,7 @@ const ThreadTurnStartBootstrap = Schema.Struct({
 export type ThreadTurnStartBootstrap = typeof ThreadTurnStartBootstrap.Type;
 
 export const ThreadTurnStartCommand = Schema.Struct({
+  selectedScientSkillNames: Schema.optional(SelectedScientSkillNames),
   queueProtocolVersion: Schema.optional(Schema.Literal(2)),
   sendIntent: Schema.optional(Schema.Literals(["normal", "steer"])),
   queueItemId: Schema.optional(Schema.String),
@@ -1360,6 +1362,7 @@ export const ThreadTurnStartCommand = Schema.Struct({
 });
 
 const ClientThreadTurnStartCommand = Schema.Struct({
+  selectedScientSkillNames: Schema.optional(SelectedScientSkillNames),
   queueProtocolVersion: Schema.optional(Schema.Literal(2)),
   sendIntent: Schema.optional(Schema.Literals(["normal", "steer"])),
   type: Schema.Literal("thread.turn.start"),
@@ -2065,6 +2068,7 @@ export const ThreadMessageSentPayload = Schema.Struct({
 });
 
 export const ThreadTurnStartRequestedPayload = Schema.Struct({
+  selectedScientSkillNames: Schema.optional(SelectedScientSkillNames),
   threadId: ThreadId,
   messageId: MessageId,
   modelSelection: Schema.optional(ModelSelection),

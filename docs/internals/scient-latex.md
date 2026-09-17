@@ -72,7 +72,7 @@ that would escape the workspace root (`..` walks, a Windows drive-relative
 absolute path) is rejected as `invalid-path`.
 
 **Logical document key.** Every build, status, and cancel call resolves to
-`latex:<normalized-workspace-root>:<root-relative-path>`, capped at 1,024
+`latex:<sha256-of-normalized-workspace-root>:<root-relative-path>`, capped at 1,024
 characters (`document-key-too-long` otherwise). This is the same key space
 `GeneratedDocumentStore` uses for its bindings, so the build coordinator's
 in-memory state and the store's on-disk binding always agree on which document
@@ -602,6 +602,26 @@ are restricted to HTTPS (except a loopback exception used by tests) and to an
 explicit host allowlist (`github.com`,
 `release-assets.githubusercontent.com`, `objects.githubusercontent.com`)
 across at most 5 redirect hops.
+
+## Compiler authority boundary
+
+Agent-facing `latexmk` builds pass both `-no-shell-escape` and `-norc`.
+`-no-shell-escape` prevents TeX shell escape; `-norc` separately prevents
+project and user `latexmk` Perl startup files from turning a document build into
+arbitrary host command execution. Tectonic continues to run in its `--untrusted`
+mode. These controls bound execution behavior, but they do not make either
+compiler an operating-system filesystem sandbox: TeX content can still ask the
+selected engine to resolve readable files. A future provider profile that has
+project-only read authority must not receive this capability until the exact
+platform/engine path has an isolation proof.
+
+The agent tool's `openWorldHint` is intentionally true. A system installation
+is never modified or contacted, but a user-selected Scient-managed TinyTeX may
+search for and download missing packages as documented above. Provider-visible
+toolchain status keeps the engine basename and omits the host-local executable
+path. LaTeX logical document keys use a SHA-256 digest of the normalized
+workspace root plus the project-relative document path, so generated-document
+descriptors do not disclose the canonical host root.
 
 ## Aux/work directory
 

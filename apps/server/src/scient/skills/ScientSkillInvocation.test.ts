@@ -47,11 +47,48 @@ const releases = new Map([
 ]);
 
 describe("turn-local Scient skill routing", () => {
+  it("never derives explicit selection from augmented or retained provider text", () => {
+    for (const text of [
+      `Captured text: $${explicit.name} please.`,
+      `<terminal_context>\n$${explicit.name} please.\n</terminal_context>`,
+      JSON.stringify({ retainedHistory: `Use $${explicit.name} now.` }),
+    ]) {
+      expect(prepareScientSkillTurn(text, skills, releases).skillScope.skills).toEqual([automatic]);
+    }
+    const wrapped = JSON.stringify({ latestUserMessage: `$${explicit.name} please.` });
+    expect(
+      prepareScientSkillTurn(wrapped, skills, releases, undefined, [explicit.name]).skillScope
+        .skills,
+    ).toEqual([explicit, automatic]);
+    expect(
+      prepareScientSkillTurn(wrapped, skills, releases, undefined, []).skillScope.skills,
+    ).toEqual([automatic]);
+  });
+  it("bounds automatic UTF-8 metadata without dropping explicit multilingual entries", () => {
+    const longDescription = "מחקר 科学 🧪 ".repeat(200);
+    const described = { ...automatic, description: longDescription };
+    const unselected = prepareScientSkillTurn("Review.", [described], releases);
+    expect(Buffer.byteLength(unselected.input!)).toBeLessThan(4_000);
+    expect(unselected.input).toContain("additional skills remain available");
+    expect(unselected.skillScope.skills).toEqual([described]);
+    const selected = prepareScientSkillTurn(
+      `Use $${described.name} now.`,
+      [described],
+      releases,
+      undefined,
+      [described.name],
+    );
+    expect(selected.input).toContain(longDescription);
+    expect(selected.input).toContain("selected by the user");
+  });
+
   it("indexes automatic skills and only the explicitly selected $name", () => {
     const result = prepareScientSkillTurn(
       "Please use $improve-workspace-readiness after the review.",
       skills,
       releases,
+      undefined,
+      [explicit.name],
     );
     expect(result.input).toContain("Scient skills available for this turn");
     expect(result.input).toContain(`{"name":"${automatic.name}"}`);
@@ -85,6 +122,8 @@ describe("turn-local Scient skill routing", () => {
       "Use $scient-skill-authoring to improve this candidate.",
       [authoring],
       new Map([[authoring.releaseKey, authoringRelease]]),
+      undefined,
+      [authoring.name],
     );
     expect(result.input).toContain("selected by the user");
     expect(result.input).toContain(`{"name":"${authoring.name}"}`);

@@ -1,6 +1,54 @@
 import { afterEach, beforeEach, describe, expect, it } from "vite-plus/test";
 
-import { acknowledgeQueueSubmission, queueSubmissionId } from "./submission";
+import { acknowledgeQueueSubmission, queueSubmissionId, prepareQueueMessage } from "./submission";
+import { ComposerContextId, type OrchestrationMessageContext } from "@t3tools/contracts";
+import { projectComposerContextForProvider } from "@t3tools/shared/composerContextReferences";
+
+describe("queued message context", () => {
+  const text = "Explain [Terminal](t3-context://v1/terminal/ctx_terminal)";
+  const context: OrchestrationMessageContext = {
+    version: 1,
+    records: [
+      {
+        version: 1,
+        kind: "terminal",
+        contextId: ComposerContextId.make("ctx_terminal"),
+        label: "Terminal",
+        terminalId: "default",
+        terminalLabel: "Terminal",
+        lineStart: 1,
+        lineEnd: 1,
+        text: "measured result: 42",
+      },
+    ],
+  };
+  it("retains typed context for capable queues", () => {
+    const message = prepareQueueMessage(text, context, true);
+    expect(message).toEqual({ text, context });
+    expect(
+      projectComposerContextForProvider({ text: message.text, records: message.context!.records }),
+    ).toContain("measured result: 42");
+  });
+  it("keeps retry identity when only the host's context delivery mode changes", async () => {
+    const identify = (supportsContext: boolean) => {
+      const payload = {
+        ...prepareQueueMessage(text, context, supportsContext),
+        composerSnapshot: "same draft",
+        attachments: [],
+      };
+      const { text: _wireText, context: _wireContext, ...identity } = payload;
+      return queueSubmissionId("context-retry", { ...identity, text, context });
+    };
+    expect(await identify(false)).toBe(await identify(true));
+  });
+  it("uses the existing context serializer for older queues", () => {
+    const message = prepareQueueMessage(text, context, false);
+    expect(message.context).toBeUndefined();
+    expect(message.text).toContain("measured result: 42");
+    expect(message.text).not.toContain("t3-context://");
+    expect(prepareQueueMessage("hello", undefined, false)).toEqual({ text: "hello" });
+  });
+});
 
 function createLocalStorageStub(): Storage {
   const store = new Map<string, string>();

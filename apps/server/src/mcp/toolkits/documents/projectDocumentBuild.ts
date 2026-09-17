@@ -4,8 +4,14 @@ import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 
-import * as ProjectionSnapshotQuery from "../../../orchestration/Services/ProjectionSnapshotQuery.ts";
-import * as McpInvocationContext from "../../McpInvocationContext.ts";
+import type {
+  WorkspaceBindingId,
+  WorkspaceAuthorityScopeRevision,
+  WorkspaceBindingRecordV1,
+} from "../../../scient/projectScope/WorkspaceBinding.ts";
+import * as WorkspaceBindingResolver from "../../../scient/projectScope/WorkspaceBindingResolver.ts";
+import * as AgentInvocationContext from "../../../scient/operations/AgentInvocationContext.ts";
+import { consumeAgentWorkspace } from "../../../scient/operations/AgentWorkspaceScope.ts";
 
 const NonEmptyMessage = Schema.String.check(Schema.isTrimmed(), Schema.isNonEmpty());
 
@@ -24,8 +30,11 @@ export class ProjectDocumentBuildBoundaryError extends Schema.TaggedError<Projec
 ) {}
 
 export interface ResolvedDocumentBuildProject {
-  readonly invocation: McpInvocationContext.McpInvocationScope;
+  readonly invocation: AgentInvocationContext.AgentInvocationScope;
   readonly root: string;
+  readonly bindingId: WorkspaceBindingId;
+  readonly authorityGeneration: WorkspaceBindingRecordV1["authorityGeneration"];
+  readonly scopeRevision: WorkspaceAuthorityScopeRevision;
 }
 
 export interface ResolvedPdfOutput {
@@ -35,6 +44,8 @@ export interface ResolvedPdfOutput {
 }
 
 export interface StagedPdfOutput {
+  readonly canonicalRoot: string;
+  readonly canonicalTargetDirectory: string;
   readonly finalPath: string;
   readonly temporaryPath: string;
 }
@@ -57,46 +68,47 @@ export const isInsideRoot = (root: string, candidate: string, path: Path.Path): 
 
 export const resolveDocumentBuildProject = Effect.fn("ProjectDocumentBuild.resolveProject")(
   function* () {
-    const invocation = yield* McpInvocationContext.McpInvocationContext;
+    const invocation = yield* AgentInvocationContext.AgentInvocationContext;
     if (!invocation.capabilities.has("documents:build")) {
       return yield* boundaryError(
         "capability-unavailable",
         "This provider session does not grant document build access.",
       );
     }
-    const snapshots = yield* ProjectionSnapshotQuery.ProjectionSnapshotQuery;
-    const thread = yield* snapshots
-      .getThreadShellById(invocation.threadId)
-      .pipe(
-        Effect.mapError(() =>
-          boundaryError("project-changed", "The current thread could not be resolved."),
-        ),
-      );
-    if (Option.isNone(thread) || thread.value.projectId === null) {
-      return yield* boundaryError(
-        "project-required",
-        "Document builds require a thread that belongs to a Scient project.",
-      );
-    }
-    const project = yield* snapshots
-      .getProjectShellById(thread.value.projectId)
-      .pipe(
-        Effect.mapError(() =>
-          boundaryError("project-changed", "The current project could not be resolved."),
-        ),
-      );
-    if (Option.isNone(project)) {
-      return yield* boundaryError(
-        "project-changed",
-        "The project for this thread is no longer active.",
-      );
-    }
+    const resolved = yield* consumeAgentWorkspace().pipe(
+      Effect.mapError((cause) => boundaryError(cause.code, cause.message)),
+    );
+    const binding = resolved.binding;
     return {
       invocation,
-      root: thread.value.worktreePath ?? project.value.workspaceRoot,
+      root: binding.canonicalRoot,
+      bindingId: binding.bindingId,
+      authorityGeneration: binding.authorityGeneration,
+      scopeRevision: resolved.scopeRevision,
     } satisfies ResolvedDocumentBuildProject;
   },
 );
+
+export const assertCurrentDocumentBuildProject = Effect.fn(
+  "ProjectDocumentBuild.assertCurrentProject",
+)(function* (authority: ResolvedDocumentBuildProject) {
+  const resolver = yield* WorkspaceBindingResolver.WorkspaceBindingResolver;
+  yield* resolver
+    .assertCurrentThreadScope({
+      threadId: authority.invocation.threadId,
+      bindingId: authority.bindingId,
+      authorityGeneration: authority.authorityGeneration,
+      scopeRevision: authority.scopeRevision,
+    })
+    .pipe(
+      Effect.mapError(() =>
+        boundaryError(
+          "project-changed",
+          "The active project workspace changed while the document was being built. Run the build again.",
+        ),
+      ),
+    );
+});
 
 export const resolveProjectPdfOutput = Effect.fn("ProjectDocumentBuild.resolvePdfOutput")(
   function* (root: string, requestedPath: string) {
@@ -208,33 +220,78 @@ export const stageProjectPdfOutput = Effect.fn("ProjectDocumentBuild.stagePdfOut
     return yield* writeError();
   }
 
-  const temporaryDirectory = yield* fileSystem
-    .makeTempDirectoryScoped({
-      directory: canonicalTargetDirectory,
-      prefix: `.${path.basename(output.absolutePath)}.`,
-    })
-    .pipe(Effect.mapError(writeError));
+  const temporaryDirectory = yield* Effect.acquireRelease(
+    fileSystem
+      .makeTempDirectory({
+        directory: canonicalTargetDirectory,
+        prefix: `.${path.basename(output.absolutePath)}.`,
+      })
+      .pipe(Effect.mapError(writeError)),
+    (directory) =>
+      Effect.gen(function* () {
+        const currentParent = yield* fileSystem
+          .realPath(path.dirname(directory))
+          .pipe(Effect.option);
+        if (Option.isNone(currentParent) || currentParent.value !== canonicalTargetDirectory) {
+          return;
+        }
+        const currentDirectory = yield* fileSystem.realPath(directory).pipe(Effect.option);
+        if (
+          Option.isNone(currentDirectory) ||
+          currentDirectory.value === canonicalTargetDirectory ||
+          !isInsideRoot(canonicalTargetDirectory, currentDirectory.value, path)
+        ) {
+          return;
+        }
+        yield* fileSystem.remove(directory, { recursive: true }).pipe(Effect.ignore);
+      }),
+  );
   const temporaryPath = path.join(temporaryDirectory, "document.pdf");
   yield* fileSystem.writeFile(temporaryPath, bytes).pipe(Effect.mapError(writeError));
   yield* Effect.scoped(
     fileSystem.open(temporaryPath, { flag: "r+" }).pipe(Effect.flatMap((file) => file.sync)),
   ).pipe(Effect.mapError(writeError));
 
-  return { finalPath, temporaryPath } satisfies StagedPdfOutput;
+  return {
+    canonicalRoot: output.canonicalRoot,
+    canonicalTargetDirectory,
+    finalPath,
+    temporaryPath,
+  } satisfies StagedPdfOutput;
 });
 
 export const commitStagedProjectPdfOutput = Effect.fn("ProjectDocumentBuild.commitStagedPdfOutput")(
   function* (staged: StagedPdfOutput) {
     const fileSystem = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const writeError = () =>
+      boundaryError(
+        "output-write-failed",
+        "Scient validated the PDF but could not write it to the requested project path.",
+      );
+    const currentTargetDirectory = yield* fileSystem
+      .realPath(path.dirname(staged.finalPath))
+      .pipe(Effect.mapError(writeError));
+    const currentTemporaryPath = yield* fileSystem
+      .realPath(staged.temporaryPath)
+      .pipe(Effect.mapError(writeError));
+    if (
+      currentTargetDirectory !== staged.canonicalTargetDirectory ||
+      currentTemporaryPath !== staged.temporaryPath ||
+      !isInsideRoot(staged.canonicalRoot, currentTargetDirectory, path) ||
+      !isInsideRoot(staged.canonicalTargetDirectory, currentTemporaryPath, path)
+    ) {
+      return yield* boundaryError(
+        "invalid-output-path",
+        "The PDF output directory changed before the project file could be written.",
+      );
+    }
+    const existingOutput = yield* fileSystem.stat(staged.finalPath).pipe(Effect.option);
+    if (Option.isSome(existingOutput) && existingOutput.value.type !== "File") {
+      return yield* writeError();
+    }
     yield* fileSystem
       .rename(staged.temporaryPath, staged.finalPath)
-      .pipe(
-        Effect.mapError(() =>
-          boundaryError(
-            "output-write-failed",
-            "Scient validated the PDF but could not write it to the requested project path.",
-          ),
-        ),
-      );
+      .pipe(Effect.mapError(writeError));
   },
 );
