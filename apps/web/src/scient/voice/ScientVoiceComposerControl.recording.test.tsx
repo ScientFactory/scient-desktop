@@ -2,7 +2,15 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 
 const controllerState = vi.hoisted(() => ({
-  phase: "recording" as "recording" | "correcting",
+  phase: "recording" as "idle" | "recording" | "correcting" | "setup-prompt",
+  errorMessage: null as string | null,
+  modelSnapshot: null as null | {
+    runtimeAvailable: boolean;
+    selectedModelId: null;
+    recommendation: null;
+    activeDownloadModelId: null;
+    models: [];
+  },
 }));
 
 vi.mock("./voiceClient.ts", async (importOriginal) => {
@@ -21,9 +29,9 @@ vi.mock("./useScientVoiceController.ts", async (importOriginal) => {
       phase: controllerState.phase,
       levels: [],
       elapsedMs: 0,
-      errorMessage: null,
+      errorMessage: controllerState.errorMessage,
       downloadPercent: 0,
-      modelSnapshot: null,
+      modelSnapshot: controllerState.modelSnapshot,
       activate: async () => undefined,
       setupModel: async () => undefined,
       dismissSetup: () => undefined,
@@ -38,6 +46,8 @@ import { ScientVoiceComposerControl } from "./ScientVoiceComposerControl.tsx";
 
 afterEach(() => {
   controllerState.phase = "recording";
+  controllerState.errorMessage = null;
+  controllerState.modelSnapshot = null;
 });
 
 describe("ScientVoiceComposerControl recording actions", () => {
@@ -69,5 +79,29 @@ describe("ScientVoiceComposerControl recording actions", () => {
 
     expect(markup).toContain("Correcting transcript…");
     expect(markup).toContain("Use original");
+  });
+
+  it("does not turn a ready-only consumer into another model setup surface", () => {
+    controllerState.phase = "setup-prompt";
+    const markup = renderToStaticMarkup(
+      <ScientVoiceComposerControl
+        onTranscript={() => undefined}
+        readyModelOnly
+        ariaLabel="Dictate citation comment"
+      />,
+    );
+
+    expect(markup).toBe("");
+    expect(markup).not.toContain("Choose voice model");
+  });
+
+  it("hides a ready-only control when activation can no longer verify setup", () => {
+    controllerState.phase = "idle";
+    controllerState.errorMessage = "Voice setup could not be checked";
+    const markup = renderToStaticMarkup(
+      <ScientVoiceComposerControl onTranscript={() => undefined} readyModelOnly />,
+    );
+
+    expect(markup).toBe("");
   });
 });

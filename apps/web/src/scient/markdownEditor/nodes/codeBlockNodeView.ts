@@ -31,6 +31,13 @@ import { ScientEditableRichFence } from "./ScientEditableRichFence";
 
 export type ScientMarkdownCodeEditorRegistrar = ScientNestedCodeEditorRegistrar;
 
+const richFenceSourceOpeners = new WeakMap<HTMLElement, () => boolean>();
+
+/** Opens the visible source owned by a mounted rich fence without coupling citation code to React. */
+export function openScientRichFenceSource(block: HTMLElement): boolean {
+  return richFenceSourceOpeners.get(block)?.() ?? false;
+}
+
 function codeLanguage(node: ProseMirrorNode): string {
   return String(node.attrs.params).trim().split(/\s+/u)[0] || "text";
 }
@@ -86,6 +93,11 @@ class ScientCodeBlockNodeView implements NodeView {
     this.dom.contentEditable = "false";
     this.dom.dir = "ltr";
     this.dom.setAttribute("data-scient-markdown-code-block", "true");
+    richFenceSourceOpeners.set(this.dom, () => {
+      if (!this.isRichFence() || !this.view.editable) return false;
+      this.openSourceEditor(false);
+      return true;
+    });
     const header = document.createElement("div");
     header.className = "scient-markdown-code-header";
     this.header = mountCodeBlockHeader(header, () => this.node.textContent, this.setWordWrap);
@@ -160,6 +172,7 @@ class ScientCodeBlockNodeView implements NodeView {
 
   destroy(): void {
     this.destroyed = true;
+    richFenceSourceOpeners.delete(this.dom);
     this.header.destroy();
     this.unregisterCodeEditor?.();
     this.unregisterCodeEditor = undefined;

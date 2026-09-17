@@ -29,10 +29,11 @@ contracts.
   keep correction disabled by default.
 
 The direct inherited-host changes are deliberately narrow: one composer mount,
-one positioned-footer class, one IPC method-group loop, one preload-adapter
-mount, and one call from the desktop artifact builder into the Scient-owned
-runtime staging adapter. Voice behavior does not live in `ChatComposer.tsx`,
-the inherited preload, or the artifact orchestrator.
+one ready-model-only citation-comment mount, one positioned-footer class, one
+IPC method-group loop, one preload-adapter mount, and one call from the desktop
+artifact builder into the Scient-owned runtime staging adapter. Voice behavior
+does not live in `ChatComposer.tsx`, the inherited preload, or the artifact
+orchestrator.
 
 ## Reliability invariants
 
@@ -93,6 +94,13 @@ verified installed model when one exists; otherwise voice returns to setup.
 Existing installations retain any valid saved selection. If that selection is
 missing, the sole verified installed model is selected without downloading it
 again; multiple installed models remain an explicit user choice.
+
+Citation comments consume this existing setup rather than providing another
+model-management surface. Their microphone is absent until the desktop reports
+a selected, verified, ready model. The comment control revalidates readiness
+before recording and disappears without a placeholder if setup is missing or
+cannot be verified; first-use choice, downloads, repair, and removal remain in
+the composer and Settings → Voice.
 
 ## Runtime provenance and packaging
 

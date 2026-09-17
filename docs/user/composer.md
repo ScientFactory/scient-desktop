@@ -134,8 +134,10 @@ In a workspace Markdown file's rendered view, select text and choose **Ask in ch
 Scient adds a file-quote chip to the current chat and opens the same optional
 comment bubble used for assistant quotes. Text in paragraphs, lists, tables,
 and ordinary code blocks is supported; selecting an entire image, formula, or
-interactive chart is not part of this action. Source view and read-only host-file
-previews keep their existing controls.
+interactive chart is not part of this action. When an editable diagram's source
+is visible, selecting that source is supported like any other code block; selecting
+the rendered diagram is not. Source view and read-only host-file previews keep
+their existing controls.
 
 The chip retains the exact selected text, the original environment and workspace,
 file path, and the containing Markdown source lines. The line range describes
