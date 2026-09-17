@@ -25,3 +25,17 @@ export const successfulParentWithDescendantFixture = [
   "const child = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { stdio: 'ignore' });",
   "process.stdout.write(String(child.pid) + '\\n', () => process.exit(0));",
 ].join("\n");
+
+/** Spawns a SIGTERM-resistant descendant, reports its PID, then exits zero. */
+export const successfulParentWithResistantDescendantFixture = [
+  "const { spawn } = require('node:child_process');",
+  "const source = [",
+  "  \"process.on('SIGTERM', () => {});\",",
+  "  \"process.stdout.write('ready\\\\n');\",",
+  '  "setInterval(() => {}, 1000);",',
+  "].join('\\n');",
+  "const child = spawn(process.execPath, ['-e', source], { stdio: ['ignore', 'pipe', 'ignore'] });",
+  "child.stdout.once('data', () => {",
+  "  process.stdout.write(String(child.pid) + '\\n', () => process.exit(0));",
+  "});",
+].join("\n");

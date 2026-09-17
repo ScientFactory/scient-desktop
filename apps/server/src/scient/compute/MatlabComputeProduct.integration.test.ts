@@ -495,13 +495,75 @@ describe.runIf(Boolean(TEST_MATLAB))("MATLAB compute product backend", () => {
             );
             if (representation?.data._tag !== "json")
               return yield* Effect.die(`Missing inline table preview: ${name}`);
-            const preview = yield* Schema.decodeUnknownEffect(tablePreviewSchema)(
+            const preview = yield* Schema.decodeEffect(tablePreviewSchema)(
               representation.data.json,
             );
             expect(preview.data).toHaveLength(rows);
             expect(preview.schema.fields).toHaveLength(columns);
             expect(preview.scientPreview.truncated).toBe(truncated);
           }
+
+          const unrelatedTableId = yield* submit(
+            gateway,
+            projectRoot,
+            sessionId,
+            session.generation,
+            "matlab-table-unrelated-execution",
+            "disp('table remains unchanged');",
+          );
+          expect(yield* waitForTerminal(gateway, projectRoot, sessionId, unrelatedTableId)).toBe(
+            "succeeded",
+          );
+          const unrelatedTableOutputs = (yield* gateway.listOutputs({
+            cwd: projectRoot,
+            sessionId,
+            executionId: unrelatedTableId,
+          })).outputs;
+          expect(
+            unrelatedTableOutputs.some(
+              (output) => output._tag === "display-data" || output._tag === "display-update",
+            ),
+          ).toBe(false);
+
+          const changedTableId = yield* submit(
+            gateway,
+            projectRoot,
+            sessionId,
+            session.generation,
+            "matlab-table-changed",
+            "qa_table.value(1) = 999;",
+          );
+          expect(yield* waitForTerminal(gateway, projectRoot, sessionId, changedTableId)).toBe(
+            "succeeded",
+          );
+          const changedTableRawOutputs = (yield* gateway.listOutputs({
+            cwd: projectRoot,
+            sessionId,
+            executionId: changedTableId,
+          })).outputs;
+          const changedTableDisplays = changedTableRawOutputs.filter(
+            (output) => output._tag === "display-data" || output._tag === "display-update",
+          );
+          expect(changedTableDisplays).toHaveLength(1);
+          expect(changedTableDisplays[0]).toMatchObject({
+            _tag: "display-data",
+            displayId: "matlab-table:qa_table",
+          });
+          const changedTable = projectComputeOutputs(changedTableRawOutputs).find(
+            (output) =>
+              output._tag === "representation" && output.displayId === "matlab-table:qa_table",
+          );
+          if (changedTable?._tag !== "representation")
+            return yield* Effect.die("Missing changed qa_table snapshot");
+          const changedTableRepresentation = changedTable.bundle.representations.find(
+            (entry) => entry.mediaType === "application/vnd.dataresource+json",
+          );
+          if (changedTableRepresentation?.data._tag !== "json")
+            return yield* Effect.die("Missing changed qa_table preview");
+          const changedTablePreview = yield* Schema.decodeEffect(tablePreviewSchema)(
+            changedTableRepresentation.data.json,
+          );
+          expect(changedTablePreview.data[0]).toMatchObject({ value: 999 });
 
           const diagnosticCode = [
             "retained_after_failure = 7;",

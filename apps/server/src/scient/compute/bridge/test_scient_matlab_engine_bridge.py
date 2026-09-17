@@ -109,8 +109,14 @@ class FakeEngine:
             }
         )
 
-    def _tables(self, _maximum_rows, _maximum_columns, **_kwargs):
-        return json.dumps({"tables": self.tables, "truncated": False})
+    def _tables(self, _maximum_rows, _maximum_columns, _maximum_tables, **_kwargs):
+        return json.dumps(
+            {
+                "tables": self.tables,
+                "truncated": False,
+                "inventoryTruncated": False,
+            }
+        )
 
     def _variables(self, _maximum, **_kwargs):
         return json.dumps(
@@ -683,6 +689,163 @@ class TestMatlabBridge(unittest.IsolatedAsyncioTestCase):
         )
         self.assertEqual(display["payload"]["displayId"], "matlab-table:results")
 
+    async def test_matlab_table_previews_are_execution_scoped_and_change_aware(self):
+        def table_entry(answer, warning=""):
+            return {
+                "name": "results",
+                "json": json.dumps(
+                    {
+                        "schema": {"fields": [{"name": "answer"}]},
+                        "data": [{"answer": answer}],
+                        "scientPreview": {"truncated": False},
+                    },
+                    separators=(",", ":"),
+                ),
+                "text": f"answer\n{answer}\n",
+                "warning": warning,
+            }
+
+        engine = FakeEngine(
+            figure=False,
+            tables=[table_entry(41, "bounded preview warning")],
+        )
+        instance, output = make_bridge(self, engine)
+
+        async def execute(request_id):
+            await instance._handle_execute({"code": "disp('step')"}, request_id)
+            await instance._execution_task
+            return [
+                message
+                for message in decode_frames(output.getvalue())
+                if message.get("requestId") == request_id
+            ]
+
+        first = await execute("table-first")
+        self.assertEqual(
+            [message["payload"]["kind"] for message in first if message["type"] == "display"],
+            ["display-data"],
+        )
+        self.assertEqual(
+            len([message for message in first if message["type"] == "warning"]), 1
+        )
+
+        unchanged = await execute("table-unchanged")
+        self.assertFalse(any(message["type"] == "display" for message in unchanged))
+        self.assertFalse(any(message["type"] == "warning" for message in unchanged))
+
+        engine.tables = [table_entry(42, "bounded preview warning")]
+        changed = await execute("table-changed")
+        changed_display = next(
+            message for message in changed if message["type"] == "display"
+        )
+        self.assertEqual(changed_display["payload"]["kind"], "display-data")
+        self.assertEqual(changed_display["payload"]["displayId"], "matlab-table:results")
+        changed_json = next(
+            representation["data"]
+            for representation in changed_display["payload"]["bundle"]["representations"]
+            if representation["mediaType"] == "application/vnd.dataresource+json"
+        )
+        self.assertEqual(json.loads(changed_json)["data"], [{"answer": 42}])
+
+        with patch.object(engine, "_tables", return_value=json.dumps({"unexpected": []})):
+            malformed = await execute("table-malformed-inspection")
+        self.assertFalse(any(message["type"] == "display" for message in malformed))
+        self.assertEqual(
+            len([message for message in malformed if message["type"] == "warning"]), 1
+        )
+        self.assertIn("results", instance._table_preview_hashes)
+
+        engine.tables = [
+            {"name": f"other_{index}", "json": "", "text": "", "warning": ""}
+            for index in range(matlab_bridge.MAX_TABLES + 1)
+        ]
+        truncated_inventory = await execute("table-truncated-inventory")
+        self.assertFalse(
+            any(message["type"] == "display" for message in truncated_inventory)
+        )
+        self.assertEqual(
+            len(
+                [
+                    message
+                    for message in truncated_inventory
+                    if message["type"] == "warning"
+                ]
+            ),
+            1,
+        )
+        self.assertIn("results", instance._table_preview_hashes)
+
+        repeated_truncated_inventory = await execute("table-truncated-inventory-again")
+        self.assertFalse(
+            any(
+                message["type"] in {"display", "warning"}
+                for message in repeated_truncated_inventory
+            )
+        )
+
+        engine.tables = [table_entry(42, "bounded preview warning")]
+        unchanged_after_malformed = await execute("table-unchanged-after-malformed")
+        self.assertFalse(
+            any(message["type"] == "display" for message in unchanged_after_malformed)
+        )
+        self.assertFalse(
+            any(message["type"] == "warning" for message in unchanged_after_malformed)
+        )
+
+        engine.tables = []
+        removed = await execute("table-removed")
+        self.assertFalse(any(message["type"] == "display" for message in removed))
+        self.assertNotIn("results", instance._table_preview_hashes)
+
+        engine.tables = [table_entry(42)]
+        recreated = await execute("table-recreated")
+        self.assertEqual(
+            len([message for message in recreated if message["type"] == "display"]), 1
+        )
+
+    async def test_table_preview_retries_after_a_temporary_peer_frame_limit(self):
+        table_json = json.dumps(
+            {
+                "schema": {"fields": [{"name": "answer"}]},
+                "data": [{"answer": "x" * 2_000}],
+                "scientPreview": {"truncated": False},
+            },
+            separators=(",", ":"),
+        )
+        engine = FakeEngine(
+            figure=False,
+            tables=[{"name": "results", "json": table_json, "text": "answer\nvalue\n"}],
+        )
+        instance, output = make_bridge(self, engine)
+        instance._peer_frame_limit = 1_024
+
+        async def execute(request_id):
+            await instance._handle_execute({"code": "disp('step')"}, request_id)
+            await instance._execution_task
+            return [
+                message
+                for message in decode_frames(output.getvalue())
+                if message.get("requestId") == request_id
+            ]
+
+        constrained = await execute("table-frame-constrained")
+        self.assertFalse(any(message["type"] == "display" for message in constrained))
+        self.assertTrue(
+            any(
+                message["type"] == "warning"
+                and "bridge frame limit" in (message["payload"].get("detail") or "")
+                for message in constrained
+            )
+        )
+        self.assertNotIn("results", instance._table_preview_hashes)
+
+        instance._peer_frame_limit = matlab_bridge.MAX_FRAME
+        retried = await execute("table-frame-retried")
+        self.assertEqual(
+            len([message for message in retried if message["type"] == "display"]), 1
+        )
+        self.assertIn("results", instance._table_preview_hashes)
+
     def test_native_m02_and_m07_tables_are_bounded_and_well_formed(self):
         """Qualify the real helper against the QA MATLAB table stress cases."""
         executable = os.environ.get("SCIENT_TEST_MATLAB")
@@ -739,18 +902,27 @@ disp('M07_PASS');
                 "\n".join(
                     [
                         f"run('{fixture_names[0]}');",
-                        f"scient_m02_json = {helper_name}(100, 20);",
+                        f"scient_m02_json = {helper_name}(100, 20, 50);",
                         "scient_m02_file = fopen('m02-helper.json', 'w');",
                         "assert(scient_m02_file ~= -1);",
                         "fwrite(scient_m02_file, scient_m02_json, 'char');",
                         "fclose(scient_m02_file);",
                         "clear;",
                         f"run('{fixture_names[1]}');",
-                        f"scient_m07_json = {helper_name}(100, 20);",
+                        f"scient_m07_json = {helper_name}(100, 20, 50);",
                         "scient_m07_file = fopen('m07-helper.json', 'w');",
                         "assert(scient_m07_file ~= -1);",
                         "fwrite(scient_m07_file, scient_m07_json, 'char');",
                         "fclose(scient_m07_file);",
+                        "clear;",
+                        "for scient_i = 1:12",
+                        "    eval(sprintf('qa_table_%02d = table(%d);', scient_i, scient_i));",
+                        "end",
+                        f"scient_many_json = {helper_name}(100, 20, 5);",
+                        "scient_many_file = fopen('many-helper.json', 'w');",
+                        "assert(scient_many_file ~= -1);",
+                        "fwrite(scient_many_file, scient_many_json, 'char');",
+                        "fclose(scient_many_file);",
                     ]
                 )
                 + "\n",
@@ -774,6 +946,7 @@ disp('M07_PASS');
 
             m02_payload = json.loads((root / "m02-helper.json").read_text(encoding="utf-8"))
             m07_payload = json.loads((root / "m07-helper.json").read_text(encoding="utf-8"))
+            many_payload = json.loads((root / "many-helper.json").read_text(encoding="utf-8"))
 
             def entries(payload):
                 raw = payload.get("tables")
@@ -818,6 +991,10 @@ disp('M07_PASS');
             self.assertLessEqual(
                 len(m07_tables[0]["text"].encode("utf-8")), matlab_bridge.MAX_TABLE_TEXT
             )
+            many_tables = entries(many_payload)
+            self.assertIsInstance(many_tables, list)
+            self.assertEqual(len(many_tables), 5)
+            self.assertTrue(many_payload["inventoryTruncated"])
 
     async def test_figure_identity_emits_update_and_close_facts(self):
         engine = FakeEngine()

@@ -10,7 +10,11 @@ import * as Layer from "effect/Layer";
 import * as Stream from "effect/Stream";
 import { ChildProcessSpawner } from "effect/unstable/process";
 
-import { LOCAL_OWNED_PROCESS_KILL_OPTIONS, makeLocalOwnedProcess } from "./LocalOwnedProcess.ts";
+import {
+  ensureLocalOwnedProcessTreeExit,
+  LOCAL_OWNED_PROCESS_KILL_OPTIONS,
+  makeLocalOwnedProcess,
+} from "./LocalOwnedProcess.ts";
 
 export class ExecutionProcess extends Context.Service<ExecutionProcess, ExecutionProcessPort>()(
   "t3/scient/execution/LocalExecutionProcess/ExecutionProcess",
@@ -37,33 +41,15 @@ const make = Effect.gen(function* () {
             processError("spawn", "Unable to start the execution process.", cause),
           ),
         );
-      const awaitOwnedTreeExit =
-        platform === "win32"
-          ? Effect.void
-          : Effect.gen(function* () {
-              const processGroupId = -Number(child.pid);
-              for (let attempt = 0; attempt < 100; attempt += 1) {
-                const exists = yield* Effect.sync(() => {
-                  try {
-                    globalThis.process.kill(processGroupId, 0);
-                    return true;
-                  } catch (cause) {
-                    return !(
-                      cause instanceof Error &&
-                      "code" in cause &&
-                      (cause as NodeJS.ErrnoException).code === "ESRCH"
-                    );
-                  }
-                });
-                if (!exists) return;
-                yield* Effect.sleep("10 millis");
-              }
-              return yield* processError(
-                "cancel",
-                "The execution process tree remained alive after cancellation.",
-                new Error("Timed out waiting for the owned process group to exit."),
-              );
-            });
+      const ensureOwnedTreeExit = ensureLocalOwnedProcessTreeExit(Number(child.pid), platform).pipe(
+        Effect.mapError((cause) =>
+          processError(
+            "cancel",
+            "The execution process tree remained alive after cancellation.",
+            cause,
+          ),
+        ),
+      );
       const output = Stream.merge(
         child.stdout.pipe(
           Stream.decodeText(),
@@ -83,21 +69,24 @@ const make = Effect.gen(function* () {
       // differently on each platform, so the direct child's liveness decides
       // whether the failure matters. This is also run after ordinary success:
       // the direct parent may exit zero while a subprocess it created remains.
-      const cancel = child.kill(LOCAL_OWNED_PROCESS_KILL_OPTIONS).pipe(
-        Effect.catch((cause) =>
-          child.isRunning.pipe(
-            Effect.catchCause(() => Effect.succeed(true)),
-            Effect.flatMap((isRunning) =>
-              isRunning
-                ? Effect.fail(
-                    processError("cancel", "Unable to stop the execution process tree.", cause),
-                  )
-                : Effect.void,
+      const cancel = yield* Effect.cached(
+        child.kill(LOCAL_OWNED_PROCESS_KILL_OPTIONS).pipe(
+          Effect.catch((cause) =>
+            child.isRunning.pipe(
+              Effect.catchCause(() => Effect.succeed(true)),
+              Effect.flatMap((isRunning) =>
+                isRunning
+                  ? Effect.fail(
+                      processError("cancel", "Unable to stop the execution process tree.", cause),
+                    )
+                  : Effect.void,
+              ),
             ),
           ),
+          Effect.andThen(ensureOwnedTreeExit),
         ),
-        Effect.andThen(awaitOwnedTreeExit),
       );
+      yield* Effect.addFinalizer(() => cancel.pipe(Effect.ignore));
       const exitCode = child.exitCode.pipe(
         Effect.map(Number),
         Effect.mapError((cause) =>

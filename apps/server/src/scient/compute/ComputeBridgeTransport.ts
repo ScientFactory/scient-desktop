@@ -412,12 +412,16 @@ export function makeComputeBridgeTransport(
               // tree is still stopped before its private ports are unprotected.
               yield* Effect.addFinalizer(() =>
                 cleanupOwnedProcess("shutdown").pipe(
-                  Effect.catch((cause) =>
+                  Effect.tapError((cause) =>
                     Effect.logWarning(
                       "compute process cleanup failed; retaining private endpoint protection",
                       { cause, sessionId: request.sessionId },
                     ),
                   ),
+                  // Finalizers cannot expose a typed error, but cleanup failure
+                  // must still fail `Scope.close`; the session layer catches
+                  // that cause and retains its host reservation.
+                  Effect.orDie,
                 ),
               );
               return handle;
@@ -1483,14 +1487,11 @@ export function makeComputeBridgeTransport(
               Effect.ignore,
             );
             yield* Queue.end(events).pipe(Effect.ignore);
-            yield* cleanupOwnedProcess("shutdown").pipe(
-              Effect.catch((cause) =>
-                Effect.logWarning(
-                  "compute process cleanup failed; retaining private endpoint protection",
-                  { cause, sessionId: request.sessionId },
-                ),
-              ),
-            );
+            // The ownership finalizer registered immediately after spawn runs
+            // after this protocol finalizer. It is the single scope-close
+            // backstop for process cleanup: success releases the endpoint and
+            // managed-runtime leases, while failure propagates through
+            // `Scope.close` so the session service retains host capacity.
           }),
         );
 

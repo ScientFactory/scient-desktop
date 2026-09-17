@@ -97,6 +97,36 @@ describe("compute output projection", () => {
     expect(second).toMatchObject({ sequence: 2, revisionSequence: 3, bundle: textBundle("new") });
   });
 
+  it("keeps repeated display data as independent output-area snapshots", () => {
+    const areas = projectComputeOutputAreas([
+      {
+        areaId: "execution-a",
+        output: output({
+          _tag: "display-data",
+          sequence: 1,
+          bundle: textBundle("before"),
+          displayId: "matlab-table:results",
+        }),
+      },
+      {
+        areaId: "execution-b",
+        output: output({
+          _tag: "display-data",
+          sequence: 2,
+          bundle: textBundle("after"),
+          displayId: "matlab-table:results",
+        }),
+      },
+    ]);
+
+    expect(areas.get("execution-a")).toMatchObject([
+      { sequence: 1, revisionSequence: 1, bundle: textBundle("before") },
+    ]);
+    expect(areas.get("execution-b")).toMatchObject([
+      { sequence: 2, revisionSequence: 2, bundle: textBundle("after") },
+    ]);
+  });
+
   it("does not invent a display when an update has no matching identity", () => {
     expect(
       projectComputeOutputs([

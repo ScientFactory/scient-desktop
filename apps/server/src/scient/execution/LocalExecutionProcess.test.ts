@@ -16,6 +16,7 @@ import {
   descendantFixture,
   processExists,
   successfulParentWithDescendantFixture,
+  successfulParentWithResistantDescendantFixture,
 } from "./LocalProcessTestSupport.ts";
 
 const Live = layer.pipe(Layer.provideMerge(NodeServices.layer));
@@ -94,5 +95,62 @@ describe("LocalExecutionProcess", () => {
         expect(processExists(childPid)).toBe(false);
       }),
     ).pipe(Effect.provide(Live), TestClock.withLive),
+  );
+
+  it.effect("force-stops a resistant descendant after the direct parent exits", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const processes = yield* ExecutionProcess;
+        const handle = yield* processes.start({
+          runId: ExecutionRunId.make("resistant-successful-process-tree-test"),
+          executable: NodeProcess.execPath,
+          args: ["-e", successfulParentWithResistantDescendantFixture],
+          cwd: NodeProcess.cwd(),
+          environment: {},
+        });
+        const childPid = Number(
+          yield* handle.output.pipe(
+            Stream.filter((output) => output.stream === "stdout"),
+            Stream.map((output) => output.text),
+            Stream.splitLines,
+            Stream.runHead,
+            Effect.map(Option.getOrThrow),
+          ),
+        );
+        expect(processExists(childPid)).toBe(true);
+
+        expect(yield* handle.exitCode).toBe(0);
+        expect(processExists(childPid)).toBe(false);
+      }),
+    ).pipe(Effect.provide(Live), TestClock.withLive),
+  );
+
+  it.effect("cleans up its owned tree when the caller scope closes", () =>
+    Effect.gen(function* () {
+      let childPid = 0;
+      yield* Effect.scoped(
+        Effect.gen(function* () {
+          const processes = yield* ExecutionProcess;
+          const handle = yield* processes.start({
+            runId: ExecutionRunId.make("scoped-process-tree-test"),
+            executable: NodeProcess.execPath,
+            args: ["-e", descendantFixture],
+            cwd: NodeProcess.cwd(),
+            environment: {},
+          });
+          childPid = Number(
+            yield* handle.output.pipe(
+              Stream.filter((output) => output.stream === "stdout"),
+              Stream.map((output) => output.text),
+              Stream.splitLines,
+              Stream.runHead,
+              Effect.map(Option.getOrThrow),
+            ),
+          );
+          expect(processExists(childPid)).toBe(true);
+        }),
+      );
+      expect(processExists(childPid)).toBe(false);
+    }).pipe(Effect.provide(Live), TestClock.withLive),
   );
 });

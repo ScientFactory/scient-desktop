@@ -326,15 +326,22 @@ scientJson = jsonencode(struct('variables', scientVariables, 'truncated', numel(
 end
 """
 
-TABLES_HELPER = r"""function scientJson = __SCIENT_FUNCTION__(scientMaximumRows, scientMaximumColumns)
+TABLES_HELPER = r"""function scientJson = __SCIENT_FUNCTION__(scientMaximumRows, scientMaximumColumns, scientMaximumTables)
 scientEntries = evalin('base', 'whos');
 scientTables = repmat(struct('name', '', 'json', '', 'text', '', 'warning', ''), 1, 0);
 scientTruncated = false;
+scientInventoryTruncated = false;
+scientTableCount = 0;
 for scientIndex = 1:numel(scientEntries)
     scientEntry = scientEntries(scientIndex);
     if ~strcmp(scientEntry.class, 'table') && ~strcmp(scientEntry.class, 'timetable')
         continue;
     end
+    if scientTableCount >= max(0, floor(scientMaximumTables))
+        scientInventoryTruncated = true;
+        break;
+    end
+    scientTableCount = scientTableCount + 1;
     try
         scientValue = evalin('base', scientEntry.name);
         [scientDataJson, scientText, scientWasTruncated, scientWarning] = ...
@@ -351,7 +358,10 @@ for scientIndex = 1:numel(scientEntries)
             'warning', scientTableError.message(1:min(numel(scientTableError.message), 4096))); %#ok<AGROW>
     end
 end
-scientJson = jsonencode(struct('tables', scientTables, 'truncated', scientTruncated));
+scientJson = jsonencode(struct( ...
+    'tables', scientTables, ...
+    'truncated', scientTruncated, ...
+    'inventoryTruncated', scientInventoryTruncated));
 end
 
 function [scientDataJson, scientText, scientTruncated, scientWarning] = scient_table_payload(scientValue, scientMaximumRows, scientMaximumColumns)
@@ -656,6 +666,8 @@ class MatlabEngineBridge:
         self._dispatch_task: Optional[asyncio.Task[None]] = None
         self._monitor_task: Optional[asyncio.Task[None]] = None
         self._transitioning = False
+        self._table_preview_hashes: dict[str, str] = {}
+        self._table_inventory_truncated = False
         self._figure_hashes: dict[str, str] = {}
         self._figure_seen: set[str] = set()
 
@@ -1241,28 +1253,59 @@ class MatlabEngineBridge:
             self._execution_task = None
 
     async def _capture_tables(self, request_id: str) -> None:
-        """Publish bounded table/timetable values without parsing console text."""
+        """Publish changed bounded table/timetable previews for this execution."""
         try:
             inspect_tables = await self._trusted_helper("tables")
             raw = await asyncio.to_thread(
                 inspect_tables,
                 float(MAX_TABLE_ROWS),
                 float(MAX_TABLE_COLUMNS),
+                float(MAX_TABLES),
                 nargout=1,
             )
             payload = json.loads(str(raw))
-            tables = payload.get("tables", []) if isinstance(payload, dict) else []
+            if not isinstance(payload, dict):
+                raise ValueError("MATLAB table inspection returned an invalid payload.")
+            if "tables" not in payload:
+                raise ValueError("MATLAB table inspection omitted the table inventory.")
+            tables = payload["tables"]
             if isinstance(tables, dict):
                 tables = [tables]
-            for entry in tables[:MAX_TABLES] if isinstance(tables, list) else []:
+            if not isinstance(tables, list):
+                raise ValueError("MATLAB table inspection returned an invalid table list.")
+
+            raw_inventory_truncated = payload.get("inventoryTruncated", False)
+            if not isinstance(raw_inventory_truncated, bool):
+                raise ValueError(
+                    "MATLAB table inspection returned an invalid inventory boundary."
+                )
+            inventory_truncated = raw_inventory_truncated or len(tables) > MAX_TABLES
+            inspection_complete = not inventory_truncated
+            if inventory_truncated and not self._table_inventory_truncated:
+                self._send_warning(
+                    "output-truncated",
+                    f"Only the first {MAX_TABLES} MATLAB tables were inspected.",
+                    request_id,
+                )
+            self._table_inventory_truncated = inventory_truncated
+            observed_names: set[str] = set()
+            for entry in tables[:MAX_TABLES]:
                 if not isinstance(entry, dict):
+                    inspection_complete = False
+                    continue
+                raw_name = entry.get("name")
+                if not isinstance(raw_name, str) or not raw_name:
+                    inspection_complete = False
                     continue
                 # Leave room for the stable display-id prefix and its separator.
-                name = truncate_utf8(entry.get("name", "table"), 220)[0] or "table"
+                name = truncate_utf8(raw_name, 220)[0]
+                observed_names.add(name)
+                warnings: list[tuple[str, str]] = []
                 warning = entry.get("warning")
                 if isinstance(warning, str) and warning:
-                    self._send_warning("runtime-warning", warning, request_id)
+                    warnings.append(("runtime-warning", warning))
                 representations: list[dict[str, str]] = []
+                preview_truncated = False
                 raw_json = entry.get("json")
                 if isinstance(raw_json, str) and raw_json:
                     try:
@@ -1277,6 +1320,10 @@ class MatlabEngineBridge:
                             and len(fields) <= MAX_TABLE_COLUMNS
                             and len(rows) <= MAX_TABLE_ROWS
                         ):
+                            preview = decoded.get("scientPreview")
+                            preview_truncated = bool(
+                                isinstance(preview, dict) and preview.get("truncated")
+                            )
                             canonical = json.dumps(
                                 decoded, ensure_ascii=False, separators=(",", ":")
                             )
@@ -1289,22 +1336,26 @@ class MatlabEngineBridge:
                                     }
                                 )
                             else:
-                                self._send_warning(
-                                    "output-truncated",
-                                    f"MATLAB table '{name}' JSON exceeded the inline limit.",
-                                    request_id,
+                                preview_truncated = True
+                                warnings.append(
+                                    (
+                                        "output-truncated",
+                                        f"MATLAB table '{name}' JSON exceeded the inline limit.",
+                                    )
                                 )
                         else:
-                            self._send_warning(
-                                "runtime-warning",
-                                f"MATLAB table '{name}' returned an invalid table representation.",
-                                request_id,
+                            warnings.append(
+                                (
+                                    "runtime-warning",
+                                    f"MATLAB table '{name}' returned an invalid table representation.",
+                                )
                             )
                     except (TypeError, ValueError):
-                        self._send_warning(
-                            "runtime-warning",
-                            f"MATLAB table '{name}' returned invalid JSON.",
-                            request_id,
+                        warnings.append(
+                            (
+                                "runtime-warning",
+                                f"MATLAB table '{name}' returned invalid JSON.",
+                            )
                         )
                 raw_text = entry.get("text")
                 if isinstance(raw_text, str) and raw_text:
@@ -1313,42 +1364,79 @@ class MatlabEngineBridge:
                         {"mediaType": "text/plain", "encoding": "text", "data": text}
                     )
                     if truncated:
-                        self._send_warning(
-                            "output-truncated",
-                            f"MATLAB table '{name}' text was truncated.",
-                            request_id,
+                        preview_truncated = True
+                        warnings.append(
+                            (
+                                "output-truncated",
+                                f"MATLAB table '{name}' text was truncated.",
+                            )
                         )
-                if not representations:
-                    continue
                 metadata = json.dumps(
                     {
                         "language": "matlab",
                         "variable": name,
-                        "truncated": bool(payload.get("truncated"))
-                        if isinstance(payload, dict)
-                        else False,
+                        "truncated": preview_truncated,
                     },
                     separators=(",", ":"),
                 )
-                try:
-                    self._send(
-                        "display",
+                bounded_warnings = [
+                    (code, truncate_utf8(detail, MAX_DETAIL)[0]) for code, detail in warnings
+                ]
+                preview_hash = hashlib.sha256(
+                    json.dumps(
                         {
-                            "kind": "display-data",
-                            "bundle": {
-                                "representations": representations,
-                                "metadataJson": metadata,
-                            },
-                            "displayId": f"matlab-table:{name}",
+                            "representations": representations,
+                            "metadataJson": metadata,
+                            "warnings": bounded_warnings,
                         },
-                        request_id,
-                    )
-                except ValueError:
-                    self._send_warning(
-                        "output-truncated",
-                        f"MATLAB table '{name}' exceeded the bridge frame limit.",
-                        request_id,
-                    )
+                        ensure_ascii=False,
+                        separators=(",", ":"),
+                    ).encode("utf-8")
+                ).hexdigest()
+                if self._table_preview_hashes.get(name) == preview_hash:
+                    continue
+
+                for code, detail in bounded_warnings:
+                    self._send_warning(code, detail, request_id)
+                preview_delivered = not representations
+                if representations:
+                    try:
+                        self._send(
+                            "display",
+                            {
+                                # A changed table is a complete snapshot in the
+                                # current execution. It cannot be a standalone
+                                # display-update because that execution has no
+                                # prior display to update.
+                                "kind": "display-data",
+                                "bundle": {
+                                    "representations": representations,
+                                    "metadataJson": metadata,
+                                },
+                                "displayId": f"matlab-table:{name}",
+                            },
+                            request_id,
+                        )
+                        preview_delivered = True
+                    except ValueError:
+                        self._send_warning(
+                            "output-truncated",
+                            f"MATLAB table '{name}' exceeded the bridge frame limit.",
+                            request_id,
+                        )
+                # Cache only a preview that was actually delivered. Otherwise
+                # a temporary peer-frame limit would suppress the identical
+                # table forever after the first warning, even after the limit
+                # changes or the session is reconnected.
+                if preview_delivered:
+                    self._table_preview_hashes[name] = preview_hash
+
+            # Absence is authoritative only when the helper returned a complete,
+            # structurally valid inventory. A truncated or malformed inspection
+            # must never make an existing preview look deleted.
+            if inspection_complete:
+                for name in self._table_preview_hashes.keys() - observed_names:
+                    del self._table_preview_hashes[name]
         except Exception as error:  # noqa: BLE001 - table capture is optional
             self._send_warning(
                 "runtime-warning", f"MATLAB table capture failed: {error}", request_id
@@ -1619,6 +1707,8 @@ class MatlabEngineBridge:
         try:
             await self._cancel_active()
             await self._close_engine()
+            self._table_preview_hashes.clear()
+            self._table_inventory_truncated = False
             self._figure_hashes.clear()
             self._figure_seen.clear()
             await self._start_engine(self._working_directory)

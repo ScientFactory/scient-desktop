@@ -418,31 +418,34 @@ describe("jupyter bridge handshake", () => {
       const bridge = yield* makeFakeBridge();
       bridge.failCancellation();
       let releases = 0;
-      yield* Effect.scoped(
-        Effect.gen(function* () {
-          const channel = yield* openChannel(bridge, {
-            prepareKernelEndpoints: () =>
-              Effect.succeed({
-                ports: {
-                  ip: "127.0.0.1" as const,
-                  shell: 42_001,
-                  iopub: 42_002,
-                  stdin: 42_003,
-                  heartbeat: 42_004,
-                  control: 42_005,
-                },
-                handoff: Effect.void,
-                release: Effect.sync(() => {
-                  releases += 1;
+      const scopeExit = yield* Effect.exit(
+        Effect.scoped(
+          Effect.gen(function* () {
+            const channel = yield* openChannel(bridge, {
+              prepareKernelEndpoints: () =>
+                Effect.succeed({
+                  ports: {
+                    ip: "127.0.0.1" as const,
+                    shell: 42_001,
+                    iopub: 42_002,
+                    stdin: 42_003,
+                    heartbeat: 42_004,
+                    control: 42_005,
+                  },
+                  handoff: Effect.void,
+                  release: Effect.sync(() => {
+                    releases += 1;
+                  }),
                 }),
-              }),
-          });
-          const result = yield* Effect.exit(
-            channel.shutdown({ expectedGeneration: INITIAL_COMPUTE_SESSION_GENERATION }),
-          );
-          expect(result._tag).toBe("Failure");
-        }),
+            });
+            const shutdownExit = yield* Effect.exit(
+              channel.shutdown({ expectedGeneration: INITIAL_COMPUTE_SESSION_GENERATION }),
+            );
+            expect(shutdownExit._tag).toBe("Failure");
+          }),
+        ),
       );
+      expect(scopeExit._tag).toBe("Failure");
       expect(bridge.cancels()).toBeGreaterThan(0);
       expect(releases).toBe(0);
     }),
