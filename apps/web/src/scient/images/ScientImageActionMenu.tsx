@@ -3,6 +3,7 @@ import { useRef, useState, type ReactNode } from "react";
 import { Button } from "~/components/ui/button";
 import { Menu, MenuItem, MenuTrigger } from "~/components/ui/menu";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "~/components/ui/tooltip";
+import { cn } from "~/lib/utils";
 import { VisualCardMenuPopup, VisualCardToolbarMenuItems } from "../presentation/VisualCardToolbar";
 
 export interface ScientImageAction {
@@ -21,11 +22,13 @@ export function ScientImageActionMenu({
   busy,
   run,
   details,
+  triggerClassName,
 }: {
   readonly actions: readonly ScientImageAction[];
   readonly busy: boolean;
   readonly run: (action: ScientImageAction) => void;
   readonly details?: ReactNode;
+  readonly triggerClassName?: string;
 }) {
   const pendingAction = useRef<ScientImageAction | null>(null);
   const [handingOffFocus, setHandingOffFocus] = useState(false);
@@ -51,7 +54,7 @@ export function ScientImageActionMenu({
               render={
                 <Button
                   aria-label="More image actions"
-                  className="chat-markdown-chrome-action"
+                  className={cn("chat-markdown-chrome-action", triggerClassName)}
                   size="icon-xs"
                   type="button"
                   variant="ghost"

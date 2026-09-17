@@ -197,6 +197,10 @@ describe("compute figure presentation", () => {
   it("waits for image decoding, then opens the existing following viewer directly", async () => {
     const presentation = figure();
     const { container } = await fixture(presentation);
+    expect(
+      container.querySelector<HTMLElement>("[aria-label='Figure actions']")?.dataset.slot,
+    ).toBe("compact-command-group");
+    expect(button("Move figure actions").hidden).toBe(false);
     expect(button("View Figure 1").disabled).toBe(true);
     expect(container.textContent).toContain("Loading figure");
     await loaded(container);
@@ -207,6 +211,54 @@ describe("compute figure presentation", () => {
     await menu();
     expect(document.body.textContent).toContain("640 × 480");
     expect(document.body.textContent).not.toContain("Download MATLAB FIG");
+    expect(document.body.textContent).not.toContain("Move controls");
+  });
+  it("keeps the direct drag handle mounted while moving the compact action card", async () => {
+    const { container } = await fixture();
+    const card = container.querySelector<HTMLElement>("[data-scient-visual-card]")!;
+    const toolbar = container.querySelector<HTMLElement>("[aria-label='Figure actions']")!;
+    const handle = button("Move figure actions");
+    const description = document.getElementById(handle.getAttribute("aria-describedby")!);
+    expect(description?.className).toContain("sr-only");
+    expect(description?.textContent).toContain("Use arrow keys to move");
+    const captured = new Set<number>();
+    handle.setPointerCapture = vi.fn((pointerId: number) => captured.add(pointerId));
+    handle.hasPointerCapture = vi.fn((pointerId: number) => captured.has(pointerId));
+    handle.releasePointerCapture = vi.fn((pointerId: number) => captured.delete(pointerId));
+    card.getBoundingClientRect = () =>
+      ({ left: 100, top: 100, right: 500, bottom: 400, width: 400, height: 300 }) as DOMRect;
+    toolbar.getBoundingClientRect = () => {
+      const [x = 0, y = 0] = toolbar.style.translate
+        ? toolbar.style.translate.split(" ").map(Number.parseFloat)
+        : [];
+      return {
+        left: 396 + x,
+        top: 104 + y,
+        right: 496 + x,
+        bottom: 136 + y,
+        width: 100,
+        height: 32,
+      } as DOMRect;
+    };
+    const pointer = (type: string, clientX: number, clientY: number) =>
+      handle.dispatchEvent(
+        new PointerEvent(type, {
+          bubbles: true,
+          button: 0,
+          cancelable: true,
+          clientX,
+          clientY,
+          isPrimary: true,
+          pointerId: 7,
+        }),
+      );
+    await act(() => pointer("pointerdown", 400, 120));
+    expect(button("Move figure actions")).toBe(handle);
+    expect(captured.has(7)).toBe(true);
+    await act(() => pointer("pointermove", 340, 180));
+    await act(() => pointer("pointerup", 340, 180));
+    expect(toolbar.style.translate).toBe("-60px 60px");
+    expect(captured.size).toBe(0);
   });
   it("retries decoding even when the signed URL does not change", async () => {
     const { container } = await fixture();
@@ -268,12 +320,15 @@ describe("compute figure presentation", () => {
     expect(button("View Figure 1").disabled).toBe(false);
     expect(mocks.download).not.toHaveBeenCalled();
   });
-  it("exposes provenance to keyboard users without permanent metadata text", async () => {
+  it("keeps observed-file provenance in overflow metadata instead of the command group", async () => {
     const { container } = await fixture(figure(), true);
-    const note = container.querySelector<HTMLElement>("[role=note]")!;
-    expect(note.tabIndex).toBe(0);
-    expect(note.getAttribute("aria-label")).toContain("not proven");
+    expect(container.querySelector("[role=note]")).toBeNull();
+    expect(
+      container.querySelectorAll('[data-slot="compact-command-group-separator"]'),
+    ).toHaveLength(1);
     expect(container.textContent).not.toContain("Observed project file");
+    await menu();
+    expect(document.body.textContent).toContain("Observed project file; creator not verified");
   });
   it("offers retry for URL resolution failure without mounting a broken image", async () => {
     asset = { _tag: "Failure", refresh: mocks.retry };

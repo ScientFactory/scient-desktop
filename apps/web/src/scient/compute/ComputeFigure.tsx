@@ -1,11 +1,14 @@
 import type { EnvironmentId, ScopedThreadRef } from "@t3tools/contracts";
-import { Info, LoaderCircle, Maximize2 } from "lucide-react";
+import { LoaderCircle, Maximize2 } from "lucide-react";
 import { useRef, useState } from "react";
 
 import { useAssetUrlRefresh, useAssetUrlState, type AssetUrlState } from "~/assets/assetUrls";
 import { copyStaticImage, downloadStaticImage } from "~/components/preview/staticImageActions";
 import { Button } from "~/components/ui/button";
+import { CompactCommandGroupSeparator } from "~/components/ui/compact-command-group";
+import { compactCommandClassName } from "~/components/ui/compact-command-group.styles";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "~/components/ui/tooltip";
+import { cn } from "~/lib/utils";
 import { selectThreadPreviewMiniPlayer, usePreviewMiniPlayerStore } from "~/previewMiniPlayerStore";
 import {
   openStaticArtifactInPanel,
@@ -140,14 +143,14 @@ function ComputeFigurePreview(
         data-scient-visual-card
         className={`relative inline-flex min-w-24 max-w-full items-center justify-center rounded-md bg-white ${loaded ? "" : "h-32 w-64"}`}
       >
-        <span className="absolute top-0 right-1 z-10 max-w-full">
-          <VisualCardToolbar label="Figure actions">
+        <span className="absolute top-1 right-1 z-10 max-w-full">
+          <VisualCardToolbar label="Figure actions" appearance="command-group" movement="direct">
             <Tooltip>
               <TooltipTrigger
                 render={
                   <Button
                     aria-label={`Open ${presentation.inline.label} in viewer`}
-                    className="chat-markdown-chrome-action"
+                    className={cn("chat-markdown-chrome-action", compactCommandClassName)}
                     disabled={!loaded}
                     onClick={openViewer}
                     size="icon-xs"
@@ -160,33 +163,16 @@ function ComputeFigurePreview(
               </TooltipTrigger>
               <TooltipPopup>Open in viewer</TooltipPopup>
             </Tooltip>
-            {observed ? (
-              <Tooltip>
-                <TooltipTrigger
-                  render={
-                    <span
-                      role="note"
-                      tabIndex={0}
-                      aria-label="Observed project file; this execution is not proven to have created it."
-                      className="flex size-7 items-center justify-center text-muted-foreground outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                    />
-                  }
-                >
-                  <Info className="size-3" />
-                </TooltipTrigger>
-                <TooltipPopup>
-                  Observed project file; this execution is not proven to have created it.
-                </TooltipPopup>
-              </Tooltip>
-            ) : null}
+            <CompactCommandGroupSeparator />
             <ScientImageActionMenu
               actions={actions}
               busy={busy}
               run={run}
+              triggerClassName={compactCommandClassName}
               details={
                 <VisualCardDetails
                   title={presentation.inline.label}
-                  detail={`${presentation.inline.mediaType}${loaded ? ` · ${image.width} × ${image.height}` : ""}`}
+                  detail={`${presentation.inline.mediaType}${loaded ? ` · ${image.width} × ${image.height}` : ""}${observed ? " · Observed project file; creator not verified" : ""}`}
                 />
               }
             />
