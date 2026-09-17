@@ -157,9 +157,14 @@ the code yourself; Scient never replays a failed run automatically.
 For a missing, recognized Python dependency, the error offers **Choose Python environment…**.
 It can report that Scient-managed Python has the corresponding package installed when current
 runtime inspection supports that suggestion; package presence is not a guarantee that the script
-will succeed. Unknown project imports and missing submodules do not get this suggestion. Choose
-the environment in Settings, then use **Switch Python** for an existing file session before running
-again. This guidance neither installs packages nor changes a running session automatically.
+will succeed. Unknown project imports and missing submodules do not get this suggestion.
+
+When that alternative is ready, the current tab also offers **Start a new session with managed
+Python…**. After confirmation, Scient rechecks the environment and package, stops this tab's
+session with confirmed cleanup, and starts an empty managed session. In-memory variables are lost;
+run history is kept. It does not change your default environment, install packages, or rerun code.
+History-only and temporary fresh-run views do not replace another tab's session. You can instead
+choose an environment in Settings, then use **Switch Python** for an existing file session.
 
 ## Connect your MATLAB installation
 

@@ -62,6 +62,20 @@ export function computeDependencyRecovery(input: {
   const distribution = PYTHON_IMPORT_DISTRIBUTIONS.get(moduleName);
   if (distribution === undefined) return null;
 
+  return {
+    moduleName,
+    managedHasPackage: managedDependencyRuntime({ ...input, moduleName }) !== null,
+  };
+}
+
+/** A package-qualified alternative; selection still requires fresh verification. */
+export function managedDependencyRuntime(input: {
+  readonly moduleName: string;
+  readonly session: Pick<ComputeSessionRecord, "languageId" | "runtime">;
+  readonly inspection: ComputeRuntimeInspection | null;
+}): NonNullable<ComputeSessionRecord["runtime"]> | null {
+  const distribution = PYTHON_IMPORT_DISTRIBUTIONS.get(input.moduleName);
+  if (input.session.languageId !== "python" || distribution === undefined) return null;
   const language = input.inspection?.languages.find(
     (entry) => entry.descriptor.languageId === "python",
   );
@@ -69,17 +83,22 @@ export function computeDependencyRecovery(input: {
   const catalogued = language?.toolkits.some((toolkit) =>
     toolkit.packageRequirements.some((requirement) => requirement.name === distribution),
   );
-  const managedHasPackage = Boolean(
-    input.session.runtime !== null &&
-    input.session.runtime.source !== "managed" &&
-    language?.enabled &&
-    catalogued &&
-    status?.installed &&
-    status.operation === null &&
-    !status.failure &&
-    !status.failureMessage &&
-    !status.toolkitChanges?.some((change) => change.state !== "failed") &&
-    language.runtimes.some(
+  if (
+    !(
+      input.session.runtime !== null &&
+      input.session.runtime.source !== "managed" &&
+      language?.enabled &&
+      catalogued &&
+      status?.installed &&
+      status.operation === null &&
+      !status.failure &&
+      !status.failureMessage &&
+      !status.toolkitChanges?.some((change) => change.state !== "failed")
+    )
+  )
+    return null;
+  return (
+    language.runtimes.find(
       (candidate) =>
         candidate.profile.source === "managed" &&
         candidate.profile.executable !== input.session.runtime?.executable &&
@@ -88,7 +107,6 @@ export function computeDependencyRecovery(input: {
         candidate.verification.packages.some(
           (pkg) => pkg.name === distribution && Boolean(pkg.version),
         ),
-    ),
+    )?.profile ?? null
   );
-  return { moduleName, managedHasPackage };
 }

@@ -24,7 +24,9 @@ import {
 } from "./computeResultPresentation";
 import { computeRichRepresentation } from "./computeRichRepresentation";
 import { ComputeRichOutput } from "./ComputeRichOutput";
-import { computeDependencyRecovery } from "./computeDependencyRecovery";
+import { computeDependencyRecovery, managedDependencyRuntime } from "./computeDependencyRecovery";
+import { ComputeDependencyRecoveryAction } from "./ComputeDependencyRecoveryAction";
+import type { ComputeContextId } from "./computeContextStore";
 
 type ComputeExecutionSource = ComputeExecutionRecord["request"]["source"];
 
@@ -121,6 +123,10 @@ export function ComputeOutputView(props: {
   readonly threadRef: ScopedThreadRef;
   readonly source?: ComputeExecutionSource | null;
   readonly runtimeInspection?: ComputeRuntimeInspection | null;
+  readonly dependencyRecovery?: {
+    readonly contextId: ComputeContextId;
+    readonly onSettled: () => void;
+  };
 }) {
   if (props.outputs.length === 0 && !props.corruptLineCount && !props.clipped) {
     return <p className="text-xs text-muted-foreground">{props.emptyLabel ?? "No output."}</p>;
@@ -161,6 +167,14 @@ export function ComputeOutputView(props: {
                 session: props.session,
                 inspection: props.runtimeInspection ?? null,
               });
+              const managed =
+                recovery === null
+                  ? null
+                  : managedDependencyRuntime({
+                      moduleName: recovery.moduleName,
+                      session: props.session,
+                      inspection: props.runtimeInspection ?? null,
+                    });
               return (
                 <div
                   key={outputKey(output, index)}
@@ -180,6 +194,17 @@ export function ComputeOutputView(props: {
                               : `Check the Python environment and its ${recovery.moduleName} installation.`}{" "}
                             Changing the default does not switch an existing session.
                           </p>
+                          {managed !== null &&
+                          recovery !== null &&
+                          props.dependencyRecovery !== undefined ? (
+                            <ComputeDependencyRecoveryAction
+                              contextId={props.dependencyRecovery.contextId}
+                              session={props.session}
+                              moduleName={recovery.moduleName}
+                              executable={managed.executable}
+                              onSettled={props.dependencyRecovery.onSettled}
+                            />
+                          ) : null}
                           <Button
                             size="xs"
                             variant="ghost-muted"

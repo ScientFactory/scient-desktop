@@ -2,6 +2,7 @@ import type {
   ComputeSessionRecord,
   ComputeSessionGeneration,
   ComputeSessionId,
+  ComputeLanguageId,
   EnvironmentId,
 } from "@t3tools/contracts";
 import { TERMINAL_COMPUTE_SESSION_STATUSES } from "@t3tools/contracts";
@@ -18,6 +19,16 @@ import {
   type ComputeContextId,
   type ComputeContextBinding,
 } from "./computeContextStore";
+import { isComputeCapacityReachedError } from "./computeFileSurfaceModel";
+
+// Close/Stop wins over a replacement still checking readiness or starting.
+// Navigation does not cancel work: only the explicit lifecycle commands do.
+const replacements = new Map<ComputeContextId, { cancelled: boolean }>();
+
+function cancelReplacement(contextId: ComputeContextId): void {
+  const pending = replacements.get(contextId);
+  if (pending) pending.cancelled = true;
+}
 
 type StopResult = AtomCommandResult<ComputeSessionRecord, unknown>;
 type GetResult = AtomCommandResult<ComputeSessionRecord | null, unknown>;
@@ -102,6 +113,7 @@ function thrownError(error: unknown): string {
 export async function closeComputeContext(
   input: ComputeContextCloseInput,
 ): Promise<ComputeContextCloseResult> {
+  cancelReplacement(input.contextId);
   // Mark the owner before awaiting any child, so a Run click cannot add work
   // while close is in flight. Navigation never calls this explicit-close path.
   useComputeContextStore.getState().markClosing(input.contextId);
@@ -123,6 +135,13 @@ export async function closeComputeContext(
 
 /** Stop the displayed context only; closing its tab also stops all owned children. */
 export async function stopComputeContext(
+  input: ComputeContextCloseInput,
+): Promise<ComputeContextCloseResult> {
+  cancelReplacement(input.contextId);
+  return stopOwnedComputeContext(input);
+}
+
+async function stopOwnedComputeContext(
   input: ComputeContextCloseInput,
 ): Promise<ComputeContextCloseResult> {
   const binding = getComputeContext(input.contextId);
@@ -245,4 +264,139 @@ export async function stopComputeContext(
   const error = "Unable to confirm compute context shutdown.";
   useComputeContextStore.getState().markCloseFailed({ contextId: input.contextId, error });
   return { closed: false, contextId: input.contextId, error };
+}
+
+export type ComputeContextReplacementResult =
+  | { readonly kind: "started"; readonly session: ComputeSessionRecord }
+  | { readonly kind: "cancelled" }
+  | { readonly kind: "failed"; readonly error: string };
+
+/**
+ * Replace one explicitly confirmed owner, never its history or global default.
+ * Preparation is read-only. A replacement is reserved only after confirmed
+ * shutdown, and an uncertain start retains ownership until cleanup is confirmed.
+ */
+export async function replaceComputeContextSession(
+  input: ComputeContextCloseInput & {
+    readonly expectedSession: ComputeSessionRecord;
+    readonly replacementSessionId: ComputeSessionId;
+    readonly prepareRuntime: () => Promise<{
+      readonly languageId: ComputeLanguageId;
+      readonly executable: string;
+    }>;
+    readonly startSession: (input: {
+      readonly environmentId: EnvironmentId;
+      readonly input: {
+        readonly cwd: string;
+        readonly sessionId: ComputeSessionId;
+        readonly languageId: ComputeLanguageId;
+        readonly executable: string;
+      };
+    }) => Promise<StopResult>;
+  },
+): Promise<ComputeContextReplacementResult> {
+  if (replacements.has(input.contextId)) return { kind: "cancelled" };
+  const expected = input.expectedSession;
+  const binding = getComputeContext(input.contextId);
+  if (
+    binding === null ||
+    expected.lifetime === "fresh" ||
+    binding.parentContextId !== undefined ||
+    binding.lifecycle !== "live" ||
+    binding.sessionId !== expected.sessionId ||
+    binding.generation !== expected.generation
+  )
+    return { kind: "failed", error: "The owned session changed. Choose the current result again." };
+
+  const pending = { cancelled: false };
+  replacements.set(input.contextId, pending);
+  let reserved = false;
+  const cleanup = async () => {
+    if (getComputeContext(input.contextId)?.sessionId !== input.replacementSessionId) return;
+    await stopOwnedComputeContext(input);
+  };
+  try {
+    const runtime = await input.prepareRuntime();
+    const current = getComputeContext(input.contextId);
+    if (
+      pending.cancelled ||
+      current?.lifecycle !== "live" ||
+      current.sessionId !== expected.sessionId ||
+      current.generation !== expected.generation
+    ) {
+      return { kind: "cancelled" };
+    }
+    const closed = await stopOwnedComputeContext(input);
+    if (!closed.closed)
+      return { kind: "failed", error: closed.error ?? "Shutdown was not confirmed." };
+    const stopped = getComputeContext(input.contextId);
+    if (
+      pending.cancelled ||
+      stopped?.lifecycle !== "terminal" ||
+      stopped.sessionId !== expected.sessionId
+    ) {
+      return { kind: "cancelled" };
+    }
+    reserved = useComputeContextStore.getState().reserveSession({
+      contextId: input.contextId,
+      sessionId: input.replacementSessionId,
+      generation: INITIAL_COMPUTE_CONTEXT_GENERATION,
+    });
+    if (!reserved) return { kind: "cancelled" };
+    const started = await input.startSession({
+      environmentId: binding.environmentId,
+      input: { cwd: binding.cwd, sessionId: input.replacementSessionId, ...runtime },
+    });
+    if (started._tag !== "Success") {
+      const error = squashAtomCommandFailure(started);
+      if (isComputeCapacityReachedError(error)) {
+        useComputeContextStore.getState().releasePendingReservation({
+          contextId: input.contextId,
+          sessionId: input.replacementSessionId,
+          generation: INITIAL_COMPUTE_CONTEXT_GENERATION,
+        });
+        return {
+          kind: "failed",
+          error:
+            "Compute capacity reached. Stop an unused session, then try again. No code was run.",
+        };
+      }
+      await cleanup();
+      return isAtomCommandInterrupted(started)
+        ? { kind: "cancelled" }
+        : { kind: "failed", error: resultError(started) };
+    }
+    if (pending.cancelled) {
+      await cleanup();
+      return { kind: "cancelled" };
+    }
+    if (
+      started.value.sessionId !== input.replacementSessionId ||
+      started.value.languageId !== runtime.languageId ||
+      started.value.runtime?.executable !== runtime.executable ||
+      started.value.status !== "ready"
+    ) {
+      await cleanup();
+      return { kind: "failed", error: "The requested runtime was not started. No code was run." };
+    }
+    if (
+      !useComputeContextStore.getState().bindSession({
+        contextId: input.contextId,
+        sessionId: started.value.sessionId,
+        generation: started.value.generation,
+      })
+    ) {
+      await cleanup();
+      return { kind: "cancelled" };
+    }
+    return { kind: "started", session: started.value };
+  } catch (error) {
+    if (reserved) await cleanup();
+    return {
+      kind: "failed",
+      error: error instanceof Error ? error.message : "Unable to start a new session.",
+    };
+  } finally {
+    replacements.delete(input.contextId);
+  }
 }

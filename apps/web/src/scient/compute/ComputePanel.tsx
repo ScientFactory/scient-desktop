@@ -228,6 +228,10 @@ function EmptyComputeResults(props: {
 
 function ComputeExecutionCard(props: {
   readonly runtimeInspection: ComputeRuntimeInspection | null;
+  readonly dependencyRecovery?: {
+    readonly contextId: ComputeContextId;
+    readonly onSettled: () => void;
+  };
   readonly allowFigureFollowing: boolean;
   readonly cwd: string;
   readonly environmentId: EnvironmentId;
@@ -358,6 +362,9 @@ function ComputeExecutionCard(props: {
           </p>
         ) : (
           <ComputeOutputView
+            {...(props.dependencyRecovery === undefined
+              ? {}
+              : { dependencyRecovery: props.dependencyRecovery })}
             runtimeInspection={props.runtimeInspection}
             allowFigureFollowing={props.allowFigureFollowing}
             cwd={props.cwd}
@@ -1674,6 +1681,24 @@ export function ComputePanel(props: {
                 ) : null}
                 {selectedExecution ? (
                   <ComputeExecutionCard
+                    {...(props.contextId !== undefined &&
+                    contextBinding?.parentContextId === undefined &&
+                    contextBinding?.sessionId === selectedSession.sessionId &&
+                    selectedSession.lifetime !== "fresh" &&
+                    selectedExecution.request.generation === selectedSession.generation &&
+                    selectedExecution.result?.status === "failed"
+                      ? {
+                          dependencyRecovery: {
+                            contextId: props.contextId,
+                            onSettled: () => {
+                              sessions.refresh();
+                              events.refresh();
+                              runtimes.refresh();
+                              executions.refresh();
+                            },
+                          },
+                        }
+                      : {})}
                     runtimeInspection={
                       runtimes.isSuccess && !runtimes.isPending ? runtimes.data : null
                     }
