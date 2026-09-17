@@ -54,35 +54,37 @@ export function ComputeDependencyRecoveryAction(props: {
         stopSession,
         startSession,
         prepareRuntime: async () => {
-          const [runtimes, session] = await Promise.all([
-            refreshRuntimes({
-              environmentId: owner.environmentId,
-              input: { cwd: owner.cwd, refresh: true },
-            }),
-            getSession({
-              environmentId: owner.environmentId,
-              input: { cwd: owner.cwd, sessionId: props.session.sessionId },
-            }),
-          ]);
-          if (
-            session._tag !== "Success" ||
-            session.value?.sessionId !== props.session.sessionId ||
-            session.value.generation !== props.session.generation ||
-            session.value.status !== "ready" ||
-            session.value.activity !== "idle"
-          ) {
-            throw new Error(
-              "The session changed or is busy. Wait for it to finish, then try again.",
-            );
-          }
+          const runtimes = await refreshRuntimes({
+            environmentId: owner.environmentId,
+            input: { cwd: owner.cwd, refresh: true },
+          });
           const target = managedDependencyRuntime({
             moduleName: props.moduleName,
-            session: session.value,
+            session: props.session,
             inspection: runtimes._tag === "Success" ? runtimes.value : null,
           });
           if (!target || target.executable !== props.executable) {
             throw new Error(
               "The managed Python environment or its packages changed. Check Scientific Computing settings before trying again.",
+            );
+          }
+          // Runtime inspection can be slow. Read the exact session afterward,
+          // so an earlier idle snapshot cannot authorize stopping newly busy work.
+          const session = await getSession({
+            environmentId: owner.environmentId,
+            input: { cwd: owner.cwd, sessionId: props.session.sessionId },
+          });
+          if (
+            session._tag !== "Success" ||
+            session.value?.sessionId !== props.session.sessionId ||
+            session.value.generation !== props.session.generation ||
+            session.value.languageId !== props.session.languageId ||
+            session.value.runtime?.executable !== props.session.runtime?.executable ||
+            session.value.status !== "ready" ||
+            session.value.activity !== "idle"
+          ) {
+            throw new Error(
+              "The session changed or is busy. Wait for it to finish, then try again.",
             );
           }
           return { languageId: target.languageId, executable: target.executable };

@@ -302,4 +302,43 @@ describe("confirmed compute context replacement", () => {
     expect(results.every((result) => result.kind === "started")).toBe(true);
     expect(getComputeContext(contextId)?.sessionId).toBe(sessionId);
   });
+  it("does not resurrect a removed binding after tab close confirmed replacement cleanup", async () => {
+    const input = commands();
+    const startup = deferred<ReturnType<typeof success<ComputeSessionRecord>>>();
+    input.startSession.mockReturnValue(startup.promise);
+    const recovering = replaceComputeContextSession(input);
+    await vi.waitFor(() => expect(input.startSession).toHaveBeenCalledOnce());
+    const closed = await closeComputeContext(input);
+    expect(closed.closed).toBe(true);
+    expect(input.stopSession.mock.calls.at(-1)?.[0].input.sessionId).toBe(replacementSessionId);
+    useComputeContextStore.getState().removeContext(contextId);
+    startup.resolve(success(managedSession));
+    expect(await recovering).toEqual({ kind: "cancelled" });
+    expect(getComputeContext(contextId)).toBeNull();
+    expect(input.stopSession).toHaveBeenCalledTimes(2);
+  });
+  it("retains the replacement owner when explicit tab close cannot confirm cleanup", async () => {
+    const input = commands();
+    const startup = deferred<ReturnType<typeof success<ComputeSessionRecord>>>();
+    input.startSession.mockReturnValue(startup.promise);
+    const stopSession = vi
+      .fn()
+      .mockResolvedValueOnce(success({ ...expectedSession, status: "stopped" }))
+      .mockResolvedValue(failure());
+    const getSession = vi.fn(async () => success(managedSession));
+    const recovering = replaceComputeContextSession({ ...input, stopSession, getSession });
+    await vi.waitFor(() => expect(input.startSession).toHaveBeenCalledOnce());
+    expect((await closeComputeContext({ ...input, stopSession, getSession })).closed).toBe(false);
+    startup.resolve(success(managedSession));
+    expect(await recovering).toEqual({ kind: "cancelled" });
+    expect(getComputeContext(contextId)).toMatchObject({
+      sessionId: replacementSessionId,
+      lifecycle: "close-failed",
+    });
+    expect(
+      stopSession.mock.calls
+        .slice(1)
+        .every(([call]) => call.input.sessionId === replacementSessionId),
+    ).toBe(true);
+  });
 });

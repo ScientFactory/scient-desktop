@@ -331,4 +331,32 @@ describe("confirmed managed-Python recovery action", () => {
     });
     expect(mocks.start).toHaveBeenCalledOnce();
   });
+  it("checks session activity after a deferred runtime check, without stopping work that became busy", async () => {
+    let resolve!: (value: unknown) => void;
+    let current = session;
+    mocks.refresh.mockReturnValue(
+      new Promise((r) => {
+        resolve = r;
+      }),
+    );
+    mocks.get.mockImplementation(async () => ({ _tag: "Success", value: current }));
+    await render();
+    await click("Start a new session with managed Python…");
+    await click("Confirm");
+    expect(mocks.get).not.toHaveBeenCalled();
+    current = { ...session, activity: "busy" };
+    await act(() => {
+      resolve({ _tag: "Success", value: inspection() });
+    });
+    expect(mocks.get).toHaveBeenCalledOnce();
+    expect(mocks.stop).not.toHaveBeenCalled();
+    expect(mocks.start).not.toHaveBeenCalled();
+    expect(getComputeContext(contextId)).toMatchObject({
+      sessionId: session.sessionId,
+      lifecycle: "live",
+    });
+    expect(mocks.toast).toHaveBeenCalledWith(
+      expect.objectContaining({ type: "error", description: expect.stringContaining("busy") }),
+    );
+  });
 });
