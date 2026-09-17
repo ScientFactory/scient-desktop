@@ -522,6 +522,43 @@ describe("ManagedPythonRuntimeController", () => {
     }),
   );
 
+  it.live("uses an alternate managed recipe's independently qualified Python version", () =>
+    Effect.gen(function* () {
+      const helperPythonVersion = "3.12.13";
+      let provisionedPythonVersion: string | null = null;
+      const manager = makeManagedPythonEnvironmentManager(
+        computeDir,
+        dependencies({
+          provision: async ({ targetRoot, pythonVersion }) => {
+            provisionedPythonVersion = pythonVersion;
+            return await executableAt(targetRoot);
+          },
+        }),
+        "matlab-connection",
+      );
+      const controller = makeManagedPythonRuntimeController({
+        manager,
+        toolkitIds: [],
+        configuration: {
+          displayName: "MATLAB connection helper",
+          description: "Test helper",
+          toolkitRevision: "matlab-connection-test",
+          pythonVersion: helperPythonVersion,
+        },
+      });
+
+      yield* controller.manage("install");
+      const settled = yield* waitForSettled(controller);
+      expect(provisionedPythonVersion).toBe(helperPythonVersion);
+      expect(settled).toMatchObject({
+        updateAvailable: false,
+        runtimeVersion: `Python ${helperPythonVersion}`,
+        toolkitRevision: "matlab-connection-test",
+      });
+      controller.dispose();
+    }),
+  );
+
   it.live("provisions an explicit Toolkit set and preserves an existing runtime selection", () =>
     Effect.gen(function* () {
       let provisionedToolkitIds: ReadonlyArray<ComputeToolkitId> = [];

@@ -8,15 +8,20 @@ import type { ExecutionProcessPort } from "@scientfactory/execution";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 
-import { makeManagedPythonEnvironmentManager } from "./ManagedPythonEnvironment.ts";
+import {
+  type ManagedPythonEnvironmentDependencies,
+  makeManagedPythonEnvironmentManager,
+} from "./ManagedPythonEnvironment.ts";
 import { makeManagedPythonProvisioner, runOwnedProcess } from "./ManagedPythonProvisioner.ts";
 import { makeManagedPythonRuntimeController } from "./ManagedPythonRuntimeController.ts";
 import { discoverMatlabCandidates, matlabInstallationRoot } from "./MatlabRuntimeAdapter.ts";
 
 export const MATLAB_CONNECTION_SPECIFICATION = {
-  lockSha256: "49526aef7c075add60a41b3605cdb6d542f3392410bc1879fc59868f8bd808d7",
-  projectSha256: "b5e57ba57363d3793dd53dec2f7c0cd667015f37368b3f6139bdae871cdab79e",
+  lockSha256: "8d437f53f63d52d266b8288b647254d28c8c5a0fa0f02e14da6a0adb30cac057",
+  projectSha256: "beeae8338729362227297b8abf8c4356c042ee072339b979406d526722663237",
 };
+export const MATLAB_CONNECTION_PYTHON_VERSION = "3.12.13";
+export const MATLAB_CONNECTION_TOOLKIT_REVISION = "matlab-connection-2026-09-10.1";
 const Installation = Schema.Struct({ root: Schema.String, release: Schema.String });
 const decodeInstallation = Schema.decodeUnknownSync(Schema.fromJsonString(Installation));
 const encodeInstallation = Schema.encodeSync(Schema.fromJsonString(Installation));
@@ -48,7 +53,11 @@ export function makeMatlabConnectionHelper(input: {
       { signal },
     );
 
-  const verify = async ({ executable, signal }: { executable: string; signal: AbortSignal }) => {
+  const verify: ManagedPythonEnvironmentDependencies["verify"] = async ({
+    executable,
+    pythonVersion,
+    signal,
+  }) => {
     const root = generationRoot(executable);
     const metadata = decodeInstallation(
       await NodeFSP.readFile(NodePath.join(root, METADATA), "utf8"),
@@ -60,7 +69,8 @@ export function makeMatlabConnectionHelper(input: {
         "-B",
         "-c",
         [
-          "import os, sys",
+          "import os, platform, sys",
+          "assert platform.python_version() == sys.argv[3]",
           "sys.path.insert(0, sys.argv[1])",
           "import matlab.engine",
           "module = os.path.realpath(matlab.engine.__file__)",
@@ -71,6 +81,7 @@ export function makeMatlabConnectionHelper(input: {
         ].join("\n"),
         NodePath.join(root, "engine"),
         metadata.root,
+        pythonVersion,
       ],
       root,
       signal,
@@ -141,7 +152,8 @@ export function makeMatlabConnectionHelper(input: {
       displayName: "MATLAB connection helper",
       description:
         "A private Python helper for your installed MATLAB. MATLAB, its license, and your other Python environments stay untouched.",
-      toolkitRevision: "matlab-connection-2026-09-10.1",
+      toolkitRevision: MATLAB_CONNECTION_TOOLKIT_REVISION,
+      pythonVersion: MATLAB_CONNECTION_PYTHON_VERSION,
     },
   });
   const hostFor = (installationRoot: string) =>

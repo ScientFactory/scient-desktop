@@ -40,14 +40,14 @@ import {
 } from "./PythonRuntimeAdapter.ts";
 import { assessPythonToolkits, PYTHON_TOOLKIT_EXTRAS } from "./PythonToolkitCatalog.ts";
 
-export const MANAGED_PYTHON_VERSION = "3.12.13";
-export const MANAGED_PYTHON_UV_VERSION = "0.11.16";
+export const MANAGED_PYTHON_VERSION = "3.14.7";
+export const MANAGED_PYTHON_UV_VERSION = "0.12.15";
 export const MANAGED_PYTHON_PROVISIONER_VERSION = `uv-${MANAGED_PYTHON_UV_VERSION}-shared-python-v1`;
-export const MANAGED_PYTHON_TOOLKIT_REVISION = "scientific-python-2026-09-17.1";
+export const MANAGED_PYTHON_TOOLKIT_REVISION = "scientific-python-2026-09-17.2";
 export const MANAGED_PYTHON_LOCK_SHA256 =
-  "66ce05d088324924895a8f0f60ba15d2a8f57d7fd161f7c8686a89932c868080";
+  "b1470dc4f8d0ee92106504bc98f970c97f781d022686b3c90ae65cd28d121577";
 export const MANAGED_PYTHON_PROJECT_SHA256 =
-  "36da1eb843789e8e980de8da0f0f59a62fd9d6a587d75a51596aeca7c4f76953";
+  "b7c6b99e2200e510c27ec6c9944d8bc2cd949fdcf37137080cab5f050d7cae2e";
 const STAGED_MANAGED_PYTHON_DIRECTORY = "scient-managed-python";
 
 const PROCESS_TIMEOUT = Duration.minutes(30);
@@ -110,6 +110,8 @@ export interface ManagedPythonUvArtifact {
   readonly archiveFormat: "tar.gz" | "zip";
   readonly executablePath: string;
   readonly auxiliaryExecutablePath: string;
+  readonly executableSha256: string;
+  readonly auxiliaryExecutableSha256: string;
 }
 
 /** Resolve only server-reviewed Toolkit identities to locked uv extras. */
@@ -128,67 +130,83 @@ export function managedPythonExtrasForToolkits(
 const UV_ARTIFACTS: Readonly<Record<string, ManagedPythonUvArtifact>> = {
   "darwin-arm64": {
     assetName: "uv-aarch64-apple-darwin.tar.gz",
-    size: 20_641_665,
-    sha256: "2b25be1af546be330b340b0a76b99f989daa6d92678fdffb87438e661e9d88fb",
+    size: 16_678_128,
+    sha256: "dc304b9ed1b24174572290fba60ac3f6fe63c73a671f0439e62a91375841964d",
     archiveFormat: "tar.gz",
     executablePath: "uv-aarch64-apple-darwin/uv",
     auxiliaryExecutablePath: "uv-aarch64-apple-darwin/uvx",
+    executableSha256: "c1f752966980dc37be8b6a90dcdcc314f689bbc82a2f86071712924f4be799b0",
+    auxiliaryExecutableSha256: "498c13c7f6de8e1eb8f74b8fae0c5949d6f595d3a70dcc65de368edd1cf06e5c",
   },
   "darwin-x64": {
     assetName: "uv-x86_64-apple-darwin.tar.gz",
-    size: 22_381_489,
-    sha256: "6b91ae3de155f51bd1f5b74814821c79f016a176561f252cd9ddfb976939af2e",
+    size: 20_292_831,
+    sha256: "e9ca61775532368fe518ab03e7a354c7ecab8ccb3c7d941c775fcc4a362b801b",
     archiveFormat: "tar.gz",
     executablePath: "uv-x86_64-apple-darwin/uv",
     auxiliaryExecutablePath: "uv-x86_64-apple-darwin/uvx",
+    executableSha256: "3f808e3cc63f06a03861472b2431167d1062e2bf0bd71e7423a5d230cf103720",
+    auxiliaryExecutableSha256: "c85556103b043f0397cb443588d422a565e73ffaddbb075764891827c76f26fd",
   },
   "linux-arm64-glibc": {
     assetName: "uv-aarch64-unknown-linux-gnu.tar.gz",
-    size: 22_456_760,
-    sha256: "8c9d0f0ee98166ae6ab198747519ba6f25db29d185bd2ae5960ecebc91a5c22a",
+    size: 18_654_404,
+    sha256: "0e9a3499b0587d449c9ff684c0160da607826e4af1cee220bc87f378702d3e08",
     archiveFormat: "tar.gz",
     executablePath: "uv-aarch64-unknown-linux-gnu/uv",
     auxiliaryExecutablePath: "uv-aarch64-unknown-linux-gnu/uvx",
+    executableSha256: "e5495936943d447df4e0ffcbda60c8bb743829e31bc27e802eac9ae99293b56c",
+    auxiliaryExecutableSha256: "4c54d360bb1a9b727c9dc16a91786449dd0a0db85f74f2aec9e88cc1ced0658c",
   },
   "linux-x64-glibc": {
     assetName: "uv-x86_64-unknown-linux-gnu.tar.gz",
-    size: 24_014_155,
-    sha256: "74947fe2c03315cf07e82ab3acc703eddef01aba4d5232a98e4c6825ec116131",
+    size: 19_443_011,
+    sha256: "f97935763c04be3e692460a7aaeaaab8fc3b78fcf8b389da820b38ae7423a638",
     archiveFormat: "tar.gz",
     executablePath: "uv-x86_64-unknown-linux-gnu/uv",
     auxiliaryExecutablePath: "uv-x86_64-unknown-linux-gnu/uvx",
+    executableSha256: "5d59bc45431db192c0a49a01c517041c3bd8778adb3fbc5195aaa025eec19e23",
+    auxiliaryExecutableSha256: "c9faf31836f0a99906793db2192fb40fc3f3c8b5ec545a99a5ff3ce6acdc031e",
   },
   "linux-arm64-musl": {
     assetName: "uv-aarch64-unknown-linux-musl.tar.gz",
-    size: 22_340_125,
-    sha256: "ac022d96411143b9a2dd75ea711fa8dd4cd14538bf248f2e5df3c10a80f7f6a4",
+    size: 20_754_110,
+    sha256: "93b801abb146e6431fb0434346a0162e65d3f0d1cd7360144d04c43488fd7f7d",
     archiveFormat: "tar.gz",
     executablePath: "uv-aarch64-unknown-linux-musl/uv",
     auxiliaryExecutablePath: "uv-aarch64-unknown-linux-musl/uvx",
+    executableSha256: "b051754f46946ddf3dbec570ab22b05232eba16f28400ba09ba6419a1524903c",
+    auxiliaryExecutableSha256: "fcc20db9b5f2563adc35525922b30853db78bab7c75dac68e95147e8140b4722",
   },
   "linux-x64-musl": {
     assetName: "uv-x86_64-unknown-linux-musl.tar.gz",
-    size: 24_286_608,
-    sha256: "1bc4be1be0a000f893b0d1db97906cf392b63fa22fda9a0ecf33d0d4bbb4bc9a",
+    size: 22_429_965,
+    sha256: "999c0c3da986953e508985c3932d283d2c62eb167b4f8d81e79f565e34104959",
     archiveFormat: "tar.gz",
     executablePath: "uv-x86_64-unknown-linux-musl/uv",
     auxiliaryExecutablePath: "uv-x86_64-unknown-linux-musl/uvx",
+    executableSha256: "85265222f25cf610272798247677805b0947dd5553e4e1aa2a8ce0a0c0ed7671",
+    auxiliaryExecutableSha256: "3234da3760c062f31099e8bca6e21d28d4f5570119ff7a10a10382a10a6cf40f",
   },
   "win32-arm64": {
     assetName: "uv-aarch64-pc-windows-msvc.zip",
-    size: 21_730_012,
-    sha256: "e4f8e70eb21f0f4efd2eeb159ab289f9a16057d59881a4475758be4ce39bc8c5",
+    size: 18_880_214,
+    sha256: "a37c8e96cb1260488c8510b64c848533a3a82a2fdf9e905de7c2700ceebf6437",
     archiveFormat: "zip",
-    executablePath: "uv-aarch64-pc-windows-msvc/uv.exe",
-    auxiliaryExecutablePath: "uv-aarch64-pc-windows-msvc/uvx.exe",
+    executablePath: "uv.exe",
+    auxiliaryExecutablePath: "uvx.exe",
+    executableSha256: "cefb67f8ed94708f21601827c47bc7a94537211013c8f4b6e62f3734c3f6743b",
+    auxiliaryExecutableSha256: "ba334adc36acfeb234a93538a2027bcaa408f3896de31f583ddf3a46e00eb663",
   },
   "win32-x64": {
     assetName: "uv-x86_64-pc-windows-msvc.zip",
-    size: 23_236_992,
-    sha256: "dd9d6d6554bfab265bfa98aa8e8a406c5c3a7b97582f93de1f4d48d9154a0395",
+    size: 17_578_593,
+    sha256: "477bd99a84e34891f2bd4c9152ddeb74e971accccbc59c0f0301f11f08a32d46",
     archiveFormat: "zip",
-    executablePath: "uv-x86_64-pc-windows-msvc/uv.exe",
-    auxiliaryExecutablePath: "uv-x86_64-pc-windows-msvc/uvx.exe",
+    executablePath: "uv.exe",
+    auxiliaryExecutablePath: "uvx.exe",
+    executableSha256: "b0131eb55f112aee1836951ba96abec9c897b7bedd3f2fdebb19d710cfb636cd",
+    auxiliaryExecutableSha256: "12fa21b9a137b045d5c093ada895e2eda8494741d658ab174bd28e082fd3200c",
   },
 };
 
@@ -381,6 +399,8 @@ interface ManagedPythonProvisionerBase {
   readonly environment: Readonly<Record<string, string>>;
   readonly platform: NodeJS.Platform;
   readonly arch: NodeJS.Architecture;
+  /** Injectable only for isolated artifact-integrity tests. */
+  readonly uvArtifact?: ManagedPythonUvArtifact;
 }
 
 /** A reviewed recipe supplies its own verifier; Scientific Python uses its adapter. */
@@ -404,7 +424,7 @@ export function makeManagedPythonProvisioner(
 ): Pick<ManagedPythonEnvironmentDependencies, "provision" | "verify"> {
   const platform = options.platform;
   const target = detectManagedRuntimeTarget({ platform, arch: options.arch });
-  const artifact = managedPythonUvArtifactForTarget(target);
+  const artifact = options.uvArtifact ?? managedPythonUvArtifactForTarget(target);
   let runSequence = 0;
   const nextRunId = (purpose: string): string => {
     runSequence += 1;
@@ -456,6 +476,26 @@ export function makeManagedPythonProvisioner(
     }
   };
 
+  const verifyUvPayload = async (root: string): Promise<void> => {
+    const entries = [
+      [artifact.executablePath, artifact.executableSha256],
+      [artifact.auxiliaryExecutablePath, artifact.auxiliaryExecutableSha256],
+    ] as const;
+    await Promise.all(
+      entries.map(async ([relativePath, sha256]) => {
+        const executable = NodePath.join(root, relativePath);
+        const stat = await NodeFSP.lstat(executable);
+        if (!stat.isFile()) {
+          throw new Error("The cached managed installer contains a non-file executable.");
+        }
+        await verifyManagedRuntimeChecksum(executable, {
+          algorithm: "sha256",
+          digest: sha256,
+        });
+      }),
+    );
+  };
+
   const ensureUv = async (
     signal: AbortSignal,
     onProgress?: ((progress: ManagedPythonProvisionProgress) => void) | undefined,
@@ -467,14 +507,36 @@ export function makeManagedPythonProvisioner(
       "uv",
       MANAGED_PYTHON_UV_VERSION,
     );
+    for (const directory of [
+      options.computeDir,
+      NodePath.join(options.computeDir, "tooling"),
+      NodePath.join(options.computeDir, "tooling", "uv"),
+      versionRoot,
+    ]) {
+      await NodeFSP.mkdir(directory, { recursive: true, mode: 0o700 });
+      if (!(await NodeFSP.lstat(directory)).isDirectory()) {
+        throw new Error("The managed installer cache must be an app-owned directory, not a link.");
+      }
+    }
     const finalRoot = NodePath.join(versionRoot, targetKey);
+    const finalRootIsDirectory = await NodeFSP.lstat(finalRoot).then(
+      (stat) => stat.isDirectory(),
+      (cause: NodeJS.ErrnoException) => {
+        if (cause.code === "ENOENT") return null;
+        throw cause;
+      },
+    );
+    if (finalRootIsDirectory === false) {
+      throw new Error("The managed installer cache must be an app-owned directory, not a link.");
+    }
     const finalExecutable = NodePath.join(finalRoot, artifact.executablePath);
-    const existing = await NodeFSP.stat(finalExecutable).then(
+    const existing = await NodeFSP.lstat(finalExecutable).then(
       (stat) => stat.isFile(),
       () => false,
     );
     if (existing) {
       try {
+        await verifyUvPayload(finalRoot);
         await smokeUv(finalExecutable, signal);
         return finalExecutable;
       } catch {
@@ -488,8 +550,6 @@ export function makeManagedPythonProvisioner(
         await NodeFSP.rm(corrupt, { recursive: true, force: true }).catch(() => undefined);
       }
     }
-
-    await NodeFSP.mkdir(versionRoot, { recursive: true, mode: 0o700 });
     const stagingRoot = NodePath.join(
       versionRoot,
       `${targetKey}.installing-${NodeCrypto.randomUUID()}`,
@@ -526,6 +586,7 @@ export function makeManagedPythonProvisioner(
         extractionLimits: { maxEntries: 8, maxExpandedBytes: 96 * 1024 * 1024 },
         signal,
       });
+      await verifyUvPayload(payloadRoot);
       await smokeUv(stagedExecutable, signal);
       await NodeFSP.rename(payloadRoot, finalRoot).catch(async (cause) => {
         const winner = await NodeFSP.stat(finalExecutable).then(
@@ -534,6 +595,7 @@ export function makeManagedPythonProvisioner(
         );
         if (!winner) throw cause;
       });
+      await verifyUvPayload(finalRoot);
       await smokeUv(finalExecutable, signal);
       return finalExecutable;
     } finally {
@@ -727,6 +789,7 @@ export function makeManagedPythonProvisioner(
   const verify = async (input: {
     readonly executable: string;
     readonly toolkitIds: ReadonlyArray<ComputeToolkitId>;
+    readonly pythonVersion: string;
     readonly signal: AbortSignal;
     readonly onProgress?: ((progress: ManagedPythonProvisionProgress) => void) | undefined;
   }): Promise<void> => {
@@ -736,6 +799,11 @@ export function makeManagedPythonProvisioner(
       signal: input.signal,
     });
     const probe = parseProbeOutput(stdout);
+    if (probe.version !== input.pythonVersion) {
+      throw new Error(
+        `Scientific Python reported ${probe.version}; expected exactly ${input.pythonVersion}.`,
+      );
+    }
     const readiness = checkReadiness(probe);
     if (readiness.readiness !== "ready") {
       throw new Error(`Scientific Python is missing: ${readiness.missing.join(", ")}.`);

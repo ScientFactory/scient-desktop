@@ -823,5 +823,6 @@ describe.runIf(Boolean(TEST_MATLAB))("MATLAB compute product backend", () => {
         Effect.scoped,
         Effect.timeout(TEST_HELPER ? "15 minutes" : "6 minutes"),
       ),
+    TEST_HELPER ? 960_000 : 420_000,
   );
 });

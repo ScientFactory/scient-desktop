@@ -668,9 +668,7 @@ jobs:
           RELEASE_VERSION: ${{ needs.preflight.outputs.version }}
         run: |
           node scripts/update-release-package-versions.ts "$RELEASE_VERSION"
-          vp run --filter @t3tools/web build
-          vp run --filter t3 build:bundle
-          cp -R apps/web/dist apps/server/dist/client
+          vp run --filter t3 build
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
           pattern: resource-monitor-*

@@ -52,8 +52,16 @@ describe("ManagedPythonProvisioner", () => {
     const versionRoot = NodePath.join(computeDir, "tooling", "uv", MANAGED_PYTHON_UV_VERSION);
     const artifact = managedPythonUvArtifactForTarget({ platform: "darwin", arch: "arm64" });
     const executable = NodePath.join(versionRoot, "darwin-arm64", artifact.executablePath);
+    const auxiliaryExecutable = NodePath.join(
+      versionRoot,
+      "darwin-arm64",
+      artifact.auxiliaryExecutablePath,
+    );
+    const executableFixture = "cached-installer-fixture";
+    const auxiliaryFixture = "cached-auxiliary-fixture";
     await NodeFSP.mkdir(NodePath.dirname(executable), { recursive: true });
-    await NodeFSP.writeFile(executable, "cached-installer-fixture");
+    await NodeFSP.writeFile(executable, executableFixture);
+    await NodeFSP.writeFile(auxiliaryExecutable, auxiliaryFixture);
     const provisioner = makeManagedPythonProvisioner({
       computeDir,
       specDirectory: NodePath.join(import.meta.dirname, "managed-python"),
@@ -62,6 +70,13 @@ describe("ManagedPythonProvisioner", () => {
       environment: {},
       platform: "darwin",
       arch: "arm64",
+      uvArtifact: {
+        ...artifact,
+        executableSha256: NodeCrypto.createHash("sha256").update(executableFixture).digest("hex"),
+        auxiliaryExecutableSha256: NodeCrypto.createHash("sha256")
+          .update(auxiliaryFixture)
+          .digest("hex"),
+      },
     });
     return {
       executable,
@@ -99,7 +114,7 @@ describe("ManagedPythonProvisioner", () => {
                 input.environment!.UV_PYTHON_INSTALL_DIR!,
                 "cpython-fixture",
                 "bin",
-                "python3.12",
+                "python3.14",
               );
               await NodeFSP.mkdir(NodePath.dirname(interpreter), { recursive: true });
               await NodeFSP.writeFile(interpreter, "fixture");
@@ -190,6 +205,73 @@ describe("ManagedPythonProvisioner", () => {
     expect(await NodeFSP.readFile(NodePath.join(outside, "keep"), "utf8")).toBe("user data");
   });
 
+  it("rejects a redirected installer cache before inspecting or replacing its target", async () => {
+    const computeDir = NodePath.join(temporaryRoot, "compute");
+    const outside = NodePath.join(temporaryRoot, "user-tooling");
+    await NodeFSP.mkdir(computeDir);
+    await NodeFSP.mkdir(outside);
+    await NodeFSP.writeFile(NodePath.join(outside, "keep"), "user data");
+    await NodeFSP.symlink(outside, NodePath.join(computeDir, "tooling"));
+    const provisioner = makeManagedPythonProvisioner({
+      computeDir,
+      specDirectory: NodePath.join(import.meta.dirname, "managed-python"),
+      processes: {
+        start: () => Effect.die("A redirected installer cache must fail before execution."),
+      },
+      spawnProbe: () => Effect.die("A redirected installer cache must fail before probing."),
+      environment: {},
+      platform: "darwin",
+      arch: "arm64",
+    });
+
+    await expect(
+      provisioner.provision({
+        targetRoot: NodePath.join(temporaryRoot, "generation"),
+        toolkitIds: [],
+        toolkitRevision: "fixture",
+        pythonVersion: MANAGED_PYTHON_VERSION,
+        provisionerVersion: "fixture",
+        signal: new AbortController().signal,
+      }),
+    ).rejects.toThrow("managed installer cache must be an app-owned directory, not a link");
+    expect(await NodeFSP.readFile(NodePath.join(outside, "keep"), "utf8")).toBe("user data");
+    expect(downloadManagedRuntime).not.toHaveBeenCalled();
+  });
+
+  it("rejects a redirected installer target before inspecting its payload", async () => {
+    const computeDir = NodePath.join(temporaryRoot, "compute");
+    const versionRoot = NodePath.join(computeDir, "tooling", "uv", MANAGED_PYTHON_UV_VERSION);
+    const outside = NodePath.join(temporaryRoot, "user-installer");
+    await NodeFSP.mkdir(versionRoot, { recursive: true });
+    await NodeFSP.mkdir(outside);
+    await NodeFSP.writeFile(NodePath.join(outside, "keep"), "user data");
+    await NodeFSP.symlink(outside, NodePath.join(versionRoot, "darwin-arm64"));
+    const provisioner = makeManagedPythonProvisioner({
+      computeDir,
+      specDirectory: NodePath.join(import.meta.dirname, "managed-python"),
+      processes: {
+        start: () => Effect.die("A redirected installer target must fail before execution."),
+      },
+      spawnProbe: () => Effect.die("A redirected installer target must fail before probing."),
+      environment: {},
+      platform: "darwin",
+      arch: "arm64",
+    });
+
+    await expect(
+      provisioner.provision({
+        targetRoot: NodePath.join(temporaryRoot, "generation"),
+        toolkitIds: [],
+        toolkitRevision: "fixture",
+        pythonVersion: MANAGED_PYTHON_VERSION,
+        provisionerVersion: "fixture",
+        signal: new AbortController().signal,
+      }),
+    ).rejects.toThrow("managed installer cache must be an app-owned directory, not a link");
+    expect(await NodeFSP.readFile(NodePath.join(outside, "keep"), "utf8")).toBe("user data");
+    expect(downloadManagedRuntime).not.toHaveBeenCalled();
+  });
+
   it("keeps the cached installer when setup is already cancelled", async () => {
     const start = vi.fn(() => Effect.die("A cancelled setup must not start a process."));
     const fixture = await cachedInstaller({ start });
@@ -249,6 +331,20 @@ describe("ManagedPythonProvisioner", () => {
     expect(downloadManagedRuntime).toHaveBeenCalledTimes(1);
   });
 
+  it("discards a cached installer whose payload no longer matches its pinned checksum", async () => {
+    const fixture = await cachedInstaller({
+      start: () => Effect.die("A corrupt payload must be rejected before it can execute."),
+    });
+    await NodeFSP.writeFile(fixture.executable, "tampered-installer");
+
+    await expect(fixture.provision(new AbortController().signal)).rejects.toThrow(
+      "Fixture offline",
+    );
+    await expect(NodeFSP.stat(fixture.executable)).rejects.toMatchObject({ code: "ENOENT" });
+    expect(await NodeFSP.readdir(fixture.versionRoot)).toEqual([]);
+    expect(downloadManagedRuntime).toHaveBeenCalledTimes(1);
+  });
+
   it("keeps the checked-in locked specification matched to its activation hashes", async () => {
     for (const [name, expected] of [
       ["pyproject.toml", MANAGED_PYTHON_PROJECT_SHA256],
@@ -289,8 +385,16 @@ describe("ManagedPythonProvisioner", () => {
       const artifact = managedPythonUvArtifactForTarget(target);
       expect(artifact.size).toBeGreaterThan(1_000_000);
       expect(artifact.sha256).toMatch(/^[a-f0-9]{64}$/u);
+      expect(artifact.executableSha256).toMatch(/^[a-f0-9]{64}$/u);
+      expect(artifact.auxiliaryExecutableSha256).toMatch(/^[a-f0-9]{64}$/u);
       expect(artifact.executablePath).toContain("uv");
       expect(artifact.auxiliaryExecutablePath).toContain("uvx");
+    }
+    for (const arch of ["arm64", "x64"] as const) {
+      expect(managedPythonUvArtifactForTarget({ platform: "win32", arch })).toMatchObject({
+        executablePath: "uv.exe",
+        auxiliaryExecutablePath: "uvx.exe",
+      });
     }
     expect(() => managedPythonUvArtifactForTarget({ platform: "linux", arch: "x64" })).toThrow(
       "Scientific Python is not available",

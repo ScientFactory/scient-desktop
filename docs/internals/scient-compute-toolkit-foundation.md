@@ -33,17 +33,18 @@ This continuation completes the setup/connection slice, not the later MATLAB
 session/result parity work. The implementation deliberately reuses a private
 **Python environment** mechanism rather than introducing a general package manager.
 
-| Responsibility                | Shared mechanism                                                                                                                                                                   | Language-specific policy                                                                                                                                               |
-| ----------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Private environment lifecycle | `ManagedPythonEnvironment`, provisioner, controller: serialized generations, activation, rollback, cancellation, removal and startup reconciliation                                | Separate `python` and `matlab-connection` roots/receipts; independent selection and revisions                                                                          |
-| Download/provisioning         | Pinned uv artifact, private CPython, locked specification and owned process runner                                                                                                 | Scientific Python's reviewed Toolkit catalog versus a minimal MATLAB helper with setuptools/wheel and the selected installation's Engine                               |
-| Runtime settings              | `ScientificRuntimePreferences`, server-scoped Settings and existing generic runtime RPCs                                                                                           | MATLAB's canonical executable is also read/written by the older analysis service; absent canonical settings read through the legacy choice without a migration write   |
-| Native connection proof       | Existing adapter prepare/open/shutdown path, serialized with session mutations                                                                                                     | MATLAB and Python advertise passive `detected` after a successful probe so `compute.verifyRuntime` starts and closes a real session. Inspect never opens that session. |
-| UI                            | Settings → Scientific Computing is the ordinary grouped Settings card (`SettingsSection` + `SettingsRow`), one current runtime per language; Runtime is a picker, not an inventory | File header names the probed interpreter; **ready** is reserved for a live session. Repair is for a damaged managed generation, not a skipped Test.                    |
+| Responsibility                | Shared mechanism                                                                                                                                                                                    | Language-specific policy                                                                                                                                               |
+| ----------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Private environment lifecycle | `ManagedPythonEnvironment`, provisioner, controller: serialized generations, activation, pre-activation state preservation, cancellation, transactional removal rollback and startup reconciliation | Separate `python` and `matlab-connection` roots/receipts; independent selection and revisions                                                                          |
+| Download/provisioning         | Pinned uv artifact, private CPython, locked specification and owned process runner                                                                                                                  | Scientific Python's reviewed Toolkit catalog versus a minimal MATLAB helper with setuptools/wheel and the selected installation's Engine                               |
+| Runtime settings              | `ScientificRuntimePreferences`, server-scoped Settings and existing generic runtime RPCs                                                                                                            | MATLAB's canonical executable is also read/written by the older analysis service; absent canonical settings read through the legacy choice without a migration write   |
+| Native connection proof       | Existing adapter prepare/open/shutdown path, serialized with session mutations                                                                                                                      | MATLAB and Python advertise passive `detected` after a successful probe so `compute.verifyRuntime` starts and closes a real session. Inspect never opens that session. |
+| UI                            | Settings → Scientific Computing is the ordinary grouped Settings card (`SettingsSection` + `SettingsRow`), one current runtime per language; Runtime is a picker, not an inventory                  | File header names the probed interpreter; **ready** is reserved for a live session. Repair is for a damaged managed generation, not a skipped Test.                    |
 
-The helper lives under `<computeDir>/environments/matlab-connection/`. It uses the
-same pinned CPython as managed Scientific Python, but **not** that environment or
-its scientific packages. The two may be repaired/removed independently. Only
+The helper lives under `<computeDir>/environments/matlab-connection/`. It uses an
+independently pinned, MATLAB-compatible CPython 3.12 host, not the newer managed
+Scientific Python interpreter, environment, or scientific packages. The two may be
+repaired/removed independently. Only
 Scient-owned generations are writable/removable. MATLAB and system/project Python
 remain user-owned. An installed helper may explicitly be deselected with Use existing.
 The release build stages the helper's `pyproject.toml` and `uv.lock` beside the
@@ -260,9 +261,9 @@ Activation follows this sequence:
    traversal and symlink escapes.
 5. Verify the exact executable and requested Toolkit set.
 6. Atomically replace the small active-state record.
-7. Name one previous generation for rollback and leave any displaced
+7. Protect one previous generation from collection and leave any displaced
    generations in place while this server process may still have sessions
-   using them.
+   using them. There is no public post-activation rollback action.
 
 Nothing discovers the candidate before step 6. Provision, verification,
 cancellation, or activation failure removes only the unpublished candidate and
@@ -287,8 +288,8 @@ locked packages.
 
 The managed Scientific Python recipe pins:
 
-- CPython `3.12.13`, installed and owned inside the fresh generation;
-- `uv 0.11.16` as the installer and resolver;
+- CPython `3.14.7`, installed and owned inside the fresh generation;
+- `uv 0.12.15` as the installer and resolver;
 - a universal `uv.lock` plus its exact `pyproject.toml` checksum;
 - a required broad base covering Jupyter execution, numerical analysis and figures,
   modern spreadsheets, YAML, basic image/PDF operations, HTTP and table exports;
@@ -315,7 +316,7 @@ image toolkit has no imagecodecs musl wheels; cftime also lacks musl ARM64 wheel
 Do not bypass `--no-build`, drop requirements silently, or claim a platform works
 because its uv installer exists. Re-run wheel resolution before widening availability.
 
-The `scientific-python-2026-09-17.1` revision makes the expanded profile an explicit
+The `scientific-python-2026-09-17.2` revision makes the expanded profile an explicit
 managed update. Activation verifies bounded offline file workflows in disposable
 directories: CSV/Excel, safe YAML, XML entity rejection, styled/Markdown tables,
 PNG/JPEG, PDF text/split/merge, and the selected toolkit's Parquet/Feather, HDF5,
@@ -405,7 +406,7 @@ Update and repair provision and verify a fresh generation before activation.
 New sessions see the selected active generation; existing sessions retain the
 executable they started with. The Python binding reserves its exact managed generation before
 starting a probe or transport, and releases it after scoped process cleanup. Collection retains
-the active generation, its rollback predecessor, unpublished builds, and every reserved generation.
+the active generation, its protected predecessor, unpublished builds, and every reserved generation.
 It renames obsolete generations under the short metadata lock and deletes them outside that lock;
 unreadable activation metadata is not permission to collect. Whole-runtime removal checks usage
 again at the deletion boundary. Unrelated Python installations do not block it. Bindings without
@@ -570,6 +571,33 @@ but neither automated tests nor this partial UI pass constitute owner or release
 acceptance. Temporary fixtures and screenshots remain in the separately owned
 QA directory and are not product assets.
 
+### CPython 3.14.7 migration qualification — 2026-09-17
+
+Scientific Python now pins exact CPython `3.14.7` and uv `0.12.15`. The MATLAB
+connection helper remains an independently versioned recipe on exact CPython
+`3.12.13`, which is within MATLAB R2026a's supported host range. Controller and
+verification inputs carry the requested recipe version explicitly so changing
+Scientific Python cannot silently change the Engine host.
+
+The final macOS arm64 candidate passed:
+
+- 78 focused lifecycle, integrity, controller and helper tests;
+- server typechecking and offline lock checks for both independently pinned recipes;
+- 142/142 organized Python compute corpus executions on CPython `3.14.7`;
+- the real managed-product cold lifecycle, including the uv download, exact-version
+  verification, every Toolkit generation, retained live sessions, removal blocking
+  and cleanup, in 751.52 seconds; and
+- 15/15 mixed Python/MATLAB product integrations, including the real MATLAB Engine
+  helper path, in 77.31 seconds.
+
+The production server build restaged all four managed recipe files byte-for-byte
+from source. uv archives and their extracted `uv`/`uvx` executables have pinned
+checksums for every advertised installer target; cached payloads are rechecked
+before execution. Wheel-only resolution passed for macOS arm64/x64, Linux glibc
+arm64/x64 and Windows x64. Linux musl and Windows arm64 remain unqualified where
+required scientific wheels are absent; an available uv installer is not a release
+claim for the package profile.
+
 Current local evidence includes:
 
 - schema and typechecking across compute, contracts, client runtime, server,
@@ -581,11 +609,11 @@ Current local evidence includes:
 - service tests proving live sessions block removal;
 - UI typechecking and focused presentation tests; and
 - an opt-in macOS arm64 product test that downloaded the pinned uv asset,
-  installed CPython `3.12.13`, synchronized the exact lock, started the real
+  installed CPython `3.14.7`, synchronized the exact lock, started the real
   bridge, ran pandas/SciPy/Matplotlib through a real kernel, retained rich
-  output, blocked unsafe removal, and removed the private environment. The
-  observed clean setup-to-removal test completed in about 45 seconds on the
-  qualification host.
+  output, transitioned through every Toolkit set, blocked unsafe removal, and
+  removed the private environment. The observed cold end-to-end run completed
+  in 751.52 seconds on the qualification host.
 
 Before release promotion, still require:
 

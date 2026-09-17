@@ -8,8 +8,11 @@ import * as Effect from "effect/Effect";
 
 import {
   makeMatlabConnectionHelper,
+  MATLAB_CONNECTION_PYTHON_VERSION,
   MATLAB_CONNECTION_SPECIFICATION,
+  MATLAB_CONNECTION_TOOLKIT_REVISION,
 } from "./MatlabConnectionHelper.ts";
+import { MANAGED_PYTHON_PROVISIONER_VERSION } from "./ManagedPythonProvisioner.ts";
 import type { ManagedPythonEnvironmentStatus } from "./ManagedPythonEnvironment.ts";
 
 describe("MATLAB connection helper prerequisites", () => {
@@ -51,9 +54,9 @@ describe("MATLAB connection helper prerequisites", () => {
               generationId: "generation-test",
               executableRelativePath: "environment/bin/python",
               toolkitIds: [],
-              toolkitRevision: "test",
-              pythonVersion: "3.12.13",
-              provisionerVersion: "test",
+              toolkitRevision: MATLAB_CONNECTION_TOOLKIT_REVISION,
+              pythonVersion: MATLAB_CONNECTION_PYTHON_VERSION,
+              provisionerVersion: MANAGED_PYTHON_PROVISIONER_VERSION,
               activatedAtEpochMs: 0,
             },
           },
@@ -66,6 +69,7 @@ describe("MATLAB connection helper prerequisites", () => {
           expect((yield* helper.controller.status()).installationExecutable).toBe(
             "/recorded/MATLAB/bin/matlab",
           );
+          expect((yield* helper.controller.status()).updateAvailable).toBe(false);
           yield* Effect.promise(() => NodeFSP.writeFile(metadata, "{broken"));
           expect((yield* helper.controller.status()).installationExecutable).toBeUndefined();
         }

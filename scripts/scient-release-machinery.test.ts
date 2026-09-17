@@ -223,6 +223,18 @@ describe("Scient release machinery", () => {
     assert(exposePnpmIndex < packageServerIndex);
   });
 
+  it("uses the authoritative server build that stages runtime assets", () => {
+    const workflow = NodeFS.readFileSync(
+      NodePath.join(import.meta.dirname, "../.github/workflows/release.yml"),
+      "utf8",
+    );
+    const serverAssetJob =
+      workflow.split(/^  build_server_asset:\n/mu)[1]?.split(/^  \w+:\n/mu)[0] ?? "";
+
+    assert.include(serverAssetJob, "vp run --filter t3 build");
+    assert.notInclude(serverAssetJob, "vp run --filter t3 build:bundle");
+  });
+
   it("installs workspace dependencies before running release assembly scripts", () => {
     const workflow = NodeFS.readFileSync(
       NodePath.join(import.meta.dirname, "../.github/workflows/release.yml"),

@@ -101,10 +101,13 @@ export function makeManagedPythonRuntimeController(input: {
     readonly displayName: string;
     readonly description: string;
     readonly toolkitRevision: string;
+    /** The independently qualified interpreter version for this managed recipe. */
+    readonly pythonVersion: string;
   };
 }): NonNullable<ComputeRuntimeBinding["managedRuntime"]> & { readonly dispose: () => void } {
   const displayName = input.configuration?.displayName ?? "Scientific Python";
   const toolkitRevision = input.configuration?.toolkitRevision ?? MANAGED_PYTHON_TOOLKIT_REVISION;
+  const pythonVersion = input.configuration?.pythonVersion ?? MANAGED_PYTHON_VERSION;
   let operation: ActiveOperation | null = null;
   let failureMessage: string | null = null;
   let failure: ComputeManagedRuntimeFailure | null = null;
@@ -176,7 +179,7 @@ export function makeManagedPythonRuntimeController(input: {
         updateAvailable:
           active !== null &&
           (active.toolkitRevision !== toolkitRevision ||
-            active.pythonVersion !== MANAGED_PYTHON_VERSION ||
+            active.pythonVersion !== pythonVersion ||
             active.provisionerVersion !== MANAGED_PYTHON_PROVISIONER_VERSION),
         runtimeVersion: active === null ? null : `Python ${active.pythonVersion}`,
         toolkitRevision: active?.toolkitRevision ?? null,
@@ -223,7 +226,7 @@ export function makeManagedPythonRuntimeController(input: {
       const active = current.record.active;
       if (
         active.toolkitRevision === toolkitRevision &&
-        active.pythonVersion === MANAGED_PYTHON_VERSION &&
+        active.pythonVersion === pythonVersion &&
         active.provisionerVersion === MANAGED_PYTHON_PROVISIONER_VERSION &&
         active.toolkitIds.length === toolkitIds.length &&
         active.toolkitIds.every((toolkitId, index) => toolkitId === toolkitIds[index])
@@ -258,7 +261,7 @@ export function makeManagedPythonRuntimeController(input: {
         : input.manager[action === "repair" ? "repair" : "install"]({
             toolkitIds,
             toolkitRevision,
-            pythonVersion: MANAGED_PYTHON_VERSION,
+            pythonVersion,
             provisionerVersion: MANAGED_PYTHON_PROVISIONER_VERSION,
             ...(options?.selectionAfterInstall === undefined
               ? {}

@@ -29,6 +29,7 @@ import * as LocalExecutionProcess from "../execution/LocalExecutionProcess.ts";
 import * as ComputeSessionService from "./ComputeSessionService.ts";
 import { makeComputeRpcGateway } from "./ComputeRpcGateway.ts";
 import * as LocalComputeStore from "./LocalComputeStore.ts";
+import { MANAGED_PYTHON_VERSION } from "./ManagedPythonProvisioner.ts";
 import * as PythonComputeRuntime from "./PythonComputeRuntime.ts";
 import { managedPythonFileCheck } from "./ManagedPythonScientificChecks.ts";
 
@@ -142,7 +143,7 @@ describe.runIf(ENABLED)("Scient-managed Python product", () => {
 
           const inventoried = (yield* gateway.runtimeInventory()).languages[0]?.installations[0];
           expect(inventoried).toMatchObject({ source: "managed", problem: null });
-          expect(inventoried?.version).toMatch(/^3\./u);
+          expect(inventoried?.version).toBe(MANAGED_PYTHON_VERSION);
 
           const inspection = yield* gateway.inspectRuntimes({ cwd: projectRoot, refresh: true });
           const managed = inspection.languages
@@ -364,9 +365,12 @@ describe.runIf(ENABLED)("Scient-managed Python product", () => {
           SCIENT_COMPUTE_MAX_LIVE_SESSIONS: "3",
         }),
         Effect.scoped,
-        Effect.timeout("20 minutes"),
+        // A completely cold interpreter/package download plus all eight
+        // Gray-code Toolkit generations can legitimately exceed 20 minutes.
+        // Per-process and per-operation ceilings still detect a stalled phase.
+        Effect.timeout("30 minutes"),
       ),
-    1_260_000,
+    1_860_000,
   );
 });
 

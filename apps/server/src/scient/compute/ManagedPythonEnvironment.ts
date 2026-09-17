@@ -97,6 +97,7 @@ export interface ManagedPythonProvisionResult {
 export interface ManagedPythonVerifyInput {
   readonly executable: string;
   readonly toolkitIds: ReadonlyArray<ComputeToolkitIdType>;
+  readonly pythonVersion: string;
   readonly signal: AbortSignal;
   readonly onProgress?: ((progress: ManagedPythonProvisionProgress) => void) | undefined;
 }
@@ -673,6 +674,7 @@ export function makeManagedPythonEnvironmentManager(
           .verify({
             executable: lexicalExecutable,
             toolkitIds,
+            pythonVersion: input.pythonVersion,
             signal: input.signal,
             onProgress: input.onProgress,
           })
