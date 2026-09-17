@@ -1,5 +1,6 @@
 import {
   formatProviderSkillDisplayName,
+  isScientManagedSkill,
   resolveProviderSkillSourceKind,
   type ProviderSkillSourceKind,
 } from "@t3tools/client-runtime/providerSkills";
@@ -152,6 +153,12 @@ const ComposerCommandMenuItem = memo(function ComposerCommandMenuItem(props: {
 }) {
   const skillSourceKind =
     props.item.type === "skill" ? resolveProviderSkillSourceKind(props.item.skill) : null;
+  const skillSourceLabel =
+    props.item.type === "skill" &&
+    skillSourceKind === "app" &&
+    isScientManagedSkill(props.item.skill)
+      ? "Scient"
+      : undefined;
   const isSlashSkill =
     props.triggerKind === "slash-command" && props.item.type === "skill" ? props.item.skill : null;
   const pullRequestPresentation =
@@ -206,6 +213,7 @@ const ComposerCommandMenuItem = memo(function ComposerCommandMenuItem(props: {
         {skillSourceKind ? (
           <SkillSourceBadge
             kind={skillSourceKind}
+            label={skillSourceLabel}
             showSkillSuffix={props.triggerKind === "skill"}
           />
         ) : null}
@@ -232,12 +240,16 @@ const SKILL_SOURCE_LABEL_BY_KIND: Record<ProviderSkillSourceKind, string> = {
   other: "Provider",
 };
 
-function SkillSourceBadge(props: { kind: ProviderSkillSourceKind; showSkillSuffix: boolean }) {
+function SkillSourceBadge(props: {
+  kind: ProviderSkillSourceKind;
+  label: string | undefined;
+  showSkillSuffix: boolean;
+}) {
   const Icon = SKILL_SOURCE_ICON_BY_KIND[props.kind];
   return (
     <Badge className="ms-auto" variant="secondary">
       <Icon aria-hidden="true" className="text-current" />
-      {SKILL_SOURCE_LABEL_BY_KIND[props.kind]}
+      {props.label ?? SKILL_SOURCE_LABEL_BY_KIND[props.kind]}
       {props.showSkillSuffix ? " Skill" : null}
     </Badge>
   );

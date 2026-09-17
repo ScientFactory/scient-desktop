@@ -1,6 +1,7 @@
 import {
   formatProviderSkillDisplayName,
   isGlobalProviderSkill,
+  isScientManagedSkill,
   resolveProviderSkillSourceKind,
   type ProviderSkillSourceKind,
 } from "@t3tools/client-runtime/providerSkills";
@@ -69,7 +70,7 @@ export function collectExternalSkillProviders(
   return providers.flatMap((provider) => {
     if (!provider.enabled || !provider.installed || !isProviderAvailable(provider)) return [];
     const skills = provider.skills
-      .filter((skill) => isGlobalProviderSkill(skill) && !skill.path.startsWith("scient://skills/"))
+      .filter((skill) => isGlobalProviderSkill(skill) && !isScientManagedSkill(skill))
       .map((skill): ExternalSkillItem => ({
         skill,
         displayName: formatProviderSkillDisplayName(skill),

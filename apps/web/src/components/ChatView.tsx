@@ -596,6 +596,7 @@ import {
 } from "../versionSkew";
 import { useAssetUrls } from "../assets/assetUrls";
 import { mergeEffectiveProviderSkills } from "../scient/skills/effectiveSkills";
+import { resolveScientSkillListInput } from "../scient/skills/scientSkillListInput";
 import { scientSkillsInventory } from "../scient/skills/scientSkillsState";
 import {
   ATTACHMENT_ONLY_BOOTSTRAP_PROMPT,
@@ -4027,14 +4028,11 @@ function ChatViewContent(props: ChatViewProps) {
   const scientSkills = useEnvironmentQuery(
     scientSkillsInventory({
       environmentId,
-      input: activeThreadId
-        ? {
-            threadId: activeThreadId,
-            ...(activeProject?.id ? { projectId: activeProject.id } : {}),
-          }
-        : activeProject?.id
-          ? { projectId: activeProject.id }
-          : {},
+      input: resolveScientSkillListInput({
+        routeKind,
+        threadId: activeThreadId,
+        projectId: activeProject?.id ?? null,
+      }),
     }),
   ).data;
   const effectiveActiveProviderSkills = useMemo(

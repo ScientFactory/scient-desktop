@@ -8,6 +8,8 @@ import type {
 
 export type ProviderSkillSourceKind = "app" | "repo" | "project" | "personal" | "system" | "other";
 
+const SCIENT_SKILL_PATH_PREFIX = "scient://skills/";
+
 function titleCaseWords(value: string): string {
   const words: string[] = [];
   for (const segment of value.split(/[\s:_-]+/)) {
@@ -67,7 +69,7 @@ export function getProviderSkillsForSlashMenu(
         skills.filter(
           (skill) =>
             isProviderSkillUserInvocable(skill) &&
-            (isGlobalProviderSkill(skill) || skill.path.startsWith(SCIENT_SKILL_PATH_PREFIX)),
+            (isGlobalProviderSkill(skill) || isScientManagedSkill(skill)),
         ),
       )
     : [];
@@ -79,6 +81,10 @@ export function getProviderSlashCommandsForSlashMenu(
 ): ServerProviderSlashCommand[] {
   const skillNames = new Set(visibleSkills.map((skill) => skill.name.trim().toLowerCase()));
   return slashCommands.filter((command) => !skillNames.has(command.name.trim().toLowerCase()));
+}
+
+export function isScientManagedSkill(skill: Pick<ServerProviderSkill, "path">): boolean {
+  return normalizePathSeparators(skill.path).startsWith(SCIENT_SKILL_PATH_PREFIX);
 }
 
 export function resolveProviderSkillSourceKind(
@@ -99,7 +105,7 @@ export function resolveProviderSkillSourceKind(
     return "project";
   }
   // SCIENT-FORK: built-in Scient releases are app-owned, not provider or user files.
-  if (normalizedPath.startsWith("scient://skills/")) {
+  if (isScientManagedSkill(skill)) {
     return "app";
   }
   if (normalizedPath.includes("/.codex/plugins/") || normalizedPath.includes("/.agents/plugins/")) {
@@ -128,8 +134,6 @@ export function isGlobalProviderSkill(skill: Pick<ServerProviderSkill, "path" | 
   const source = resolveProviderSkillSourceKind(skill);
   return source !== "repo" && source !== "project";
 }
-
-const SCIENT_SKILL_PATH_PREFIX = "scient://skills/";
 
 /** Merge the contextual Scient inventory into one provider's composer menu. */
 export function mergeEffectiveProviderSkills(input: {

@@ -73,6 +73,7 @@ import {
 import { createPortal, flushSync } from "react-dom";
 import { ScientVoiceComposerControl } from "../../scient/voice/ScientVoiceComposerControl.tsx";
 import { mergeEffectiveProviderSkills } from "../../scient/skills/effectiveSkills.ts";
+import { resolveScientSkillListInput } from "../../scient/skills/scientSkillListInput.ts";
 import { scientSkillsInventory } from "../../scient/skills/scientSkillsState.ts";
 import { useEnvironmentQuery } from "../../state/query.ts";
 import { applyVoiceTranscript } from "../../scient/voice/voiceComposerInsert.ts";
@@ -2051,11 +2052,11 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   const scientSkills = useEnvironmentQuery(
     scientSkillsInventory({
       environmentId,
-      input: activeThreadId
-        ? { threadId: activeThreadId, ...(activeProjectId ? { projectId: activeProjectId } : {}) }
-        : activeProjectId
-          ? { projectId: activeProjectId }
-          : {},
+      input: resolveScientSkillListInput({
+        routeKind,
+        threadId: activeThreadId,
+        projectId: activeProjectId,
+      }),
     }),
   ).data;
   const effectiveSelectedProviderSkills = useMemo(
