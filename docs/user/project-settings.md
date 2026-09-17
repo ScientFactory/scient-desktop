@@ -96,8 +96,10 @@ Automatic preview is available in the Scient desktop app. Other clients still ru
 not open the embedded Browser. Actions that run automatically during worktree creation start on the
 server and do not currently trigger this client-side Browser opening.
 
-When no image is found, web and desktop show a two-character monogram with colors
-derived from the saved project name. For example, `Nebula` becomes `NA`,
+Choose **Monogram** in the icon picker to set one or two letters or numbers and a color.
+
+When no image is found, web and desktop show a two-character monogram with a color
+from the icon palette, derived from the saved project name. For example, `Nebula` becomes `NA`,
 `Silver Orchard` becomes `SO`, and `M7 Forge` becomes `M7`.
 
 ## Keep the default branch current

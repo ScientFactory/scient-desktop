@@ -7,6 +7,7 @@ import {
   HostProcessPlatform,
 } from "@t3tools/shared/hostProcess";
 import { isManagedRuntimeUpdate } from "@scientfactory/provider-runtime";
+import { resolveNodeExecutable, nodeRuntimeUnavailableMessage } from "@t3tools/shared/nodeRuntime";
 import * as Clock from "effect/Clock";
 import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
@@ -565,6 +566,14 @@ export const makeAntigravityInstallation = Effect.fn("AntigravityInstallation.ma
 
   const install = Effect.fn("AntigravityInstallation.install")(
     function* (asset: AntigravityReleaseAsset) {
+      yield* resolveNodeExecutable("Antigravity", environment).pipe(
+        Effect.provideService(FileSystem.FileSystem, fs),
+        Effect.provideService(Path.Path, path),
+        Effect.provideService(HostProcessPlatform, platform),
+        Effect.mapError((cause) =>
+          installationError("verify", nodeRuntimeUnavailableMessage("Antigravity"), cause),
+        ),
+      );
       const report = (phase: ProviderInstallState["phase"], message: string | null) =>
         SubscriptionRef.update(state, (current) => ({ ...current, phase, message }));
       yield* fs.makeDirectory(versionsDirectory, { recursive: true });

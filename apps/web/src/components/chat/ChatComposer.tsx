@@ -1,5 +1,7 @@
 import { restoreQueueEditStash } from "../../scient/threadQueue/editSession";
 import { DESKTOP_PASTE_AS_TEXT_EVENT } from "../../lib/desktopPasteAsText";
+import { isLocalEnvironmentDisabled } from "../../localEnvironment";
+import { usePrimaryEnvironmentId } from "../../state/environments";
 import { runtimeModeConfig, runtimeModeOptions } from "./runtimeModeConfig";
 import { useRightPanelStore } from "~/rightPanelStore";
 import { AttachmentFilePreview } from "../files/AttachmentFilePreview";
@@ -51,6 +53,7 @@ import {
   wouldTextPasteExceedLimit,
 } from "@t3tools/client-runtime/text-paste";
 import { serializeComposerFileLink } from "@t3tools/shared/composerTrigger";
+import { folderDropTarget, resolveDroppedFolderPath } from "./folderDrop";
 import { createModelSelection, normalizeModelSlug } from "@t3tools/shared/model";
 import { USAGE_LIMITS_COMMAND } from "@t3tools/shared/usageLimits";
 import {
@@ -108,7 +111,7 @@ import {
   threadShellHasStarted,
 } from "../ChatView.logic";
 // SCIENT-FORK:START — steer shortcut for the Scient thread queue.
-import { isSteerShortcut } from "../../scient/threadQueue/disposition";
+import { resolveComposerSteerRequested } from "../../scient/threadQueue/disposition";
 // SCIENT-FORK:END
 import {
   dataTransferHasComposerMention,
@@ -958,6 +961,7 @@ import {
   PaperclipIcon,
   PencilRulerIcon,
   PlayIcon,
+  ShieldIcon,
   XIcon,
 } from "lucide-react";
 import { proposedPlanTitle } from "../../proposedPlan";
@@ -1260,6 +1264,7 @@ export interface ChatComposerHandle {
   restoreAfterTimelineReachedEnd: () => void;
   collapseForTimelineScrollKey: (key: string) => void;
   addDroppedFiles: (files: File[]) => void;
+  addDroppedFolders: (folders: File[]) => void;
   hasPendingAttachments: () => boolean;
   insertTextAtEnd: (
     text: string,
@@ -1588,6 +1593,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     onExpandImage,
     onFileOpen,
   } = props;
+  const primaryEnvironmentId = usePrimaryEnvironmentId();
   const activeTasksProgress = props.threadSyncPhase === null ? props.activeTasksProgress : null;
   const activeTaskSteps = props.threadSyncPhase === null ? props.activeTaskSteps : null;
   // ------------------------------------------------------------------
@@ -4218,27 +4224,33 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     if (key === "ArrowUp" || key === "ArrowDown") {
       return navigatePromptHistory(key === "ArrowUp" ? "backward" : "forward", event);
     }
-    if (key === "Enter" && !isMobileViewport && !event.shiftKey) {
-      // SCIENT-FORK:START — Cmd/Ctrl+Enter steers an active server thread:
-      // the message dispatches immediately even while a turn is running.
-      // Draft threads reserve Cmd/Ctrl+Enter for upstream background
-      // submission (#7821), so steering is gated to server threads; plain
-      // Enter queues when busy and ChatView owns that decision.
-      if (routeKind === "server" && isSteerShortcut(event)) {
-        submitComposer(undefined, "foreground", { steer: true });
-        return true;
-      }
-      // SCIENT-FORK:END
-      const submissionIntent = composerSubmissionIntentForEnter({
-        isMobileViewport,
-        shiftKey: event.shiftKey,
-        modifierKey: event.metaKey || event.ctrlKey,
-        isDraftThread: routeKind === "draft",
+    const submissionIntent =
+      key === "Enter"
+        ? composerSubmissionIntentForEnter({
+            isMobileViewport,
+            shiftKey: event.shiftKey,
+            modifierKey: event.metaKey || event.ctrlKey,
+            isDraftThread: routeKind === "draft",
+            isRunning: phase === "running",
+            sendShortcut: settings.sendShortcut,
+            prompt: promptRef.current,
+          })
+        : null;
+    if (submissionIntent) {
+      // SCIENT-FORK: T3 owns shortcut interpretation and the Queue/Steer
+      // preference. Scient maps that intent onto its durable server queue;
+      // it does not mirror queued payloads in browser state.
+      const steer =
+        routeKind === "server" &&
+        resolveComposerSteerRequested({
+          threadBusy: phase === "running",
+          followUpBehavior: settings.followUpBehavior,
+          alternateRequested: submissionIntent === "alternate",
+        });
+      submitComposer(undefined, submissionIntent === "background" ? "background" : "foreground", {
+        steer,
       });
-      if (submissionIntent) {
-        submitComposer(undefined, submissionIntent);
-        return true;
-      }
+      return true;
     }
     return false;
   };
@@ -6041,6 +6053,35 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
           if (!inserted) focusComposer();
         });
       },
+      addDroppedFolders: (folders: File[]) => {
+        const target = folderDropTarget({
+          localEnvironmentDisabled: isLocalEnvironmentDisabled(),
+          environmentId,
+          primaryEnvironmentId,
+        });
+        if (target === "remote") {
+          toastManager.add({
+            type: "error",
+            title: "Folders can't be dropped into remote environments",
+          });
+          return;
+        }
+        for (const folder of folders) {
+          const path = resolveDroppedFolderPath(folder, window.desktopBridge?.getPathForFile);
+          if (path === null) {
+            toastManager.add({
+              type: "error",
+              title: `Couldn't get the path of "${folder.name}"`,
+              description: "Type the folder path with @ instead.",
+            });
+            continue;
+          }
+          insertComposerTextAtEnd(`${serializeComposerFileLink(path)} `, {
+            ensureLeadingBoundary: true,
+          });
+        }
+        focusComposer();
+      },
       hasPendingAttachments: () =>
         (pendingImageCompressionsRef.current.get(attachmentTargetKey) ?? 0) > 0,
       insertTextAtEnd: insertComposerTextAtEnd,
@@ -6200,6 +6241,8 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       focusComposer,
       expandMobileComposer,
       isComposerCollapsedMobile,
+      environmentId,
+      primaryEnvironmentId,
       isConnecting,
       isComposerApprovalState,
       isChoiceOnlyPendingQuestion,
@@ -6335,13 +6378,16 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
               <ComposerBanner.Root
                 data-chat-composer-top-drawer="true"
                 variant={activePendingApproval ? "warning" : "info"}
+                density={activePendingApproval ? "spacious" : "default"}
               >
                 {activePendingApproval ? (
                   <ComposerBanner.Row
-                    layout="wrap-actions"
+                    layout="approval"
                     data-chat-composer-collapsed-controls="true"
                   >
-                    <ComposerBanner.Icon />
+                    <ComposerBanner.Icon>
+                      <ShieldIcon />
+                    </ComposerBanner.Icon>
                     <ComposerBanner.Content>
                       <ComposerPendingApprovalPanel
                         approval={activePendingApproval}
@@ -7006,6 +7052,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                       showMobilePendingAnswerActions && "max-sm:pb-11",
                       isComposerResting &&
                         "max-h-8 min-h-8 overflow-hidden whitespace-pre! leading-8",
+                      isComposerApprovalState && "min-h-8",
                     )}
                     placeholderClassName={cn(
                       isComposerResting &&
@@ -7021,8 +7068,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                     onPaste={onComposerPaste}
                     placeholder={
                       isComposerApprovalState
-                        ? (activePendingApproval?.detail ??
-                          "Resolve this approval request to continue")
+                        ? "Resolve this approval request to continue"
                         : activePendingProgress
                           ? isChoiceOnlyPendingQuestion
                             ? "Choose an option above"

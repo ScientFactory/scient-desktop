@@ -3853,7 +3853,9 @@ function ChatViewContent(props: ChatViewProps) {
     live: liveWorktreeSetup,
     recorded: recordedWorktreeSetup,
     turnStarted: activeThread?.latestTurn?.startedAt != null,
-    isWorking,
+    // Counts the optimistic send too, so the row retires the moment the
+    // follow-up is on screen rather than when the server echoes it back.
+    followUpSent: timelineMessages.filter((message) => message.role === "user").length > 1,
   });
   // Sends wait for the agent handoff, not for the setup script: an async
   // script keeps the snapshot running while the agent already works, and a
@@ -4993,9 +4995,10 @@ function ChatViewContent(props: ChatViewProps) {
   );
   const supportsThreadPullRequests =
     serverConfig?.environment.capabilities.threadPullRequests === true;
-  const visiblePullRequestCount = visibleThreadPullRequests(
+  const visiblePullRequests = visibleThreadPullRequests(
     (activeThreadShell ?? activeThread)?.pullRequests ?? [],
-  ).length;
+  );
+  const visiblePullRequestCount = visiblePullRequests.length;
   const pullRequestsSurfaceAvailable =
     isServerThread && supportsThreadPullRequests && visiblePullRequestCount > 0;
   const addPullRequestsSurface = useCallback(() => {
@@ -5116,6 +5119,7 @@ function ChatViewContent(props: ChatViewProps) {
   );
   // The shell carries server PR updates even while thread detail is still loading.
   const activeThreadMetadata = activeThreadShell ?? activeThread;
+  const hasLinkedPullRequestDetail = activeThreadMetadata?.linkedPullRequest != null;
   const linkedThreadPullRequest =
     activeThreadMetadata?.linkedPullRequest ?? activeThreadMetadata?.branchPullRequest ?? null;
   const activeProjectRepository = activeProject?.repositoryIdentity?.displayName ?? null;
@@ -5126,6 +5130,11 @@ function ChatViewContent(props: ChatViewProps) {
         linkedThreadPullRequest.number,
       ])
     : null;
+  const proactivePullRequestsKey = pullRequestsSurfaceAvailable
+    ? JSON.stringify(
+        visiblePullRequests.map((link) => [link.host, link.repository, link.number]).sort(),
+      )
+    : linkedThreadPullRequestKey;
   const observedThreadPullRequestRef = useRef<{
     readonly threadKey: string;
     readonly reference: ThreadLinkedPullRequest | null;
@@ -5200,7 +5209,40 @@ function ChatViewContent(props: ChatViewProps) {
         userActionRevision,
       );
     }
-    if (!clientSettingsHydrated || threadDetailLoading) return;
+    if (!clientSettingsHydrated) return;
+
+    const proactivePanelsEnabled = settings.proactivePanelsEnabled && !shouldUseRightPanelSheet;
+    const eligibleLink =
+      proactivePanelsEnabled &&
+      shouldOpenProactivePullRequest(previousTargetKey, proactivePullRequestsKey);
+    const shouldDeferLink = eligibleLink && !pullRequestsCapabilityKnown;
+    proactivePanelObservationRef.current = {
+      ...observation,
+      targetKey: shouldDeferLink ? (previousTargetKey ?? null) : proactivePullRequestsKey,
+    };
+    if (eligibleLink && pullRequestsCapabilityKnown) {
+      if (
+        pullRequestsSurfaceAvailable &&
+        (visiblePullRequestCount > 1 || !hasLinkedPullRequestDetail || !supportsPullRequests)
+      ) {
+        panels.openProactive(
+          activeThreadRef,
+          { id: "pull-requests", kind: "pull-requests" },
+          userActionRevision,
+        );
+      } else if (
+        !followSelectedPullRequest &&
+        supportsPullRequests &&
+        linkedThreadPullRequest !== null
+      ) {
+        panels.openProactive(
+          activeThreadRef,
+          pullRequestSurface(linkedThreadPullRequest),
+          userActionRevision,
+        );
+      }
+    }
+    if (threadDetailLoading) return;
 
     const settledTurnId = latestTurnSettled ? (activeLatestTurn?.turnId ?? null) : null;
     const newlyCompletedTurnId = shouldOpenProactiveTurnDiff({
@@ -5211,8 +5253,13 @@ function ChatViewContent(props: ChatViewProps) {
     })
       ? settledTurnId
       : null;
-    const proactivePanelsEnabled = settings.proactivePanelsEnabled && !shouldUseRightPanelSheet;
-    const eligibleCompletion = proactivePanelsEnabled && newlyCompletedTurnId !== null;
+    const eligibleCompletion =
+      proactivePanelsEnabled &&
+      newlyCompletedTurnId !== null &&
+      !(
+        proactivePullRequestsKey !== null &&
+        (!pullRequestsCapabilityKnown || supportsPullRequests || pullRequestsSurfaceAvailable)
+      );
     const completedCheckpoint = eligibleCompletion
       ? activeThread?.checkpoints.find((checkpoint) => checkpoint.turnId === newlyCompletedTurnId)
       : undefined;
@@ -5222,30 +5269,12 @@ function ChatViewContent(props: ChatViewProps) {
           isGitRepo: gitStatusQuery.data?.isRepo,
         })
       : "ignore";
-    const eligibleLink =
-      proactivePanelsEnabled &&
-      shouldOpenProactivePullRequest(previousTargetKey, linkedThreadPullRequestKey);
-    const shouldDeferLink = eligibleLink && !pullRequestsCapabilityKnown;
     proactivePanelObservationRef.current = {
-      ...observation,
-      // Preserve first-entry eligibility while the checkpoint or repository is loading.
-      runningTurnId: diffAction === "defer" ? previousRunningTurnId : activeRunningTurnId,
-      targetKey: shouldDeferLink ? (previousTargetKey ?? null) : linkedThreadPullRequestKey,
+      ...proactivePanelObservationRef.current,
+      // Preserve first-entry eligibility while capabilities, checkpoint or repository load.
+      runningTurnId:
+        diffAction === "defer" || shouldDeferLink ? previousRunningTurnId : activeRunningTurnId,
     };
-
-    if (
-      !followSelectedPullRequest &&
-      eligibleLink &&
-      pullRequestsCapabilityKnown &&
-      supportsPullRequests &&
-      linkedThreadPullRequest !== null
-    ) {
-      panels.openProactive(
-        activeThreadRef,
-        pullRequestSurface(linkedThreadPullRequest),
-        userActionRevision,
-      );
-    }
     if (diffAction !== "open" || newlyCompletedTurnId === null) return;
     if (!panels.openProactive(activeThreadRef, { id: "diff", kind: "diff" }, userActionRevision)) {
       return;
@@ -5264,9 +5293,12 @@ function ChatViewContent(props: ChatViewProps) {
     isServerThread,
     latestTurnSettled,
     linkedThreadPullRequest,
-    linkedThreadPullRequestKey,
+    proactivePullRequestsKey,
+    hasLinkedPullRequestDetail,
     onDiffPanelOpen,
     pullRequestsCapabilityKnown,
+    pullRequestsSurfaceAvailable,
+    visiblePullRequestCount,
     settings.proactivePanelsEnabled,
     shouldUseRightPanelSheet,
     supportsPullRequests,
@@ -7413,6 +7445,19 @@ function ChatViewContent(props: ChatViewProps) {
         return;
       }
 
+      if (command === "thread.steerQueuedMessage") {
+        const message = threadQueue.items[0];
+        if (!message) return;
+        event.preventDefault();
+        event.stopPropagation();
+        if (!event.repeat) {
+          void threadQueue.control("steer", message.queueItemId).catch((cause) => {
+            if (activeThreadId) setThreadError(activeThreadId, chatActionErrorMessage(cause));
+          });
+        }
+        return;
+      }
+
       if (command === "thread.stop") {
         // An unavailable command should not shadow contextual shortcuts such as Escape to close a dialog.
         if (!canInterruptRunningThread) return;
@@ -7442,6 +7487,7 @@ function ChatViewContent(props: ChatViewProps) {
     activeThreadPinned,
     activeThreadSettled,
     canInterruptRunningThread,
+    activeThreadKey,
     terminalUiState.terminalOpen,
     terminalUiState.activeTerminalId,
     activeThreadId,
@@ -7469,6 +7515,8 @@ function ChatViewContent(props: ChatViewProps) {
     toggleRightPanelMaximized,
     toggleTerminalVisibility,
     composerRef,
+    threadQueue,
+    setThreadError,
   ]);
 
   // Paste-to-focus: the resting composer blurs on a click into the timeline,
@@ -9993,6 +10041,7 @@ function ChatViewContent(props: ChatViewProps) {
   const workspaceFileDropHandlers = makeWorkspaceFileDropHandlers({
     setDragActive: setIsWorkspaceFileDragActive,
     addFiles: (files) => composerRef.current?.addDroppedFiles(files),
+    addFolders: (folders) => composerRef.current?.addDroppedFolders(folders),
   });
 
   return (

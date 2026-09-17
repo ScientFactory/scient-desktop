@@ -3,6 +3,7 @@ import { expect, it } from "@effect/vitest";
 import {
   HostProcessArchitecture,
   HostProcessEnvironment,
+  HostProcessIsExecutable,
   HostProcessPlatform,
 } from "@t3tools/shared/hostProcess";
 import * as Deferred from "effect/Deferred";
@@ -416,6 +417,19 @@ it.layer(NodeServices.layer)("Antigravity installation", (it) => {
       expect(yield* h.fs.readFileString(leased.harnessPath)).toBe(harnessContents);
       yield* Scope.close(leaseScope, Exit.void);
     }),
+  );
+
+  it.effect("reports missing Node before downloading the standalone provider runtime", () =>
+    Effect.gen(function* () {
+      const { installation, requests, validations } = yield* makeHarness();
+      yield* installation.start;
+      expect(yield* terminalState(installation)).toMatchObject({
+        phase: "failed",
+        message: expect.stringContaining("Install Node.js"),
+      });
+      expect(requests).toEqual([]);
+      expect(validations).toEqual([]);
+    }).pipe(Effect.provideService(HostProcessIsExecutable, true)),
   );
 
   it.effect("verifies both files before activating a streamed download", () =>

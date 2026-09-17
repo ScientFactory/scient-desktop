@@ -54,6 +54,27 @@ Click a video attachment to play it. If its format cannot play in the app, use
 **Download video**. Sent PDF and HTML attachments open in the file viewer;
 other files keep their filename and can be downloaded.
 
+## Send while the agent is working
+
+On web and desktop, a message sent during a running turn appears in the queue
+above the composer. The server keeps its order across navigation and restarts,
+then sends it after the current turn finishes successfully. Use **Steer** on a
+queued message to send it into the running turn, or edit, reorder, or delete it
+from the queue. Stopping a turn preserves queued messages until later work
+finishes successfully.
+
+In **Settings → General → Follow-up behavior**, choose **Queue** to keep this
+behavior or **Steer** to send new messages immediately. **Send shortcut**
+controls whether Enter or Cmd/Ctrl+Enter sends. While a turn is running, the
+alternate shortcut performs the opposite follow-up behavior for that message.
+These settings apply to the current client. Messages already queued keep their
+place.
+
+Use `Cmd+Shift+Enter` on macOS or `Ctrl+Shift+Enter` on Windows and Linux to send
+the oldest queued message now. Change `thread.steerQueuedMessage` in
+**Settings → Keybindings** to use another shortcut. It leaves the current draft
+in the composer and waits if the agent needs an approval or an answer.
+
 ## Queue messages offline on mobile
 
 In the retained mobile client (not yet a public Scient release), tap **+** for **Photo Library**

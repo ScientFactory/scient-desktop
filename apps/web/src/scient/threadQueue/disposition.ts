@@ -12,6 +12,20 @@
  */
 export type ComposerSendDisposition = "send" | "queue";
 
+/**
+ * Resolves T3's configurable running-turn shortcut into Scient's explicit
+ * server-side steer flag. `alternateRequested` means "the opposite of the
+ * configured follow-up behavior"; it never creates a second client queue.
+ */
+export function resolveComposerSteerRequested(input: {
+  readonly threadBusy: boolean;
+  readonly followUpBehavior: "queue" | "steer";
+  readonly alternateRequested: boolean;
+}): boolean {
+  if (!input.threadBusy) return false;
+  return (input.followUpBehavior === "steer") !== input.alternateRequested;
+}
+
 export function resolveComposerSendDisposition(input: {
   readonly threadBusy: boolean;
   readonly steerRequested: boolean;
@@ -22,13 +36,4 @@ export function resolveComposerSendDisposition(input: {
   if (input.editingQueuedItem) return "queue";
   const mustQueue = input.threadBusy || (input.hasQueuedItems && !input.awaitingCompletion);
   return input.steerRequested || !mustQueue ? "send" : "queue";
-}
-
-/** True when the keyboard event asks for an immediate steer (Cmd/Ctrl+Enter). */
-export function isSteerShortcut(event: {
-  readonly metaKey: boolean;
-  readonly ctrlKey: boolean;
-  readonly shiftKey: boolean;
-}): boolean {
-  return (event.metaKey || event.ctrlKey) && !event.shiftKey;
 }

@@ -36,6 +36,7 @@ import type {
   ThreadPullRequestKey,
 } from "@t3tools/contracts";
 import { faviconUrlForOrigin } from "@t3tools/shared/favicon";
+import { githubMediaFetchUrl } from "@t3tools/shared/githubMedia";
 import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
@@ -264,6 +265,9 @@ interface ChatMarkdownProps {
   extraRemarkPlugins?: NonNullable<ReactMarkdownOptions["remarkPlugins"]>;
   /** Renders a `t3-context://` link as a chip; without it the link shows its label as text. */
   renderContextReference?: ((reference: ChatMarkdownContextReference) => ReactNode) | undefined;
+  /** Loads GitHub-hosted media through `cwd`'s GitHub credential, which a private repository's
+      uploads need; without it those images and videos load unauthenticated and 404. */
+  githubMedia?: boolean | undefined;
   /** Levels added to each markdown heading in the accessibility tree so the
       text nests under the heading that introduces it, such as a chat message's
       author. Rendered tags and their styling are unchanged. */
@@ -1381,7 +1385,7 @@ export const ChatMarkdownAssetImage = memo(function ChatMarkdownAssetImage(props
   readonly environmentId: EnvironmentId;
   readonly resource: Extract<
     AssetResource,
-    { readonly _tag: "attachment" | "workspace-file" | "media-file" }
+    { readonly _tag: "attachment" | "workspace-file" | "media-file" | "github-media" }
   >;
   readonly kind?: "image" | "video";
   readonly alt: string;
@@ -1392,6 +1396,18 @@ export const ChatMarkdownAssetImage = memo(function ChatMarkdownAssetImage(props
   /** Caps the box height in rem while keeping the image's ratio; 30 by default. */
   readonly maxHeightRem?: number | undefined;
   readonly style?: CSSProperties | undefined;
+  readonly className?: string | undefined;
+  /** Sanitized authored attributes (`id`, `align`, …) that fragment links and layout rely on. */
+  readonly imageProps?:
+    | Omit<ComponentProps<"img">, "src" | "alt" | "className" | "style">
+    | undefined;
+  /** Where the media also lives on the web, for the failure state's escape hatch. */
+  readonly originalUrl?: string | undefined;
+  /** The workspace media frame, on by default; off for media that keeps the author's own box. */
+  readonly framed?: boolean | undefined;
+  /** Loaded instead of the failure state when no URL can be signed, such as against a server
+      too old to know this resource. Only safe when the client can reach it directly. */
+  readonly fallbackSrc?: string | undefined;
   readonly workspaceRoot?: string | undefined;
   readonly onImageExpand?: ((preview: ExpandedImagePreview) => void) | undefined;
 }) {
@@ -1410,10 +1426,23 @@ export const ChatMarkdownAssetImage = memo(function ChatMarkdownAssetImage(props
               ? `${props.workspaceRoot.replace(/[\\/]+$/, "")}/${resource.path.replace(/^[\\/]+/, "")}`
               : resource.path
         : undefined;
-  const reference = path ? mediaFileReference(path, props.workspaceRoot) : undefined;
-  const relativePath = reference?.relativePath;
-  const threadId = resource._tag === "workspace-file" ? resource.threadId : undefined;
-  const src = assetUrl._tag === "Success" ? assetUrl.url + (props.srcFragment ?? "") : null;
+  const reference = path
+    ? mediaFileReference(path, props.workspaceRoot)
+    : props.originalUrl
+      ? mediaUrlReference(props.originalUrl)
+      : undefined;
+  const relativePath = reference?.kind === "file" ? reference.relativePath : undefined;
+  const threadId =
+    resource._tag === "workspace-file" || resource._tag === "media-file"
+      ? resource.threadId
+      : undefined;
+  const fallbackSrc = assetUrl._tag === "Failure" ? props.fallbackSrc : undefined;
+  const src =
+    assetUrl._tag === "Success"
+      ? assetUrl.url + (props.srcFragment ?? "")
+      : fallbackSrc === undefined
+        ? null
+        : fallbackSrc + (props.srcFragment ?? "");
   // The server reads the pixel size from the file header, so the slot can be
   // the image's final box instead of a 16:9 guess. An authored size wins; a
   // caller's height cap shrinks the box while keeping the ratio.
@@ -1430,7 +1459,9 @@ export const ChatMarkdownAssetImage = memo(function ChatMarkdownAssetImage(props
     kind: props.kind ?? "image",
     name: props.alt || (props.kind ?? "image"),
     src,
-    asset: { environmentId: props.environmentId, resource },
+    ...(fallbackSrc === undefined
+      ? { asset: { environmentId: props.environmentId, resource } }
+      : {}),
     ...(reference ? { reference } : {}),
     ...(relativePath && threadId
       ? {
@@ -1446,9 +1477,10 @@ export const ChatMarkdownAssetImage = memo(function ChatMarkdownAssetImage(props
     return (
       <ChatMarkdownVideo
         src={src}
-        sourceFailed={assetUrl._tag === "Failure"}
+        sourceFailed={assetUrl._tag === "Failure" && fallbackSrc === undefined}
         alt={props.alt}
         copyMarkdown={props.copyMarkdown}
+        originalUrl={props.originalUrl}
         style={props.style}
         mediaIdentity={JSON.stringify([props.environmentId, props.resource, props.srcFragment])}
         onRetry={refreshAssetUrl}
@@ -1462,13 +1494,18 @@ export const ChatMarkdownAssetImage = memo(function ChatMarkdownAssetImage(props
     <ChatMarkdownImage
       key={JSON.stringify([props.environmentId, props.resource, props.srcFragment])}
       src={src}
-      sourceFailed={assetUrl._tag === "Failure"}
+      sourceFailed={assetUrl._tag === "Failure" && fallbackSrc === undefined}
       alt={props.alt}
       copyMarkdown={props.copyMarkdown}
       standalone={props.standalone ?? true}
-      className={CHAT_MARKDOWN_WORKSPACE_IMAGE_CLASS_NAME}
+      className={cn(
+        props.framed === false ? undefined : CHAT_MARKDOWN_WORKSPACE_IMAGE_CLASS_NAME,
+        props.className,
+      )}
       style={style}
+      imageProps={props.imageProps}
       actionsSource={actionsSource}
+      originalUrl={props.originalUrl}
       onImageExpand={props.onImageExpand}
     />
   );
@@ -2028,6 +2065,7 @@ function useChatMarkdownState({
   extraRemarkPlugins = EMPTY_REMARK_PLUGINS,
   renderContextReference,
   headingLevelOffset = 0,
+  githubMedia = false,
 }: ChatMarkdownProps) {
   // Delimiter normalization is length-preserving, so offset-based behavior
   // (task-list toggling, list positions) stays correct on every surface. The
@@ -2512,6 +2550,7 @@ function useChatMarkdownState({
       environmentId,
       expandMedia,
       fileLinkChip,
+      githubMedia,
       renderContextReference,
       headingLevelOffset,
       imageBaseDir,
@@ -2544,6 +2583,7 @@ function useChatMarkdownState({
       environmentId,
       expandMedia,
       fileLinkChip,
+      githubMedia,
       renderContextReference,
       headingLevelOffset,
       imageBaseDir,
@@ -2619,7 +2659,9 @@ const CHAT_MARKDOWN_COMPONENTS = {
   img: function MarkdownImg({ node, alt, src, title, ...props }) {
     const {
       cwd,
+      environmentId,
       expandMedia,
+      githubMedia,
       imageBaseDir,
       imageCaptions,
       isStreaming,
@@ -2653,6 +2695,9 @@ const CHAT_MARKDOWN_COMPONENTS = {
     const imageSource = classifyMarkdownImageSource(classifiedSrc, imageBaseDir ?? cwd);
     const srcFragment = markdownImageSourceFragment(classifiedSrc);
     const kind = mediaKindFromPath(classifiedSrc) ?? "image";
+    const directUri = imageSource._tag === "Direct" ? imageSource.uri : null;
+    const githubMediaUrl =
+      directUri === null ? null : githubMediaFetchUrl(resolveProtocolRelativeMediaUrl(directUri));
     const image =
       imageSource._tag === "WorkspaceFile"
         ? resolveInlineWorkspaceImage({ alt, cwd, src: imageSource.path })
@@ -2678,6 +2723,33 @@ const CHAT_MARKDOWN_COMPONENTS = {
           image={image}
           markdownSource={markdownSource}
           reason={isStreaming ? "streaming" : "unavailable"}
+        />
+      );
+    }
+    if (
+      githubMedia &&
+      cwd !== undefined &&
+      environmentId !== null &&
+      directUri !== null &&
+      githubMediaUrl !== null
+    ) {
+      const { className, style: _style, width: _width, height: _height, ...imageProps } = props;
+      return (
+        <ChatMarkdownAssetImage
+          environmentId={environmentId}
+          resource={{ _tag: "github-media", cwd, url: githubMediaUrl }}
+          alt={altText}
+          kind={kind}
+          copyMarkdown={markdownSource}
+          standalone={standalone}
+          className={className}
+          style={style}
+          imageProps={imageProps}
+          srcFragment={srcFragment}
+          originalUrl={resolveProtocolRelativeMediaUrl(directUri)}
+          framed={false}
+          fallbackSrc={githubMediaUrl}
+          onImageExpand={imageExpand}
         />
       );
     }

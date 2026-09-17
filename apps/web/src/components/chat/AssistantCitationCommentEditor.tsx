@@ -5,12 +5,14 @@ import { Button } from "../ui/button";
 
 export function AssistantCitationCommentEditor({
   citation,
+  mode = "edit",
   inputRef,
   onSubmit,
   onSubmitAndSend,
   onCancel,
 }: {
   citation: Pick<AssistantCitation, "comment">;
+  mode?: "create" | "edit";
   inputRef?: Ref<HTMLTextAreaElement>;
   onSubmit: (comment: string) => boolean;
   onSubmitAndSend?: (comment: string) => boolean;
@@ -29,6 +31,11 @@ export function AssistantCitationCommentEditor({
       onSubmit(comment);
     }
   };
+  const submitLabel = mode === "create" ? "Add to chat" : "Save";
+  const keyboardDescription =
+    mode === "create"
+      ? "Enter to add the citation to chat; Command/Ctrl+Enter to add and send; Shift+Enter for a new line."
+      : "Enter to save the citation comment; Command/Ctrl+Enter to save and send; Shift+Enter for a new line.";
 
   return (
     <div
@@ -45,7 +52,7 @@ export function AssistantCitationCommentEditor({
       <textarea
         ref={inputRef}
         aria-label="Comment on selected text"
-        aria-description="Enter to save the citation comment; Command/Ctrl+Enter to save and send; Shift+Enter for a new line."
+        aria-description={keyboardDescription}
         aria-invalid={commentTooLong || undefined}
         placeholder="Add an optional comment..."
         rows={2}
@@ -89,7 +96,7 @@ export function AssistantCitationCommentEditor({
           onPointerDown={(event) => event.preventDefault()}
           onClick={submit}
         >
-          {commentTooLong ? "Shorten comment" : "Save"}
+          {commentTooLong ? "Shorten comment" : submitLabel}
         </Button>
       </div>
     </div>

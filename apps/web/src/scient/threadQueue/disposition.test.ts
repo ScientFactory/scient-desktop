@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { isSteerShortcut, resolveComposerSendDisposition } from "./disposition";
+import { resolveComposerSendDisposition, resolveComposerSteerRequested } from "./disposition";
 
 describe("resolveComposerSendDisposition", () => {
   it("sends immediately when the thread is idle", () => {
@@ -20,15 +20,46 @@ describe("resolveComposerSendDisposition", () => {
   });
 });
 
-describe("isSteerShortcut", () => {
-  it("accepts Cmd or Ctrl without Shift", () => {
-    expect(isSteerShortcut({ metaKey: true, ctrlKey: false, shiftKey: false })).toBe(true);
-    expect(isSteerShortcut({ metaKey: false, ctrlKey: true, shiftKey: false })).toBe(true);
+describe("resolveComposerSteerRequested", () => {
+  it("maps normal and alternate sends to opposite running-turn behaviors", () => {
+    expect(
+      resolveComposerSteerRequested({
+        threadBusy: true,
+        followUpBehavior: "queue",
+        alternateRequested: false,
+      }),
+    ).toBe(false);
+    expect(
+      resolveComposerSteerRequested({
+        threadBusy: true,
+        followUpBehavior: "queue",
+        alternateRequested: true,
+      }),
+    ).toBe(true);
+    expect(
+      resolveComposerSteerRequested({
+        threadBusy: true,
+        followUpBehavior: "steer",
+        alternateRequested: false,
+      }),
+    ).toBe(true);
+    expect(
+      resolveComposerSteerRequested({
+        threadBusy: true,
+        followUpBehavior: "steer",
+        alternateRequested: true,
+      }),
+    ).toBe(false);
   });
 
-  it("rejects plain Enter and Shift+Cmd+Enter", () => {
-    expect(isSteerShortcut({ metaKey: false, ctrlKey: false, shiftKey: false })).toBe(false);
-    expect(isSteerShortcut({ metaKey: true, ctrlKey: false, shiftKey: true })).toBe(false);
+  it("never requests a steer while the thread is idle", () => {
+    expect(
+      resolveComposerSteerRequested({
+        threadBusy: false,
+        followUpBehavior: "steer",
+        alternateRequested: false,
+      }),
+    ).toBe(false);
   });
 });
 

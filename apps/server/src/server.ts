@@ -584,8 +584,10 @@ const RuntimeCoreDependenciesLive = ReactorLayerLive.pipe(
   // Core Services
   Layer.provideMerge(Layer.mergeAll(ServerSettingsLayerLive, PtyAdapterLive)),
   Layer.provideMerge(CheckpointingLayerLive),
+  // `GitHubCli` is the registry's own instance, exposed because the asset route fetches
+  // GitHub-hosted pull request media with the repository's credential.
   Layer.provideMerge(
-    Layer.mergeAll(SourceControlProviderRegistryLayerLive, PullRequestServiceLive),
+    Layer.mergeAll(SourceControlProviderRegistryLayerLive, PullRequestServiceLive, GitHubCli.layer),
   ),
   Layer.provideMerge(GitLayerLive),
   Layer.provideMerge(VcsLayerLive),
