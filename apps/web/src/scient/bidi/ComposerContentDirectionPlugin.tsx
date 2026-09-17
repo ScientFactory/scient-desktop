@@ -2,7 +2,7 @@ import { useLexicalComposerContext } from "@lexical/react/LexicalComposerContext
 import { useLayoutEffect } from "react";
 import { useContentDirection } from "./ContentDirectionScope";
 
-function applyComposerDirection(
+export function applyComposerDirection(
   rootElement: HTMLElement | null,
   direction: "auto" | "rtl" | "ltr",
 ): void {

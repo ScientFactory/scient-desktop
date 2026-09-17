@@ -131,7 +131,6 @@ import {
   isLatexPreviewFile,
   isMarkdownPreviewFile,
   resolveMarkdownTaskPreviewUpdate,
-  shouldLoadFileAsText,
   shouldShowFileExplorer,
 } from "./filePreviewMode";
 import { useFileSaveCoordinator } from "./useFileSaveCoordinator";
@@ -1335,11 +1334,45 @@ export default function FilePreviewPanel({
   const sourcePending = relativePath !== null && pendingPaths.has(relativePath);
   const effectiveSourcePending = sourcePending || selectedFilePending;
   const runAfterPendingSave = usePendingSurfaceDeparture(pendingPaths, departureOptions);
+  const isMarkdownPreview = relativePath ? isMarkdownPreviewFile(relativePath) : false;
+  const isRichMarkdown = relativePath ? isScientMarkdownDocumentPath(relativePath) : false;
+  const isMarkdownDocument = isMarkdownPreview || isRichMarkdown;
+  const {
+    automaticRefreshUnavailable,
+    cancelReloadNotice,
+    file: queriedFile,
+    handleSaveConfirmed,
+    handleSaveFailure,
+    handleSaveResolutionApplied,
+    reloadNotice,
+    requestManualReload,
+    requestOverwrite,
+    requestRetrySave,
+    resolveReloadNotice,
+    saveError,
+    saveResolution,
+    saveRetryReady,
+    viewerRefreshKey,
+  } = useWorkspaceFileRefresh({
+    environmentId,
+    cwd,
+    relativePath,
+    // Read every workspace path so a chat link to a directory can be
+    // distinguished from a media or PDF file before choosing a preview.
+    loadAsText: attachment === undefined,
+    sourcePending: effectiveSourcePending,
+    surfaceOwnsConflictDetection: isRichMarkdown && !isHostFile,
+    workspaceMutationId,
+    watchChanges:
+      attachment === undefined && !isHostFile && !quietMarkdownPaths.has(relativePath ?? ""),
+  });
+  const isDirectory = queriedFile.isNotFile && !isHostFile;
+  const previewPath = isDirectory ? null : relativePath;
   const [explorerOpen, setExplorerOpen] = useState(initialExplorerOpen);
   const [pdfExplorerOpen, setPdfExplorerOpen] = useState(false);
-  const effectiveExplorerOpen = isPdf ? pdfExplorerOpen : explorerOpen;
+  const effectiveExplorerOpen = isDirectory || (isPdf ? pdfExplorerOpen : explorerOpen);
   const showExplorer = shouldShowFileExplorer({
-    relativePath,
+    relativePath: previewPath,
     explorerOpen: effectiveExplorerOpen,
     attachmentOpen: attachment !== undefined,
   });
@@ -1367,9 +1400,6 @@ export default function FilePreviewPanel({
     null,
   );
   const breadcrumbRef = useRef<HTMLDivElement>(null);
-  const isMarkdownPreview = relativePath ? isMarkdownPreviewFile(relativePath) : false;
-  const isRichMarkdown = relativePath ? isScientMarkdownDocumentPath(relativePath) : false;
-  const isMarkdownDocument = isMarkdownPreview || isRichMarkdown;
   const revealHandled =
     revealLine === null ||
     (handledReveal?.path === relativePath && handledReveal.requestId === revealRequestId);
@@ -1386,7 +1416,7 @@ export default function FilePreviewPanel({
     revealHandled;
   const rendered = isMarkdownDocument ? renderMarkdown : isHtml ? renderBrowserFile : false;
   const tableDelimiter =
-    relativePath && attachment === undefined ? filePreviewDelimiter({ name: relativePath }) : null;
+    previewPath && attachment === undefined ? filePreviewDelimiter({ name: previewPath }) : null;
   const renderTable = tableDelimiter !== null && renderTablePreferred && revealHandled;
   const renderedMode = isMarkdownDocument
     ? ("markdown" as const)
@@ -1395,35 +1425,9 @@ export default function FilePreviewPanel({
       : isHtml
         ? ("html" as const)
         : null;
-  const canToggleRenderedForSurface = attachment === undefined && renderedMode !== null;
+  const canToggleRenderedForSurface =
+    previewPath !== null && attachment === undefined && renderedMode !== null;
   const surfaceRendered = tableDelimiter ? renderTable : rendered;
-  const {
-    automaticRefreshUnavailable,
-    cancelReloadNotice,
-    file: queriedFile,
-    handleSaveConfirmed,
-    handleSaveFailure,
-    handleSaveResolutionApplied,
-    reloadNotice,
-    requestManualReload,
-    requestOverwrite,
-    requestRetrySave,
-    resolveReloadNotice,
-    saveError,
-    saveResolution,
-    saveRetryReady,
-    viewerRefreshKey,
-  } = useWorkspaceFileRefresh({
-    environmentId,
-    cwd,
-    relativePath,
-    loadAsText: attachment === undefined && shouldLoadFileAsText(relativePath),
-    sourcePending: effectiveSourcePending,
-    surfaceOwnsConflictDetection: isRichMarkdown && !isHostFile,
-    workspaceMutationId,
-    watchChanges:
-      attachment === undefined && !isHostFile && !quietMarkdownPaths.has(relativePath ?? ""),
-  });
   const {
     lease: markdownLease,
     snapshot: markdownSnapshot,
@@ -1458,7 +1462,7 @@ export default function FilePreviewPanel({
   // Rendered documents and media own their layout. Word wrap only applies to
   // the raw text surfaces that feed the Pierre file renderer/editor.
   const showsRawText =
-    relativePath !== null &&
+    previewPath !== null &&
     file.data !== null &&
     !(isMarkdownDocument && renderMarkdown) &&
     !(tableDelimiter && renderTable) &&
@@ -1541,11 +1545,11 @@ export default function FilePreviewPanel({
     ],
   );
   const canOpenInBrowser =
-    relativePath !== null &&
+    previewPath !== null &&
     attachment === undefined &&
     !isVideo &&
     isPreviewSupportedInRuntime() &&
-    isBrowserPreviewFile(relativePath);
+    isBrowserPreviewFile(previewPath);
   const absolutePath =
     relativePath && attachment === undefined ? resolvePathLinkTarget(relativePath, cwd) : null;
   const pdfSource = useMemo(
@@ -1747,7 +1751,7 @@ export default function FilePreviewPanel({
               <Globe2 className="size-3.5" />
             </FileSurfaceAction>
           ) : null}
-          {attachment === undefined ? (
+          {attachment === undefined && previewPath !== null ? (
             <ScientFileReloadButton
               automaticRefreshUnavailable={automaticRefreshUnavailable}
               isPending={markdownSnapshot?.reading ?? file.isPending}
@@ -1760,7 +1764,7 @@ export default function FilePreviewPanel({
               }
             />
           ) : null}
-          {!isHostFile ? (
+          {!isHostFile && previewPath !== null ? (
             <FileSurfaceAction
               label={effectiveExplorerOpen ? "Hide file explorer" : "Show file explorer"}
               pressed={effectiveExplorerOpen}
@@ -1777,7 +1781,7 @@ export default function FilePreviewPanel({
         <ScientFileFreshnessNotices
           relativePath={relativePath}
           notice={reloadNotice}
-          readError={file.error}
+          readError={isDirectory ? null : file.error}
           saveError={saveError}
           saveRetryReady={saveRetryReady}
           hasFallbackData={file.data !== null}
@@ -1793,7 +1797,7 @@ export default function FilePreviewPanel({
           This file is read-only in Files.
         </div>
       ) : null}
-      {relativePath &&
+      {previewPath &&
       attachment === undefined &&
       !markdownLease &&
       !isMedia &&
@@ -1806,12 +1810,9 @@ export default function FilePreviewPanel({
       ) : null}
       <div className="flex min-h-0 flex-1 overflow-hidden">
         <div
-          className={cn(
-            "min-w-0 flex-1 flex-col overflow-hidden",
-            relativePath ? "flex" : "hidden",
-          )}
+          className={cn("min-w-0 flex-1 flex-col overflow-hidden", previewPath ? "flex" : "hidden")}
         >
-          {relativePath && attachment ? (
+          {isDirectory ? null : relativePath && attachment ? (
             <AttachmentFilePreview
               key={`${environmentId}:${attachment.id}`}
               name={attachment.name}
@@ -2120,26 +2121,28 @@ export default function FilePreviewPanel({
               />
             )
           ) : null}
-          <ScientFileAuxiliarySurface
-            environmentId={environmentId}
-            threadRef={threadRef}
-            cwd={cwd}
-            relativePath={relativePath}
-            sourceRevision={file.data?.revision ?? null}
-            sourcePending={
-              sourcePending ||
-              (file.data !== null &&
-                file.authoritativeData !== null &&
-                file.data.contents !== file.authoritativeData.contents)
-            }
-            truncated={file.data?.truncated ?? false}
-          />
+          {previewPath ? (
+            <ScientFileAuxiliarySurface
+              environmentId={environmentId}
+              threadRef={threadRef}
+              cwd={cwd}
+              relativePath={previewPath}
+              sourceRevision={file.data?.revision ?? null}
+              sourcePending={
+                sourcePending ||
+                (file.data !== null &&
+                  file.authoritativeData !== null &&
+                  file.data.contents !== file.authoritativeData.contents)
+              }
+              truncated={file.data?.truncated ?? false}
+            />
+          ) : null}
         </div>
         {showExplorer ? (
           <aside
             className={cn(
               "flex min-h-0 shrink-0 bg-background",
-              relativePath
+              previewPath
                 ? "w-[min(22rem,46%)] min-w-64 border-l border-border/60"
                 : "min-w-0 flex-1",
             )}
@@ -2154,7 +2157,7 @@ export default function FilePreviewPanel({
               onOpenFile={onOpenFile}
               onOpenFileSource={onOpenFileSource}
               workspaceMutationId={workspaceMutationId}
-              {...(relativePath && !isMedia && !isPdf
+              {...(previewPath && !isMedia && !isPdf
                 ? { onRefreshSelectedFile: file.refresh }
                 : {})}
             />
