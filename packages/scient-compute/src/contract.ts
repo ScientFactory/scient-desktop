@@ -590,6 +590,21 @@ export const ComputeManagedRuntimeFailure = Schema.Struct({
 });
 export type ComputeManagedRuntimeFailure = typeof ComputeManagedRuntimeFailure.Type;
 
+/** An individual capability request, rebased by the server on its installed generation. */
+export const ComputeManagedToolkitChange = Schema.Struct({
+  toolkitId: ComputeToolkitId,
+  action: Schema.Literals(["install", "remove", "cancel"]),
+});
+export type ComputeManagedToolkitChange = typeof ComputeManagedToolkitChange.Type;
+
+export const ComputeManagedToolkitStatus = Schema.Struct({
+  toolkitId: ComputeToolkitId,
+  install: Schema.Boolean,
+  state: Schema.Literals(["queued", "running", "failed"]),
+  error: Schema.NullOr(Schema.String.check(Schema.isMaxLength(4096))),
+});
+export type ComputeManagedToolkitStatus = typeof ComputeManagedToolkitStatus.Type;
+
 export const ComputeManagedRuntimeStatus = Schema.Struct({
   /** Labels belong to the reviewed adapter, not to a parallel UI provider switch. */
   displayName: Schema.optional(Label),
@@ -607,6 +622,10 @@ export const ComputeManagedRuntimeStatus = Schema.Struct({
     Schema.withDecodingDefaultKey(Effect.succeed([])),
   ),
   operation: Schema.NullOr(ComputeManagedRuntimeOperation),
+  /** Present only on servers supporting individual queued Toolkit changes. */
+  toolkitChanges: Schema.optional(
+    Schema.Array(ComputeManagedToolkitStatus).check(Schema.isMaxLength(64)),
+  ),
   /** Structured for current clients; failureMessage remains for older clients and logs. */
   failure: Schema.optional(Schema.NullOr(ComputeManagedRuntimeFailure)),
   failureMessage: Schema.NullOr(Schema.String.check(Schema.isMaxLength(4096))),

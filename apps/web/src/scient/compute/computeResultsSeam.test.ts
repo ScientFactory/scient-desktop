@@ -178,20 +178,21 @@ describe("compute result surface seam", () => {
     expect(managedRuntimeSource).toContain("Copy the full error");
   });
 
-  it("keeps Scientific Computing settings to the current runtime, not an inventory dashboard", () => {
+  it("keeps default selection separate from installation actions using shared settings rows", () => {
     expect(settingsSource).toContain("SettingsRow");
     expect(settingsSource).toContain("SettingsSection");
-    expect(settingsSource).not.toContain('variant="plain"');
+    expect(settingsSource).toContain('variant="plain"');
+    expect(settingsSource).toContain("SettingsSourceStrip");
+    expect(settingsSource).toContain("SettingsSourcePanel");
     expect(settingsSource).not.toContain("Python & MATLAB");
     expect(settingsSource).not.toContain("Advanced");
-    expect(settingsSource).toContain('title="Runtime"');
+    expect(settingsSource).toContain('title="Default runtime"');
     expect(settingsSource).toContain("SelectTrigger");
     expect(settingsSource).toContain("computeRuntimePickerLabel");
     expect(settingsSource).not.toContain("<select");
     expect(settingsSource).not.toContain("break-all");
     expect(settingsSource).toContain("ManagedRuntimeMaintenanceMenu");
-    expect(settingsSource).not.toContain("ComputeInstallationRow");
-    expect(settingsSource).toContain("Starts and closes a test session");
+    expect(settingsSource).toContain("ComputeInstallationRow");
     expect(settingsSource).not.toContain("More scientific tools are coming soon");
     expect(settingsSource).toContain('title="Scientific Computing"');
     expect(pythonActionsSource).toContain("runtimeVersion:");

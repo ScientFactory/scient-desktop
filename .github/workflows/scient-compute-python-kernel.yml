@@ -33,6 +33,39 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
+  managed_python:
+    name: Managed Python toolkits / ${{ matrix.runner }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [ubuntu-24.04, macos-15]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          sparse-checkout: |
+            /*
+            !/.repos/
+          sparse-checkout-cone-mode: false
+      - name: Setup Vite+
+        uses: voidzero-dev/setup-vp@v1
+        with:
+          node-version-file: package.json
+          cache: true
+          run-install: |
+            args:
+              - --filter=t3...
+      # The production provisioner downloads pinned private uv/CPython and uses
+      # the checked-in lock. No ambient pip environment can satisfy this test.
+      - name: Qualify base, every toolkit combination, and retained kernels
+        working-directory: apps/server
+        env:
+          SCIENT_TEST_MANAGED_PYTHON: "1"
+          MPLBACKEND: Agg
+        run: vp test run src/scient/compute/ManagedPythonProduct.live.test.ts --maxWorkers=1
+
   real_kernel:
     name: Real kernel / ${{ matrix.runner }} / Python ${{ matrix.python }}
     runs-on: ${{ matrix.runner }}

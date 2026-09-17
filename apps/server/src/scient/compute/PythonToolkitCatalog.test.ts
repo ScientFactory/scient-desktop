@@ -42,6 +42,13 @@ const verification = (
     { name: "statsmodels", version: "0.15.0" },
     { name: "sympy", version: "1.14.0" },
     { name: "openpyxl", version: "3.1.5" },
+    { name: "pyyaml", version: "6.0.3" },
+    { name: "pillow", version: "12.3.0" },
+    { name: "requests", version: "2.34.2" },
+    { name: "pypdf", version: "6.19.0" },
+    { name: "tabulate", version: "0.10.0" },
+    { name: "jinja2", version: "3.1.6" },
+    { name: "defusedxml", version: "0.7.1" },
   ],
   ...input,
 });
@@ -80,6 +87,27 @@ describe("Python Toolkit catalog", () => {
     expect(result.readiness).toBe("missing-requirement");
     expect(result.missingRequirements).toEqual(["SciPy"]);
   });
+
+  it.each(
+    PYTHON_TOOLKIT_CATALOG.flatMap((toolkit) =>
+      toolkit.packageRequirements.map((requirement) => ({ toolkit, requirement })),
+    ),
+  )(
+    "does not hide a missing $requirement.name behind other installed toolkits",
+    ({ toolkit, requirement }) => {
+      const complete = PYTHON_TOOLKIT_CATALOG.flatMap((item) => item.packageRequirements).map(
+        (item) => ({ name: item.name, version: item.minimumVersion ?? "99.0" }),
+      );
+      const observed = verification({
+        packages: complete.filter((item) => item.name !== requirement.name),
+      });
+      expect(assessPythonToolkit(toolkit, observed)).toMatchObject({
+        readiness: "missing-requirement",
+        missingRequirements: [requirement.displayName],
+      });
+      expect(observed.readiness).toBe("ready");
+    },
+  );
 
   it("does not call a Toolkit ready when the runtime itself cannot start compute", () => {
     const result = assessPythonToolkit(

@@ -5,6 +5,7 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import { ExecutionRunId } from "@scientfactory/execution";
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Stream from "effect/Stream";
@@ -20,6 +21,25 @@ import {
 const Live = layer.pipe(Layer.provideMerge(NodeServices.layer));
 
 describe("LocalExecutionProcess", () => {
+  it.effect("finishes short commands without a cancellation grace delay", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const processes = yield* ExecutionProcess;
+        const started = performance.now();
+        const handle = yield* processes.start({
+          runId: ExecutionRunId.make("short-process-test"),
+          executable: NodeProcess.execPath,
+          args: ["-e", "process.stdout.write('done')"],
+          cwd: NodeProcess.cwd(),
+          environment: {},
+        });
+        const output = yield* Effect.forkScoped(Stream.runCollect(handle.output));
+        expect(yield* handle.exitCode).toBe(0);
+        yield* Fiber.join(output);
+        expect(performance.now() - started).toBeLessThan(2000);
+      }),
+    ).pipe(Effect.provide(Live), TestClock.withLive),
+  );
   it.effect("cancels a spawned descendant with the owned process tree", () =>
     Effect.scoped(
       Effect.gen(function* () {

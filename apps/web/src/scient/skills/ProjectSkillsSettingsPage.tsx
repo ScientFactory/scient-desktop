@@ -10,7 +10,12 @@ import {
 } from "../../components/settings/settingsLayout";
 import { useProjects } from "../../state/entities";
 import { ProjectSkillsSettings } from "./ProjectSkillsSettings";
-import { SkillSourceStrip, SkillSourceStripItem } from "./SkillSourceStrip";
+import {
+  SettingsSourceStrip,
+  SettingsSourceGroup,
+  SettingsSourcePanel,
+  SettingsSourceStripItem,
+} from "../../components/settings/SettingsSourceStrip";
 
 const projectKey = (project: ReturnType<typeof useProjects>[number]): string =>
   `${project.environmentId}:${project.id}`;
@@ -35,14 +40,18 @@ export function ProjectSkillsSettingsPage() {
           Skills
         </Link>
         {projects.length > 0 ? (
-          <>
-            <div className="px-3 sm:px-4">
-              <SkillSourceStrip label="Projects">
+          <div className="px-3 sm:px-4">
+            <SettingsSourceGroup
+              activePanelId={
+                expandedProject ? `project-skills-${projectKey(expandedProject)}` : null
+              }
+            >
+              <SettingsSourceStrip label="Projects">
                 {projects.map((project, index) => {
                   const key = projectKey(project);
                   const expanded = expandedProjectKey === key;
                   return (
-                    <SkillSourceStripItem
+                    <SettingsSourceStripItem
                       key={key}
                       controls={`project-skills-${key}`}
                       expanded={expanded}
@@ -55,17 +64,17 @@ export function ProjectSkillsSettingsPage() {
                     />
                   );
                 })}
-              </SkillSourceStrip>
-            </div>
-            {expandedProject ? (
-              <div id={`project-skills-${projectKey(expandedProject)}`}>
-                <ProjectSkillsSettings
-                  environmentId={expandedProject.environmentId}
-                  projectId={expandedProject.id}
-                />
-              </div>
-            ) : null}
-          </>
+              </SettingsSourceStrip>
+              {expandedProject ? (
+                <SettingsSourcePanel id={`project-skills-${projectKey(expandedProject)}`}>
+                  <ProjectSkillsSettings
+                    environmentId={expandedProject.environmentId}
+                    projectId={expandedProject.id}
+                  />
+                </SettingsSourcePanel>
+              ) : null}
+            </SettingsSourceGroup>
+          </div>
         ) : (
           <SettingsRow
             title="No projects"

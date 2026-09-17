@@ -1785,33 +1785,64 @@ code {
   background: var(--app-scrollbar-thumb-hover);
 }
 
+/* A single decorative outline keeps the standard card radius and a smaller raised cue. */
+.settings-source-group {
+  position: relative;
+  isolation: isolate;
+}
+
+.settings-source-group > [data-source-panel] {
+  margin-top: 20px;
+}
+
+[data-compute-settings] [data-slot="settings-row"] {
+  border-radius: 0;
+}
+
+.settings-source-outline {
+  position: absolute;
+  pointer-events: none;
+  z-index: -1;
+  overflow: visible;
+  fill: color-mix(in oklab, var(--card) 40%, transparent);
+  stroke: color-mix(in oklab, var(--border) 60%, transparent);
+  stroke-width: 1px;
+  filter: drop-shadow(0 1px 1px rgb(0 0 0 / 5%));
+}
+
+.settings-source-group[data-source-outline="ready"] > [data-source-panel] {
+  background: transparent;
+  border-color: transparent;
+  box-shadow: none;
+}
+
 /* Compact horizontal selectors reveal their scrollbar only on interaction. */
-.skill-source-strip {
+.settings-source-strip {
   scrollbar-color: transparent transparent;
   scrollbar-width: thin;
 }
 
-.skill-source-strip::-webkit-scrollbar {
+.settings-source-strip::-webkit-scrollbar {
   height: 3px;
 }
 
-.skill-source-strip::-webkit-scrollbar-thumb {
+.settings-source-strip::-webkit-scrollbar-thumb {
   border-radius: 999px;
   background: transparent;
 }
 
-.skill-source-strip:hover,
-.skill-source-strip:has(:focus-visible) {
+.settings-source-strip:hover,
+.settings-source-strip:has(:focus-visible) {
   scrollbar-color: var(--app-scrollbar-thumb) transparent;
 }
 
-.skill-source-strip:hover::-webkit-scrollbar-thumb,
-.skill-source-strip:has(:focus-visible)::-webkit-scrollbar-thumb {
+.settings-source-strip:hover::-webkit-scrollbar-thumb,
+.settings-source-strip:has(:focus-visible)::-webkit-scrollbar-thumb {
   background: var(--app-scrollbar-thumb);
 }
 
-.skill-source-strip:hover::-webkit-scrollbar-thumb:hover,
-.skill-source-strip:has(:focus-visible)::-webkit-scrollbar-thumb:hover {
+.settings-source-strip:hover::-webkit-scrollbar-thumb:hover,
+.settings-source-strip:has(:focus-visible)::-webkit-scrollbar-thumb:hover {
   background: var(--app-scrollbar-thumb-hover);
 }
 

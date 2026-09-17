@@ -8,6 +8,7 @@ import {
   classifyMatlabSource,
   ComputeManagedRuntimeAction,
   ComputeManagedRuntimeStatus,
+  ComputeManagedToolkitChange,
   ComputeOperationError,
   ComputeOutput,
   ComputeProjectId,
@@ -36,7 +37,7 @@ import {
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 
-export { ComputeToolkitId };
+export { ComputeToolkitId, ComputeManagedToolkitChange };
 
 const ComputeCwd = Schema.String.check(Schema.isMaxLength(4096));
 const ComputeExecutable = Schema.String.check(Schema.isMaxLength(4096));
@@ -151,6 +152,7 @@ export const ComputeManagedRuntimeInput = Schema.Struct({
   action: ComputeManagedRuntimeAction,
   /** Omitted by older clients and actions that do not provision a generation. */
   toolkitIds: Schema.optional(Schema.Array(ComputeToolkitId).check(Schema.isMaxLength(64))),
+  toolkitChange: Schema.optional(ComputeManagedToolkitChange),
   /** First installation only: preserve an existing runtime or activate the managed one. */
   selectionAfterInstall: Schema.optional(Schema.Literals(["managed", "existing"])),
 });

@@ -12,9 +12,24 @@ The quickest path is to open a `.py` file and choose **Set up Python** in the fi
 opens the correct server's Scientific Computing settings, where **Set up Python** starts the
 installation. Scient downloads a verified installer and creates one private, shared Python
 environment for that Scient server. The included **Scientific Python** Toolkit covers numerical
-data, tables, statistics, machine learning, symbolic math, spreadsheets, and figures. Optional
+data, tables, statistics, machine learning, symbolic math, spreadsheets, and figures. It also
+includes YAML configuration, basic image manipulation, PDF text extraction/splitting/merging,
+HTTP requests, and Markdown/styled-table exports. PDFs containing only scanned images need
+separate OCR; these Python libraries do not change Scient's native file previews or enable
+arbitrary HTML in Results. Optional
 reviewed Toolkits add large and multidimensional data, image analysis, or bioinformatics without
 turning package management into a list of individual dependencies.
+
+**Multidimensional and large datasets** adds Parquet/Feather through PyArrow, HDF5,
+NetCDF (including nonstandard calendars), Zarr, and local Dask array/DataFrame processing.
+It does not include a distributed cluster or every pandas optional file engine, such as
+PyTables for `read_hdf()`. **Image analysis** includes codecs for compressed TIFF workflows;
+**Sequences and bioinformatics** includes sequence parsing and indexed FASTA access.
+PyArrow remains optional while its platform coverage is being qualified.
+
+Existing managed installations receive these additions through **Update**; opening Settings
+does not install them silently. Existing sessions retain their original environment until closed.
+Selecting a system or project Python does not add these packages to that installation.
 
 Setting up managed Python from a file that has no usable runtime enables Python and selects the new
 environment. Setting it up from Settings while an existing Python is already selected leaves that
@@ -25,7 +40,8 @@ The managed environment is optional. To use Python you already maintain instead:
 1. Open **Settings → Scientific Computing** for the server environment you want to use.
 2. Select **Python** in the language strip.
 3. Enable Python if it is off.
-4. Choose **Automatic**, a detected installation, or **Custom executable…** from the runtime menu.
+4. Choose **Automatic** or an installation under **Default runtime**. To enter a path, expand
+   **Custom executable** and choose **Use path**. Typing, collapsing, or cancelling does not save it.
 
 A ready Python needs CPython 3.10 or newer, `jupyter_client` 8.6 or newer, and `ipykernel` 6.29 or
 newer. Install missing requirements with your own environment tooling, then use the page refresh
@@ -35,24 +51,67 @@ with `pip --user`; do not force packages into a Homebrew- or system-managed Pyth
 runtime discovery succeed.
 
 Settings → Scientific Computing has a compact language selector and shows one language at a time.
-Each language uses the same ordinary rows for Enable and Runtime, while language-owned rows handle
-Scient-managed Python, Toolkits, or the MATLAB connection. A ready runtime keeps a compact **Test**
-action. Runtime labels stay short; path suffixes appear only when otherwise-identical installations
-must be distinguished, and the explicit path field remains available when needed.
+Select the open language again to collapse its panel. This only hides the settings; it does not
+disable the language, cancel setup, or stop a session. Each optional Toolkit has its own **Download**
+action; installed Toolkits have a small menu with **Remove**. There is no separate Apply step.
+Setup is required before optional downloads. Toolkit operations continue when the panel is collapsed
+or another language is selected; status reflects the server's verified installation, not the click.
+You can request more Toolkits while another is installing. Each row shows its own progress,
+queue, cancellation, or retry action. Pending requests are combined into the next verified
+environment build; they do not run competing installers against the working environment.
+Cancelling one pending Toolkit leaves the others requested. The queue lives on the server
+and survives navigation, but not a server restart. A failed request can be retried independently.
+Cancel immediately shows **Cancelling…** and prevents repeated clicks while the request is pending.
+For an active build, feedback remains while shutdown and cleanup finish; a failed cancellation
+restores the control so you can try again.
+Julia, R, and SPSS appear as **Coming soon** previews only, with no setup or execution controls.
+Supported languages use the same rows for Enable and Default runtime. Installations follow as
+ordinary rows with their known version and a quiet **Default** marker for new sessions. An unknown
+version says **Version not checked**; opening Settings does not execute Python to fill it in.
+**Test** in an installation’s menu starts and closes a test session without selecting it,
+and any observed version is shared with this view’s picker until refresh. **Testing…** shows an inline spinner.
+A green check and **Test passed** clear after four seconds; the observed version remains. **Test failed**
+stays available with error details and a retry action. **Copy path** copies that
+installation’s path. **Forget path** clears only a saved custom reference, never its files.
+System and project installations have no install, update, or remove actions. Scient-managed Python
+has its own setup and maintenance actions; Toolkits explicitly target that private environment.
+The MATLAB connection helper remains separate from the actual MATLAB installation. Runtime labels
+stay short; path suffixes appear only when otherwise-identical installations must be distinguished.
 Removing a managed runtime uses a compact confirmation beside the action; it does not obscure the
 whole Settings page. Scient does not silently replace a broken selected interpreter.
 
 Changing Toolkits or accepting a reviewed Toolkit update never mutates the active environment in
-place. **Apply changes**, **Update**, and **Repair** each build and verify a fresh generation before
+place. Toolkit downloads/removals, **Update**, and **Repair** each build and verify a fresh generation before
 it becomes available. Existing sessions keep the exact generation they started with.
+The pinned Python interpreter is reused from Scient's private, versioned interpreter store.
+Package files use independent filesystem clones where supported, or copies otherwise; they never
+share writable hardlinks with the cache or another generation. Changing Toolkits does not reinstall
+the same Python interpreter. Enablement and runtime selection remain available during preparation;
+the latest selection is preserved when the verified generation becomes available.
+**Repair** deliberately prepares a new private interpreter as well, so a damaged interpreter is
+not reused or replaced underneath an existing session.
+Downloads reuse Scient's private package cache, never a system or project cache. The installer
+checks its size between provisioning stages and clears it when it exceeds 2 GiB; in-flight downloads
+may exceed that retention limit. Cache cleanup cannot remove packages from an installed generation.
+First-time downloads and verification still take time; the inline status reports the current stage.
 
-**Runtime** changes only which runtime new sessions prefer. **Automatic** restores discovery instead
+**Default runtime** changes only which runtime new sessions prefer. **Automatic** restores discovery instead
 of pinning an installation. Choosing an existing Python also
 releases Scient-managed precedence; it does not copy or modify packages. **Repair** builds and
 verifies a fresh managed generation before activating it; an existing generation remains available
 if setup fails. **Update** appears only when Scient ships a newer reviewed Python or Toolkit
-revision. **Remove** deletes only Scient's private environment and is refused while a live Python
-session may still be using it. Project `.venv`, configured, system, Homebrew, Conda, pyenv, and
+revision. It appears as a small **Update** button beside the managed row's menu, including when
+that installation is not selected; progress replaces the button while updating. The MATLAB
+connection row follows the same rule for Scient's helper only, not the MATLAB application or
+licensed toolboxes. Rebuild and Remove remain in the menu.
+**Remove** deletes only Scient's private environment and is refused while a Scient-owned
+session or probe is using that environment. Sessions using unrelated Python installations do not
+block removal. Scient tracks environment usage, not individual Python imports: an idle session can
+still import a package later. Old generations are reclaimed after their last user closes, while the
+active generation and one rollback generation are retained. Interpreter builds and the bounded
+download cache are retained for reuse; removing an environment is not a purge of those stores.
+These usage guarantees cover processes owned by Scient, not arbitrary external terminals launched
+against its private environment paths. Project `.venv`, configured, system, Homebrew, Conda, pyenv, and
 other user-owned installations are never repaired or removed.
 
 Before a session starts, the file header names the interpreter it found (**Python 3.12**,
@@ -64,7 +123,7 @@ If setup fails for the runtime the file needs, the header shows a one-line statu
 never wraps a stack or path across **Run**. A code error remains a result of that execution; it does
 not make a healthy Python or MATLAB runtime unready. The refresh control in Scientific Computing
 performs lightweight runtime rediscovery so an installation or environment change can be recognized
-without reloading the app. **Test** beside the enable switch starts and closes a temporary session;
+without reloading the app. **Test** in the installation menu starts and closes a temporary session;
 a package check is not a successful test.
 **Repair** rebuilds a damaged Scient-managed generation; it is not how you recover from a failed
 Test. Scient never swaps the interpreter beneath a live session. If the selected Python changes
@@ -111,7 +170,7 @@ does not reintroduce an older path.
 Opening Settings and its refresh control only look for installations and read their metadata; they do not
 import MATLAB Engine or start Python/MATLAB. Recent status stays visible while being rechecked.
 Choosing an installation does not promise that the Engine works or a license is available. Run the
-file, or use **Test** beside the enable switch, to prove the Engine host. A license/startup failure
+file, or use **Test** in the installation menu, to prove the Engine host. A license/startup failure
 stays visible with recovery guidance.
 
 If an Engine host is missing, **Connect MATLAB** on the file opens Scientific Computing settings.

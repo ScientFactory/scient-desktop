@@ -42,6 +42,7 @@ import {
   type ComputeLanguageId,
   type ComputeManagedRuntimeAction,
   type ComputeManagedRuntimeStatus,
+  type ComputeManagedToolkitChange,
   type ComputeToolkitId,
   type ComputeListExecutionsInput,
   type ComputeListOutputsInput,
@@ -166,6 +167,8 @@ export interface ComputeRuntimeBinding {
   readonly managedRuntime?:
     | {
         readonly isRemoving: () => boolean;
+        /** Production bindings may enforce precise process-scoped environment ownership. */
+        readonly tracksUsage?: boolean;
         readonly status: () => Effect.Effect<ComputeManagedRuntimeStatus, ComputeOperationError>;
         readonly manage: (
           action: ComputeManagedRuntimeAction,
@@ -177,6 +180,7 @@ export interface ComputeRuntimeBinding {
 }
 
 export interface ComputeManagedRuntimeProvisionOptions {
+  readonly toolkitChange?: ComputeManagedToolkitChange;
   readonly toolkitIds?: ReadonlyArray<ComputeToolkitId>;
   readonly selectionAfterInstall?: "managed" | "existing";
 }
@@ -676,7 +680,8 @@ const make = Effect.gen(function* () {
     options?: ComputeManagedRuntimeProvisionOptions,
   ) =>
     Effect.gen(function* () {
-      if (action === "remove") {
+      const controller = yield* managedController(languageId);
+      if (action === "remove" && !controller.tracksUsage) {
         const liveSessions = yield* Ref.get(sessionsRef);
         if (
           [...liveSessions.values()].some((session) => session.adapter.languageId === languageId) ||
@@ -689,7 +694,6 @@ const make = Effect.gen(function* () {
           );
         }
       }
-      const controller = yield* managedController(languageId);
       return yield* controller.manage(action, options);
     }).pipe(startLock.withPermits(1));
 
@@ -743,7 +747,7 @@ const make = Effect.gen(function* () {
       // and close a session, the same way MATLAB Test does.
       if (verification.readiness !== "ready" || verification.connection !== "detected")
         return verification;
-      if (binding.managedRuntime?.isRemoving()) {
+      if (binding.managedRuntime?.isRemoving() && !binding.managedRuntime.tracksUsage) {
         return yield* computeError(
           "verify",
           "runtime-unusable",
@@ -790,7 +794,7 @@ const make = Effect.gen(function* () {
             const binding = bindings.find(
               (candidate) => candidate.adapter.languageId === input.languageId,
             );
-            if (binding?.managedRuntime?.isRemoving())
+            if (binding?.managedRuntime?.isRemoving() && !binding.managedRuntime.tracksUsage)
               return yield* computeError(
                 "verify",
                 "runtime-unusable",
@@ -2259,7 +2263,7 @@ const make = Effect.gen(function* () {
       }
       // Removal admission shares the start lock. Once admitted, its background
       // operation must finish before another session can claim this runtime.
-      if (binding.managedRuntime?.isRemoving()) {
+      if (binding.managedRuntime?.isRemoving() && !binding.managedRuntime.tracksUsage) {
         return yield* computeError(
           "start",
           "runtime-unusable",
@@ -2546,7 +2550,7 @@ const make = Effect.gen(function* () {
               `No compute runtime is registered for '${input.languageId}'.`,
             );
           }
-          if (binding.managedRuntime?.isRemoving()) {
+          if (binding.managedRuntime?.isRemoving() && !binding.managedRuntime.tracksUsage) {
             return yield* computeError(
               "start",
               "runtime-unusable",

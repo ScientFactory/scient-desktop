@@ -210,8 +210,10 @@ fingerprint.
 ### Reviewed Python Toolkit catalog
 
 Every managed generation includes **Scientific Python**: NumPy, pandas, SciPy,
-Matplotlib, Plotly, Seaborn, statsmodels, SymPy, scikit-learn, openpyxl, and the
-Jupyter bridge dependencies. Users may explicitly add reviewed optional groups
+Matplotlib, Plotly, Seaborn, statsmodels, SymPy, scikit-learn, openpyxl, PyYAML,
+Pillow, Requests, pypdf, tabulate, Jinja2, defusedxml, and the Jupyter bridge
+dependencies. Pillow and YAML are explicit base promises, not accidental optional
+dependencies. Users may explicitly add reviewed optional groups
 for large and multidimensional data, image analysis, and bioinformatics. The UI
 names capabilities first and keeps exact package membership visible as secondary
 information.
@@ -287,12 +289,12 @@ The managed Scientific Python recipe pins:
 - CPython `3.12.13`, installed and owned inside the fresh generation;
 - `uv 0.11.16` as the installer and resolver;
 - a universal `uv.lock` plus its exact `pyproject.toml` checksum;
-- a required broad base covering Jupyter execution, NumPy, pandas, SciPy,
-  Matplotlib, Plotly, Seaborn, statsmodels, SymPy, scikit-learn, and openpyxl;
+- a required broad base covering Jupyter execution, numerical analysis and figures,
+  modern spreadsheets, YAML, basic image/PDF operations, HTTP and table exports;
   and
 - optional locked groups for large and multidimensional data (`xarray`,
-  PyArrow, `h5py`, `h5netcdf`, Zarr, and Dask), image analysis
-  (`scikit-image`, `imageio`, and `tifffile`), and sequence/bioinformatics work
+  PyArrow, `h5py`, `h5netcdf`, `cftime`, Zarr, and Dask array/DataFrame), image analysis
+  (`scikit-image`, `imageio`, `tifffile`, and `imagecodecs`), and sequence/bioinformatics work
   (Biopython and `pyfaidx`).
 
 Scient does not run a remote shell installer. It downloads the pinned uv
@@ -305,6 +307,24 @@ Windows x64. The current base does not have a complete wheel set on musl Linux
 or Windows arm64; those assisted paths must remain unqualified until the
 product records an explicit availability policy. Listing a uv target is not
 packaged-app release evidence.
+
+PyArrow remains optional: its pinned release has no Windows ARM64 wheel, so its
+proposed promotion to the base has not passed the platform gate. The expanded
+image toolkit has no imagecodecs musl wheels; cftime also lacks musl ARM64 wheels.
+Do not bypass `--no-build`, drop requirements silently, or claim a platform works
+because its uv installer exists. Re-run wheel resolution before widening availability.
+
+The `scientific-python-2026-09-17.1` revision makes the expanded profile an explicit
+managed update. Activation verifies bounded offline file workflows in disposable
+directories: CSV/Excel, safe YAML, XML entity rejection, styled/Markdown tables,
+PNG/JPEG, PDF text/split/merge, and the selected toolkit's Parquet/Feather, HDF5,
+NetCDF nonstandard calendars, Zarr v2/v3, compressed TIFF, and FASTA/FASTQ operations.
+These checks neither open windows nor require network access. The opt-in product
+test additionally exercises Requests against loopback HTTP and every combination
+of optional toolkits through the production lifecycle, retaining an old kernel
+across replacement/removal and checking absent optional imports in new kernels.
+The managed-profile CI job runs this test on macOS and glibc Linux; native Windows,
+other architectures, visual acceptance, and release qualification remain separate.
 
 Cancelling a check of the cached installer leaves that cache intact and does
 not start a replacement download. A completed check that proves a version
@@ -382,10 +402,14 @@ owns a discovered external runtime.
 
 Update and repair provision and verify a fresh generation before activation.
 New sessions see the selected active generation; existing sessions retain the
-executable they started with. Displaced generations are not deleted while the
-current server may still host such sessions. Startup reconciliation is their
-safe collection point. Explicit removal is blocked while a live Python session
-exists.
+executable they started with. The Python binding reserves its exact managed generation before
+starting a probe or transport, and releases it after scoped process cleanup. Collection retains
+the active generation, its rollback predecessor, unpublished builds, and every reserved generation.
+It renames obsolete generations under the short metadata lock and deletes them outside that lock;
+unreadable activation metadata is not permission to collect. Whole-runtime removal checks usage
+again at the deletion boundary. Unrelated Python installations do not block it. Bindings without
+qualified usage tracking, including the MATLAB helper, retain conservative admission and startup
+collection rules. These reservations cover Scient-owned processes, not external terminal users.
 
 The file surface compares the live session executable with the default runtime
 selected for a new session, only when that default is verified ready. It never
@@ -431,12 +455,19 @@ environment choice. The file-status tooltip identifies the exact interpreter;
 missing-module errors link to that server's Python settings without installing
 packages or rerunning code automatically.
 
-The active record names one previous generation for rollback. Retaining older
-displaced generations until restart is a deliberate reliability tradeoff:
-updates and repairs are rare, and temporary disk retention is safer than
-breaking an active scientific namespace. If long-lived servers and frequent
-profile changes make this unbounded in practice, add explicit session leases
-rather than guessing that an old generation is unused.
+The pinned installer reuses a versioned app-private CPython store. Receipts record the exact
+interpreter relative path; legacy generation-local interpreters remain readable. Packages use
+uv clone mode, followed by a hardlink-detachment pass because uv can fall back from clones to
+hardlinks. This preserves independent writable package files on filesystems without cloning.
+Repair uses a new interpreter store rather than replacing a shared interpreter under a session;
+subsequent Toolkit updates reuse that repaired store. Interpreter stores remain retained, including
+after environment removal. Their eventual reclamation requires reference-aware policy covering
+both Python and the MATLAB helper; environment leases alone are not interpreter-store leases.
+
+Long provisioning work does not own the short selection/activation lock. Enablement and runtime
+selection remain usable during builds, and activation preserves the latest selection. Installers
+still serialize writes to the managed installation; independent Toolkit requests can queue and
+coalesce without competing against the working environment.
 
 Provider-runtime helpers are reused only for target detection, bounded HTTPS
 download, checksum verification, and safe archive materialization. Python's
@@ -485,6 +516,22 @@ Python acquisition. Managed Python improves first-use reliability; it is not a
 prerequisite that blocks those tracks or a replacement for users' existing runtimes.
 
 ## Qualification evidence and remaining promotion gates
+
+### Managed Python reuse and usage tracking — 2026-09-16
+
+Local automated review passed 453 backend/execution tests and 292 web/settings tests, plus server
+and web typechecks. The real macOS arm64 product test installed the pinned scientific environment,
+rendered tables/figures, added and removed a Toolkit while an older kernel remained open, executed
+again in that older kernel, refused whole-environment removal while in use, and removed it after
+shutdown. The full live test took approximately 162 seconds. Targeted coverage includes 32 concurrent
+reservations, idempotent release, directory aliases, corrupt metadata, selection during builds,
+repair isolation, and cache hardlink detachment. No computer use was performed in this pass.
+
+Warm Toolkit changes still spent roughly 45 seconds on this qualification host. Process-cleanup
+timing tests ruled out a fixed kill-grace delay; sampling the scientific verifier showed native
+library loading/code-signature validation. Reuse removes interpreter reinstallation and unnecessary
+package copying, but does not make verification or first-use native imports instantaneous. Do not
+weaken verification, share writable package files, or claim cross-platform speed from this result.
 
 ### Local computer-use pass — 2026-08-31
 

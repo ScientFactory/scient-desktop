@@ -48,7 +48,7 @@ vi.mock("../../state/entities", () => ({
 import { ProjectFavicon } from "../../components/ProjectFavicon";
 import { ProjectSkillsSettings } from "./ProjectSkillsSettings";
 import { ProjectSkillsSettingsPage } from "./ProjectSkillsSettingsPage";
-import { SkillSourceStripItem } from "./SkillSourceStrip";
+import { SettingsSourceStripItem } from "../../components/settings/SettingsSourceStrip";
 
 function render() {
   hooks.beginRender();
@@ -70,7 +70,7 @@ describe("ProjectSkillsSettingsPage project selector", () => {
 
   it("opens, switches, and closes projects from the shared source selector", () => {
     let page = render();
-    let projectItems = collectElements(page, (element) => element.type === SkillSourceStripItem);
+    let projectItems = collectElements(page, (element) => element.type === SettingsSourceStripItem);
     const favicons = collectElements(page, (element) => element.type === ProjectFavicon);
     let settings = visitElements(page, (element) => element.type === ProjectSkillsSettings);
 
@@ -81,7 +81,7 @@ describe("ProjectSkillsSettingsPage project selector", () => {
 
     (projectItems[1]?.props.onToggle as (() => void) | undefined)?.();
     page = render();
-    projectItems = collectElements(page, (element) => element.type === SkillSourceStripItem);
+    projectItems = collectElements(page, (element) => element.type === SettingsSourceStripItem);
     settings = visitElements(page, (element) => element.type === ProjectSkillsSettings);
 
     expect(projectItems.map((item) => item.props.expanded)).toEqual([false, true]);
@@ -89,7 +89,7 @@ describe("ProjectSkillsSettingsPage project selector", () => {
 
     (projectItems[0]?.props.onToggle as (() => void) | undefined)?.();
     page = render();
-    projectItems = collectElements(page, (element) => element.type === SkillSourceStripItem);
+    projectItems = collectElements(page, (element) => element.type === SettingsSourceStripItem);
     settings = visitElements(page, (element) => element.type === ProjectSkillsSettings);
 
     expect(projectItems.map((item) => item.props.expanded)).toEqual([true, false]);
@@ -97,7 +97,7 @@ describe("ProjectSkillsSettingsPage project selector", () => {
 
     (projectItems[0]?.props.onToggle as (() => void) | undefined)?.();
     page = render();
-    projectItems = collectElements(page, (element) => element.type === SkillSourceStripItem);
+    projectItems = collectElements(page, (element) => element.type === SettingsSourceStripItem);
     settings = visitElements(page, (element) => element.type === ProjectSkillsSettings);
 
     expect(projectItems.map((item) => item.props.expanded)).toEqual([false, false]);

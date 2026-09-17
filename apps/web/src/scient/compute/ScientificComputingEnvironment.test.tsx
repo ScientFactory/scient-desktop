@@ -151,7 +151,7 @@ describe("Scientific Computing environment ownership", () => {
     const markup = renderToStaticMarkup(<ScientificComputingSettings />);
     expect(mocks.readSettings).toHaveBeenCalledWith("local-server");
     expect(markup).not.toContain("More scientific tools are coming soon");
-    expect(markup).toContain("Runtime");
+    expect(markup).toContain("Default runtime");
   });
 
   it("renders truthful language cards while the inventory is loading", () => {

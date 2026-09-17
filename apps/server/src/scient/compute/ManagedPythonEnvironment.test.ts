@@ -66,6 +66,129 @@ describe("ManagedPythonEnvironment", () => {
   const generationDirectory = (id: string): string =>
     NodePath.join(managedPythonEnvironmentPaths(computeDir).managedRoot, `generation-${id}`);
 
+  it("retains every used generation through overlapping updates and collects after the last release", async () => {
+    const manager = makeManagedPythonEnvironmentManager(computeDir, dependencies(), "python", {
+      trackUsage: true,
+    });
+    const first = await manager.install(installInput());
+    const releases = await Promise.all(
+      Array.from({ length: 32 }, () => manager.acquire(first.executable)),
+    );
+    await manager.install(installInput());
+    await manager.install(installInput());
+    await manager.collect();
+    expect((await NodeFSP.stat(first.executable)).isFile()).toBe(true);
+    await expect(manager.remove()).rejects.toThrow("Stop sessions");
+    releases.slice(0, -1).forEach((release) => {
+      release();
+      release();
+    });
+    await manager.collect();
+    expect((await NodeFSP.stat(first.executable)).isFile()).toBe(true);
+    releases.at(-1)!();
+    await manager.collect();
+    await expect(NodeFSP.stat(first.executable)).rejects.toMatchObject({ code: "ENOENT" });
+    await expect(manager.acquire(first.executable)).rejects.toThrow("no longer available");
+    const external = await manager.acquire("/system/python");
+    await manager.remove();
+    external();
+  });
+
+  it("requests a new private interpreter for repair and preserves the old environment on failure", async () => {
+    let fresh: boolean | undefined;
+    const manager = makeManagedPythonEnvironmentManager(
+      computeDir,
+      dependencies({
+        provision: async (input) => {
+          fresh = input.freshInterpreter;
+          if (fresh) throw new Error("fixture repair failed");
+          await executableAt(input.targetRoot);
+          return { executableRelativePath: NodePath.join("environment", "bin", "python") };
+        },
+      }),
+    );
+    const first = await manager.install(installInput());
+    expect(fresh).toBe(false);
+    await expect(manager.repair(installInput())).rejects.toThrow("could not provision");
+    expect(fresh).toBe(true);
+    expect((await manager.inspect())?.executable).toBe(first.executable);
+  });
+
+  it("does not collect generations when activation metadata is unreadable", async () => {
+    const manager = makeManagedPythonEnvironmentManager(computeDir, dependencies(), "python", {
+      trackUsage: true,
+    });
+    const first = await manager.install(installInput());
+    await manager.collect();
+    await NodeFSP.writeFile(managedPythonEnvironmentPaths(computeDir).statePath, "broken");
+    await manager.collect();
+    expect((await NodeFSP.stat(first.executable)).isFile()).toBe(true);
+  });
+
+  it("reserves a generation through a directory alias and releases idempotently", async () => {
+    const manager = makeManagedPythonEnvironmentManager(computeDir, dependencies(), "python", {
+      trackUsage: true,
+    });
+    const first = await manager.install(installInput());
+    const alias = NodePath.join(temporaryRoot, "alias");
+    await NodeFSP.symlink(NodePath.dirname(first.executable), alias, "dir");
+    const release = await manager.acquire(NodePath.join(alias, "python"));
+    await expect(manager.assertUnused()).rejects.toThrow("Stop sessions");
+    release();
+    release();
+    await manager.assertUnused();
+    await manager.collect();
+  });
+
+  it("saves runtime selection immediately during a build and preserves it at activation", async () => {
+    const waiting = Promise.withResolvers<void>();
+    const finish = Promise.withResolvers<void>();
+    let pause = false;
+    const manager = makeManagedPythonEnvironmentManager(
+      computeDir,
+      dependencies({
+        verify: async () => {
+          if (pause) {
+            waiting.resolve();
+            await finish.promise;
+          }
+        },
+      }),
+    );
+    await manager.install(installInput());
+    pause = true;
+    const update = manager.install(installInput());
+    await waiting.promise;
+    await manager.select("existing");
+    expect((await manager.inspect())?.record.selection).toBe("existing");
+    finish.resolve();
+    expect((await update).record.selection).toBe("existing");
+  });
+
+  it("accepts only the recorded app-private shared interpreter, retaining legacy generations", async () => {
+    const interpreter = NodePath.join(computeDir, "interpreters", "python", "uv-fixture", "python");
+    await NodeFSP.mkdir(NodePath.dirname(interpreter), { recursive: true });
+    await NodeFSP.writeFile(interpreter, "python");
+    const manager = makeManagedPythonEnvironmentManager(
+      computeDir,
+      dependencies({
+        provision: async ({ targetRoot }) => {
+          const executable = await executableAt(targetRoot);
+          await NodeFSP.unlink(executable);
+          await NodeFSP.symlink(interpreter, executable);
+          return {
+            executableRelativePath: "environment/bin/python",
+            interpreterRelativePath: "uv-fixture/python",
+          };
+        },
+      }),
+    );
+    await manager.install(installInput());
+    expect((await manager.inspect())?.available).toBe(true);
+    await manager.remove();
+    expect(await NodeFSP.readFile(interpreter, "utf8")).toBe("python");
+  });
+
   it("uses one shared app-owned environment root", () => {
     const paths = managedPythonEnvironmentPaths(computeDir);
     expect(paths.managedRoot).toBe(NodePath.join(computeDir, "environments", "python"));

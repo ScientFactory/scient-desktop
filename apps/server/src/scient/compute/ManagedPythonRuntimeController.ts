@@ -6,6 +6,7 @@ import {
   type ComputeManagedRuntimeAction,
   type ComputeManagedRuntimeFailure,
   type ComputeManagedRuntimeStatus,
+  type ComputeManagedToolkitStatus,
   type ComputeToolkitId,
 } from "@scientfactory/compute";
 import * as Effect from "effect/Effect";
@@ -107,6 +108,16 @@ export function makeManagedPythonRuntimeController(input: {
   let operation: ActiveOperation | null = null;
   let failureMessage: string | null = null;
   let failure: ComputeManagedRuntimeFailure | null = null;
+  const changes = new Map<ComputeToolkitId, ComputeManagedToolkitStatus>();
+  let revision = 0;
+  let disposed = false;
+  // Serialize short commands, never the background provisioning work.
+  let commandTail: Promise<unknown> = Promise.resolve();
+  const serial = <A>(command: () => Promise<A>): Promise<A> => {
+    const result = commandTail.then(command);
+    commandTail = result.catch(() => undefined);
+    return result;
+  };
   const availableToolkitIds = new Set(input.toolkitIds);
   const requiredToolkitIds = input.requiredToolkitIds ?? input.toolkitIds;
   if (availableToolkitIds.size !== input.toolkitIds.length) {
@@ -139,8 +150,9 @@ export function makeManagedPythonRuntimeController(input: {
   const readStatus = async (): Promise<ComputeManagedRuntimeStatus> => {
     for (;;) {
       const operationSnapshot = operation;
+      const observedRevision = revision;
       const current = await input.manager.inspect();
-      if (operationSnapshot !== operation) continue;
+      if (operationSnapshot !== operation || observedRevision !== revision) continue;
       const active = current?.record.active ?? null;
       const unavailableFailure =
         current !== null && !current.available
@@ -169,6 +181,7 @@ export function makeManagedPythonRuntimeController(input: {
         runtimeVersion: active === null ? null : `Python ${active.pythonVersion}`,
         toolkitRevision: active?.toolkitRevision ?? null,
         toolkitIds: active?.toolkitIds ?? [],
+        ...(input.configuration === undefined ? { toolkitChanges: [...changes.values()] } : {}),
         operation:
           operationSnapshot === null
             ? null
@@ -195,11 +208,14 @@ export function makeManagedPythonRuntimeController(input: {
   const begin = async (
     action: Extract<ComputeManagedRuntimeAction, "install" | "update" | "repair" | "remove">,
     options?: ComputeManagedRuntimeProvisionOptions,
+    batch: ReadonlyArray<ComputeManagedToolkitStatus> = [],
   ): Promise<void> => {
+    if (disposed) throw operationError("Scientific runtime service is shutting down.");
     if (operation !== null) return;
     const current = await input.manager.inspect();
     // Two clients can cross the first check while inspection is in flight.
     // Recheck before publishing the operation so one server owns one mutation.
+    if (disposed) throw operationError("Scientific runtime service is shutting down.");
     if (operation !== null) return;
     if (action === "install" && current !== null) return;
     const toolkitIds = selectedToolkitIds(options?.toolkitIds, current?.record.active.toolkitIds);
@@ -219,6 +235,7 @@ export function makeManagedPythonRuntimeController(input: {
       throw operationError(`Set up ${displayName} before repairing or updating it.`);
     }
     if (action === "remove" && current === null) return;
+    if (action === "remove") await input.manager.assertUnused();
 
     const controller = new AbortController();
     const activeOperation: ActiveOperation = {
@@ -231,6 +248,7 @@ export function makeManagedPythonRuntimeController(input: {
       totalBytes: null,
     };
     operation = activeOperation;
+    revision++;
     failureMessage = null;
     failure = null;
 
@@ -253,20 +271,66 @@ export function makeManagedPythonRuntimeController(input: {
               activeOperation.totalBytes = progress.totalBytes;
             },
           });
-    void run
-      .then(() => {
-        failureMessage = null;
-        failure = null;
-      })
-      .catch((cause: unknown) => {
-        if (!controller.signal.aborted) {
+    const settle = (cause?: unknown) =>
+      serial(async () => {
+        if (operation !== activeOperation) return;
+        for (const entry of batch) {
+          if (changes.get(entry.toolkitId) !== entry) continue;
+          if (controller.signal.aborted) {
+            changes.set(entry.toolkitId, { ...entry, state: "queued" });
+          } else if (cause !== undefined) {
+            changes.set(entry.toolkitId, { ...entry, state: "failed", error: shortMessage(cause) });
+          } else changes.delete(entry.toolkitId);
+        }
+        if (batch.length === 0 && cause !== undefined && !controller.signal.aborted) {
           failureMessage = shortMessage(cause);
           failure = managedRuntimeFailure(cause, action, displayName);
         }
-      })
-      .finally(() => {
-        if (operation === activeOperation) operation = null;
+        operation = null;
+        if (action === "remove" && cause === undefined) changes.clear();
+        revision++;
+        await drainChanges();
       });
+    void run
+      .then(
+        () => settle(),
+        (cause: unknown) => settle(cause),
+      )
+      .catch((cause: unknown) => {
+        failureMessage = shortMessage(cause);
+        failure = managedRuntimeFailure(cause, action, displayName);
+      });
+  };
+
+  const drainChanges = async (): Promise<void> => {
+    if (disposed || operation !== null) return;
+    const queued = [...changes.values()].filter((entry) => entry.state === "queued");
+    if (queued.length === 0) return;
+    try {
+      const current = await input.manager.inspect();
+      if (disposed) return;
+      if (!current) throw operationError(`Set up ${displayName} before downloading Toolkits.`);
+      const ids = new Set(current.record.active.toolkitIds);
+      const batch: ComputeManagedToolkitStatus[] = [];
+      for (const entry of queued) {
+        if (ids.has(entry.toolkitId) === entry.install) {
+          changes.delete(entry.toolkitId);
+          continue;
+        }
+        if (entry.install) ids.add(entry.toolkitId);
+        else ids.delete(entry.toolkitId);
+        const running = { ...entry, state: "running" as const };
+        changes.set(entry.toolkitId, running);
+        batch.push(running);
+      }
+      revision++;
+      if (batch.length > 0) await begin("update", { toolkitIds: [...ids] }, batch);
+    } catch (cause) {
+      if (!disposed)
+        for (const entry of queued)
+          changes.set(entry.toolkitId, { ...entry, state: "failed", error: shortMessage(cause) });
+      revision++;
+    }
   };
 
   const manage = (
@@ -274,42 +338,96 @@ export function makeManagedPythonRuntimeController(input: {
     options?: ComputeManagedRuntimeProvisionOptions,
   ) =>
     Effect.tryPromise({
-      try: async () => {
-        if (options?.selectionAfterInstall !== undefined && action !== "install") {
-          throw operationError("Runtime selection can be chosen only during first setup.");
-        }
-        if (
-          options?.toolkitIds !== undefined &&
-          action !== "install" &&
-          action !== "update" &&
-          action !== "repair"
-        ) {
-          throw operationError("Toolkits can be chosen only while provisioning a runtime.");
-        }
-        if (action === "use-managed" || action === "use-existing") {
-          if (operation !== null) {
-            throw operationError(`Wait for the current ${displayName} operation to finish.`);
+      try: () =>
+        serial(async () => {
+          if (disposed) throw operationError("Scientific runtime service is shutting down.");
+          const change = options?.toolkitChange;
+          if (change !== undefined) {
+            if (
+              action !== "update" ||
+              options?.toolkitIds !== undefined ||
+              options?.selectionAfterInstall !== undefined ||
+              input.configuration !== undefined
+            ) {
+              throw operationError(
+                "Individual Toolkit changes require a Python update without a replacement Toolkit list.",
+              );
+            }
+            if (
+              !availableToolkitIds.has(change.toolkitId) ||
+              requiredToolkitIds.includes(change.toolkitId)
+            ) {
+              throw operationError("Choose an optional, reviewed Scientific Python Toolkit.");
+            }
+            const previous = changes.get(change.toolkitId);
+            if (change.action === "cancel") {
+              changes.delete(change.toolkitId);
+              if (previous?.state === "running") operation?.controller.abort();
+            } else {
+              if (operation?.action === "remove")
+                throw operationError("Wait for Python removal to finish.");
+              if (!(await input.manager.inspect()))
+                throw operationError("Set up Scient-managed Python first.");
+              if (disposed) throw operationError("Scientific runtime service is shutting down.");
+              if (previous?.state === "running") {
+                if (previous.install !== (change.action === "install"))
+                  throw operationError("Cancel the current Toolkit change first.");
+              } else
+                changes.set(change.toolkitId, {
+                  toolkitId: change.toolkitId,
+                  install: change.action === "install",
+                  state: "queued",
+                  error: null,
+                });
+            }
+            revision++;
+            await drainChanges();
+            return await readStatus();
           }
-          await input.manager.select(action === "use-managed" ? "managed" : "existing");
-          failureMessage = null;
-          failure = null;
-        } else {
-          await begin(action, options);
-        }
-        return await readStatus();
-      },
+          if (options?.selectionAfterInstall !== undefined && action !== "install") {
+            throw operationError("Runtime selection can be chosen only during first setup.");
+          }
+          if (
+            options?.toolkitIds !== undefined &&
+            action !== "install" &&
+            action !== "update" &&
+            action !== "repair"
+          ) {
+            throw operationError("Toolkits can be chosen only while provisioning a runtime.");
+          }
+          if (action === "use-managed" || action === "use-existing") {
+            if (operation?.action === "remove") {
+              throw operationError(`Wait for the current ${displayName} operation to finish.`);
+            }
+            await input.manager.select(action === "use-managed" ? "managed" : "existing");
+            failureMessage = null;
+            failure = null;
+          } else {
+            if (operation !== null && options?.toolkitIds !== undefined)
+              throw operationError(
+                "Wait for the current operation or submit an individual Toolkit change.",
+              );
+            await begin(action, options);
+          }
+          return await readStatus();
+        }),
       catch: (cause) =>
         isComputeOperationError(cause)
           ? cause
-          : operationError(`Unable to manage ${displayName}.`, cause),
+          : cause instanceof ManagedPythonEnvironmentError
+            ? operationError(shortMessage(cause), cause)
+            : operationError(`Unable to manage ${displayName}.`, cause),
     });
 
   const cancel = () =>
     Effect.tryPromise({
-      try: async () => {
-        operation?.controller.abort();
-        return await readStatus();
-      },
+      try: () =>
+        serial(async () => {
+          changes.clear();
+          revision++;
+          operation?.controller.abort();
+          return await readStatus();
+        }),
       catch: (cause) => operationError(`Unable to cancel ${displayName} setup.`, cause),
     });
 
@@ -318,6 +436,11 @@ export function makeManagedPythonRuntimeController(input: {
     status,
     manage,
     cancel,
-    dispose: () => operation?.controller.abort(),
+    dispose: () => {
+      disposed = true;
+      changes.clear();
+      revision++;
+      operation?.controller.abort();
+    },
   };
 }

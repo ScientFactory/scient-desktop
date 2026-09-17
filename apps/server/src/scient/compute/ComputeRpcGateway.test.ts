@@ -2,6 +2,7 @@ import { initializeScientProject, readScientProjectIdentity } from "@scientfacto
 import {
   ComputeExecutionId,
   ComputeLanguageId,
+  ComputeToolkitId,
   ComputeProjectId,
   ComputeSessionId,
   ComputeTransportKind,
@@ -188,6 +189,28 @@ const project = Effect.gen(function* () {
 });
 
 describe("compute RPC gateway", () => {
+  it.effect("forwards individual Toolkit intent without inventing a replacement selection", () =>
+    Effect.gen(function* () {
+      const toolkitChange = {
+        toolkitId: ComputeToolkitId.make("python-image-analysis"),
+        action: "install" as const,
+      };
+      let forwarded: unknown;
+      const compute = computeStub({
+        manageRuntime: (language, action, options) => {
+          forwarded = options;
+          return computeStub().manageRuntime(language, action, options);
+        },
+      });
+      const gateway = makeComputeRpcGateway({
+        compute,
+        serverSettings: { getSettings: Effect.succeed(DEFAULT_SERVER_SETTINGS) },
+        workspaceFileSystem: workspace(),
+      });
+      yield* gateway.manageRuntime({ languageId: PYTHON, action: "update", toolkitChange });
+      expect(forwarded).toEqual({ toolkitChange });
+    }),
+  );
   it.effect("reads inventory preferences without inspecting or verifying runtimes", () =>
     Effect.gen(function* () {
       let enabled: ReadonlySet<unknown> = new Set();
@@ -284,6 +307,13 @@ describe("compute RPC gateway", () => {
           { name: "statsmodels", version: "0.15.0" },
           { name: "sympy", version: "1.14.0" },
           { name: "openpyxl", version: "3.1.5" },
+          { name: "pyyaml", version: "6.0.3" },
+          { name: "pillow", version: "12.3.0" },
+          { name: "requests", version: "2.34.2" },
+          { name: "pypdf", version: "6.19.0" },
+          { name: "tabulate", version: "0.10.0" },
+          { name: "jinja2", version: "3.1.6" },
+          { name: "defusedxml", version: "0.7.1" },
         ],
       };
       const compute = computeStub({

@@ -27,6 +27,19 @@ describe("compute contract", () => {
     };
     expect(decode(previousStatus).generationId).toBeUndefined();
     expect(decode(previousStatus).toolkitIds).toEqual([]);
+    expect(decode(previousStatus).toolkitChanges).toBeUndefined();
+    expect(decode({ ...previousStatus, toolkitChanges: [] }).toolkitChanges).toEqual([]);
+    expect(() =>
+      decode({
+        ...previousStatus,
+        toolkitChanges: Array.from({ length: 65 }, () => ({
+          toolkitId: "python-image-analysis",
+          install: true,
+          state: "queued",
+          error: null,
+        })),
+      }),
+    ).toThrow();
     expect(decode({ ...previousStatus, generationId: "repaired-1" }).generationId).toBe(
       "repaired-1",
     );

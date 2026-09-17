@@ -5,6 +5,7 @@ import {
   type ComputeManagedRuntimeStatus,
 } from "@t3tools/contracts";
 import {
+  automaticComputeRuntimeLabel,
   computeCurrentRuntimeSummary,
   computeManagedPrimaryAction,
   computeRuntimePickerLabel,
@@ -47,6 +48,13 @@ const inventory: ComputeLanguageRuntimeInventory = {
 };
 
 describe("installation selection", () => {
+  it("labels automatic by its resolved source, without inventing a runtime or version", () => {
+    expect(automaticComputeRuntimeLabel(undefined)).toBe("Automatic");
+    expect(automaticComputeRuntimeLabel(inventory.installations[1])).toBe("Automatic · System");
+    expect(automaticComputeRuntimeLabel(inventory.installations[0])).toBe(
+      "Automatic · Scient-managed",
+    );
+  });
   it("labels a runtime without its executable path", () => {
     expect(computeRuntimePickerLabel(inventory.installations[0]!, "Python")).toBe(
       "3.12.13 · Scient-managed",

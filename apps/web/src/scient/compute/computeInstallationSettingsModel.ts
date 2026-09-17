@@ -7,7 +7,7 @@ import type {
 
 export type ComputeSettingsInstallation = ComputeLanguageRuntimeInventory["installations"][number];
 
-function runtimeSourceLabel(source: string): string {
+export function runtimeSourceLabel(source: string): string {
   switch (source) {
     case "managed":
       return "Scient-managed";
@@ -21,6 +21,18 @@ function runtimeSourceLabel(source: string): string {
     default:
       return source;
   }
+}
+
+/** Automatic is a selection policy, not an additional installation. */
+export function automaticComputeRuntimeLabel(
+  installation: ComputeSettingsInstallation | undefined,
+): string {
+  if (!installation) return "Automatic";
+  const source =
+    installation.source === "path" || installation.source === "conventional"
+      ? "System"
+      : runtimeSourceLabel(installation.source);
+  return `Automatic · ${source}`;
 }
 
 /** Short picker label, with the shortest distinguishing directory suffix when needed. */

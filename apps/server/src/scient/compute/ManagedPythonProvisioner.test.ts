@@ -66,9 +66,17 @@ describe("ManagedPythonProvisioner", () => {
     return {
       executable,
       versionRoot,
-      provision: (signal: AbortSignal) =>
+      provision: (
+        signal: AbortSignal,
+        generation = "generation",
+        interpreter: {
+          freshInterpreter?: boolean;
+          interpreterRelativePath?: string | undefined;
+        } = {},
+      ) =>
         provisioner.provision({
-          targetRoot: NodePath.join(temporaryRoot, "generation"),
+          ...interpreter,
+          targetRoot: NodePath.join(temporaryRoot, generation),
           toolkitIds: [],
           toolkitRevision: "fixture",
           pythonVersion: MANAGED_PYTHON_VERSION,
@@ -77,6 +85,110 @@ describe("ManagedPythonProvisioner", () => {
         }),
     };
   };
+
+  it.each([0, 3 * 1024 ** 3])(
+    "reuses only the private artifact cache and enforces retention at %s bytes",
+    async (bytes) => {
+      const commands: Parameters<ExecutionProcessPort["start"]>[0][] = [];
+      const fixture = await cachedInstaller({
+        start: (input) => {
+          commands.push(input);
+          if (input.args[0] === "python" && input.args[1] === "find")
+            return Effect.promise(async () => {
+              const interpreter = NodePath.join(
+                input.environment!.UV_PYTHON_INSTALL_DIR!,
+                "cpython-fixture",
+                "bin",
+                "python3.12",
+              );
+              await NodeFSP.mkdir(NodePath.dirname(interpreter), { recursive: true });
+              await NodeFSP.writeFile(interpreter, "fixture");
+              return {
+                output: Stream.make({ stream: "stdout" as const, text: interpreter }),
+                exitCode: Effect.succeed(0),
+                cancel: Effect.void,
+              };
+            });
+          if (input.args[0] === "sync")
+            return Effect.promise(async () => {
+              await NodeFSP.mkdir(input.environment!.UV_PROJECT_ENVIRONMENT!, { recursive: true });
+              return { output: Stream.empty, exitCode: Effect.succeed(0), cancel: Effect.void };
+            });
+          const text =
+            input.args[0] === "--version"
+              ? `uv ${MANAGED_PYTHON_UV_VERSION}`
+              : input.args[1] === "size"
+                ? String(bytes)
+                : "";
+          return Effect.succeed({
+            output: Stream.make(
+              {
+                stream: "stderr" as const,
+                text: input.args[1] === "size" ? "fixture diagnostic\n" : "",
+              },
+              { stream: "stdout" as const, text },
+            ),
+            exitCode: Effect.succeed(0),
+            cancel: Effect.void,
+          });
+        },
+      });
+      await NodeFSP.mkdir(NodePath.join(temporaryRoot, "generation"));
+      await NodeFSP.mkdir(NodePath.join(temporaryRoot, "generation-two"));
+      await fixture.provision(new AbortController().signal);
+      await fixture.provision(new AbortController().signal, "generation-two");
+      const syncs = commands.filter((command) => command.args[0] === "sync");
+      expect(syncs).toHaveLength(2);
+      const cache = NodePath.join(temporaryRoot, "compute", "cache", "python");
+      expect(syncs.map((command) => command.environment?.UV_CACHE_DIR)).toEqual([cache, cache]);
+      expect(syncs[0]?.environment?.UV_PROJECT_ENVIRONMENT).not.toEqual(
+        syncs[1]?.environment?.UV_PROJECT_ENVIRONMENT,
+      );
+      expect(syncs[0]?.environment?.UV_PYTHON_INSTALL_DIR).toEqual(
+        syncs[1]?.environment?.UV_PYTHON_INSTALL_DIR,
+      );
+      expect(syncs.every((command) => command.args.includes("clone"))).toBe(true);
+      expect(commands.filter((command) => command.args[1] === "clean")).toHaveLength(
+        bytes === 0 ? 0 : 4,
+      );
+      expect((await NodeFSP.stat(cache)).isDirectory()).toBe(true);
+      await NodeFSP.mkdir(NodePath.join(temporaryRoot, "repair"));
+      const repaired = await fixture.provision(new AbortController().signal, "repair", {
+        freshInterpreter: true,
+      });
+      const repairedStore = commands.findLast((command) => command.args[0] === "sync")!.environment!
+        .UV_PYTHON_INSTALL_DIR;
+      expect(repairedStore).not.toBe(syncs[0]?.environment?.UV_PYTHON_INSTALL_DIR);
+      await NodeFSP.mkdir(NodePath.join(temporaryRoot, "after-repair"));
+      await fixture.provision(new AbortController().signal, "after-repair", {
+        interpreterRelativePath: repaired.interpreterRelativePath,
+      });
+      expect(
+        commands.findLast((command) => command.args[0] === "sync")!.environment!
+          .UV_PYTHON_INSTALL_DIR,
+      ).toBe(repairedStore);
+    },
+  );
+
+  it("rejects a redirected artifact cache without touching its target", async () => {
+    const fixture = await cachedInstaller({
+      start: () =>
+        Effect.succeed({
+          output: Stream.make({
+            stream: "stdout" as const,
+            text: `uv ${MANAGED_PYTHON_UV_VERSION}`,
+          }),
+          exitCode: Effect.succeed(0),
+          cancel: Effect.void,
+        }),
+    });
+    const outside = NodePath.join(temporaryRoot, "user-cache");
+    await NodeFSP.mkdir(outside);
+    await NodeFSP.writeFile(NodePath.join(outside, "keep"), "user data");
+    await NodeFSP.symlink(outside, NodePath.join(temporaryRoot, "compute", "cache"));
+    await expect(fixture.provision(new AbortController().signal)).rejects.toThrow("not a link");
+    expect(await NodeFSP.readFile(NodePath.join(outside, "keep"), "utf8")).toBe("user data");
+  });
 
   it("keeps the cached installer when setup is already cancelled", async () => {
     const start = vi.fn(() => Effect.die("A cancelled setup must not start a process."));

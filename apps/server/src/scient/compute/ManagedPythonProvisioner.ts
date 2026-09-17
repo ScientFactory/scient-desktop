@@ -20,6 +20,8 @@ import * as Fiber from "effect/Fiber";
 import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
 import * as Stream from "effect/Stream";
+import { isolateManagedPythonPackages } from "./ManagedPythonPackageIsolation.ts";
+import { managedPythonFileCheck } from "./ManagedPythonScientificChecks.ts";
 
 import type {
   ManagedPythonEnvironmentDependencies,
@@ -36,22 +38,16 @@ import {
   makePythonRuntimeAdapter,
   parseProbeOutput,
 } from "./PythonRuntimeAdapter.ts";
-import {
-  assessPythonToolkits,
-  PYTHON_BIOINFORMATICS_TOOLKIT,
-  PYTHON_IMAGE_ANALYSIS_TOOLKIT,
-  PYTHON_LARGE_DATA_TOOLKIT,
-  PYTHON_TOOLKIT_EXTRAS,
-} from "./PythonToolkitCatalog.ts";
+import { assessPythonToolkits, PYTHON_TOOLKIT_EXTRAS } from "./PythonToolkitCatalog.ts";
 
 export const MANAGED_PYTHON_VERSION = "3.12.13";
 export const MANAGED_PYTHON_UV_VERSION = "0.11.16";
-export const MANAGED_PYTHON_PROVISIONER_VERSION = `uv-${MANAGED_PYTHON_UV_VERSION}`;
-export const MANAGED_PYTHON_TOOLKIT_REVISION = "scientific-python-2026-09-15.2";
+export const MANAGED_PYTHON_PROVISIONER_VERSION = `uv-${MANAGED_PYTHON_UV_VERSION}-shared-python-v1`;
+export const MANAGED_PYTHON_TOOLKIT_REVISION = "scientific-python-2026-09-17.1";
 export const MANAGED_PYTHON_LOCK_SHA256 =
-  "886d2252869ffaa9fb619a1b84e64772fa253711526e5f17dc4d478c07e3b356";
+  "66ce05d088324924895a8f0f60ba15d2a8f57d7fd161f7c8686a89932c868080";
 export const MANAGED_PYTHON_PROJECT_SHA256 =
-  "b215879df117043d7ced48b9b96c9837b42883bdb6a9688c615e78d9799a0cd8";
+  "ee964b65c6980c36a7f00e64664e35ff2c1bb76b86adc47f7f97b353804c4c85";
 const STAGED_MANAGED_PYTHON_DIRECTORY = "scient-managed-python";
 
 const PROCESS_TIMEOUT = Duration.minutes(30);
@@ -82,7 +78,7 @@ const REPRESENTATIVE_SCIENTIFIC_CHECK = [
   "x = np.arange(6, dtype=float)",
   'frame = pd.DataFrame({"x": x, "y": x ** 2})',
   "assert frame.y.sum() == 55.0",
-  "assert float(stats.zscore(x).mean()) < 1e-12",
+  "assert abs(float(stats.zscore(x).mean())) < 1e-12",
   "figure, axis = plt.subplots()",
   'axis.plot(frame["x"], frame["y"])',
   "buffer = io.BytesIO()",
@@ -97,33 +93,13 @@ const REPRESENTATIVE_SCIENTIFIC_CHECK = [
   "assert sns.color_palette(n_colors=3)",
   "assert openpyxl.Workbook().active.max_row == 1",
   'assert tuple(int(part) for part in nbformat.__version__.split(".")[:2]) >= (4, 2)',
-  'print(json.dumps({"ok": True}))',
 ].join("\n");
-
-const TOOLKIT_SCIENTIFIC_CHECKS: Readonly<Record<string, ReadonlyArray<string>>> = {
-  [PYTHON_LARGE_DATA_TOOLKIT.toolkitId]: [
-    "import dask.array as da",
-    "import h5netcdf, h5py, pyarrow as pa, xarray as xr, zarr",
-    "assert int(da.arange(6, chunks=3).sum().compute()) == 15",
-    "assert xr.DataArray([1, 2]).sum().item() == 3",
-    "assert pa.table({'x': [1]}).num_rows == 1",
-  ],
-  [PYTHON_IMAGE_ANALYSIS_TOOLKIT.toolkitId]: [
-    "import imageio, skimage, tifffile",
-    "from skimage import filters",
-    "assert filters.sobel(np.eye(3)).shape == (3, 3)",
-  ],
-  [PYTHON_BIOINFORMATICS_TOOLKIT.toolkitId]: [
-    "from Bio.Seq import Seq",
-    "import pyfaidx",
-    "assert str(Seq('ATGC').reverse_complement()) == 'GCAT'",
-  ],
-};
 
 function representativeScientificCheck(toolkitIds: ReadonlyArray<ComputeToolkitId>): string {
   return [
     REPRESENTATIVE_SCIENTIFIC_CHECK,
-    ...toolkitIds.flatMap((toolkitId) => TOOLKIT_SCIENTIFIC_CHECKS[toolkitId] ?? []),
+    managedPythonFileCheck(toolkitIds),
+    'print(json.dumps({"ok": True}))',
   ].join("\n");
 }
 
@@ -275,6 +251,7 @@ export function runOwnedProcess(
     readonly args: ReadonlyArray<string>;
     readonly cwd: string;
     readonly environment: Readonly<Record<string, string>>;
+    readonly stdoutOnly?: boolean;
   },
 ): Effect.Effect<string, ManagedPythonProcessError> {
   return Effect.scoped(
@@ -298,8 +275,15 @@ export function runOwnedProcess(
           ),
         );
       const outputRef = yield* Ref.make("");
+      const stdoutRef = yield* Ref.make("");
       const drain = yield* handle.output.pipe(
-        Stream.runForEach((chunk) => Ref.update(outputRef, (tail) => appendTail(tail, chunk.text))),
+        Stream.runForEach((chunk) =>
+          Effect.gen(function* () {
+            yield* Ref.update(outputRef, (tail) => appendTail(tail, chunk.text));
+            if (input.stdoutOnly && chunk.stream === "stdout")
+              yield* Ref.update(stdoutRef, (tail) => appendTail(tail, chunk.text));
+          }),
+        ),
         Effect.catchCause((cause) =>
           Effect.logDebug("managed Python process output ended early", { cause }),
         ),
@@ -335,14 +319,19 @@ export function runOwnedProcess(
           message: `${input.executable} exited with code ${String(exitCode.value)}${detail.length > 0 ? `: ${detail}` : "."}`,
         });
       }
-      return output;
+      return input.stdoutOnly ? yield* Ref.get(stdoutRef) : output;
     }),
   );
 }
 
 export function managedPythonProvisioningEnvironment(
   base: Readonly<Record<string, string>>,
-  input: { readonly targetRoot: string; readonly projectRoot: string },
+  input: {
+    readonly targetRoot: string;
+    readonly projectRoot: string;
+    readonly cacheRoot?: string;
+    readonly interpreterRoot?: string;
+  },
 ): Record<string, string> {
   const environment = Object.fromEntries(
     Object.entries(base).filter(([key]) => {
@@ -358,13 +347,13 @@ export function managedPythonProvisioningEnvironment(
     ...environment,
     PYTHONUTF8: "1",
     PYTHONUNBUFFERED: "1",
-    UV_CACHE_DIR: NodePath.join(input.targetRoot, ".cache"),
+    UV_CACHE_DIR: input.cacheRoot ?? NodePath.join(input.targetRoot, ".cache"),
     UV_MANAGED_PYTHON: "1",
     UV_NO_CONFIG: "1",
     UV_NO_PROGRESS: "1",
     UV_PROJECT: input.projectRoot,
     UV_PROJECT_ENVIRONMENT: NodePath.join(input.targetRoot, "environment"),
-    UV_PYTHON_INSTALL_DIR: NodePath.join(input.targetRoot, "python"),
+    UV_PYTHON_INSTALL_DIR: input.interpreterRoot ?? NodePath.join(input.targetRoot, "python"),
     UV_SYSTEM_CERTS: "1",
   };
 }
@@ -431,6 +420,7 @@ export function makeManagedPythonProvisioner(
     purpose: string,
   ): Promise<string> => {
     signal.throwIfAborted();
+    const started = performance.now();
     return Effect.runPromise(
       runOwnedProcess(options.processes, {
         runId: nextRunId(purpose),
@@ -438,9 +428,18 @@ export function makeManagedPythonProvisioner(
         args,
         cwd,
         environment,
+        stdoutOnly: purpose === "cache-size" || purpose === "python-find",
       }),
       { signal },
-    );
+    ).finally(() => {
+      Effect.runSync(
+        Effect.logDebug("Managed Python phase finished", {
+          phase: purpose,
+          durationMs: Math.round(performance.now() - started),
+          cancelled: signal.aborted,
+        }),
+      );
+    });
   };
 
   const smokeUv = async (executable: string, signal: AbortSignal): Promise<void> => {
@@ -546,6 +545,36 @@ export function makeManagedPythonProvisioner(
     const extras = managedPythonExtrasForToolkits(input.toolkitIds);
     await verifySpecification(options.specDirectory, options.recipe);
     const uv = await ensureUv(input.signal, input.onProgress);
+    // Reuse the pinned installer's CPython build; package environments stay private.
+    const cacheRoot = NodePath.join(options.computeDir, "cache", "python");
+    const interpretersRoot = NodePath.join(options.computeDir, "interpreters", "python");
+    const defaultStore = `uv-${MANAGED_PYTHON_UV_VERSION}`;
+    const previousStore = input.interpreterRelativePath?.split(NodePath.sep)[0];
+    // Repair must not reuse a damaged interpreter, or replace one under live sessions.
+    // Later Toolkit changes reuse the repaired store through its verified receipt.
+    const reusableStore =
+      previousStore === defaultStore ||
+      (previousStore?.startsWith(`${defaultStore}-repair-`) &&
+        /^[a-zA-Z0-9.-]+$/.test(previousStore))
+        ? previousStore
+        : defaultStore;
+    const interpreterRoot = NodePath.join(
+      interpretersRoot,
+      input.freshInterpreter ? `${defaultStore}-repair-${NodeCrypto.randomUUID()}` : reusableStore,
+    );
+    for (const directory of [
+      options.computeDir,
+      NodePath.dirname(cacheRoot),
+      cacheRoot,
+      NodePath.dirname(interpretersRoot),
+      interpretersRoot,
+      interpreterRoot,
+    ]) {
+      await NodeFSP.mkdir(directory, { recursive: true, mode: 0o700 });
+      if (!(await NodeFSP.lstat(directory)).isDirectory()) {
+        throw new Error("The managed Python cache must be an app-owned directory, not a link.");
+      }
+    }
     const projectRoot = NodePath.join(input.targetRoot, "project");
     await NodeFSP.mkdir(projectRoot, { recursive: false, mode: 0o700 });
     await Promise.all(
@@ -559,7 +588,36 @@ export function makeManagedPythonProvisioner(
     const environment = managedPythonProvisioningEnvironment(options.environment, {
       targetRoot: input.targetRoot,
       projectRoot,
+      cacheRoot,
+      interpreterRoot,
     });
+    const maintainCache = async () => {
+      const bytes = (
+        await run(
+          uv,
+          ["cache", "size", "--no-config", "--color", "never"],
+          projectRoot,
+          environment,
+          input.signal,
+          "cache-size",
+        )
+      ).trim();
+      if (!/^\d+$/.test(bytes))
+        throw new Error("The managed installer returned an invalid cache size.");
+      // A retention ceiling, not a quota on in-flight downloads. uv owns locking
+      // and eviction; never remove its entries directly or touch the user's cache.
+      if (Number(bytes) > 2 * 1024 ** 3) {
+        await run(
+          uv,
+          ["cache", "clean", "--no-config", "--color", "never"],
+          projectRoot,
+          { ...environment, UV_LOCK_TIMEOUT: "5" },
+          input.signal,
+          "cache-clean",
+        );
+      }
+    };
+    await maintainCache();
     input.onProgress?.({
       phase: "installing-python",
       downloadedBytes: null,
@@ -585,48 +643,80 @@ export function makeManagedPythonProvisioner(
       input.signal,
       "python-install",
     );
+    const interpreter = (
+      await run(
+        uv,
+        [
+          "python",
+          "find",
+          input.pythonVersion,
+          "--managed-python",
+          "--no-python-downloads",
+          "--no-config",
+        ],
+        projectRoot,
+        environment,
+        input.signal,
+        "python-find",
+      )
+    ).trim();
+    const canonicalInterpreters = await NodeFSP.realpath(interpretersRoot);
+    const canonicalInterpreter = await NodeFSP.realpath(interpreter);
+    const interpreterRelativePath = NodePath.relative(canonicalInterpreters, canonicalInterpreter);
+    if (
+      !interpreterRelativePath ||
+      interpreterRelativePath.startsWith("..") ||
+      NodePath.isAbsolute(interpreterRelativePath)
+    )
+      throw new Error("The installer selected Python outside Scient's private interpreter store.");
     input.onProgress?.({
       phase: "installing-packages",
       downloadedBytes: null,
       totalBytes: null,
     });
-    try {
-      await run(
-        uv,
-        [
-          "sync",
-          "--locked",
-          "--no-dev",
-          ...extras.flatMap((extra) => ["--extra", extra]),
-          "--no-install-project",
-          "--managed-python",
-          "--no-python-downloads",
-          "--no-build",
-          "--no-sources",
-          "--link-mode",
-          "copy",
-          "--python",
-          input.pythonVersion,
-          "--project",
-          projectRoot,
-          "--no-config",
-          "--no-progress",
-          "--system-certs",
-          "--color",
-          "never",
-        ],
+    await run(
+      uv,
+      [
+        "sync",
+        "--locked",
+        "--no-dev",
+        ...extras.flatMap((extra) => ["--extra", extra]),
+        "--no-install-project",
+        "--managed-python",
+        "--no-python-downloads",
+        "--no-build",
+        "--no-sources",
+        "--link-mode",
+        "clone",
+        "--python",
+        interpreter,
+        "--project",
         projectRoot,
-        environment,
-        input.signal,
-        "package-install",
-      );
-    } finally {
-      await NodeFSP.rm(NodePath.join(input.targetRoot, ".cache"), {
-        recursive: true,
-        force: true,
-      }).catch(() => undefined);
-    }
+        "--no-config",
+        "--no-progress",
+        "--system-certs",
+        "--color",
+        "never",
+      ],
+      projectRoot,
+      environment,
+      input.signal,
+      "package-install",
+    );
+    const isolationStarted = performance.now();
+    await isolateManagedPythonPackages(
+      NodePath.join(input.targetRoot, "environment"),
+      input.signal,
+    );
+    Effect.runSync(
+      Effect.logDebug("Managed Python phase finished", {
+        phase: "package-isolation",
+        durationMs: Math.round(performance.now() - isolationStarted),
+      }),
+    );
+    await maintainCache();
     return {
+      interpreterRelativePath,
       executableRelativePath:
         platform === "win32"
           ? NodePath.join("environment", "Scripts", "python.exe")

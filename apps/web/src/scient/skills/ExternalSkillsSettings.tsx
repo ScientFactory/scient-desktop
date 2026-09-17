@@ -16,7 +16,12 @@ import { useAtomCommand } from "../../state/use-atom-command";
 import { AVAILABLE_PROVIDER_OPTIONS } from "../../components/chat/providerIconUtils";
 import { collectExternalSkillProviders, externalSkillSourceLabel } from "./externalSkills";
 import { setProviderSkillEnabled } from "./scientSkillsState";
-import { SkillSourceStrip, SkillSourceStripItem } from "./SkillSourceStrip";
+import {
+  SettingsSourcePanel,
+  SettingsSourceGroup,
+  SettingsSourceStrip,
+  SettingsSourceStripItem,
+} from "../../components/settings/SettingsSourceStrip";
 
 function providerLabel(driver: string, displayName: string | undefined): string {
   if (displayName) return displayName;
@@ -68,85 +73,88 @@ export function ExternalSkillsSettings() {
           />
         ) : (
           <div className="px-3 sm:px-4">
-            <SkillSourceStrip label="Agent providers">
-              {groups.map(({ provider, skills }, index) => {
-                const label = providerLabel(provider.driver, provider.displayName);
-                const isOpen = expandedInstanceId === provider.instanceId;
-                const panelId = `external-skills-${provider.instanceId}`;
-                return (
-                  <SkillSourceStripItem
-                    key={provider.instanceId}
-                    controls={panelId}
-                    detail={`${skills.length} ${skills.length === 1 ? "skill" : "skills"}`}
-                    expanded={isOpen}
-                    separated={index > 0}
-                    label={label}
-                    onToggle={() =>
-                      setExpandedInstanceId((current) =>
-                        current === provider.instanceId ? null : provider.instanceId,
-                      )
-                    }
-                    icon={
-                      <ProviderInstanceIcon
-                        driverKind={provider.driver}
-                        displayName={label}
-                        accentColor={provider.accentColor}
-                        className="size-6"
-                        iconClassName="size-5"
-                      />
-                    }
-                  />
-                );
-              })}
-            </SkillSourceStrip>
-            {expandedGroup ? (
-              <div
-                id={`external-skills-${expandedGroup.provider.instanceId}`}
-                className="rounded-xl border border-border/60 bg-card/40 py-1 shadow-xs/5 [&>*+*]:border-t [&>*+*]:border-border/50"
-              >
-                {expandedGroup.skills.length === 0 ? (
-                  <SettingsRow
-                    title="No global skills reported"
-                    description="Project skills stay with their workspace."
-                  />
-                ) : null}
-                {expandedGroup.skills.map(({ skill, displayName, description, source }) => {
-                  const pending = pendingPath === skill.path;
+            <SettingsSourceGroup
+              activePanelId={
+                expandedGroup ? `external-skills-${expandedGroup.provider.instanceId}` : null
+              }
+            >
+              <SettingsSourceStrip label="Agent providers">
+                {groups.map(({ provider, skills }, index) => {
+                  const label = providerLabel(provider.driver, provider.displayName);
+                  const isOpen = expandedInstanceId === provider.instanceId;
+                  const panelId = `external-skills-${provider.instanceId}`;
                   return (
-                    <SettingsRow
-                      key={skill.path}
-                      className="sm:[&>div]:grid-cols-[minmax(0,1fr)_auto] [&>div>div>p]:max-w-none"
-                      title={displayName}
-                      description={description}
-                      status={`${externalSkillSourceLabel(source)}${
-                        skill.canSetEnabled === true
-                          ? skill.enabled
-                            ? ""
-                            : " · Deactivated"
-                          : " · Read-only in Scient"
-                      }`}
-                      control={
-                        skill.canSetEnabled === true ? (
-                          <Switch
-                            checked={skill.enabled}
-                            disabled={pending || pendingPath !== null}
-                            aria-label={`${skill.enabled ? "Deactivate" : "Activate"} ${displayName}`}
-                            onCheckedChange={(checked) =>
-                              void updateSkill({
-                                instanceId: expandedGroup.provider.instanceId,
-                                name: skill.name,
-                                path: skill.path,
-                                enabled: Boolean(checked),
-                              })
-                            }
-                          />
-                        ) : undefined
+                    <SettingsSourceStripItem
+                      key={provider.instanceId}
+                      controls={panelId}
+                      detail={`${skills.length} ${skills.length === 1 ? "skill" : "skills"}`}
+                      expanded={isOpen}
+                      separated={index > 0}
+                      label={label}
+                      onToggle={() =>
+                        setExpandedInstanceId((current) =>
+                          current === provider.instanceId ? null : provider.instanceId,
+                        )
+                      }
+                      icon={
+                        <ProviderInstanceIcon
+                          driverKind={provider.driver}
+                          displayName={label}
+                          accentColor={provider.accentColor}
+                          className="size-6"
+                          iconClassName="size-5"
+                        />
                       }
                     />
                   );
                 })}
-              </div>
-            ) : null}
+              </SettingsSourceStrip>
+              {expandedGroup ? (
+                <SettingsSourcePanel id={`external-skills-${expandedGroup.provider.instanceId}`}>
+                  {expandedGroup.skills.length === 0 ? (
+                    <SettingsRow
+                      title="No global skills reported"
+                      description="Project skills stay with their workspace."
+                    />
+                  ) : null}
+                  {expandedGroup.skills.map(({ skill, displayName, description, source }) => {
+                    const pending = pendingPath === skill.path;
+                    return (
+                      <SettingsRow
+                        key={skill.path}
+                        className="sm:[&>div]:grid-cols-[minmax(0,1fr)_auto] [&>div>div>p]:max-w-none"
+                        title={displayName}
+                        description={description}
+                        status={`${externalSkillSourceLabel(source)}${
+                          skill.canSetEnabled === true
+                            ? skill.enabled
+                              ? ""
+                              : " · Deactivated"
+                            : " · Read-only in Scient"
+                        }`}
+                        control={
+                          skill.canSetEnabled === true ? (
+                            <Switch
+                              checked={skill.enabled}
+                              disabled={pending || pendingPath !== null}
+                              aria-label={`${skill.enabled ? "Deactivate" : "Activate"} ${displayName}`}
+                              onCheckedChange={(checked) =>
+                                void updateSkill({
+                                  instanceId: expandedGroup.provider.instanceId,
+                                  name: skill.name,
+                                  path: skill.path,
+                                  enabled: Boolean(checked),
+                                })
+                              }
+                            />
+                          ) : undefined
+                        }
+                      />
+                    );
+                  })}
+                </SettingsSourcePanel>
+              ) : null}
+            </SettingsSourceGroup>
           </div>
         )}
       </SettingsSection>

@@ -256,6 +256,7 @@ export function makeComputeRpcGateway(input: {
   ) {
     return yield* input.compute.manageRuntime(request.languageId, request.action, {
       ...(request.toolkitIds === undefined ? {} : { toolkitIds: request.toolkitIds }),
+      ...(request.toolkitChange === undefined ? {} : { toolkitChange: request.toolkitChange }),
       ...(request.selectionAfterInstall === undefined
         ? {}
         : { selectionAfterInstall: request.selectionAfterInstall }),

@@ -30,7 +30,12 @@ import {
 export function withManagedRuntimePolling<A extends ComputeManagedRuntimeStatus | null, E>(
   source: Atom.Atom<AsyncResult.AsyncResult<A, E>>,
 ) {
-  return withActiveOperationPolling(source, (status) => status?.operation != null);
+  return withActiveOperationPolling(
+    source,
+    (status) =>
+      status?.operation != null ||
+      status?.toolkitChanges?.some((entry) => entry.state !== "failed") === true,
+  );
 }
 
 function withActiveOperationPolling<A, E>(
@@ -374,7 +379,12 @@ export function createComputeEnvironmentAtoms<R, E>(
         Atom.setIdleTTL(0),
       ),
       (inventory) =>
-        inventory.languages.some((language) => language.managedRuntime?.operation != null),
+        inventory.languages.some(
+          (language) =>
+            language.managedRuntime?.operation != null ||
+            language.managedRuntime?.toolkitChanges?.some((entry) => entry.state !== "failed") ===
+              true,
+        ),
     );
   });
   const runtimeInventory = (target: InventoryTarget) => inventoryFamily(JSON.stringify(target));

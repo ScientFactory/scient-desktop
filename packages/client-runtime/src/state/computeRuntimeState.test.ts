@@ -2,6 +2,7 @@ import { describe, expect, it } from "@effect/vitest";
 import { vi } from "vite-plus/test";
 import {
   ComputeLanguageId,
+  ComputeToolkitId,
   ComputeSessionId,
   INITIAL_COMPUTE_SESSION_GENERATION,
   EnvironmentId,
@@ -604,34 +605,50 @@ describe("shared compute runtime transitions", () => {
     }),
   );
 
-  it("polls only while an operation is running and cancels the timer on disposal", async () => {
-    vi.useFakeTimers();
-    const registry = AtomRegistry.make();
-    let current = { ...initialStatus, operation } as ComputeManagedRuntimeStatus;
-    let reads = 0;
-    const source = Atom.make(() => {
-      reads += 1;
-      return AsyncResult.success(current);
-    }).pipe(Atom.setIdleTTL(0));
-    const observed = withManagedRuntimePolling(source);
-    try {
-      const unmount = registry.mount(observed);
-      expect(reads).toBe(1);
-      await vi.advanceTimersByTimeAsync(1_000);
-      expect(reads).toBe(2);
-      current = { ...current, operation: null };
-      await vi.advanceTimersByTimeAsync(1_000);
-      const settledReads = reads;
-      await vi.advanceTimersByTimeAsync(10_000);
-      expect(reads).toBe(settledReads);
-      current = { ...current, operation };
-      registry.refresh(observed);
-      unmount();
-      await vi.advanceTimersByTimeAsync(10_000);
-      expect(reads).toBe(settledReads + 1);
-    } finally {
-      registry.dispose();
-      vi.useRealTimers();
-    }
-  });
+  it.each(["running", "queued"] as const)(
+    "polls %s work and cancels the timer on disposal",
+    async (phase) => {
+      vi.useFakeTimers();
+      const registry = AtomRegistry.make();
+      let current: ComputeManagedRuntimeStatus =
+        phase === "running"
+          ? { ...initialStatus, operation }
+          : {
+              ...initialStatus,
+              toolkitChanges: [
+                {
+                  toolkitId: ComputeToolkitId.make("python-image-analysis"),
+                  install: true,
+                  state: "queued",
+                  error: null,
+                },
+              ],
+            };
+      let reads = 0;
+      const source = Atom.make(() => {
+        reads += 1;
+        return AsyncResult.success(current);
+      }).pipe(Atom.setIdleTTL(0));
+      const observed = withManagedRuntimePolling(source);
+      try {
+        const unmount = registry.mount(observed);
+        expect(reads).toBe(1);
+        await vi.advanceTimersByTimeAsync(1_000);
+        expect(reads).toBe(2);
+        current = { ...current, operation: null, toolkitChanges: [] };
+        await vi.advanceTimersByTimeAsync(1_000);
+        const settledReads = reads;
+        await vi.advanceTimersByTimeAsync(10_000);
+        expect(reads).toBe(settledReads);
+        current = { ...current, operation };
+        registry.refresh(observed);
+        unmount();
+        await vi.advanceTimersByTimeAsync(10_000);
+        expect(reads).toBe(settledReads + 1);
+      } finally {
+        registry.dispose();
+        vi.useRealTimers();
+      }
+    },
+  );
 });

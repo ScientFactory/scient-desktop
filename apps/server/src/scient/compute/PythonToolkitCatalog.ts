@@ -16,7 +16,7 @@ export const PYTHON_DATA_AND_FIGURES_TOOLKIT: ComputeToolkitDescriptor = {
   toolkitId: ComputeToolkitId.make("python-data-and-figures"),
   languageId: PYTHON_LANGUAGE_ID,
   displayName: "Scientific Python",
-  summary: "Data, statistics, machine learning, symbolic math, spreadsheets, and figures.",
+  summary: "Data, statistics, models, figures, spreadsheets, images, PDFs, and everyday files.",
   required: true,
   packageRequirements: [
     { name: "numpy", displayName: "NumPy", minimumVersion: null },
@@ -30,13 +30,20 @@ export const PYTHON_DATA_AND_FIGURES_TOOLKIT: ComputeToolkitDescriptor = {
     { name: "sympy", displayName: "SymPy", minimumVersion: null },
     { name: "scikit-learn", displayName: "scikit-learn", minimumVersion: null },
     { name: "openpyxl", displayName: "openpyxl", minimumVersion: null },
+    { name: "pyyaml", displayName: "PyYAML", minimumVersion: null },
+    { name: "pillow", displayName: "Pillow", minimumVersion: null },
+    { name: "requests", displayName: "Requests", minimumVersion: null },
+    { name: "pypdf", displayName: "pypdf", minimumVersion: null },
+    { name: "tabulate", displayName: "tabulate", minimumVersion: null },
+    { name: "jinja2", displayName: "Jinja2", minimumVersion: null },
+    { name: "defusedxml", displayName: "defusedxml", minimumVersion: null },
   ],
 };
 
 export const PYTHON_LARGE_DATA_TOOLKIT: ComputeToolkitDescriptor = {
   toolkitId: ComputeToolkitId.make("python-large-data"),
   languageId: PYTHON_LANGUAGE_ID,
-  displayName: "Large and multidimensional data",
+  displayName: "Multidimensional and large datasets",
   summary: "Labeled arrays, columnar data, chunked datasets, HDF5, NetCDF, and parallel workloads.",
   required: false,
   packageRequirements: [
@@ -46,6 +53,7 @@ export const PYTHON_LARGE_DATA_TOOLKIT: ComputeToolkitDescriptor = {
     { name: "h5netcdf", displayName: "h5netcdf", minimumVersion: null },
     { name: "zarr", displayName: "Zarr", minimumVersion: null },
     { name: "dask", displayName: "Dask", minimumVersion: null },
+    { name: "cftime", displayName: "cftime", minimumVersion: null },
   ],
 };
 
@@ -59,6 +67,7 @@ export const PYTHON_IMAGE_ANALYSIS_TOOLKIT: ComputeToolkitDescriptor = {
     { name: "scikit-image", displayName: "scikit-image", minimumVersion: null },
     { name: "imageio", displayName: "imageio", minimumVersion: null },
     { name: "tifffile", displayName: "tifffile", minimumVersion: null },
+    { name: "imagecodecs", displayName: "imagecodecs", minimumVersion: null },
   ],
 };
 
