@@ -81,7 +81,7 @@ import { importPastedComposerText } from "./composerInlineTokenPaste";
 import { didComposerSelectionChangeVisibly } from "./composerSelection";
 import type { ComposerDraftContextRecords } from "./composerContextPresentation";
 import { useContentDirection } from "~/scient/bidi/ContentDirectionScope";
-import { applyComposerDirection } from "~/scient/bidi/ComposerContentDirectionPlugin";
+import { applyComposerDirection } from "~/scient/bidi/applyComposerDirection";
 
 const rememberedCursors = new Map<string, number>();
 

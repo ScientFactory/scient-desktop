@@ -143,6 +143,10 @@ body/action row. The user update guide no longer advertises an unsupported Night
   upstream provenance were rechecked for the composed result.
 - Focused stable-only updater coverage passed 67 tests across four files; focused mobile favorites
   and preview picking coverage passed 125 tests across four files.
+- PR CI identified an obsolete exported Lexical direction plugin left after the Tiptap switch.
+  The unused wrapper was removed; Tiptap still calls the unchanged DOM direction helper, now in
+  `applyComposerDirection.ts`. The exact `knip:check` and `vp check` gates pass, along with web
+  typecheck and 54 bidi tests covering RTL/LTR, return to Automatic, and newly inserted paragraphs.
 - Mobile native source discovery found 11 Swift and 23 Kotlin files. SwiftLint, ktlint, and detekt
   are unavailable on this host and were reported as skipped.
 - No computer use, visual acceptance, live-provider qualification, Windows execution, or native
