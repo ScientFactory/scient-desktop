@@ -297,3 +297,7 @@ Automated coverage must continue to prove:
 
 The fork-owned roots and inherited integration points are recorded in
 `scient-skills-seams.json` and checked by `pnpm skills:seams:check`.
+The inventory includes shared operation dispatch and queued/immediate turn
+delivery: classification records their Skill integration, not exclusive Skill
+ownership. Inherited command, event, provider, and composer paths remain
+explicit upstream mounts rather than being reclassified as fork-owned code.

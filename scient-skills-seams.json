@@ -9,10 +9,21 @@
   ],
   "ownedFiles": [
     "apps/mobile/src/state/scientSkills.ts",
+    "apps/server/src/mcp/ScientMcpInvocation.ts",
+    "apps/server/src/mcp/ScientOperationCatalog.ts",
     "apps/server/src/provider/ScientAwareness.ts",
+    "apps/server/src/provider/ScientToolProjection.ts",
+    "apps/server/src/scient/operations/AgentInvocationContext.ts",
+    "apps/server/src/scient/operations/AgentOperationDispatcher.ts",
+    "apps/server/src/scient/threadQueue/Worker.ts",
+    "apps/server/src/scient/threadQueue/operations.ts",
     "apps/web/src/routes/settings.skills_.external.tsx",
     "apps/web/src/routes/settings.skills.tsx",
-    "packages/contracts/src/scientSkills.ts"
+    "apps/web/src/scient/threadQueue/composerSnapshot.ts",
+    "packages/contracts/src/scientSkillSelection.ts",
+    "packages/contracts/src/scientSkills.ts",
+    "packages/contracts/src/scientThreadQueue.ts",
+    "packages/scient-operations/src/operation.ts"
   ],
   "skillDiffSignals": [
     "@scientfactory/scient-skills",
@@ -23,6 +34,46 @@
     "skillScope"
   ],
   "upstreamMounts": [
+    {
+      "path": "apps/mobile/src/lib/projectThreadStartTurn.ts",
+      "anchor": "selectedScientSkillNames",
+      "purpose": "Preserve explicit Scient skill selection when starting a mobile project thread."
+    },
+    {
+      "path": "apps/mobile/src/state/use-thread-outbox-drain.ts",
+      "anchor": "selectedScientSkillNames",
+      "purpose": "Preserve explicit Scient skill selection when delivering mobile outbox turns."
+    },
+    {
+      "path": "apps/server/src/orchestration/Layers/ProviderCommandReactor.ts",
+      "anchor": "selectedScientSkillNames",
+      "purpose": "Forward persisted skill selection into the provider turn without changing upstream turn ownership."
+    },
+    {
+      "path": "apps/server/src/orchestration/decider.ts",
+      "anchor": "selectedScientSkillNames",
+      "purpose": "Persist optional explicit skill selection in the existing turn event."
+    },
+    {
+      "path": "apps/web/src/proposedPlan.ts",
+      "anchor": "selectedScientSkillNames",
+      "purpose": "Collect explicit Scient skill selections in plan feedback submissions."
+    },
+    {
+      "path": "packages/contracts/src/orchestration.ts",
+      "anchor": "SelectedScientSkillNames",
+      "purpose": "Carry optional bounded Scient skill selections through turn commands and events."
+    },
+    {
+      "path": "packages/contracts/src/provider.ts",
+      "anchor": "SelectedScientSkillNames",
+      "purpose": "Carry optional explicit Scient skill selection to the provider boundary."
+    },
+    {
+      "path": "packages/shared/src/composerInlineTokens.ts",
+      "anchor": "collectSelectedScientSkillNames",
+      "purpose": "Extract real skill tokens while excluding context-chip labels from explicit skill selection."
+    },
     {
       "path": "apps/mobile/src/features/threads/composerSlashSkillSearch.ts",
       "anchor": "isGlobalProviderSkill",

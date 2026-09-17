@@ -13,8 +13,11 @@ persistence, cloud, or mobile contracts.
 
 `scient-latex-seams.json` is the machine-readable inventory this section
 mirrors. Its owned roots keep the build lane, shared generated-document/PDF
-foundation, and reader implementation outside inherited T3 paths. Two owned
-files sit outside those roots:
+foundation, and reader implementation outside inherited T3 paths. The inventory
+also classifies shared Scient integrations, including document MCP tools,
+provider awareness and tool-name projection, and built-in Skill definitions.
+This records integration responsibility, not exclusive LaTeX ownership.
+The two principal contract/client files outside the owned roots are
 `packages/contracts/src/scientLatex.ts` (the wire contract: toolchain status,
 build snapshot, diagnostic, and managed-install schemas) and
 `packages/client-runtime/src/state/scientLatexHttp.ts` (the typed HTTP client
