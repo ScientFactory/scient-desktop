@@ -12,6 +12,10 @@ const MARKDOWN_CODE_BLOCK = /(?:```|~~~)[\s\S]*?(?:```|~~~|$)/g;
 const MARKDOWN_INLINE_CODE = /`[^`\n]*`/g;
 const MARKDOWN_LINK_DESTINATION = /\]\([^)]*\)/g;
 const MARKDOWN_AUTOLINK = /<(?:https?:\/\/|mailto:)[^>]+>/gi;
+const MARKDOWN_DISPLAY_MATH = /\$\$[\s\S]*?(?:\$\$|$)/g;
+const MARKDOWN_BRACKET_MATH = /\\\[[\s\S]*?(?:\\\]|$)/g;
+const MARKDOWN_PAREN_MATH = /\\\([\s\S]*?(?:\\\)|$)/g;
+const MARKDOWN_INLINE_MATH = /(?<!\\)\$(?!\$)(?:\\.|[^$\n]){1,1000}(?<!\\)\$/g;
 const TABLE_LITERAL_TEX = /\$(?=[^$\n]*\\[A-Za-z]{2,})[^$\n]{1,1000}\$/g;
 const TABLE_TEX_COMMAND = /\\[A-Za-z]{2,}(?:\s*\{[^{}\n]*\})?/g;
 const TABLE_TECHNICAL_IDENTIFIER =
@@ -67,6 +71,8 @@ export interface StrongScriptCounts {
   readonly ltr: number;
 }
 
+export type DirectionEvidence = FixedContentDirection | "ambiguous";
+
 export function countStrongScripts(text: string): StrongScriptCounts {
   let rtl = 0;
   let ltr = 0;
@@ -93,9 +99,7 @@ export function countTableStrongScripts(text: string): StrongScriptCounts {
   );
 }
 
-export function resolveStrongScriptDirection(
-  counts: StrongScriptCounts,
-): FixedContentDirection | null {
+function resolveStrongScriptDirection(counts: StrongScriptCounts): FixedContentDirection | null {
   if (counts.rtl === 0 && counts.ltr === 0) return null;
   return counts.rtl >= counts.ltr ? "rtl" : "ltr";
 }
@@ -104,8 +108,27 @@ function stripMarkdownTechnicalContent(markdown: string): string {
   return markdown
     .replace(MARKDOWN_CODE_BLOCK, " ")
     .replace(MARKDOWN_INLINE_CODE, " ")
+    .replace(MARKDOWN_DISPLAY_MATH, " ")
+    .replace(MARKDOWN_BRACKET_MATH, " ")
+    .replace(MARKDOWN_PAREN_MATH, " ")
+    .replace(MARKDOWN_INLINE_MATH, (literal) => {
+      const content = literal.slice(1, -1);
+      return !/\s/u.test(content) || /[\\_^=+*/<>→←⇒⇐⟶⟵⟹⟸]/u.test(content) ? " " : literal;
+    })
     .replace(MARKDOWN_LINK_DESTINATION, "]")
     .replace(MARKDOWN_AUTOLINK, " ");
+}
+
+function markdownProseBlockCounts(prose: string): StrongScriptCounts[] {
+  return prose
+    .split(/\n\s*\n+/u)
+    .map((block) =>
+      /^\s*\|?.+\|.+\|?\s*$/mu.test(block) &&
+      /^\s*\|?\s*:?-{3,}:?\s*(?:\|\s*:?-{3,}:?\s*)+\|?\s*$/mu.test(block)
+        ? countTableStrongScripts(block)
+        : countStrongScripts(block),
+    )
+    .filter((counts) => counts.rtl > 0 || counts.ltr > 0);
 }
 
 /** Returns the strongest direction signal in Markdown prose, if one exists. */
@@ -124,12 +147,19 @@ export function resolveMarkdownDirectionHint(markdown: string): FixedContentDire
 export function resolveMarkdownDirection(
   markdown: string,
   requestedDirection: ContentDirection,
+  fallbackDirection: FixedContentDirection = "ltr",
 ): FixedContentDirection {
   if (isFixedContentDirection(requestedDirection)) {
     return requestedDirection;
   }
 
-  return resolveMarkdownDirectionHint(markdown) ?? "ltr";
+  const prose = stripMarkdownTechnicalContent(markdown);
+  const blockCounts = markdownProseBlockCounts(prose);
+  const aggregateCounts = blockCounts.reduce(
+    (total, counts) => ({ ltr: total.ltr + counts.ltr, rtl: total.rtl + counts.rtl }),
+    { ltr: 0, rtl: 0 },
+  );
+  return resolveStructuredDirectionFromCounts(blockCounts, aggregateCounts, fallbackDirection);
 }
 
 /**
@@ -151,7 +181,11 @@ export function resolveStreamingMarkdownDirection(input: {
     return input.requestedDirection;
   }
   if (!input.isStreaming) {
-    return resolveMarkdownDirection(input.markdown, "auto");
+    return resolveMarkdownDirection(
+      input.markdown,
+      "auto",
+      input.frozenDirection ?? input.messageDirectionHint ?? "ltr",
+    );
   }
   return (
     input.frozenDirection ??
@@ -177,12 +211,57 @@ export function resolveProseBlockDirectionFromCounts(
   counts: StrongScriptCounts,
   baseDirection: FixedContentDirection,
 ): FixedContentDirection {
+  const evidence = resolveProseDirectionEvidenceFromCounts(counts);
+  return evidence === "ambiguous" ? baseDirection : evidence;
+}
+
+/** Classifies one prose region without silently choosing its surrounding flow. */
+function resolveProseDirectionEvidenceFromCounts(counts: StrongScriptCounts): DirectionEvidence {
   const { rtl, ltr } = counts;
   const total = rtl + ltr;
-  if (total === 0) return baseDirection;
+  if (total === 0) return "ambiguous";
   if (rtl * 100 >= total * CONTEXTUAL_PROSE_MIN_RTL_PERCENT_FOR_RTL) return "rtl";
   if (rtl * 100 <= total * CONTEXTUAL_PROSE_MAX_RTL_PERCENT_FOR_LTR) return "ltr";
-  return baseDirection;
+  return "ambiguous";
+}
+
+/**
+ * Resolves a complete document from both its language balance and its semantic
+ * blocks. A decisive whole-document signal wins. When the aggregate falls in
+ * the mixed band, paragraphs/lists/sections vote once each instead of letting
+ * one long identifier-heavy block dominate the entire document.
+ */
+export function resolveStructuredDirectionFromCounts(
+  blockCounts: ReadonlyArray<StrongScriptCounts>,
+  aggregateCounts: StrongScriptCounts,
+  fallbackDirection: FixedContentDirection,
+): FixedContentDirection {
+  const aggregateEvidence = resolveProseDirectionEvidenceFromCounts(aggregateCounts);
+  if (aggregateEvidence !== "ambiguous") return aggregateEvidence;
+
+  let rtlBlocks = 0;
+  let ltrBlocks = 0;
+  let firstDecisiveDirection: FixedContentDirection | null = null;
+  for (const counts of blockCounts) {
+    const evidence = resolveProseDirectionEvidenceFromCounts(counts);
+    if (evidence === "ambiguous") continue;
+    firstDecisiveDirection ??= evidence;
+    if (evidence === "rtl") rtlBlocks += 1;
+    else ltrBlocks += 1;
+  }
+  if (rtlBlocks > ltrBlocks) return "rtl";
+  if (ltrBlocks > rtlBlocks) return "ltr";
+  return firstDecisiveDirection ?? fallbackDirection;
+}
+
+/** Resolves a heading from the section it labels, then from its own prose. */
+export function resolveHeadingSectionDirectionFromCounts(
+  headingCounts: StrongScriptCounts,
+  sectionCounts: StrongScriptCounts,
+  fallbackDirection: FixedContentDirection,
+): FixedContentDirection {
+  const headingDirection = resolveProseBlockDirectionFromCounts(headingCounts, fallbackDirection);
+  return resolveProseBlockDirectionFromCounts(sectionCounts, headingDirection);
 }
 
 /**

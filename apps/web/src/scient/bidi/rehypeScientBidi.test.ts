@@ -70,7 +70,7 @@ describe("rehypeScientBidi", () => {
     expect(elements[4]?.properties).toBeUndefined();
   });
 
-  it("keeps headings in the message direction when their text differs", () => {
+  it("keeps headings with the section they introduce", () => {
     const tree = {
       type: "root",
       children: [
@@ -87,11 +87,29 @@ describe("rehypeScientBidi", () => {
       ],
     };
 
-    rehypeScientBidi({ direction: "rtl" })(tree);
+    rehypeScientBidi({ direction: "ltr", requestedDirection: "auto" })(tree);
 
     const elements = tree.children as Array<{ properties?: Record<string, unknown> }>;
     expect(elements[0]?.properties?.dir).toBe("rtl");
     expect(elements[1]?.properties?.dir).toBe("rtl");
+  });
+
+  it("uses a standalone heading's own language in automatic mode", () => {
+    const tree = {
+      type: "root",
+      children: [
+        {
+          type: "element",
+          tagName: "h2",
+          children: [{ type: "text", value: "כותרת עברית" }],
+        },
+      ],
+    };
+
+    rehypeScientBidi({ direction: "ltr", requestedDirection: "auto" })(tree);
+
+    const heading = tree.children[0] as { properties?: Record<string, unknown> };
+    expect(heading.properties?.dir).toBe("rtl");
   });
 
   it("normalizes flow arrows only in RTL prose, not LTR or technical text", () => {
@@ -871,5 +889,25 @@ describe("rehypeScientBidi", () => {
     expect(paragraph.children?.length).toBe(1);
     expect(paragraph.children?.[0]?.type).toBe("text");
     expect(paragraph.children?.[0]?.value).toBe("שלום ⇒ עולם");
+  });
+
+  it("normalizes arrows in local RTL prose inside an automatic LTR message", () => {
+    const tree = {
+      type: "root",
+      children: [
+        {
+          type: "element",
+          tagName: "p",
+          children: [{ type: "text", value: "שלב ראשון → שלב שני" }],
+        },
+      ],
+    };
+
+    rehypeScientBidi({ direction: "ltr", requestedDirection: "auto" })(tree);
+
+    const paragraph = tree.children[0] as {
+      children?: Array<{ value?: string }>;
+    };
+    expect(paragraph.children?.[0]?.value).toBe("שלב ראשון ← שלב שני");
   });
 });

@@ -12,6 +12,7 @@ import {
   resolvePlainTextBoxDirection,
   resolveProseBlockDirection,
   resolveProseBlockDirectionFromCounts,
+  resolveStructuredDirectionFromCounts,
   resolveStreamingMarkdownDirection,
   resolveTableCellDirection,
   resolveTableCellDirectionFromCounts,
@@ -53,6 +54,34 @@ describe("message and block direction", () => {
     expect(
       resolveMarkdownDirection("## Methods and Results\n\n- Mean\n- Standard deviation", "auto"),
     ).toBe("ltr");
+  });
+
+  it("uses structural evidence when the complete prose balance is closely mixed", () => {
+    expect(
+      resolveStructuredDirectionFromCounts(
+        [
+          { ltr: 4, rtl: 6 },
+          { ltr: 4, rtl: 6 },
+          { ltr: 9, rtl: 1 },
+        ],
+        { ltr: 60, rtl: 40 },
+        "ltr",
+      ),
+    ).toBe("rtl");
+  });
+
+  it("does not let inline or display math make a Hebrew message LTR", () => {
+    const markdown = [
+      "# כותרת עברית",
+      "",
+      "זהו הסבר עברי ברור עם פרטים נוספים.",
+      "",
+      String.raw`$EnglishTechnicalIdentifier + AnotherVariable \rightarrow ResultVariable$`,
+      "",
+      String.raw`$$LongEnglishEquationName = AnotherLongEnglishEquationName$$`,
+    ].join("\n");
+
+    expect(resolveMarkdownDirection(markdown, "auto")).toBe("rtl");
   });
 
   it("uses local prose when it is decisive and message context in the middle band", () => {
@@ -160,6 +189,14 @@ describe("message and block direction", () => {
         isStreaming: true,
       }),
     ).toBe("ltr");
+    expect(
+      resolveStreamingMarkdownDirection({
+        markdown: "123 — …",
+        requestedDirection: "auto",
+        frozenDirection: "rtl",
+        isStreaming: false,
+      }),
+    ).toBe("rtl");
   });
 
   it("normalizes only standalone flow arrows in RTL prose", () => {

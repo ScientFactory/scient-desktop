@@ -1,7 +1,7 @@
 import {
   countStrongScripts,
   resolveProseBlockDirectionFromCounts,
-  resolveStrongScriptDirection,
+  resolveStructuredDirectionFromCounts,
 } from "./contentDirection";
 
 const COMPOSER_DIRECTION_GROUP_SELECTOR =
@@ -30,12 +30,16 @@ export function applyComposerDirection(
   }
 
   if (direction === "auto") {
-    const messageDirection =
-      resolveStrongScriptDirection(countStrongScripts(composerProseText(rootElement))) ?? "ltr";
+    const groups = Array.from(
+      rootElement.querySelectorAll<HTMLElement>(COMPOSER_DIRECTION_GROUP_SELECTOR),
+    );
+    const messageDirection = resolveStructuredDirectionFromCounts(
+      groups.map((group) => countStrongScripts(composerProseText(group))),
+      countStrongScripts(composerProseText(rootElement)),
+      "ltr",
+    );
     rootElement.dir = messageDirection;
-    for (const group of rootElement.querySelectorAll<HTMLElement>(
-      COMPOSER_DIRECTION_GROUP_SELECTOR,
-    )) {
+    for (const group of groups) {
       group.dir = resolveProseBlockDirectionFromCounts(
         countStrongScripts(composerProseText(group)),
         messageDirection,
