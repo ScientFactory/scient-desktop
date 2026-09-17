@@ -2,6 +2,17 @@
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
+import { EnvironmentId } from "@t3tools/contracts";
+
+vi.mock("~/scient/voice/ScientVoiceCommentControl", () => ({
+  ScientVoiceCommentControl: ({ onTranscript }: { onTranscript: (text: string) => void }) => (
+    <button
+      type="button"
+      aria-label="Dictate citation comment"
+      onClick={() => onTranscript("Dictated context")}
+    />
+  ),
+}));
 
 import { AssistantCitationCommentEditor } from "./AssistantCitationCommentEditor";
 
@@ -14,7 +25,7 @@ async function render(mode: "create" | "edit" = "edit") {
   await act(() =>
     root.render(
       <AssistantCitationCommentEditor
-        citation={{}}
+        citation={{ environmentId: EnvironmentId.make("local") }}
         mode={mode}
         onSubmit={onSubmit}
         onCancel={onCancel}
@@ -73,6 +84,20 @@ describe("assistant citation comment actions", () => {
     await click("Cancel");
 
     expect(onCancel).toHaveBeenCalledOnce();
+    expect(onSubmit).not.toHaveBeenCalled();
+  });
+
+  it("inserts voice text into the optional comment without submitting it", async () => {
+    await render("create");
+    const microphone = container.querySelector<HTMLButtonElement>(
+      '[aria-label="Dictate citation comment"]',
+    );
+    expect(microphone).not.toBeNull();
+    await act(() => microphone!.click());
+
+    expect(container.querySelector<HTMLTextAreaElement>("textarea")?.value).toBe(
+      "Dictated context",
+    );
     expect(onSubmit).not.toHaveBeenCalled();
   });
 });

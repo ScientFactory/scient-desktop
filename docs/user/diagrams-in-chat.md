@@ -30,11 +30,13 @@ on request. A failed diagram instead shows its error directly above a normal
 code block, with its language or title, syntax highlighting, copy, and line-wrap
 controls. Expanded viewers keep zoom, fit, and actual-size controls visible.
 
-In an editable Markdown file, the source box below a diagram error is already
-an editor. Click anywhere in its text and type there; the box stays in place.
+In an editable Markdown file, the source box shown below a diagram is already an
+editor. Click anywhere in its text and type there; the box stays in place.
 The diagram updates as you fix the source. Escape returns to the document, and
-the same source box remains visible while the error persists. Read mode keeps
-the source selectable for copying.
+the same source box remains visible while the error persists. Select source text
+and choose **Ask in chat** to add that exact passage as a file quote; this applies
+to visible source, not the rendered diagram. Read mode keeps the source selectable
+for copying.
 
 Choose **Move controls** in More to expose a movement handle. Drag it or use
 arrow keys to move within the card; press Enter or Escape to finish.

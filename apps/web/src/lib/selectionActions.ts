@@ -35,11 +35,13 @@ export function resolveSelectionActionPosition(options: {
 export function observeSelectionActions({
   element,
   getActionElement,
+  allowPreventedSelectionStart,
   onSelection,
   onDismiss,
 }: {
   element: HTMLElement;
   getActionElement?: () => HTMLElement | null;
+  allowPreventedSelectionStart?: (target: EventTarget | null) => boolean;
   onSelection: (pointer: SelectionActionPoint | null) => void;
   onDismiss: (reason: "interaction" | "cancel") => void;
 }) {
@@ -102,7 +104,9 @@ export function observeSelectionActions({
   const onSelectionStart = (event: PointerEvent) => {
     if (!event.isPrimary) return;
     // A surface may consume a press for a link or terminal mouse reporting.
-    gestureActive = event.button === 0 && !event.defaultPrevented;
+    gestureActive =
+      event.button === 0 &&
+      (!event.defaultPrevented || allowPreventedSelectionStart?.(event.target) === true);
     dismissed = !gestureActive;
   };
   const onPointerUp = (event: PointerEvent) => {

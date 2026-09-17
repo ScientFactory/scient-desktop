@@ -137,12 +137,15 @@ provider-input expansion boundary; assistant v1 links remain compatible.
 
 Capture reads the live ProseMirror document and current projected source ranges.
 Nested code selection belongs to CodeMirror and is translated to its containing
-ProseMirror code node. No capture, comment, or highlighting action may serialize,
-save, or replace the editor document or undo history. A quote stores the exact
-selected text, original environment/workspace/path, draft-or-saved provenance,
-snapshot SHA-256, and enclosing source blocks/lines. ProseMirror positions are
-an optimization for that exact snapshot only. Changed-source navigation uses
-conservative text/context matching; an ambiguous match must not be highlighted.
+ProseMirror code node. This includes a rich fence only while its source editor is
+visibly selected; native selections crossing a rendered diagram never substitute
+the diagram's hidden source. No capture, comment, or highlighting action may
+serialize, save, or replace the editor document or undo history. A quote stores
+the exact selected text, original environment/workspace/path, draft-or-saved
+provenance, snapshot SHA-256, and enclosing source blocks/lines. ProseMirror
+positions are an optimization for that exact snapshot only. Changed-source
+navigation uses conservative text/context matching; an ambiguous match must not
+be highlighted.
 
 Only text selections are supported in this slice. Non-text atoms, source mode,
 and fallback read-only host-file previews do not inherit a fake file selection

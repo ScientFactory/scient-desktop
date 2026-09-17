@@ -6,7 +6,10 @@ function event(type: string, values: Record<string, unknown> = {}) {
   return Object.assign(new Event(type, { cancelable: true }), values);
 }
 
-function createSelectionSurface({ interactiveActions = false } = {}) {
+function createSelectionSurface({
+  interactiveActions = false,
+  allowPreventedSelectionStart = false,
+} = {}) {
   const frames = new Map<number, FrameRequestCallback>();
   let frameId = 0;
   const view = Object.assign(new EventTarget(), {
@@ -37,6 +40,9 @@ function createSelectionSurface({ interactiveActions = false } = {}) {
     ...(interactiveActions
       ? { getActionElement: () => actionElement as unknown as HTMLElement }
       : {}),
+    ...(allowPreventedSelectionStart
+      ? { allowPreventedSelectionStart: (target: EventTarget | null) => target === element }
+      : {}),
     onSelection,
     onDismiss,
   });
@@ -46,18 +52,21 @@ function createSelectionSurface({ interactiveActions = false } = {}) {
     inside = true,
     button = 0,
     consumed = false,
+    prevented = false,
     isPrimary = true,
     target = inside ? element : document,
   }: {
     inside?: boolean;
     button?: number;
     consumed?: boolean;
+    prevented?: boolean;
     isPrimary?: boolean;
     target?: EventTarget;
   } = {}) => {
     const press = event("pointerdown", { button, isPrimary });
     Object.defineProperty(press, "target", { value: target });
     document.dispatchEvent(press);
+    if (prevented) press.preventDefault();
     if (target === element && !consumed) element.dispatchEvent(press);
   };
   const focus = (target: EventTarget) => {
@@ -173,6 +182,22 @@ describe("selection action gestures", () => {
     surface.down({ consumed: true });
     surface.up();
     surface.change();
+    surface.flush();
+    expect(surface.onSelection).not.toHaveBeenCalled();
+  });
+
+  it("allows an explicitly trusted text surface to finish a prevented selection gesture", () => {
+    const surface = createSelectionSurface({ allowPreventedSelectionStart: true });
+    surface.down({ prevented: true });
+    surface.up({ x: 240, y: 160 });
+    surface.flush();
+    expect(surface.onSelection).toHaveBeenCalledWith({ x: 240, y: 160 });
+  });
+
+  it("keeps prevented gestures suppressed unless the surface explicitly opts in", () => {
+    const surface = createSelectionSurface();
+    surface.down({ prevented: true });
+    surface.up();
     surface.flush();
     expect(surface.onSelection).not.toHaveBeenCalled();
   });

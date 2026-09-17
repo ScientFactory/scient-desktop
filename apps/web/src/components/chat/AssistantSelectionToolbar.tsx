@@ -21,10 +21,12 @@ export function SelectionCitationToolbar<T extends { readonly text: string }>({
   viewport,
   capture,
   onCite,
+  allowPreventedSelectionStart,
 }: {
   viewport: HTMLElement | null;
   capture: () => { citation: T; sourceAnchor: AssistantCitationSourceAnchor } | null;
   onCite: (citation: T, sourceAnchor: AssistantCitationSourceAnchor) => boolean;
+  allowPreventedSelectionStart?: (target: EventTarget | null) => boolean;
 }) {
   const [selection, setSelection] = useState<{
     citation: T;
@@ -72,6 +74,7 @@ export function SelectionCitationToolbar<T extends { readonly text: string }>({
     const actions = observeSelectionActions({
       element: viewport,
       getActionElement: () => toolbarRef.current,
+      ...(allowPreventedSelectionStart ? { allowPreventedSelectionStart } : {}),
       onSelection: update,
       onDismiss: clear,
     });
@@ -104,7 +107,7 @@ export function SelectionCitationToolbar<T extends { readonly text: string }>({
       actions.dispose();
       actionsRef.current = null;
     };
-  }, [capture, viewport]);
+  }, [allowPreventedSelectionStart, capture, viewport]);
 
   if (!selection) return null;
   const tooLong = selection.citation.text.length > ASSISTANT_CITATION_MAX_TEXT_LENGTH;
