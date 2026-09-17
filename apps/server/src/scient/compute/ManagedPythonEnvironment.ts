@@ -526,6 +526,18 @@ export function makeManagedPythonEnvironmentManager(
   const reconcile = () =>
     serialize(async () => {
       const current = await readStatus(paths, purpose);
+      if (current === null) {
+        const hasActivationMetadata = await NodeFSP.lstat(paths.statePath).then(
+          () => true,
+          (cause: NodeJS.ErrnoException) => {
+            if (cause.code === "ENOENT") return false;
+            throw cause;
+          },
+        );
+        // Existing but unreadable metadata does not prove any generation obsolete.
+        // Leave recovery/removal to an explicit action, as background collection does.
+        if (hasActivationMetadata) return null;
+      }
       await cleanupAbandoned(current?.record ?? null);
       return current;
     });

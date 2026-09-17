@@ -268,12 +268,13 @@ Nothing discovers the candidate before step 6. Provision, verification,
 cancellation, or activation failure removes only the unpublished candidate and
 leaves the previous state untouched. Removal first atomically renames the exact
 app-owned environment to a sibling tombstone; deletion failure renames it back.
-Removal is refused while a live Python session exists. Removal admission shares
-the session-start lock, and new sessions are refused while removal is active.
-Startup reconciliation,
-after prior-process sessions are gone, removes abandoned app-owned generations
-and removal tombstones. A tampered state record cannot redirect inspection or
-cleanup outside the managed root.
+Removal admission and process-start reservations protect generations in use;
+Python sessions using unrelated installations do not block managed Python removal.
+Startup reconciliation, after prior-process sessions are gone, removes proven
+abandoned app-owned generations and removal tombstones. If an activation record
+exists but cannot be read or trusted, reconciliation preserves the generations
+for explicit recovery instead. A tampered state record cannot redirect inspection
+or cleanup outside the managed root.
 
 `repair` deliberately uses the same fresh-generation transaction as install.
 It never modifies the active environment in place. The runtime record stores a

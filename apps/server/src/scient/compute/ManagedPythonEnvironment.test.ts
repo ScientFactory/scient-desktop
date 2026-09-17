@@ -125,6 +125,21 @@ describe("ManagedPythonEnvironment", () => {
     expect((await NodeFSP.stat(first.executable)).isFile()).toBe(true);
   });
 
+  it.each(["python", "matlab-connection"] as const)(
+    "preserves %s generations on startup when existing activation metadata cannot be read",
+    async (purpose) => {
+      const manager = makeManagedPythonEnvironmentManager(computeDir, dependencies(), purpose);
+      const installed = await manager.install(installInput());
+      const statePath = managedPythonEnvironmentPaths(computeDir, purpose).statePath;
+      await NodeFSP.writeFile(statePath, "broken");
+
+      const restarted = makeManagedPythonEnvironmentManager(computeDir, dependencies(), purpose);
+      expect(await restarted.reconcile()).toBeNull();
+      expect((await NodeFSP.stat(installed.executable)).isFile()).toBe(true);
+      expect(await NodeFSP.readFile(statePath, "utf8")).toBe("broken");
+    },
+  );
+
   it("reserves a generation through a directory alias and releases idempotently", async () => {
     const manager = makeManagedPythonEnvironmentManager(computeDir, dependencies(), "python", {
       trackUsage: true,

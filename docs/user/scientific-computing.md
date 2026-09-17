@@ -110,6 +110,8 @@ block removal. Scient tracks environment usage, not individual Python imports: a
 still import a package later. Old generations are reclaimed after their last user closes, while the
 active generation and one rollback generation are retained. Interpreter builds and the bounded
 download cache are retained for reuse; removing an environment is not a purge of those stores.
+If activation metadata cannot be read, startup preserves the existing generations rather than
+treating them as abandoned. This also applies to MATLAB connection-helper generations.
 These usage guarantees cover processes owned by Scient, not arbitrary external terminals launched
 against its private environment paths. Project `.venv`, configured, system, Homebrew, Conda, pyenv, and
 other user-owned installations are never repaired or removed.
