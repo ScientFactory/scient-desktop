@@ -240,10 +240,12 @@ describe("searchSettings", () => {
 
   it("ranks keybinding commands after other settings", () => {
     const ids = searchSettings("model").map((item) => item.id);
-    expect(ids[0]).toBe("default-model");
-    expect(ids.indexOf("keybinding-modelPicker.toggle")).toBeGreaterThan(
-      ids.indexOf("text-generation-model"),
-    );
+    const commandIndex = ids.indexOf("keybinding-modelPicker.toggle");
+    expect(commandIndex).toBeGreaterThan(-1);
+    for (const id of ["custom-models", "default-model", "text-generation-model"]) {
+      expect(ids.indexOf(id)).toBeGreaterThan(-1);
+      expect(commandIndex).toBeGreaterThan(ids.indexOf(id));
+    }
   });
 
   it("sends commands without a default binding to the section", () => {

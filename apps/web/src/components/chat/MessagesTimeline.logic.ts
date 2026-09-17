@@ -1186,7 +1186,7 @@ export function deriveMessagesTimelineRows(input: {
       continue;
     }
 
-    if (input.isWorking && activeWorkRow !== null && index === activeTurnHeaderIndex) {
+    if (input.isWorking && index === activeTurnHeaderIndex) {
       appendWorkingRow();
     }
 
@@ -1555,24 +1555,10 @@ export function deriveMessagesTimelineRows(input: {
             ]
           : [setupRow]),
       );
-      // A finished setup card remains attached to the initiating send. If a
-      // different turn is still active, keep that turn's stable working
-      // header immediately after the setup outcome instead of moving it to
-      // the end of an already-streaming response.
-      if (input.isWorking && !setupRunning) {
-        nextRows.splice(insertAt + 1, 0, {
-          kind: "working",
-          id: "working-indicator-row",
-          createdAt: input.activeTurnStartedAt,
-        });
-      }
     }
   }
-  if (
-    input.isWorking &&
-    (activeWorkRow === null || activeTurnHeaderIndex === input.timelineEntries.length) &&
-    !nextRows.some((row) => row.kind === "working")
-  ) {
+  const hasWorkingRow = nextRows.some((row) => row.kind === "working");
+  if (input.isWorking && !hasWorkingRow && activeTurnHeaderIndex === input.timelineEntries.length) {
     appendWorkingRow();
   }
   // Scient setup scripts may keep running after the agent starts. Preserve
@@ -1594,10 +1580,6 @@ export function deriveMessagesTimelineRows(input: {
   }
   // A running setup owns the working slot above its card and shows no
   // activity row of its own; every other state gets the usual tail.
-  const hasWorkingRow = nextRows.some((row) => row.kind === "working");
-  if (input.isWorking && !hasWorkingRow && activeTurnHeaderIndex === input.timelineEntries.length) {
-    appendWorkingRow();
-  }
   if (input.isWorking && !setupRunning && (!hasActivityRow || latestToolFailed)) {
     nextRows.push({
       kind: "thinking",

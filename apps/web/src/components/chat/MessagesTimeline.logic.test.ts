@@ -2869,8 +2869,8 @@ describe("deriveMessagesTimelineRows", () => {
     });
 
     expect(rows.map((row) => row.id)).toEqual([
-      "assistant-commentary-entry",
       "working-indicator-row",
+      "assistant-commentary-entry",
       "live-activity-row",
     ]);
   });
