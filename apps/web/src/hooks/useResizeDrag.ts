@@ -1,4 +1,5 @@
 import { type PointerEvent, useCallback, useEffect, useLayoutEffect, useRef } from "react";
+import { resizeCursorForPlatform } from "~/lib/utils";
 
 interface ResizeSession {
   width: number;
@@ -103,7 +104,7 @@ export function useResizeDrag<T extends HTMLElement>(
         moved: false,
         frame: null,
       };
-      document.body.style.cursor = "col-resize";
+      document.body.style.cursor = resizeCursorForPlatform("horizontal", navigator.platform);
       document.body.style.userSelect = "none";
     },
     onPointerMove(event: PointerEvent<T>) {
