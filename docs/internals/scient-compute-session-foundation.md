@@ -909,6 +909,22 @@ The bridge:
   still live, not a way to recover descendants from a vanished leader.
 - Exits if its parent server connection closes (parent-death watchdog).
 
+Before kernel startup, the host reserves and protects its private loopback
+channels. The protection remains across kernel restarts and is released only
+after confirmed process-tree cleanup. Preview discovery additionally requires
+an explicit web URL: a listening port or terminal process is not evidence of
+HTTP support. This second boundary protects kernels in other backend instances,
+which cannot share an in-memory registry. Listener enumeration supplies passive
+metadata only; probes use the declared scheme without HTTP/HTTPS guessing.
+An older installed Scient version may still probe a patched candidate's ports;
+cross-instance qualification must identify the versions of both participants.
+
+Bridge process stderr remains a bounded diagnostic channel. Jupyter IOPub
+stderr remains user-visible output: a parent message ID establishes correlation,
+not whether text originated in user code or kernel infrastructure. Do not hide
+protocol errors by matching traceback strings; prevent unsolicited protocol
+traffic at the scanner instead.
+
 ### 7.3 Initial bridge runtime strategy
 
 For the technical proof and initial development, run the bridge using the

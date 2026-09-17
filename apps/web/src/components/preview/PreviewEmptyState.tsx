@@ -71,8 +71,8 @@ export function PreviewEmptyState({
         </EmptyMedia>
         <EmptyTitle>No preview yet</EmptyTitle>
         <EmptyDescription>
-          Type a URL above, or run a dev script. Browser-ready localhost servers will show up here
-          automatically.
+          Type a URL above, or run a project action with a Preview URL. Configured local previews
+          appear here when ready.
         </EmptyDescription>
       </Empty>
     );

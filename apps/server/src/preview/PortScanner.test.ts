@@ -7,7 +7,6 @@ import {
   type DiscoveredLocalServer,
 } from "@t3tools/contracts";
 import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
-import * as Net from "@t3tools/shared/Net";
 import * as Cause from "effect/Cause";
 import * as Clock from "effect/Clock";
 import * as Duration from "effect/Duration";
@@ -44,16 +43,6 @@ const TestProcessRunner = Layer.succeed(ProcessRunner.ProcessRunner, {
 });
 const TestOwnedLocalEndpointsLive = OwnedLocalEndpoints.layer;
 
-let integrationListeningPort: number | null = null;
-
-const TestIntegrationNet = Layer.succeed(Net.NetService, {
-  canListenOnHost: () => Effect.succeed(true),
-  isPortAvailableOnLoopback: (port) => Effect.sync(() => port !== integrationListeningPort),
-  hasListenerOnHost: (port) => Effect.sync(() => port === integrationListeningPort),
-  reserveLoopbackPort: () => Effect.succeed(40_000),
-  findAvailablePort: (preferred) => Effect.succeed(preferred),
-});
-
 const makeProbeFailureLayer = (
   run: ProcessRunner.ProcessRunner["Service"]["run"],
   fetch: typeof globalThis.fetch = globalThis.fetch,
@@ -62,13 +51,6 @@ const makeProbeFailureLayer = (
     Layer.provide(
       Layer.mergeAll(
         Layer.succeed(ProcessRunner.ProcessRunner, { run }),
-        Layer.succeed(Net.NetService, {
-          canListenOnHost: () => Effect.succeed(true),
-          isPortAvailableOnLoopback: () => Effect.succeed(true),
-          hasListenerOnHost: () => Effect.succeed(false),
-          reserveLoopbackPort: () => Effect.succeed(40_000),
-          findAvailablePort: (preferred) => Effect.succeed(preferred),
-        }),
         Layer.succeed(HostProcessPlatform, "linux"),
         FetchHttpClient.layer.pipe(Layer.provide(Layer.succeed(FetchHttpClient.Fetch, fetch))),
         TestOwnedLocalEndpointsLive,
@@ -80,7 +62,6 @@ const TestPortDiscoveryLive = PortScanner.layer.pipe(
   Layer.provide(
     Layer.mergeAll(
       TestProcessRunner,
-      TestIntegrationNet,
       Layer.succeed(HostProcessPlatform, "win32"),
       FetchHttpClient.layer,
       TestOwnedLocalEndpointsLive,
@@ -89,6 +70,81 @@ const TestPortDiscoveryLive = PortScanner.layer.pipe(
 );
 
 const LSOF_TEST_PORT = 43_123;
+
+effectIt.effect("unknown listeners and terminal ownership never authorize protocol probes", () => {
+  const requests: string[] = [];
+  const layer = makeLsofScannerLayer({
+    pid: () => 1234,
+    listeners: () => [
+      { pid: 1234, port: LSOF_TEST_PORT },
+      { pid: 5678, port: 8888 },
+    ],
+    fetch: ((url: Parameters<typeof globalThis.fetch>[0]) => {
+      requests.push(String(url));
+      return Promise.resolve(new Response("ok", { headers: { "content-type": "text/html" } }));
+    }) as typeof globalThis.fetch,
+  });
+  return Effect.gen(function* () {
+    const scanner = yield* PortScanner.PortDiscovery;
+    yield* scanner.registerTerminalProcesses({
+      threadId: "test",
+      terminalId: "term",
+      processIds: [1234],
+    });
+    for (let i = 0; i < 20; i += 1) expect(yield* scanner.scan()).toEqual([]);
+    expect(requests).toEqual([]);
+    const explicit = `http://localhost:${LSOF_TEST_PORT}/app`;
+    const servers = yield* scanner.scan([explicit]);
+    expect(servers[0]?.terminal?.terminalId).toBe("term");
+    expect(requests).toEqual([explicit]);
+    yield* scanner.unregisterTerminal({ threadId: "test", terminalId: "term" });
+    expect(yield* scanner.scan()).toEqual([]);
+    expect(requests).toEqual([explicit]);
+  }).pipe(Effect.provide(layer));
+});
+
+effectIt.effect(
+  "forgetting a URL discards cached readiness instead of granting future discovery",
+  () => {
+    const requests: string[] = [];
+    const url = `http://localhost:${LSOF_TEST_PORT}/`;
+    const layer = makeLsofScannerLayer({
+      pid: () => 1234,
+      fetch: ((input: Parameters<typeof globalThis.fetch>[0]) => {
+        requests.push(String(input));
+        return Promise.resolve(new Response("ok", { headers: { "content-type": "text/html" } }));
+      }) as typeof globalThis.fetch,
+    });
+    return Effect.gen(function* () {
+      const scanner = yield* PortScanner.PortDiscovery;
+      expect(yield* scanner.scan([url])).toHaveLength(1);
+      expect(yield* scanner.scan()).toEqual([]);
+      expect(requests).toEqual([url]);
+      expect(yield* scanner.scan([url])).toHaveLength(1);
+      expect(requests).toEqual([url, url]);
+    }).pipe(Effect.provide(layer));
+  },
+);
+
+effectIt.effect("revalidates explicit targets when the listener process changes", () => {
+  let pid = 1234;
+  const requests: string[] = [];
+  const url = `http://localhost:${LSOF_TEST_PORT}/`;
+  const layer = makeLsofScannerLayer({
+    pid: () => pid,
+    fetch: ((input: Parameters<typeof globalThis.fetch>[0]) => {
+      requests.push(String(input));
+      return Promise.resolve(new Response("ok", { headers: { "content-type": "text/html" } }));
+    }) as typeof globalThis.fetch,
+  });
+  return Effect.gen(function* () {
+    const scanner = yield* PortScanner.PortDiscovery;
+    yield* scanner.scan([url]);
+    pid += 1;
+    yield* scanner.scan([url]);
+    expect(requests).toEqual([url, url]);
+  }).pipe(Effect.provide(layer));
+});
 
 const makeLsofScannerLayer = (input: {
   readonly pid: () => number;
@@ -118,13 +174,6 @@ const makeLsofScannerLayer = (input: {
               stdoutInvalidUtf8: false,
               stderrInvalidUtf8: false,
             }),
-        }),
-        Layer.succeed(Net.NetService, {
-          canListenOnHost: () => Effect.succeed(true),
-          isPortAvailableOnLoopback: () => Effect.succeed(true),
-          hasListenerOnHost: () => Effect.succeed(false),
-          reserveLoopbackPort: () => Effect.succeed(40_000),
-          findAvailablePort: (preferred) => Effect.succeed(preferred),
         }),
         Layer.succeed(HostProcessPlatform, "linux"),
         FetchHttpClient.layer.pipe(
@@ -157,103 +206,45 @@ const closeServer = (server: NodeNet.Server): Effect.Effect<void> =>
     server.close(() => resume(Effect.void));
   });
 
-const openCommonDevServer = Effect.fn("PortScannerTest.openCommonDevServer")(function* (
-  ports: ReadonlyArray<number>,
-  onConnection: (socket: NodeNet.Socket) => void,
-) {
-  for (const port of ports) {
-    const server = yield* openServer(port, onConnection);
-    if (server !== null) return { port, server };
-  }
-  return yield* Effect.die(
-    new Error("No common development port was available for the preview scanner test"),
-  );
-});
-
 const commonDevServer = Effect.acquireRelease(
-  openCommonDevServer(PortScanner.COMMON_DEV_PORTS, (socket) => {
+  openServer(0, (socket) => {
     socket.once("data", () => {
       socket.end("HTTP/1.1 200 OK\r\nContent-Type: text/html\r\nContent-Length: 5\r\n\r\nhello");
     });
   }).pipe(
-    Effect.tap(({ port }) =>
-      Effect.sync(() => {
-        integrationListeningPort = port;
-      }),
-    ),
+    Effect.map((server) => {
+      if (server === null) throw new Error("Could not bind fixture");
+      const address = server.address();
+      if (address === null || typeof address === "string") throw new Error("No fixture port");
+      return { server, port: address.port };
+    }),
   ),
-  ({ server }) =>
-    closeServer(server).pipe(
-      Effect.ensuring(
-        Effect.sync(() => {
-          integrationListeningPort = null;
-        }),
-      ),
-    ),
+  ({ server }) => closeServer(server),
 );
 
-const commonNonHttpServer = Effect.acquireRelease(
-  openCommonDevServer(PortScanner.COMMON_DEV_PORTS.toReversed(), (socket) => {
-    socket.on("error", () => undefined);
-    socket.once("data", () => socket.end("MYSQL\r\n\r\n"));
-  }).pipe(
-    Effect.tap(({ port }) =>
-      Effect.sync(() => {
-        integrationListeningPort = port;
-      }),
-    ),
-  ),
-  ({ server }) =>
-    closeServer(server).pipe(
-      Effect.ensuring(
-        Effect.sync(() => {
-          integrationListeningPort = null;
-        }),
-      ),
-    ),
-);
-
-/**
- * Integration tests against a real TCP listener. We provide the Windows host
- * platform so the tests exercise the TCP-probe fallback without depending on
- * `lsof` being installed.
- */
-effectIt.layer(TestPortDiscoveryLive)("PortDiscovery integration (TCP probe fallback)", (it) => {
-  it.effect(
-    "scan() returns an HTTP server we just opened on a curated dev port",
-    Effect.fn("PortScannerTest.scanFindsCommonDevServer")(function* () {
+effectIt.layer(TestPortDiscoveryLive)("Explicit Preview URLs without listener metadata", (it) => {
+  it.effect("checks an explicitly configured real web server", () =>
+    Effect.gen(function* () {
       const { port } = yield* commonDevServer;
       const scanner = yield* PortScanner.PortDiscovery;
-      const result = yield* scanner.scan();
-      const found = result.find((server) => server.port === port);
-      expect(found).toBeDefined();
-      expect(found?.host).toBe("localhost");
+      const result = yield* scanner.scan([`http://127.0.0.1:${port}/`]);
+      expect(result[0]?.port).toBe(port);
     }),
   );
-
-  it.effect(
-    "scan() excludes a listening port that does not speak HTTP",
-    Effect.fn("PortScannerTest.scanExcludesNonHttpServer")(function* () {
-      const { port } = yield* commonNonHttpServer;
-      const scanner = yield* PortScanner.PortDiscovery;
-      const result = yield* scanner.scan();
-      expect(result.some((server) => server.port === port)).toBe(false);
-    }),
-  );
-
-  it.effect(
-    "retain drives an immediate broadcast to subscribers",
-    Effect.fn("PortScannerTest.retainBroadcastsImmediately")(function* () {
+  it.effect("retain broadcasts configured URLs only", () =>
+    Effect.gen(function* () {
       const { port } = yield* commonDevServer;
       const received: number[] = [];
       const scanner = yield* PortScanner.PortDiscovery;
-      yield* scanner.subscribe({ configuredUrls: [], initialSnapshot: [] }, (servers) =>
-        Effect.sync(() => {
-          for (const server of servers) received.push(server.port);
-        }),
+      yield* scanner.subscribe(
+        { configuredUrls: [`http://127.0.0.1:${port}/`], initialSnapshot: [] },
+        (servers) =>
+          Effect.sync(() => {
+            for (const server of servers) received.push(server.port);
+          }),
       );
       yield* scanner.retain;
-      expect(received).toContain(port);
+      expect(received).toEqual([port]);
     }),
   );
 });
@@ -271,17 +262,16 @@ effectIt.effect("revalidates a successful HTML probe after its cache entry expir
 
   return Effect.gen(function* () {
     const scanner = yield* PortScanner.PortDiscovery;
-    expect(yield* scanner.scan()).toHaveLength(1);
-    expect(yield* scanner.scan()).toHaveLength(1);
+    expect(yield* scanner.scan([`http://localhost:${LSOF_TEST_PORT}/`])).toHaveLength(1);
+    expect(yield* scanner.scan([`http://localhost:${LSOF_TEST_PORT}/`])).toHaveLength(1);
     expect(requests).toEqual([`http://localhost:${LSOF_TEST_PORT}/`]);
 
     responds = false;
     yield* TestClock.adjust(Duration.seconds(15));
-    expect(yield* scanner.scan()).toHaveLength(0);
+    expect(yield* scanner.scan([`http://localhost:${LSOF_TEST_PORT}/`])).toHaveLength(0);
     expect(requests).toEqual([
       `http://localhost:${LSOF_TEST_PORT}/`,
       `http://localhost:${LSOF_TEST_PORT}/`,
-      `https://localhost:${LSOF_TEST_PORT}/`,
     ]);
   }).pipe(Effect.provide(layer));
 });
@@ -312,11 +302,16 @@ effectIt.effect("never sends HTTP bytes to a protected internal endpoint", () =>
     yield* lease.handoff;
 
     const scanner = yield* PortScanner.PortDiscovery;
-    expect(yield* scanner.scan()).toEqual([]);
+    expect(
+      yield* scanner.scan([
+        `http://localhost:${protectedPort}/`,
+        `https://127.0.0.1:${protectedPort}/`,
+      ]),
+    ).toEqual([]);
     expect(requests).toEqual([]);
 
     yield* lease.release;
-    expect(yield* scanner.scan()).toHaveLength(1);
+    expect(yield* scanner.scan([`http://localhost:${protectedPort}/`])).toHaveLength(1);
     expect(requests).toEqual([`http://localhost:${protectedPort}/`]);
   }).pipe(Effect.provide(layer));
 });
@@ -350,7 +345,9 @@ effectIt.effect("still discovers a normal web port owned by the same process", (
     yield* lease.handoff;
 
     const scanner = yield* PortScanner.PortDiscovery;
-    expect((yield* scanner.scan()).map(({ port }) => port)).toEqual([LSOF_TEST_PORT]);
+    expect(
+      (yield* scanner.scan([`http://localhost:${LSOF_TEST_PORT}/`])).map(({ port }) => port),
+    ).toEqual([LSOF_TEST_PORT]);
     expect(requests).toEqual([`http://localhost:${LSOF_TEST_PORT}/`]);
     yield* lease.release;
   }).pipe(Effect.provide(layer));
@@ -372,8 +369,8 @@ effectIt.effect("invalidates cached classifications when endpoint ownership chan
   return Effect.gen(function* () {
     const scanner = yield* PortScanner.PortDiscovery;
     const registry = yield* OwnedLocalEndpoints.OwnedLocalEndpointRegistry;
-    expect(yield* scanner.scan()).toHaveLength(1);
-    expect(yield* scanner.scan()).toHaveLength(1);
+    expect(yield* scanner.scan([`http://localhost:${LSOF_TEST_PORT}/`])).toHaveLength(1);
+    expect(yield* scanner.scan([`http://localhost:${LSOF_TEST_PORT}/`])).toHaveLength(1);
     expect(requests).toHaveLength(1);
 
     const lease = yield* registry.reserveProtectedLoopbackTcpPorts({
@@ -381,7 +378,7 @@ effectIt.effect("invalidates cached classifications when endpoint ownership chan
       purpose: "private-protocol",
       count: 1,
     });
-    expect(yield* scanner.scan()).toHaveLength(1);
+    expect(yield* scanner.scan([`http://localhost:${LSOF_TEST_PORT}/`])).toHaveLength(1);
     expect(requests).toHaveLength(2);
     yield* lease.release;
   }).pipe(Effect.provide(layer));
@@ -575,7 +572,7 @@ effectIt.effect("uses the current configured fragment when readiness comes from 
   }).pipe(Effect.provide(layer));
 });
 
-effectIt.effect("shares a configured root probe with discovered-root classification", () => {
+effectIt.effect("deduplicates an explicit URL without adding discovered-root probes", () => {
   const requests: string[] = [];
   const rootUrl = `http://localhost:${LSOF_TEST_PORT}/`;
   const fetchFn = ((input: Parameters<typeof globalThis.fetch>[0]) => {
@@ -586,7 +583,7 @@ effectIt.effect("shares a configured root probe with discovered-root classificat
 
   return Effect.gen(function* () {
     const scanner = yield* PortScanner.PortDiscovery;
-    expect(yield* scanner.scan([rootUrl])).toHaveLength(1);
+    expect(yield* scanner.scan([rootUrl, rootUrl])).toHaveLength(1);
     expect(requests).toEqual([rootUrl]);
 
     yield* TestClock.adjust(Duration.seconds(15));
@@ -615,8 +612,8 @@ effectIt.effect("starts fresh cache entries after the probing batch completes", 
 
     yield* Effect.gen(function* () {
       const scanner = yield* PortScanner.PortDiscovery;
-      expect(yield* scanner.scan()).toHaveLength(1);
-      expect(yield* scanner.scan()).toHaveLength(1);
+      expect(yield* scanner.scan([`http://localhost:${LSOF_TEST_PORT}/`])).toHaveLength(1);
+      expect(yield* scanner.scan([`http://localhost:${LSOF_TEST_PORT}/`])).toHaveLength(1);
       expect(requests).toHaveLength(1);
     }).pipe(Effect.provide(layer), Effect.provideService(Clock.Clock, clock));
   }),
@@ -635,18 +632,18 @@ effectIt.effect("caches a failed web probe until its bounded cache entry expires
 
   return Effect.gen(function* () {
     const scanner = yield* PortScanner.PortDiscovery;
-    expect(yield* scanner.scan()).toHaveLength(0);
-    expect(yield* scanner.scan()).toHaveLength(0);
-    expect(requests).toHaveLength(2);
+    expect(yield* scanner.scan([`http://localhost:${LSOF_TEST_PORT}/`])).toHaveLength(0);
+    expect(yield* scanner.scan([`http://localhost:${LSOF_TEST_PORT}/`])).toHaveLength(0);
+    expect(requests).toHaveLength(1);
 
     responds = true;
     yield* TestClock.adjust(Duration.seconds(15));
-    expect(yield* scanner.scan()).toHaveLength(1);
-    expect(requests).toHaveLength(3);
+    expect(yield* scanner.scan([`http://localhost:${LSOF_TEST_PORT}/`])).toHaveLength(1);
+    expect(requests).toHaveLength(2);
   }).pipe(Effect.provide(layer));
 });
 
-effectIt.effect("falls back to HTTPS and does not follow redirects while probing", () => {
+effectIt.effect("uses only explicit HTTPS and does not follow redirects while probing", () => {
   const redirects: Array<string | undefined> = [];
   const fetchFn = (async (
     input: Parameters<typeof globalThis.fetch>[0],
@@ -660,10 +657,10 @@ effectIt.effect("falls back to HTTPS and does not follow redirects while probing
 
   return Effect.gen(function* () {
     const scanner = yield* PortScanner.PortDiscovery;
-    const servers = yield* scanner.scan();
+    const servers = yield* scanner.scan([`https://localhost:${LSOF_TEST_PORT}/`]);
     expect(servers).toHaveLength(1);
-    expect(servers[0]?.url).toBe(`https://localhost:${LSOF_TEST_PORT}`);
-    expect(redirects).toEqual(["manual", "manual"]);
+    expect(servers[0]?.url).toBe(`https://localhost:${LSOF_TEST_PORT}/`);
+    expect(redirects).toEqual(["manual"]);
   }).pipe(Effect.provide(layer));
 });
 
@@ -679,30 +676,30 @@ effectIt.effect(
 
     return Effect.gen(function* () {
       const scanner = yield* PortScanner.PortDiscovery;
-      expect(yield* scanner.scan()).toHaveLength(0);
+      expect(yield* scanner.scan([`http://localhost:${LSOF_TEST_PORT}/`])).toHaveLength(0);
 
       pid += 1;
       makeResponse = () =>
         new Response("{}", { status: 200, headers: { "content-type": "application/json" } });
-      expect(yield* scanner.scan()).toHaveLength(0);
+      expect(yield* scanner.scan([`http://localhost:${LSOF_TEST_PORT}/`])).toHaveLength(0);
 
       pid += 1;
       makeResponse = () =>
         new Response("ready", { status: 200, headers: { "content-type": "text/plain" } });
-      expect(yield* scanner.scan()).toHaveLength(0);
+      expect(yield* scanner.scan([`http://localhost:${LSOF_TEST_PORT}/`])).toHaveLength(0);
 
       pid += 1;
       makeResponse = () => new Response(null, { status: 304, headers: { location: "/cached" } });
-      expect(yield* scanner.scan()).toHaveLength(0);
+      expect(yield* scanner.scan([`http://localhost:${LSOF_TEST_PORT}/`])).toHaveLength(0);
 
       pid += 1;
       makeResponse = () =>
         new Response(null, { status: 204, headers: { "content-type": "text/html" } });
-      expect(yield* scanner.scan()).toHaveLength(0);
+      expect(yield* scanner.scan([`http://localhost:${LSOF_TEST_PORT}/`])).toHaveLength(0);
 
       pid += 1;
       makeResponse = () => new Response(null, { status: 302 });
-      expect(yield* scanner.scan()).toHaveLength(0);
+      expect(yield* scanner.scan([`http://localhost:${LSOF_TEST_PORT}/`])).toHaveLength(0);
 
       pid += 1;
       makeResponse = () =>
@@ -710,12 +707,12 @@ effectIt.effect(
           status: 200,
           headers: { "content-type": "application/xhtml+xml; charset=utf-8" },
         });
-      expect(yield* scanner.scan()).toHaveLength(1);
+      expect(yield* scanner.scan([`http://localhost:${LSOF_TEST_PORT}/`])).toHaveLength(1);
     }).pipe(Effect.provide(layer));
   },
 );
 
-effectIt.effect("aborts HTTP and HTTPS probes when they time out", () => {
+effectIt.effect("aborts the declared-protocol probe when it times out", () => {
   const aborted: string[] = [];
   const fetchFn = ((
     input: Parameters<typeof globalThis.fetch>[0],
@@ -737,13 +734,12 @@ effectIt.effect("aborts HTTP and HTTPS probes when they time out", () => {
 
   return Effect.gen(function* () {
     const scanner = yield* PortScanner.PortDiscovery;
-    const scanFiber = yield* Effect.forkChild(scanner.scan());
+    const scanFiber = yield* Effect.forkChild(
+      scanner.scan([`http://localhost:${LSOF_TEST_PORT}/`]),
+    );
     yield* TestClock.adjust(Duration.seconds(2));
     expect(yield* Fiber.join(scanFiber)).toHaveLength(0);
-    expect(aborted).toEqual([
-      `http://localhost:${LSOF_TEST_PORT}/`,
-      `https://localhost:${LSOF_TEST_PORT}/`,
-    ]);
+    expect(aborted).toEqual([`http://localhost:${LSOF_TEST_PORT}/`]);
   }).pipe(Effect.provide(layer));
 });
 
@@ -752,10 +748,9 @@ effectIt.effect("does not swallow process probe defects", () =>
     const defect = new Error("unexpected process probe defect");
     const layer = makeProbeFailureLayer(() => Effect.die(defect));
 
-    const exit = yield* Effect.flatMap(PortScanner.PortDiscovery, (scanner) => scanner.scan()).pipe(
-      Effect.provide(layer),
-      Effect.exit,
-    );
+    const exit = yield* Effect.flatMap(PortScanner.PortDiscovery, (scanner) =>
+      scanner.scan([`http://localhost:${LSOF_TEST_PORT}/`]),
+    ).pipe(Effect.provide(layer), Effect.exit);
 
     expect(Exit.isFailure(exit)).toBe(true);
     if (Exit.isFailure(exit)) {
@@ -769,10 +764,9 @@ effectIt.effect("does not swallow process probe interruption", () =>
   Effect.gen(function* () {
     const layer = makeProbeFailureLayer(() => Effect.interrupt);
 
-    const exit = yield* Effect.flatMap(PortScanner.PortDiscovery, (scanner) => scanner.scan()).pipe(
-      Effect.provide(layer),
-      Effect.exit,
-    );
+    const exit = yield* Effect.flatMap(PortScanner.PortDiscovery, (scanner) =>
+      scanner.scan([`http://localhost:${LSOF_TEST_PORT}/`]),
+    ).pipe(Effect.provide(layer), Effect.exit);
 
     expect(Exit.isFailure(exit)).toBe(true);
     if (Exit.isFailure(exit)) {
