@@ -1924,9 +1924,17 @@ describe("storage cleanup", () => {
           assert.strictEqual(yield* fs.exists(activeLog), true);
         }).pipe(
           Effect.provide(
-            ServerConfig.layerTest(process.cwd(), { prefix: "t3-storage-cleanup-" }).pipe(
-              Layer.provideMerge(NodeServices.layer),
-            ),
+            Layer.unwrap(
+              Effect.gen(function* () {
+                const fs = yield* FileSystem.FileSystem;
+                const directory = yield* fs.makeTempDirectoryScoped({
+                  prefix: "t3-storage-cleanup-",
+                });
+                // Exercise cleanup policy, not the host's temporary-directory symlink aliases.
+                const canonicalDirectory = yield* fs.realPath(directory);
+                return ServerConfig.layerTest(process.cwd(), canonicalDirectory);
+              }),
+            ).pipe(Layer.provideMerge(NodeServices.layer)),
           ),
           Effect.scoped,
         ),

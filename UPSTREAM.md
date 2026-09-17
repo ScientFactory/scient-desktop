@@ -38,26 +38,30 @@ or observed tip.
 
 The current T3 alignment is recorded in
 [`docs/internals/2026-09-17-upstream-sync-dd9528a9.md`](docs/internals/2026-09-17-upstream-sync-dd9528a9.md)
-and in `upstream-state.json`. It preserves 35 more official first-parent commits after
+and in `upstream-state.json`. It preserves 37 more official first-parent commits after
 `01e64193d9d2abfae8f7b3d20f66824e38397bd6` through
-`dd9528a974ba534faa8d1588f3f137fa2a281860`. The history-preserving merge
-`f3a0406a28fe7122fdf3ad0932942ed38e401d1b` has the exact owned base
-`cbd99c95fbb07cf5c3575b9a5058c6749ae17ca5` as its first parent and the exact official target as
-its second.
+`1ab2dfb5a7bd2996f79407b5d02cae6132a7626c`. Initial merge
+`f3a0406a28fe7122fdf3ad0932942ed38e401d1b` is extended on the same branch by
+`86b5bb723178ec1959e916d6722e958e5268859e`, whose second parent is the exact final official
+target. Its first parent `d1a8574362d2f64038e06aa0d8d1b26f67482855` also incorporates owned
+main `cee69d80373272fce40d0e1f866193164066c852`.
 
-Automated qualification passed; owner manual review is pending. Pull-request delivery, merge, and
-release publication remain separate actions. The
+Automated qualification passed; the owner requested PR delivery and history-preserving auto-merge.
+No additional visual acceptance or release publication is implied. The
 [preceding alignment](docs/internals/2026-09-15-upstream-sync-c1b22104.md) remains in ancestry.
 Later observed upstream tips do not move `integrationBase` by themselves.
 
 ## Receiving T3 updates
 
-The local alignment through `dd9528a9` is documented in the
+The local alignment through `1ab2dfb5` is documented in the
 [2026-09-17 review](docs/internals/2026-09-17-upstream-sync-dd9528a9.md). It adds the rich-text
 composer default, multi-model thread creation in separate worktrees, automatic storage cleanup,
 directory-safe file navigation, broader command-palette discovery, improved pull-request and chat
 presentation, checkpoint and settlement reliability, Android Material surfaces, mobile worktree
-handoff, and dictation wake-lock behavior. Scient's provider lifecycle, scientific surfaces,
+handoff, dictation wake-lock behavior, mobile model favorites, and the preview-picker navigation
+fix. Scient's approved stable-only update policy also removes the unsupported track selector and
+normalizes stale Nightly preferences without replacing download or install mechanics.
+Scient's provider lifecycle, scientific surfaces,
 identity, signed npm-pinned server runtime, durable server-authoritative queue, project-first
 policy, state roots, and cloud/mobile publication holds remain.
 
