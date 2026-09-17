@@ -1,38 +1,30 @@
 ---
 name: pdf-authoring
-description: Create polished PDF deliverables and their editable sources. Use when the user asks to create, revise, or export a PDF or printable document, not when they only want to read an existing PDF.
+description: Create, revise, or export PDF documents in Scient. Use when the user asks to create a PDF, change an existing PDF, or export another document as PDF. Do not use when the task only involves reading or extracting information from a PDF.
 ---
 
 # PDF Authoring
 
-The goal is to produce a correct, polished PDF that fits the user's purpose while preserving an appropriate editable source and truthful build evidence.
+The goal is to deliver a PDF that meets the user’s requirements and accurately report what was produced and verified.
 
-## Choose an Authoring Route
+## Choose a Method
 
-Honor the user's requested source format. If they ask for LaTeX or a `.tex` source, create LaTeX and do not substitute HTML merely because another route is easier to build. Preserve an existing authoring format unless the user asks to convert it.
+Honor any format or editing method the user requests. When working from an editable source, preserve its format unless the user requests conversion or conversion is required to complete the task.
 
-When the user has not chosen a format, select the source model whose strengths match the document's hardest requirements and expected revision workflow, not its topic or length alone:
+Choose the method based on the requested changes, available source, future editing needs, and the tools available:
 
-- Prefer LaTeX when semantic typesetting—such as equations, references, numbering, footnotes, or consistent structured composition—is the main source of complexity.
-- Prefer HTML and CSS when visual composition, browser-native graphics, multilingual or RTL behavior, or web-derived content is the main source of complexity.
-- When neither dominates, use the route that can be built, inspected, and maintained most reliably with the capabilities actually available.
+- For an existing PDF, use direct PDF operations when they can make the requested changes while preserving the rest of the document.
+- When authoring a document without an established source format, consider LaTeX for structured typesetting such as equations, citations, and cross-references, or HTML and CSS for browser-based layout and graphics.
+- Consider other available authoring, export, or PDF-editing tools when they better fit the task.
 
-When LaTeX is chosen, use `latex-authoring` when available. When HTML is chosen for PDF output, use `html-pdf-authoring` when available. Preserve another existing source format and use its qualified native exporter when that gives the most faithful result.
+Use the relevant dedicated skill and tools available for the selected method. Use `latex-authoring` for LaTeX and `html-pdf-authoring` for HTML-to-PDF; follow equivalent guidance for other methods when available.
 
-These are judgment criteria, not restrictions. Do not re-render an existing PDF merely to copy, inspect, or transform it; use a PDF-native operation when one is available.
+## Produce and Verify the PDF
 
-This skill provides guidance only and grants no tools or authority. If no qualified build route is available, provide the editable source and state the limitation clearly; never imply that a PDF was produced or verified.
+This skill grants no tools or authority. When the requested deliverable is a PDF, source alone is not completion: produce the actual PDF using an available build, export, or editing capability. If that cannot be completed, provide any useful work produced and clearly explain what remains.
 
-## Build and Verify the Deliverable
+Review the output against the requirements that matter for that document, including content completeness, readable layout, relevant text fidelity and navigation, and any explicitly requested page count.
 
-Keep the source and its assets in sensible workspace locations unless the user requests otherwise. When the requested deliverable is a PDF, source alone is not completion: build the PDF when the session has a qualified route.
+Successful generation or editing does not establish visual quality. When visual review is available, inspect rendered pages of the resulting PDF. Prefer direct page rendering or a PDF preview tool over computer use when it provides the needed view. Inspect enough of the document to support the claims you make, fix material defects you observe, and verify the updated output. If visual inspection is unavailable, say so.
 
-Review the result in the dimensions that matter for the document:
-
-- visual fidelity, including typography, hierarchy, spacing, pagination, sharp figures, and the absence of clipping, overlap, or missing glyphs;
-- text fidelity, including search, selection, copy order, and RTL or mixed-direction text when relevant; and
-- document behavior, including page count, links, outline, references, and page numbering when intended.
-
-Inspect rendered pages rather than relying only on successful compilation or structural parsing. Review every page of a short document and representative high-risk pages of a long one. Fix meaningful defects and rebuild when possible.
-
-When reporting completion to the user in Scient chat, provide clickable project-relative Markdown links to the exact editable source and final project PDF actually produced. Link the exact `outputPath` returned by a build operation, and wrap link destinations containing spaces in angle brackets. If no PDF was built, link the editable source and state that clearly. Do not rebuild through another route merely to obtain a link. Then report the authoring route, verification performed, and any unresolved warning or unverified property.
+When reporting completion in Scient chat, provide clickable project-relative Markdown links to the final PDF and any editable source created or updated. Use the actual output path; when a tool returns `outputPath`, use it for that tool’s output. Wrap destinations containing spaces in angle brackets. If no PDF was produced, link any useful work created and state what remains. Briefly report what was verified and any material limitation.
