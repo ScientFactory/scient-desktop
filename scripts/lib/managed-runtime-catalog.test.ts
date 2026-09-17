@@ -346,7 +346,26 @@ describe("managed runtime release discovery", () => {
     };
     expect(() =>
       mergeQualifiedManagedRuntimeProvider({ current, candidate: incomplete, provider: "pi" }),
-    ).toThrow(/same-version catalog repack/u);
+    ).toThrow(/every app-approved target/u);
+  });
+
+  it("rejects an incomplete newer release during publication", () => {
+    const current = validateManagedRuntimeCatalog(bundledCatalogJson);
+    const pi = current.providers.pi!;
+    const candidate = validateManagedRuntimeCatalog({
+      ...current,
+      providers: {
+        ...current.providers,
+        pi: {
+          ...pi,
+          version: nextPatch(pi.version),
+          artifacts: { "darwin-arm64": pi.artifacts["darwin-arm64"] },
+        },
+      },
+    });
+    expect(() =>
+      mergeQualifiedManagedRuntimeProvider({ current, candidate, provider: "pi" }),
+    ).toThrow(/every app-approved target/u);
   });
 
   it("discovers every existing Droid target from its native channel", async () => {

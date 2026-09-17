@@ -111,6 +111,18 @@ function approvedTargetKeys(provider: ManagedRuntimeCatalogProvider): ReadonlyAr
     : policyEntries(provider).map(({ key }) => key);
 }
 
+function hasCompleteApprovedTargetSet(
+  provider: ManagedRuntimeCatalogProvider,
+  release: ManagedRuntimeCatalogProviderData,
+): boolean {
+  const approved = approvedTargetKeys(provider);
+  const candidate = Object.keys(release.artifacts);
+  return (
+    candidate.length === approved.length &&
+    approved.every((key) => release.artifacts[key] !== undefined)
+  );
+}
+
 function strictVersion(value: string, label: string): string {
   const version = value.trim();
   if (!/^[0-9]+(?:\.[0-9]+)+(?:-[0-9A-Za-z._]+)?$/u.test(version) || version.length > 128) {
@@ -439,9 +451,8 @@ function isAdditiveTargetExpansion(input: {
   const currentEntries = Object.entries(input.current.artifacts);
   const candidateEntries = Object.entries(input.candidate.artifacts);
   return (
-    candidateEntries.length === approved.size &&
+    hasCompleteApprovedTargetSet(input.provider, input.candidate) &&
     candidateEntries.length > currentEntries.length &&
-    candidateEntries.every(([key]) => approved.has(key)) &&
     currentEntries.every(
       ([key, artifact]) =>
         approved.has(key) &&
@@ -873,6 +884,9 @@ export function mergeQualifiedManagedRuntimeProvider(input: {
   const candidateRelease = input.candidate.providers[input.provider];
   if (!candidateRelease) {
     throw new Error(`Managed runtime catalog is missing ${input.provider}.`);
+  }
+  if (!hasCompleteApprovedTargetSet(input.provider, candidateRelease)) {
+    throw new Error(`${input.provider} candidate does not contain every app-approved target.`);
   }
   if (currentRelease.version === candidateRelease.version) {
     if (JSON.stringify(currentRelease) !== JSON.stringify(candidateRelease)) {

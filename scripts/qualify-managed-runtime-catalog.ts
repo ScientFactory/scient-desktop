@@ -50,7 +50,11 @@ if (runPiLiveTests && provider !== "pi") {
   throw new Error("--pi-live-tests is valid only for Pi qualification.");
 }
 
-async function verifyPiIntegration(binary: string, platform: NodeJS.Platform): Promise<void> {
+async function verifyPiIntegration(
+  binary: string,
+  version: string,
+  platform: NodeJS.Platform,
+): Promise<void> {
   const tests = [
     "apps/server/src/provider/pi/PiCustomModels.live.test.ts",
     "apps/server/src/provider/pi/PiNativeProvider.live.test.ts",
@@ -61,7 +65,11 @@ async function verifyPiIntegration(binary: string, platform: NodeJS.Platform): P
   await new Promise<void>((resolve, reject) => {
     const child = NodeChildProcess.spawn("vp", ["test", "run", "--no-file-parallelism", ...tests], {
       cwd: process.cwd(),
-      env: { ...process.env, SCIENT_PI_TEST_BINARY: binary },
+      env: {
+        ...process.env,
+        SCIENT_PI_TEST_BINARY: binary,
+        SCIENT_PI_TEST_VERSION: version,
+      },
       // Windows cannot execute a package-manager .cmd shim directly through spawn.
       // The shell is needed only to resolve the fixed `vp` command; all arguments are static.
       shell: platform === "win32",
@@ -172,7 +180,7 @@ try {
     throw new Error(`${provider} ${targetKey} did not activate the qualified release.`);
   }
   if (runPiLiveTests) {
-    await verifyPiIntegration(runtime.launchPath(artifact), target.platform);
+    await verifyPiIntegration(runtime.launchPath(artifact), artifact.version, target.platform);
   }
   if (process.argv.includes("--repair")) {
     await runtime.install({ artifact, signal: AbortSignal.timeout(15 * 60_000) });
