@@ -16,6 +16,8 @@ const TABLE_LITERAL_TEX = /\$(?=[^$\n]*\\[A-Za-z]{2,})[^$\n]{1,1000}\$/g;
 const TABLE_TEX_COMMAND = /\\[A-Za-z]{2,}(?:\s*\{[^{}\n]*\})?/g;
 const TABLE_TECHNICAL_IDENTIFIER =
   /(?<![\p{L}\p{N}])(?:[A-Z]{2,5}[+-]?|[A-Za-z]+\d+[A-Za-z0-9+-]*|\d+[A-Za-z]+[A-Za-z0-9+-]*)(?![\p{L}\p{N}])/gu;
+const CONTEXTUAL_PROSE_MAX_RTL_PERCENT_FOR_LTR = 30;
+const CONTEXTUAL_PROSE_MIN_RTL_PERCENT_FOR_RTL = 45;
 const MIXED_TABLE_CELL_LTR_THRESHOLD_PERCENT = 70;
 
 const RTL_FLOW_ARROW_REPLACEMENTS: Readonly<Record<string, string>> = {
@@ -160,9 +162,9 @@ export function resolveStreamingMarkdownDirection(input: {
 }
 
 /**
- * Gives a prose block an explicit local direction only when it is unambiguous.
- * Mixed blocks inherit the message base so leading English tokens cannot flip
- * an otherwise Hebrew sentence or list item.
+ * Resolves a paragraph or complete list against its surrounding message.
+ * Locally decisive prose wins; a mixture between 30% and 45% RTL follows the
+ * message so short terms from the other script cannot reverse a coherent block.
  */
 export function resolveProseBlockDirection(
   text: string,
@@ -176,15 +178,17 @@ export function resolveProseBlockDirectionFromCounts(
   baseDirection: FixedContentDirection,
 ): FixedContentDirection {
   const { rtl, ltr } = counts;
-  if (rtl > 0 && ltr === 0) return "rtl";
-  if (ltr > 0 && rtl === 0) return "ltr";
+  const total = rtl + ltr;
+  if (total === 0) return baseDirection;
+  if (rtl * 100 >= total * CONTEXTUAL_PROSE_MIN_RTL_PERCENT_FOR_RTL) return "rtl";
+  if (rtl * 100 <= total * CONTEXTUAL_PROSE_MAX_RTL_PERCENT_FOR_LTR) return "ltr";
   return baseDirection;
 }
 
 /**
  * Resolves a direction for a structural group such as one complete list.
- * Any RTL prose makes the group RTL; otherwise any LTR prose makes it LTR.
- * This deliberately does not classify each child independently.
+ * The same contextual classifier is used for prose blocks, but the complete
+ * group is counted once so its children never receive competing directions.
  */
 export function resolveAggregateDirection(
   text: string,
@@ -197,10 +201,7 @@ export function resolveAggregateDirectionFromCounts(
   counts: StrongScriptCounts,
   fallbackDirection: FixedContentDirection,
 ): FixedContentDirection {
-  const { rtl, ltr } = counts;
-  if (rtl > 0) return "rtl";
-  if (ltr > 0) return "ltr";
-  return fallbackDirection;
+  return resolveProseBlockDirectionFromCounts(counts, fallbackDirection);
 }
 
 /**

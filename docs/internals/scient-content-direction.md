@@ -9,7 +9,7 @@ It is separate from application-shell direction, is decoded with the default
 `auto`, and is not sent to providers or stored in conversation events.
 
 `ContentDirectionScope` is the web-only boundary. Chat rendering and the
-Lexical composer consume that scope; the app shell, project picker, terminals,
+Tiptap composer consume that scope; the app shell, project picker, terminals,
 file browser, and other technical surfaces remain unchanged.
 
 ## Markdown boundary
@@ -18,9 +18,12 @@ file browser, and other technical surfaces remain unchanged.
 and then applies the small `rehypeScientBidi` transform. The transform adds
 direction only to conversational structural elements (`p`, headings,
 blockquotes, lists, tables, and details). In automatic mode, each complete
-list gets one aggregate direction: any RTL prose makes the whole list RTL; an
-English-only list is LTR; items do not receive competing per-item overrides.
-Nested lists inherit their parent list direction. In automatic mode, table
+paragraph or list uses its strong prose characters and the complete message as
+context. At least 45% RTL prose makes that structure RTL; at most 30% keeps it
+LTR; between those thresholds it follows the message direction. Each complete
+list is counted once, items do not receive competing overrides, and nested
+lists inherit their parent list direction. Code and math nodes do not
+participate in prose counts. In automatic mode, table
 structure follows the dominant prose direction across the whole table. Code,
 equations, literal TeX, and scientific identifiers such as `HER2` and `cN0` do
 not decide column order. English-only prose tables can therefore remain LTR
@@ -70,10 +73,12 @@ response is resolved again. Plain-text boxes still use their own content rule.
 
 ## Composer
 
-The composer plugin changes only the Lexical root and its direct paragraphs for
-fixed modes. Automatic mode removes the explicit root direction and preserves
-Lexical's native `dir="auto"` paragraph behavior. The plugin is mounted at the
-existing composer seam and does not alter prompt serialization.
+The composer adapter changes only the Tiptap root and its direct paragraphs,
+lists, and blockquotes. Automatic mode resolves the complete draft once for
+context, then applies the same 30%/45% prose rule used by rendered Markdown.
+Code nodes do not participate, and every complete list keeps one direction.
+Fixed modes remain authoritative. The adapter is mounted at the existing
+composer seam and does not alter prompt serialization.
 
 ## Upstream maintenance
 

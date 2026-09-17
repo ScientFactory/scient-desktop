@@ -61,7 +61,7 @@ describe("rehypeScientBidi", () => {
     }>;
     expect(elements[0]?.properties?.dir).toBe("rtl");
     expect(elements[1]?.properties?.dir).toBe("ltr");
-    expect(elements[2]?.properties?.dir).toBe("rtl");
+    expect(elements[2]?.properties?.dir).toBe("ltr");
     expect(elements[2]?.children?.[0]?.properties).toBeUndefined();
     expect(elements[2]?.children?.[1]?.properties).toBeUndefined();
     expect(elements[3]?.properties?.dir).toBe("rtl");
@@ -151,6 +151,36 @@ describe("rehypeScientBidi", () => {
     expect(explicitlyLtrParagraph.children?.[0]?.value).toBe("שלום → עולם");
   });
 
+  it("does not let code or math steer a prose block", () => {
+    const tree = {
+      type: "root",
+      children: [
+        {
+          type: "element",
+          tagName: "p",
+          children: [
+            { type: "text", value: "שלום" },
+            {
+              type: "element",
+              tagName: "code",
+              children: [{ type: "text", value: "const englishTechnicalIdentifier = true" }],
+            },
+            {
+              type: "element",
+              tagName: "math",
+              children: [{ type: "text", value: "EnglishVariable" }],
+            },
+          ],
+        },
+      ],
+    };
+
+    rehypeScientBidi({ direction: "ltr", requestedDirection: "auto" })(tree);
+
+    const paragraph = tree.children?.[0] as { properties?: Record<string, unknown> };
+    expect(paragraph.properties?.dir).toBe("rtl");
+  });
+
   it("uses one direction for an English-only list and keeps children inheriting", () => {
     const tree = {
       type: "root",
@@ -175,6 +205,40 @@ describe("rehypeScientBidi", () => {
     };
 
     rehypeScientBidi({ direction: "rtl" })(tree);
+
+    const list = tree.children?.[0] as {
+      children?: Array<{ properties?: Record<string, unknown> }>;
+      properties?: Record<string, unknown>;
+    };
+    expect(list.properties?.dir).toBe("ltr");
+    expect(list.children?.[0]?.properties).toBeUndefined();
+    expect(list.children?.[1]?.properties).toBeUndefined();
+  });
+
+  it("keeps a mostly English list LTR when it contains one Hebrew word", () => {
+    const tree = {
+      type: "root",
+      children: [
+        {
+          type: "element",
+          tagName: "ul",
+          children: [
+            {
+              type: "element",
+              tagName: "li",
+              children: [{ type: "text", value: "Standard deviation and confidence interval" }],
+            },
+            {
+              type: "element",
+              tagName: "li",
+              children: [{ type: "text", value: "Review the complete report שלום" }],
+            },
+          ],
+        },
+      ],
+    };
+
+    rehypeScientBidi({ direction: "rtl", requestedDirection: "auto" })(tree);
 
     const list = tree.children?.[0] as {
       children?: Array<{ properties?: Record<string, unknown> }>;
@@ -562,7 +626,7 @@ describe("rehypeScientBidi", () => {
               type: "element",
               tagName: "li",
               children: [
-                { type: "text", value: "ממצא" },
+                { type: "text", value: "ממצא עברי משמעותי נוסף וברור" },
                 {
                   type: "element",
                   tagName: "ol",

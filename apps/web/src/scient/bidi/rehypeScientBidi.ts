@@ -37,7 +37,8 @@ const HEADING_TAGS = new Set(["h1", "h2", "h3", "h4", "h5", "h6"]);
 const LIST_TAGS = new Set(["ul", "ol"]);
 const LOCAL_DIRECTION_TAGS = new Set(DIRECTIONAL_BLOCK_TAGS);
 const TABLE_CELL_TAGS = new Set(["th", "td"]);
-const NON_PROSE_TAGS = new Set(["a", "code", "math", "pre", "script", "style"]);
+const PROSE_EXCLUDED_TAGS = new Set(["code", "math", "pre", "script", "style"]);
+const NON_PROSE_TAGS = new Set(["a", ...PROSE_EXCLUDED_TAGS]);
 const ZERO_COUNTS: StrongScriptCounts = { ltr: 0, rtl: 0 };
 
 interface TableCellPlacement {
@@ -63,7 +64,7 @@ function setDirection(node: BidiNode, direction: FixedContentDirection): void {
 }
 
 function plainText(node: BidiNode): string {
-  if (node.type === "element" && (node.tagName === "code" || node.tagName === "pre")) {
+  if (node.type === "element" && node.tagName && PROSE_EXCLUDED_TAGS.has(node.tagName)) {
     return "";
   }
   if (node.type === "text") return node.value ?? "";
@@ -71,15 +72,7 @@ function plainText(node: BidiNode): string {
 }
 
 function tableProseText(node: BidiNode): string {
-  if (
-    node.type === "element" &&
-    node.tagName &&
-    (node.tagName === "code" ||
-      node.tagName === "math" ||
-      node.tagName === "pre" ||
-      node.tagName === "script" ||
-      node.tagName === "style")
-  ) {
+  if (node.type === "element" && node.tagName && PROSE_EXCLUDED_TAGS.has(node.tagName)) {
     return "";
   }
   if (node.type === "text") return node.value ?? "";
