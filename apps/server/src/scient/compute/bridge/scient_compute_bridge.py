@@ -189,7 +189,15 @@ def _scient_pre_run(info):
     global _scient_filename, _scient_saved_file
     global _scient_previous_file_present, _scient_previous_file, _scient_added_sys_path
     _scient_restore_source_context()
-    metadata = info.cell_meta if isinstance(info.cell_meta, dict) else {}
+    # IPython 9 carries execute-request metadata on ExecutionInfo.  IPython 8,
+    # which is still selected by supported Python 3.10 runtimes, keeps the same
+    # metadata only on ZMQInteractiveShell's current parent message.
+    metadata = getattr(info, "cell_meta", None)
+    if not isinstance(metadata, dict):
+        parent = getattr(_scient_shell, "parent_header", None)
+        metadata = parent.get("metadata") if isinstance(parent, dict) else None
+    if not isinstance(metadata, dict):
+        metadata = {}
     context = metadata.get("scient")
     if not isinstance(context, dict):
         return

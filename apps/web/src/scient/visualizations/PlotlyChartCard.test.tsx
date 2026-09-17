@@ -70,8 +70,15 @@ describe("PlotlyChartCard server fallback", () => {
         }),
       ),
     );
-    const describedBy = [...html.matchAll(/aria-describedby="([^"]+)"/gu)].map((match) => match[1]);
+    const figureOpeningTags = [...html.matchAll(/<[^>]*\brole="figure"[^>]*>/gu)].map(
+      (match) => match[0],
+    );
+    const describedBy = figureOpeningTags.flatMap((tag) => {
+      const match = /\baria-describedby="([^"]+)"/u.exec(tag);
+      return match?.[1] === undefined ? [] : [match[1]];
+    });
 
+    expect(figureOpeningTags).toHaveLength(2);
     expect(describedBy).toHaveLength(2);
     expect(new Set(describedBy).size).toBe(2);
   });

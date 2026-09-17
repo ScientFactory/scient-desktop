@@ -13,6 +13,7 @@ import {
   nextComputeSessionGeneration,
   projectComputeOutputs,
   type ComputeChannel,
+  type ComputeExecuteSourceContext,
   type ComputeRuntimeProfile,
   type ComputeTransportEvent,
 } from "@scientfactory/compute";
@@ -189,10 +190,16 @@ const execute = Effect.fn("PythonKernel.execute")(function* (
   id: string,
   code: string,
   generation = INITIAL_COMPUTE_SESSION_GENERATION,
+  sourceContext?: ComputeExecuteSourceContext,
 ) {
   const requestId = ComputeRequestId.make(id);
   NodeProcess.stderr.write(`real-kernel send: ${id}\n`);
-  yield* harness.channel.execute({ requestId, expectedGeneration: generation, code });
+  yield* harness.channel.execute({
+    requestId,
+    expectedGeneration: generation,
+    code,
+    ...(sourceContext === undefined ? {} : { sourceContext }),
+  });
   NodeProcess.stderr.write(`real-kernel sent: ${id}\n`);
   const observed: ComputeTransportEvent[] = [];
   for (;;) {
@@ -233,6 +240,12 @@ describe.runIf(Boolean(TEST_PYTHON))("Python kernel integration", () => {
           const representations = outputs.flatMap((output) =>
             output._tag === "display-data" ? output.bundle.representations : [],
           );
+          expect(
+            outputs.some(
+              (output) =>
+                output._tag === "stream" && output.text.includes("Error in callback <function"),
+            ),
+          ).toBe(false);
           const table = representations.find(
             (item) => item.mediaType === "application/vnd.dataresource+json",
           );
@@ -251,6 +264,20 @@ describe.runIf(Boolean(TEST_PYTHON))("Python kernel integration", () => {
           expect(data.scientPreview.truncated).toBe(true);
           expect(
             representations.some((item) => item.mediaType === "application/vnd.plotly.v1+json"),
+          ).toBe(true);
+
+          const contextualFailure = yield* execute(
+            harness,
+            "source-context-failure",
+            "raise RuntimeError('source-context-marker')",
+            INITIAL_COMPUTE_SESSION_GENERATION,
+            { kind: "selection", filePath: "source-context.py", saved: false },
+          );
+          const report = contextualFailure.find((event) => event._tag === "runtime-error");
+          if (report?._tag !== "runtime-error") throw new Error("Expected a contextual error.");
+          expect(report.report.value).toContain("source-context-marker");
+          expect(
+            report.report.traceback.some((line) => line.includes("<scient-compute-source>")),
           ).toBe(true);
           yield* harness.channel.shutdown({
             expectedGeneration: INITIAL_COMPUTE_SESSION_GENERATION,
