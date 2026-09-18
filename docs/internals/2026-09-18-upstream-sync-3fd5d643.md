@@ -50,6 +50,9 @@ release notes, and preserve composer submission intent while voice processing is
 - **Documentation and dependencies were composed, not duplicated.** Scient's existing guidance
   and exports were retained, upstream documentation was added at its own paths, and the lockfile
   was regenerated from the composed manifests.
+- **Macroscope's ignore manifest remains literal glob syntax.** The upstream control file uses a
+  `.md` suffix for discovery but is not Markdown. The documentation workflow now excludes that
+  exact file instead of allowing its Markdown formatter to rewrite and corrupt the glob patterns.
 - **The latest owned-main changes were folded without textual conflicts.** Their agent guidance,
   preview-link schema, Windows/Unicode HTML path test, release notes, and voice-aware composer
   submission behavior are preserved as ordinary main history.
@@ -73,6 +76,8 @@ release notes, and preserve composer submission intent while voice processing is
   optional-platform import warnings only.
 - `pnpm run test:desktop-smoke`: passed.
 - `pnpm run brand:check`: passed across 2,106 product-surface files.
+- The exact Documentation workflow file selection, pinned formatter, and local-link check passed;
+  `.macroscope/ignore.md` remains excluded from Markdown processing and unchanged from upstream.
 - Analysis, onboarding, skills, and LaTeX protected-seam checks: passed against the exact
   `origin/main...HEAD` candidate range and official `upstream/main` target.
 - `pnpm run upstream:provenance:check`: passed at official integration base `3fd5d643`.

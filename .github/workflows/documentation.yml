@@ -47,7 +47,8 @@ jobs:
             START_SHA="$HEAD_SHA^"
           fi
 
-          # Reference snapshots preserve their donor bytes; only owned files are linted.
+          # Reference snapshots preserve their donor bytes. Macroscope's ignore file uses a
+          # Markdown extension for discovery, but its contents are glob syntax rather than Markdown.
           git diff --check "$START_SHA" "$HEAD_SHA" -- . ':!.repos'
 
           markdown_files=()
@@ -55,7 +56,7 @@ jobs:
             if [[ "$file" == *.md ]]; then
               markdown_files+=("$file")
             fi
-          done < <(git diff --name-only -z --diff-filter=ACMR "$START_SHA" "$HEAD_SHA" -- "*.md" "docs/**" ':!.repos')
+          done < <(git diff --name-only -z --diff-filter=ACMR "$START_SHA" "$HEAD_SHA" -- "*.md" "docs/**" ':!.repos' ':!.macroscope/ignore.md')
 
           if (( ${#markdown_files[@]} > 0 )); then
             npx --yes oxfmt@0.57.0 --config .github/oxfmt-documentation.json --check "${markdown_files[@]}"
