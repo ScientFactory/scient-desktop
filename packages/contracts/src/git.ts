@@ -211,6 +211,8 @@ const VcsStatusChangeRequest = Schema.Struct({
 });
 
 const VcsStatusLocalShape = {
+  /** Optional for compatibility with older servers. */
+  gitAvailability: Schema.optional(Schema.Literals(["available", "missing"])),
   isRepo: Schema.Boolean,
   sourceControlProvider: Schema.optional(SourceControlProviderInfo),
   hasPrimaryRemote: Schema.Boolean,

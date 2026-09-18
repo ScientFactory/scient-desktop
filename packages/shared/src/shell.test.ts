@@ -452,6 +452,9 @@ effectIt.layer(NodeServices.layer)("resolveCommandPath", (it) => {
       expect((yield* resolveCommandPath("appeared", options).pipe(Effect.result))._tag).toBe(
         "Failure",
       );
+      expect(yield* resolveCommandPath("appeared", { ...options, bypassCache: true })).toBe(
+        executable,
+      );
       expect(yield* resolveCommandPath(executable, options)).toBe(executable);
       yield* TestClock.adjust("30 seconds");
       expect(yield* resolveCommandPath("appeared", options)).toBe(executable);

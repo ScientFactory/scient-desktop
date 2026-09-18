@@ -256,6 +256,20 @@ export class VcsRepositoryDetectionError extends Schema.TaggedError<VcsRepositor
   }
 }
 
+export class VcsExecutableUnavailableError extends Schema.TaggedError<VcsExecutableUnavailableError>()(
+  "VcsExecutableUnavailableError",
+  {
+    operation: Schema.String,
+    kind: VcsDriverKind,
+    command: TrimmedNonEmptyString,
+    cwd: Schema.String,
+  },
+) {
+  override get message(): string {
+    return `${this.command} is unavailable for ${this.kind} in ${this.operation}: ${this.cwd}`;
+  }
+}
+
 export class VcsUnsupportedOperationError extends Schema.TaggedError<VcsUnsupportedOperationError>()(
   "VcsUnsupportedOperationError",
   {
@@ -277,6 +291,7 @@ export const VcsError = Schema.Union([
   VcsProcessOutputReadError,
   VcsProcessOutputLimitError,
   VcsProcessMissingExitCodeError,
+  VcsExecutableUnavailableError,
   VcsRepositoryDetectionError,
   VcsUnsupportedOperationError,
 ]);

@@ -224,6 +224,35 @@ describe("add project shared logic", () => {
     expect(sortAddProjectProviderSources(readiness)[0]).toBe("github");
   });
 
+  it("disables every remote clone source when Git is unavailable", () => {
+    const discovery: SourceControlDiscoveryResult = {
+      versionControlSystems: [
+        {
+          kind: "git",
+          label: "Git",
+          executable: "git",
+          implemented: true,
+          status: "missing",
+          version: Option.none(),
+          installHint: "Install Git",
+          detail: Option.none(),
+        },
+      ],
+      sourceControlProviders: [],
+    };
+
+    const readiness = buildAddProjectRemoteSourceReadiness(discovery);
+    expect(Object.values(readiness)).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          ready: false,
+          hint: "Git is unavailable in this environment.",
+        }),
+      ]),
+    );
+    expect(Object.values(readiness).every((source) => !source.ready)).toBe(true);
+  });
+
   it("finds existing projects by normalized path in the target environment", () => {
     const env = EnvironmentId.make("env");
     const other = EnvironmentId.make("other");

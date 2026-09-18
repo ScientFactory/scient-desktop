@@ -35,6 +35,8 @@ function canExecuteFile(filePath: string): boolean {
 export interface CommandAvailabilityOptions {
   readonly env?: NodeJS.ProcessEnv;
   readonly extendEnv?: boolean;
+  /** Re-scan PATH even when a recent lookup was cached. */
+  readonly bypassCache?: boolean;
 }
 
 export type CommandAvailabilityChecker = (
@@ -584,7 +586,7 @@ const resolveCommandPathForPlatform = Effect.fn("shell.resolveCommandPathForPlat
   );
   const cache = yield* CommandResolutionCache;
   const nowNanos = yield* Clock.currentTimeNanos;
-  const cached = cache.get(cacheKey);
+  const cached = options.bypassCache ? undefined : cache.get(cacheKey);
   if (cached !== undefined && cached.expiresAtNanos > nowNanos) {
     if (cached.resolvedPath === null) {
       return yield* new CommandResolutionError({ command, reason: "not-found" });
@@ -607,12 +609,16 @@ const resolveCommandPathForPlatform = Effect.fn("shell.resolveCommandPathForPlat
     for (const candidate of commandCandidates) {
       const candidatePath = path.join(pathEntry, candidate);
       if (yield* isExecutableFile(candidatePath, platform, windowsPathExtensions)) {
-        cacheCommandResolution(cache, cacheKey, candidatePath, nowNanos);
+        if (!options.bypassCache) {
+          cacheCommandResolution(cache, cacheKey, candidatePath, nowNanos);
+        }
         return candidatePath;
       }
     }
   }
-  cacheCommandResolution(cache, cacheKey, null, nowNanos);
+  if (!options.bypassCache) {
+    cacheCommandResolution(cache, cacheKey, null, nowNanos);
+  }
   return yield* new CommandResolutionError({ command, reason: "not-found" });
 });
 
@@ -623,6 +629,7 @@ export const resolveCommandPath = Effect.fn("shell.resolveCommandPath")(function
   return yield* resolveCommandPathForPlatform(command, {
     env: options.env ?? (yield* HostProcessEnvironment),
     platform: yield* HostProcessPlatform,
+    ...(options.bypassCache ? { bypassCache: true } : {}),
   });
 });
 

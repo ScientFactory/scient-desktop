@@ -3,7 +3,7 @@ import * as NodePath from "node:path";
 
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { it } from "@effect/vitest";
-import { ThreadId, type VcsError } from "@t3tools/contracts";
+import { ThreadId, VcsExecutableUnavailableError, type VcsError } from "@t3tools/contracts";
 import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -113,6 +113,31 @@ it.layer(TestLayer)("CheckpointStore.layer", (it) => {
 
         expect(yield* checkpointStore.isGitRepository(tmp)).toBe(true);
       }),
+    );
+
+    it.effect("treats missing Git as unavailable checkpoint support", () =>
+      Effect.gen(function* () {
+        const checkpointStore = yield* CheckpointStore.CheckpointStore;
+        expect(yield* checkpointStore.isGitRepository("/workspace")).toBe(false);
+      }).pipe(
+        Effect.provide(
+          CheckpointStore.layer.pipe(
+            Layer.provide(
+              Layer.mock(VcsDriverRegistry.VcsDriverRegistry)({
+                detect: () =>
+                  Effect.fail(
+                    new VcsExecutableUnavailableError({
+                      operation: "GitVcsDriver.detectRepository",
+                      kind: "git",
+                      command: "git",
+                      cwd: "/workspace",
+                    }),
+                  ),
+              }),
+            ),
+          ),
+        ),
+      ),
     );
   });
 

@@ -10,9 +10,10 @@ import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
 import * as PlatformError from "effect/PlatformError";
 import { ChildProcessSpawner } from "effect/unstable/process";
-import { assert, it } from "@effect/vitest";
+import { assert, expect, it, vi } from "@effect/vitest";
 
 import { CheckpointRef, GitCommandError, VcsProcessExitError } from "@t3tools/contracts";
+import { CommandAvailability } from "@t3tools/shared/shell";
 import * as ServerConfig from "../config.ts";
 import * as GitVcsDriver from "./GitVcsDriver.ts";
 import * as VcsProcess from "./VcsProcess.ts";
@@ -68,6 +69,26 @@ runVcsDriverContractSuite<GitVcsDriver.GitVcsDriver, GitContractError>({
         yield* fileSystem.writeFileString(path.join(cwd, ".gitignore"), `${pattern}\n`);
       }),
   },
+});
+
+it.effect("distinguishes a missing Git executable from an ordinary non-repository", () => {
+  const commandAvailability = vi.fn(() => Effect.succeed(false));
+  return Effect.gen(function* () {
+    const driver = yield* GitVcsDriver.makeVcsDriverShape();
+    const error = yield* driver.detectRepository("/workspace").pipe(Effect.flip);
+
+    expect(error).toMatchObject({
+      _tag: "VcsExecutableUnavailableError",
+      operation: "GitVcsDriver.detectRepository",
+      kind: "git",
+      command: "git",
+      cwd: "/workspace",
+    });
+    expect(commandAvailability).toHaveBeenCalledWith("git", { bypassCache: true });
+  }).pipe(
+    Effect.provideService(CommandAvailability, commandAvailability),
+    Effect.provide(GitContractLayer),
+  );
 });
 
 const makeCheckpointFixture = Effect.fn("makeCheckpointFixture")(function* (

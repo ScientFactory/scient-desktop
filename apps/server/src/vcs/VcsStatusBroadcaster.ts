@@ -378,19 +378,22 @@ export const make = Effect.gen(function* () {
     const cwd = yield* withFileSystem(normalizeCwd(input.cwd));
     const cached = yield* getCachedStatus(cwd);
     if (cached?.local && cached.remote) {
-      return mergeGitStatusParts(cached.local.value, cached.remote.value);
+      return mergeGitStatusParts(
+        cached.local.value,
+        cached.local.value.gitAvailability === "missing" ? null : cached.remote.value,
+      );
     }
     return yield* withRemoteWriteLock(
       cwd,
       Effect.gen(function* () {
         const latest = yield* getCachedStatus(cwd);
-        const [local, remote] = yield* Effect.all(
-          [
-            latest?.local ? Effect.succeed(latest.local.value) : workflow.localStatus({ cwd }),
-            latest?.remote ? Effect.succeed(latest.remote.value) : workflow.remoteStatus({ cwd }),
-          ],
-          { concurrency: "unbounded" },
-        );
+        const local = latest?.local ? latest.local.value : yield* workflow.localStatus({ cwd });
+        const remote =
+          local.gitAvailability === "missing"
+            ? null
+            : latest?.remote
+              ? latest.remote.value
+              : yield* workflow.remoteStatus({ cwd });
         return yield* updateCachedStatus(cwd, local, remote);
       }),
     );
@@ -459,6 +462,10 @@ export const make = Effect.gen(function* () {
     return yield* withRemoteWriteLock(
       cwd,
       Effect.gen(function* () {
+        const local = yield* getOrLoadLocalStatus(cwd);
+        if (local.gitAvailability === "missing") {
+          return yield* updateCachedRemoteStatus(cwd, null, { publish: true });
+        }
         if (options?.refreshUpstream !== false) {
           yield* workflow.invalidateRemoteStatus(cwd);
         }
@@ -480,10 +487,9 @@ export const make = Effect.gen(function* () {
       cwd,
       Effect.gen(function* () {
         yield* workflow.invalidateStatus(cwd);
-        const [local, remote] = yield* Effect.all(
-          [workflow.localStatus({ cwd }), workflow.remoteStatus({ cwd })],
-          { concurrency: "unbounded" },
-        );
+        const local = yield* workflow.localStatus({ cwd });
+        const remote =
+          local.gitAvailability === "missing" ? null : yield* workflow.remoteStatus({ cwd });
         const pulled = yield* maybeAutoPull(cwd, remote, [rawCwd]);
         if (pulled !== null) return mergeGitStatusParts(pulled.local, pulled.remote);
         return yield* updateCachedStatus(cwd, local, remote, { publish: true });

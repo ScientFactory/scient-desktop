@@ -615,6 +615,8 @@ import {
 import { useComputeFilePresentationStore } from "~/scient/compute/computeFilePresentationStore";
 import { computeSourceLanguageForPath } from "~/scient/compute/computeSourceLanguage";
 
+const INSTALL_GIT_AGENT_PROMPT =
+  "Install Git in this execution environment using its standard trusted package manager. Verify that `git --version` works afterward. Ask before taking any action that requires administrator privileges. Do not initialize a repository or modify project files.";
 const EMPTY_ACTIVITIES: OrchestrationThreadActivity[] = [];
 const EMPTY_PROVIDERS: ServerProvider[] = [];
 const EMPTY_USAGE_LIMIT_SOURCES: UsageLimitSourceSnapshots = [];
@@ -4010,6 +4012,12 @@ function ChatViewContent(props: ChatViewProps) {
           input: { cwd: gitStatusCwd },
         }),
   );
+  const gitNoticeKey = gitStatusCwd === null ? null : `${environmentId}:${gitStatusCwd}`;
+  const [dismissedGitNoticeKey, setDismissedGitNoticeKey] = useState<string | null>(null);
+  const gitInstallRefreshStateRef = useRef<{
+    readonly key: string;
+    sawWorking: boolean;
+  } | null>(null);
   useWorkspaceMutationRefresh({
     enabled: gitStatusCwd !== null,
     mutationId: workspaceMutationId,
@@ -4153,12 +4161,15 @@ function ChatViewContent(props: ChatViewProps) {
   // branch strip and then drop it. A never-seen checkout assumes Git, which
   // is what nearly every project is.
   const liveIsGitRepo = gitStatusQuery.data?.isRepo;
+  const gitUnavailable = gitStatusQuery.data?.gitAvailability === "missing";
   useEffect(() => {
-    if (gitStatusCwd !== null && liveIsGitRepo !== undefined) {
+    if (gitStatusCwd !== null && liveIsGitRepo !== undefined && !gitUnavailable) {
       rememberCheckoutIsRepo(environmentId, gitStatusCwd, liveIsGitRepo);
     }
-  }, [environmentId, gitStatusCwd, liveIsGitRepo]);
-  const isGitRepo = liveIsGitRepo ?? recallCheckoutIsRepo(environmentId, gitStatusCwd) ?? true;
+  }, [environmentId, gitStatusCwd, gitUnavailable, liveIsGitRepo]);
+  const isGitRepo = gitUnavailable
+    ? false
+    : (liveIsGitRepo ?? recallCheckoutIsRepo(environmentId, gitStatusCwd) ?? true);
   const diffAvailable = hasProjectWorkspace && isServerThread && isGitRepo;
   const forkCheckpointByAssistantMessageId = useMemo(
     () =>
@@ -7132,11 +7143,60 @@ function ChatViewContent(props: ChatViewProps) {
     // The user asked for this one, so it leads the notice tier instead of trailing it.
     const usageLimitsItems = usageLimitsBanner === null ? [] : [usageLimitsBanner];
     const projectCloneItems = projectCloneBannerItem === null ? [] : [projectCloneBannerItem];
+    const gitUnavailableItems: ComposerBannerStackItem[] =
+      gitUnavailable && gitNoticeKey !== null && dismissedGitNoticeKey !== gitNoticeKey
+        ? [
+            {
+              id: `git-unavailable:${gitNoticeKey}`,
+              variant: "info",
+              icon: <GitBranchIcon />,
+              title: "Git isn’t installed",
+              description:
+                "Git features are unavailable, but you can continue using Scient normally.",
+              actions: (
+                <Button
+                  size="xs"
+                  variant="ghost"
+                  disabled={
+                    !activeThread ||
+                    !queueEditsReady ||
+                    queueEdit !== undefined ||
+                    isWorking ||
+                    isSendBusy ||
+                    isConnecting ||
+                    isRevertingCheckpoint ||
+                    !clientSettingsHydrated ||
+                    threadDetailLoading ||
+                    activeEnvironmentUnavailable ||
+                    activePendingProgress !== null ||
+                    !selectedProviderEntry?.enabled ||
+                    !selectedProviderEntry.isAvailable ||
+                    selectedProviderEntry.status !== "ready"
+                  }
+                  onClick={() => {
+                    gitInstallRefreshStateRef.current = {
+                      key: gitNoticeKey,
+                      sawWorking: isWorking,
+                    };
+                    void onSend(undefined, "foreground", undefined, {
+                      directPrompt: INSTALL_GIT_AGENT_PROMPT,
+                    });
+                  }}
+                >
+                  Ask agent to install
+                </Button>
+              ),
+              dismissLabel: "Dismiss Git notice",
+              onDismiss: () => setDismissedGitNoticeKey(gitNoticeKey),
+            },
+          ]
+        : [];
     if (!localCheckoutBranchMismatch || !showBranchMismatchBanner || !activeBranchMismatchKey) {
       return [
         ...feedbackBannerItems,
         ...usageLimitsItems,
         ...projectCloneItems,
+        ...gitUnavailableItems,
         ...systemComposerBannerItems,
         ...tokenLimitItems,
         ...backgroundLivenessItems,
@@ -7149,6 +7209,7 @@ function ChatViewContent(props: ChatViewProps) {
       ...feedbackBannerItems,
       ...usageLimitsItems,
       ...projectCloneItems,
+      ...gitUnavailableItems,
       ...systemComposerBannerItems,
       ...tokenLimitItems,
       ...backgroundLivenessItems,
@@ -7196,19 +7257,33 @@ function ChatViewContent(props: ChatViewProps) {
     ];
   }, [
     activeBranchMismatchKey,
+    activeEnvironmentUnavailable,
+    activePendingProgress,
+    activeThread,
     backgroundLivenessBannerItem,
+    clientSettingsHydrated,
     hasTokenLimitNotice,
     tokenLimitNoticeKey,
     feedbackBannerItems,
+    gitNoticeKey,
+    gitUnavailable,
     handleRestoreThreadBranch,
     isRestoringThreadBranch,
+    isSendBusy,
+    isWorking,
     localCheckoutBranchMismatch,
+    onSend,
     parkedThreadBannerItem,
     projectCloneBannerItem,
+    queueEditsReady,
+    queueEdit,
     resumeCompactionBannerItem,
     showBranchMismatchBanner,
+    selectedProviderEntry,
     systemComposerBannerItems,
+    threadDetailLoading,
     usageLimitsBanner,
+    dismissedGitNoticeKey,
     wokeThreadBannerItem,
   ]);
   useEffect(() => {
@@ -7845,7 +7920,7 @@ function ChatViewContent(props: ChatViewProps) {
     }
   };
 
-  const onSend = async (
+  async function onSend(
     e?: { preventDefault: () => void },
     submissionIntent: ComposerSubmissionIntent = "foreground",
     directAnnotation?: {
@@ -7854,16 +7929,18 @@ function ChatViewContent(props: ChatViewProps) {
     },
     // SCIENT-FORK:START — steer submissions (Cmd/Ctrl+Enter) bypass the
     // Scient thread queue disposition below.
-    options?: { steer?: boolean },
+    options?: { steer?: boolean; directPrompt?: string },
     // SCIENT-FORK:END
-  ) => {
+  ) {
     e?.preventDefault();
+    const directPrompt = options?.directPrompt?.trim() || null;
     // Typed out in full rather than picked from the menu. Attachments or contexts
     // mean the user is sending a prompt, so those go through as usual.
     if (
       usageLimitsOffered &&
       usageLimitsKey !== null &&
       !directAnnotation &&
+      directPrompt === null &&
       !composerHasNonPromptContent &&
       isUsageLimitsCommand(promptRef.current)
     ) {
@@ -7938,7 +8015,7 @@ function ChatViewContent(props: ChatViewProps) {
       notifyDirectAnnotationAttached();
       return;
     }
-    const multipleModelSelections = sendCtx.multipleModelSelections;
+    const multipleModelSelections = directPrompt === null ? sendCtx.multipleModelSelections : null;
     if (
       multipleModelSelections !== null &&
       serverConfig?.environment.capabilities.requiredWorktreeBootstrap !== true
@@ -7978,22 +8055,28 @@ function ChatViewContent(props: ChatViewProps) {
       interactionMode: sendInteractionMode,
       interactionModeEnabled: sendInteractionModeEnabled,
     } = sendCtx;
+    const effectiveSendContextImages = directPrompt === null ? sendContextImages : [];
+    const effectiveComposerFiles = directPrompt === null ? composerFiles : [];
+    const effectiveComposerTerminalContexts = directPrompt === null ? composerTerminalContexts : [];
+    const effectivePreviewAnnotations = directPrompt === null ? sendContextPreviewAnnotations : [];
+    const effectiveReviewComments = directPrompt === null ? composerReviewComments : [];
     const annotationImageAlreadyAttached =
       directAnnotation?.image !== undefined &&
-      sendContextImages.some((image) => image.id === directAnnotation.image?.id);
+      effectiveSendContextImages.some((image) => image.id === directAnnotation.image?.id);
     // A full composer (e.g. 8 files) cannot take the annotation screenshot;
     // over the cap the server rejects the whole turn.
     const annotationImageAppended =
       directAnnotation?.image !== undefined &&
       !annotationImageAlreadyAttached &&
-      sendContextImages.length + composerFiles.length < PROVIDER_SEND_TURN_MAX_ATTACHMENTS;
+      effectiveSendContextImages.length + effectiveComposerFiles.length <
+        PROVIDER_SEND_TURN_MAX_ATTACHMENTS;
     const composerImages =
       directAnnotation?.image && annotationImageAppended
-        ? [...sendContextImages, directAnnotation.image]
-        : sendContextImages;
+        ? [...effectiveSendContextImages, directAnnotation.image]
+        : effectiveSendContextImages;
     const composerPreviewAnnotations =
       directAnnotation &&
-      !sendContextPreviewAnnotations.some(
+      !effectivePreviewAnnotations.some(
         (annotation) => annotation.id === directAnnotation.annotation.id,
       )
         ? [
@@ -8009,14 +8092,16 @@ function ChatViewContent(props: ChatViewProps) {
                   : null,
             },
           ]
-        : sendContextPreviewAnnotations;
+        : effectivePreviewAnnotations;
     // A direct "send annotation" writes the draft and sends in the same tick; the reference
     // must be in the text now, not after the next render.
-    const promptForSend = directAnnotation
-      ? ensureInlineContextReferences(promptRef.current, [
-          previewAnnotationContextReference(directAnnotation.annotation),
-        ])
-      : promptRef.current;
+    const promptForSend =
+      directPrompt ??
+      (directAnnotation
+        ? ensureInlineContextReferences(promptRef.current, [
+            previewAnnotationContextReference(directAnnotation.annotation),
+          ])
+        : promptRef.current);
     const draftSnapshotForSend = useComposerDraftStore
       .getState()
       .getComposerDraft(composerDraftTarget);
@@ -8027,17 +8112,18 @@ function ChatViewContent(props: ChatViewProps) {
       hasSendableContent,
     } = deriveComposerSendState({
       prompt: promptForSend,
-      imageCount: composerImages.length + composerFiles.length,
-      terminalContexts: composerTerminalContexts,
-      elementContextCount: composerPreviewAnnotations.length + composerReviewComments.length,
+      imageCount: composerImages.length + effectiveComposerFiles.length,
+      terminalContexts: effectiveComposerTerminalContexts,
+      elementContextCount: composerPreviewAnnotations.length + effectiveReviewComments.length,
     });
     const standaloneForkCommand =
       !queueEdit &&
       !directAnnotation &&
+      directPrompt === null &&
       composerImages.length === 0 &&
       sendableComposerTerminalContexts.length === 0 &&
       composerPreviewAnnotations.length === 0 &&
-      composerReviewComments.length === 0 &&
+      effectiveReviewComments.length === 0 &&
       isStandaloneForkSlashCommand(trimmed);
     if (standaloneForkCommand) {
       promptRef.current = "";
@@ -8048,12 +8134,13 @@ function ChatViewContent(props: ChatViewProps) {
     }
     const feedbackCommand =
       !queueEdit &&
+      directPrompt === null &&
       ctxSelectedProvider === "codex" &&
       composerImages.length === 0 &&
-      composerFiles.length === 0 &&
+      effectiveComposerFiles.length === 0 &&
       sendableComposerTerminalContexts.length === 0 &&
       composerPreviewAnnotations.length === 0 &&
-      composerReviewComments.length === 0
+      effectiveReviewComments.length === 0
         ? parseCodexFeedbackCommand(trimmed)
         : null;
     if (feedbackCommand && multipleModelSelections === null) {
@@ -8112,11 +8199,12 @@ function ChatViewContent(props: ChatViewProps) {
     if (
       !queueEdit &&
       !directAnnotation &&
+      directPrompt === null &&
       sendInteractionModeEnabled &&
       showPlanFollowUpPrompt &&
       activeProposedPlan &&
       composerImages.length === 0 &&
-      composerFiles.length === 0
+      effectiveComposerFiles.length === 0
     ) {
       const followUp = resolvePlanFollowUpSubmission({
         draftText: promptForSend,
@@ -8177,12 +8265,13 @@ function ChatViewContent(props: ChatViewProps) {
     // Providers without the legacy toggle receive their native commands unchanged.
     const standaloneSlashCommand =
       !queueEdit &&
+      directPrompt === null &&
       sendInteractionModeEnabled &&
       composerImages.length === 0 &&
-      composerFiles.length === 0 &&
+      effectiveComposerFiles.length === 0 &&
       sendableComposerTerminalContexts.length === 0 &&
       composerPreviewAnnotations.length === 0 &&
-      composerReviewComments.length === 0
+      effectiveReviewComments.length === 0
         ? parseStandaloneComposerSlashCommand(trimmed)
         : null;
     if (standaloneSlashCommand && multipleModelSelections === null) {
@@ -8252,13 +8341,13 @@ function ChatViewContent(props: ChatViewProps) {
     // User-authored composer turns must carry the selection snapshot as authority.
     // Keep non-composer commands free to omit it for wire compatibility.
     const startComposerThreadTurn = (args: ComposerTurnStartArgs) => startThreadTurn(args);
-    const composerFilesSnapshot = [...composerFiles];
+    const composerFilesSnapshot = [...effectiveComposerFiles];
     const composerAttachmentsSnapshot = [...composerImagesSnapshot, ...composerFilesSnapshot];
     const composerTerminalContextsSnapshot = [...sendableComposerTerminalContexts];
     const composerPreviewAnnotationsSnapshot = [...composerPreviewAnnotations];
-    const composerReviewCommentsSnapshot: ReviewCommentContext[] = [...composerReviewComments];
+    const composerReviewCommentsSnapshot: ReviewCommentContext[] = [...effectiveReviewComments];
     // Expired terminal excerpts are not sent; their chips leave the text with them.
-    const messageTextForSend = composerTerminalContexts
+    const messageTextForSend = effectiveComposerTerminalContexts
       .filter((context) => !composerTerminalContextsSnapshot.includes(context))
       .reduce(
         (text, context) =>
@@ -8526,6 +8615,7 @@ function ChatViewContent(props: ChatViewProps) {
           if (
             !queueEdit &&
             queueContextKeyRef.current === submissionContextKey &&
+            directPrompt === null &&
             useComposerDraftStore.getState().getComposerDraft(composerDraftTarget) ===
               draftSnapshotForSend
           ) {
@@ -8907,8 +8997,9 @@ function ChatViewContent(props: ChatViewProps) {
       );
     }
     if (
+      directPrompt === null &&
       useComposerDraftStore.getState().getComposerDraft(composerDraftTarget) ===
-      draftSnapshotForSend
+        draftSnapshotForSend
     ) {
       clearComposerDraftContent(composerDraftTarget);
       if (queueContextKeyRef.current === activeThreadKey) {
@@ -9157,7 +9248,7 @@ function ChatViewContent(props: ChatViewProps) {
       }
       const retryDraft = useComposerDraftStore.getState().getComposerDraft(composerDraftTarget);
       const retryTargetVisible = queueContextKeyRef.current === activeThreadKey;
-      if (!retryDraft || !composerDraftHasUserContent(retryDraft)) {
+      if (directPrompt !== null || !retryDraft || !composerDraftHasUserContent(retryDraft)) {
         setOptimisticUserMessages((existing) => {
           const removed = existing.filter((message) => message.id === messageIdForSend);
           for (const message of removed) {
@@ -9166,25 +9257,33 @@ function ChatViewContent(props: ChatViewProps) {
           const next = existing.filter((message) => message.id !== messageIdForSend);
           return next.length === existing.length ? existing : next;
         });
-        const retryComposerImages = composerImagesSnapshot.map(cloneComposerImageForRetry);
-        if (retryTargetVisible) {
-          promptRef.current = promptForSend;
-          composerImagesRef.current = retryComposerImages;
-          composerFilesRef.current = composerFilesSnapshot;
-          composerTerminalContextsRef.current = composerTerminalContextsSnapshot;
+        if (directPrompt !== null) {
+          // The action prompt is independent of the user's composer draft.
+          // A failed send removes only its optimistic row and leaves the draft untouched.
+        } else {
+          const retryComposerImages = composerImagesSnapshot.map(cloneComposerImageForRetry);
+          if (retryTargetVisible) {
+            promptRef.current = promptForSend;
+            composerImagesRef.current = retryComposerImages;
+            composerFilesRef.current = composerFilesSnapshot;
+            composerTerminalContextsRef.current = composerTerminalContextsSnapshot;
+          }
+          setComposerDraftPrompt(composerDraftTarget, promptForSend);
+          addComposerDraftImages(composerDraftTarget, retryComposerImages);
+          addComposerDraftFiles(composerDraftTarget, composerFilesSnapshot);
+          setComposerDraftTerminalContexts(composerDraftTarget, composerTerminalContextsSnapshot);
+          setComposerDraftPreviewAnnotations(
+            composerDraftTarget,
+            composerPreviewAnnotationsSnapshot,
+          );
+          setComposerDraftReviewComments(composerDraftTarget, composerReviewCommentsSnapshot);
+          if (retryTargetVisible)
+            composerRef.current?.resetCursorState({
+              cursor: collapseExpandedComposerCursor(promptForSend, promptForSend.length),
+              prompt: promptForSend,
+              detectTrigger: true,
+            });
         }
-        setComposerDraftPrompt(composerDraftTarget, promptForSend);
-        addComposerDraftImages(composerDraftTarget, retryComposerImages);
-        addComposerDraftFiles(composerDraftTarget, composerFilesSnapshot);
-        setComposerDraftTerminalContexts(composerDraftTarget, composerTerminalContextsSnapshot);
-        setComposerDraftPreviewAnnotations(composerDraftTarget, composerPreviewAnnotationsSnapshot);
-        setComposerDraftReviewComments(composerDraftTarget, composerReviewCommentsSnapshot);
-        if (retryTargetVisible)
-          composerRef.current?.resetCursorState({
-            cursor: collapseExpandedComposerCursor(promptForSend, promptForSend.length),
-            prompt: promptForSend,
-            detectTrigger: true,
-          });
       }
       if (!isAtomCommandInterrupted(failure)) {
         const error = squashAtomCommandFailure(failure);
@@ -9238,7 +9337,22 @@ function ChatViewContent(props: ChatViewProps) {
       );
       resetLocalDispatch();
     }
-  };
+  }
+  useEffect(() => {
+    const refreshState = gitInstallRefreshStateRef.current;
+    if (refreshState === null) return;
+    if (refreshState.key !== gitNoticeKey) {
+      gitInstallRefreshStateRef.current = null;
+      return;
+    }
+    if (isWorking) {
+      refreshState.sawWorking = true;
+      return;
+    }
+    if (!refreshState.sawWorking) return;
+    gitStatusQuery.refresh();
+    gitInstallRefreshStateRef.current = null;
+  }, [gitNoticeKey, gitStatusQuery, isWorking]);
 
   // SCIENT-FORK:START — actions mutate the captured thread queue. Only the
   // server worker admits queued messages into orchestration.

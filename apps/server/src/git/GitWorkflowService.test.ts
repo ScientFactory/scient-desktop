@@ -4,7 +4,7 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 
-import { VcsRepositoryDetectionError } from "@t3tools/contracts";
+import { VcsExecutableUnavailableError, VcsRepositoryDetectionError } from "@t3tools/contracts";
 
 import * as GitManager from "./GitManager.ts";
 import * as GitWorkflowService from "./GitWorkflowService.ts";
@@ -61,6 +61,7 @@ describe("GitWorkflowService", () => {
       const status = yield* workflow.localStatus({ cwd: "/not-a-repo" });
 
       assert.deepStrictEqual(status, {
+        gitAvailability: "available",
         isRepo: false,
         hasPrimaryRemote: false,
         isDefaultRef: false,
@@ -87,6 +88,7 @@ describe("GitWorkflowService", () => {
       const status = yield* workflow.status({ cwd: "/not-a-repo" });
 
       assert.deepStrictEqual(status, {
+        gitAvailability: "available",
         isRepo: false,
         hasPrimaryRemote: false,
         isDefaultRef: false,
@@ -139,6 +141,47 @@ describe("GitWorkflowService", () => {
       yield* workflow.remoteStatus({ cwd: "/not-a-repo" });
       yield* workflow.status({ cwd: "/not-a-repo" });
 
+      assert.equal(localStatus.mock.calls.length, 0);
+      assert.equal(remoteStatus.mock.calls.length, 0);
+      assert.equal(status.mock.calls.length, 0);
+    }).pipe(Effect.provide(testLayer));
+  });
+
+  it.effect("reports missing Git as an available non-repository workspace", () => {
+    const localStatus = vi.fn();
+    const remoteStatus = vi.fn();
+    const status = vi.fn();
+    const missingGit = new VcsExecutableUnavailableError({
+      operation: "GitVcsDriver.detectRepository",
+      kind: "git",
+      command: "git",
+      cwd: "/workspace",
+    });
+    const testLayer = GitWorkflowService.layer.pipe(
+      Layer.provide(
+        Layer.mock(VcsDriverRegistry.VcsDriverRegistry)({
+          detect: () => Effect.fail(missingGit),
+        }),
+      ),
+      Layer.provide(Layer.mock(GitVcsDriver.GitVcsDriver)({})),
+      Layer.provide(
+        Layer.mock(GitManager.GitManager)({
+          localStatus,
+          remoteStatus,
+          status,
+        }),
+      ),
+    );
+
+    return Effect.gen(function* () {
+      const workflow = yield* GitWorkflowService.GitWorkflowService;
+      const local = yield* workflow.localStatus({ cwd: "/workspace" });
+      const remote = yield* workflow.remoteStatus({ cwd: "/workspace" });
+      const full = yield* workflow.status({ cwd: "/workspace" });
+
+      expect(local).toMatchObject({ gitAvailability: "missing", isRepo: false });
+      assert.isNull(remote);
+      expect(full).toMatchObject({ gitAvailability: "missing", isRepo: false });
       assert.equal(localStatus.mock.calls.length, 0);
       assert.equal(remoteStatus.mock.calls.length, 0);
       assert.equal(status.mock.calls.length, 0);

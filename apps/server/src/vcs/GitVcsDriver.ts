@@ -12,6 +12,7 @@ import { ChildProcessSpawner } from "effect/unstable/process";
 
 import {
   GitCommandError,
+  VcsExecutableUnavailableError,
   VcsProcessExitError,
   type VcsSwitchRefInput,
   type VcsSwitchRefResult,
@@ -31,6 +32,7 @@ import {
   type VcsStatusInput,
   type VcsStatusResult,
 } from "@t3tools/contracts";
+import { CommandAvailability } from "@t3tools/shared/shell";
 import {
   makeGitVcsDriverCore,
   PATCH_RENDER_PREFIX_ARGS,
@@ -499,6 +501,7 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const vcsProcess = yield* VcsProcess.VcsProcess;
+  const commandAvailable = yield* CommandAvailability;
   const capabilities = {
     kind: "git" as const,
     supportsWorktrees: true,
@@ -537,6 +540,19 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
   const detectRepository: VcsDriver.VcsDriver["Service"]["detectRepository"] = Effect.fn(
     "detectRepository",
   )(function* (cwd) {
+    if (
+      !(yield* commandAvailable("git", { bypassCache: true }).pipe(
+        Effect.provideService(FileSystem.FileSystem, fileSystem),
+        Effect.provideService(Path.Path, path),
+      ))
+    ) {
+      return yield* new VcsExecutableUnavailableError({
+        operation: "GitVcsDriver.detectRepository",
+        kind: "git",
+        command: "git",
+        cwd,
+      });
+    }
     if (!(yield* isInsideWorkTree(cwd))) {
       return null;
     }
