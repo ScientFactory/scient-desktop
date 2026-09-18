@@ -18,6 +18,7 @@ import { threadSearchMatchKey } from "@t3tools/client-runtime/state/thread-searc
 import { resolveThreadReferenceCopyTarget } from "@t3tools/shared/threadReference";
 import {
   canPreloadBrowsePath,
+  canonicalizeUneditedBrowseQuery,
   createBrowseNavigationCoordinator,
   filterFilesystemBrowseEntries,
   getFilesystemBrowsePath,
@@ -127,6 +128,7 @@ import {
   hasTrailingPathSeparator,
   inferProjectTitleFromPath,
   isExplicitRelativeProjectPath,
+  isFilesystemBrowseQuery,
   isUnsupportedWindowsProjectPath,
   resolveProjectPathForDispatch,
 } from "../lib/projectPaths";
@@ -224,6 +226,12 @@ import { PullRequestGlyph } from "~/components/pullRequest/pullRequestIcons";
 import { readPullRequestListPreferences } from "~/components/pullRequest/pullRequestListPreferences";
 
 const EMPTY_BROWSE_ENTRIES: FilesystemBrowseResult["entries"] = [];
+
+interface AddProjectBrowseScopeState {
+  readonly baseDirectoryPath: string;
+  readonly initialPath: string;
+  readonly resolvedInitialPath: string | null;
+}
 
 const APPEARANCE_OPTIONS = [
   { mode: "system", label: "System", icon: MonitorIcon },
@@ -901,6 +909,13 @@ function OpenCommandPaletteDialog(props: {
   const [addProjectEnvironmentId, setAddProjectEnvironmentId] = useState<EnvironmentId | null>(
     null,
   );
+  const [addProjectBrowseScope, setAddProjectBrowseScope] =
+    useState<AddProjectBrowseScopeState | null>(null);
+  const addProjectBrowseSession = useRef(0);
+  const resetAddProjectBrowseScope = useCallback((): void => {
+    addProjectBrowseSession.current += 1;
+    setAddProjectBrowseScope(null);
+  }, []);
   const [isPickingProjectFolder, setIsPickingProjectFolder] = useState(false);
   const [addProjectCloneFlow, setAddProjectCloneFlow] = useState<AddProjectCloneFlow | null>(null);
   const cloneLookupGeneration = useRef(0);
@@ -1129,14 +1144,38 @@ function OpenCommandPaletteDialog(props: {
           addProjectCloneFlow.repository?.nameWithOwner ?? addProjectCloneFlow.remoteUrl,
         )
       : "";
+  const filesystemBrowseScope = useMemo(
+    () =>
+      addProjectBrowseScope === null
+        ? null
+        : {
+            baseDirectoryPath: addProjectBrowseScope.baseDirectoryPath,
+            ...(addProjectBrowseScope.resolvedInitialPath
+              ? {
+                  alias: {
+                    path: addProjectBrowseScope.initialPath,
+                    resolvedPath: addProjectBrowseScope.resolvedInitialPath,
+                  },
+                }
+              : {}),
+          },
+    [addProjectBrowseScope],
+  );
   const browsePath = useMemo(
     () =>
       getFilesystemBrowsePath(
         query,
         browseEnvironmentPlatform,
         browseEnvironmentId !== null && !isRemoteProjectRepositoryStep,
+        filesystemBrowseScope,
       ),
-    [browseEnvironmentId, browseEnvironmentPlatform, isRemoteProjectRepositoryStep, query],
+    [
+      browseEnvironmentId,
+      browseEnvironmentPlatform,
+      filesystemBrowseScope,
+      isRemoteProjectRepositoryStep,
+      query,
+    ],
   );
   const isBrowsing = browsePath.isBrowsing;
   const browseDirectoryPath = browsePath.directoryPath;
@@ -1223,27 +1262,36 @@ function OpenCommandPaletteDialog(props: {
       partialPath: string,
       environmentId: EnvironmentId | null = browseEnvironmentId,
       cwd: string | null = currentProjectCwdForBrowse,
-    ): Promise<void> => {
+    ): Promise<FilesystemBrowseResult | null> => {
       if (!environmentId) {
-        return;
+        return null;
       }
       const environment = environments.find(
         (candidate) => candidate.environmentId === environmentId,
       );
       if (!canPreloadBrowsePath(environment?.connection.phase)) {
-        return;
+        return null;
       }
 
-      await loadBrowsePath({
+      const result = await loadBrowsePath({
         environmentId,
         input: {
           partialPath,
           ...(cwd ? { cwd } : {}),
         },
       });
+      return result._tag === "Success" ? result.value : null;
     },
     [browseEnvironmentId, currentProjectCwdForBrowse, environments, loadBrowsePath],
   );
+  const updateAddProjectBrowseBase = useCallback((baseDirectoryPath: string | null): void => {
+    if (baseDirectoryPath === null) return;
+    setAddProjectBrowseScope((current) =>
+      current === null || current.baseDirectoryPath === baseDirectoryPath
+        ? current
+        : { ...current, baseDirectoryPath },
+    );
+  }, []);
 
   useEffect(
     () => () => {
@@ -1510,6 +1558,7 @@ function OpenCommandPaletteDialog(props: {
 
   function popView(): void {
     browseNavigation.invalidate();
+    resetAddProjectBrowseScope();
     setAddProjectCloneFlow(null);
     if (viewStack.length <= 1) {
       setAddProjectEnvironmentId(null);
@@ -1523,40 +1572,78 @@ function OpenCommandPaletteDialog(props: {
   function handleQueryChange(nextQuery: string): void {
     browseNavigation.invalidate();
     clearHighlightedItem();
+    if (
+      addProjectBrowseScope !== null &&
+      isFilesystemBrowseQuery(nextQuery, browseEnvironmentPlatform)
+    ) {
+      const nextBrowsePath = getFilesystemBrowsePath(
+        nextQuery,
+        browseEnvironmentPlatform,
+        true,
+        filesystemBrowseScope,
+      );
+      if (
+        nextBrowsePath.directoryPath.length > 0 &&
+        nextBrowsePath.directoryPath !== addProjectBrowseScope.baseDirectoryPath
+      ) {
+        setAddProjectBrowseScope({
+          ...addProjectBrowseScope,
+          baseDirectoryPath: nextBrowsePath.directoryPath,
+        });
+      }
+    }
     setQuery(nextQuery);
-    if (nextQuery === "" && currentView?.initialQuery) {
+    if (nextQuery === "" && currentView?.initialQuery && addProjectBrowseScope === null) {
       popView();
     }
   }
 
   const startAddProjectBrowse = useCallback(
-    async (environmentId: EnvironmentId): Promise<void> => {
+    (environmentId: EnvironmentId): void => {
       // Warm code while the user browses, without blocking the picker or
       // surfacing speculative failures. Submission still checks readiness.
       void settlePromise(() => preloadProjectChat(router));
       const initialQuery = getAddProjectInitialQueryForEnvironment(environmentId);
       const initialBrowsePath = getBrowseDirectoryPath(initialQuery);
       const browseCwd = getBrowseCwdForEnvironment(environmentId);
+      const session = addProjectBrowseSession.current + 1;
+      addProjectBrowseSession.current = session;
       const view: CommandPaletteView = {
         addonIcon: <FolderPlusIcon className={ADDON_ICON_CLASS} />,
         groups: [],
         initialQuery,
       };
 
-      await browseNavigation.run(
-        () =>
-          initialBrowsePath.length > 0
-            ? prefetchBrowsePath(initialBrowsePath, environmentId, browseCwd)
-            : Promise.resolve(),
-        () => {
-          setAddProjectEnvironmentId(environmentId);
-          setAddProjectCloneFlow(null);
-          pushPaletteView(view);
-        },
-      );
+      setAddProjectEnvironmentId(environmentId);
+      setAddProjectCloneFlow(null);
+      setAddProjectBrowseScope({
+        baseDirectoryPath: initialBrowsePath,
+        initialPath: initialQuery,
+        resolvedInitialPath: null,
+      });
+      pushPaletteView(view);
+
+      if (initialBrowsePath.length === 0) return;
+      void prefetchBrowsePath(initialBrowsePath, environmentId, browseCwd).then((result) => {
+        if (result === null || addProjectBrowseSession.current !== session) return;
+        const resolvedInitialPath = ensureBrowseDirectoryPath(result.parentPath);
+        setAddProjectBrowseScope((current) =>
+          current === null
+            ? current
+            : {
+                ...current,
+                resolvedInitialPath,
+              },
+        );
+        // Canonicalize an untouched symbolic default (notably `~/` on
+        // Windows), but never replace text the user entered while the
+        // environment was resolving it in the background.
+        setQuery((current) =>
+          canonicalizeUneditedBrowseQuery(current, initialQuery, resolvedInitialPath),
+        );
+      });
     },
     [
-      browseNavigation,
       getAddProjectInitialQueryForEnvironment,
       getBrowseCwdForEnvironment,
       prefetchBrowsePath,
@@ -1567,6 +1654,7 @@ function OpenCommandPaletteDialog(props: {
 
   const startAddProjectClone = useCallback(
     (environmentId: EnvironmentId, source: AddProjectRemoteSource): void => {
+      resetAddProjectBrowseScope();
       setAddProjectEnvironmentId(environmentId);
       setAddProjectCloneFlow({ step: "repository", environmentId, source });
       pushPaletteView({
@@ -1575,7 +1663,7 @@ function OpenCommandPaletteDialog(props: {
         initialQuery: "",
       });
     },
-    [pushPaletteView],
+    [pushPaletteView, resetAddProjectBrowseScope],
   );
 
   const openSourceControlSettings = useCallback(() => {
@@ -1692,6 +1780,7 @@ function OpenCommandPaletteDialog(props: {
         );
         return;
       }
+      resetAddProjectBrowseScope();
       setAddProjectEnvironmentId(environmentId);
       setAddProjectCloneFlow(null);
       pushPaletteView({
@@ -1709,6 +1798,7 @@ function OpenCommandPaletteDialog(props: {
       buildAddProjectSourceGroups,
       environments,
       pushPaletteView,
+      resetAddProjectBrowseScope,
       sourceControlDiscovery.data,
     ],
   );
@@ -1776,13 +1866,14 @@ function OpenCommandPaletteDialog(props: {
     if (openIntent?.kind !== "search") return;
     browseNavigation.invalidate();
     cloneLookupGeneration.current += 1;
+    resetAddProjectBrowseScope();
     setIsRemoteProjectLookingUp(false);
     setAddProjectCloneFlow(null);
     setViewStack([]);
     setLinkedThreadSearch(openIntent);
     setQuery(openIntent.query);
     clearOpenIntent();
-  }, [browseNavigation, clearOpenIntent, openIntent]);
+  }, [browseNavigation, clearOpenIntent, openIntent, resetAddProjectBrowseScope]);
 
   useLayoutEffect(() => {
     if (openIntent?.kind !== "add-project") {
@@ -1798,6 +1889,7 @@ function OpenCommandPaletteDialog(props: {
     }
     clearOpenIntent();
     browseNavigation.invalidate();
+    resetAddProjectBrowseScope();
     setAddProjectCloneFlow(null);
     setViewStack([]);
     setQuery("");
@@ -1830,6 +1922,7 @@ function OpenCommandPaletteDialog(props: {
     openIntent,
     projectThreadItems,
     pushPaletteView,
+    resetAddProjectBrowseScope,
   ]);
 
   const actionItems: Array<CommandPaletteActionItem | CommandPaletteSubmenuItem> = [];
@@ -2075,6 +2168,7 @@ function OpenCommandPaletteDialog(props: {
     clearOpenIntent();
     browseNavigation.invalidate();
     cloneLookupGeneration.current += 1;
+    resetAddProjectBrowseScope();
     setIsRemoteProjectLookingUp(false);
     setAddProjectCloneFlow(null);
     setViewStack([]);
@@ -2082,7 +2176,7 @@ function OpenCommandPaletteDialog(props: {
       addonIcon: <PaletteIcon className={ADDON_ICON_CLASS} />,
       groups: [{ value: "themes", label: "Change theme", items: [] }],
     });
-  }, [browseNavigation, clearOpenIntent, openIntent, pushPaletteView]);
+  }, [browseNavigation, clearOpenIntent, openIntent, pushPaletteView, resetAddProjectBrowseScope]);
 
   actionItems.push({
     kind: "action",
@@ -2729,10 +2823,15 @@ function OpenCommandPaletteDialog(props: {
             cloneDirectoryName: pinnedCloneDirectoryName,
             caseSensitive: !isWindowsPlatform(browseEnvironmentPlatform),
           })
-        : appendBrowsePathSegment(query, name);
+        : appendBrowsePathSegment(browsePath.directoryPath, name);
+      let resolvedDirectoryPath: string | null = null;
       await browseNavigation.run(
-        () => prefetchBrowsePath(getBrowseDirectoryPath(nextQuery)),
+        async () => {
+          const result = await prefetchBrowsePath(getBrowseDirectoryPath(nextQuery));
+          resolvedDirectoryPath = result ? ensureBrowseDirectoryPath(result.parentPath) : null;
+        },
         () => {
+          updateAddProjectBrowseBase(resolvedDirectoryPath);
           clearHighlightedItem();
           setIsNewProjectFolderDraft(false);
           setQuery(nextQuery);
@@ -2746,7 +2845,7 @@ function OpenCommandPaletteDialog(props: {
       browsePath.directoryPath,
       pinnedCloneDirectoryName,
       prefetchBrowsePath,
-      query,
+      updateAddProjectBrowseBase,
     ],
   );
 
@@ -2757,24 +2856,35 @@ function OpenCommandPaletteDialog(props: {
     }
 
     const nextQuery = getCloneDestinationPath(parentPath, pinnedCloneDirectoryName);
+    let resolvedDirectoryPath: string | null = null;
     await browseNavigation.run(
-      () => prefetchBrowsePath(parentPath),
+      async () => {
+        const result = await prefetchBrowsePath(parentPath);
+        resolvedDirectoryPath = result ? ensureBrowseDirectoryPath(result.parentPath) : null;
+      },
       () => {
+        updateAddProjectBrowseBase(resolvedDirectoryPath);
         clearHighlightedItem();
         setIsNewProjectFolderDraft(false);
         setQuery(nextQuery);
         setBrowseGeneration((generation) => generation + 1);
       },
     );
-  }, [browseNavigation, browsePath.parentPath, pinnedCloneDirectoryName, prefetchBrowsePath]);
+  }, [
+    browseNavigation,
+    browsePath.parentPath,
+    pinnedCloneDirectoryName,
+    prefetchBrowsePath,
+    updateAddProjectBrowseBase,
+  ]);
 
   // Resolve the add-project path from browse data when available. When the
   // query has a trailing separator (e.g. "~/projects/foo/"), parentPath is the
   // directory itself. Otherwise the user typed a partial leaf name, so we need
   // the exact browse entry's fullPath or fall back to the raw query.
-  const resolvedAddProjectPath = hasTrailingPathSeparator(query)
-    ? (browseResult?.parentPath ?? query.trim())
-    : (exactBrowseEntry?.fullPath ?? query.trim());
+  const resolvedAddProjectPath = hasTrailingPathSeparator(browsePath.resolvedQuery)
+    ? (browseResult?.parentPath ?? browsePath.resolvedQuery.trim())
+    : (exactBrowseEntry?.fullPath ?? browsePath.resolvedQuery.trim());
 
   const canBrowseUp = !relativePathNeedsActiveProject && browsePath.canBrowseUp;
 
@@ -2836,9 +2946,9 @@ function OpenCommandPaletteDialog(props: {
     canSubmitBrowsePath,
     isBrowsePending,
     hasBrowseResult: browseResult !== null,
-    query,
+    query: browsePath.resolvedQuery,
     hasKeyboardBrowseHighlight,
-    hasTrailingPathSeparator: hasTrailingPathSeparator(query),
+    hasTrailingPathSeparator: hasTrailingPathSeparator(browsePath.resolvedQuery),
     exactEntryExists: exactBrowseEntry !== null,
   });
   const useMetaForMod = isMacPlatform(navigator.platform);
@@ -2887,23 +2997,22 @@ function OpenCommandPaletteDialog(props: {
       return undefined;
     }
 
-    const trimmedQuery = query.trim();
-    if (trimmedQuery.length === 0) {
-      return undefined;
-    }
+    const resolvedQuery = browsePath.resolvedQuery.trim();
 
-    const initialPath = hasTrailingPathSeparator(query)
-      ? (browseResult?.parentPath ?? trimmedQuery)
-      : browseDirectoryPath || trimmedQuery;
+    const initialPath = hasTrailingPathSeparator(browsePath.resolvedQuery)
+      ? (browseResult?.parentPath ?? resolvedQuery)
+      : browseDirectoryPath || resolvedQuery;
+
+    if (initialPath.length === 0) return undefined;
 
     const resolvedPath = resolveProjectPathForDispatch(initialPath, currentProjectCwdForBrowse);
     return resolvedPath.length > 0 ? resolvedPath : undefined;
   }, [
     browseDirectoryPath,
+    browsePath.resolvedQuery,
     browseResult?.parentPath,
     canOpenProjectFromFileManager,
     currentProjectCwdForBrowse,
-    query,
   ]);
 
   const handleDroppedProjectFolder = useCallback(

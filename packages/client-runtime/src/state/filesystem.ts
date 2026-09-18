@@ -5,23 +5,82 @@ import type { EnvironmentConnectionPhase } from "../connection/presentation.ts";
 import type { EnvironmentRegistry } from "../connection/registry.ts";
 import {
   canNavigateUp,
+  ensureBrowseDirectoryPath,
   getBrowseDirectoryPath,
   getBrowseLeafPathSegment,
   getBrowseParentPath,
   hasTrailingPathSeparator,
   isFilesystemBrowseQuery,
+  isUnsupportedWindowsProjectPath,
 } from "./projects.ts";
 import { createEnvironmentRpcQueryAtomFamily } from "./runtime.ts";
 
-export function getFilesystemBrowsePath(query: string, platform = "", enabled = true) {
-  const isBrowsing = enabled && isFilesystemBrowseQuery(query, platform);
-  const directoryPath = isBrowsing ? getBrowseDirectoryPath(query) : "";
+export interface FilesystemBrowseScope {
+  readonly baseDirectoryPath: string;
+  readonly alias?: {
+    readonly path: string;
+    readonly resolvedPath: string;
+  };
+}
+
+export function canonicalizeUneditedBrowseQuery(
+  currentQuery: string,
+  initialQuery: string,
+  resolvedInitialPath: string,
+): string {
+  return currentQuery === initialQuery
+    ? ensureBrowseDirectoryPath(resolvedInitialPath)
+    : currentQuery;
+}
+
+function resolveScopedBrowseQuery(
+  query: string,
+  platform: string,
+  scope: FilesystemBrowseScope | null,
+): string {
+  const alias = scope?.alias;
+  if (alias && query.startsWith(alias.path)) {
+    return `${ensureBrowseDirectoryPath(alias.resolvedPath)}${query.slice(alias.path.length)}`;
+  }
+  if (isFilesystemBrowseQuery(query, platform) || scope === null) {
+    return query;
+  }
+  // Keep an absolute Windows path intact on non-Windows environments. The
+  // picker stays in filesystem mode and its existing validation can explain
+  // the platform mismatch instead of interpreting the drive as a folder name.
+  if (isUnsupportedWindowsProjectPath(query, platform)) {
+    return query;
+  }
+  const scopedBaseDirectory =
+    alias && ensureBrowseDirectoryPath(scope.baseDirectoryPath) === alias.path
+      ? alias.resolvedPath
+      : scope.baseDirectoryPath;
+  return `${ensureBrowseDirectoryPath(scopedBaseDirectory)}${query}`;
+}
+
+export function getFilesystemBrowsePath(
+  query: string,
+  platform = "",
+  enabled = true,
+  scope: FilesystemBrowseScope | null = null,
+) {
+  const resolvedQuery = resolveScopedBrowseQuery(query, platform, scope);
+  const isUnsupportedPath =
+    scope !== null && isUnsupportedWindowsProjectPath(resolvedQuery, platform);
+  const isBrowsing =
+    enabled &&
+    (scope !== null || isFilesystemBrowseQuery(resolvedQuery, platform) || isUnsupportedPath);
+  const directoryPath =
+    isBrowsing && !isUnsupportedPath ? getBrowseDirectoryPath(resolvedQuery) : "";
   const filterQuery =
-    isBrowsing && !hasTrailingPathSeparator(query) ? getBrowseLeafPathSegment(query) : "";
+    isBrowsing && !isUnsupportedPath && !hasTrailingPathSeparator(resolvedQuery)
+      ? getBrowseLeafPathSegment(resolvedQuery)
+      : "";
   const parentPath = isBrowsing ? getBrowseParentPath(directoryPath) : null;
 
   return {
     isBrowsing,
+    resolvedQuery,
     directoryPath,
     filterQuery,
     parentPath,

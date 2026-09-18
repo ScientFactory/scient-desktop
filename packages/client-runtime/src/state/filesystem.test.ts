@@ -2,6 +2,7 @@ import { describe, expect, it } from "vite-plus/test";
 
 import {
   canPreloadBrowsePath,
+  canonicalizeUneditedBrowseQuery,
   createBrowseNavigationCoordinator,
   filterFilesystemBrowseEntries,
   getFilesystemBrowsePath,
@@ -11,6 +12,7 @@ describe("filesystem browse model", () => {
   it("derives the browse target and navigation state", () => {
     expect(getFilesystemBrowsePath("~/projects/t3")).toEqual({
       isBrowsing: true,
+      resolvedQuery: "~/projects/t3",
       directoryPath: "~/projects/",
       filterQuery: "t3",
       parentPath: "~/",
@@ -18,6 +20,70 @@ describe("filesystem browse model", () => {
     });
     expect(getFilesystemBrowsePath("C:\\Users\\test", "MacIntel").isBrowsing).toBe(false);
     expect(getFilesystemBrowsePath("~/projects/", "", false).isBrowsing).toBe(false);
+  });
+
+  it("keeps add-project browsing active while a user filters by folder name", () => {
+    expect(
+      getFilesystemBrowsePath("OneDrive", "Win32", true, {
+        baseDirectoryPath: "C:\\Users\\Sacha\\",
+      }),
+    ).toEqual({
+      isBrowsing: true,
+      resolvedQuery: "C:\\Users\\Sacha\\OneDrive",
+      directoryPath: "C:\\Users\\Sacha\\",
+      filterQuery: "OneDrive",
+      parentPath: "C:\\Users\\",
+      canBrowseUp: true,
+    });
+    expect(
+      getFilesystemBrowsePath("Projects", "MacIntel", true, {
+        baseDirectoryPath: "/Users/test/",
+      }).resolvedQuery,
+    ).toBe("/Users/test/Projects");
+  });
+
+  it("resolves a symbolic starting path without replacing typed text", () => {
+    const scope = {
+      baseDirectoryPath: "~/",
+      alias: {
+        path: "~/",
+        resolvedPath: "C:\\Users\\Sacha\\",
+      },
+    } as const;
+    expect(getFilesystemBrowsePath("~/One", "Win32", true, scope)).toEqual({
+      isBrowsing: true,
+      resolvedQuery: "C:\\Users\\Sacha\\One",
+      directoryPath: "C:\\Users\\Sacha\\",
+      filterQuery: "One",
+      parentPath: "C:\\Users\\",
+      canBrowseUp: true,
+    });
+    expect(getFilesystemBrowsePath("One", "Win32", true, scope).resolvedQuery).toBe(
+      "C:\\Users\\Sacha\\One",
+    );
+  });
+
+  it("canonicalizes only an untouched initial path", () => {
+    expect(canonicalizeUneditedBrowseQuery("~/", "~/", "C:\\Users\\Sacha")).toBe(
+      "C:\\Users\\Sacha\\",
+    );
+    expect(canonicalizeUneditedBrowseQuery("~/One", "~/", "C:\\Users\\Sacha")).toBe("~/One");
+    expect(canonicalizeUneditedBrowseQuery("One", "~/", "C:\\Users\\Sacha")).toBe("One");
+  });
+
+  it("does not reinterpret an unsupported absolute Windows path as a local folder name", () => {
+    expect(
+      getFilesystemBrowsePath("C:\\Work\\Repo", "MacIntel", true, {
+        baseDirectoryPath: "/Users/test/",
+      }),
+    ).toEqual({
+      isBrowsing: true,
+      resolvedQuery: "C:\\Work\\Repo",
+      directoryPath: "",
+      filterQuery: "",
+      parentPath: null,
+      canBrowseUp: false,
+    });
   });
 
   it("filters names, hidden directories, and exact matches consistently", () => {
