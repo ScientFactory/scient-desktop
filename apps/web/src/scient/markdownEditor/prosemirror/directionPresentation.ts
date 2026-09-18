@@ -8,8 +8,9 @@ import {
   findRtlFlowArrowSpans,
   resolveAggregateDirectionFromCounts,
   resolveDominantDirectionFromCounts,
+  resolveHeadingSectionDirectionFromCounts,
   resolveProseBlockDirectionFromCounts,
-  resolveStrongScriptDirection,
+  resolveStructuredDirectionFromCounts,
   resolveTableCellDirectionFromCounts,
   resolveTableColumnDirectionFromCounts,
   type FixedContentDirection,
@@ -17,9 +18,9 @@ import {
 } from "../../bidi/contentDirection";
 
 interface DirectionPresentationState {
-  readonly counts: StrongScriptCounts;
   readonly direction: FixedContentDirection;
   readonly decorations: DecorationSet;
+  readonly headingDirections: ReadonlyMap<ProseMirrorNode, FixedContentDirection>;
   readonly topLevelNodes: ReadonlySet<ProseMirrorNode>;
 }
 
@@ -89,10 +90,6 @@ function explicitDirection(node: ProseMirrorNode): FixedContentDirection | null 
 
 function addCounts(left: StrongScriptCounts, right: StrongScriptCounts): StrongScriptCounts {
   return { ltr: left.ltr + right.ltr, rtl: left.rtl + right.rtl };
-}
-
-function subtractCounts(left: StrongScriptCounts, right: StrongScriptCounts): StrongScriptCounts {
-  return { ltr: left.ltr - right.ltr, rtl: left.rtl - right.rtl };
 }
 
 /** Visible prose only: code, equations, exact source, and reference syntax do not steer layout. */
@@ -187,7 +184,14 @@ export function resolveProseMirrorTableColumnDirections(
 export function resolveScientMarkdownDocumentDirection(
   document: ProseMirrorNode,
 ): FixedContentDirection {
-  return resolveStrongScriptDirection(proseCounts(document)) ?? "ltr";
+  const blocks: StrongScriptCounts[] = [];
+  let aggregate = ZERO_COUNTS;
+  document.forEach((node) => {
+    const counts = node.type.name === "table" ? tableDirectionCounts(node) : proseCounts(node);
+    blocks.push(counts);
+    aggregate = addCounts(aggregate, counts);
+  });
+  return resolveStructuredDirectionFromCounts(blocks, aggregate, "ltr");
 }
 
 export function resolveProseMirrorTableDirection(
@@ -197,11 +201,66 @@ export function resolveProseMirrorTableDirection(
   return resolveDominantDirectionFromCounts(tableDirectionCounts(table), fallbackDirection);
 }
 
+interface HeadingSection {
+  readonly heading: ProseMirrorNode;
+  readonly level: number;
+  counts: StrongScriptCounts;
+}
+
+function resolveHeadingDirections(
+  document: ProseMirrorNode,
+  fallbackDirection: FixedContentDirection,
+): ReadonlyMap<ProseMirrorNode, FixedContentDirection> {
+  const directions = new Map<ProseMirrorNode, FixedContentDirection>();
+  const activeSections: HeadingSection[] = [];
+  const finish = (section: HeadingSection) => {
+    directions.set(
+      section.heading,
+      resolveHeadingSectionDirectionFromCounts(
+        proseCounts(section.heading),
+        section.counts,
+        fallbackDirection,
+      ),
+    );
+  };
+
+  document.forEach((node) => {
+    if (node.type.name === "heading") {
+      const level = Number(node.attrs.level ?? 1);
+      while (
+        activeSections.length > 0 &&
+        activeSections[activeSections.length - 1]!.level >= level
+      ) {
+        finish(activeSections.pop()!);
+      }
+      activeSections.push({ counts: ZERO_COUNTS, heading: node, level });
+      return;
+    }
+
+    const counts = node.type.name === "table" ? tableDirectionCounts(node) : proseCounts(node);
+    for (const section of activeSections) section.counts = addCounts(section.counts, counts);
+  });
+  while (activeSections.length > 0) finish(activeSections.pop()!);
+  return directions;
+}
+
+function directionsEqual(
+  left: ReadonlyMap<ProseMirrorNode, FixedContentDirection>,
+  right: ReadonlyMap<ProseMirrorNode, FixedContentDirection>,
+): boolean {
+  if (left.size !== right.size) return false;
+  for (const [node, direction] of left) {
+    if (right.get(node) !== direction) return false;
+  }
+  return true;
+}
+
 function addNodeDecorations(
   node: ProseMirrorNode,
   position: number,
   context: DirectionContext,
   direction: FixedContentDirection,
+  headingDirections: ReadonlyMap<ProseMirrorNode, FixedContentDirection>,
   decorations: Decoration[],
 ): void {
   const nodeName = node.type.name;
@@ -231,7 +290,11 @@ function addNodeDecorations(
     childContext = { ...context, domDirection: resolved, inheritedDirection: resolved };
   } else if (nodeName === "heading") {
     resolved =
-      authoredDirection ?? context.inheritedDirection ?? context.tableContentDirection ?? direction;
+      authoredDirection ??
+      context.inheritedDirection ??
+      context.tableContentDirection ??
+      headingDirections.get(node) ??
+      resolveProseBlockDirectionFromCounts(proseCounts(node), direction);
   } else if (nodeName === "paragraph") {
     resolved =
       authoredDirection ??
@@ -262,24 +325,38 @@ function addNodeDecorations(
     childContext = { ...childContext, domDirection: resolved };
   }
   node.forEach((child, offset) => {
-    addNodeDecorations(child, position + 1 + offset, childContext, direction, decorations);
+    addNodeDecorations(
+      child,
+      position + 1 + offset,
+      childContext,
+      direction,
+      headingDirections,
+      decorations,
+    );
   });
 }
 
 function buildDirectionPresentation(document: ProseMirrorNode): DirectionPresentationState {
-  const counts = proseCounts(document);
-  const direction = resolveStrongScriptDirection(counts) ?? "ltr";
+  const direction = resolveScientMarkdownDocumentDirection(document);
+  const headingDirections = resolveHeadingDirections(document, direction);
   const decorations: Decoration[] = [];
   const topLevelNodes = new Set<ProseMirrorNode>();
 
   document.forEach((child, offset) => {
     topLevelNodes.add(child);
-    addNodeDecorations(child, offset, { domDirection: direction }, direction, decorations);
+    addNodeDecorations(
+      child,
+      offset,
+      { domDirection: direction },
+      direction,
+      headingDirections,
+      decorations,
+    );
   });
   return {
-    counts,
     direction,
     decorations: DecorationSet.create(document, decorations),
+    headingDirections,
     topLevelNodes,
   };
 }
@@ -292,19 +369,20 @@ function updateDirectionPresentation(
   if (!transaction.docChanged) return current;
   const changed: Array<{ readonly node: ProseMirrorNode; readonly position: number }> = [];
   const topLevelNodes = new Set<ProseMirrorNode>();
-  let counts = current.counts;
   document.forEach((node, position) => {
     topLevelNodes.add(node);
     if (!current.topLevelNodes.has(node)) {
       changed.push({ node, position });
-      counts = addCounts(counts, proseCounts(node));
     }
   });
-  current.topLevelNodes.forEach((node) => {
-    if (!topLevelNodes.has(node)) counts = subtractCounts(counts, proseCounts(node));
-  });
-  const direction = resolveStrongScriptDirection(counts) ?? "ltr";
-  if (direction !== current.direction) return buildDirectionPresentation(document);
+  const direction = resolveScientMarkdownDocumentDirection(document);
+  const headingDirections = resolveHeadingDirections(document, direction);
+  if (
+    direction !== current.direction ||
+    !directionsEqual(headingDirections, current.headingDirections)
+  ) {
+    return buildDirectionPresentation(document);
+  }
 
   let decorations = current.decorations.map(transaction.mapping, document);
   for (const block of changed) {
@@ -317,11 +395,12 @@ function updateDirectionPresentation(
       block.position,
       { domDirection: direction },
       direction,
+      headingDirections,
       replacements,
     );
     decorations = decorations.add(document, replacements);
   }
-  return { counts, decorations, direction, topLevelNodes };
+  return { decorations, direction, headingDirections, topLevelNodes };
 }
 
 /** Semantic `dir` is presentation state: it never enters transactions or Markdown source. */

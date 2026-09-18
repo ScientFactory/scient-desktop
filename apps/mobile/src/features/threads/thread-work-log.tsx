@@ -348,7 +348,7 @@ function workRowSymbolName(icon: ThreadFeedActivity["icon"]): AppSymbolName {
     case "alert":
       return { ios: "exclamationmark.triangle", android: "error" };
     case "browser":
-      return { ios: "safari", android: "public" };
+      return { ios: "globe", android: "public" };
     case "check":
       return { ios: "checkmark", android: "check" };
     case "command":

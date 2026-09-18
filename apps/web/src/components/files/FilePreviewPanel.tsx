@@ -26,7 +26,7 @@ import {
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
 import { mediaFileReference } from "@t3tools/client-runtime/media-reference";
-import { Code2, Eye, FolderTree, Globe2, Table2, WrapTextIcon } from "lucide-react";
+import { Code2, Eye, FolderTree, Globe, Table2, WrapTextIcon } from "lucide-react";
 import * as Schema from "effect/Schema";
 import {
   lazy,
@@ -1748,7 +1748,7 @@ export default function FilePreviewPanel({
           ) : null}
           {canOpenInBrowser ? (
             <FileSurfaceAction label="Open file in preview browser" onPress={handleOpenInBrowser}>
-              <Globe2 className="size-3.5" />
+              <Globe className="size-3.5" />
             </FileSurfaceAction>
           ) : null}
           {attachment === undefined && previewPath !== null ? (

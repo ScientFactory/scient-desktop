@@ -4,6 +4,7 @@ import {
   normalizeRtlFlowArrows,
   resolveAggregateDirection,
   resolveDominantDirectionFromCounts,
+  resolveHeadingSectionDirectionFromCounts,
   resolveProseBlockDirection,
   resolveTableCellDirection,
   resolveTableColumnDirectionFromCounts,
@@ -37,13 +38,20 @@ const HEADING_TAGS = new Set(["h1", "h2", "h3", "h4", "h5", "h6"]);
 const LIST_TAGS = new Set(["ul", "ol"]);
 const LOCAL_DIRECTION_TAGS = new Set(DIRECTIONAL_BLOCK_TAGS);
 const TABLE_CELL_TAGS = new Set(["th", "td"]);
-const NON_PROSE_TAGS = new Set(["a", "code", "math", "pre", "script", "style"]);
+const PROSE_EXCLUDED_TAGS = new Set(["code", "math", "pre", "script", "style"]);
+const NON_PROSE_TAGS = new Set(["a", ...PROSE_EXCLUDED_TAGS]);
 const ZERO_COUNTS: StrongScriptCounts = { ltr: 0, rtl: 0 };
 
 interface TableCellPlacement {
   readonly column: number;
   readonly columnSpan: number;
   readonly node: BidiNode;
+}
+
+interface HeadingSection {
+  readonly heading: BidiNode;
+  readonly level: number;
+  counts: StrongScriptCounts;
 }
 
 /**
@@ -63,7 +71,7 @@ function setDirection(node: BidiNode, direction: FixedContentDirection): void {
 }
 
 function plainText(node: BidiNode): string {
-  if (node.type === "element" && (node.tagName === "code" || node.tagName === "pre")) {
+  if (node.type === "element" && node.tagName && PROSE_EXCLUDED_TAGS.has(node.tagName)) {
     return "";
   }
   if (node.type === "text") return node.value ?? "";
@@ -71,15 +79,7 @@ function plainText(node: BidiNode): string {
 }
 
 function tableProseText(node: BidiNode): string {
-  if (
-    node.type === "element" &&
-    node.tagName &&
-    (node.tagName === "code" ||
-      node.tagName === "math" ||
-      node.tagName === "pre" ||
-      node.tagName === "script" ||
-      node.tagName === "style")
-  ) {
+  if (node.type === "element" && node.tagName && PROSE_EXCLUDED_TAGS.has(node.tagName)) {
     return "";
   }
   if (node.type === "text") return node.value ?? "";
@@ -88,6 +88,52 @@ function tableProseText(node: BidiNode): string {
 
 function addCounts(left: StrongScriptCounts, right: StrongScriptCounts): StrongScriptCounts {
   return { ltr: left.ltr + right.ltr, rtl: left.rtl + right.rtl };
+}
+
+function headingLevel(node: BidiNode): number | null {
+  if (node.type !== "element" || !node.tagName || !HEADING_TAGS.has(node.tagName)) return null;
+  return Number.parseInt(node.tagName.slice(1), 10);
+}
+
+function resolveHeadingSectionDirections(
+  root: BidiNode,
+  fallbackDirection: FixedContentDirection,
+): WeakMap<BidiNode, FixedContentDirection> {
+  const directions = new WeakMap<BidiNode, FixedContentDirection>();
+  const activeSections: HeadingSection[] = [];
+
+  const finish = (section: HeadingSection) => {
+    directions.set(
+      section.heading,
+      resolveHeadingSectionDirectionFromCounts(
+        countStrongScripts(plainText(section.heading)),
+        section.counts,
+        fallbackDirection,
+      ),
+    );
+  };
+
+  for (const child of root.children ?? []) {
+    const level = headingLevel(child);
+    if (level !== null) {
+      while (
+        activeSections.length > 0 &&
+        activeSections[activeSections.length - 1]!.level >= level
+      ) {
+        finish(activeSections.pop()!);
+      }
+      activeSections.push({ counts: ZERO_COUNTS, heading: child, level });
+      continue;
+    }
+
+    const counts =
+      child.type === "element" && child.tagName === "table"
+        ? countTableStrongScripts(tableProseText(child))
+        : countStrongScripts(plainText(child));
+    for (const section of activeSections) section.counts = addCounts(section.counts, counts);
+  }
+  while (activeSections.length > 0) finish(activeSections.pop()!);
+  return directions;
 }
 
 function positiveSpan(value: unknown): number {
@@ -249,6 +295,18 @@ export function rehypeScientBidi(options: {
 }) {
   return (tree: BidiNode) => {
     const tableColumnDirections = new WeakMap<BidiNode, FixedContentDirection>();
+    const headingSectionDirections = resolveHeadingSectionDirections(tree, options.direction);
+    const canNormalizeArrows = (
+      flowDirection: FixedContentDirection,
+      flowArrowEligible: boolean,
+    ) => {
+      if (!flowArrowEligible || flowDirection !== "rtl") return false;
+      if (options.requestedDirection === "ltr") return false;
+      if (options.requestedDirection === "auto" || options.requestedDirection === "rtl") {
+        return true;
+      }
+      return options.direction === "rtl";
+    };
     function processChildren(
       parent: BidiNode,
       inheritedDirection: FixedContentDirection | undefined,
@@ -257,8 +315,7 @@ export function rehypeScientBidi(options: {
       flowArrowEligible: boolean,
     ): void {
       if (!parent.children) return;
-      const canWrapArrows =
-        flowArrowEligible && options.direction === "rtl" && flowDirection === "rtl";
+      const canWrapArrows = canNormalizeArrows(flowDirection, flowArrowEligible);
       if (!canWrapArrows) {
         parent.children.forEach((child) =>
           visit(child, inheritedDirection, tableDirection, flowDirection, flowArrowEligible),
@@ -285,12 +342,7 @@ export function rehypeScientBidi(options: {
       flowArrowEligible = true,
     ): void {
       if (node.type === "text") {
-        if (
-          flowArrowEligible &&
-          options.direction === "rtl" &&
-          flowDirection === "rtl" &&
-          node.value
-        ) {
+        if (canNormalizeArrows(flowDirection, flowArrowEligible) && node.value) {
           node.value = normalizeRtlFlowArrows(node.value);
         }
         return;
@@ -362,9 +414,13 @@ export function rehypeScientBidi(options: {
           );
           return;
         } else if (HEADING_TAGS.has(node.tagName)) {
-          // A title follows its enclosing message, list, or table-cell flow
-          // rather than switching from a short heading label alone.
-          const headingDirection = inheritedDirection ?? tableDirection ?? options.direction;
+          const headingDirection =
+            inheritedDirection ??
+            tableDirection ??
+            (options.requestedDirection && options.requestedDirection !== "auto"
+              ? options.requestedDirection
+              : (headingSectionDirections.get(node) ??
+                resolveProseBlockDirection(plainText(node), options.direction)));
           setDirection(node, headingDirection);
           flowDirection = headingDirection;
         } else if (LOCAL_DIRECTION_TAGS.has(node.tagName)) {
