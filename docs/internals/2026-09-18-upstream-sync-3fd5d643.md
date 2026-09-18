@@ -1,9 +1,9 @@
 # T3 alignment through `3fd5d643`
 
-Status: automated qualification passed; isolated candidate ready for owner manual review.
-No PR, push, visual acceptance, or release publication is claimed. This is one full,
-history-preserving alignment from the previous official boundary through the exact official
-target. It is not a split, cherry-pick, squash, or replay.
+Status: automated qualification and final source review passed; pull-request publication is
+authorized. No visual acceptance or release publication is claimed. This is one full,
+history-preserving alignment from the previous official boundary through the exact official target.
+It is not a split, cherry-pick, squash, or replay.
 
 ## Frozen history
 
@@ -73,6 +73,9 @@ release notes, and preserve composer submission intent while voice processing is
   optional-platform import warnings only.
 - `pnpm run test:desktop-smoke`: passed.
 - `pnpm run brand:check`: passed across 2,106 product-surface files.
+- Analysis, onboarding, skills, and LaTeX protected-seam checks: passed against the exact
+  `origin/main...HEAD` candidate range and official `upstream/main` target.
+- `pnpm run upstream:provenance:check`: passed at official integration base `3fd5d643`.
 - Conflict markers and unmerged index entries: none. The candidate worktree is clean after the
   documentation/state receipt commit.
 - No computer-use or visual manual review was performed; this is the handoff point for owner
