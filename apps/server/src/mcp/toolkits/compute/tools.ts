@@ -2,14 +2,15 @@ import { ComputeRuntimeInventory } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
 import { Tool, Toolkit } from "effect/unstable/ai";
 
-import * as McpInvocationContext from "../../McpInvocationContext.ts";
+import { ScientOperation } from "../../ScientOperationTool.ts";
+import * as AgentInvocationContext from "../../../scient/operations/AgentInvocationContext.ts";
 import { ComputeMcpGateway } from "./ComputeMcpGateway.ts";
 
 // MCP clients require an object schema even when a read operation has no
 // arguments. This rejects arrays and scalar payloads instead of publishing a
 // broad JSON schema that can cause a client to discard the tool catalog.
 const EmptyToolInput = Schema.Record(Schema.String, Schema.Never);
-const dependencies = [McpInvocationContext.McpInvocationContext, ComputeMcpGateway];
+const dependencies = [AgentInvocationContext.AgentInvocationContext, ComputeMcpGateway];
 
 export class ScientComputeInventoryToolError extends Schema.TaggedError<ScientComputeInventoryToolError>()(
   "ScientComputeInventoryToolError",
@@ -31,6 +32,14 @@ const ScientComputeInventoryTool = Tool.make("scient_compute_inventory", {
   .annotate(Tool.Readonly, true)
   .annotate(Tool.Destructive, false)
   .annotate(Tool.Idempotent, true)
-  .annotate(Tool.OpenWorld, false);
+  .annotate(Tool.OpenWorld, false)
+  .annotate(ScientOperation, {
+    id: "compute.inventory",
+    family: "compute",
+    scope: "thread",
+    requiredCapabilities: ["compute:inventory"],
+    approval: "session-grant",
+    documentation: "docs/user/scientific-computing.md",
+  });
 
 export const ScientComputeToolkit = Toolkit.make(ScientComputeInventoryTool);

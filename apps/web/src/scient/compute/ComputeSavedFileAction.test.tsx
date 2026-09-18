@@ -69,12 +69,14 @@ function pickFile() {
   hooks.beginRender();
   const tree = ComputeSavedFileAction(props) as ReactElement<Record<string, unknown>>;
   const button = visitElements(tree, (element) => typeof element.props.title === "string");
-  (button?.props.onClick as () => void)();
+  expect(button).toBeDefined();
+  (button!.props.onClick as () => void)();
   hooks.beginRender();
   const opened = ComputeSavedFileAction(props) as ReactElement<Record<string, unknown>>;
   const picker = visitElements(opened, (element) => element.type === ProjectFilePickerForTarget);
   expect(picker?.props.target).toMatchObject({ environmentId, cwd: "/synthetic" });
-  (picker?.props.onSelectFile as (path: string) => void)("run.py");
+  expect(picker).toBeDefined();
+  (picker!.props.onSelectFile as (path: string) => void)("run.py");
 }
 
 beforeEach(() => {

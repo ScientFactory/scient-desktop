@@ -52,6 +52,15 @@ const sessionId = ComputeSessionId.make("python-integration-session");
 const python = ComputeLanguageId.make("python");
 const transportKind = ComputeTransportKind.make("jupyter-bridge");
 type ReadyEvent = Extract<ComputeTransportEvent, { readonly _tag: "ready" }>;
+const decodeDataFramePreview = Schema.decodeUnknownEffect(
+  Schema.fromJsonString(
+    Schema.Struct({
+      data: Schema.Array(Schema.Unknown),
+      schema: Schema.Struct({ fields: Schema.Array(Schema.Unknown) }),
+      scientPreview: Schema.Struct({ truncated: Schema.Boolean }),
+    }),
+  ),
+);
 interface IntegrationHarness {
   readonly channel: ComputeChannel;
   readonly events: Queue.Dequeue<ComputeTransportEvent>;
@@ -295,15 +304,7 @@ describe.runIf(Boolean(TEST_PYTHON))("Python kernel integration", () => {
             (item) => item.mediaType === "application/vnd.dataresource+json",
           );
           if (table?.data._tag !== "json") throw new Error("Expected bounded dataframe JSON");
-          const data = yield* Schema.decodeUnknownEffect(
-            Schema.fromJsonString(
-              Schema.Struct({
-                data: Schema.Array(Schema.Unknown),
-                schema: Schema.Struct({ fields: Schema.Array(Schema.Unknown) }),
-                scientPreview: Schema.Struct({ truncated: Schema.Boolean }),
-              }),
-            ),
-          )(table.data.json);
+          const data = yield* decodeDataFramePreview(table.data.json);
           expect(data.data).toHaveLength(100);
           expect(data.schema.fields).toHaveLength(21);
           expect(data.scientPreview.truncated).toBe(true);

@@ -4,6 +4,8 @@ import * as Layer from "effect/Layer";
 import { McpServer } from "effect/unstable/ai";
 
 import { ScientComputeToolkitRegistrationLive } from "../../McpHttpServer.ts";
+import { WorkspaceBindingResolver } from "../../../scient/projectScope/WorkspaceBindingResolver.ts";
+import { workspaceResolverForTest } from "../../../scient/projectScope/WorkspaceBindingTestUtils.ts";
 import { ComputeMcpGateway } from "./ComputeMcpGateway.ts";
 
 const TestLayer = ScientComputeToolkitRegistrationLive.pipe(
@@ -12,6 +14,7 @@ const TestLayer = ScientComputeToolkitRegistrationLive.pipe(
       runtimeInventory: () => Effect.succeed({ languages: [] }),
     }),
   ),
+  Layer.provide(Layer.succeed(WorkspaceBindingResolver, workspaceResolverForTest(new Map()))),
   Layer.provideMerge(McpServer.McpServer.layer),
 );
 

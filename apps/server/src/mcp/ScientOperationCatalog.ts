@@ -2,6 +2,7 @@ import { makeOperationRegistry } from "@scientfactory/operations";
 import type { Tool } from "effect/unstable/ai";
 
 import { operationDefinitionForTool } from "./ScientOperationTool.ts";
+import { ScientComputeToolkit } from "./toolkits/compute/tools.ts";
 import { ScientDocumentsToolkit } from "./toolkits/documents/tools.ts";
 import { PreviewToolkit } from "./toolkits/preview/tools.ts";
 import { ScientSkillsToolkit } from "./toolkits/skills/tools.ts";
@@ -31,6 +32,7 @@ export const scientTools = [
   ...Object.values(ScientSourcesToolkit.tools),
   ...Object.values(ScientSkillsToolkit.tools),
   ...Object.values(ScientDocumentsToolkit.tools),
+  ...Object.values(ScientComputeToolkit.tools),
 ];
 export type ScientToolName = (typeof scientTools)[number]["name"];
 export const scientOperationCatalog = makeScientOperationCatalog(scientTools);

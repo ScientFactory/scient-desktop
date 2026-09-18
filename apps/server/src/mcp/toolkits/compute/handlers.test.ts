@@ -8,14 +8,14 @@ import { expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import { vi } from "vite-plus/test";
 
-import * as McpInvocationContext from "../../McpInvocationContext.ts";
+import * as AgentInvocationContext from "../../../scient/operations/AgentInvocationContext.ts";
 import { ComputeMcpGateway } from "./ComputeMcpGateway.ts";
 import { listScientComputeInventory } from "./handlers.ts";
 import { ScientComputeInventoryToolError } from "./tools.ts";
 
 const makeInvocation = (
-  capabilities: ReadonlySet<McpInvocationContext.McpCapability>,
-): McpInvocationContext.McpInvocationScope => ({
+  capabilities: ReadonlySet<AgentInvocationContext.OperationCapability>,
+): AgentInvocationContext.AgentInvocationScope => ({
   environmentId: EnvironmentId.make("environment-compute-handler-test"),
   threadId: ThreadId.make("thread-compute-handler-test"),
   providerSessionId: "provider-session-compute-handler-test",
@@ -30,7 +30,10 @@ it.effect("requires compute:inventory before touching the gateway", () => {
 
   return Effect.gen(function* () {
     const error = yield* listScientComputeInventory().pipe(
-      Effect.provideService(McpInvocationContext.McpInvocationContext, makeInvocation(new Set())),
+      Effect.provideService(
+        AgentInvocationContext.AgentInvocationContext,
+        makeInvocation(new Set()),
+      ),
       Effect.provideService(ComputeMcpGateway, gateway),
       Effect.flip,
     );
@@ -49,7 +52,7 @@ it.effect("reads only the existing gateway inventory operation", () => {
   return Effect.gen(function* () {
     const result = yield* listScientComputeInventory().pipe(
       Effect.provideService(
-        McpInvocationContext.McpInvocationContext,
+        AgentInvocationContext.AgentInvocationContext,
         makeInvocation(new Set(["compute:inventory"])),
       ),
       Effect.provideService(ComputeMcpGateway, gateway),
@@ -75,7 +78,7 @@ it.effect("maps gateway failures without exposing host details", () => {
   return Effect.gen(function* () {
     const error = yield* listScientComputeInventory().pipe(
       Effect.provideService(
-        McpInvocationContext.McpInvocationContext,
+        AgentInvocationContext.AgentInvocationContext,
         makeInvocation(new Set(["compute:inventory"])),
       ),
       Effect.provideService(ComputeMcpGateway, gateway),

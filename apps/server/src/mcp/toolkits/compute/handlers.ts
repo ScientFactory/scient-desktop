@@ -1,6 +1,6 @@
 import * as Effect from "effect/Effect";
 
-import * as McpInvocationContext from "../../McpInvocationContext.ts";
+import * as AgentInvocationContext from "../../../scient/operations/AgentInvocationContext.ts";
 import { ComputeMcpGateway } from "./ComputeMcpGateway.ts";
 import { ScientComputeInventoryToolError, ScientComputeToolkit } from "./tools.ts";
 
@@ -10,7 +10,7 @@ const toolError = (
 ) => new ScientComputeInventoryToolError({ code, message });
 
 const requireComputeInventory = Effect.fn("ScientComputeToolkit.requireInventory")(function* () {
-  const invocation = yield* McpInvocationContext.McpInvocationContext;
+  const invocation = yield* AgentInvocationContext.AgentInvocationContext;
   if (!invocation.capabilities.has("compute:inventory")) {
     return yield* toolError(
       "capability-unavailable",

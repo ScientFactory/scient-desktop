@@ -631,9 +631,9 @@ export const ScientDocumentsToolkitRegistrationLive = registerScientToolkit(
   ScientDocumentsToolkit,
 ).pipe(Layer.provide(ScientDocumentsToolkitHandlersLive));
 
-export const ScientComputeToolkitRegistrationLive = McpServer.toolkit(ScientComputeToolkit).pipe(
-  Layer.provide(ScientComputeToolkitHandlersLive),
-);
+export const ScientComputeToolkitRegistrationLive = registerScientToolkit(
+  ScientComputeToolkit,
+).pipe(Layer.provide(ScientComputeToolkitHandlersLive));
 
 export const PullRequestsToolkitRegistrationLive = McpServer.toolkit(PullRequestsToolkit).pipe(
   Layer.provide(PullRequestsToolkitHandlersLive),

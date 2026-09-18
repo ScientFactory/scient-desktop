@@ -33,6 +33,7 @@ import { matlabRuntimeBinding } from "./MatlabComputeRuntime.ts";
 const PYTHON = NodeProcess.env.SCIENT_TEST_PYTHON;
 const MATLAB = NodeProcess.env.SCIENT_TEST_MATLAB;
 const PROJECT = ComputeProjectId.make("native-concurrent-compute");
+const encodeQualificationMeasurement = Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown));
 
 const eventually = Effect.fn("ConcurrentCompute.eventually")(function* <A, E, R>(
   read: Effect.Effect<A | null, E, R>,
@@ -151,7 +152,7 @@ describe.runIf(Boolean(PYTHON && MATLAB))("native independent Compute contexts",
           if (reportPath)
             yield* fs.writeFileString(
               reportPath,
-              yield* Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown))(measurement),
+              yield* encodeQualificationMeasurement(measurement),
             );
           const submit = (session: ComputeSessionRecord, suffix: string, code: string) =>
             service.submitExecution({

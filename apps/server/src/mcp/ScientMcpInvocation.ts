@@ -8,6 +8,7 @@ import type { McpCapability, McpInvocationScope } from "./McpInvocationContext.t
 const scientGrants: Record<OperationCapability, McpCapability> = {
   preview: "preview",
   "documents:build": "documents:build",
+  "compute:inventory": "compute:inventory",
   "skills:read": "skills:read",
   "sources:read": "sources:read",
   "sources:write": "sources:write",

@@ -1633,7 +1633,7 @@ const make = Effect.gen(function* () {
                       sourceRevision: execution.request.source.revision,
                     }),
                 saved: execution.request.source.bufferState === "saved",
-                ...(execution.request.source.range ?? {}),
+                ...execution.request.source.range,
               },
             }),
       } satisfies ComputeDispatch;
