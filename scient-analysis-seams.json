@@ -18,6 +18,8 @@
     "packages/scient-execution"
   ],
   "ownedFiles": [
+    "apps/server/scripts/compute-recipes.ts",
+    "apps/server/scripts/publish-compute-recipe.ts",
     "apps/server/src/telemetry/ComputeOutputAnalytics.ts",
     "apps/server/src/orchestration/scient-fork/migrations/005_AnalysisRunIndex.ts",
     "apps/server/src/orchestration/scient-fork/migrations/006_AnalysisRunProjectionState.ts",
@@ -37,7 +39,8 @@
     "packages/client-runtime/src/state/analysis.ts",
     "packages/client-runtime/src/state/compute.ts",
     "packages/contracts/src/scientAnalysis.ts",
-    "packages/contracts/src/scientCompute.ts"
+    "packages/contracts/src/scientCompute.ts",
+    "renovate.json5"
   ],
   "analysisDiffSignals": [
     "@scientfactory/(analysis|compute|execution)",
