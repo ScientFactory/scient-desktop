@@ -2430,7 +2430,7 @@ function OpenCommandPaletteDialog(props: {
           existing.id,
           clientSettings.sidebarThreadSortOrder,
         );
-        if (latestThread) {
+        if (latestThread && latestThread.settledOverride !== "settled") {
           if (!canCommitNavigation()) return;
           handoff();
           await navigate({

@@ -180,9 +180,14 @@ but the new thread does not reuse the worktree created for the thread that just 
 ## `when` Conditions
 
 A `when` expression is evaluated against context keys describing the current UI state. The keys
-the app supplies today are `terminalFocus`, `terminalOpen`, `previewFocus`, `previewOpen`, and
-`modelPickerOpen`. The set is open and grows over time, so treat that as the current list rather
-than a fixed one. Any key the running app does not supply evaluates to `false`.
+the app supplies today are `terminalFocus`, `terminalOpen`, `previewFocus`, `previewOpen`,
+`modelPickerOpen`, `isWeb`, and `isDesktop`. `isWeb` is true in a browser tab and `isDesktop` is
+true in the desktop app. The set is open and grows over time, so treat that as the current list
+rather than a fixed one. Any key the running app does not supply evaluates to `false`.
+
+`mod+1` through `mod+9` jump to the first nine threads, and to models while the model picker is
+open. Those defaults use `isDesktop` so they do not steal the browser's tab-switch shortcuts.
+Remove that condition in Settings if you want the same jumps in a browser.
 
 Operators: `!` (not), `&&` (and), `||` (or), and parentheses.
 

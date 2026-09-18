@@ -32,6 +32,7 @@ for (const previousId of [49, 50, 52] as const) {
                   [53, "ProjectionThreadPullRequests"],
                   [54, "ProjectionThreadMessageContext"],
                   [55, "ProjectionThreadTitleState"],
+                  [56, "PullRequestFilesViewed"],
                 ]
               : [
                   [51, "ProjectionThreadBranchPullRequest"],
@@ -39,6 +40,7 @@ for (const previousId of [49, 50, 52] as const) {
                   [53, "ProjectionThreadPullRequests"],
                   [54, "ProjectionThreadMessageContext"],
                   [55, "ProjectionThreadTitleState"],
+                  [56, "PullRequestFilesViewed"],
                 ],
           );
           assert.deepStrictEqual(
@@ -56,6 +58,13 @@ for (const previousId of [49, 50, 52] as const) {
           assert.ok(columns.some((column) => column.name === "active_order_key"));
           assert.ok(columns.some((column) => column.name === "title_state_json"));
           assert.deepStrictEqual(yield* sql`SELECT * FROM projection_thread_pull_requests`, []);
+          const viewedFileColumns = yield* sql<{
+            name: string;
+          }>`PRAGMA table_info(pull_request_files_viewed)`;
+          assert.deepStrictEqual(
+            viewedFileColumns.map((column) => column.name),
+            ["provider", "host", "repository", "number", "viewer", "path", "revision", "viewed_at"],
+          );
           assert.isEmpty(yield* runMigrations());
         }),
       );
@@ -76,8 +85,10 @@ it.layer(Layer.fresh(NodeSqliteClient.layerMemory()))("fresh migration compatibi
         { migration_id: 53, name: "ProjectionThreadPullRequests" },
         { migration_id: 54, name: "ProjectionThreadMessageContext" },
         { migration_id: 55, name: "ProjectionThreadTitleState" },
+        { migration_id: 56, name: "PullRequestFilesViewed" },
       ]);
       assert.deepStrictEqual(yield* sql`SELECT * FROM projection_thread_pull_requests`, []);
+      assert.deepStrictEqual(yield* sql`SELECT * FROM pull_request_files_viewed`, []);
       assert.isEmpty(yield* runMigrations());
     }),
   );
