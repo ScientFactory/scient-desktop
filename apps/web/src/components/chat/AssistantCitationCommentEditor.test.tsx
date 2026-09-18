@@ -5,12 +5,32 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test"
 import { EnvironmentId } from "@t3tools/contracts";
 
 vi.mock("~/scient/voice/ScientVoiceCommentControl", () => ({
-  ScientVoiceCommentControl: ({ onTranscript }: { onTranscript: (text: string) => void }) => (
-    <button
-      type="button"
-      aria-label="Dictate citation comment"
-      onClick={() => onTranscript("Dictated context")}
-    />
+  ScientVoiceCommentControl: ({
+    onBusyChange,
+    onTranscript,
+  }: {
+    onBusyChange?: (busy: boolean) => void;
+    onTranscript: (text: string) => void;
+  }) => (
+    <>
+      <button
+        type="button"
+        aria-label="Dictate citation comment"
+        onClick={() => onTranscript("Dictated context")}
+      />
+      <button type="button" onClick={() => onBusyChange?.(true)}>
+        Begin voice processing
+      </button>
+      <button
+        type="button"
+        onClick={() => {
+          onTranscript("Dictated context");
+          onBusyChange?.(false);
+        }}
+      >
+        Finish voice processing
+      </button>
+    </>
   ),
 }));
 
@@ -19,15 +39,20 @@ import { AssistantCitationCommentEditor } from "./AssistantCitationCommentEditor
 let container: HTMLDivElement;
 let root: Root;
 const onSubmit = vi.fn(() => true);
+const onSubmitAndSend = vi.fn(() => true);
 const onCancel = vi.fn();
 
-async function render(mode: "create" | "edit" = "edit") {
+async function render(
+  mode: "create" | "edit" = "edit",
+  options: { withSubmitAndSend?: boolean } = {},
+) {
   await act(() =>
     root.render(
       <AssistantCitationCommentEditor
         citation={{ environmentId: EnvironmentId.make("local") }}
         mode={mode}
         onSubmit={onSubmit}
+        {...(options.withSubmitAndSend ? { onSubmitAndSend } : {})}
         onCancel={onCancel}
       />,
     ),
@@ -40,6 +65,21 @@ async function click(label: string) {
   );
   expect(button, label).toBeDefined();
   await act(() => button!.click());
+}
+
+async function pressEnter(options: KeyboardEventInit = {}) {
+  const textarea = container.querySelector<HTMLTextAreaElement>("textarea");
+  expect(textarea).not.toBeNull();
+  await act(() =>
+    textarea!.dispatchEvent(
+      new KeyboardEvent("keydown", {
+        bubbles: true,
+        cancelable: true,
+        key: "Enter",
+        ...options,
+      }),
+    ),
+  );
 }
 
 beforeEach(() => {
@@ -100,4 +140,30 @@ describe("assistant citation comment actions", () => {
     );
     expect(onSubmit).not.toHaveBeenCalled();
   });
+
+  it.each([
+    { shortcut: "Enter", options: {}, expected: onSubmit },
+    { shortcut: "Command+Enter", options: { metaKey: true }, expected: onSubmitAndSend },
+    { shortcut: "Ctrl+Enter", options: { ctrlKey: true }, expected: onSubmitAndSend },
+  ])(
+    "blocks $shortcut while voice processing is pending, then submits the transcript",
+    async ({ options, expected }) => {
+      await render("create", { withSubmitAndSend: true });
+      await click("Begin voice processing");
+
+      await pressEnter(options);
+
+      expect(onSubmit).not.toHaveBeenCalled();
+      expect(onSubmitAndSend).not.toHaveBeenCalled();
+
+      await click("Finish voice processing");
+      expect(container.querySelector<HTMLTextAreaElement>("textarea")?.value).toBe(
+        "Dictated context",
+      );
+
+      await pressEnter(options);
+
+      expect(expected).toHaveBeenCalledWith("Dictated context");
+    },
+  );
 });

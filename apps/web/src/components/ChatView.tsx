@@ -8218,6 +8218,14 @@ function ChatViewContent(props: ChatViewProps) {
       }
     }
     const selectedScientSkillNames = collectSelectedScientSkillNames(promptForSend);
+    type ComposerTurnStartArgs = Omit<Parameters<typeof startThreadTurn>[0], "input"> & {
+      readonly input: Parameters<typeof startThreadTurn>[0]["input"] & {
+        readonly selectedScientSkillNames: ReadonlyArray<string>;
+      };
+    };
+    // User-authored composer turns must carry the selection snapshot as authority.
+    // Keep non-composer commands free to omit it for wire compatibility.
+    const startComposerThreadTurn = (args: ComposerTurnStartArgs) => startThreadTurn(args);
     const composerFilesSnapshot = [...composerFiles];
     const composerAttachmentsSnapshot = [...composerImagesSnapshot, ...composerFilesSnapshot];
     const composerTerminalContextsSnapshot = [...sendableComposerTerminalContexts];
@@ -8599,10 +8607,11 @@ function ChatViewContent(props: ChatViewProps) {
                 appAtomRegistry.get(environmentServerConfigsAtom).get(environmentId)?.environment
                   .capabilities.inlineMessageContext === true;
               requestMayHaveStarted = true;
-              const result = await startThreadTurn({
+              const result = await startComposerThreadTurn({
                 environmentId,
                 input: {
                   threadId: targetThreadId,
+                  selectedScientSkillNames,
                   message: {
                     messageId: newMessageId(),
                     role: "user",
@@ -8996,7 +9005,7 @@ function ChatViewContent(props: ChatViewProps) {
       if (backgroundThreadRef) {
         beginBackgroundDraftSubmissionByRef(backgroundThreadRef);
       }
-      const startPromise = startThreadTurn({
+      const startPromise = startComposerThreadTurn({
         environmentId,
         input: {
           threadId: threadIdForSend,
