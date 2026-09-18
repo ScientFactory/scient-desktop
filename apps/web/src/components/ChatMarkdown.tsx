@@ -2089,9 +2089,8 @@ function useChatMarkdownState({
     messageId: MessageId | null;
     direction: FixedContentDirection;
   } | null>(null);
-  if (!isStreaming) {
-    streamingDirectionRef.current = null;
-  } else if (
+  if (
+    isStreaming &&
     effectiveContentDirection === "auto" &&
     streamingDirectionRef.current?.messageId !== (messageId ?? null)
   ) {
@@ -2105,14 +2104,19 @@ function useChatMarkdownState({
       }),
     };
   }
+  const frozenDirection =
+    effectiveContentDirection === "auto" &&
+    streamingDirectionRef.current?.messageId === (messageId ?? null)
+      ? streamingDirectionRef.current.direction
+      : null;
   const resolvedContentDirection = resolveStreamingMarkdownDirection({
     markdown: text,
     requestedDirection: effectiveContentDirection,
     messageDirectionHint: directionHint,
-    frozenDirection:
-      effectiveContentDirection === "auto" ? streamingDirectionRef.current?.direction : null,
+    frozenDirection,
     isStreaming,
   });
+  if (!isStreaming) streamingDirectionRef.current = null;
   const { resolvedTheme } = useTheme();
   const [localMediaPreview, setLocalMediaPreview] = useState<ExpandedImagePreview | null>(null);
   const markdownRef = useRef<HTMLDivElement>(null);
