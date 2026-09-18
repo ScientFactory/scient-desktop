@@ -165,6 +165,9 @@ _scient_previous_file_present = False
 _scient_previous_file = None
 _scient_added_sys_path = None
 _scient_original_cache = _scient_shell.compile.cache
+_scient_source_cache = {}
+_scient_source_cache_bytes = 0
+_scient_compilation = 0
 
 def _scient_restore_source_context():
     global _scient_filename, _scient_saved_file
@@ -216,23 +219,33 @@ def _scient_pre_run(info):
     if _scient_saved_file:
         _scient_previous_file_present = "__file__" in _scient_shell.user_ns
         _scient_previous_file = _scient_shell.user_ns.get("__file__")
-        _scient_shell.user_ns["__file__"] = _scient_filename
-        parent = os.path.dirname(_scient_filename)
+        _scient_shell.user_ns["__file__"] = raw_path
+        parent = os.path.dirname(raw_path)
         if parent and parent not in sys.path:
             sys.path.insert(0, parent)
             _scient_added_sys_path = parent
 
 def _scient_cache(transformed_code, number=0, raw_code=None):
+    global _scient_source_cache_bytes, _scient_compilation
     if _scient_filename is None:
         return _scient_original_cache(transformed_code, number, raw_code)
     # Compiled code keeps the submitted snippet's relative line numbers.  The
     # adapter owns the one document-range offset; padding linecache here would
     # make source excerpts blank or visually double-shifted.
+    _scient_compilation += 1
+    filename = _scient_filename[:-1] + ":" + str(_scient_compilation) + ">"
     lines = transformed_code.splitlines(keepends=True)
-    linecache.cache[_scient_filename] = (
-        len(transformed_code), None, lines, _scient_filename
+    size = len(transformed_code.encode("utf-8"))
+    linecache.cache[filename] = (
+        size, None, lines, filename
     )
-    return _scient_filename
+    _scient_source_cache[filename] = size
+    _scient_source_cache_bytes += size
+    while len(_scient_source_cache) > 256 or _scient_source_cache_bytes > 8 * 1024 * 1024:
+        oldest = next(iter(_scient_source_cache))
+        _scient_source_cache_bytes -= _scient_source_cache.pop(oldest)
+        linecache.cache.pop(oldest, None)
+    return filename
 
 _scient_shell.compile.cache = _scient_cache
 _scient_shell.events.register("pre_run_cell", _scient_pre_run)
@@ -1159,14 +1172,7 @@ class ScientBridge:
             canonical["filePath"] = self._resolve_source_path(
                 source_context, require_file=native_saved_file
             )
-        if not native_saved_file:
-            # PythonDiagnostic intentionally applies submittedSource.startLine
-            # only to synthetic filenames. The runtime line remains the cell
-            # line, so this bridge must not emit a real project path here or the
-            # adapter would interpret the relative line as already absolute.
-            canonical["tracebackFilename"] = "<scient-compute-source>"
-        else:
-            canonical.pop("tracebackFilename", None)
+        canonical.pop("tracebackFilename", None)
         return canonical
 
     def _execute_kernel(
@@ -1329,6 +1335,12 @@ class ScientBridge:
                 )
                 if native_saved_file:
                     self._verify_saved_source(code, source_context)
+                # Never reuse a path as a compilation cache key, even for saved
+                # files: retained functions must keep their original source.
+                # Hex keeps arbitrary protocol ids inert in traceback filenames.
+                source_context["tracebackFilename"] = (
+                    "<scient-compute-source:" + request_id.encode("utf-8").hex() + ">"
+                )
         except SourceConflict as error:
             # A source race is a failed execution, not a broken bridge.  Keep
             # the command correlated and tell the service why no native code ran.

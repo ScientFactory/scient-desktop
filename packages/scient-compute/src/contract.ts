@@ -715,6 +715,15 @@ export interface ComputeRuntimeErrorReport {
 /** Server-owned source context an adapter may use to produce safe locations. */
 export interface ComputeDiagnosticContext {
   readonly projectRoot: string;
+  /** Bounded, server-owned provenance for executions retained by this live namespace. */
+  readonly executionSources?: ReadonlyMap<
+    string,
+    {
+      readonly relativePath: string;
+      readonly startLine: number;
+      readonly lineCount: number;
+    }
+  >;
   readonly submittedSource: {
     readonly relativePath: string;
     /** Zero-based first document line represented by runtime line one. */

@@ -12,6 +12,7 @@ import contextlib
 import hashlib
 import io
 import json
+import linecache
 import os
 import queue
 import re
@@ -20,6 +21,8 @@ import struct
 import subprocess
 import sys
 import tempfile
+import traceback
+import types
 import unittest
 
 # Add the bridge directory to the path so we can import the module.
@@ -664,6 +667,87 @@ class TestBridgeIOPubMapping(unittest.TestCase):
         self.assertEqual(representation["encoding"], "text")
 
 
+class TestSourceCache(unittest.TestCase):
+    def setUp(self):
+        self.shell = types.SimpleNamespace(
+            compile=types.SimpleNamespace(cache=lambda *args: "<fallback>"),
+            events=types.SimpleNamespace(register=lambda *args: None),
+            user_ns={},
+        )
+        self.context = {
+            "get_ipython": lambda: self.shell,
+            "os": os,
+            "sys": sys,
+            "linecache": linecache,
+        }
+        # Execute the actual source-metadata hook without needing IPython.
+        hook = bridge.PYTHON_RICH_DISPLAY_SETUP.split("# Jupyter carries", 1)[1]
+        exec("# Jupyter carries" + hook, self.context)
+
+    def tearDown(self):
+        self.context["_scient_restore_source_context"]()
+        for filename in self.context["_scient_source_cache"]:
+            linecache.cache.pop(filename, None)
+
+    def compile_source(self, source, request="a"):
+        self.context["_scient_filename"] = "<scient-compute-source:" + request.encode().hex() + ">"
+        filename = self.shell.compile.cache(source)
+        return compile(source, filename, "exec"), filename
+
+    def test_retained_function_keeps_its_excerpt_across_submissions(self):
+        namespace = {}
+        first, filename = self.compile_source(
+            "def retained():\n    raise ValueError('original A')\n"
+        )
+        exec(first, namespace)
+        second, second_filename = self.compile_source("marker = 'B'\nretained()\n", "b")
+        try:
+            exec(second, namespace)
+        except ValueError as error:
+            frames = traceback.extract_tb(error.__traceback__)
+        else:
+            self.fail("The retained function did not fail")
+        self.assertEqual(frames[-1].filename, filename)
+        self.assertEqual(frames[-1].line, "raise ValueError('original A')")
+        self.assertEqual(frames[-2].filename, second_filename)
+        self.assertEqual(frames[-2].line, "retained()")
+        _, repeated_filename = self.compile_source("different = 1\n")
+        self.assertNotEqual(filename, repeated_filename)
+        self.assertIn("original A", linecache.getline(filename, 2))
+
+    def test_cache_is_bounded_by_entries_and_bytes_without_reusing_evicted_names(self):
+        _, oldest = self.compile_source("old = 1\n")
+        for _ in range(300):
+            self.compile_source("new = 2\n")
+        self.assertEqual(len(self.context["_scient_source_cache"]), 256)
+        self.assertEqual(linecache.getline(oldest, 1), "")
+        for _ in range(12):
+            self.shell.compile.cache("#" + "x" * (1024 * 1024))
+        self.assertLessEqual(self.context["_scient_source_cache_bytes"], 8 * 1024 * 1024)
+        self.assertLess(len(self.context["_scient_source_cache"]), 10)
+
+    def test_saved_file_uses_real_file_context_but_immutable_compilation_identity(self):
+        metadata = {"scient": {
+            "filePath": "/project/main.py",
+            "kind": "file",
+            "saved": True,
+            "tracebackFilename": "<scient-compute-source:61>",
+        }}
+        for info in (
+            types.SimpleNamespace(cell_meta=metadata),
+            types.SimpleNamespace(),  # IPython 8 fallback through parent_header
+        ):
+            self.shell.parent_header = {"metadata": metadata}
+            self.context["_scient_pre_run"](info)
+            self.assertEqual(self.shell.user_ns["__file__"], "/project/main.py")
+            self.assertIn("/project", sys.path)
+            filename = self.shell.compile.cache("x = 1\n")
+            self.assertTrue(filename.startswith("<scient-compute-source:61:"))
+            self.context["_scient_restore_source_context"]()
+            self.assertNotIn("__file__", self.shell.user_ns)
+            self.assertNotIn("/project", sys.path)
+
+
 class TestBridgeExecute(unittest.IsolatedAsyncioTestCase):
     """Submitting work, and what happens when submitting fails."""
 
@@ -716,7 +800,7 @@ class TestBridgeExecute(unittest.IsolatedAsyncioTestCase):
                 message["metadata"]["scient"]["filePath"], os.path.realpath(source)
             )
             self.assertTrue(message["metadata"]["scient"]["saved"])
-            self.assertNotIn("tracebackFilename", message["metadata"]["scient"])
+            self.assertTrue(message["metadata"]["scient"]["tracebackFilename"].startswith("<scient-compute-source:"))
             self.assertEqual(message["content"]["code"], code)
 
     async def test_dirty_selection_hash_is_provenance_only(self):
@@ -738,7 +822,7 @@ class TestBridgeExecute(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.client.source_messages[0]["metadata"]["scient"]["kind"], "selection")
         self.assertEqual(
             self.client.source_messages[0]["metadata"]["scient"]["tracebackFilename"],
-            "<scient-compute-source>",
+            "<scient-compute-source:" + "selection-1".encode().hex() + ">",
         )
 
     async def test_saved_selection_stays_submitted_bytes_not_native_file(self):
@@ -813,9 +897,7 @@ class TestBridgeExecute(unittest.IsolatedAsyncioTestCase):
                 self.assertTrue(
                     any(
                         (
-                            'File "<scient-compute-source>", line 3' in line
-                            or "File <scient-compute-source>:3" in line
-                            or "<scient-compute-source>:3" in line
+                            "<scient-compute-source:" in line and ">:3" in line
                         )
                         for line in first_traceback
                     ),
@@ -823,7 +905,7 @@ class TestBridgeExecute(unittest.IsolatedAsyncioTestCase):
                 )
                 self.assertFalse(
                     any(
-                        "<scient-compute-source>:8" in line or 'line 8' in line
+                        ">:8" in line or 'line 8' in line
                         for line in first_traceback
                     )
                 )
@@ -860,7 +942,7 @@ class TestBridgeExecute(unittest.IsolatedAsyncioTestCase):
                 second_traceback = second_error["payload"]["traceback"]
                 self.assertTrue(
                     any(
-                        f"{os.path.realpath(saved_path)}:1" in line
+                        "<scient-compute-source:" in line and ">:1" in line
                         for line in second_traceback
                     ),
                     second_traceback,

@@ -28,14 +28,7 @@ describe("python diagnostic normalization", () => {
       "    int('abc')",
       "ValueError: invalid literal for int()",
     ]);
-    expect(diagnostics[0]!.frames).toEqual([
-      {
-        relativePath: "analysis.py",
-        line: 1,
-        column: null,
-        functionName: "<module>",
-      },
-    ]);
+    expect(diagnostics[0]!.frames).toEqual([]);
   });
 
   it("strips ANSI colour codes from every field", () => {
@@ -131,19 +124,23 @@ describe("python diagnostic normalization", () => {
     expect(line).not.toContain("\uFFFD");
   });
 
-  it("maps synthetic and IPython cell frames to the submitted document range", () => {
+  it("maps each retained execution to its own document range, never the current submission", () => {
     const diagnostics = normalizePythonDiagnostic(
       {
         name: "ValueError",
         value: "bad value",
         traceback: [
-          "Cell In[7], line 2, in calculate()\n----> 2 calculate()",
-          '  File "<string>", line 4, in <module>',
+          "File <scient-compute-source:61:1>:2, in calculate()\n----> 2 calculate()",
+          '  File "<scient-compute-source:62:2>", line 4, in <module>',
         ],
       },
       {
         projectRoot: "/project",
-        submittedSource: { relativePath: "src/model.py", startLine: 20 },
+        submittedSource: { relativePath: "current.py", startLine: 100 },
+        executionSources: new Map([
+          ["a", { relativePath: "src/model.py", startLine: 20, lineCount: 5 }],
+          ["b", { relativePath: "other.py", startLine: 40, lineCount: 5 }],
+        ]),
       },
     );
 
@@ -155,12 +152,35 @@ describe("python diagnostic normalization", () => {
         functionName: "calculate()",
       },
       {
-        relativePath: "src/model.py",
-        line: 24,
+        relativePath: "other.py",
+        line: 44,
         column: null,
         functionName: "<module>",
       },
     ]);
+  });
+
+  it("keeps unknown, evicted, malformed and out-of-range sources readable without invented navigation", () => {
+    const traceback = [
+      'File "<scient-compute-source:63:1>", line 2',
+      'File "<scient-compute-source:6:1>", line 2',
+      'File "<scient-compute-source:61:1>", line 9',
+      'File "<scient-compute-source:61:1>", line 0',
+      'File "<scient-compute-source>", line 2',
+      'File "<string>", line 2',
+      "Cell In[7], line 2, in retained()",
+    ];
+    const diagnostics = normalizePythonDiagnostic(
+      { name: "ValueError", value: "old source", traceback },
+      {
+        ...CONTEXT,
+        executionSources: new Map([
+          ["a", { relativePath: "original.py", startLine: 10, lineCount: 2 }],
+        ]),
+      },
+    );
+    expect(diagnostics[0]!.frames).toEqual([]);
+    expect(diagnostics[0]!.traceback).toEqual(traceback);
   });
 
   it("keeps only project-local file frames and deduplicates locations", () => {

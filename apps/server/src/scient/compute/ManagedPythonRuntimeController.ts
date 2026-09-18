@@ -74,7 +74,7 @@ function managedRuntimeFailure(
       ? value.reason
       : "operation-failed";
   const summary = (() => {
-    if (action === "remove") return `${displayName} could not be removed`;
+    if (action === "remove") return `${displayName} removal incomplete`;
     switch (reason) {
       case "invalid-request":
         return `${displayName} setup could not start`;
@@ -237,7 +237,7 @@ export function makeManagedPythonRuntimeController(input: {
     if ((action === "repair" || action === "update") && current === null) {
       throw operationError(`Set up ${displayName} before repairing or updating it.`);
     }
-    if (action === "remove" && current === null) return;
+    // No active record does not imply that a failed removal has no files left.
     if (action === "remove") await input.manager.assertUnused();
 
     const controller = new AbortController();

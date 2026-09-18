@@ -677,6 +677,46 @@ describe("ManagedPythonRuntimeController", () => {
     }),
   );
 
+  it.live(
+    "reports partial removal as unavailable and permits retry without an installed record",
+    () =>
+      Effect.gen(function* () {
+        let fail = true;
+        const manager = makeManagedPythonEnvironmentManager(
+          computeDir,
+          dependencies({
+            removeTree: async (root) => {
+              if (fail) throw new Error("cleanup busy");
+              await NodeFSP.rm(root, { recursive: true, force: true });
+            },
+          }),
+        );
+        const controller = makeManagedPythonRuntimeController({
+          manager,
+          toolkitIds: [TOOLKIT_ID],
+        });
+        yield* controller.manage("install");
+        yield* waitForSettled(controller);
+        yield* controller.manage("remove");
+        const failed = yield* waitForSettled(controller);
+        expect(failed).toMatchObject({
+          installed: false,
+          failure: {
+            action: "remove",
+            reason: "remove-failed",
+            detail: expect.stringContaining("removed from use"),
+          },
+        });
+        fail = false;
+        yield* controller.manage("remove");
+        expect(yield* waitForSettled(controller)).toMatchObject({
+          installed: false,
+          failure: null,
+        });
+        controller.dispose();
+      }),
+  );
+
   it.live("keeps session admission blocked until private removal settles", () =>
     Effect.gen(function* () {
       let release!: () => void;

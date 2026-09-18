@@ -14,6 +14,7 @@ import {
   type ManagedPythonEnvironmentInstallInput,
   makeManagedPythonEnvironmentManager,
   managedPythonEnvironmentPaths,
+  isContained,
 } from "./ManagedPythonEnvironment.ts";
 
 const TOOLKIT_ID = ComputeToolkitId.make("python-data-and-figures");
@@ -22,6 +23,20 @@ const PYTHON_VERSION = "3.12.13";
 const PROVISIONER_VERSION = "uv-test";
 
 describe("ManagedPythonEnvironment", () => {
+  it("does not claim another Windows drive or UNC share as a managed child", () => {
+    for (const [root, child, expected] of [
+      ["C:\\managed", "C:\\managed", true],
+      ["C:\\managed", "C:\\managed\\generation-1\\python.exe", true],
+      ["C:\\managed", "C:\\managed-other\\python.exe", false],
+      ["C:\\managed", "C:\\python.exe", false],
+      ["C:\\managed", "D:\\Python\\python.exe", false],
+      ["C:\\managed", "\\\\server\\share\\python.exe", false],
+      ["\\\\server\\share\\managed", "\\\\server\\other\\python.exe", false],
+      ["\\\\server\\share\\managed", "\\\\server\\share\\managed\\python.exe", true],
+      ["C:\\managed", "C:\\managed\\..name\\python.exe", true],
+    ] as const)
+      expect(isContained(root, child, NodePath.win32)).toBe(expected);
+  });
   let temporaryRoot: string;
   let computeDir: string;
 
@@ -488,19 +503,70 @@ describe("ManagedPythonEnvironment", () => {
     }),
   );
 
-  it("rolls back atomic removal when deleting its tombstone fails", async () => {
+  it.each(["python", "matlab-connection"] as const)(
+    "quarantines partial %s deletion and permits cleanup retry",
+    async (purpose) => {
+      let fail = true;
+      const manager = makeManagedPythonEnvironmentManager(
+        computeDir,
+        dependencies({
+          generationId: () => "rollback",
+          provision: async ({ targetRoot }) => {
+            await executableAt(targetRoot);
+            await NodeFSP.writeFile(NodePath.join(targetRoot, "package.py"), "present");
+            return { executableRelativePath: NodePath.join("environment", "bin", "python") };
+          },
+          removeTree: async (root) => {
+            if (fail) {
+              await NodeFSP.rm(NodePath.join(root, "generation-rollback", "package.py"));
+              throw new Error("busy after partial deletion");
+            }
+            await NodeFSP.rm(root, { recursive: true, force: true });
+          },
+        }),
+        purpose,
+      );
+      const installed = await manager.install(installInput());
+      await expect(manager.remove()).rejects.toMatchObject({
+        reason: "remove-failed",
+        message: expect.stringContaining("removed from use"),
+      });
+      expect(await manager.inspect()).toBeNull();
+      await expect(manager.acquire(installed.executable)).rejects.toThrow("no longer available");
+      const paths = managedPythonEnvironmentPaths(computeDir, purpose);
+      expect(await NodeFSP.readdir(paths.environmentsRoot)).toHaveLength(1);
+      fail = false;
+      expect(await manager.remove()).toBe(true);
+      expect(await NodeFSP.readdir(paths.environmentsRoot)).toEqual([]);
+      expect(await manager.remove()).toBe(false);
+    },
+  );
+
+  it("retries quarantined cleanup after restart without deleting a replacement or unrelated sibling", async () => {
+    let generation = 0;
     const manager = makeManagedPythonEnvironmentManager(
       computeDir,
       dependencies({
-        generationId: () => "rollback",
+        generationId: () => `test-${++generation}`,
         removeTree: async () => {
           throw new Error("busy");
         },
       }),
     );
-    const installed = await manager.install(installInput());
-    await expect(manager.remove()).rejects.toMatchObject({ reason: "remove-failed" });
-    expect(await manager.inspect()).toEqual(installed);
+    await manager.install(installInput());
+    await expect(manager.remove()).rejects.toThrow("removed from use");
+    const replacement = await manager.install(installInput());
+    const paths = managedPythonEnvironmentPaths(computeDir);
+    const unrelated = NodePath.join(paths.environmentsRoot, "python.removing-user-data");
+    await NodeFSP.mkdir(unrelated);
+    const restarted = makeManagedPythonEnvironmentManager(computeDir, dependencies());
+    expect(await restarted.reconcile()).toEqual(replacement);
+    expect((await NodeFSP.stat(replacement.executable)).isFile()).toBe(true);
+    expect((await NodeFSP.stat(unrelated)).isDirectory()).toBe(true);
+    expect((await NodeFSP.readdir(paths.environmentsRoot)).sort()).toEqual([
+      "python",
+      "python.removing-user-data",
+    ]);
   });
 
   it("keeps a selected missing installation repairable without changing its selection", async () => {
@@ -582,7 +648,10 @@ describe("ManagedPythonEnvironment", () => {
   it("reconciles abandoned generations and removal tombstones", async () => {
     const paths = managedPythonEnvironmentPaths(computeDir);
     const abandoned = NodePath.join(paths.managedRoot, "generation-abandoned");
-    const tombstone = NodePath.join(paths.environmentsRoot, "python.removing-abandoned");
+    const tombstone = NodePath.join(
+      paths.environmentsRoot,
+      "python.removing-00000000-0000-4000-8000-000000000001",
+    );
     await NodeFSP.mkdir(abandoned, { recursive: true });
     await NodeFSP.mkdir(tombstone, { recursive: true });
     const manager = makeManagedPythonEnvironmentManager(computeDir, dependencies());

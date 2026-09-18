@@ -33,13 +33,13 @@ This continuation completes the setup/connection slice, not the later MATLAB
 session/result parity work. The implementation deliberately reuses a private
 **Python environment** mechanism rather than introducing a general package manager.
 
-| Responsibility                | Shared mechanism                                                                                                                                                                                    | Language-specific policy                                                                                                                                               |
-| ----------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Private environment lifecycle | `ManagedPythonEnvironment`, provisioner, controller: serialized generations, activation, pre-activation state preservation, cancellation, transactional removal rollback and startup reconciliation | Separate `python` and `matlab-connection` roots/receipts; independent selection and revisions                                                                          |
-| Download/provisioning         | Pinned uv artifact, private CPython, locked specification and owned process runner                                                                                                                  | Scientific Python's reviewed Toolkit catalog versus a minimal MATLAB helper with setuptools/wheel and the selected installation's Engine                               |
-| Runtime settings              | `ScientificRuntimePreferences`, server-scoped Settings and existing generic runtime RPCs                                                                                                            | MATLAB's canonical executable is also read/written by the older analysis service; absent canonical settings read through the legacy choice without a migration write   |
-| Native connection proof       | Existing adapter prepare/open/shutdown path, serialized with session mutations                                                                                                                      | MATLAB and Python advertise passive `detected` after a successful probe so `compute.verifyRuntime` starts and closes a real session. Inspect never opens that session. |
-| UI                            | Settings → Scientific Computing is the ordinary grouped Settings card (`SettingsSection` + `SettingsRow`), one current runtime per language; Runtime is a picker, not an inventory                  | File header names the probed interpreter; **ready** is reserved for a live session. Repair is for a damaged managed generation, not a skipped Test.                    |
+| Responsibility                | Shared mechanism                                                                                                                                                                   | Language-specific policy                                                                                                                                               |
+| ----------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Private environment lifecycle | `ManagedPythonEnvironment`, provisioner, controller: serialized generations, activation, pre-activation state preservation, cancellation, quarantined removal and startup cleanup  | Separate `python` and `matlab-connection` roots/receipts; independent selection and revisions                                                                          |
+| Download/provisioning         | Pinned uv artifact, private CPython, locked specification and owned process runner                                                                                                 | Scientific Python's reviewed Toolkit catalog versus a minimal MATLAB helper with setuptools/wheel and the selected installation's Engine                               |
+| Runtime settings              | `ScientificRuntimePreferences`, server-scoped Settings and existing generic runtime RPCs                                                                                           | MATLAB's canonical executable is also read/written by the older analysis service; absent canonical settings read through the legacy choice without a migration write   |
+| Native connection proof       | Existing adapter prepare/open/shutdown path, serialized with session mutations                                                                                                     | MATLAB and Python advertise passive `detected` after a successful probe so `compute.verifyRuntime` starts and closes a real session. Inspect never opens that session. |
+| UI                            | Settings → Scientific Computing is the ordinary grouped Settings card (`SettingsSection` + `SettingsRow`), one current runtime per language; Runtime is a picker, not an inventory | File header names the probed interpreter; **ready** is reserved for a live session. Repair is for a damaged managed generation, not a skipped Test.                    |
 
 The helper lives under `<computeDir>/environments/matlab-connection/`. It uses an
 independently pinned, MATLAB-compatible CPython 3.12 host, not the newer managed
@@ -268,9 +268,14 @@ Activation follows this sequence:
 Nothing discovers the candidate before step 6. Provision, verification,
 cancellation, or activation failure removes only the unpublished candidate and
 leaves the previous state untouched. Removal first atomically renames the exact
-app-owned environment to a sibling tombstone; deletion failure renames it back.
+app-owned environment to a sibling tombstone. This commits its removal from use:
+recursive deletion can partially succeed, so a tombstone is never restored as an
+available environment. Cleanup failure is reported without blocking a fresh
+installation; explicit removal retries and startup reconciliation retry deletion.
 Removal admission and process-start reservations protect generations in use;
 Python sessions using unrelated installations do not block managed Python removal.
+Containment rejects absolute relative-path results, including different Windows
+drives and UNC shares; those installations are not Scient-owned.
 Startup reconciliation, after prior-process sessions are gone, removes proven
 abandoned app-owned generations and removal tombstones. If an activation record
 exists but cannot be read or trusted, reconciliation preserves the generations

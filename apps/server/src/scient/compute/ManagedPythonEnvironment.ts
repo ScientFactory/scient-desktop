@@ -110,7 +110,7 @@ export interface ManagedPythonEnvironmentDependencies {
   readonly commitState?:
     | ((statePath: string, record: ManagedPythonEnvironmentRecord) => Promise<void>)
     | undefined;
-  /** Injectable only so removal rollback can be proved without platform-specific permission tricks. */
+  /** Injectable so partial deletion and retry can be tested without permission tricks. */
   readonly removeTree?: ((root: string) => Promise<void>) | undefined;
 }
 
@@ -153,9 +153,9 @@ export function managedPythonEnvironmentPaths(
   };
 }
 
-function isContained(root: string, candidate: string): boolean {
-  const relative = NodePath.relative(NodePath.resolve(root), NodePath.resolve(candidate));
-  return relative === "" || (!relative.startsWith(`..${NodePath.sep}`) && relative !== "..");
+export function isContained(root: string, candidate: string, path = NodePath): boolean {
+  const relative = path.relative(path.resolve(root), path.resolve(candidate));
+  return !path.isAbsolute(relative) && relative !== ".." && !relative.startsWith(`..${path.sep}`);
 }
 
 function validGenerationId(value: string): boolean {
@@ -481,6 +481,25 @@ export function makeManagedPythonEnvironmentManager(
         );
     });
 
+  // A tombstone is a committed logical removal, never a rollback candidate:
+  // recursive deletion may already have removed arbitrary files when it fails.
+  const cleanupRemovals = async (): Promise<boolean> => {
+    if (!(await managedDirectorySafety(paths, purpose)).environmentsPresent) return false;
+    const entries = (await NodeFSP.readdir(paths.environmentsRoot)).filter((entry) =>
+      new RegExp(`^${purpose}\\.removing-[0-9a-f-]{36}$`, "u").test(entry),
+    );
+    for (const entry of entries) {
+      await removeTree(NodePath.join(paths.environmentsRoot, entry)).catch((cause) => {
+        throw new ManagedPythonEnvironmentError(
+          "remove-failed",
+          `The ${managedPurposeNoun(purpose)} was removed from use, but some files could not be deleted. Scient retries cleanup at startup. You can install a new environment without restoring these files.`,
+          { cause },
+        );
+      });
+    }
+    return entries.length > 0;
+  };
+
   const cleanupAbandoned = async (record: ManagedPythonEnvironmentRecord | null): Promise<void> => {
     const safety = await managedDirectorySafety(paths, purpose);
     if (!safety.environmentsPresent) return;
@@ -509,19 +528,7 @@ export function makeManagedPythonEnvironmentManager(
           ),
       );
     }
-    const environmentEntries = await NodeFSP.readdir(paths.environmentsRoot).catch(
-      (): string[] => [],
-    );
-    await Promise.all(
-      environmentEntries
-        .filter((entry) => entry.startsWith(`${purpose}.removing-`))
-        .map((entry) =>
-          NodeFSP.rm(NodePath.join(paths.environmentsRoot, entry), {
-            recursive: true,
-            force: true,
-          }).catch(() => undefined),
-        ),
-    );
+    await cleanupRemovals().catch(() => undefined);
   };
 
   const reconcile = () =>
@@ -787,7 +794,7 @@ export function makeManagedPythonEnvironmentManager(
             "Stop sessions using Scient-managed Python before removing it.",
           );
         const safety = await managedDirectorySafety(paths, purpose);
-        if (!safety.managedPresent) return false;
+        if (!safety.managedPresent) return cleanupRemovals();
 
         const tombstone = NodePath.join(
           paths.environmentsRoot,
@@ -800,24 +807,7 @@ export function makeManagedPythonEnvironmentManager(
             { cause },
           );
         });
-        try {
-          await removeTree(tombstone);
-        } catch (cause) {
-          try {
-            await NodeFSP.rename(tombstone, paths.managedRoot);
-          } catch (rollbackCause) {
-            throw new ManagedPythonEnvironmentError(
-              "remove-failed",
-              `Scient could not remove the ${managedPurposeNoun(purpose)} or restore it.`,
-              { cause: new AggregateError([cause, rollbackCause]) },
-            );
-          }
-          throw new ManagedPythonEnvironmentError(
-            "remove-failed",
-            `Scient could not remove the ${managedPurposeNoun(purpose)}; the previous environment was restored.`,
-            { cause },
-          );
-        }
+        await cleanupRemovals();
         return true;
       });
     });

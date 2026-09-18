@@ -29,6 +29,7 @@ import { DuplexProcess, layer as duplexProcessLayer } from "../execution/LocalDu
 import { processExists } from "../execution/LocalProcessTestSupport.ts";
 import { makeComputeBridgeTransport } from "./ComputeBridgeTransport.ts";
 import { buildLaunchPlan } from "./PythonRuntimeAdapter.ts";
+import { normalizePythonDiagnostic } from "./PythonDiagnostic.ts";
 
 /**
  * Every case here is `it.live` rather than `it.effect`.
@@ -217,6 +218,50 @@ const execute = Effect.fn("PythonKernel.execute")(function* (
 
 describe.runIf(Boolean(TEST_PYTHON))("Python kernel integration", () => {
   it.live(
+    "preserves retained source excerpts and navigation across different document submissions",
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const harness = yield* integration();
+          yield* execute(
+            harness,
+            "define-original",
+            "def retained():\n    raise ValueError('original-A')\n",
+            INITIAL_COMPUTE_SESSION_GENERATION,
+            { kind: "selection", filePath: "source-A.py", startLine: 10, saved: false },
+          );
+          const observed = yield* execute(
+            harness,
+            "call-later",
+            "marker = 'B'\nretained()\n",
+            INITIAL_COMPUTE_SESSION_GENERATION,
+            { kind: "selection", filePath: "source-B.py", startLine: 100, saved: false },
+          );
+          const error = observed.find((event) => event._tag === "runtime-error");
+          if (error?._tag !== "runtime-error") throw new Error("Expected retained-function error");
+          const diagnostics = normalizePythonDiagnostic(error.report, {
+            projectRoot: here,
+            submittedSource: { relativePath: "source-B.py", startLine: 100 },
+            executionSources: new Map([
+              ["define-original", { relativePath: "source-A.py", startLine: 10, lineCount: 2 }],
+              ["call-later", { relativePath: "source-B.py", startLine: 100, lineCount: 2 }],
+            ]),
+          });
+          expect(diagnostics[0]?.traceback.join("\n")).toContain("raise ValueError('original-A')");
+          expect(
+            diagnostics[0]?.frames.map(({ relativePath, line }) => ({ relativePath, line })),
+          ).toEqual([
+            { relativePath: "source-B.py", line: 102 },
+            { relativePath: "source-A.py", line: 12 },
+          ]);
+          yield* harness.channel.shutdown({
+            expectedGeneration: INITIAL_COMPUTE_SESSION_GENERATION,
+          });
+        }),
+      ).pipe(Effect.provide(Live), Effect.timeout("30 seconds")),
+  );
+
+  it.live(
     "emits bounded dataframe previews and Plotly MIME without browser launch or namespace pollution",
     () =>
       Effect.scoped(
@@ -277,7 +322,7 @@ describe.runIf(Boolean(TEST_PYTHON))("Python kernel integration", () => {
           if (report?._tag !== "runtime-error") throw new Error("Expected a contextual error.");
           expect(report.report.value).toContain("source-context-marker");
           expect(
-            report.report.traceback.some((line) => line.includes("<scient-compute-source>")),
+            report.report.traceback.some((line) => line.includes("<scient-compute-source:")),
           ).toBe(true);
           yield* harness.channel.shutdown({
             expectedGeneration: INITIAL_COMPUTE_SESSION_GENERATION,

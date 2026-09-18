@@ -457,6 +457,18 @@ only paths resolved inside that authorized project become relative, clickable
 source locations. The client renders those locations but never parses arbitrary
 traceback text into filesystem authority.
 
+Python document executions use immutable, execution-specific compilation names,
+including saved files. Saved-file `__file__` and sibling-import context still use
+the canonical project path. A retained function therefore keeps its own source
+excerpt when another snippet runs. Scient retains at most 256 compilation entries
+and 8 MiB of source bytes in its kernel line cache, plus 256 small execution-source
+records in the server's live session. Completion does not discard that provenance;
+restart clears it with the namespace. Each frame resolves against its originating
+execution's path and line range, never the current submission. Evicted, unknown,
+out-of-range, and arbitrary synthetic filenames remain readable traceback text
+without fabricated source links. These bounds apply to Scient's source cache, not
+to IPython's independently managed interactive history.
+
 The file editor has one contextual primary run action. Exact selected text wins;
 otherwise the caret selects the surrounding explicit `# %%` cell; without an
 explicit cell, the whole current buffer runs. Marker lines are delimiters and

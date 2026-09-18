@@ -17,6 +17,7 @@ import {
   createSimulatedComputeTransport,
   type ComputeCapability,
   type ComputeChannel,
+  type ComputeDiagnosticContext,
   type ComputeLanguageAdapter,
   type ComputeExecutionSource,
   type ComputeOutput,
@@ -53,6 +54,7 @@ import {
   type ComputeSessionServiceOptions,
 } from "./ComputeSessionService.ts";
 import * as LocalComputeStore from "./LocalComputeStore.ts";
+import { normalizePythonDiagnostic } from "./PythonDiagnostic.ts";
 import {
   ComputeProjectOutputObserver,
   type ComputeProjectOutputObserverPort,
@@ -2401,6 +2403,80 @@ describe("compute session execution", () => {
         }),
       );
     }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+  );
+
+  it.effect(
+    "retains bounded execution provenance through completion and clears it on restart",
+    () =>
+      Effect.gen(function* () {
+        let context: ComputeDiagnosticContext | undefined;
+        const test = yield* harness({
+          adapter: {
+            normalizeDiagnostic: (report, current) => {
+              context = current;
+              return normalizePythonDiagnostic(
+                {
+                  ...report,
+                  traceback: ['File "<scient-compute-source:6669727374:1>", line 1, in retained'],
+                },
+                current,
+              );
+            },
+          },
+        });
+        yield* test.use(
+          Effect.gen(function* () {
+            const service = yield* ComputeSessionService;
+            yield* start;
+            const source: ComputeExecutionSource = {
+              _tag: "document",
+              origin: "selection",
+              path: "original.py",
+              bufferState: "dirty",
+              revision: "revision-1",
+              range: { startLine: 20, startColumn: 0, endLine: 20, endColumn: 8 },
+            };
+            yield* submit("print(1)", "first", INITIAL_COMPUTE_SESSION_GENERATION, source);
+            yield* waitUntil(executionAt(ComputeExecutionId.make("first"), "succeeded"));
+            yield* submit("boom", "second");
+            const failed = yield* waitUntil(
+              executionAt(ComputeExecutionId.make("second"), "failed"),
+            );
+            expect(failed.result?.diagnostics[0]?.frames).toEqual([
+              { relativePath: "original.py", line: 21, column: null, functionName: "retained" },
+            ]);
+            for (let i = 0; i < 257; i++) {
+              const id = `bounded-${i}`;
+              yield* submit("print(1)", id, INITIAL_COMPUTE_SESSION_GENERATION, source);
+              // Poll the live completion receipt, not the whole growing history.
+              yield* waitUntil(
+                Effect.gen(function* () {
+                  const current = yield* service.getSession({
+                    projectId: PROJECT_ID,
+                    sessionId: SESSION_ID,
+                  });
+                  return current?.activity === "idle" ? current : null;
+                }),
+              );
+            }
+            yield* submit("boom", "after-eviction");
+            const evicted = yield* waitUntil(
+              executionAt(ComputeExecutionId.make("after-eviction"), "failed"),
+            );
+            expect(context?.executionSources?.size).toBe(256);
+            expect(context?.executionSources?.has("first")).toBe(false);
+            expect(evicted.result?.diagnostics[0]?.frames).toEqual([]);
+            const restarted = yield* service.restartSession({
+              projectId: PROJECT_ID,
+              sessionId: SESSION_ID,
+              expectedGeneration: INITIAL_COMPUTE_SESSION_GENERATION,
+            });
+            yield* submit("boom", "after-restart", restarted.generation);
+            yield* waitUntil(executionAt(ComputeExecutionId.make("after-restart"), "failed"));
+            expect(context?.executionSources?.size).toBe(0);
+          }),
+        );
+      }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
   );
 
   it.effect("records a runtime error where it happened and names the failure", () =>

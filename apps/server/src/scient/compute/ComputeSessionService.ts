@@ -30,6 +30,7 @@ import {
   type ComputeExecuteSourceContext,
   type ComputeCapability,
   type ComputeDiagnostic,
+  type ComputeDiagnosticContext,
   type ComputeExecutionCommandInput,
   type ComputeExecutionOutputs,
   type ComputeExecutionRecord,
@@ -362,6 +363,7 @@ interface LiveComputeSession {
   readonly recordRef: Ref.Ref<ComputeSessionRecord>;
   readonly queueRef: Ref.Ref<ComputeQueueState>;
   readonly pendingRef: Ref.Ref<ReadonlyMap<ComputeExecutionId, ComputeExecutionRecord>>;
+  readonly executionSourcesRef: Ref.Ref<NonNullable<ComputeDiagnosticContext["executionSources"]>>;
   readonly projectOutputObservationsRef: Ref.Ref<
     ReadonlyMap<ComputeExecutionId, ComputeProjectOutputObservation>
   >;
@@ -1599,6 +1601,21 @@ const make = Effect.gen(function* () {
       yield* Ref.set(live.queueRef, advanced.state);
       yield* setExecutionStatus(operation, live, executionId, "submitting");
       yield* syncQueueCounters(operation, live);
+      if (execution.request.source._tag === "document") {
+        const source = execution.request.source;
+        yield* Ref.update(live.executionSourcesRef, (previous) => {
+          const next = new Map(previous);
+          next.set(executionId, {
+            relativePath: source.path,
+            startLine: source.range?.startLine ?? 0,
+            lineCount: execution.request.code.split("\n").length,
+          });
+          // Keep provenance after completion, not the full submitted code. Old
+          // functions can still fail; evicted entries must produce no guessed link.
+          if (next.size > 256) next.delete(next.keys().next().value!);
+          return next;
+        });
+      }
       return {
         executionId,
         generation: record.generation,
@@ -1940,6 +1957,7 @@ const make = Effect.gen(function* () {
           const source = execution?.request.source;
           const diagnostics = live.adapter.normalizeDiagnostic(event.report, {
             projectRoot: live.workingDirectory,
+            executionSources: yield* Ref.get(live.executionSourcesRef),
             submittedSource:
               source?._tag === "document"
                 ? {
@@ -1991,6 +2009,7 @@ const make = Effect.gen(function* () {
           // Whatever the old namespace was still holding is settled here; the
           // restart command already cancelled everything that was waiting.
           yield* cancelEverything("restart", live, RESTART_DETAIL, "cancelled");
+          yield* Ref.set(live.executionSourcesRef, new Map());
           const current = yield* Ref.get(live.recordRef);
           yield* Ref.set(live.recordRef, {
             ...current,
@@ -2432,6 +2451,9 @@ const make = Effect.gen(function* () {
       mutation: yield* Semaphore.make(1),
       recordRef: yield* Ref.make(record),
       queueRef: yield* Ref.make(EMPTY_COMPUTE_QUEUE),
+      executionSourcesRef: yield* Ref.make<
+        NonNullable<ComputeDiagnosticContext["executionSources"]>
+      >(new Map()),
       pendingRef: yield* Ref.make<ReadonlyMap<ComputeExecutionId, ComputeExecutionRecord>>(
         new Map(),
       ),
