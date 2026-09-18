@@ -72,7 +72,10 @@ export const PreviewAutomationStatus = Schema.Struct({
   available: Schema.Boolean,
   visible: Schema.Boolean,
   tabId: Schema.NullOr(PreviewTabId),
-  url: Schema.NullOr(Schema.String),
+  url: Schema.NullOr(Schema.String).annotate({
+    description:
+      "The tab's current navigation URL. For a local file preview, this may be an internal address rather than a user-facing link.",
+  }),
   title: Schema.NullOr(Schema.String),
   loading: Schema.Boolean,
   /** Optional for compatibility with desktop hosts predating viewport sizing. */

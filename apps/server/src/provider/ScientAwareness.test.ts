@@ -21,7 +21,11 @@ describe("Scient awareness", () => {
     expect(SCIENT_CORE_AWARENESS).toContain("Scient's Markdown chat");
     expect(SCIENT_CORE_AWARENESS).toContain("Project `.tex` files open");
     expect(SCIENT_CORE_AWARENESS).toContain("editable LaTeX source/PDF workspace");
-    expect(SCIENT_CORE_AWARENESS).not.toContain("project-relative Markdown link");
+    expect(SCIENT_CORE_AWARENESS).toContain("Linked project `.html` files open directly");
+    expect(SCIENT_CORE_AWARENESS).toContain("integrated browser with relative resources");
+    expect(SCIENT_CORE_AWARENESS).toContain("prefer clickable project-relative Markdown links");
+    expect(SCIENT_CORE_AWARENESS).toContain("temporary preview URLs");
+    expect(SCIENT_CORE_AWARENESS).not.toContain("localhost");
     expect(SCIENT_CORE_AWARENESS).not.toContain("When LaTeX fits");
     expect(SCIENT_CORE_AWARENESS).toContain("diagram declaration before its contents");
     expect(SCIENT_CORE_AWARENESS).toContain("self-contained Plotly figure JSON");
