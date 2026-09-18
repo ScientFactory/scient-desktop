@@ -12,8 +12,14 @@ export const SCIENT_RELEASE_NOTES = [
     version: "0.6.14",
     publishedAt: "2026-09-18",
     format: "paragraphs",
-    headline: "Bring more context. Keep more control. Compare more answers.",
+    headline: "More ways to work with agents.",
     highlights: [
+      {
+        id: "python-and-matlab-compute",
+        title: "Run Python and MATLAB in Scient",
+        description:
+          "Work with Python and MATLAB in shared Code, Split, and Results views. Inspect variables, tables, figures, and diagnostics; stop, restart, and recover sessions; and configure runtimes and scientific toolkits from Settings.",
+      },
       {
         id: "compare-several-models",
         title: "Compare several models at once",
@@ -38,21 +44,9 @@ export const SCIENT_RELEASE_NOTES = [
         description:
           "Choose whether follow-ups queue or steer, edit or reorder waiting messages, and keep composing while projects and worktrees finish setting up in the background.",
       },
-      {
-        id: "repair-diagrams-without-losing-intent",
-        title: "Repair diagrams without losing intent",
-        description:
-          "Ask an agent to propose a Mermaid repair and review it before sending, or let Scient recover narrowly recognized syntax slips. SVG and PNG exports preserve richer labels more reliably.",
-      },
-      {
-        id: "move-through-projects-and-reviews",
-        title: "Move through projects and reviews faster",
-        description:
-          "Folder links open the file tree, large diffs load progressively, and pull-request search, stacks, comments, shortcuts, and setup progress make complex work easier to navigate.",
-      },
     ],
     alsoIncluded:
-      "Thinking traces and native commands; usage limits for OpenCode Go, Cursor, and Grok; clearer Skills; safer custom-model tests; optional storage cleanup; reliable browser editing; better HTML and image previews and exports; steadier Git and checkpoints; mixed Hebrew/English direction; and stable desktop updates.",
+      "Faster project and review navigation; Mermaid repair and exports; thinking traces and native commands; usage limits for OpenCode Go, Cursor, and Grok; clearer Skills; safer custom-model tests; storage cleanup; browser editing; preview fixes; Git and checkpoints; mixed Hebrew/English direction; stable desktop updates.",
   },
   {
     version: "0.6.13",
