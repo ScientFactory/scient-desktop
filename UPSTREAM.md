@@ -46,18 +46,18 @@ revision remains literal ancestry of owned `main`; it is not merely a reviewed
 or observed tip.
 
 The current T3 alignment is recorded in
-[`docs/internals/2026-09-17-upstream-sync-dd9528a9.md`](docs/internals/2026-09-17-upstream-sync-dd9528a9.md)
-and in `upstream-state.json`. It preserves 37 more official first-parent commits after
-`01e64193d9d2abfae8f7b3d20f66824e38397bd6` through
-`1ab2dfb5a7bd2996f79407b5d02cae6132a7626c`. Initial merge
-`f3a0406a28fe7122fdf3ad0932942ed38e401d1b` is extended on the same branch by
-`86b5bb723178ec1959e916d6722e958e5268859e`, whose second parent is the exact final official
-target. Its first parent `d1a8574362d2f64038e06aa0d8d1b26f67482855` also incorporates owned
-main `cee69d80373272fce40d0e1f866193164066c852`.
+[`docs/internals/2026-09-18-upstream-sync-3fd5d643.md`](docs/internals/2026-09-18-upstream-sync-3fd5d643.md)
+and in `upstream-state.json`. It preserves the exact 23 official first-parent commits after
+`1ab2dfb5a7bd2996f79407b5d02cae6132a7626c` through
+`3fd5d6439d8fd49d173503ecda96500463a39bd2`. The history-preserving alignment merge is
+`0b541f80af4cadf1b5639f51aa12effcf9881c87`, whose second parent is that exact official target.
+The candidate then incorporates the latest owned-main commits `f6dd5203ba` (#304),
+`c343223d37` (#305), and `3f9e3c9c6e` (#307) through two additional history-preserving merges,
+with no textual conflicts. The final candidate head is `108bb3c37e`.
 
-Automated qualification passed; the owner requested PR delivery and history-preserving auto-merge.
-No additional visual acceptance or release publication is implied. The
-[preceding alignment](docs/internals/2026-09-15-upstream-sync-c1b22104.md) remains in ancestry.
+Automated qualification passed and this isolated candidate is ready for owner manual review.
+No PR, push, visual acceptance, or release publication is implied by this pass. The
+[preceding alignment](docs/internals/2026-09-17-upstream-sync-dd9528a9.md) remains in ancestry.
 Later observed upstream tips do not move `integrationBase` by themselves.
 
 ## Receiving T3 updates

@@ -1,6 +1,6 @@
 # Settings and project overrides
 
-The Settings breadcrumb ends with the environment and project a change applies to. They start
+On web and desktop, the Settings breadcrumb ends with the environment and project a change applies to. They start
 at **All environments** and **All projects** and stay selected as you move between categories or
 search for a setting.
 
@@ -25,6 +25,17 @@ again.
 
 Providers and diagnostics are per machine: they show one environment at a time, the primary
 one until you pick another. Every other setting fans out to the selection.
+
+On mobile, open **Settings** and use the filter in its header to choose connected environments
+and a project. The filter stays available in server-setting pages. With **All projects** selected,
+the **Server settings** categories and auto-settle controls in **Thread behavior** edit the
+selected environments' defaults. Choosing a project edits its overrides on the selected
+environments. Use **Use defaults** in a page to remove that page's project overrides.
+Open **Settings → Projects & threads → Overview** to rename the project across its selected
+connected checkouts and see where those checkouts live.
+Settings that are environment-wide stay read-only while a project is selected. When selected
+targets disagree, a control shows **Mixed** until you choose one value. Appearance, keyboard,
+and other phone-only settings ignore the filter.
 
 ## Defaults and inheritance
 
@@ -141,6 +152,7 @@ Choose an environment to set the default or a project to override it.
 Scient checks in the background and when the server starts. It uses the branch's configured
 upstream and only performs a fast-forward pull when the checkout has no working-tree changes,
 untracked files, or local commits.
+On mobile, use **Settings → Source control** to change selected environment defaults or project overrides.
 
 The pull is skipped if the checkout is on another branch, has no upstream, or contains local work.
 Pull failures do not prevent the server from starting.

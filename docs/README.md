@@ -82,6 +82,8 @@ policy in [CONTRIBUTING.md](../CONTRIBUTING.md); agent rules in [AGENTS.md](../A
 - [Provider lifecycle architecture](./internals/provider-lifecycle.md)
 - [Provider lifecycle capability audit](./internals/provider-lifecycle-capability-audit.md)
 - [Codex runtime and authentication](./internals/scient-codex-runtime-auth.md)
+- [Pull request file revisions](./internals/pull-request-file-revisions.md)
+- [Model classification](./internals/model-manifest.md)
 - [Remote environments](./internals/remote.md)
 - [Server updates](./internals/server-updates.md)
 - [Resource telemetry](./internals/resource-telemetry.md)

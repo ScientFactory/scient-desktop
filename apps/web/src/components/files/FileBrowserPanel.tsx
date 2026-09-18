@@ -32,6 +32,7 @@ import { useComposerHandleContext } from "~/composerHandleContext";
 import { writeTextToClipboard } from "~/hooks/useCopyToClipboard";
 import { useTheme } from "~/hooks/useTheme";
 import { useWorkspaceMutationRefresh } from "~/hooks/useWorkspaceMutationRefresh";
+import { useFileContextMenu, type FileContextMenuAction } from "~/fileContextMenu";
 import { readLocalApi } from "~/localApi";
 import { T3_PIERRE_ICONS } from "~/pierre-icons";
 import { shouldOpenInBrowserByDefault } from "~/scient/fileOpening/fileOpeningPolicy";
@@ -220,6 +221,7 @@ export default function FileBrowserPanel({
     hasCurrentSearch && !pathSearch.isPending
       ? JSON.stringify([directoryView, normalizedSearchValue, pathSearch.entries])
       : null;
+  const fileContextMenu = useFileContextMenu(environmentId);
   const entryKinds = useMemo(
     () =>
       new Map(
@@ -258,6 +260,7 @@ export default function FileBrowserPanel({
     return () => document.removeEventListener("contextmenu", capturePointer, true);
   }, []);
 
+  /** Combines the file actions (open/reveal/open with) with the panel's own mention actions. */
   const showEntryContextMenu = async (
     item: TreeContextMenuItem,
     context: TreeContextMenuOpenContext,
@@ -275,9 +278,12 @@ export default function FileBrowserPanel({
     const position = pointerIsFresh
       ? { x: pointer.x, y: pointer.y }
       : { x: anchorRect.left, y: anchorRect.bottom };
+    const fileTarget = { environmentId, filePath: relativePath, workspaceRoot: cwd };
+    const fileMenuItems = fileContextMenu.buildItems(fileTarget);
     try {
       const clicked = await api.contextMenu.show(
         [
+          ...fileMenuItems,
           ...(shouldOpenInBrowserByDefault(relativePath)
             ? ([{ id: "open-source", label: "Open source" }] as const)
             : []),
@@ -286,6 +292,15 @@ export default function FileBrowserPanel({
         ],
         position,
       );
+      if (clicked === null) return;
+      // "Open with" submenu selections report the child id ("editor:<id>"),
+      // which is not present in the top-level item list.
+      const isFileMenuAction =
+        fileMenuItems.some((entry) => entry.id === clicked) || clicked.startsWith("editor:");
+      if (isFileMenuAction) {
+        await fileContextMenu.activate(clicked as FileContextMenuAction, fileTarget);
+        return;
+      }
       if (clicked === "open-source") {
         onOpenFileSource(relativePath);
         return;
