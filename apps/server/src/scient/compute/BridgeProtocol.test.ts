@@ -28,9 +28,11 @@ import {
   HelloAckPayload,
   HelloPayload,
   InterruptResultPayload,
+  KernelPortsPayload,
   KernelReadyPayload,
   RestartedPayload,
   StreamPayload,
+  StartKernelPayload,
   VariablesPayload,
   WarningPayload,
   type BridgeMessage,
@@ -65,6 +67,8 @@ const loadFixture = (name: string): string =>
 // Compiled once: `decodeUnknownSync` rebuilds the decoder on every call.
 const decodeHello = Schema.decodeUnknownSync(HelloPayload);
 const decodeHelloAck = Schema.decodeUnknownSync(HelloAckPayload);
+const decodeKernelPorts = Schema.decodeUnknownSync(KernelPortsPayload);
+const decodeStartKernel = Schema.decodeUnknownSync(StartKernelPayload);
 const decodeExecute = Schema.decodeUnknownSync(ExecutePayload);
 const decodeStream = Schema.decodeUnknownSync(StreamPayload);
 const decodeDisplay = Schema.decodeUnknownSync(DisplayPayload);
@@ -107,6 +111,46 @@ describe("bridge protocol payload schemas", () => {
     ).toThrow();
   });
 
+  it("accepts exact IPv4 loopback endpoints for a Jupyter kernel", () => {
+    const kernelPorts = decodeKernelPorts({
+      ip: "127.0.0.1",
+      shell: 41_001,
+      iopub: 41_002,
+      stdin: 41_003,
+      heartbeat: 41_004,
+      control: 41_005,
+    });
+    const payload = decodeStartKernel({
+      workingDirectory: "/project",
+      kernelName: null,
+      kernelPorts,
+    });
+    expect(payload.kernelPorts?.control).toBe(41_005);
+  });
+
+  it("rejects external or invalid kernel endpoint assignments", () => {
+    expect(() =>
+      decodeKernelPorts({
+        ip: "0.0.0.0",
+        shell: 41_001,
+        iopub: 41_002,
+        stdin: 41_003,
+        heartbeat: 41_004,
+        control: 41_005,
+      }),
+    ).toThrow();
+    expect(() =>
+      decodeKernelPorts({
+        ip: "127.0.0.1",
+        shell: 0,
+        iopub: 41_002,
+        stdin: 41_003,
+        heartbeat: 41_004,
+        control: 41_005,
+      }),
+    ).toThrow();
+  });
+
   it("accepts a valid execute payload", () => {
     const payload = decodeExecute({
       code: "print('hello')\n",
@@ -114,6 +158,53 @@ describe("bridge protocol payload schemas", () => {
       storeHistory: true,
     });
     expect(payload.code).toBe("print('hello')\n");
+  });
+
+  it("accepts optional source facts without changing the submitted code", () => {
+    const payload = decodeExecute({
+      code: "print('cell')\n",
+      silent: false,
+      storeHistory: true,
+      sourceContext: {
+        kind: "selection",
+        filePath: "analysis/notebook.py",
+        fileName: "notebook.py",
+        sourceBytesHash: "submitted-code-hash",
+        sourceRevision: "revision-7",
+        saved: false,
+        startLine: 3,
+        startColumn: 0,
+        endLine: 4,
+        endColumn: 14,
+      },
+    });
+    expect(payload.sourceContext).toEqual({
+      kind: "selection",
+      filePath: "analysis/notebook.py",
+      fileName: "notebook.py",
+      sourceBytesHash: "submitted-code-hash",
+      sourceRevision: "revision-7",
+      saved: false,
+      startLine: 3,
+      startColumn: 0,
+      endLine: 4,
+      endColumn: 14,
+    });
+  });
+
+  it("keeps saved-file identity requirements in the bridge-facing shape", () => {
+    const payload = decodeExecute({
+      code: "run_saved()\n",
+      silent: false,
+      storeHistory: true,
+      sourceContext: {
+        kind: "file",
+        filePath: "analysis/run_saved.py",
+        sourceBytesHash: "sha256:abc123",
+        saved: true,
+      },
+    });
+    expect(payload.sourceContext?.saved).toBe(true);
   });
 
   it("rejects an execute payload with oversized code", () => {

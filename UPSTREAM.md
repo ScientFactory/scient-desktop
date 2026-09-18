@@ -1,5 +1,14 @@
 # Upstream maintenance
 
+Scient's local Preview discovery requires an explicit web URL before sending
+HTTP(S) traffic. Preserve this deliberate boundary in `PortScanner.ts`: passive
+listener enumeration enriches ownership metadata but never authorizes a probe,
+including common ports and terminal-owned processes. Probe only the declared
+protocol and retain private Compute endpoint protection. A process-local denylist
+cannot protect kernels belonging to another Scient instance. Project-action
+Preview URLs remain the existing automatic-preview integration; do not restore
+speculative global probing during upstream alignment.
+
 Scient's desktop update control retains the inherited idle check icon and update
 actions. Its active states use a compact primary-colored button with Update,
 download percentage, Restart, or Retry copy. The labeled button is 28px tall and

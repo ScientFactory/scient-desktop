@@ -166,6 +166,19 @@ export const HelloAckPayload = Schema.Struct({
 });
 export type HelloAckPayload = typeof HelloAckPayload.Type;
 
+const TcpPort = Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 65_535 }));
+
+/** Exact loopback endpoints reserved by the host for one Jupyter kernel. */
+export const KernelPortsPayload = Schema.Struct({
+  ip: Schema.Literal("127.0.0.1"),
+  shell: TcpPort,
+  iopub: TcpPort,
+  stdin: TcpPort,
+  heartbeat: TcpPort,
+  control: TcpPort,
+});
+export type KernelPortsPayload = typeof KernelPortsPayload.Type;
+
 export const StartKernelPayload = Schema.Struct({
   workingDirectory: Schema.NonEmptyString.check(Schema.isMaxLength(MaxPathLength)),
   /**
@@ -178,11 +191,39 @@ export const StartKernelPayload = Schema.Struct({
    * language reuses this transport without the bridge knowing the language.
    */
   kernelName: Schema.NullOr(Label),
+  /**
+   * Optional because non-Jupyter bridges share this envelope. The Python host
+   * supplies it so private ZeroMQ listeners are known before they exist.
+   */
+  kernelPorts: Schema.optional(KernelPortsPayload),
 });
 export type StartKernelPayload = typeof StartKernelPayload.Type;
 
+const SourceContextPath = Schema.NonEmptyString.check(Schema.isMaxLength(MaxPathLength));
+const SourceContextLine = Schema.Int.check(Schema.isGreaterThanOrEqualTo(0));
+
+/**
+ * Source facts are metadata, not a second copy of user code.  The bridge uses
+ * them for native filename context and saved-file identity checks only. For a
+ * dirty file, cell, or selection, sourceBytesHash is the submitted-code hash;
+ * only saved files may be dispatched from disk.
+ */
+export const ExecuteSourceContext = Schema.Struct({
+  kind: Schema.Literals(["file", "cell", "selection"]),
+  filePath: Schema.optional(SourceContextPath),
+  fileName: Schema.optional(Label),
+  sourceBytesHash: Schema.optional(Schema.NonEmptyString.check(Schema.isMaxLength(256))),
+  sourceRevision: Schema.optional(Label),
+  saved: Schema.optional(Schema.Boolean),
+  startLine: Schema.optional(SourceContextLine),
+  startColumn: Schema.optional(SourceContextLine),
+  endLine: Schema.optional(SourceContextLine),
+  endColumn: Schema.optional(SourceContextLine),
+});
+export type ExecuteSourceContext = typeof ExecuteSourceContext.Type;
+
 export const KernelReadyPayload = Schema.Struct({
-  kernelPid: Schema.Int.check(Schema.isGreaterThan(0)),
+  kernelPid: Schema.NullOr(Schema.Int.check(Schema.isGreaterThan(0))),
   languageId: ComputeLanguageId,
   languageVersion: Label,
   protocolVersion: Schema.Int.check(Schema.isGreaterThanOrEqualTo(1)),
@@ -194,6 +235,7 @@ export const ExecutePayload = Schema.Struct({
   code: Schema.String.check(Schema.isMaxLength(MaxCodeLength), utf8Bound(MaxCodeLength)),
   silent: Schema.Boolean,
   storeHistory: Schema.Boolean,
+  sourceContext: Schema.optional(ExecuteSourceContext),
 });
 export type ExecutePayload = typeof ExecutePayload.Type;
 
@@ -347,7 +389,7 @@ export type RestartPayload = typeof RestartPayload.Type;
  * the session is actually at.
  */
 export const RestartedPayload = Schema.Struct({
-  kernelPid: Schema.Int.check(Schema.isGreaterThan(0)),
+  kernelPid: Schema.NullOr(Schema.Int.check(Schema.isGreaterThan(0))),
 });
 export type RestartedPayload = typeof RestartedPayload.Type;
 

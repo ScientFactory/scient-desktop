@@ -566,6 +566,7 @@ import { assetEnvironment } from "../state/assets";
 import { readPreparedConnection } from "../state/session";
 import { useAtomCommand } from "../state/use-atom-command";
 import { useAtomQueryRunner } from "../state/use-atom-query-runner";
+import { computeEnvironment } from "../state/compute";
 import { Button } from "./ui/button";
 import {
   AlertDialog,
@@ -603,6 +604,16 @@ import {
   ATTACHMENT_ONLY_BOOTSTRAP_PROMPT,
   recallableComposerPrompt,
 } from "./chat/composerPromptHistory";
+import { closeComputeContext } from "~/scient/compute/computeContextCoordinator";
+import { useCancelComputeBatchRun } from "~/scient/compute/useCancelComputeBatchRun";
+import {
+  computeFileContextId,
+  createComputeContextId,
+  useComputeContextStore,
+  type ComputeContextId,
+} from "~/scient/compute/computeContextStore";
+import { useComputeFilePresentationStore } from "~/scient/compute/computeFilePresentationStore";
+import { computeSourceLanguageForPath } from "~/scient/compute/computeSourceLanguage";
 
 const EMPTY_ACTIVITIES: OrchestrationThreadActivity[] = [];
 const EMPTY_PROVIDERS: ServerProvider[] = [];
@@ -1641,6 +1652,14 @@ function ChatViewContent(props: ChatViewProps) {
   });
   const openPreview = useAtomCommand(previewEnvironment.open, { reportFailure: false });
   const closePreview = useAtomCommand(previewEnvironment.close, "preview close");
+  const cancelComputeBatchRun = useCancelComputeBatchRun();
+  const stopComputeSession = useAtomCommand(computeEnvironment.stopSession, {
+    reportFailure: false,
+  });
+  const getComputeSession = useAtomQueryRunner(computeEnvironment.session, {
+    reportFailure: false,
+    refresh: true,
+  });
   const { environments } = useEnvironments();
   const primaryEnvironment = usePrimaryEnvironment();
   const serverConfigs = useServerConfigs();
@@ -2551,6 +2570,10 @@ function ChatViewContent(props: ChatViewProps) {
   const [pendingFileSurfaceIdsByProject, setPendingFileSurfaceIdsByProject] = useState<
     ReadonlyMap<string, ReadonlySet<string>>
   >(() => new Map());
+  const pendingFilesDuringCloseRef = useRef(pendingFileSurfaceIdsByProject);
+  useEffect(() => {
+    pendingFilesDuringCloseRef.current = pendingFileSurfaceIdsByProject;
+  }, [pendingFileSurfaceIdsByProject]);
   const genericPendingFileSurfaceIds = activeWorkspaceKey
     ? (pendingFileSurfaceIdsByProject.get(activeWorkspaceKey) ?? EMPTY_PENDING_FILE_SURFACE_IDS)
     : EMPTY_PENDING_FILE_SURFACE_IDS;
@@ -4981,7 +5004,10 @@ function ChatViewContent(props: ChatViewProps) {
   }, [activeProject, activeThreadRef, activeWorkspaceRoot, runAfterPendingFileSave]);
   const addComputeSurface = useCallback(() => {
     if (!activeThreadRef || activeWorkspaceRoot === undefined) return;
-    const surface = scientComputeSurface({ cwd: activeWorkspaceRoot });
+    const surface = scientComputeSurface({
+      cwd: activeWorkspaceRoot,
+      contextId: createComputeContextId(),
+    });
     runAfterPendingFileSave(surface.id, () => {
       useRightPanelStore.getState().openScient(activeThreadRef, surface);
     });
@@ -5547,6 +5573,59 @@ function ChatViewContent(props: ChatViewProps) {
       storeCloseTerminal,
     ],
   );
+  const computeContextIdForSurface = useCallback(
+    (surface: RightPanelSurface): ComputeContextId | null => {
+      if (surface.kind === "scient" && surface.module === "compute") {
+        return surface.contextId ?? null;
+      }
+      if (surface.kind === "file" && surface.attachment !== undefined) return null;
+      const relativePath =
+        surface.kind === "file"
+          ? surface.relativePath
+          : surface.kind === "scient" && surface.module === "file"
+            ? surface.path
+            : null;
+      if (
+        activeThreadRef === null ||
+        activeWorkspaceRoot === undefined ||
+        relativePath === null ||
+        computeSourceLanguageForPath(relativePath) === null
+      ) {
+        return null;
+      }
+      return computeFileContextId({
+        environmentId: activeThreadRef.environmentId,
+        threadId: activeThreadRef.threadId,
+        cwd: activeWorkspaceRoot,
+        relativePath,
+      });
+    },
+    [activeThreadRef, activeWorkspaceRoot],
+  );
+  const closeComputeOwnedSurfaces = useCallback(
+    async (surfaces: readonly RightPanelSurface[]) => {
+      const contextIds = [
+        ...new Set(
+          surfaces
+            .map(computeContextIdForSurface)
+            .filter((contextId): contextId is ComputeContextId => contextId !== null),
+        ),
+      ];
+      for (const contextId of contextIds) {
+        const result = await closeComputeContext({
+          contextId,
+          stopSession: stopComputeSession,
+          getSession: getComputeSession,
+          cancelBatchRun: cancelComputeBatchRun,
+        });
+        if (!result.closed) return false;
+        useComputeContextStore.getState().removeContext(contextId);
+        useComputeFilePresentationStore.getState().remove(contextId);
+      }
+      return true;
+    },
+    [computeContextIdForSurface, getComputeSession, stopComputeSession, cancelComputeBatchRun],
+  );
   const closeAfterAgentBrowserConfirmation = useCallback(
     (surfaces: readonly RightPanelSurface[], closeSurfaces: () => void) => {
       const message = agentControlledBrowserCloseConfirmation(
@@ -5581,14 +5660,54 @@ function ChatViewContent(props: ChatViewProps) {
   const finishRightPanelSurfaceClose = useCallback(
     (surfaces: readonly RightPanelSurface[]) => {
       if (!activeThreadRef) return;
-      cleanupRightPanelSurfaces(surfaces);
-      const store = useRightPanelStore.getState();
-      for (const surface of surfaces) {
-        store.closeSurface(activeThreadRef, surface.id);
-      }
-      syncActivePreviewSurface();
+      void closeComputeOwnedSurfaces(surfaces)
+        .then((closed) => {
+          if (!closed) return;
+          const pendingSurfaceIds =
+            markdownDepartureOptions.getPendingSurfaceIds?.() ?? pendingFileSurfaceIds;
+          const latestPendingFiles =
+            activeWorkspaceKey === null
+              ? undefined
+              : pendingFilesDuringCloseRef.current.get(activeWorkspaceKey);
+          if (
+            surfaces.some(
+              (surface) => pendingSurfaceIds.has(surface.id) || latestPendingFiles?.has(surface.id),
+            )
+          ) {
+            toastManager.add({
+              type: "info",
+              title: "File kept open",
+              description: "The file changed while its compute session was stopping.",
+            });
+            return;
+          }
+          cleanupRightPanelSurfaces(surfaces);
+          const store = useRightPanelStore.getState();
+          for (const surface of surfaces) {
+            store.closeSurface(activeThreadRef, surface.id);
+          }
+          syncActivePreviewSurface();
+        })
+        .catch((error: unknown) => {
+          toastManager.add(
+            stackedThreadToast({
+              type: "error",
+              title: "Unable to close the panel",
+              description:
+                error instanceof Error ? error.message : "The panel close could not be completed.",
+            }),
+          );
+        });
     },
-    [activeThreadRef, cleanupRightPanelSurfaces, syncActivePreviewSurface],
+    [
+      activeThreadRef,
+      cleanupRightPanelSurfaces,
+      closeComputeOwnedSurfaces,
+      activeWorkspaceKey,
+      markdownDepartureOptions,
+      pendingFileSurfaceIds,
+      syncActivePreviewSurface,
+    ],
   );
   const closeRightPanelSurface = useCallback(
     (surface: RightPanelSurface) => {
@@ -10216,9 +10335,16 @@ function ChatViewContent(props: ChatViewProps) {
       activeThreadRef ? (
       <Suspense fallback={null}>
         <ComputePanel
+          key={`${activeThreadRef.environmentId}:${activeThreadRef.threadId}:${renderedRightPanelSurface.id}`}
           environmentId={activeThreadRef.environmentId}
           cwd={renderedRightPanelSurface.cwd}
           threadRef={activeThreadRef}
+          {...(renderedRightPanelSurface.contextId === undefined
+            ? {}
+            : {
+                contextId: renderedRightPanelSurface.contextId,
+                onRetryClose: () => closeRightPanelSurface(renderedRightPanelSurface),
+              })}
         />
       </Suspense>
     ) : renderedRightPanelSurface?.kind === "scient" &&

@@ -116,6 +116,8 @@ describe("Scient release machinery", () => {
       "promote-release.yml",
       "release.yml",
       "scheduled-stable-candidate.yml",
+      "scient-compute-python-kernel.yml",
+      "scient-compute-recipes.yml",
     ]) {
       const workflow = NodeFS.readFileSync(
         NodePath.join(import.meta.dirname, "../.github/workflows", workflowName),
@@ -126,6 +128,9 @@ describe("Scient release machinery", () => {
       );
       assert(uses.length > 0, `${workflowName} must declare at least one action`);
       for (const action of uses) {
+        // A repository-local reusable workflow is immutable with its caller's checkout.
+        // Its external actions are inspected when this loop reads that workflow directly.
+        if (action === "./.github/workflows/scient-compute-python-kernel.yml") continue;
         // This repository-local action is pinned by the release checkout itself.
         // Keep the exception exact and prevent nested mutable action references.
         if (action === "./.github/actions/setup-apt-mirrors") {
@@ -221,6 +226,18 @@ describe("Scient release machinery", () => {
     const packageServerIndex = serverAssetJob.indexOf("node scripts/package-scient-server.ts");
     assert(setupVpIndex >= 0 && setupVpIndex < exposePnpmIndex);
     assert(exposePnpmIndex < packageServerIndex);
+  });
+
+  it("uses the authoritative server build that stages runtime assets", () => {
+    const workflow = NodeFS.readFileSync(
+      NodePath.join(import.meta.dirname, "../.github/workflows/release.yml"),
+      "utf8",
+    );
+    const serverAssetJob =
+      workflow.split(/^  build_server_asset:\n/mu)[1]?.split(/^  \w+:\n/mu)[0] ?? "";
+
+    assert.include(serverAssetJob, "vp run --filter t3 build");
+    assert.notInclude(serverAssetJob, "vp run --filter t3 build:bundle");
   });
 
   it("installs workspace dependencies before running release assembly scripts", () => {

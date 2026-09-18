@@ -35,6 +35,7 @@ const STANDARD_FRAME_PATTERN = /^\s*File\s+"([^"]+)",\s+line\s+(\d+)(?:,\s+in\s+
 const IPYTHON_FILE_FRAME_PATTERN = /^\s*File\s+(.+):(\d+)(?:,\s+in\s+(.+))?\s*$/;
 const IPYTHON_CELL_FRAME_PATTERN = /^\s*Cell\s+In\[[^\]]*\],\s+line\s+(\d+)(?:,\s+in\s+(.+))?\s*$/;
 const SYNTHETIC_PYTHON_PATH_PATTERN = /^<[^>]+>$/;
+const SCIENT_SOURCE_PATTERN = /^<scient-compute-source:([0-9a-f]+):[0-9]+>$/;
 
 function stripAnsi(text: string): string {
   return text.replace(ANSI_PATTERN, "");
@@ -92,7 +93,9 @@ function projectRelativePath(projectRoot: string, reportedPath: string): string 
 function positiveLine(value: string, offset = 0): number | null {
   const parsed = Number(value);
   const line = parsed + offset;
-  return Number.isSafeInteger(line) && line >= 1 ? line : null;
+  return Number.isSafeInteger(parsed) && parsed >= 1 && Number.isSafeInteger(line) && line >= 1
+    ? line
+    : null;
 }
 
 function frameFunctionName(value: string | undefined): string | null {
@@ -102,15 +105,15 @@ function frameFunctionName(value: string | undefined): string | null {
 
 function submittedFrame(
   context: ComputeDiagnosticContext,
+  executionId: string,
   runtimeLine: string,
   functionName: string | undefined,
 ): ComputeDiagnosticFrame | null {
-  if (context.submittedSource === null) return null;
-  const relativePath = projectRelativePath(
-    context.projectRoot,
-    context.submittedSource.relativePath,
-  );
-  const line = positiveLine(runtimeLine, context.submittedSource.startLine);
+  const source = context.executionSources?.get(executionId);
+  if (source === undefined) return null;
+  const relativePath = projectRelativePath(context.projectRoot, source.relativePath);
+  if (Number(runtimeLine) > source.lineCount) return null;
+  const line = positiveLine(runtimeLine, source.startLine);
   if (relativePath === null || line === null) return null;
   return {
     relativePath,
@@ -125,14 +128,23 @@ function parseFrame(
   context: ComputeDiagnosticContext,
 ): ComputeDiagnosticFrame | null {
   const cellMatch = IPYTHON_CELL_FRAME_PATTERN.exec(line);
-  if (cellMatch) return submittedFrame(context, cellMatch[1]!, cellMatch[2]);
+  // Cell numbers and arbitrary synthetic filenames do not identify the current
+  // submission: they may belong to retained functions or user-created code.
+  if (cellMatch) return null;
 
   const standardMatch = STANDARD_FRAME_PATTERN.exec(line);
   const fileMatch = standardMatch ?? IPYTHON_FILE_FRAME_PATTERN.exec(line);
   if (!fileMatch) return null;
   const reportedPath = fileMatch[1]!.trim();
+  const sourceMatch = SCIENT_SOURCE_PATTERN.exec(reportedPath);
+  if (sourceMatch) {
+    const encodedId = sourceMatch[1]!;
+    if (encodedId.length % 2 !== 0) return null;
+    const executionId = Buffer.from(encodedId, "hex").toString("utf8");
+    return submittedFrame(context, executionId, fileMatch[2]!, fileMatch[3]);
+  }
   if (SYNTHETIC_PYTHON_PATH_PATTERN.test(reportedPath)) {
-    return submittedFrame(context, fileMatch[2]!, fileMatch[3]);
+    return null;
   }
   const relativePath = projectRelativePath(context.projectRoot, reportedPath);
   const frameLine = positiveLine(fileMatch[2]!);

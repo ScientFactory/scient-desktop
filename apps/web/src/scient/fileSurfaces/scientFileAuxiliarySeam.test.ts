@@ -9,17 +9,27 @@ describe("Scient file surface seams", () => {
       new URL("../../components/files/FilePreviewPanel.tsx", import.meta.url),
       "utf8",
     );
-    expect(source).toContain("ScientFileAuxiliarySurface");
-    expect(source.match(/<ScientFileAuxiliarySurface/gu)).toHaveLength(1);
-    expect(source).toContain("ScientPythonComputeSurface");
-    expect(source.match(/<ScientPythonComputeSurface/gu)).toHaveLength(1);
+    expect(source).not.toContain("ScientFileAuxiliarySurface");
+    expect(source).toContain("ScientComputeFileSurface");
+    expect(source.match(/<ScientComputeFileSurface/gu)).toHaveLength(1);
     expect(source.match(/useWorkspaceFileRefresh\(/gu)).toHaveLength(1);
-    expect(source).not.toMatch(/matlab|-batch|AnalysisRunFilePanel/iu);
+    expect(source).not.toMatch(/-batch|AnalysisRunFilePanel/iu);
+    expect(source).not.toContain("matlabOneShotVisible");
+  });
+
+  it("places batch in the same Results surface without another execution panel", () => {
+    const auxiliary = NodeFS.readFileSync(
+      new URL("../compute/ScientComputeFileSurface.tsx", import.meta.url),
+      "utf8",
+    );
+    expect(auxiliary).toContain("showingBatch");
+    expect(auxiliary).toContain("<ComputeBatchResults");
+    expect(auxiliary).not.toContain("AnalysisRunFilePanel");
   });
 
   it("keeps Python execution controls in the Scient-owned file surface", () => {
     const surface = NodeFS.readFileSync(
-      new URL("../compute/ScientPythonComputeSurface.tsx", import.meta.url),
+      new URL("../compute/ScientComputeFileSurface.tsx", import.meta.url),
       "utf8",
     );
     const results = NodeFS.readFileSync(
@@ -34,13 +44,13 @@ describe("Scient file surface seams", () => {
       new URL("../artifacts/staticArtifactViewerActions.ts", import.meta.url),
       "utf8",
     );
-    const artifactMenus = NodeFS.readFileSync(
-      new URL("../artifacts/StaticArtifactMenus.tsx", import.meta.url),
+    const figure = NodeFS.readFileSync(
+      new URL("../compute/ComputeFigure.tsx", import.meta.url),
       "utf8",
     );
 
-    expect(surface).toContain("PythonFileComputeActions");
-    expect(surface).toContain("PYTHON_COMPUTE_VIEWS");
+    expect(surface).toContain("ComputeFileActions");
+    expect(surface).toContain("COMPUTE_FILE_VIEWS");
     expect(surface).toContain("ComputePanel");
     expect(results).not.toMatch(/<Textarea|Run code in this session/gu);
     expect(results).not.toMatch(/Code that ran|request\.code|revision\.slice/gu);
@@ -51,14 +61,18 @@ describe("Scient file surface seams", () => {
     expect(results).not.toContain("<Pause");
     expect(results).toContain('aria-label="Compute session history"');
     expect(results).toContain("MenuRadioGroup");
-    expect(output).toContain("useAssetUrlState");
-    expect(output).toContain("<img");
-    expect(output).toContain("StaticArtifactPresentationMenu");
-    expect(output).toContain("StaticArtifactPresentationActionMenu");
-    expect(output).toContain("StaticImageCopyButton");
-    expect(output).toContain("StaticImageDownloadButton");
-    expect(artifactMenus).toContain("openStaticArtifactInPanel");
-    expect(artifactMenus).toContain("toggleStaticArtifactFloating");
+    expect(results).toContain('role="tablist"');
+    expect(results).toContain('aria-label="Compute view"');
+    expect(results).not.toContain("setVariablesOpen");
+    expect(results).not.toContain("showVariablesTab");
+    expect(output).toContain("<ComputeFigure");
+    expect(figure).toContain("useAssetUrlState");
+    expect(figure).toContain("<img");
+    expect(figure).toContain("ScientImageActionMenu");
+    expect(figure).toContain("copyStaticImage");
+    expect(figure).toContain("downloadStaticImage");
+    expect(figure).toContain("openStaticArtifactInPanel");
+    expect(figure).toContain("toggleStaticArtifactFloating");
     expect(artifactActions).toContain("openScientArtifact");
   });
 });

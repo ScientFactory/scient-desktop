@@ -6,7 +6,7 @@ import { describe, expect, it } from "@effect/vitest";
 describe("analysis result promotion UI seam", () => {
   it("keeps promotion in the Scient panel and opens the ordinary project file surface", () => {
     const source = NodeFS.readFileSync(
-      new URL("./AnalysisRunFilePanel.tsx", import.meta.url),
+      new URL("../compute/ComputeBatchResults.tsx", import.meta.url),
       "utf8",
     );
     expect(source).toContain("Save to project");

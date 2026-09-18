@@ -133,6 +133,12 @@ Automatic preview is available in the Scient desktop app. Other clients still ru
 not open the embedded Browser. Actions that run automatically during worktree creation start on the
 server and do not currently trigger this client-side Browser opening.
 
+Local preview checks use the configured URL and its declared HTTP or HTTPS protocol. Scient does
+not send web requests to arbitrary listening ports, including processes launched in its terminals:
+a Python kernel or database may use a non-web protocol. For a server started elsewhere, enter its
+URL in the Browser, or configure it as a project action's Preview URL. Printed terminal URLs and
+recent browsing history do not by themselves enable background probing.
+
 Choose **Monogram** in the icon picker to set one or two letters or numbers and a color.
 
 When no image is found, web and desktop show a two-character monogram with a color

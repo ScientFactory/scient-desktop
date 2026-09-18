@@ -4,8 +4,8 @@
 #
 # The bridge's own unit tests need nothing but a standard library and so run on
 # every pull request from `ci.yml`. What is here needs `jupyter_client`,
-# `ipykernel` and a live subprocess tree, which is why it is path-filtered and
-# dispatchable rather than always on.
+# `ipykernel`, matplotlib, pandas, and a live subprocess tree, which is why it
+# is path-filtered and dispatchable rather than always on.
 #
 # The matrix is deliberately the platforms this suite has been observed to pass
 # on. Windows is absent because it is unverified, not because it is expected to
@@ -17,11 +17,15 @@
 name: Scient Compute Python Kernel
 
 on:
+  workflow_call:
   workflow_dispatch:
   pull_request:
     paths:
       - ".github/workflows/scient-compute-python-kernel.yml"
       - "apps/server/src/scient/compute/**"
+      - "apps/server/scripts/compute-recipes.ts"
+      - "apps/server/src/preview/PortScanner*"
+      - "apps/server/src/localEndpoints/**"
       - "apps/server/src/scient/execution/LocalDuplexProcess.ts"
       - "packages/scient-compute/**"
 
@@ -33,6 +37,50 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
+  managed_python:
+    name: Managed Python toolkits / ${{ matrix.runner }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-24.04
+            target: linux-x64
+          - runner: macos-15
+            target: darwin-arm64
+    steps:
+      - name: Checkout
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          fetch-depth: 0
+          sparse-checkout: |
+            /*
+            !/.repos/
+          sparse-checkout-cone-mode: false
+      - name: Setup Vite+
+        uses: voidzero-dev/setup-vp@250f29ce396baf5e8f24498e17c0dfdebabc26eb # v1
+        with:
+          node-version-file: package.json
+          cache: true
+          run-install: |
+            args:
+              - --filter=t3...
+      # The production provisioner downloads pinned private uv/CPython and uses
+      # the checked-in lock. No ambient pip environment can satisfy this test.
+      - name: Seal candidate recipe metadata
+        run: node apps/server/scripts/compute-recipes.ts seal
+      - name: Assert native qualification target
+        env:
+          EXPECTED_TARGET: ${{ matrix.target }}
+        run: node -e 'require("node:assert/strict").equal(`${process.platform}-${process.arch}`, process.env.EXPECTED_TARGET)'
+      - name: Qualify base, every toolkit combination, and retained kernels
+        working-directory: apps/server
+        env:
+          SCIENT_TEST_MANAGED_PYTHON: "1"
+          MPLBACKEND: Agg
+        run: vp test run src/scient/compute/ManagedPythonProduct.live.test.ts src/scient/compute/ComputeRecipe.live.test.ts --maxWorkers=1
+
   real_kernel:
     name: Real kernel / ${{ matrix.runner }} / Python ${{ matrix.python }}
     runs-on: ${{ matrix.runner }}
@@ -49,7 +97,7 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
           sparse-checkout: |
             /*
@@ -57,7 +105,7 @@ jobs:
           sparse-checkout-cone-mode: false
 
       - name: Setup Vite+
-        uses: voidzero-dev/setup-vp@v1
+        uses: voidzero-dev/setup-vp@250f29ce396baf5e8f24498e17c0dfdebabc26eb # v1
         with:
           node-version-file: package.json
           cache: true
@@ -66,7 +114,7 @@ jobs:
               - --filter=t3...
 
       - name: Setup Python ${{ matrix.python }}
-        uses: actions/setup-python@v6
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
         with:
           python-version: ${{ matrix.python }}
 
@@ -75,7 +123,7 @@ jobs:
         run: |
           set -euo pipefail
           python -m pip install --upgrade pip
-          python -m pip install "jupyter_client>=8.6" "ipykernel>=6.29" matplotlib
+          python -m pip install "jupyter_client>=8.6" "ipykernel>=6.29" matplotlib pandas
 
       # The absolute path rather than `python`: this value becomes the launch
       # plan's executable, so resolving it once here is what makes the kernel
@@ -91,4 +139,8 @@ jobs:
           set -euo pipefail
           SCIENT_TEST_PYTHON="$(python -c 'import sys; print(sys.executable)')"
           export SCIENT_TEST_PYTHON
-          vp test run src/scient/compute/PythonKernel.integration.test.ts
+          vp test run \
+            src/scient/compute/PythonKernel.integration.test.ts \
+            src/scient/compute/PythonComputeService.integration.test.ts \
+            src/scient/compute/FreshCompute.integration.test.ts \
+            src/preview/PortScannerPythonCompute.integration.test.ts

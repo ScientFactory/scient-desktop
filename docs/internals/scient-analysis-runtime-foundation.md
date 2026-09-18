@@ -10,6 +10,14 @@ as part of this released AnalysisRun surface.
 
 ## Decision
 
+Current local continuation: see the [execution consolidation candidate](scient-compute-session-foundation.md#execution-consolidation-candidate-2026-09-15).
+Native MATLAB batch retains the AnalysisRun transport, records, artifact identity and promotion
+semantics described here. Its former auxiliary file panel/setup form is replaced by the common
+Compute Results location and Scientific Computing preferences. Batch is not Engine-gated.
+Caller-reserved IDs and strict close-after-cleanup extend lifecycle ownership; they do not migrate
+history or convert stdout into Jupyter MIME. The original release boundary above and dated
+descriptions below remain historical evidence, not a claim that this continuation has shipped.
+
 The first vertical slice runs a saved, project-owned `.m` file with a user-installed MATLAB,
 streams output, supports Stop and per-file history, and publishes captured figures. It also
 establishes the runtime-neutral contracts needed by later Python, R, notebook, typesetting, and

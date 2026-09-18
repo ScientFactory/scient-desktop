@@ -1,189 +1,876 @@
-import { RefreshCwIcon, SigmaIcon } from "lucide-react";
-import { useEffect, useState } from "react";
+import { ExternalLinkIcon, ChevronRightIcon, RefreshCwIcon, SigmaIcon } from "lucide-react";
+import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
+import * as Schema from "effect/Schema";
 import type {
-  ComputeLanguageRuntimeInspection,
+  ComputeLanguageRuntimeInventory,
+  ComputeManagedRuntimeAction,
+  EnvironmentId,
   ScientificComputingLanguageSettings,
 } from "@t3tools/contracts";
+import { ComputeLanguageDescriptor, ComputeLanguageId } from "@t3tools/contracts";
+import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 
-import { usePrimarySettings, useUpdatePrimarySettings } from "~/hooks/useSettings";
-import { usePrimaryEnvironment } from "~/state/environments";
+import { useEnvironmentSettings } from "~/hooks/useSettings";
+import { useLocalStorage } from "~/hooks/useLocalStorage";
+import { serverEnvironment } from "~/state/server";
+import { useEnvironment, usePrimaryEnvironmentId } from "~/state/environments";
 import { useEnvironmentQuery } from "~/state/query";
 import { computeEnvironment } from "~/state/compute";
 import { useAtomCommand } from "~/state/use-atom-command";
+import { cn } from "~/lib/utils";
+import pythonLogo from "~/assets/compute/python.svg";
+import matlabLogo from "~/assets/compute/matlab.svg";
+import juliaLogo from "~/assets/compute/julia.svg";
+import rLogo from "~/assets/compute/r.svg";
+import spssLogo from "~/assets/compute/spss.svg";
 import { Button } from "~/components/ui/button";
 import { Input } from "~/components/ui/input";
+import {
+  Select,
+  SelectItem,
+  SelectPopup,
+  SelectSeparator,
+  SelectTrigger,
+  SelectValue,
+} from "~/components/ui/select";
 import { Switch } from "~/components/ui/switch";
+import { Tooltip, TooltipPopup, TooltipTrigger } from "~/components/ui/tooltip";
 import {
   SettingsPageContainer,
   SettingsRow,
   SettingsSection,
 } from "~/components/settings/settingsLayout";
+import {
+  SettingsSourcePanel,
+  SettingsSourceGroup,
+  SettingsSourceStrip,
+  SettingsSourceStripItem,
+} from "~/components/settings/SettingsSourceStrip";
+import {
+  useComputeManagedRuntime,
+  ManagedRuntimeNotice,
+  ManagedRuntimeMaintenanceMenu,
+  type ComputeManagedRuntimeController,
+} from "./ComputeManagedRuntimeControls";
+import {
+  automaticComputeRuntimeLabel,
+  runtimeSourceLabel,
+  computeCurrentRuntimeSummary,
+  computeManagedPrimaryAction,
+  computeRuntimePickerLabel,
+  defaultComputeInstallation,
+  type ComputeManagedPrimaryAction,
+} from "./computeInstallationSettingsModel";
 
-function readinessLabel(language: ComputeLanguageRuntimeInspection, enabled: boolean): string {
-  if (!enabled) return "Disabled";
-  if (language.runtimes.length === 0) return "No compatible runtime detected";
-  const ready = language.runtimes.filter(
-    (candidate) => candidate.verification.readiness === "ready",
-  ).length;
-  return ready > 0
-    ? `${ready} ready runtime${ready === 1 ? "" : "s"}`
-    : "Runtime requirements are missing";
-}
+const AUTOMATIC_RUNTIME_OPTION = "scient-runtime:automatic";
+const SELECTED_LANGUAGE_STORAGE_KEY = "scient:scientific-computing:selected-language:v1";
+const LANGUAGE_LOGOS: Readonly<Record<string, string>> = {
+  python: pythonLogo,
+  matlab: matlabLogo,
+  julia: juliaLogo,
+  r: rLogo,
+  spss: spssLogo,
+};
+// Presentation-only previews; these must not become runtime inventory entries.
+const UPCOMING_LANGUAGES = [
+  { id: "julia", label: "Julia" },
+  { id: "r", label: "R" },
+  { id: "spss", label: "SPSS" },
+] as const;
 
-export function RuntimeDetails({
-  language,
-  enabled,
-}: {
-  language: ComputeLanguageRuntimeInspection;
-  enabled: boolean;
-}) {
-  if (!enabled || language.runtimes.length === 0) return null;
-  return (
-    <div className="mt-3 space-y-1 border-t border-border/50 py-2">
-      {language.runtimes.map(({ profile, verification }) => (
-        <div key={`${profile.source}:${profile.executable}`} className="min-w-0 py-1.5 text-xs">
-          <div className="flex min-w-0 items-start justify-between gap-4">
-            <div className="min-w-0">
-              <div className="truncate font-medium text-foreground/90">{profile.displayName}</div>
-              <div className="truncate font-mono text-muted-foreground">{profile.executable}</div>
-              <div className="text-muted-foreground">
-                {profile.source}
-                {profile.architecture ? ` · ${profile.architecture}` : ""}
-              </div>
-            </div>
-            <div
-              className={
-                verification.readiness === "ready"
-                  ? "shrink-0 text-success"
-                  : "max-w-64 shrink-0 text-right text-warning"
-              }
-            >
-              {verification.readiness === "ready"
-                ? "Ready"
-                : verification.missingRequirements.length > 0
-                  ? `Missing: ${verification.missingRequirements.join(", ")}`
-                  : (verification.message ?? verification.readiness.replaceAll("-", " "))}
-            </div>
-          </div>
-          {verification.readiness === "missing-requirement" && verification.message !== null ? (
-            <p className="mt-2 max-w-2xl text-[11px] leading-snug text-muted-foreground">
-              {verification.message}
-            </p>
-          ) : null}
-        </div>
-      ))}
-    </div>
-  );
-}
+import { PythonToolkitSettings, type ToolkitChange } from "./PythonToolkitSettings";
+import { ComputeInstallationRow } from "./ComputeInstallationRow";
+import { useComputeInstallationSelection } from "./useComputeInstallationSelection";
 
-function LanguageSettingsRow({
+/** Owns the one runtime controller shared by the selected language's runtime and Toolkit cards. */
+function SelectedLanguageRuntime({
+  environmentId,
   language,
   preference,
   onChange,
-  onRefresh,
-  refreshing,
+  children,
 }: {
-  language: ComputeLanguageRuntimeInspection;
+  environmentId: EnvironmentId;
+  language: ComputeLanguageRuntimeInventory;
   preference: ScientificComputingLanguageSettings;
-  onChange: (next: ScientificComputingLanguageSettings) => void;
-  onRefresh: () => void;
-  refreshing: boolean;
+  onChange: (next: ScientificComputingLanguageSettings) => Promise<boolean>;
+  children: (runtime: ComputeManagedRuntimeController) => ReactNode;
 }) {
-  const [executable, setExecutable] = useState(preference.executable);
-  useEffect(() => setExecutable(preference.executable), [preference.executable]);
+  const runtime = useComputeManagedRuntime({
+    environmentId,
+    languageId: language.descriptor.languageId,
+    initialStatus: language.managedRuntime,
+    ensureEnabled: async () =>
+      preference.enabled || (await onChange({ ...preference, enabled: true })),
+  });
+  return children(runtime);
+}
 
-  const persistExecutable = () => {
-    const next = executable.trim();
-    if (next !== preference.executable) onChange({ ...preference, executable: next });
+function LanguageRuntimeSummary({
+  language,
+  preference,
+  runtime,
+  onChange,
+  environmentId,
+  loading,
+  refreshing,
+  onRefresh,
+  refreshVersion,
+  toolkitChange,
+}: {
+  language: ComputeLanguageRuntimeInventory;
+  preference: ScientificComputingLanguageSettings;
+  runtime: ComputeManagedRuntimeController;
+  onChange: (next: ScientificComputingLanguageSettings) => Promise<boolean>;
+  environmentId: EnvironmentId | null;
+  loading: boolean;
+  refreshing: boolean;
+  onRefresh: () => Promise<void>;
+  refreshVersion: number;
+  toolkitChange: ToolkitChange | null;
+}) {
+  const languageId = language.descriptor.languageId;
+  const isPython = languageId === "python";
+  const isMatlab = languageId === "matlab";
+  const summary = computeCurrentRuntimeSummary({
+    language,
+    preference,
+    managed: runtime.status,
+  });
+  const selectedInstallation = defaultComputeInstallation(language, preference, runtime.status);
+  const connectionNeedsRetarget =
+    languageId === "matlab" &&
+    runtime.status?.installed === true &&
+    runtime.status.installationExecutable !== undefined &&
+    selectedInstallation !== undefined &&
+    runtime.status.installationExecutable !== selectedInstallation.executable;
+  const helperNeedsRetarget = connectionNeedsRetarget && runtime.status?.selection === "managed";
+  const connectionFailure =
+    languageId === "matlab" &&
+    runtime.failure?.retryAction != null &&
+    runtime.failure.retryAction !== "remove"
+      ? runtime.failure
+      : null;
+  const connectionNeedsRepair = summary.kind === "repair-connection" || connectionFailure !== null;
+  const connectionRepairAction: ComputeManagedPrimaryAction =
+    connectionFailure?.retryAction === "install" ? "install" : "repair";
+  const requiredToolkitIds = language.toolkits
+    .filter((toolkit) => toolkit.required)
+    .map((toolkit) => toolkit.toolkitId);
+  const disabled = Boolean(loading || refreshing || runtime.busy || !environmentId);
+  const selection = useComputeInstallationSelection({
+    language,
+    preference,
+    runtime,
+    onChange,
+    onRefresh,
+    unavailable: loading || refreshing || !environmentId,
+  });
+  const runtimeFingerprint = JSON.stringify([
+    refreshVersion,
+    preference.enabled,
+    selectedInstallation?.executable,
+    selectedInstallation?.version,
+    selectedInstallation?.problem,
+    runtime.status?.generationId,
+    runtime.status?.selection,
+    runtime.status?.operation?.operationId,
+    runtime.status?.installed,
+    runtime.status?.installationExecutable,
+    runtime.status?.failureMessage,
+    language.installations.map(({ executable, version, problem }) => [
+      executable,
+      version,
+      problem,
+    ]),
+  ]);
+  // A Test may reveal a version that lightweight discovery deliberately did not probe.
+  // Share that observation with this view's picker, never across environments or refreshes.
+  const [observedVersions, setObservedVersions] = useState<{
+    fingerprint: string;
+    versions: Record<string, string>;
+  } | null>(null);
+  const displayLanguage =
+    observedVersions?.fingerprint === runtimeFingerprint
+      ? {
+          ...language,
+          installations: language.installations.map((installation) => ({
+            ...installation,
+            version: observedVersions.versions[installation.executable] ?? installation.version,
+          })),
+        }
+      : language;
+  const rememberVersion = (executable: string, version: string) => {
+    setObservedVersions((previous) => ({
+      fingerprint: runtimeFingerprint,
+      versions: {
+        ...(previous?.fingerprint === runtimeFingerprint ? previous.versions : {}),
+        [executable]: version,
+      },
+    }));
+  };
+  const setup = () => {
+    const action = computeManagedPrimaryAction(runtime.status);
+    void runtime.act(action, {
+      ...(isPython
+        ? {
+            toolkitIds: [
+              ...new Set([...(runtime.status?.toolkitIds ?? []), ...requiredToolkitIds]),
+            ],
+          }
+        : {}),
+      ...(isPython &&
+      action === "install" &&
+      selectedInstallation !== undefined &&
+      selectedInstallation.source !== "managed"
+        ? { selectionAfterInstall: "existing" as const }
+        : {}),
+    });
+  };
+  const operationId = runtime.status?.operation?.operationId ?? null;
+  const previousOperationId = useRef<string | null>(null);
+  useEffect(() => {
+    if (previousOperationId.current !== null && operationId === null) void onRefresh();
+    previousOperationId.current = operationId;
+  }, [onRefresh, operationId]);
+  const showManagedNotice = runtime.status?.operation != null || Boolean(runtime.failure);
+  const toolkitOwnsNotice =
+    isPython &&
+    (runtime.status?.toolkitChanges?.some((entry) => entry.state === "running") ||
+      language.toolkits.some((toolkit) => toolkit.toolkitId === toolkitChange?.toolkitId));
+  const inlineManagedProgress = runtime.status?.operation != null && !toolkitOwnsNotice;
+  const story = loading
+    ? "Checking…"
+    : helperNeedsRetarget
+      ? `${selectedInstallation.version ?? "MATLAB"} · Connection needs update`
+      : summary.kind === "disabled"
+        ? "Off"
+        : summary.kind === "ready"
+          ? "For new sessions"
+          : summary.kind === "update-managed" ||
+              summary.kind === "repair-managed" ||
+              summary.kind === "unavailable"
+            ? `${summary.title} · ${summary.detail}`
+            : summary.title;
+  const pythonManagedAction = isPython ? computeManagedPrimaryAction(runtime.status) : null;
+  const primaryManagedAction: ComputeManagedRuntimeAction | null = helperNeedsRetarget
+    ? "repair"
+    : pythonManagedAction === "repair"
+      ? "repair"
+      : summary.kind === "repair-managed"
+        ? "repair"
+        : connectionNeedsRepair
+          ? connectionRepairAction
+          : null;
+  const managedAction = (() => {
+    if (inlineManagedProgress)
+      return <ManagedRuntimeNotice runtime={runtime} variant="toolbar" showFailure={false} />;
+    if (loading || runtime.busy) return null;
+    if (helperNeedsRetarget)
+      return (
+        <Button
+          size="xs"
+          variant="outline"
+          disabled={disabled}
+          onClick={() => void runtime.act("repair")}
+        >
+          Set up connection
+        </Button>
+      );
+    if (connectionNeedsRepair)
+      return (
+        <Button
+          size="xs"
+          variant="outline"
+          disabled={disabled}
+          onClick={() => void runtime.act(connectionRepairAction)}
+        >
+          Repair connection
+        </Button>
+      );
+    if (isMatlab && summary.kind === "connect")
+      return (
+        <Button size="xs" variant="outline" disabled={disabled} onClick={setup}>
+          Connect MATLAB
+        </Button>
+      );
+    if (isPython && !runtime.status?.installed)
+      return (
+        <Button size="xs" variant="outline" disabled={disabled} onClick={setup}>
+          Set up
+        </Button>
+      );
+    if (pythonManagedAction === "repair")
+      return (
+        <Button
+          size="xs"
+          variant="outline"
+          disabled={disabled}
+          onClick={() => void runtime.act("repair")}
+        >
+          Repair
+        </Button>
+      );
+    if (summary.kind === "repair-managed")
+      return (
+        <Button
+          size="xs"
+          variant="outline"
+          disabled={disabled}
+          onClick={() => void runtime.act("repair")}
+        >
+          Repair
+        </Button>
+      );
+    // Maintenance belongs to the installed capability, not the selected runtime.
+    // For MATLAB this updates Scient's helper, never the user's MATLAB installation.
+    if (runtime.status?.installed && runtime.status.updateAvailable)
+      return (
+        <Button
+          size="xs"
+          variant="outline"
+          className="text-primary"
+          disabled={disabled || (isMatlab && !selectedInstallation)}
+          onClick={() => void runtime.act("update")}
+        >
+          Update
+        </Button>
+      );
+    return null;
+  })();
+  const managedDescription = isPython
+    ? runtime.status?.installed
+      ? (runtime.status.runtimeVersion ?? "Version not checked")
+      : "Not installed"
+    : runtime.status?.installed
+      ? "Connection helper installed"
+      : "Connect Scient to the selected MATLAB installation.";
+  return (
+    <>
+      <SettingsRow
+        id={`${languageId}-enabled`}
+        title={`Enable ${language.descriptor.displayName}`}
+        control={
+          <Switch
+            checked={preference.enabled}
+            disabled={loading || refreshing || !environmentId}
+            onCheckedChange={(enabled) => {
+              void onChange({ ...preference, enabled }).then((saved) => {
+                if (saved) void onRefresh();
+              });
+            }}
+            aria-label={`Enable ${language.descriptor.displayName}`}
+          />
+        }
+      />
+      <LanguageRuntimeRecovery
+        language={displayLanguage}
+        preference={preference}
+        selection={selection}
+        loading={loading}
+        runtime={runtime}
+        story={story}
+      />
+      {displayLanguage.installations
+        .filter((installation) => installation.source !== "managed")
+        .map((installation, index) => (
+          <ComputeInstallationRow
+            key={`${installation.executable}:${runtimeFingerprint}`}
+            id={`${languageId}-installation-${index}`}
+            title={
+              displayLanguage.installations.filter(
+                (other) =>
+                  runtimeSourceLabel(other.source) === runtimeSourceLabel(installation.source),
+              ).length > 1
+                ? computeRuntimePickerLabel(
+                    installation,
+                    language.descriptor.displayName,
+                    displayLanguage.installations,
+                  )
+                : runtimeSourceLabel(installation.source)
+            }
+            installation={installation}
+            environmentId={environmentId}
+            languageId={languageId}
+            isDefault={installation.executable === selectedInstallation?.executable}
+            disabled={
+              loading ||
+              refreshing ||
+              !environmentId ||
+              !preference.enabled ||
+              (isMatlab && runtime.busy)
+            }
+            forgetDisabled={selection.disabled}
+            onVersion={(version) => rememberVersion(installation.executable, version)}
+            onForget={
+              installation.source === "configured" &&
+              (installation.configured ||
+                installation.executable === preference.executable.trim()) &&
+              preference.executable.trim()
+                ? () => void selection.select(null)
+                : undefined
+            }
+          />
+        ))}
+      {isMatlab && !loading && language.installations.length === 0 ? (
+        <SettingsRow
+          id="matlab-installation-missing"
+          title="MATLAB installation"
+          description="Not found"
+          control={
+            <Button
+              size="xs"
+              variant="outline"
+              render={
+                <a
+                  href="https://www.mathworks.com/products/matlab.html"
+                  target="_blank"
+                  rel="noreferrer"
+                />
+              }
+            >
+              Get MATLAB <ExternalLinkIcon />
+            </Button>
+          }
+        />
+      ) : null}
+      <ComputeInstallationRow
+        key={`managed:${runtimeFingerprint}`}
+        installation={
+          isPython
+            ? language.installations.find((installation) => installation.source === "managed")
+            : undefined
+        }
+        environmentId={environmentId}
+        languageId={languageId}
+        isDefault={isPython && selectedInstallation?.source === "managed"}
+        disabled={disabled || !preference.enabled}
+        id={`${languageId}-managed-runtime`}
+        title={isPython ? "Scient-managed Python" : "MATLAB connection"}
+        description={
+          connectionNeedsRepair
+            ? null
+            : runtime.status?.updateCheck === "unavailable"
+              ? `${managedDescription} · Update check unavailable`
+              : managedDescription
+        }
+        status={
+          showManagedNotice && !toolkitOwnsNotice && (!inlineManagedProgress || runtime.failure) ? (
+            <ManagedRuntimeNotice runtime={runtime} showProgress={!inlineManagedProgress} />
+          ) : undefined
+        }
+        action={managedAction}
+        renderMenu={(installationActions) => (
+          <ManagedRuntimeMaintenanceMenu
+            installationActions={installationActions}
+            runtime={runtime}
+            connection={isMatlab}
+            omitAction={primaryManagedAction}
+            canProvision={selectedInstallation !== undefined}
+            disabled={refreshing || !environmentId}
+            connectionNeedsRetarget={connectionNeedsRetarget}
+          />
+        )}
+      />
+    </>
+  );
+}
+
+function PythonToolkitsSection({
+  language,
+  runtime,
+  loading,
+  refreshing,
+  hidden,
+  toolkitChange,
+  onToolkitChange,
+}: {
+  language: ComputeLanguageRuntimeInventory;
+  runtime: ComputeManagedRuntimeController;
+  loading: boolean;
+  refreshing: boolean;
+  hidden: boolean;
+  toolkitChange: ToolkitChange | null;
+  onToolkitChange: (change: ToolkitChange | null) => void;
+}) {
+  if (language.descriptor.languageId !== "python" || language.toolkits.length === 0) return null;
+  return (
+    <SettingsSection
+      id="scientific-computing-toolkits"
+      title="Toolkits"
+      headerAction={<span className="text-xs text-muted-foreground">Scient-managed Python</span>}
+      variant="plain"
+      className="-mx-3 mt-8 sm:-mx-4"
+      hidden={hidden}
+    >
+      <div className="px-3 sm:px-4">
+        <SettingsSourcePanel>
+          <PythonToolkitSettings
+            toolkits={language.toolkits}
+            runtime={runtime}
+            disabled={
+              runtime.status?.toolkitChanges === undefined
+                ? Boolean(loading || refreshing || runtime.busy)
+                : Boolean(loading || refreshing || runtime.status.operation?.action === "remove")
+            }
+            change={toolkitChange}
+            onChange={onToolkitChange}
+          />
+        </SettingsSourcePanel>
+      </div>
+    </SettingsSection>
+  );
+}
+
+function LanguageRuntimeRecovery({
+  language,
+  preference,
+  selection,
+  loading,
+  runtime,
+  story,
+}: {
+  language: ComputeLanguageRuntimeInventory;
+  preference: ScientificComputingLanguageSettings;
+  selection: ReturnType<typeof useComputeInstallationSelection>;
+  loading: boolean;
+  runtime: ComputeManagedRuntimeController;
+  story: string;
+}) {
+  const languageId = language.descriptor.languageId;
+  const isPython = languageId === "python";
+  const [pathOpen, setPathOpen] = useState(false);
+  const [pathDraft, setPathDraft] = useState("");
+  const { selecting, error: selectionFailure, disabled } = selection;
+  const selectedInstallation = defaultComputeInstallation(language, preference, runtime.status);
+  const hasExplicitSelection =
+    Boolean(preference.executable.trim()) || (isPython && runtime.status?.selection === "managed");
+  const runtimePickerValue = hasExplicitSelection
+    ? (selectedInstallation?.executable ?? null)
+    : AUTOMATIC_RUNTIME_OPTION;
+
+  const select = async (executable: string | null) => {
+    if (await selection.select(executable)) {
+      setPathOpen(false);
+      setPathDraft("");
+    }
   };
 
   return (
     <SettingsRow
-      title={language.descriptor.displayName}
-      description={`Enable ${language.descriptor.displayName} for new scientific sessions on this server.`}
-      status={readinessLabel(language, preference.enabled)}
+      id={`${languageId}-runtime`}
+      title="Default runtime"
+      description={<span data-compute-summary={languageId}>{story}</span>}
       control={
-        <Switch
-          checked={preference.enabled}
-          onCheckedChange={(enabled) => onChange({ ...preference, enabled })}
-          aria-label={`Enable ${language.descriptor.displayName}`}
-        />
+        loading ? (
+          <p className="text-xs text-muted-foreground" role="status">
+            Checking…
+          </p>
+        ) : (
+          <div className="flex flex-wrap items-center gap-1.5">
+            <div className="flex min-w-0 items-center">
+              <Select
+                value={runtimePickerValue}
+                onValueChange={(value) => {
+                  if (!value || value === runtimePickerValue) return;
+                  if (value === AUTOMATIC_RUNTIME_OPTION) {
+                    void select(null);
+                    return;
+                  }
+                  void select(value);
+                }}
+                disabled={disabled || !preference.enabled}
+              >
+                <SelectTrigger
+                  size="sm"
+                  className="w-auto max-w-52"
+                  aria-label={`Choose ${language.descriptor.displayName} runtime`}
+                  data-compute-runtime={selectedInstallation?.executable ?? ""}
+                >
+                  <SelectValue>
+                    {!hasExplicitSelection
+                      ? automaticComputeRuntimeLabel(selectedInstallation)
+                      : selectedInstallation
+                        ? computeRuntimePickerLabel(
+                            selectedInstallation,
+                            language.descriptor.displayName,
+                            language.installations,
+                          )
+                        : "Choose a runtime"}
+                  </SelectValue>
+                </SelectTrigger>
+                <SelectPopup
+                  align="end"
+                  alignItemWithTrigger={false}
+                  matchTriggerWidth={false}
+                  className="max-w-[calc(100vw-1rem)]"
+                >
+                  <SelectItem
+                    hideIndicator
+                    value={AUTOMATIC_RUNTIME_OPTION}
+                    data-compute-runtime={AUTOMATIC_RUNTIME_OPTION}
+                  >
+                    {hasExplicitSelection
+                      ? "Automatic"
+                      : automaticComputeRuntimeLabel(selectedInstallation)}
+                  </SelectItem>
+                  {language.installations.length > 0 ? <SelectSeparator /> : null}
+                  {language.installations.map((installation) => (
+                    <SelectItem
+                      key={installation.executable}
+                      hideIndicator
+                      value={installation.executable}
+                      data-compute-runtime={installation.executable}
+                    >
+                      <span className="block max-w-[calc(100vw-3rem)] truncate sm:max-w-80">
+                        {computeRuntimePickerLabel(
+                          installation,
+                          language.descriptor.displayName,
+                          language.installations,
+                        )}
+                      </span>
+                    </SelectItem>
+                  ))}
+                </SelectPopup>
+              </Select>
+            </div>
+          </div>
+        )
       }
     >
-      <div className="mt-3 flex flex-col gap-2 border-t border-border/50 py-3 sm:flex-row sm:items-center">
-        <Input
-          nativeInput
-          size="compact"
-          value={executable}
-          disabled={!preference.enabled}
-          placeholder="Automatic"
-          aria-label={`${language.descriptor.displayName} executable`}
-          onChange={(event) => setExecutable(event.currentTarget.value)}
-          onBlur={persistExecutable}
-          onKeyDown={(event) => {
-            if (event.key === "Enter") {
-              persistExecutable();
-              event.currentTarget.blur();
-            }
-          }}
-        />
+      <div className="mt-2 mb-2 space-y-2" data-compute-recovery={languageId}>
         <Button
           size="xs"
-          variant="outline"
-          disabled={!preference.enabled || refreshing}
-          onClick={onRefresh}
+          variant="ghost-muted"
+          className="-ml-1.5"
+          aria-expanded={pathOpen}
+          aria-controls={`${languageId}-custom-executable`}
+          disabled={disabled || !preference.enabled}
+          onClick={() => setPathOpen((open) => !open)}
         >
-          <RefreshCwIcon className={refreshing ? "size-3 animate-spin" : "size-3"} />
-          Refresh
+          <ChevronRightIcon className={pathOpen ? "rotate-90" : undefined} /> Custom executable
         </Button>
+        {pathOpen ? (
+          <form
+            id={`${languageId}-custom-executable`}
+            className="flex min-w-0 items-center gap-1.5"
+            onSubmit={(event) => {
+              event.preventDefault();
+              if (pathDraft.trim()) void select(pathDraft.trim());
+            }}
+          >
+            <Input
+              nativeInput
+              size="compact"
+              className="min-w-0 flex-1"
+              value={pathDraft}
+              disabled={disabled}
+              placeholder="Executable path"
+              aria-label={`${language.descriptor.displayName} executable path`}
+              onChange={(event) => setPathDraft(event.currentTarget.value)}
+            />
+            <Button
+              size="xs"
+              variant="outline"
+              type="submit"
+              disabled={disabled || !pathDraft.trim()}
+            >
+              Use path
+            </Button>
+            <Button
+              size="xs"
+              variant="ghost-muted"
+              disabled={selecting}
+              onClick={() => setPathOpen(false)}
+            >
+              Cancel
+            </Button>
+          </form>
+        ) : null}
+        {selectionFailure ? (
+          <p className="text-xs text-destructive" role="alert">
+            {selectionFailure}
+          </p>
+        ) : null}
+        {language.failureMessage ? (
+          <p className="text-xs text-destructive" role="alert">
+            {language.failureMessage}
+          </p>
+        ) : null}
       </div>
-      {preference.enabled ? (
-        <p className="text-[11px] text-muted-foreground">
-          Capabilities: {language.descriptor.capabilities.join(", ")}
-        </p>
-      ) : null}
-      <RuntimeDetails language={language} enabled={preference.enabled} />
     </SettingsRow>
   );
 }
 
-export function ScientificComputingSettings() {
-  const primaryEnvironment = usePrimaryEnvironment();
-  const preferences = usePrimarySettings((settings) => settings.scientificComputing);
-  const updateSettings = useUpdatePrimarySettings();
-  const refreshRuntimes = useAtomCommand(computeEnvironment.refreshRuntimes);
+const PENDING_RUNTIME_DESCRIPTORS: ReadonlyArray<ComputeLanguageDescriptor> = [
+  ComputeLanguageDescriptor.make({
+    languageId: ComputeLanguageId.make("python"),
+    displayName: "Python",
+    sourceExtensions: [".py"],
+    capabilities: ["execute", "interrupt", "restart", "shutdown"],
+  }),
+  ComputeLanguageDescriptor.make({
+    languageId: ComputeLanguageId.make("matlab"),
+    displayName: "MATLAB",
+    sourceExtensions: [".m"],
+    capabilities: ["execute", "interrupt", "restart", "shutdown"],
+  }),
+];
+
+function pendingRuntimeInventory(
+  preferences: Readonly<Record<string, ScientificComputingLanguageSettings>>,
+): ReadonlyArray<ComputeLanguageRuntimeInventory> {
+  return PENDING_RUNTIME_DESCRIPTORS.map((descriptor) => {
+    const preference = preferences[descriptor.languageId] ?? { enabled: false, executable: "" };
+    return {
+      descriptor,
+      enabled: preference.enabled,
+      configuredExecutable: preference.executable || null,
+      managedRuntime: null,
+      toolkits: [],
+      installations: [],
+      failureMessage: null,
+    };
+  });
+}
+
+export function ScientificComputingSettings(
+  props: { environmentId?: EnvironmentId | undefined } = {},
+) {
+  const primaryId = usePrimaryEnvironmentId();
+  const environmentId = props.environmentId ?? primaryId;
+  const environment = useEnvironment(environmentId);
+  if (environmentId === null || environment === null) {
+    return (
+      <SettingsPageContainer>
+        <SettingsSection title="Scientific Computing">
+          <p className="text-sm text-muted-foreground">
+            This server is unavailable. Reconnect it to manage scientific runtimes.
+          </p>
+        </SettingsSection>
+      </SettingsPageContainer>
+    );
+  }
+  return (
+    <EnvironmentScientificComputingSettings
+      key={environmentId}
+      environmentId={environmentId}
+      label={environment.label}
+    />
+  );
+}
+
+function EnvironmentScientificComputingSettings({
+  environmentId,
+  label,
+}: {
+  environmentId: EnvironmentId;
+  label: string;
+}) {
+  const preferences = useEnvironmentSettings(
+    environmentId,
+    (settings) => settings.scientificComputing,
+  );
+  const updateSettings = useAtomCommand(serverEnvironment.updateSettings, { reportFailure: false });
+  const refreshRuntimes = useAtomCommand(computeEnvironment.refreshRuntimeInventory, {
+    reportFailure: false,
+  });
   const [refreshing, setRefreshing] = useState(false);
-  const runtimesAtom = primaryEnvironment
-    ? computeEnvironment.runtimes({
-        environmentId: primaryEnvironment.environmentId,
-        input: { cwd: null, refresh: false },
+  const [refreshVersion, setRefreshVersion] = useState(0);
+  const [refreshFailure, setRefreshFailure] = useState<string | null>(null);
+  const runtimesAtom = environmentId
+    ? computeEnvironment.runtimeInventory({
+        environmentId,
+        input: {},
       })
     : null;
   const runtimes = useEnvironmentQuery(runtimesAtom);
+  const inventoryPending = runtimes.data === null && runtimes.error === null;
+  const displayedLanguages =
+    runtimes.data?.languages ?? pendingRuntimeInventory(preferences.languages);
+  const [storedLanguageId, setStoredLanguageId] = useLocalStorage(
+    SELECTED_LANGUAGE_STORAGE_KEY,
+    "python",
+    Schema.String,
+  );
+  const upcomingLanguages = UPCOMING_LANGUAGES.filter(
+    (preview) =>
+      !displayedLanguages.some((language) => language.descriptor.languageId === preview.id),
+  );
+  const selectedPreview = upcomingLanguages.find((preview) => preview.id === storedLanguageId);
+  const selectedLanguage = selectedPreview
+    ? undefined
+    : (displayedLanguages.find((language) => language.descriptor.languageId === storedLanguageId) ??
+      displayedLanguages[0]);
+  const selectedId = selectedPreview?.id ?? selectedLanguage?.descriptor.languageId;
+  const languageItems = [
+    ...displayedLanguages.map((language) => ({
+      id: language.descriptor.languageId,
+      label: language.descriptor.displayName,
+      detail: preferences.languages[language.descriptor.languageId]?.enabled ? "On" : "Off",
+    })),
+    ...upcomingLanguages.map((preview) => ({ ...preview, detail: "Coming soon" })),
+  ];
+  const [collapsed, setCollapsed] = useState(false);
+  // Keep the pending action when moving between language disclosures.
+  const [toolkitChange, setToolkitChange] = useState<ToolkitChange | null>(null);
 
-  const updateLanguage = (
-    languageId: ComputeLanguageRuntimeInspection["descriptor"]["languageId"],
+  const updateLanguage = async (
+    languageId: ComputeLanguageRuntimeInventory["descriptor"]["languageId"],
     next: ScientificComputingLanguageSettings,
   ) => {
-    updateSettings({
-      scientificComputing: {
-        schemaVersion: 1,
-        languages: { [languageId]: next },
+    const result = await updateSettings({
+      environmentId,
+      input: {
+        patch: {
+          scientificComputing: {
+            schemaVersion: 1,
+            languages: { [languageId]: next },
+          },
+        },
       },
     });
+    if (result._tag === "Failure") {
+      const failure = squashAtomCommandFailure(result);
+      setRefreshFailure(
+        failure instanceof Error ? failure.message : "The setting could not be saved.",
+      );
+      return false;
+    }
+    setRefreshFailure(null);
+    setRefreshVersion((current) => current + 1);
+    return true;
   };
 
-  const handleRefresh = async () => {
-    if (!primaryEnvironment) return;
+  const handleRefresh = useCallback(async () => {
+    if (environmentId === null) return;
+    // Refresh is a new observation, not proof that an earlier Test still holds.
+    setRefreshVersion((current) => current + 1);
+    setRefreshFailure(null);
     setRefreshing(true);
-    await refreshRuntimes({
-      environmentId: primaryEnvironment.environmentId,
-      input: { cwd: null, refresh: true },
+    const result = await refreshRuntimes({
+      environmentId,
+      input: {},
     });
     setRefreshing(false);
-    runtimes.refresh();
-  };
+    if (result._tag === "Failure") {
+      const failure = squashAtomCommandFailure(result);
+      setRefreshFailure(
+        failure instanceof Error
+          ? failure.message
+          : "Scient could not refresh scientific runtimes.",
+      );
+      return;
+    }
+    setRefreshFailure(null);
+  }, [environmentId, refreshRuntimes]);
 
+  const selectedPreference = selectedLanguage
+    ? (preferences.languages[selectedLanguage.descriptor.languageId] ?? {
+        enabled: false,
+        executable: selectedLanguage.configuredExecutable ?? "",
+      })
+    : null;
   return (
     <SettingsPageContainer>
       <SettingsSection
@@ -192,44 +879,133 @@ export function ScientificComputingSettings() {
         icon={<SigmaIcon className="size-4 text-muted-foreground" />}
         variant="plain"
         headerAction={
-          <span className="text-xs text-muted-foreground">
-            {primaryEnvironment?.label ?? "No server selected"}
-          </span>
+          <div className="flex items-center gap-1.5">
+            <span className="hidden text-xs text-muted-foreground sm:inline">{label}</span>
+            <Tooltip>
+              <TooltipTrigger
+                render={
+                  <Button
+                    size="icon-xs"
+                    variant="ghost-muted"
+                    disabled={runtimes.isPending || refreshing}
+                    aria-label="Refresh scientific runtimes"
+                    onClick={() => void handleRefresh()}
+                  >
+                    <RefreshCwIcon
+                      className={cn(runtimes.isPending || refreshing ? "animate-spin" : undefined)}
+                    />
+                  </Button>
+                }
+              />
+              <TooltipPopup side="top">Find runtimes again</TooltipPopup>
+            </Tooltip>
+          </div>
         }
       >
-        <div className="space-y-3">
-          <div className="rounded-xl border border-border/60 bg-card/40 shadow-xs/5 [&>*+*]:border-t [&>*+*]:border-border/50 [&>[data-slot=settings-row]]:rounded-none">
-            {(runtimes.data?.languages ?? []).map((language) => {
-              const preference = preferences.languages[language.descriptor.languageId] ?? {
-                enabled: false,
-                executable: "",
-              };
-              return (
-                <LanguageSettingsRow
-                  key={language.descriptor.languageId}
-                  language={language}
-                  preference={preference}
-                  onChange={(next) => updateLanguage(language.descriptor.languageId, next)}
-                  onRefresh={() => void handleRefresh()}
-                  refreshing={runtimes.isPending || refreshing}
-                />
-              );
-            })}
-            {runtimes.error ? (
-              <p className="px-4 py-3 text-xs text-destructive" role="alert">
-                {runtimes.error}
-              </p>
+        <div className="px-3 sm:px-4">
+          <SettingsSourceGroup
+            activePanelId={!collapsed && selectedId ? `scientific-computing-${selectedId}` : null}
+          >
+            <SettingsSourceStrip label="Scientific computing languages">
+              {languageItems.map((language, index) => {
+                const languageId = language.id;
+                return (
+                  <SettingsSourceStripItem
+                    key={languageId}
+                    id={`scientific-computing-${languageId}-trigger`}
+                    controls={`scientific-computing-${languageId}`}
+                    expanded={!collapsed && languageId === selectedId}
+                    separated={index > 0}
+                    label={language.label}
+                    detail={language.detail}
+                    icon={
+                      LANGUAGE_LOGOS[languageId] ? (
+                        <img
+                          src={LANGUAGE_LOGOS[languageId]}
+                          alt=""
+                          aria-hidden="true"
+                          width={24}
+                          height={24}
+                          className="size-6 shrink-0 object-contain"
+                        />
+                      ) : (
+                        <SigmaIcon className="size-6 shrink-0" />
+                      )
+                    }
+                    onToggle={() => {
+                      if (languageId === selectedId) {
+                        setCollapsed((current) => !current);
+                      } else {
+                        setStoredLanguageId(languageId);
+                        setCollapsed(false);
+                      }
+                    }}
+                  />
+                );
+              })}
+            </SettingsSourceStrip>
+            {selectedPreview ? (
+              <SettingsSourcePanel
+                id={`scientific-computing-${selectedPreview.id}`}
+                aria-labelledby={`scientific-computing-${selectedPreview.id}-trigger`}
+                hidden={collapsed}
+              >
+                <p className="px-3 py-3 text-sm text-muted-foreground sm:px-4">Coming soon</p>
+              </SettingsSourcePanel>
             ) : null}
-          </div>
-          <div className="mx-auto w-full max-w-xl rounded-xl border border-dashed border-border/60 bg-muted/15 px-4 py-5 text-center">
-            <p className="text-sm font-medium text-foreground/85">
-              More scientific tools are coming soon
-            </p>
-            <p className="mt-1 text-xs text-muted-foreground/80">
-              Additional languages and purpose-built scientific workflows are on the way.
-            </p>
-          </div>
+            {selectedLanguage && selectedPreference ? (
+              <SelectedLanguageRuntime
+                key={selectedLanguage.descriptor.languageId}
+                environmentId={environmentId}
+                language={selectedLanguage}
+                preference={selectedPreference}
+                onChange={(next) => updateLanguage(selectedLanguage.descriptor.languageId, next)}
+              >
+                {(runtime) => (
+                  <>
+                    <SettingsSourcePanel
+                      id={`scientific-computing-${selectedLanguage.descriptor.languageId}`}
+                      data-compute-settings=""
+                      aria-labelledby={`scientific-computing-${selectedLanguage.descriptor.languageId}-trigger`}
+                      hidden={collapsed}
+                    >
+                      <LanguageRuntimeSummary
+                        language={selectedLanguage}
+                        preference={selectedPreference}
+                        runtime={runtime}
+                        onChange={(next) =>
+                          updateLanguage(selectedLanguage.descriptor.languageId, next)
+                        }
+                        environmentId={environmentId}
+                        loading={inventoryPending}
+                        refreshing={refreshing}
+                        onRefresh={handleRefresh}
+                        refreshVersion={refreshVersion}
+                        toolkitChange={
+                          selectedLanguage.descriptor.languageId === "python" ? toolkitChange : null
+                        }
+                      />
+                    </SettingsSourcePanel>
+                    <PythonToolkitsSection
+                      language={selectedLanguage}
+                      runtime={runtime}
+                      loading={inventoryPending}
+                      refreshing={refreshing}
+                      hidden={collapsed}
+                      toolkitChange={toolkitChange}
+                      onToolkitChange={setToolkitChange}
+                    />
+                  </>
+                )}
+              </SelectedLanguageRuntime>
+            ) : null}
+          </SettingsSourceGroup>
         </div>
+        {(refreshFailure ?? runtimes.error) ? (
+          <p className="px-4 py-3 text-xs text-destructive" role="alert">
+            {refreshFailure ?? runtimes.error}
+          </p>
+        ) : null}
       </SettingsSection>
     </SettingsPageContainer>
   );

@@ -17,6 +17,7 @@ export type AgentCaller<ExternalProviderId extends string = string> =
 export type OperationCapability =
   | "preview"
   | "documents:build"
+  | "compute:inventory"
   | "skills:read"
   | "sources:read"
   | "sources:write";

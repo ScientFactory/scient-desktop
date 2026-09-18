@@ -47,6 +47,24 @@ describe("PlotlyChartCard server fallback", () => {
     expect(html).toContain("&quot;data&quot;");
   });
 
+  it("blocks network-backed figures before mounting Plotly", () => {
+    const html = renderToStaticMarkup(
+      createElement(PlotlyChartCard, {
+        language: "plotly",
+        source: JSON.stringify({
+          data: [],
+          layout: { images: [{ source: "http://127.0.0.1/private" }] },
+        }),
+        theme: "light",
+        title: null,
+      }),
+    );
+
+    expect(html).toContain("Unable to render this Plotly figure");
+    expect(html).toContain("requires network access, which is blocked");
+    expect(html).not.toContain("Network content");
+  });
+
   it("gives identical figures independent accessible descriptions", () => {
     const source = JSON.stringify({
       data: [],
@@ -70,8 +88,15 @@ describe("PlotlyChartCard server fallback", () => {
         }),
       ),
     );
-    const describedBy = [...html.matchAll(/aria-describedby="([^"]+)"/gu)].map((match) => match[1]);
+    const figureOpeningTags = [...html.matchAll(/<[^>]*\brole="figure"[^>]*>/gu)].map(
+      (match) => match[0],
+    );
+    const describedBy = figureOpeningTags.flatMap((tag) => {
+      const match = /\baria-describedby="([^"]+)"/u.exec(tag);
+      return match?.[1] === undefined ? [] : [match[1]];
+    });
 
+    expect(figureOpeningTags).toHaveLength(2);
     expect(describedBy).toHaveLength(2);
     expect(new Set(describedBy).size).toBe(2);
   });

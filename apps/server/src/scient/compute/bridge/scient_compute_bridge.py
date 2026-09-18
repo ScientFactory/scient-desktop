@@ -26,7 +26,9 @@ import asyncio
 import ast
 import base64
 import contextlib
+import hashlib
 import json
+import linecache
 import os
 import queue
 import re
@@ -36,7 +38,7 @@ import subprocess
 import sys
 import threading
 import time
-from typing import Any, BinaryIO, Optional, TextIO
+from typing import Any, BinaryIO, Callable, Optional, TextIO
 
 PROTOCOL_VERSION = 1
 FRAME_HEADER = struct.Struct(">I")
@@ -78,6 +80,9 @@ MAX_VARIABLE_NAME = 256
 MAX_VARIABLE_TYPE = 256
 MAX_VARIABLE_TEXT = 4096
 MAX_SAFE_JSON_INTEGER = 9_007_199_254_740_991
+MAX_SOURCE_PATH = 4096
+MAX_SOURCE_NAME = 256
+MAX_SOURCE_HASH = 256
 
 SERVER_MESSAGE_TYPES = {
     "hello",
@@ -89,6 +94,163 @@ SERVER_MESSAGE_TYPES = {
     "shutdown",
 }
 REQUEST_ID_TYPES = {"execute", "interrupt", "inspect-variables"}
+
+# Registered by type name: pandas is never imported just to start a session.
+# Keep this in the selected kernel (not the transport) so it also survives restart.
+# No user namespace entries, global pandas settings, HTML, or package installation.
+PYTHON_RICH_DISPLAY_SETUP = r"""
+from IPython import get_ipython
+from IPython.core.formatters import JSONFormatter
+import datetime
+import json
+import linecache
+import math
+import os
+import sys
+
+def table_preview(frame):
+    try:
+        if frame.columns.nlevels != 1 or frame.index.nlevels != 1:
+            return None
+        names = list(frame.columns[:20])
+        if any(type(name) is not str or not name or len(name) > 256 for name in names) or len(set(names)) != len(names):
+            return None
+        index_name = "index"
+        while index_name in names:
+            index_name = "_" + index_name
+        columns = [index_name] + names
+        clipped = len(frame) > 100 or len(frame.columns) > 20
+        def scalar(value):
+            nonlocal clipped
+            if type(value) is str:
+                if len(value) > 256:
+                    clipped = True
+                    return value[:256] + "…"
+                return value
+            if value is None or type(value) is bool:
+                return value
+            if type(value) is int:
+                return value if abs(value) <= 9007199254740991 else str(value)[:256]
+            if type(value) is float:
+                return value if math.isfinite(value) else None
+            if type(value).__module__.startswith("numpy") and type(value).__name__ not in {"ndarray", "object_"}:
+                return scalar(value.item())
+            if type(value) in {datetime.date, datetime.datetime, datetime.time}:
+                return value.isoformat()
+            clipped = True
+            return "[" + type(value).__name__[:80] + "]"
+        rows = [
+            dict(zip(columns, (scalar(value) for value in row)))
+            for row in frame.iloc[:100, :20].itertuples(index=True, name=None)
+        ]
+        result = {"schema": {"fields": [{"name": name} for name in columns]}, "data": rows,
+                  "scientPreview": {"truncated": clipped}}
+        # The fallback text remains available when even a bounded preview is too large.
+        return result if len(json.dumps(result, ensure_ascii=False).encode("utf-8")) <= 512 * 1024 else None
+    except Exception:
+        return None
+
+formatter = JSONFormatter(parent=get_ipython().display_formatter, print_method="_scient_table_preview_")
+formatter.for_type_by_name("pandas.core.frame", "DataFrame", table_preview)
+formatter.for_type_by_name("pandas", "DataFrame", table_preview)
+get_ipython().display_formatter.formatters["application/vnd.dataresource+json"] = formatter
+
+# Jupyter carries request metadata separately from the submitted source.  Use
+# that native channel to give Python the same filename/line context as a file
+# execution without wrapping, rewriting, or replacing the submitted bytes.
+_scient_shell = get_ipython()
+_scient_filename = None
+_scient_saved_file = False
+_scient_previous_file_present = False
+_scient_previous_file = None
+_scient_added_sys_path = None
+_scient_original_cache = _scient_shell.compile.cache
+_scient_source_cache = {}
+_scient_source_cache_bytes = 0
+_scient_compilation = 0
+
+def _scient_restore_source_context():
+    global _scient_filename, _scient_saved_file
+    global _scient_previous_file_present, _scient_previous_file, _scient_added_sys_path
+    if _scient_saved_file:
+        if _scient_previous_file_present:
+            _scient_shell.user_ns["__file__"] = _scient_previous_file
+        else:
+            _scient_shell.user_ns.pop("__file__", None)
+        if _scient_added_sys_path is not None:
+            try:
+                sys.path.remove(_scient_added_sys_path)
+            except ValueError:
+                pass
+    _scient_filename = None
+    _scient_saved_file = False
+    _scient_previous_file_present = False
+    _scient_previous_file = None
+    _scient_added_sys_path = None
+
+def _scient_pre_run(info):
+    global _scient_filename, _scient_saved_file
+    global _scient_previous_file_present, _scient_previous_file, _scient_added_sys_path
+    _scient_restore_source_context()
+    # IPython 9 carries execute-request metadata on ExecutionInfo.  IPython 8,
+    # which is still selected by supported Python 3.10 runtimes, keeps the same
+    # metadata only on ZMQInteractiveShell's current parent message.
+    metadata = getattr(info, "cell_meta", None)
+    if not isinstance(metadata, dict):
+        parent = getattr(_scient_shell, "parent_header", None)
+        metadata = parent.get("metadata") if isinstance(parent, dict) else None
+    if not isinstance(metadata, dict):
+        metadata = {}
+    context = metadata.get("scient")
+    if not isinstance(context, dict):
+        return
+    raw_path = context.get("filePath")
+    raw_filename = context.get("tracebackFilename")
+    if (
+        (not isinstance(raw_path, str) or not raw_path)
+        and (not isinstance(raw_filename, str) or not raw_filename)
+    ):
+        return
+    if isinstance(raw_filename, str) and raw_filename.startswith("<") and raw_filename.endswith(">"):
+        _scient_filename = raw_filename
+    else:
+        _scient_filename = os.path.abspath(raw_filename or raw_path)
+    _scient_saved_file = context.get("kind") == "file" and context.get("saved") is True
+    if _scient_saved_file:
+        _scient_previous_file_present = "__file__" in _scient_shell.user_ns
+        _scient_previous_file = _scient_shell.user_ns.get("__file__")
+        _scient_shell.user_ns["__file__"] = raw_path
+        parent = os.path.dirname(raw_path)
+        if parent and parent not in sys.path:
+            sys.path.insert(0, parent)
+            _scient_added_sys_path = parent
+
+def _scient_cache(transformed_code, number=0, raw_code=None):
+    global _scient_source_cache_bytes, _scient_compilation
+    if _scient_filename is None:
+        return _scient_original_cache(transformed_code, number, raw_code)
+    # Compiled code keeps the submitted snippet's relative line numbers.  The
+    # adapter owns the one document-range offset; padding linecache here would
+    # make source excerpts blank or visually double-shifted.
+    _scient_compilation += 1
+    filename = _scient_filename[:-1] + ":" + str(_scient_compilation) + ">"
+    lines = transformed_code.splitlines(keepends=True)
+    size = len(transformed_code.encode("utf-8"))
+    linecache.cache[filename] = (
+        size, None, lines, filename
+    )
+    _scient_source_cache[filename] = size
+    _scient_source_cache_bytes += size
+    while len(_scient_source_cache) > 256 or _scient_source_cache_bytes > 8 * 1024 * 1024:
+        oldest = next(iter(_scient_source_cache))
+        _scient_source_cache_bytes -= _scient_source_cache.pop(oldest)
+        linecache.cache.pop(oldest, None)
+    return filename
+
+_scient_shell.compile.cache = _scient_cache
+_scient_shell.events.register("pre_run_cell", _scient_pre_run)
+_scient_shell.events.register("post_run_cell", lambda _result: _scient_restore_source_context())
+"""
 
 
 # A single expression keeps inspection out of the user's history and namespace.
@@ -209,6 +371,10 @@ class ProtocolViolation(Exception):
     """An inbound message violated the stateful bridge protocol."""
 
 
+class SourceConflict(Exception):
+    """The submitted bytes no longer identify the requested saved source."""
+
+
 # ---------------------------------------------------------------------------
 # Framing
 # ---------------------------------------------------------------------------
@@ -250,6 +416,43 @@ def truncate_utf8(value: Any, maximum_bytes: int) -> tuple[str, bool]:
     if len(encoded) <= maximum_bytes:
         return text, False
     return encoded[:maximum_bytes].decode("utf-8", errors="ignore"), True
+
+
+def validate_source_context(value: Any) -> Optional[dict[str, Any]]:
+    """Validate source metadata without interpreting it as executable input."""
+    if value is None:
+        return None
+    if not isinstance(value, dict):
+        raise ProtocolViolation("execute sourceContext must be an object.")
+    kind = value.get("kind")
+    if kind not in {"file", "cell", "selection"}:
+        raise ProtocolViolation("execute sourceContext kind is invalid.")
+    for key, maximum in (
+        ("filePath", MAX_SOURCE_PATH),
+        ("fileName", MAX_SOURCE_NAME),
+        ("sourceBytesHash", MAX_SOURCE_HASH),
+        ("sourceRevision", MAX_SOURCE_NAME),
+    ):
+        candidate = value.get(key)
+        if candidate is not None and (
+            not isinstance(candidate, str) or not candidate or len(candidate) > maximum
+        ):
+            raise ProtocolViolation(f"execute sourceContext {key} is invalid.")
+    for key in ("startLine", "startColumn", "endLine", "endColumn"):
+        candidate = value.get(key)
+        if candidate is not None and (not isinstance(candidate, int) or candidate < 0):
+            raise ProtocolViolation(f"execute sourceContext {key} is invalid.")
+    saved = value.get("saved")
+    if saved is not None and not isinstance(saved, bool):
+        raise ProtocolViolation("execute sourceContext saved is invalid.")
+    if saved is True and (
+        not isinstance(value.get("filePath"), str)
+        or not isinstance(value.get("sourceBytesHash"), str)
+    ):
+        raise ProtocolViolation(
+            "A saved sourceContext requires filePath and sourceBytesHash."
+        )
+    return dict(value)
 
 
 def detach_protocol_stream() -> BinaryIO:
@@ -401,9 +604,15 @@ class InboundReader:
     loop is still busy with the previous command.
     """
 
-    def __init__(self, stream: BinaryIO, loop: asyncio.AbstractEventLoop) -> None:
+    def __init__(
+        self,
+        stream: BinaryIO,
+        loop: asyncio.AbstractEventLoop,
+        on_disconnect: Optional[Callable[[], None]] = None,
+    ) -> None:
         self._stream = stream
         self._loop = loop
+        self._on_disconnect = on_disconnect
         self._queue: asyncio.Queue[tuple[str, Any]] = asyncio.Queue(maxsize=1)
         self._taken = threading.Event()
         self._thread = threading.Thread(
@@ -418,6 +627,8 @@ class InboundReader:
         # ``QueueFull``: the thread does not read again until the loop has taken
         # the previous item.
         self._queue.put_nowait(item)
+        if item[0] == "eof" and self._on_disconnect is not None:
+            self._on_disconnect()
 
     def _pump(self) -> None:
         while True:
@@ -471,6 +682,7 @@ class ScientBridge:
         self._kernel_manager: Any = None
         self._kernel_client: Any = None
         self._kernel_pid: Optional[int] = None
+        self._working_directory = os.path.realpath(os.getcwd())
         self._execution_task: Optional[asyncio.Task[None]] = None
         self._kernel_monitor_task: Optional[asyncio.Task[None]] = None
         self._recent_msg_ids: dict[str, str] = {}
@@ -745,7 +957,9 @@ class ScientBridge:
     # -- kernel lifecycle ---------------------------------------------------
 
     @staticmethod
-    def _make_kernel_manager(kernel_name: Optional[str]) -> Any:
+    def _make_kernel_manager(
+        kernel_name: Optional[str], kernel_ports: Optional[dict[str, Any]] = None
+    ) -> Any:
         """Build the manager for this session's kernel.
 
         ``None`` means Python, and launches ``ipykernel`` inside this very
@@ -758,33 +972,50 @@ class ScientBridge:
         from jupyter_client import AsyncKernelManager
 
         if kernel_name is not None:
-            return AsyncKernelManager(kernel_name=kernel_name)
+            manager = AsyncKernelManager(kernel_name=kernel_name)
+        else:
+            from jupyter_client.kernelspec import KernelSpec, KernelSpecManager
 
-        from jupyter_client.kernelspec import KernelSpec, KernelSpecManager
+            class SelectedInterpreterKernelSpecManager(KernelSpecManager):
+                def __init__(self, spec: Any) -> None:
+                    super().__init__()
+                    self._spec = spec
 
-        class SelectedInterpreterKernelSpecManager(KernelSpecManager):
-            def __init__(self, spec: Any) -> None:
-                super().__init__()
-                self._spec = spec
+                def get_kernel_spec(self, _kernel_name: str) -> Any:
+                    return self._spec
 
-            def get_kernel_spec(self, _kernel_name: str) -> Any:
-                return self._spec
+            spec = KernelSpec(
+                argv=[
+                    sys.executable,
+                    "-m",
+                    "ipykernel_launcher",
+                    "--IPKernelApp.exec_lines="
+                    + json.dumps(
+                        ["exec(" + repr(PYTHON_RICH_DISPLAY_SETUP) + ", {})"]
+                    ),
+                    "-f",
+                    "{connection_file}",
+                ],
+                display_name="Scient Python",
+                language="python",
+            )
+            manager = AsyncKernelManager(
+                kernel_name="scient-python",
+                kernel_spec_manager=SelectedInterpreterKernelSpecManager(spec),
+            )
 
-        spec = KernelSpec(
-            argv=[
-                sys.executable,
-                "-m",
-                "ipykernel_launcher",
-                "-f",
-                "{connection_file}",
-            ],
-            display_name="Scient Python",
-            language="python",
-        )
-        return AsyncKernelManager(
-            kernel_name="scient-python",
-            kernel_spec_manager=SelectedInterpreterKernelSpecManager(spec),
-        )
+        if kernel_ports is not None:
+            # These sockets were reserved and registered as private before the
+            # bridge was started. Disable jupyter_client's own port cache so it
+            # cannot silently replace the host-owned endpoint set.
+            manager.ip = kernel_ports["ip"]
+            manager.shell_port = kernel_ports["shell"]
+            manager.iopub_port = kernel_ports["iopub"]
+            manager.stdin_port = kernel_ports["stdin"]
+            manager.hb_port = kernel_ports["heartbeat"]
+            manager.control_port = kernel_ports["control"]
+            manager.cache_ports = False
+        return manager
 
     def _read_kernel_pid(self) -> int:
         pid = getattr(getattr(self._kernel_manager, "provisioner", None), "pid", None)
@@ -825,8 +1056,26 @@ class ScientBridge:
         kernel_name = payload.get("kernelName")
         if kernel_name is not None and (not isinstance(kernel_name, str) or not kernel_name):
             raise ProtocolViolation("start-kernel kernelName must be a non-empty string or null.")
+        kernel_ports = payload.get("kernelPorts")
+        if kernel_ports is not None:
+            names = ("shell", "iopub", "stdin", "heartbeat", "control")
+            if not isinstance(kernel_ports, dict) or kernel_ports.get("ip") != "127.0.0.1":
+                raise ProtocolViolation(
+                    "start-kernel kernelPorts must contain IPv4 loopback endpoints."
+                )
+            ports = [kernel_ports.get(name) for name in names]
+            if any(type(port) is not int or port <= 0 or port >= 65536 for port in ports):
+                raise ProtocolViolation(
+                    "start-kernel kernelPorts must contain valid TCP ports."
+                )
+            if len(set(ports)) != len(ports):
+                raise ProtocolViolation(
+                    "start-kernel kernelPorts must contain five distinct TCP ports."
+                )
 
-        self._kernel_manager = self._make_kernel_manager(kernel_name)
+        self._working_directory = os.path.realpath(working_directory)
+
+        self._kernel_manager = self._make_kernel_manager(kernel_name, kernel_ports)
         # ``stdout=DEVNULL`` is the other half of keeping the protocol intact.
         # ``detach_protocol_stream`` already moved the real pipe out of reach, so
         # this only stops the kernel from inheriting whatever now sits on fd 1 --
@@ -843,6 +1092,7 @@ class ScientBridge:
         # already depends on matplotlib-inline; importing Matplotlib remains
         # lazy and user code can still choose another backend explicitly.
         kernel_environment["MPLBACKEND"] = "module://matplotlib_inline.backend_inline"
+        kernel_environment.setdefault("PLOTLY_RENDERER", "plotly_mimetype")
         await self._kernel_manager.start_kernel(
             cwd=working_directory,
             env=kernel_environment,
@@ -867,6 +1117,94 @@ class ScientBridge:
             },
         )
         self._ensure_kernel_monitor()
+
+    def _resolve_source_path(
+        self, source_context: dict[str, Any], require_file: bool = True
+    ) -> str:
+        raw_path = source_context.get("filePath")
+        if not isinstance(raw_path, str) or not raw_path:
+            raise SourceConflict("The source context did not name a project file.")
+        root = os.path.normcase(os.path.realpath(self._working_directory))
+        candidate = os.path.realpath(
+            raw_path if os.path.isabs(raw_path) else os.path.join(root, raw_path)
+        )
+        try:
+            inside = os.path.normcase(os.path.commonpath([root, candidate])) == root
+        except ValueError:
+            inside = False
+        if not inside:
+            raise SourceConflict("The source context points outside the compute project.")
+        if require_file and not os.path.isfile(candidate):
+            raise SourceConflict(f"The source file '{raw_path}' is no longer available.")
+        return candidate
+
+    def _verify_saved_source(self, code: str, source_context: dict[str, Any]) -> str:
+        """Check bounded currently observable saved bytes against the request."""
+        path = self._resolve_source_path(source_context)
+        try:
+            with open(path, "rb") as source_file:
+                source_bytes = source_file.read(MAX_CODE + 1)
+        except OSError as error:
+            raise SourceConflict(f"The source file could not be read: {error}") from error
+        if len(source_bytes) > MAX_CODE:
+            raise SourceConflict(
+                f"The source file '{source_context.get('filePath')}' exceeds the bridge code limit."
+            )
+        expected = source_context.get("sourceBytesHash")
+        digest = hashlib.sha256(source_bytes).hexdigest()
+        expected_values = {digest, f"sha256:{digest}"}
+        if expected not in expected_values:
+            raise SourceConflict(
+                f"The saved source changed before execution: '{source_context.get('filePath')}'."
+            )
+        if source_bytes != code.encode("utf-8"):
+            raise SourceConflict(
+                f"The submitted bytes do not match the saved source: '{source_context.get('filePath')}'."
+            )
+        return path
+
+    def _canonicalize_source_context(
+        self, source_context: dict[str, Any], native_saved_file: bool
+    ) -> dict[str, Any]:
+        """Resolve document identity before user code can change the kernel cwd."""
+        canonical = dict(source_context)
+        if canonical.get("filePath") is not None:
+            canonical["filePath"] = self._resolve_source_path(
+                source_context, require_file=native_saved_file
+            )
+        canonical.pop("tracebackFilename", None)
+        return canonical
+
+    def _execute_kernel(
+        self,
+        code: str,
+        silent: bool,
+        store_history: bool,
+        source_context: Optional[dict[str, Any]],
+    ) -> str:
+        """Submit exact source bytes with optional native Jupyter metadata."""
+        if source_context is None:
+            return self._kernel_client.execute(
+                code,
+                silent=silent,
+                store_history=store_history,
+                allow_stdin=False,
+            )
+        content = {
+            "code": code,
+            "silent": silent,
+            "store_history": store_history,
+            "user_expressions": {},
+            "allow_stdin": False,
+            "stop_on_error": True,
+        }
+        session = getattr(self._kernel_client, "session", None)
+        shell_channel = getattr(self._kernel_client, "shell_channel", None)
+        if session is None or shell_channel is None:
+            raise ProtocolViolation("The selected Python kernel cannot carry source metadata.")
+        message = session.msg("execute_request", content, metadata={"scient": source_context})
+        shell_channel.send(message)
+        return message["header"]["msg_id"]
 
     async def _cancel_execution_task(
         self,
@@ -984,14 +1322,52 @@ class ScientBridge:
         if len(code.encode("utf-8")) > MAX_CODE:
             raise ProtocolViolation(f"execute code exceeds {MAX_CODE} bytes.")
 
+        source_context = validate_source_context(payload.get("sourceContext"))
+        native_saved_file = (
+            source_context is not None
+            and source_context.get("kind") == "file"
+            and source_context.get("saved") is True
+        )
+        try:
+            if source_context is not None:
+                source_context = self._canonicalize_source_context(
+                    source_context, native_saved_file
+                )
+                if native_saved_file:
+                    self._verify_saved_source(code, source_context)
+                # Never reuse a path as a compilation cache key, even for saved
+                # files: retained functions must keep their original source.
+                # Hex keeps arbitrary protocol ids inert in traceback filenames.
+                source_context["tracebackFilename"] = (
+                    "<scient-compute-source:" + request_id.encode("utf-8").hex() + ">"
+                )
+        except SourceConflict as error:
+            # A source race is a failed execution, not a broken bridge.  Keep
+            # the command correlated and tell the service why no native code ran.
+            self._send("accepted", {}, request_id)
+            self._send(
+                "error",
+                {
+                    "name": "Scient:SourceConflict",
+                    "value": truncate_utf8(str(error), MAX_ERROR_VALUE)[0],
+                    "traceback": [
+                        truncate_utf8(str(source_context.get("filePath", "<source>")), MAX_TRACEBACK_LINE)[0]
+                    ],
+                },
+                request_id,
+            )
+            self._send("execution-complete", {"outcome": "failed"}, request_id)
+            await self._flush()
+            return
+
         # Submitted before it is recorded as active: a submit that raises must
         # leave the session able to run the next cell, not holding its only
         # execution slot for work that never started.
-        msg_id = self._kernel_client.execute(
+        msg_id = self._execute_kernel(
             code,
             silent=bool(payload.get("silent", False)),
             store_history=bool(payload.get("storeHistory", True)),
-            allow_stdin=False,
+            source_context=source_context,
         )
         self._mapping.active_request_id = request_id
         self._mapping.active_msg_id = msg_id
@@ -1136,15 +1512,15 @@ class ScientBridge:
 
     async def _drain_iopub(self, request_id: str, msg_id: str) -> bool:
         drained = 0
-        pending_stream: Optional[tuple[str, str]] = None
+        pending_stream: Optional[tuple[Optional[str], str, str]] = None
 
         async def flush_stream() -> None:
             nonlocal pending_stream
             if pending_stream is None:
                 return
-            name, text = pending_stream
+            target_request_id, name, text = pending_stream
             pending_stream = None
-            self._map_stream({"name": name, "text": text}, request_id)
+            self._map_stream({"name": name, "text": text}, target_request_id)
             if self._outbound.pressured():
                 await self._flush()
 
@@ -1155,32 +1531,41 @@ class ScientBridge:
                 break
             drained += 1
             parent_id = message.get("parent_header", {}).get("msg_id")
-            if parent_id == msg_id:
-                msg_type = message.get("msg_type")
-                content = message.get("content", {})
-                if msg_type == "stream" and isinstance(content, dict):
-                    name = content.get("name", "stdout")
-                    if name not in {"stdout", "stderr"}:
-                        name = "stdout"
-                    text = content.get("text", "")
-                    if not isinstance(text, str):
-                        text = str(text)
-                    if pending_stream is not None:
-                        prior_name, prior_text = pending_stream
-                        combined = prior_text + text
-                        if prior_name == name and len(combined.encode("utf-8")) <= MAX_STREAM_TEXT:
-                            pending_stream = (name, combined)
-                            continue
-                        await flush_stream()
-                    pending_stream = (name, text)
-                else:
+            target_request_id = (
+                request_id
+                if parent_id == msg_id
+                else None
+                if parent_id is None
+                else self._recent_msg_ids.get(parent_id)
+            )
+            # Unknown parents can be stale Jupyter control traffic. Consuming
+            # them is necessary, but claiming them as user output is not.
+            if parent_id is not None and target_request_id is None:
+                continue
+            msg_type = message.get("msg_type")
+            content = message.get("content", {})
+            if msg_type == "stream" and isinstance(content, dict):
+                name = content.get("name", "stdout")
+                if name not in {"stdout", "stderr"}:
+                    name = "stdout"
+                text = content.get("text", "")
+                if not isinstance(text, str):
+                    text = str(text)
+                if pending_stream is not None:
+                    prior_request, prior_name, prior_text = pending_stream
+                    combined = prior_text + text
+                    if (
+                        prior_request == target_request_id
+                        and prior_name == name
+                        and len(combined.encode("utf-8")) <= MAX_STREAM_TEXT
+                    ):
+                        pending_stream = (target_request_id, name, combined)
+                        continue
                     await flush_stream()
-                    self._handle_iopub(msg_type, content, request_id)
-            elif parent_id is None:
+                pending_stream = (target_request_id, name, text)
+            else:
                 await flush_stream()
-                # A kernel-level message that no execution caused.  Worth
-                # reporting, but not against work that did not produce it.
-                self._handle_iopub(message.get("msg_type"), message.get("content", {}), None)
+                self._handle_iopub(msg_type, content, target_request_id)
             if self._outbound.pressured():
                 await self._flush()
         await flush_stream()

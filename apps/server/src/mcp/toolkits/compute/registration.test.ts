@@ -1,0 +1,42 @@
+import { expect, it } from "@effect/vitest";
+import * as Effect from "effect/Effect";
+import * as Layer from "effect/Layer";
+import { McpServer } from "effect/unstable/ai";
+
+import { ScientComputeToolkitRegistrationLive } from "../../McpHttpServer.ts";
+import { WorkspaceBindingResolver } from "../../../scient/projectScope/WorkspaceBindingResolver.ts";
+import { workspaceResolverForTest } from "../../../scient/projectScope/WorkspaceBindingTestUtils.ts";
+import { ComputeMcpGateway } from "./ComputeMcpGateway.ts";
+
+const TestLayer = ScientComputeToolkitRegistrationLive.pipe(
+  Layer.provide(
+    Layer.succeed(ComputeMcpGateway, {
+      runtimeInventory: () => Effect.succeed({ languages: [] }),
+    }),
+  ),
+  Layer.provide(Layer.succeed(WorkspaceBindingResolver, workspaceResolverForTest(new Map()))),
+  Layer.provideMerge(McpServer.McpServer.layer),
+);
+
+it.effect("registers an object-shaped read-only Compute inventory tool", () =>
+  Effect.gen(function* () {
+    const server = yield* McpServer.McpServer;
+    const registered = server.tools.find(({ tool }) => tool.name === "scient_compute_inventory");
+
+    expect(
+      server.tools
+        .filter(({ tool }) => tool.name.startsWith("scient_compute_"))
+        .map(({ tool }) => tool.name),
+    ).toEqual(["scient_compute_inventory"]);
+    expect(registered?.tool.inputSchema.type).toBe("object");
+    expect(registered?.tool.description).toContain(
+      "a listed executable path does not authorize launching it",
+    );
+    expect(registered?.tool.annotations).toMatchObject({
+      readOnlyHint: true,
+      destructiveHint: false,
+      idempotentHint: true,
+      openWorldHint: false,
+    });
+  }).pipe(Effect.provide(TestLayer)),
+);

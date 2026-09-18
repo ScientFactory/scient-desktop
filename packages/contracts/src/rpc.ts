@@ -351,12 +351,16 @@ import {
   ComputeListProjectExecutionsResult,
   ComputeListProjectOutputsInput,
   ComputeListProjectSessionsResult,
+  ComputeManagedRuntimeInput,
+  ComputeManagedRuntimeStatus,
+  ComputeManagedRuntimeStatusInput,
   ComputeOperationError,
   ComputeProjectExecutionCommandInput,
   ComputeProjectInput,
   ComputeProjectSessionCommandInput,
   ComputeProjectSessionInput,
   ComputeRuntimeInspection,
+  ComputeRuntimeInventory,
   ComputeRuntimeVerification,
   ComputeSessionRecord,
   ComputeSessionStreamEvent,
@@ -406,7 +410,11 @@ export const WS_METHODS = {
 
   // Scient-owned stateful scientific compute methods
   computeInspectRuntimes: "compute.inspectRuntimes",
+  computeRuntimeInventory: "compute.runtimeInventory",
   computeVerifyRuntime: "compute.verifyRuntime",
+  computeManagedRuntimeStatus: "compute.managedRuntimeStatus",
+  computeManageRuntime: "compute.manageRuntime",
+  computeCancelManagedRuntime: "compute.cancelManagedRuntime",
   computeStartSession: "compute.startSession",
   computeListSessions: "compute.listSessions",
   computeGetSession: "compute.getSession",
@@ -1304,9 +1312,33 @@ const WsComputeInspectRuntimesRpc = Rpc.make(WS_METHODS.computeInspectRuntimes, 
   error: ComputeRpcError,
 });
 
+const WsComputeRuntimeInventoryRpc = Rpc.make(WS_METHODS.computeRuntimeInventory, {
+  payload: Schema.Struct({}),
+  success: ComputeRuntimeInventory,
+  error: ComputeRpcError,
+});
+
 const WsComputeVerifyRuntimeRpc = Rpc.make(WS_METHODS.computeVerifyRuntime, {
   payload: ComputeVerifyRuntimeInput,
   success: ComputeRuntimeVerification,
+  error: ComputeRpcError,
+});
+
+const WsComputeManagedRuntimeStatusRpc = Rpc.make(WS_METHODS.computeManagedRuntimeStatus, {
+  payload: ComputeManagedRuntimeStatusInput,
+  success: ComputeManagedRuntimeStatus,
+  error: ComputeRpcError,
+});
+
+const WsComputeManageRuntimeRpc = Rpc.make(WS_METHODS.computeManageRuntime, {
+  payload: ComputeManagedRuntimeInput,
+  success: ComputeManagedRuntimeStatus,
+  error: ComputeRpcError,
+});
+
+const WsComputeCancelManagedRuntimeRpc = Rpc.make(WS_METHODS.computeCancelManagedRuntime, {
+  payload: ComputeManagedRuntimeStatusInput,
+  success: ComputeManagedRuntimeStatus,
   error: ComputeRpcError,
 });
 
@@ -1961,7 +1993,11 @@ export const WsRpcGroup = RpcGroup.make(
   WsAnalysisPromoteRunRpc,
   WsSubscribeAnalysisRunsRpc,
   WsComputeInspectRuntimesRpc,
+  WsComputeRuntimeInventoryRpc,
   WsComputeVerifyRuntimeRpc,
+  WsComputeManagedRuntimeStatusRpc,
+  WsComputeManageRuntimeRpc,
+  WsComputeCancelManagedRuntimeRpc,
   WsComputeStartSessionRpc,
   WsComputeListSessionsRpc,
   WsComputeGetSessionRpc,

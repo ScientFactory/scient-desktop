@@ -8,15 +8,21 @@ protection -- rather than Jupyter's.
 """
 
 import asyncio
+import contextlib
+import hashlib
 import io
 import json
+import linecache
 import os
 import queue
+import re
 import signal
 import struct
 import subprocess
 import sys
 import tempfile
+import traceback
+import types
 import unittest
 
 # Add the bridge directory to the path so we can import the module.
@@ -60,6 +66,9 @@ class FakeKernelClient:
         self.execute_requests = []
         self.execute_error = None
         self.channels_stopped = False
+        self.source_messages = []
+        self.session = FakeKernelSession(self)
+        self.shell_channel = FakeShellChannel(self)
 
     def execute(
         self,
@@ -95,6 +104,30 @@ class FakeKernelClient:
 
     def stop_channels(self):
         self.channels_stopped = True
+
+
+class FakeKernelSession:
+    def __init__(self, client):
+        self.client = client
+        self.counter = 0
+
+    def msg(self, msg_type, content, metadata=None):
+        self.counter += 1
+        message = {
+            "header": {"msg_id": "source-msg-%d" % self.counter, "msg_type": msg_type},
+            "content": content,
+            "metadata": metadata or {},
+        }
+        self.client.source_messages.append(message)
+        return message
+
+
+class FakeShellChannel:
+    def __init__(self, client):
+        self.client = client
+
+    def send(self, message):
+        self.client.source_messages[-1]["sent"] = message
 
 
 class FakeKernelManager:
@@ -634,6 +667,87 @@ class TestBridgeIOPubMapping(unittest.TestCase):
         self.assertEqual(representation["encoding"], "text")
 
 
+class TestSourceCache(unittest.TestCase):
+    def setUp(self):
+        self.shell = types.SimpleNamespace(
+            compile=types.SimpleNamespace(cache=lambda *args: "<fallback>"),
+            events=types.SimpleNamespace(register=lambda *args: None),
+            user_ns={},
+        )
+        self.context = {
+            "get_ipython": lambda: self.shell,
+            "os": os,
+            "sys": sys,
+            "linecache": linecache,
+        }
+        # Execute the actual source-metadata hook without needing IPython.
+        hook = bridge.PYTHON_RICH_DISPLAY_SETUP.split("# Jupyter carries", 1)[1]
+        exec("# Jupyter carries" + hook, self.context)
+
+    def tearDown(self):
+        self.context["_scient_restore_source_context"]()
+        for filename in self.context["_scient_source_cache"]:
+            linecache.cache.pop(filename, None)
+
+    def compile_source(self, source, request="a"):
+        self.context["_scient_filename"] = "<scient-compute-source:" + request.encode().hex() + ">"
+        filename = self.shell.compile.cache(source)
+        return compile(source, filename, "exec"), filename
+
+    def test_retained_function_keeps_its_excerpt_across_submissions(self):
+        namespace = {}
+        first, filename = self.compile_source(
+            "def retained():\n    raise ValueError('original A')\n"
+        )
+        exec(first, namespace)
+        second, second_filename = self.compile_source("marker = 'B'\nretained()\n", "b")
+        try:
+            exec(second, namespace)
+        except ValueError as error:
+            frames = traceback.extract_tb(error.__traceback__)
+        else:
+            self.fail("The retained function did not fail")
+        self.assertEqual(frames[-1].filename, filename)
+        self.assertEqual(frames[-1].line, "raise ValueError('original A')")
+        self.assertEqual(frames[-2].filename, second_filename)
+        self.assertEqual(frames[-2].line, "retained()")
+        _, repeated_filename = self.compile_source("different = 1\n")
+        self.assertNotEqual(filename, repeated_filename)
+        self.assertIn("original A", linecache.getline(filename, 2))
+
+    def test_cache_is_bounded_by_entries_and_bytes_without_reusing_evicted_names(self):
+        _, oldest = self.compile_source("old = 1\n")
+        for _ in range(300):
+            self.compile_source("new = 2\n")
+        self.assertEqual(len(self.context["_scient_source_cache"]), 256)
+        self.assertEqual(linecache.getline(oldest, 1), "")
+        for _ in range(12):
+            self.shell.compile.cache("#" + "x" * (1024 * 1024))
+        self.assertLessEqual(self.context["_scient_source_cache_bytes"], 8 * 1024 * 1024)
+        self.assertLess(len(self.context["_scient_source_cache"]), 10)
+
+    def test_saved_file_uses_real_file_context_but_immutable_compilation_identity(self):
+        metadata = {"scient": {
+            "filePath": "/project/main.py",
+            "kind": "file",
+            "saved": True,
+            "tracebackFilename": "<scient-compute-source:61>",
+        }}
+        for info in (
+            types.SimpleNamespace(cell_meta=metadata),
+            types.SimpleNamespace(),  # IPython 8 fallback through parent_header
+        ):
+            self.shell.parent_header = {"metadata": metadata}
+            self.context["_scient_pre_run"](info)
+            self.assertEqual(self.shell.user_ns["__file__"], "/project/main.py")
+            self.assertIn("/project", sys.path)
+            filename = self.shell.compile.cache("x = 1\n")
+            self.assertTrue(filename.startswith("<scient-compute-source:61:"))
+            self.context["_scient_restore_source_context"]()
+            self.assertNotIn("__file__", self.shell.user_ns)
+            self.assertNotIn("/project", sys.path)
+
+
 class TestBridgeExecute(unittest.IsolatedAsyncioTestCase):
     """Submitting work, and what happens when submitting fails."""
 
@@ -658,6 +772,241 @@ class TestBridgeExecute(unittest.IsolatedAsyncioTestCase):
         msgs = decode_frames(self.stdout.getvalue())
         self.assertEqual(msgs[0]["type"], "accepted")
         self.assertEqual(msgs[0]["requestId"], "req-1")
+
+    async def test_saved_file_metadata_uses_native_execute_request_header(self):
+        code = "from .sibling import answer\nanswer\n"
+        with tempfile.TemporaryDirectory() as directory:
+            source = os.path.join(directory, "main.py")
+            with open(source, "wb") as stream:
+                stream.write(code.encode("utf-8"))
+            self.b._working_directory = os.path.realpath(directory)
+            await self.b._handle_execute(
+                {
+                    "code": code,
+                    "sourceContext": {
+                        "kind": "file",
+                        "filePath": "main.py",
+                        "sourceBytesHash": hashlib.sha256(code.encode("utf-8")).hexdigest(),
+                        "saved": True,
+                        "startLine": 0,
+                    },
+                },
+                "saved-1",
+            )
+            self.assertEqual(self.client.executed, [])
+            self.assertEqual(len(self.client.source_messages), 1)
+            message = self.client.source_messages[0]
+            self.assertEqual(
+                message["metadata"]["scient"]["filePath"], os.path.realpath(source)
+            )
+            self.assertTrue(message["metadata"]["scient"]["saved"])
+            self.assertTrue(message["metadata"]["scient"]["tracebackFilename"].startswith("<scient-compute-source:"))
+            self.assertEqual(message["content"]["code"], code)
+
+    async def test_dirty_selection_hash_is_provenance_only(self):
+        code = "print('selection')\n"
+        await self.b._handle_execute(
+            {
+                "code": code,
+                "sourceContext": {
+                    "kind": "selection",
+                    "sourceBytesHash": hashlib.sha256(code.encode("utf-8")).hexdigest(),
+                    "saved": False,
+                    "startLine": 4,
+                    "endLine": 5,
+                },
+            },
+            "selection-1",
+        )
+        self.assertEqual(self.client.executed, [])
+        self.assertEqual(self.client.source_messages[0]["metadata"]["scient"]["kind"], "selection")
+        self.assertEqual(
+            self.client.source_messages[0]["metadata"]["scient"]["tracebackFilename"],
+            "<scient-compute-source:" + "selection-1".encode().hex() + ">",
+        )
+
+    async def test_saved_selection_stays_submitted_bytes_not_native_file(self):
+        code = "print('selected')\n"
+        with tempfile.TemporaryDirectory() as directory:
+            source = os.path.join(directory, "analysis.py")
+            with open(source, "w", encoding="utf-8") as stream:
+                stream.write("print('whole file')\n")
+            self.b._working_directory = os.path.realpath(directory)
+            await self.b._handle_execute(
+                {
+                    "code": code,
+                    "sourceContext": {
+                        "kind": "selection",
+                        "filePath": "analysis.py",
+                        "sourceBytesHash": hashlib.sha256(code.encode("utf-8")).hexdigest(),
+                        "saved": True,
+                    },
+                },
+                "saved-selection-1",
+            )
+            self.assertEqual(self.client.executed, [])
+            self.assertEqual(self.client.source_messages[0]["metadata"]["scient"]["kind"], "selection")
+
+    async def test_real_kernel_preserves_cell_line_and_canonical_saved_filename_after_chdir(self):
+        """Exercise IPython compilation, traceback emission, and cwd stability."""
+        try:
+            import jupyter_client  # noqa: F401
+        except ImportError:
+            self.skipTest("jupyter_client is unavailable")
+
+        with tempfile.TemporaryDirectory() as directory:
+            source_directory = os.path.join(directory, "src")
+            os.makedirs(source_directory)
+            saved_path = os.path.join(source_directory, "saved.py")
+            saved_code = "raise RuntimeError('saved source')\n"
+            with open(saved_path, "wb") as stream:
+                stream.write(saved_code.encode("utf-8"))
+
+            self.b._stderr = io.StringIO()
+            try:
+                # The fixture installs a fake manager for ordinary unit tests;
+                # this case deliberately replaces it with a real local kernel.
+                self.b._kernel_manager = None
+                await self.b._start_kernel(
+                    {"workingDirectory": directory, "kernelName": None}
+                )
+                cell_code = "import os\nos.chdir('/')\nraise RuntimeError('cell source')\n"
+                await self.b._handle_execute(
+                    {
+                        "code": cell_code,
+                        "sourceContext": {
+                            "kind": "selection",
+                            "filePath": "src/cell.py",
+                            "sourceBytesHash": hashlib.sha256(
+                                cell_code.encode("utf-8")
+                            ).hexdigest(),
+                            "saved": False,
+                            "startLine": 5,
+                        },
+                    },
+                    "real-cell-source",
+                )
+                await self.b._execution_task
+                first_error = next(
+                    message
+                    for message in decode_frames(self.stdout.getvalue())
+                    if message["type"] == "error"
+                    and message["requestId"] == "real-cell-source"
+                )
+                first_traceback = first_error["payload"]["traceback"]
+                self.assertTrue(
+                    any(
+                        (
+                            "<scient-compute-source:" in line and ">:3" in line
+                        )
+                        for line in first_traceback
+                    ),
+                    first_traceback,
+                )
+                self.assertFalse(
+                    any(
+                        ">:8" in line or 'line 8' in line
+                        for line in first_traceback
+                    )
+                )
+                clean_traceback = [
+                    re.sub(r"\x1b\[[0-9;]*[A-Za-z]", "", line)
+                    for line in first_traceback
+                ]
+                self.assertTrue(
+                    any("raise RuntimeError('cell source')" in line for line in clean_traceback),
+                    clean_traceback,
+                )
+
+                await self.b._handle_execute(
+                    {
+                        "code": saved_code,
+                        "sourceContext": {
+                            "kind": "file",
+                            "filePath": "src/saved.py",
+                            "sourceBytesHash": hashlib.sha256(
+                                saved_code.encode("utf-8")
+                            ).hexdigest(),
+                            "saved": True,
+                        },
+                    },
+                    "real-saved-source",
+                )
+                await self.b._execution_task
+                second_error = next(
+                    message
+                    for message in decode_frames(self.stdout.getvalue())
+                    if message["type"] == "error"
+                    and message["requestId"] == "real-saved-source"
+                )
+                second_traceback = second_error["payload"]["traceback"]
+                self.assertTrue(
+                    any(
+                        "<scient-compute-source:" in line and ">:1" in line
+                        for line in second_traceback
+                    ),
+                    second_traceback,
+                )
+            finally:
+                monitor = self.b._kernel_monitor_task
+                if monitor is not None:
+                    monitor.cancel()
+                    with contextlib.suppress(asyncio.CancelledError):
+                        await monitor
+                if self.b._kernel_client is not None:
+                    with contextlib.suppress(Exception):
+                        self.b._kernel_client.stop_channels()
+                if self.b._kernel_manager is not None:
+                    with contextlib.suppress(Exception):
+                        await self.b._stop_kernel_process()
+
+    async def test_saved_source_conflict_fails_without_submitting_code(self):
+        with tempfile.TemporaryDirectory() as directory:
+            source = os.path.join(directory, "main.py")
+            with open(source, "w", encoding="utf-8") as stream:
+                stream.write("print('disk')\n")
+            self.b._working_directory = os.path.realpath(directory)
+            await self.b._handle_execute(
+                {
+                    "code": "print('submitted')\n",
+                    "sourceContext": {
+                        "kind": "file",
+                        "filePath": "main.py",
+                        "sourceBytesHash": hashlib.sha256(b"print('submitted')\n").hexdigest(),
+                        "saved": True,
+                    },
+                },
+                "conflict-1",
+            )
+            messages = decode_frames(self.stdout.getvalue())
+            self.assertEqual(self.client.executed, [])
+            self.assertEqual(self.client.source_messages, [])
+            self.assertEqual(messages[0]["type"], "accepted")
+            self.assertEqual(messages[1]["payload"]["name"], "Scient:SourceConflict")
+            self.assertEqual(messages[-1]["payload"]["outcome"], "failed")
+
+    async def test_oversized_saved_source_is_rejected_with_bounded_read(self):
+        with tempfile.TemporaryDirectory() as directory:
+            source = os.path.join(directory, "oversized.py")
+            with open(source, "wb") as stream:
+                stream.write(b"x" * (bridge.MAX_CODE + 1))
+            self.b._working_directory = os.path.realpath(directory)
+            await self.b._handle_execute(
+                {
+                    "code": "x\n",
+                    "sourceContext": {
+                        "kind": "file",
+                        "filePath": "oversized.py",
+                        "sourceBytesHash": hashlib.sha256(b"x\n").hexdigest(),
+                        "saved": True,
+                    },
+                },
+                "oversized-source",
+            )
+            messages = decode_frames(self.stdout.getvalue())
+            self.assertEqual(self.client.source_messages, [])
+            self.assertIn("exceeds the bridge code limit", messages[1]["payload"]["value"])
+            self.assertEqual(messages[-1]["payload"]["outcome"], "failed")
 
     async def test_a_refused_submit_leaves_the_session_usable(self):
         self.client.execute_error = RuntimeError("shell channel is dead")
@@ -830,6 +1179,41 @@ class TestBridgeCorrelation(unittest.IsolatedAsyncioTestCase):
         self.b._mapping.active_request_id = "req-1"
         await self.b._correlate("req-1", "msg-1")
         self.assertEqual([m["type"] for m in self._messages()], ["execution-complete"])
+
+    async def test_routes_known_late_output_while_another_execution_is_active(self):
+        self.b._kernel_client = FakeKernelClient(
+            iopub=[
+                iopub(
+                    "stream",
+                    {"name": "stdout", "text": "late\n"},
+                    parent="msg-old",
+                ),
+                iopub("status", {"execution_state": "idle"}),
+            ],
+            shell=[shell_reply({"status": "ok"})],
+        )
+        self.b._recent_msg_ids["msg-old"] = "req-old"
+        self.b._mapping.active_request_id = "req-1"
+        await self.b._correlate("req-1", "msg-1")
+        messages = self._messages()
+        self.assertEqual([message["type"] for message in messages], ["stream", "execution-complete"])
+        self.assertEqual(messages[0]["requestId"], "req-old")
+        self.assertEqual(messages[1]["requestId"], "req-1")
+
+    async def test_keeps_parentless_output_at_session_scope_while_execution_is_active(self):
+        self.b._kernel_client = FakeKernelClient(
+            iopub=[
+                iopub("stream", {"name": "stderr", "text": "kernel notice\n"}, parent=None),
+                iopub("status", {"execution_state": "idle"}),
+            ],
+            shell=[shell_reply({"status": "ok"})],
+        )
+        self.b._mapping.active_request_id = "req-1"
+        await self.b._correlate("req-1", "msg-1")
+        messages = self._messages()
+        self.assertEqual(messages[0]["type"], "stream")
+        self.assertIsNone(messages[0]["requestId"])
+        self.assertEqual(messages[-1]["requestId"], "req-1")
 
     async def test_drains_late_output_after_an_execution_is_idle(self):
         self.b._kernel_client = FakeKernelClient(
@@ -1101,6 +1485,52 @@ class TestBridgeLifecycle(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(msgs[1]["type"], "restarted")
         self.assertEqual(msgs[1]["generation"], 2)
         self.assertEqual(msgs[1]["payload"], {"kernelPid": 4321})
+
+
+class TestKernelEndpointAssignment(unittest.IsolatedAsyncioTestCase):
+    def setUp(self):
+        self.b, _ = make_bridge()
+
+    def test_assigns_host_reserved_ports_and_disables_jupyter_port_cache(self):
+        try:
+            import jupyter_client  # noqa: F401
+        except ImportError:
+            self.skipTest("jupyter_client is unavailable")
+
+        ports = {
+            "ip": "127.0.0.1",
+            "shell": 41001,
+            "iopub": 41002,
+            "stdin": 41003,
+            "heartbeat": 41004,
+            "control": 41005,
+        }
+        manager = self.b._make_kernel_manager(None, ports)
+        self.assertEqual(manager.ip, "127.0.0.1")
+        self.assertEqual(manager.shell_port, 41001)
+        self.assertEqual(manager.iopub_port, 41002)
+        self.assertEqual(manager.stdin_port, 41003)
+        self.assertEqual(manager.hb_port, 41004)
+        self.assertEqual(manager.control_port, 41005)
+        self.assertFalse(manager.cache_ports)
+
+    async def test_rejects_duplicate_host_reserved_ports_before_starting(self):
+        with tempfile.TemporaryDirectory() as directory:
+            with self.assertRaisesRegex(bridge.ProtocolViolation, "distinct"):
+                await self.b._start_kernel(
+                    {
+                        "workingDirectory": directory,
+                        "kernelName": None,
+                        "kernelPorts": {
+                            "ip": "127.0.0.1",
+                            "shell": 41001,
+                            "iopub": 41001,
+                            "stdin": 41003,
+                            "heartbeat": 41004,
+                            "control": 41005,
+                        },
+                    }
+                )
 
 
 class TestInboundReader(unittest.IsolatedAsyncioTestCase):

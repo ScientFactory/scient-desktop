@@ -68,6 +68,7 @@ import * as WorkspaceBindingEvidence from "./scient/projectScope/WorkspaceBindin
 import * as WorkspaceBindingResolver from "./scient/projectScope/WorkspaceBindingResolver.ts";
 import * as WorkspaceBindingStore from "./scient/projectScope/WorkspaceBindingStore.ts";
 import * as McpSessionRegistry from "./mcp/McpSessionRegistry.ts";
+import { ComputeMcpGatewayLive } from "./mcp/toolkits/compute/ComputeMcpGateway.ts";
 import * as PreviewAutomationBroker from "./mcp/PreviewAutomationBroker.ts";
 import * as ScientSkillSession from "./scient/skills/ScientSkillSession.ts";
 import * as ScientSkillManagement from "./scient/skills/ScientSkillManagement.ts";
@@ -177,8 +178,10 @@ import * as LocalAnalysisStore from "./scient/analysis/LocalAnalysisStore.ts";
 import * as AnalysisRunIndex from "./scient/analysis/AnalysisRunIndex.ts";
 import * as LocalDuplexProcess from "./scient/execution/LocalDuplexProcess.ts";
 import * as LocalExecutionProcess from "./scient/execution/LocalExecutionProcess.ts";
+import * as OwnedLocalEndpoints from "./localEndpoints/OwnedLocalEndpointRegistry.ts";
 import * as LocalComputeStore from "./scient/compute/LocalComputeStore.ts";
-import * as PythonComputeRuntime from "./scient/compute/PythonComputeRuntime.ts";
+import * as ComputeRuntimeRegistry from "./scient/compute/ComputeRuntimeRegistry.ts";
+import * as ScientificRuntimePreferences from "./scient/compute/ScientificRuntimePreferences.ts";
 import * as LatexBuildService from "./scient/latex/LatexBuildService.ts";
 import * as LatexManagedToolchain from "./scient/latex/LatexManagedToolchain.ts";
 import * as LatexPackageInstaller from "./scient/latex/LatexPackageInstaller.ts";
@@ -499,7 +502,11 @@ const CheckpointingLayerLive = Layer.empty.pipe(
   Layer.provideMerge(CheckpointStore.layer.pipe(Layer.provide(VcsDriverRegistryLayerLive))),
 );
 
-const PortScannerLayerLive = PortScanner.layer.pipe(Layer.provide(ProcessRunner.layer));
+const OwnedLocalEndpointRegistryLive = OwnedLocalEndpoints.layer;
+const PortScannerLayerLive = PortScanner.layer.pipe(
+  Layer.provide(ProcessRunner.layer),
+  Layer.provide(OwnedLocalEndpointRegistryLive),
+);
 
 const TerminalLayerLive = TerminalManager.layer.pipe(
   Layer.provide(PtyAdapterLive),
@@ -693,6 +700,10 @@ const commandReadinessLayer = HttpRouter.middleware(
 );
 
 const AnalysisRunIndexLive = AnalysisRunIndex.layer.pipe(Layer.provide(PersistenceLayerLive));
+const ScientificRuntimePreferencesLive = ScientificRuntimePreferences.layer.pipe(
+  Layer.provide(ServerSettingsLayerLive),
+  Layer.provide(LocalAnalysisStore.layer),
+);
 
 const AnalysisServiceLive = AnalysisService.layer.pipe(
   Layer.provide(LocalAnalysisStore.layer),
@@ -704,10 +715,11 @@ const AnalysisServiceLive = AnalysisService.layer.pipe(
 // interpreter probe, duplex for the bridge it talks to. The store is mounted
 // here rather than inside the service so the disk that holds a session's
 // history has one owner for the life of the server.
-const ComputeSessionServiceLive = PythonComputeRuntime.layer.pipe(
+const ComputeSessionServiceLive = ComputeRuntimeRegistry.layer.pipe(
   Layer.provide(LocalComputeStore.layer),
   Layer.provide(LocalExecutionProcess.layer),
   Layer.provide(LocalDuplexProcess.layer),
+  Layer.provide(OwnedLocalEndpointRegistryLive),
 );
 
 // The build coordinator owns its execution port the way the analysis runtime
@@ -757,7 +769,9 @@ export const makeRoutesLayer = Layer.mergeAll(
   // and mutations observed on WebSocket invalidate patches subsequently read over HTTP.
   Layer.provide(PullRequestServiceLive),
   Layer.provide(AnalysisServiceLive),
+  Layer.provide(ComputeMcpGatewayLive),
   Layer.provide(ComputeSessionServiceLive),
+  Layer.provide(ScientificRuntimePreferencesLive),
   Layer.provide(ScientLatexServicesLive),
   Layer.provide(PreviewAutomationBroker.layer),
   Layer.provide(ServerSelfUpdate.layer.pipe(Layer.provide(DesktopAppUpdateLayerLive))),

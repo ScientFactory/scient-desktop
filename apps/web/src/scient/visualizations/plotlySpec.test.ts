@@ -67,6 +67,7 @@ describe("parsePlotlySource", () => {
         },
         config: { topojsonURL: "https://example.test/topology/" },
       }),
+      { networkAccess: "allow" },
     );
 
     expect(parsed.hasWebGl).toBe(true);
@@ -80,9 +81,36 @@ describe("parsePlotlySource", () => {
     ]);
   });
 
-  it("warns about compatible deprecated Mapbox traces without rejecting them", () => {
+  it.each([
+    [
+      "an external image",
+      { data: [], layout: { images: [{ source: "https://example.test/overlay.png" }] } },
+    ],
+    ["a relative image", { data: [], layout: { images: [{ source: "/overlay.png" }] } }],
+    ["a topology URL", { data: [], config: { topojsonURL: "https://example.test/" } }],
+    ["map tiles", { data: [{ type: "scattermap", lat: [31.8], lon: [35.2] }] }],
+    ["geo topology", { data: [{ type: "choropleth", locations: ["ISR"], z: [1] }] }],
+  ])("blocks %s before the embedded renderer can request it", (_label, figure) => {
+    expect(() => parsePlotlySource(JSON.stringify(figure))).toThrow(
+      "requires network access, which is blocked",
+    );
+  });
+
+  it("allows bounded inline raster images without granting network access", () => {
+    const parsed = parsePlotlySource(
+      JSON.stringify({
+        data: [],
+        layout: { images: [{ source: "data:image/png;base64,iVBORw0KGgo=" }] },
+      }),
+    );
+
+    expect(parsed.externalResources).toEqual([]);
+  });
+
+  it("warns about compatible deprecated Mapbox traces on a network-authorized surface", () => {
     const parsed = parsePlotlySource(
       JSON.stringify({ data: [{ type: "scattermapbox", lat: [1], lon: [2] }] }),
+      { networkAccess: "allow" },
     );
 
     expect(parsed.warnings).toHaveLength(1);

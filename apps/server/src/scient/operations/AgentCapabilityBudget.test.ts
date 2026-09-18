@@ -181,12 +181,12 @@ it.live(
           ),
         );
       expect(size(500)).toBeGreaterThan(size(100) * 4);
-      expect(size(100)).toBeGreaterThan(size(28) * 2);
-      expect(scientTools).toHaveLength(28);
+      expect(size(100)).toBeGreaterThan(size(29) * 2);
+      expect(scientTools).toHaveLength(29);
       yield* Effect.logInfo({
         fixture: "eager-input-schemas",
-        actual28Bytes: Buffer.byteLength(encode(schemas)),
-        synthetic28Bytes: size(28),
+        actual29Bytes: Buffer.byteLength(encode(schemas)),
+        synthetic29Bytes: size(29),
         synthetic100Bytes: size(100),
         synthetic500Bytes: size(500),
       });

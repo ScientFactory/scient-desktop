@@ -9,6 +9,7 @@ import {
 } from "@scientfactory/execution";
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
+import * as Deferred from "effect/Deferred";
 import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Ref from "effect/Ref";
@@ -34,6 +35,7 @@ interface ProbeScript {
   /** Exits, but leaves stdout held open, so end-of-file never arrives. */
   readonly outputNeverEnds?: boolean;
   readonly unstartable?: boolean;
+  readonly cleanupFails?: boolean;
 }
 
 interface FakeProcesses {
@@ -66,7 +68,18 @@ const fakeProcesses = (script: ProbeScript): Effect.Effect<FakeProcesses> =>
             output:
               script.outputNeverEnds === true ? Stream.concat(written, Stream.never) : written,
             exitCode: script.silent === true ? Effect.never : Effect.succeed(script.exitCode ?? 0),
-            cancel: Ref.update(cancelledRef, (count) => count + 1),
+            cancel: Ref.update(cancelledRef, (count) => count + 1).pipe(
+              Effect.andThen(
+                script.cleanupFails
+                  ? Effect.fail(
+                      new ExecutionProcessError({
+                        operation: "cancel",
+                        message: "Cleanup unconfirmed.",
+                      }),
+                    )
+                  : Effect.void,
+              ),
+            ),
           };
         }),
     };
@@ -86,6 +99,71 @@ const probeFor = (script: ProbeScript, cwd = "/tmp") =>
     });
     return { ...processes, probe };
   });
+
+describe("managed Python probe ownership", () => {
+  it.effect("releases usage only after successful process-tree cleanup", () =>
+    Effect.gen(function* () {
+      const { probe, cancelled } = yield* probeFor({ stdout: ["ready"] });
+      let releases = 0;
+      const acquire = Effect.succeed(() => {
+        releases += 1;
+      });
+      expect(yield* probe("/managed/python", acquire)).toBe("ready");
+      expect(yield* cancelled).toBe(1);
+      expect(releases).toBe(1);
+    }),
+  );
+
+  it.effect("retains usage when process-tree cleanup is unconfirmed", () =>
+    Effect.gen(function* () {
+      const { probe, cancelled } = yield* probeFor({ stdout: ["ready"], cleanupFails: true });
+      let releases = 0;
+      yield* probe(
+        "/managed/python",
+        Effect.succeed(() => {
+          releases += 1;
+        }),
+      );
+      expect(yield* cancelled).toBe(1);
+      expect(releases).toBe(0);
+    }),
+  );
+
+  it.effect("releases usage when the process never started", () =>
+    Effect.gen(function* () {
+      const { probe, cancelled } = yield* probeFor({ unstartable: true });
+      let releases = 0;
+      yield* Effect.flip(
+        probe(
+          "/managed/python",
+          Effect.succeed(() => {
+            releases += 1;
+          }),
+        ),
+      );
+      expect(yield* cancelled).toBe(0);
+      expect(releases).toBe(1);
+    }),
+  );
+
+  it.effect("cancels a running probe before releasing usage on interruption", () =>
+    Effect.gen(function* () {
+      const { probe, cancelled } = yield* probeFor({ silent: true });
+      const acquired = yield* Deferred.make<void>();
+      let releases = 0;
+      const acquire = Deferred.succeed(acquired, undefined).pipe(
+        Effect.as(() => {
+          releases += 1;
+        }),
+      );
+      const running = yield* Effect.forkChild(probe("/managed/python", acquire));
+      yield* Deferred.await(acquired);
+      yield* Fiber.interrupt(running);
+      expect(yield* cancelled).toBe(1);
+      expect(releases).toBe(1);
+    }),
+  );
+});
 
 describe("python bridge location", () => {
   it("looks beside the source before anything a build staged", () => {

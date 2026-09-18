@@ -1,0 +1,47 @@
+[project]
+name = "scient-scientific-python"
+version = "0.0.0"
+requires-python = "==3.14.7"
+dependencies = [
+  "ipykernel==7.3.0",
+  "jupyter-client==8.10.0",
+  "matplotlib==3.11.1",
+  "nbformat==5.10.4",
+  "numpy==2.5.2",
+  "pandas==3.0.5",
+  "plotly==7.0.0",
+  "scipy==1.18.1",
+  "scikit-learn==1.9.1",
+  "seaborn==0.13.2",
+  "statsmodels==0.15.0",
+  "sympy==1.14.0",
+  "openpyxl==3.1.5",
+  "pyyaml==6.0.3",
+  "pillow==12.3.0",
+  "requests==2.34.2",
+  "pypdf==6.19.0",
+  "tabulate==0.10.0",
+  "jinja2==3.1.6",
+  "defusedxml==0.7.1",
+]
+
+[project.optional-dependencies]
+large-data = [
+  "xarray==2026.7.0",
+  "pyarrow==25.0.1",
+  "h5py==3.16.0",
+  "h5netcdf==1.8.1",
+  "zarr==3.3.0",
+  "dask[array,dataframe]==2026.8.0",
+  "cftime==1.6.5",
+]
+image-analysis = [
+  "scikit-image==0.26.0",
+  "imageio==2.37.4",
+  "tifffile==2026.9.15",
+  "imagecodecs==2026.8.16",
+]
+bioinformatics = ["biopython==1.86", "pyfaidx==0.9.0.4"]
+
+[tool.uv]
+package = false

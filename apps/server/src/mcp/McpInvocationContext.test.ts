@@ -57,6 +57,21 @@ it("projects explicit Scient grants without conflating transport and native cont
   expect(projected.nativeSessionId).toBeUndefined();
 });
 
+it("projects the explicit read-only Compute inventory grant", () => {
+  const source: McpInvocationContext.McpInvocationScope = {
+    environmentId: EnvironmentId.make("compute-projection-environment"),
+    threadId: ThreadId.make("compute-projection-thread"),
+    providerInstanceId: ProviderInstanceId.make("codex"),
+    providerSessionId: "compute-projection-provider",
+    issuedAt: 1,
+    capabilities: new Set(["compute:inventory"]),
+  };
+
+  const projected = scientInvocationForMcp(source);
+
+  expect(projected.capabilities).toEqual(new Set(["compute:inventory"]));
+});
+
 it.effect("reports other missing capabilities with the neutral error", () => {
   const invocation: McpInvocationContext.McpInvocationScope = {
     environmentId: EnvironmentId.make("environment-1"),

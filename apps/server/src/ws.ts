@@ -156,6 +156,7 @@ import * as GeneratedDocumentStore from "./scient/documentArtifacts/GeneratedDoc
 import { publishBrowserPdfExport } from "./scient/documentArtifacts/BrowserPdfExportPublication.ts";
 import * as AnalysisService from "./scient/analysis/AnalysisService.ts";
 import { makeComputeRpcGateway } from "./scient/compute/ComputeRpcGateway.ts";
+import { ScientificRuntimePreferences } from "./scient/compute/ScientificRuntimePreferences.ts";
 import * as ComputeSessionService from "./scient/compute/ComputeSessionService.ts";
 import * as ScientSkillManagement from "./scient/skills/ScientSkillManagement.ts";
 import * as ProviderSkillManagement from "./scient/skills/ProviderSkillManagement.ts";
@@ -750,7 +751,7 @@ const makeWsRpcLayer = (
       const compute = yield* ComputeSessionService.ComputeSessionService;
       const computeGateway = makeComputeRpcGateway({
         compute,
-        serverSettings,
+        serverSettings: yield* ScientificRuntimePreferences,
         workspaceFileSystem,
       });
       const scientSkillManagement = yield* ScientSkillManagement.ScientSkillManagement;
@@ -3636,10 +3637,30 @@ const makeWsRpcLayer = (
             computeGateway.inspectRuntimes(input),
             { "rpc.aggregate": "compute" },
           ),
+        [WS_METHODS.computeRuntimeInventory]: () =>
+          observeRpcEffect(WS_METHODS.computeRuntimeInventory, computeGateway.runtimeInventory(), {
+            "rpc.aggregate": "compute",
+          }),
         [WS_METHODS.computeVerifyRuntime]: (input) =>
           observeRpcEffect(WS_METHODS.computeVerifyRuntime, computeGateway.verifyRuntime(input), {
             "rpc.aggregate": "compute",
           }),
+        [WS_METHODS.computeManagedRuntimeStatus]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.computeManagedRuntimeStatus,
+            computeGateway.managedRuntimeStatus(input),
+            { "rpc.aggregate": "compute" },
+          ),
+        [WS_METHODS.computeManageRuntime]: (input) =>
+          observeRpcEffect(WS_METHODS.computeManageRuntime, computeGateway.manageRuntime(input), {
+            "rpc.aggregate": "compute",
+          }),
+        [WS_METHODS.computeCancelManagedRuntime]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.computeCancelManagedRuntime,
+            computeGateway.cancelManagedRuntime(input),
+            { "rpc.aggregate": "compute" },
+          ),
         [WS_METHODS.computeStartSession]: (input) =>
           observeRpcEffect(WS_METHODS.computeStartSession, computeGateway.startSession(input), {
             "rpc.aggregate": "compute",
@@ -4489,6 +4510,7 @@ export const websocketRpcRouteLayer = Layer.unwrap(
     const pullRequests = yield* PullRequestService.PullRequestService;
     const analysis = yield* AnalysisService.AnalysisService;
     const compute = yield* ComputeSessionService.ComputeSessionService;
+    const runtimePreferences = yield* ScientificRuntimePreferences;
     const sql = yield* SqlClient.SqlClient;
     return HttpRouter.add(
       "GET",
@@ -4560,6 +4582,7 @@ export const websocketRpcRouteLayer = Layer.unwrap(
               Layer.provide(Layer.succeed(PullRequestService.PullRequestService, pullRequests)),
               Layer.provide(Layer.succeed(AnalysisService.AnalysisService, analysis)),
               Layer.provide(Layer.succeed(ComputeSessionService.ComputeSessionService, compute)),
+              Layer.provide(Layer.succeed(ScientificRuntimePreferences, runtimePreferences)),
               Layer.provide(
                 SourceControlDiscovery.layer.pipe(
                   Layer.provide(

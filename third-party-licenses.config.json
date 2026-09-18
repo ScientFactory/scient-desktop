@@ -2,6 +2,21 @@
   "customNotices": [
     {
       "bundles": ["assets", "desktop", "web"],
+      "license": "MIT",
+      "name": "Devicon scientific computing icons",
+      "sourceUrl": "https://github.com/devicons/devicon/tree/7330accdbc47e2dc0c19789a48533c4a3c50fe58",
+      "generatedNotices": [
+        {
+          "licenseId": "MIT",
+          "copyrights": ["Copyright (c) 2015 konpa"],
+          "preamble": [
+            "Python, MATLAB, Julia, R, and SPSS logos are bundled from Devicon for product identification. The respective trademarks remain the property of their owners."
+          ]
+        }
+      ]
+    },
+    {
+      "bundles": ["assets", "desktop", "web"],
       "license": "CC0-1.0",
       "name": "Notification Sound 1 by deadrobotmusic",
       "sourceUrl": "https://freesound.org/people/deadrobotmusic/sounds/750607/",

@@ -27,6 +27,11 @@ export interface ParsedPlotlySource {
   readonly warnings: ReadonlyArray<string>;
 }
 
+export interface ParsePlotlySourceOptions {
+  /** Embedded renderers deny network-backed figures unless a qualified surface opts in. */
+  readonly networkAccess?: "allow" | "deny";
+}
+
 const WEB_GL_TRACE_TYPES = new Set([
   "cone",
   "heatmapgl",
@@ -183,6 +188,10 @@ function isExternalResourceKey(path: ReadonlyArray<string>, key: string): boolea
   return key === "style" && (path.includes("map") || path.includes("mapbox"));
 }
 
+function isInlinePlotlyResource(value: string): boolean {
+  return /^data:image\/(?:gif|jpeg|png|webp);base64,/iu.test(value.trim());
+}
+
 function inspectFigure(root: PlotlyJsonObject): {
   readonly externalResources: ReadonlyArray<string>;
   readonly hasMath: boolean;
@@ -216,7 +225,8 @@ function inspectFigure(root: PlotlyJsonObject): {
       if (
         current.key != null &&
         isExternalResourceKey(current.path, current.key) &&
-        /^https?:\/\//iu.test(current.value)
+        current.value.trim().length > 0 &&
+        !isInlinePlotlyResource(current.value)
       ) {
         externalResources.add(current.value);
       }
@@ -268,7 +278,10 @@ function traceTypes(data: ReadonlyArray<PlotlyJsonObject>): ReadonlySet<string> 
   );
 }
 
-export function parsePlotlySource(source: string): ParsedPlotlySource {
+export function parsePlotlySource(
+  source: string,
+  options: ParsePlotlySourceOptions = {},
+): ParsedPlotlySource {
   if (source.trim().length === 0) throw new Error("The Plotly source is empty.");
   if (source.length > MAX_PLOTLY_SOURCE_LENGTH) {
     throw new Error(
@@ -312,14 +325,25 @@ export function parsePlotlySource(source: string): ParsedPlotlySource {
   const deprecatedMapboxTypes = [...types].filter((type) =>
     DEPRECATED_MAPBOX_TRACE_TYPES.has(type),
   );
+  const hasGeoTopology = [...types].some((type) => GEO_TOPOLOGY_TRACE_TYPES.has(type));
+  const hasMapTiles = [...types].some((type) => TILE_MAP_TRACE_TYPES.has(type));
+
+  if (
+    options.networkAccess !== "allow" &&
+    (inspection.externalResources.length > 0 || hasGeoTopology || hasMapTiles)
+  ) {
+    throw new Error(
+      "This Plotly figure requires network access, which is blocked in Scient's embedded renderer. Use inline data or a static image instead.",
+    );
+  }
 
   return {
     externalResources: inspection.externalResources,
     figure,
     hasCartesian: hasImplicitScatter || [...types].some((type) => CARTESIAN_TRACE_TYPES.has(type)),
     hasFrames: frames.length > 0,
-    hasGeoTopology: [...types].some((type) => GEO_TOPOLOGY_TRACE_TYPES.has(type)),
-    hasMapTiles: [...types].some((type) => TILE_MAP_TRACE_TYPES.has(type)),
+    hasGeoTopology,
+    hasMapTiles,
     hasMath: inspection.hasMath,
     hasWebGl: [...types].some(
       (type) => WEB_GL_TRACE_TYPES.has(type) || TILE_MAP_TRACE_TYPES.has(type),

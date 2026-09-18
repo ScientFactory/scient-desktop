@@ -1,0 +1,35 @@
+{
+  "schemaVersion": 1,
+  "sequence": 1,
+  "recipes": [
+    {
+      "purpose": "python",
+      "revision": 1,
+      "toolkitRevision": "scientific-python-2026-09-17.2",
+      "contract": 1,
+      "pythonVersion": "3.14.7",
+      "uvVersion": "0.12.15",
+      "sourceCommit": null,
+      "projectSha256": "b7c6b99e2200e510c27ec6c9944d8bc2cd949fdcf37137080cab5f050d7cae2e",
+      "lockSha256": "b1470dc4f8d0ee92106504bc98f970c97f781d022686b3c90ae65cd28d121577",
+      "capabilitySha256": "5d398bd45ae7d1b067506a3fdfa5f0b463f413be1d03e9a76b607dedb176c795",
+      "targets": ["darwin-arm64", "linux-x64"],
+      "summary": "Qualified Scientific Python and optional Toolkits."
+    },
+    {
+      "purpose": "matlab-connection",
+      "revision": 1,
+      "toolkitRevision": "matlab-connection-2026-09-10.1",
+      "contract": 1,
+      "pythonVersion": "3.12.13",
+      "uvVersion": "0.12.15",
+      "sourceCommit": null,
+      "projectSha256": "beeae8338729362227297b8abf8c4356c042ee072339b979406d526722663237",
+      "lockSha256": "8d437f53f63d52d266b8288b647254d28c8c5a0fa0f02e14da6a0adb30cac057",
+      "capabilitySha256": "26f288dd9559ad361a80846a0828fbbea21263998059130c2918e9d3e168c479",
+      "targets": ["darwin-arm64"],
+      "summary": "Private connection helper for supported MATLAB installations."
+    }
+  ],
+  "withdrawn": []
+}

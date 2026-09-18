@@ -7,11 +7,16 @@ import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
-import * as Schedule from "effect/Schedule";
 import * as Stream from "effect/Stream";
+import * as TestClock from "effect/testing/TestClock";
 
 import { DuplexProcess, layer } from "./LocalDuplexProcess.ts";
-import { descendantFixture, processExists } from "./LocalProcessTestSupport.ts";
+import {
+  descendantFixture,
+  processExists,
+  successfulParentWithDescendantFixture,
+  successfulParentWithResistantDescendantFixture,
+} from "./LocalProcessTestSupport.ts";
 
 const Live = layer.pipe(Layer.provideMerge(NodeServices.layer));
 
@@ -227,17 +232,75 @@ describe("LocalDuplexProcess", () => {
         expect(processExists(childPid)).toBe(true);
 
         yield* handle.cancelProcessTree;
-
-        // `cancelProcessTree` waits for the direct child; the descendant is
-        // reaped by init a moment later, so poll rather than sample once.
-        yield* Effect.retry(
-          Effect.suspend(() =>
-            processExists(childPid) ? Effect.fail("descendant still running") : Effect.void,
-          ),
-          { times: 50, schedule: Schedule.spaced("20 millis") },
-        );
         expect(processExists(childPid)).toBe(false);
       }),
-    ).pipe(Effect.provide(Live)),
+    ).pipe(Effect.provide(Live), TestClock.withLive),
+  );
+
+  it.effect("cleans up descendants after the direct parent exits successfully", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const handle = yield* startFixture(
+          "duplex-successful-process-tree-test",
+          successfulParentWithDescendantFixture,
+        );
+        const childPidLine = yield* handle.stdout.pipe(
+          Stream.decodeText(),
+          Stream.splitLines,
+          Stream.runHead,
+          Effect.map(Option.getOrThrow),
+        );
+        const childPid = Number(childPidLine);
+        expect(Number.isSafeInteger(childPid)).toBe(true);
+        expect(processExists(childPid)).toBe(true);
+
+        expect(yield* handle.exitCode).toBe(0);
+        expect(processExists(childPid)).toBe(false);
+      }),
+    ).pipe(Effect.provide(Live), TestClock.withLive),
+  );
+
+  it.effect("force-stops a resistant descendant after the direct parent exits", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const handle = yield* startFixture(
+          "duplex-resistant-successful-process-tree-test",
+          successfulParentWithResistantDescendantFixture,
+        );
+        const childPid = Number(
+          yield* handle.stdout.pipe(
+            Stream.decodeText(),
+            Stream.splitLines,
+            Stream.runHead,
+            Effect.map(Option.getOrThrow),
+          ),
+        );
+        expect(processExists(childPid)).toBe(true);
+
+        expect(yield* handle.exitCode).toBe(0);
+        expect(processExists(childPid)).toBe(false);
+      }),
+    ).pipe(Effect.provide(Live), TestClock.withLive),
+  );
+
+  it.effect("cleans up its owned tree when the caller scope closes", () =>
+    Effect.gen(function* () {
+      let childPid = 0;
+      yield* Effect.scoped(
+        Effect.gen(function* () {
+          const handle = yield* startFixture("duplex-scoped-process-tree-test", descendantFixture);
+          childPid = Number(
+            yield* handle.stdout.pipe(
+              Stream.decodeText(),
+              Stream.splitLines,
+              Stream.runHead,
+              Effect.map(Option.getOrThrow),
+            ),
+          );
+          expect(processExists(childPid)).toBe(true);
+        }),
+      );
+      expect(processExists(childPid)).toBe(false);
+    }).pipe(Effect.provide(Live), TestClock.withLive),
   );
 });

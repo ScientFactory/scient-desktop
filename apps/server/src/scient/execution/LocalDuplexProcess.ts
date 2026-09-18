@@ -11,7 +11,11 @@ import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
 import { ChildProcessSpawner } from "effect/unstable/process";
 
-import { LOCAL_OWNED_PROCESS_KILL_OPTIONS, makeLocalOwnedProcess } from "./LocalOwnedProcess.ts";
+import {
+  ensureLocalOwnedProcessTreeExit,
+  LOCAL_OWNED_PROCESS_KILL_OPTIONS,
+  makeLocalOwnedProcess,
+} from "./LocalOwnedProcess.ts";
 
 export class DuplexProcess extends Context.Service<DuplexProcess, DuplexProcessPort>()(
   "t3/scient/execution/LocalDuplexProcess/DuplexProcess",
@@ -100,16 +104,57 @@ const make = Effect.gen(function* () {
           writeGate.withPermits(1),
         );
 
-      const exitCode = child.exitCode.pipe(
+      const directExitCode = child.exitCode.pipe(
         Effect.map(Number),
         Effect.mapError((cause) =>
           processError("exit", "Unable to observe the duplex process exit.", cause),
         ),
       );
 
+      // `kill` signals the detached group on Unix and the tree via taskkill on
+      // Windows, falls back to the direct child, and resolves only once that
+      // child has exited — the stop acknowledgement the port promises. A tree
+      // that is already gone reports the absence differently on every platform
+      // (`ESRCH` once reaped, `EPERM` for an unreaped macOS zombie, a non-zero
+      // taskkill exit on Windows), so the child's own liveness, not the signal
+      // result, decides whether cancellation actually failed.
+      const cancelProcessTree = yield* Effect.cached(
+        child.kill(LOCAL_OWNED_PROCESS_KILL_OPTIONS).pipe(
+          Effect.catch((cause) =>
+            child.isRunning.pipe(
+              Effect.catchCause(() => Effect.succeed(true)),
+              Effect.flatMap((isRunning) =>
+                isRunning
+                  ? Effect.fail(
+                      processError("cancel", "Unable to stop the duplex process tree.", cause),
+                    )
+                  : Effect.void,
+              ),
+            ),
+          ),
+          Effect.andThen(
+            ensureLocalOwnedProcessTreeExit(Number(child.pid), platform).pipe(
+              Effect.mapError((cause) =>
+                processError(
+                  "cancel",
+                  "The duplex process tree remained alive after cancellation.",
+                  cause,
+                ),
+              ),
+            ),
+          ),
+        ),
+      );
+      yield* Effect.addFinalizer(() => cancelProcessTree.pipe(Effect.ignore));
+
+      // A normal direct-child exit does not transfer ownership of surviving
+      // descendants to the host. Keep the same cleanup guarantee as the
+      // one-shot adapter before exposing the terminal exit to callers.
+      const exitCode = directExitCode.pipe(Effect.tap(() => cancelProcessTree));
+
       // A descendant that inherited the child's stdout keeps the pipe open
       // after the child itself is gone, so end-of-file alone can leave a
-      // consumer pulling forever. Wait for the child to exit, then allow one
+      // consumer pulling forever. Wait for owned-tree cleanup, then allow one
       // drain window so buffered frames — a peer's final protocol reply, for
       // instance — are still delivered, and only then stop pulling. The exit
       // outcome is deliberately discarded: a cancelled process exits by
@@ -126,28 +171,6 @@ const make = Effect.gen(function* () {
           ),
           Stream.haltWhen(outputDrainDeadline),
         );
-
-      // `kill` signals the detached group on Unix and the tree via taskkill on
-      // Windows, falls back to the direct child, and resolves only once that
-      // child has exited — the stop acknowledgement the port promises. A tree
-      // that is already gone reports the absence differently on every platform
-      // (`ESRCH` once reaped, `EPERM` for an unreaped macOS zombie, a non-zero
-      // taskkill exit on Windows), so the child's own liveness, not the signal
-      // result, decides whether cancellation actually failed.
-      const cancelProcessTree = child.kill(LOCAL_OWNED_PROCESS_KILL_OPTIONS).pipe(
-        Effect.catch((cause) =>
-          child.isRunning.pipe(
-            Effect.catchCause(() => Effect.succeed(true)),
-            Effect.flatMap((isRunning) =>
-              isRunning
-                ? Effect.fail(
-                    processError("cancel", "Unable to stop the duplex process tree.", cause),
-                  )
-                : Effect.void,
-            ),
-          ),
-        ),
-      );
 
       return {
         pid: Number(child.pid),

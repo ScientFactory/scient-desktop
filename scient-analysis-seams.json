@@ -2,6 +2,7 @@
   "schemaVersion": 2,
   "owner": "ScientFactory",
   "ownedRoots": [
+    "apps/server/src/mcp/toolkits/compute",
     "apps/server/src/scient/analysis",
     "apps/server/src/scient/compute",
     "apps/server/src/scient/execution",
@@ -17,6 +18,8 @@
     "packages/scient-execution"
   ],
   "ownedFiles": [
+    "apps/server/scripts/compute-recipes.ts",
+    "apps/server/scripts/publish-compute-recipe.ts",
     "apps/server/src/telemetry/ComputeOutputAnalytics.ts",
     "apps/server/src/orchestration/scient-fork/migrations/005_AnalysisRunIndex.ts",
     "apps/server/src/orchestration/scient-fork/migrations/006_AnalysisRunProjectionState.ts",
@@ -36,7 +39,8 @@
     "packages/client-runtime/src/state/analysis.ts",
     "packages/client-runtime/src/state/compute.ts",
     "packages/contracts/src/scientAnalysis.ts",
-    "packages/contracts/src/scientCompute.ts"
+    "packages/contracts/src/scientCompute.ts",
+    "renovate.json5"
   ],
   "analysisDiffSignals": [
     "@scientfactory/(analysis|compute|execution)",
@@ -52,7 +56,6 @@
     "static-artifact",
     "selectThreadPreviewMiniPlayerTabId",
     "openScientArtifact",
-    "ScientFileAuxiliarySurface",
     "ResizeSeparator",
     "useScientHorizontalSplit",
     "analysis(Start|Cancel|Verify|List|Get|Cleanup|Promote)",
@@ -129,7 +132,7 @@
     },
     {
       "path": "apps/web/src/components/files/FilePreviewPanel.tsx",
-      "anchor": "ScientFileAuxiliarySurface",
+      "anchor": "ScientComputeFileSurface",
       "purpose": "Mount additive analysis and compute actions plus generic freshness controls in the file viewer."
     },
     {

@@ -13,6 +13,7 @@ import {
   nextComputeSessionGeneration,
   projectComputeOutputs,
   type ComputeChannel,
+  type ComputeExecuteSourceContext,
   type ComputeRuntimeProfile,
   type ComputeTransportEvent,
 } from "@scientfactory/compute";
@@ -20,12 +21,15 @@ import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Queue from "effect/Queue";
+import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 
+import * as OwnedLocalEndpoints from "../../localEndpoints/OwnedLocalEndpointRegistry.ts";
 import { DuplexProcess, layer as duplexProcessLayer } from "../execution/LocalDuplexProcess.ts";
 import { processExists } from "../execution/LocalProcessTestSupport.ts";
-import { makeJupyterBridgeTransport } from "./JupyterBridgeTransport.ts";
+import { makeComputeBridgeTransport } from "./ComputeBridgeTransport.ts";
 import { buildLaunchPlan } from "./PythonRuntimeAdapter.ts";
+import { normalizePythonDiagnostic } from "./PythonDiagnostic.ts";
 
 /**
  * Every case here is `it.live` rather than `it.effect`.
@@ -39,12 +43,24 @@ import { buildLaunchPlan } from "./PythonRuntimeAdapter.ts";
 const TEST_PYTHON = NodeProcess.env.SCIENT_TEST_PYTHON;
 const here = NodePath.dirname(NodeURL.fileURLToPath(import.meta.url));
 const bridgePath = NodePath.join(here, "bridge", "scient_compute_bridge.py");
-const Live = duplexProcessLayer.pipe(Layer.provideMerge(NodeServices.layer));
+const Live = Layer.merge(
+  duplexProcessLayer.pipe(Layer.provideMerge(NodeServices.layer)),
+  OwnedLocalEndpoints.layer,
+);
 
 const sessionId = ComputeSessionId.make("python-integration-session");
 const python = ComputeLanguageId.make("python");
 const transportKind = ComputeTransportKind.make("jupyter-bridge");
 type ReadyEvent = Extract<ComputeTransportEvent, { readonly _tag: "ready" }>;
+const decodeDataFramePreview = Schema.decodeUnknownEffect(
+  Schema.fromJsonString(
+    Schema.Struct({
+      data: Schema.Array(Schema.Unknown),
+      schema: Schema.Struct({ fields: Schema.Array(Schema.Unknown) }),
+      scientPreview: Schema.Struct({ truncated: Schema.Boolean }),
+    }),
+  ),
+);
 interface IntegrationHarness {
   readonly channel: ComputeChannel;
   readonly events: Queue.Dequeue<ComputeTransportEvent>;
@@ -117,7 +133,33 @@ const takeMatching = (
 const integration = Effect.fn("PythonKernel.integration")(function* () {
   if (!TEST_PYTHON) return yield* Effect.die("SCIENT_TEST_PYTHON is not set.");
   const processes = yield* DuplexProcess;
-  const transport = makeJupyterBridgeTransport(processes, {});
+  const ownedLocalEndpoints = yield* OwnedLocalEndpoints.OwnedLocalEndpointRegistry;
+  const transport = makeComputeBridgeTransport(processes, {
+    prepareKernelEndpoints: () =>
+      ownedLocalEndpoints
+        .reserveProtectedLoopbackTcpPorts({
+          owner: `compute-test/${sessionId}`,
+          purpose: "jupyter-kernel-channels",
+          count: 5,
+        })
+        .pipe(
+          Effect.orDie,
+          Effect.map((lease) => {
+            const [shell, iopub, stdin, heartbeat, control] = lease.ports as [
+              number,
+              number,
+              number,
+              number,
+              number,
+            ];
+            return {
+              ports: { ip: "127.0.0.1" as const, shell, iopub, stdin, heartbeat, control },
+              handoff: lease.handoff.pipe(Effect.orDie),
+              release: lease.release,
+            };
+          }),
+        ),
+  });
   const profile: ComputeRuntimeProfile = {
     languageId: python,
     source: "configured",
@@ -158,10 +200,16 @@ const execute = Effect.fn("PythonKernel.execute")(function* (
   id: string,
   code: string,
   generation = INITIAL_COMPUTE_SESSION_GENERATION,
+  sourceContext?: ComputeExecuteSourceContext,
 ) {
   const requestId = ComputeRequestId.make(id);
   NodeProcess.stderr.write(`real-kernel send: ${id}\n`);
-  yield* harness.channel.execute({ requestId, expectedGeneration: generation, code });
+  yield* harness.channel.execute({
+    requestId,
+    expectedGeneration: generation,
+    code,
+    ...(sourceContext === undefined ? {} : { sourceContext }),
+  });
   NodeProcess.stderr.write(`real-kernel sent: ${id}\n`);
   const observed: ComputeTransportEvent[] = [];
   for (;;) {
@@ -178,6 +226,112 @@ const execute = Effect.fn("PythonKernel.execute")(function* (
 });
 
 describe.runIf(Boolean(TEST_PYTHON))("Python kernel integration", () => {
+  it.live(
+    "preserves retained source excerpts and navigation across different document submissions",
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const harness = yield* integration();
+          yield* execute(
+            harness,
+            "define-original",
+            "def retained():\n    raise ValueError('original-A')\n",
+            INITIAL_COMPUTE_SESSION_GENERATION,
+            { kind: "selection", filePath: "source-A.py", startLine: 10, saved: false },
+          );
+          const observed = yield* execute(
+            harness,
+            "call-later",
+            "marker = 'B'\nretained()\n",
+            INITIAL_COMPUTE_SESSION_GENERATION,
+            { kind: "selection", filePath: "source-B.py", startLine: 100, saved: false },
+          );
+          const error = observed.find((event) => event._tag === "runtime-error");
+          if (error?._tag !== "runtime-error") throw new Error("Expected retained-function error");
+          const diagnostics = normalizePythonDiagnostic(error.report, {
+            projectRoot: here,
+            submittedSource: { relativePath: "source-B.py", startLine: 100 },
+            executionSources: new Map([
+              ["define-original", { relativePath: "source-A.py", startLine: 10, lineCount: 2 }],
+              ["call-later", { relativePath: "source-B.py", startLine: 100, lineCount: 2 }],
+            ]),
+          });
+          expect(diagnostics[0]?.traceback.join("\n")).toContain("raise ValueError('original-A')");
+          expect(
+            diagnostics[0]?.frames.map(({ relativePath, line }) => ({ relativePath, line })),
+          ).toEqual([
+            { relativePath: "source-B.py", line: 102 },
+            { relativePath: "source-A.py", line: 12 },
+          ]);
+          yield* harness.channel.shutdown({
+            expectedGeneration: INITIAL_COMPUTE_SESSION_GENERATION,
+          });
+        }),
+      ).pipe(Effect.provide(Live), Effect.timeout("30 seconds")),
+  );
+
+  it.live(
+    "emits bounded dataframe previews and Plotly MIME without browser launch or namespace pollution",
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const harness = yield* integration();
+          const observed = yield* execute(
+            harness,
+            "table-and-plotly",
+            [
+              "import pandas as pd",
+              "from IPython.display import display",
+              "frame = pd.DataFrame({f'column_{i}': range(150) for i in range(30)})",
+              "display(frame)",
+              "display({'application/vnd.plotly.v1+json': {'data': [{'type': 'scatter', 'x': [1, 2], 'y': [3, 4]}]}}, raw=True)",
+              "assert 'table_preview' not in globals()",
+            ].join("\n"),
+          );
+          const outputs = observed.flatMap((event) =>
+            event._tag === "output" ? [event.output] : [],
+          );
+          const representations = outputs.flatMap((output) =>
+            output._tag === "display-data" ? output.bundle.representations : [],
+          );
+          expect(
+            outputs.some(
+              (output) =>
+                output._tag === "stream" && output.text.includes("Error in callback <function"),
+            ),
+          ).toBe(false);
+          const table = representations.find(
+            (item) => item.mediaType === "application/vnd.dataresource+json",
+          );
+          if (table?.data._tag !== "json") throw new Error("Expected bounded dataframe JSON");
+          const data = yield* decodeDataFramePreview(table.data.json);
+          expect(data.data).toHaveLength(100);
+          expect(data.schema.fields).toHaveLength(21);
+          expect(data.scientPreview.truncated).toBe(true);
+          expect(
+            representations.some((item) => item.mediaType === "application/vnd.plotly.v1+json"),
+          ).toBe(true);
+
+          const contextualFailure = yield* execute(
+            harness,
+            "source-context-failure",
+            "raise RuntimeError('source-context-marker')",
+            INITIAL_COMPUTE_SESSION_GENERATION,
+            { kind: "selection", filePath: "source-context.py", saved: false },
+          );
+          const report = contextualFailure.find((event) => event._tag === "runtime-error");
+          if (report?._tag !== "runtime-error") throw new Error("Expected a contextual error.");
+          expect(report.report.value).toContain("source-context-marker");
+          expect(
+            report.report.traceback.some((line) => line.includes("<scient-compute-source:")),
+          ).toBe(true);
+          yield* harness.channel.shutdown({
+            expectedGeneration: INITIAL_COMPUTE_SESSION_GENERATION,
+          });
+        }),
+      ).pipe(Effect.provide(Live), Effect.timeout("60 seconds")),
+  );
+
   it.live("retains complete MIME bundles and projects display updates and delayed clears", () =>
     Effect.scoped(
       Effect.gen(function* () {
@@ -204,13 +358,14 @@ describe.runIf(Boolean(TEST_PYTHON))("Python kernel integration", () => {
         const outputs = observed.flatMap((event) =>
           event._tag === "output" ? [event.output] : [],
         );
-        expect(outputs.map(({ _tag }) => _tag)).toEqual([
+        const displayOutputs = outputs.filter((output) => output._tag !== "stream");
+        expect(displayOutputs.map(({ _tag }) => _tag)).toEqual([
           "display-data",
           "display-update",
           "clear-output",
           "display-data",
         ]);
-        const first = outputs[0];
+        const first = displayOutputs[0];
         if (first?._tag !== "display-data") throw new Error("Expected display data.");
         expect(first.bundle.representations.map(({ mediaType }) => mediaType)).toEqual([
           "text/plain",
@@ -218,7 +373,7 @@ describe.runIf(Boolean(TEST_PYTHON))("Python kernel integration", () => {
           "image/svg+xml",
         ]);
         expect(first.displayId).toBe("shared-display");
-        const projected = projectComputeOutputs(outputs);
+        const projected = projectComputeOutputs(displayOutputs);
         expect(projected).toHaveLength(1);
         expect(projected[0]).toMatchObject({
           _tag: "representation",
@@ -369,6 +524,23 @@ describe.runIf(Boolean(TEST_PYTHON))("Python kernel integration", () => {
           ),
         ).toBe(true);
 
+        const tableAfterRestart = yield* execute(
+          harness,
+          "table-after-restart",
+          "import pandas as pd\nfrom IPython.display import display\ndisplay(pd.DataFrame({'answer': [42]}))",
+          nextGeneration,
+        );
+        expect(
+          tableAfterRestart.some(
+            (event) =>
+              event._tag === "output" &&
+              event.output._tag === "display-data" &&
+              event.output.bundle.representations.some(
+                (item) => item.mediaType === "application/vnd.dataresource+json",
+              ),
+          ),
+        ).toBe(true);
+
         yield* harness.channel.shutdown({ expectedGeneration: nextGeneration });
         yield* Effect.logInfo("real-kernel: shutdown complete");
         yield* awaitProcessGone(bridgePid);
@@ -472,8 +644,11 @@ describe.runIf(Boolean(TEST_PYTHON))("Python kernel integration", () => {
           .join("");
         expect(text).toContain("line-0\n");
         expect(text).toContain("line-19999\n");
-        // Every line, in order, however the kernel chose to batch them.
-        expect(text.split("\n").filter((line) => line.length > 0)).toHaveLength(20000);
+        // Count only the flood lines. Older kernels can emit a leading stderr
+        // warning, which must not be mistaken for a dropped or extra payload line.
+        const lines = text.split("\n").filter((line) => /^line-\d+$/.test(line));
+        expect(lines).toHaveLength(20000);
+        expect(lines.find((line, index) => line !== `line-${index}`)).toBeUndefined();
 
         const afterwards = yield* execute(harness, "after-flood", "6 * 7");
         expect(afterwards.some((event) => outputText(event)?.includes("42") === true)).toBe(true);

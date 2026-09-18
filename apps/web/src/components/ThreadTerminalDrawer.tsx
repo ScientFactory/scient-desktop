@@ -41,6 +41,11 @@ import {
 } from "react";
 import { Popover, PopoverPopup, PopoverTrigger } from "~/components/ui/popover";
 import { Button } from "~/components/ui/button";
+import {
+  CompactCommandGroup,
+  CompactCommandGroupSeparator,
+} from "~/components/ui/compact-command-group";
+import { compactCommandClassName } from "~/components/ui/compact-command-group.styles";
 import { PanelTabCloseButton } from "~/components/ui/panel-tab-close-button";
 import { stackedThreadToast, toastManager } from "~/components/ui/toast";
 import { readTextFromClipboard, writeTextToClipboard } from "~/hooks/useCopyToClipboard";
@@ -1441,47 +1446,47 @@ export default function ThreadTerminalDrawer({
 
       {!hasTerminalSidebar && (
         <div className="pointer-events-none absolute right-2 top-2 z-20">
-          <div className="pointer-events-auto inline-flex items-center overflow-hidden rounded-md border border-border/80 bg-background shadow-xs">
+          <CompactCommandGroup aria-label="Terminal actions" className="pointer-events-auto">
             <TerminalActionButton
-              className={`p-1 text-foreground/90 transition-colors ${
-                hasReachedSplitLimit
-                  ? "cursor-not-allowed opacity-45 hover:bg-transparent"
-                  : "hover:bg-accent"
-              }`}
+              className={cn(
+                compactCommandClassName,
+                "p-1",
+                hasReachedSplitLimit && "cursor-not-allowed opacity-45 hover:bg-transparent",
+              )}
               onClick={onSplitTerminalAction}
               label={splitTerminalActionLabel}
             >
               <SquareSplitHorizontal className="size-3.25" />
             </TerminalActionButton>
-            <div className="h-4 w-px bg-border/80" />
+            <CompactCommandGroupSeparator />
             <TerminalActionButton
-              className={`p-1 text-foreground/90 transition-colors ${
-                hasReachedSplitLimit
-                  ? "cursor-not-allowed opacity-45 hover:bg-transparent"
-                  : "hover:bg-accent"
-              }`}
+              className={cn(
+                compactCommandClassName,
+                "p-1",
+                hasReachedSplitLimit && "cursor-not-allowed opacity-45 hover:bg-transparent",
+              )}
               onClick={onSplitTerminalVerticalAction}
               label={splitTerminalVerticalActionLabel}
             >
               <SquareSplitVertical className="size-3.25" />
             </TerminalActionButton>
-            <div className="h-4 w-px bg-border/80" />
+            <CompactCommandGroupSeparator />
             <TerminalActionButton
-              className="p-1 text-foreground/90 transition-colors hover:bg-accent"
+              className={cn(compactCommandClassName, "p-1")}
               onClick={onNewTerminalAction}
               label={newTerminalActionLabel}
             >
               <Plus className="size-3.25" />
             </TerminalActionButton>
-            <div className="h-4 w-px bg-border/80" />
+            <CompactCommandGroupSeparator />
             <TerminalActionButton
-              className="p-1 text-foreground/90 transition-colors hover:bg-accent"
+              className={cn(compactCommandClassName, "p-1")}
               onClick={() => confirmCloseTerminal(resolvedActiveTerminalId)}
               label={closeTerminalActionLabel}
             >
               <Trash2 className="size-3.25" />
             </TerminalActionButton>
-          </div>
+          </CompactCommandGroup>
         </div>
       )}
 

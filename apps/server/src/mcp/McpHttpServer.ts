@@ -41,6 +41,8 @@ import { ScientSkillsToolkitHandlersLive } from "./toolkits/skills/handlers.ts";
 import { ScientSkillsToolkit } from "./toolkits/skills/tools.ts";
 import { ScientDocumentsToolkitHandlersLive } from "./toolkits/documents/handlers.ts";
 import { ScientDocumentsToolkit } from "./toolkits/documents/tools.ts";
+import { ScientComputeToolkitHandlersLive } from "./toolkits/compute/handlers.ts";
+import { ScientComputeToolkit } from "./toolkits/compute/tools.ts";
 import { PullRequestsToolkitHandlersLive } from "./toolkits/pullRequests/handlers.ts";
 import { PullRequestsToolkit } from "./toolkits/pullRequests/tools.ts";
 import {
@@ -629,6 +631,10 @@ export const ScientDocumentsToolkitRegistrationLive = registerScientToolkit(
   ScientDocumentsToolkit,
 ).pipe(Layer.provide(ScientDocumentsToolkitHandlersLive));
 
+export const ScientComputeToolkitRegistrationLive = registerScientToolkit(
+  ScientComputeToolkit,
+).pipe(Layer.provide(ScientComputeToolkitHandlersLive));
+
 export const PullRequestsToolkitRegistrationLive = McpServer.toolkit(PullRequestsToolkit).pipe(
   Layer.provide(PullRequestsToolkitHandlersLive),
 );
@@ -660,6 +666,7 @@ export const layer = Layer.mergeAll(
   ScientSourcesToolkitRegistrationLive,
   ScientSkillsToolkitRegistrationLive,
   ScientDocumentsToolkitRegistrationLive,
+  ScientComputeToolkitRegistrationLive,
   PullRequestsToolkitRegistrationLive,
   DeviceToolkitRegistrationLive,
 ).pipe(Layer.provideMerge(McpTransportLive));

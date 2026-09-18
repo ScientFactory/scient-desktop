@@ -128,7 +128,8 @@ const RIGHT_PANEL_STORAGE_KEY = "t3code:right-panel-state:v2";
 // v14 adds stable direct artifact surfaces without persisting signed asset URLs.
 // v15 keys generated-PDF surfaces by stable artifact identity instead of revision.
 // v16 adds the device surface alongside Scient's existing durable surfaces.
-const RIGHT_PANEL_STORAGE_VERSION = 16;
+// v17 also preserves explicit Compute context ids from the parallel v16 Compute candidate.
+const RIGHT_PANEL_STORAGE_VERSION = 17;
 /** A fixed workspace-level ref: each PR surface carries its own real environment. */
 export const PULL_REQUESTS_PANEL_REF = scopeThreadRef(
   EnvironmentId.make("pull-requests-panel"),

@@ -323,6 +323,9 @@ states what the user can inspect, and names the rich Markdown representations th
 renders. A separate browser block is composed only when the exact MCP credential for that session
 grants `preview`; the same capability decision drives both authorization and awareness. Sources
 mechanics remain in tool descriptions rather than consuming every turn's instruction context.
+The read-only Compute inventory block is likewise included only with the exact
+`compute:inventory` grant. It reports existing runtime candidates but grants no execution,
+installation, attachment, or authority to launch a listed executable path.
 
 Each built-in driver has an explicit native delivery decision, guarded against `BUILT_IN_DRIVERS`:
 

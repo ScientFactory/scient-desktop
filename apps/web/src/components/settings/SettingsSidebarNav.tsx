@@ -24,7 +24,6 @@ import {
   Mic2Icon,
   PaletteIcon,
   SearchIcon,
-  SigmaIcon,
   Settings2Icon,
   XIcon,
 } from "lucide-react";
@@ -68,6 +67,20 @@ const SnapShotIcon = createLucideIcon("snap-shot", [
   ["circle", { cx: "12", cy: "12", r: "1.5", key: "lens" }],
 ]);
 
+function ScientificComputingSidebarIcon({ className }: { className?: string }) {
+  return (
+    <svg aria-hidden="true" className={className} fill="none" focusable="false" viewBox="0 0 14 14">
+      <path
+        d="M10.5 4V3a.625.625 0 0 0-.625-.625H3.75a.3125.3125 0 0 0-.25.5l2.625 3.5a1.125 1.125 0 0 1 0 1.35l-2.625 3.5a.3125.3125 0 0 0 .25.5h6.125a.625.625 0 0 0 .625-.625V10"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="1.25"
+      />
+    </svg>
+  );
+}
+
 const T3ConnectSidebarSignIn = lazy(() =>
   import("../clerk/T3ConnectSidebarSignIn").then((module) => ({
     default: module.T3ConnectSidebarSignIn,
@@ -91,7 +104,7 @@ const SETTINGS_SECTION_ICONS: Readonly<
   "/settings/custom-models": BrainCircuitIcon,
   "/settings/skills": Layers3Icon,
   "/settings/integrations": BlocksIcon,
-  "/settings/scientific-computing": SigmaIcon,
+  "/settings/scientific-computing": ScientificComputingSidebarIcon,
   "/settings/source-control": GitBranchIcon,
   "/settings/storage": HardDriveIcon,
   "/settings/connections": Link2Icon,

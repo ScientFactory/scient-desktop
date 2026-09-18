@@ -8,6 +8,7 @@ import { Tool } from "effect/unstable/ai";
 
 import { scientOperationCatalog, makeScientOperationCatalog } from "./ScientOperationCatalog.ts";
 import { ScientOperation } from "./ScientOperationTool.ts";
+import { ScientComputeToolkit } from "./toolkits/compute/tools.ts";
 import { ScientPdfBuildTool } from "./toolkits/documents/tools.ts";
 import { ScientSourcesToolkit } from "./toolkits/sources/tools.ts";
 
@@ -15,10 +16,11 @@ const ScientSourcesListTool = ScientSourcesToolkit.tools.scient_sources_list;
 import { ScientSkillLoadTool } from "./toolkits/skills/tools.ts";
 import { PreviewSnapshotTool } from "./toolkits/preview/tools.ts";
 
-it("describes all 28 existing tools without replacing their schemas", () => {
-  expect(scientOperationCatalog.list()).toHaveLength(28);
+it("describes all 29 existing tools without replacing their schemas", () => {
+  expect(scientOperationCatalog.list()).toHaveLength(29);
   for (const tool of [
     ScientPdfBuildTool,
+    ScientComputeToolkit.tools.scient_compute_inventory,
     ScientSourcesListTool,
     ScientSkillLoadTool,
     PreviewSnapshotTool,

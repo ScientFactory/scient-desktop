@@ -3,6 +3,7 @@ import {
   createContext,
   useContext,
   useEffect,
+  useId,
   useLayoutEffect,
   useMemo,
   useRef,
@@ -13,6 +14,7 @@ import {
 } from "react";
 
 import { MenuItem, MenuPopup, MenuSeparator } from "~/components/ui/menu";
+import { CompactCommandGroup } from "~/components/ui/compact-command-group";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "~/components/ui/tooltip";
 import { cn } from "~/lib/utils";
 import { attachVisualCardToolbarDrag } from "./visualCardToolbarDrag";
@@ -60,21 +62,28 @@ export function VisualCardToolbar(props: {
   readonly children: ReactNode;
   readonly className?: string;
   readonly label: string;
+  readonly appearance?: "quiet" | "command-group";
+  /** Direct movement keeps the grip visible and skips the menu activation step. */
+  readonly movement?: "menu" | "direct";
   readonly variant?: "utilities" | "exploration";
 }) {
+  const movementDescriptionId = useId();
   const toolbarRef = useRef<HTMLSpanElement>(null);
   const handleRef = useRef<HTMLButtonElement>(null);
   const [dragging, setDragging] = useState(false);
   const [moving, setMoving] = useState(false);
   const exploration = props.variant === "exploration";
+  const commandGroup = !exploration && props.appearance === "command-group";
+  const directMovement = exploration || props.movement === "direct";
+  const ToolbarRoot = commandGroup ? CompactCommandGroup : "span";
   const movementAllowed = useRef(false);
   useLayoutEffect(() => {
-    movementAllowed.current = exploration || moving;
-  }, [exploration, moving]);
+    movementAllowed.current = directMovement || moving;
+  }, [directMovement, moving]);
   const controller = useRef<ReturnType<typeof attachVisualCardToolbarDrag> | null>(null);
   const position = useMemo(
     () =>
-      exploration
+      directMovement
         ? null
         : {
             moving,
@@ -85,7 +94,7 @@ export function VisualCardToolbar(props: {
               setMoving(false);
             },
           },
-    [exploration, moving],
+    [directMovement, moving],
   );
 
   useEffect(() => {
@@ -107,14 +116,17 @@ export function VisualCardToolbar(props: {
 
   return (
     <ToolbarPositionContext.Provider value={position}>
-      <span
+      <ToolbarRoot
         ref={toolbarRef}
         aria-label={props.label}
         className={cn(
           "relative z-10 inline-flex max-w-full flex-wrap items-center justify-end gap-0.5 focus-within:z-20 [&_button:disabled]:pointer-events-auto [&_button:disabled]:cursor-default",
           exploration
             ? "touch-none cursor-grab rounded-md border border-border/40 bg-background/70 py-0.5 pr-0.5 pl-2.5"
-            : "scient-visual-utility-controls",
+            : commandGroup
+              ? "flex-nowrap gap-0"
+              : "scient-visual-utility-controls",
+          directMovement && commandGroup && "touch-none cursor-grab pl-2.5",
           moving && "pl-5",
           dragging && "cursor-grabbing",
           props.className,
@@ -136,14 +148,15 @@ export function VisualCardToolbar(props: {
           toolbarRef.current?.querySelector<HTMLButtonElement>("[aria-haspopup='menu']")?.focus();
         }}
       >
-        <Tooltip disabled={dragging}>
+        <Tooltip>
           <TooltipTrigger
             render={
               <button
                 ref={handleRef}
                 data-scient-toolbar-move
-                hidden={!exploration && !moving}
+                hidden={!directMovement && !moving}
                 aria-label={`Move ${props.label.toLowerCase()}`}
+                aria-describedby={movementDescriptionId}
                 className={cn(
                   "absolute top-1/2 left-0 z-10 flex h-5 w-2.5 -translate-y-1/2 touch-none cursor-grab select-none items-center justify-center rounded-sm text-muted-foreground/50 outline-none hover:bg-accent hover:text-foreground focus-visible:bg-accent focus-visible:text-foreground active:cursor-grabbing [&[hidden]]:hidden",
                   dragging && "cursor-grabbing",
@@ -159,13 +172,14 @@ export function VisualCardToolbar(props: {
               <span className="size-0.5 rounded-full bg-current" />
             </span>
           </TooltipTrigger>
-          <TooltipPopup>
-            Drag or use arrow keys to move. Shift moves precisely; Home resets.
-            {!exploration && " Press Enter or Escape to finish."}
-          </TooltipPopup>
+          <TooltipPopup>Drag to move</TooltipPopup>
         </Tooltip>
+        <span id={movementDescriptionId} className="sr-only">
+          Use arrow keys to move. Hold Shift for precise movement. Press Home to reset.
+          {!directMovement && " Press Enter or Escape to finish."}
+        </span>
         {props.children}
-      </span>
+      </ToolbarRoot>
     </ToolbarPositionContext.Provider>
   );
 }

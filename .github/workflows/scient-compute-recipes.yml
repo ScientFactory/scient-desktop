@@ -1,0 +1,115 @@
+name: Scient Compute Qualified Recipes
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "apps/server/src/scient/compute/managed-python/pyproject.toml"
+      - "apps/server/src/scient/compute/managed-python/uv.lock"
+      - ".github/workflows/scient-compute-recipes.yml"
+  workflow_dispatch:
+    inputs:
+      purpose:
+        type: choice
+        options: [python, matlab-connection]
+        default: python
+        description: Independently qualified environment to publish
+      withdraw:
+        type: string
+        required: false
+        description: Optional exact recipe identity to withdraw; never rolls back installed environments
+
+permissions:
+  contents: read
+
+# Serialize the whole promotion, including withdrawal. Never terminate a publisher.
+concurrency:
+  group: scient-compute-qualified-recipes
+  cancel-in-progress: false
+
+jobs:
+  matlab_configuration:
+    if: github.ref == 'refs/heads/main' && inputs.purpose == 'matlab-connection' && !inputs.withdraw && vars.SCIENT_MATLAB_QUALIFICATION_ENABLED != 'true'
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Require the licensed qualification matrix
+        run: |
+          echo '::error::Configure the protected MATLAB qualification environment, runner, and supported installations before publishing a helper recipe.'
+          exit 1
+
+  python:
+    if: github.ref == 'refs/heads/main' && inputs.purpose != 'matlab-connection' && !inputs.withdraw
+    uses: ./.github/workflows/scient-compute-python-kernel.yml
+
+  matlab:
+    if: github.ref == 'refs/heads/main' && inputs.purpose == 'matlab-connection' && !inputs.withdraw && vars.SCIENT_MATLAB_QUALIFICATION_ENABLED == 'true'
+    # Dedicated licensed runner, never untrusted PR code. The environment requires approval.
+    environment: compute-matlab-qualification
+    runs-on: [self-hosted, macOS, ARM64, scient-matlab-qualification]
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      max-parallel: 1
+      matrix:
+        release: [R2024B, R2025A, R2025B, R2026A]
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: voidzero-dev/setup-vp@250f29ce396baf5e8f24498e17c0dfdebabc26eb # v1
+        with:
+          node-version-file: package.json
+          run-install: |
+            args:
+              - --filter=t3...
+      - run: node apps/server/scripts/compute-recipes.ts seal
+      - name: Qualify installed MATLAB and private helper
+        working-directory: apps/server
+        env:
+          SCIENT_TEST_MATLAB: ${{ vars[format('SCIENT_TEST_MATLAB_{0}', matrix.release)] }}
+          SCIENT_TEST_MATLAB_EXPECTED_RELEASE: ${{ matrix.release }}
+          SCIENT_TEST_MATLAB_HELPER: "1"
+        run: |
+          test -x "$SCIENT_TEST_MATLAB"
+          node --input-type=module -e 'import {readFile, realpath} from "node:fs/promises"; import {matlabInstallationRoot} from "./src/scient/compute/MatlabRuntimeAdapter.ts"; import assert from "node:assert/strict"; const xml = await readFile(`${matlabInstallationRoot(await realpath(process.env.SCIENT_TEST_MATLAB))}/VersionInfo.xml`, "utf8"); assert.equal(/<release>(R\d{4}[ab])<\/release>/.exec(xml)?.[1].toUpperCase(), process.env.SCIENT_TEST_MATLAB_EXPECTED_RELEASE); assert.equal(`${process.platform}-${process.arch}`, "darwin-arm64");'
+          vp test run src/scient/compute/MatlabComputeProduct.integration.test.ts --maxWorkers=1
+
+  publish:
+    needs: [python, matlab]
+    if: >-
+      always() && !cancelled() && github.ref == 'refs/heads/main' &&
+      (inputs.withdraw != '' || needs.python.result == 'success' || needs.matlab.result == 'success')
+    runs-on: ubuntu-24.04
+    environment: compute-recipe-publication
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: voidzero-dev/setup-vp@250f29ce396baf5e8f24498e17c0dfdebabc26eb # v1
+        with:
+          node-version-file: package.json
+          run-install: |
+            args:
+              - --filter=t3...
+      - name: Seal and validate the exact qualified candidate
+        run: node apps/server/scripts/compute-recipes.ts seal
+      - name: Verify catalog and lifecycle invariants
+        working-directory: apps/server
+        run: vp test run src/scient/compute/ComputeRecipeSource.test.ts src/scient/compute/ComputeRecipePublisher.test.ts src/scient/compute/ManagedPythonRuntimeController.test.ts src/scient/compute/ManagedPythonEnvironment.test.ts src/scient/compute/ManagedPythonProvisioner.test.ts src/scient/compute/MatlabConnectionHelper.test.ts --maxWorkers=2
+      - id: token
+        uses: actions/create-github-app-token@fee1f7d63c2ff003460e3d139729b119787bc349 # v2
+        with:
+          app-id: ${{ secrets.RELEASE_APP_ID }}
+          private-key: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
+          repositories: scient-desktop
+          permission-contents: write
+      - name: Publish with immutable-source and concurrent-write guards
+        env:
+          GH_TOKEN: ${{ steps.token.outputs.token }}
+          RECIPE_PURPOSE: ${{ inputs.purpose || 'python' }}
+          WITHDRAW: ${{ inputs.withdraw }}
+        run: node apps/server/scripts/publish-compute-recipe.ts "$RECIPE_PURPOSE" "$WITHDRAW"
