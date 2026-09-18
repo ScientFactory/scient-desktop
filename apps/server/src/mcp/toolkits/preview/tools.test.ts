@@ -73,3 +73,14 @@ it("exports exact object result schemas for preview actions", () => {
     });
   }
 });
+
+it("distinguishes preview navigation URLs from user-facing links", () => {
+  const schema = Tool.getJsonSchemaFromSchema(
+    PreviewToolkit.tools.preview_status.successSchema,
+  ) as {
+    readonly properties?: Readonly<Record<string, unknown>>;
+  };
+  const urlSchema = JSON.stringify(schema.properties?.url);
+  expect(urlSchema).toContain("current navigation URL");
+  expect(urlSchema).toContain("internal address rather than a user-facing link");
+});
