@@ -12,7 +12,7 @@ import {
   type ResolvedKeybindingsConfig,
   type ScopedThreadRef,
 } from "@t3tools/contracts";
-import { AlertTriangle, FileQuestion, Globe2, LoaderCircle, Music2 } from "lucide-react";
+import { AlertTriangle, FileQuestion, Globe, LoaderCircle, Music2 } from "lucide-react";
 import { lazy, Suspense, useCallback, useEffect, useRef, useState } from "react";
 
 import { useAssetUrlState } from "~/assets/assetUrls";
@@ -525,7 +525,7 @@ export default function EnvironmentFilePreview(props: {
                 />
               }
             >
-              <Globe2 />
+              <Globe />
             </TooltipTrigger>
             <TooltipPopup>Open in Browser</TooltipPopup>
           </Tooltip>
