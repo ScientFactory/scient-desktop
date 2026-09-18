@@ -463,9 +463,10 @@ const startInput = (
  * Runs the coordinator forward until an expectation holds.
  *
  * The scripted runtime never sleeps, so every state a test waits for is a fixed
- * number of fiber turns away rather than a duration. Yielding rather than
- * sleeping keeps the suite honest under a test clock and keeps it from passing
- * for timing reasons.
+ * number of turns away rather than a duration. Completion still persists to the
+ * real filesystem, however, so each retry must yield to both Effect fibers and
+ * Node's event loop. This remains deterministic under a test clock without
+ * starving the host callback that makes the observed state durable.
  */
 const waitUntil = <A, E, R>(check: Effect.Effect<A | null, E, R>) =>
   Effect.gen(function* () {
@@ -473,6 +474,7 @@ const waitUntil = <A, E, R>(check: Effect.Effect<A | null, E, R>) =>
       const value = yield* check;
       if (value !== null) return value;
       yield* Effect.yieldNow;
+      yield* Effect.promise(() => new Promise<void>((resolve) => setImmediate(resolve)));
     }
     return yield* Effect.die(
       new Error("The compute session never reached the state the test waited for."),
@@ -2196,6 +2198,19 @@ describe("compute session startup", () => {
 });
 
 describe("compute session execution", () => {
+  it.effect("waits for host-backed completion without depending on wall-clock time", () =>
+    Effect.gen(function* () {
+      let completed = false;
+      setImmediate(() => {
+        completed = true;
+      });
+
+      yield* waitUntil(Effect.sync(() => (completed ? true : null)));
+
+      expect(completed).toBe(true);
+    }),
+  );
+
   it.effect("rejects MATLAB definition files before they reach the runtime", () =>
     Effect.gen(function* () {
       const matlabProfile: ComputeRuntimeProfile = {
