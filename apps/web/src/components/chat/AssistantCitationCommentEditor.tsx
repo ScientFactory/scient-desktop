@@ -26,11 +26,12 @@ export function AssistantCitationCommentEditor({
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   useImperativeHandle(inputRef, () => textareaRef.current!, []);
   const commentTooLong = comment.length > ASSISTANT_CITATION_MAX_COMMENT_LENGTH;
+  const submissionBlocked = voiceBusy || commentTooLong;
   const submit = () => {
-    if (!commentTooLong) onSubmit(comment);
+    if (!submissionBlocked) onSubmit(comment);
   };
   const submitAndSend = () => {
-    if (commentTooLong) return;
+    if (submissionBlocked) return;
     if (onSubmitAndSend) {
       onSubmitAndSend(comment);
     } else {
