@@ -25,18 +25,23 @@ gates on pull requests and pushes to `main`:
   builds the desktop pipeline (`vp run build:desktop`) and verifies the preload bundle exists,
   imports only modules that Electron's sandbox can load, and still exports callable expected APIs.
   The verifier first parses imports, then executes the trusted artifact with controlled bridge stubs.
-- **Test**: `vp run --parallel --concurrency-limit 4 --filter '!t3' --filter '!@t3tools/monorepo'
-test` across every workspace package except the server app and the monorepo root, dropping the
-  dependency-ordering wait that only bought idle runner time. The 20-minute job ceiling is wider
-  than upstream's 10 because Scient's suite is roughly three times larger on a runner with half
-  the vCPUs.
+- **Test**: `vp run --parallel --concurrency-limit 4 --filter '!t3'
+--filter '!@t3tools/web' --filter '!@t3tools/monorepo' test` across workspace packages except the
+  server, web app, and monorepo root, dropping the dependency-ordering wait that only bought idle
+  runner time. The 20-minute job ceiling is wider than upstream's 10 because Scient's suite is
+  roughly three times larger on a runner with half the vCPUs.
+- **Test Web**: three shards of `vp run --filter @t3tools/web test --shard N/3`, each on its own
+  runner. This keeps the large web suite from competing with other workspace packages.
 - **Test Server**: three shards of `vp run --filter t3 test --shard N/3`. The server sets
   `fileParallelism: false`, so its test files run strictly serially and sharding spreads them over
   separate runners instead of workers: no two server test files ever share a machine, and no
   Electron download is spent on these shards. Exactly one shard writes the thread transfer budget
   report; a presence-gated upload keeps a single `thread-transfer-results` artifact, the exact name
   [`thread-transfer-report.yml`](../../.github/workflows/thread-transfer-report.yml) resolves when
-  it posts the PR comment.
+  it posts the PR comment. Web and server shards also preserve their normal human-readable output
+  while uploading native Vitest JSON results for 14 days. The reports expose exact discovered,
+  passed, failed, and skipped tests for performance and failure investigations; report upload does
+  not control the test command's result.
 - **Rust**: `cargo fmt --check` and `cargo test --locked` for the native resource monitor, split
   out of Check and Test so neither lane pays a ~7-9s Rust toolchain install for checks that take
   under 3s.
@@ -47,7 +52,11 @@ test` across every workspace package except the server app and the monorepo root
   that defines `lint:mobile`, or `ci.yml`. Otherwise the job is skipped, which GitHub reports as
   success for the required check. Renames are matched on both their old and new path. The gate fails
   open in every other case: if the changed-file list cannot be resolved, GitHub truncates it, or the
-  gate job itself fails, the lint runs.
+  gate job itself fails, the lint runs. The macOS job installs only the dependency closure needed
+  by `@t3tools/scripts`, does not restore or save the repository-wide dependency cache, and fails if
+  SwiftLint, ktlint, or detekt is unavailable before invoking the canonical native checker directly.
+  It deliberately avoids `vp run` because Vite+ resolves task configuration for unrelated workspace
+  packages before starting a root script, which would reintroduce a whole-repository install.
 - **Release Smoke**: exercises release-only workflow steps through `scripts/release-smoke.ts`, so
   release breakage surfaces on PRs rather than at tag time.
 

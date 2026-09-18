@@ -30,7 +30,7 @@ import {
   Code2,
   Eye,
   FolderTree,
-  Globe2,
+  Globe,
   MessageSquarePlus,
   Table2,
   WrapTextIcon,
@@ -1823,7 +1823,7 @@ export default function FilePreviewPanel({
           ) : null}
           {canOpenInBrowser ? (
             <FileSurfaceAction label="Open file in preview browser" onPress={handleOpenInBrowser}>
-              <Globe2 className="size-3.5" />
+              <Globe className="size-3.5" />
             </FileSurfaceAction>
           ) : null}
           {attachment === undefined && previewPath !== null ? (

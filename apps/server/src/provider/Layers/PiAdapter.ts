@@ -1462,7 +1462,7 @@ export const makePiAdapter = Effect.fn("makePiAdapter")(function* (options: PiAd
 
   return {
     provider: PROVIDER,
-    capabilities: { sessionModelSwitch: "in-session" },
+    capabilities: { sessionModelSwitch: "in-session", mcpSessionInjection: true },
     startSession,
     sendTurn,
     interruptTurn,

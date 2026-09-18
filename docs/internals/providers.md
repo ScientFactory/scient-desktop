@@ -390,8 +390,8 @@ The [provider lifecycle architecture](./provider-lifecycle.md) owns the shared m
 
 [`PiDriver.ts`][pi] composes the same provider-instance registry, lifecycle actions, settings, and
 orchestration contracts as the other drivers. It does not import a second provider architecture or
-ACP translation layer. Native protocol tests cover official Pi 0.84.4 and 0.85.0; the managed
-installation remains pinned to the qualified 0.84.4 archive.
+ACP translation layer. Native protocol tests and the managed installation are pinned to the
+qualified official Pi 0.85.1 archives.
 
 - `provider/pi/PiRpcClient.ts` owns the newline-delimited RPC transport, request correlation, bounded
   frames/queues and query timeouts. Prompt acceptance can wait for extension input; writes remain

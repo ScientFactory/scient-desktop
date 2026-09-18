@@ -1094,7 +1094,11 @@ describe("asking about a change rather than working on it", () => {
       previewAnnotations: [],
       reviewComments: [comment],
     });
-    expect(submission).toEqual({ text: draftText, interactionMode: "plan" });
+    expect(submission).toEqual({
+      text: draftText,
+      interactionMode: "plan",
+      selectedScientSkillNames: [],
+    });
     expect(context?.records[0]).toMatchObject({ pullRequest: base });
     const legacyText = serializeLegacyContextMessage({
       text: submission.text,

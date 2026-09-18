@@ -1,3 +1,5 @@
+import { collectComposerContextReferences } from "./composerContextReferences.ts";
+
 export type ComposerInlineToken =
   | {
       readonly type: "mention";
@@ -16,6 +18,17 @@ export type ComposerInlineToken =
 
 export interface CollectComposerInlineTokensOptions {
   readonly preserveTrailingFrom?: ReadonlyArray<ComposerInlineToken>;
+}
+
+/** Call on the user's composer only, before appending files, captures or history. */
+export function collectSelectedScientSkillNames(composerText: string): ReadonlyArray<string> {
+  return [
+    ...new Set(
+      collectComposerInlineTokens(`${composerText}\n`).flatMap((token) =>
+        token.type === "skill" && token.value.length <= 64 ? [token.value] : [],
+      ),
+    ),
+  ];
 }
 
 /**
@@ -139,5 +152,10 @@ export function collectComposerInlineTokens(
     }
   }
 
-  return [...matches].sort((left, right) => left.start - right.start);
+  // Context chip labels are captured/display data, not composer Skill or file
+  // selections. Preserve token offsets for the editor without parsing the labels.
+  const references = collectComposerContextReferences(text);
+  return matches
+    .filter((token) => !references.some((ref) => token.start < ref.end && token.end > ref.start))
+    .sort((left, right) => left.start - right.start);
 }

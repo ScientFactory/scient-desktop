@@ -12,11 +12,12 @@ import {
   readScientSourceRecord,
 } from "@scientfactory/scient-sources/store";
 import * as Effect from "effect/Effect";
+import { consumeAgentWorkspace } from "../../../scient/operations/AgentWorkspaceScope.ts";
 import * as Option from "effect/Option";
 
 import * as ProjectionSnapshotQuery from "../../../orchestration/Services/ProjectionSnapshotQuery.ts";
 import { makeSourceImportAnalytics } from "../../../telemetry/SourceImportAnalytics.ts";
-import * as McpInvocationContext from "../../McpInvocationContext.ts";
+import * as AgentInvocationContext from "../../../scient/operations/AgentInvocationContext.ts";
 import {
   ScientSourcesToolError,
   ScientSourcesToolkit,
@@ -48,7 +49,7 @@ const attempt = <A>(run: () => Promise<A>) =>
   });
 
 const requireSourcesWrite = Effect.fn("ScientSourcesToolkit.requireWrite")(function* () {
-  const invocation = yield* McpInvocationContext.McpInvocationContext;
+  const invocation = yield* AgentInvocationContext.AgentInvocationContext;
   if (!invocation.capabilities.has("sources:write")) {
     return yield* toolError(
       "capability-unavailable",
@@ -182,43 +183,19 @@ function mergePreparedAgentPdfCandidate(
 
 export const resolveScientSourcesProject = Effect.fn("ScientSourcesToolkit.resolveProject")(
   function* () {
-    const invocation = yield* McpInvocationContext.McpInvocationContext;
+    const invocation = yield* AgentInvocationContext.AgentInvocationContext;
     if (!invocation.capabilities.has("sources:read")) {
       return yield* toolError(
         "capability-unavailable",
         "This provider session does not grant Sources access.",
       );
     }
-    const snapshots = yield* ProjectionSnapshotQuery.ProjectionSnapshotQuery;
-    const thread = yield* snapshots
-      .getThreadShellById(invocation.threadId)
-      .pipe(
-        Effect.mapError(() =>
-          toolError("operation-failed", "The current thread could not be resolved."),
-        ),
-      );
-    if (Option.isNone(thread) || thread.value.projectId === null) {
-      return yield* toolError(
-        "project-required",
-        "Sources tools require a thread that belongs to a Scient project.",
-      );
-    }
-    const project = yield* snapshots
-      .getProjectShellById(thread.value.projectId)
-      .pipe(
-        Effect.mapError(() =>
-          toolError("operation-failed", "The current project could not be resolved."),
-        ),
-      );
-    if (Option.isNone(project)) {
-      return yield* toolError(
-        "project-changed",
-        "The project for this thread is no longer active.",
-      );
-    }
+    const workspace = yield* consumeAgentWorkspace().pipe(
+      Effect.mapError((error) => toolError(error.code, error.message)),
+    );
     return {
-      projectId: thread.value.projectId,
-      root: thread.value.worktreePath ?? project.value.workspaceRoot,
+      projectId: workspace.binding.hostProjectId,
+      root: workspace.binding.canonicalRoot,
     };
   },
 );

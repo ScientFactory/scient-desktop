@@ -12,6 +12,7 @@ import {
   type MessageId,
 } from "@t3tools/contracts";
 import { buildTemporaryWorktreeBranchName } from "@t3tools/shared/git";
+import { collectSelectedScientSkillNames } from "@t3tools/shared/composerInlineTokens";
 import * as Cause from "effect/Cause";
 import { AsyncResult } from "effect/unstable/reactivity";
 import { useCallback, useEffect, useRef, useState } from "react";
@@ -803,6 +804,7 @@ export function useThreadOutboxDrain(): void {
         environmentId: queuedMessage.environmentId,
         input: {
           commandId: queuedMessage.commandId,
+          selectedScientSkillNames: collectSelectedScientSkillNames(queuedMessage.text),
           threadId: queuedMessage.threadId,
           message: {
             messageId: queuedMessage.messageId,

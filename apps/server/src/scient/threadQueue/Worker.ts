@@ -85,11 +85,15 @@ export const ScientQueueWorkerLive = Layer.effect(
         type: "thread.turn.start",
         commandId: CommandId.make(`queue:${item.queueItemId}:${doc.revision}`),
         threadId: id,
+        ...(item.selectedScientSkillNames === undefined
+          ? {}
+          : { selectedScientSkillNames: item.selectedScientSkillNames }),
         message: {
           messageId: MessageId.make(`queue:${item.queueItemId}`),
           role: "user",
           text: item.text,
           attachments: item.attachments,
+          ...(item.context === undefined ? {} : { context: item.context }),
         },
         modelSelection: item.steerRequested
           ? thread.modelSelection

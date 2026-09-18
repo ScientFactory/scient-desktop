@@ -907,6 +907,7 @@ describe("ProviderCommandReactor", () => {
       harness.engine.dispatch({
         type: "thread.turn.start",
         commandId: CommandId.make("cmd-turn-start-1"),
+        selectedScientSkillNames: ["pdf-authoring"],
         threadId: ThreadId.make("thread-1"),
         message: {
           messageId: asMessageId("user-message-1"),
@@ -923,6 +924,7 @@ describe("ProviderCommandReactor", () => {
     await waitFor(() => harness.startSession.mock.calls.length === 1);
     await waitFor(() => harness.sendTurn.mock.calls.length === 1);
     expect(harness.startSession.mock.calls[0]?.[0]).toEqual(ThreadId.make("thread-1"));
+    expect(harness.sendTurn.mock.calls[0]?.[0].selectedScientSkillNames).toEqual(["pdf-authoring"]);
     expect(harness.startSession.mock.calls[0]?.[1]).toMatchObject({
       cwd: "/tmp/provider-project",
       modelSelection: {
@@ -981,6 +983,7 @@ describe("ProviderCommandReactor", () => {
       harness.engine.dispatch({
         type: "thread.turn.start",
         commandId: CommandId.make("cmd-fork-bootstrap-turn"),
+        selectedScientSkillNames: ["pdf-authoring"],
         threadId: ThreadId.make("thread-1"),
         message: {
           messageId: asMessageId("fork-user-message"),
@@ -998,6 +1001,7 @@ describe("ProviderCommandReactor", () => {
     await waitFor(() => markAccepted.mock.calls.length === 1);
     expect(harness.sendTurn.mock.calls[0]?.[0]).toMatchObject({
       input: "retained-context\ncontinue from here",
+      selectedScientSkillNames: ["pdf-authoring"],
     });
     expect(callOrder).toEqual(["prepare", "reserved", "send", "accepted"]);
   });

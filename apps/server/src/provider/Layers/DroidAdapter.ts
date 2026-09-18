@@ -1770,7 +1770,7 @@ export function makeDroidAdapter(droidSettings: DroidSettings, options?: DroidAd
 
     return {
       provider: PROVIDER,
-      capabilities: { sessionModelSwitch: "in-session" },
+      capabilities: { sessionModelSwitch: "in-session", mcpSessionInjection: true },
       startSession,
       sendTurn,
       interruptTurn,

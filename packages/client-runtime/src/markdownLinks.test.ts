@@ -77,6 +77,10 @@ describe("parseMarkdownFileLink", () => {
     ["/workspace/Makefile", "/workspace/Makefile"],
     ["/tmp/favicons/", "/tmp/favicons/"],
     ["C:\\Users\\mike\\project\\src\\main.ts", "C:\\Users\\mike\\project\\src\\main.ts"],
+    [
+      "C:/Users/Sacha/OneDrive/Bureau/REPOs/רפואה שנה א/dashboard.html",
+      "C:/Users/Sacha/OneDrive/Bureau/REPOs/רפואה שנה א/dashboard.html",
+    ],
     ["C:%5Crepo%5Cimage.png", "C:\\repo\\image.png"],
     ["\\\\server\\share\\image.png", "\\\\server\\share\\image.png"],
     ["/D:/Programme/t3code/OpenInPicker.tsx", "D:/Programme/t3code/OpenInPicker.tsx"],

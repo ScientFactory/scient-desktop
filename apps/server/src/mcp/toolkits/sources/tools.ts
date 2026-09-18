@@ -12,16 +12,14 @@ import {
 } from "@scientfactory/scient-sources";
 import * as Schema from "effect/Schema";
 import { Tool, Toolkit } from "effect/unstable/ai";
+import { ScientOperation, type OperationMetadata } from "../../ScientOperationTool.ts";
 
-import * as ProjectionSnapshotQuery from "../../../orchestration/Services/ProjectionSnapshotQuery.ts";
-import * as McpInvocationContext from "../../McpInvocationContext.ts";
+import { WorkspaceBindingResolver } from "../../../scient/projectScope/WorkspaceBindingResolver.ts";
+import * as AgentInvocationContext from "../../../scient/operations/AgentInvocationContext.ts";
 
 const NonEmptyString = Schema.Trimmed.check(Schema.isNonEmpty());
 const NullableText = Schema.NullOr(Schema.String);
-const dependencies = [
-  McpInvocationContext.McpInvocationContext,
-  ProjectionSnapshotQuery.ProjectionSnapshotQuery,
-];
+const dependencies = [AgentInvocationContext.AgentInvocationContext, WorkspaceBindingResolver];
 
 const ScientSourceAgentAttachment = Schema.Struct({
   attachmentId: NonEmptyString,
@@ -46,6 +44,15 @@ export class ScientSourcesToolError extends Schema.TaggedError<ScientSourcesTool
     message: NonEmptyString,
   },
 ) {}
+
+const sourceOperation = (id: string, write: boolean): OperationMetadata => ({
+  id,
+  family: "sources",
+  scope: "workspace",
+  requiredCapabilities: write ? ["sources:read", "sources:write"] : ["sources:read"],
+  approval: write ? "explicit-user-request-guidance" : "session-grant",
+  documentation: "docs/user/sources.md",
+});
 
 export const ScientSourceAgentSummary = Schema.Struct({
   sourceId: NonEmptyString,
@@ -114,7 +121,8 @@ const ScientSourcesListTool = Tool.make("scient_sources_list", {
   .annotate(Tool.Readonly, true)
   .annotate(Tool.Destructive, false)
   .annotate(Tool.Idempotent, true)
-  .annotate(Tool.OpenWorld, false);
+  .annotate(Tool.OpenWorld, false)
+  .annotate(ScientOperation, sourceOperation("sources.list", false));
 
 const ScientSourceGetTool = Tool.make("scient_sources_get", {
   description:
@@ -128,7 +136,8 @@ const ScientSourceGetTool = Tool.make("scient_sources_get", {
   .annotate(Tool.Readonly, true)
   .annotate(Tool.Destructive, false)
   .annotate(Tool.Idempotent, true)
-  .annotate(Tool.OpenWorld, false);
+  .annotate(Tool.OpenWorld, false)
+  .annotate(ScientOperation, sourceOperation("sources.get", false));
 
 export const ScientSourceNoteUpdateResult = Schema.Struct({
   outcome: Schema.Literals(["updated", "unchanged", "stale"]),
@@ -153,7 +162,8 @@ const ScientSourceNoteUpdateTool = Tool.make("scient_sources_note_update", {
   .annotate(Tool.Readonly, false)
   .annotate(Tool.Destructive, false)
   .annotate(Tool.Idempotent, true)
-  .annotate(Tool.OpenWorld, false);
+  .annotate(Tool.OpenWorld, false)
+  .annotate(ScientOperation, sourceOperation("sources.note.update", true));
 
 const ScientSourceMetadataUpdateTool = Tool.make("scient_sources_update", {
   description:
@@ -189,7 +199,8 @@ const ScientSourceMetadataUpdateTool = Tool.make("scient_sources_update", {
   .annotate(Tool.Readonly, false)
   .annotate(Tool.Destructive, false)
   .annotate(Tool.Idempotent, true)
-  .annotate(Tool.OpenWorld, false);
+  .annotate(Tool.OpenWorld, false)
+  .annotate(ScientOperation, sourceOperation("sources.update", true));
 
 const ScientSourceRemoveTool = Tool.make("scient_sources_remove", {
   description:
@@ -210,7 +221,8 @@ const ScientSourceRemoveTool = Tool.make("scient_sources_remove", {
   .annotate(Tool.Readonly, false)
   .annotate(Tool.Destructive, true)
   .annotate(Tool.Idempotent, true)
-  .annotate(Tool.OpenWorld, false);
+  .annotate(Tool.OpenWorld, false)
+  .annotate(ScientOperation, sourceOperation("sources.remove", true));
 
 const ScientSourceReviewTool = Tool.make("scient_sources_review", {
   description:
@@ -233,7 +245,8 @@ const ScientSourceReviewTool = Tool.make("scient_sources_review", {
   .annotate(Tool.Readonly, false)
   .annotate(Tool.Destructive, true)
   .annotate(Tool.Idempotent, true)
-  .annotate(Tool.OpenWorld, false);
+  .annotate(Tool.OpenWorld, false)
+  .annotate(ScientOperation, sourceOperation("sources.review", true));
 
 export const ScientSourceAddInput = Schema.Struct({
   type: Schema.optionalKey(ScientSourceType),
@@ -301,7 +314,8 @@ const ScientSourceAddTool = Tool.make("scient_sources_add", {
   .annotate(Tool.Readonly, false)
   .annotate(Tool.Destructive, false)
   .annotate(Tool.Idempotent, true)
-  .annotate(Tool.OpenWorld, true);
+  .annotate(Tool.OpenWorld, true)
+  .annotate(ScientOperation, sourceOperation("sources.add", true));
 
 const ScientSourceAttachPdfTool = Tool.make("scient_sources_attach_pdf", {
   description:
@@ -324,7 +338,8 @@ const ScientSourceAttachPdfTool = Tool.make("scient_sources_attach_pdf", {
   .annotate(Tool.Readonly, false)
   .annotate(Tool.Destructive, false)
   .annotate(Tool.Idempotent, true)
-  .annotate(Tool.OpenWorld, false);
+  .annotate(Tool.OpenWorld, false)
+  .annotate(ScientOperation, sourceOperation("sources.pdf.attach", true));
 
 const ScientSourceDetachPdfTool = Tool.make("scient_sources_detach_pdf", {
   description:
@@ -350,7 +365,8 @@ const ScientSourceDetachPdfTool = Tool.make("scient_sources_detach_pdf", {
   .annotate(Tool.Readonly, false)
   .annotate(Tool.Destructive, true)
   .annotate(Tool.Idempotent, true)
-  .annotate(Tool.OpenWorld, false);
+  .annotate(Tool.OpenWorld, false)
+  .annotate(ScientOperation, sourceOperation("sources.pdf.detach", true));
 
 export const ScientSourcesToolkit = Toolkit.make(
   ScientSourcesListTool,

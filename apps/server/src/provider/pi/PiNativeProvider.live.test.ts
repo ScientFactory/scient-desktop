@@ -10,11 +10,14 @@ import * as Stream from "effect/Stream";
 
 import { makePiRpcClient } from "./PiRpcClient.ts";
 import { PI_CUSTOM_MODELS_EXTENSION } from "./PiCustomModels.ts";
+import { rejectNonPostRequest } from "./PiLiveTestHelpers.ts";
 
-// Opt in with SCIENT_PI_TEST_BINARY=/path/to/pi; no installed profile or credentials are used.
+// Opt in with SCIENT_PI_TEST_BINARY=/path/to/pi; SCIENT_PI_TEST_VERSION can pin the candidate.
+// No installed profile or credentials are used.
 // Raw builtins only: an empty offline profile does not qualify coding-agent remote catalog
 // overlays/cached updates, native filter/refresh semantics, or deferred response handles.
 const binary = process.env.SCIENT_PI_TEST_BINARY;
+const expectedVersion = process.env.SCIENT_PI_TEST_VERSION;
 const json = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
 const decodeBody = Schema.decodeUnknownSync(
   Schema.fromJsonString(Schema.Record(Schema.String, Schema.Unknown)),
@@ -33,7 +36,7 @@ for (const preset of [
     model: "claude-haiku-4-5",
     api: "anthropic-messages",
     suffix: "",
-    route: "/v1/messages",
+    route: "/v1/messages?beta=true",
   },
   {
     provider: "openrouter",
@@ -85,6 +88,7 @@ for (const preset of [
               response.writeHead(200, { "content-type": "application/json" }).end(json(payload));
               return;
             }
+            if (rejectNonPostRequest(request, response)) return;
             let body = "";
             for await (const chunk of request) body += String(chunk);
             requests.push({
@@ -215,7 +219,7 @@ export default function(pi) {
               SCIENT_NATIVE_QA_B: "must-not-interpolate-b",
             },
           });
-          expect(client.version).toBe("0.84.4");
+          if (expectedVersion) expect(client.version).toBe(expectedVersion);
           yield* client.prompt("/scient-models-refresh");
           yield* client.prompt("/generated-probe snapshot");
           yield* client.prompt("/scient-models-refresh");
@@ -475,7 +479,7 @@ function responseEvents(api = "openai-responses", responseModel = modelId) {
 }
 
 it.effect.skipIf(!binary)(
-  "qualifies full native OpenAI providers in isolated connection namespaces (Pi 0.84.4)",
+  "qualifies full native OpenAI providers in isolated connection namespaces",
   () =>
     Effect.scoped(
       Effect.gen(function* () {
@@ -488,6 +492,7 @@ it.effect.skipIf(!binary)(
           body: Record<string, unknown>;
         }> = [];
         const server = NodeHttp.createServer(async (request, response) => {
+          if (rejectNonPostRequest(request, response)) return;
           let body = "";
           for await (const chunk of request) body += String(chunk);
           requests.push({
@@ -652,7 +657,7 @@ export default function(pi) {
             SCIENT_NATIVE_QA_B: "must-not-interpolate-b",
           },
         });
-        expect(client.version).toBe("0.84.4");
+        if (expectedVersion) expect(client.version).toBe(expectedVersion);
         yield* client.prompt("/native-qualify inspect");
         const baseline = (yield* client.getAvailableModels()).models;
         const native = baseline.find(

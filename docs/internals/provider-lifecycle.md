@@ -259,7 +259,7 @@ execution policy live in the provider manifests.
 | Droid                    | Apple silicon and Intel | ARM64 and x64      | ARM64 and x64, glibc           | Musl Linux.                                 |
 | Cursor                   | Apple silicon and Intel | ARM64 and x64      | ARM64 and x64, glibc           | Musl Linux.                                 |
 | OpenCode                 | No managed catalog      | No managed catalog | No managed catalog             | Scient-managed lifecycle is not advertised. |
-| Pi                       | Apple silicon only      | No managed catalog | No managed catalog             | Other targets require an external runtime.  |
+| Pi                       | Apple silicon and Intel | ARM64 and x64      | ARM64 and x64, glibc           | Musl Linux.                                 |
 
 A release may advertise a row as platform-qualified only after its exact packaged install,
 cancellation, smoke test, authentication, repair, update, interruption, removal, and recovery paths

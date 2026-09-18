@@ -11,6 +11,8 @@ import {
   resolveMarkdownDirection,
   resolvePlainTextBoxDirection,
   resolveProseBlockDirection,
+  resolveProseBlockDirectionFromCounts,
+  resolveStructuredDirectionFromCounts,
   resolveStreamingMarkdownDirection,
   resolveTableCellDirection,
   resolveTableCellDirectionFromCounts,
@@ -54,14 +56,58 @@ describe("message and block direction", () => {
     ).toBe("ltr");
   });
 
-  it("allows only unambiguous blocks to override the message base", () => {
+  it("uses structural evidence when the complete prose balance is closely mixed", () => {
+    expect(
+      resolveStructuredDirectionFromCounts(
+        [
+          { ltr: 4, rtl: 6 },
+          { ltr: 4, rtl: 6 },
+          { ltr: 9, rtl: 1 },
+        ],
+        { ltr: 60, rtl: 40 },
+        "ltr",
+      ),
+    ).toBe("rtl");
+  });
+
+  it("does not let inline or display math make a Hebrew message LTR", () => {
+    const markdown = [
+      "# כותרת עברית",
+      "",
+      "זהו הסבר עברי ברור עם פרטים נוספים.",
+      "",
+      String.raw`$EnglishTechnicalIdentifier + AnotherVariable \rightarrow ResultVariable$`,
+      "",
+      String.raw`$$LongEnglishEquationName = AnotherLongEnglishEquationName$$`,
+    ].join("\n");
+
+    expect(resolveMarkdownDirection(markdown, "auto")).toBe("rtl");
+  });
+
+  it("uses local prose when it is decisive and message context in the middle band", () => {
     expect(resolveProseBlockDirection("Methods and Results", "rtl")).toBe("ltr");
     expect(resolveProseBlockDirection("RF — רגיש מאוד", "rtl")).toBe("rtl");
     expect(resolveProseBlockDirection("Methods — שיטות", "rtl")).toBe("rtl");
+    expect(resolveProseBlockDirection("Methods — שיטות", "ltr")).toBe("ltr");
   });
 
-  it("keeps a mixed list RTL when any list item contains RTL prose", () => {
-    expect(resolveAggregateDirection("Standard deviation\nCRP/ESR — מוגברים", "ltr")).toBe("rtl");
+  it("applies the contextual thresholds at their exact boundaries", () => {
+    expect(resolveProseBlockDirectionFromCounts({ ltr: 70, rtl: 30 }, "rtl")).toBe("ltr");
+    expect(resolveProseBlockDirectionFromCounts({ ltr: 69, rtl: 31 }, "ltr")).toBe("ltr");
+    expect(resolveProseBlockDirectionFromCounts({ ltr: 69, rtl: 31 }, "rtl")).toBe("rtl");
+    expect(resolveProseBlockDirectionFromCounts({ ltr: 56, rtl: 44 }, "ltr")).toBe("ltr");
+    expect(resolveProseBlockDirectionFromCounts({ ltr: 56, rtl: 44 }, "rtl")).toBe("rtl");
+    expect(resolveProseBlockDirectionFromCounts({ ltr: 55, rtl: 45 }, "ltr")).toBe("rtl");
+    expect(resolveProseBlockDirectionFromCounts({ ltr: 0, rtl: 0 }, "rtl")).toBe("rtl");
+  });
+
+  it("does not reverse a complete English list because of one RTL word", () => {
+    expect(
+      resolveAggregateDirection(
+        "Standard deviation and confidence interval\nReview the complete report שלום",
+        "rtl",
+      ),
+    ).toBe("ltr");
   });
 
   it("makes English-only groups LTR and leaves empty groups at their fallback", () => {
@@ -143,6 +189,14 @@ describe("message and block direction", () => {
         isStreaming: true,
       }),
     ).toBe("ltr");
+    expect(
+      resolveStreamingMarkdownDirection({
+        markdown: "123 — …",
+        requestedDirection: "auto",
+        frozenDirection: "rtl",
+        isStreaming: false,
+      }),
+    ).toBe("rtl");
   });
 
   it("normalizes only standalone flow arrows in RTL prose", () => {

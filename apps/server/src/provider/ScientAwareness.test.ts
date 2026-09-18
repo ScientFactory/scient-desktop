@@ -29,7 +29,11 @@ describe("Scient awareness", () => {
     expect(SCIENT_CORE_AWARENESS).toContain("Scient's Markdown chat");
     expect(SCIENT_CORE_AWARENESS).toContain("Project `.tex` files open");
     expect(SCIENT_CORE_AWARENESS).toContain("editable LaTeX source/PDF workspace");
-    expect(SCIENT_CORE_AWARENESS).not.toContain("project-relative Markdown link");
+    expect(SCIENT_CORE_AWARENESS).toContain("Linked project `.html` files open directly");
+    expect(SCIENT_CORE_AWARENESS).toContain("integrated browser with relative resources");
+    expect(SCIENT_CORE_AWARENESS).toContain("prefer clickable project-relative Markdown links");
+    expect(SCIENT_CORE_AWARENESS).toContain("temporary preview URLs");
+    expect(SCIENT_CORE_AWARENESS).not.toContain("localhost");
     expect(SCIENT_CORE_AWARENESS).not.toContain("When LaTeX fits");
     expect(SCIENT_CORE_AWARENESS).toContain("diagram declaration before its contents");
     expect(SCIENT_CORE_AWARENESS).toContain("self-contained Plotly figure JSON");
@@ -113,12 +117,15 @@ describe("Scient awareness", () => {
 
   it("projects exact provider tool names without changing capability gating", () => {
     const awareness = buildScientAwareness(
-      new Set(["documents:build", "skills:read"]),
+      new Set(["documents:build", "skills:read", "preview"]),
       CLAUDE_SCIENT_TOOL_PROJECTION,
     );
 
     expect(awareness).toContain("`mcp__t3-code__scient_pdf_build`");
     expect(awareness).toContain("`mcp__t3-code__scient_latex_build`");
+    expect(awareness).toContain("`mcp__t3-code__preview_status`");
+    expect(awareness).toContain("`mcp__t3-code__preview_open`");
+    expect(awareness).not.toContain("`preview_status`");
     expect(awareness).not.toContain("`ToolSearch`");
     expect(awareness).not.toContain("use `scient_pdf_build`");
     expect(awareness).toContain(SCIENT_SKILLS_AWARENESS);

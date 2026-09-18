@@ -31,12 +31,13 @@ export function restoreQueuedImages(
     const file = new File([bytes], attachment.name, { type: attachment.mimeType });
     restored.push({
       type: "image",
-      id: `queued_${randomUUID()}`,
+      id: attachment.id ?? `queued_${randomUUID()}`,
       name: attachment.name,
       mimeType: attachment.mimeType,
       sizeBytes: attachment.sizeBytes,
       previewUrl: URL.createObjectURL(file),
       file,
+      ...(attachment.source ? { source: attachment.source } : {}),
     });
   }
   return restored;

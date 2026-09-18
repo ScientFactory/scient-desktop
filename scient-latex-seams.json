@@ -14,6 +14,7 @@
     "apps/server/src/mcp/toolkits/documents/latexHandler.ts",
     "apps/server/src/mcp/toolkits/documents/tools.ts",
     "apps/server/src/provider/ScientToolProjection.ts",
+    "apps/server/src/provider/ScientAwareness.ts",
     "apps/server/src/scient/skills/BuiltInSkillSources.ts",
     "scripts/stage-synctex-runtime.ts",
     "scripts/lib/scient-synctex-build.ts",

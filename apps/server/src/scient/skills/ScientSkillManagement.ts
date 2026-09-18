@@ -8,6 +8,7 @@ import {
 import {
   ProviderDriverKind,
   ScientSkillManagementError,
+  type ScientSkillDocument,
   type ScientSkillInventory,
 } from "@t3tools/contracts";
 import * as Context from "effect/Context";
@@ -23,6 +24,9 @@ export interface ScientSkillManagementShape {
   readonly list: (
     projectRoot?: string,
   ) => Effect.Effect<ScientSkillInventory, ScientSkillManagementError>;
+  readonly readDocument: (
+    releaseKey: string,
+  ) => Effect.Effect<ScientSkillDocument, ScientSkillManagementError>;
   readonly setUserActivation: (input: {
     readonly releaseKey: string;
     readonly active: boolean;
@@ -38,6 +42,13 @@ export interface ScientSkillManagementShape {
 
 const emptyManagement: ScientSkillManagementShape = {
   list: () => Effect.succeed({ skills: [], diagnostics: [], supportedProviders: [] }),
+  readDocument: () =>
+    Effect.fail(
+      new ScientSkillManagementError({
+        operation: "readDocument",
+        message: "Scient skill management is unavailable in this server composition.",
+      }),
+    ),
   setUserActivation: () =>
     Effect.fail(
       new ScientSkillManagementError({
@@ -146,7 +157,7 @@ const make = Effect.fn("ScientSkillManagement.make")(function* () {
             categoryDescription: release.categoryDescription,
             origin: release.origin,
             scope: "project" as const,
-            path: `.scient/skills/${release.name}`,
+            path: `.scient/skills/${release.name}/SKILL.md`,
             supportedScopes: [...release.supportedScopes],
             defaultInvocationPolicy: "automatic" as const,
             defaultActive: true,
@@ -177,6 +188,24 @@ const make = Effect.fn("ScientSkillManagement.make")(function* () {
       } satisfies ScientSkillInventory;
     },
   );
+
+  const readDocument: ScientSkillManagementShape["readDocument"] = Effect.fn(
+    "ScientSkillManagement.readDocument",
+  )(function* (releaseKey) {
+    const release = registry.resolveReleaseKey(releaseKey);
+    if (!release) {
+      return yield* new ScientSkillManagementError({
+        operation: "readDocument",
+        message: "That exact managed skill release is not available in this Scient build.",
+      });
+    }
+    return {
+      releaseKey: skillReleaseKey(release),
+      name: release.name,
+      description: release.description,
+      instructions: release.instructions,
+    } satisfies ScientSkillDocument;
+  });
 
   const setUserActivation: ScientSkillManagementShape["setUserActivation"] = Effect.fn(
     "ScientSkillManagement.setUserActivation",
@@ -243,7 +272,7 @@ const make = Effect.fn("ScientSkillManagement.make")(function* () {
     return yield* list(input.projectRoot);
   });
 
-  return ScientSkillManagement.of({ list, setProjectPreference, setUserActivation });
+  return ScientSkillManagement.of({ list, readDocument, setProjectPreference, setUserActivation });
 });
 
 export const layer = Layer.effect(ScientSkillManagement, make());

@@ -7,7 +7,7 @@ import {
   ArrowUpDownIcon,
   ChevronRightIcon,
   FolderPlusIcon,
-  Globe2Icon,
+  GlobeIcon,
   SearchIcon,
   SquarePenIcon,
   TerminalIcon,
@@ -820,7 +820,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
                   />
                 }
               >
-                <Globe2Icon className="size-3" />
+                <GlobeIcon className="size-3" />
               </TooltipTrigger>
               <TooltipPopup side="top">
                 Open localhost:{discoveredPorts[0]?.port}

@@ -138,13 +138,14 @@ describe("asset route", () => {
     }).pipe(Effect.provide(testLayer), Effect.scoped),
   );
 
-  it.effect("serves interactive HTML and its nested local resources with normal MIME types", () =>
+  it.effect("serves interactive HTML from Unicode paths with normal MIME types", () =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
       const root = yield* fileSystem.makeTempDirectoryScoped({ prefix: "scient-html-route-" });
-      const htmlPath = path.join(root, "interactive.html");
-      const scriptPath = path.join(root, "assets", "app.js");
+      const documentRoot = path.join(root, "רפואה שנה א");
+      const htmlPath = path.join(documentRoot, "dashboard.html");
+      const scriptPath = path.join(documentRoot, "assets", "app.js");
       yield* fileSystem.makeDirectory(path.dirname(scriptPath), { recursive: true });
       yield* fileSystem.writeFileString(htmlPath, '<script src="assets/app.js"></script>');
       yield* fileSystem.writeFileString(scriptPath, "document.body.textContent = 'ready';");
@@ -166,6 +167,7 @@ describe("asset route", () => {
         "sandbox allow-scripts allow-forms allow-popups allow-modals",
       );
       expect(html.headers.get("cache-control")).toBe("no-store");
+      expect(yield* Effect.promise(() => html.text())).toContain('src="assets/app.js"');
 
       const script = yield* runRequest(`${ASSET_ROUTE_PREFIX}/${token}/assets/app.js`);
       expect(script.status).toBe(200);

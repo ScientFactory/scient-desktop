@@ -1,4 +1,4 @@
-import { File, FileText, Image as ImageIcon, Library, Sigma } from "lucide-react";
+import { BookOpenText, File, FileText, Image as ImageIcon, Library, Sigma } from "lucide-react";
 
 import type { ScientRightPanelSurface } from "./surfaces";
 
@@ -15,5 +15,7 @@ export function ScientRightPanelSurfaceIcon(props: { readonly surface: ScientRig
       return <ImageIcon className="size-3 shrink-0" />;
     case "file":
       return <File className="size-3 shrink-0" />;
+    case "skill":
+      return <BookOpenText className="size-3 shrink-0" />;
   }
 }

@@ -3,7 +3,6 @@
   flex: 1;
   overflow: auto;
   background: var(--background);
-  cursor: text;
 }
 
 .scient-markdown-workspace {
@@ -1306,10 +1305,6 @@ textarea.scient-markdown-math-source {
 
 .scient-markdown-document.is-write {
   caret-color: var(--foreground);
-}
-
-.scient-markdown-document.is-read {
-  cursor: text;
 }
 
 .scient-markdown-document .ProseMirror-selectednode {

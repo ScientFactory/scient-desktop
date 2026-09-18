@@ -64,6 +64,52 @@ describe("ComposerCommandMenu", () => {
     expect(markup).toContain("<svg");
   });
 
+  it("identifies built-in Scient skills while preserving project ownership", () => {
+    const markup = renderToStaticMarkup(
+      <ComposerCommandMenu
+        items={[
+          {
+            id: "skill:codex:pdf-authoring",
+            type: "skill",
+            provider: ProviderDriverKind.make("codex"),
+            skill: {
+              name: "pdf-authoring",
+              path: "scient://skills/scient.pdf-authoring%400.2.0%23sha256%3Aabc",
+              scope: "personal",
+              enabled: true,
+            },
+            label: "PDF Authoring",
+            description: "Create and verify PDF documents",
+          },
+          {
+            id: "skill:codex:project-review",
+            type: "skill",
+            provider: ProviderDriverKind.make("codex"),
+            skill: {
+              name: "project-review",
+              path: "scient://skills/project.review%400.1.0%23sha256%3Adef",
+              scope: "project",
+              enabled: true,
+            },
+            label: "Project Review",
+            description: "Review this project",
+          },
+        ]}
+        resolvedTheme="dark"
+        isLoading={false}
+        triggerKind="skill"
+        activeItemId="skill:codex:pdf-authoring"
+        onHighlightedItemChange={() => {}}
+        onSelect={() => {}}
+      />,
+    );
+
+    expect(markup).toContain(">Scient Skill</span>");
+    expect(markup).toContain(">Project Skill</span>");
+    expect(markup).not.toContain(">App Skill</span>");
+    expect(markup).toContain('<img aria-hidden="true" class="shrink-0 size-3.5 sm:size-3"');
+  });
+
   it("shows the repo source for a slash skill", () => {
     const markup = renderToStaticMarkup(
       <ComposerCommandMenu

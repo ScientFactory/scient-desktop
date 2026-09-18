@@ -5,6 +5,29 @@ import { restoreQueuedImages } from "./queueImageRestore";
 const pngDataUrl = `data:image/png;base64,${btoa("fake-png-bytes")}`;
 
 describe("restoreQueuedImages", () => {
+  it("preserves image identity and captured-window metadata through editing", () => {
+    const source = {
+      kind: "snap-shot" as const,
+      capturedAt: "2026-09-14T00:00:00.000Z",
+      appName: "Editor",
+      windowTitle: "Plot",
+      accessibleText: "axis labels",
+    };
+    const [image] = restoreQueuedImages([
+      {
+        type: "image",
+        id: "local-image",
+        name: "plot.png",
+        mimeType: "image/png",
+        sizeBytes: 14,
+        dataUrl: pngDataUrl,
+        source,
+      },
+    ]);
+    expect(image?.id).toBe("local-image");
+    expect(image?.source).toEqual(source);
+    if (image) URL.revokeObjectURL(image.previewUrl);
+  });
   it("rebuilds composer images from stored upload attachments", async () => {
     const restored = await restoreQueuedImages([
       {

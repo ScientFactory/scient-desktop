@@ -1,10 +1,12 @@
 import type { ScopedThreadRef } from "@t3tools/contracts";
 import type { ComposerThreadDraftState, DraftId } from "../../composerDraftStore";
+import { migrateQueueComposerContext } from "./composerSnapshot";
 
 export type QueueEditSession = {
   key: string;
   journalKey: string;
   stashed?: boolean;
+  composerSeparated?: boolean;
   originalTarget: ScopedThreadRef;
   editTarget: DraftId;
   queueItemId: string;
@@ -18,6 +20,7 @@ type StoredDraft = Omit<ComposerThreadDraftState, "images" | "files"> & {
   files: StoredAttachment<ComposerThreadDraftState["files"][number]>[];
 };
 type StoredSession = Omit<QueueEditSession, "ordinary" | "edited"> & {
+  contextVersion?: 2;
   ordinary: StoredDraft;
   edited: StoredDraft;
 };
@@ -87,6 +90,7 @@ export async function writeQueueEditJournal(session: QueueEditSession | string) 
       };
       entries.put({
         ...session,
+        contextVersion: 2,
         ordinary: encode(session.ordinary, "ordinary"),
         edited: encode(session.edited, "edited"),
       } satisfies StoredSession);
@@ -130,6 +134,7 @@ async function decode(session: StoredSession): Promise<QueueEditSession> {
     ]);
     return {
       ...value,
+      ...(session.contextVersion === 2 ? {} : migrateQueueComposerContext(value)),
       images: images.map((image) => {
         if (!image.file) throw new Error(`The saved image ${image.name} is unavailable.`);
         return { ...image, file: image.file };

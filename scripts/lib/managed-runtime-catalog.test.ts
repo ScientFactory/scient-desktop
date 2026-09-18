@@ -17,29 +17,7 @@ import {
 } from "./managed-runtime-catalog.ts";
 import bundledCatalogJson from "../../apps/server/src/scient/providerLifecycle/bundled-managed-runtime-catalog.json" with { type: "json" };
 
-const currentCatalog: ManagedRuntimeCatalogData = {
-  schemaVersion: 1,
-  providers: {
-    codex: { contractRevision: 1, channel: "stable", version: "0.150.1", artifacts: {} },
-    claudeAgent: { contractRevision: 1, channel: "stable", version: "2.1.251", artifacts: {} },
-    antigravity: { contractRevision: 1, channel: "stable", version: "1.1.22", artifacts: {} },
-    antigravityAcp: {
-      contractRevision: 1,
-      channel: "stable",
-      version: "1.0.0",
-      artifacts: {},
-    },
-    cursor: {
-      contractRevision: 1,
-      channel: "stable",
-      version: "2026.08.25-3e8eec8",
-      artifacts: {},
-    },
-    droid: { contractRevision: 1, channel: "stable", version: "0.208.1", artifacts: {} },
-    grok: { contractRevision: 1, channel: "stable", version: "1.0.13", artifacts: {} },
-    pi: { contractRevision: 1, channel: "stable", version: "0.84.4", artifacts: {} },
-  },
-};
+const currentCatalog: ManagedRuntimeCatalogData = validateManagedRuntimeCatalog(bundledCatalogJson);
 
 const unixAcpArchive = Buffer.from(
   "UEsDBBQAAAAIAAAAIl1zEy/oFAAAABQAAAASAAAAYWd5X2FjcF9zZXJ2ZXIucGFyS8wryUwvSizLLKlUKCoFcnJTuQBQSwMEFAAAAAgAAAAiXV9yAykQAAAADgAAABUAAABsb2NhbGhhcm5lc3NfZXh0ZXJuYWzLyU9OzFHISCzKSy0u5gIAUEsBAhQDFAAAAAgAAAAiXXMTL+gUAAAAFAAAABIAAAAAAAAAAAAAAO2BAAAAAGFneV9hY3Bfc2VydmVyLnBhclBLAQIUAxQAAAAIAAAAIl1fcgMpEAAAAA4AAAAVAAAAAAAAAAAAAADtgUQAAABsb2NhbGhhcm5lc3NfZXh0ZXJuYWxQSwUGAAAAAAIAAgCDAAAAhwAAAAAA",
@@ -77,7 +55,7 @@ function nextPatch(version: string): string {
   return `${match[1]}${Number(match[2]) + 1}`;
 }
 
-function stableChannelFetch(codexVersion = "0.150.1") {
+function stableChannelFetch(codexVersion = bundledCatalogJson.providers.codex.version) {
   const requested: string[] = [];
   const fetch_ = async (input: URL) => {
     const url = input.toString();
@@ -86,28 +64,33 @@ function stableChannelFetch(codexVersion = "0.150.1") {
       return Response.json({ tag_name: `rust-v${codexVersion}` });
     }
     if (url === "https://downloads.claude.ai/claude-code-releases/latest") {
-      return new Response("2.1.251");
+      return new Response(bundledCatalogJson.providers.claudeAgent.version);
     }
     if (url.endsWith("/manifests/darwin_arm64.json")) {
-      return Response.json({ version: "1.1.22" });
+      return Response.json({ version: bundledCatalogJson.providers.antigravity.version });
     }
     if (url === "https://cursor.com/install") {
       return new Response(
-        'DOWNLOAD_URL="https://downloads.cursor.com/lab/2026.08.25-3e8eec8/${OS}/${ARCH}/agent-cli-package.tar.gz"',
+        `DOWNLOAD_URL="https://downloads.cursor.com/lab/${bundledCatalogJson.providers.cursor.version}/\${OS}/\${ARCH}/agent-cli-package.tar.gz"`,
       );
     }
     if (url === "https://downloads.factory.ai/factory-cli/LATEST") {
-      return new Response("0.208.1\n");
+      return new Response(`${bundledCatalogJson.providers.droid.version}\n`);
     }
-    if (url === "https://x.ai/cli/stable") return new Response("1.0.13");
+    if (url === "https://x.ai/cli/stable")
+      return new Response(bundledCatalogJson.providers.grok.version);
     if (
       url ===
       "https://raw.githubusercontent.com/agentclientprotocol/registry/main/antigravity-acp/agent.json"
     ) {
-      return Response.json({ version: "1.0.0" });
+      return Response.json({ version: bundledCatalogJson.providers.antigravityAcp.version });
     }
     if (url === "https://api.github.com/repos/earendil-works/pi/releases/latest")
-      return Response.json({ tag_name: "v0.84.4", draft: false, prerelease: false });
+      return Response.json({
+        tag_name: `v${bundledCatalogJson.providers.pi.version}`,
+        draft: false,
+        prerelease: false,
+      });
     throw new Error(`Unexpected release request: ${url}`);
   };
   return { fetch_, requested };
@@ -133,6 +116,27 @@ describe("managed runtime release discovery", () => {
         },
       }),
     ).toThrow(/unapproved targets/u);
+  });
+
+  it("preserves an approved older target subset until its provider is requalified", () => {
+    const pi = bundledCatalogJson.providers.pi;
+    const legacy = validateManagedRuntimeCatalog({
+      ...bundledCatalogJson,
+      providers: {
+        ...bundledCatalogJson.providers,
+        pi: { ...pi, artifacts: { "darwin-arm64": pi.artifacts["darwin-arm64"] } },
+      },
+    });
+    expect(Object.keys(legacy.providers.pi!.artifacts)).toEqual(["darwin-arm64"]);
+    expect(() =>
+      validateManagedRuntimeCatalog({
+        ...bundledCatalogJson,
+        providers: {
+          ...bundledCatalogJson.providers,
+          pi: { ...pi, artifacts: {} },
+        },
+      }),
+    ).toThrow(/does not contain any app-approved targets/u);
   });
 
   it("extracts one unambiguous Cursor CLI release", () => {
@@ -210,33 +214,42 @@ describe("managed runtime release discovery", () => {
     const { pi, ...providers } = bundledCatalogJson.providers;
     const legacy = validateManagedRuntimeCatalog({ ...bundledCatalogJson, providers });
     const version = newer ? nextPatch(pi.version) : pi.version;
-    const artifact = pi.artifacts["darwin-arm64"];
-    const url = artifact.url.replace(`/v${pi.version}/`, `/v${version}/`);
+    const releaseArtifacts = Object.values(pi.artifacts).map((artifact) => ({
+      ...artifact,
+      url: artifact.url.replace(`/v${pi.version}/`, `/v${version}/`),
+    }));
     const requested: string[] = [];
     const result = await refreshManagedRuntimeProvider(legacy, "pi", async (input, init) => {
-      requested.push(input.toString());
-      if (input.toString() === "https://api.github.com/repos/earendil-works/pi/releases/latest") {
+      const url = input.toString();
+      requested.push(url);
+      if (url === "https://api.github.com/repos/earendil-works/pi/releases/latest") {
         return Response.json({
           tag_name: `v${version}`,
           draft: false,
           prerelease: false,
-          assets: [
-            {
-              name: artifact.artifactName,
-              browser_download_url: url,
-              digest: `sha256:${artifact.checksum.digest}`,
-            },
-          ],
+          assets: releaseArtifacts.map((artifact) => ({
+            name: artifact.artifactName,
+            browser_download_url: artifact.url,
+            digest: `sha256:${artifact.checksum.digest}`,
+          })),
         });
       }
-      expect(input.toString()).toBe(url);
+      const artifact = releaseArtifacts.find((value) => value.url === url);
+      expect(artifact).toBeDefined();
       expect(init?.method).toBe("HEAD");
-      return new Response(null, { headers: { "content-length": String(artifact.size) } });
+      return new Response(null, { headers: { "content-length": String(artifact!.size) } });
     });
     expect(result.changedProviders).toEqual(["pi"]);
     expect(result.catalog.providers.pi?.version).toBe(version);
-    expect(Object.keys(result.catalog.providers.pi!.artifacts)).toEqual(["darwin-arm64"]);
-    expect(requested).toHaveLength(3);
+    expect(Object.keys(result.catalog.providers.pi!.artifacts)).toEqual([
+      "darwin-arm64",
+      "darwin-x64",
+      "linux-arm64-glibc",
+      "linux-x64-glibc",
+      "win32-arm64",
+      "win32-x64",
+    ]);
+    expect(requested).toHaveLength(8);
     expect(legacy.providers.pi).toBeUndefined();
     const promoted = mergeQualifiedManagedRuntimeProvider({
       current: legacy,
@@ -245,6 +258,114 @@ describe("managed runtime release discovery", () => {
     });
     expect(promoted.providers.pi?.version).toBe(version);
     expect(promoted.providers.codex).toEqual(legacy.providers.codex);
+  });
+
+  it("discovers and promotes a qualified same-version target expansion", async () => {
+    const full = validateManagedRuntimeCatalog(bundledCatalogJson);
+    const pi = bundledCatalogJson.providers.pi;
+    const current = validateManagedRuntimeCatalog({
+      ...bundledCatalogJson,
+      providers: {
+        ...bundledCatalogJson.providers,
+        pi: { ...pi, artifacts: { "darwin-arm64": pi.artifacts["darwin-arm64"] } },
+      },
+    });
+    const artifacts = Object.values(pi.artifacts);
+    const result = await refreshManagedRuntimeProvider(current, "pi", async (input, init) => {
+      const url = input.toString();
+      if (url === "https://api.github.com/repos/earendil-works/pi/releases/latest") {
+        return Response.json({
+          tag_name: `v${pi.version}`,
+          draft: false,
+          prerelease: false,
+          assets: artifacts.map((artifact) => ({
+            name: artifact.artifactName,
+            browser_download_url: artifact.url,
+            digest: `sha256:${artifact.checksum.digest}`,
+          })),
+        });
+      }
+      const artifact = artifacts.find((value) => value.url === url);
+      expect(artifact).toBeDefined();
+      expect(init?.method).toBe("HEAD");
+      return new Response(null, { headers: { "content-length": String(artifact!.size) } });
+    });
+    expect(result.changedProviders).toEqual(["pi"]);
+    expect(result.catalog.providers.pi).toEqual(full.providers.pi);
+    expect(
+      mergeQualifiedManagedRuntimeProvider({ current, candidate: result.catalog, provider: "pi" })
+        .providers.pi,
+    ).toEqual(full.providers.pi);
+  });
+
+  it("keeps same-version expansion additive and immutable", () => {
+    const candidate = validateManagedRuntimeCatalog(bundledCatalogJson);
+    const pi = bundledCatalogJson.providers.pi;
+    const current = validateManagedRuntimeCatalog({
+      ...bundledCatalogJson,
+      providers: {
+        ...bundledCatalogJson.providers,
+        pi: { ...pi, artifacts: { "darwin-arm64": pi.artifacts["darwin-arm64"] } },
+      },
+    });
+    const changedExisting: ManagedRuntimeCatalogData = {
+      ...candidate,
+      providers: {
+        ...candidate.providers,
+        pi: {
+          ...candidate.providers.pi!,
+          artifacts: {
+            ...candidate.providers.pi!.artifacts,
+            "darwin-arm64": {
+              ...candidate.providers.pi!.artifacts["darwin-arm64"]!,
+              checksum: { algorithm: "sha256", digest: "a".repeat(64) },
+            },
+          },
+        },
+      },
+    };
+    expect(() =>
+      mergeQualifiedManagedRuntimeProvider({
+        current,
+        candidate: changedExisting,
+        provider: "pi",
+      }),
+    ).toThrow(/same-version catalog repack/u);
+    const incomplete: ManagedRuntimeCatalogData = {
+      ...candidate,
+      providers: {
+        ...candidate.providers,
+        pi: {
+          ...candidate.providers.pi!,
+          artifacts: {
+            "darwin-arm64": candidate.providers.pi!.artifacts["darwin-arm64"]!,
+            "darwin-x64": candidate.providers.pi!.artifacts["darwin-x64"]!,
+          },
+        },
+      },
+    };
+    expect(() =>
+      mergeQualifiedManagedRuntimeProvider({ current, candidate: incomplete, provider: "pi" }),
+    ).toThrow(/every app-approved target/u);
+  });
+
+  it("rejects an incomplete newer release during publication", () => {
+    const current = validateManagedRuntimeCatalog(bundledCatalogJson);
+    const pi = current.providers.pi!;
+    const candidate = validateManagedRuntimeCatalog({
+      ...current,
+      providers: {
+        ...current.providers,
+        pi: {
+          ...pi,
+          version: nextPatch(pi.version),
+          artifacts: { "darwin-arm64": pi.artifacts["darwin-arm64"] },
+        },
+      },
+    });
+    expect(() =>
+      mergeQualifiedManagedRuntimeProvider({ current, candidate, provider: "pi" }),
+    ).toThrow(/every app-approved target/u);
   });
 
   it("discovers every existing Droid target from its native channel", async () => {

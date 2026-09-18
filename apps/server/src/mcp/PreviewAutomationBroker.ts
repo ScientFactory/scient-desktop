@@ -36,10 +36,10 @@ import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import * as SynchronizedRef from "effect/SynchronizedRef";
 
-import * as McpInvocationContext from "./McpInvocationContext.ts";
+import * as AgentInvocationContext from "../scient/operations/AgentInvocationContext.ts";
 
 export interface PreviewAutomationInvokeInput {
-  readonly scope: McpInvocationContext.McpInvocationScope;
+  readonly scope: AgentInvocationContext.AgentInvocationScope;
   readonly operation: PreviewAutomationOperation;
   readonly input: unknown;
   readonly tabId?: PreviewTabId;
@@ -100,10 +100,10 @@ interface HostAssignment {
 
 interface PreviewAutomationRequestErrorContext {
   readonly operation: PreviewAutomationOperation;
-  readonly environmentId: McpInvocationContext.McpInvocationScope["environmentId"];
-  readonly threadId: McpInvocationContext.McpInvocationScope["threadId"];
-  readonly providerSessionId: string;
-  readonly providerInstanceId: McpInvocationContext.McpInvocationScope["providerInstanceId"];
+  readonly environmentId: AgentInvocationContext.AgentInvocationScope["environmentId"];
+  readonly threadId: AgentInvocationContext.AgentInvocationScope["threadId"];
+  readonly providerSessionId: string | undefined;
+  readonly providerInstanceId: AgentInvocationContext.AgentInvocationScope["providerInstanceId"];
   readonly clientId: string;
   readonly connectionId: ClientConnection["connectionId"];
   readonly requestId: string;
@@ -158,8 +158,8 @@ const selectorDiagnosticsFromInput = (
   return {};
 };
 
-const hostAssignmentKey = (scope: McpInvocationContext.McpInvocationScope): string =>
-  `${scope.environmentId}\u0000${scope.providerSessionId}`;
+const hostAssignmentKey = (scope: AgentInvocationContext.AgentInvocationScope): string =>
+  `${scope.environmentId}\u0000${scope.nativeSessionId !== undefined ? `native:${scope.nativeSessionId}` : `provider:${scope.providerSessionId}`}`;
 
 const isPreviewTabId = Schema.is(PreviewTabId);
 

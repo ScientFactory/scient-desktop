@@ -62,6 +62,7 @@ export const RPC_REQUIRED_SCOPES = {
   [WS_METHODS.serverRemoveCustomModel]: AuthOrchestrationOperateScope,
   [WS_METHODS.serverTestCustomModel]: AuthOrchestrationOperateScope,
   [WS_METHODS.skillsList]: AuthOrchestrationReadScope,
+  [WS_METHODS.skillsReadDocument]: AuthOrchestrationReadScope,
   [WS_METHODS.skillsSetProjectPreference]: AuthOrchestrationOperateScope,
   [WS_METHODS.skillsSetUserActivation]: AuthOrchestrationOperateScope,
   [WS_METHODS.providerSkillsSetEnabled]: AuthOrchestrationOperateScope,

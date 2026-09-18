@@ -12,6 +12,7 @@ import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import * as Fiber from "effect/Fiber";
 import { makePiCustomModelsClientFactory } from "./PiCustomModels.ts";
+import { rejectNonPostRequest } from "./PiLiveTestHelpers.ts";
 import type { ResolvedModelConnection } from "../../customModels.ts";
 import { makePiTextGeneration } from "../../textGeneration/PiTextGeneration.ts";
 
@@ -337,6 +338,7 @@ for (const protocol of ["openai-completions", "openai-responses", "anthropic-mes
             body: Record<string, unknown>;
           }> = [];
           const server = NodeHttp.createServer(async (request, response) => {
+            if (rejectNonPostRequest(request, response)) return;
             let body = "";
             for await (const chunk of request) body += String(chunk);
             requests.push({
@@ -495,6 +497,8 @@ for (const protocol of ["openai-completions", "openai-responses", "anthropic-mes
           expect(yield* fs.exists(root + "/profile/models.json")).toBe(false);
         }),
       ).pipe(Effect.provide(NodeServices.layer)),
-    { timeout: 45_000 },
+    // The Intel macOS runner needs more than 45 seconds to exercise every
+    // credential form twice through the real Pi executable.
+    { timeout: 90_000 },
   );
 }

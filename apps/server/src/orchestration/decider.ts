@@ -1457,6 +1457,9 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
         ...(userMessageEvent ? { causationEventId: userMessageEvent.eventId } : {}),
         type: "thread.turn-start-requested",
         payload: {
+          ...(command.selectedScientSkillNames === undefined
+            ? {}
+            : { selectedScientSkillNames: command.selectedScientSkillNames }),
           threadId: command.threadId,
           messageId: command.message.messageId,
           ...(command.modelSelection !== undefined

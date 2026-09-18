@@ -2,10 +2,13 @@ import { expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import { McpServer } from "effect/unstable/ai";
+import { WorkspaceBindingResolver } from "../../../scient/projectScope/WorkspaceBindingResolver.ts";
+import { workspaceResolverForTest } from "../../../scient/projectScope/WorkspaceBindingTestUtils.ts";
 
 import { ScientDocumentsToolkitRegistrationLive } from "../../McpHttpServer.ts";
 
 const TestLayer = ScientDocumentsToolkitRegistrationLive.pipe(
+  Layer.provide(Layer.succeed(WorkspaceBindingResolver, workspaceResolverForTest(new Map()))),
   Layer.provideMerge(McpServer.McpServer.layer),
 );
 
@@ -34,7 +37,7 @@ it.effect("registers the HTML and LaTeX document build operations", () =>
       readOnlyHint: false,
       destructiveHint: true,
       idempotentHint: true,
-      openWorldHint: false,
+      openWorldHint: true,
     });
   }).pipe(Effect.provide(TestLayer)),
 );

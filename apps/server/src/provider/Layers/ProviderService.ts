@@ -965,10 +965,11 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
 
   const agentAccessCapabilities = Effect.fn("ProviderService.agentAccessCapabilities")(function* (
     threadId: ThreadId,
-    provider: ProviderDriverKind,
+    adapter: ProviderAdapterShape<unknown>,
   ) {
     const supportsScientSkills =
-      ScientSkillSession.scientSkillDeliveryForProvider(provider) === "mcp";
+      adapter.capabilities.mcpSessionInjection === true &&
+      ScientSkillSession.scientSkillDeliveryForProvider(adapter.provider) === "mcp";
     const capabilities = new Set<McpInvocationContext.McpCapability>([
       "pull-requests",
       "documents:build",
@@ -1013,10 +1014,15 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
   const prepareMcpSession = (
     threadId: ThreadId,
     providerInstanceId: ProviderInstanceId,
-    provider: ProviderDriverKind,
+    adapter: ProviderAdapterShape<unknown>,
   ) =>
     Effect.gen(function* () {
-      const capabilities = yield* agentAccessCapabilities(threadId, provider);
+      if (adapter.capabilities.mcpSessionInjection !== true) {
+        yield* McpSessionRegistry.revokeActiveMcpThread(threadId);
+        yield* Effect.sync(() => McpProviderSession.clearMcpProviderSession(threadId));
+        return undefined;
+      }
+      const capabilities = yield* agentAccessCapabilities(threadId, adapter);
       const supportsScientSkills = capabilities.has("skills:read");
       const credential = yield* issueMcpCredential({
         threadId,
@@ -1349,7 +1355,7 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
       const persistedCwd = readPersistedCwd(input.binding.runtimePayload);
       const persistedModelSelection = readPersistedModelSelection(input.binding.runtimePayload);
 
-      yield* prepareMcpSession(input.binding.threadId, bindingInstanceId, input.binding.provider);
+      yield* prepareMcpSession(input.binding.threadId, bindingInstanceId, adapter);
       const resumed = yield* adapter
         .startSession({
           threadId: input.binding.threadId,
@@ -1583,7 +1589,7 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
         }
         const adapter = yield* registry.getByInstance(resolvedInstanceId);
         yield* clearTurnAnalyticsSession(resolvedInstanceId, threadId);
-        yield* prepareMcpSession(threadId, resolvedInstanceId, resolvedProvider);
+        yield* prepareMcpSession(threadId, resolvedInstanceId, adapter);
         const session = yield* adapter
           .startSession({
             ...input,
@@ -1687,11 +1693,10 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
       const candidate = inputTextWithAttachmentContext
         ? `${inputTextWithAttachmentContext}\n\n${context}`
         : context;
-      if (candidate.length <= PROVIDER_SEND_TURN_MAX_INPUT_CHARS) {
-        inputTextWithAttachmentContext = candidate;
-        return true;
-      }
-      return false;
+      // Preserve selected data. The final prepared-input check can omit optional
+      // Skill discovery, but must reject rather than silently drop attachments.
+      inputTextWithAttachmentContext = candidate;
+      return candidate.length <= PROVIDER_SEND_TURN_MAX_INPUT_CHARS;
     };
     for (const attachment of attachments) {
       const attachmentPath = resolveAttachmentPath({
@@ -1804,6 +1809,7 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
       yield* McpSessionRegistry.touchActiveMcpThread(input.threadId);
       const skillPlan = yield* skillSessionPlanner.resolve({
         provider: routed.adapter.provider,
+        mcpSessionAvailable: routed.adapter.capabilities.mcpSessionInjection === true,
         ...(routed.projectRoot ? { projectRoot: routed.projectRoot } : {}),
       });
       yield* Effect.forEach(
@@ -1818,17 +1824,36 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
         { discard: true },
       );
       const scientTools = scientToolProjectionForProvider(routed.adapter.provider);
-      const skillTurn = prepareScientSkillTurn(
-        input.input,
-        skillPlan.delivery === "mcp" ? skillPlan.skills : [],
-        skillPlan.delivery === "mcp" ? skillPlan.releases : new Map(),
-        {
-          skillLoadToolName: scientTools.skillLoad,
-          providerNativeSkillTool: scientTools.providerNativeSkillTool,
-          deferred: scientTools.deferred,
-        },
-      );
-      if (ScientSkillSession.scientSkillDeliveryForProvider(routed.adapter.provider) === "mcp") {
+      const skillProjection = {
+        skillLoadToolName: scientTools.name("scient_skill_load"),
+        skillListToolName: scientTools.name("scient_skills_list"),
+        providerNativeSkillTool: scientTools.providerNativeSkillTool,
+        deferred: scientTools.deferred,
+      };
+      const prepareSkills = (omitAutomaticIndex: boolean) =>
+        prepareScientSkillTurn(
+          input.input,
+          skillPlan.delivery === "mcp" ? skillPlan.skills : [],
+          skillPlan.delivery === "mcp" ? skillPlan.releases : new Map(),
+          { ...skillProjection, omitAutomaticIndex },
+          parsed.selectedScientSkillNames ?? [],
+        );
+      let skillTurn = prepareSkills(false);
+      if ((skillTurn.input?.length ?? 0) > PROVIDER_SEND_TURN_MAX_INPUT_CHARS) {
+        // Drop only optional catalog lines, preserving selection/context and the
+        // full callable scope. Discovery explains omissions through the list tool.
+        skillTurn = prepareSkills(true);
+      }
+      if ((skillTurn.input?.length ?? 0) > PROVIDER_SEND_TURN_MAX_INPUT_CHARS) {
+        return yield* toValidationError(
+          "ProviderService.sendTurn",
+          "The message, selected context, attachments and Scient instructions exceed the provider input limit. Shorten the message or remove a context selection and retry; nothing was sent.",
+        );
+      }
+      if (
+        routed.adapter.capabilities.mcpSessionInjection === true &&
+        ScientSkillSession.scientSkillDeliveryForProvider(routed.adapter.provider) === "mcp"
+      ) {
         // The bearer token remains stable for the provider process, but its
         // exact skill authority is replaced immediately before this turn.
         // Policy changes made while it runs therefore apply only to the next

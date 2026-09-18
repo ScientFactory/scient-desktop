@@ -11,6 +11,7 @@ describe("buildLatexInvocation", () => {
     });
 
     expect(invocation.command).toBe("latexmk");
+    expect(invocation.args).toContain("-norc");
     expect(invocation.args).toContain("-interaction=nonstopmode");
     expect(invocation.args).toContain("-file-line-error");
     expect(invocation.args).toContain("-no-shell-escape");

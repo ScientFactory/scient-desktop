@@ -6,9 +6,10 @@ extensions, and skills remain Pi-owned. Models added through Scient use separate
 
 ## Setup
 
-Enable **Pi** in **Settings > Providers**. Pi is off by default. On an Apple Silicon Mac, Scient can
-install a qualified private Pi runtime through the existing **Install** action. Repair, update, and
-remove affect only that private runtime, not your system installation or Pi credentials.
+Enable **Pi** in **Settings > Providers**. Pi is off by default. On supported macOS, Windows, and
+glibc-based Linux desktops, Scient can install a qualified private Pi runtime through the existing
+**Install** action. Repair, update, and remove affect only that private runtime, not your system
+installation, native Pi configuration, model connections, or Pi credentials.
 
 For recognized system package installations, Scient can check for updates and run the owning
 package manager when you choose **Update**. Extensions are not updated. Unrecognized installations
@@ -19,9 +20,9 @@ Scient does not silently migrate an existing installation.
 
 Alternatively, install Pi using its [official instructions](https://github.com/earendil-works/pi),
 then configure its executable path if `pi` is not on the Scient server's `PATH`. The integration is
-tested against Pi 0.84.4 and 0.85.0 and requires 0.84.4 or newer. The managed installer offers
-qualified native releases through Scient's update catalog. Other operating-system targets require a separately installed runtime;
-Scient does not currently offer a qualified managed Pi build for those targets.
+tested against Pi 0.85.1 and requires 0.84.4 or newer. The managed installer covers Apple-silicon
+and Intel macOS, ARM64 and x64 Windows, and ARM64 and x64 glibc Linux. Musl Linux and other
+operating-system or architecture targets require a separately installed runtime.
 
 Use **Settings > Custom models > Add model**, or **Connect models** in Pi's setup:
 

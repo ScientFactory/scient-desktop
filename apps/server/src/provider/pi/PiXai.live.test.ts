@@ -10,6 +10,7 @@ import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import { makePiCustomModelsClientFactory } from "./PiCustomModels.ts";
+import { rejectNonPostRequest } from "./PiLiveTestHelpers.ts";
 import { piModelSettings } from "./PiCustomModelsTestHelpers.ts";
 
 const binary = process.env.SCIENT_PI_TEST_BINARY;
@@ -27,6 +28,7 @@ it.effect.skipIf(!binary)(
       const requests: { path: string; body: Record<string, unknown>; key: string | undefined }[] =
         [];
       const server = NodeHttp.createServer(async (request, response) => {
+        if (rejectNonPostRequest(request, response)) return;
         let body = "";
         for await (const chunk of request) body += String(chunk);
         requests.push({

@@ -35,6 +35,7 @@
     "@scientfactory/compute": "workspace:*",
     "@scientfactory/document-artifacts": "workspace:*",
     "@scientfactory/execution": "workspace:*",
+    "@scientfactory/operations": "workspace:*",
     "@scientfactory/pdf-validation": "workspace:*",
     "@scientfactory/project-init": "workspace:*",
     "@scientfactory/provider-runtime": "workspace:*",

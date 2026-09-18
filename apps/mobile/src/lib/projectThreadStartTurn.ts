@@ -8,6 +8,7 @@ import {
   type ProviderInteractionMode,
   type RuntimeMode,
 } from "@t3tools/contracts";
+import { collectSelectedScientSkillNames } from "@t3tools/shared/composerInlineTokens";
 import { composerCitationsToPlainText } from "@t3tools/shared/composerCitations";
 
 import type { UploadedMobileAttachment } from "./attachmentUpload";
@@ -54,6 +55,7 @@ export function buildProjectThreadStartTurnInput(spec: ProjectThreadStartTurnSpe
   const isWorktree = spec.workspaceMode === "worktree";
   return {
     commandId: CommandId.make(spec.commandId),
+    selectedScientSkillNames: collectSelectedScientSkillNames(spec.text),
     threadId: ThreadId.make(spec.threadId),
     message: {
       messageId: MessageId.make(spec.messageId),

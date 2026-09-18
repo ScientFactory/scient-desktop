@@ -22,7 +22,19 @@ import { vi } from "vite-plus/test";
 import * as ProjectionSnapshotQuery from "../../../orchestration/Services/ProjectionSnapshotQuery.ts";
 import { GeneratedDocumentStore } from "../../../scient/documentArtifacts/GeneratedDocumentStore.ts";
 import * as LatexBuildService from "../../../scient/latex/LatexBuildService.ts";
-import * as McpInvocationContext from "../../McpInvocationContext.ts";
+import {
+  WorkspaceAuthorityGeneration,
+  WorkspaceAuthorityScopeRevision,
+  WorkspaceBindingId,
+  type WorkspaceBindingRecordV1,
+  WorkspaceBindingResolutionError,
+  toSafeWorkspaceBindingDiagnostic,
+} from "../../../scient/projectScope/WorkspaceBinding.ts";
+import {
+  WorkspaceBindingResolver,
+  type WorkspaceBindingDiagnosticResolution,
+} from "../../../scient/projectScope/WorkspaceBindingResolver.ts";
+import * as AgentInvocationContext from "../../../scient/operations/AgentInvocationContext.ts";
 import * as PreviewAutomationBroker from "../../PreviewAutomationBroker.ts";
 import { buildScientLatexForInvocation } from "./latexHandler.ts";
 
@@ -137,11 +149,127 @@ const makeQuery = (input: {
       Effect.succeed(input.project === null ? Option.none() : Option.some(input.project)),
   } as unknown as ProjectionSnapshotQuery.ProjectionSnapshotQueryShape);
 
+const makeDynamicQuery = (input: {
+  readonly thread: (threadId: ThreadId) => OrchestrationThreadShell | null;
+  readonly project: (projectId: ProjectId) => OrchestrationProjectShell | null;
+}) =>
+  ProjectionSnapshotQuery.ProjectionSnapshotQuery.of({
+    getThreadShellById: (threadId: ThreadId) => {
+      const thread = input.thread(threadId);
+      return Effect.succeed(thread === null ? Option.none() : Option.some(thread));
+    },
+    getProjectShellById: (projectId: ProjectId) => {
+      const project = input.project(projectId);
+      return Effect.succeed(project === null ? Option.none() : Option.some(project));
+    },
+  } as unknown as ProjectionSnapshotQuery.ProjectionSnapshotQueryShape);
+
+const makeBinding = (input: {
+  readonly threadId: ThreadId;
+  readonly projectId: ProjectId;
+  readonly root: string;
+}): WorkspaceBindingRecordV1 => ({
+  schemaVersion: 1,
+  bindingId: WorkspaceBindingId.make(`binding:${input.threadId}:${input.root}`),
+  environmentId,
+  hostProjectId: input.projectId,
+  canonicalRoot: input.root,
+  rootFileSystemIdentity: null,
+  scientProjectId: "scient-project-latex-fixture",
+  repositoryIdentity: null,
+  worktreeIdentity: null,
+  lineageBindingId: null,
+  trustState: "verified",
+  authorityGeneration: WorkspaceAuthorityGeneration.make(1),
+  createdAt: now,
+  lastVerifiedAt: now,
+  supersededBy: null,
+});
+
+const makeResolverForQuery = (
+  query: ProjectionSnapshotQuery.ProjectionSnapshotQueryShape,
+): WorkspaceBindingResolver["Service"] => {
+  const resolveThread: WorkspaceBindingResolver["Service"]["resolveThread"] = Effect.fn(
+    "TestLatexWorkspaceBindingResolver.resolveThread",
+  )(function* (threadId) {
+    const thread = yield* query.getThreadShellById(threadId).pipe(Effect.orDie);
+    if (Option.isNone(thread)) {
+      return yield* new WorkspaceBindingResolutionError({
+        operation: "resolve-thread",
+        kind: "thread-not-found",
+      });
+    }
+    if (thread.value.projectId === null) {
+      return yield* new WorkspaceBindingResolutionError({
+        operation: "resolve-thread",
+        kind: "project-required",
+      });
+    }
+    const project = yield* query.getProjectShellById(thread.value.projectId).pipe(Effect.orDie);
+    if (Option.isNone(project)) {
+      return yield* new WorkspaceBindingResolutionError({
+        operation: "resolve-project",
+        kind: "project-not-found",
+      });
+    }
+    return {
+      binding: makeBinding({
+        threadId,
+        projectId: thread.value.projectId,
+        root: thread.value.worktreePath ?? project.value.workspaceRoot,
+      }),
+      relation: "only-binding",
+      relatedBindingCount: 0,
+      scopeRevision: WorkspaceAuthorityScopeRevision.make(1),
+    };
+  });
+
+  const assertCurrentThreadScope: WorkspaceBindingResolver["Service"]["assertCurrentThreadScope"] =
+    Effect.fn("TestLatexWorkspaceBindingResolver.assertCurrentThreadScope")(function* (input) {
+      const current = yield* resolveThread(input.threadId);
+      if (
+        current.binding.bindingId !== input.bindingId ||
+        current.binding.authorityGeneration !== input.authorityGeneration ||
+        current.scopeRevision !== input.scopeRevision
+      ) {
+        return yield* new WorkspaceBindingResolutionError({
+          operation: "assert-current-thread-scope",
+          kind: "stale-authority",
+        });
+      }
+      return current.binding;
+    });
+
+  const diagnosticsForThread: WorkspaceBindingResolver["Service"]["diagnosticsForThread"] = (
+    threadId,
+  ) =>
+    resolveThread(threadId).pipe(
+      Effect.map((current): WorkspaceBindingDiagnosticResolution => ({
+        binding: toSafeWorkspaceBindingDiagnostic(current.binding),
+        relation: current.relation,
+        relatedBindingCount: current.relatedBindingCount,
+      })),
+    );
+
+  return WorkspaceBindingResolver.of({
+    resolveWorkspaceRoot: () =>
+      Effect.die("UI root resolution is not used by agent document tools"),
+    assertCurrentWorkspaceScope: () =>
+      Effect.die("UI root revalidation is not used by agent document tools"),
+    resolveThread,
+    resolveTrustedChild: ({ childThreadId }) => resolveThread(childThreadId),
+    assertCurrentThreadScope,
+    diagnosticsForThread,
+  });
+};
+
 const makeInvocation = (
   threadId: ThreadId,
-  capabilities: ReadonlySet<McpInvocationContext.McpCapability> = new Set(["documents:build"]),
+  capabilities: ReadonlySet<AgentInvocationContext.OperationCapability> = new Set([
+    "documents:build",
+  ]),
 ) =>
-  McpInvocationContext.McpInvocationContext.of({
+  AgentInvocationContext.AgentInvocationContext.of({
     environmentId,
     threadId,
     providerSessionId: "session-latex-build-test",
@@ -203,16 +331,21 @@ function makeBroker(failPresentation = false) {
 function runBuild(
   effect: ReturnType<typeof buildScientLatexForInvocation>,
   input: {
-    readonly invocation: McpInvocationContext.McpInvocationScope;
+    readonly invocation: AgentInvocationContext.AgentInvocationScope;
     readonly query: ProjectionSnapshotQuery.ProjectionSnapshotQueryShape;
+    readonly resolver?: WorkspaceBindingResolver["Service"];
     readonly builds: LatexBuildService.LatexBuildService["Service"];
     readonly store: GeneratedDocumentStore["Service"];
     readonly broker: PreviewAutomationBroker.PreviewAutomationBroker["Service"];
   },
 ) {
   return effect.pipe(
-    Effect.provideService(McpInvocationContext.McpInvocationContext, input.invocation),
+    Effect.provideService(AgentInvocationContext.AgentInvocationContext, input.invocation),
     Effect.provideService(ProjectionSnapshotQuery.ProjectionSnapshotQuery, input.query),
+    Effect.provideService(
+      WorkspaceBindingResolver,
+      input.resolver ?? makeResolverForQuery(input.query),
+    ),
     Effect.provideService(LatexBuildService.LatexBuildService, input.builds),
     Effect.provideService(GeneratedDocumentStore, input.store),
     Effect.provideService(PreviewAutomationBroker.PreviewAutomationBroker, input.broker),
@@ -279,6 +412,7 @@ describe("Scient LaTeX build handler", () => {
         outputPath: "paper.pdf",
         buildState: "running",
         retryAfterMs: 1_750,
+        toolchain: { executable: "latexmk" },
       });
       expect(builds.requestBuild).not.toHaveBeenCalled();
     }),
@@ -314,6 +448,7 @@ describe("Scient LaTeX build handler", () => {
         byteLength: pdfBytes.byteLength,
         validation: "structural",
         visualReviewPerformed: false,
+        toolchain: { executable: "latexmk" },
       });
       expect(second.status).toBe("completed");
       expect(builds.requestBuild).toHaveBeenCalledOnce();
@@ -558,6 +693,130 @@ describe("Scient LaTeX build handler", () => {
         },
       });
       expect((yield* Effect.promise(() => NodeFSP.stat(outputPath))).isDirectory()).toBe(true);
+    }),
+  );
+
+  it.effect("refuses project output and presentation when the active worktree changes", () =>
+    Effect.gen(function* () {
+      const firstRoot = yield* Effect.promise(() => fixture("scient-latex-authority-first-"));
+      const secondRoot = yield* Effect.promise(() => fixture("scient-latex-authority-second-"));
+      yield* Effect.promise(() => Promise.all([writeTex(firstRoot), writeTex(secondRoot)]));
+      const revisionPath = NodePath.join(firstRoot, ".revision.pdf");
+      yield* Effect.promise(() => NodeFSP.writeFile(revisionPath, pdfBytes));
+      const projectId = ProjectId.make("project-latex-authority-switch");
+      const threadId = ThreadId.make("thread-latex-authority-switch");
+      let activeThread = makeThread({ threadId, projectId, worktreePath: firstRoot });
+      const project = makeProject(projectId, firstRoot);
+      const query = makeDynamicQuery({
+        thread: (candidate) => (candidate === threadId ? activeThread : null),
+        project: (candidate) => (candidate === projectId ? project : null),
+      });
+      const succeeded = snapshot({ state: "succeeded", descriptor: source });
+      const builds = makeBuildService({
+        initial: succeeded,
+        onStatus: (index) => {
+          if (index === 1) {
+            activeThread = makeThread({ threadId, projectId, worktreePath: secondRoot });
+          }
+          return Effect.succeed(succeeded);
+        },
+      });
+      const store = makeStore(revisionPath);
+      const broker = makeBroker();
+
+      const result = yield* runBuild(buildScientLatexForInvocation(defaultInput), {
+        invocation: makeInvocation(threadId),
+        query,
+        builds: builds.service,
+        store: store.store,
+        broker: broker.broker,
+      }).pipe(Effect.result);
+
+      expect(result).toMatchObject({
+        _tag: "Failure",
+        failure: {
+          _tag: "ScientLatexBuildToolError",
+          code: "partial-publication",
+          outputPath: defaultInput.outputPath,
+          publishedSource: source,
+        },
+      });
+      expect(store.retainRevision).toHaveBeenCalledOnce();
+      expect(broker.invoke).not.toHaveBeenCalled();
+      yield* Effect.promise(async () => {
+        await expect(
+          NodeFSP.access(NodePath.join(firstRoot, defaultInput.outputPath)),
+        ).rejects.toBeDefined();
+        await expect(
+          NodeFSP.access(NodePath.join(secondRoot, defaultInput.outputPath)),
+        ).rejects.toBeDefined();
+      });
+    }),
+  );
+
+  it.effect("keeps two worktrees of one project on separate LaTeX write authorities", () =>
+    Effect.gen(function* () {
+      const firstRoot = yield* Effect.promise(() => fixture("scient-latex-worktree-one-"));
+      const secondRoot = yield* Effect.promise(() => fixture("scient-latex-worktree-two-"));
+      yield* Effect.promise(() => Promise.all([writeTex(firstRoot), writeTex(secondRoot)]));
+      const firstRevision = NodePath.join(firstRoot, ".revision.pdf");
+      const secondRevision = NodePath.join(secondRoot, ".revision.pdf");
+      yield* Effect.promise(() =>
+        Promise.all([
+          NodeFSP.writeFile(firstRevision, pdfBytes),
+          NodeFSP.writeFile(secondRevision, pdfBytes),
+        ]),
+      );
+      const projectId = ProjectId.make("project-latex-two-worktrees");
+      const firstThreadId = ThreadId.make("thread-latex-worktree-one");
+      const secondThreadId = ThreadId.make("thread-latex-worktree-two");
+      const project = makeProject(projectId, firstRoot);
+      const threads = new Map<ThreadId, OrchestrationThreadShell>([
+        [
+          firstThreadId,
+          makeThread({ threadId: firstThreadId, projectId, worktreePath: firstRoot }),
+        ],
+        [
+          secondThreadId,
+          makeThread({ threadId: secondThreadId, projectId, worktreePath: secondRoot }),
+        ],
+      ]);
+      const query = makeDynamicQuery({
+        thread: (threadId) => threads.get(threadId) ?? null,
+        project: (candidate) => (candidate === projectId ? project : null),
+      });
+      const succeeded = snapshot({ state: "succeeded", descriptor: source });
+      const firstOutput = "outputs/first.pdf";
+      const secondOutput = "outputs/second.pdf";
+
+      yield* runBuild(buildScientLatexForInvocation({ ...defaultInput, outputPath: firstOutput }), {
+        invocation: makeInvocation(firstThreadId),
+        query,
+        builds: makeBuildService({ initial: succeeded }).service,
+        store: makeStore(firstRevision).store,
+        broker: makeBroker().broker,
+      });
+      yield* runBuild(
+        buildScientLatexForInvocation({ ...defaultInput, outputPath: secondOutput }),
+        {
+          invocation: makeInvocation(secondThreadId),
+          query,
+          builds: makeBuildService({ initial: succeeded }).service,
+          store: makeStore(secondRevision).store,
+          broker: makeBroker().broker,
+        },
+      );
+
+      yield* Effect.promise(async () => {
+        await expect(
+          NodeFSP.access(NodePath.join(firstRoot, firstOutput)),
+        ).resolves.toBeUndefined();
+        await expect(
+          NodeFSP.access(NodePath.join(secondRoot, secondOutput)),
+        ).resolves.toBeUndefined();
+        await expect(NodeFSP.access(NodePath.join(firstRoot, secondOutput))).rejects.toBeDefined();
+        await expect(NodeFSP.access(NodePath.join(secondRoot, firstOutput))).rejects.toBeDefined();
+      });
     }),
   );
 

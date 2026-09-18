@@ -54,6 +54,13 @@ export type ScientRightPanelSurface =
       readonly module: "file";
       readonly path: string;
       readonly line: number | null;
+    }
+  | {
+      readonly id: `scient:skill:${string}`;
+      readonly kind: "scient";
+      readonly module: "skill";
+      readonly releaseKey: string;
+      readonly title: string;
     };
 
 export function scientSourcesSurface(): Extract<ScientRightPanelSurface, { module: "sources" }> {
@@ -135,6 +142,19 @@ export function scientEnvironmentFileSurface(input: {
   };
 }
 
+export function scientSkillSurface(input: {
+  readonly releaseKey: string;
+  readonly title: string;
+}): Extract<ScientRightPanelSurface, { module: "skill" }> {
+  return {
+    id: `scient:skill:${encodeURIComponent(input.releaseKey)}`,
+    kind: "scient",
+    module: "skill",
+    releaseKey: input.releaseKey,
+    title: input.title,
+  };
+}
+
 export function normalizeScientRightPanelSurface(value: unknown): ScientRightPanelSurface | null {
   if (typeof value !== "object" || value === null) return null;
   const surface = value as Record<string, unknown>;
@@ -198,6 +218,19 @@ export function normalizeScientRightPanelSurface(value: unknown): ScientRightPan
       line: typeof surface.line === "number" ? surface.line : null,
     });
   }
+  if (
+    surface.module === "skill" &&
+    typeof surface.releaseKey === "string" &&
+    surface.releaseKey.length > 0 &&
+    surface.releaseKey.length <= 1_024 &&
+    !surface.releaseKey.includes("\0") &&
+    typeof surface.title === "string" &&
+    surface.title.length > 0 &&
+    surface.title.length <= 256 &&
+    !surface.title.includes("\0")
+  ) {
+    return scientSkillSurface({ releaseKey: surface.releaseKey, title: surface.title });
+  }
   return null;
 }
 
@@ -217,5 +250,7 @@ export function scientRightPanelSurfaceTitle(surface: ScientRightPanelSurface): 
       const normalized = surface.path.replaceAll("\\", "/");
       return normalized.slice(normalized.lastIndexOf("/") + 1) || surface.path;
     }
+    case "skill":
+      return surface.title;
   }
 }

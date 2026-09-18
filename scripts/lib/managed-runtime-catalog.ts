@@ -105,6 +105,24 @@ function policyEntries(provider: ManagedRuntimeProvider) {
   });
 }
 
+function approvedTargetKeys(provider: ManagedRuntimeCatalogProvider): ReadonlyArray<string> {
+  return provider === "antigravityAcp"
+    ? ANTIGRAVITY_ACP_TARGETS.map((target) => `${target.platform}-${target.arch}`)
+    : policyEntries(provider).map(({ key }) => key);
+}
+
+function hasCompleteApprovedTargetSet(
+  provider: ManagedRuntimeCatalogProvider,
+  release: ManagedRuntimeCatalogProviderData,
+): boolean {
+  const approved = approvedTargetKeys(provider);
+  const candidate = Object.keys(release.artifacts);
+  return (
+    candidate.length === approved.length &&
+    approved.every((key) => release.artifacts[key] !== undefined)
+  );
+}
+
 function strictVersion(value: string, label: string): string {
   const version = value.trim();
   if (!/^[0-9]+(?:\.[0-9]+)+(?:-[0-9A-Za-z._]+)?$/u.test(version) || version.length > 128) {
@@ -326,13 +344,23 @@ export function validateManagedRuntimeCatalog(input: unknown): ManagedRuntimeCat
         ? ANTIGRAVITY_ACP_TARGETS.map((target) => ({ key: `${target.platform}-${target.arch}` }))
         : policyEntries(provider);
     const expectedTargets = new Set(entries.map(({ key }) => key));
-    const unexpectedTargets = Object.keys(rawArtifacts).filter((key) => !expectedTargets.has(key));
+    const artifactKeys = Object.keys(rawArtifacts);
+    const unexpectedTargets = artifactKeys.filter((key) => !expectedTargets.has(key));
     if (unexpectedTargets.length > 0) {
       throw new Error(`${provider} contains unapproved targets: ${unexpectedTargets.join(", ")}.`);
     }
+    if (artifactKeys.length === 0) {
+      throw new Error(`${provider} does not contain any app-approved targets.`);
+    }
+    // A generated feed can predate newly app-approved targets. Decode its approved
+    // subset so that the provider's own discovery and native qualification can
+    // add the missing targets without disabling its already qualified artifacts.
+    if (provider === "antigravityAcp" && artifactKeys.length !== entries.length) {
+      throw new Error("Antigravity ACP does not contain every app-approved target.");
+    }
 
     const artifacts: Record<string, ManagedRuntimeCatalogArtifactData> = {};
-    for (const { key } of entries) {
+    for (const { key } of entries.filter(({ key }) => rawArtifacts[key] !== undefined)) {
       const rawArtifact = record(rawArtifacts[key], `${provider} ${key} artifact`);
       const rawChecksum = record(rawArtifact.checksum, `${provider} ${key} checksum`);
       const algorithm = stringField(rawChecksum, "algorithm", `${provider} ${key} checksum`);
@@ -371,7 +399,28 @@ export function validateManagedRuntimeCatalog(input: unknown): ManagedRuntimeCat
           : {}),
       };
     }
-    providers[provider] = candidateProvider({ provider, version, artifacts });
+    if (provider === "antigravityAcp") {
+      providers[provider] = candidateProvider({ provider, version, artifacts });
+      continue;
+    }
+    for (const { key, policy } of policyEntries(provider)) {
+      const artifact = artifacts[key];
+      if (!artifact) continue;
+      const hydrated = hydrateManagedRuntimeArtifact(policy, {
+        provider,
+        version,
+        target: policy.target,
+        ...artifact,
+        catalogRevision: `validation:${provider}:${version}:${key}`,
+      });
+      if (!hydrated) throw new Error(`${provider} ${key} violates app-owned runtime policy.`);
+    }
+    providers[provider] = {
+      contractRevision: CONTRACT_REVISION,
+      channel: "stable",
+      version,
+      artifacts,
+    };
   }
 
   return { schemaVersion: 1, providers };
@@ -382,13 +431,34 @@ function releaseChanged(
   current: ManagedRuntimeCatalogProviderData,
   version: string,
 ): boolean {
-  if (current.version === version) return false;
+  if (current.version === version) {
+    return approvedTargetKeys(provider).some((key) => current.artifacts[key] === undefined);
+  }
   if (!isManagedRuntimeUpdate({ provider, current: current.version, candidate: version })) {
     throw new Error(
       `${provider} stable discovery moved backwards from ${current.version} to ${version}.`,
     );
   }
   return true;
+}
+
+function isAdditiveTargetExpansion(input: {
+  readonly provider: ManagedRuntimeCatalogProvider;
+  readonly current: ManagedRuntimeCatalogProviderData;
+  readonly candidate: ManagedRuntimeCatalogProviderData;
+}): boolean {
+  const approved = new Set(approvedTargetKeys(input.provider));
+  const currentEntries = Object.entries(input.current.artifacts);
+  const candidateEntries = Object.entries(input.candidate.artifacts);
+  return (
+    hasCompleteApprovedTargetSet(input.provider, input.candidate) &&
+    candidateEntries.length > currentEntries.length &&
+    currentEntries.every(
+      ([key, artifact]) =>
+        approved.has(key) &&
+        JSON.stringify(input.candidate.artifacts[key]) === JSON.stringify(artifact),
+    )
+  );
 }
 
 export function parseCursorInstallerVersion(source: string): string {
@@ -815,9 +885,24 @@ export function mergeQualifiedManagedRuntimeProvider(input: {
   if (!candidateRelease) {
     throw new Error(`Managed runtime catalog is missing ${input.provider}.`);
   }
+  if (!hasCompleteApprovedTargetSet(input.provider, candidateRelease)) {
+    throw new Error(`${input.provider} candidate does not contain every app-approved target.`);
+  }
   if (currentRelease.version === candidateRelease.version) {
     if (JSON.stringify(currentRelease) !== JSON.stringify(candidateRelease)) {
-      throw new Error(`${input.provider} attempted a same-version catalog repack.`);
+      if (
+        !isAdditiveTargetExpansion({
+          provider: input.provider,
+          current: currentRelease,
+          candidate: candidateRelease,
+        })
+      ) {
+        throw new Error(`${input.provider} attempted a same-version catalog repack.`);
+      }
+      return {
+        schemaVersion: 1,
+        providers: { ...input.current.providers, [input.provider]: candidateRelease },
+      };
     }
     return input.current.providers[input.provider]
       ? input.current

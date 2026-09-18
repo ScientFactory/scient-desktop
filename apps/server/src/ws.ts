@@ -2965,6 +2965,12 @@ const makeWsRpcLayer = (
             }),
             { "rpc.aggregate": "skills" },
           ),
+        [WS_METHODS.skillsReadDocument]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.skillsReadDocument,
+            scientSkillManagement.readDocument(input.releaseKey),
+            { "rpc.aggregate": "skills" },
+          ),
         [WS_METHODS.skillsSetProjectPreference]: (input) =>
           observeRpcEffect(
             WS_METHODS.skillsSetProjectPreference,

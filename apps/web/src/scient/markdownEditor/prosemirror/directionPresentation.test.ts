@@ -92,8 +92,8 @@ describe("rich Markdown direction presentation", () => {
     ].join("\n");
     const { controller, onUserSourceChange, view } = mount(source);
 
-    expect(view.dom.dir).toBe("ltr");
-    expect(inheritedDirection(view.dom.querySelector("h1"))).toBe("ltr");
+    expect(view.dom.dir).toBe("rtl");
+    expect(inheritedDirection(view.dom.querySelector("h1"))).toBe("rtl");
     const paragraphs = Array.from(view.dom.querySelectorAll("p"));
     expect(
       inheritedDirection(
@@ -355,6 +355,25 @@ describe("rich Markdown direction presentation", () => {
     expect(arrows[1]?.classList.contains("is-long")).toBe(true);
     expect(view.dom.querySelector("a")?.textContent).toBe("קישור → עברי");
     expect(view.dom.querySelector("code")?.textContent).toBe("קוד → עברי");
+    expect(controller.session.session.draftSource).toBe(source);
+    expect(onUserSourceChange).not.toHaveBeenCalled();
+  });
+
+  it("keeps a heading with its section when the document base differs", () => {
+    const source = [
+      "English introduction remains left to right.",
+      "",
+      "## כותרת עברית",
+      "",
+      "- פריט ראשון",
+      "- פריט שני",
+      "",
+    ].join("\n");
+    const { controller, onUserSourceChange, view } = mount(source);
+
+    expect(view.dom.dir).toBe("rtl");
+    expect(inheritedDirection(view.dom.querySelector("h2"))).toBe("rtl");
+    expect(inheritedDirection(view.dom.querySelector("ul"))).toBe("rtl");
     expect(controller.session.session.draftSource).toBe(source);
     expect(onUserSourceChange).not.toHaveBeenCalled();
   });

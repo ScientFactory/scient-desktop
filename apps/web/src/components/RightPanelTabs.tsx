@@ -21,7 +21,7 @@ import {
   ChevronRight,
   FileDiff,
   Files,
-  Globe2,
+  Globe,
   Library,
   Plus,
   Sigma,
@@ -405,7 +405,7 @@ function RightPanelEmptyState(props: {
     },
     {
       label: "Browser",
-      icon: Globe2,
+      icon: Globe,
       shortcut: "B",
       available: props.browserAvailable,
       disabledReason: SURFACE_UNAVAILABLE_HINTS.browser,
@@ -731,7 +731,7 @@ function PreviewFavicon({ capturedUrl, url }: { capturedUrl: string | null; url:
   return (
     <FaviconImage
       sources={[capturedUrl, publicProviderUrl]}
-      fallback={<Globe2 className="size-3 shrink-0" />}
+      fallback={<Globe className="size-3 shrink-0" />}
       className="size-3 shrink-0 rounded-sm object-contain"
     />
   );
@@ -967,7 +967,7 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
     },
     {
       label: "Browser",
-      icon: Globe2,
+      icon: Globe,
       shortcut: "B",
       available: props.browserAvailable,
       disabledReason: SURFACE_DISABLED_REASONS.browser,

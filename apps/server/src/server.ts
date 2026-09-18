@@ -62,6 +62,10 @@ import * as TextGeneration from "./textGeneration/TextGeneration.ts";
 import { ProviderInstanceRegistryHydrationLive } from "./provider/Layers/ProviderInstanceRegistryHydration.ts";
 import * as TerminalManager from "./terminal/Manager.ts";
 import * as McpHttpServer from "./mcp/McpHttpServer.ts";
+import * as WorkspaceAuthorityProjection from "./scient/projectScope/WorkspaceAuthorityProjection.ts";
+import * as WorkspaceBindingEvidence from "./scient/projectScope/WorkspaceBindingEvidence.ts";
+import * as WorkspaceBindingResolver from "./scient/projectScope/WorkspaceBindingResolver.ts";
+import * as WorkspaceBindingStore from "./scient/projectScope/WorkspaceBindingStore.ts";
 import * as McpSessionRegistry from "./mcp/McpSessionRegistry.ts";
 import { ComputeMcpGatewayLive } from "./mcp/toolkits/compute/ComputeMcpGateway.ts";
 import * as PreviewAutomationBroker from "./mcp/PreviewAutomationBroker.ts";
@@ -657,7 +661,7 @@ const RuntimeCoreDependenciesLive = ReactorLayerLive.pipe(
   ),
 );
 
-const RuntimeDependenciesLive = RuntimeCoreDependenciesLive.pipe(
+const RuntimeBaseDependenciesLive = RuntimeCoreDependenciesLive.pipe(
   // Misc.
   Layer.provideMerge(BackgroundLayerLive),
   Layer.provideMerge(ResourceDiagnosticsLayerLive),
@@ -671,6 +675,17 @@ const RuntimeDependenciesLive = RuntimeCoreDependenciesLive.pipe(
   Layer.provideMerge(RemoteOpenTargets.layer),
   Layer.provideMerge(ServerLifecycleEvents.layer),
   Layer.provide(NetService.layer),
+);
+
+const WorkspaceBindingResolverLayerLive = WorkspaceBindingResolver.layer.pipe(
+  Layer.provide(WorkspaceAuthorityProjection.layer),
+  Layer.provide(WorkspaceBindingEvidence.layer),
+  Layer.provide(WorkspaceBindingStore.layer),
+);
+
+const RuntimeDependenciesLive = Layer.mergeAll(
+  RuntimeBaseDependenciesLive,
+  WorkspaceBindingResolverLayerLive.pipe(Layer.provide(RuntimeBaseDependenciesLive)),
 );
 
 const commandReadinessLayer = HttpRouter.middleware(

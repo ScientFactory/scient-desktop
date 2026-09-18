@@ -7,6 +7,7 @@ import {
   useMemo,
   useRef,
 } from "react";
+import { resizeCursorForPlatform } from "~/lib/utils";
 
 import {
   nudgeScientSplitFraction,
@@ -112,7 +113,10 @@ export function useScientSplit(options: UseScientSplitOptions) {
         pendingFraction: options.fraction,
         frame: null,
       };
-      document.body.style.cursor = axis === "y" ? "row-resize" : "col-resize";
+      document.body.style.cursor = resizeCursorForPlatform(
+        axis === "y" ? "vertical" : "horizontal",
+        navigator.platform,
+      );
       document.body.style.userSelect = "none";
       event.preventDefault();
     },

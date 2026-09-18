@@ -1,4 +1,6 @@
 import * as Schema from "effect/Schema";
+import { SelectedScientSkillNames } from "./scientSkillSelection.ts";
+import { OrchestrationMessageContext } from "./composerContext.ts";
 
 import { IsoDateTime, ThreadId, TrimmedNonEmptyString } from "./baseSchemas.ts";
 import {
@@ -29,6 +31,11 @@ export const ScientThreadQueueItemId = TrimmedNonEmptyString.check(
 export type ScientThreadQueueItemId = typeof ScientThreadQueueItemId.Type;
 
 export const ScientThreadQueueItem = Schema.Struct({
+  // Versioned client edit snapshot. The server preserves this bounded opaque
+  // JSON alongside delivery text; it never interprets it as agent authority.
+  composerSnapshot: Schema.optional(Schema.String.check(Schema.isMaxLength(4 * 1024 * 1024))),
+  selectedScientSkillNames: Schema.optional(SelectedScientSkillNames),
+  context: Schema.optional(OrchestrationMessageContext),
   queueItemId: ScientThreadQueueItemId,
   threadId: Schema.optional(ThreadId),
   editToken: Schema.optional(Schema.String),
@@ -65,6 +72,9 @@ export const ScientThreadQueueListRequest = Schema.Struct({
 export type ScientThreadQueueListRequest = typeof ScientThreadQueueListRequest.Type;
 
 export const ScientThreadQueueEnqueueRequest = Schema.Struct({
+  context: ScientThreadQueueItem.fields.context,
+  composerSnapshot: ScientThreadQueueItem.fields.composerSnapshot,
+  selectedScientSkillNames: ScientThreadQueueItem.fields.selectedScientSkillNames,
   threadId: ThreadId,
   queueItemId: ScientThreadQueueItemId,
   modelSelection: ScientThreadQueueItem.fields.modelSelection,
@@ -76,6 +86,9 @@ export const ScientThreadQueueEnqueueRequest = Schema.Struct({
 export type ScientThreadQueueEnqueueRequest = typeof ScientThreadQueueEnqueueRequest.Type;
 
 export const ScientThreadQueueUpdateRequest = Schema.Struct({
+  context: ScientThreadQueueItem.fields.context,
+  composerSnapshot: ScientThreadQueueItem.fields.composerSnapshot,
+  selectedScientSkillNames: ScientThreadQueueItem.fields.selectedScientSkillNames,
   threadId: ThreadId,
   editToken: Schema.String,
   queueItemId: ScientThreadQueueItemId,

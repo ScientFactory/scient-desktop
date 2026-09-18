@@ -9,6 +9,52 @@ import type { ScientReleaseNote } from "./model";
  */
 export const SCIENT_RELEASE_NOTES = [
   {
+    version: "0.6.14",
+    publishedAt: "2026-09-18",
+    format: "paragraphs",
+    headline: "Bring more context. Keep more control. Compare more answers.",
+    highlights: [
+      {
+        id: "compare-several-models",
+        title: "Compare several models at once",
+        description:
+          "Choose multiple models when starting a task. Scient gives each one a separate worktree so you can compare approaches without mixing their changes.",
+      },
+      {
+        id: "ask-in-chat-from-more-places",
+        title: "Ask in chat from more places",
+        description:
+          "Select text in an answer or rendered Markdown—including code and editable Mermaid source—and add it to chat with an optional typed or voice note. Saved quotes can reopen the source.",
+      },
+      {
+        id: "compose-with-richer-context",
+        title: "Compose with richer context",
+        description:
+          "Put files, terminal excerpts, review comments, previews, and pull requests directly in a rich-text prompt. Large pastes become attachments instead of crowding the message.",
+      },
+      {
+        id: "control-follow-ups",
+        title: "Stay in control while agents work",
+        description:
+          "Choose whether follow-ups queue or steer, edit or reorder waiting messages, and keep composing while projects and worktrees finish setting up in the background.",
+      },
+      {
+        id: "repair-diagrams-without-losing-intent",
+        title: "Repair diagrams without losing intent",
+        description:
+          "Ask an agent to propose a Mermaid repair and review it before sending, or let Scient recover narrowly recognized syntax slips. SVG and PNG exports preserve richer labels more reliably.",
+      },
+      {
+        id: "move-through-projects-and-reviews",
+        title: "Move through projects and reviews faster",
+        description:
+          "Folder links open the file tree, large diffs load progressively, and pull-request search, stacks, comments, shortcuts, and setup progress make complex work easier to navigate.",
+      },
+    ],
+    alsoIncluded:
+      "Thinking traces and native commands; usage limits for OpenCode Go, Cursor, and Grok; clearer Skills; safer custom-model tests; optional storage cleanup; reliable browser editing; better HTML and image previews and exports; steadier Git and checkpoints; mixed Hebrew/English direction; and stable desktop updates.",
+  },
+  {
     version: "0.6.13",
     publishedAt: "2026-09-09",
     format: "paragraphs",

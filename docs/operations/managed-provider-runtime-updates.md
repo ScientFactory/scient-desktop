@@ -40,13 +40,16 @@ Grok, and Pi. The eight release-family runs are intentionally independent:
    Droid uses Factory's native `factory-cli/LATEST` download channel, not the
    independently maintained changelog RSS. Pi uses the official `earendil-works/pi`
    stable GitHub release.
-3. If the version is newer, collect complete immutable metadata for every
-   app-approved target.
+3. If the version is newer or an older feed is missing a subsequently approved
+   target, collect complete immutable metadata for every app-approved target.
 4. Exercise the normal managed-runtime engine on hosted macOS Apple-silicon,
    macOS Intel, Linux x64/ARM64, and Windows x64/ARM64 runners. Each runner downloads,
    verifies, materializes, checks package contents, smoke-tests, activates, and
    removes its native artifact in a temporary private root.
-   Pi qualifies only Apple-silicon macOS, its sole app-approved managed target.
+   Pi uses all six runners. In addition to the shared lifecycle checks, each native
+   Pi binary runs the isolated live Pi integration suites once against synthetic local
+   model endpoints. Those suites verify runtime/RPC behavior, custom-model protocols,
+   secret isolation, and preservation of Pi-owned configuration before repair and removal.
    Official Antigravity ACP uses T3's paired-executable installer instead of the generic
    runtime engine. Its five runners cover Apple-silicon macOS, Linux x64/ARM64, and Windows
    x64/ARM64; no ACP artifact exists for Intel macOS. Its qualification initializes the
@@ -67,14 +70,18 @@ Grok, and Pi. The eight release-family runs are intentionally independent:
 A failed provider is red in its own matrix entry and does not stop other
 providers. Failed discovery, incomplete metadata, a failed native check, a
 downgrade, a same-version repack, or a publication race leaves the current
-catalog untouched. The workflow never force-pushes and never opens a catalog PR,
-so an unrelated monorepo test cannot suppress a qualified provider update.
+catalog untouched. The only permitted same-version change is a complete,
+natively qualified target expansion that preserves every previously published
+artifact byte-for-byte. The workflow never force-pushes and never opens a catalog
+PR, so an unrelated monorepo test cannot suppress a qualified provider update.
 
-An older feed may omit an app-approved family, such as subsequently added ACP or Pi. Validation
-preserves those omissions so other providers can continue independently. Discovery
-uses that family's bundled policy baseline, but collects and qualifies the official
-release even if its version matches the bundle. Only that family's successful
-publication adds it to the feed; no unrelated provider run seeds unqualified entries.
+An older feed may omit an app-approved family, such as subsequently added ACP or Pi, or approved
+targets added after that provider first published. Validation preserves those omissions so other
+providers can continue independently. Discovery uses that family's bundled policy baseline, but
+collects and qualifies the complete official release even if its version matches the bundle.
+Publication may add only approved missing targets while preserving every existing same-version
+artifact exactly. Only that family's successful publication expands the feed; no unrelated provider
+run seeds unqualified entries.
 The runtime package owns the shared release-family list. A workflow contract test
 keeps the scheduled matrix and manual choices aligned with that list.
 
@@ -171,7 +178,7 @@ pass (these are not retries that hide a failure).
 
 ```sh
 gh workflow run managed-provider-runtime-updates.yml \
-  --ref <feature-branch> -f provider=cursor -F qualify_only=true
+  --ref <feature-branch> -f provider=pi -F qualify_only=true
 ```
 
 Cursor's complete 2026.09.02 Unix packages expand to 511–570 MiB, so its

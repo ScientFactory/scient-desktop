@@ -14,9 +14,10 @@ import * as Path from "effect/Path";
 
 import * as GeneratedDocumentStore from "../../../scient/documentArtifacts/GeneratedDocumentStore.ts";
 import * as LatexBuildService from "../../../scient/latex/LatexBuildService.ts";
-import type { McpInvocationScope } from "../../McpInvocationContext.ts";
+import type { AgentInvocationScope } from "../../../scient/operations/AgentInvocationContext.ts";
 import * as PreviewAutomationBroker from "../../PreviewAutomationBroker.ts";
 import {
+  assertCurrentDocumentBuildProject,
   commitStagedProjectPdfOutput,
   isInsideRoot,
   isWindowsAbsolutePath,
@@ -84,6 +85,20 @@ const boundedInstallingPackages = (packages: ReadonlyArray<string>): ReadonlyArr
     .slice(0, MAX_INSTALLING_PACKAGES)
     .map((packageName) => packageName.slice(0, MAX_PACKAGE_NAME_LENGTH).trim())
     .filter((packageName) => packageName.length > 0);
+
+/** Provider results need the engine name, not a host-local executable path. */
+const providerVisibleToolchain = (
+  toolchain: ScientLatexBuildSnapshot["toolchain"],
+): ScientLatexBuildSnapshot["toolchain"] =>
+  toolchain === null
+    ? null
+    : {
+        ...toolchain,
+        executable:
+          toolchain.executable === null
+            ? null
+            : (toolchain.executable.split(/[\\/]/u).at(-1) ?? null),
+      };
 
 const isBuildActive = (snapshot: ScientLatexBuildSnapshot): boolean =>
   snapshot.pendingRerun || ACTIVE_BUILD_STATES.has(snapshot.state);
@@ -182,7 +197,7 @@ const inProgressResult = (input: {
   rootSourcePath: input.snapshot.rootRelativePath,
   outputPath: input.outputPath,
   buildState: input.snapshot.state,
-  toolchain: input.snapshot.toolchain,
+  toolchain: providerVisibleToolchain(input.snapshot.toolchain),
   installingPackages: boundedInstallingPackages(input.snapshot.installingPackages ?? []),
   retryAfterMs: input.retryAfterMs,
 });
@@ -198,7 +213,7 @@ const failFromSnapshot = (
     rootSourcePath: snapshot.rootRelativePath,
     outputPath: input.outputPath,
     diagnostics,
-    toolchain: snapshot.toolchain,
+    toolchain: providerVisibleToolchain(snapshot.toolchain),
   } as const;
   if (snapshot.state === "cancelled") {
     return toolError(
@@ -227,7 +242,7 @@ const failFromSnapshot = (
 };
 
 const presentLatexDocument = Effect.fn("ScientLatexBuild.present")(function* (
-  invocation: McpInvocationScope,
+  invocation: AgentInvocationScope,
   rootSourcePath: string,
 ) {
   const broker = yield* PreviewAutomationBroker.PreviewAutomationBroker;
@@ -255,9 +270,8 @@ export const buildScientLatexForInvocation = Effect.fn("ScientLatexBuild.build")
   const waitBudgetMs = Math.max(0, options.waitBudgetMs ?? DEFAULT_WAIT_BUDGET_MS);
   const pollIntervalMs = Math.max(1, options.pollIntervalMs ?? DEFAULT_POLL_INTERVAL_MS);
   const retryAfterMs = Math.max(250, options.retryAfterMs ?? DEFAULT_RETRY_AFTER_MS);
-  const { invocation, root } = yield* resolveDocumentBuildProject().pipe(
-    Effect.mapError(boundaryToolError),
-  );
+  const authority = yield* resolveDocumentBuildProject().pipe(Effect.mapError(boundaryToolError));
+  const { invocation, root } = authority;
   const latexSource = yield* resolveLatexSource(root, input.sourcePath);
   const output = yield* resolveProjectPdfOutput(latexSource.canonicalRoot, input.outputPath).pipe(
     Effect.mapError(boundaryToolError),
@@ -274,6 +288,7 @@ export const buildScientLatexForInvocation = Effect.fn("ScientLatexBuild.build")
     .status(buildInput)
     .pipe(Effect.mapError((cause) => buildServiceToolError(cause, input)));
   if (!isBuildActive(snapshot) && snapshot.state !== "succeeded") {
+    yield* assertCurrentDocumentBuildProject(authority).pipe(Effect.mapError(boundaryToolError));
     snapshot = yield* builds
       .requestBuild(buildInput)
       .pipe(Effect.mapError((cause) => buildServiceToolError(cause, input)));
@@ -283,6 +298,9 @@ export const buildScientLatexForInvocation = Effect.fn("ScientLatexBuild.build")
     while (isBuildActive(snapshot)) {
       const now = yield* Clock.currentTimeMillis;
       if (now >= deadline) {
+        yield* assertCurrentDocumentBuildProject(authority).pipe(
+          Effect.mapError(boundaryToolError),
+        );
         return inProgressResult({
           sourcePath: latexSource.sourcePath,
           outputPath: output.outputPath,
@@ -308,7 +326,7 @@ export const buildScientLatexForInvocation = Effect.fn("ScientLatexBuild.build")
           rootSourcePath: snapshot.rootRelativePath,
           outputPath: output.outputPath,
           diagnostics: boundedDiagnostics(snapshot.diagnostics),
-          toolchain: snapshot.toolchain,
+          toolchain: providerVisibleToolchain(snapshot.toolchain),
         },
       );
     }
@@ -325,13 +343,14 @@ export const buildScientLatexForInvocation = Effect.fn("ScientLatexBuild.build")
           rootSourcePath: snapshot.rootRelativePath,
           outputPath: output.outputPath,
           diagnostics: boundedDiagnostics(snapshot.diagnostics),
-          toolchain: snapshot.toolchain,
+          toolchain: providerVisibleToolchain(snapshot.toolchain),
           publishedSource: snapshot.descriptor,
         },
       );
     }
     const successfulPageCount = snapshot.descriptor.pageCount;
-    const successfulToolchain = snapshot.toolchain;
+    // The validation block above already rejects a null or unqualified toolchain.
+    const successfulToolchain = providerVisibleToolchain(snapshot.toolchain)!;
     const successfulSnapshot = snapshot;
     const materialized = yield* Effect.scoped(
       Effect.gen(function* () {
@@ -342,6 +361,22 @@ export const buildScientLatexForInvocation = Effect.fn("ScientLatexBuild.build")
             "The LaTeX PDF revision is no longer available.",
           );
         }
+        const assertMaterializationAuthority = () =>
+          assertCurrentDocumentBuildProject(authority).pipe(
+            Effect.mapError(() =>
+              toolError(
+                "partial-publication",
+                "Scient retained the immutable LaTeX PDF, but the active project workspace changed before the requested project file could be written.",
+                {
+                  sourcePath: latexSource.sourcePath,
+                  rootSourcePath: successfulSnapshot.rootRelativePath,
+                  outputPath: output.outputPath,
+                  publishedSource: source,
+                },
+              ),
+            ),
+          );
+        yield* assertMaterializationAuthority();
         yield* generatedDocuments.retainRevision({
           artifactId: source.artifactId,
           revisionId: source.revisionId,
@@ -404,6 +439,7 @@ export const buildScientLatexForInvocation = Effect.fn("ScientLatexBuild.build")
         ) {
           return { _tag: "changed" as const, snapshot: latest };
         }
+        yield* assertMaterializationAuthority();
         yield* commitStagedProjectPdfOutput(staged).pipe(
           Effect.mapError(() =>
             toolError(
@@ -432,6 +468,9 @@ export const buildScientLatexForInvocation = Effect.fn("ScientLatexBuild.build")
       if (!isBuildActive(snapshot) && snapshot.state === "succeeded") continue;
       const now = yield* Clock.currentTimeMillis;
       if (isBuildActive(snapshot) && now >= deadline) {
+        yield* assertCurrentDocumentBuildProject(authority).pipe(
+          Effect.mapError(boundaryToolError),
+        );
         return inProgressResult({
           sourcePath: latexSource.sourcePath,
           outputPath: output.outputPath,
@@ -442,6 +481,20 @@ export const buildScientLatexForInvocation = Effect.fn("ScientLatexBuild.build")
       continue;
     }
 
+    yield* assertCurrentDocumentBuildProject(authority).pipe(
+      Effect.mapError(() =>
+        toolError(
+          "project-changed",
+          "Scient wrote the LaTeX PDF to the workspace where the build began, but the active workspace changed before presentation. The PDF was not opened in the new workspace.",
+          {
+            sourcePath: latexSource.sourcePath,
+            rootSourcePath: successfulSnapshot.rootRelativePath,
+            outputPath: output.outputPath,
+            publishedSource: materialized.source,
+          },
+        ),
+      ),
+    );
     const presented = yield* presentLatexDocument(invocation, successfulSnapshot.rootRelativePath);
     return {
       status: "completed",
