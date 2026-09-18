@@ -113,8 +113,13 @@ export class GitWorkflowService extends Context.Service<
   }
 >()("t3/git/GitWorkflowService") {}
 
-function nonRepositoryLocalStatus(): VcsStatusLocalResult {
+type GitStatusRepositoryState = "repository" | "not-repository" | "git-missing";
+
+function nonRepositoryLocalStatus(
+  gitAvailability: "available" | "missing" = "available",
+): VcsStatusLocalResult {
   return {
+    gitAvailability,
     isRepo: false,
     hasPrimaryRemote: false,
     isDefaultRef: false,
@@ -128,9 +133,11 @@ function nonRepositoryLocalStatus(): VcsStatusLocalResult {
   };
 }
 
-function nonRepositoryStatus(): VcsStatusResult {
+function nonRepositoryStatus(
+  gitAvailability: "available" | "missing" = "available",
+): VcsStatusResult {
   return {
-    ...nonRepositoryLocalStatus(),
+    ...nonRepositoryLocalStatus(gitAvailability),
     hasUpstream: false,
     aheadCount: 0,
     behindCount: 0,
@@ -208,6 +215,11 @@ export const make = Effect.gen(function* () {
   const detectGitRepositoryForStatus = Effect.fn("GitWorkflowService.detectGitRepositoryForStatus")(
     function* (operation: string, cwd: string) {
       const handle = yield* registry.detect({ cwd }).pipe(
+        Effect.catchTag("VcsExecutableUnavailableError", (cause) =>
+          cause.kind === "git" && cause.command === "git"
+            ? Effect.succeed("git-missing" as const)
+            : Effect.fail(cause),
+        ),
         Effect.mapError(
           (cause) =>
             new GitManagerError({
@@ -218,8 +230,11 @@ export const make = Effect.gen(function* () {
             }),
         ),
       );
+      if (handle === "git-missing") {
+        return "git-missing" satisfies GitStatusRepositoryState;
+      }
       if (!handle) {
-        return false;
+        return "not-repository" satisfies GitStatusRepositoryState;
       }
       if (handle.kind !== "git") {
         return yield* new GitManagerError({
@@ -228,7 +243,7 @@ export const make = Effect.gen(function* () {
           detail: `The ${operation} workflow currently supports Git repositories only; detected ${handle.kind}. (${cwd})`,
         });
       }
-      return true;
+      return "repository" satisfies GitStatusRepositoryState;
     },
   );
 
@@ -297,22 +312,36 @@ export const make = Effect.gen(function* () {
       ),
     status: (input) =>
       detectGitRepositoryForStatus("GitWorkflowService.status", input.cwd).pipe(
-        Effect.flatMap((isGitRepository) =>
-          isGitRepository ? gitManager.status(input) : Effect.succeed(nonRepositoryStatus()),
+        Effect.flatMap((state) =>
+          state === "repository"
+            ? gitManager
+                .status(input)
+                .pipe(
+                  Effect.map((status) => ({ ...status, gitAvailability: "available" as const })),
+                )
+            : Effect.succeed(
+                nonRepositoryStatus(state === "git-missing" ? "missing" : "available"),
+              ),
         ),
       ),
     localStatus: (input) =>
       detectGitRepositoryForStatus("GitWorkflowService.localStatus", input.cwd).pipe(
-        Effect.flatMap((isGitRepository) =>
-          isGitRepository
-            ? gitManager.localStatus(input)
-            : Effect.succeed(nonRepositoryLocalStatus()),
+        Effect.flatMap((state) =>
+          state === "repository"
+            ? gitManager
+                .localStatus(input)
+                .pipe(
+                  Effect.map((status) => ({ ...status, gitAvailability: "available" as const })),
+                )
+            : Effect.succeed(
+                nonRepositoryLocalStatus(state === "git-missing" ? "missing" : "available"),
+              ),
         ),
       ),
     remoteStatus: (input, options) =>
       detectGitRepositoryForStatus("GitWorkflowService.remoteStatus", input.cwd).pipe(
-        Effect.flatMap((isGitRepository) =>
-          isGitRepository ? gitManager.remoteStatus(input, options) : Effect.succeed(null),
+        Effect.flatMap((state) =>
+          state === "repository" ? gitManager.remoteStatus(input, options) : Effect.succeed(null),
         ),
       ),
     invalidateLocalStatus: gitManager.invalidateLocalStatus,

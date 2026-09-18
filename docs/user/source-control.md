@@ -196,7 +196,10 @@ clone runs in the background: you can write your first prompt, and sending waits
 are in place. A toast tracks progress and lets you cancel; if the clone fails, retry it from the
 toast or from the banner above the composer.
 
-**Git is required** — Scient uses Git for all local operations. Ensure `git` is installed in the project environment.
+**Git is required only for source-control operations** — Ordinary folders, chat, files, terminals,
+browser tools, compute, and agents continue to work without Git. Cloning, branches, worktrees,
+diffs, commits, pushes, and Git checkpoints require Git in the project environment. When Git is
+missing, the composer can ask the selected agent to install it without replacing your current draft.
 
 **Environment-side setup** — Authentication happens in the environment where the project runs, not necessarily on the device displaying Scient. An administrator may have already configured a shared environment.
 

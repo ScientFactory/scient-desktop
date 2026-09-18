@@ -1,4 +1,4 @@
-import { assert, it, describe } from "@effect/vitest";
+import { assert, expect, it, describe } from "@effect/vitest";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as Cause from "effect/Cause";
 import * as Deferred from "effect/Deferred";
@@ -228,6 +228,38 @@ describe("VcsStatusBroadcaster", () => {
       assert.equal(state.remoteStatusCalls, 1);
       assert.equal(state.localInvalidationCalls, 0);
       assert.equal(state.remoteInvalidationCalls, 0);
+    }).pipe(Effect.provide(makeTestLayer(state)));
+  });
+
+  it.effect("does not probe remote Git status while Git is unavailable", () => {
+    const state = {
+      currentLocalStatus: {
+        ...baseLocalStatus,
+        gitAvailability: "missing" as const,
+        isRepo: false,
+      } as VcsStatusLocalResult,
+      currentRemoteStatus: baseRemoteStatus,
+      localStatusCalls: 0,
+      remoteStatusCalls: 0,
+      localInvalidationCalls: 0,
+      remoteInvalidationCalls: 0,
+    };
+
+    return Effect.gen(function* () {
+      const broadcaster = yield* VcsStatusBroadcaster.VcsStatusBroadcaster;
+
+      const initial = yield* broadcaster.getStatus({ cwd: "/workspace" });
+      const refreshed = yield* broadcaster.refreshStatus("/workspace");
+
+      expect(initial).toMatchObject({ gitAvailability: "missing", isRepo: false });
+      expect(refreshed).toMatchObject({ gitAvailability: "missing", isRepo: false });
+      assert.equal(state.remoteStatusCalls, 0);
+
+      state.currentLocalStatus = { ...baseLocalStatus, gitAvailability: "available" };
+      const available = yield* broadcaster.refreshStatus("/workspace");
+
+      expect(available).toMatchObject({ gitAvailability: "available", isRepo: true });
+      assert.equal(state.remoteStatusCalls, 1);
     }).pipe(Effect.provide(makeTestLayer(state)));
   });
 
