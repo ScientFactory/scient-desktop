@@ -5,8 +5,7 @@ import { ScientSymbol } from "../ScientSymbol";
 import { resolveSidebarStageBackdropVariant, StageBackdropArt } from "../SidebarStageBackdrop";
 
 /**
- * Full-screen card for standalone auth pages, mirroring the pairing surface's
- * treatment. Used by the CLI-connect authorize and callback surfaces.
+ * Branded masthead for the CLI-connect authorize and callback pages.
  */
 export function AuthSurfaceShell({ children }: { readonly children: ReactNode }) {
   const stageVariant = resolveSidebarStageBackdropVariant(APP_STAGE_LABEL);
@@ -32,7 +31,6 @@ export function AuthSurfaceShell({ children }: { readonly children: ReactNode })
             <p className="text-sm font-semibold tracking-tight">{APP_DISPLAY_NAME}</p>
           </div>
         </header>
-
         <div className="p-6 sm:p-8">{children}</div>
       </section>
     </div>

@@ -15,6 +15,7 @@ import {
   type ManagedRuntimeCatalogProvider,
 } from "@scientfactory/provider-runtime";
 import * as Clock from "effect/Clock";
+import * as ByteSize from "effect/ByteSize";
 import * as Context from "effect/Context";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
@@ -453,10 +454,7 @@ export const makeWithOptions = (options?: { readonly startBackgroundRefresh?: bo
         if (response.status === 304) return { response, data: null };
         yield* HttpClientResponse.filterStatusOk(response);
         const data = yield* response.text.pipe(
-          Effect.provideService(
-            HttpIncomingMessage.MaxBodySize,
-            FileSystem.Size(MAX_CATALOG_BYTES),
-          ),
+          Effect.provideService(HttpIncomingMessage.MaxBodySize, ByteSize.bytes(MAX_CATALOG_BYTES)),
           Effect.flatMap(decodeBoundedCatalogJson),
         );
         return { response, data };

@@ -1,40 +1,49 @@
 ---
 name: test-t3-mobile
-description: Launch and test T3 Code Mobile on an iOS Simulator or Android Emulator against disposable local T3 environments, including Metro and dev-client reuse, native rebuild decisions, per-client pairing, seeded projects, semantic UI control, screenshots, and iOS serve-sim streaming. Use after mobile UI or native changes, when reproducing phone or tablet behavior, pairing an emulator to isolated state, or verifying mobile behavior on macOS, Linux, or Windows.
+description: Test T3 Code's native iOS and Android app through its Device panel and returned AgentDevice command. Use for mobile verification, native-client builds, Metro launch, and mobile pairing against isolated development state.
 ---
 
 # Test T3 Mobile
 
-Run one focused, end-to-end mobile verification pass against disposable T3 state. Use the sibling [`test-t3-app`](../test-t3-app/SKILL.md) skill as the detailed reference for pairing-token semantics and SQLite fixtures.
+## Open the device
 
-Command examples use POSIX shell syntax. On Windows, use PowerShell equivalents: set variables with `$env:NAME = "value"`, use an explicit temporary directory from `[System.IO.Path]::GetTempPath()`, and run multiline examples on one line or with PowerShell backticks. Use `$env:ANDROID_HOME\platform-tools\adb.exe` when `adb` is not already on `PATH`.
+Call `device_list`, then `device_open` with the selected host and device IDs.
+T3 boots the device and shows its live stream in the Device panel. Follow its
+returned `quickStart`, using the exact `agentDevice.command` and all `targetArgs`
+on every operation. Use `device_screenshot` to inspect the screen.
 
-## Select a viable platform
+If T3 device tools or the selected device are unavailable, report the blocker
+and stop verification. Do not install or switch to another automation system.
 
-Inspect the host and the affected code before launching processes:
+## Use an isolated backend
 
-- On macOS with Xcode, prefer one representative iOS Simulator when the change is cross-platform so the user can watch through serve-sim. Load and follow [`ios-debugger-agent`](../ios-debugger-agent/SKILL.md), and load [`ios-simulator-browser`](../ios-simulator-browser/SKILL.md) when live streaming is available.
-- On macOS, Linux, or Windows with the Android SDK, use one Android Emulator when Android is the affected surface or iOS tooling is unavailable.
-- When the change is platform-specific, test that platform. When neither platform is viable, report the missing SDK or emulator prerequisite rather than claiming verification. A missing development client is a build step, not a blocker.
+Reuse this task's healthy backend. Otherwise run `vp run dev` from the
+repository root, retain its terminal session, and read the actual backend port
+from the dev-runner output. Use the worktree's ignored `.scient-next` state.
+Never run against `~/.t3/userdata` or a live Scient profile. The Browser panel
+is not required for this workflow.
 
-Do not treat unavailable iOS tooling as a blocker when Android is a valid representative target.
+Test with meaningful project and thread data. Read the shared
+[SQLite fixture reference](../test-t3-app/references/sqlite-fixtures.md) only
+when inspecting or seeding SQLite. Stop the test server before fixture writes.
 
-## Ensure a compatible native client
+## Launch T3 Code Dev
 
-Authorized mobile verification includes building and installing a development client. A missing, stale, or unknown native client is not a reason to skip verification or leave a PR in draft. Build and install it, then continue. Respect an explicit user instruction not to rebuild; otherwise do not ask for separate permission.
-
-Run this from the checkout being tested, on the machine that hosts the selected simulator or emulator. Select and boot one explicit iOS UDID or Android emulator serial first:
+From the checkout being tested on the selected device host, run:
 
 ```bash
-node scripts/mobile-native-client.ts ensure ios <simulator-udid>
-node scripts/mobile-native-client.ts ensure android <emulator-serial>
+node scripts/mobile-native-client.ts ensure <ios|android> <device-id>
 ```
 
-`ensure` compares the checkout's local Expo development fingerprint and the installed app's binary contents against the last successful build record. It reuses a matching client; otherwise it runs a clean prebuild, builds and installs the development app, and records the successful result. It does not start Metro. Start Metro below after it succeeds. On hosts with an `agent-job` requirement, run the entire `ensure` command through that queue.
+This reuses a matching native client or builds and installs one. Authorized
+mobile verification includes that build step unless the user prohibits it.
 
-For a read-only decision, use `check` in place of `ensure`. Exit 0 means compatible, 2 means build required, and 1 means an operational error. An app installed outside this helper is initially unknown and gets rebuilt once. Records are local to the simulator host under `~/.cache/t3code/native-clients` and work across checkouts. Do not copy records between machines or write them manually.
+Start `vp run dev:client` from `apps/mobile`, or reuse a healthy Metro belonging
+to this checkout. Open its printed development-client URL with AgentDevice
+`open com.t3tools.t3code.dev <url>` and all returned target arguments.
+The device must be able to reach both Metro and the isolated backend.
 
-A JavaScript-only diff, bundle identifier, app version, or recent install date does not prove native compatibility. Always check the whole checkout. Expo fingerprints are computed locally with `APP_VARIANT=development`; no EAS credentials or cloud build are required. Generated `ios/` and `android/` directories are excluded by `.fingerprintignore`, so edit native source modules or config plugins rather than generated output.
+## Pair and verify
 
 The development identity is `T3 Code Dev`, bundle/package `com.t3tools.t3code.dev`, scheme `t3code-dev`. If a build fails, investigate the build error and fix the local prerequisites. Report the concrete failure if it cannot be resolved, not “no compatible client.”
 
@@ -132,16 +141,19 @@ Do not start, stop, erase, or reconfigure an emulator owned by another task. Tra
 ## Pair each client once
 
 Use the bundled helper from the repository root. It issues a fresh credential against the running backend's exact base directory, opens the existing Add Environment route with the credential in an encoded query parameter, and asks that route to connect once:
+Store the returned executable and target arguments in `agent_device_command`
+and the Bash array `agent_device_target_args`.
 
 ```bash
 .agents/skills/test-t3-mobile/scripts/pair-client.sh \
-  ios <simulator-udid> <server-port> <base-dir>
-
-.agents/skills/test-t3-mobile/scripts/pair-client.sh \
-  android <emulator-serial> <server-port> <base-dir>
+  <server-port> <base-dir> <device-reachable-backend-origin> \
+  "$agent_device_command" "${agent_device_target_args[@]}"
 ```
 
-Run only the command for the selected platform. The helper uses `http://127.0.0.1:<server-port>` for iOS and `http://10.0.2.2:<server-port>` for Android. Pass a fifth argument only when testing a non-development URL scheme.
+It issues a fresh credential and opens T3 Code Dev's existing pairing route
+through AgentDevice. For a backend on the device host, use
+`http://127.0.0.1:<server-port>` on iOS or `http://10.0.2.2:<server-port>`
+on Android. For a remote backend, use its reachable origin.
 
 The helper opens this registered route:
 
@@ -193,3 +205,9 @@ Keep local verification focused. Do not turn this workflow into a full repositor
 - **iOS semantic actions fail:** set explicit XcodeBuildMCP defaults and refresh with `snapshot_ui`.
 - **Android cannot reach Metro:** verify `adb reverse` for the exact Metro port and relaunch the development-client URL.
 - **Android cannot reach the backend:** use `10.0.2.2`, not `127.0.0.1`, for the Android Emulator.
+  At teardown, close the AgentDevice session and call `device_close` after the
+  disposable connection and owned backend/Metro processes have been handled.
+  Confirm the intended projects appear, exercise the affected flow, and capture
+  evidence. Retain the app and environment while iterating. At teardown, remove
+  the disposable connection, close the AgentDevice session, call `device_close`,
+  and stop only your backend and Metro processes.

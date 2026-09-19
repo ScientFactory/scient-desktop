@@ -1,4 +1,5 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
+import * as ByteSize from "effect/ByteSize";
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -77,7 +78,7 @@ const fakeInfoOf = (contents: string): FileSystem.File.Info => ({
   uid: Option.none(),
   gid: Option.none(),
   rdev: Option.none(),
-  size: FileSystem.Size(new TextEncoder().encode(contents).byteLength),
+  size: ByteSize.bytes(new TextEncoder().encode(contents).byteLength),
   blksize: Option.none(),
   blocks: Option.none(),
 });

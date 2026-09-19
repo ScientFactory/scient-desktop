@@ -1,13 +1,16 @@
 ---
 name: test-t3-app
-description: Launch, retain, and test the T3 Code web app in isolated development environments, including first-try browser authentication with one-time pairing URLs, pairing-token recovery, worktree-safe state directories, cross-turn dev server lifecycle, and direct SQLite inspection or fixture seeding. Use when an agent needs to run T3 locally, iteratively test UI behavior with a human, recover from an expired or consumed pairing token, isolate dev state, or prepare test data in state.sqlite.
+description: Test T3 Code's web and desktop UI through its built-in Browser panel against isolated development state. Use for browser verification, browser pairing recovery, and test fixtures. Use test-t3-mobile for native mobile verification.
 ---
 
-# Test T3 App
+# Test T3 web and desktop
 
-Use this skill for the web client. For iOS Simulator, Android Emulator, or physical-device testing against an isolated T3 backend, use the sibling [`test-t3-mobile`](../test-t3-mobile/SKILL.md) skill.
+Use T3's built-in Browser panel for verification. If its tools are absent or
+the panel reports unavailable, explain the blocker and stop verification.
+Do not install or switch to another automation system. For native mobile
+testing, use [test-t3-mobile](../test-t3-mobile/SKILL.md).
 
-## Start an isolated web environment
+## Start the app
 
 1. Run commands from the repository root.
 2. Choose a base directory that belongs only to the current worktree or test:
@@ -17,12 +20,31 @@ Use this skill for the web client. For iOS Simulator, Android Emulator, or physi
 4. Keep the terminal session alive and read the selected server port, web port, base directory, and pairing URL from its output.
 
 Treat a base directory as disposable only when it was created or deliberately selected for the current test. Do not use live Scient or T3 profiles as test state. Prefer a new temporary base directory over clearing state of uncertain ownership.
+Reuse a healthy dev server only when it belongs to this worktree and uses the
+same isolated base directory. Otherwise run `vp run dev` from the repository
+root and retain its terminal session. Use the worktree's ignored `.scient-next`
+state, never `~/.t3/userdata`, and leave `VITE_HTTP_URL` and `VITE_WS_URL`
+unset for ordinary development. When sharing is requested, add `--share` and
+give the tester a fresh complete pairing URL that has not been consumed.
 
-Ports are derived from the worktree path but can shift when occupied. Always read the actual values from the `[dev-runner]` line.
+Test with meaningful project and thread data. Read
+[references/sqlite-fixtures.md](references/sqlite-fixtures.md) only when
+inspecting or seeding SQLite. Stop the test server before direct fixture writes.
 
-Shared browser dev is single-origin: Vite proxies the backend paths, so never set `VITE_HTTP_URL` or `VITE_WS_URL` for `dev`/`dev:web`.
+## Use the Browser panel
 
-The dev runner disables browser auto-open by default. Do not pass `--browser` during automated testing: an automatically opened page can consume the one-time bootstrap token before the controlled browser uses it.
+Call `preview_status`, then `preview_open` if the Browser panel is
+closed. Navigate to the complete startup pairing URL once with
+`preview_navigate`, then use `preview_snapshot` and T3's interaction tools.
+If the token was consumed or expired, run `node apps/server/src/bin.ts pair`
+for a fresh one. Keep using the same tab.
+
+## Verify and retain
+
+Exercise the affected flow and capture the state that proves it works. Keep
+the server, state, and panel available while the user inspects or iterates.
+An assistant turn ending is not teardown. Stop only processes you started,
+using retained terminal sessions or captured PIDs.
 
 ### Verify a shared environment before human handoff
 
@@ -84,3 +106,4 @@ If completion is uncertain, keep the environment alive and mention that it is re
 - If the replacement token is rejected, verify that the CLI and server use the identical absolute base directory and web URL.
 - If the UI shows unexpected data, verify that every command uses the identical explicit base directory before editing anything.
 - If ports move because another instance is running, trust the current dev-runner output rather than assuming ports `13773` and `5733`.
+  Keep other credentials out of screenshots, commits, and replies.

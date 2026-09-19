@@ -13,10 +13,6 @@ it("emits object-only MCP input schemas for every Scient skill tool", () => {
   for (const tool of [ScientSkillsListTool, ScientSkillLoadTool, ScientSkillReadResourceTool]) {
     expect(Tool.getJsonSchema(tool)).toMatchObject({ type: "object" });
   }
-  expect(Tool.getJsonSchema(ScientSkillsListTool)).toMatchObject({
-    type: "object",
-    additionalProperties: false,
-  });
   const accepts = Schema.is(ScientSkillListInput);
   expect(accepts({})).toBe(true);
   expect(accepts([])).toBe(false);

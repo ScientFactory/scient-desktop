@@ -26,15 +26,15 @@ import packageJson from "../../package.json" with { type: "json" };
 import * as ServerConfig from "../config.ts";
 
 const AnalyticsEnvConfig = Config.all({
-  enabled: Config.boolean("SCIENT_ANALYTICS_ENABLED").pipe(Config.withDefault(false)),
-  consent: Config.string("SCIENT_ANALYTICS_CONSENT").pipe(Config.withDefault("diagnostic")),
-  buildChannel: Config.string("SCIENT_ANALYTICS_BUILD_CHANNEL").pipe(
+  enabled: Config.Boolean("SCIENT_ANALYTICS_ENABLED").pipe(Config.withDefault(false)),
+  consent: Config.String("SCIENT_ANALYTICS_CONSENT").pipe(Config.withDefault("diagnostic")),
+  buildChannel: Config.String("SCIENT_ANALYTICS_BUILD_CHANNEL").pipe(
     Config.withDefault("development"),
   ),
-  appVersion: Config.string("SCIENT_ANALYTICS_APP_VERSION").pipe(
+  appVersion: Config.String("SCIENT_ANALYTICS_APP_VERSION").pipe(
     Config.withDefault(packageJson.version),
   ),
-  testEndpoint: Config.string("SCIENT_ANALYTICS_TEST_ENDPOINT").pipe(Config.withDefault("")),
+  testEndpoint: Config.String("SCIENT_ANALYTICS_TEST_ENDPOINT").pipe(Config.withDefault("")),
 });
 
 /** Explicit local qualification only; never an alternate third-party telemetry host. */
