@@ -4,6 +4,7 @@ import { describe, expect, it, vi } from "vite-plus/test";
 import {
   handleSidebarUpdateReleaseNotesPopoverOpenChange,
   openSidebarUpdateReleaseNotesPopoverOnForwardTab,
+  shouldShowSidebarUpdateRestartIcon,
   shouldUseSidebarUpdateReleaseNotesPopover,
 } from "./SidebarUpdatePill";
 
@@ -82,5 +83,36 @@ describe("sidebar update release notes popover", () => {
     );
 
     expect(open).not.toHaveBeenCalled();
+  });
+});
+
+describe("sidebar update restart icon", () => {
+  it("hides the icon when the downloaded update is ready to restart", () => {
+    expect(
+      shouldShowSidebarUpdateRestartIcon({
+        ...nightlyState,
+        status: "downloaded",
+        downloadedVersion: nightlyState.availableVersion,
+      }),
+    ).toBe(false);
+  });
+
+  it("shows the icon only when retrying a failed install", () => {
+    expect(
+      shouldShowSidebarUpdateRestartIcon({
+        ...nightlyState,
+        status: "error",
+        errorContext: "install",
+        canRetry: true,
+      }),
+    ).toBe(true);
+    expect(
+      shouldShowSidebarUpdateRestartIcon({
+        ...nightlyState,
+        status: "error",
+        errorContext: "download",
+        canRetry: true,
+      }),
+    ).toBe(false);
   });
 });

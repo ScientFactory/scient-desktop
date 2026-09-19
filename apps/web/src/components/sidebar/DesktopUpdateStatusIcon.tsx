@@ -41,11 +41,12 @@ export function shouldContinueDesktopUpdateCheckAnimation({
 
 function DesktopUpdateAvailableIcon() {
   return (
-    <span className="relative grid size-4 place-items-center">
-      <DownloadIcon className="size-4" />
+    // SCIENT-FORK: icon set scaled to the compact pill (13px, stroke 2.25).
+    <span className="relative grid size-3 place-items-center">
+      <DownloadIcon className="size-[13px]" strokeWidth={2.25} />
       <span
         aria-hidden="true"
-        className="absolute -top-0.5 -right-0.5 size-1.5 rounded-full bg-current ring-2 ring-sidebar-control-surface"
+        className="absolute -top-0.5 -right-0.5 size-[4.5px] rounded-full bg-current ring-2 ring-sidebar-control-surface"
       />
     </span>
   );
@@ -83,17 +84,17 @@ function DesktopUpdateDownloadingIcon({ percent }: { readonly percent: number | 
           className="transition-[stroke-dashoffset] duration-300 ease-out motion-reduce:transition-none"
         />
       </svg>
-      <DownloadIcon className="size-4" />
+      <DownloadIcon className="size-[13px]" strokeWidth={2.25} />
     </span>
   );
 }
 
 function DesktopUpdateDownloadedIcon() {
   return (
-    <span className="relative grid size-4 place-items-center">
-      <RotateCwIcon className="size-4" />
-      <span className="absolute -right-1 -bottom-1 grid size-2.5 place-items-center rounded-full bg-foreground text-background ring-2 ring-background">
-        <CheckIcon className="size-2" strokeWidth={3} />
+    <span className="relative grid size-3 place-items-center">
+      <RotateCwIcon className="size-[13px]" strokeWidth={2.25} />
+      <span className="absolute -right-1 -bottom-1 grid size-[7px] place-items-center rounded-full bg-foreground text-background ring-2 ring-background">
+        <CheckIcon className="size-[5px]" strokeWidth={3} />
       </span>
     </span>
   );
@@ -118,7 +119,8 @@ export function DesktopUpdateStatusIcon({
 
   return (
     <RefreshIcon
-      className="size-4"
+      strokeWidth={2.25}
+      className="size-[13px]"
       refreshing={status === "checking" && isCheckAnimating === true}
       onAnimationIteration={onCheckAnimationIteration}
     />
