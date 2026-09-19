@@ -363,7 +363,12 @@ function SidebarUpdateControl() {
       {iconStatus === "available" ? (
         <DownloadIcon aria-hidden="true" className="size-[13px] shrink-0" strokeWidth={2.25} />
       ) : iconStatus === "downloaded" ? (
-        <RotateCwIcon aria-hidden="true" className="size-[13px] shrink-0" strokeWidth={2.25} />
+        // SCIENT-FORK: the clean ready-to-restart state is text-only, but the
+        // install-retry state (status "error" + errorContext "install") shares
+        // the "downloaded" iconStatus, so it keeps its restart icon.
+        state?.status === "error" ? (
+          <RotateCwIcon aria-hidden="true" className="size-[13px] shrink-0" strokeWidth={2.25} />
+        ) : null
       ) : iconStatus === "downloading" && (state?.downloadPercent ?? 0) <= 0 ? (
         <LoaderCircleIcon
           aria-hidden="true"
