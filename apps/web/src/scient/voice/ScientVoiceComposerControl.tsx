@@ -230,7 +230,11 @@ export function ScientVoiceComposerControl({
     controller.phase === "correcting" ? (
       <div
         className={cn(
-          "absolute inset-0 z-10 flex items-center gap-2 bg-background",
+          // z-40 keeps this surface above the composer footer's provider icon
+          // (ProviderInstanceIcon renders at z-30 upstream), so the recording
+          // waveform is never overlapped by the agent avatar at the footer's
+          // left edge. Popovers/tooltips portal outside this stacking context.
+          "absolute inset-0 z-40 flex items-center gap-2 bg-background",
           presentation === "composer" ? "px-3 pb-3 sm:px-4 sm:pb-4" : null,
         )}
       >
