@@ -11,6 +11,8 @@ export function makeDesktopVoiceBridge(
   ipcRenderer: Pick<IpcRenderer, "invoke">,
 ): DesktopVoiceBridge {
   return {
+    requestMicrophoneAccess: () =>
+      ipcRenderer.invoke(IpcChannels.VOICE_REQUEST_MICROPHONE_ACCESS_CHANNEL),
     getModelsState: () => ipcRenderer.invoke(IpcChannels.VOICE_GET_MODELS_STATE_CHANNEL),
     downloadModel: (request) =>
       ipcRenderer.invoke(IpcChannels.VOICE_DOWNLOAD_MODEL_CHANNEL, request),

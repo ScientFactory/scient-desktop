@@ -1442,6 +1442,8 @@ ${associatedDomains}
     <true/>
     <key>com.apple.security.cs.disable-library-validation</key>
     <true/>
+    <key>com.apple.security.device.audio-input</key>
+    <true/>
   </dict>
 </plist>
 `;
@@ -2862,6 +2864,7 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
       icon: "icon.icns",
       category: "public.app-category.developer-tools",
       extendInfo: {
+        NSMicrophoneUsageDescription: `${SCIENT_DESKTOP_IDENTITY.baseName} uses the microphone only while you dictate a message. Audio is transcribed on this device.`,
         NSScreenCaptureUsageDescription: `${SCIENT_DESKTOP_IDENTITY.baseName} captures the active window when you use the window capture shortcut.`,
       },
       protocols: [
@@ -2870,10 +2873,17 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
           schemes: [SCIENT_DESKTOP_IDENTITY.productionScheme],
         },
       ],
-      ...(signed ? { sign: path.join(repoRoot, "scripts/sign-macos.ts") } : {}),
+      ...(signed
+        ? {
+            sign: path.join(repoRoot, "scripts/sign-macos.ts"),
+            entitlements:
+              macPasskeySigning?.entitlementsPath ??
+              path.join(repoRoot, "scripts/entitlements.mac.plist"),
+            entitlementsInherit: path.join(repoRoot, "scripts/entitlements.mac.plist"),
+          }
+        : {}),
       ...(macPasskeySigning
         ? {
-            entitlements: macPasskeySigning.entitlementsPath,
             provisioningProfile: macPasskeySigning.provisioningProfilePath,
           }
         : {}),

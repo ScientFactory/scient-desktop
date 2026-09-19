@@ -121,6 +121,15 @@ export class VoiceTranscriptCorrectionError extends Schema.TaggedError<VoiceTran
 export const VoiceEngineId = Schema.Literals(["local"]);
 export type VoiceEngineId = typeof VoiceEngineId.Type;
 
+/** Host-level microphone authorization state used before renderer capture begins. */
+export const VoiceMicrophoneAccessStatus = Schema.Literals([
+  "granted",
+  "denied",
+  "restricted",
+  "unavailable",
+]);
+export type VoiceMicrophoneAccessStatus = typeof VoiceMicrophoneAccessStatus.Type;
+
 /**
  * Provider-neutral failure taxonomy. Kept complete (including remote-shaped
  * kinds) so any current or future engine maps cleanly into a single wire type.

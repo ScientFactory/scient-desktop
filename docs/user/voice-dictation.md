@@ -14,6 +14,12 @@ text before Scient inserts or sends it.
 4. While recording, choose cancel, insert the transcript, or transcribe and
    send. `Esc` cancels and `Enter` inserts.
 
+If microphone access was denied on macOS, select **Open Settings** beside the
+voice error, enable Scient under **Privacy & Security → Microphone**, then quit
+and reopen Scient. A downloaded model does not itself grant microphone access.
+If the Mac restricts microphone access through parental controls or device
+management, those restrictions must be resolved before recording can start.
+
 Audio and the initial transcript are processed by a bundled local speech model.
 Audio remains on the local computer and is never sent to Scient or an AI
 provider.
