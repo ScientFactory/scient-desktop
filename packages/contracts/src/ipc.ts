@@ -4,6 +4,7 @@ import type {
   VoiceModelOperationRequest,
   VoiceModelRemoveRequest,
   VoiceModelsSnapshot,
+  VoiceMicrophoneAccessStatus,
   VoiceTranscribeRequest,
   VoiceTranscript,
 } from "./voice.ts";
@@ -1309,7 +1310,7 @@ export const DesktopPreviewAutomationWaitForInputSchema = Schema.Struct({
  * A System Settings pane the app can deep-link to. The identifier crosses IPC
  * rather than a URL, so the renderer can only reach these known destinations.
  */
-export const SystemSettingsPaneSchema = Schema.Literals(["full-disk-access"]);
+export const SystemSettingsPaneSchema = Schema.Literals(["full-disk-access", "microphone"]);
 export type SystemSettingsPane = typeof SystemSettingsPaneSchema.Type;
 
 export interface DesktopBridge {
@@ -1463,6 +1464,11 @@ export interface DesktopBridge {
  * model download performed by the main process.
  */
 export interface DesktopVoiceBridge {
+  /**
+   * Ask the native host to establish microphone consent before Chromium opens
+   * the capture device. Optional while older desktop shells host a newer UI.
+   */
+  requestMicrophoneAccess?: () => Promise<VoiceMicrophoneAccessStatus>;
   /** Current catalog, selection and install/download state. */
   getModelsState: () => Promise<VoiceModelsSnapshot>;
   /** Download + verify one model, optionally selecting it after verification. */

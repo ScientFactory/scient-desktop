@@ -152,6 +152,7 @@ export const installDesktopIpcHandlers = Effect.fn("desktop.ipc.installHandlers"
   for (const voiceMethod of VoiceIpc.methods) {
     yield* ipc.handle(voiceMethod);
   }
+  yield* ipc.handle(VoiceIpc.requestMicrophoneAccess);
 
   for (const previewMethod of PreviewIpc.methods) {
     yield* ipc.handle(previewMethod);

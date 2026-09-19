@@ -104,6 +104,20 @@ the composer and Settings → Voice.
 
 ## Runtime provenance and packaging
 
+Signed macOS builds include `NSMicrophoneUsageDescription` and the hardened
+runtime `com.apple.security.device.audio-input` entitlement on both the main
+app and its Electron helpers. The main app retains its additional passkey
+entitlements when configured; helpers use the shared baseline entitlement file.
+Before capture, the desktop voice bridge requests native macOS consent if it is
+not determined. A denial offers System Settings recovery; a restriction reports
+that the Mac's policy must be changed. Cancellation or unmount while the native
+prompt is open must prevent recording when that prompt later resolves. Other
+platforms and older desktop bridges retain the renderer permission flow.
+
+Packaging and mocked permission tests do not prove the macOS consent dialog.
+Release validation requires a signed app with fresh microphone permission state,
+covering approval and recording, denial and recovery, and an existing grant.
+
 `scripts/stage-whisper-runtime.ts` stages whisper.cpp `v1.9.1` from commit
 `f049fff95a089aa9969deb009cdd4892b3e74916`. Source and supported prebuilt
 archives have pinned SHA-256 values. The script asserts the private
