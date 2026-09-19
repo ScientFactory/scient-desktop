@@ -1,4 +1,5 @@
 import {
+  MANAGED_RUNTIME_POLICY,
   ManagedPiRuntime,
   detectManagedRuntimeTarget,
   managedRuntimeTargetKey,
@@ -16,7 +17,6 @@ import {
 } from "./ManagedProviderRuntimeActions.ts";
 
 const DEFAULT_PI_BINARY = "pi";
-const PI_MANAGED_RUNTIME_CONTRACT_REVISION = 1;
 
 function detectTargetSafely(input: { readonly platform: NodeJS.Platform; readonly arch: string }) {
   try {
@@ -49,7 +49,7 @@ export const makePiManagedRuntimeResolution = Effect.fn("PiManagedRuntime.makeRe
       providerSlug: "pi",
       runtime: new ManagedPiRuntime(input.baseDir),
       bundledArtifact: artifact,
-      contractRevision: PI_MANAGED_RUNTIME_CONTRACT_REVISION,
+      contractRevision: MANAGED_RUNTIME_POLICY.pi.revision,
       targetLabel,
       environment: input.environment,
       spawner: input.spawner,

@@ -121,6 +121,11 @@ export function resolveReviewedCodexArtifact(
     checksum: { algorithm: "sha256", digest: artifact.sha256 },
     size: artifact.size,
     archiveFormat: "tar.gz",
+    // Complete Unix packages include voice helpers and libraries. Keep bounded
+    // headroom without relaxing Windows or the shared extraction defaults.
+    ...(target.platform === "win32"
+      ? {}
+      : { extractionLimits: { maxEntries: 128, maxExpandedBytes: 512 * 1024 * 1024 } }),
     executablePath: artifact.executablePath,
     auxiliaryExecutablePaths: artifact.auxiliaryExecutablePaths,
     smokeArgs: ["--version"],

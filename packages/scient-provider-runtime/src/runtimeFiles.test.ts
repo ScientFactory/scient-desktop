@@ -9,6 +9,7 @@ import JSZip from "jszip";
 import { afterEach, describe, expect, it } from "vite-plus/test";
 
 import { resolveReviewedCursorArtifact } from "./cursorManifest.ts";
+import { resolveReviewedCodexArtifact } from "./codexManifest.ts";
 import {
   materializeManagedRuntimeArtifact,
   resolveManagedRuntimeArtifactPath,
@@ -31,6 +32,44 @@ afterEach(async () => {
 });
 
 describe("managed runtime files", () => {
+  it.each([
+    { platform: "darwin", entries: 54, passes: true },
+    { platform: "linux", entries: 128, passes: true },
+    { platform: "linux", entries: 129, passes: false },
+    { platform: "win32", entries: 33, passes: false },
+  ] as const)(
+    "enforces the Codex $platform budget at $entries entries",
+    async ({ platform, entries, passes }) => {
+      const root = await temporaryRoot();
+      const source = NodePath.join(root, "source");
+      const archive = NodePath.join(root, "codex-package.tar.gz");
+      const policy = resolveReviewedCodexArtifact({ platform, arch: "arm64" })!;
+      const executablePath = platform === "win32" ? "codex.exe" : "codex";
+      const members = [
+        executablePath,
+        ...Array.from({ length: entries - 1 }, (_, i) => `voice-library-${i}`),
+      ];
+      await NodeFSP.mkdir(source);
+      await Promise.all(members.map((name) => NodeFSP.writeFile(NodePath.join(source, name), "x")));
+      await Tar.c({ cwd: source, file: archive, gzip: true }, members);
+      const extraction = materializeManagedRuntimeArtifact({
+        archivePath: archive,
+        archiveFormat: "tar.gz",
+        destination: NodePath.join(root, "destination"),
+        executablePath,
+        platform,
+        extractionLimits: policy.extractionLimits,
+        signal: new AbortController().signal,
+      });
+      if (passes)
+        await expect(extraction).resolves.toBe(NodePath.join(root, "destination", executablePath));
+      else
+        await expect(extraction).rejects.toThrow(
+          `${entries} entries (limit ${policy.extractionLimits?.maxEntries ?? 32})`,
+        );
+    },
+  );
+
   it("verifies exact SHA-256 digests", async () => {
     const root = await temporaryRoot();
     const file = NodePath.join(root, "artifact");
@@ -209,7 +248,7 @@ describe("managed runtime files", () => {
         extractionLimits: { maxEntries: 1, maxExpandedBytes: 4_096 },
         signal: new AbortController().signal,
       }),
-    ).rejects.toThrow("exceeds extraction limits");
+    ).rejects.toThrow("2 entries (limit 1)");
   });
 
   it("rejects ZIP payloads that exceed their reviewed expanded-size budget", async () => {
@@ -229,7 +268,7 @@ describe("managed runtime files", () => {
         extractionLimits: { maxEntries: 2, maxExpandedBytes: 4_096 },
         signal: new AbortController().signal,
       }),
-    ).rejects.toThrow("exceeds extraction limits");
+    ).rejects.toThrow("4097 expanded bytes (limit 4096)");
   });
 
   it("rejects ZIP symbolic links instead of materializing them", async () => {

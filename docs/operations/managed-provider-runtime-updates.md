@@ -27,6 +27,37 @@ and byte size. The app and CI both re-apply policy compiled on `main`; the branc
 cannot introduce a provider or target, change extraction or smoke behavior,
 widen an allowed host or path family, or increase a support tier.
 
+## Installer compatibility
+
+`MANAGED_RUNTIME_POLICY` in `@scientfactory/provider-runtime` owns the current
+contract revision for each release family. The app, discovery, native qualification,
+and publication use this registry. Each bundled provider entry must declare the
+same revision; its version and artifact receipts must remain previously qualified.
+
+When a provider's new releases require changed extraction or execution policy,
+advance only that family's revision and list the previously published revision
+as historical. Published historical entries are preserved as data, without
+interpreting them as candidates for the new installer or relabeling them during
+another provider's update. Unknown revisions are rejected. Discovery collects a
+fresh complete candidate under the current policy, including when the release
+version has not changed. Every required native runner must qualify it before
+publication may replace the historical entry. A contract-only transition may
+preserve the same release, but cannot change or remove its existing artifacts.
+
+Older Scient builds reject the new contract and retain their compatible cached
+or bundled release. Their installed runtime keeps working; they must update Scient
+to receive runtimes requiring the new contract. Updated builds use their bundled
+floor until a compatible qualified feed is available. Other release families
+continue updating independently. Remote catalog metadata never changes an app's
+installer policy. Keep the legacy main-branch compatibility snapshot unchanged.
+
+Codex contract 2 accommodates the official voice payload introduced in 0.155:
+Unix archives have 52–54 entries, with a reviewed allowance of 128 entries and
+512 MiB expanded data. Windows retains the shared 32-entry, 512 MiB allowance.
+Changing these numbers requires code review and qualification, not a feed edit.
+Extraction errors report the entry at rejection, the running entry/byte counts,
+and their limits; the counts are observed so far, not a scan of the entire archive.
+
 ## Automated path
 
 `managed-provider-runtime-updates.yml` runs every two hours and may also be
@@ -40,8 +71,9 @@ Grok, and Pi. The eight release-family runs are intentionally independent:
    Droid uses Factory's native `factory-cli/LATEST` download channel, not the
    independently maintained changelog RSS. Pi uses the official `earendil-works/pi`
    stable GitHub release.
-3. If the version is newer or an older feed is missing a subsequently approved
-   target, collect complete immutable metadata for every app-approved target.
+3. If the version is newer, its installer contract changed, or an older feed is
+   missing a subsequently approved target, collect complete immutable metadata
+   for every app-approved target.
 4. Exercise the normal managed-runtime engine on hosted macOS Apple-silicon,
    macOS Intel, Linux x64/ARM64, and Windows x64/ARM64 runners. Each runner downloads,
    verifies, materializes, checks package contents, smoke-tests, activates, and
@@ -70,9 +102,9 @@ Grok, and Pi. The eight release-family runs are intentionally independent:
 A failed provider is red in its own matrix entry and does not stop other
 providers. Failed discovery, incomplete metadata, a failed native check, a
 downgrade, a same-version repack, or a publication race leaves the current
-catalog untouched. The only permitted same-version change is a complete,
-natively qualified target expansion that preserves every previously published
-artifact byte-for-byte. The workflow never force-pushes and never opens a catalog
+catalog untouched. Same-version contract transitions and target expansions require
+complete native qualification and preserve every previously published artifact
+byte-for-byte. The workflow never force-pushes and never opens a catalog
 PR, so an unrelated monorepo test cannot suppress a qualified provider update.
 
 An older feed may omit an app-approved family, such as subsequently added ACP or Pi, or approved
@@ -154,8 +186,9 @@ runs again, previously published releases may remain unavailable to fresh apps.
 - A transient provider or runner failure needs no rollback; retry that workflow
   after the external condition clears.
 - If an official stable endpoint or artifact layout changed, update only that
-  provider's discovery and app-owned manifest policy, add focused fixtures, and
-  re-run every approved native family before publication.
+  provider's discovery and app-owned manifest policy, advance its contract when
+  the release needs changed installer behavior, add focused fixtures, and re-run
+  every approved native family before publication.
 - If an incorrect entry was somehow published, disable provider update checks
   only as temporary client-side containment. The break-glass withdrawal is a
   reviewed, normal (non-force) commit that restores only the affected provider's
