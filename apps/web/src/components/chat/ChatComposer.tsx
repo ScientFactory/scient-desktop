@@ -116,6 +116,7 @@ import {
 } from "../ChatView.logic";
 // SCIENT-FORK:START — steer shortcut for the Scient thread queue.
 import { resolveComposerSteerRequested } from "../../scient/threadQueue/disposition";
+import { resolveComposerWorkingPlaceholder } from "../../scient/threadQueue/workingPlaceholder";
 // SCIENT-FORK:END
 import {
   dataTransferHasComposerMention,
@@ -2898,6 +2899,20 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       attachmentTargetKey,
     ],
   );
+  // SCIENT-FORK:START — agent-working placeholder advertising queue/steer keys.
+  const composerWorkingPlaceholder = useMemo(
+    () =>
+      resolveComposerWorkingPlaceholder({
+        isRunning: phase === "running",
+        isMobileViewport,
+        followUpBehavior: settings.followUpBehavior,
+        sendShortcut: settings.sendShortcut,
+        prompt,
+        isMacPlatform: isMacPlatform(navigator.platform),
+      }),
+    [isMobileViewport, phase, prompt, settings.followUpBehavior, settings.sendShortcut],
+  );
+  // SCIENT-FORK:END
   const collapsedComposerPrimaryActionDisabled =
     isSendBusy ||
     isSendDisabled ||
@@ -7213,7 +7228,10 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                                 ? "Enable a provider in Settings to send a message"
                                 : phase === "disconnected"
                                   ? DISCONNECTED_COMPOSER_PLACEHOLDER
-                                  : "Ask anything, @tag files/folders, $use skills, or / for commands"
+                                  : // SCIENT-FORK:START — busy-state placeholder while the agent works.
+                                    (composerWorkingPlaceholder ??
+                                    "Ask anything, @tag files/folders, $use skills, or / for commands")
+                      // SCIENT-FORK:END
                     }
                     disabled={
                       (onStashQueueEdit !== undefined && isSendBusy) ||
