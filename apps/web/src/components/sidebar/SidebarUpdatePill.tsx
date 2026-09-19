@@ -45,6 +45,10 @@ export function shouldUseSidebarUpdateReleaseNotesPopover(
   return showUpdateDetails && state?.channel === "nightly" && state.releaseNotes.length > 0;
 }
 
+export function shouldShowSidebarUpdateRestartIcon(state: DesktopUpdateState | null): boolean {
+  return state?.status === "error" && state.errorContext === "install";
+}
+
 export function handleSidebarUpdateReleaseNotesPopoverOpenChange(
   _open: boolean,
   details: Pick<SidebarUpdatePopoverChangeDetails, "reason" | "cancel">,
@@ -326,9 +330,7 @@ function SidebarUpdateControl() {
         isInteractionDisabled ? "cursor-not-allowed" : "cursor-pointer",
         showUpdateIconState
           ? cn(
-              // SCIENT-FORK: compact pill — ~2px smaller all around, tested in
-              // the update lab (sizes, weights and stroke below are the
-              // lab-verified values).
+              // SCIENT-FORK: lab-verified compact pill dimensions, type and spacing.
               "h-5 w-16 gap-0.5 rounded-[var(--control-radius)] bg-primary px-0.5 text-[11.5px] font-medium whitespace-nowrap text-primary-foreground",
               !isInteractionDisabled && "hover:bg-primary/90",
             )
@@ -366,7 +368,7 @@ function SidebarUpdateControl() {
         // SCIENT-FORK: the clean ready-to-restart state is text-only, but the
         // install-retry state (status "error" + errorContext "install") shares
         // the "downloaded" iconStatus, so it keeps its restart icon.
-        state?.status === "error" ? (
+        shouldShowSidebarUpdateRestartIcon(state) ? (
           <RotateCwIcon aria-hidden="true" className="size-[13px] shrink-0" strokeWidth={2.25} />
         ) : null
       ) : iconStatus === "downloading" && (state?.downloadPercent ?? 0) <= 0 ? (
