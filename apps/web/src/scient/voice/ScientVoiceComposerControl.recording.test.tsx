@@ -4,6 +4,7 @@ import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 const controllerState = vi.hoisted(() => ({
   phase: "recording" as "idle" | "recording" | "correcting" | "setup-prompt",
   errorMessage: null as string | null,
+  microphonePermissionDenied: false,
   modelSnapshot: null as null | {
     runtimeAvailable: boolean;
     selectedModelId: null;
@@ -30,6 +31,7 @@ vi.mock("./useScientVoiceController.ts", async (importOriginal) => {
       levels: [],
       elapsedMs: 0,
       errorMessage: controllerState.errorMessage,
+      microphonePermissionDenied: controllerState.microphonePermissionDenied,
       downloadPercent: 0,
       modelSnapshot: controllerState.modelSnapshot,
       activate: async () => undefined,
@@ -45,8 +47,10 @@ vi.mock("./useScientVoiceController.ts", async (importOriginal) => {
 import { ScientVoiceComposerControl } from "./ScientVoiceComposerControl.tsx";
 
 afterEach(() => {
+  vi.unstubAllGlobals();
   controllerState.phase = "recording";
   controllerState.errorMessage = null;
+  controllerState.microphonePermissionDenied = false;
   controllerState.modelSnapshot = null;
 });
 
@@ -111,5 +115,24 @@ describe("ScientVoiceComposerControl recording actions", () => {
     );
 
     expect(markup).toBe("");
+  });
+
+  it("offers macOS Settings recovery when microphone access was denied", () => {
+    controllerState.phase = "idle";
+    controllerState.errorMessage = "Allow microphone access, then try again.";
+    controllerState.microphonePermissionDenied = true;
+    vi.stubGlobal("window", {
+      desktopBridge: {
+        getClientPlatform: () => "darwin",
+        openSystemSettings: vi.fn().mockResolvedValue(true),
+      },
+    });
+
+    const markup = renderToStaticMarkup(
+      <ScientVoiceComposerControl onTranscript={() => undefined} />,
+    );
+
+    expect(markup).toContain("Open Settings");
+    expect(markup).toContain("Allow microphone access");
   });
 });

@@ -78,6 +78,7 @@ export interface ScientVoiceController {
   readonly levels: readonly number[];
   readonly elapsedMs: number;
   readonly errorMessage: string | null;
+  readonly microphonePermissionDenied: boolean;
   readonly downloadPercent: number;
   readonly modelSnapshot: VoiceModelsSnapshot | null;
   activate: () => Promise<void>;
@@ -127,6 +128,7 @@ export function useScientVoiceController({
   const recordAnalytics = useRecordScientAnalytics();
   const [phase, setPhaseState] = useState<VoicePhase>("idle");
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [microphonePermissionDenied, setMicrophonePermissionDenied] = useState(false);
   const [downloadProgress, setDownloadProgress] = useState<VoiceModelDownloadProgress | null>(null);
   const [modelSnapshot, setModelSnapshot] = useState<VoiceModelsSnapshot | null>(null);
   const [elapsedMs, setElapsedMs] = useState(0);
@@ -288,8 +290,27 @@ export function useScientVoiceController({
   const beginRecording = useCallback(async (): Promise<void> => {
     const operation = (operationRef.current += 1);
     setErrorMessage(null);
+    setMicrophonePermissionDenied(false);
     setElapsedMs(0);
     setPhase("requesting-permission");
+    if (client?.requestMicrophoneAccess) {
+      const access = await client.requestMicrophoneAccess().catch(() => "unavailable" as const);
+      if (operation !== operationRef.current) return;
+      if (access === "denied" || access === "restricted") {
+        setPhase("idle");
+        setMicrophonePermissionDenied(access === "denied");
+        setErrorMessage(
+          access === "restricted"
+            ? "Microphone access is restricted by this Mac. Check parental controls or contact your administrator."
+            : "Microphone access is off. Enable Scient in System Settings, then restart Scient.",
+        );
+        recordAnalytics({
+          name: "voice.transcription.failed",
+          properties: { engineClass: "local-whisper", failureClass: "permission" },
+        });
+        return;
+      }
+    }
     const started = await startRecording();
     if (operation !== operationRef.current) {
       cancelRecording();
@@ -298,12 +319,13 @@ export function useScientVoiceController({
     if (!started) return;
     recordingStartedAtRef.current = performance.now();
     setPhase("recording");
-  }, [cancelRecording, setPhase, startRecording]);
+  }, [cancelRecording, client, recordAnalytics, setPhase, startRecording]);
 
   const activate = useCallback(async (): Promise<void> => {
     if (!client) return;
     const operation = (operationRef.current += 1);
     setErrorMessage(null);
+    setMicrophonePermissionDenied(false);
     let state: VoiceModelsSnapshot;
     try {
       state = await client.getModelsState();
@@ -328,6 +350,7 @@ export function useScientVoiceController({
       if (!client) return;
       const operation = (operationRef.current += 1);
       setErrorMessage(null);
+      setMicrophonePermissionDenied(false);
       setDownloadProgress(null);
       setPhase("downloading");
       let modelId: VoiceModelId | null = null;
@@ -415,12 +438,14 @@ export function useScientVoiceController({
     }
     setElapsedMs(0);
     setErrorMessage(null);
+    setMicrophonePermissionDenied(false);
     setPhase("idle");
   }, [cancelRecording, client, recordAnalytics, setPhase]);
 
   const dismissSetup = useCallback(() => {
     operationRef.current += 1;
     setErrorMessage(null);
+    setMicrophonePermissionDenied(false);
     setPhase("idle");
   }, [setPhase]);
 
@@ -432,6 +457,7 @@ export function useScientVoiceController({
   useEffect(() => {
     if (recorderStatus !== "error" || !recorderErrorKind) return;
     setPhase("idle");
+    setMicrophonePermissionDenied(recorderErrorKind === "permission-denied");
     setErrorMessage(describeVoiceRecorderError(recorderErrorKind));
     recordAnalytics({
       name: "voice.transcription.failed",
@@ -483,6 +509,7 @@ export function useScientVoiceController({
     levels: recorderLevels,
     elapsedMs,
     errorMessage,
+    microphonePermissionDenied,
     downloadPercent: percent(downloadProgress),
     modelSnapshot,
     activate,

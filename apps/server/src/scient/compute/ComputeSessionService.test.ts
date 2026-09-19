@@ -2451,33 +2451,56 @@ describe("compute session execution", () => {
               revision: "revision-1",
               range: { startLine: 20, startColumn: 0, endLine: 20, endColumn: 8 },
             };
-            yield* submit("print(1)", "first", INITIAL_COMPUTE_SESSION_GENERATION, source);
-            yield* waitUntil(executionAt(ComputeExecutionId.make("first"), "succeeded"));
-            yield* submit("boom", "second");
-            const failed = yield* waitUntil(
-              executionAt(ComputeExecutionId.make("second"), "failed"),
+            // Subscribe before submitting so even immediate completion is retained.
+            // Disk persistence is asynchronous: a fixed number of event-loop turns
+            // is not a reliable completion budget on a busy CI runner.
+            const submitAndComplete = (...args: Parameters<typeof submit>) =>
+              Effect.scoped(
+                Effect.gen(function* () {
+                  const events = yield* service.subscribeSessions({ projectId: PROJECT_ID });
+                  yield* submit(...args);
+                  const [completed] = yield* events.pipe(
+                    Stream.filter(
+                      (event) =>
+                        event._tag === "execution-updated" &&
+                        event.execution.request.sessionId === SESSION_ID &&
+                        event.execution.request.executionId === args[1] &&
+                        (event.execution.result?.status === "succeeded" ||
+                          event.execution.result?.status === "failed"),
+                    ),
+                    Stream.take(1),
+                    Stream.runCollect,
+                  );
+                  if (completed?._tag !== "execution-updated") {
+                    return yield* Effect.die(new Error("Execution completion was not delivered."));
+                  }
+                  return completed.execution;
+                }),
+              );
+            const first = yield* submitAndComplete(
+              "print(1)",
+              "first",
+              INITIAL_COMPUTE_SESSION_GENERATION,
+              source,
             );
+            expect(first.result?.status).toBe("succeeded");
+            const failed = yield* submitAndComplete("boom", "second");
+            expect(failed.result?.status).toBe("failed");
             expect(failed.result?.diagnostics[0]?.frames).toEqual([
               { relativePath: "original.py", line: 21, column: null, functionName: "retained" },
             ]);
             for (let i = 0; i < 257; i++) {
               const id = `bounded-${i}`;
-              yield* submit("print(1)", id, INITIAL_COMPUTE_SESSION_GENERATION, source);
-              // Poll the live completion receipt, not the whole growing history.
-              yield* waitUntil(
-                Effect.gen(function* () {
-                  const current = yield* service.getSession({
-                    projectId: PROJECT_ID,
-                    sessionId: SESSION_ID,
-                  });
-                  return current?.activity === "idle" ? current : null;
-                }),
+              const completed = yield* submitAndComplete(
+                "print(1)",
+                id,
+                INITIAL_COMPUTE_SESSION_GENERATION,
+                source,
               );
+              expect(completed.result?.status).toBe("succeeded");
             }
-            yield* submit("boom", "after-eviction");
-            const evicted = yield* waitUntil(
-              executionAt(ComputeExecutionId.make("after-eviction"), "failed"),
-            );
+            const evicted = yield* submitAndComplete("boom", "after-eviction");
+            expect(evicted.result?.status).toBe("failed");
             expect(context?.executionSources?.size).toBe(256);
             expect(context?.executionSources?.has("first")).toBe(false);
             expect(evicted.result?.diagnostics[0]?.frames).toEqual([]);
@@ -2486,8 +2509,12 @@ describe("compute session execution", () => {
               sessionId: SESSION_ID,
               expectedGeneration: INITIAL_COMPUTE_SESSION_GENERATION,
             });
-            yield* submit("boom", "after-restart", restarted.generation);
-            yield* waitUntil(executionAt(ComputeExecutionId.make("after-restart"), "failed"));
+            const afterRestart = yield* submitAndComplete(
+              "boom",
+              "after-restart",
+              restarted.generation,
+            );
+            expect(afterRestart.result?.status).toBe("failed");
             expect(context?.executionSources?.size).toBe(0);
           }),
         );

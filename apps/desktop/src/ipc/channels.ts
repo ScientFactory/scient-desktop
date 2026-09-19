@@ -116,6 +116,7 @@ export const PREVIEW_STATE_CHANGE_CHANNEL = "desktop:preview-state-change";
 export const PREVIEW_POINTER_EVENT_CHANNEL = "desktop:preview-pointer-event";
 
 // Scient local voice transcription (desktop-only).
+export const VOICE_REQUEST_MICROPHONE_ACCESS_CHANNEL = "desktop:voice-request-microphone-access";
 export const VOICE_GET_MODELS_STATE_CHANNEL = "desktop:voice-get-models-state";
 export const VOICE_DOWNLOAD_MODEL_CHANNEL = "desktop:voice-download-model";
 export const VOICE_CANCEL_MODEL_DOWNLOAD_CHANNEL = "desktop:voice-cancel-model-download";

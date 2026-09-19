@@ -93,12 +93,23 @@ const VoiceWaveform = memo(function VoiceWaveform({
   );
 });
 
-function VoiceErrorText({ message }: { readonly message: string }): ReactNode {
+function VoiceErrorText({
+  message,
+  onOpenSettings,
+}: {
+  readonly message: string;
+  readonly onOpenSettings?: () => void;
+}): ReactNode {
   return (
-    <span className="flex items-center gap-1 text-destructive text-xs" role="alert">
+    <div className="flex items-center gap-1 text-destructive text-xs" role="alert">
       <CircleAlertIcon aria-hidden="true" className="size-3.5 shrink-0" />
-      {message}
-    </span>
+      <span>{message}</span>
+      {onOpenSettings ? (
+        <Button className="h-auto px-1 py-0" onClick={onOpenSettings} size="xs" variant="ghost">
+          Open Settings
+        </Button>
+      ) : null}
+    </div>
   );
 }
 
@@ -205,6 +216,11 @@ export function ScientVoiceComposerControl({
     onTranscript,
     ...(onRequestSubmit ? { onRequestSubmit } : {}),
   });
+  const desktopBridge = typeof window === "undefined" ? undefined : window.desktopBridge;
+  const canOpenMicrophoneSettings =
+    controller.microphonePermissionDenied &&
+    desktopBridge?.getClientPlatform?.() === "darwin" &&
+    desktopBridge.openSystemSettings !== undefined;
 
   useEffect(() => {
     onBusyChange?.(
@@ -392,7 +408,16 @@ export function ScientVoiceComposerControl({
           >
             <ComposerControlIcon icon={MicIcon} />
           </ComposerControl>
-          {controller.errorMessage ? <VoiceErrorText message={controller.errorMessage} /> : null}
+          {controller.errorMessage ? (
+            <VoiceErrorText
+              message={controller.errorMessage}
+              {...(canOpenMicrophoneSettings
+                ? {
+                    onOpenSettings: () => void desktopBridge.openSystemSettings?.("microphone"),
+                  }
+                : {})}
+            />
+          ) : null}
         </>
       )}
       {recordingSurface}

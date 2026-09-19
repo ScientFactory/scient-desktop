@@ -1,11 +1,22 @@
 import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 
-import { VOICE_CANCEL_MODEL_DOWNLOAD_CHANNEL } from "../../ipc/channels.ts";
+import {
+  VOICE_CANCEL_MODEL_DOWNLOAD_CHANNEL,
+  VOICE_REQUEST_MICROPHONE_ACCESS_CHANNEL,
+} from "../../ipc/channels.ts";
 import { makeDesktopVoiceBridge } from "./preloadBridge.ts";
 
 afterEach(() => vi.useRealTimers());
 
 describe("makeDesktopVoiceBridge", () => {
+  it("requests native microphone access through its dedicated IPC method", async () => {
+    const invoke = vi.fn().mockResolvedValue("granted");
+    const bridge = makeDesktopVoiceBridge({ invoke });
+
+    await expect(bridge.requestMicrophoneAccess?.()).resolves.toBe("granted");
+    expect(invoke).toHaveBeenCalledWith(VOICE_REQUEST_MICROPHONE_ACCESS_CHANNEL);
+  });
+
   it("cancels model setup through its dedicated IPC method", async () => {
     const invoke = vi.fn().mockResolvedValue(undefined);
     const bridge = makeDesktopVoiceBridge({ invoke });

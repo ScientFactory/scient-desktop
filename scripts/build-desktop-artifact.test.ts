@@ -1,5 +1,6 @@
 // @effect-diagnostics nodeBuiltinImport:off - Tests use Node's glob matcher to verify electron-builder exclusions.
 import * as NodeCrypto from "node:crypto";
+import * as NodeFS from "node:fs";
 import * as NodePath from "node:path";
 
 import * as NodeServices from "@effect/platform-node/NodeServices";
@@ -1875,6 +1876,7 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
     assert.include(entitlements, "<string>webcredentials:clerk.example.com</string>");
     assert.include(entitlements, "<string>webcredentials:example.clerk.accounts.dev</string>");
     assert.include(entitlements, "<key>com.apple.security.cs.allow-jit</key>");
+    assert.include(entitlements, "<key>com.apple.security.device.audio-input</key>");
   });
 
   it("rejects incomplete macOS passkey signing configuration", () => {
@@ -1970,10 +1972,35 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
         const mac = config.mac as Record<string, unknown>;
         assert.equal(config.appId, "com.scientfactory.scient");
         assert.equal(mac.entitlements, "/tmp/entitlements.mac.plist");
+        assert.match(String(mac.entitlementsInherit), /scripts[\\/]entitlements\.mac\.plist$/u);
         assert.equal(mac.provisioningProfile, "/tmp/t3code.provisionprofile");
         assert.match(String(mac.sign), /[\\/]scripts[\\/]sign-macos\.ts$/);
         assert.deepStrictEqual(mac.protocols, [{ name: "Scient", schemes: ["scient"] }]);
       }).pipe(Effect.provide(ConfigProvider.layer(ConfigProvider.fromEnv({ env: {} })))),
+  );
+
+  it.effect("adds microphone metadata and entitlements to signed macOS builds", () =>
+    Effect.gen(function* () {
+      const config = yield* createBuildConfig(
+        "mac",
+        "dmg",
+        "1.2.3",
+        true,
+        false,
+        undefined,
+        undefined,
+      );
+
+      const mac = config.mac as Record<string, unknown>;
+      const extendInfo = mac.extendInfo as Record<string, unknown>;
+      assert.match(String(extendInfo.NSMicrophoneUsageDescription), /dictate a message/u);
+      assert.match(String(mac.entitlements), /scripts[\\/]entitlements\.mac\.plist$/u);
+      assert.equal(mac.entitlementsInherit, mac.entitlements);
+      assert.include(
+        NodeFS.readFileSync(String(mac.entitlements), "utf8"),
+        "<key>com.apple.security.device.audio-input</key>",
+      );
+    }).pipe(Effect.provide(ConfigProvider.layer(ConfigProvider.fromEnv({ env: {} })))),
   );
 
   it.effect("uses the nightly DMG background for nightly macOS builds", () =>
