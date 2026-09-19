@@ -50,6 +50,7 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
     traceMaxFiles: 10,
     otlpTracesUrl: undefined,
     otlpMetricsUrl: undefined,
+    otlpLogsUrl: undefined,
     otlpExportIntervalMs: 10_000,
     otlpServiceName: "t3-server",
     otlpHeaders: undefined,
@@ -442,6 +443,7 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
           tailscaleServePort: 443,
           otlpTracesUrl: "http://localhost:4318/v1/traces",
           otlpMetricsUrl: "http://localhost:4318/v1/metrics",
+          otlpLogsUrl: "http://localhost:4318/v1/logs",
         }),
       );
       const derivedPaths = yield* deriveServerPaths(baseDir, undefined);
@@ -483,6 +485,7 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
         ...defaultObservabilityConfig,
         otlpTracesUrl: undefined,
         otlpMetricsUrl: undefined,
+        otlpLogsUrl: undefined,
         mode: "desktop",
         port: 4888,
         cwd: process.cwd(),
@@ -651,6 +654,7 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
           observability: {
             otlpTracesUrl: "http://localhost:4318/v1/traces",
             otlpMetricsUrl: "http://localhost:4318/v1/metrics",
+            otlpLogsUrl: "http://localhost:4318/v1/logs",
           },
         })}\n`,
       );
@@ -687,6 +691,7 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
         ...defaultObservabilityConfig,
         otlpTracesUrl: undefined,
         otlpMetricsUrl: undefined,
+        otlpLogsUrl: undefined,
         mode: "desktop",
         port: 4888,
         cwd: process.cwd(),
@@ -735,6 +740,7 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
                   SCIENT_NEXT_SAFETY_ENVELOPE: "true",
                   T3CODE_OTLP_TRACES_URL: "https://telemetry.example/traces",
                   T3CODE_OTLP_METRICS_URL: "https://telemetry.example/metrics",
+                  T3CODE_OTLP_LOGS_URL: "https://telemetry.example/logs",
                 },
               }),
             ),
@@ -745,6 +751,7 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
 
       expect(resolved.otlpTracesUrl).toBeUndefined();
       expect(resolved.otlpMetricsUrl).toBeUndefined();
+      expect(resolved.otlpLogsUrl).toBeUndefined();
     }),
   );
 

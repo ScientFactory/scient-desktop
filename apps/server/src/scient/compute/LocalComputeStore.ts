@@ -878,12 +878,12 @@ const make = Effect.gen(function* () {
         mediaType: metadata.mediaType,
         contentHash: metadata.contentHash,
         byteLength: metadata.byteLength,
-        // `mtime.getTime()`, not `mtimeMs`: this revision is pinned into a
-        // signed URL and compared against a fresh stat when the URL is served,
-        // and the reader sees whole milliseconds. `mtimeMs` carries the
-        // filesystem's sub-millisecond precision, so recording it would make
-        // the two disagree about an unchanged file and refuse to serve it.
-        revision: { size: info.size, mtimeMs: info.mtime.getTime() },
+        // The HTTP asset layer compares whole milliseconds from Effect's
+        // FileSystem stat. Node's Date#getTime() rounds, while the Effect
+        // adapter truncates sub-millisecond filesystem precision; use the
+        // same normalized value here so an unchanged output is not rejected
+        // as changed merely because its mtime fell on a fractional millisecond.
+        revision: { size: info.size, mtimeMs: Math.trunc(info.mtimeMs) },
       } satisfies ResolvedComputeOutputResource;
     });
 

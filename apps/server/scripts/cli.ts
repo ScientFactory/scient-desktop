@@ -18,6 +18,7 @@ import {
 import { resolveCatalogDependencies } from "../../../scripts/lib/resolve-catalog.ts";
 import { fromJsonStringPretty } from "@t3tools/shared/schemaJson";
 import { fromYaml } from "@t3tools/shared/schemaYaml";
+import { findEsmImportsOfExternalPackages } from "../../../scripts/lib/cli-executable-imports.ts";
 import { resolveSpawnCommand } from "@t3tools/shared/shell";
 import serverPackageJson from "../package.json" with { type: "json" };
 import {
@@ -25,6 +26,7 @@ import {
   ServerCliCommandExitError,
   ServerCliDevelopmentIconSourceMissingError,
   ServerCliDevelopmentIconTargetMissingError,
+  ServerCliExecutableImportError,
   ServerCliPublishIconSourceMissingError,
   ServerCliPublishIconTargetMissingError,
 } from "./cliErrors.ts";
@@ -171,7 +173,7 @@ const applyDevelopmentIconOverrides = Effect.fn("applyDevelopmentIconOverrides")
 const buildCmd = Command.make(
   "build",
   {
-    verbose: Flag.boolean("verbose").pipe(Flag.withDefault(false)),
+    verbose: Flag.Boolean("verbose").pipe(Flag.withDefault(false)),
   },
   (config) =>
     Effect.gen(function* () {
@@ -234,6 +236,65 @@ const buildCmd = Command.make(
 ).pipe(Command.withDescription("Build the server package (tsdown + bundle web client)."));
 
 // ---------------------------------------------------------------------------
+// build-exe subcommand
+// ---------------------------------------------------------------------------
+
+const buildExeCmd = Command.make(
+  "build-exe",
+  {
+    verbose: Flag.Boolean("verbose").pipe(Flag.withDefault(false)),
+    target: Flag.String("target").pipe(
+      Flag.withDescription(
+        "Cross-build for <platform>-<arch> in nodejs.org naming (for example darwin-x64); defaults to the host.",
+      ),
+      Flag.optional,
+    ),
+  },
+  (config) =>
+    Effect.gen(function* () {
+      const path = yield* Path.Path;
+      const fs = yield* FileSystem.FileSystem;
+      const repoRoot = yield* RepoRoot;
+      const serverDir = path.join(repoRoot, "apps/server");
+
+      yield* Effect.log("[cli] Building single-executable...");
+      const spawnCommand = yield* resolveSpawnCommand("vp", ["pack"]);
+      yield* runCommand(
+        ChildProcess.make(spawnCommand.command, spawnCommand.args, {
+          cwd: serverDir,
+          env: {
+            ...process.env,
+            T3CODE_PACK_EXE: "1",
+            ...Option.match(config.target, {
+              onNone: () => ({}),
+              onSome: (target) => ({ T3CODE_PACK_EXE_TARGET: target }),
+            }),
+          },
+          stdout: config.verbose ? "inherit" : "ignore",
+          stderr: "inherit",
+          shell: spawnCommand.shell,
+        }),
+      );
+
+      // The executable can only `import` built-ins. A file-backed import
+      // passes the bundler and `node dist/bin.mjs`, then throws inside the
+      // binary, so read the emitted module graph rather than trusting config.
+      const bundlePath = path.join(serverDir, "dist-exe/bin.mjs");
+      const specifiers = findEsmImportsOfExternalPackages(yield* fs.readFileString(bundlePath));
+      if (specifiers.length > 0) {
+        return yield* new ServerCliExecutableImportError({ bundlePath, specifiers });
+      }
+      yield* Effect.log(
+        "[cli] Built dist-exe/scient (expects client/, resource-monitor/, and runtime externals beside it; the release packaging workflow assembles that tree)",
+      );
+    }),
+).pipe(
+  Command.withDescription(
+    "Build the server as a Node single-executable (the archive builder supplies runtime externals).",
+  ),
+);
+
+// ---------------------------------------------------------------------------
 // publish subcommand
 // ---------------------------------------------------------------------------
 
@@ -265,12 +326,12 @@ const createVpPmPublishArgs = (config: PublishCommandConfig): ReadonlyArray<stri
 const publishCmd = Command.make(
   "publish",
   {
-    tag: Flag.string("tag").pipe(Flag.withDefault("latest")),
-    access: Flag.string("access").pipe(Flag.withDefault("public")),
-    appVersion: Flag.string("app-version").pipe(Flag.optional),
-    provenance: Flag.boolean("provenance").pipe(Flag.withDefault(false)),
-    dryRun: Flag.boolean("dry-run").pipe(Flag.withDefault(false)),
-    verbose: Flag.boolean("verbose").pipe(Flag.withDefault(false)),
+    tag: Flag.String("tag").pipe(Flag.withDefault("latest")),
+    access: Flag.String("access").pipe(Flag.withDefault("public")),
+    appVersion: Flag.String("app-version").pipe(Flag.optional),
+    provenance: Flag.Boolean("provenance").pipe(Flag.withDefault(false)),
+    dryRun: Flag.Boolean("dry-run").pipe(Flag.withDefault(false)),
+    verbose: Flag.Boolean("verbose").pipe(Flag.withDefault(false)),
   },
   (config) =>
     Effect.gen(function* () {
@@ -369,7 +430,7 @@ const publishCmd = Command.make(
 
 const cli = Command.make("cli").pipe(
   Command.withDescription("T3 server build & publish CLI."),
-  Command.withSubcommands([buildCmd, publishCmd]),
+  Command.withSubcommands([buildCmd, buildExeCmd, publishCmd]),
 );
 
 Command.run(cli, { version: "0.0.0" }).pipe(

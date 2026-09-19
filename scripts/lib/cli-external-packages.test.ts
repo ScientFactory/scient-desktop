@@ -9,6 +9,8 @@ import * as Schema from "effect/Schema";
 
 import serverPackageJson from "../../apps/server/package.json" with { type: "json" };
 
+import { findEsmImportsOfExternalPackages } from "./cli-executable-imports.ts";
+
 import {
   CLI_RUNTIME_EXTERNAL_PREFIXES,
   findInlinedExternalPackages,
@@ -19,8 +21,8 @@ import {
 // Only the field this test cares about; decoding ignores everything else.
 // optionalDependencies matter as much as dependencies here: every native family
 // in the list declares its actual platform bindings there (ffi-rs -> @yuuang/*,
-// msgpackr-extract -> @msgpackr-extract/*, fff-node -> @ff-labs/fff-bin-*), so
-// reading only `dependencies` would check nothing for exactly those packages.
+// fff-node -> @ff-labs/fff-bin-*), so reading only `dependencies` would check
+// nothing for exactly those packages.
 const PackageManifest = Schema.Struct({
   dependencies: Schema.optional(Schema.Record(Schema.String, Schema.String)),
   optionalDependencies: Schema.optional(Schema.Record(Schema.String, Schema.String)),
@@ -52,6 +54,7 @@ describe("shouldBundleCliDependency", () => {
       "@clerk/electron-passkeys",
       "msgpackr-extract",
       "@msgpackr-extract/msgpackr-extract-win32-x64",
+      "node-addon-api",
     ]) {
       assert.strictEqual(shouldBundleCliDependency(id), false, id);
     }
@@ -165,8 +168,8 @@ it.layer(NodeServices.layer)("external package dependency closure", (it) => {
         const found = [...installed.keys()].filter(isRuntimeExternal);
 
         // Without this the closure check below can pass vacuously: if nothing is
-        // read, nothing is checked. These are the packages whose closure actually
-        // broke WSL, so require them by name.
+        // read, nothing is checked. These are the packages whose closure
+        // actually broke WSL, so require them by name.
         for (const required of ["node-pty", "node-gyp-build-optional-packages", "detect-libc"]) {
           assert.ok(
             found.includes(required),
@@ -278,8 +281,67 @@ var x = 1;
   });
 
   it("reports no regions when the marker format is absent", () => {
-    const result = findInlinedExternalPackages("var x = 1; // node_modules/detect-libc/lib.js");
+    const result = findInlinedExternalPackages("var x = 1; // node_modules/node-pty/lib.js");
     assert.strictEqual(result.regionCount, 0);
     assert.deepStrictEqual(result.inlined, []);
+  });
+});
+
+// The single-executable build can only `import` built-ins. A file-backed
+// import of an external package passes every bundler check and the regular
+// `node dist/bin.mjs` path, then fails inside the executable, so the scan
+// reads the emitted module graph instead.
+describe("findEsmImportsOfExternalPackages", () => {
+  it("flags static and dynamic imports of file-backed packages", () => {
+    const source = [
+      'import { FileFinder } from "@ff-labs/fff-node";',
+      'import * as fs from "fs";',
+      'import { createRequire } from "node:module";',
+      'const pty = () => import("node-pty");',
+      'const data = () => import("@ff-labs/fff-bin-linux-x64-gnu", { with: { type: "json" } });',
+      'const lazy = () => import(/* @vite-ignore */ "ffi-rs");',
+      'const local = () => import("./chunk-abc.mjs");',
+    ].join("\n");
+
+    assert.deepStrictEqual(findEsmImportsOfExternalPackages(source), [
+      "@ff-labs/fff-bin-linux-x64-gnu",
+      "@ff-labs/fff-node",
+      "ffi-rs",
+      "node-pty",
+    ]);
+  });
+
+  it("flags side-effect imports and re-exports too", () => {
+    const source = ['import "msgpackr-extract";', 'export { load } from "ffi-rs";'].join("\n");
+    assert.deepStrictEqual(findEsmImportsOfExternalPackages(source), [
+      "ffi-rs",
+      "msgpackr-extract",
+    ]);
+  });
+
+  it("ignores imports inside generated extension source and comments", () => {
+    const source = [
+      'const extension = `import { Type } from "typebox";\nimport type { ExtensionAPI } from "@earendil-works/pi-coding-agent";`;',
+      '// import "comment-only";',
+      "const example = 'import(\"string-only\")';",
+      'const interpolated = `source ${import("real-package")}`;',
+    ].join("\n");
+    assert.deepStrictEqual(findEsmImportsOfExternalPackages(source), ["real-package"]);
+  });
+
+  it("allows optional dynamic Bun built-ins but rejects static imports", () => {
+    assert.deepStrictEqual(
+      findEsmImportsOfExternalPackages('const load = () => import("bun:sqlite");'),
+      [],
+    );
+    assert.deepStrictEqual(
+      findEsmImportsOfExternalPackages('import { Database } from "bun:sqlite";'),
+      ["bun:sqlite"],
+    );
+  });
+
+  it("does not mistake createRequire calls for imports", () => {
+    const source = 'const { FileFinder } = createRequire(import.meta.url)("@ff-labs/fff-node");';
+    assert.deepStrictEqual(findEsmImportsOfExternalPackages(source), []);
   });
 });

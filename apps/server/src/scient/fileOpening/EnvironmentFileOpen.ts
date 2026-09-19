@@ -1,6 +1,6 @@
 // @effect-diagnostics nodeBuiltinImport:off
 import * as NodeFS from "node:fs";
-import Mime from "@effect/platform-node/Mime";
+import * as Mime from "effect/unstable/http/Mime";
 import {
   type EnvironmentFileChangeEvent,
   EnvironmentFilePath,
@@ -149,7 +149,7 @@ export function classifyEnvironmentFile(input: {
   if (HTML_EXTENSIONS.has(extension) || (decodedText && looksLikeHtml(decodedText.text))) {
     return {
       kind: "html",
-      mediaType: Mime.getType(input.filePath) ?? "text/html",
+      mediaType: Option.getOrElse(Mime.getType(input.filePath), () => "text/html"),
       ...(decodedText ? { textEncoding: decodedText.encoding } : {}),
     };
   }
@@ -164,20 +164,20 @@ export function classifyEnvironmentFile(input: {
   if (decodedText && MARKDOWN_EXTENSIONS.has(extension)) {
     return {
       kind: "markdown",
-      mediaType: Mime.getType(input.filePath) ?? "text/markdown",
+      mediaType: Option.getOrElse(Mime.getType(input.filePath), () => "text/markdown"),
       textEncoding: decodedText.encoding,
     };
   }
   if (decodedText) {
     return {
       kind: "text",
-      mediaType: Mime.getType(input.filePath) ?? "text/plain",
+      mediaType: Option.getOrElse(Mime.getType(input.filePath), () => "text/plain"),
       textEncoding: decodedText.encoding,
     };
   }
   return {
     kind: "binary",
-    mediaType: Mime.getType(input.filePath) ?? "application/octet-stream",
+    mediaType: Option.getOrElse(Mime.getType(input.filePath), () => "application/octet-stream"),
   };
 }
 
