@@ -46,19 +46,16 @@ revision remains literal ancestry of owned `main`; it is not merely a reviewed
 or observed tip.
 
 The current T3 alignment is recorded in
-[`docs/internals/2026-09-18-upstream-sync-3fd5d643.md`](docs/internals/2026-09-18-upstream-sync-3fd5d643.md)
-and in `upstream-state.json`. It preserves the exact 23 official first-parent commits after
-`1ab2dfb5a7bd2996f79407b5d02cae6132a7626c` through
-`3fd5d6439d8fd49d173503ecda96500463a39bd2`. The history-preserving alignment merge is
-`0b541f80af4cadf1b5639f51aa12effcf9881c87`, whose second parent is that exact official target.
-The candidate then incorporates the latest owned-main commits `f6dd5203ba` (#304),
-`c343223d37` (#305), and `3f9e3c9c6e` (#307) through two additional history-preserving merges,
-with no textual conflicts. The final candidate head is `108bb3c37e`.
+[`docs/internals/2026-09-19-upstream-sync-408ff8ae9b.md`](docs/internals/2026-09-19-upstream-sync-408ff8ae9b.md)
+and in `upstream-state.json`. It preserves the exact 76 official commits after
+`3fd5d6439d8fd49d173503ecda96500463a39bd2` through
+`408ff8ae9bd7eb2e7e90cbfd8b3fcfe63641bf23`. The history-preserving alignment merge is
+`0c141c73e109d51369e8b95ca21e15573292bab2`, whose second parent is that exact official target.
 
-Automated qualification passed and this isolated candidate is ready for owner manual review.
-No PR, push, visual acceptance, or release publication is implied by this pass. The
-[preceding alignment](docs/internals/2026-09-17-upstream-sync-dd9528a9.md) remains in ancestry.
-Later observed upstream tips do not move `integrationBase` by themselves.
+Automated qualification and source review passed. The requested PR is the delivery boundary;
+release publication remains separate. The [preceding alignment](docs/internals/2026-09-18-upstream-sync-3fd5d643.md)
+and all earlier official ancestry remain literal history. Later observed upstream tips do not
+move `integrationBase` by themselves.
 
 ## Receiving T3 updates
 
