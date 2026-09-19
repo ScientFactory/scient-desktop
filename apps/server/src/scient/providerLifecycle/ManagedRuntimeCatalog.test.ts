@@ -1,5 +1,6 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import {
+  MANAGED_RUNTIME_POLICY,
   managedRuntimeArtifactReceipt,
   resolveReviewedAntigravityArtifact,
   resolveReviewedClaudeArtifact,
@@ -73,7 +74,7 @@ const remoteCatalog = (version = newerCodexVersion): ManagedRuntimeCatalogData =
   schemaVersion: 1,
   providers: {
     codex: {
-      contractRevision: 1,
+      contractRevision: MANAGED_RUNTIME_POLICY.codex.revision,
       channel: "stable",
       version,
       artifacts: {
@@ -109,6 +110,43 @@ const serviceLayers = (input: {
   );
 
 describe("managed runtime catalog resolution", () => {
+  it("protects old clients while accepting the new Codex contract in upgraded clients", () => {
+    const bundled = BUNDLED_MANAGED_RUNTIME_CATALOG;
+    const codex = bundled.providers.codex!;
+    const claude = bundled.providers.claudeAgent!;
+    const oldClient = {
+      ...bundled,
+      providers: { ...bundled.providers, codex: { ...codex, contractRevision: 1 } },
+    };
+    const feed = {
+      ...bundled,
+      providers: {
+        ...bundled.providers,
+        codex: { ...codex, version: newerCodexVersion },
+        claudeAgent: { ...claude, version: nextPatch(claude.version) },
+      },
+    };
+    const oldResult = mergeManagedRuntimeCatalogs(oldClient, feed);
+    assert.deepStrictEqual(oldResult.providers.codex, oldClient.providers.codex);
+    assert.strictEqual(oldResult.providers.claudeAgent?.version, nextPatch(claude.version));
+    assert.strictEqual(
+      resolveFetchedManagedRuntimeCatalog(feed).providers.codex?.version,
+      newerCodexVersion,
+    );
+    assert.deepStrictEqual(resolveFetchedManagedRuntimeCatalog(oldClient).providers.codex, codex);
+    assert.deepStrictEqual(mergeManagedRuntimeCatalogs(bundled, oldClient).providers.codex, codex);
+
+    const policy = resolveReviewedCodexArtifact({ platform: "darwin", arch: "arm64" })!;
+    assert.isUndefined(
+      resolveManagedRuntimeCatalogArtifact({ catalog: feed, policy, contractRevision: 1 }),
+    );
+    assert.deepStrictEqual(
+      resolveManagedRuntimeCatalogArtifact({ catalog: feed, policy, contractRevision: 2 })
+        ?.extractionLimits,
+      { maxEntries: 128, maxExpandedBytes: 512 * 1024 * 1024 },
+    );
+  });
+
   it("never lets an older cache outrank a newer bundled provider release", () => {
     const bundled = BUNDLED_MANAGED_RUNTIME_CATALOG;
     const codex = bundled.providers.codex;
@@ -151,7 +189,7 @@ describe("managed runtime catalog resolution", () => {
     assert.deepStrictEqual(repacked.providers.codex, codex);
     const contractDrift = mergeManagedRuntimeCatalogs(bundled, {
       schemaVersion: 1,
-      providers: { codex: { ...codex, contractRevision: 2, version: newerCodexVersion } },
+      providers: { codex: { ...codex, contractRevision: 999, version: newerCodexVersion } },
     });
     assert.deepStrictEqual(contractDrift.providers.codex, codex);
   });
@@ -217,7 +255,7 @@ describe("managed runtime catalog resolution", () => {
         const resolved = resolveManagedRuntimeCatalogArtifact({
           catalog: BUNDLED_MANAGED_RUNTIME_CATALOG,
           policy,
-          contractRevision: 1,
+          contractRevision: MANAGED_RUNTIME_POLICY[provider].revision,
         });
         assert.isDefined(resolved, `${provider} ${JSON.stringify(target)}`);
         assert.strictEqual(
@@ -293,7 +331,7 @@ describe("managed runtime catalog resolution", () => {
     const resolved = resolveManagedRuntimeCatalogArtifact({
       catalog: remoteCatalog(),
       policy,
-      contractRevision: 1,
+      contractRevision: MANAGED_RUNTIME_POLICY.codex.revision,
     });
     assert.isDefined(resolved);
     assert.strictEqual(resolved.version, newerCodexVersion);
@@ -312,7 +350,7 @@ describe("managed runtime catalog resolution", () => {
       resolveManagedRuntimeCatalogArtifact({
         catalog: remoteCatalog(),
         policy,
-        contractRevision: 2,
+        contractRevision: 1,
       }),
     );
     const catalog = remoteCatalog();
@@ -335,7 +373,7 @@ describe("managed runtime catalog resolution", () => {
           },
         },
         policy,
-        contractRevision: 1,
+        contractRevision: MANAGED_RUNTIME_POLICY.codex.revision,
       }),
     );
   });
@@ -555,7 +593,7 @@ describe("latest qualified repair selection", () => {
       const candidate = resolveManagedRuntimeCatalogCandidate({
         bundledArtifact: bundled,
         catalog: BUNDLED_MANAGED_RUNTIME_CATALOG,
-        contractRevision: 1,
+        contractRevision: MANAGED_RUNTIME_POLICY[provider].revision,
       });
       assert.isDefined(candidate);
       const newer = {

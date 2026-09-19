@@ -4,6 +4,7 @@ import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 
 import {
+  MANAGED_RUNTIME_POLICY,
   ManagedCodexRuntime,
   detectManagedRuntimeTarget,
   managedRuntimeSmokeEnvironment,
@@ -40,7 +41,6 @@ import {
 import { isManagedRuntimeUpdate } from "./managedRuntimeVersion.ts";
 
 const DEFAULT_CODEX_BINARY = "codex";
-const CODEX_MANAGED_RUNTIME_CONTRACT_REVISION = 1;
 
 export function resolveCodexCodeModeHostPath(
   binaryPath: string,
@@ -112,7 +112,7 @@ export function resolveCodexCatalogCandidate(input: {
   return resolveManagedRuntimeCatalogCandidate({
     catalog: input.catalog,
     bundledArtifact: input.bundledArtifact,
-    contractRevision: CODEX_MANAGED_RUNTIME_CONTRACT_REVISION,
+    contractRevision: MANAGED_RUNTIME_POLICY.codex.revision,
   });
 }
 

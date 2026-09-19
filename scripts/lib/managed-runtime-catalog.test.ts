@@ -2,6 +2,7 @@ import { describe, expect, it } from "vite-plus/test";
 import {
   ANTIGRAVITY_ACP_TARGETS,
   MANAGED_RUNTIME_CATALOG_PROVIDERS,
+  MANAGED_RUNTIME_POLICY,
   antigravityAcpExecutableNames,
 } from "@scientfactory/provider-runtime";
 
@@ -13,11 +14,187 @@ import {
   refreshManagedRuntimeCatalog,
   refreshManagedRuntimeProvider,
   validateManagedRuntimeCatalog,
+  validateManagedRuntimeCandidate,
   type ManagedRuntimeCatalogData,
 } from "./managed-runtime-catalog.ts";
 import bundledCatalogJson from "../../apps/server/src/scient/providerLifecycle/bundled-managed-runtime-catalog.json" with { type: "json" };
 
 const currentCatalog: ManagedRuntimeCatalogData = validateManagedRuntimeCatalog(bundledCatalogJson);
+
+const previousCodexCatalog = (): ManagedRuntimeCatalogData => ({
+  ...currentCatalog,
+  providers: {
+    ...currentCatalog.providers,
+    codex: { ...currentCatalog.providers.codex!, contractRevision: 1 },
+  },
+});
+
+describe("managed runtime policy transitions", () => {
+  it("keeps every bundled family aligned with the shared policy registry", () => {
+    for (const provider of MANAGED_RUNTIME_CATALOG_PROVIDERS) {
+      const policy = MANAGED_RUNTIME_POLICY[provider];
+      expect(currentCatalog.providers[provider]?.contractRevision).toBe(policy.revision);
+      expect(
+        policy.historicalRevisions.every((revision) => revision > 0 && revision < policy.revision),
+      ).toBe(true);
+    }
+  });
+
+  it("preserves the old published revision while other providers discover and publish", async () => {
+    const current = validateManagedRuntimeCatalog(previousCodexCatalog());
+    expect(current.providers.codex?.contractRevision).toBe(1);
+    const { fetch_ } = stableChannelFetch();
+    const unchanged = await refreshManagedRuntimeProvider(current, "claudeAgent", fetch_);
+    expect(unchanged.changedProviders).toEqual([]);
+    const claude = currentCatalog.providers.claudeAgent!;
+    const candidate = {
+      ...currentCatalog,
+      providers: {
+        ...currentCatalog.providers,
+        claudeAgent: { ...claude, version: nextPatch(claude.version) },
+      },
+    };
+    const published = mergeQualifiedManagedRuntimeProvider({
+      current,
+      candidate,
+      provider: "claudeAgent",
+    });
+    expect(published.providers.codex).toEqual(current.providers.codex);
+    expect(published.providers.claudeAgent?.version).toBe(nextPatch(claude.version));
+  });
+
+  it("rediscovers complete metadata when only the contract changed", async () => {
+    const current = validateManagedRuntimeCatalog(previousCodexCatalog());
+    const codex = current.providers.codex!;
+    const requested: string[] = [];
+    const result = await refreshManagedRuntimeProvider(current, "codex", async (input, init) => {
+      requested.push(input.toString());
+      if (init?.method === "HEAD")
+        return new Response(null, { headers: { "content-length": "123456" } });
+      return Response.json({
+        tag_name: `rust-v${codex.version}`,
+        assets: Object.values(codex.artifacts).map((artifact) => ({
+          name: artifact.artifactName,
+          browser_download_url: artifact.url,
+          digest: `sha256:${artifact.checksum.digest}`,
+        })),
+      });
+    });
+    expect(result.changedProviders).toEqual(["codex"]);
+    expect(result.catalog.providers.codex?.contractRevision).toBe(2);
+    expect(result.catalog.providers.codex?.version).toBe(codex.version);
+    expect(requested).toHaveLength(2 + Object.keys(codex.artifacts).length);
+    expect(current.providers.codex?.contractRevision).toBe(1);
+  });
+
+  it("retains historical policy data without qualifying it against today's installer", () => {
+    const previous = previousCodexCatalog();
+    const codex = previous.providers.codex!;
+    const historical = {
+      ...codex,
+      artifacts: { "former-target": codex.artifacts["darwin-arm64"]! },
+    };
+    const decoded = validateManagedRuntimeCatalog({
+      ...previous,
+      providers: { ...previous.providers, codex: historical },
+    });
+    expect(decoded.providers.codex).toEqual(historical);
+    expect(() => validateManagedRuntimeCandidate(decoded, "codex")).toThrow(
+      /current managed runtime contract/u,
+    );
+    expect(() =>
+      validateManagedRuntimeCatalog({
+        ...decoded,
+        providers: { codex: { ...historical, contractRevision: 2 } },
+      }),
+    ).toThrow(/unapproved target/u);
+  });
+
+  it("promotes a qualified policy-only transition idempotently and preserves other providers", () => {
+    const current = validateManagedRuntimeCatalog(previousCodexCatalog());
+    const promoted = mergeQualifiedManagedRuntimeProvider({
+      current,
+      candidate: currentCatalog,
+      provider: "codex",
+    });
+    expect(promoted).toEqual(currentCatalog);
+    expect(
+      mergeQualifiedManagedRuntimeProvider({
+        current: promoted,
+        candidate: currentCatalog,
+        provider: "codex",
+      }),
+    ).toBe(promoted);
+  });
+
+  it("never lets a contract change authorize repacking or deleting an existing artifact", () => {
+    const current = validateManagedRuntimeCatalog(previousCodexCatalog());
+    const codex = currentCatalog.providers.codex!;
+    const artifact = codex.artifacts["darwin-arm64"]!;
+    const candidate = {
+      ...currentCatalog,
+      providers: {
+        ...currentCatalog.providers,
+        codex: {
+          ...codex,
+          artifacts: {
+            ...codex.artifacts,
+            "darwin-arm64": { ...artifact, size: artifact.size + 1 },
+          },
+        },
+      },
+    };
+    expect(() =>
+      mergeQualifiedManagedRuntimeProvider({ current, candidate, provider: "codex" }),
+    ).toThrow(/same-version catalog repack/u);
+    const { "darwin-arm64": _removed, ...remaining } = codex.artifacts;
+    expect(() =>
+      validateManagedRuntimeCandidate(
+        { ...candidate, providers: { codex: { ...codex, artifacts: remaining } } },
+        "codex",
+      ),
+    ).toThrow(/every app-approved target/u);
+  });
+
+  it.each([0, 3, 999])("rejects unknown Codex contract %s", (contractRevision) => {
+    expect(() =>
+      validateManagedRuntimeCatalog({
+        ...currentCatalog,
+        providers: { codex: { ...currentCatalog.providers.codex!, contractRevision } },
+      }),
+    ).toThrow(/unsupported managed runtime contract/u);
+  });
+
+  it("never qualifies or publishes an older contract through the new installer", () => {
+    const legacy = validateManagedRuntimeCatalog(previousCodexCatalog());
+    expect(() => validateManagedRuntimeCandidate(legacy, "codex")).toThrow(
+      /current managed runtime contract/u,
+    );
+    expect(() =>
+      mergeQualifiedManagedRuntimeProvider({
+        current: currentCatalog,
+        candidate: legacy,
+        provider: "codex",
+      }),
+    ).toThrow(/current managed runtime contract/u);
+  });
+
+  it("does not downgrade a provider version when its policy changes", () => {
+    const current = previousCodexCatalog();
+    const codex = current.providers.codex!;
+    const newer = {
+      ...current,
+      providers: { ...current.providers, codex: { ...codex, version: nextPatch(codex.version) } },
+    };
+    expect(() =>
+      mergeQualifiedManagedRuntimeProvider({
+        current: newer,
+        candidate: currentCatalog,
+        provider: "codex",
+      }),
+    ).toThrow(/not newer/u);
+  });
+});
 
 const unixAcpArchive = Buffer.from(
   "UEsDBBQAAAAIAAAAIl1zEy/oFAAAABQAAAASAAAAYWd5X2FjcF9zZXJ2ZXIucGFyS8wryUwvSizLLKlUKCoFcnJTuQBQSwMEFAAAAAgAAAAiXV9yAykQAAAADgAAABUAAABsb2NhbGhhcm5lc3NfZXh0ZXJuYWzLyU9OzFHISCzKSy0u5gIAUEsBAhQDFAAAAAgAAAAiXXMTL+gUAAAAFAAAABIAAAAAAAAAAAAAAO2BAAAAAGFneV9hY3Bfc2VydmVyLnBhclBLAQIUAxQAAAAIAAAAIl1fcgMpEAAAAA4AAAAVAAAAAAAAAAAAAADtgUQAAABsb2NhbGhhcm5lc3NfZXh0ZXJuYWxQSwUGAAAAAAIAAgCDAAAAhwAAAAAA",

@@ -1,4 +1,5 @@
 import { compareManagedRuntimeVersions } from "./managedRuntimeVersion.ts";
+import { MANAGED_RUNTIME_POLICY } from "./managedRuntimePolicy.ts";
 
 interface AntigravityAcpCatalogData {
   readonly providers: Readonly<
@@ -108,7 +109,7 @@ export function resolveAntigravityAcpCatalogAsset(
     !release ||
     !artifact ||
     !payload ||
-    release.contractRevision !== 1 ||
+    release.contractRevision !== MANAGED_RUNTIME_POLICY.antigravityAcp.revision ||
     release.channel !== "stable" ||
     !["equal", "newer"].includes(
       compareManagedRuntimeVersions({

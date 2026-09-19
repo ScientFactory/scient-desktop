@@ -4,6 +4,7 @@ import * as NodeCrypto from "node:crypto";
 import {
   ANTIGRAVITY_ACP_TARGETS,
   MANAGED_RUNTIME_CATALOG_PROVIDERS as managedRuntimeProviders,
+  MANAGED_RUNTIME_POLICY,
   DROID_LATEST_VERSION_URL,
   parseDroidReleaseVersion,
   antigravityAcpExecutableNames,
@@ -33,7 +34,6 @@ const MAX_METADATA_BYTES = 2 * 1_024 * 1_024;
 const MAX_ARTIFACT_BYTES = 4 * 1_024 * 1_024 * 1_024;
 const REQUEST_TIMEOUT_MS = 30_000;
 const ARTIFACT_TIMEOUT_MS = 15 * 60_000;
-const CONTRACT_REVISION = 1;
 
 export interface ManagedRuntimeCatalogArtifactData {
   readonly artifactName: string;
@@ -255,7 +255,7 @@ function candidateProvider(input: {
 }): ManagedRuntimeCatalogProviderData {
   if (input.provider === "antigravityAcp") {
     const release = {
-      contractRevision: CONTRACT_REVISION,
+      contractRevision: MANAGED_RUNTIME_POLICY[input.provider].revision,
       channel: "stable" as const,
       version: input.version,
       artifacts: input.artifacts,
@@ -292,7 +292,7 @@ function candidateProvider(input: {
     if (!hydrated) throw new Error(`${input.provider} ${key} violates app-owned runtime policy.`);
   }
   return {
-    contractRevision: CONTRACT_REVISION,
+    contractRevision: MANAGED_RUNTIME_POLICY[input.provider].revision,
     channel: "stable",
     version: input.version,
     artifacts: input.artifacts,
@@ -300,10 +300,12 @@ function candidateProvider(input: {
 }
 
 /**
- * Decode and re-apply the app-owned provider policy to an untrusted catalog.
+ * Decode a published catalog without upgrading its policy revisions. Current
+ * releases are checked against app-owned policy; known historical revisions
+ * are retained as data so a policy transition cannot block other providers.
  * Automation reads the generated branch through Git, so it must not trust a
- * TypeScript cast to establish that every provider and approved target is
- * complete or still obeys the runtime policy shipped on `main`.
+ * TypeScript cast to establish current-policy compatibility. Candidate validation
+ * additionally requires the current revision and every approved target.
  */
 export function validateManagedRuntimeCatalog(input: unknown): ManagedRuntimeCatalogData {
   const root = record(input, "Managed runtime catalog");
@@ -328,7 +330,13 @@ export function validateManagedRuntimeCatalog(input: unknown): ManagedRuntimeCat
     // family's own discovery and native qualification succeed.
     if (rawProviders[provider] === undefined) continue;
     const rawRelease = record(rawProviders[provider], `Managed runtime catalog ${provider}`);
-    if (rawRelease.contractRevision !== CONTRACT_REVISION) {
+    const policyContract = MANAGED_RUNTIME_POLICY[provider];
+    const contractRevision = rawRelease.contractRevision;
+    if (
+      typeof contractRevision !== "number" ||
+      (contractRevision !== policyContract.revision &&
+        !policyContract.historicalRevisions.includes(contractRevision))
+    ) {
       throw new Error(`${provider} has an unsupported managed runtime contract revision.`);
     }
     if (rawRelease.channel !== "stable") {
@@ -339,8 +347,10 @@ export function validateManagedRuntimeCatalog(input: unknown): ManagedRuntimeCat
       `${provider} catalog release`,
     );
     const rawArtifacts = record(rawRelease.artifacts, `${provider} catalog artifacts`);
-    const entries =
-      provider === "antigravityAcp"
+    const historical = contractRevision !== policyContract.revision;
+    const entries = historical
+      ? Object.keys(rawArtifacts).map((key) => ({ key }))
+      : provider === "antigravityAcp"
         ? ANTIGRAVITY_ACP_TARGETS.map((target) => ({ key: `${target.platform}-${target.arch}` }))
         : policyEntries(provider);
     const expectedTargets = new Set(entries.map(({ key }) => key));
@@ -355,7 +365,7 @@ export function validateManagedRuntimeCatalog(input: unknown): ManagedRuntimeCat
     // A generated feed can predate newly app-approved targets. Decode its approved
     // subset so that the provider's own discovery and native qualification can
     // add the missing targets without disabling its already qualified artifacts.
-    if (provider === "antigravityAcp" && artifactKeys.length !== entries.length) {
+    if (!historical && provider === "antigravityAcp" && artifactKeys.length !== entries.length) {
       throw new Error("Antigravity ACP does not contain every app-approved target.");
     }
 
@@ -399,6 +409,10 @@ export function validateManagedRuntimeCatalog(input: unknown): ManagedRuntimeCat
           : {}),
       };
     }
+    if (historical) {
+      providers[provider] = { contractRevision, channel: "stable", version, artifacts };
+      continue;
+    }
     if (provider === "antigravityAcp") {
       providers[provider] = candidateProvider({ provider, version, artifacts });
       continue;
@@ -416,7 +430,7 @@ export function validateManagedRuntimeCatalog(input: unknown): ManagedRuntimeCat
       if (!hydrated) throw new Error(`${provider} ${key} violates app-owned runtime policy.`);
     }
     providers[provider] = {
-      contractRevision: CONTRACT_REVISION,
+      contractRevision,
       channel: "stable",
       version,
       artifacts,
@@ -432,7 +446,10 @@ function releaseChanged(
   version: string,
 ): boolean {
   if (current.version === version) {
-    return approvedTargetKeys(provider).some((key) => current.artifacts[key] === undefined);
+    return (
+      current.contractRevision !== MANAGED_RUNTIME_POLICY[provider].revision ||
+      approvedTargetKeys(provider).some((key) => current.artifacts[key] === undefined)
+    );
   }
   if (!isManagedRuntimeUpdate({ provider, current: current.version, candidate: version })) {
     throw new Error(
@@ -442,7 +459,26 @@ function releaseChanged(
   return true;
 }
 
-function isAdditiveTargetExpansion(input: {
+/** Only the current, complete app-owned policy can enter native qualification or publication. */
+export function validateManagedRuntimeCandidate(
+  catalog: ManagedRuntimeCatalogData,
+  provider: ManagedRuntimeCatalogProvider,
+): ManagedRuntimeCatalogProviderData {
+  const release = catalog.providers[provider];
+  if (
+    !release ||
+    release.channel !== "stable" ||
+    release.contractRevision !== MANAGED_RUNTIME_POLICY[provider].revision
+  ) {
+    throw new Error(`${provider} candidate does not use the current managed runtime contract.`);
+  }
+  if (!hasCompleteApprovedTargetSet(provider, release)) {
+    throw new Error(`${provider} candidate does not contain every app-approved target.`);
+  }
+  return candidateProvider({ provider, version: release.version, artifacts: release.artifacts });
+}
+
+function preservesPublishedArtifacts(input: {
   readonly provider: ManagedRuntimeCatalogProvider;
   readonly current: ManagedRuntimeCatalogProviderData;
   readonly candidate: ManagedRuntimeCatalogProviderData;
@@ -452,7 +488,7 @@ function isAdditiveTargetExpansion(input: {
   const candidateEntries = Object.entries(input.candidate.artifacts);
   return (
     hasCompleteApprovedTargetSet(input.provider, input.candidate) &&
-    candidateEntries.length > currentEntries.length &&
+    candidateEntries.length >= currentEntries.length &&
     currentEntries.every(
       ([key, artifact]) =>
         approved.has(key) &&
@@ -855,7 +891,9 @@ export async function refreshManagedRuntimeProvider(
     report(`${provider} is already current at ${latestVersion}.`);
     return { catalog: current, changedProviders: [] };
   }
-  report(`Collecting ${provider} ${latestVersion} release metadata.`);
+  report(
+    `Collecting ${provider} ${latestVersion} release metadata for contract ${MANAGED_RUNTIME_POLICY[provider].revision}.`,
+  );
   const candidate = await discoverers[provider](fetch_);
   if (candidate.version !== latestVersion) {
     throw new Error(`${provider} stable release changed during discovery.`);
@@ -881,21 +919,28 @@ export function mergeQualifiedManagedRuntimeProvider(input: {
   readonly provider: ManagedRuntimeCatalogProvider;
 }): ManagedRuntimeCatalogData {
   const currentRelease = existingOrBundledRelease(input.current, input.provider);
-  const candidateRelease = input.candidate.providers[input.provider];
-  if (!candidateRelease) {
-    throw new Error(`Managed runtime catalog is missing ${input.provider}.`);
-  }
-  if (!hasCompleteApprovedTargetSet(input.provider, candidateRelease)) {
-    throw new Error(`${input.provider} candidate does not contain every app-approved target.`);
+  const candidateRelease = validateManagedRuntimeCandidate(input.candidate, input.provider);
+  const policyContract = MANAGED_RUNTIME_POLICY[input.provider];
+  if (
+    (currentRelease.contractRevision !== policyContract.revision &&
+      !policyContract.historicalRevisions.includes(currentRelease.contractRevision)) ||
+    candidateRelease.contractRevision < currentRelease.contractRevision
+  ) {
+    throw new Error(
+      `${input.provider} attempted an unsupported managed runtime contract transition.`,
+    );
   }
   if (currentRelease.version === candidateRelease.version) {
     if (JSON.stringify(currentRelease) !== JSON.stringify(candidateRelease)) {
       if (
-        !isAdditiveTargetExpansion({
+        !preservesPublishedArtifacts({
           provider: input.provider,
           current: currentRelease,
           candidate: candidateRelease,
-        })
+        }) ||
+        (candidateRelease.contractRevision === currentRelease.contractRevision &&
+          Object.keys(candidateRelease.artifacts).length <=
+            Object.keys(currentRelease.artifacts).length)
       ) {
         throw new Error(`${input.provider} attempted a same-version catalog repack.`);
       }
