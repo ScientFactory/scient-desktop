@@ -29,8 +29,11 @@ interface ComposerPrimaryActionsProps {
   isPreparingWorktree: boolean;
   hasSendableContent: boolean;
   preserveComposerFocusOnPointerDown?: boolean;
-  /** Enter-to-send is disabled on mobile viewports, where stop would otherwise
-   * be the only primary action and a running turn could not be steered. */
+  /** While a turn is running and the composer has sendable content, render
+   * the submit button beside stop. Submitting a busy thread queues the
+   * message, so the button advertises "Queue message" in that state.
+   * SCIENT-FORK: enabled on desktop as well (DF-028); upstream only used it
+   * on mobile viewports. */
   showSendWhileRunning?: boolean;
   onPreviousPendingQuestion: () => void;
   onInterrupt: () => void;
@@ -248,7 +251,11 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
                 ? "Preparing worktree"
                 : isSendBusy
                   ? "Sending"
-                  : "Send message"
+                  : // SCIENT-FORK: submitting a running thread queues the
+                    // message, so the label follows the real disposition.
+                    isRunning
+                    ? "Queue message"
+                    : "Send message"
       }
     >
       {stageBackdropVariant ? (
