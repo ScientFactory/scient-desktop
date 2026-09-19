@@ -1,4 +1,5 @@
 import {
+  MANAGED_RUNTIME_POLICY,
   ManagedAntigravityRuntime,
   detectManagedRuntimeTarget,
   managedRuntimeTargetKey,
@@ -16,7 +17,6 @@ import {
 } from "./ManagedProviderRuntimeActions.ts";
 
 const DEFAULT_ANTIGRAVITY_BINARY = "agy";
-const ANTIGRAVITY_MANAGED_RUNTIME_CONTRACT_REVISION = 1;
 
 function detectTargetSafely(input: { readonly platform: NodeJS.Platform; readonly arch: string }) {
   try {
@@ -50,7 +50,7 @@ export const makeAntigravityManagedRuntimeResolution = Effect.fn(
     providerSlug: "antigravity",
     runtime: new ManagedAntigravityRuntime(input.baseDir),
     bundledArtifact: artifact,
-    contractRevision: ANTIGRAVITY_MANAGED_RUNTIME_CONTRACT_REVISION,
+    contractRevision: MANAGED_RUNTIME_POLICY.antigravity.revision,
     targetLabel,
     environment: input.environment,
     spawner: input.spawner,

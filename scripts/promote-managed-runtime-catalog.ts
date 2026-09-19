@@ -39,13 +39,9 @@ await NodeFSP.writeFile(outputPath, `${JSON.stringify(promoted, null, 2)}\n`, { 
 
 const previousRelease = current.providers[provider];
 const promotedRelease = promoted.providers[provider];
-const previousVersion = previousRelease?.version;
-const promotedVersion = promotedRelease?.version;
 const unchanged = JSON.stringify(previousRelease) === JSON.stringify(promotedRelease);
 process.stdout.write(
   unchanged
-    ? `${provider} ${promotedVersion ?? "unknown"} is already published.\n`
-    : previousVersion === promotedVersion
-      ? `Published additional qualified targets for ${provider} ${promotedVersion ?? "unknown"}.\n`
-      : `Published ${provider} ${promotedVersion ?? "unknown"} over ${previousVersion ?? "unknown"}.\n`,
+    ? `${provider} ${promotedRelease?.version ?? "unknown"} is already published.\n`
+    : `Prepared ${provider} ${promotedRelease?.version} (contract ${promotedRelease?.contractRevision}) over ${previousRelease?.version ?? "absent"} (contract ${previousRelease?.contractRevision ?? "absent"}).\n`,
 );

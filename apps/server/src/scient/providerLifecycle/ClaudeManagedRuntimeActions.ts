@@ -1,4 +1,5 @@
 import {
+  MANAGED_RUNTIME_POLICY,
   ManagedClaudeRuntime,
   detectManagedRuntimeTarget,
   managedRuntimeTargetKey,
@@ -16,7 +17,6 @@ import {
 } from "./ManagedProviderRuntimeActions.ts";
 
 const DEFAULT_CLAUDE_BINARY = "claude";
-const CLAUDE_MANAGED_RUNTIME_CONTRACT_REVISION = 1;
 
 function detectTargetSafely(input: { readonly platform: NodeJS.Platform; readonly arch: string }) {
   try {
@@ -49,7 +49,7 @@ export const makeClaudeManagedRuntimeResolution = Effect.fn("ClaudeManagedRuntim
       providerSlug: "claude",
       runtime: new ManagedClaudeRuntime(input.baseDir),
       bundledArtifact: artifact,
-      contractRevision: CLAUDE_MANAGED_RUNTIME_CONTRACT_REVISION,
+      contractRevision: MANAGED_RUNTIME_POLICY.claudeAgent.revision,
       targetLabel,
       environment: input.environment,
       spawner: input.spawner,

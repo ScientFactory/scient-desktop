@@ -1,4 +1,5 @@
 import {
+  MANAGED_RUNTIME_POLICY,
   ManagedDroidRuntime,
   detectManagedRuntimeTarget,
   managedRuntimeTargetKey,
@@ -16,7 +17,6 @@ import {
 } from "./ManagedProviderRuntimeActions.ts";
 
 const DEFAULT_DROID_BINARY = "droid";
-const DROID_MANAGED_RUNTIME_CONTRACT_REVISION = 1;
 
 function detectTargetSafely(input: { readonly platform: NodeJS.Platform; readonly arch: string }) {
   try {
@@ -49,7 +49,7 @@ export const makeDroidManagedRuntimeResolution = Effect.fn("DroidManagedRuntime.
       providerSlug: "droid",
       runtime: new ManagedDroidRuntime(input.baseDir),
       bundledArtifact: artifact,
-      contractRevision: DROID_MANAGED_RUNTIME_CONTRACT_REVISION,
+      contractRevision: MANAGED_RUNTIME_POLICY.droid.revision,
       targetLabel,
       environment: input.environment,
       spawner: input.spawner,

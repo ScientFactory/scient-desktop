@@ -256,7 +256,11 @@ function validateArchiveEntry(input: {
     input.counters.entries > input.limits.maxEntries ||
     input.counters.expandedBytes > input.limits.maxExpandedBytes
   ) {
-    throw new ManagedRuntimeFileError("Managed runtime archive exceeds extraction limits.");
+    throw new ManagedRuntimeFileError(
+      `Managed runtime archive exceeds extraction limits at ${JSON.stringify(input.entryPath)}: ` +
+        `${input.counters.entries} entries (limit ${input.limits.maxEntries}), ` +
+        `${input.counters.expandedBytes} expanded bytes (limit ${input.limits.maxExpandedBytes}).`,
+    );
   }
   return outputPath;
 }

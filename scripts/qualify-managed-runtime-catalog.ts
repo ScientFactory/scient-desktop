@@ -32,7 +32,10 @@ import {
 import { HostProcessArchitecture, HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import * as Effect from "effect/Effect";
 
-import type { ManagedRuntimeCatalogData } from "./lib/managed-runtime-catalog.ts";
+import {
+  validateManagedRuntimeCatalog,
+  validateManagedRuntimeCandidate,
+} from "./lib/managed-runtime-catalog.ts";
 
 function argument(name: string): string | undefined {
   const index = process.argv.indexOf(name);
@@ -143,12 +146,12 @@ const factory = providerFactories[provider];
 const policy = factory.policy(target);
 if (!policy) throw new Error(`${provider} does not support native CI target ${targetKey}.`);
 
-const catalog = JSON.parse(
-  await NodeFSP.readFile(catalogPath, "utf8"),
-) as ManagedRuntimeCatalogData;
-const release = catalog.providers[provider];
-const artifactData = release?.artifacts[targetKey];
-if (!release || release.contractRevision !== 1 || release.channel !== "stable" || !artifactData) {
+const catalog = validateManagedRuntimeCatalog(
+  JSON.parse(await NodeFSP.readFile(catalogPath, "utf8")),
+);
+const release = validateManagedRuntimeCandidate(catalog, provider);
+const artifactData = release.artifacts[targetKey];
+if (!artifactData) {
   throw new Error(`${provider} catalog does not contain approved native target ${targetKey}.`);
 }
 const artifact = hydrateManagedRuntimeArtifact(policy, {
@@ -159,7 +162,7 @@ const artifact = hydrateManagedRuntimeArtifact(policy, {
   catalogRevision: [
     "managed-runtime",
     provider,
-    "contract-1",
+    `contract-${release.contractRevision}`,
     release.version,
     targetKey,
     artifactData.checksum.algorithm,
@@ -167,6 +170,10 @@ const artifact = hydrateManagedRuntimeArtifact(policy, {
   ].join(":"),
 });
 if (!artifact) throw new Error(`${provider} ${targetKey} violates app-owned runtime policy.`);
+
+process.stdout.write(
+  `Qualifying ${provider} ${artifact.version} on ${targetKey}, contract ${release.contractRevision}.\n`,
+);
 
 const root = await NodeFSP.mkdtemp(
   NodePath.join(NodeOS.tmpdir(), `scient-${provider}-qualification-`),
