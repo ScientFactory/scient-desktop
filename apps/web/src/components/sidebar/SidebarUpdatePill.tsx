@@ -326,11 +326,15 @@ function SidebarUpdateControl() {
         isInteractionDisabled ? "cursor-not-allowed" : "cursor-pointer",
         showUpdateIconState
           ? cn(
-              "h-7 w-22 gap-1.5 rounded-[var(--control-radius)] bg-primary px-2 text-sm font-medium whitespace-nowrap text-primary-foreground",
+              // SCIENT-FORK: compact pill — ~2px smaller all around, tested in
+              // the update lab (sizes, weights and stroke below are the
+              // lab-verified values).
+              "h-5 w-16 gap-0.5 rounded-[var(--control-radius)] bg-primary px-0.5 text-[11.5px] font-medium whitespace-nowrap text-primary-foreground",
               !isInteractionDisabled && "hover:bg-primary/90",
             )
           : cn(
-              "size-8 rounded-full text-[var(--sidebar-icon-color)]",
+              // SCIENT-FORK: idle circle 32px -> 20px to match the pill.
+              "size-5 rounded-full text-[var(--sidebar-icon-color)]",
               !isInteractionDisabled && "hover:bg-sidebar-row-hover hover:text-sidebar-foreground",
             ),
         disabled && !showUpdateIconState && "opacity-60",
@@ -357,20 +361,22 @@ function SidebarUpdateControl() {
       }}
     >
       {iconStatus === "available" ? (
-        <DownloadIcon aria-hidden="true" className="size-4 shrink-0" />
+        <DownloadIcon aria-hidden="true" className="size-[13px] shrink-0" strokeWidth={2.25} />
       ) : iconStatus === "downloaded" ? (
-        <RotateCwIcon aria-hidden="true" className="size-4 shrink-0" />
+        <RotateCwIcon aria-hidden="true" className="size-[13px] shrink-0" strokeWidth={2.25} />
       ) : iconStatus === "downloading" && (state?.downloadPercent ?? 0) <= 0 ? (
         <LoaderCircleIcon
           aria-hidden="true"
-          className="size-4 shrink-0 animate-spin motion-reduce:animate-none"
+          className="size-[13px] shrink-0 animate-spin motion-reduce:animate-none"
+          strokeWidth={2.25}
         />
       ) : (
         <span
           className={cn(
             "flex shrink-0 items-center justify-center",
             iconStatus === "downloading" &&
-              "size-6 [&>span]:shrink-0 [&>span]:scale-75 [&_circle]:transition-none",
+              // SCIENT-FORK: ring visual diameter 24px -> ~17px.
+              "size-[17px] [&>span]:shrink-0 [&>span]:scale-[0.53] [&_circle]:transition-none",
           )}
         >
           <DesktopUpdateStatusIcon
@@ -382,7 +388,12 @@ function SidebarUpdateControl() {
           />
         </span>
       )}
-      {updateLabel ? <span className="tabular-nums">{updateLabel}</span> : null}
+      {updateLabel ? (
+        // SCIENT-FORK: label weight 650 (variable-font axis; font-medium is 500).
+        <span className="tabular-nums" style={{ fontVariationSettings: '"wght" 650' }}>
+          {updateLabel}
+        </span>
+      ) : null}
     </button>
   );
 
