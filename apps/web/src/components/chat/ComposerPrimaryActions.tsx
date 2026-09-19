@@ -29,8 +29,11 @@ interface ComposerPrimaryActionsProps {
   isPreparingWorktree: boolean;
   hasSendableContent: boolean;
   preserveComposerFocusOnPointerDown?: boolean;
-  /** Enter-to-send is disabled on mobile viewports, where stop would otherwise
-   * be the only primary action and a running turn could not be steered. */
+  /** While a turn is running and the composer has sendable content, render
+   * the submit button beside stop. Submitting a busy thread queues the
+   * message, so the button advertises "Queue message" in that state.
+   * SCIENT-FORK: enabled on desktop as well (DF-028); upstream only used it
+   * on mobile viewports. */
   showSendWhileRunning?: boolean;
   onPreviousPendingQuestion: () => void;
   onInterrupt: () => void;
@@ -91,11 +94,10 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
       type="button"
       className={cn(
         "flex cursor-pointer items-center justify-center rounded-full bg-destructive/90 text-white shadow-xs shadow-destructive/24 inset-shadow-[0_1px_--theme(--color-white/16%)] transition-all duration-150 hover:bg-destructive hover:scale-105 active:inset-shadow-[0_1px_--theme(--color-black/8%)] active:shadow-none",
-        insidePendingAction
-          ? "size-8 sm:size-7"
-          : showSendWhileRunning && hasSendableContent
-            ? "size-9 sm:size-8"
-            : "size-8 sm:h-8 sm:w-8",
+        // SCIENT-FORK: one shared circle size for every stop state, matching
+        // the recording send button (icon-sm); the 12×12 square is unchanged
+        // (DF-027).
+        "size-8 sm:size-7",
       )}
       {...pointerFocusProps}
       onClick={onInterrupt}
@@ -223,7 +225,9 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
     <button
       type="submit"
       className={cn(
-        "relative isolate flex h-9 w-9 items-center justify-center overflow-hidden rounded-full shadow-xs transition-all duration-150 enabled:cursor-pointer enabled:inset-shadow-[0_1px_--theme(--color-white/16%)] hover:scale-105 active:inset-shadow-[0_1px_--theme(--color-black/8%)] active:shadow-none disabled:pointer-events-none disabled:opacity-30 disabled:shadow-none disabled:hover:scale-100 sm:h-8 sm:w-8",
+        // SCIENT-FORK: circle matches the recording send button (icon-sm =
+        // size-8 sm:size-7); the 14×14 arrow is unchanged (DF-027).
+        "relative isolate flex size-8 sm:size-7 items-center justify-center overflow-hidden rounded-full shadow-xs transition-all duration-150 enabled:cursor-pointer enabled:inset-shadow-[0_1px_--theme(--color-white/16%)] hover:scale-105 active:inset-shadow-[0_1px_--theme(--color-black/8%)] active:shadow-none disabled:pointer-events-none disabled:opacity-30 disabled:shadow-none disabled:hover:scale-100",
         stageBackdropVariant
           ? "bg-transparent text-white enabled:shadow-black/24 enabled:hover:brightness-110"
           : "bg-message-action text-message-action-foreground enabled:shadow-message-action/24 hover:bg-message-action-hover",
@@ -247,7 +251,11 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
                 ? "Preparing worktree"
                 : isSendBusy
                   ? "Sending"
-                  : "Send message"
+                  : // SCIENT-FORK: submitting a running thread queues the
+                    // message, so the label follows the real disposition.
+                    isRunning
+                    ? "Queue message"
+                    : "Send message"
       }
     >
       {stageBackdropVariant ? (

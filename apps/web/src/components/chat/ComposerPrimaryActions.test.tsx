@@ -132,18 +132,27 @@ describe("ComposerPrimaryActions", () => {
     expect(markup).not.toContain('aria-label="Send message"');
   });
 
-  it("renders send alongside stop while running when Enter-to-send is unavailable", () => {
+  it("renders the queue button alongside stop while running with sendable content", () => {
     const markup = renderRunningActions(true, true);
 
     expect(markup).toContain('aria-label="Stop generation"');
-    expect(markup).toContain('aria-label="Send message"');
+    // SCIENT-FORK: submitting a running thread queues the message, so the
+    // button advertises the real disposition instead of "Send message".
+    expect(markup).toContain('aria-label="Queue message"');
     expect(markup).toContain('type="submit"');
+  });
+
+  it("labels the idle submit button as send, not queue", () => {
+    const markup = renderSendButton();
+
+    expect(markup).toContain('aria-label="Send message"');
+    expect(markup).not.toContain('aria-label="Queue message"');
   });
 
   it("keeps stop as the only action while running with an empty composer", () => {
     const markup = renderRunningActions(true, false);
 
     expect(markup).toContain('aria-label="Stop generation"');
-    expect(markup).not.toContain('aria-label="Send message"');
+    expect(markup).not.toContain('aria-label="Queue message"');
   });
 });

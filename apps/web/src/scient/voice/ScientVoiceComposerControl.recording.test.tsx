@@ -60,6 +60,14 @@ describe("ScientVoiceComposerControl recording actions", () => {
     expect(markup).not.toContain('aria-label="Transcribe and send"');
   });
 
+  it("stacks the recording surface above the footer's z-30 provider icon", () => {
+    const markup = renderToStaticMarkup(
+      <ScientVoiceComposerControl onTranscript={() => undefined} />,
+    );
+
+    expect(markup).toContain("z-40");
+  });
+
   it("offers transcript submission when the host supplies a submit callback", () => {
     const markup = renderToStaticMarkup(
       <ScientVoiceComposerControl

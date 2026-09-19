@@ -230,8 +230,16 @@ export function ScientVoiceComposerControl({
     controller.phase === "correcting" ? (
       <div
         className={cn(
-          "absolute inset-0 z-10 flex items-center gap-2 bg-background",
-          presentation === "composer" ? "px-3 pb-3 sm:px-4 sm:pb-4" : null,
+          // The recording surface starts right of the composer footer's
+          // provider icon (ProviderInstanceIcon renders at z-30 upstream and
+          // spans roughly 12–32px from the left edge), so the agent avatar
+          // stays visible and the waveform begins just past it. z-40 is kept
+          // defensively above the avatar's stacking context. Popovers/tooltips
+          // portal outside this stacking context.
+          "absolute inset-y-0 right-0 z-40 flex items-center gap-2 bg-background",
+          presentation === "composer"
+            ? "left-9 pe-3 pb-3 sm:left-10 sm:pe-4 sm:pb-4"
+            : "inset-x-0 px-3 pb-3 sm:px-4 sm:pb-4",
         )}
       >
         {controller.phase === "recording" ? (
