@@ -31,6 +31,7 @@ import * as LocalExecutionProcess from "../execution/LocalExecutionProcess.ts";
 import { processExists } from "../execution/LocalProcessTestSupport.ts";
 import * as ComputeSessionService from "./ComputeSessionService.ts";
 import { makeComputeRpcGateway } from "./ComputeRpcGateway.ts";
+import { computeWorkspaceResolverForTest } from "./ComputeWorkspaceTestUtils.ts";
 import * as LocalComputeStore from "./LocalComputeStore.ts";
 import { matlabRuntimeBinding } from "./MatlabComputeRuntime.ts";
 import { ComputeRecipeNetwork } from "./ComputeRecipeSource.ts";
@@ -143,6 +144,7 @@ describe.runIf(Boolean(TEST_MATLAB))("MATLAB compute product backend", () => {
           const compute = yield* ComputeSessionService.ComputeSessionService;
           const workspaceFileSystem = yield* WorkspaceFileSystem.WorkspaceFileSystem;
           const gateway = makeComputeRpcGateway({
+            workspaceResolver: computeWorkspaceResolverForTest,
             compute,
             workspaceFileSystem,
             serverSettings: {

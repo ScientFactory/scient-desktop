@@ -4,6 +4,7 @@ import * as NodeOS from "node:os";
 import { inspectScientProject, readScientProjectIdentity } from "@scientfactory/project-init";
 import {
   ComputeProjectId,
+  ComputeOperationError,
   TERMINAL_COMPUTE_SESSION_STATUSES,
   type ComputeLanguageId,
   type ComputeSourceRange,
@@ -32,6 +33,8 @@ import type * as WorkspaceFileSystem from "../../workspace/WorkspaceFileSystem.t
 import type { ServerSettingsError } from "@t3tools/contracts";
 import type { LocalAnalysisStoreError } from "../analysis/LocalAnalysisStore.ts";
 import type { ComputeSessionService } from "./ComputeSessionService.ts";
+import type { WorkspaceBindingResolver } from "../projectScope/WorkspaceBindingResolver.ts";
+import { ComputeWorkspaceAdmission } from "./ComputeWorkspaceAdmission.ts";
 
 type ComputeGatewayService = Pick<
   ComputeSessionService["Service"],
@@ -94,7 +97,59 @@ export function makeComputeRpcGateway(input: {
   readonly compute: ComputeGatewayService;
   readonly serverSettings: ComputeGatewaySettings;
   readonly workspaceFileSystem: ComputeGatewayWorkspace;
+  readonly workspaceResolver?: WorkspaceBindingResolver["Service"];
 }) {
+  const inWorkspace =
+    <I extends { readonly cwd: string | null }, A, E, R>(
+      operation: GatewayOperation,
+      action: (request: I) => Effect.Effect<A, E, R>,
+    ) =>
+    (request: I) =>
+      Effect.gen(function* () {
+        if (request.cwd === null) return yield* action(request);
+        if (!input.workspaceResolver)
+          return yield* gatewayError(
+            operation,
+            "operation-failed",
+            "Workspace authority is unavailable.",
+          );
+        const resolver = input.workspaceResolver;
+        const resolved = yield* resolver
+          .resolveWorkspaceRoot(request.cwd)
+          .pipe(
+            Effect.mapError((cause) =>
+              gatewayError(
+                operation,
+                "operation-failed",
+                "The project workspace could not be verified.",
+                cause,
+              ),
+            ),
+          );
+        const scope = {
+          bindingId: resolved.binding.bindingId,
+          authorityGeneration: resolved.binding.authorityGeneration,
+          workspaceRoot: resolved.binding.canonicalRoot,
+          scopeRevision: resolved.scopeRevision,
+        };
+        const assertCurrent = resolver.assertCurrentWorkspaceScope(scope).pipe(
+          Effect.asVoid,
+          Effect.mapError(
+            (cause) =>
+              new ComputeOperationError({
+                operation: "resolve",
+                reason: "workspace-changed",
+                message:
+                  "The project workspace changed. Reopen Compute from the current workspace.",
+                cause,
+              }),
+          ),
+        );
+        yield* assertCurrent;
+        return yield* action(request).pipe(
+          Effect.provideService(ComputeWorkspaceAdmission, { scope, assertCurrent }),
+        );
+      });
   const readSettings = (operation: GatewayOperation) =>
     input.serverSettings.getSettings.pipe(
       Effect.mapError((cause) =>
@@ -111,10 +166,12 @@ export function makeComputeRpcGateway(input: {
     operation: GatewayOperation,
     cwd: string,
   ) {
+    const admission = yield* ComputeWorkspaceAdmission;
     const project = yield* Effect.tryPromise({
       try: async () => {
-        const inspection = await inspectScientProject(cwd);
+        const inspection = await inspectScientProject(admission?.scope.workspaceRoot ?? cwd);
         if (inspection.state !== "initialized") return null;
+        if (admission && inspection.root !== admission.scope.workspaceRoot) return null;
         const identity = await readScientProjectIdentity(inspection.root);
         return { root: inspection.root, projectId: ComputeProjectId.make(identity.projectId) };
       },
@@ -429,23 +486,26 @@ export function makeComputeRpcGateway(input: {
 
   return {
     runtimeInventory,
-    inspectRuntimes,
-    verifyRuntime,
+    inspectRuntimes: inWorkspace("inspect", inspectRuntimes),
+    verifyRuntime: inWorkspace("verify", verifyRuntime),
     managedRuntimeStatus,
     manageRuntime,
     cancelManagedRuntime,
-    startSession,
-    listSessions,
-    getSession,
-    listExecutions,
-    listOutputs,
-    submitExecution,
-    cancelExecution,
-    interruptSession: sessionCommand("interrupt", input.compute.interruptSession),
-    restartSession: sessionCommand("restart", input.compute.restartSession),
-    stopSession: sessionCommand("stop", input.compute.stopSession),
-    inspectVariables,
-    subscribeSessions,
+    startSession: inWorkspace("start", startSession),
+    listSessions: inWorkspace("list", listSessions),
+    getSession: inWorkspace("get", getSession),
+    listExecutions: inWorkspace("list", listExecutions),
+    listOutputs: inWorkspace("outputs", listOutputs),
+    submitExecution: inWorkspace("submit", submitExecution),
+    cancelExecution: inWorkspace("cancel", cancelExecution),
+    interruptSession: inWorkspace(
+      "interrupt",
+      sessionCommand("interrupt", input.compute.interruptSession),
+    ),
+    restartSession: inWorkspace("restart", sessionCommand("restart", input.compute.restartSession)),
+    stopSession: inWorkspace("stop", sessionCommand("stop", input.compute.stopSession)),
+    inspectVariables: inWorkspace("variables", inspectVariables),
+    subscribeSessions: inWorkspace("subscribe", subscribeSessions),
   };
 }
 

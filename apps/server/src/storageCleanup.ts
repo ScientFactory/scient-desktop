@@ -35,6 +35,7 @@ import * as Settings from "./serverSettings.ts";
 import * as TerminalManager from "./terminal/Manager.ts";
 import * as GitVcsDriver from "./vcs/GitVcsDriver.ts";
 import { withWorkspaceLease } from "./workspace/workspaceLease.ts";
+import { withoutComputeWorkspaceOwners } from "./scient/compute/ComputeWorkspaceLifetime.ts";
 
 export class StorageCleanup extends Context.Service<
   StorageCleanup,
@@ -358,7 +359,9 @@ export const make = Effect.gen(function* () {
         // from that branch when the thread is resumed.
         yield* Effect.logInfo("storage cleanup removed worktree", { threadId: thread.id });
       }).pipe(
-        (effect) => withWorkspaceLease(worktreePath, effect),
+        // SCIENT-FORK: retain worktrees until Compute physically releases them.
+        (effect) =>
+          withWorkspaceLease(worktreePath, withoutComputeWorkspaceOwners(worktreePath, effect)),
         Effect.catch((error) =>
           Effect.logDebug("storage cleanup skipped worktree", { threadId: thread.id, error }),
         ),

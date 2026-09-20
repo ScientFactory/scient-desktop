@@ -51,6 +51,7 @@ export class ComputeOperationError extends Schema.TaggedError<ComputeOperationEr
       "session-conflict",
       // The caller is talking about a namespace that has been replaced.
       "generation-stale",
+      "workspace-changed",
       // The session is there and healthy but has nowhere to put the work.
       "queue-full",
       "capacity-reached",

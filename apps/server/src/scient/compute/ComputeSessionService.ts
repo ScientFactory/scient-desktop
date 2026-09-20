@@ -99,6 +99,11 @@ import {
 import * as LocalComputeStore from "./LocalComputeStore.ts";
 import { makeComputeSessionNotifications } from "./ComputeSessionNotifications.ts";
 import * as ComputeHostCapacity from "./ComputeHostCapacity.ts";
+import {
+  ComputeWorkspaceAdmission,
+  type ComputeWorkspaceReceipt,
+} from "./ComputeWorkspaceAdmission.ts";
+import { withComputeWorkspaceReservation } from "./ComputeWorkspaceLifetime.ts";
 import type {
   ResolvedComputeOutputImage,
   ResolvedComputeOutputResource,
@@ -348,6 +353,8 @@ interface InterruptTarget {
  * transport, so a slow interrupt cannot stall the output it is trying to stop.
  */
 interface LiveComputeSession {
+  readonly workspaceReceipt: ComputeWorkspaceReceipt | null;
+  readonly releaseWorkspace: Effect.Effect<void>;
   readonly projectId: ComputeProjectId;
   readonly sessionId: ComputeSessionId;
   readonly workingDirectory: string;
@@ -704,6 +711,8 @@ const make = Effect.gen(function* () {
 
   const verifyRuntime = (input: ComputeRuntimeVerificationRequest) =>
     Effect.gen(function* () {
+      const workspaceReceipt = yield* ComputeWorkspaceAdmission;
+      if (workspaceReceipt) yield* workspaceReceipt.assertCurrent;
       const binding = bindings.find(
         (candidate) => candidate.adapter.languageId === input.languageId,
       );
@@ -764,6 +773,7 @@ const make = Effect.gen(function* () {
           cwd: workingDirectory,
           environment,
         });
+        if (workspaceReceipt) yield* workspaceReceipt.assertCurrent;
         const channel = yield* binding.transport.open({
           sessionId: ComputeSessionId.make(`verify-${NodeCrypto.randomUUID()}`),
           generation: INITIAL_COMPUTE_SESSION_GENERATION,
@@ -792,27 +802,30 @@ const make = Effect.gen(function* () {
     }).pipe((verification) =>
       Effect.acquireUseRelease(
         startLock.withPermits(1)(
-          Effect.gen(function* () {
-            const binding = bindings.find(
-              (candidate) => candidate.adapter.languageId === input.languageId,
-            );
-            if (binding?.managedRuntime?.isRemoving() && !binding.managedRuntime.tracksUsage)
-              return yield* computeError(
-                "verify",
-                "runtime-unusable",
-                "Wait for runtime removal to finish before verifying the connection.",
+          withComputeWorkspaceReservation(input.workingDirectory, (releaseWorkspace) =>
+            Effect.gen(function* () {
+              const binding = bindings.find(
+                (candidate) => candidate.adapter.languageId === input.languageId,
               );
-            const releaseCapacity = yield* hostCapacity.acquire();
-            yield* Ref.update(verifyingRef, (counts) =>
-              new Map(counts).set(input.languageId, (counts.get(input.languageId) ?? 0) + 1),
-            );
-            return { releaseCapacity, scope: yield* Scope.make("sequential") };
-          }),
+              if (binding?.managedRuntime?.isRemoving() && !binding.managedRuntime.tracksUsage)
+                return yield* computeError(
+                  "verify",
+                  "runtime-unusable",
+                  "Wait for runtime removal to finish before verifying the connection.",
+                );
+              const releaseCapacity = yield* hostCapacity.acquire();
+              yield* Ref.update(verifyingRef, (counts) =>
+                new Map(counts).set(input.languageId, (counts.get(input.languageId) ?? 0) + 1),
+              );
+              return { releaseCapacity, releaseWorkspace, scope: yield* Scope.make("sequential") };
+            }),
+          ),
         ),
         ({ scope }) =>
           verification.pipe(Effect.provideService(Scope.Scope, scope), startupSlots.withPermits(1)),
-        ({ releaseCapacity, scope }, exit) =>
+        ({ releaseCapacity, releaseWorkspace, scope }, exit) =>
           Scope.close(scope, exit).pipe(
+            Effect.andThen(releaseWorkspace),
             Effect.andThen(
               Ref.update(verifyingRef, (counts) => {
                 const next = new Map(counts);
@@ -831,12 +844,19 @@ const make = Effect.gen(function* () {
   // Publishing and persistence
   // -------------------------------------------------------------------------
 
+  const notificationOwner = (projectId: string, workspace?: ComputeSessionRecord["workspace"]) =>
+    workspace
+      ? JSON.stringify([projectId, workspace.bindingId, workspace.authorityGeneration])
+      : projectId;
   const publishSession = (session: ComputeSessionRecord) =>
-    notifications.publish(session.projectId, (eventSequence) => ({
-      _tag: "session-updated",
-      eventSequence,
-      session,
-    }));
+    notifications.publish(
+      notificationOwner(session.projectId, session.workspace),
+      (eventSequence) => ({
+        _tag: "session-updated",
+        eventSequence,
+        session,
+      }),
+    );
 
   const publishExecution = (
     live: LiveComputeSession,
@@ -844,13 +864,16 @@ const make = Effect.gen(function* () {
     isNewExecution = false,
   ) =>
     Effect.gen(function* () {
-      yield* notifications.publish(live.projectId, (eventSequence) => ({
-        _tag: "execution-updated",
-        eventSequence,
-        projectId: live.projectId,
-        sessionId: live.sessionId,
-        execution,
-      }));
+      yield* notifications.publish(
+        notificationOwner(live.projectId, live.workspaceReceipt?.scope),
+        (eventSequence) => ({
+          _tag: "execution-updated",
+          eventSequence,
+          projectId: live.projectId,
+          sessionId: live.sessionId,
+          execution,
+        }),
+      );
       const result = execution.result;
       const status = result?.status;
       // Queue/phase changes must not recreate a start after consent is changed.
@@ -905,14 +928,17 @@ const make = Effect.gen(function* () {
     executionId: ComputeExecutionId | null,
     outputs: ReadonlyArray<ComputeOutput>,
   ) =>
-    notifications.publish(live.projectId, (eventSequence) => ({
-      _tag: "execution-output",
-      eventSequence,
-      projectId: live.projectId,
-      sessionId: live.sessionId,
-      executionId,
-      outputs,
-    }));
+    notifications.publish(
+      notificationOwner(live.projectId, live.workspaceReceipt?.scope),
+      (eventSequence) => ({
+        _tag: "execution-output",
+        eventSequence,
+        projectId: live.projectId,
+        sessionId: live.sessionId,
+        executionId,
+        outputs,
+      }),
+    );
 
   const persistenceError = (operation: ComputeOperation, message: string) => (cause: unknown) =>
     computeError(operation, "persistence-failed", message, cause);
@@ -1689,6 +1715,7 @@ const make = Effect.gen(function* () {
               new Map(observations).set(next.executionId, observation),
             );
             const channel = yield* channelFor(live, "submit");
+            if (live.workspaceReceipt) yield* live.workspaceReceipt.assertCurrent;
             yield* channel
               .execute({
                 requestId: ComputeRequestId.make(next.executionId),
@@ -1719,7 +1746,11 @@ const make = Effect.gen(function* () {
               );
           }).pipe(
             Effect.catch((cause) =>
-              live.mutation.withPermits(1)(failDispatch(live, next.executionId, cause.message)),
+              cause._tag === "ComputeOperationError" && cause.reason === "workspace-changed"
+                ? endSessionUnderLease(live, cause.message).pipe(
+                    Effect.andThen(retireLiveSession(live)),
+                  )
+                : live.mutation.withPermits(1)(failDispatch(live, next.executionId, cause.message)),
             ),
           ),
         );
@@ -1866,6 +1897,7 @@ const make = Effect.gen(function* () {
       // Removal and tab-close acknowledgement must not race a still-live process.
       yield* closeRuntimeScope(live);
       yield* endSessionUnderLease(live, TRANSPORT_CLOSED_REASON);
+      yield* live.releaseWorkspace;
       yield* failPendingReady(
         live,
         computeError("start", "transport-failed", TRANSPORT_CLOSED_REASON),
@@ -2270,6 +2302,7 @@ const make = Effect.gen(function* () {
 
   const openLiveSession = (live: LiveComputeSession, input: ComputeStartSessionInput) =>
     Effect.gen(function* () {
+      if (live.workspaceReceipt) yield* live.workspaceReceipt.assertCurrent;
       const binding = bindings.find(
         (candidate) => candidate.adapter.languageId === input.languageId,
       );
@@ -2362,6 +2395,7 @@ const make = Effect.gen(function* () {
           ),
           Effect.orElseSucceed(() => null),
         );
+      if (live.workspaceReceipt) yield* live.workspaceReceipt.assertCurrent;
       const channel = yield* binding.transport
         .open({
           sessionId: input.sessionId,
@@ -2402,7 +2436,18 @@ const make = Effect.gen(function* () {
     input: ComputeStartSessionInput,
     binding: ComputeRuntimeBinding,
     releaseCapacity: Effect.Effect<void>,
+    releaseWorkspace: Effect.Effect<void>,
   ) {
+    const workspaceReceipt = yield* ComputeWorkspaceAdmission;
+    if (workspaceReceipt) {
+      yield* workspaceReceipt.assertCurrent;
+      if (input.workingDirectory !== workspaceReceipt.scope.workspaceRoot)
+        return yield* computeError(
+          "start",
+          "workspace-changed",
+          "The runtime workspace does not match its admission.",
+        );
+    }
     const projectRoot = yield* runtimeDirectory("start", input.workingDirectory);
     const createdAt = yield* nowIso;
     const requestedExecutable = input.requestedExecutable ?? input.configuredExecutable;
@@ -2413,6 +2458,7 @@ const make = Effect.gen(function* () {
       languageId: binding.adapter.languageId,
       transportKind: binding.adapter.transportKind,
       workingDirectory: shortText(projectRoot),
+      ...(workspaceReceipt ? { workspace: workspaceReceipt.scope } : {}),
       // This is a requested selector, not a verified runtime identity. Launch replaces it.
       runtime: {
         languageId: input.languageId,
@@ -2438,6 +2484,8 @@ const make = Effect.gen(function* () {
     };
     const ready = yield* Deferred.make<ComputeSessionRecord, ComputeOperationError>();
     const live: LiveComputeSession = {
+      workspaceReceipt,
+      releaseWorkspace,
       projectId: input.projectId,
       sessionId: input.sessionId,
       workingDirectory: projectRoot,
@@ -2534,6 +2582,14 @@ const make = Effect.gen(function* () {
           // session to hand back, so it falls through to the answer below.
           if (existing !== undefined) {
             const record = yield* Ref.get(existing.recordRef);
+            // Recheck under identity admission: a concurrent start can win after
+            // the outer read, including a new authority at the same path.
+            if (!ownsRecord(yield* ComputeWorkspaceAdmission, record))
+              return yield* computeError(
+                "start",
+                "workspace-changed",
+                "This session identifier belongs to another workspace.",
+              );
             if (!TERMINAL_COMPUTE_SESSION_STATUSES.has(record.status)) {
               if (
                 existing.startRequest.languageId !== input.languageId ||
@@ -2583,7 +2639,11 @@ const make = Effect.gen(function* () {
           // not strand a reservation before its independent startup fiber exists.
           return yield* Effect.gen(function* () {
             const releaseCapacity = yield* hostCapacity.acquire();
-            return yield* reserveSession(input, binding, releaseCapacity).pipe(
+            return yield* withComputeWorkspaceReservation(
+              input.workingDirectory,
+              (releaseWorkspace) =>
+                reserveSession(input, binding, releaseCapacity, releaseWorkspace),
+            ).pipe(
               Effect.onError(() =>
                 Effect.gen(function* () {
                   if (!(yield* Ref.get(sessionsRef)).has(key)) yield* releaseCapacity;
@@ -2934,6 +2994,7 @@ const make = Effect.gen(function* () {
       );
       // A slow runtime inspection must never hold the lifecycle lease and
       // prevent Stop. The transport rechecks generation and stopping at send.
+      if (live.workspaceReceipt) yield* live.workspaceReceipt.assertCurrent;
       return yield* (yield* channelFor(live, "variables"))
         .inspectVariables({
           requestId: ComputeRequestId.make(NodeCrypto.randomUUID()),
@@ -2949,6 +3010,7 @@ const make = Effect.gen(function* () {
   const restartSession = (input: ComputeSessionCommandInput) =>
     Effect.gen(function* () {
       const live = yield* requireLiveSession("restart", input.projectId, input.sessionId);
+      if (live.workspaceReceipt) yield* live.workspaceReceipt.assertCurrent;
       if (live.startRequest.runOnce !== undefined) {
         return yield* computeError(
           "restart",
@@ -3197,7 +3259,10 @@ const make = Effect.gen(function* () {
   const subscribeSessions = (input: ComputeSubscribeSessionsInput) =>
     Effect.gen(function* () {
       yield* ensureProjectRecovered("subscribe", input.projectId);
-      const changes = yield* notifications.subscribe(input.projectId);
+      const receipt = yield* ComputeWorkspaceAdmission;
+      const changes = yield* notifications.subscribe(
+        notificationOwner(input.projectId, receipt?.scope),
+      );
       // Subscribe before the durable read. Each subscription starts at zero,
       // including one whose initial project has no sessions to snapshot.
       const sessions = yield* listSessions({ projectId: input.projectId });
@@ -3284,6 +3349,87 @@ const make = Effect.gen(function* () {
     }),
   );
 
+  const ownsRecord = (receipt: ComputeWorkspaceReceipt | null, record: ComputeSessionRecord) => {
+    if (record.workspace === undefined) {
+      // Legacy history remains readable at its original root, but cannot become
+      // a live grant. Preserve existing transcript/resource addresses.
+      return (
+        receipt === null ||
+        (TERMINAL_COMPUTE_SESSION_STATUSES.has(record.status) &&
+          record.workingDirectory === receipt.scope.workspaceRoot)
+      );
+    }
+    return (
+      receipt !== null &&
+      record.workspace.bindingId === receipt.scope.bindingId &&
+      record.workspace.authorityGeneration === receipt.scope.authorityGeneration &&
+      record.workspace.workspaceRoot === receipt.scope.workspaceRoot
+    );
+  };
+  const guarded =
+    <I extends ComputeGetSessionInput, A, E, R>(
+      operation: ComputeOperation,
+      action: (input: I) => Effect.Effect<A, E, R>,
+    ) =>
+    (input: I) =>
+      Effect.gen(function* () {
+        const receipt = yield* ComputeWorkspaceAdmission;
+        if (receipt) yield* receipt.assertCurrent;
+        const record = yield* getSession(input);
+        if (record && !ownsRecord(receipt, record))
+          return yield* computeError(
+            operation,
+            "workspace-changed",
+            "This Compute session belongs to another workspace. Open a session in this workspace.",
+          );
+        return yield* action(input);
+      });
+  const scopedList = (input: ComputeListSessionsInput) =>
+    Effect.gen(function* () {
+      const receipt = yield* ComputeWorkspaceAdmission;
+      if (receipt) yield* receipt.assertCurrent;
+      return (yield* listSessions(input)).filter((record) => ownsRecord(receipt, record));
+    });
+  const scopedSubscribe = (input: ComputeSubscribeSessionsInput) =>
+    Effect.gen(function* () {
+      const receipt = yield* ComputeWorkspaceAdmission;
+      if (receipt) yield* receipt.assertCurrent;
+      const stream = yield* subscribeSessions(input);
+      return stream.pipe(
+        // End a stale subscription instead of silently retaining a dead feed.
+        Stream.takeWhileEffect(() =>
+          receipt
+            ? receipt.assertCurrent.pipe(
+                Effect.as(true),
+                Effect.orElseSucceed(() => false),
+              )
+            : Effect.succeed(true),
+        ),
+        Stream.filterEffect((event) =>
+          Effect.gen(function* () {
+            const record =
+              "session" in event
+                ? event.session
+                : yield* getSession({ projectId: event.projectId, sessionId: event.sessionId });
+            return record !== null && ownsRecord(receipt, record);
+          }).pipe(Effect.orElseSucceed(() => false)),
+        ),
+      );
+    });
+  const scopedStart = (input: ComputeStartSessionInput) =>
+    Effect.gen(function* () {
+      const receipt = yield* ComputeWorkspaceAdmission;
+      if (receipt) yield* receipt.assertCurrent;
+      const existing = yield* getSession(input);
+      if (existing && !ownsRecord(receipt, existing))
+        return yield* computeError(
+          "start",
+          "workspace-changed",
+          "This session identifier belongs to another workspace.",
+        );
+      return yield* startSession(input);
+    });
+
   return ComputeSessionService.of({
     runtimeDescriptors: bindings.map(descriptorFor),
     runtimeInventory,
@@ -3292,21 +3438,21 @@ const make = Effect.gen(function* () {
     managedRuntimeStatus,
     manageRuntime,
     cancelManagedRuntime,
-    startSession,
-    submitExecution,
-    cancelExecution,
-    interruptSession,
-    inspectVariables,
-    restartSession,
-    stopSession,
-    listSessions,
-    getSession,
-    listExecutions,
-    listOutputs,
-    listJournal,
+    startSession: scopedStart,
+    submitExecution: guarded("submit", submitExecution),
+    cancelExecution: guarded("cancel", cancelExecution),
+    interruptSession: guarded("interrupt", interruptSession),
+    inspectVariables: guarded("variables", inspectVariables),
+    restartSession: guarded("restart", restartSession),
+    stopSession: guarded("stop", stopSession),
+    listSessions: scopedList,
+    getSession: guarded("get", getSession),
+    listExecutions: guarded("list", listExecutions),
+    listOutputs: guarded("outputs", listOutputs),
+    listJournal: guarded("list", listJournal),
     resolveOutputImage,
     resolveOutputResource,
-    subscribeSessions,
+    subscribeSessions: scopedSubscribe,
   });
 });
 

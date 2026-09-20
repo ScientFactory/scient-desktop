@@ -27,6 +27,7 @@ import * as LocalDuplexProcess from "../execution/LocalDuplexProcess.ts";
 import * as LocalExecutionProcess from "../execution/LocalExecutionProcess.ts";
 import * as ComputeSessionService from "./ComputeSessionService.ts";
 import { makeComputeRpcGateway } from "./ComputeRpcGateway.ts";
+import { computeWorkspaceResolverForTest } from "./ComputeWorkspaceTestUtils.ts";
 import * as LocalComputeStore from "./LocalComputeStore.ts";
 import * as PythonComputeRuntime from "./PythonComputeRuntime.ts";
 
@@ -105,6 +106,7 @@ describe.runIf(Boolean(TEST_PYTHON))("compute product backend", () => {
         const compute = yield* ComputeSessionService.ComputeSessionService;
         const workspaceFileSystem = yield* WorkspaceFileSystem.WorkspaceFileSystem;
         const gateway = makeComputeRpcGateway({
+          workspaceResolver: computeWorkspaceResolverForTest,
           compute,
           workspaceFileSystem,
           serverSettings: {
@@ -136,6 +138,27 @@ describe.runIf(Boolean(TEST_PYTHON))("compute product backend", () => {
           executable: runtime.profile.executable,
         });
         expect(session.status).toBe("ready");
+
+        // A copy keeps the logical UUID, but must never inherit the live kernel.
+        const copiedRoot = yield* fs.makeTempDirectoryScoped({
+          prefix: "scient-compute-product-copy-",
+        });
+        yield* fs.copy(`${projectRoot}/.scient`, `${copiedRoot}/.scient`);
+        expect(yield* gateway.listSessions({ cwd: copiedRoot })).toEqual([]);
+        const denied = yield* gateway
+          .submitExecution({
+            cwd: copiedRoot,
+            sessionId,
+            executionId: ComputeExecutionId.make("cross-workspace"),
+            expectedGeneration: session.generation,
+            code: "raise Exception('wrong workspace')",
+            source: { _tag: "console" },
+          })
+          .pipe(Effect.flip);
+        expect(denied.reason).toBe("workspace-changed");
+        expect(yield* gateway.listExecutions({ cwd: projectRoot, sessionId, limit: 100 })).toEqual(
+          [],
+        );
 
         const writeId = ComputeExecutionId.make("phase-4-write");
         yield* gateway.submitExecution({
