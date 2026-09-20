@@ -274,7 +274,7 @@ export const OpenCodeDriver: ProviderDriver<OpenCodeSettings, OpenCodeDriverEnv>
               ]).pipe(
                 Effect.map(([machineSnapshot, { skills, commands }]) => ({
                   ...machineSnapshot,
-                  skills: openCodeSkillsToServerProviderSkills(skills, cwd),
+                  skills: openCodeSkillsToServerProviderSkills(skills, cwd, processEnv),
                   slashCommands: openCodeCommandsToServerProviderSlashCommands(commands),
                 })),
                 Effect.mapError(
