@@ -124,6 +124,20 @@
   background: color-mix(in srgb, var(--background) 92%, var(--muted));
 }
 
+/* Background build messages must not resize the typeset editing viewport. */
+.scient-latex-surface[data-latex-layout="visual"] {
+  position: relative;
+}
+
+.scient-latex-surface[data-latex-layout="visual"] > .scient-latex-diagnostics {
+  position: absolute;
+  inset-inline: 8px;
+  bottom: 48px;
+  z-index: 12;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+}
+
 .scient-latex-diagnostics-toggle {
   display: flex;
   min-height: 26px;

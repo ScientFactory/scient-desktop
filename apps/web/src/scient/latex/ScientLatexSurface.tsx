@@ -743,7 +743,7 @@ export function ScientLatexSurface(props: ScientLatexSurfaceProps) {
   );
 
   return (
-    <div className="scient-latex-surface" dir="ltr">
+    <div className="scient-latex-surface" data-latex-layout={mode} dir="ltr">
       <div className="scient-latex-toolbar">
         <div className="scient-latex-modes" role="group" aria-label="LaTeX preview layout">
           {LATEX_PREVIEW_MODES.map((candidate) => (

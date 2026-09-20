@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { flushSync } from "react-dom";
 
 import {
@@ -115,6 +115,10 @@ export function useScientPdfReader(input: {
   const anchorProviderRef = useRef<(() => PdfPresentationAnchor | null) | null>(null);
   const invalidateRef = useRef(input.onSourceInvalidated);
   invalidateRef.current = input.onSourceInvalidated;
+  const requestedSourceRef = useRef({ documentKey: input.documentKey, url: input.sourceUrl });
+  useLayoutEffect(() => {
+    requestedSourceRef.current = { documentKey: input.documentKey, url: input.sourceUrl };
+  }, [input.documentKey, input.sourceUrl]);
   const responsiveZoomRef = useRef<PdfResponsiveZoomController | null>(null);
   const passwordRef = useRef<PdfPasswordChallenge["submit"] | null>(null);
   const activeSearchQueryRef = useRef("");
@@ -164,6 +168,10 @@ export function useScientPdfReader(input: {
     const abortController = new AbortController();
     let current = true;
     let requested = true;
+    const isRequested = () =>
+      requested &&
+      requestedSourceRef.current.documentKey === input.documentKey &&
+      requestedSourceRef.current.url === input.sourceUrl;
     let candidate: ScientPdfRuntime | null = null;
     let searchWarmupHandle: number | null = null;
     let searchWarmupKind: "idle" | "timeout" | null = null;
@@ -178,7 +186,7 @@ export function useScientPdfReader(input: {
     else setState(INITIAL_STATE);
     const loadingTask = startPdfDocumentLoad(input.sourceUrl, {
       onPassword: ({ reason, submit }) => {
-        if (!requested) return;
+        if (!isRequested()) return;
         passwordRef.current = submit;
         setState((previous) => ({
           ...previous,
@@ -188,7 +196,7 @@ export function useScientPdfReader(input: {
         }));
       },
       onProgress: (loaded, total) => {
-        if (!requested || runtimeRef.current) return;
+        if (!isRequested() || runtimeRef.current) return;
         setState((previous) => ({
           ...previous,
           progress: total && total > 0 ? Math.min(loaded / total, 1) : null,
@@ -198,7 +206,7 @@ export function useScientPdfReader(input: {
 
     void loadingTask.promise
       .then(async (document) => {
-        if (!requested) return;
+        if (!isRequested()) return;
         const runtime = createPdfRuntime({
           container,
           viewerElement,
@@ -216,7 +224,9 @@ export function useScientPdfReader(input: {
           const restoredPage = viewportSession.restore(runtime.viewer, runtime.document.numPages);
           responsiveZoom.capturePreference(runtime.viewer);
           const publish = () => {
-            if (!requested) return;
+            // A newer React commit can precede passive-effect cancellation.
+            // Check committed source identity as well as the request lifetime.
+            if (!isRequested()) return;
             const disposeOld = disposePresentedRef.current;
             const previousZoom = responsiveZoomRef.current?.persistedScaleValue();
             if (previousZoom)
@@ -415,7 +425,7 @@ export function useScientPdfReader(input: {
 
     function fail(error: unknown) {
       if (
-        !requested ||
+        !isRequested() ||
         (error instanceof Error && (error.name === "AbortException" || error.name === "AbortError"))
       )
         return;

@@ -32,6 +32,12 @@ function declaredPropNames(): ReadonlyArray<string> {
 }
 
 describe("Scient LaTeX file-preview seam", () => {
+  it("keeps asynchronous diagnostics out of the visual viewport's layout", () => {
+    expect(surfaceSource).toContain("data-latex-layout={mode}");
+    expect(surfaceStyles).toMatch(
+      /\[data-latex-layout="visual"\] > \.scient-latex-diagnostics \{\s*position: absolute;/u,
+    );
+  });
   it("lazily mounts the surface for LaTeX paths only", () => {
     expect(panelSource).toContain('import("~/scient/latex/ScientLatexSurface")');
     expect(panelSource).toContain("default: module.ScientLatexSurface,");
