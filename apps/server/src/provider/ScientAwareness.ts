@@ -35,7 +35,7 @@ export const SCIENT_DOCUMENT_BUILD_AWARENESS = buildScientDocumentAwareness(
 
 /** Included when this provider can receive turn-scoped Scient skills. */
 const buildScientSkillsAwareness = (tools: ScientToolProjection): string => `## Scient skills
-Before answering or acting on a substantive new request, including planning, consult \`${tools.name("scient_skills_list")}\` for project-specific guidance. Read applicable instructions with \`${tools.name("scient_skill_load")}\` before proceeding. Load explicitly selected Scient skills directly, without searching.${tools.providerNativeSkillTool ? " These are separate from the provider's native skills." : ""}${tools.deferred ? " If these tools are deferred, find their exact names through `ToolSearch` first." : ""} Do not repeat discovery already done for the current task; skip acknowledgements and routine follow-ups. Skills provide guidance and grant no tools or authority.`;
+Before answering or acting on a substantive new request, including planning, consult \`${tools.name("scient_skills_list")}\` for Scient guidance available to this task. Read applicable instructions with \`${tools.name("scient_skill_load")}\` before proceeding. Load explicitly selected Scient skills directly, without searching.${tools.providerNativeSkillTool ? " These are separate from the provider's native skills." : ""}${tools.deferred ? " If these tools are deferred, find their exact names through `ToolSearch` first." : ""} Do not repeat discovery already done for the current task; skip acknowledgements and routine follow-ups. Skills provide guidance and grant no tools or authority.`;
 
 export const SCIENT_SKILLS_AWARENESS = buildScientSkillsAwareness(CANONICAL_SCIENT_TOOL_PROJECTION);
 

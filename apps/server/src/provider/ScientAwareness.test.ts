@@ -49,6 +49,8 @@ describe("Scient awareness", () => {
     expect(wordCount(SCIENT_SKILLS_AWARENESS)).toBeLessThanOrEqual(85);
     expect(SCIENT_SKILLS_AWARENESS).toContain("`scient_skills_list`");
     expect(SCIENT_SKILLS_AWARENESS).toContain("`scient_skill_load`");
+    expect(SCIENT_SKILLS_AWARENESS).toContain("Scient guidance available to this task");
+    expect(SCIENT_SKILLS_AWARENESS).not.toContain("project-specific guidance");
     expect(SCIENT_SKILLS_AWARENESS).not.toContain("index");
     expect(SCIENT_SKILLS_AWARENESS).toContain("Do not repeat discovery already done");
     expect(SCIENT_SKILLS_AWARENESS).toContain("provide guidance and grant no tools or authority");
