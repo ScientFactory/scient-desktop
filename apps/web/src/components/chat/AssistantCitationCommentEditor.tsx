@@ -101,7 +101,9 @@ export function AssistantCitationCommentEditor({
           environmentId={citation.environmentId}
           onBusyChange={setVoiceBusy}
           onTranscript={(transcript) => {
-            setComment((current) => buildVoiceDraftReplacement(current, transcript).replacement);
+            const replacement = buildVoiceDraftReplacement(comment, transcript).replacement;
+            setComment(replacement);
+            onDraftChange?.(replacement);
             queueMicrotask(() => textareaRef.current?.focus({ preventScroll: true }));
           }}
         />

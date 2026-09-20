@@ -24,6 +24,9 @@ publication authority.
   split implementation. The small follow-up test commit only adapts incoming
   coverage to Scient's shared citation component:
   `e5f191b7a7` (`test(web): cover citation dismissal on shared chip`).
+- A final narrow composition fix, `fix(web): preserve dictated citation drafts
+on dismissal`, also forwards voice-inserted text through the same draft
+  tracking callback used by typed comments.
 
 ## Upstream behavior included in this alignment
 
@@ -62,7 +65,8 @@ The incoming upstream test was adapted to instantiate Scient's shared
 
 The remaining overlapping files were auto-merged and reviewed semantically:
 the shared comment editor keeps Scient's voice control and create/edit labels,
-the diff parser preserves source-file line identity for review comments, and
+and both typed and dictated edits update dismissal draft state. The diff parser
+preserves source-file line identity for review comments, and
 the PR UI changes remain limited to the intended toggle/cache/positioning
 seams. There are no conflict markers or unmerged paths.
 
