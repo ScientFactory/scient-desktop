@@ -45,6 +45,7 @@
     "diff": "8.0.3",
     "effect": "catalog:",
     "fast-xml-parser": "5.8.0",
+    "jsonc-parser": "3.3.1",
     "msgpackr-extract": "3.0.4",
     "node-pty": "^1.1.0",
     "parse5": "7.3.0",

@@ -8,6 +8,7 @@ import * as Path from "effect/Path";
 import {
   discoverClaudeSkills,
   mergeClaudeReportedSkills,
+  setClaudeSkillEnabled,
   skillOverrideSettingsPaths,
 } from "./ClaudeSkills.ts";
 
@@ -52,6 +53,7 @@ it("merges SDK-reported bundled skills with filesystem scope metadata", () => {
         path: "claude://skills/dataviz",
         scope: "app",
         enabled: true,
+        enabledReadOnlyReason: "Managed by Claude",
       },
       {
         name: "project-review",
@@ -99,6 +101,7 @@ it.layer(NodeServices.layer)("discoverClaudeSkills", (it) => {
           path: path.join(configDir, "skills", "codex-review", "SKILL.md"),
           enabled: true,
           scope: "user",
+          canSetEnabled: true,
           description: "Ask Codex for a review.",
         },
         {
@@ -106,6 +109,7 @@ it.layer(NodeServices.layer)("discoverClaudeSkills", (it) => {
           path: path.join(workspace, ".claude", "skills", "deploy", "SKILL.md"),
           enabled: true,
           scope: "project",
+          enabledReadOnlyReason: "Managed in this project",
           description: "Deploy the app.",
         },
       ]);
@@ -166,6 +170,7 @@ it.layer(NodeServices.layer)("discoverClaudeSkills", (it) => {
           path: path.join(configDir, "skills", "deploy", "SKILL.md"),
           enabled: true,
           scope: "user",
+          canSetEnabled: true,
           description: "User deploy.",
         },
       ]);
@@ -419,8 +424,14 @@ it.layer(NodeServices.layer)("discoverClaudeSkills", (it) => {
       const skills = yield* discoverClaudeSkills({ homePath: configDir });
 
       assert.deepEqual(
-        skills.map((skill) => [skill.name, skill.enabled, skill.userInvocationOnly === true]),
-        [["ask-matt", true, true]],
+        skills.map((skill) => [
+          skill.name,
+          skill.enabled,
+          skill.userInvocationOnly === true,
+          skill.canSetEnabled,
+          skill.enabledReadOnlyReason,
+        ]),
+        [["ask-matt", true, true, undefined, "Uses a Claude invocation mode"]],
       );
     }),
   );
@@ -729,6 +740,66 @@ it.layer(NodeServices.layer)("discoverClaudeSkills", (it) => {
       );
 
       assert.deepEqual(skills, []);
+    }),
+  );
+
+  it.effect("updates one user override while preserving unrelated JSONC settings", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const tempDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-claude-skills-" });
+      const configDir = path.join(tempDir, "claude-home");
+      yield* fs.makeDirectory(configDir, { recursive: true });
+      yield* fs.writeFileString(
+        path.join(configDir, "settings.json"),
+        [
+          "{",
+          "  // keep this comment",
+          '  "theme": "dark",',
+          '  "skillOverrides": {',
+          '    "kept": "name-only",',
+          "  },",
+          "}",
+          "",
+        ].join("\n"),
+      );
+
+      yield* setClaudeSkillEnabled({
+        config: { homePath: configDir },
+        environment: {},
+        name: "review",
+        scope: "user",
+        enabled: false,
+      });
+
+      const updated = yield* fs.readFileString(path.join(configDir, "settings.json"));
+      assert.match(updated, /\/\/ keep this comment/);
+      assert.match(updated, /"theme": "dark"/);
+      assert.match(updated, /"kept": "name-only"/);
+      assert.match(updated, /"review": "off"/);
+    }),
+  );
+
+  it.effect("refuses malformed settings without overwriting them", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const tempDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-claude-skills-" });
+      const configDir = path.join(tempDir, "claude-home");
+      yield* fs.makeDirectory(configDir, { recursive: true });
+      const settingsPath = path.join(configDir, "settings.json");
+      yield* fs.writeFileString(settingsPath, "{ invalid");
+
+      const exit = yield* setClaudeSkillEnabled({
+        config: { homePath: configDir },
+        environment: {},
+        name: "review",
+        scope: "user",
+        enabled: true,
+      }).pipe(Effect.exit);
+
+      assert.equal(exit._tag, "Failure");
+      assert.equal(yield* fs.readFileString(settingsPath), "{ invalid");
     }),
   );
 });

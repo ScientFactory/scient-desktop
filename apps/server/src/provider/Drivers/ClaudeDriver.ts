@@ -71,7 +71,7 @@ import {
 } from "../providerUpdateSettings.ts";
 import { hasExternalClaudeAccountConfiguration } from "./ClaudeAuthStatus.ts";
 import { makeClaudeCapabilitiesCacheKey, makeClaudeContinuationGroupKey } from "./ClaudeHome.ts";
-import { discoverClaudeSkills } from "./ClaudeSkills.ts";
+import { discoverClaudeSkills, setClaudeSkillEnabled } from "./ClaudeSkills.ts";
 const decodeClaudeSettings = Schema.decodeSync(ClaudeSettings);
 
 const DRIVER_KIND = ProviderDriverKind.make("claudeAgent");
@@ -353,6 +353,26 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv> = {
               Effect.provideService(FileSystem.FileSystem, fileSystem),
               Effect.provideService(Path.Path, path),
             );
+      const skillActions = {
+        setEnabled: (skill: {
+          readonly name: string;
+          readonly path: string;
+          readonly scope?: string | undefined;
+          readonly enabled: boolean;
+        }) =>
+          setClaudeSkillEnabled({
+            config: effectiveConfig,
+            environment: processEnv,
+            cwd: serverConfig.cwd,
+            name: skill.name,
+            scope: skill.scope,
+            enabled: skill.enabled,
+          }).pipe(
+            Effect.provideService(FileSystem.FileSystem, fileSystem),
+            Effect.provideService(Path.Path, path),
+            Effect.mapError((cause) => ({ message: cause.detail, cause })),
+          ),
+      };
 
       return {
         instanceId,
@@ -366,6 +386,7 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv> = {
         enabled,
         snapshot,
         snapshotForCwd,
+        skillActions,
         adapter,
         textGeneration,
         voiceTranscriptCorrection,

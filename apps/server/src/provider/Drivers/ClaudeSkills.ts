@@ -21,11 +21,13 @@ import type {
   ServerProviderSlashCommand,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
+import * as Data from "effect/Data";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import { fromLenientJson } from "@t3tools/shared/schemaJson";
+import { applyEdits, modify, parse, type ParseError } from "jsonc-parser/lib/esm/main.js";
 import { parse as parseYamlDocument } from "yaml";
 
 import { expandHomePath } from "../../pathExpansion.ts";
@@ -210,17 +212,22 @@ const decodeSkillOverrideSettings = Schema.decodeUnknownEffect(SkillOverrideSett
 type SkillOverride = {
   readonly enabled: boolean;
   readonly userInvocationOnly: boolean;
+  readonly source: "user" | "project" | "managed";
+  readonly mode: typeof SkillOverrideValue.Type;
 };
 
-function parseSkillOverride(value: typeof SkillOverrideValue.Type): SkillOverride {
+function parseSkillOverride(
+  value: typeof SkillOverrideValue.Type,
+  source: SkillOverride["source"],
+): SkillOverride {
   switch (value) {
     case "off":
-      return { enabled: false, userInvocationOnly: false };
+      return { enabled: false, userInvocationOnly: false, source, mode: value };
     case "user-invocable-only":
-      return { enabled: true, userInvocationOnly: true };
+      return { enabled: true, userInvocationOnly: true, source, mode: value };
     case "on":
     case "name-only":
-      return { enabled: true, userInvocationOnly: false };
+      return { enabled: true, userInvocationOnly: false, source, mode: value };
   }
 }
 
@@ -234,6 +241,8 @@ const readSkillOverrides = Effect.fn("readSkillOverrides")(function* (
   const platform = yield* HostProcessPlatform;
   const overridesByName = new Map<string, SkillOverride>();
   const repositoryRoot = cwd === undefined ? undefined : yield* findRepositoryRoot(cwd);
+  const userSettingsPath = path.join(configDirPath, "settings.json");
+  const managedSettingsPath = claudeManagedSettingsPath(path, platform, environment);
 
   for (const settingsPath of skillOverrideSettingsPaths(
     path,
@@ -265,7 +274,17 @@ const readSkillOverrides = Effect.fn("readSkillOverrides")(function* (
     }
 
     for (const [name, value] of Object.entries(overrides)) {
-      overridesByName.set(name, parseSkillOverride(value));
+      overridesByName.set(
+        name,
+        parseSkillOverride(
+          value,
+          settingsPath === userSettingsPath
+            ? "user"
+            : settingsPath === managedSettingsPath
+              ? "managed"
+              : "project",
+        ),
+      );
     }
   }
 
@@ -374,6 +393,20 @@ export const discoverClaudeSkills = Effect.fn("discoverClaudeSkills")(function* 
         path: skillPath,
         enabled: override?.enabled ?? true,
         scope: root.scope,
+        ...(root.scope === "user" &&
+        (override === undefined ||
+          (override.source === "user" && (override.mode === "on" || override.mode === "off")))
+          ? { canSetEnabled: true }
+          : {
+              enabledReadOnlyReason:
+                root.scope === "project"
+                  ? "Managed in this project"
+                  : override?.source === "managed"
+                    ? "Managed by policy"
+                    : override?.source === "project"
+                      ? "Overridden by this project"
+                      : "Uses a Claude invocation mode",
+            }),
         ...(frontmatter.kind === "parsed" && frontmatter.description
           ? { description: frontmatter.description }
           : {}),
@@ -410,6 +443,7 @@ export function mergeClaudeReportedSkills(
       path: `${CLAUDE_REPORTED_SKILL_PREFIX}${encodeURIComponent(name)}`,
       scope: "app",
       enabled: true,
+      enabledReadOnlyReason: "Managed by Claude",
       ...(skill.description ? { description: skill.description } : {}),
     });
   }
@@ -417,11 +451,108 @@ export function mergeClaudeReportedSkills(
   for (const skill of discoveredSkills) {
     const key = skill.name.trim().toLowerCase();
     if (!key) continue;
+    const reported = skillsByName.get(key);
+    const { enabledReadOnlyReason: _reportedReadOnlyReason, ...reportedMetadata } = reported ?? {};
     skillsByName.set(key, {
-      ...skillsByName.get(key),
+      ...reportedMetadata,
       ...skill,
     });
   }
 
   return [...skillsByName.values()].sort((left, right) => left.name.localeCompare(right.name));
 }
+
+const CLAUDE_SKILL_SETTINGS_ERROR_TAG = "ClaudeSkillSettingsError";
+export class ClaudeSkillSettingsError extends Data.TaggedError(CLAUDE_SKILL_SETTINGS_ERROR_TAG)<{
+  readonly cause?: unknown;
+  readonly detail: string;
+}> {}
+
+/**
+ * Persist one user-scoped Claude skill override without rewriting unrelated
+ * JSONC settings or comments. Higher-precedence project and managed settings
+ * remain authoritative and are caught by the shared refresh/readback gate.
+ */
+export const setClaudeSkillEnabled = Effect.fn("setClaudeSkillEnabled")(function* (input: {
+  readonly config: Pick<ClaudeSettings, "homePath">;
+  readonly environment: NodeJS.ProcessEnv;
+  readonly cwd?: string | undefined;
+  readonly name: string;
+  readonly scope?: string | undefined;
+  readonly enabled: boolean;
+}) {
+  if (input.scope !== "user") {
+    return yield* new ClaudeSkillSettingsError({
+      detail: "Only user-scoped Claude skills can be changed from External skills.",
+    });
+  }
+
+  const fileSystem = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const configDirPath = yield* resolveClaudeConfigDirPath(
+    input.config,
+    input.environment,
+    input.cwd,
+  );
+  const settingsPath = path.join(configDirPath, "settings.json");
+  const contents = yield* fileSystem.readFileString(settingsPath).pipe(
+    Effect.catchTags({
+      PlatformError: (error) =>
+        error.reason._tag === "NotFound" ? Effect.succeed("{}\n") : Effect.fail(error),
+    }),
+    Effect.mapError(
+      (cause) =>
+        new ClaudeSkillSettingsError({
+          cause,
+          detail: "Claude's user settings could not be read.",
+        }),
+    ),
+  );
+
+  const parseErrors: ParseError[] = [];
+  const parsedSettings = parse(contents, parseErrors, {
+    allowTrailingComma: true,
+    disallowComments: false,
+  });
+  if (
+    parseErrors.length > 0 ||
+    typeof parsedSettings !== "object" ||
+    parsedSettings === null ||
+    Array.isArray(parsedSettings)
+  ) {
+    return yield* new ClaudeSkillSettingsError({
+      detail: "Claude's user settings contain invalid JSON and were not changed.",
+    });
+  }
+
+  const lineEnding = contents.includes("\r\n") ? "\r\n" : "\n";
+  const updated = applyEdits(
+    contents,
+    modify(contents, ["skillOverrides", input.name], input.enabled ? "on" : "off", {
+      formattingOptions: { insertSpaces: true, tabSize: 2, eol: lineEnding },
+    }),
+  );
+  yield* Effect.gen(function* () {
+    yield* fileSystem.makeDirectory(configDirPath, { recursive: true });
+    const temporaryPath = yield* fileSystem.makeTempFile({
+      directory: configDirPath,
+      prefix: ".settings.json.scient-",
+    });
+    yield* fileSystem
+      .writeFileString(temporaryPath, updated)
+      .pipe(
+        Effect.andThen(fileSystem.rename(temporaryPath, settingsPath)),
+        Effect.ensuring(fileSystem.remove(temporaryPath).pipe(Effect.ignore)),
+      );
+  }).pipe(
+    Effect.mapError(
+      (cause) =>
+        new ClaudeSkillSettingsError({
+          cause,
+          detail: "Claude's user skill setting could not be saved.",
+        }),
+    ),
+  );
+
+  return { effectiveEnabled: input.enabled };
+});

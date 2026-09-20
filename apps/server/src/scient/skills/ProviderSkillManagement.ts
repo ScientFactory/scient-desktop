@@ -55,10 +55,11 @@ export function makeProviderSkillManagement(
       });
     }
 
-    const result = yield* actions
+    yield* actions
       .setEnabled({
         name: skill.name,
         path: skill.path,
+        ...(skill.scope ? { scope: skill.scope } : {}),
         enabled: input.enabled,
       })
       .pipe(
@@ -71,8 +72,26 @@ export function makeProviderSkillManagement(
         ),
       );
     const refreshedProviders = yield* providerRegistry.refreshInstance(input.instanceId);
+    const refreshedSkill = refreshedProviders
+      .find((candidate) => candidate.instanceId === input.instanceId)
+      ?.skills.find((candidate) => candidate.path === skill.path && candidate.name === skill.name);
+    if (!refreshedSkill) {
+      return yield* failure({
+        instanceId: input.instanceId,
+        reason: "provider_rejected",
+        message: `Scient could not verify '${skill.name}' after the provider refresh.`,
+      });
+    }
+    const effectiveEnabled = refreshedSkill.enabled;
+    if (effectiveEnabled !== input.enabled) {
+      return yield* failure({
+        instanceId: input.instanceId,
+        reason: "provider_rejected",
+        message: `The provider kept '${skill.name}' ${effectiveEnabled ? "enabled" : "disabled"}.`,
+      });
+    }
     return {
-      effectiveEnabled: result.effectiveEnabled,
+      effectiveEnabled,
       providers: refreshedProviders,
     };
   });

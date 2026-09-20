@@ -55,7 +55,7 @@ import {
 } from "../../scient/providerLifecycle/DroidConnectionActions.ts";
 import { makeDroidManagedRuntimeResolution } from "../../scient/providerLifecycle/DroidManagedRuntimeActions.ts";
 import { makeDroidCustomModelsRuntimeFactory } from "../droid/DroidCustomModels.ts";
-import { discoverDroidSkills } from "./DroidSkills.ts";
+import { discoverDroidSkills, setDroidSkillEnabled } from "./DroidSkills.ts";
 
 const decodeDroidSettings = Schema.decodeSync(DroidSettings);
 
@@ -313,6 +313,26 @@ export const DroidDriver: ProviderDriver<DroidSettings, DroidDriverEnv> = {
         ),
       );
 
+      const skillActions = {
+        setEnabled: (skill: {
+          readonly name: string;
+          readonly path: string;
+          readonly scope?: string | undefined;
+          readonly enabled: boolean;
+        }) =>
+          setDroidSkillEnabled({
+            binaryPath: effectiveConfig.binaryPath,
+            cwd: serverConfig.cwd,
+            environment: processEnv,
+            name: skill.name,
+            scope: skill.scope,
+            enabled: skill.enabled,
+          }).pipe(
+            Effect.scoped,
+            Effect.mapError((cause) => ({ message: cause.detail, cause })),
+          ),
+      };
+
       return {
         instanceId,
         driverKind: DRIVER_KIND,
@@ -335,6 +355,7 @@ export const DroidDriver: ProviderDriver<DroidSettings, DroidDriverEnv> = {
               ),
         adapter,
         textGeneration,
+        skillActions,
         ...(connectionActions ? { connectionActions } : {}),
         managedRuntimeActions: managedRuntime.actions,
       } satisfies ProviderInstance;

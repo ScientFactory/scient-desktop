@@ -5,6 +5,7 @@ import {
   compactExternalSkillDescription,
   collectExternalSkillProviders,
   externalSkillSourceLabel,
+  externalSkillStatus,
   summarizeExternalSkills,
 } from "./externalSkills";
 
@@ -106,6 +107,24 @@ describe("external skill presentation", () => {
     expect((["app", "personal", "system", "other"] as const).map(externalSkillSourceLabel)).toEqual(
       ["Provider bundled", "Personal", "System", "Provider managed"],
     );
+  });
+
+  it("reports activation and read-only authority independently", () => {
+    expect(externalSkillStatus({ enabled: true, canSetEnabled: true }, "personal")).toBe(
+      "Personal",
+    );
+    expect(externalSkillStatus({ enabled: false, canSetEnabled: true }, "personal")).toBe(
+      "Personal · Deactivated",
+    );
+    expect(
+      externalSkillStatus(
+        {
+          enabled: false,
+          enabledReadOnlyReason: "Controlled by the skill file",
+        },
+        "personal",
+      ),
+    ).toBe("Personal · Deactivated · Controlled by the skill file");
   });
 
   it("shows a compact provider-authored summary without changing the source skill", () => {

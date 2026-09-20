@@ -8,6 +8,7 @@ import * as Fiber from "effect/Fiber";
 import {
   discoverDroidSkills,
   droidSkillsToServerProviderSkills,
+  setDroidSkillEnabled,
   type DroidSkillInventoryClientFactory,
 } from "./DroidSkills.ts";
 
@@ -46,14 +47,22 @@ it("maps Droid's native locations and invocation state without recreating preced
         path: "automation:nightly",
         scope: "automation",
         enabled: true,
+        canSetEnabled: true,
       },
-      { name: "built-in", path: "builtin:built-in", scope: "builtin", enabled: true },
+      {
+        name: "built-in",
+        path: "builtin:built-in",
+        scope: "builtin",
+        enabled: true,
+        canSetEnabled: true,
+      },
       {
         name: "personal-review",
         path: "/home/user/.factory/skills/personal-review/SKILL.md",
         scope: "personal",
         enabled: false,
         userInvocable: false,
+        canSetEnabled: true,
       },
       {
         name: "project-review",
@@ -61,8 +70,75 @@ it("maps Droid's native locations and invocation state without recreating preced
         scope: "project",
         enabled: true,
         userInvocable: true,
+        canSetEnabled: true,
         description: "Review the project.",
         shortDescription: "Review the project.",
+      },
+    ],
+  );
+});
+
+it("keeps frontmatter-disabled Droid skills read-only", () => {
+  NodeAssert.deepEqual(
+    droidSkillsToServerProviderSkills([
+      {
+        name: "fixed-off",
+        location: "personal",
+        filePath: "/skills/fixed-off/SKILL.md",
+        enabled: false,
+        disabledBy: { kind: "frontmatter" },
+      },
+    ]),
+    [
+      {
+        name: "fixed-off",
+        path: "/skills/fixed-off/SKILL.md",
+        scope: "personal",
+        enabled: false,
+        enabledReadOnlyReason: "Controlled by the skill file",
+      },
+    ],
+  );
+});
+
+it("keeps skills disabled by another Droid settings level read-only", () => {
+  NodeAssert.deepEqual(
+    droidSkillsToServerProviderSkills([
+      {
+        name: "project-disabled",
+        location: "personal",
+        filePath: "/skills/project-disabled/SKILL.md",
+        enabled: false,
+        disabledBy: {
+          kind: "ledger",
+          sources: [{ level: "project" }],
+        },
+      },
+      {
+        name: "user-disabled",
+        location: "personal",
+        filePath: "/skills/user-disabled/SKILL.md",
+        enabled: false,
+        disabledBy: {
+          kind: "ledger",
+          sources: [{ level: "user" }],
+        },
+      },
+    ]),
+    [
+      {
+        name: "project-disabled",
+        path: "/skills/project-disabled/SKILL.md",
+        scope: "personal",
+        enabled: false,
+        enabledReadOnlyReason: "Managed by another Droid settings level",
+      },
+      {
+        name: "user-disabled",
+        path: "/skills/user-disabled/SKILL.md",
+        scope: "personal",
+        enabled: false,
+        canSetEnabled: true,
       },
     ],
   );
@@ -170,6 +246,42 @@ it.effect("closes an acquired client when discovery is interrupted", () =>
     ).pipe(Effect.forkChild);
     yield* Effect.promise(() => listStarted);
     yield* Fiber.interrupt(fiber);
+    NodeAssert.equal(closed, 1);
+  }),
+);
+
+it.effect("uses Droid's native settings ledger and always closes the client", () =>
+  Effect.gen(function* () {
+    const writes: Array<{
+      name: string;
+      disabled: boolean;
+      level: "user" | "project";
+    }> = [];
+    let closed = 0;
+    const makeClient: DroidSkillInventoryClientFactory = async () => ({
+      close: async () => {
+        closed += 1;
+      },
+      listSkills: async () => ({ skills: [] }),
+      setSkillDisabled: async (name, disabled, level) => {
+        writes.push({ name, disabled, level });
+      },
+    });
+
+    const result = yield* setDroidSkillEnabled(
+      {
+        binaryPath: "droid",
+        cwd: "/work",
+        environment: {},
+        name: "review",
+        scope: "project",
+        enabled: false,
+      },
+      makeClient,
+    );
+
+    NodeAssert.deepEqual(result, { effectiveEnabled: false });
+    NodeAssert.deepEqual(writes, [{ name: "review", disabled: true, level: "project" }]);
     NodeAssert.equal(closed, 1);
   }),
 );

@@ -277,7 +277,8 @@ exact contextual `scient://` entry remains available for explicit selection.
 reported by each connected provider instance. Providers remain the source of
 truth. Codex supplies its inventory through app-server; Claude uses the Agent
 SDK's skill-only reload response plus narrow filesystem discovery for scope
-metadata; and Antigravity uses metadata-only discovery for its documented skill
+metadata; Droid uses its official SDK inventory; Grok uses `grok inspect
+--json`; and Antigravity uses metadata-only discovery for its documented skill
 roots.
 Scient does not copy, import, rewrite, or execute those files. Personal,
 provider-bundled, system, and otherwise unclassified global skills are shown;
@@ -285,13 +286,26 @@ project and repository skills stay out of this global page and out of the
 global `$` and `/` menus.
 
 Provider instances share one compact selector and only the selected provider's
-inventory is expanded. Native skill controls are capability-gated: Codex
-currently exposes its reviewed `skills/config/write` API, so its skills can be
-activated or deactivated in Scient. Claude, Antigravity, and OpenCode remain
-read-only because they do not expose an equivalent reviewed mutation API. The
-server validates the exact provider instance, skill name, and provider-owned
-path against the latest snapshot before dispatching a change, then refreshes
-the provider inventory. The UI never predicts success.
+inventory is expanded. Native skill controls are capability-gated:
+
+- Codex uses app-server `skills/config/write`, selecting by the exact reported
+  path rather than an ambiguous name;
+- Droid uses the official SDK's settings ledger. Skills disabled in their own
+  frontmatter or by a different settings level remain read-only because the
+  current surface cannot truthfully override them;
+- Grok updates only the user `config.toml` `[skills].disabled` list and preserves
+  unrelated TOML text; and
+- Claude updates only simple user-scoped `skillOverrides` on/off values while
+  preserving JSONC comments. Project, managed-policy, plugin, and specialized
+  invocation-mode entries remain read-only.
+
+OpenCode, Cursor, Pi, and Antigravity remain read-only until each provider has a
+reviewed, persistent, reversible per-skill mechanism. Scient does not maintain a
+shadow disabled state. The server validates the exact provider instance, skill
+name, and provider-owned path against the latest snapshot before dispatching a
+change, refreshes the provider inventory, and accepts success only when the
+provider's refreshed state confirms the requested value. The UI never predicts
+success.
 
 ## Deliberate phase-one exclusions
 

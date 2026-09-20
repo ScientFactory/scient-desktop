@@ -14,7 +14,7 @@ import { primaryServerProvidersAtom } from "../../state/server";
 import { usePrimaryEnvironmentId } from "../../state/environments";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { AVAILABLE_PROVIDER_OPTIONS } from "../../components/chat/providerIconUtils";
-import { collectExternalSkillProviders, externalSkillSourceLabel } from "./externalSkills";
+import { collectExternalSkillProviders, externalSkillStatus } from "./externalSkills";
 import { setProviderSkillEnabled } from "./scientSkillsState";
 import {
   SettingsSourcePanel,
@@ -125,13 +125,7 @@ export function ExternalSkillsSettings() {
                         className="sm:[&>div]:grid-cols-[minmax(0,1fr)_auto] [&>div>div>p]:max-w-none"
                         title={displayName}
                         description={description}
-                        status={`${externalSkillSourceLabel(source)}${
-                          skill.canSetEnabled === true
-                            ? skill.enabled
-                              ? ""
-                              : " · Deactivated"
-                            : " · Read-only in Scient"
-                        }`}
+                        status={externalSkillStatus(skill, source)}
                         control={
                           skill.canSetEnabled === true ? (
                             <Switch
