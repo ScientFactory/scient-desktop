@@ -1101,7 +1101,7 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
   --card-foreground: var(--color-zinc-800);
   --popover: var(--color-white);
   --popover-foreground: var(--color-zinc-800);
-  --primary: oklch(0.488 0.217 264);
+  --primary: oklch(0.509119 0.184173 257.541);
   --primary-foreground: var(--color-white);
   --secondary: var(--color-zinc-50);
   --secondary-foreground: var(--color-zinc-800);
@@ -1114,11 +1114,11 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
   --message-foreground: var(--foreground);
   --message-action: var(--primary);
   --message-action-foreground: var(--primary-foreground);
-  --message-action-hover: color-mix(in srgb, var(--primary) 90%, var(--background));
+  --message-action-hover: oklch(0.464689 0.166392 257.308);
   --accent: var(--color-zinc-100);
   --accent-foreground: var(--color-zinc-900);
-  --error: var(--color-red-500);
-  --error-foreground: var(--color-red-700);
+  --error: oklch(0.600498 0.221471 27.138);
+  --error-foreground: oklch(0.555556 0.221471 27.138);
   --tool-error-icon: var(--error);
   --error-surface: color-mix(in srgb, var(--error) 8%, transparent);
   --destructive: var(--error);
@@ -1179,6 +1179,7 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
     --popover: color-mix(in srgb, var(--background) 97%, var(--color-white));
     --popover-foreground: var(--color-neutral-100);
     --primary: oklch(0.571 0.21 264);
+    --message-action-hover: color-mix(in srgb, var(--primary) 90%, var(--background));
     --secondary: --alpha(var(--color-white) / 3%);
     --secondary-foreground: var(--color-neutral-100);
     --muted: --alpha(var(--color-white) / 3%);
