@@ -55,10 +55,23 @@ import {
 } from "../../scient/providerLifecycle/DroidConnectionActions.ts";
 import { makeDroidManagedRuntimeResolution } from "../../scient/providerLifecycle/DroidManagedRuntimeActions.ts";
 import { makeDroidCustomModelsRuntimeFactory } from "../droid/DroidCustomModels.ts";
+import { discoverDroidSkills } from "./DroidSkills.ts";
 
 const decodeDroidSettings = Schema.decodeSync(DroidSettings);
 
 const DRIVER_KIND = ProviderDriverKind.make("droid");
+const DROID_SKILL_DISCOVERY_TIMEOUT = "12 seconds";
+
+function canDiscoverDroidSkills(
+  snapshot: Pick<ServerProvider, "enabled" | "installed" | "status" | "auth">,
+): boolean {
+  return (
+    snapshot.enabled &&
+    snapshot.installed &&
+    snapshot.status !== "error" &&
+    snapshot.auth.status !== "unauthenticated"
+  );
+}
 
 export type DroidDriverEnv =
   | BackgroundPolicy.BackgroundPolicy
@@ -183,6 +196,24 @@ export const DroidDriver: ProviderDriver<DroidSettings, DroidDriverEnv> = {
       });
       const makeAcpRuntime = yield* makeDroidCustomModelsRuntimeFactory(serverSettings, instanceId);
 
+      const discoverSkillsForCwd = (
+        cwd: string,
+        fallback: ServerProvider["skills"] = [],
+      ): Effect.Effect<ServerProvider["skills"]> =>
+        discoverDroidSkills({
+          binaryPath: effectiveConfig.binaryPath,
+          cwd,
+          environment: processEnv,
+        }).pipe(
+          Effect.timeout(DROID_SKILL_DISCOVERY_TIMEOUT),
+          Effect.catch((cause) =>
+            Effect.logWarning("Droid native skill discovery was unavailable.", {
+              cwd,
+              cause,
+            }).pipe(Effect.as(fallback)),
+          ),
+        );
+
       const adapter = yield* makeDroidAdapter(effectiveConfig, {
         environment: processEnv,
         ...(eventLoggers.native ? { nativeEventLogger: eventLoggers.native } : {}),
@@ -210,6 +241,16 @@ export const DroidDriver: ProviderDriver<DroidSettings, DroidDriverEnv> = {
         processEnv,
         makeAcpRuntime,
       ).pipe(
+        Effect.flatMap((result) =>
+          canDiscoverDroidSkills(result.snapshot)
+            ? discoverSkillsForCwd(serverConfig.cwd).pipe(
+                Effect.map((skills) => ({
+                  ...result,
+                  snapshot: { ...result.snapshot, skills },
+                })),
+              )
+            : Effect.succeed(result),
+        ),
         Effect.map(({ snapshot: checkedSnapshot, accountCapabilities }) =>
           stampIdentity(checkedSnapshot, accountCapabilities),
         ),
@@ -280,6 +321,18 @@ export const DroidDriver: ProviderDriver<DroidSettings, DroidDriverEnv> = {
         accentColor,
         enabled,
         snapshot,
+        snapshotForCwd: (cwd) =>
+          !effectiveConfig.enabled
+            ? snapshot.getSnapshot
+            : snapshot.getSnapshot.pipe(
+                Effect.flatMap((machineSnapshot) =>
+                  canDiscoverDroidSkills(machineSnapshot)
+                    ? discoverSkillsForCwd(cwd, machineSnapshot.skills).pipe(
+                        Effect.map((skills) => ({ ...machineSnapshot, skills })),
+                      )
+                    : Effect.succeed(machineSnapshot),
+                ),
+              ),
         adapter,
         textGeneration,
         ...(connectionActions ? { connectionActions } : {}),
