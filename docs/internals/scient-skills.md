@@ -123,8 +123,9 @@ handler checks the capability and exact turn allowlist. Loading returns
 instructions and resource metadata; resources remain separate and are read on
 demand.
 
-Codex, Claude, Droid, Grok, Scient-managed OpenCode, and Pi have implemented
-skill transport and application-awareness paths. Transport support does not
+Every built-in provider has implemented skill transport through Scient's
+authenticated MCP session. Codex, Claude, Droid, Grok, Scient-managed OpenCode,
+and Pi also have application-awareness paths. Transport support does not
 establish spontaneous model discovery or equal task quality across providers.
 An externally managed OpenCode server does not
 receive Scient's per-session MCP connection and is therefore unsupported for
@@ -226,14 +227,15 @@ do not describe the transport support table as behavioral qualification.
 for missing provider awareness. A future Scient Agent can use the same skill
 services directly; MCP is the external-provider transport, not the skill owner.
 
-Antigravity's official ACP sessions receive Scient's authenticated HTTP MCP
-connection, including on resume. This transport alone does not qualify Scient
-skill delivery: Antigravity and Cursor still have no reviewed private awareness
-seam. Both therefore remain unsupported for Scient-managed skills instead of
-receiving partial or prompt-emulated behavior. Provider-native skill discovery remains
-authoritative. The composer appends active Scient skills only when the provider
-supports them, and withholds a Scient entry when a native skill already owns
-the same name.
+Antigravity and Cursor receive Scient's authenticated MCP connection and exact
+turn-scoped skill tools; Antigravity retains that connection on resume. Their
+agents can browse the available list, and a user can explicitly select a skill
+through `$name`. Neither provider has a reviewed private awareness seam, so
+Scient does not claim qualified automatic discovery or emulate it through a
+catalog in user input, generated project guidance, or provider configuration.
+Provider-native skill discovery remains authoritative. The composer appends
+active Scient skills only when the provider has reviewed MCP transport, and
+withholds a Scient entry when a native skill already owns the same name.
 
 ## Product surface
 
@@ -310,7 +312,9 @@ Automated coverage must continue to prove:
    atomic explicit lock writes;
 3. exact-lock trust invalidation after any lock-byte change;
 4. no discovery of provider-native skill directories;
-5. truthful unsupported delivery for Antigravity and Cursor;
+5. independent transport and awareness decisions: Antigravity and Cursor keep
+   MCP list/load/resource access and explicit `$name` selection without a claim
+   of qualified automatic discovery;
 6. exact turn-scope snapshot copying, unique model-facing names, and handler
    authorization even when files or the global catalog change after the turn
    starts;

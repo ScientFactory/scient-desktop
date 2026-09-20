@@ -116,6 +116,8 @@ describe("Scient skill session planning", () => {
     expect(
       ScientSkillSession.scientSkillDeliveryForProvider(ProviderDriverKind.make("future-provider")),
     ).toBe("unsupported");
+    expect(ScientSkillSession.SCIENT_SKILL_DELIVERY.antigravity).toBe("mcp");
+    expect(ScientSkillSession.SCIENT_SKILL_DELIVERY.cursor).toBe("mcp");
   });
 
   it.effect("withholds project skills until the exact current lock is trusted", () =>
@@ -170,7 +172,7 @@ describe("Scient skill session planning", () => {
   );
 
   it.effect(
-    "delivers exact user activations without a project and is truthful for Antigravity",
+    "delivers exact user activations through reviewed MCP transports without a project",
     () =>
       Effect.gen(function* () {
         const parent = yield* Effect.promise(() => fixture("scient-user-skill-session-"));
@@ -202,14 +204,20 @@ describe("Scient skill session planning", () => {
           }),
         ]);
 
-        const antigravity = yield* resolvePlan(catalog, snapshot, {
-          provider: ProviderDriverKind.make("antigravity"),
-        });
-        expect(antigravity.delivery).toBe("unsupported");
-        expect(antigravity.releases).toEqual(new Map());
-        expect(antigravity.diagnostics.map((entry) => entry.code)).toContain(
-          "provider-unsupported",
-        );
+        for (const provider of ["antigravity", "cursor"] as const) {
+          const plan = yield* resolvePlan(catalog, snapshot, {
+            provider: ProviderDriverKind.make(provider),
+          });
+          expect(plan.delivery).toBe("mcp");
+          expect(plan.releases).toEqual(new Map([[skillReleaseKey(release), release]]));
+          expect(plan.skills).toEqual([
+            expect.objectContaining({
+              releaseKey: skillReleaseKey(release),
+              invocationPolicy: "automatic",
+            }),
+          ]);
+          expect(plan.diagnostics.map((entry) => entry.code)).not.toContain("provider-unsupported");
+        }
 
         const externalOpenCode = yield* resolvePlan(catalog, snapshot, {
           provider: ProviderDriverKind.make("opencode"),

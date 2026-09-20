@@ -67,8 +67,8 @@ describe("Scient skill management", () => {
         expect(initial.skills.every((skill) => skill.scope === "user")).toBe(true);
         expect(initial.skills.every((skill) => skill.defaultActive)).toBe(true);
         expect(initial.skills.every((skill) => skill.active)).toBe(true);
-        expect(initial.supportedProviders).not.toContain("antigravity");
-        expect(initial.supportedProviders).not.toContain("cursor");
+        expect(initial.supportedProviders).toContain("antigravity");
+        expect(initial.supportedProviders).toContain("cursor");
 
         const htmlPdf = initial.skills.find((skill) => skill.name === "html-pdf-authoring")!;
         const document = yield* management.readDocument(htmlPdf.releaseKey);

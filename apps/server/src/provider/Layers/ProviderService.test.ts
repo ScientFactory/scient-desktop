@@ -115,6 +115,7 @@ const claudeAgentInstanceId = ProviderInstanceId.make("claudeAgent");
 const CODEX_DRIVER = ProviderDriverKind.make("codex");
 const CLAUDE_AGENT_DRIVER = ProviderDriverKind.make("claudeAgent");
 const CURSOR_DRIVER = ProviderDriverKind.make("cursor");
+const ANTIGRAVITY_DRIVER = ProviderDriverKind.make("antigravity");
 
 const assistantQuoteText = 'Keep the shared parser for "résumé".\nPreserve line breaks.';
 const assistantCitation = {
@@ -5522,33 +5523,39 @@ describe("agent browser access", () => {
     }).pipe(Effect.provide(NodeServices.layer)),
   );
 
-  it.effect("keeps project capabilities independent of Scient skill delivery", () =>
-    Effect.gen(function* () {
-      const threadId = asThreadId("thread-project-capabilities-only");
+  for (const providerDriver of [CURSOR_DRIVER, ANTIGRAVITY_DRIVER]) {
+    it.effect(
+      `grants skill MCP transport without claiming private awareness for ${providerDriver}`,
+      () =>
+        Effect.gen(function* () {
+          const threadId = asThreadId(`thread-skill-transport-${providerDriver}`);
 
-      const issued = yield* startSessionWith(
-        false,
-        threadId,
-        undefined,
-        undefined,
-        undefined,
-        CURSOR_DRIVER,
-      );
+          const issued = yield* startSessionWith(
+            false,
+            threadId,
+            undefined,
+            undefined,
+            undefined,
+            providerDriver,
+          );
 
-      assert.deepEqual(issued, [
-        {
-          threadId,
-          capabilities: new Set([
-            "pull-requests",
-            "documents:build",
-            "compute:inventory",
-            "sources:read",
-            "sources:write",
-          ]),
-        },
-      ]);
-    }).pipe(Effect.provide(NodeServices.layer)),
-  );
+          assert.deepEqual(issued, [
+            {
+              threadId,
+              capabilities: new Set([
+                "pull-requests",
+                "documents:build",
+                "compute:inventory",
+                "sources:read",
+                "sources:write",
+                "skills:read",
+              ]),
+              skillScope: { releases: new Map(), skills: [] },
+            },
+          ]);
+        }).pipe(Effect.provide(NodeServices.layer)),
+    );
+  }
 
   it.effect("withholds the session toolkit when the configured adapter cannot attach it", () =>
     Effect.gen(function* () {
