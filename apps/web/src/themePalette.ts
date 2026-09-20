@@ -36,6 +36,25 @@ export const THEME_HALVES_STORAGE_KEY = "t3code:theme-halves:v1";
 
 const LEGACY_T3_CHAT_DARK_THEME_ID = "t3-chat-dark";
 
+/**
+ * The reviewed stock light palette for the web and desktop clients. Mobile
+ * keeps the shared T3 Code palette until its default appearance is reviewed
+ * independently.
+ */
+const T3_CODE_WEB_LIGHT_THEME_COLORS: ThemeColors = {
+  ...T3_CODE_LIGHT_THEME_COLORS,
+  focus: "#0160cc",
+  accent: "#0160cc",
+  error: "#e72b2b",
+  errorForeground: "#d60e1a",
+  errorSurface: "#faebeb",
+  update: "#0160cc",
+  updateForeground: "#0160cc",
+  updateSurface: "#dee9f6",
+  messageAction: "#0160cc",
+  messageActionHover: "#0154b4",
+};
+
 export const ThemePreference = Schema.String;
 export type ThemePreference = typeof ThemePreference.Type;
 
@@ -338,7 +357,7 @@ export function getStandardThemeColors(appearance: ThemeAppearance): ThemeColors
   if (appearance === "dark") {
     return (standardDarkThemeColors ??= decodeThemeColors(T3_CODE_DARK_THEME_COLORS));
   }
-  return (standardLightThemeColors ??= decodeThemeColors(T3_CODE_LIGHT_THEME_COLORS));
+  return (standardLightThemeColors ??= decodeThemeColors(T3_CODE_WEB_LIGHT_THEME_COLORS));
 }
 
 type ThemeRgbColor = {
