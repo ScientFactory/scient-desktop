@@ -19,20 +19,13 @@ export interface PreparedScientSkillTurn {
 
 export interface ScientSkillTurnProjection {
   readonly skillLoadToolName: string;
-  readonly skillListToolName?: string;
   readonly providerNativeSkillTool?: boolean;
   readonly deferred?: boolean;
-  /** Under input pressure, omit automatic entry lines, not selected intent. */
-  readonly omitAutomaticIndex?: boolean;
 }
 
 const DEFAULT_PROJECTION: ScientSkillTurnProjection = {
   skillLoadToolName: "scient_skill_load",
-  skillListToolName: "scient_skills_list",
 };
-
-/** Bounds automatic orientation only; exact selected instructions are never cut. */
-const AUTOMATIC_SKILL_INDEX_BYTE_BUDGET = 2_800;
 
 export function prepareScientSkillTurn(
   input: string | undefined,
@@ -68,33 +61,15 @@ export function prepareScientSkillTurn(
             : 0,
   );
   const instructions: string[] = [];
-  let automaticBytes = 0;
-  let omitted = 0;
-  const index: string[] = [];
+  // Automatic discovery belongs to the stable skill tools, not user input.
+  // Only structured, explicit selections need turn-local orientation. Never
+  // include descriptions or instruction bodies here, even for selected skills.
   for (const skill of skills) {
-    const isSelected = selected.has(skill.releaseKey);
-    const line = `- \`${skill.name}\` (${isSelected ? "selected by the user; load before doing the requested work" : "automatic; load only on a clear match"}; call with \`{"name":"${skill.name}"}\`): ${skill.description}`;
-    const bytes = Buffer.byteLength(line, "utf8");
-    if (
-      !isSelected &&
-      (projection.omitAutomaticIndex || automaticBytes + bytes > AUTOMATIC_SKILL_INDEX_BYTE_BUDGET)
-    ) {
-      omitted++;
-      continue;
+    if (selected.has(skill.releaseKey)) {
+      instructions.push(
+        `- \`${skill.name}\` (selected by the user): load with \`{"name":"${skill.name}"}\` before doing the requested work.`,
+      );
     }
-    if (!isSelected) automaticBytes += bytes;
-    index.push(line);
-  }
-  if (skills.length > 0) {
-    instructions.push(
-      "Scient skills available for this turn:",
-      ...index,
-      ...(omitted > 0
-        ? [
-            `${omitted} additional skills remain available. Search \`${projection.skillListToolName ?? "scient_skills_list"}\` with \`{"query":"topic"}\` or browse with \`{"offset":0,"limit":20}\`; follow nextOffset for more. Omission from this short index does not disable a skill.`,
-          ]
-        : []),
-    );
   }
   if (instructions.length > 0) {
     instructions.push(
@@ -114,7 +89,7 @@ export function prepareScientSkillTurn(
 
   const runtimeInstruction =
     instructions.length > 0
-      ? `[Scient runtime instruction:\n${instructions.join("\n")}\n]`
+      ? `[Scient selected skills for this turn:\n${instructions.join("\n")}\n]`
       : undefined;
   return {
     input: runtimeInstruction ? [input, runtimeInstruction].filter(Boolean).join("\n\n") : input,

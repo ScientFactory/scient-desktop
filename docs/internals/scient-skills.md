@@ -113,7 +113,7 @@ Supported providers keep the authenticated skill transport available with an
 empty initial scope. Immediately before a turn, the server atomically replaces
 that scope with active automatic skills plus active explicit skills selected
 as `$name`. Unselected explicit and inactive skills are absent from both the
-agent-facing list and the MCP allowlist. The agent-facing index uses the
+agent-facing list and the MCP allowlist. Agent-facing discovery uses the
 canonical Agent Skills name and never asks the model to reconstruct internal
 versions or digests. Load and resource calls resolve that name only within the
 current scope, then the server reads the exact immutable release snapshot bound
@@ -123,17 +123,31 @@ handler checks the capability and exact turn allowlist. Loading returns
 instructions and resource metadata; resources remain separate and are read on
 demand.
 
-Codex, Claude, Droid, Grok, Scient-managed OpenCode, and Pi currently support
-the full Phase 1 delivery path. An externally managed OpenCode server does not
+Every built-in provider has implemented skill transport through Scient's
+authenticated MCP session. Codex, Claude, Droid, Grok, Scient-managed OpenCode,
+and Pi also have application-awareness paths. Transport support does not
+establish spontaneous model discovery or equal task quality across providers.
+An externally managed OpenCode server does not
 receive Scient's per-session MCP connection and is therefore unsupported for
-this path. Their stable private awareness explains the routing rule; a
-turn-local private index supplies only the exact automatic and selected skills
-available now. A visible `$skill-name` token adds the selected exact release to
-that index and allowlist without altering the message stored in the
-conversation. **Only with $name** is therefore enforced by omission, not by a
-secondary denial after discovery.
+this path. Stable application-owned awareness directs agents to search or browse
+`scient_skills_list` before answering or acting on a substantive new request,
+including planning, and to load applicable instructions before proceeding.
+Discovery already performed for the current task need not be repeated.
+Acknowledgements and routine follow-ups do not require rediscovery. The tool definitions stay stable as
+the catalog changes; discovery reads the current turn snapshot, not cached tool
+descriptions. Ordinary user input receives no skill catalog or skill instructions.
 
-### Candidate bounded discovery
+An explicitly selected skill receives only a small turn-local loading instruction
+with its exact name and provider-projected loader. This selection signal still
+travels as server-appended provider input, not as a private system message; it
+contains no descriptions, full skill bodies, or unselected names and does not
+alter the message stored in the conversation. It preserves direct loading even
+when fork/context serialization obscures the original `$name`. Removing this
+remaining selection signal requires a proven per-turn provider-native delivery
+mechanism, not a session restart or a fabricated tool result. **Only with $name**
+remains enforced by omission from the scope, not by a secondary discovery denial.
+
+### Discovery and explicit selection
 
 The capability foundation carries explicit `selectedScientSkillNames` from
 the composer through turn commands/events, the durable queue and provider
@@ -144,7 +158,7 @@ excluded from Skill/mention tokenization: a filename or terminal label containin
 `$name` is still data, not a newly selected Skill. The server still intersects names with
 the current eligible immutable releases. Missing metadata means no explicit
 selection; older callers must supply the optional field to invoke explicit
-Scient Skills. Automatic discovery is unchanged. Fork/bootstrap formatting
+Scient Skills. Fork/bootstrap formatting
 does not replace or infer this metadata.
 
 Plan approval derives selection only from the actual follow-up draft. An empty
@@ -159,37 +173,41 @@ not guessed. The two mobile outbox start producers collect names from their
 stored raw composer text before server augmentation. This is source/test
 coverage, not fresh native mobile or provider-device qualification.
 
-The final provider-input character bound is checked after attachments and Skill
-orientation are prepared. If needed, automatic catalog entry lines are omitted
-first with a discovery continuation message; eligible releases and selected
-entries remain intact. Still-over-limit requests report that nothing was sent;
+The final provider-input character bound is checked after attachments and explicit
+selection orientation are prepared. Automatic skills consume no input budget.
+Over-limit requests report that nothing was sent;
 they neither silently omit selected attachments nor replace the current Skill
 scope. The bound is not a model-token or full-conversation budget. Combined
 fixtures cover attachment identity, capture text, citations, context blocks,
 fork wrapping, explicit scope and exact character-boundary cases. Real-provider
 task quality, loaded resource/result cost and compaction remain separate proofs.
 
-The capability foundation limits the **automatic** private index
-to 2,800 UTF-8 bytes of entry lines, with a small routing/continuation message.
-Entries use locale-independent code-point name/ID ordering, matching discovery,
-not an unproven semantic ranker. Valid names are ASCII kebab-case.
-Explicitly selected entries remain present even beyond that budget, and the
-complete selected instruction body is still loaded separately without truncation.
-The turn's authorized release snapshot is not reduced when its short index is.
+The automatic index and its 2,800-byte truncation/fallback path have been removed.
+Only selected names add turn-local orientation. Descriptions and instruction
+bodies never appear in that signal; full instructions are loaded separately.
 
-`scient_skills_list` still accepts `{}`. Optional `query` matches all supplied
+`scient_skills_list` accepts `{}` to browse one page. Optional `query` matches all supplied
 terms against name and description; `offset` and `limit` browse deterministic
-pages (20 entries by default, at most 50). `total` counts matching entries and
+pages (20 entries by default, at most 50). `total` counts entries in the returned view and
 `nextOffset: null` means the last page. Search is within the current authorized
 turn, not a global catalog, installer, native-provider search or new grant.
-The private index explains how to find omitted entries. Tool-name projection
+On a keyword miss, the tool returns a bounded browse page with an explicit hint,
+not an empty result that could be mistaken for no applicable guidance. `total`
+and `nextOffset` then describe the browse view; retaining the query or omitting
+it continues the same deterministic order. An empty available scope is reported
+separately. This is literal keyword filtering with browse fallback, not
+semantic or multilingual retrieval. A search miss never prevents exact-name
+loading. Results expose name, description, origin and invocation policy; detailed
+release identity remains on load results and in server-side scope. These are
+agent discovery responses, not the Settings/composer catalog contract.
+Tool-name projection
 uses the registered canonical name; Claude receives its existing MCP prefix
 for the list/load tools and Browser/Documents guidance alike.
 
 The scale fixture covers 28/100/500 synthetic entries, explicitly verifies that
-a rare name is absent from ordinary orientation, then discovers and loads it
+a rare name is absent from unchanged ordinary input, then discovers and loads it
 through the host-composed executor using that ordinary turn's scope. It also
-covers explicit selection beyond the short index and paging without omissions. It
+covers compact explicit selection and paging without omissions. It
 measures preparation and bytes, not model reasoning quality or consumed tokens.
 Immutable built-in release snapshots remain reused. Mutable project skills and
 lock trust are still verified at turn preparation; no timestamp-only or watcher-
@@ -197,14 +215,27 @@ only cache is introduced that could silently serve edited bytes as a new trusted
 release. A project-scan cache and provider-native lazy delivery need their own
 invalidation/performance evidence before adoption.
 
-Antigravity's official ACP sessions receive Scient's authenticated HTTP MCP
-connection, including on resume. This transport alone does not qualify Scient
-skill delivery: Antigravity and Cursor still have no reviewed private awareness
-seam. Both therefore remain unsupported for Scient-managed skills instead of
-receiving partial or prompt-emulated behavior. Provider-native skill discovery remains
-authoritative. The composer appends active Scient skills only when the provider
-supports them, and withholds a Scient entry when a native skill already owns
-the same name.
+Discovery quality must be evaluated separately using fresh real-provider sessions:
+ordinary task wording, unfamiliar project skills, explicit selections, multilingual
+requests, catalog changes, resume/compaction, and unrelated tasks that should not
+load a skill. Compare successful loading, irrelevant calls, output quality and
+latency against catalog-based delivery. A protocol fixture or a synthetic model
+does not qualify spontaneous discovery. Keep provider-specific gaps in PR evidence;
+do not describe the transport support table as behavioral qualification.
+
+`AGENTS.md` remains project-owned guidance, not a generated catalog or a fallback
+for missing provider awareness. A future Scient Agent can use the same skill
+services directly; MCP is the external-provider transport, not the skill owner.
+
+Antigravity and Cursor receive Scient's authenticated MCP connection and exact
+turn-scoped skill tools; Antigravity retains that connection on resume. Their
+agents can browse the available list, and a user can explicitly select a skill
+through `$name`. Neither provider has a reviewed private awareness seam, so
+Scient does not claim qualified automatic discovery or emulate it through a
+catalog in user input, generated project guidance, or provider configuration.
+Provider-native skill discovery remains authoritative. The composer appends
+active Scient skills only when the provider has reviewed MCP transport, and
+withholds a Scient entry when a native skill already owns the same name.
 
 ## Product surface
 
@@ -281,7 +312,9 @@ Automated coverage must continue to prove:
    atomic explicit lock writes;
 3. exact-lock trust invalidation after any lock-byte change;
 4. no discovery of provider-native skill directories;
-5. truthful unsupported delivery for Antigravity and Cursor;
+5. independent transport and awareness decisions: Antigravity and Cursor keep
+   MCP list/load/resource access and explicit `$name` selection without a claim
+   of qualified automatic discovery;
 6. exact turn-scope snapshot copying, unique model-facing names, and handler
    authorization even when files or the global catalog change after the turn
    starts;

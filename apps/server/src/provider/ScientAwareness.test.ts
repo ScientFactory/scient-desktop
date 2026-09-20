@@ -46,8 +46,13 @@ describe("Scient awareness", () => {
   });
 
   it("mentions Scient skills only when exact skill access is granted", () => {
-    expect(wordCount(SCIENT_SKILLS_AWARENESS)).toBeLessThanOrEqual(50);
-    expect(SCIENT_SKILLS_AWARENESS).toContain("private turn-scoped index");
+    expect(wordCount(SCIENT_SKILLS_AWARENESS)).toBeLessThanOrEqual(85);
+    expect(SCIENT_SKILLS_AWARENESS).toContain("`scient_skills_list`");
+    expect(SCIENT_SKILLS_AWARENESS).toContain("`scient_skill_load`");
+    expect(SCIENT_SKILLS_AWARENESS).toContain("Scient guidance available to this task");
+    expect(SCIENT_SKILLS_AWARENESS).not.toContain("project-specific guidance");
+    expect(SCIENT_SKILLS_AWARENESS).not.toContain("index");
+    expect(SCIENT_SKILLS_AWARENESS).toContain("Do not repeat discovery already done");
     expect(SCIENT_SKILLS_AWARENESS).toContain("provide guidance and grant no tools or authority");
     expect(SCIENT_SKILLS_AWARENESS).not.toContain("automatic skill");
     expect(SCIENT_SKILLS_AWARENESS).not.toContain("user-selected");
@@ -128,7 +133,10 @@ describe("Scient awareness", () => {
     expect(awareness).not.toContain("`preview_status`");
     expect(awareness).not.toContain("`ToolSearch`");
     expect(awareness).not.toContain("use `scient_pdf_build`");
-    expect(awareness).toContain(SCIENT_SKILLS_AWARENESS);
+    expect(awareness).toContain("`mcp__t3-code__scient_skills_list`");
+    expect(awareness).toContain("`mcp__t3-code__scient_skill_load`");
+    expect(awareness).not.toContain("`scient_skills_list`");
+    expect(awareness).toContain("separate from the provider's native skills");
     expect(buildScientAwareness(new Set(), CLAUDE_SCIENT_TOOL_PROJECTION)).toBe(
       SCIENT_CORE_AWARENESS,
     );

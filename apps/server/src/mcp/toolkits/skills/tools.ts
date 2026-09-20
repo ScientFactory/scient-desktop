@@ -63,12 +63,20 @@ export const ScientSkillResource = Schema.Struct({
 
 export const ScientSkillsListTool = Tool.make("scient_skills_list", {
   description:
-    "Search or browse exact Scient-managed skills available in this turn. Query matches name and description; default page size is 20, maximum 50. Follow nextOffset until null. Provider-native skills remain separate. Skills never grant tools, credentials, or permissions.",
+    "Discover Scient guidance for a new task. Omit query to browse, or search using short keywords in skill names/descriptions. If no keywords match, returns a labeled browse page instead; search never restricts loading. Results are summaries, not instructions: load applicable skills with scient_skill_load before following them. Default page size 20, maximum 50; use nextOffset when more results are needed. Provider-native skills remain separate.",
   parameters: ScientSkillListInput,
   success: Schema.Struct({
-    skills: Schema.Array(ScientSkillSummary).pipe(Schema.check(Schema.isMaxLength(50))),
+    skills: Schema.Array(
+      Schema.Struct({
+        name: NonEmptyString,
+        description: NonEmptyString,
+        origin: NonEmptyString,
+        invocationPolicy: Schema.Literals(["automatic", "explicit"]),
+      }),
+    ).pipe(Schema.check(Schema.isMaxLength(50))),
     total: Schema.Int,
     nextOffset: Schema.NullOr(Schema.Int),
+    hint: Schema.optional(NonEmptyString),
   }),
   failure: ScientSkillToolError,
   dependencies,
@@ -82,7 +90,7 @@ export const ScientSkillsListTool = Tool.make("scient_skills_list", {
 
 export const ScientSkillLoadTool = Tool.make("scient_skill_load", {
   description:
-    "Load one selected Scient skill by the exact Agent Skills name shown in the private turn index or returned by scient_skills_list. Scient resolves that name only within this turn's exact release scope. Loading returns verified instructions and resource metadata; it does not execute anything or widen authority.",
+    "Read the instructions for an available Scient skill by its exact name, from the user's Scient selection or scient_skills_list. An explicit selection can be loaded directly without searching. Returns the complete instructions and a resource index; read supporting files with scient_skill_read_resource as needed. Resolves only within this turn's exact release scope; does not execute anything or grant tools or permissions.",
   parameters: Schema.Struct({ name: SkillName }),
   success: Schema.Struct({
     skill: ScientSkillSummary,

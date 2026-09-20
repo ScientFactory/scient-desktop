@@ -38,7 +38,7 @@ describe("effective provider skill inventory", () => {
     expect(result[1]).toMatchObject({ name: "review", path: expect.stringMatching(/^scient:/u) });
   });
 
-  it("lets provider-native skills win collisions and excludes unsupported providers", () => {
+  it("lets provider-native skills win collisions and exposes reviewed MCP transports", () => {
     const native = [{ name: "review", path: "/native", enabled: false }];
     expect(
       mergeEffectiveProviderSkills({
@@ -47,9 +47,24 @@ describe("effective provider skill inventory", () => {
         inventory,
       }),
     ).toEqual(native);
+    for (const provider of ["antigravity", "cursor"] as const) {
+      expect(
+        mergeEffectiveProviderSkills({
+          provider: ProviderDriverKind.make(provider),
+          providerSkills: [],
+          inventory: {
+            ...inventory,
+            supportedProviders: [ProviderDriverKind.make(provider)],
+          },
+        }),
+      ).toEqual([expect.objectContaining({ name: "review" })]);
+    }
+  });
+
+  it("excludes Scient skills from providers without reviewed MCP transport", () => {
     expect(
       mergeEffectiveProviderSkills({
-        provider: ProviderDriverKind.make("antigravity"),
+        provider: ProviderDriverKind.make("future-provider"),
         providerSkills: [],
         inventory,
       }),

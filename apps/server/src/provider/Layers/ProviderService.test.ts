@@ -115,6 +115,7 @@ const claudeAgentInstanceId = ProviderInstanceId.make("claudeAgent");
 const CODEX_DRIVER = ProviderDriverKind.make("codex");
 const CLAUDE_AGENT_DRIVER = ProviderDriverKind.make("claudeAgent");
 const CURSOR_DRIVER = ProviderDriverKind.make("cursor");
+const ANTIGRAVITY_DRIVER = ProviderDriverKind.make("antigravity");
 
 const assistantQuoteText = 'Keep the shared parser for "résumé".\nPreserve line breaks.';
 const assistantCitation = {
@@ -5307,6 +5308,7 @@ describe("agent browser access", () => {
           runtimeMode: "full-access",
         });
         yield* provider.sendTurn({ threadId, input: "Is this workspace organized?" });
+        assert.equal(codex.sendTurn.mock.calls.at(-1)![0].input, "Is this workspace organized?");
 
         skillPlan = {
           delivery: "mcp",
@@ -5366,7 +5368,7 @@ describe("agent browser access", () => {
         assert.isTrue(sentCombined.input!.startsWith(expanded));
         assert.deepEqual(sentCombined.attachments, attachments);
         assert.lengthOf(
-          sentCombined.input!.match(/Scient skills available for this turn/g) ?? [],
+          sentCombined.input!.match(/Scient selected skills for this turn/g) ?? [],
           1,
         );
         const positions = [
@@ -5377,7 +5379,7 @@ describe("agent browser access", () => {
           '[Attached file "measurements.csv"',
           '[Attached image "capture.png"',
           "Untrusted captured-window data",
-          "Scient skills available",
+          "Scient selected skills",
         ].map((section) => sentCombined.input!.indexOf(section));
         assert.isTrue(
           positions.every(
@@ -5450,7 +5452,7 @@ describe("agent browser access", () => {
         [new Set([automatic.releaseKey]), new Set([explicit.releaseKey]), new Set<string>()],
       );
       const sent = codex.sendTurn.mock.calls.map((call) => call[0].input ?? "");
-      assert.include(sent[0] ?? "", `{"name":"${automatic.name}"}`);
+      assert.equal(sent[0], "Is this workspace organized?");
       assert.notInclude(sent[0] ?? "", `{"name":"${explicit.name}"}`);
       assert.include(sent[1] ?? "", `{"name":"${explicit.name}"}`);
       assert.notInclude(sent[0] ?? "", automatic.releaseKey);
@@ -5521,33 +5523,39 @@ describe("agent browser access", () => {
     }).pipe(Effect.provide(NodeServices.layer)),
   );
 
-  it.effect("keeps project capabilities independent of Scient skill delivery", () =>
-    Effect.gen(function* () {
-      const threadId = asThreadId("thread-project-capabilities-only");
+  for (const providerDriver of [CURSOR_DRIVER, ANTIGRAVITY_DRIVER]) {
+    it.effect(
+      `grants skill MCP transport without claiming private awareness for ${providerDriver}`,
+      () =>
+        Effect.gen(function* () {
+          const threadId = asThreadId(`thread-skill-transport-${providerDriver}`);
 
-      const issued = yield* startSessionWith(
-        false,
-        threadId,
-        undefined,
-        undefined,
-        undefined,
-        CURSOR_DRIVER,
-      );
+          const issued = yield* startSessionWith(
+            false,
+            threadId,
+            undefined,
+            undefined,
+            undefined,
+            providerDriver,
+          );
 
-      assert.deepEqual(issued, [
-        {
-          threadId,
-          capabilities: new Set([
-            "pull-requests",
-            "documents:build",
-            "compute:inventory",
-            "sources:read",
-            "sources:write",
-          ]),
-        },
-      ]);
-    }).pipe(Effect.provide(NodeServices.layer)),
-  );
+          assert.deepEqual(issued, [
+            {
+              threadId,
+              capabilities: new Set([
+                "pull-requests",
+                "documents:build",
+                "compute:inventory",
+                "sources:read",
+                "sources:write",
+                "skills:read",
+              ]),
+              skillScope: { releases: new Map(), skills: [] },
+            },
+          ]);
+        }).pipe(Effect.provide(NodeServices.layer)),
+    );
+  }
 
   it.effect("withholds the session toolkit when the configured adapter cannot attach it", () =>
     Effect.gen(function* () {

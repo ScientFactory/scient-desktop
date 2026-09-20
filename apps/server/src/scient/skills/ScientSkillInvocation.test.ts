@@ -64,12 +64,11 @@ describe("turn-local Scient skill routing", () => {
       prepareScientSkillTurn(wrapped, skills, releases, undefined, []).skillScope.skills,
     ).toEqual([automatic]);
   });
-  it("bounds automatic UTF-8 metadata without dropping explicit multilingual entries", () => {
+  it("never injects descriptions, including large multilingual metadata", () => {
     const longDescription = "מחקר 科学 🧪 ".repeat(200);
     const described = { ...automatic, description: longDescription };
     const unselected = prepareScientSkillTurn("Review.", [described], releases);
-    expect(Buffer.byteLength(unselected.input!)).toBeLessThan(4_000);
-    expect(unselected.input).toContain("additional skills remain available");
+    expect(unselected.input).toBe("Review.");
     expect(unselected.skillScope.skills).toEqual([described]);
     const selected = prepareScientSkillTurn(
       `Use $${described.name} now.`,
@@ -78,11 +77,12 @@ describe("turn-local Scient skill routing", () => {
       undefined,
       [described.name],
     );
-    expect(selected.input).toContain(longDescription);
+    expect(selected.input).not.toContain(longDescription);
+    expect(Buffer.byteLength(selected.input!)).toBeLessThan(600);
     expect(selected.input).toContain("selected by the user");
   });
 
-  it("indexes automatic skills and only the explicitly selected $name", () => {
+  it("orients only the explicitly selected skill without injecting an automatic catalog", () => {
     const result = prepareScientSkillTurn(
       "Please use $improve-workspace-readiness after the review.",
       skills,
@@ -90,8 +90,8 @@ describe("turn-local Scient skill routing", () => {
       undefined,
       [explicit.name],
     );
-    expect(result.input).toContain("Scient skills available for this turn");
-    expect(result.input).toContain(`{"name":"${automatic.name}"}`);
+    expect(result.input).toContain("Scient selected skills for this turn");
+    expect(result.input).not.toContain(automatic.name);
     expect(result.input).toContain("selected by the user");
     expect(result.input).toContain(`{"name":"${explicit.name}"}`);
     expect(result.input).not.toContain(automatic.releaseKey);
@@ -136,11 +136,17 @@ describe("turn-local Scient skill routing", () => {
   });
 
   it("can project a deferred provider loader without changing canonical skill identity", () => {
-    const result = prepareScientSkillTurn("Review this workspace.", skills, releases, {
-      skillLoadToolName: "mcp__t3-code__scient_skill_load",
-      providerNativeSkillTool: true,
-      deferred: true,
-    });
+    const result = prepareScientSkillTurn(
+      "Review this workspace.",
+      skills,
+      releases,
+      {
+        skillLoadToolName: "mcp__t3-code__scient_skill_load",
+        providerNativeSkillTool: true,
+        deferred: true,
+      },
+      [automatic.name],
+    );
 
     expect(result.input).toContain("`mcp__t3-code__scient_skill_load`");
     expect(result.input).toContain("not provider-native skills");
@@ -156,5 +162,27 @@ describe("turn-local Scient skill routing", () => {
       input: "Review this workspace.",
       skillScope: { releases: new Map(), skills: [] },
     });
+  });
+
+  it("preserves ordinary text, native commands and promptless input exactly", () => {
+    for (const input of [undefined, "", "/compact", "Review this workspace.", "בדוק את הפרויקט"]) {
+      const result = prepareScientSkillTurn(input, skills, releases);
+      expect(result.input).toBe(input);
+      expect(result.skillScope.skills).toEqual([automatic]);
+    }
+  });
+
+  it("does not retain selections into later turns or grant unavailable selections", () => {
+    const selected = prepareScientSkillTurn("Do this.", skills, releases, undefined, [
+      explicit.name,
+      explicit.name,
+    ]);
+    expect(selected.input?.match(/selected by the user/g)).toHaveLength(1);
+    const next = prepareScientSkillTurn("Continue.", skills, releases);
+    expect(next.input).toBe("Continue.");
+    expect(next.skillScope.skills).toEqual([automatic]);
+    expect(
+      prepareScientSkillTurn("Do this.", [], new Map(), undefined, [explicit.name]).input,
+    ).toBe("Do this.");
   });
 });

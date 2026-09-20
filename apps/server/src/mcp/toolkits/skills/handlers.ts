@@ -98,19 +98,34 @@ export const listScientSkillsForInvocation = Effect.fn("ScientSkillsToolkit.list
         compareStrings(left.release.name, right.release.name) ||
         compareStrings(left.release.id, right.release.id),
     )
-    .map(({ release, descriptor }) =>
-      summary(release, descriptor.invocationPolicy, descriptor.activationScope),
-    );
+    .map(({ release, descriptor }) => ({
+      name: release.name,
+      description: release.description,
+      origin: release.origin,
+      invocationPolicy: descriptor.invocationPolicy,
+    }));
   const terms = (input.query ?? "").trim().toLowerCase().split(/\s+/u).filter(Boolean);
-  const matches = skills.filter((skill) =>
+  const matched = skills.filter((skill) =>
     terms.every((term) => `${skill.name} ${skill.description}`.toLowerCase().includes(term)),
   );
+  // A lexical miss is not evidence that useful guidance is unavailable. Keep
+  // recovery bounded and explicit rather than relying on another guessed query.
+  const browseFallback = terms.length > 0 && matched.length === 0 && skills.length > 0;
+  const matches = browseFallback ? skills : matched;
   const offset = input.offset ?? 0;
   const page = matches.slice(offset, offset + (input.limit ?? 20));
   return {
     skills: page,
     total: matches.length,
     nextOffset: offset + page.length < matches.length ? offset + page.length : null,
+    ...(browseFallback || skills.length === 0
+      ? {
+          hint:
+            skills.length === 0
+              ? "No Scient skills are available in this turn."
+              : "No keyword matches; showing available skills to browse instead. Load any applicable skill by name. Pagination uses this browse order.",
+        }
+      : {}),
   };
 });
 

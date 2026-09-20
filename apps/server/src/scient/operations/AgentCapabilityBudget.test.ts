@@ -48,7 +48,7 @@ const fixtures = (count: number) => {
 const encode = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
 
 it.live(
-  "bounds automatic Skill orientation and preserves rare and explicit access at 28, 100 and 500 entries",
+  "adds zero automatic catalog bytes and preserves rare and explicit access at 28, 100 and 500 entries",
   () =>
     Effect.gen(function* () {
       const execute = yield* makeScientToolExecutor(yield* ScientSkillsToolkit);
@@ -61,7 +61,7 @@ it.live(
           fixture.skills,
           fixture.releases,
         );
-        expect(Buffer.byteLength(ordinary.input!)).toBeLessThan(4_000);
+        expect(ordinary.input).toBe("Explain this function.");
         expect(ordinary.skillScope.skills).toHaveLength(count);
         const rareName = fixture.skills.at(-1)!.name;
         expect(ordinary.input).not.toContain(rareName);
@@ -75,16 +75,8 @@ it.live(
           [rareName],
         );
         expect(selected.input).toContain(`\`${rareName}\` (selected by the user`);
-        const underPressure = prepareScientSkillTurn(
-          "Use the selected Skill.",
-          fixture.skills,
-          fixture.releases,
-          { skillLoadToolName: "scient_skill_load", omitAutomaticIndex: true },
-          [rareName],
-        );
-        expect(underPressure.input).toContain(`\`${rareName}\` (selected by the user`);
-        expect(underPressure.input).toContain(`${count - 1} additional skills`);
-        expect(underPressure.skillScope.skills).toHaveLength(count);
+        expect(selected.input).not.toContain("additional skills");
+        expect(Buffer.byteLength(selected.input!)).toBeLessThan(600);
         const invocation = AgentInvocationContext.of({
           nativeSessionId: "budget-fixture",
           environmentId: EnvironmentId.make("budget-environment"),
@@ -118,6 +110,22 @@ it.live(
         }
         expect(names).toEqual(fixture.skills.map((skill) => skill.name));
         expect(new Set(names).size).toBe(names.length);
+        const fallbackNames: string[] = [];
+        offset = 0;
+        while (offset !== null) {
+          const page: Effect.Success<ReturnType<typeof listScientSkillsForInvocation>> =
+            yield* listScientSkillsForInvocation({
+              query: "unmatched query",
+              offset,
+              limit: 20,
+            }).pipe(Effect.provideService(AgentInvocationContext, invocation));
+          expect(page.skills.length).toBeLessThanOrEqual(20);
+          expect(page.total).toBe(count);
+          expect(page.hint).toContain("showing available skills");
+          fallbackNames.push(...page.skills.map((skill) => skill.name));
+          offset = page.nextOffset;
+        }
+        expect(fallbackNames).toEqual(names);
         const samples = Array.from({ length: 101 }, () => {
           const start = performance.now();
           prepareScientSkillTurn("Explain this function.", fixture.skills, fixture.releases);
@@ -129,11 +137,12 @@ it.live(
           fixture: "skill-orientation",
           count,
           coreBytes,
-          indexBytes: Buffer.byteLength(ordinary.input!),
+          providerInputBytes: Buffer.byteLength(ordinary.input!),
+          automaticOrientationBytes: 0,
           loadedInstructionBytes: Buffer.byteLength(loaded.result.instructions),
           discoveryResultBytes: Buffer.byteLength(encode(found.result)),
           loadedResultBytes: Buffer.byteLength(encode(loaded.result)),
-          combinedCoreIndexSchemasAndResultsBytes:
+          combinedCoreInputSchemasAndResultsBytes:
             coreBytes +
             Buffer.byteLength(ordinary.input!) +
             Buffer.byteLength(

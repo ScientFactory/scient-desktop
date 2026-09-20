@@ -34,8 +34,10 @@ export const SCIENT_DOCUMENT_BUILD_AWARENESS = buildScientDocumentAwareness(
 );
 
 /** Included when this provider can receive turn-scoped Scient skills. */
-export const SCIENT_SKILLS_AWARENESS = `## Scient skills
-Scient may provide a private turn-scoped index of available skills. Follow that index. Skills provide guidance and grant no tools or authority.`;
+const buildScientSkillsAwareness = (tools: ScientToolProjection): string => `## Scient skills
+Before answering or acting on a substantive new request, including planning, consult \`${tools.name("scient_skills_list")}\` for Scient guidance available to this task. Read applicable instructions with \`${tools.name("scient_skill_load")}\` before proceeding. Load explicitly selected Scient skills directly, without searching.${tools.providerNativeSkillTool ? " These are separate from the provider's native skills." : ""}${tools.deferred ? " If these tools are deferred, find their exact names through `ToolSearch` first." : ""} Do not repeat discovery already done for the current task; skip acknowledgements and routine follow-ups. Skills provide guidance and grant no tools or authority.`;
+
+export const SCIENT_SKILLS_AWARENESS = buildScientSkillsAwareness(CANONICAL_SCIENT_TOOL_PROJECTION);
 
 const buildScientComputeAwareness = (tools: ScientToolProjection): string => `## Scient Compute
 When you need to know which Scient runtimes are configured or already present, call \`${tools.name("scient_compute_inventory")}\`. It is a bounded, read-only inventory of configured settings, managed-runtime status, and existing candidates. Inventory is discovery only: readiness is unknown unless a separate verified result says otherwise. It does not install, run, execute, or attach to runtimes or project sessions, and a listed executable path does not grant authority to launch it.`;
@@ -55,7 +57,7 @@ export function buildScientAwareness(
     ...(capabilities?.has("compute:inventory") ? [buildScientComputeAwareness(tools)] : []),
     ...(capabilities?.has("device") ? [SCIENT_DEVICE_AWARENESS] : []),
     ...(capabilities?.has("documents:build") ? [buildScientDocumentAwareness(tools)] : []),
-    ...(capabilities?.has("skills:read") ? [SCIENT_SKILLS_AWARENESS] : []),
+    ...(capabilities?.has("skills:read") ? [buildScientSkillsAwareness(tools)] : []),
   ].join("\n\n");
 }
 

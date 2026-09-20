@@ -16,12 +16,17 @@ import * as ScientSkillPolicy from "./ScientSkillPolicy.ts";
 import * as ScientSkillRegistry from "./ScientSkillRegistry.ts";
 import { resolveEffectiveUserSkillPolicies } from "./ScientSkillEffectivePolicy.ts";
 
-/** Every built-in provider has an explicit delivery decision. */
+/**
+ * Every built-in provider has an explicit MCP transport decision. This is
+ * deliberately independent of private application awareness: a provider can
+ * browse the tools or load a user-selected `$skill` without Scient claiming
+ * that spontaneous discovery has been qualified.
+ */
 export const SCIENT_SKILL_DELIVERY = {
-  antigravity: "unsupported",
+  antigravity: "mcp",
   claudeAgent: "mcp",
   codex: "mcp",
-  cursor: "unsupported",
+  cursor: "mcp",
   droid: "mcp",
   grok: "mcp",
   opencode: "mcp",
