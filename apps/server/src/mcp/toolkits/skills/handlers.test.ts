@@ -100,7 +100,6 @@ describe("Scient skills MCP handlers", () => {
     Effect.gen(function* () {
       const catalog = yield* Effect.promise(makeCatalogFixture);
       const release = catalog.releases[0]!;
-      const releaseKey = skillReleaseKey(release);
       const invocation = makeInvocation([release]);
 
       const listed = yield* provideContext(listScientSkillsForInvocation(), {
@@ -108,7 +107,12 @@ describe("Scient skills MCP handlers", () => {
         invocation,
       });
       expect(listed.skills).toHaveLength(1);
-      expect(listed.skills[0]).toMatchObject({ releaseKey, id: release.id });
+      expect(listed.skills[0]).toEqual({
+        name: release.name,
+        description: release.description,
+        origin: release.origin,
+        invocationPolicy: "automatic",
+      });
 
       const releaseRoot = NodePath.join(fixtures[0]!, "evidence-review");
       yield* Effect.promise(() =>
@@ -142,6 +146,55 @@ describe("Scient skills MCP handlers", () => {
         content: "Distinguish findings from inference.\n",
       });
     }),
+  );
+
+  it.effect(
+    "recovers from keyword misses through browsing without restricting direct loading",
+    () =>
+      Effect.gen(function* () {
+        const catalog = yield* Effect.promise(makeCatalogFixture);
+        const release = catalog.releases[0]!;
+        const invocation = makeInvocation([release]);
+        for (const query of ["prepare a manuscript", "בדוק את הראיות", "evidence nonexistent"]) {
+          const missed = yield* provideContext(listScientSkillsForInvocation({ query }), {
+            catalog,
+            invocation,
+          });
+          expect(missed).toEqual({
+            skills: [
+              {
+                name: release.name,
+                description: release.description,
+                origin: release.origin,
+                invocationPolicy: "automatic",
+              },
+            ],
+            total: 1,
+            nextOffset: null,
+            hint: "No keyword matches; showing available skills to browse instead. Load any applicable skill by name. Pagination uses this browse order.",
+          });
+        }
+        const browsed = yield* provideContext(listScientSkillsForInvocation({}), {
+          catalog,
+          invocation,
+        });
+        expect(browsed.skills.map((skill) => skill.name)).toEqual([release.name]);
+        const loaded = yield* provideContext(loadScientSkillForInvocation({ name: release.name }), {
+          catalog,
+          invocation,
+        });
+        expect(loaded.instructions).toBe(release.instructions);
+        const empty = yield* provideContext(listScientSkillsForInvocation({}), {
+          catalog,
+          invocation: makeInvocation([]),
+        });
+        expect(empty).toEqual({
+          skills: [],
+          total: 0,
+          nextOffset: null,
+          hint: "No Scient skills are available in this turn.",
+        });
+      }),
   );
 
   it.effect("denies catalog entries and paths outside the exact turn scope", () =>

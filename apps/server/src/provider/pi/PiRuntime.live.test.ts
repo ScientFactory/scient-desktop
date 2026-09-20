@@ -81,7 +81,7 @@ it.effect.skipIf(!binary)(
     ).pipe(Effect.provide(NodeServices.layer)),
 );
 
-const prepareSyntheticSkillTurn = (input: string) =>
+const prepareSyntheticSkillTurn = (input: string, selected = false) =>
   prepareScientSkillTurn(
     input,
     [
@@ -96,6 +96,8 @@ const prepareSyntheticSkillTurn = (input: string) =>
       },
     ],
     new Map([["synthetic-release", BUILT_IN_SKILL_RELEASES[0]!]]),
+    undefined,
+    selected ? ["synthetic"] : [],
   );
 
 it.effect.skipIf(!binary)(
@@ -179,8 +181,8 @@ it.effect.skipIf(!binary)(
           Stream.runCollect,
           Effect.forkChild,
         );
-        const prepared = prepareSyntheticSkillTurn("/synthetic-question");
-        expect(prepared.input).toContain("Scient runtime instruction:");
+        const prepared = prepareSyntheticSkillTurn("/synthetic-question", true);
+        expect(prepared.input).toContain("Scient selected skills for this turn:");
         const accepted = yield* adapter.sendTurn({
           threadId,
           input: prepared.input,
@@ -570,7 +572,7 @@ it.effect.skipIf(!binary)(
               : turn === 2
                 ? "/skill:native-skill"
                 : `Synthetic turn ${turn}`;
-          const prepared = prepareSyntheticSkillTurn(originalInput);
+          const prepared = prepareSyntheticSkillTurn(originalInput, turn === 1 || turn === 2);
           const accepted = yield* adapter.sendTurn({
             threadId,
             input: prepared.input,

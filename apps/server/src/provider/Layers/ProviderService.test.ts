@@ -5307,6 +5307,7 @@ describe("agent browser access", () => {
           runtimeMode: "full-access",
         });
         yield* provider.sendTurn({ threadId, input: "Is this workspace organized?" });
+        assert.equal(codex.sendTurn.mock.calls.at(-1)![0].input, "Is this workspace organized?");
 
         skillPlan = {
           delivery: "mcp",
@@ -5366,7 +5367,7 @@ describe("agent browser access", () => {
         assert.isTrue(sentCombined.input!.startsWith(expanded));
         assert.deepEqual(sentCombined.attachments, attachments);
         assert.lengthOf(
-          sentCombined.input!.match(/Scient skills available for this turn/g) ?? [],
+          sentCombined.input!.match(/Scient selected skills for this turn/g) ?? [],
           1,
         );
         const positions = [
@@ -5377,7 +5378,7 @@ describe("agent browser access", () => {
           '[Attached file "measurements.csv"',
           '[Attached image "capture.png"',
           "Untrusted captured-window data",
-          "Scient skills available",
+          "Scient selected skills",
         ].map((section) => sentCombined.input!.indexOf(section));
         assert.isTrue(
           positions.every(
@@ -5450,7 +5451,7 @@ describe("agent browser access", () => {
         [new Set([automatic.releaseKey]), new Set([explicit.releaseKey]), new Set<string>()],
       );
       const sent = codex.sendTurn.mock.calls.map((call) => call[0].input ?? "");
-      assert.include(sent[0] ?? "", `{"name":"${automatic.name}"}`);
+      assert.equal(sent[0], "Is this workspace organized?");
       assert.notInclude(sent[0] ?? "", `{"name":"${explicit.name}"}`);
       assert.include(sent[1] ?? "", `{"name":"${explicit.name}"}`);
       assert.notInclude(sent[0] ?? "", automatic.releaseKey);

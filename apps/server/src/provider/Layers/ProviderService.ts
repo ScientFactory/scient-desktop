@@ -1826,24 +1826,16 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
       const scientTools = scientToolProjectionForProvider(routed.adapter.provider);
       const skillProjection = {
         skillLoadToolName: scientTools.name("scient_skill_load"),
-        skillListToolName: scientTools.name("scient_skills_list"),
         providerNativeSkillTool: scientTools.providerNativeSkillTool,
         deferred: scientTools.deferred,
       };
-      const prepareSkills = (omitAutomaticIndex: boolean) =>
-        prepareScientSkillTurn(
-          input.input,
-          skillPlan.delivery === "mcp" ? skillPlan.skills : [],
-          skillPlan.delivery === "mcp" ? skillPlan.releases : new Map(),
-          { ...skillProjection, omitAutomaticIndex },
-          parsed.selectedScientSkillNames ?? [],
-        );
-      let skillTurn = prepareSkills(false);
-      if ((skillTurn.input?.length ?? 0) > PROVIDER_SEND_TURN_MAX_INPUT_CHARS) {
-        // Drop only optional catalog lines, preserving selection/context and the
-        // full callable scope. Discovery explains omissions through the list tool.
-        skillTurn = prepareSkills(true);
-      }
+      const skillTurn = prepareScientSkillTurn(
+        input.input,
+        skillPlan.delivery === "mcp" ? skillPlan.skills : [],
+        skillPlan.delivery === "mcp" ? skillPlan.releases : new Map(),
+        skillProjection,
+        parsed.selectedScientSkillNames ?? [],
+      );
       if ((skillTurn.input?.length ?? 0) > PROVIDER_SEND_TURN_MAX_INPUT_CHARS) {
         return yield* toValidationError(
           "ProviderService.sendTurn",
