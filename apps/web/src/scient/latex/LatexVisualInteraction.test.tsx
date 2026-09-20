@@ -92,6 +92,18 @@ afterEach(async () => {
 });
 
 describe("exact-output visual interaction", () => {
+  it("keeps the caret and focused input while a replacement PDF is being authorized", async () => {
+    await click();
+    const caret = mount.querySelector<HTMLElement>(".scient-latex-visual-caret");
+    expect(caret).not.toBeNull();
+    const top = caret!.style.top;
+    props = { ...props, host: { ...props.host, ready: false } };
+    await render();
+    expect(mount.querySelector<HTMLElement>(".scient-latex-visual-caret")?.style.top).toBe(top);
+    expect(document.activeElement).toBe(textarea());
+    await type("Hello from smoothly edited Scient.");
+    expect(mount.querySelector(".scient-latex-visual-caret")).not.toBeNull();
+  });
   it("retains unqualified input across a mode or tab unmount", async () => {
     locate.mockImplementation(() => new Promise(() => {}));
     await click();

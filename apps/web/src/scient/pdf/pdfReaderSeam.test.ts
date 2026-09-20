@@ -41,12 +41,14 @@ describe("Scient PDF reader source seam", () => {
 
     expect(source).toContain(
       `const onPageChanging = ({ pageNumber }: { pageNumber: number }) => {
+          if (!displayed()) return;
           setState((previous) => ({ ...previous, page: pageNumber }));
           runtime.refreshForContainerSize();
         };`,
     );
     expect(source).toContain(
       `const onRotationChanging = ({ pagesRotation }: { pagesRotation: number }) => {
+          if (!displayed()) return;
           setState((previous) => ({ ...previous, rotation: pagesRotation }));
           runtime.refreshForContainerSize();
         };`,
@@ -91,7 +93,7 @@ describe("Scient PDF reader source seam", () => {
     expect(source).toContain("let pdfSourceSyncHintLearnedThisSession = false;");
     expect(source).not.toContain("pdfSourceSyncHintShownThisSession");
     expect(source).toContain("onClick={scheduleSourceSyncHint}");
-    expect(source).toContain("onScroll={dismissSourceSyncHint}");
+    expect(source).toContain("onScrollCapture={dismissSourceSyncHint}");
     expect(source).toContain("showSourceSyncHint();");
     expect(source).toContain("Double-click a PDF word to show its matching source line");
     expect(source).toContain("const onInverseSearch = props.syncNavigation?.onInverseSearch;");

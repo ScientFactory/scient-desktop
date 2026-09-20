@@ -54,10 +54,14 @@ external editor later requires its own license and dependency review.
    identities with the published artifact revision. No new write authority or
    filesystem access is granted to the renderer.
 3. The reader exposes an interaction host with actual loaded revision,
-   viewport container and PDF-coordinate conversion. It retains its mounted
-   reader while a replacement revision obtains its asset URL; the retained
-   revision cannot admit new visual edits. Loaded URL and revision checks
-   prevent old text layers from being treated as the new PDF.
+   viewport container and PDF-coordinate conversion. Document lifetime is
+   separate from revision-request lifetime: asset callbacks do not reload the
+   viewer, and a new revision does not tear down the displayed pages. A sized,
+   invisible staging surface prepares the next PDF while the old surface stays
+   interactive. Publication waits for visible canvases and text layers plus two
+   stable animation frames, not merely `pagesinit`. Superseded stages are
+   cancelled; failed stages leave the old presentation intact. Loaded URL and
+   revision checks prevent old geometry authorizing new source edits or sync.
 4. A click measures the invisible PDF text layer and asks the existing
    revision-scoped inverse SyncTeX endpoint for the source line. The actual
    displayed PDF glyphs are never replaced. The client hashes its current
@@ -79,9 +83,16 @@ external editor later requires its own license and dependency review.
    Visual also compare-and-sets against the current in-memory source. A save
    confirmation requests the existing coalescing build queue. Failures retain
    the last successful artifact and existing conflict-resolution UI.
-8. The reader replaces its output from the successful published PDF. Its
-   existing viewport session restores page and zoom. The active input survives
-   asset authorization and is remapped against new text-layer geometry.
+8. Prepared output and its interaction host are published together before the
+   next paint; only then is the old runtime disposed. Preparation follows live
+   scrolling and zooming instead of imposing an earlier viewport snapshot.
+   An optional source-neutral anchor provider lets visual editing keep a
+   source-backed visible prose line at its screen Y position. Anchor lookup
+   can materialize a nearby page after reflow (within two pages); ambiguity or
+   distant restructuring falls back to preserved scroll coordinates. Status
+   notices do not alter viewport dimensions. The active textarea survives and
+   caret lookup spans rendered pages, retaining its previous geometry while
+   new source is not yet typeset. This does not invent uncompiled glyphs.
 
 ## Supported and explicitly unsupported
 
@@ -112,9 +123,10 @@ Current limitations requiring further product work:
   against an adversarial change-and-restore during engine execution. Stronger
   provenance requires isolated build input snapshots or engine-observed input
   digests, and a richer glyph/source map than SyncTeX.
-- PDF loading can briefly show its normal loading state. A seamless,
-  double-buffered PDF runtime is a separate rendering improvement; retaining
-  the input session must not be confused with zero-frame page swaps.
+- First document loading still has a loading state; background revision
+  replacement does not. Prepared-page publication requires native visual
+  acceptance in addition to DOM lifecycle tests. Genuine layout changes,
+  ambiguous text anchors and large repagination cannot promise immobile text.
 
 ## Long-term progression and acceptance gates
 

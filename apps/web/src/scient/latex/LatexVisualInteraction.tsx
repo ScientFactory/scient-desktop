@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import type { PdfInteractionHost, PdfInverseSyncPoint } from "~/scient/pdf/ScientPdfReader";
 import {
   editVisualRun,
@@ -7,6 +7,7 @@ import {
   type VisualRun,
 } from "@t3tools/shared/latexVisual";
 import { clearVisualDraft, readVisualDraft, retainVisualDraft } from "./visualDrafts";
+import { captureVisualPresentationAnchor } from "./visualPresentationAnchor";
 
 interface ActiveEdit {
   pending: boolean;
@@ -14,6 +15,7 @@ interface ActiveEdit {
   readonly run: VisualRun;
   source: string;
   text: string;
+  presentedText: string;
   page: number;
 }
 
@@ -185,6 +187,7 @@ export function LatexVisualInteraction(props: LatexVisualInteractionProps) {
           source: current.source,
           run: provisional.run,
           text: provisional.run.text,
+          presentedText: provisional.run.text,
           page: point.page,
         };
         input.current.value = provisional.run.text;
@@ -267,6 +270,7 @@ export function LatexVisualInteraction(props: LatexVisualInteractionProps) {
             source: current.source,
             run: match.run,
             text: match.run.text,
+            presentedText: match.run.text,
             page: point.page,
           };
           textarea.value = match.run.text;
@@ -293,19 +297,14 @@ export function LatexVisualInteraction(props: LatexVisualInteractionProps) {
     const transaction = active.current;
     const textarea = input.current;
     const container = latest.current.host.container;
-    if (
-      !transaction ||
-      !textarea ||
-      !container ||
-      !latest.current.host.ready ||
-      (latest.current.host.rotation ?? 0) !== 0
-    ) {
+    if (!transaction || !textarea || !container || (latest.current.host.rotation ?? 0) !== 0) {
       setCaret(null);
       setSelectionRects([]);
       return;
     }
     // Never guess geometry for text which has not been typeset yet.
-    if (!verifiedRef.current) return;
+    if (!verifiedRef.current || transaction.source !== latest.current.source) return;
+    transaction.presentedText = transaction.text;
     const source = visualCharacters(transaction.text);
     const selection = textarea.selectionStart;
     let selected = source.offsets.findIndex((offset) => offset >= selection);
@@ -316,7 +315,7 @@ export function LatexVisualInteraction(props: LatexVisualInteractionProps) {
     const hostRect = container.parentElement!.getBoundingClientRect();
     const hits: { node: Text; offset: number }[] = [];
     for (const span of container.querySelectorAll<HTMLElement>(
-      `.page[data-page-number="${transaction.page}"] .textLayer span`,
+      ".page[data-page-number] .textLayer span",
     )) {
       const node = span.firstChild;
       if (!(node instanceof Text) || span.childNodes.length !== 1 || span.dir === "rtl") continue;
@@ -357,7 +356,7 @@ export function LatexVisualInteraction(props: LatexVisualInteractionProps) {
     });
   }
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     const container = props.host.container;
     if (!container) return;
     // Text layers are virtualized and may finish after the PDF's ready event.
@@ -380,6 +379,27 @@ export function LatexVisualInteraction(props: LatexVisualInteractionProps) {
     props.revisionId,
     verified,
   ]);
+
+  useLayoutEffect(() => {
+    const register = props.host.registerAnchorProvider;
+    register?.(() => {
+      const transaction = active.current;
+      const container = latest.current.host.container;
+      if (
+        !transaction ||
+        transaction.pending ||
+        !container ||
+        (latest.current.host.rotation ?? 0) !== 0
+      )
+        return null;
+      return captureVisualPresentationAnchor(
+        container,
+        transaction.presentedText,
+        transaction.text,
+      );
+    });
+    return () => register?.(null);
+  }, [props.host.registerAnchorProvider]);
 
   function commit() {
     const transaction = active.current;

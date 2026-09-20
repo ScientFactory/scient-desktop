@@ -139,6 +139,9 @@ function PdfPasswordPrompt(props: {
 
 /** Interaction only; extensions never replace PDF.js's authoritative page rendering. */
 export interface PdfInteractionHost {
+  readonly registerAnchorProvider?: (
+    provider: (() => import("./pdfPresentation").PdfPresentationAnchor | null) | null,
+  ) => void;
   readonly scale?: number;
   readonly revisionId: string | null;
   readonly rotation?: number;
@@ -250,6 +253,8 @@ function LoadedScientPdfReader(props: {
     viewerElement,
   });
   const { state } = reader;
+  const currentPresentation =
+    props.interactionReady && state.phase === "ready" && state.loadedSourceUrl === props.sourceUrl;
   const thumbnailPages = useMemo(
     () => Array.from({ length: state.pageCount }, (_, index) => index + 1),
     [state.pageCount],
@@ -275,9 +280,9 @@ function LoadedScientPdfReader(props: {
   }, [reader.prepareSearch, searchOpen]);
   useEffect(() => {
     const target = props.syncNavigation?.forwardTarget;
-    if (target === null || target === undefined || state.phase !== "ready") return;
+    if (target === null || target === undefined || !currentPresentation) return;
     reader.goToSyncPoint(target);
-  }, [props.syncNavigation?.forwardTarget, reader.goToSyncPoint, state.phase]);
+  }, [props.syncNavigation?.forwardTarget, reader.goToSyncPoint, currentPresentation]);
 
   const closeSearch = useCallback(() => {
     setSearchOpen(false);
@@ -344,7 +349,7 @@ function LoadedScientPdfReader(props: {
     (event: React.MouseEvent<HTMLDivElement>) => {
       if (
         props.syncNavigation?.onInverseSearch === undefined ||
-        state.phase !== "ready" ||
+        !currentPresentation ||
         pdfSourceSyncHintLearnedThisSession ||
         event.ctrlKey ||
         event.metaKey
@@ -372,7 +377,12 @@ function LoadedScientPdfReader(props: {
         showSourceSyncHint();
       }, PDF_SOURCE_SYNC_HINT_DELAY_MS);
     },
-    [props.syncNavigation?.onInverseSearch, showSourceSyncHint, sourceSyncHintVisible, state.phase],
+    [
+      props.syncNavigation?.onInverseSearch,
+      showSourceSyncHint,
+      sourceSyncHintVisible,
+      currentPresentation,
+    ],
   );
 
   const onReaderKeyDown = (event: React.KeyboardEvent<HTMLDivElement>) => {
@@ -647,11 +657,6 @@ function LoadedScientPdfReader(props: {
           No selectable text was detected on the opening pages. Search and copying may be limited.
         </div>
       ) : null}
-      {props.sourceNotice ? (
-        <div className="scient-pdf-notice" role="status">
-          {props.sourceNotice}
-        </div>
-      ) : null}
       <div className="scient-pdf-body">
         {sidebar !== "closed" && state.phase === "ready" && reader.runtimeRef.current ? (
           <aside className="scient-pdf-sidebar" aria-label="PDF navigation">
@@ -707,11 +712,12 @@ function LoadedScientPdfReader(props: {
         <div className="scient-pdf-content">
           <div
             ref={setContainer}
-            className="scient-pdf-viewer-container"
+            className="scient-pdf-presentation-mount"
             tabIndex={0}
             onClick={scheduleSourceSyncHint}
             onDoubleClick={(event) => {
               dismissSourceSyncHint();
+              if (!currentPresentation) return;
               const onInverseSearch = props.syncNavigation?.onInverseSearch;
               if (onInverseSearch === undefined) return;
               const target = event.target;
@@ -728,19 +734,22 @@ function LoadedScientPdfReader(props: {
                 onInverseSearch(point);
               }
             }}
-            onScroll={dismissSourceSyncHint}
+            onScrollCapture={dismissSourceSyncHint}
           >
-            <div ref={setViewerElement} className="pdfViewer" />
+            <div ref={setViewerElement} className="scient-pdf-presentation-layers" />
           </div>
+          {props.sourceNotice || state.updateError ? (
+            <div className="scient-pdf-update-notice" role="status">
+              {state.updateError ?? props.sourceNotice}
+            </div>
+          ) : null}
           {props.renderInteraction?.({
-            container,
+            container: reader.presentedContainer,
+            registerAnchorProvider: reader.registerAnchorProvider,
             scale: state.scale,
             revisionId: props.source._tag === "generated-pdf" ? props.source.revisionId : null,
             rotation: state.rotation,
-            ready:
-              props.interactionReady &&
-              state.phase === "ready" &&
-              state.loadedSourceUrl === props.sourceUrl,
+            ready: currentPresentation,
             pointFromClient: reader.syncPointFromClient,
           })}
           {sourceSyncHintVisible ? (
