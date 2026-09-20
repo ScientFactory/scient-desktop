@@ -220,9 +220,20 @@ export const CursorDriver: ProviderDriver<CursorSettings, CursorDriverEnv> = {
         discoverModels,
       ).pipe(
         Effect.flatMap((snapshot) =>
-          effectiveConfig.enabled && snapshot.installed && snapshot.auth.status === "authenticated"
-            ? readCursorUsageLimits(effectiveConfig, processEnv).pipe(
-                Effect.map((usageLimits) => ({ ...snapshot, usageLimits })),
+          effectiveConfig.enabled && snapshot.installed
+            ? Effect.all({
+                skills: discoverCursorSkills(undefined, effectiveProcessEnv).pipe(
+                  Effect.provideService(FileSystem.FileSystem, fileSystem),
+                  Effect.provideService(Path.Path, path),
+                ),
+                usageLimits:
+                  snapshot.auth.status === "authenticated"
+                    ? readCursorUsageLimits(effectiveConfig, processEnv).pipe(
+                        Effect.map((usageLimits) => ({ usageLimits })),
+                      )
+                    : Effect.succeed({}),
+              }).pipe(
+                Effect.map(({ skills, usageLimits }) => ({ ...snapshot, ...usageLimits, skills })),
               )
             : Effect.succeed(snapshot),
         ),

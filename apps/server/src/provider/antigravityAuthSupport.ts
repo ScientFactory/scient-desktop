@@ -36,6 +36,8 @@ const maxBrowserHelperLineLength =
   maxAuthorizationUrlLength +
   2;
 const maxStdoutLineBytes = 16 * 1024 * 1024;
+const maxPluginProjectionEntries = 10_000;
+const maxPluginManifestBytes = 1_000_000;
 const authPrefixBytes = new TextEncoder().encode(ANTIGRAVITY_AUTH_STDOUT_PREFIX);
 const decodeUrl = Schema.decodeUnknownEffect(Schema.URLFromString);
 const decodeBrowserHelperUrl = Schema.decodeUnknownEffect(Schema.fromJsonString(Schema.String));
@@ -49,6 +51,9 @@ const ProfileSettingsFile = Schema.Struct({
   ),
 });
 const encodeProfileSettings = Schema.encodeSync(Schema.fromJsonString(ProfileSettingsFile));
+const decodePluginProjectionManifest = Schema.decodeUnknownSync(
+  Schema.fromJsonString(Schema.Struct({ name: Schema.String })),
+);
 const isAcpRequestError = Schema.is(AcpErrors.AcpRequestError);
 const isAcpTransportError = Schema.is(AcpErrors.AcpTransportError);
 
@@ -242,12 +247,12 @@ function antigravityEnvironment(
 }
 
 /**
- * The agent reads its user-global skills under `GEMINI_HOME`, which T3 points
- * at the private profile. Link the two skill directories back to the user's
- * real `~/.gemini` so global skills load, while MCP servers, hooks, and
- * credentials stay isolated. Best effort: a link that cannot be made only
- * costs global skills, never the session. A real directory at the link path
- * is the user's own content and is left alone.
+ * The agent reads its global skills under `GEMINI_HOME`, which T3 points at
+ * the private profile. Link the loose and provider-managed skill directories
+ * back to the user's real `~/.gemini`. Plugin skills use a separate projection
+ * below so the runtime never inherits plugin MCP servers, hooks, rules, or
+ * credentials. Best effort: an unavailable link only costs those skills,
+ * never the session. A real directory at a link path is left alone.
  */
 const linkAntigravityUserSkills = Effect.fn("linkAntigravityUserSkills")(function* (input: {
   readonly profileDirectory: string;
@@ -290,6 +295,141 @@ const linkAntigravityUserSkills = Effect.fn("linkAntigravityUserSkills")(functio
     );
   }
 });
+
+/**
+ * Give the managed ACP runtime the skill component of each Antigravity plugin
+ * without importing the plugin's other authority-bearing components. The
+ * immutable generation keeps an already-running session's paths stable when
+ * plugins are added, removed, or upgraded.
+ */
+const projectAntigravityPluginSkills = Effect.fn("projectAntigravityPluginSkills")(
+  function* (input: {
+    readonly profileDirectory: string;
+    readonly userHome: string;
+    readonly platform: NodeJS.Platform;
+  }) {
+    yield* Effect.tryPromise({
+      try: async () => {
+        const sourceRoot = NodePath.join(input.userHome, ".gemini", "config", "plugins");
+        const sourceEntries = await NodeFSP.readdir(sourceRoot, { withFileTypes: true }).catch(
+          (error: NodeJS.ErrnoException) => (error.code === "ENOENT" ? [] : Promise.reject(error)),
+        );
+        if (sourceEntries.length > maxPluginProjectionEntries) {
+          throw new Error("Antigravity plugin discovery exceeded its entry limit.");
+        }
+        const plugins: Array<{
+          readonly directoryName: string;
+          readonly manifest: string;
+          readonly skillsDirectory: string;
+        }> = [];
+        for (const entry of sourceEntries.toSorted((left, right) =>
+          left.name.localeCompare(right.name),
+        )) {
+          if (!entry.isDirectory() && !entry.isSymbolicLink()) continue;
+          const pluginDirectory = NodePath.join(sourceRoot, entry.name);
+          const manifestPath = NodePath.join(pluginDirectory, "plugin.json");
+          const skillsDirectory = NodePath.join(pluginDirectory, "skills");
+          const [manifestInfo, skillsInfo] = await Promise.all([
+            NodeFSP.stat(manifestPath).catch(() => undefined),
+            NodeFSP.stat(skillsDirectory).catch(() => undefined),
+          ]);
+          if (
+            !manifestInfo?.isFile() ||
+            manifestInfo.size > maxPluginManifestBytes ||
+            !skillsInfo?.isDirectory()
+          ) {
+            continue;
+          }
+          const manifest = await NodeFSP.readFile(manifestPath, "utf8");
+          let parsed: { readonly name: string };
+          try {
+            parsed = decodePluginProjectionManifest(manifest);
+          } catch {
+            continue;
+          }
+          if (!parsed.name.trim()) continue;
+          plugins.push({ directoryName: entry.name, manifest, skillsDirectory });
+        }
+
+        const generationHash = NodeCrypto.createHash("sha256");
+        for (const plugin of plugins) {
+          generationHash.update(plugin.directoryName);
+          generationHash.update("\0");
+          generationHash.update(plugin.manifest);
+          generationHash.update("\0");
+          generationHash.update(plugin.skillsDirectory);
+          generationHash.update("\0");
+        }
+        const projectionRoot = NodePath.join(
+          input.profileDirectory,
+          "antigravity-acp",
+          "skill-plugins",
+        );
+        const generation = NodePath.join(projectionRoot, generationHash.digest("hex"));
+        const marker = NodePath.join(generation, ".complete");
+        const isComplete = await NodeFSP.stat(marker)
+          .then((info) => info.isFile())
+          .catch(() => false);
+        if (!isComplete) {
+          const temporary = NodePath.join(projectionRoot, `.next-${NodeCrypto.randomUUID()}`);
+          await NodeFSP.mkdir(temporary, { recursive: true, mode: 0o700 });
+          try {
+            for (const plugin of plugins) {
+              const target = NodePath.join(temporary, plugin.directoryName);
+              await NodeFSP.mkdir(target, { recursive: true, mode: 0o700 });
+              await NodeFSP.writeFile(NodePath.join(target, "plugin.json"), plugin.manifest, {
+                mode: 0o600,
+              });
+              await NodeFSP.symlink(
+                plugin.skillsDirectory,
+                NodePath.join(target, "skills"),
+                input.platform === "win32" ? "junction" : "dir",
+              );
+            }
+            await NodeFSP.writeFile(NodePath.join(temporary, ".complete"), "", { mode: 0o600 });
+            await NodeFSP.mkdir(projectionRoot, { recursive: true, mode: 0o700 });
+            await NodeFSP.rename(temporary, generation).catch(
+              async (error: NodeJS.ErrnoException) => {
+                if (error.code !== "EEXIST" && error.code !== "ENOTEMPTY") throw error;
+                await NodeFSP.rm(temporary, { recursive: true, force: true });
+              },
+            );
+          } catch (error) {
+            await NodeFSP.rm(temporary, { recursive: true, force: true });
+            throw error;
+          }
+        }
+
+        const pluginsLink = NodePath.join(input.profileDirectory, "config", "plugins");
+        const existing = await NodeFSP.lstat(pluginsLink).catch((error: NodeJS.ErrnoException) =>
+          error.code === "ENOENT" ? undefined : Promise.reject(error),
+        );
+        if (existing && !existing.isSymbolicLink()) return;
+        if (existing?.isSymbolicLink()) {
+          const target = NodePath.resolve(
+            NodePath.dirname(pluginsLink),
+            await NodeFSP.readlink(pluginsLink),
+          );
+          if (target === generation) return;
+          await NodeFSP.rm(pluginsLink);
+        }
+        await NodeFSP.mkdir(NodePath.dirname(pluginsLink), { recursive: true, mode: 0o700 });
+        await NodeFSP.symlink(
+          generation,
+          pluginsLink,
+          input.platform === "win32" ? "junction" : "dir",
+        );
+      },
+      catch: (cause) => (cause instanceof Error ? cause.message : String(cause)),
+    }).pipe(
+      Effect.catch((error) =>
+        Effect.logWarning("Antigravity plugin skills are not projected into the profile.", {
+          error,
+        }),
+      ),
+    );
+  },
+);
 
 /** Prepares a private profile without reading or copying Google credentials. */
 export const prepareAntigravityProfile = Effect.fn("prepareAntigravityProfile")(function* (input: {
@@ -415,6 +555,7 @@ export const prepareAntigravityProfile = Effect.fn("prepareAntigravityProfile")(
       ),
     );
   yield* linkAntigravityUserSkills({ profileDirectory: geminiHome, userHome, platform });
+  yield* projectAntigravityPluginSkills({ profileDirectory: geminiHome, userHome, platform });
   return profile;
 });
 

@@ -278,12 +278,18 @@ reported by each connected provider instance. Providers remain the source of
 truth. Codex supplies its inventory through app-server; Claude uses the Agent
 SDK's skill-only reload response plus narrow filesystem discovery for scope
 metadata; Droid uses its official SDK inventory; Grok uses `grok inspect
---json`; and Antigravity uses metadata-only discovery for its documented skill
-roots.
-Scient does not copy, import, rewrite, or execute those files. Personal,
-provider-bundled, system, and otherwise unclassified global skills are shown;
-project and repository skills stay out of this global page and out of the
-global `$` and `/` menus.
+--json`; Cursor reads its documented personal compatibility roots and
+provider-managed built-ins; managed Antigravity reads its loose and plugin
+skill roots; and legacy Antigravity asks `agy /skills` for the exact native
+catalog, including provider built-ins. Managed Antigravity projects only plugin
+manifests and skill directories into its isolated profile, leaving plugin MCP
+servers, hooks, rules, agents, and credentials outside the runtime.
+
+External inventory does not import provider skills into Scient's own catalog,
+rewrite their source, or execute them. Personal, provider-bundled, plugin,
+system, and otherwise unclassified global skills are shown; project and
+repository skills stay out of this global page and out of the global `$` and
+`/` menus.
 
 Provider instances share one compact selector and only the selected provider's
 inventory is expanded. Native skill controls are capability-gated:
@@ -327,7 +333,8 @@ Automated coverage must continue to prove:
 2. zero-write project inspection, no scanning of uninitialized folders, and
    atomic explicit lock writes;
 3. exact-lock trust invalidation after any lock-byte change;
-4. no discovery of provider-native skill directories;
+4. provider-native discovery remains isolated from Scient's built-in and
+   project skill registries;
 5. independent transport and awareness decisions: Antigravity and Cursor keep
    MCP list/load/resource access and explicit `$name` selection without a claim
    of qualified automatic discovery;

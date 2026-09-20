@@ -11,6 +11,7 @@ import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Ref from "effect/Ref";
+import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
@@ -111,7 +112,16 @@ const testLayer = Layer.merge(
 type ProbeError = EffectAcpErrors.AcpError | ProviderSetupError;
 
 const makeHarness = Effect.fn("makeAntigravityProviderHarness")(function* (
-  options: { readonly enabled?: boolean; readonly safe?: boolean } = {},
+  options: {
+    readonly enabled?: boolean;
+    readonly safe?: boolean;
+    readonly globalSkills?: ReadonlyArray<{
+      readonly name: string;
+      readonly path: string;
+      readonly scope: string;
+      readonly enabled: boolean;
+    }>;
+  } = {},
 ) {
   const initialProbe = yield* Deferred.make<EffectAcpSchema.InitializeResponse, ProbeError>();
   const probeCalls = yield* Ref.make(0);
@@ -128,6 +138,9 @@ const makeHarness = Effect.fn("makeAntigravityProviderHarness")(function* (
         Effect.andThen(Ref.get(probe)),
         Effect.flatten,
       ),
+      ...(options.globalSkills
+        ? { discoverGlobalSkills: Effect.succeed(Result.succeed(options.globalSkills)) }
+        : {}),
       supportsTextGeneration: Ref.update(safetyCalls, (count) => count + 1).pipe(
         Effect.andThen(Ref.get(safety)),
         Effect.flatten,
@@ -212,6 +225,27 @@ describe("Antigravity model catalog", () => {
 });
 
 it.layer(testLayer)("Antigravity provider snapshots", (it) => {
+  it.effect("publishes global skills and preserves them across account clearing", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const skills = [
+          {
+            name: "global-review",
+            path: "/home/test/.gemini/config/skills/global-review/SKILL.md",
+            scope: "user",
+            enabled: true,
+          },
+        ];
+        const harness = yield* makeHarness({ globalSkills: skills });
+        yield* harness.initialize;
+
+        expect((yield* harness.provider.snapshot.getSnapshot).skills).toEqual(skills);
+        yield* harness.provider.onSignedOut;
+        expect((yield* harness.provider.snapshot.getSnapshot).skills).toEqual(skills);
+      }),
+    ),
+  );
+
   it.effect("does not probe or run helper safety checks while disabled", () =>
     Effect.scoped(
       Effect.gen(function* () {

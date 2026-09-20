@@ -3,6 +3,7 @@ import * as NodeOS from "node:os";
 import type { ServerProviderSkill } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
+import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import type * as PlatformError from "effect/PlatformError";
 import * as Schema from "effect/Schema";
@@ -57,6 +58,17 @@ const SkillFrontmatter = Schema.Struct({
   description: Schema.optional(Schema.NullOr(Schema.String)),
 });
 const decodeSkillFrontmatter = Schema.decodeUnknownSync(SkillFrontmatter);
+const PluginManifest = Schema.fromJsonString(
+  Schema.Struct({
+    name: Schema.String,
+  }),
+);
+const decodePluginManifest = Schema.decodeUnknownOption(PluginManifest);
+
+/** Global plugins loaded by Antigravity 2.0 and the standalone IDE. */
+export function antigravityUserPluginDirectory(path: Path.Path, geminiHome: string): string {
+  return path.join(geminiHome, "config", "plugins");
+}
 
 export class AntigravitySkillsProbeError extends Schema.TaggedError<AntigravitySkillsProbeError>()(
   "AntigravitySkillsProbeError",
@@ -153,12 +165,13 @@ const readSkill = Effect.fn("readAntigravitySkill")(function* (
 });
 
 /**
- * Match the official ACP's explicit skill roots. The first valid same-name skill
- * wins. Each root loads its own SKILL.md or those in its immediate subdirectories.
+ * Match the official ACP's documented skill locations. The first valid
+ * same-name skill wins. Each loose root loads its own SKILL.md or those in its
+ * immediate subdirectories; plugin skills are namespaced by their manifest.
  * Read failures remain typed so workspace snapshots do not cache partial results.
  */
 export const discoverAntigravitySkills = Effect.fn("discoverAntigravitySkills")(function* (input: {
-  readonly cwd: string;
+  readonly cwd?: string;
   readonly userHome: string;
 }): Effect.fn.Return<
   ReadonlyArray<ServerProviderSkill>,
@@ -171,12 +184,20 @@ export const discoverAntigravitySkills = Effect.fn("discoverAntigravitySkills")(
     path,
     path.join(input.userHome, ".gemini"),
   );
+  const userGeminiHome = path.join(input.userHome, ".gemini");
+  const globalPlugins = antigravityUserPluginDirectory(path, userGeminiHome);
   const roots = [
     { directory: configSkills, scope: "user" },
-    { directory: path.resolve(input.cwd, ".gemini", "skills"), scope: "project" },
+    ...(input.cwd
+      ? [{ directory: path.resolve(input.cwd, ".gemini", "skills"), scope: "project" }]
+      : []),
     { directory: cliSkills, scope: "user" },
-    { directory: path.resolve(input.cwd, ".agents", "skills"), scope: "project" },
-    { directory: path.resolve(input.cwd, ".agent", "skills"), scope: "project" },
+    ...(input.cwd
+      ? [
+          { directory: path.resolve(input.cwd, ".agents", "skills"), scope: "project" },
+          { directory: path.resolve(input.cwd, ".agent", "skills"), scope: "project" },
+        ]
+      : []),
   ];
   const budget: ScanBudget = {
     remainingBytes: MAX_SCAN_BYTES,
@@ -188,6 +209,7 @@ export const discoverAntigravitySkills = Effect.fn("discoverAntigravitySkills")(
     directory: string,
     scope: string,
     scanChildren: boolean,
+    namePrefix?: string,
   ): Effect.fn.Return<void, AntigravitySkillsProbeError, FileSystem.FileSystem> {
     const info = yield* readIfPresent(fileSystem.stat(directory), directory);
     if (info?.type !== "Directory") return;
@@ -209,9 +231,12 @@ export const discoverAntigravitySkills = Effect.fn("discoverAntigravitySkills")(
       const contents = yield* readSkill(skillPath, budget);
       if (contents === undefined) return;
       const skill = parseSkillFrontmatter(contents, skillFileName);
-      if (!skill || skillsByName.has(skill.name)) return;
-      skillsByName.set(skill.name, {
+      if (!skill) return;
+      const name = namePrefix ? `${namePrefix}:${skill.name}` : skill.name;
+      if (skillsByName.has(name)) return;
+      skillsByName.set(name, {
         ...skill,
+        name,
         path: skillPath,
         scope,
         enabled: true,
@@ -225,13 +250,45 @@ export const discoverAntigravitySkills = Effect.fn("discoverAntigravitySkills")(
           left.sortKey < right.sortKey ? -1 : left.sortKey > right.sortKey ? 1 : 0,
         );
       for (const { entry } of children) {
-        yield* scanDirectory(path.join(directory, entry), scope, false);
+        yield* scanDirectory(path.join(directory, entry), scope, false, namePrefix);
       }
+    }
+  });
+
+  const scanPluginDirectory = Effect.fn("scanAntigravityPluginDirectory")(function* (
+    directory: string,
+  ): Effect.fn.Return<void, AntigravitySkillsProbeError, FileSystem.FileSystem> {
+    const info = yield* readIfPresent(fileSystem.stat(directory), directory);
+    if (info?.type !== "Directory") return;
+    const entries = yield* readIfPresent(fileSystem.readDirectory(directory), directory);
+    if (entries === undefined) return;
+    if (entries.length > budget.remainingEntries) {
+      return yield* new AntigravitySkillsProbeError({
+        reason: "scan-budget-exhausted",
+        path: directory,
+      });
+    }
+    budget.remainingEntries -= entries.length;
+
+    for (const entry of entries.toSorted()) {
+      const pluginDirectory = path.join(directory, entry);
+      const manifestPath = path.join(pluginDirectory, "plugin.json");
+      const manifestContents = yield* readSkill(manifestPath, budget);
+      if (manifestContents === undefined) continue;
+      const manifest = decodePluginManifest(manifestContents);
+      if (Option.isNone(manifest)) continue;
+      const pluginName = manifest.value.name.trim();
+      if (!pluginName) continue;
+      yield* scanDirectory(path.join(pluginDirectory, "skills"), "plugin", true, pluginName);
     }
   });
 
   for (const root of roots) {
     yield* scanDirectory(root.directory, root.scope, true);
+  }
+  yield* scanPluginDirectory(globalPlugins);
+  if (input.cwd) {
+    yield* scanPluginDirectory(path.resolve(input.cwd, ".agents", "plugins"));
   }
   return [...skillsByName.values()].sort((left, right) => left.name.localeCompare(right.name));
 });

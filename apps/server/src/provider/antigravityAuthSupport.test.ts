@@ -48,6 +48,7 @@ const encode = (text: string) => new TextEncoder().encode(text);
 const encodeUnknownJson = Schema.encodeUnknownSync(Schema.fromJsonString(Schema.Unknown));
 
 const decodeJson = Schema.decodeUnknownSync(Schema.fromJsonString(Schema.Unknown));
+const encodeJson = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
 
 describe("Antigravity process environment", () => {
   const profile: AntigravityProfile = {
@@ -601,7 +602,7 @@ it.layer(NodeServices.layer)("Antigravity profile preparation", (it) => {
   );
 
   it.effect.skipIf(!symlinksSupported)(
-    "links the user's global skill directories into the profile without touching real content",
+    "projects only user and plugin skills into the isolated profile",
     () =>
       Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;
@@ -611,18 +612,39 @@ it.layer(NodeServices.layer)("Antigravity profile preparation", (it) => {
         const profileDirectory = path.join(temporaryDirectory, "profile");
         const configSkills = path.join(userHome, ".gemini", "config", "skills");
         const cliSkills = path.join(userHome, ".gemini", "antigravity-cli", "skills");
+        const sourcePlugin = path.join(userHome, ".gemini", "config", "plugins", "science");
         yield* fs.makeDirectory(path.join(configSkills, "review"), { recursive: true });
+        yield* fs.makeDirectory(path.join(sourcePlugin, "skills", "literature"), {
+          recursive: true,
+        });
+        yield* fs.writeFileString(
+          path.join(sourcePlugin, "plugin.json"),
+          encodeJson({ name: "science", version: "1.0.0" }),
+        );
+        yield* fs.writeFileString(path.join(sourcePlugin, "mcp_config.json"), "{}");
+        yield* fs.writeFileString(path.join(sourcePlugin, "hooks.json"), "{}");
 
         yield* prepareAntigravityProfile({ profileDirectory, userHome });
         const configLink = path.join(profileDirectory, "config", "skills");
         const cliLink = path.join(profileDirectory, "antigravity-cli", "skills");
+        const projectedPlugin = path.join(profileDirectory, "config", "plugins", "science");
         expect(yield* fs.readLink(configLink)).toBe(configSkills);
         expect(yield* fs.readLink(cliLink)).toBe(cliSkills);
         expect(yield* fs.exists(path.join(configLink, "review"))).toBe(true);
-        // Only the skill directories are shared; the rest of the profile stays private.
+        expect(yield* fs.exists(path.join(projectedPlugin, "skills", "literature"))).toBe(true);
+        expect(
+          decodeJson(yield* fs.readFileString(path.join(projectedPlugin, "plugin.json"))),
+        ).toEqual({ name: "science", version: "1.0.0" });
+        expect(yield* fs.exists(path.join(projectedPlugin, "mcp_config.json"))).toBe(false);
+        expect(yield* fs.exists(path.join(projectedPlugin, "hooks.json"))).toBe(false);
+        // Only skill material is shared; the rest of the profile stays private.
         expect(yield* fs.exists(path.join(profileDirectory, "config", "mcp_config.json"))).toBe(
           false,
         );
+
+        yield* fs.remove(sourcePlugin, { recursive: true });
+        yield* prepareAntigravityProfile({ profileDirectory, userHome });
+        expect(yield* fs.exists(projectedPlugin)).toBe(false);
 
         // A stale link is repointed; a real directory the user placed there is kept.
         yield* fs.remove(cliLink);
