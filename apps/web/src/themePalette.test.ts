@@ -100,7 +100,41 @@ describe("theme files", () => {
       secondary: "#111111",
       muted: "#111111",
       accentSurface: "#141414",
+      focus: "#346bf1",
+      messageAction: "#346bf1",
+      messageActionHover: "#3061d9",
+      error: "#fb414a",
+      errorForeground: "#ff6467",
     });
+  });
+
+  it("keeps the reviewed stock light action and error colors exact and readable", () => {
+    const colors = getStandardThemeColors("light");
+    expectThemeColors(colors, {
+      focus: "#0160cc",
+      accent: "#0160cc",
+      accentForeground: "#ffffff",
+      error: "#e72b2b",
+      errorForeground: "#d60e1a",
+      errorSurface: "#faebeb",
+      update: "#0160cc",
+      updateForeground: "#0160cc",
+      updateSurface: "#dee9f6",
+      messageAction: "#0160cc",
+      messageActionForeground: "#ffffff",
+      messageActionHover: "#0154b4",
+      terminalCursor: "#26384e",
+    });
+    expect(
+      contrastRatio(colors.messageActionForeground, colors.messageAction),
+    ).toBeGreaterThanOrEqual(4.5);
+    expect(
+      contrastRatio(colors.messageActionForeground, colors.messageActionHover),
+    ).toBeGreaterThanOrEqual(4.5);
+    expect(contrastRatio(colors.errorForeground, colors.errorSurface)).toBeGreaterThanOrEqual(4.5);
+    expect(contrastRatio(colors.updateForeground, colors.updateSurface)).toBeGreaterThanOrEqual(
+      4.5,
+    );
   });
 
   it("keeps the stock sidebar and chat on distinct surfaces in both appearances", () => {

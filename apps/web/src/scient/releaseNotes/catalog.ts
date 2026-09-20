@@ -9,6 +9,40 @@ import type { ScientReleaseNote } from "./model";
  */
 export const SCIENT_RELEASE_NOTES = [
   {
+    version: "0.6.15",
+    publishedAt: "2026-09-20",
+    format: "paragraphs",
+    headline: "More dependable voice and agent sessions.",
+    highlights: [
+      {
+        id: "first-run-mac-microphone-access",
+        title: "Start voice dictation on macOS more reliably",
+        description:
+          "Scient now asks macOS for microphone access before opening the recorder on first use. Denied or restricted access explains how to recover, while existing grants continue to work. Your voice remains on this device for local transcription.",
+      },
+      {
+        id: "useful-provider-startup-errors",
+        title: "See useful provider startup errors",
+        description:
+          "When an ACP provider cannot start, Scient keeps a bounded, redacted error detail so you can understand what happened instead of seeing only a generic closed-session message.",
+      },
+      {
+        id: "pending-question-draft-recovery",
+        title: "Keep your draft when answering a question",
+        description:
+          "Text you typed while an agent was waiting for an answer returns to the composer after you choose an option, with your cursor and draft state preserved.",
+      },
+      {
+        id: "preview-and-snapshot-reliability",
+        title: "More reliable previews and SnapShots",
+        description:
+          "Preview annotations no longer depend on a network fetch for local images, and SnapShots can recover application text in more Linux accessibility setups.",
+      },
+    ],
+    alsoIncluded:
+      "Additional reliability improvements across Claude continuation, provider setup, ACP sessions, desktop accessibility, and scientific workspace previews.",
+  },
+  {
     version: "0.6.14",
     publishedAt: "2026-09-18",
     format: "paragraphs",
