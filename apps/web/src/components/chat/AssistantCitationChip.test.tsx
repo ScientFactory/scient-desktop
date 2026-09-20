@@ -34,7 +34,7 @@ vi.mock("../ui/button", () => ({
 }));
 
 import { PopoverPopup } from "../ui/popover";
-import { AssistantCitationChip } from "./AssistantCitationChip";
+import { CitationChip } from "./AssistantCitationChip";
 
 const citation = {
   version: 1 as const,
@@ -60,7 +60,7 @@ function mount(onSave = vi.fn(() => true)) {
   function Composer() {
     const [open, setOpen] = useState(true);
     return (
-      <AssistantCitationChip
+      <CitationChip
         citation={citation}
         commentEditor={{ open, sourceAnchor, onOpenChange: setOpen, onSave }}
       />
