@@ -12,6 +12,7 @@ import { confirmProjectFileQueryData } from "./projectFilesQueryState";
 const FILE_SAVE_DEBOUNCE_MS = 500;
 
 interface FileSaveOptions {
+  debounceMs?: number;
   environmentId: EnvironmentId;
   cwd: string;
   relativePath: string;
@@ -24,6 +25,7 @@ interface FileSaveOptions {
 }
 
 export function useFileSaveCoordinator({
+  debounceMs = FILE_SAVE_DEBOUNCE_MS,
   environmentId,
   cwd,
   relativePath,
@@ -57,7 +59,7 @@ export function useFileSaveCoordinator({
       },
       setup: () => {
         const coordinator = new FileSaveCoordinator({
-          debounceMs: FILE_SAVE_DEBOUNCE_MS,
+          debounceMs,
           initialRevision: latestRevision.current,
           onPendingChange: (pending) => onPendingChange(relativePath, pending),
           persist: (nextContents, expectedRevision) =>
@@ -88,6 +90,7 @@ export function useFileSaveCoordinator({
       },
     };
   }, [
+    debounceMs,
     cwd,
     environmentId,
     onPendingChange,

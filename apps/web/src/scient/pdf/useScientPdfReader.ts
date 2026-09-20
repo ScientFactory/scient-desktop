@@ -25,6 +25,7 @@ export interface PdfFindCount {
 }
 
 export interface PdfReaderState {
+  readonly loadedSourceUrl?: string;
   readonly error: string | null;
   readonly findCount: PdfFindCount;
   readonly findPhase: PdfFindPhase;
@@ -190,6 +191,7 @@ export function useScientPdfReader(input: {
           setState((previous) => ({
             ...previous,
             phase: "ready",
+            loadedSourceUrl: input.sourceUrl,
             page: restoredPage,
             pageCount: runtime.document.numPages,
             progress: 1,

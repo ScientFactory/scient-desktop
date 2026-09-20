@@ -8,6 +8,8 @@
  * living in a subdirectory finds the files it `\input`s and `\include`s.
  */
 import * as NodeChildProcess from "node:child_process";
+import * as NodeCrypto from "node:crypto";
+import { editVisualRun, matchVisualRun } from "@t3tools/shared/latexVisual";
 
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import type { PdfSourceDescriptor } from "@scientfactory/document-artifacts";
@@ -33,7 +35,7 @@ import {
 } from "./LatexBuildService.ts";
 import { layer as packageInstallerLayer } from "./LatexPackageInstaller.ts";
 import { layer as toolchainLayer } from "./LatexToolchain.ts";
-import { layer as syncTexLayer } from "./LatexSyncTex.ts";
+import { LatexSyncTex, layer as syncTexLayer } from "./LatexSyncTex.ts";
 
 /** A whole-command string keeps this off `shell:true`'s argument-splicing path. */
 const resolvesOnPath = (command: string): boolean => {
@@ -143,6 +145,7 @@ describe.skipIf(!ENGINE_ON_PATH)("LatexBuildService against an installed engine"
           expect(finished.failureSummary).toBeNull();
           expect(finished.state).toBe("succeeded");
           expect(finished.diagnostics).toEqual([]);
+          expect(finished.visualSourceRevisions?.["main.tex"]).toMatch(/^sha256:[a-f0-9]{64}$/u);
           expect(finished.descriptor).toMatchObject({
             _tag: "generated-pdf",
             bindingStatus: "current",
@@ -186,9 +189,126 @@ describe.skipIf(!ENGINE_ON_PATH)("LatexBuildService against an installed engine"
           expect(finished.state).toBe("succeeded");
           expect(finished.diagnostics).toEqual([]);
           expect(finished.rootRelativePath).toBe("paper/main.tex");
+          expect(Object.keys(finished.visualSourceRevisions ?? {}).sort()).toEqual([
+            "paper/appendix.tex",
+            "paper/main.tex",
+            "paper/sections/intro.tex",
+          ]);
           yield* expectPublishedPdf(store, finished.descriptor);
         }).pipe(Effect.provide(harness.serviceLayer));
       }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
     COMPILE_TIMEOUT_MS,
   );
 });
+
+describe.skipIf(!ENGINE_ON_PATH || !resolvesOnPath("pdftotext -v"))(
+  "visual editing real-engine round trip",
+  () => {
+    it.live(
+      "maps the published PDF, repeatedly patches prose, preserves math and recovers from a failed compile",
+      () =>
+        Effect.gen(function* () {
+          const original =
+            "\\documentclass{article}\n\\begin{document}\nHello from Scient.\n\nProtected mathematics: $x^2 + y^2 = z^2$.\n\\end{document}\n";
+          const harness = yield* makeWorkspace({ "main.tex": original });
+          yield* Effect.gen(function* () {
+            const service = yield* LatexBuildService;
+            const store = yield* GeneratedDocumentStore;
+            const sync = yield* LatexSyncTex;
+            const fs = yield* FileSystem.FileSystem;
+            const input = { workspaceRoot: harness.workspaceRoot, relativePath: "main.tex" };
+            let source = original;
+            let lastRevision: string | null = null;
+            let initialPixels: string | null = null;
+            for (const replacement of [
+              null,
+              null,
+              "Hello from Science.",
+              "Hello from Science: 50% & counting.",
+              "A completely revised sentence.",
+            ]) {
+              if (replacement !== null) {
+                const sentence = source.split("\n")[2]!;
+                // The same bounded mapper and splice implementation used by the UI.
+                const display = sentence.replace(/\\([%&])/gu, "$1");
+                const match = matchVisualRun(source, display, 0, 3);
+                expect(match).not.toBeNull();
+                source = editVisualRun(source, match!.run, replacement);
+                yield* fs.writeFileString(`${harness.workspaceRoot}/main.tex`, source);
+              }
+              yield* service.requestBuild(input);
+              const finished = yield* awaitTerminal(service, input);
+              expect(finished.state).toBe("succeeded");
+              expect(finished.visualSourceRevisions?.["main.tex"]).toBe(
+                `sha256:${NodeCrypto.createHash("sha256").update(source).digest("hex")}`,
+              );
+              const descriptor = finished.descriptor;
+              if (descriptor?._tag !== "generated-pdf") return yield* Effect.die("missing PDF");
+              if (replacement !== null) expect(descriptor.revisionId).not.toBe(lastRevision);
+              lastRevision = descriptor.revisionId;
+              const published = yield* store.resolveRevision({
+                authority: descriptor.authority,
+                artifactId: descriptor.artifactId,
+                revisionId: descriptor.revisionId,
+              });
+              const text = NodeChildProcess.execFileSync("pdftotext", [published.path, "-"], {
+                encoding: "utf8",
+              });
+              expect(text).toContain(replacement ?? "Hello from Scient.");
+              if (replacement === null && resolvesOnPath("pdftoppm -v")) {
+                const pixels = NodeChildProcess.execFileSync(
+                  "pdftoppm",
+                  ["-singlefile", "-r", "72", published.path],
+                  { maxBuffer: 16 * 1024 * 1024, timeout: 10_000 },
+                );
+                const digest = NodeCrypto.createHash("sha256").update(pixels).digest("hex");
+                if (initialPixels !== null) expect(digest).toBe(initialPixels);
+                initialPixels = digest;
+              }
+              expect(source).toContain("$x^2 + y^2 = z^2$");
+              const revision = {
+                workspaceRoot: harness.workspaceRoot,
+                rootRelativePath: "main.tex",
+                artifactId: descriptor.artifactId,
+                revisionId: descriptor.revisionId,
+              };
+              const forward = yield* sync.forward({
+                ...revision,
+                sourceRelativePath: "main.tex",
+                line: 3,
+              });
+              expect(
+                forward._tag,
+                forward._tag === "unavailable" ? forward.message : undefined,
+              ).toBe("found");
+              if (forward._tag === "found") {
+                const inverse = yield* sync.inverse({
+                  ...revision,
+                  page: forward.page,
+                  x: forward.x,
+                  y: forward.y,
+                });
+                expect(inverse).toMatchObject({ _tag: "found", relativePath: "main.tex" });
+              }
+            }
+            yield* fs.writeFileString(
+              `${harness.workspaceRoot}/main.tex`,
+              source.replace("\\end{document}", "\\UndefinedVisualTest\n\\end{document}"),
+            );
+            yield* service.requestBuild(input);
+            const failed = yield* awaitTerminal(service, input);
+            expect(failed.state).toBe("failed");
+            expect(failed.visualSourceRevisions).toBeUndefined();
+            expect(failed.descriptor).toMatchObject({
+              revisionId: lastRevision,
+              bindingStatus: "stale",
+            });
+            yield* fs.writeFileString(`${harness.workspaceRoot}/main.tex`, source);
+            yield* service.requestBuild(input);
+            expect((yield* awaitTerminal(service, input)).state).toBe("succeeded");
+          }).pipe(Effect.provide(harness.serviceLayer));
+        }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+      60_000,
+    );
+  },
+);

@@ -27,7 +27,7 @@ import {
   ZoomIn,
   ZoomOut,
 } from "lucide-react";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 
 import {
   DropdownMenu,
@@ -42,6 +42,7 @@ import { cn } from "~/lib/utils";
 import { ScientTooltip } from "../presentation/ScientTooltip";
 
 import { PdfOutline } from "./PdfOutline";
+import { useRetainedPdfSource } from "./useRetainedPdfSource";
 import { announcePdfSaveCopyResult } from "./pdfSaveCopyNotification";
 import { observePdfCopy } from "./pdfCopyAnalytics";
 import { PdfThumbnail } from "./PdfThumbnail";
@@ -136,7 +137,22 @@ function PdfPasswordPrompt(props: {
   );
 }
 
+/** Interaction only; extensions never replace PDF.js's authoritative page rendering. */
+export interface PdfInteractionHost {
+  readonly scale?: number;
+  readonly revisionId: string | null;
+  readonly rotation?: number;
+  readonly container: HTMLDivElement | null;
+  readonly ready: boolean;
+  readonly pointFromClient: (input: {
+    pageElement: HTMLElement;
+    clientX: number;
+    clientY: number;
+  }) => PdfInverseSyncPoint | null;
+}
+
 export function ScientPdfReader(props: {
+  readonly renderInteraction?: (host: PdfInteractionHost) => ReactNode;
   readonly actions?: PdfSourceActions;
   readonly refreshKey?: number;
   readonly resolver?: PdfSourceResolver;
@@ -145,13 +161,15 @@ export function ScientPdfReader(props: {
 }) {
   const resolver = props.resolver ?? webPdfSourceResolver;
   const asset = resolver.useResolve(props.source);
+  const documentKey = pdfReaderSessionDocumentKey(props.source);
+  const displayed = useRetainedPdfSource(documentKey, props.source, asset);
   const previousRefreshKey = useRef(props.refreshKey);
   useEffect(() => {
     if (previousRefreshKey.current === props.refreshKey) return;
     previousRefreshKey.current = props.refreshKey;
     asset.refresh();
   }, [asset.refresh, props.refreshKey]);
-  if (asset._tag === "Failure") {
+  if (asset._tag === "Failure" && displayed === null) {
     return (
       <div className="scient-pdf-reader">
         <div className="scient-pdf-state-card text-destructive">
@@ -162,7 +180,7 @@ export function ScientPdfReader(props: {
       </div>
     );
   }
-  if (asset._tag !== "Success") {
+  if (displayed === null) {
     return (
       <div className="scient-pdf-reader">
         <div className="scient-pdf-state-card">
@@ -172,22 +190,35 @@ export function ScientPdfReader(props: {
       </div>
     );
   }
-  const documentKey = pdfReaderSessionDocumentKey(props.source);
   return (
     <LoadedScientPdfReader
       key={documentKey}
       documentKey={documentKey}
-      source={props.source}
-      sourceUrl={asset.url}
-      sourceExpiresAt={asset.expiresAt}
+      source={displayed.source}
+      sourceUrl={displayed.asset.url}
+      sourceExpiresAt={displayed.asset.expiresAt}
+      interactionReady={asset._tag === "Success"}
+      sourceNotice={
+        asset._tag === "Failure"
+          ? "Unable to load the updated PDF. Showing the previous revision."
+          : asset._tag === "Loading"
+            ? "Loading the updated PDF…"
+            : null
+      }
       refreshSource={asset.refresh}
       actions={props.actions ?? webPdfSourceActions}
+      {...(props.renderInteraction === undefined
+        ? {}
+        : { renderInteraction: props.renderInteraction })}
       {...(props.syncNavigation === undefined ? {} : { syncNavigation: props.syncNavigation })}
     />
   );
 }
 
 function LoadedScientPdfReader(props: {
+  readonly sourceNotice: string | null;
+  readonly interactionReady: boolean;
+  readonly renderInteraction?: (host: PdfInteractionHost) => ReactNode;
   readonly actions: PdfSourceActions;
   readonly documentKey: string;
   readonly source: PdfSourceDescriptor;
@@ -616,6 +647,11 @@ function LoadedScientPdfReader(props: {
           No selectable text was detected on the opening pages. Search and copying may be limited.
         </div>
       ) : null}
+      {props.sourceNotice ? (
+        <div className="scient-pdf-notice" role="status">
+          {props.sourceNotice}
+        </div>
+      ) : null}
       <div className="scient-pdf-body">
         {sidebar !== "closed" && state.phase === "ready" && reader.runtimeRef.current ? (
           <aside className="scient-pdf-sidebar" aria-label="PDF navigation">
@@ -696,6 +732,17 @@ function LoadedScientPdfReader(props: {
           >
             <div ref={setViewerElement} className="pdfViewer" />
           </div>
+          {props.renderInteraction?.({
+            container,
+            scale: state.scale,
+            revisionId: props.source._tag === "generated-pdf" ? props.source.revisionId : null,
+            rotation: state.rotation,
+            ready:
+              props.interactionReady &&
+              state.phase === "ready" &&
+              state.loadedSourceUrl === props.sourceUrl,
+            pointFromClient: reader.syncPointFromClient,
+          })}
           {sourceSyncHintVisible ? (
             <div className="scient-pdf-source-sync-hint" role="status">
               Double-click a PDF word to show its matching source line

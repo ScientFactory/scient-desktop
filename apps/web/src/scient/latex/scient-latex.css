@@ -299,3 +299,64 @@
 .scient-latex-setup-action:disabled {
   opacity: 0.5;
 }
+.scient-latex-visual-status {
+  position: absolute;
+  bottom: 10px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 8;
+  max-width: 90%;
+  padding: 6px 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--background);
+  color: var(--muted-foreground);
+  font-size: 12px;
+  pointer-events: none;
+}
+
+.scient-latex-visual-input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  border: 0;
+  opacity: 0;
+  overflow: hidden;
+  resize: none;
+  pointer-events: none;
+}
+
+.scient-latex-visual-caret {
+  position: absolute;
+  width: 2px;
+  background: var(--primary);
+  z-index: 7;
+  pointer-events: none;
+}
+
+.scient-latex-visual-selection {
+  position: absolute;
+  z-index: 6;
+  background: color-mix(in srgb, var(--primary) 25%, transparent);
+  pointer-events: none;
+}
+.scient-latex-visual-recovery {
+  position: absolute;
+  z-index: 9;
+  bottom: 48px;
+  left: 16px;
+  right: 16px;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--background);
+  font-size: 12px;
+}
+
+.scient-latex-visual-recovery textarea {
+  display: block;
+  width: 100%;
+  min-height: 64px;
+  padding: 6px;
+}

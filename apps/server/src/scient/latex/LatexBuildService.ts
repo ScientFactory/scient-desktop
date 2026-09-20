@@ -71,6 +71,7 @@ import {
   decodeLatexBuildEvidence,
   encodeLatexBuildEvidence,
   latexEvidenceMatches,
+  latexVisualSourceRevisions,
   probeLatexEvidence,
   UNVERIFIED_FILE_DIGEST,
   type LatexBuildEvidence,
@@ -237,6 +238,7 @@ function withFailureReason(
 }
 
 interface LatexBuildEntry {
+  readonly visualSourceRevisions?: Readonly<Record<string, string>>;
   readonly logicalDocumentKey: string;
   /**
    * Which build this entry belongs to. `requestBuild` stamps a fresh number
@@ -519,6 +521,11 @@ export const make = Effect.gen(function* () {
     finishedAtEpochMs: entry.finishedAtEpochMs,
     toolchain,
     pendingRerun: entry.pendingRerun,
+    ...(entry.state === "succeeded" &&
+    !entry.pendingRerun &&
+    entry.visualSourceRevisions !== undefined
+      ? { visualSourceRevisions: entry.visualSourceRevisions }
+      : {}),
     // Absent unless a fetch is running, so an ordinary poll carries nothing new.
     ...(entry.installingPackages === null ? {} : { installingPackages: entry.installingPackages }),
   });
@@ -685,6 +692,7 @@ export const make = Effect.gen(function* () {
     readonly managedToolchain: boolean;
     readonly title: string;
     readonly diagnostics: ReadonlyArray<ScientLatexDiagnostic>;
+    readonly visualSourceRevisions: Readonly<Record<string, string>>;
   }) =>
     Effect.gen(function* () {
       const bytes = yield* fileSystem.readFile(input.pdfPath);
@@ -728,6 +736,7 @@ export const make = Effect.gen(function* () {
               yield* finishBuild(input.key, input.generation, (entry) => ({
                 ...entry,
                 state: "succeeded",
+                visualSourceRevisions: input.visualSourceRevisions,
                 descriptor,
                 // Warnings survive a successful build; they are the point of the log.
                 diagnostics: input.diagnostics,
@@ -1244,6 +1253,27 @@ export const make = Effect.gen(function* () {
       }
 
       for (let round = 0; ; round += 1) {
+        // Include the previous recorder's dependencies and statically visible
+        // inputs. Newly discovered inputs deliberately disable Visual until a
+        // subsequent build has observed them on both sides of compilation.
+        const previousEvidence = yield* loadEvidence(key);
+        const declaredDependencies = yield* preambleDependencies({
+          workspaceRoot: entry.workspaceRoot,
+          rootRelativePath: entry.rootRelativePath,
+          rootAbsolutePath,
+        });
+        const beforeCompile = yield* withPlatform(
+          collectLatexBuildEvidence({
+            workspaceRoot: entry.workspaceRoot,
+            rootRelativePath: entry.rootRelativePath,
+            dependencies: [
+              ...declaredDependencies,
+              ...(previousEvidence.evidence?.dependencies.map((item) => item.path) ?? []),
+            ],
+            truncated: previousEvidence.evidence?.truncated ?? false,
+            nowEpochMs: yield* Clock.currentTimeMillis,
+          }),
+        );
         // The work directory outlives a single build, so the previous run's PDF
         // is still sitting at `pdfPath`. Drop it first: afterwards "a PDF is
         // there" means "this run produced one", so a run that fails cannot be
@@ -1400,6 +1430,7 @@ export const make = Effect.gen(function* () {
           managedToolchain: managedBinDirectory !== null,
           title: documentTitle(entry.rootRelativePath),
           diagnostics,
+          visualSourceRevisions: latexVisualSourceRevisions(beforeCompile.evidence, evidence),
         });
         yield* persistBuildEvidence({ key, generation, evidence });
         return;

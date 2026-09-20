@@ -20,7 +20,9 @@ import * as Option from "effect/Option";
 import { AsyncResult, Atom } from "effect/unstable/reactivity";
 import { lazy, memo, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 
-import { EditableFileSurface } from "~/components/files/FilePreviewPanel";
+import { EditableFileEditor } from "~/components/files/FilePreviewPanel";
+import { useFileSaveCoordinator } from "~/components/files/useFileSaveCoordinator";
+import { setProjectFileQueryData } from "~/components/files/projectFilesQueryState";
 import { projectFileCacheKey } from "~/components/files/fileContentRevision";
 import { type DraftId } from "~/composerDraftStore";
 import { getLocalStorageItem, setLocalStorageItem } from "~/hooks/useLocalStorage";
@@ -35,10 +37,12 @@ import type {
   PdfForwardSyncTarget,
   PdfInverseSyncPoint,
   PdfSyncNavigation,
+  PdfInteractionHost,
 } from "~/scient/pdf/ScientPdfReader";
 import { ScientTooltip } from "~/scient/presentation/ScientTooltip";
 
 import { documentBindingChanges } from "./bindingChanges";
+import { LatexVisualInteraction } from "./LatexVisualInteraction";
 import { LatexToolchainSetupCard } from "./LatexToolchainSetupCard";
 import { requestLatexForwardSync, requestLatexInverseSync } from "./client";
 import {
@@ -317,6 +321,7 @@ function LatexReadOnlyHalf(props: {
  * none of that reaches the PDF reader.
  */
 interface LatexViewerPaneProps {
+  readonly renderInteraction?: (host: PdfInteractionHost) => React.ReactNode;
   readonly descriptor: LatexPdfDescriptor;
   readonly readerKey: string | null;
   readonly viewer: LatexViewerState;
@@ -345,6 +350,7 @@ const LatexViewerPane = memo(function LatexViewerPane({
   installRequesting,
   onInstall,
   syncNavigation,
+  renderInteraction,
 }: LatexViewerPaneProps) {
   return (
     <div className="scient-latex-pane">
@@ -353,6 +359,7 @@ const LatexViewerPane = memo(function LatexViewerPane({
           <ScientPdfReader
             key={readerKey}
             source={descriptor}
+            {...(renderInteraction === undefined ? {} : { renderInteraction })}
             {...(syncNavigation === undefined ? {} : { syncNavigation })}
           />
         </Suspense>
@@ -484,11 +491,42 @@ export function ScientLatexSurface(props: ScientLatexSurfaceProps) {
     requestManagedLatexInstall(target);
   }, [target]);
 
+  // One persistence owner survives layout switches. Both editors use the same
+  // optimistic buffer and revision-checked write queue, never competing saves.
+  const coordinator = useFileSaveCoordinator({
+    ...props,
+    debounceMs: 150,
+    onSaveConfirmed: handleSaveConfirmed,
+    onSaveFailure: handleSaveFailure,
+  });
+  const sourceRef = useRef(props.contents);
+  sourceRef.current = props.contents;
+  const handleContentsChange = useCallback(
+    (contents: string) => {
+      sourceRef.current = contents;
+      setProjectFileQueryData(props.environmentId, props.cwd, props.relativePath, contents);
+      coordinator.change(contents);
+    },
+    [coordinator, props.environmentId, props.cwd, props.relativePath],
+  );
+  const handleVisualEdit = useCallback(
+    (expected: string, next: string) => {
+      if (props.truncated || sourceRef.current !== expected || props.saveResolution !== null)
+        return false;
+      handleContentsChange(next);
+      return true;
+    },
+    [handleContentsChange, props.truncated, props.saveResolution],
+  );
+
   // A reveal asks for a line of source, so a document parked on the PDF shows
   // its source until the reader picks a layout again. The file panel's
   // rendered-markdown branch resolves the same conflict the same way.
   const revealPending = revealLine !== null && handledRevealRequestId !== revealRequestId;
-  const mode = revealPending && preferredMode === "pdf" ? "split" : preferredMode;
+  const mode =
+    revealPending && (preferredMode === "pdf" || preferredMode === "visual")
+      ? "split"
+      : preferredMode;
   const selectMode = useCallback(
     (next: ScientLatexPreviewMode) => {
       setPreferredMode(next);
@@ -645,8 +683,64 @@ export function ScientLatexSurface(props: ScientLatexSurfaceProps) {
         ? descriptor.artifactId
         : descriptor.logicalDocumentKey;
   const compiledFrom = latexCompiledFromPath(build.snapshot?.rootRelativePath, props.relativePath);
-  const showEditor = mode !== "pdf";
+  const showEditor = mode === "source" || mode === "split";
   const showViewer = mode !== "source";
+
+  const locateVisualSource = useCallback(
+    async (point: PdfInverseSyncPoint): Promise<number | string> => {
+      if (!build.snapshot || descriptor?._tag !== "generated-pdf")
+        return "Build a current PDF first.";
+      const result = await requestLatexInverseSync(props.environmentId, {
+        workspaceRoot: props.cwd,
+        rootRelativePath: build.snapshot.rootRelativePath,
+        artifactId: descriptor.artifactId,
+        revisionId: descriptor.revisionId,
+        ...point,
+      });
+      if (result._tag === "unavailable") return result.message;
+      if (result.relativePath !== props.relativePath)
+        return `This text belongs to ${result.relativePath}. Open that source file to edit it visually.`;
+      return result.line;
+    },
+    [build.snapshot, descriptor, props.cwd, props.environmentId, props.relativePath],
+  );
+  const renderVisualInteraction = useCallback(
+    (host: PdfInteractionHost) => (
+      <LatexVisualInteraction
+        key={`${props.environmentId}\0${props.cwd}\0${props.relativePath}`}
+        draftKey={`${props.environmentId}\0${props.cwd}\0${props.relativePath}`}
+        host={host}
+        failureMessage={
+          saveError ?? (build.snapshot?.state === "failed" ? build.snapshot.failureSummary : null)
+        }
+        source={props.contents}
+        sourceRevision={build.snapshot?.visualSourceRevisions?.[props.relativePath] ?? null}
+        ready={
+          !props.truncated &&
+          build.snapshot?.state === "succeeded" &&
+          !build.snapshot.pendingRerun &&
+          descriptor?._tag === "generated-pdf" &&
+          descriptor.bindingStatus === "current"
+        }
+        revisionId={descriptorRevision}
+        locate={locateVisualSource}
+        onEdit={handleVisualEdit}
+      />
+    ),
+    [
+      props.contents,
+      saveError,
+      props.environmentId,
+      props.cwd,
+      props.relativePath,
+      props.truncated,
+      build.snapshot,
+      descriptor,
+      descriptorRevision,
+      locateVisualSource,
+      handleVisualEdit,
+    ],
+  );
 
   return (
     <div className="scient-latex-surface" dir="ltr">
@@ -820,7 +914,7 @@ export function ScientLatexSurface(props: ScientLatexSurfaceProps) {
                   onPostRender={props.onPostRender}
                 />
               ) : (
-                <EditableFileSurface
+                <EditableFileEditor
                   environmentId={props.environmentId}
                   cwd={props.cwd}
                   relativePath={props.relativePath}
@@ -831,11 +925,7 @@ export function ScientLatexSurface(props: ScientLatexSurfaceProps) {
                   revealRequestId={props.revealRequestId}
                   wordWrap={props.wordWrap}
                   onPostRender={props.onPostRender}
-                  onPendingChange={props.onPendingChange}
-                  onSaveFailure={handleSaveFailure}
-                  onSaveConfirmed={handleSaveConfirmed}
-                  onSaveResolutionApplied={props.onSaveResolutionApplied}
-                  saveResolution={props.saveResolution}
+                  onContentsChange={handleContentsChange}
                 />
               )}
             </div>
@@ -865,6 +955,7 @@ export function ScientLatexSurface(props: ScientLatexSurfaceProps) {
               managedInstall={build.managedInstall}
               installRequesting={build.installRequesting}
               onInstall={handleInstallToolchain}
+              {...(mode === "visual" ? { renderInteraction: renderVisualInteraction } : {})}
               {...(syncNavigation === undefined ? {} : { syncNavigation })}
             />
           </div>

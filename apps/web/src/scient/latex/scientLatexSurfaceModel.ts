@@ -22,12 +22,13 @@ import { isActiveLatexInstall } from "./latexToolchainSetupModel";
 export const LATEX_PREVIEW_MODE_STORAGE_KEY = "scient.latexPreviewMode";
 export const LATEX_SPLIT_RATIO_STORAGE_KEY = "scient.latexSplitRatio";
 
-export const LATEX_PREVIEW_MODES = ["source", "split", "pdf"] as const;
+export const LATEX_PREVIEW_MODES = ["source", "split", "visual", "pdf"] as const;
 export type ScientLatexPreviewMode = (typeof LATEX_PREVIEW_MODES)[number];
 
 export const LATEX_PREVIEW_MODE_LABELS: Readonly<Record<ScientLatexPreviewMode, string>> = {
   source: "Source",
   split: "Split",
+  visual: "Visual",
   pdf: "PDF",
 };
 

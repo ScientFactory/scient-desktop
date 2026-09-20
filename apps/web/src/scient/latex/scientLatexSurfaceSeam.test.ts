@@ -75,16 +75,18 @@ describe("Scient LaTeX file-preview seam", () => {
     );
   });
 
-  it("reuses the panel's editable surface instead of forking it", () => {
+  it("reuses the panel's controlled editor and one shared save owner across modes", () => {
     expect(panelSource).toMatch(/^export function EditableFileSurface\(/mu);
     expect(surfaceSource).toMatch(
-      /import \{ EditableFileSurface \} from "~\/components\/files\/FilePreviewPanel"/u,
+      /import \{ EditableFileEditor \} from "~\/components\/files\/FilePreviewPanel"/u,
     );
     // The forked copy carried its own editor, save coordinator, and comment
     // wiring. Any of them reappearing here is that fork growing back.
     expect(surfaceSource).not.toMatch(/new FileSaveCoordinator/u);
     expect(surfaceSource).not.toMatch(/new Editor</u);
     expect(surfaceSource).not.toMatch(/useProjectFileQuery/u);
+    expect(surfaceSource.match(/useFileSaveCoordinator\(/gu)).toHaveLength(1);
+    expect(surfaceSource).toContain("onContentsChange={handleContentsChange}");
   });
 
   it("passes truthful source and current PDF page context to forward SyncTeX", () => {

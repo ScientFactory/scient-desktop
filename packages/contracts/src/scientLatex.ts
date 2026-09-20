@@ -131,6 +131,8 @@ export const ScientLatexBuildSnapshot = Schema.Struct({
   toolchain: Schema.NullOr(ScientLatexToolchainStatus),
   /** A rebuild was requested while this one was still running and will follow it. */
   pendingRerun: Schema.Boolean,
+  /** Source byte identities checked on both sides of this compile, never a navigation guess. */
+  visualSourceRevisions: Schema.optional(Schema.Record(Schema.String, Schema.String)),
   /**
    * Present only while this build is fetching packages the last compile said
    * were missing. The state stays `running` throughout, so a client polls as

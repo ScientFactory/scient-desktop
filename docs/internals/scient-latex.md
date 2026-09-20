@@ -1,5 +1,9 @@
 # Scient LaTeX build
 
+The [editable typeset view](scient-latex-visual.md) describes Visual mode's
+source ownership, exact-output decision, supported subset, and remaining
+qualification boundaries.
+
 Status: Scient-owned server and desktop feature. A build runs entirely on the
 local server against the shared PDF foundation; the only network requests this
 lane ever makes belong to the distribution Scient installs — the optional

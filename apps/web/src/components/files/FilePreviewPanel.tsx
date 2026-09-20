@@ -815,7 +815,7 @@ export function MarkdownSourceSurface({
   return <EditableFileEditor {...props} {...bindings} />;
 }
 
-function EditableFileEditor({
+export function EditableFileEditor({
   environmentId,
   cwd,
   relativePath,

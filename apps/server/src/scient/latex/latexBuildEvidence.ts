@@ -85,6 +85,26 @@ export const LatexBuildEvidence = Schema.Struct({
 });
 export type LatexBuildEvidence = typeof LatexBuildEvidence.Type;
 
+/** Visual edits require stable inputs across the compile, not merely a post-build stat. */
+export function latexVisualSourceRevisions(
+  before: LatexBuildEvidence,
+  after: LatexBuildEvidence,
+): Readonly<Record<string, string>> {
+  if (before.truncated || after.truncated) return {};
+  const prior = new Map(before.dependencies.map((item) => [item.path, item.sha256]));
+  if (
+    after.dependencies.some(
+      (item) => prior.get(item.path) !== item.sha256 || !/^[a-f0-9]{64}$/u.test(item.sha256),
+    )
+  )
+    return {};
+  return Object.fromEntries(
+    after.dependencies
+      .filter((item) => /\.tex$/iu.test(item.path))
+      .map((item) => [item.path, `sha256:${item.sha256}`]),
+  );
+}
+
 const EvidenceJson = Schema.fromJsonString(LatexBuildEvidence);
 const encodeEvidence = Schema.encodeSync(EvidenceJson);
 const decodeEvidence = Schema.decodeUnknownSync(EvidenceJson);
