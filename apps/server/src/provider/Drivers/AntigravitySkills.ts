@@ -66,7 +66,7 @@ const PluginManifest = Schema.fromJsonString(
 const decodePluginManifest = Schema.decodeUnknownOption(PluginManifest);
 
 /** Global plugins loaded by Antigravity 2.0 and the standalone IDE. */
-export function antigravityUserPluginDirectory(path: Path.Path, geminiHome: string): string {
+function antigravityUserPluginDirectory(path: Path.Path, geminiHome: string): string {
   return path.join(geminiHome, "config", "plugins");
 }
 

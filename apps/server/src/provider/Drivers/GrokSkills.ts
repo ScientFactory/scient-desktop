@@ -159,7 +159,7 @@ export const discoverGrokSkills = Effect.fn("discoverGrokSkills")(function* (
 });
 
 const GROK_SKILL_SETTINGS_ERROR_TAG = "GrokSkillSettingsError";
-export class GrokSkillSettingsError extends Data.TaggedError(GROK_SKILL_SETTINGS_ERROR_TAG)<{
+class GrokSkillSettingsError extends Data.TaggedError(GROK_SKILL_SETTINGS_ERROR_TAG)<{
   readonly cause?: unknown;
   readonly detail: string;
 }> {}

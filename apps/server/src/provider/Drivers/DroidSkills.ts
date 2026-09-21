@@ -34,7 +34,7 @@ const DroidSkillInventory = Schema.Struct({
 const decodeDroidSkillInventory = Schema.decodeUnknownEffect(DroidSkillInventory);
 
 const DROID_SKILL_DISCOVERY_ERROR_TAG = "DroidSkillDiscoveryError";
-export class DroidSkillDiscoveryError extends Data.TaggedError(DROID_SKILL_DISCOVERY_ERROR_TAG)<{
+class DroidSkillDiscoveryError extends Data.TaggedError(DROID_SKILL_DISCOVERY_ERROR_TAG)<{
   readonly cause?: unknown;
   readonly detail: string;
 }> {

@@ -314,11 +314,9 @@ provider's refreshed state confirms the requested value. Native setting changes
 and their readback are serialized on the server so concurrent clients or provider
 instances sharing a configuration cannot overwrite one another's skill changes.
 The switch responds immediately without blocking other controls and shows
-"Updating" in the existing
-status line until confirmation. Further clicks on that switch replace its
+"Updating" in the existing status line until confirmation. Further clicks replace its
 desired state; after each provider-confirmed write, Scient applies only the
-latest remaining choice.
-Other skills remain usable. After a failed write, Scient attempts to refresh
+latest remaining choice. Other skills remain usable. After a failed write, Scient attempts to refresh
 the provider state instead of claiming that an unverified choice succeeded.
 
 ## Deliberate phase-one exclusions

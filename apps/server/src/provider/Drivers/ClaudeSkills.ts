@@ -463,7 +463,7 @@ export function mergeClaudeReportedSkills(
 }
 
 const CLAUDE_SKILL_SETTINGS_ERROR_TAG = "ClaudeSkillSettingsError";
-export class ClaudeSkillSettingsError extends Data.TaggedError(CLAUDE_SKILL_SETTINGS_ERROR_TAG)<{
+class ClaudeSkillSettingsError extends Data.TaggedError(CLAUDE_SKILL_SETTINGS_ERROR_TAG)<{
   readonly cause?: unknown;
   readonly detail: string;
 }> {}
