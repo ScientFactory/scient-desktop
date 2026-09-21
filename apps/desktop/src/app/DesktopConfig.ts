@@ -14,6 +14,9 @@ const trimmedString = (name: string) =>
 const optionalBoolean = (name: string) =>
   Config.Boolean(name).pipe(Config.option, Config.map(Option.getOrElse(() => false)));
 
+const optionalOneMarker = (name: string) =>
+  trimmedString(name).pipe(Config.map(Option.exists((value) => value === "1")));
+
 const commaSeparatedStrings = (name: string) =>
   trimmedString(name).pipe(
     Config.map(
@@ -41,6 +44,13 @@ export const DesktopConfig = Config.all({
   // That variable remains an internal server compatibility name, but the
   // desktop candidate must never inherit an installed T3 Code data root.
   scientNextHome: trimmedString("SCIENT_NEXT_HOME"),
+  // These standalone-launcher variables are duplicated in
+  // apps/desktop/scripts/dev-app-process.mjs because that pre-bundle script cannot import TS.
+  localDevAppManaged: optionalOneMarker("SCIENT_LOCAL_DEV_APP_MANAGED"),
+  nextDevRunnerActive: optionalOneMarker("SCIENT_NEXT_DEV_RUNNER_ACTIVE"),
+  developmentAppPidFile: trimmedString("SCIENT_DEV_APP_PID_FILE"),
+  developmentLaunchGeneration: trimmedString("SCIENT_DEV_APP_LAUNCH_GENERATION"),
+  developmentBackendPidFile: trimmedString("SCIENT_DEV_BACKEND_PID_FILE"),
   safetyEnvelopeEnabled: optionalBoolean("SCIENT_NEXT_SAFETY_ENVELOPE"),
   devServerUrl: Config.URL("VITE_DEV_SERVER_URL").pipe(Config.option),
   appUserModelIdOverride: trimmedString("T3CODE_DESKTOP_APP_USER_MODEL_ID"),

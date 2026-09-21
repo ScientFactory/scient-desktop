@@ -5,7 +5,10 @@ import * as NodePath from "node:path";
 
 export const SCIENT_DEV_APP_ENV_FILE_ENV = "SCIENT_DEV_APP_ENV_FILE";
 export const SCIENT_DEV_APP_PID_FILE_ENV = "SCIENT_DEV_APP_PID_FILE";
+export const SCIENT_DEV_APP_LAUNCH_GENERATION_ENV = "SCIENT_DEV_APP_LAUNCH_GENERATION";
+export const SCIENT_DEV_BACKEND_PID_FILE_ENV = "SCIENT_DEV_BACKEND_PID_FILE";
 export const DEVELOPMENT_LAUNCHES_DIRECTORY = "launches";
+export const DEVELOPMENT_LAUNCH_HANDOFF_GRACE_MS = 5_000;
 
 const DEVELOPMENT_LAUNCH_GENERATION_PATTERN = /^[a-f0-9]+(?:-[a-f0-9]+)*$/u;
 
@@ -100,6 +103,7 @@ export function resolveDevelopmentLaunchPaths(runtimeDir, generation) {
     launcherPidPath: NodePath.join(launchDir, "launcher.pid"),
     appPidPath: NodePath.join(launchDir, "electron.pid"),
     backendPidPath: NodePath.join(launchDir, "backend.pid"),
+    backendPidPendingPath: NodePath.join(launchDir, "backend.pending"),
     environmentFilePath: NodePath.join(launchDir, "environment.sh"),
     legacy: false,
   };
@@ -132,6 +136,7 @@ export function listDevelopmentLaunchPaths(
       launcherPidPath: null,
       appPidPath: legacyAppPidPath ?? null,
       backendPidPath: legacyBackendPidPath ?? null,
+      backendPidPendingPath: null,
       environmentFilePath: null,
       legacy: true,
     });
@@ -172,6 +177,50 @@ export function writeDevelopmentProcessPid(filePath, pid) {
   NodeFS.renameSync(temporaryPath, filePath);
 }
 
+export function writeDevelopmentLaunchHandoff(record) {
+  if (record.legacy || !record.launchDir || !record.backendPidPendingPath) {
+    throw new Error("Cannot prepare a backend PID handoff for a legacy development launch.");
+  }
+  if (!DEVELOPMENT_LAUNCH_GENERATION_PATTERN.test(record.generation)) {
+    throw new Error(`Invalid development launch generation: ${record.generation}`);
+  }
+  NodeFS.mkdirSync(record.launchDir, { recursive: true });
+  const temporaryPath = `${record.backendPidPendingPath}.tmp-${String(process.pid)}`;
+  try {
+    NodeFS.writeFileSync(temporaryPath, `${record.generation}\n`, {
+      flag: "wx",
+      mode: 0o600,
+    });
+    NodeFS.renameSync(temporaryPath, record.backendPidPendingPath);
+  } finally {
+    NodeFS.rmSync(temporaryPath, { force: true });
+  }
+}
+
+export function readDevelopmentLaunchHandoff(record, { now = Date.now } = {}) {
+  if (record.legacy || !record.backendPidPendingPath) return null;
+  try {
+    const generation = NodeFS.readFileSync(record.backendPidPendingPath, "utf8").trim();
+    if (generation !== record.generation) return null;
+    const modifiedAt = NodeFS.statSync(record.backendPidPendingPath).mtimeMs;
+    return {
+      generation,
+      ageMs: Math.max(0, now() - modifiedAt),
+    };
+  } catch (error) {
+    if (error?.code === "ENOENT") return null;
+    throw error;
+  }
+}
+
+export function developmentLauncherIsActive(launcher) {
+  return (
+    typeof launcher.pid === "number" &&
+    launcher.exitCode === null &&
+    (launcher.signalCode === null || launcher.signalCode === undefined)
+  );
+}
+
 export function inspectProcessCommand(pid, { spawnSync = NodeChildProcess.spawnSync } = {}) {
   const result = spawnSync("ps", ["-p", String(pid), "-o", "command="], {
     encoding: "utf8",
@@ -197,6 +246,30 @@ export function readOwnedDevelopmentAppProcess({
     return null;
   }
   return { pid, command };
+}
+
+/**
+ * Resolves backend ownership across the handoff boundary without trusting one
+ * stale observation. A publisher writes backend.pid before a consumer removes
+ * backend.pending, so a missing marker requires one final validated PID read.
+ */
+export function inspectDevelopmentBackendOwnership({
+  record,
+  pidFilePath,
+  commandPrefix,
+  inspectCommand,
+  now,
+}) {
+  const readBackend = () =>
+    readOwnedDevelopmentAppProcess({
+      pidFilePath,
+      electronBinaryPath: commandPrefix,
+      ...(inspectCommand ? { inspectCommand } : {}),
+    });
+  let backend = readBackend();
+  const handoff = readDevelopmentLaunchHandoff(record, now ? { now } : undefined);
+  if (!backend && handoff === null) backend = readBackend();
+  return { backend, handoff };
 }
 
 export function readOwnedDevelopmentLauncherProcess({
@@ -294,6 +367,51 @@ export function waitForOwnedDevelopmentAppProcess(
   });
 }
 
+export function waitForOwnedDevelopmentBackendProcess(
+  input,
+  {
+    timeoutMs = 30_000,
+    intervalMs = 25,
+    setTimer = setTimeout,
+    publishFallbackPid = writeDevelopmentProcessPid,
+  } = {},
+) {
+  const startedAt = Date.now();
+  return new Promise((resolve, reject) => {
+    const check = () => {
+      const published = readOwnedDevelopmentAppProcess({
+        pidFilePath: input.pidFilePath,
+        electronBinaryPath: input.commandPrefix,
+        ...(input.inspectCommand ? { inspectCommand: input.inspectCommand } : {}),
+      });
+      if (published) {
+        resolve(published);
+        return;
+      }
+      const fallback = findOwnedDevelopmentChildProcess({
+        parentPid: input.parentPid,
+        commandPrefix: input.commandPrefix,
+        ...(input.inspectChildren ? { inspectChildren: input.inspectChildren } : {}),
+      });
+      if (fallback) {
+        publishFallbackPid(input.pidFilePath, fallback.pid);
+        resolve(fallback);
+        return;
+      }
+      if (Date.now() - startedAt >= timeoutMs) {
+        reject(
+          new Error(
+            `The macOS development app did not publish its owned backend within ${String(timeoutMs)}ms.`,
+          ),
+        );
+        return;
+      }
+      setTimer(check, intervalMs)?.unref?.();
+    };
+    check();
+  });
+}
+
 export function removeDevelopmentLaunchFiles(...filePaths) {
   for (const filePath of filePaths) {
     if (filePath) NodeFS.rmSync(filePath, { force: true });
@@ -323,7 +441,7 @@ export async function stopManagedDevelopmentLaunch({
 
   signalOwnedProcess(backendPidFilePath, backendCommandPrefix, "SIGKILL");
   signalOwnedProcess(appPidFilePath, electronBinaryPath, "SIGKILL");
-  if (launcher.exitCode === null) launcher.kill("SIGKILL");
+  if (developmentLauncherIsActive(launcher)) launcher.kill("SIGKILL");
   if (await waitForExit(forcedTimeoutMs)) return;
 
   throw new Error(`Could not stop managed development launch ${generation}.`);

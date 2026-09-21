@@ -10,6 +10,7 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
+import * as Schema from "effect/Schema";
 
 import * as DesktopAppSettings from "../settings/DesktopAppSettings.ts";
 import * as DesktopConfig from "./DesktopConfig.ts";
@@ -29,6 +30,12 @@ export interface MakeDesktopEnvironmentInput {
   readonly isPackaged: boolean;
   readonly resourcesPath: string;
   readonly runningUnderArm64Translation: boolean;
+}
+
+export interface DevelopmentBackendPidHandoff {
+  readonly generation: string;
+  readonly pidFilePath: string;
+  readonly pendingFilePath: string;
 }
 
 export class DesktopEnvironment extends Context.Service<
@@ -71,6 +78,7 @@ export class DesktopEnvironment extends Context.Service<
     readonly devServerUrl: Option.Option<URL>;
     readonly devRemoteT3ServerEntryPath: Option.Option<string>;
     readonly configuredBackendPort: Option.Option<number>;
+    readonly developmentBackendPidHandoff: Option.Option<DevelopmentBackendPidHandoff>;
     readonly commitHashOverride: Option.Option<string>;
     readonly otlpTracesUrl: Option.Option<string>;
     readonly otlpMetricsUrl: Option.Option<string>;
@@ -96,6 +104,66 @@ export class DesktopEnvironment extends Context.Service<
 >()("@t3tools/desktop/app/DesktopEnvironment") {}
 
 const APP_BASE_NAME = SCIENT_DESKTOP_IDENTITY.baseName;
+const DEVELOPMENT_LAUNCH_GENERATION = Schema.String.check(
+  Schema.isPattern(/^[a-f0-9]+(?:-[a-f0-9]+)*$/u),
+);
+const decodeDevelopmentLaunchGeneration = Schema.decodeUnknownOption(DEVELOPMENT_LAUNCH_GENERATION);
+
+const resolveDevelopmentBackendPidHandoff = (input: {
+  readonly baseDir: string;
+  readonly isPackaged: boolean;
+  readonly platform: NodeJS.Platform;
+  readonly localDevAppManaged: boolean;
+  readonly nextDevRunnerActive: boolean;
+  readonly appPidFile: Option.Option<string>;
+  readonly generation: Option.Option<string>;
+  readonly backendPidFile: Option.Option<string>;
+  readonly path: Path.Path;
+}): Option.Option<DevelopmentBackendPidHandoff> => {
+  if (
+    input.isPackaged ||
+    input.platform !== "darwin" ||
+    !input.localDevAppManaged ||
+    !input.nextDevRunnerActive ||
+    !input.path.isAbsolute(input.baseDir)
+  ) {
+    return Option.none();
+  }
+
+  const rawGeneration = Option.getOrUndefined(input.generation);
+  const appPidFilePath = Option.getOrUndefined(input.appPidFile);
+  const backendPidFilePath = Option.getOrUndefined(input.backendPidFile);
+  if (
+    rawGeneration === undefined ||
+    appPidFilePath === undefined ||
+    backendPidFilePath === undefined ||
+    !input.path.isAbsolute(appPidFilePath) ||
+    !input.path.isAbsolute(backendPidFilePath)
+  ) {
+    return Option.none();
+  }
+
+  const generation = decodeDevelopmentLaunchGeneration(rawGeneration);
+  if (Option.isNone(generation)) return Option.none();
+  const launchDirectory = input.path.join(
+    input.baseDir,
+    "local-dev-app-runtime",
+    "launches",
+    generation.value,
+  );
+  if (
+    appPidFilePath !== input.path.join(launchDirectory, "electron.pid") ||
+    backendPidFilePath !== input.path.join(launchDirectory, "backend.pid")
+  ) {
+    return Option.none();
+  }
+
+  return Option.some({
+    generation: generation.value,
+    pidFilePath: backendPidFilePath,
+    pendingFilePath: input.path.join(launchDirectory, "backend.pending"),
+  });
+};
 
 const resolveCandidateAppUserModelId = (input: {
   readonly isDevelopment: boolean;
@@ -227,6 +295,17 @@ const make = Effect.fn("desktop.environment.make")(function* (
     "applications",
   );
   const resourcesPath = input.resourcesPath;
+  const developmentBackendPidHandoff = resolveDevelopmentBackendPidHandoff({
+    baseDir,
+    isPackaged: input.isPackaged,
+    platform: input.platform,
+    localDevAppManaged: config.localDevAppManaged,
+    nextDevRunnerActive: config.nextDevRunnerActive,
+    appPidFile: config.developmentAppPidFile,
+    generation: config.developmentLaunchGeneration,
+    backendPidFile: config.developmentBackendPidFile,
+    path,
+  });
 
   return DesktopEnvironment.of({
     path,
@@ -261,6 +340,7 @@ const make = Effect.fn("desktop.environment.make")(function* (
     devServerUrl,
     devRemoteT3ServerEntryPath: config.devRemoteT3ServerEntryPath,
     configuredBackendPort: config.configuredBackendPort,
+    developmentBackendPidHandoff,
     commitHashOverride: config.commitHashOverride,
     otlpTracesUrl: config.otlpTracesUrl,
     otlpMetricsUrl: config.otlpMetricsUrl,

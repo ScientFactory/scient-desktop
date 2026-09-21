@@ -145,6 +145,67 @@ describe("DesktopEnvironment", () => {
     }),
   );
 
+  it.effect("accepts only the generation-scoped managed backend PID handoff", () =>
+    Effect.gen(function* () {
+      const baseDir = "/tmp/scient-next";
+      const generation = "abc-1-def";
+      const launchDirectory = `${baseDir}/local-dev-app-runtime/launches/${generation}`;
+      const environment = yield* makeEnvironment(
+        {},
+        {
+          SCIENT_NEXT_HOME: baseDir,
+          SCIENT_LOCAL_DEV_APP_MANAGED: "1",
+          SCIENT_NEXT_DEV_RUNNER_ACTIVE: "1",
+          SCIENT_DEV_APP_LAUNCH_GENERATION: generation,
+          SCIENT_DEV_APP_PID_FILE: `${launchDirectory}/electron.pid`,
+          SCIENT_DEV_BACKEND_PID_FILE: `${launchDirectory}/backend.pid`,
+        },
+      );
+
+      assert.deepEqual(
+        environment.developmentBackendPidHandoff,
+        Option.some({
+          generation,
+          pidFilePath: `${launchDirectory}/backend.pid`,
+          pendingFilePath: `${launchDirectory}/backend.pending`,
+        }),
+      );
+    }),
+  );
+
+  it.effect("rejects arbitrary destinations and malformed managed generation tokens", () =>
+    Effect.gen(function* () {
+      const arbitraryDestination = yield* makeEnvironment(
+        {},
+        {
+          SCIENT_NEXT_HOME: "/tmp/scient-next",
+          SCIENT_LOCAL_DEV_APP_MANAGED: "1",
+          SCIENT_NEXT_DEV_RUNNER_ACTIVE: "1",
+          SCIENT_DEV_APP_LAUNCH_GENERATION: "abc-1-def",
+          SCIENT_DEV_APP_PID_FILE:
+            "/tmp/scient-next/local-dev-app-runtime/launches/abc-1-def/electron.pid",
+          SCIENT_DEV_BACKEND_PID_FILE: "/tmp/arbitrary.pid",
+        },
+      );
+      const malformedGeneration = yield* makeEnvironment(
+        {},
+        {
+          SCIENT_NEXT_HOME: "/tmp/scient-next",
+          SCIENT_LOCAL_DEV_APP_MANAGED: "1",
+          SCIENT_NEXT_DEV_RUNNER_ACTIVE: "1",
+          SCIENT_DEV_APP_LAUNCH_GENERATION: "../escape",
+          SCIENT_DEV_APP_PID_FILE:
+            "/tmp/scient-next/local-dev-app-runtime/launches/../escape/electron.pid",
+          SCIENT_DEV_BACKEND_PID_FILE:
+            "/tmp/scient-next/local-dev-app-runtime/launches/../escape/backend.pid",
+        },
+      );
+
+      assert.deepEqual(arbitraryDestination.developmentBackendPidHandoff, Option.none());
+      assert.deepEqual(malformedGeneration.developmentBackendPidHandoff, Option.none());
+    }),
+  );
+
   it.effect("uses the packaged Windows server sidecar as the backend root", () =>
     Effect.gen(function* () {
       const environment = yield* makeEnvironment({

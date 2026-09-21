@@ -6,6 +6,7 @@ import { afterEach, assert, describe, it } from "vite-plus/test";
 
 import {
   resolveDevelopmentLaunchPaths,
+  writeDevelopmentLaunchHandoff,
   writeDevelopmentProcessPid,
 } from "../apps/desktop/scripts/dev-app-process.mjs";
 
@@ -459,6 +460,78 @@ describe("local dev app runner lifecycle", () => {
       [],
     );
     assert.isFalse(NodeFS.existsSync(record.launchDir));
+  });
+
+  it("keeps a generation handoff until publication or its recovery grace expires", () => {
+    const { paths } = fixture();
+    const record = resolveDevelopmentLaunchPaths(paths.runtimeDir, "1-1-eeeeeeee");
+    writeDevelopmentLaunchHandoff(record);
+    const modifiedAt = NodeFS.statSync(record.backendPidPendingPath).mtimeMs;
+    const dependencies = {
+      inspectCommand: () => null,
+      inspectChildren: () => [],
+    };
+
+    assert.lengthOf(
+      resolveOwnedDevelopmentLaunches(paths, {
+        ...dependencies,
+        now: () => modifiedAt + 1,
+      }),
+      1,
+    );
+    assert.isTrue(NodeFS.existsSync(record.launchDir));
+    assert.deepEqual(
+      resolveOwnedDevelopmentLaunches(paths, {
+        ...dependencies,
+        now: () => modifiedAt + 5_001,
+      }),
+      [],
+    );
+    assert.isFalse(NodeFS.existsSync(record.launchDir));
+  });
+
+  it("does not delete a backend published while its handoff marker disappears", () => {
+    const { paths } = fixture();
+    const record = resolveDevelopmentLaunchPaths(paths.runtimeDir, "1-1-eeeeeeee");
+    writeDevelopmentLaunchHandoff(record);
+    writeDevelopmentProcessPid(record.backendPidPath, 5432);
+    const electronBinaryPath = NodePath.join(
+      paths.root,
+      "apps",
+      "desktop",
+      ".electron-runtime",
+      `${LOCAL_DEV_APP_NAME}.app`,
+      "Contents",
+      "MacOS",
+      "Electron",
+    );
+    const commandPrefix = `${electronBinaryPath} ${NodePath.join(
+      paths.root,
+      "apps",
+      "server",
+      "dist",
+      "bin.mjs",
+    )}`;
+    let backendInspections = 0;
+
+    const launches = resolveOwnedDevelopmentLaunches(paths, {
+      inspectCommand: (pid) => {
+        if (pid !== 5432) return null;
+        backendInspections++;
+        if (backendInspections === 1) {
+          NodeFS.rmSync(record.backendPidPendingPath);
+          return null;
+        }
+        return `${commandPrefix} --bootstrap-fd 3`;
+      },
+      inspectChildren: () => [],
+    });
+
+    assert.equal(backendInspections, 2);
+    assert.lengthOf(launches, 1);
+    assert.equal(launches[0].backend?.pid, 5432);
+    assert.isTrue(NodeFS.existsSync(record.launchDir));
+    assert.isTrue(NodeFS.existsSync(record.backendPidPath));
   });
 
   it("signals only the validated runner PID", async () => {

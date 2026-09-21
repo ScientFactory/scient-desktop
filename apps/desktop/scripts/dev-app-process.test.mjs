@@ -7,7 +7,9 @@ import { afterEach, assert, describe, it } from "vite-plus/test";
 import {
   createCoalescedRestartScheduler,
   createDevelopmentLaunchGeneration,
+  developmentLauncherIsActive,
   findOwnedDevelopmentChildProcess,
+  inspectDevelopmentBackendOwnership,
   listDevelopmentLaunchPaths,
   makeMacDevelopmentAppLaunchCommand,
   readOwnedDevelopmentAppProcess,
@@ -15,6 +17,7 @@ import {
   resolveDevelopmentAppDisplayName,
   resolveDevelopmentLaunchPaths,
   stopManagedDevelopmentLaunch,
+  waitForOwnedDevelopmentBackendProcess,
   writeDevelopmentEnvironmentFile,
   writeDevelopmentProcessPid,
 } from "./dev-app-process.mjs";
@@ -108,6 +111,86 @@ describe("macOS development app process ownership", () => {
       pid: 5432,
       command: `${commandPrefix} --bootstrap-fd 3`,
       parentPid: 4321,
+    });
+  });
+
+  it("prefers the backend PID published by the desktop start boundary", async () => {
+    const root = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "scient-dev-backend-pid-"));
+    roots.push(root);
+    const pidFilePath = NodePath.join(root, "backend.pid");
+    const commandPrefix = "/repo/Scient.app/Contents/MacOS/Electron /repo/server/dist/bin.mjs";
+    writeDevelopmentProcessPid(pidFilePath, 5432);
+    let inspectedChildren = false;
+
+    const backend = await waitForOwnedDevelopmentBackendProcess({
+      parentPid: 4321,
+      pidFilePath,
+      commandPrefix,
+      inspectCommand: () => `${commandPrefix} --bootstrap-fd 3`,
+      inspectChildren: () => {
+        inspectedChildren = true;
+        return [];
+      },
+    });
+
+    assert.deepEqual(backend, {
+      pid: 5432,
+      command: `${commandPrefix} --bootstrap-fd 3`,
+    });
+    assert.isFalse(inspectedChildren);
+  });
+
+  it("retains direct-child discovery only as a backend PID recovery fallback", async () => {
+    const commandPrefix = "/repo/Scient.app/Contents/MacOS/Electron /repo/server/dist/bin.mjs";
+    const published = [];
+
+    const backend = await waitForOwnedDevelopmentBackendProcess(
+      {
+        parentPid: 4321,
+        pidFilePath: "/runtime/backend.pid",
+        commandPrefix,
+        inspectChildren: () => [{ pid: 5432, command: `${commandPrefix} --bootstrap-fd 3` }],
+      },
+      {
+        publishFallbackPid: (...args) => published.push(args),
+      },
+    );
+
+    assert.equal(backend.pid, 5432);
+    assert.deepEqual(published, [["/runtime/backend.pid", 5432]]);
+  });
+
+  it("rechecks the backend PID after a concurrent handoff-marker removal", () => {
+    const runtimeDir = NodeFS.mkdtempSync(
+      NodePath.join(NodeOS.tmpdir(), "scient-dev-handoff-race-"),
+    );
+    roots.push(runtimeDir);
+    const record = resolveDevelopmentLaunchPaths(runtimeDir, "abc-1-def");
+    NodeFS.mkdirSync(record.launchDir, { recursive: true });
+    writeDevelopmentProcessPid(record.backendPidPath, 5432);
+    NodeFS.writeFileSync(record.backendPidPendingPath, `${record.generation}\n`);
+    const commandPrefix = "/repo/Scient.app/Contents/MacOS/Electron /repo/server/dist/bin.mjs";
+    let inspections = 0;
+
+    const ownership = inspectDevelopmentBackendOwnership({
+      record,
+      pidFilePath: record.backendPidPath,
+      commandPrefix,
+      inspectCommand: () => {
+        inspections++;
+        if (inspections === 1) {
+          NodeFS.rmSync(record.backendPidPendingPath);
+          return null;
+        }
+        return `${commandPrefix} --bootstrap-fd 3`;
+      },
+    });
+
+    assert.equal(inspections, 2);
+    assert.isNull(ownership.handoff);
+    assert.deepEqual(ownership.backend, {
+      pid: 5432,
+      command: `${commandPrefix} --bootstrap-fd 3`,
     });
   });
 
@@ -261,7 +344,9 @@ describe("macOS development app process ownership", () => {
     const signals = [];
     const launcherSignals = [];
     const launcher = {
+      pid: 7654,
       exitCode: null,
+      signalCode: null,
       kill: (signal) => launcherSignals.push(signal),
     };
     let failure;
@@ -294,6 +379,41 @@ describe("macOS development app process ownership", () => {
       ["/runtime/electron.pid", "/app/Electron", "SIGKILL"],
     ]);
     assert.deepEqual(launcherSignals, ["SIGKILL"]);
+  });
+
+  it("does not re-signal a launcher that already exited by signal", async () => {
+    const launcherSignals = [];
+    const launcher = {
+      pid: 1234,
+      exitCode: null,
+      signalCode: "SIGTERM",
+      kill: (signal) => launcherSignals.push(signal),
+    };
+
+    assert.isFalse(developmentLauncherIsActive(launcher));
+    let failure;
+    try {
+      await stopManagedDevelopmentLaunch({
+        appPidPromise: Promise.resolve(null),
+        backendPidPromise: Promise.resolve(null),
+        appPidFilePath: "/runtime/electron.pid",
+        backendPidFilePath: "/runtime/backend.pid",
+        electronBinaryPath: "/app/Electron",
+        backendCommandPrefix: "/app/Electron /server/bin.mjs",
+        launcher,
+        signalOwnedProcess: () => {},
+        waitForExit: async () => false,
+        gracefulTimeoutMs: 10_000,
+        forcedTimeoutMs: 2_000,
+        generation: "signaled-generation",
+      });
+    } catch (error) {
+      failure = error;
+    }
+
+    assert.instanceOf(failure, Error);
+    assert.equal(failure.message, "Could not stop managed development launch signaled-generation.");
+    assert.deepEqual(launcherSignals, []);
   });
 
   it("uses a concise automatic label while keeping stable canonical", () => {

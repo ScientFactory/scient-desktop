@@ -81,6 +81,13 @@ const emptyBackendObservabilitySettings: BackendObservabilitySettings = {
   otlpLogsUrl: Option.none(),
 };
 
+// Kept in sync with apps/server/src/desktopDevelopmentBackendPidHandoff.ts.
+// They are passed only after DesktopEnvironment validates the managed launch.
+const SCIENT_DESKTOP_DEV_BACKEND_PID_HANDOFF_ENV = "SCIENT_DESKTOP_DEV_BACKEND_PID_HANDOFF";
+const SCIENT_DESKTOP_DEV_BACKEND_PID_FILE_ENV = "SCIENT_DESKTOP_DEV_BACKEND_PID_FILE";
+const SCIENT_DESKTOP_DEV_BACKEND_LAUNCH_GENERATION_ENV =
+  "SCIENT_DESKTOP_DEV_BACKEND_LAUNCH_GENERATION";
+
 const DESKTOP_BACKEND_ENV_NAMES = [
   ...SCIENT_ANALYTICS_METADATA_ENV_NAMES,
   "T3CODE_HOME",
@@ -96,6 +103,15 @@ const DESKTOP_BACKEND_ENV_NAMES = [
   "T3CODE_TAILSCALE_SERVE",
   "T3CODE_TAILSCALE_SERVE_PORT",
   "SCIENT_NEXT_DEVELOPMENT_STATE",
+  // Launcher ownership metadata is consumed by the desktop process only.
+  "SCIENT_LOCAL_DEV_APP_MANAGED",
+  "SCIENT_NEXT_DEV_RUNNER_ACTIVE",
+  "SCIENT_DEV_APP_PID_FILE",
+  "SCIENT_DEV_APP_LAUNCH_GENERATION",
+  "SCIENT_DEV_BACKEND_PID_FILE",
+  SCIENT_DESKTOP_DEV_BACKEND_PID_HANDOFF_ENV,
+  SCIENT_DESKTOP_DEV_BACKEND_PID_FILE_ENV,
+  SCIENT_DESKTOP_DEV_BACKEND_LAUNCH_GENERATION_ENV,
 ] as const;
 
 // Env vars that the WSL backend needs but Windows process.env won't forward
@@ -616,6 +632,14 @@ const resolvePrimaryStartConfig = Effect.fn("desktop.backendConfiguration.resolv
         SCIENT_NEXT_HOME: environment.baseDir,
         SCIENT_NEXT_DEVELOPMENT_STATE: environment.isDevelopment ? "true" : undefined,
         SCIENT_NEXT_SAFETY_ENVELOPE: SCIENT_DESKTOP_IDENTITY.safetyEnvelopeMarker,
+        ...Option.match(environment.developmentBackendPidHandoff, {
+          onNone: () => ({}),
+          onSome: (handoff) => ({
+            [SCIENT_DESKTOP_DEV_BACKEND_PID_HANDOFF_ENV]: "1",
+            [SCIENT_DESKTOP_DEV_BACKEND_PID_FILE_ENV]: handoff.pidFilePath,
+            [SCIENT_DESKTOP_DEV_BACKEND_LAUNCH_GENERATION_ENV]: handoff.generation,
+          }),
+        }),
       },
       // Primary wants process.env (PATH, dev-runner's T3CODE_HOME, etc.).
       extendEnv: true,
@@ -624,6 +648,10 @@ const resolvePrimaryStartConfig = Effect.fn("desktop.backendConfiguration.resolv
       httpBaseUrl: backendExposure.httpBaseUrl,
       captureOutput: true,
       preflightFailure: Option.none(),
+      ...Option.match(environment.developmentBackendPidHandoff, {
+        onNone: () => ({}),
+        onSome: (developmentBackendPidHandoff) => ({ developmentBackendPidHandoff }),
+      }),
     } satisfies DesktopBackendManager.DesktopBackendStartConfig;
   },
 );
