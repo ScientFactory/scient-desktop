@@ -444,6 +444,13 @@ the form that provider runs, so the text before and after the token is kept. Ski
 start, and never the agent on its own, work the same way. A skill you switched off in the provider's
 settings does not appear in either menu.
 
+Use **Settings → Skills → External skills** to inspect provider-owned skills.
+Where a switch is available, it changes the provider's own setting and can also
+affect that provider outside Scient. Codex, Droid, Grok, and ordinary personal
+Claude skills support switching; other entries remain read-only when Scient
+cannot change their native setting. A provider may require a new conversation
+to load changed settings.
+
 Provider commands such as `/compact` only run when they open the message, so the `/` menu offers
 them only there. Scient's own commands, such as `/model` and `/plan`, and skills stay available on
 any line.
