@@ -5,6 +5,7 @@ import {
   ThreadId,
   TurnId,
   PROVIDER_SEND_TURN_MAX_INPUT_CHARS,
+  PROVIDER_SEND_TURN_MAX_ATTACHMENTS,
   type ChatAttachment,
   type OrchestrationMessage,
   type OrchestrationThread,
@@ -243,9 +244,11 @@ it.layer(layer)("ScientForkContextBootstrap", (it) => {
       assert.strictEqual(prepared.attachments.length, 1);
       const limited = yield* service.prepareTurn({
         ...input,
-        attachments: Array.from({ length: 8 }, (_, index) => attachment(index)),
+        attachments: Array.from({ length: PROVIDER_SEND_TURN_MAX_ATTACHMENTS }, (_, index) =>
+          attachment(index),
+        ),
       });
-      assert.strictEqual(limited.attachments.length, 8);
+      assert.strictEqual(limited.attachments.length, PROVIDER_SEND_TURN_MAX_ATTACHMENTS);
       assert.strictEqual(limited.omittedAttachmentCount, 1);
       assert.include(limited.input, '"contentReattached":false');
       assert.strictEqual(fork.messages.length, 2);
@@ -299,6 +302,28 @@ it.layer(layer)("ScientForkContextBootstrap", (it) => {
       assert.match(prepared.input, /Retained request/);
       assert.match(prepared.input, /Retained answer/);
       assert.notMatch(prepared.input, /Do not inherit this/);
+    }),
+  );
+
+  it.effect("rejects a latest message over the shared image payload budget", () =>
+    Effect.gen(function* () {
+      yield* insertFork();
+      const service = yield* ScientForkContextBootstrap;
+      const result = yield* Effect.result(
+        service.prepareTurn({
+          thread: thread([]),
+          currentMessageId: "current",
+          messageText: "Compare these",
+          attachments: Array.from({ length: 9 }, (_, index) => ({
+            ...attachment(index),
+            sizeBytes: 10 * 1024 * 1024,
+          })),
+        }),
+      );
+      assert.strictEqual(result._tag, "Failure");
+      if (result._tag === "Failure") {
+        assert.match(result.failure.detail, /80 MiB/);
+      }
     }),
   );
 
@@ -370,10 +395,10 @@ it.layer(layer)("ScientForkContextBootstrap", (it) => {
           id: `prior-${index}`,
           role: index % 2 === 0 ? "user" : "assistant",
           text: `message ${index}`,
-          attachments: [attachment(index)],
+          attachments: [{ ...attachment(index), sizeBytes: 10 * 1024 * 1024 }],
         }),
       );
-      const currentAttachment = attachment(20);
+      const currentAttachment = { ...attachment(20), sizeBytes: 10 * 1024 * 1024 };
       const current = message({
         id: "current",
         role: "user",

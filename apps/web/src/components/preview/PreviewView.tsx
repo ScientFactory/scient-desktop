@@ -812,7 +812,11 @@ export function PreviewView({
         {snapshot && desktopOverlay ? (
           <ZoomIndicator zoomFactor={desktopOverlay.zoomFactor} />
         ) : null}
-        {runtimeTabId && desktopOverlay && !showEmptyState && !isUnreachable ? (
+        {runtimeTabId &&
+        desktopOverlay &&
+        !showEmptyState &&
+        !isUnreachable &&
+        !activeRecordingTabIds.has(runtimeTabId) ? (
           <AgentBrowserCursor
             tabId={runtimeTabId}
             zoomFactor={desktopOverlay.zoomFactor}

@@ -303,6 +303,8 @@ describe("getChangedBrowserSettingLabels", () => {
         browserDefaultZoomFactor: 1.5,
         browserDefaultAppearance: "dark",
         browserRecordingFrameRate: 60,
+        browserRecordingShowKeyPresses: true,
+        browserRecordingShowMousePresses: true,
         browserLinkTarget: "system",
         browserAutoShowFloatingPreview: !DEFAULT_UNIFIED_SETTINGS.browserAutoShowFloatingPreview,
       }),
@@ -311,6 +313,8 @@ describe("getChangedBrowserSettingLabels", () => {
       "Browser zoom",
       "Browser appearance",
       "Recording frame rate",
+      "Recording key presses",
+      "Recording mouse presses",
       "Open links in",
       "Floating preview",
     ]);

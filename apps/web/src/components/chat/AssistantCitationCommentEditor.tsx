@@ -13,6 +13,7 @@ export function AssistantCitationCommentEditor({
   onSubmit,
   onSubmitAndSend,
   onCancel,
+  onDraftChange,
 }: {
   citation: Pick<AssistantCitation, "comment" | "environmentId">;
   mode?: "create" | "edit";
@@ -20,6 +21,7 @@ export function AssistantCitationCommentEditor({
   onSubmit: (comment: string) => boolean;
   onSubmitAndSend?: (comment: string) => boolean;
   onCancel: () => void;
+  onDraftChange?: (comment: string) => void;
 }) {
   const [comment, setComment] = useState(citation.comment ?? "");
   const [voiceBusy, setVoiceBusy] = useState(false);
@@ -66,7 +68,10 @@ export function AssistantCitationCommentEditor({
         rows={2}
         className="field-sizing-content block max-h-40 min-h-16 w-full resize-none bg-transparent px-1 py-1.5 text-base outline-none placeholder:text-muted-foreground sm:text-sm"
         value={comment}
-        onChange={(event) => setComment(event.currentTarget.value)}
+        onChange={(event) => {
+          setComment(event.currentTarget.value);
+          onDraftChange?.(event.currentTarget.value);
+        }}
         onKeyDown={(event) => {
           if (
             event.key === "Enter" &&
@@ -96,7 +101,9 @@ export function AssistantCitationCommentEditor({
           environmentId={citation.environmentId}
           onBusyChange={setVoiceBusy}
           onTranscript={(transcript) => {
-            setComment((current) => buildVoiceDraftReplacement(current, transcript).replacement);
+            const replacement = buildVoiceDraftReplacement(comment, transcript).replacement;
+            setComment(replacement);
+            onDraftChange?.(replacement);
             queueMicrotask(() => textareaRef.current?.focus({ preventScroll: true }));
           }}
         />

@@ -45,7 +45,7 @@ describe("rich Markdown preview presentation parity", () => {
   it("keeps the same document measure, inset, type scale, and contrast as the established preview", () => {
     expect(previewSurfaceSource).toContain('className="mx-auto max-w-4xl px-6 py-5"');
     expect(previewRendererSource).toContain(
-      "chat-markdown w-full min-w-0 text-sm leading-relaxed text-foreground/80",
+      "chat-markdown w-full min-w-0 text-sm leading-relaxed text-foreground/[calc(80%+var(--appearance-contrast-boost)/5)]",
     );
     expect(cssSource).toMatch(
       /\.scient-markdown-document \{[^}]*width: min\(100%, 56rem\)[^}]*padding: 1\.25rem 1\.5rem 5rem;[^}]*color: color-mix\(in oklab, var\(--foreground\) 80%, transparent\)[^}]*font-size: 0\.875rem[^}]*line-height: 1\.625[^}]*white-space: pre-wrap/su,

@@ -65,6 +65,7 @@ vi.mock("../editorPreferences", () => ({
 vi.mock("~/lib/openPullRequestLink", () => ({
   findProjectOnChangeRequestHost: () => undefined,
   parseChangeRequestUrl: () => null,
+  resolvePullRequestPreviewTarget: () => null,
   useOpenChangeRequestLink: () => vi.fn(),
 }));
 
@@ -121,6 +122,52 @@ describe("Markdown file quote in sent messages", () => {
     expect(invalid).not.toContain("data-file-citation-chip");
     expect(invalid).not.toContain('href="scient-file-citation');
     expect(invalid).not.toContain('href="javascript:');
+  });
+});
+
+describe("ChatMarkdown inline color swatches", () => {
+  it("renders exact swatches for supported inline CSS colors without changing other code", () => {
+    const functionalColors = [
+      "rgb(27, 78, 216)",
+      "rgb(1 96 204 / 40%)",
+      "hsl(222, 78%, 48%)",
+      "hwb(214 0% 20%)",
+      "oklch(0.52 0.19 262)",
+      "lab(54% 70 50)",
+      "lch(54% 86 36)",
+      "color(display-p3 0.1 0.4 0.9)",
+    ];
+    const html = renderToStaticMarkup(
+      <ChatMarkdown
+        cwd="/workspace"
+        text={[
+          "Current `#1b4ed8`, proposed `#0160cc`, and identifier `0x1b4ed8`.",
+          "",
+          functionalColors.map((color) => `\`${color}\``).join(" "),
+          "",
+          "Named `red`, variable `var(--brand-color)`, and composed `color-mix(in srgb, red, blue)`.",
+          "",
+          "```text",
+          "#e72b2b",
+          "```",
+        ].join("\n")}
+      />,
+    );
+
+    expect(html.match(/data-scient-inline-color-swatch="true"/g)).toHaveLength(
+      2 + functionalColors.length,
+    );
+    expect(html).toContain('style="background-color:#1b4ed8"');
+    expect(html).toContain('style="background-color:#0160cc"');
+    for (const color of functionalColors) {
+      expect(html).toContain(`style="background-color:${color}"`);
+    }
+    expect(html).toContain("0x1b4ed8");
+    expect(html).toContain("red");
+    expect(html).toContain("var(--brand-color)");
+    expect(html).toContain("color-mix(in srgb, red, blue)");
+    expect(html).toContain("#e72b2b");
+    expect(html).not.toContain('style="background-color:#e72b2b"');
   });
 });
 
