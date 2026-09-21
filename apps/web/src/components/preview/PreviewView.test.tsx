@@ -7,7 +7,7 @@ import {
   FILL_PREVIEW_VIEWPORT,
   ThreadId,
 } from "@t3tools/contracts";
-import { act, Profiler, type ReactNode } from "react";
+import { act, createElement, Profiler, type ReactNode } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
@@ -34,6 +34,9 @@ const mocks = vi.hoisted(() => ({
   showEmptyState: false,
   loading: false,
   controller: "none" as "human" | "agent" | "none",
+  serverEpoch: null as string | null,
+  recordingTabIds: new Set<string>(),
+  recordingRuntimeTabId: null as string | null,
   recordVisitForThread: vi.fn(),
 }));
 
@@ -99,6 +102,7 @@ vi.mock("~/previewStateStore", () => ({
   updatePreviewServerSnapshot: vi.fn(),
   useThreadPreviewState: () => ({
     activeTabId: "tab-1",
+    serverEpoch: mocks.serverEpoch,
     desktopByTabId: {
       "tab-1": {
         hasWebContents: true,
@@ -147,11 +151,11 @@ vi.mock("~/state/use-atom-command", () => ({
 }));
 
 vi.mock("~/browser/browserRecording", () => ({
-  findActiveBrowserRecordingRuntimeTabId: vi.fn(() => null),
+  findActiveBrowserRecordingRuntimeTabId: () => mocks.recordingRuntimeTabId,
   isBrowserRecordingStartCancelledError: vi.fn(() => false),
   startBrowserRecording: vi.fn(),
   stopBrowserRecording: vi.fn(),
-  useActiveBrowserRecordingTabIds: () => new Set(),
+  useActiveBrowserRecordingTabIds: () => mocks.recordingTabIds,
 }));
 
 vi.mock("~/browser/browserSurfaceStore", () => ({
@@ -253,7 +257,9 @@ vi.mock("./PreviewMoreMenu", () => ({
 }));
 vi.mock("./PreviewUnreachable", () => ({ PreviewUnreachable: () => null }));
 vi.mock("./ZoomIndicator", () => ({ ZoomIndicator: () => null }));
-vi.mock("./AgentBrowserCursor", () => ({ AgentBrowserCursor: () => null }));
+vi.mock("./AgentBrowserCursor", () => ({
+  AgentBrowserCursor: () => createElement("agent-cursor"),
+}));
 vi.mock("~/browser/BrowserSurfaceSlot", () => ({ BrowserSurfaceSlot: () => null }));
 vi.mock("./usePreviewSession", () => ({ usePreviewSession: vi.fn() }));
 
@@ -354,6 +360,9 @@ describe("PreviewView navigation", () => {
     mocks.showEmptyState = false;
     mocks.loading = false;
     mocks.controller = "none";
+    mocks.serverEpoch = null;
+    mocks.recordingTabIds = new Set();
+    mocks.recordingRuntimeTabId = null;
     mocks.recordVisitForThread.mockClear();
   });
 
@@ -370,6 +379,32 @@ describe("PreviewView navigation", () => {
       <PreviewView threadRef={TEST_THREAD_REF} tabId="tab-1" visible />,
     );
     expect(agentMarkup).toContain("Agent controlling browser");
+  });
+
+  it("shows the cursor in a replacement browser while the old instance still records", async () => {
+    const document = installTestDom();
+    const { createRoot } = await import("react-dom/client");
+    const container = document.createElement("div");
+    const root = createRoot(container as unknown as Element);
+    const hasCursor = (node: TestNode): boolean =>
+      node.nodeName === "AGENT-CURSOR" || node.childNodes.some(hasCursor);
+    mocks.recordingTabIds.add(TEST_RUNTIME_TAB_ID);
+    mocks.recordingRuntimeTabId = TEST_RUNTIME_TAB_ID;
+    try {
+      await act(() => {
+        root.render(<PreviewView threadRef={TEST_THREAD_REF} tabId="tab-1" visible />);
+      });
+      expect(hasCursor(container)).toBe(false);
+      mocks.serverEpoch = "replacement-server";
+      await act(() => {
+        root.render(<PreviewView threadRef={TEST_THREAD_REF} tabId="tab-1" visible />);
+      });
+      expect(hasCursor(container)).toBe(true);
+      expect(mocks.recordingTabIds.has(TEST_RUNTIME_TAB_ID)).toBe(true);
+    } finally {
+      await act(() => root.unmount());
+      vi.unstubAllGlobals();
+    }
   });
 
   it("does not rerender while loading time passes", async () => {

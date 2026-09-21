@@ -129,3 +129,5 @@ export const SET_UNREAD_ANSWER_COUNT_CHANNEL = "scient:answer-attention:set-coun
 export const MAC_PERMISSION_HELPER_CHANNEL = "desktop:mac-permission-helper";
 
 export const CHECK_SYSTEM_PERMISSION_CHANNEL = "desktop:check-system-permission";
+
+export const PREVIEW_RECORDING_INPUT_CHANNEL = "desktop:preview-recording-input";
