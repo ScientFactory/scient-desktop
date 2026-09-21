@@ -1,5 +1,7 @@
 import { extractFenceTitle } from "~/scient/presentation/CodeBlockTitle";
 import { MarkdownCodeBlock } from "~/scient/presentation/MarkdownCodeBlock";
+import { resolveInlineCssColor } from "~/scient/markdown/inlineCssColor";
+import { ScientInlineColorCode } from "~/scient/markdown/ScientInlineColorCode";
 import { usePullRequestLinking } from "~/hooks/usePullRequestLinking";
 import { useAtomValue } from "@effect/atom-react";
 import {
@@ -3195,6 +3197,20 @@ const CHAT_MARKDOWN_COMPONENTS = {
           inlineCodeFilePathCandidate(codeText) ?? codeText.trim(),
         );
       }
+
+      // SCIENT-FORK:START — render exact CSS colors beside inline code (DF-027)
+      const inlineCssColor = resolveInlineCssColor(codeText);
+      if (inlineCssColor) {
+        return (
+          <ScientInlineColorCode
+            codeProps={{ ...props, className, dir: "ltr" }}
+            color={inlineCssColor}
+          >
+            {children}
+          </ScientInlineColorCode>
+        );
+      }
+      // SCIENT-FORK:END
     }
     return (
       <code {...props} className={className} dir="ltr">
