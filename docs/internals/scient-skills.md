@@ -311,10 +311,12 @@ shadow disabled state. The server validates the exact provider instance, skill
 name, and provider-owned path against the latest snapshot before dispatching a
 change, refreshes the provider inventory, and accepts success only when the
 provider's refreshed state confirms the requested value. The switch responds
-immediately without blocking other controls, labels the change as pending until
-confirmation, and reverts if the provider rejects it. Only the pending switch
-is temporarily non-interactive; it retains its appearance and shows the
-blocked cursor on hover.
+immediately without blocking other controls, shows "Updating" in the existing
+status line until confirmation. Further clicks on that switch replace its
+desired state; after each provider-confirmed write, Scient applies only the
+latest remaining choice.
+Other skills remain usable. After a failed write, Scient attempts to refresh
+the provider state instead of claiming that an unverified choice succeeded.
 
 ## Deliberate phase-one exclusions
 
