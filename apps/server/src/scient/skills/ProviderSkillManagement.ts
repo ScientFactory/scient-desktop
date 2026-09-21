@@ -4,6 +4,7 @@ import {
   type ProviderSkillSetEnabledResult,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
+import * as Semaphore from "effect/Semaphore";
 
 import type { ProviderRegistryShape } from "../../provider/Services/ProviderRegistry.ts";
 
@@ -22,6 +23,9 @@ const failure = (input: {
 export function makeProviderSkillManagement(
   providerRegistry: ProviderRegistryShape,
 ): ProviderSkillManagementShape {
+  // Different clients and provider instances may write the same native settings
+  // file. Keep each read/write/refresh together; client-side queues alone cannot.
+  const writePermit = Semaphore.makeUnsafe(1);
   const setEnabled: ProviderSkillManagementShape["setEnabled"] = Effect.fn(
     "ProviderSkillManagement.setEnabled",
   )(function* (input) {
@@ -96,5 +100,5 @@ export function makeProviderSkillManagement(
     };
   });
 
-  return { setEnabled };
+  return { setEnabled: (input) => writePermit.withPermits(1)(setEnabled(input)) };
 }

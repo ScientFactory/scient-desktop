@@ -221,6 +221,26 @@ describe("ExternalSkillsSettings activation", () => {
     expect(renderer.root.findAllByProps({ "data-status": "Personal · Updating" })).toHaveLength(0);
   });
 
+  it("releases the local choice when the provider snapshot arrives before the response", async () => {
+    const write = deferredResult();
+    state.setEnabled.mockReturnValueOnce(write.promise);
+    act(() => switches()[0]?.props.onClick());
+
+    act(() => {
+      state.providers = [provider(false)];
+      renderer.update(<ExternalSkillsSettings />);
+    });
+    expect(renderer.root.findAllByProps({ "data-status": "Personal · Updating" })).toHaveLength(1);
+    await act(async () => write.resolve({ _tag: "Success" }));
+
+    act(() => {
+      state.providers = [provider(true)];
+      renderer.update(<ExternalSkillsSettings />);
+    });
+    expect(switches()[0]?.props["data-checked"]).toBe(true);
+    expect(renderer.root.findAllByProps({ "data-status": "Personal · Updating" })).toHaveLength(0);
+  });
+
   it("follows a changed choice even after the next provider write has started", async () => {
     const first = deferredResult();
     const second = deferredResult();

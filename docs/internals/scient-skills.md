@@ -310,8 +310,11 @@ reviewed, persistent, reversible per-skill mechanism. Scient does not maintain a
 shadow disabled state. The server validates the exact provider instance, skill
 name, and provider-owned path against the latest snapshot before dispatching a
 change, refreshes the provider inventory, and accepts success only when the
-provider's refreshed state confirms the requested value. The switch responds
-immediately without blocking other controls, shows "Updating" in the existing
+provider's refreshed state confirms the requested value. Native setting changes
+and their readback are serialized on the server so concurrent clients or provider
+instances sharing a configuration cannot overwrite one another's skill changes.
+The switch responds immediately without blocking other controls and shows
+"Updating" in the existing
 status line until confirmation. Further clicks on that switch replace its
 desired state; after each provider-confirmed write, Scient applies only the
 latest remaining choice.

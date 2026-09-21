@@ -32,6 +32,52 @@ function provider(canSetEnabled = true): ServerProvider {
 }
 
 describe("provider skill management", () => {
+  it.effect("preserves concurrent skill changes that share native settings", () =>
+    Effect.gen(function* () {
+      const base = provider();
+      let snapshot: ServerProvider = {
+        ...base,
+        skills: [
+          ...base.skills,
+          ...base.skills.map((skill) => ({
+            ...skill,
+            name: "second",
+            path: "/skills/second/SKILL.md",
+          })),
+        ],
+      };
+      const management = makeProviderSkillManagement({
+        ...makeProviderRegistryMock([snapshot]),
+        getProviders: Effect.sync(() => [snapshot]),
+        getProviderSkillActionsForInstance: () =>
+          Effect.succeed({
+            setEnabled: (input: { name: string; enabled: boolean }) =>
+              Effect.gen(function* () {
+                const skills = snapshot.skills;
+                yield* Effect.yieldNow;
+                snapshot = {
+                  ...snapshot,
+                  skills: skills.map((skill) =>
+                    skill.name === input.name ? { ...skill, enabled: input.enabled } : skill,
+                  ),
+                };
+                return { effectiveEnabled: input.enabled };
+              }),
+          }),
+        refreshInstance: () => Effect.sync(() => [snapshot]),
+      });
+
+      yield* Effect.all(
+        snapshot.skills.map((skill) =>
+          management.setEnabled({ instanceId, name: skill.name, path: skill.path, enabled: false }),
+        ),
+        { concurrency: "unbounded" },
+      );
+
+      expect(snapshot.skills.map((skill) => skill.enabled)).toEqual([false, false]);
+    }),
+  );
+
   it.effect("validates the snapshot, delegates to the provider, and refreshes", () =>
     Effect.gen(function* () {
       const snapshot = provider();
