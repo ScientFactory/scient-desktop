@@ -217,6 +217,10 @@ function scheduleFollowUp(
   loop: WatchLoop,
   snapshot: ScientLatexBuildSnapshot,
 ): void {
+  // A hold is a polling boundary as well as a rebuild-timer boundary. In
+  // particular, an active server build must not re-arm status polling behind
+  // the transaction that just suspended this loop.
+  if (loop.rebuildSuspensions > 0) return;
   // The coordinator re-arms a coalesced rerun after writing the terminal
   // state, so a terminal snapshot with pendingRerun still has work coming.
   if (isActiveLatexBuildState(snapshot.state) || snapshot.pendingRerun || installUnderway(key)) {
@@ -419,6 +423,10 @@ export function setLatexBuildSuspended(target: LatexBuildTarget, suspended: bool
   if (!loop || loop.stopped) return;
   if (suspended) {
     loop.rebuildSuspensions += 1;
+    // Discredit a status response issued before the hold. The server request
+    // may already be beyond cancellation, but its response cannot restart this
+    // client's poll cadence or publish stale local state into the store.
+    issueSequence(loop);
     clearTimer(loop);
     clearRebuildTimer(loop);
     return;
@@ -426,7 +434,11 @@ export function setLatexBuildSuspended(target: LatexBuildTarget, suspended: bool
   loop.rebuildSuspensions = Math.max(0, loop.rebuildSuspensions - 1);
   if (loop.rebuildSuspensions !== 0) return;
   if (loop.rebuildPending) {
-    schedulePendingRebuild(key, target, loop, 0);
+    // Ending direct input is not proof that the file save carrying its final
+    // source has landed. Keep the normal checkpoint window: a confirmation
+    // arriving just after the hold is released replaces this timer instead of
+    // causing an obsolete build followed by a rerun.
+    schedulePendingRebuild(key, target, loop, LATEX_EDIT_CHECKPOINT_DELAY_MS);
     return;
   }
   clearTimer(loop);
@@ -481,6 +493,7 @@ export function notifyLatexBindingChange(target: LatexBuildTarget): void {
   const loop = loops.get(key);
   if (loop === undefined || loop.stopped) return;
   clearTimer(loop);
+  if (loop.rebuildSuspensions > 0) return;
   schedulePoll(key, target, loop, 0);
 }
 

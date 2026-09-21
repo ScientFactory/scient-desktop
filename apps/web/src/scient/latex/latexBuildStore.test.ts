@@ -221,16 +221,36 @@ describe("latexBuildStore", () => {
     stop();
   });
 
+  it("adopts Visual source authorization even when no rendered status field changed", async () => {
+    readLatexBuildStatus.mockResolvedValueOnce(snapshot("succeeded")).mockResolvedValueOnce(
+      snapshot("succeeded", {
+        visualSourceRevisions: { "main.tex": `sha256:${"a".repeat(64)}` },
+      }),
+    );
+
+    const stop = startWatchingLatexBuild(target);
+    await settle();
+    expect(readLatexBuild(target).snapshot?.visualSourceRevisions).toBeUndefined();
+
+    notifyLatexBindingChange(target);
+    await settle();
+
+    expect(readLatexBuild(target).snapshot?.visualSourceRevisions).toEqual({
+      "main.tex": `sha256:${"a".repeat(64)}`,
+    });
+    stop();
+  });
+
   it("coalesces repeated saves into one settled-source checkpoint", async () => {
     readLatexBuildStatus.mockResolvedValue(snapshot("succeeded"));
     requestLatexBuild.mockResolvedValue(snapshot("queued"));
     const stop = startWatchingLatexBuild(target);
     await settle();
 
-    scheduleLatexRebuild(target);
+    for (let save = 0; save < 100; save += 1) scheduleLatexRebuild(target);
     await vi.advanceTimersByTimeAsync(LATEX_EDIT_CHECKPOINT_DELAY_MS - 1);
     expect(requestLatexBuild).not.toHaveBeenCalled();
-    scheduleLatexRebuild(target);
+    for (let save = 0; save < 100; save += 1) scheduleLatexRebuild(target);
     await vi.advanceTimersByTimeAsync(LATEX_EDIT_CHECKPOINT_DELAY_MS - 1);
     expect(requestLatexBuild).not.toHaveBeenCalled();
     await vi.advanceTimersByTimeAsync(1);
@@ -238,7 +258,7 @@ describe("latexBuildStore", () => {
     stop();
   });
 
-  it("does not poll or build underneath an active Visual transaction", async () => {
+  it("holds Visual builds and coalesces release with the final confirmed save", async () => {
     readLatexBuildStatus.mockResolvedValue(snapshot("succeeded"));
     requestLatexBuild.mockResolvedValue(snapshot("queued"));
     const stop = startWatchingLatexBuild(target);
@@ -251,8 +271,40 @@ describe("latexBuildStore", () => {
     expect(requestLatexBuild).not.toHaveBeenCalled();
 
     setLatexBuildSuspended(target, false);
-    await vi.advanceTimersByTimeAsync(0);
+    await vi.advanceTimersByTimeAsync(LATEX_EDIT_CHECKPOINT_DELAY_MS - 1);
+    expect(requestLatexBuild).not.toHaveBeenCalled();
+
+    // The final source confirmation can follow the focus/session transition.
+    // It owns a fresh full checkpoint window rather than queueing a second build.
+    scheduleLatexRebuild(target);
+    await vi.advanceTimersByTimeAsync(LATEX_EDIT_CHECKPOINT_DELAY_MS - 1);
+    expect(requestLatexBuild).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(1);
     expect(requestLatexBuild).toHaveBeenCalledTimes(1);
+    stop();
+  });
+
+  it("does not let a pre-hold status response restart polling during Visual input", async () => {
+    let resolveStatus!: (value: ScientLatexBuildSnapshot) => void;
+    readLatexBuildStatus.mockReturnValueOnce(
+      new Promise<ScientLatexBuildSnapshot>((resolve) => {
+        resolveStatus = resolve;
+      }),
+    );
+    const stop = startWatchingLatexBuild(target);
+    await settle();
+    expect(readLatexBuildStatus).toHaveBeenCalledOnce();
+
+    setLatexBuildSuspended(target, true);
+    resolveStatus(snapshot("running"));
+    await settle();
+    await vi.advanceTimersByTimeAsync(LATEX_CURRENTNESS_POLL_INTERVAL_MS * 2);
+    expect(readLatexBuildStatus).toHaveBeenCalledOnce();
+    expect(readLatexBuild(target).snapshot).toBeNull();
+
+    setLatexBuildSuspended(target, false);
+    await settle();
+    expect(readLatexBuildStatus).toHaveBeenCalledTimes(2);
     stop();
   });
 

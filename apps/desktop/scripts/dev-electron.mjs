@@ -9,10 +9,17 @@ import {
   resolveElectronLaunchCommand,
 } from "./electron-launcher.mjs";
 import {
+  createCoalescedRestartScheduler,
+  createDevelopmentLaunchGeneration,
   inspectProcessCommand,
   makeMacDevelopmentAppLaunchCommand,
   readOwnedDevelopmentAppProcess,
   removeDevelopmentLaunchFiles,
+  removeDevelopmentLaunchRecord,
+  resolveDevelopmentLaunchPaths,
+  SCIENT_DEV_APP_ENV_FILE_ENV,
+  SCIENT_DEV_APP_PID_FILE_ENV,
+  stopManagedDevelopmentLaunch,
   waitForOwnedDevelopmentChildProcess,
   waitForOwnedDevelopmentAppProcess,
   writeDevelopmentEnvironmentFile,
@@ -78,6 +85,8 @@ await waitForResources({
 
 const childEnv = { ...process.env };
 delete childEnv.ELECTRON_RUN_AS_NODE;
+delete childEnv[SCIENT_DEV_APP_ENV_FILE_ENV];
+delete childEnv[SCIENT_DEV_APP_PID_FILE_ENV];
 childEnv.SCIENT_NEXT_SAFETY_ENVELOPE = "true";
 childEnv.SCIENT_NEXT_DEV_RUNNER_ACTIVE = "1";
 const devProtocolClient = resolveDevProtocolClient();
@@ -89,41 +98,48 @@ if (managedByLocalDevApp && hostPlatform === "darwin" && !devProtocolClient) {
   throw new Error("The managed macOS development app requires a generated app bundle.");
 }
 
-const appPidFilePath =
+const configuredAppPidFilePath =
   process.env.SCIENT_DEV_APP_PID_FILE?.trim() ||
   NodePath.join(
     childEnv.SCIENT_NEXT_HOME ?? NodePath.resolve(desktopDir, "..", "..", ".scient-next"),
     "local-dev-app-runtime",
     "electron.pid",
   );
-const launchStateDir = NodePath.dirname(appPidFilePath);
-const backendPidFilePath = NodePath.join(launchStateDir, "backend.pid");
+const launchStateDir = NodePath.dirname(configuredAppPidFilePath);
 const backendEntryPath = NodePath.resolve(desktopDir, "..", "server", "dist", "bin.mjs");
 
 let shuttingDown = false;
-let restartTimer = null;
 let currentApp = null;
-let restartQueue = Promise.resolve();
 const expectedExits = new WeakSet();
 const watchers = [];
 let launchSequence = 0;
 
 function cleanupLaunchFiles(app) {
-  removeDevelopmentLaunchFiles(app.environmentFilePath);
+  const { launchPaths } = app;
+  removeDevelopmentLaunchFiles(launchPaths.environmentFilePath);
+  const launcherStarted = typeof app.launcher.pid === "number";
+  const launcherActive = launcherStarted && app.launcher.exitCode === null;
+  if (!launcherStarted || app.launcher.exitCode !== null) {
+    removeDevelopmentLaunchFiles(launchPaths.launcherPidPath);
+  }
   const owned = app.electronBinaryPath
     ? readOwnedDevelopmentAppProcess({
-        pidFilePath: appPidFilePath,
+        pidFilePath: launchPaths.appPidPath,
         electronBinaryPath: app.electronBinaryPath,
       })
     : null;
-  if (!owned) removeDevelopmentLaunchFiles(appPidFilePath);
+  if (!owned) removeDevelopmentLaunchFiles(launchPaths.appPidPath);
   const ownedBackend = app.backendCommandPrefix
     ? readOwnedDevelopmentAppProcess({
-        pidFilePath: backendPidFilePath,
+        pidFilePath: launchPaths.backendPidPath,
         electronBinaryPath: app.backendCommandPrefix,
       })
     : null;
-  if (!ownedBackend) removeDevelopmentLaunchFiles(backendPidFilePath);
+  if (!ownedBackend) removeDevelopmentLaunchFiles(launchPaths.backendPidPath);
+  if (!launcherActive && !owned && !ownedBackend) {
+    removeDevelopmentLaunchRecord(launchPaths);
+  }
+  return { launcherActive, ownedApp: owned, ownedBackend };
 }
 
 function signalOwnedProcess(pidFilePath, commandPrefix, signal) {
@@ -161,11 +177,11 @@ async function waitForManagedProcessesToExit(app, timeoutMs) {
   const startedAt = Date.now();
   while (Date.now() - startedAt < timeoutMs) {
     const ownedApp = readOwnedDevelopmentAppProcess({
-      pidFilePath: appPidFilePath,
+      pidFilePath: app.launchPaths.appPidPath,
       electronBinaryPath: app.electronBinaryPath,
     });
     const ownedBackend = readOwnedDevelopmentAppProcess({
-      pidFilePath: backendPidFilePath,
+      pidFilePath: app.launchPaths.backendPidPath,
       electronBinaryPath: app.backendCommandPrefix,
     });
     if (!ownedApp && !ownedBackend && app.launcher.exitCode !== null) return true;
@@ -186,9 +202,9 @@ function startApp() {
     ? electronArgs
     : [...electronArgs, `--t3code-dev-root=${desktopDir}`, "dist-electron/main.cjs"];
   launchSequence += 1;
-  const environmentFilePath = NodePath.join(
+  const launchPaths = resolveDevelopmentLaunchPaths(
     launchStateDir,
-    `electron-environment-${String(process.pid)}-${String(launchSequence)}.sh`,
+    createDevelopmentLaunchGeneration({ sequence: launchSequence }),
   );
   const managedMacLaunch = managedByLocalDevApp && hostPlatform === "darwin";
   let electronCommand;
@@ -197,8 +213,8 @@ function startApp() {
   let electronBinaryPath;
   let backendCommandPrefix;
   if (managedMacLaunch && devProtocolClient) {
-    removeDevelopmentLaunchFiles(appPidFilePath, backendPidFilePath, environmentFilePath);
-    writeDevelopmentEnvironmentFile(environmentFilePath, childEnv);
+    removeDevelopmentLaunchRecord(launchPaths);
+    writeDevelopmentEnvironmentFile(launchPaths.environmentFilePath, childEnv);
     electronBinaryPath = NodePath.join(
       devProtocolClient.appBundlePath,
       "Contents",
@@ -208,11 +224,11 @@ function startApp() {
     electronCommand = makeMacDevelopmentAppLaunchCommand({
       appBundlePath: devProtocolClient.appBundlePath,
       args: electronArgs,
-      environmentFilePath,
-      pidFilePath: appPidFilePath,
+      environmentFilePath: launchPaths.environmentFilePath,
+      pidFilePath: launchPaths.appPidPath,
     });
     pidPromise = waitForOwnedDevelopmentAppProcess({
-      pidFilePath: appPidFilePath,
+      pidFilePath: launchPaths.appPidPath,
       electronBinaryPath,
     });
     backendCommandPrefix = `${electronBinaryPath} ${backendEntryPath}`;
@@ -221,13 +237,13 @@ function startApp() {
         parentPid: ownedApp.pid,
         commandPrefix: backendCommandPrefix,
       }).then((ownedBackend) => {
-        writeDevelopmentProcessPid(backendPidFilePath, ownedBackend.pid);
+        writeDevelopmentProcessPid(launchPaths.backendPidPath, ownedBackend.pid);
         return ownedBackend;
       }),
     );
   } else {
     electronCommand = resolveElectronLaunchCommand(launchArgs);
-    removeDevelopmentLaunchFiles(environmentFilePath);
+    removeDevelopmentLaunchRecord(launchPaths);
     pidPromise = Promise.resolve(null);
   }
   const launcher = NodeChildProcess.spawn(
@@ -239,6 +255,9 @@ function startApp() {
       stdio: "inherit",
     },
   );
+  if (managedMacLaunch && typeof launcher.pid === "number") {
+    writeDevelopmentProcessPid(launchPaths.launcherPidPath, launcher.pid);
+  }
   if (!managedMacLaunch && hostPlatform !== "win32" && typeof launcher.pid === "number") {
     backendCommandPrefix = `${electronCommand.electronPath} ${backendEntryPath}`;
     backendPidPromise = waitForOwnedDevelopmentChildProcess({
@@ -250,7 +269,7 @@ function startApp() {
   const app = {
     launcher,
     managedMacLaunch,
-    environmentFilePath,
+    launchPaths,
     electronBinaryPath,
     backendCommandPrefix,
     pidPromise,
@@ -292,13 +311,18 @@ function startApp() {
   }
 
   launcher.once("error", () => {
-    cleanupLaunchFiles(app);
-    if (currentApp === app) {
+    const ownership = cleanupLaunchFiles(app);
+    if (
+      currentApp === app &&
+      !ownership.launcherActive &&
+      !ownership.ownedApp &&
+      !ownership.ownedBackend
+    ) {
       currentApp = null;
     }
 
-    if (!shuttingDown) {
-      scheduleRestart();
+    if (!shuttingDown && !expectedExits.has(launcher)) {
+      restartScheduler.request();
     }
   });
 
@@ -306,14 +330,15 @@ function startApp() {
     if (!app.managedMacLaunch) {
       signalCapturedBackend(app, "SIGTERM");
     }
-    cleanupLaunchFiles(app);
-    if (currentApp === app) {
+    const ownership = cleanupLaunchFiles(app);
+    const hasRetainedProcess = Boolean(ownership.ownedApp || ownership.ownedBackend);
+    if (currentApp === app && !hasRetainedProcess) {
       currentApp = null;
     }
 
-    const exitedAbnormally = signal !== null || code !== 0;
+    const exitedAbnormally = signal !== null || code !== 0 || hasRetainedProcess;
     if (!shuttingDown && !expectedExits.has(launcher) && exitedAbnormally) {
-      scheduleRestart();
+      restartScheduler.request();
     }
   });
 }
@@ -324,22 +349,29 @@ async function stopApp() {
     return;
   }
 
-  currentApp = null;
   expectedExits.add(app.launcher);
 
   if (app.managedMacLaunch && app.electronBinaryPath && app.backendCommandPrefix) {
-    await app.pidPromise.catch(() => null);
-    signalOwnedProcess(appPidFilePath, app.electronBinaryPath, "SIGTERM");
-    signalOwnedProcess(backendPidFilePath, app.backendCommandPrefix, "SIGTERM");
-    if (!(await waitForManagedProcessesToExit(app, forcedShutdownTimeoutMs))) {
-      signalOwnedProcess(appPidFilePath, app.electronBinaryPath, "SIGKILL");
-      signalOwnedProcess(backendPidFilePath, app.backendCommandPrefix, "SIGKILL");
-      if (app.launcher.exitCode === null) app.launcher.kill("SIGKILL");
-      await waitForManagedProcessesToExit(app, 2_000);
-    }
+    await stopManagedDevelopmentLaunch({
+      appPidPromise: app.pidPromise,
+      backendPidPromise: app.backendPidPromise,
+      appPidFilePath: app.launchPaths.appPidPath,
+      backendPidFilePath: app.launchPaths.backendPidPath,
+      electronBinaryPath: app.electronBinaryPath,
+      backendCommandPrefix: app.backendCommandPrefix,
+      launcher: app.launcher,
+      signalOwnedProcess,
+      waitForExit: (timeoutMs) => waitForManagedProcessesToExit(app, timeoutMs),
+      gracefulTimeoutMs: forcedShutdownTimeoutMs,
+      forcedTimeoutMs: 2_000,
+      generation: app.launchPaths.generation,
+    });
+    if (currentApp === app) currentApp = null;
     cleanupLaunchFiles(app);
     return;
   }
+
+  currentApp = null;
 
   await new Promise((resolve) => {
     let settled = false;
@@ -369,27 +401,13 @@ async function stopApp() {
   }).finally(() => cleanupLaunchFiles(app));
 }
 
-function scheduleRestart() {
-  if (shuttingDown) {
-    return;
-  }
-
-  if (restartTimer) {
-    clearTimeout(restartTimer);
-  }
-
-  restartTimer = setTimeout(() => {
-    restartTimer = null;
-    restartQueue = restartQueue
-      .catch(() => undefined)
-      .then(async () => {
-        await stopApp();
-        if (!shuttingDown) {
-          startApp();
-        }
-      });
-  }, restartDebounceMs);
-}
+const restartScheduler = createCoalescedRestartScheduler({
+  debounceMs: restartDebounceMs,
+  restart: async () => {
+    await stopApp();
+    if (!shuttingDown) startApp();
+  },
+});
 
 function startWatchers() {
   for (const { directory, files } of watchedDirectories) {
@@ -401,7 +419,7 @@ function startWatchers() {
           return;
         }
 
-        scheduleRestart();
+        restartScheduler.request();
       },
     );
 
@@ -413,15 +431,11 @@ async function shutdown(exitCode) {
   if (shuttingDown) return;
   shuttingDown = true;
 
-  if (restartTimer) {
-    clearTimeout(restartTimer);
-    restartTimer = null;
-  }
-
   for (const watcher of watchers) {
     watcher.close();
   }
 
+  await restartScheduler.close();
   await stopApp();
 
   process.exit(exitCode);

@@ -36,6 +36,7 @@ import {
 import { layer as packageInstallerLayer } from "./LatexPackageInstaller.ts";
 import { layer as toolchainLayer } from "./LatexToolchain.ts";
 import { LatexSyncTex, layer as syncTexLayer } from "./LatexSyncTex.ts";
+import { layer as visualRevisionStoreLayer } from "./LatexVisualRevisionStore.ts";
 
 /** A whole-command string keeps this off `shell:true`'s argument-splicing path. */
 const resolvesOnPath = (command: string): boolean => {
@@ -79,17 +80,24 @@ const makeWorkspace = (files: Readonly<Record<string, string>>) =>
       yield* fileSystem.makeDirectory(path.dirname(absolutePath), { recursive: true });
       yield* fileSystem.writeFileString(absolutePath, contents);
     }
+    const generatedStoreLayer = storeLayer.pipe(Layer.provide(serverEnvironment));
     return {
       workspaceRoot,
       serviceLayer: buildServiceLayer.pipe(
         Layer.provide(LocalExecutionProcess.layer),
         Layer.provideMerge(syncTexLayer.pipe(Layer.provide(serverEnvironment))),
+        Layer.provideMerge(
+          visualRevisionStoreLayer.pipe(
+            Layer.provide(generatedStoreLayer),
+            Layer.provide(serverEnvironment),
+          ),
+        ),
         // Never asked for here — the engine on PATH is the user's own, which
         // this lane does not install into — but the service holds it the way
         // the server mounts it.
         Layer.provide(packageInstallerLayer),
         Layer.provideMerge(toolchainLayer),
-        Layer.provideMerge(storeLayer.pipe(Layer.provide(serverEnvironment))),
+        Layer.provideMerge(generatedStoreLayer),
         Layer.provideMerge(ServerConfig.layerTest(workspaceRoot, baseDir)),
         Layer.provideMerge(NodeServices.layer),
       ),

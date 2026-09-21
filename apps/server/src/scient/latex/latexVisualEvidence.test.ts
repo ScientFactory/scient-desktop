@@ -1,5 +1,10 @@
 import { describe, expect, it } from "@effect/vitest";
-import { latexVisualSourceRevisions, type LatexBuildEvidence } from "./latexBuildEvidence.ts";
+import {
+  latexBuildInputsChangedDuringCompile,
+  latexVisualNeedsRequalification,
+  latexVisualSourceRevisions,
+  type LatexBuildEvidence,
+} from "./latexBuildEvidence.ts";
 
 const evidence = (digest = "a".repeat(64)): LatexBuildEvidence => ({
   schemaVersion: 1,
@@ -32,5 +37,49 @@ describe("visual compile evidence", () => {
         ],
       }),
     ).toEqual({});
+  });
+  it("requests only one bounded stabilization opportunity for newly known complete inputs", () => {
+    const discovered = {
+      ...evidence(),
+      dependencies: [
+        ...evidence().dependencies,
+        { path: "chapter.tex", sha256: "c".repeat(64), byteLength: 12 },
+      ],
+    };
+    expect(latexVisualNeedsRequalification(evidence(), discovered)).toBe(true);
+    expect(latexVisualNeedsRequalification(discovered, discovered)).toBe(false);
+    expect(latexVisualNeedsRequalification(evidence(), evidence("b".repeat(64)))).toBe(true);
+    expect(latexVisualNeedsRequalification(evidence(), { ...discovered, truncated: true })).toBe(
+      false,
+    );
+    expect(latexVisualNeedsRequalification({ ...evidence(), truncated: true }, discovered)).toBe(
+      true,
+    );
+  });
+  it("detects a definite in-compile source change without guessing from incomplete evidence", () => {
+    expect(latexBuildInputsChangedDuringCompile(evidence(), evidence())).toBe(false);
+    expect(latexBuildInputsChangedDuringCompile(evidence(), evidence("b".repeat(64)))).toBe(true);
+    expect(
+      latexBuildInputsChangedDuringCompile(evidence(), {
+        ...evidence(),
+        dependencies: [],
+        truncated: true,
+      }),
+    ).toBe(false);
+    expect(latexBuildInputsChangedDuringCompile(evidence(), evidence("unverified"))).toBe(false);
+  });
+  it("authorizes every LaTeX source extension mounted by the Visual surface", () => {
+    const before = {
+      ...evidence(),
+      rootRelativePath: "main.latex",
+      dependencies: [
+        { path: "main.latex", sha256: "a".repeat(64), byteLength: 42 },
+        { path: "chapter.ltx", sha256: "b".repeat(64), byteLength: 24 },
+      ],
+    };
+    expect(latexVisualSourceRevisions(before, before)).toEqual({
+      "main.latex": `sha256:${"a".repeat(64)}`,
+      "chapter.ltx": `sha256:${"b".repeat(64)}`,
+    });
   });
 });

@@ -238,21 +238,30 @@ in place without changing size. An `oversize` marker is decoded only to migrate
 evidence written by the earlier size-only implementation; its first unverifiable
 probe earns one rebuild and is replaced by a real digest.
 
-The dependency list comes from the engine's own recorder wherever there is one.
-`latexmk` passes `-recorder` by default and writes `<jobname>.fls` beside the
-other aux files; `flsManifest.ts` reads its `INPUT` lines against the run's
-`PWD`, drops everything outside the workspace root (the distribution's classes,
-packages, and fonts) and everything inside the build work directory (the
-`.aux`/`.toc` this very run wrote and read back — inputs by label, outputs in
-fact), normalizes separators, dedupes, and sorts. Windows drive containment is
-compared case-insensitively and the returned path keeps the case on disk; POSIX
+The dependency list comes from the selected engine's own recorder. `latexmk`
+passes `-recorder` by default and writes `<jobname>.fls` beside the other aux
+files; `flsManifest.ts` reads its `INPUT` lines against the run's `PWD`, drops
+everything outside the workspace root (the distribution's classes, packages,
+and fonts) and everything inside the build work directory (the `.aux`/`.toc`
+this very run wrote and read back — inputs by label, outputs in fact),
+normalizes separators, dedupes, and sorts. Tectonic runs with
+`--keep-intermediates --makefile-rules <jobname>.dependencies.mk`; the same
+module parses the dependency side of those Make rules, including continuations
+and escaped path characters, and rebases workspace inputs that Tectonic reports
+under its `--outdir` back to the compile directory. Both paths apply the same
+workspace/work-directory boundary. Windows drive containment is compared
+case-insensitively and the returned path keeps the case on disk; POSIX
 containment remains case-sensitive, so a differently cased sibling is not
-admitted as a workspace input. A run
-naming more than `MAX_RECORDER_DEPENDENCIES = 256` workspace inputs reports
-`truncated: true` with an _empty_ list rather than its first 256, and evidence
-falls back to the root document alone: a narrower claim beats a partial one
-presented as complete. tectonic writes no `.fls`, so there the fallback is the
-root plus what `latexPreamble.ts` already reads out of it.
+admitted as a workspace input.
+
+A run naming more than `MAX_RECORDER_DEPENDENCIES = 256` workspace inputs
+reports `truncated: true` with an _empty_ list rather than its first 256. A
+missing, malformed, truncated, or root-less recorder is also unusable. The
+service then performs its shallow preamble dependency discovery, marks the
+result incomplete, and the evidence layer deliberately narrows that truncated
+claim to the root document alone: a narrower claim beats a partial one
+presented as complete. Such evidence can keep ordinary root-file freshness but
+can never authorize direct Visual source writes.
 
 The check runs on every status poll of a finished, successful entry, and is
 built for that cadence: one `stat` per dependency, a size difference decides on
@@ -636,12 +645,13 @@ descriptors do not disclose the canonical host root.
 other environment-derived state directories — never inside the user's
 workspace. Every compile writes into
 `<latexDir>/builds/<sha256(logicalDocumentKey)[:16]>/` via each engine's own
-`-outdir`/`--outdir` flag, so `.aux`, `.log`, `.fdb_latexmk`, `.fls`,
-`.synctex.gz`, and the PDF itself all land there. Build-input evidence is the
-only other per-document state this lane keeps, one JSON file per document under
-`<latexDir>/evidence/` keyed by the same digest. The workspace directory the user edits
-never receives compiler output, and neither does the agent's own checkpoint
-history. The managed TinyTeX distribution lives under a separate
+`-outdir`/`--outdir` flag, so `.aux`, `.log`, `.fdb_latexmk`, `.fls`, Tectonic's
+`.dependencies.mk`, `.synctex.gz`, and the PDF itself all land there.
+Build-input evidence is the only other per-document state this lane keeps, one
+JSON file per document under `<latexDir>/evidence/` keyed by the same digest.
+The workspace directory the user edits never receives compiler output, and
+neither does the agent's own checkpoint history. The managed TinyTeX
+distribution lives under a separate
 `<latexDir>/managed` root, entirely apart from build work directories. Published
 navigation indexes live under
 `<latexDir>/synctex/<artifact-id>/<revision-id>` and are swept when the shared

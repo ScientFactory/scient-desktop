@@ -2,6 +2,7 @@ import {
   ArtifactProducerId,
   LogicalDocumentKey,
   ProducingOperationId,
+  type PdfSourceDescriptor,
 } from "@scientfactory/document-artifacts";
 import type { ExecutionProcessPort, ExecutionProcessRequest } from "@scientfactory/execution";
 import * as NodeServices from "@effect/platform-node/NodeServices";
@@ -42,6 +43,7 @@ import {
 } from "./LatexPackageInstaller.ts";
 import { LatexToolchain } from "./LatexToolchain.ts";
 import { LatexSyncTex } from "./LatexSyncTex.ts";
+import { layer as visualRevisionStoreLayer } from "./LatexVisualRevisionStore.ts";
 
 /** Byte-for-byte the fixture shape the document store's own tests accept. */
 function minimalPdf(marker: string): Uint8Array {
@@ -130,6 +132,7 @@ const RECORDER_MANIFEST = [
   "OUTPUT main.pdf",
   "",
 ].join("\n");
+const ROOT_RECORDER_MANIFEST = ["INPUT main.tex", "OUTPUT main.pdf", ""].join("\n");
 const WARNING_TRANSCRIPT =
   "This is pdfTeX\nLaTeX Warning: Reference `fig:1' undefined on input line 12.\n";
 const ERROR_TRANSCRIPT = "./main.tex:12: Undefined control sequence.\nl.12 \\nosuchmacro\n";
@@ -189,6 +192,10 @@ interface FakeCompile {
    * compile directory, so a fixture never has to know the temporary workspace.
    */
   readonly fls?: string;
+  /** Optional navigation index emitted by the compile. */
+  readonly syncTex?: string;
+  /** Optional uncompressed navigation index emitted by the compile. */
+  readonly plainSyncTex?: string;
   /** When present the process only exits once the test resolves it. */
   readonly hold?: Deferred.Deferred<void>;
 }
@@ -238,6 +245,8 @@ const makeHarness = (input: {
    * second.
    */
   readonly beginProductionGate?: (attempt: number) => Effect.Effect<void>;
+  /** Runs after the immutable revision and binding have committed, before the build can finish. */
+  readonly publishCommittedGate?: (descriptor: PdfSourceDescriptor) => Effect.Effect<void>;
 }) =>
   Effect.gen(function* () {
     const fileSystem = yield* FileSystem.FileSystem;
@@ -276,7 +285,12 @@ const makeHarness = (input: {
           yield* Queue.offer(started, request);
           const exitSignal = yield* Deferred.make<number>();
           const finish = Effect.gen(function* () {
-            if (compile.pdf !== null || compile.fls !== undefined) {
+            if (
+              compile.pdf !== null ||
+              compile.fls !== undefined ||
+              compile.syncTex !== undefined ||
+              compile.plainSyncTex !== undefined
+            ) {
               yield* fileSystem.makeDirectory(outputDirectory(request), { recursive: true });
             }
             if (compile.pdf !== null) {
@@ -284,6 +298,18 @@ const makeHarness = (input: {
             }
             if (compile.fls !== undefined) {
               yield* fileSystem.writeFileString(producedPath(request, "fls"), compile.fls);
+            }
+            if (compile.syncTex !== undefined) {
+              yield* fileSystem.writeFileString(
+                producedPath(request, "synctex.gz"),
+                compile.syncTex,
+              );
+            }
+            if (compile.plainSyncTex !== undefined) {
+              yield* fileSystem.writeFileString(
+                producedPath(request, "synctex"),
+                compile.plainSyncTex,
+              );
             }
             yield* Deferred.succeed(exitSignal, compile.exitCode);
           }).pipe(Effect.orDie);
@@ -335,8 +361,9 @@ const makeHarness = (input: {
 
     const realStoreLayer = storeLayer.pipe(Layer.provide(serverEnvironment));
     const beginProductionGate = input.beginProductionGate;
+    const publishCommittedGate = input.publishCommittedGate;
     const gatedStoreLayer =
-      beginProductionGate === undefined
+      beginProductionGate === undefined && publishCommittedGate === undefined
         ? realStoreLayer
         : Layer.effect(
             GeneratedDocumentStore,
@@ -346,21 +373,33 @@ const makeHarness = (input: {
               return GeneratedDocumentStore.of({
                 ...underlying,
                 beginProduction: (request) =>
-                  underlying
-                    .beginProduction(request)
-                    .pipe(
-                      Effect.tap(() =>
-                        Ref.updateAndGet(attempts, (count) => count + 1).pipe(
-                          Effect.flatMap(beginProductionGate),
+                  beginProductionGate === undefined
+                    ? underlying.beginProduction(request)
+                    : underlying
+                        .beginProduction(request)
+                        .pipe(
+                          Effect.tap(() =>
+                            Ref.updateAndGet(attempts, (count) => count + 1).pipe(
+                              Effect.flatMap(beginProductionGate),
+                            ),
+                          ),
                         ),
-                      ),
-                    ),
+                publishPdf: (request) =>
+                  publishCommittedGate === undefined
+                    ? underlying.publishPdf(request)
+                    : underlying.publishPdf(request).pipe(Effect.tap(publishCommittedGate)),
               });
             }),
           ).pipe(Layer.provide(realStoreLayer));
 
     const serviceLayer = Layer.effect(LatexBuildService, makeBuildService).pipe(
       Layer.provide(syncTexLayer),
+      Layer.provide(
+        visualRevisionStoreLayer.pipe(
+          Layer.provide(gatedStoreLayer),
+          Layer.provide(serverEnvironment),
+        ),
+      ),
       Layer.provide(Layer.succeed(LatexPackageInstaller, installer)),
       Layer.provide(Layer.succeed(LocalExecutionProcess.ExecutionProcess, port)),
       Layer.provide(
@@ -1344,6 +1383,227 @@ describe("LatexBuildService", () => {
     }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
   );
 
+  it.live("qualifies recorder-discovered nested inputs with one bounded second compile", () =>
+    Effect.gen(function* () {
+      const nestedManifest = [
+        "INPUT main.tex",
+        "INPUT chapter.tex",
+        "INPUT sections/nested.tex",
+        "OUTPUT main.pdf",
+        "",
+      ].join("\n");
+      const harness = yield* makeHarness({
+        files: {
+          "main.tex":
+            "\\documentclass{article}\n\\begin{document}\n\\input{chapter}\n\\end{document}\n",
+          "chapter.tex": "\\input{sections/nested}\n",
+          "sections/nested.tex": "Nested recorder input.\n",
+        },
+        compiles: [
+          { transcript: "", exitCode: 0, pdf: minimalPdf("discovery"), fls: nestedManifest },
+          { transcript: "", exitCode: 0, pdf: minimalPdf("qualified"), fls: nestedManifest },
+        ],
+      });
+      yield* Effect.gen(function* () {
+        const service = yield* LatexBuildService;
+        yield* service.requestBuild(harness.buildInput);
+        const finished = yield* awaitTerminal(service, harness.buildInput);
+
+        expect(finished.state).toBe("succeeded");
+        expect(yield* Ref.get(harness.startCount)).toBe(2);
+        expect(Object.keys(finished.visualSourceRevisions ?? {}).sort()).toEqual([
+          "chapter.tex",
+          "main.tex",
+          "sections/nested.tex",
+        ]);
+      }).pipe(Effect.provide(harness.serviceLayer));
+    }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+  );
+
+  it.live("recompiles once when a known source changes during the engine run", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const firstHold = yield* Deferred.make<void>();
+      const harness = yield* makeHarness({
+        compiles: [
+          {
+            transcript: "",
+            exitCode: 0,
+            pdf: minimalPdf("raced"),
+            fls: ROOT_RECORDER_MANIFEST,
+            hold: firstHold,
+          },
+          {
+            transcript: "",
+            exitCode: 0,
+            pdf: minimalPdf("stable"),
+            fls: ROOT_RECORDER_MANIFEST,
+          },
+        ],
+      });
+      yield* Effect.gen(function* () {
+        const service = yield* LatexBuildService;
+        yield* service.requestBuild(harness.buildInput);
+        yield* Queue.take(harness.started);
+        yield* fileSystem.writeFileString(
+          path.join(harness.workspaceRoot, "main.tex"),
+          SOURCE.replace("hello", "changed during compile"),
+        );
+        yield* Deferred.succeed(firstHold, undefined);
+
+        const finished = yield* awaitTerminal(service, harness.buildInput);
+        expect(finished.state).toBe("succeeded");
+        expect(finished.visualSourceRevisions?.["main.tex"]).toMatch(/^sha256:[a-f0-9]{64}$/u);
+        expect(yield* Ref.get(harness.startCount)).toBe(2);
+      }).pipe(Effect.provide(harness.serviceLayer));
+    }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+  );
+
+  it.live("refuses to bless a PDF when sources change during both bounded passes", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const firstHold = yield* Deferred.make<void>();
+      const secondHold = yield* Deferred.make<void>();
+      const harness = yield* makeHarness({
+        compiles: [
+          {
+            transcript: "",
+            exitCode: 0,
+            pdf: minimalPdf("raced-once"),
+            fls: ROOT_RECORDER_MANIFEST,
+            hold: firstHold,
+          },
+          {
+            transcript: "",
+            exitCode: 0,
+            pdf: minimalPdf("raced-twice"),
+            fls: ROOT_RECORDER_MANIFEST,
+            hold: secondHold,
+          },
+        ],
+      });
+      yield* Effect.gen(function* () {
+        const service = yield* LatexBuildService;
+        yield* service.requestBuild(harness.buildInput);
+        yield* Queue.take(harness.started);
+        yield* fileSystem.writeFileString(
+          path.join(harness.workspaceRoot, "main.tex"),
+          SOURCE.replace("hello", "first concurrent edit"),
+        );
+        yield* Deferred.succeed(firstHold, undefined);
+
+        yield* Queue.take(harness.started);
+        yield* fileSystem.writeFileString(
+          path.join(harness.workspaceRoot, "main.tex"),
+          SOURCE.replace("hello", "second concurrent edit"),
+        );
+        yield* Deferred.succeed(secondHold, undefined);
+
+        const finished = yield* awaitTerminal(service, harness.buildInput);
+        expect(finished.state).toBe("failed");
+        expect(finished.failureSummary).toContain("sources changed");
+        expect(finished.visualSourceRevisions).toBeUndefined();
+        expect(yield* Ref.get(harness.startCount)).toBe(2);
+      }).pipe(Effect.provide(harness.serviceLayer));
+    }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+  );
+
+  it.live("keeps recorder-less PDFs readable but never authorizes Visual source writes", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness({
+        compiles: [{ transcript: "", exitCode: 0, pdf: minimalPdf("no-recorder") }],
+      });
+      yield* Effect.gen(function* () {
+        const service = yield* LatexBuildService;
+        yield* service.requestBuild(harness.buildInput);
+        const finished = yield* awaitTerminal(service, harness.buildInput);
+
+        expect(finished.state).toBe("succeeded");
+        expect(finished.descriptor).toMatchObject({ bindingStatus: "current" });
+        expect(finished.visualSourceRevisions).toEqual({});
+        expect(yield* Ref.get(harness.startCount)).toBe(1);
+      }).pipe(Effect.provide(harness.serviceLayer));
+    }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+  );
+
+  it.live("never reuses an earlier recorder or SyncTeX index for a later compile", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const harness = yield* makeHarness({
+        files: {
+          "main.tex": SOURCE_WITH_INCLUDE,
+          "sections/intro.tex": "The introduction.\n",
+        },
+        compiles: [
+          {
+            transcript: "",
+            exitCode: 0,
+            pdf: minimalPdf("recorded"),
+            fls: RECORDER_MANIFEST,
+            syncTex: "SyncTeX Version:1\n",
+            plainSyncTex: "SyncTeX Version:1\n",
+          },
+          { transcript: "", exitCode: 0, pdf: minimalPdf("recorder-omitted") },
+        ],
+      });
+      yield* Effect.gen(function* () {
+        const service = yield* LatexBuildService;
+        yield* service.requestBuild(harness.buildInput);
+        const first = yield* awaitTerminal(service, harness.buildInput);
+        expect(first.visualSourceRevisions?.["main.tex"]).toMatch(/^sha256:[a-f0-9]{64}$/u);
+        const firstRequest = yield* Queue.take(harness.started);
+        expect(yield* fileSystem.exists(producedPath(firstRequest, "fls"))).toBe(true);
+        expect(yield* fileSystem.exists(producedPath(firstRequest, "synctex.gz"))).toBe(true);
+        expect(yield* fileSystem.exists(producedPath(firstRequest, "synctex"))).toBe(true);
+
+        yield* fileSystem.writeFileString(
+          path.join(harness.workspaceRoot, "main.tex"),
+          `${SOURCE_WITH_INCLUDE}% edited\n`,
+        );
+        yield* service.requestBuild(harness.buildInput);
+        const second = yield* awaitTerminal(service, harness.buildInput);
+        const secondRequest = yield* Queue.take(harness.started);
+
+        expect(second.state).toBe("succeeded");
+        expect(second.visualSourceRevisions).toEqual({});
+        expect(yield* fileSystem.exists(producedPath(secondRequest, "fls"))).toBe(false);
+        expect(yield* fileSystem.exists(producedPath(secondRequest, "synctex.gz"))).toBe(false);
+        expect(yield* fileSystem.exists(producedPath(secondRequest, "synctex"))).toBe(false);
+        expect(yield* Ref.get(harness.startCount)).toBe(2);
+      }).pipe(Effect.provide(harness.serviceLayer));
+    }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+  );
+
+  it.live("fails Visual closed when a recorder does not name the compiled root", () =>
+    Effect.gen(function* () {
+      const noRootManifest = ["INPUT chapter.tex", "OUTPUT main.pdf", ""].join("\n");
+      const harness = yield* makeHarness({
+        files: { "chapter.tex": "A chapter.\n" },
+        compiles: [
+          {
+            transcript: "",
+            exitCode: 0,
+            pdf: minimalPdf("root-not-recorded"),
+            fls: noRootManifest,
+          },
+        ],
+      });
+      yield* Effect.gen(function* () {
+        const service = yield* LatexBuildService;
+        yield* service.requestBuild(harness.buildInput);
+        const finished = yield* awaitTerminal(service, harness.buildInput);
+
+        expect(finished.state).toBe("succeeded");
+        expect(finished.descriptor).toMatchObject({ bindingStatus: "current" });
+        expect(finished.visualSourceRevisions).toEqual({});
+        expect(yield* Ref.get(harness.startCount)).toBe(1);
+      }).pipe(Effect.provide(harness.serviceLayer));
+    }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+  );
+
   it.live("reports a binding restored after a restart as built only while its evidence holds", () =>
     Effect.gen(function* () {
       const first = yield* makeHarness({
@@ -1358,7 +1618,12 @@ describe("LatexBuildService", () => {
       yield* Effect.gen(function* () {
         const service = yield* LatexBuildService;
         yield* service.requestBuild(first.buildInput);
-        expect((yield* awaitTerminal(service, first.buildInput)).state).toBe("succeeded");
+        const finished = yield* awaitTerminal(service, first.buildInput);
+        expect(finished.state).toBe("succeeded");
+        expect(Object.keys(finished.visualSourceRevisions ?? {}).sort()).toEqual([
+          "main.tex",
+          "sections/intro.tex",
+        ]);
         yield* awaitPersistedEvidence(first.latexDir);
       }).pipe(Effect.provide(first.serviceLayer));
 
@@ -1374,6 +1639,11 @@ describe("LatexBuildService", () => {
 
         expect(restored.state).toBe("succeeded");
         expect(restored.descriptor).toMatchObject({ bindingStatus: "current" });
+        expect(Object.keys(restored.visualSourceRevisions ?? {}).sort()).toEqual([
+          "main.tex",
+          "sections/intro.tex",
+        ]);
+        expect(restored.visualSourceRevisions?.["main.tex"]).toMatch(/^sha256:[a-f0-9]{64}$/u);
         // Answered from the files, not from a compile: this harness has none.
         expect(yield* Ref.get(restarted.startCount)).toBe(0);
       }).pipe(Effect.provide(restarted.serviceLayer));
@@ -1418,11 +1688,101 @@ describe("LatexBuildService", () => {
         const service = yield* LatexBuildService;
         const restored = yield* service.status(restarted.buildInput);
         expect(TERMINAL_STATES.has(restored.state)).toBe(false);
+        expect(restored.visualSourceRevisions).toBeUndefined();
         // The stale PDF stays on screen while its replacement compiles.
         expect(restored.descriptor).not.toBeNull();
 
         const rebuilt = yield* awaitTerminal(service, restarted.buildInput);
         expect(rebuilt.state).toBe("succeeded");
+        expect(Object.keys(rebuilt.visualSourceRevisions ?? {}).sort()).toEqual([
+          "main.tex",
+          "sections/intro.tex",
+        ]);
+        expect(yield* Ref.get(restarted.startCount)).toBe(1);
+      }).pipe(Effect.provide(restarted.serviceLayer));
+    }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+  );
+
+  it.live("never lends an older revision's evidence to a newer PDF after restart", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const originalIntroduction = "The original introduction.\n";
+      const replacementIntroduction = "The replacement introduction.\n";
+      const first = yield* makeHarness({
+        files: {
+          "main.tex": SOURCE_WITH_INCLUDE,
+          "sections/intro.tex": originalIntroduction,
+        },
+        compiles: [
+          { transcript: "", exitCode: 0, pdf: minimalPdf("revision-a"), fls: RECORDER_MANIFEST },
+          { transcript: "", exitCode: 0, pdf: minimalPdf("revision-b"), fls: RECORDER_MANIFEST },
+        ],
+      });
+
+      let firstRevision: string | null = null;
+      let secondRevision: string | null = null;
+      let oldEvidence = "";
+      let evidencePath = "";
+      yield* Effect.gen(function* () {
+        const service = yield* LatexBuildService;
+        yield* service.requestBuild(first.buildInput);
+        const firstFinished = yield* awaitTerminal(service, first.buildInput);
+        expect(firstFinished.state).toBe("succeeded");
+        firstRevision =
+          firstFinished.descriptor?._tag === "generated-pdf"
+            ? firstFinished.descriptor.revisionId
+            : null;
+        const evidenceFiles = yield* awaitPersistedEvidence(first.latexDir);
+        expect(evidenceFiles).toHaveLength(1);
+        evidencePath = path.join(first.latexDir, "evidence", evidenceFiles[0] ?? "missing");
+        oldEvidence = yield* fileSystem.readFileString(evidencePath);
+
+        yield* fileSystem.writeFileString(
+          path.join(first.workspaceRoot, "sections/intro.tex"),
+          replacementIntroduction,
+        );
+        yield* service.requestBuild(first.buildInput);
+        const secondFinished = yield* awaitTerminal(service, first.buildInput);
+        expect(secondFinished.state).toBe("succeeded");
+        secondRevision =
+          secondFinished.descriptor?._tag === "generated-pdf"
+            ? secondFinished.descriptor.revisionId
+            : null;
+        expect(secondRevision).not.toBe(firstRevision);
+      }).pipe(Effect.provide(first.serviceLayer));
+
+      // Model a crash after revision B became the binding but before its
+      // evidence replaced revision A's file, followed by an undo while the
+      // server was down. Source A now matches the surviving evidence bytes, but
+      // those bytes must never vouch for PDF B.
+      yield* fileSystem.writeFileString(evidencePath, oldEvidence);
+      yield* fileSystem.writeFileString(
+        path.join(first.workspaceRoot, "sections/intro.tex"),
+        originalIntroduction,
+      );
+
+      const restarted = yield* makeHarness({
+        reuse: { workspaceRoot: first.workspaceRoot, baseDir: first.baseDir },
+        compiles: [
+          {
+            transcript: "",
+            exitCode: 0,
+            pdf: minimalPdf("revision-c"),
+            fls: RECORDER_MANIFEST,
+          },
+        ],
+      });
+      yield* Effect.gen(function* () {
+        const service = yield* LatexBuildService;
+        const restored = yield* service.status(restarted.buildInput);
+        expect(TERMINAL_STATES.has(restored.state)).toBe(false);
+        expect(restored.visualSourceRevisions).toBeUndefined();
+        expect(restored.descriptor).toMatchObject({ revisionId: secondRevision });
+
+        const rebuilt = yield* awaitTerminal(service, restarted.buildInput);
+        expect(rebuilt.state).toBe("succeeded");
+        expect(rebuilt.descriptor).not.toMatchObject({ revisionId: secondRevision });
         expect(yield* Ref.get(restarted.startCount)).toBe(1);
       }).pipe(Effect.provide(restarted.serviceLayer));
     }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
@@ -1484,10 +1844,10 @@ describe("LatexBuildService", () => {
         yield* service.requestBuild(harness.buildInput);
         yield* Queue.take(harness.started);
 
-        const second = yield* service.requestBuild(harness.buildInput);
-        expect(second.pendingRerun).toBe(true);
-        const third = yield* service.requestBuild(harness.buildInput);
-        expect(third.pendingRerun).toBe(true);
+        for (let request = 0; request < 100; request += 1) {
+          const queued = yield* service.requestBuild(harness.buildInput);
+          expect(queued.pendingRerun).toBe(true);
+        }
         expect(yield* Ref.get(harness.startCount)).toBe(1);
 
         yield* Deferred.succeed(hold, undefined);
@@ -1495,7 +1855,7 @@ describe("LatexBuildService", () => {
         const finished = yield* awaitTerminal(service, harness.buildInput);
         expect(finished.state).toBe("succeeded");
         expect(finished.pendingRerun).toBe(false);
-        // Three requests, two compiles: the second and third coalesced.
+        // A 100-request burst still owns only one successor compile.
         expect(yield* Ref.get(harness.startCount)).toBe(2);
       }).pipe(Effect.provide(harness.serviceLayer));
     }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
@@ -1528,6 +1888,49 @@ describe("LatexBuildService", () => {
           .getDescriptor(LogicalDocumentKey.make(settled.logicalDocumentKey))
           .pipe(Effect.flip);
         expect(bound.reason).toBe("missing-revision");
+      }).pipe(Effect.provide(harness.serviceLayer));
+    }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+  );
+
+  it.live("lets an already committed publication win a racing cancellation", () =>
+    Effect.gen(function* () {
+      const committed = yield* Deferred.make<PdfSourceDescriptor>();
+      const release = yield* Deferred.make<void>();
+      const harness = yield* makeHarness({
+        compiles: [
+          {
+            transcript: "",
+            exitCode: 0,
+            pdf: minimalPdf("committed"),
+            fls: ROOT_RECORDER_MANIFEST,
+          },
+        ],
+        publishCommittedGate: (descriptor) =>
+          Deferred.succeed(committed, descriptor).pipe(Effect.andThen(Deferred.await(release))),
+      });
+      yield* Effect.gen(function* () {
+        const service = yield* LatexBuildService;
+        yield* service.requestBuild(harness.buildInput);
+        const publishedDescriptor = yield* Deferred.await(committed);
+
+        // The immutable revision and binding are already committed. Cancel may
+        // stop auxiliary work only before that boundary; afterwards the store's
+        // successful transition is the authoritative winner.
+        const cancelling = yield* service.cancel(harness.buildInput);
+        expect(cancelling.state).toBe("publishing");
+        expect(cancelling.descriptor).toMatchObject({
+          revisionId:
+            publishedDescriptor._tag === "generated-pdf"
+              ? publishedDescriptor.revisionId
+              : "unexpected-descriptor",
+          bindingStatus: "current",
+        });
+
+        yield* Deferred.succeed(release, undefined);
+        const finished = yield* awaitTerminal(service, harness.buildInput);
+        expect(finished.state).toBe("succeeded");
+        expect(finished.descriptor).toEqual(publishedDescriptor);
+        expect(finished.visualSourceRevisions?.["main.tex"]).toMatch(/^sha256:[a-f0-9]{64}$/u);
       }).pipe(Effect.provide(harness.serviceLayer));
     }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
   );
@@ -1717,6 +2120,53 @@ describe("LatexBuildService", () => {
         expect(superseded.state).toBe("cancelled");
         const bound = yield* store.getDescriptor(documentKey);
         expect(bound).toMatchObject({ revisionId: secondRevision });
+      }).pipe(Effect.provide(harness.serviceLayer));
+    }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+  );
+
+  it.live("does not report success after another producer claims a committed binding", () =>
+    Effect.gen(function* () {
+      const committed = yield* Deferred.make<PdfSourceDescriptor>();
+      const release = yield* Deferred.make<void>();
+      const harness = yield* makeHarness({
+        compiles: [
+          {
+            transcript: "",
+            exitCode: 0,
+            pdf: minimalPdf("committed"),
+            fls: ROOT_RECORDER_MANIFEST,
+          },
+        ],
+        publishCommittedGate: (descriptor) =>
+          Deferred.succeed(committed, descriptor).pipe(Effect.andThen(Deferred.await(release))),
+      });
+      yield* Effect.gen(function* () {
+        const service = yield* LatexBuildService;
+        const store = yield* GeneratedDocumentStore;
+        yield* service.requestBuild(harness.buildInput);
+        const publishedDescriptor = yield* Deferred.await(committed);
+        if (publishedDescriptor._tag !== "generated-pdf") {
+          return yield* Effect.die("expected generated PDF descriptor");
+        }
+
+        // The active bytes still name the just-published revision, but binding
+        // generation two already belongs to a different attempt. Revision-only
+        // comparison would incorrectly let generation one finish `succeeded`.
+        yield* store.beginProduction({
+          logicalDocumentKey: LogicalDocumentKey.make(publishedDescriptor.logicalDocumentKey),
+          operationId: ProducingOperationId.make("external-after-commit"),
+          producerId: ArtifactProducerId.make("external-producer"),
+        });
+        yield* Deferred.succeed(release, undefined);
+
+        const superseded = yield* awaitTerminal(service, harness.buildInput);
+        expect(superseded.state).toBe("cancelled");
+        expect(superseded.visualSourceRevisions).toBeUndefined();
+        expect(superseded.descriptor).toMatchObject({
+          revisionId: publishedDescriptor.revisionId,
+          bindingGeneration: 2,
+          bindingStatus: "current",
+        });
       }).pipe(Effect.provide(harness.serviceLayer));
     }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
   );

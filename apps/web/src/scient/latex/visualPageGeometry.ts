@@ -1,9 +1,11 @@
-import { visualCharacters, type VisualRun } from "@t3tools/shared/latexVisual";
+import type { VisualRun } from "@t3tools/shared/latexVisual";
+import type { VisualEditManifest, VisualEditManifestEntry } from "./visualEditManifest";
 
 export interface VisualTextHit {
   readonly node: Text;
   readonly offset: number;
   readonly span: HTMLElement;
+  readonly entry: VisualEditManifestEntry;
 }
 
 export interface DraftGeometry {
@@ -49,14 +51,22 @@ function textRect(node: Text): DOMRect {
 }
 
 /** Resolve page whitespace to the nearest unambiguous insertion-bearing text line. */
-export function visualTextHit(event: MouseEvent, container: HTMLElement): VisualTextHit | null {
+export function visualTextHit(
+  event: MouseEvent,
+  container: HTMLElement,
+  manifest: VisualEditManifest,
+): VisualTextHit | null {
   const target = event.target;
   if (!(target instanceof Element)) return null;
   const span = target.closest<HTMLElement>(".textLayer span");
   const direct = span ? textNode(span) : null;
-  if (span && direct && /\S/u.test(direct.data)) {
-    return { node: direct, offset: offsetInText(direct, event.clientX), span };
+  const directEntry = span ? manifest.entryFor(span) : null;
+  if (span && direct && directEntry && /\S/u.test(direct.data)) {
+    return { node: direct, offset: offsetInText(direct, event.clientX), span, entry: directEntry };
   }
+  // Text that failed semantic qualification is read-only. The whitespace
+  // affordance must never redirect a deliberate click on it to nearby prose.
+  if (span && direct && /\S/u.test(direct.data)) return null;
 
   const page = target.closest<HTMLElement>(".page[data-page-number]");
   if (!page || !container.contains(page)) return null;
@@ -66,9 +76,11 @@ export function visualTextHit(event: MouseEvent, container: HTMLElement): Visual
     rect: DOMRect;
     score: number;
   }> = [];
-  for (const candidate of page.querySelectorAll<HTMLElement>(".textLayer span")) {
-    const node = textNode(candidate);
-    if (!node || !/\S/u.test(node.data)) continue;
+  for (const entry of manifest.entries) {
+    const candidate = entry.span;
+    if (candidate.closest(".page[data-page-number]") !== page) continue;
+    const node = entry.node;
+    if (!node.isConnected || !/\S/u.test(node.data)) continue;
     const rect = textRect(node);
     if (rect.width <= 0 || rect.height <= 0) continue;
     const dx =
@@ -100,28 +112,31 @@ export function visualTextHit(event: MouseEvent, container: HTMLElement): Visual
     node: nearest.node,
     offset: offsetInText(nearest.node, event.clientX),
     span: nearest.span,
+    entry: manifest.entryFor(nearest.span)!,
   };
 }
 
 export function measureDraftGeometry(
   container: HTMLElement,
   anchor: DraftAnchor,
+  manifest: VisualEditManifest,
 ): DraftGeometry | null {
   const host = container.parentElement;
   if (!host || !anchor.span.isConnected || !anchor.page.isConnected) return null;
-  const normalizedRun = visualCharacters(anchor.run.text).text;
   const rects: DOMRect[] = [];
-  for (const span of anchor.page.querySelectorAll<HTMLElement>(".textLayer span")) {
-    const node = textNode(span);
-    if (!node) continue;
-    const normalized = visualCharacters(node.data).text;
-    const first = normalizedRun.indexOf(normalized);
+  for (const entry of manifest.entries) {
+    if (entry.span.closest(".page[data-page-number]") !== anchor.page) continue;
+    // Manifest rebuilds create fresh VisualRun objects, so source coordinates
+    // are the stable identity. Raw text containment is not: an unrelated
+    // paragraph, table, or generated label can repeat a substring and must not
+    // enlarge the active editor's mask.
     if (
-      span !== anchor.span &&
-      (normalized.length < 3 || first < 0 || normalizedRun.indexOf(normalized, first + 1) >= 0)
+      entry.run.from !== anchor.run.from ||
+      entry.run.to !== anchor.run.to ||
+      entry.run.text !== anchor.run.text
     )
       continue;
-    const rect = textRect(node);
+    const rect = textRect(entry.node);
     if (rect.width > 0 && rect.height > 0) rects.push(rect);
   }
   if (rects.length === 0) return null;

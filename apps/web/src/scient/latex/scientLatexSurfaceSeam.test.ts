@@ -32,11 +32,11 @@ function declaredPropNames(): ReadonlyArray<string> {
 }
 
 describe("Scient LaTeX file-preview seam", () => {
-  it("keeps asynchronous diagnostics out of the visual viewport's layout", () => {
-    expect(surfaceSource).toContain("data-latex-layout={mode}");
-    expect(surfaceStyles).toMatch(
-      /\[data-latex-layout="visual"\] > \.scient-latex-diagnostics \{\s*position: absolute;/u,
+  it("does not mount collapsed diagnostics over the Visual document", () => {
+    expect(surfaceSource).toContain(
+      'diagnostics.length > 0 && (mode !== "visual" || diagnosticsOpen)',
     );
+    expect(surfaceSource).toContain("onClick={() => setDiagnosticsOpen(true)}");
   });
   it("lazily mounts the surface for LaTeX paths only", () => {
     expect(panelSource).toContain('import("~/scient/latex/ScientLatexSurface")');
@@ -56,6 +56,15 @@ describe("Scient LaTeX file-preview seam", () => {
       "props.onLatexPresentationRequestHandled(props.relativePath, request)",
     );
     expect(surfaceSource).not.toMatch(/persist\([^)]*request\.mode/u);
+  });
+
+  it("finishes an active Visual transaction before a source reveal can unmount it", () => {
+    expect(surfaceSource).toMatch(
+      /const visualRevealNeedsFinish =[\s\S]*?useLayoutEffect\(\(\) => \{\s*if \(!visualRevealNeedsFinish\) return;\s*finishVisualEditingRef\.current\?\.\(\);\s*setFinishedVisualRevealRequestId\(revealRequestId\);/u,
+    );
+    expect(surfaceSource).toContain(
+      "const revealPending = revealRequested && !visualRevealNeedsFinish;",
+    );
   });
 
   it("opens successful agent builds on the resolved LaTeX root surface", () => {
@@ -93,6 +102,29 @@ describe("Scient LaTeX file-preview seam", () => {
     expect(surfaceSource).not.toMatch(/useProjectFileQuery/u);
     expect(surfaceSource.match(/useFileSaveCoordinator\(/gu)).toHaveLength(1);
     expect(surfaceSource).toContain("onContentsChange={handleContentsChange}");
+  });
+
+  it("routes the applied save-resolution action through the Visual hold policy", () => {
+    expect(surfaceSource).toContain("visualStateAfterSaveResolution(");
+    expect(surfaceSource).toContain("onSaveResolutionApplied: handleSaveResolutionApplied");
+    expect(surfaceSource).toContain("failedContents === sourceRef.current && !revisionConflict");
+    expect(surfaceSource).toMatch(
+      /action === "discard"[\s\S]*?discardVisualDraft\(visualDraftKey,[\s\S]*?visualPendingSourceRef\.current[\s\S]*?visualPendingBaseRevisionRef\.current/u,
+    );
+    expect(surfaceSource).not.toMatch(
+      /useFileSaveCoordinator\(\{[\s\S]*?onSaveResolutionApplied: props\.onSaveResolutionApplied/u,
+    );
+  });
+
+  it("owns one Visual journal base across intermediate save confirmations", () => {
+    expect(surfaceSource).toContain(
+      "visualPendingBaseRevisionRef.current ?? visualConfirmedRevisionRef.current",
+    );
+    expect(surfaceSource).toContain(
+      "visualPendingBaseRevisionRef.current = visualConfirmedRevisionRef.current",
+    );
+    expect(surfaceSource).toContain("visualConfirmedRevisionRef.current = revision");
+    expect(surfaceSource).toContain("getDraftBaseRevision={getVisualDraftBaseRevision}");
   });
 
   it("passes truthful source and current PDF page context to forward SyncTeX", () => {

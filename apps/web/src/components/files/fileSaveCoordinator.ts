@@ -13,8 +13,10 @@ export interface FileSaveCoordinatorOptions<A, E> {
   readonly onPendingChange: (pending: boolean) => void;
   readonly onConfirmed: (contents: string, value: A) => void;
   readonly onFailure?: (contents: string, result: AtomCommandFailure<A, E>) => void;
-  readonly onResolutionApplied?: () => void;
+  readonly onResolutionApplied?: (action: FileSaveResolutionAction) => void;
 }
+
+export type FileSaveResolutionAction = "discard" | "retry";
 
 type PendingResolution =
   | { readonly _tag: "discard"; readonly revision: string }
@@ -27,6 +29,7 @@ export class FileSaveCoordinator<A = unknown, E = unknown> {
   private confirmedEditRevision = 0;
   private lastChangeAt = 0;
   private saving = false;
+  private suspended = false;
   private disposed = false;
   private pendingResolution: PendingResolution | null = null;
   private confirmedFileRevision: string;
@@ -41,7 +44,24 @@ export class FileSaveCoordinator<A = unknown, E = unknown> {
     this.latestRevision += 1;
     this.lastChangeAt = Date.now();
     this.options.onPendingChange(true);
-    this.schedule(this.options.debounceMs);
+    if (!this.suspended) this.schedule(this.options.debounceMs);
+  }
+
+  /**
+   * Hold workspace persistence while a higher-level editing transaction is
+   * still open. Changes remain pending and `dispose()` still flushes them; a
+   * normal resume observes the original debounce rather than dropping or
+   * duplicating the latest buffer.
+   */
+  setSuspended(suspended: boolean): void {
+    if (this.disposed || this.suspended === suspended) return;
+    this.suspended = suspended;
+    if (suspended) {
+      this.clearTimer();
+      return;
+    }
+    if (this.latestRevision === this.confirmedEditRevision || this.saving) return;
+    this.schedule(Math.max(0, this.options.debounceMs - (Date.now() - this.lastChangeAt)));
   }
 
   dispose(): void {
@@ -83,15 +103,16 @@ export class FileSaveCoordinator<A = unknown, E = unknown> {
     if (resolution._tag === "discard") {
       this.confirmedEditRevision = this.latestRevision;
       this.options.onPendingChange(false);
-      this.options.onResolutionApplied?.();
+      this.options.onResolutionApplied?.(resolution._tag);
       return;
     }
     this.schedule(0);
-    this.options.onResolutionApplied?.();
+    this.options.onResolutionApplied?.(resolution._tag);
   }
 
   private schedule(delay: number): void {
     this.clearTimer();
+    if (this.suspended && !this.disposed) return;
     this.timer = setTimeout(() => {
       this.timer = null;
       void this.persistLatest();
@@ -105,7 +126,12 @@ export class FileSaveCoordinator<A = unknown, E = unknown> {
   }
 
   private async persistLatest(): Promise<void> {
-    if (this.saving || this.latestRevision === this.confirmedEditRevision) return;
+    if (
+      this.saving ||
+      this.latestRevision === this.confirmedEditRevision ||
+      (this.suspended && !this.disposed)
+    )
+      return;
 
     this.saving = true;
     const contents = this.latestContents;

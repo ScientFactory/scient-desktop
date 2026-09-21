@@ -6,7 +6,7 @@ import type { FileSaveResolution } from "~/scient/fileSurfaces/useWorkspaceFileR
 import { projectEnvironment } from "~/state/projects";
 import { useAtomCommand } from "~/state/use-atom-command";
 
-import { FileSaveCoordinator } from "./fileSaveCoordinator";
+import { FileSaveCoordinator, type FileSaveResolutionAction } from "./fileSaveCoordinator";
 import { confirmProjectFileQueryData } from "./projectFilesQueryState";
 
 const FILE_SAVE_DEBOUNCE_MS = 500;
@@ -18,9 +18,9 @@ interface FileSaveOptions {
   relativePath: string;
   onPendingChange: (relativePath: string, pending: boolean) => void;
   revision: string;
-  onSaveFailure: (relativePath: string, error: unknown) => void;
+  onSaveFailure: (relativePath: string, error: unknown, contents?: string) => void;
   onSaveConfirmed: (relativePath: string, contents: string, revision: string) => void;
-  onSaveResolutionApplied: () => void;
+  onSaveResolutionApplied: (action: FileSaveResolutionAction) => void;
   saveResolution: FileSaveResolution | null;
 }
 
@@ -35,7 +35,7 @@ export function useFileSaveCoordinator({
   onSaveConfirmed,
   onSaveResolutionApplied,
   saveResolution,
-}: FileSaveOptions): Pick<FileSaveCoordinator, "change"> {
+}: FileSaveOptions): Pick<FileSaveCoordinator, "change" | "setSuspended"> {
   const writeFile = useAtomCommand(projectEnvironment.writeFile);
   const latestRevision = useRef(revision);
   useEffect(() => {
@@ -46,11 +46,16 @@ export function useFileSaveCoordinator({
       createRef<
         Pick<
           FileSaveCoordinator,
-          "change" | "syncConfirmedFileRevision" | "discardPending" | "retryPending"
+          | "change"
+          | "setSuspended"
+          | "syncConfirmedFileRevision"
+          | "discardPending"
+          | "retryPending"
         >
       >();
     return {
       change: (contents: string) => coordinatorRef.current?.change(contents),
+      setSuspended: (suspended: boolean) => coordinatorRef.current?.setSuspended(suspended),
       syncRevision: (value: string) => coordinatorRef.current?.syncConfirmedFileRevision(value),
       resolve: (resolution: FileSaveResolution) => {
         if (resolution.action === "discard")
@@ -78,8 +83,8 @@ export function useFileSaveCoordinator({
             );
             onSaveConfirmed(relativePath, confirmedContents, result.revision);
           },
-          onFailure: (_contents, result) =>
-            onSaveFailure(relativePath, squashAtomCommandFailure(result)),
+          onFailure: (contents, result) =>
+            onSaveFailure(relativePath, squashAtomCommandFailure(result), contents),
           onResolutionApplied: onSaveResolutionApplied,
         });
         coordinatorRef.current = coordinator;

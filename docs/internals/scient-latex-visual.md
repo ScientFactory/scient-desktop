@@ -48,12 +48,28 @@ external editor later requires its own license and dependency review.
 1. `LatexBuildService` hashes known workspace dependencies immediately before
    invoking the engine and compares them with the after-build evidence.
    Only a successful non-truncated, unchanged dependency set supplies
-   `visualSourceRevisions`. New dependencies disable visual mapping until a
-   subsequent compile has observed them on both sides. Restored old artifacts
-   do not manufacture this evidence.
+   `visualSourceRevisions`. Before every engine invocation the prior candidate
+   PDF, compressed and plain SyncTeX indexes, and dependency recorder are
+   removed; a cleanup failure stops before compilation, so no run can inherit
+   an earlier run's proof. A complete recorder must name the actual root. If it
+   discovers new inputs or a known input changes during compilation, the same
+   production performs one bounded stabilization pass. A second concurrent
+   change fails that production and leaves the last verified PDF in place
+   rather than blessing an uncertain one. Both latexmk's `.fls` recorder and
+   Tectonic's `--keep-intermediates --makefile-rules` output feed this boundary.
+   Missing or incomplete recorder output keeps the PDF readable but Visual
+   conservatively read-only. The source identities
+   are encoded before publication as a bounded revision attachment. The PDF,
+   artifact metadata, and Visual proof are fsynced in one staging directory and
+   renamed into the immutable revision before its binding commits, so they share
+   one visibility and retention boundary. Restart restoration occurs only after
+   ordinary build evidence proves that exact revision still describes the
+   workspace; missing, corrupt, or mismatched Visual evidence fails closed
+   without discrediting the readable PDF.
 2. The normal authorized build-status contract transports those source byte
    identities with the published artifact revision. No new write authority or
-   filesystem access is granted to the renderer.
+   filesystem access is granted to the renderer, and a revision can never
+   borrow edit permission from a different PDF.
 3. The reader exposes an interaction host with actual loaded revision,
    viewport container and PDF-coordinate conversion. Document lifetime is
    separate from revision-request lifetime: asset callbacks do not reload the
@@ -61,13 +77,24 @@ external editor later requires its own license and dependency review.
    invisible staging surface prepares the next PDF while the old surface stays
    interactive. Publication waits for visible canvases and text layers plus two
    stable animation frames, not merely `pagesinit`. Superseded stages are
-   cancelled; failed stages leave the old presentation intact. Loaded URL and
-   revision checks prevent old geometry authorizing new source edits or sync.
-4. A click measures the invisible PDF text layer and asks the existing
-   revision-scoped inverse SyncTeX endpoint for the source line. Blank space
-   resolves geometrically to the nearest unambiguous line on the same page;
-   an ambiguous column gutter fails closed. The initial client source must
-   match the build identity.
+   cancelled; failed stages leave the old presentation intact. At the final
+   paint fence, Visual also rechecks that no edit is active and that the
+   candidate's source digest is the exact current editor buffer. A candidate
+   invalidated while staging is disposed, so A can remain interactive until
+   exact revision C replaces it without an A-to-B-to-C flash. The first readable
+   PDF is always admitted even when Visual evidence is unavailable, leaving
+   legacy, truncated, or unsupported documents visible but read-only. Loaded
+   URL and revision checks prevent old geometry authorizing new source edits or
+   sync.
+4. When a revision's PDF.js text layer appears, the client builds a local,
+   revision-pinned edit manifest before interaction. Only an upright LTR token
+   whose normalized text occurs exactly once in the bounded source projection
+   receives an editing affordance. A click is therefore a synchronous lookup;
+   it never invokes SyncTeX, starts a build, or displays a refusal. Blank space
+   resolves only to a nearby already-proven token on the same page, and an
+   ambiguous gutter fails quietly. The initial client source must match the
+   build identity. SyncTeX remains the navigation mechanism for Split mode,
+   not the authorization mechanism for Visual writes.
 5. `packages/shared/src/latexVisual.ts` projects supported literal prose runs
    and keeps display-to-source boundaries. Normalization is comparison-only.
    Ligatures, escaped punctuation, whitespace and basic TeX punctuation can be
@@ -77,24 +104,37 @@ external editor later requires its own license and dependency review.
    masks only that prose region while active. The resulting minimal source
    splice preserves unrelated syntax, comments and whitespace. Pasted TeX control
    characters are escaped as literal prose, not executed as new commands.
-   Globally unique local matches can buffer keystrokes while SyncTeX is in
-   flight, but cannot write until it agrees. Rejected or interrupted drafts
-   survive mode/tab switches in an environment/file-keyed in-memory recovery
-   store. This store is not crash-durable and does not claim to be saved source.
+   A browser-local, source-aware recovery record is updated before the source
+   debounce and remains until the matching file revision is confirmed saved.
+   An unmount, renderer restart, or crash between optimistic buffer acceptance
+   and disk persistence therefore cannot silently drop input. It does not
+   masquerade as saved source: a rejected compare-and-set or failed save is
+   shown as explicit recovery text.
 7. Source and Visual share the existing `useFileSaveCoordinator`, with a
    150 ms save debounce, optimistic source cache and expected-revision writes.
-   Visual also compare-and-sets against the current in-memory source. Saves
-   replace one 1.5-second checkpoint timer instead of compiling. An active
-   Visual transaction suspends that timer and status-currentness polling;
-   leaving the edit requests the latest revision once. Explicit Rebuild remains
-   an override. Failures retain the last successful artifact and existing
-   conflict-resolution UI.
+   Visual also compare-and-sets against the current in-memory source. Keystrokes
+   change only the active draft. After 700 ms of quiet input, one minimal source
+   checkpoint enters the normal save owner. Workspace persistence and
+   compilation are both suspended for the entire document editing transaction;
+   the optimistic source buffer and durable recovery journal remain current in
+   the meantime. Blur and movement between prose blocks are not session
+   boundaries. Escape, an intentional mode command, or pointing outside the PDF
+   flushes the last source checkpoint and resumes the revision-checked save.
+   The build hold is released only when that exact final buffer is confirmed on
+   disk, rather than after a timing guess; the normal 1.5-second build window
+   then coalesces the confirmation into one compile of the latest source.
+   Manual Rebuild is disabled while the transaction owns uncommitted input.
+   A conflict keeps the hold through Retry until the exact source is confirmed;
+   Discard adopts the authoritative disk state and releases every hold not
+   owned by a still-active input. Failures retain the last successful artifact,
+   durable recovery, and the existing conflict-resolution UI.
 8. A mapping session pins the source and SyncTeX identity of the displayed PDF.
    Minimal Visual splices are recorded as positional changes, allowing later
    clicks on the stable page to rebase into newer source without compiling
    first. An external source replacement invalidates the session rather than
    guessing.
-9. Prepared output and its interaction host are published together before the
+9. Prepared output and its interaction host — including the revision identity
+   that actually owns the painted container — are published together before the
    next paint; only then is the old runtime disposed. Preparation follows live
    scrolling and zooming instead of imposing an earlier viewport snapshot.
    An optional source-neutral anchor provider lets visual editing keep a
@@ -103,7 +143,10 @@ external editor later requires its own license and dependency review.
    distant restructuring falls back to preserved scroll coordinates. Status
    notices do not alter viewport dimensions. The completed editing transaction
    is anchored through publication so genuine TeX reflow does not reset the
-   viewport to an unrelated page.
+   viewport to an unrelated page. While a successor is staged, the old painted
+   revision stays ready and editable; the requested revision cannot disable or
+   authorize its interaction. Collapsed diagnostics are not mounted over the
+   page, and an explicitly opened diagnostic panel participates in normal layout.
 
 ## Supported and explicitly unsupported
 

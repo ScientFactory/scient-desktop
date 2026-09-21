@@ -36,6 +36,20 @@ describe("Scient PDF reader source seam", () => {
     expect(source).toContain("viewportSession.flush()");
   });
 
+  it("binds interaction geometry to the actually presented revision during staged updates", () => {
+    const readerSource = NodeFS.readFileSync(
+      new URL("./ScientPdfReader.tsx", import.meta.url),
+      "utf8",
+    );
+
+    expect(readerSource).toContain("container: reader.presentation?.container ?? null");
+    expect(readerSource).toContain("revisionId: reader.presentation?.revisionId ?? null");
+    expect(readerSource).toContain("ready: reader.presentation !== null");
+    expect(readerSource).not.toContain(
+      'revisionId: props.source._tag === "generated-pdf" ? props.source.revisionId : null',
+    );
+  });
+
   it("reconciles page and rotation geometry against the current pane width", () => {
     const source = NodeFS.readFileSync(new URL("./useScientPdfReader.ts", import.meta.url), "utf8");
 

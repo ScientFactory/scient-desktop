@@ -18,7 +18,17 @@ import { ChevronRight, CircleAlert, LoaderCircle, RotateCw, TriangleAlert, X } f
 import * as Schema from "effect/Schema";
 import * as Option from "effect/Option";
 import { AsyncResult, Atom } from "effect/unstable/reactivity";
-import { lazy, memo, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  lazy,
+  memo,
+  Suspense,
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 
 import { EditableFileEditor } from "~/components/files/FilePreviewPanel";
 import { useFileSaveCoordinator } from "~/components/files/useFileSaveCoordinator";
@@ -39,6 +49,7 @@ import type {
   PdfSyncNavigation,
   PdfInteractionHost,
 } from "~/scient/pdf/ScientPdfReader";
+import type { RequestedPdfPresentation } from "~/scient/pdf/useScientPdfReader";
 import { ScientTooltip } from "~/scient/presentation/ScientTooltip";
 
 import { documentBindingChanges } from "./bindingChanges";
@@ -74,6 +85,9 @@ import {
   type LatexViewerState,
   type ScientLatexPreviewMode,
 } from "./scientLatexSurfaceModel";
+import { confirmVisualDraft, discardVisualDraft } from "./visualDrafts";
+import { canPublishVisualPdf, useLatexSourceIdentity } from "./visualPdfPublication";
+import { visualStateAfterSaveResolution } from "./visualSaveResolution";
 
 import "./scient-latex.css";
 
@@ -323,6 +337,7 @@ function LatexReadOnlyHalf(props: {
  * none of that reaches the PDF reader.
  */
 interface LatexViewerPaneProps {
+  readonly canPublishPresentation?: (candidate: RequestedPdfPresentation) => boolean;
   readonly renderInteraction?: (host: PdfInteractionHost) => React.ReactNode;
   readonly descriptor: LatexPdfDescriptor;
   readonly readerKey: string | null;
@@ -342,6 +357,7 @@ interface LatexViewerPaneProps {
  * news to the PDF reader, and re-rendering it would cost the reader its page.
  */
 const LatexViewerPane = memo(function LatexViewerPane({
+  canPublishPresentation,
   descriptor,
   readerKey,
   viewer,
@@ -361,6 +377,7 @@ const LatexViewerPane = memo(function LatexViewerPane({
           <ScientPdfReader
             key={readerKey}
             source={descriptor}
+            {...(canPublishPresentation === undefined ? {} : { canPublishPresentation })}
             {...(renderInteraction === undefined ? {} : { renderInteraction })}
             {...(syncNavigation === undefined ? {} : { syncNavigation })}
           />
@@ -416,6 +433,7 @@ function sourcePositionFromPointerEvent(
 }
 
 export function ScientLatexSurface(props: ScientLatexSurfaceProps) {
+  const visualDraftKey = `${props.environmentId}\0${props.cwd}\0${props.relativePath}`;
   const target = useMemo<LatexBuildTarget>(
     () => ({
       environmentId: props.environmentId,
@@ -432,17 +450,40 @@ export function ScientLatexSurface(props: ScientLatexSurfaceProps) {
   );
   const [splitFraction, setSplitFraction] = useState(initialSplitFraction);
   const [diagnosticsOpen, setDiagnosticsOpen] = useState(false);
+  const [visualEditing, setVisualEditing] = useState(false);
+  const [visualAwaitingSave, setVisualAwaitingSave] = useState(false);
+  const visualEditingRef = useRef(false);
+  const visualAwaitingSaveRef = useRef(false);
+  const visualBuildHeldRef = useRef(false);
+  const visualPendingSourceRef = useRef<string | null>(null);
+  const visualPendingBaseRevisionRef = useRef<string | null>(null);
+  const visualConfirmedRevisionRef = useRef(props.revision);
+  const finishVisualEditingRef = useRef<(() => void) | null>(null);
+  const sourceRef = useRef(props.contents);
+  sourceRef.current = props.contents;
   const [saveError, setSaveError] = useState<string | null>(null);
   const [syncNotice, setSyncNotice] = useState<LatexSyncNotice | null>(null);
   const [forwardSyncTarget, setForwardSyncTarget] = useState<PdfForwardSyncTarget | null>(null);
   const [handledRevealRequestId, setHandledRevealRequestId] = useState<number | null>(null);
+  const [finishedVisualRevealRequestId, setFinishedVisualRevealRequestId] = useState<number | null>(
+    null,
+  );
   const lastBindingChangeRef = useRef<DocumentBindingChange | null>(null);
   const syncRequestRef = useRef(0);
   const pdfPageRef = useRef<number | null>(null);
+  const updateVisualBuildHold = useCallback(
+    (held: boolean) => {
+      if (visualBuildHeldRef.current === held) return;
+      visualBuildHeldRef.current = held;
+      setLatexBuildSuspended(target, held);
+    },
+    [target],
+  );
 
   useEffect(() => {
     const request = props.latexPresentationRequest;
     if (request === null) return;
+    finishVisualEditingRef.current?.();
     setPreferredMode(request.mode);
     setHandledRevealRequestId(props.revealRequestId);
     props.onLatexPresentationRequestHandled(props.relativePath, request);
@@ -457,41 +498,96 @@ export function ScientLatexSurface(props: ScientLatexSurfaceProps) {
   useEffect(() => {
     lastBindingChangeRef.current = null;
   }, [target]);
+  useLayoutEffect(() => {
+    visualConfirmedRevisionRef.current = props.revision;
+  }, [props.revision]);
   useEffect(() => {
     if (bindingChange === null || lastBindingChangeRef.current === bindingChange) return;
     lastBindingChangeRef.current = bindingChange;
     notifyLatexBindingChange(target);
   }, [bindingChange, target]);
 
-  const { onSaveConfirmed, onSaveFailure, revealLine, revealRequestId } = props;
+  const { onSaveConfirmed, onSaveFailure, onSaveResolutionApplied, revealLine, revealRequestId } =
+    props;
   const handleSaveConfirmed = useCallback(
     (path: string, contents: string, revision: string) => {
       setSaveError(null);
+      visualConfirmedRevisionRef.current = revision;
+      confirmVisualDraft(visualDraftKey, contents);
+      if (visualPendingSourceRef.current === contents) {
+        visualPendingSourceRef.current = null;
+        visualPendingBaseRevisionRef.current = null;
+      }
       onSaveConfirmed(path, contents, revision);
       scheduleLatexRebuild(target);
+      if (contents === sourceRef.current) {
+        visualAwaitingSaveRef.current = false;
+        setVisualAwaitingSave(false);
+        updateVisualBuildHold(visualEditingRef.current);
+      }
     },
-    [onSaveConfirmed, target],
+    [onSaveConfirmed, target, updateVisualBuildHold, visualDraftKey],
   );
   const handleSaveFailure = useCallback(
-    (path: string, error: unknown) => {
+    (path: string, error: unknown, failedContents?: string) => {
       onSaveFailure(path, error);
+      const revisionConflict =
+        isProjectWriteFileError(error) && error.failure === "revision_conflict";
+      // A conflict still has a live Discard/Retry decision. Preserve the
+      // Visual checkpoint and build hold until that decision is applied;
+      // Retry may clear them only through an exact save confirmation.
+      if (failedContents === sourceRef.current && !revisionConflict) {
+        visualAwaitingSaveRef.current = false;
+        setVisualAwaitingSave(false);
+        updateVisualBuildHold(visualEditingRef.current);
+      }
       // A conflicting write is the panel's notice to resolve, and saying it
       // twice would only compete with the buttons that fix it. Anything else —
       // an unreachable environment, a file that turned read-only — has nowhere
       // else to surface.
       setSaveError(
-        isProjectWriteFileError(error) && error.failure === "revision_conflict"
+        revisionConflict
           ? null
           : error instanceof Error
             ? error.message
             : "The file could not be saved.",
       );
     },
-    [onSaveFailure],
+    [onSaveFailure, updateVisualBuildHold],
   );
   const handleInstallToolchain = useCallback(() => {
     requestManagedLatexInstall(target);
   }, [target]);
+  const handleSaveResolutionApplied = useCallback(
+    (action: FileSaveResolution["action"]) => {
+      if (
+        action === "discard" &&
+        visualPendingSourceRef.current !== null &&
+        visualPendingBaseRevisionRef.current !== null
+      ) {
+        discardVisualDraft(visualDraftKey, {
+          source: visualPendingSourceRef.current,
+          baseRevision: visualPendingBaseRevisionRef.current,
+        });
+        visualPendingSourceRef.current = null;
+        visualPendingBaseRevisionRef.current = null;
+      }
+      // The file surface has already adopted/refreshed the authoritative
+      // revision before the coordinator reports an applied Discard.
+      onSaveResolutionApplied();
+      const next = visualStateAfterSaveResolution(
+        {
+          editing: visualEditingRef.current,
+          awaitingSave: visualAwaitingSaveRef.current,
+        },
+        action,
+      );
+      visualAwaitingSaveRef.current = next.awaitingSave;
+      setVisualAwaitingSave(next.awaitingSave);
+      updateVisualBuildHold(next.buildHeld);
+    },
+    [onSaveResolutionApplied, updateVisualBuildHold, visualDraftKey],
+  );
 
   // One persistence owner survives layout switches. Both editors use the same
   // optimistic buffer and revision-checked write queue, never competing saves.
@@ -500,9 +596,8 @@ export function ScientLatexSurface(props: ScientLatexSurfaceProps) {
     debounceMs: 150,
     onSaveConfirmed: handleSaveConfirmed,
     onSaveFailure: handleSaveFailure,
+    onSaveResolutionApplied: handleSaveResolutionApplied,
   });
-  const sourceRef = useRef(props.contents);
-  sourceRef.current = props.contents;
   const handleContentsChange = useCallback(
     (contents: string) => {
       sourceRef.current = contents;
@@ -511,26 +606,52 @@ export function ScientLatexSurface(props: ScientLatexSurfaceProps) {
     },
     [coordinator, props.environmentId, props.cwd, props.relativePath],
   );
+  const getVisualDraftBaseRevision = useCallback(
+    () => visualPendingBaseRevisionRef.current ?? visualConfirmedRevisionRef.current,
+    [],
+  );
   const handleVisualEdit = useCallback(
     (expected: string, next: string) => {
       if (props.truncated || sourceRef.current !== expected || props.saveResolution !== null)
         return false;
+      if (!visualAwaitingSaveRef.current)
+        visualPendingBaseRevisionRef.current = visualConfirmedRevisionRef.current;
+      visualPendingSourceRef.current = next;
+      visualAwaitingSaveRef.current = true;
+      setVisualAwaitingSave(true);
+      updateVisualBuildHold(true);
       handleContentsChange(next);
       return true;
     },
-    [handleContentsChange, props.truncated, props.saveResolution],
+    [handleContentsChange, props.truncated, props.saveResolution, updateVisualBuildHold],
   );
 
   // A reveal asks for a line of source, so a document parked on the PDF shows
   // its source until the reader picks a layout again. The file panel's
   // rendered-markdown branch resolves the same conflict the same way.
-  const revealPending = revealLine !== null && handledRevealRequestId !== revealRequestId;
+  const revealRequested = revealLine !== null && handledRevealRequestId !== revealRequestId;
+  const visualRevealNeedsFinish =
+    revealRequested &&
+    preferredMode === "visual" &&
+    finishedVisualRevealRequestId !== revealRequestId;
+  // A reveal changes the rendered layout to Split. Keep Visual mounted for one
+  // transaction boundary so its layout effect can checkpoint the live
+  // textarea before React removes the interaction layer. This runs before
+  // paint, so the intermediate render is not visible to the user.
+  useLayoutEffect(() => {
+    if (!visualRevealNeedsFinish) return;
+    finishVisualEditingRef.current?.();
+    setFinishedVisualRevealRequestId(revealRequestId);
+  }, [revealRequestId, visualRevealNeedsFinish]);
+  const revealPending = revealRequested && !visualRevealNeedsFinish;
   const mode =
     revealPending && (preferredMode === "pdf" || preferredMode === "visual")
       ? "split"
       : preferredMode;
+  const sourceIdentity = useLatexSourceIdentity(props.contents, mode === "visual");
   const selectMode = useCallback(
     (next: ScientLatexPreviewMode) => {
+      finishVisualEditingRef.current?.();
       setPreferredMode(next);
       setHandledRevealRequestId(revealRequestId);
       persist(LATEX_PREVIEW_MODE_STORAGE_KEY, next, Schema.String);
@@ -688,38 +809,42 @@ export function ScientLatexSurface(props: ScientLatexSurfaceProps) {
   const showEditor = mode === "source" || mode === "split";
   const showViewer = mode !== "source";
 
-  const locateVisualSource = useCallback(
-    async (point: PdfInverseSyncPoint): Promise<number | string> => {
-      if (!build.snapshot || descriptor?._tag !== "generated-pdf")
-        return "Build a current PDF first.";
-      const result = await requestLatexInverseSync(props.environmentId, {
-        workspaceRoot: props.cwd,
-        rootRelativePath: build.snapshot.rootRelativePath,
-        artifactId: descriptor.artifactId,
-        revisionId: descriptor.revisionId,
-        ...point,
-      });
-      if (result._tag === "unavailable") return result.message;
-      if (result.relativePath !== props.relativePath)
-        return `This text belongs to ${result.relativePath}. Open that source file to edit it visually.`;
-      return result.line;
-    },
-    [build.snapshot, descriptor, props.cwd, props.environmentId, props.relativePath],
+  const canPublishPresentation = useCallback(
+    (candidate: RequestedPdfPresentation) =>
+      mode !== "visual" ||
+      canPublishVisualPdf({
+        candidateRevisionId: candidate.revisionId,
+        editing: visualEditingRef.current || visualEditing,
+        relativePath: props.relativePath,
+        snapshot: build.snapshot,
+        source: sourceRef.current,
+        sourceIdentity,
+        truncated: props.truncated,
+      }),
+    [build.snapshot, mode, props.relativePath, props.truncated, sourceIdentity, visualEditing],
   );
+
   const handleVisualEditingChange = useCallback(
-    (editing: boolean) => setLatexBuildSuspended(target, editing),
-    [target],
+    (editing: boolean) => {
+      visualEditingRef.current = editing;
+      setVisualEditing(editing);
+      coordinator.setSuspended(editing);
+      updateVisualBuildHold(editing || visualAwaitingSaveRef.current);
+    },
+    [coordinator, updateVisualBuildHold],
   );
+  const registerFinishVisualEditing = useCallback((finish: (() => void) | null) => {
+    finishVisualEditingRef.current = finish;
+  }, []);
   const renderVisualInteraction = useCallback(
     (host: PdfInteractionHost) => (
       <LatexVisualInteraction
-        key={`${props.environmentId}\0${props.cwd}\0${props.relativePath}`}
-        draftKey={`${props.environmentId}\0${props.cwd}\0${props.relativePath}`}
+        key={visualDraftKey}
+        draftKey={visualDraftKey}
         host={host}
-        failureMessage={
-          saveError ?? (build.snapshot?.state === "failed" ? build.snapshot.failureSummary : null)
-        }
         source={props.contents}
+        fileRevision={props.revision}
+        getDraftBaseRevision={getVisualDraftBaseRevision}
         sourceRevision={build.snapshot?.visualSourceRevisions?.[props.relativePath] ?? null}
         ready={
           !props.truncated &&
@@ -729,24 +854,24 @@ export function ScientLatexSurface(props: ScientLatexSurfaceProps) {
           descriptor.bindingStatus === "current"
         }
         revisionId={descriptorRevision}
-        locate={locateVisualSource}
         onEdit={handleVisualEdit}
         onEditingChange={handleVisualEditingChange}
+        registerFinishEditing={registerFinishVisualEditing}
       />
     ),
     [
       props.contents,
-      saveError,
-      props.environmentId,
-      props.cwd,
       props.relativePath,
       props.truncated,
+      props.revision,
       build.snapshot,
       descriptor,
       descriptorRevision,
-      locateVisualSource,
       handleVisualEdit,
       handleVisualEditingChange,
+      getVisualDraftBaseRevision,
+      registerFinishVisualEditing,
+      visualDraftKey,
     ],
   );
 
@@ -802,14 +927,24 @@ export function ScientLatexSurface(props: ScientLatexSurfaceProps) {
             </ScientTooltip>
           )}
           {status.errorCount > 0 ? (
-            <span className="scient-latex-chip scient-latex-chip-error">
+            <button
+              type="button"
+              className="scient-latex-chip scient-latex-chip-error"
+              aria-expanded={diagnosticsOpen}
+              onClick={() => setDiagnosticsOpen(true)}
+            >
               {status.errorCount} {status.errorCount === 1 ? "error" : "errors"}
-            </span>
+            </button>
           ) : null}
           {status.warningCount > 0 ? (
-            <span className="scient-latex-chip scient-latex-chip-warning">
+            <button
+              type="button"
+              className="scient-latex-chip scient-latex-chip-warning"
+              aria-expanded={diagnosticsOpen}
+              onClick={() => setDiagnosticsOpen(true)}
+            >
               {status.warningCount} {status.warningCount === 1 ? "warning" : "warnings"}
-            </span>
+            </button>
           ) : null}
           {status.stale ? (
             status.staleReason ? (
@@ -852,7 +987,7 @@ export function ScientLatexSurface(props: ScientLatexSurfaceProps) {
           <button
             type="button"
             className="scient-latex-action"
-            disabled={!status.canRebuild}
+            disabled={!status.canRebuild || visualEditing || visualAwaitingSave}
             // By hand is the one rebuild that re-probes: a TeX installed while
             // this document sat here has no other way to be noticed.
             onClick={() => requestLatexRebuild(target, { reprobeToolchain: true })}
@@ -863,7 +998,7 @@ export function ScientLatexSurface(props: ScientLatexSurfaceProps) {
         </div>
       </div>
 
-      {diagnostics.length > 0 ? (
+      {diagnostics.length > 0 && (mode !== "visual" || diagnosticsOpen) ? (
         <div className="scient-latex-diagnostics">
           <button
             type="button"
@@ -963,7 +1098,9 @@ export function ScientLatexSurface(props: ScientLatexSurfaceProps) {
               managedInstall={build.managedInstall}
               installRequesting={build.installRequesting}
               onInstall={handleInstallToolchain}
-              {...(mode === "visual" ? { renderInteraction: renderVisualInteraction } : {})}
+              {...(mode === "visual"
+                ? { canPublishPresentation, renderInteraction: renderVisualInteraction }
+                : {})}
               {...(syncNavigation === undefined ? {} : { syncNavigation })}
             />
           </div>

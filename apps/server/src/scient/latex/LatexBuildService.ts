@@ -24,7 +24,10 @@
 import * as NodeCrypto from "node:crypto";
 
 import {
+  type ArtifactId,
   ArtifactProducerId,
+  type ArtifactRevisionId,
+  type DocumentArtifactBinding,
   LogicalDocumentKey,
   ProducingOperationId,
   type PdfSourceDescriptor,
@@ -64,13 +67,16 @@ import * as LocalExecutionProcess from "../execution/LocalExecutionProcess.ts";
 import { LatexPackageInstaller } from "./LatexPackageInstaller.ts";
 import { LatexToolchain } from "./LatexToolchain.ts";
 import { LatexSyncTex } from "./LatexSyncTex.ts";
-import { parseLatexRecorderManifest } from "./flsManifest.ts";
+import { LatexVisualRevisionStore } from "./LatexVisualRevisionStore.ts";
+import { parseLatexRecorderManifest, parseTectonicMakefileRules } from "./flsManifest.ts";
 import {
   EMPTY_EVIDENCE_MARKS,
   collectLatexBuildEvidence,
-  decodeLatexBuildEvidence,
-  encodeLatexBuildEvidence,
+  decodePublishedLatexBuildEvidence,
+  encodePublishedLatexBuildEvidence,
+  latexBuildInputsChangedDuringCompile,
   latexEvidenceMatches,
+  latexVisualNeedsRequalification,
   latexVisualSourceRevisions,
   probeLatexEvidence,
   UNVERIFIED_FILE_DIGEST,
@@ -173,6 +179,8 @@ const NO_TOOLCHAIN_SUMMARY =
 const TIMEOUT_SUMMARY = "Build timed out.";
 const CANCELLED_SUMMARY = "Build cancelled.";
 const MISSING_PDF_SUMMARY = "The LaTeX engine reported success but produced no PDF.";
+const SOURCES_CHANGED_DURING_BUILD_SUMMARY =
+  "LaTeX sources changed while the document was compiling. Rebuild after the edits settle.";
 const UNEXPECTED_FAILURE_SUMMARY = "The LaTeX build could not be completed.";
 
 const ACTIVE_STATES: ReadonlySet<ScientLatexBuildState> = new Set([
@@ -271,6 +279,11 @@ interface LatexBuildEntry {
  * that is not there.
  */
 interface LatexEvidenceCacheEntry {
+  /** Exact immutable PDF revision this evidence is allowed to vouch for. */
+  readonly revision: {
+    readonly artifactId: ArtifactId;
+    readonly revisionId: ArtifactRevisionId;
+  } | null;
   readonly evidence: LatexBuildEvidence | null;
   readonly marks: LatexEvidenceMarks;
   /** Paths whose readable-after-unverified transition already caused one rebuild. */
@@ -421,6 +434,7 @@ export const make = Effect.gen(function* () {
   const store = yield* GeneratedDocumentStore;
   const toolchainProbe = yield* LatexToolchain;
   const syncTex = yield* LatexSyncTex;
+  const visualRevisions = yield* LatexVisualRevisionStore;
   const packageInstaller = yield* LatexPackageInstaller;
   const processes = yield* LocalExecutionProcess.ExecutionProcess;
   const hostEnvironment = yield* HostProcessEnvironment;
@@ -506,6 +520,31 @@ export const make = Effect.gen(function* () {
         (entry) => entry === null || entry.generation !== generation || entry.cancelRequested,
       ),
     );
+
+  const readLiveDescriptor = (key: string) =>
+    store
+      .getDescriptor(LogicalDocumentKey.make(key))
+      .pipe(Effect.orElseSucceed((): PdfSourceDescriptor | null => null));
+
+  /**
+   * A descriptor captured from `publishPdf` is current only while the binding
+   * still names that exact immutable revision *and* generation. Comparing the
+   * generation matters while a newer producer is building over the same PDF:
+   * the active revision has not changed yet, but ownership already has.
+   */
+  const isExactLiveDescriptor = (
+    expected: PdfSourceDescriptor | null,
+    live: PdfSourceDescriptor | null,
+  ): boolean =>
+    expected?._tag === "generated-pdf" &&
+    expected.bindingStatus === "current" &&
+    live?._tag === "generated-pdf" &&
+    live.bindingStatus === "current" &&
+    live.authority === expected.authority &&
+    live.logicalDocumentKey === expected.logicalDocumentKey &&
+    live.artifactId === expected.artifactId &&
+    live.revisionId === expected.revisionId &&
+    live.bindingGeneration === expected.bindingGeneration;
 
   const snapshotOf = (
     entry: LatexBuildEntry,
@@ -610,6 +649,22 @@ export const make = Effect.gen(function* () {
       ),
     );
 
+  /**
+   * Publication and cancellation linearize at the document-store binding.
+   * Once this exact production has committed a revision, an abandon is an
+   * idempotent no-op and cancellation arrived too late to truthfully call the
+   * build cancelled. A different attempt in the binding means this build lost.
+   */
+  const productionHasPublished = (
+    binding: DocumentArtifactBinding,
+    production: GeneratedDocumentProductionHandle,
+  ) =>
+    binding.generation === production.generation &&
+    binding.latestAttempt.generation === production.generation &&
+    binding.latestAttempt.operationId === production.operationId &&
+    binding.latestAttempt.producerId === production.producerId &&
+    binding.latestAttempt.state === "succeeded";
+
   const recordFailure = (input: {
     readonly key: string;
     readonly generation: number;
@@ -692,10 +747,29 @@ export const make = Effect.gen(function* () {
     readonly managedToolchain: boolean;
     readonly title: string;
     readonly diagnostics: ReadonlyArray<ScientLatexDiagnostic>;
+    readonly evidence: LatexBuildEvidence;
     readonly visualSourceRevisions: Readonly<Record<string, string>>;
   }) =>
     Effect.gen(function* () {
       const bytes = yield* fileSystem.readFile(input.pdfPath);
+      const visualAttachment = yield* visualRevisions
+        .prepare({
+          workspaceRoot: input.workspaceRoot,
+          rootRelativePath: input.rootRelativePath,
+          sourceRevisions: input.visualSourceRevisions,
+        })
+        .pipe(
+          Effect.map(Option.some),
+          Effect.catch((error) =>
+            Effect.logWarning("latex visual revision manifest could not be prepared", {
+              logicalDocumentKey: input.key,
+              error,
+            }).pipe(Effect.as(Option.none())),
+          ),
+        );
+      const durableVisualSourceRevisions = Option.isSome(visualAttachment)
+        ? input.visualSourceRevisions
+        : {};
       yield* updateOwnEntry(input.key, input.generation, (entry) => ({
         ...entry,
         state: "publishing",
@@ -706,6 +780,9 @@ export const make = Effect.gen(function* () {
           bytes,
           title: input.title,
           provenanceKind: "document-build",
+          ...(Option.isSome(visualAttachment)
+            ? { revisionAttachments: [visualAttachment.value] }
+            : {}),
         })
         .pipe(
           Effect.flatMap((descriptor) =>
@@ -733,10 +810,46 @@ export const make = Effect.gen(function* () {
                     }),
                   ),
                 );
+              let liveDescriptor = yield* readLiveDescriptor(input.key);
+              if (!isExactLiveDescriptor(descriptor, liveDescriptor)) {
+                yield* finishBuild(input.key, input.generation, (entry) => ({
+                  ...entry,
+                  state: "cancelled",
+                  descriptor: liveDescriptor ?? entry.descriptor,
+                  diagnostics: input.diagnostics,
+                  failureSummary: null,
+                }));
+                return;
+              }
+              // The source evidence becomes durable against the exact revision
+              // before `succeeded` can be observed. If this best-effort cache
+              // write fails, its in-memory identity remains exact and a restart
+              // rejects any older evidence file whose revision does not match.
+              yield* persistBuildEvidence({
+                key: input.key,
+                artifactId: descriptor.artifactId,
+                revisionId: descriptor.revisionId,
+                evidence: input.evidence,
+              });
+              // Evidence persistence is outside the document-store lock. A
+              // producer may have claimed the binding while it ran, so verify
+              // ownership again before exposing the terminal success state.
+              liveDescriptor = yield* readLiveDescriptor(input.key);
+              if (!isExactLiveDescriptor(descriptor, liveDescriptor)) {
+                yield* finishBuild(input.key, input.generation, (entry) => ({
+                  ...entry,
+                  state: "cancelled",
+                  descriptor: liveDescriptor ?? entry.descriptor,
+                  diagnostics: input.diagnostics,
+                  failureSummary: null,
+                }));
+                return;
+              }
               yield* finishBuild(input.key, input.generation, (entry) => ({
                 ...entry,
                 state: "succeeded",
-                visualSourceRevisions: input.visualSourceRevisions,
+                cancelRequested: false,
+                visualSourceRevisions: durableVisualSourceRevisions,
                 descriptor,
                 // Warnings survive a successful build; they are the point of the log.
                 diagnostics: input.diagnostics,
@@ -888,8 +1001,13 @@ export const make = Effect.gen(function* () {
       const source = yield* fileSystem
         .readFileString(evidenceFilePath(key))
         .pipe(Effect.orElseSucceed(() => null));
+      const published = source === null ? null : decodePublishedLatexBuildEvidence(source);
       const entry: LatexEvidenceCacheEntry = {
-        evidence: source === null ? null : decodeLatexBuildEvidence(source),
+        revision:
+          published === null
+            ? null
+            : { artifactId: published.artifactId, revisionId: published.revisionId },
+        evidence: published?.evidence ?? null,
         marks: EMPTY_EVIDENCE_MARKS,
         reverifiedUnverifiedPaths: new Set(),
       };
@@ -943,25 +1061,41 @@ export const make = Effect.gen(function* () {
     readonly rootAbsolutePath: string;
     readonly compileDirectory: string;
     readonly workDirectory: string;
-    readonly recorderManifestPath: string | null;
+    readonly dependencyManifest: {
+      readonly path: string;
+      readonly format: "fls" | "makefile";
+    };
   }) =>
     Effect.gen(function* () {
+      const parsedManifest = yield* fileSystem.readFileString(input.dependencyManifest.path).pipe(
+        Effect.map((contents) =>
+          input.dependencyManifest.format === "fls"
+            ? parseLatexRecorderManifest({
+                contents,
+                workspaceRoot: input.workspaceRoot,
+                compileDirectory: input.compileDirectory,
+                workDirectory: input.workDirectory,
+              })
+            : parseTectonicMakefileRules({
+                contents,
+                workspaceRoot: input.workspaceRoot,
+                compileDirectory: input.compileDirectory,
+                workDirectory: input.workDirectory,
+              }),
+        ),
+        Effect.orElseSucceed(() => null),
+      );
+      // A complete recorder must name the root that was compiled. Empty,
+      // malformed, truncated, or root-less output cannot prove what this PDF
+      // read, even if it happens to name another workspace file.
       const manifest =
-        input.recorderManifestPath === null
-          ? null
-          : yield* fileSystem.readFileString(input.recorderManifestPath).pipe(
-              Effect.map((contents) =>
-                parseLatexRecorderManifest({
-                  contents,
-                  workspaceRoot: input.workspaceRoot,
-                  compileDirectory: input.compileDirectory,
-                  workDirectory: input.workDirectory,
-                }),
-              ),
-              Effect.orElseSucceed(() => null),
-            );
-      // No recorder output at all — tectonic, or a `.fls` this run did not
-      // write — leaves the preamble scan, which is what there is.
+        parsedManifest !== null &&
+        !parsedManifest.truncated &&
+        parsedManifest.dependencies.includes(input.rootRelativePath)
+          ? parsedManifest
+          : null;
+      // Unusable recorder output leaves the preamble scan, which is useful for
+      // freshness but explicitly incomplete for Visual authorization.
       const dependencies =
         manifest === null
           ? yield* preambleDependencies({
@@ -976,7 +1110,11 @@ export const make = Effect.gen(function* () {
           workspaceRoot: input.workspaceRoot,
           rootRelativePath: input.rootRelativePath,
           dependencies,
-          truncated: manifest?.truncated ?? false,
+          // The fallback scan is intentionally incomplete (no bibliography,
+          // images, or package-discovered inputs), so it may keep ordinary
+          // build-currentness evidence but can never authorize direct Visual
+          // source writes.
+          truncated: manifest?.truncated ?? true,
           nowEpochMs,
         }),
       );
@@ -991,6 +1129,7 @@ export const make = Effect.gen(function* () {
             .map((dependency) => dependency.path),
         );
         return new Map(all).set(input.key, {
+          revision: null,
           evidence: collected.evidence,
           marks: collected.marks,
           reverifiedUnverifiedPaths: stillUnverified,
@@ -1007,27 +1146,32 @@ export const make = Effect.gen(function* () {
    */
   const persistBuildEvidence = (input: {
     readonly key: string;
-    readonly generation: number;
+    readonly artifactId: ArtifactId;
+    readonly revisionId: ArtifactRevisionId;
     readonly evidence: LatexBuildEvidence;
   }) =>
     Effect.gen(function* () {
-      const settled = yield* getEntry(input.key);
-      // A publish that lost the binding race, or a build already replaced, has
-      // nothing to say about what the document currently shows.
-      if (settled === null || settled.generation !== input.generation) return;
-      // The narrow window this accepts: a cancel landing after `publish` won
-      // the binding settles the entry `cancelled`, and abandoning the
-      // production leaves that fresh revision current at its new generation.
-      // So the binding is right, the PDF is right, and the evidence for it is
-      // never written — the document earns one spurious rebuild the first time
-      // it is polled after a restart, and that rebuild records the evidence.
-      // One extra compile in a race a reader caused deliberately is a better
-      // trade than persisting evidence for an entry that did not settle
-      // `succeeded`, which would risk vouching for a PDF that never published.
-      if (settled.state !== "succeeded") return;
+      const published = {
+        schemaVersion: 1 as const,
+        artifactId: input.artifactId,
+        revisionId: input.revisionId,
+        evidence: input.evidence,
+      };
+      // Publish the in-memory identity first. If the cache write fails, this
+      // process can still verify the revision it just produced; after restart,
+      // the older on-disk identity cannot match and therefore fails closed.
+      yield* Ref.update(evidenceRef, (all) => {
+        const current = all.get(input.key);
+        return new Map(all).set(input.key, {
+          revision: { artifactId: input.artifactId, revisionId: input.revisionId },
+          evidence: input.evidence,
+          marks: current?.marks ?? EMPTY_EVIDENCE_MARKS,
+          reverifiedUnverifiedPaths: current?.reverifiedUnverifiedPaths ?? new Set<string>(),
+        });
+      });
       yield* writeFileStringAtomically({
         filePath: evidenceFilePath(input.key),
-        contents: `${encodeLatexBuildEvidence(input.evidence)}\n`,
+        contents: `${encodePublishedLatexBuildEvidence(published)}\n`,
       }).pipe(
         withPlatform,
         Effect.catchCause((cause) =>
@@ -1046,10 +1190,26 @@ export const make = Effect.gen(function* () {
    * PDF anyone can vouch for, so it earns exactly one rebuild — after which
    * there is evidence and this answers on facts.
    */
-  const evidenceIsCurrent = (target: ResolvedLatexTarget) =>
+  const evidenceIsCurrent = (target: ResolvedLatexTarget, descriptor: PdfSourceDescriptor | null) =>
     Effect.gen(function* () {
+      if (descriptor?._tag !== "generated-pdf" || descriptor.bindingStatus !== "current") {
+        return false;
+      }
+      // An in-memory build entry can outlive its claim on the producer-neutral
+      // binding. Never let its captured descriptor/evidence vouch for a
+      // revision another producer has already superseded.
+      if (
+        !isExactLiveDescriptor(descriptor, yield* readLiveDescriptor(target.logicalDocumentKey))
+      ) {
+        return false;
+      }
       const cached = yield* loadEvidence(target.logicalDocumentKey);
-      if (cached.evidence === null) return false;
+      if (
+        cached.evidence === null ||
+        cached.revision?.artifactId !== descriptor.artifactId ||
+        cached.revision.revisionId !== descriptor.revisionId
+      )
+        return false;
       const probe = yield* withPlatform(
         probeLatexEvidence({
           workspaceRoot: target.workspaceRoot,
@@ -1060,6 +1220,7 @@ export const make = Effect.gen(function* () {
       );
       yield* Ref.update(evidenceRef, (all) =>
         new Map(all).set(target.logicalDocumentKey, {
+          revision: cached.revision,
           evidence: cached.evidence,
           marks: probe.marks,
           reverifiedUnverifiedPaths: cached.reverifiedUnverifiedPaths,
@@ -1093,6 +1254,7 @@ export const make = Effect.gen(function* () {
         // than re-entering this path.
         yield* Ref.update(evidenceRef, (all) =>
           new Map(all).set(target.logicalDocumentKey, {
+            revision: cached.revision,
             evidence: cached.evidence,
             marks: recollected.marks,
             reverifiedUnverifiedPaths: cached.reverifiedUnverifiedPaths,
@@ -1110,6 +1272,7 @@ export const make = Effect.gen(function* () {
       ) {
         yield* Ref.update(evidenceRef, (all) =>
           new Map(all).set(target.logicalDocumentKey, {
+            revision: cached.revision,
             evidence: cached.evidence,
             marks: probe.marks,
             reverifiedUnverifiedPaths: new Set(cached.reverifiedUnverifiedPaths).add(changedPath),
@@ -1232,6 +1395,7 @@ export const make = Effect.gen(function* () {
       // Every package this build has already asked for, so one no repository
       // has cannot send the same document round the loop again.
       const attempted = new Set<string>();
+      let visualQualificationRetried = false;
 
       // One fetch for everything the document already says it wants, so the
       // reactive loop below only has to cover what a package pulls in.
@@ -1274,11 +1438,22 @@ export const make = Effect.gen(function* () {
             nowEpochMs: yield* Clock.currentTimeMillis,
           }),
         );
-        // The work directory outlives a single build, so the previous run's PDF
-        // is still sitting at `pdfPath`. Drop it first: afterwards "a PDF is
-        // there" means "this run produced one", so a run that fails cannot be
-        // credited with its predecessor's output.
-        yield* fileSystem.remove(invocation.pdfPath, { force: true }).pipe(Effect.ignoreCause());
+        // The work directory outlives a single build. Drop every run-owned
+        // output before spawning the engine: afterwards a PDF, recorder, or
+        // SyncTeX index can only belong to this exact invocation. Otherwise a
+        // clean exit that omitted one of those files could silently inherit it
+        // from the previous build.
+        for (const outputPath of [
+          invocation.pdfPath,
+          invocation.syncTexPath,
+          invocation.syncTexPath.replace(/\.gz$/iu, ""),
+          invocation.dependencyManifest.path,
+        ]) {
+          // `force` makes absence successful. Any remaining error is a lock,
+          // permission, or storage failure; proceeding would let this run
+          // inherit stale bytes, so it must fail before the engine starts.
+          yield* fileSystem.remove(outputPath, { force: true });
+        }
 
         const outcome = yield* runProcess({
           key,
@@ -1416,8 +1591,39 @@ export const make = Effect.gen(function* () {
           rootAbsolutePath,
           compileDirectory,
           workDirectory,
-          recorderManifestPath: invocation.recorderManifestPath,
+          dependencyManifest: invocation.dependencyManifest,
         });
+        // Evidence collection hashes workspace files and can take long enough
+        // for a cancel or replacement build to win. Never let the superseded
+        // fiber qualify another compile or publish after that boundary.
+        if (yield* isSuperseded(key, generation)) return;
+        if (
+          !visualQualificationRetried &&
+          latexVisualNeedsRequalification(beforeCompile.evidence, evidence)
+        ) {
+          // The recorder found workspace inputs the pre-compile snapshot could
+          // not know yet. Re-run once inside the same production so the exact
+          // dependency set is observed both before and after compilation; do
+          // not publish a permanently read-only intermediate revision.
+          visualQualificationRetried = true;
+          continue;
+        }
+        if (
+          visualQualificationRetried &&
+          latexBuildInputsChangedDuringCompile(beforeCompile.evidence, evidence)
+        ) {
+          // A second pass is the bounded stabilization opportunity. If an
+          // external writer changes a known input again during that pass, no
+          // single source revision can truthfully be attached to its PDF.
+          yield* recordFailure({
+            key,
+            generation,
+            production,
+            summary: SOURCES_CHANGED_DURING_BUILD_SUMMARY,
+            diagnostics,
+          });
+          return;
+        }
         yield* publish({
           key,
           generation,
@@ -1430,9 +1636,9 @@ export const make = Effect.gen(function* () {
           managedToolchain: managedBinDirectory !== null,
           title: documentTitle(entry.rootRelativePath),
           diagnostics,
+          evidence,
           visualSourceRevisions: latexVisualSourceRevisions(beforeCompile.evidence, evidence),
         });
-        yield* persistBuildEvidence({ key, generation, evidence });
         return;
       }
     }).pipe(
@@ -1653,6 +1859,35 @@ export const make = Effect.gen(function* () {
     });
 
   /**
+   * Restores Visual eligibility only after the ordinary source-evidence check
+   * has established that this exact retained PDF still describes the files on
+   * disk. A missing or damaged manifest leaves the PDF usable and Visual
+   * conservatively unavailable.
+   */
+  const restoreVisualSourceRevisions = (
+    target: ResolvedLatexTarget,
+    snapshot: ScientLatexBuildSnapshot,
+  ) =>
+    Effect.gen(function* () {
+      const descriptor = snapshot.descriptor;
+      if (
+        snapshot.state !== "succeeded" ||
+        descriptor?._tag !== "generated-pdf" ||
+        descriptor.bindingStatus !== "current"
+      )
+        return snapshot;
+      const sourceRevisions = yield* visualRevisions.load({
+        artifactId: descriptor.artifactId,
+        revisionId: descriptor.revisionId,
+        workspaceRoot: target.workspaceRoot,
+        rootRelativePath: target.rootRelativePath,
+      });
+      return sourceRevisions === null
+        ? snapshot
+        : { ...snapshot, visualSourceRevisions: sourceRevisions };
+    });
+
+  /**
    * Starts one build pass for an already-resolved document, or coalesces into
    * the one already running. Every caller goes through here — the client's own
    * request and the freshness check that finds a PDF older than its sources —
@@ -1729,14 +1964,16 @@ export const make = Effect.gen(function* () {
         // `succeeded` when the evidence still holds, and otherwise say the
         // document is building — which is true, because it is started here.
         if (restored.state !== "succeeded") return restored;
-        if (yield* evidenceIsCurrent(target)) return restored;
+        if (yield* evidenceIsCurrent(target, restored.descriptor)) {
+          return yield* restoreVisualSourceRevisions(target, restored);
+        }
         return yield* startBuild(target, restored.descriptor);
       }
       // Only a finished, successful entry can be wrong about being current: an
       // active one is already going to answer with its own compile, and a
       // failed one is already telling the reader not to trust what it shows.
       if (entry.state === "succeeded" && !entry.pendingRerun) {
-        if (!(yield* evidenceIsCurrent(target))) {
+        if (!(yield* evidenceIsCurrent(target, entry.descriptor))) {
           return yield* startBuild(target, entry.descriptor);
         }
       }
@@ -1758,16 +1995,34 @@ export const make = Effect.gen(function* () {
       if (entry.production !== null) {
         // A cancel says nothing about the sources, so the production is
         // abandoned, not failed: a published PDF stays current instead of
-        // being staled by a build the reader chose to stop. Safe to run
-        // unconditionally — a handle that lost the binding is a no-op.
-        yield* recordStoreAbandon(entry.production, CANCELLED_SUMMARY);
+        // being staled by a build the reader chose to stop. The returned
+        // binding is also the linearization result: if this exact production
+        // has already published, publication won the store lock and it is too
+        // late to truthfully replace that success with `cancelled`.
+        const binding = yield* store
+          .abandonProduction({ ...entry.production, reason: CANCELLED_SUMMARY })
+          .pipe(
+            Effect.map(Option.some),
+            Effect.catch((error) =>
+              Effect.logWarning("latex build production could not be released", { error }).pipe(
+                Effect.as(Option.none<DocumentArtifactBinding>()),
+              ),
+            ),
+          );
+        if (Option.isSome(binding) && productionHasPublished(binding.value, entry.production)) {
+          const descriptor = yield* readLiveDescriptor(target.logicalDocumentKey);
+          yield* updateOwnEntry(target.logicalDocumentKey, entry.generation, (current) => ({
+            ...current,
+            cancelRequested: false,
+            descriptor: descriptor ?? current.descriptor,
+          }));
+          return yield* readEntrySnapshot(target.logicalDocumentKey);
+        }
       }
       // Same re-read as `recordFailure`: the snapshot this call returns has to
       // carry whatever the store now says about the binding rather than echo
       // the status it was holding before the cancel.
-      const descriptor = yield* store
-        .getDescriptor(LogicalDocumentKey.make(target.logicalDocumentKey))
-        .pipe(Effect.orElseSucceed(() => null));
+      const descriptor = yield* readLiveDescriptor(target.logicalDocumentKey);
       yield* finishBuild(target.logicalDocumentKey, entry.generation, (current) => ({
         ...current,
         state: "cancelled",

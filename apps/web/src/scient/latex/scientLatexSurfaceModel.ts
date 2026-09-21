@@ -334,6 +334,21 @@ function diagnosticsEqual(
   });
 }
 
+function sourceRevisionsEqual(
+  left: Readonly<Record<string, string>> | undefined,
+  right: Readonly<Record<string, string>> | undefined,
+): boolean {
+  if (left === undefined || right === undefined) return left === right;
+  const leftPaths = Object.keys(left);
+  const rightPaths = Object.keys(right);
+  return (
+    leftPaths.length === rightPaths.length &&
+    leftPaths.every(
+      (path) => Object.prototype.hasOwnProperty.call(right, path) && left[path] === right[path],
+    )
+  );
+}
+
 /**
  * Whether two polls of the same document say the same thing. A build that
  * takes ten seconds answers the same snapshot six times over; holding onto
@@ -357,6 +372,7 @@ export function latexSnapshotsEqual(
     stringListsEqual(left.installingPackages, right.installingPackages) &&
     descriptorsEqual(left.descriptor, right.descriptor) &&
     toolchainsEqual(left.toolchain, right.toolchain) &&
+    sourceRevisionsEqual(left.visualSourceRevisions, right.visualSourceRevisions) &&
     diagnosticsEqual(left.diagnostics, right.diagnostics)
   );
 }

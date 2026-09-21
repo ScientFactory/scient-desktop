@@ -48,6 +48,21 @@ export interface PdfReaderState {
   readonly scale: number;
 }
 
+/**
+ * The source identity which owns the currently painted PDF surface. A requested
+ * replacement is deliberately absent here until its canvases and text layers
+ * have passed the presentation fence.
+ */
+export interface RequestedPdfPresentation {
+  readonly documentKey: string;
+  readonly revisionId: string | null;
+  readonly sourceUrl: string;
+}
+
+export interface PresentedPdfSource extends RequestedPdfPresentation {
+  readonly container: HTMLDivElement;
+}
+
 const INITIAL_STATE: PdfReaderState = {
   error: null,
   findCount: { current: 0, total: 0 },
@@ -62,6 +77,8 @@ const INITIAL_STATE: PdfReaderState = {
   scanned: null,
   scale: 1,
 };
+
+const ALWAYS_PUBLISH_PRESENTATION = (_candidate: RequestedPdfPresentation) => true;
 
 function pdfErrorMessage(error: unknown): string {
   if (error instanceof Error) {
@@ -99,26 +116,44 @@ async function detectScannedDocument(
 }
 
 export function useScientPdfReader(input: {
+  /**
+   * Rechecked at the presentation fence. A producer may temporarily hold a
+   * replacement while its owning source is changing without disturbing the
+   * PDF that is already painted.
+   */
+  readonly canPublishPresentation?: (candidate: RequestedPdfPresentation) => boolean;
   readonly documentKey: string;
   readonly onSourceInvalidated: () => void;
+  readonly revisionId: string | null;
   readonly sourceUrl: string;
   readonly container: HTMLDivElement | null;
   readonly viewerElement: HTMLDivElement | null;
 }) {
   const [state, setState] = useState<PdfReaderState>(INITIAL_STATE);
   const runtimeRef = useRef<ScientPdfRuntime | null>(null);
-  const [presentedContainer, setPresentedContainer] = useState<HTMLDivElement | null>(null);
-  const presentationRef = useRef<{ runtime: ScientPdfRuntime; container: HTMLDivElement } | null>(
-    null,
-  );
+  const [presentation, setPresentation] = useState<PresentedPdfSource | null>(null);
+  const presentationRef = useRef<
+    (PresentedPdfSource & { readonly runtime: ScientPdfRuntime }) | null
+  >(null);
   const disposePresentedRef = useRef<(() => void) | null>(null);
   const anchorProviderRef = useRef<(() => PdfPresentationAnchor | null) | null>(null);
   const invalidateRef = useRef(input.onSourceInvalidated);
   invalidateRef.current = input.onSourceInvalidated;
-  const requestedSourceRef = useRef({ documentKey: input.documentKey, url: input.sourceUrl });
+  const canPublishPresentation = input.canPublishPresentation ?? ALWAYS_PUBLISH_PRESENTATION;
+  const canPublishPresentationRef = useRef(canPublishPresentation);
+  const requestedSourceRef = useRef({
+    documentKey: input.documentKey,
+    revisionId: input.revisionId,
+    url: input.sourceUrl,
+  });
   useLayoutEffect(() => {
-    requestedSourceRef.current = { documentKey: input.documentKey, url: input.sourceUrl };
-  }, [input.documentKey, input.sourceUrl]);
+    canPublishPresentationRef.current = canPublishPresentation;
+    requestedSourceRef.current = {
+      documentKey: input.documentKey,
+      revisionId: input.revisionId,
+      url: input.sourceUrl,
+    };
+  }, [canPublishPresentation, input.documentKey, input.revisionId, input.sourceUrl]);
   const responsiveZoomRef = useRef<PdfResponsiveZoomController | null>(null);
   const passwordRef = useRef<PdfPasswordChallenge["submit"] | null>(null);
   const activeSearchQueryRef = useRef("");
@@ -164,6 +199,34 @@ export function useScientPdfReader(input: {
 
   useEffect(() => {
     if (!input.container || !input.viewerElement) return;
+    const requestedPresentation: RequestedPdfPresentation = {
+      documentKey: input.documentKey,
+      revisionId: input.revisionId,
+      sourceUrl: input.sourceUrl,
+    };
+    const settleOnPresentedRevision = () => {
+      if (presentationRef.current === null) return;
+      setState((previous) =>
+        previous.updating
+          ? { ...previous, phase: "ready", updating: false, updateError: null }
+          : previous,
+      );
+    };
+    if (
+      presentationRef.current?.documentKey === input.documentKey &&
+      presentationRef.current.revisionId === input.revisionId &&
+      presentationRef.current.sourceUrl === input.sourceUrl
+    ) {
+      settleOnPresentedRevision();
+      return;
+    }
+    // A gate may freeze replacements, never the first readable PDF. Documents
+    // without source evidence (legacy, unsupported, or truncated) still open
+    // normally and simply remain read-only to their producer's interaction.
+    if (presentationRef.current !== null && !canPublishPresentation(requestedPresentation)) {
+      settleOnPresentedRevision();
+      return;
+    }
     const { container, viewerElement } = createPdfPresentationLayer(input.viewerElement);
     const abortController = new AbortController();
     let current = true;
@@ -171,7 +234,10 @@ export function useScientPdfReader(input: {
     const isRequested = () =>
       requested &&
       requestedSourceRef.current.documentKey === input.documentKey &&
-      requestedSourceRef.current.url === input.sourceUrl;
+      requestedSourceRef.current.revisionId === input.revisionId &&
+      requestedSourceRef.current.url === input.sourceUrl &&
+      (presentationRef.current === null ||
+        canPublishPresentationRef.current(requestedPresentation));
     let candidate: ScientPdfRuntime | null = null;
     let searchWarmupHandle: number | null = null;
     let searchWarmupKind: "idle" | "timeout" | null = null;
@@ -234,9 +300,16 @@ export function useScientPdfReader(input: {
                 currentScale: runtime.viewer.currentScale,
                 currentScaleValue: previousZoom,
               });
+            const nextPresentation = {
+              container,
+              documentKey: input.documentKey,
+              revisionId: input.revisionId,
+              runtime,
+              sourceUrl: input.sourceUrl,
+            } satisfies PresentedPdfSource & { readonly runtime: ScientPdfRuntime };
             runtimeRef.current = runtime;
             responsiveZoomRef.current = responsiveZoom;
-            presentationRef.current = { runtime, container };
+            presentationRef.current = nextPresentation;
             disposePresentedRef.current = dispose;
             container.classList.remove("scient-pdf-staging");
             container.removeAttribute("aria-hidden");
@@ -245,7 +318,7 @@ export function useScientPdfReader(input: {
             // One synchronous publication: interaction host, viewport and painted
             // surface become current together, before the browser's next paint.
             flushSync(() => {
-              setPresentedContainer(container);
+              setPresentation(nextPresentation);
               setState((previous) => ({
                 ...previous,
                 phase: "ready",
@@ -478,7 +551,14 @@ export function useScientPdfReader(input: {
       // until a successor is painted or the document itself is unmounted.
       if (candidate === null || runtimeRef.current !== candidate) dispose();
     };
-  }, [input.container, input.documentKey, input.sourceUrl, input.viewerElement]);
+  }, [
+    canPublishPresentation,
+    input.container,
+    input.documentKey,
+    input.revisionId,
+    input.sourceUrl,
+    input.viewerElement,
+  ]);
 
   const submitPassword = useCallback((password: string) => {
     const submit = passwordRef.current;
@@ -656,7 +736,7 @@ export function useScientPdfReader(input: {
   }, []);
 
   return {
-    presentedContainer,
+    presentation,
     registerAnchorProvider: useCallback((provider: (() => PdfPresentationAnchor | null) | null) => {
       anchorProviderRef.current = provider;
     }, []),

@@ -59,15 +59,11 @@ export interface LatexInvocation {
   readonly pdfPath: string;
   /** Revision navigation index emitted beside the PDF when the engine supports it. */
   readonly syncTexPath: string;
-  /**
-   * Where the engine leaves its recorder output — the `INPUT`/`OUTPUT` list of
-   * every file the run touched, which is what tells the caller whether a
-   * published PDF still matches its sources. `latexmk` passes `-recorder` by
-   * default and writes `<jobname>.fls` beside the other aux files; tectonic has
-   * no equivalent, so it is `null` there and the caller falls back to what it
-   * can read out of the document itself.
-   */
-  readonly recorderManifestPath: string | null;
+  /** Engine-produced dependency evidence for the exact run. */
+  readonly dependencyManifest: {
+    readonly path: string;
+    readonly format: "fls" | "makefile";
+  };
 }
 
 function pdfBaseName(rootRelativePath: string): string {
@@ -103,13 +99,24 @@ export function buildLatexInvocation(input: {
   const syncTexPath = `${input.workDirectory}/${jobName}.synctex.gz`;
 
   if (input.toolchain.kind === "tectonic") {
-    // tectonic keeps no cross-run decision state of its own; every run is a run.
+    // Tectonic keeps no cross-run decision state of its own; every run is a
+    // run. Its Make rule output is the run's complete dependency recorder.
+    const dependencyPath = `${input.workDirectory}/${jobName}.dependencies.mk`;
     return {
       command: input.toolchain.executable,
-      args: ["--outdir", input.workDirectory, "--untrusted", "--synctex", input.rootFileName],
+      args: [
+        "--outdir",
+        input.workDirectory,
+        "--untrusted",
+        "--synctex",
+        "--keep-intermediates",
+        "--makefile-rules",
+        dependencyPath,
+        input.rootFileName,
+      ],
       pdfPath,
       syncTexPath,
-      recorderManifestPath: null,
+      dependencyManifest: { path: dependencyPath, format: "makefile" },
     };
   }
 
@@ -128,6 +135,9 @@ export function buildLatexInvocation(input: {
     ],
     pdfPath,
     syncTexPath,
-    recorderManifestPath: `${input.workDirectory}/${jobName}.fls`,
+    dependencyManifest: {
+      path: `${input.workDirectory}/${jobName}.fls`,
+      format: "fls",
+    },
   };
 }

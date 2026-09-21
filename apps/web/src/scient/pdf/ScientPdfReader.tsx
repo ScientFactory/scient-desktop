@@ -55,7 +55,7 @@ import {
   type PdfSidebarMode,
 } from "./pdfReaderModel";
 import { pdfReaderSessionDocumentKey, pdfReaderSessionStore } from "./pdfReaderSessionStore";
-import { useScientPdfReader } from "./useScientPdfReader";
+import { useScientPdfReader, type RequestedPdfPresentation } from "./useScientPdfReader";
 
 import "pdfjs-dist/legacy/web/pdf_viewer.css";
 import "./scientPdfReader.css";
@@ -143,6 +143,7 @@ export interface PdfInteractionHost {
     provider: (() => import("./pdfPresentation").PdfPresentationAnchor | null) | null,
   ) => void;
   readonly scale?: number;
+  /** Revision owning `container`; never the requested-but-unpublished replacement. */
   readonly revisionId: string | null;
   readonly rotation?: number;
   readonly container: HTMLDivElement | null;
@@ -155,6 +156,7 @@ export interface PdfInteractionHost {
 }
 
 export function ScientPdfReader(props: {
+  readonly canPublishPresentation?: (candidate: RequestedPdfPresentation) => boolean;
   readonly renderInteraction?: (host: PdfInteractionHost) => ReactNode;
   readonly actions?: PdfSourceActions;
   readonly refreshKey?: number;
@@ -210,6 +212,9 @@ export function ScientPdfReader(props: {
       }
       refreshSource={asset.refresh}
       actions={props.actions ?? webPdfSourceActions}
+      {...(props.canPublishPresentation === undefined
+        ? {}
+        : { canPublishPresentation: props.canPublishPresentation })}
       {...(props.renderInteraction === undefined
         ? {}
         : { renderInteraction: props.renderInteraction })}
@@ -219,6 +224,7 @@ export function ScientPdfReader(props: {
 }
 
 function LoadedScientPdfReader(props: {
+  readonly canPublishPresentation?: (candidate: RequestedPdfPresentation) => boolean;
   readonly sourceNotice: string | null;
   readonly interactionReady: boolean;
   readonly renderInteraction?: (host: PdfInteractionHost) => ReactNode;
@@ -230,6 +236,8 @@ function LoadedScientPdfReader(props: {
   readonly sourceUrl: string;
   readonly syncNavigation?: PdfSyncNavigation;
 }) {
+  const requestedRevisionId =
+    props.source._tag === "generated-pdf" ? props.source.revisionId : null;
   const [container, setContainer] = useState<HTMLDivElement | null>(null);
   const [viewerElement, setViewerElement] = useState<HTMLDivElement | null>(null);
   const [sidebar, setSidebarState] = useState<PdfSidebarMode>(
@@ -246,15 +254,22 @@ function LoadedScientPdfReader(props: {
   const [pageInput, setPageInput] = useState("1");
   const [sourceSyncHintVisible, setSourceSyncHintVisible] = useState(false);
   const reader = useScientPdfReader({
+    ...(props.canPublishPresentation === undefined
+      ? {}
+      : { canPublishPresentation: props.canPublishPresentation }),
     documentKey: props.documentKey,
     onSourceInvalidated: props.refreshSource,
+    revisionId: requestedRevisionId,
     sourceUrl: props.sourceUrl,
     container,
     viewerElement,
   });
   const { state } = reader;
   const currentPresentation =
-    props.interactionReady && state.phase === "ready" && state.loadedSourceUrl === props.sourceUrl;
+    props.interactionReady &&
+    state.phase === "ready" &&
+    reader.presentation?.revisionId === requestedRevisionId &&
+    reader.presentation.sourceUrl === props.sourceUrl;
   const thumbnailPages = useMemo(
     () => Array.from({ length: state.pageCount }, (_, index) => index + 1),
     [state.pageCount],
@@ -744,12 +759,12 @@ function LoadedScientPdfReader(props: {
             </div>
           ) : null}
           {props.renderInteraction?.({
-            container: reader.presentedContainer,
+            container: reader.presentation?.container ?? null,
             registerAnchorProvider: reader.registerAnchorProvider,
             scale: state.scale,
-            revisionId: props.source._tag === "generated-pdf" ? props.source.revisionId : null,
+            revisionId: reader.presentation?.revisionId ?? null,
             rotation: state.rotation,
-            ready: currentPresentation,
+            ready: reader.presentation !== null,
             pointFromClient: reader.syncPointFromClient,
           })}
           {sourceSyncHintVisible ? (

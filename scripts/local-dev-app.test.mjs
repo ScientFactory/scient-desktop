@@ -5,6 +5,11 @@ import * as NodePath from "node:path";
 import { afterEach, assert, describe, it } from "vite-plus/test";
 
 import {
+  resolveDevelopmentLaunchPaths,
+  writeDevelopmentProcessPid,
+} from "../apps/desktop/scripts/dev-app-process.mjs";
+
+import {
   acquireRunner,
   clearStaleRunner,
   installDevelopmentAppBundle,
@@ -16,8 +21,10 @@ import {
   makeLocalDevAppLaunchAgentPlist,
   readLocalDevAppMarker,
   registerDevelopmentAppBundle,
+  releaseRunner,
   resolveLocalDevAppPaths,
   resolveLocalDevAppServiceLabel,
+  resolveOwnedDevelopmentLaunches,
   resolveStableDevHome,
   startAppInBackground,
   statusApp,
@@ -363,6 +370,16 @@ describe("local dev app runner lifecycle", () => {
     assert.equal(attempts, 2);
   });
 
+  it("does not let an exiting old runner remove a replacement runner lock", () => {
+    const { paths } = fixture();
+    writeRunnerState(paths, 5678);
+
+    assert.isFalse(releaseRunner(paths, 1234));
+    assert.equal(JSON.parse(NodeFS.readFileSync(paths.runnerStatePath, "utf8")).pid, 5678);
+    assert.isTrue(releaseRunner(paths, 5678));
+    assert.isFalse(NodeFS.existsSync(paths.runnerDir));
+  });
+
   it("preserves the grace window for a runner that has not written state yet", () => {
     const { paths } = fixture();
     NodeFS.mkdirSync(paths.runnerDir, { recursive: true });
@@ -384,8 +401,13 @@ describe("local dev app runner lifecycle", () => {
       paths,
       matchesRunner: () => true,
       serviceIsLoaded: () => false,
-      resolveOwnedApp: () => ({ pid: 2222 }),
-      resolveOwnedBackend: () => ({ pid: 3333 }),
+      resolveOwnedLaunches: () => [
+        {
+          app: { pid: 2222 },
+          backend: { pid: 3333 },
+          launcher: { pid: 1111 },
+        },
+      ],
       writeLine: (line) => lines.push(line),
     });
 
@@ -403,14 +425,40 @@ describe("local dev app runner lifecycle", () => {
       paths,
       matchesRunner: () => true,
       serviceIsLoaded: () => true,
-      resolveOwnedApp: () => ({ pid: 2222 }),
-      resolveOwnedBackend: () => null,
+      resolveOwnedLaunches: () => [{ app: { pid: 2222 }, backend: null, launcher: { pid: 1111 } }],
       writeLine: (line) => lines.push(line),
     });
 
     assert.deepEqual(lines, [
       `${LOCAL_DEV_APP_NAME} is starting for ${paths.root} (runner PID 1234, app PID 2222).`,
     ]);
+  });
+
+  it("preserves an incomplete launch record for the full lifetime of its runner", () => {
+    const { paths } = fixture();
+    const record = resolveDevelopmentLaunchPaths(paths.runtimeDir, "1-1-cccccccc");
+    NodeFS.mkdirSync(record.launchDir, { recursive: true });
+    const twentySecondsAgo = new Date(Date.now() - 20_000);
+    NodeFS.utimesSync(record.launchDir, twentySecondsAgo, twentySecondsAgo);
+
+    assert.lengthOf(
+      resolveOwnedDevelopmentLaunches(paths, {
+        preserveIncomplete: true,
+        inspectCommand: () => null,
+        inspectChildren: () => [],
+      }),
+      1,
+    );
+    assert.isTrue(NodeFS.existsSync(record.launchDir));
+    assert.deepEqual(
+      resolveOwnedDevelopmentLaunches(paths, {
+        preserveIncomplete: false,
+        inspectCommand: () => null,
+        inspectChildren: () => [],
+      }),
+      [],
+    );
+    assert.isFalse(NodeFS.existsSync(record.launchDir));
   });
 
   it("signals only the validated runner PID", async () => {
@@ -422,6 +470,7 @@ describe("local dev app runner lifecycle", () => {
       paths,
       matchesRunner: () => true,
       killProcess: (...args) => signals.push(args),
+      resolveOwnedLaunches: () => [],
       waitUntilStopped: async () => true,
       unloadService: () => false,
       writeLine: () => {},
@@ -439,18 +488,121 @@ describe("local dev app runner lifecycle", () => {
       paths,
       matchesRunner: () => true,
       killProcess: (...args) => signals.push(args),
-      resolveOwnedApp: () => ({ pid: 2222, command: "/owned/Electron" }),
-      resolveOwnedBackend: () => ({ pid: 3333, command: "/owned/Electron server/bin.mjs" }),
+      resolveOwnedLaunches: () => [
+        {
+          record: { generation: "test-generation" },
+          app: { pid: 2222, command: "/owned/Electron" },
+          backend: { pid: 3333, command: "/owned/Electron server/bin.mjs" },
+          launcher: null,
+        },
+      ],
       waitUntilStopped: async () => true,
       unloadService: () => false,
       writeLine: () => {},
     });
 
     assert.deepEqual(signals, [
-      [2222, "SIGTERM"],
       [3333, "SIGTERM"],
+      [2222, "SIGTERM"],
       [1234, "SIGTERM"],
     ]);
+  });
+
+  it("revalidates a generation immediately before signaling a recorded PID", async () => {
+    const { paths } = fixture();
+    writeRunnerState(paths);
+    const recordedLaunch = {
+      record: { generation: "test-generation" },
+      app: { pid: 2222, command: "/owned/Electron" },
+      backend: null,
+      launcher: null,
+    };
+    let resolutionCount = 0;
+    const signals = [];
+
+    await stopApp({
+      paths,
+      matchesRunner: () => true,
+      killProcess: (...args) => signals.push(args),
+      resolveOwnedLaunches: () => {
+        resolutionCount += 1;
+        return resolutionCount <= 2 ? [recordedLaunch] : [];
+      },
+      waitUntilStopped: async () => true,
+      unloadService: () => false,
+      writeLine: () => {},
+    });
+
+    assert.deepEqual(signals, [[1234, "SIGTERM"]]);
+    assert.isAtLeast(resolutionCount, 3);
+  });
+
+  it("retains ownership of a discovered backend after its app exits", async () => {
+    const { paths } = fixture();
+    const record = resolveDevelopmentLaunchPaths(paths.runtimeDir, "1-1-dddddddd");
+    const appBundlePath = NodePath.join(
+      paths.root,
+      "apps",
+      "desktop",
+      ".electron-runtime",
+      `${LOCAL_DEV_APP_NAME}.app`,
+    );
+    const electronBinaryPath = NodePath.join(appBundlePath, "Contents", "MacOS", "Electron");
+    const backendCommandPrefix = `${electronBinaryPath} ${NodePath.join(
+      paths.root,
+      "apps",
+      "server",
+      "dist",
+      "bin.mjs",
+    )}`;
+    const commands = new Map([
+      [1101, `${electronBinaryPath} --app`],
+      [1102, `${backendCommandPrefix} --backend`],
+      [
+        1103,
+        `/usr/bin/open -n -W --env SCIENT_DEV_APP_PID_FILE=${record.appPidPath} ${appBundlePath}`,
+      ],
+    ]);
+    writeDevelopmentProcessPid(record.appPidPath, 1101);
+    writeDevelopmentProcessPid(record.launcherPidPath, 1103);
+    const alive = new Set(commands.keys());
+    const inspectCommand = (pid) => (alive.has(pid) ? commands.get(pid) : null);
+    const resolveOwnedLaunches = () =>
+      resolveOwnedDevelopmentLaunches(paths, {
+        inspectCommand,
+        inspectChildren: (parentPid) =>
+          parentPid === 1101 && alive.has(1102) ? [{ pid: 1102, command: commands.get(1102) }] : [],
+      });
+    const signals = [];
+    let waitCount = 0;
+
+    await stopApp({
+      paths,
+      matchesRunner: () => false,
+      killProcess: (pid, signal) => {
+        signals.push([pid, signal]);
+        if (pid === 1102 && signal === "SIGTERM") {
+          assert.equal(NodeFS.readFileSync(record.backendPidPath, "utf8").trim(), "1102");
+          return;
+        }
+        alive.delete(pid);
+      },
+      resolveOwnedLaunches,
+      waitUntilStopped: async () => {
+        waitCount += 1;
+        return waitCount > 1 && resolveOwnedLaunches().length === 0;
+      },
+      unloadService: () => false,
+      writeLine: () => {},
+    });
+
+    assert.deepEqual(signals, [
+      [1102, "SIGTERM"],
+      [1101, "SIGTERM"],
+      [1103, "SIGTERM"],
+      [1102, "SIGKILL"],
+    ]);
+    assert.isFalse(NodeFS.existsSync(record.launchDir));
   });
 
   it("treats a runner that exits before signaling as already stopped", async () => {
@@ -466,11 +618,89 @@ describe("local dev app runner lifecycle", () => {
         error.code = "ESRCH";
         throw error;
       },
+      resolveOwnedLaunches: () => [],
+      waitUntilStopped: async () => true,
       unloadService: () => false,
       writeLine: (line) => lines.push(line),
     });
 
     assert.isFalse(NodeFS.existsSync(paths.runnerDir));
-    assert.deepEqual(lines, [`${LOCAL_DEV_APP_NAME} is already stopped for ${paths.root}`]);
+    assert.deepEqual(lines, [`Stopped ${LOCAL_DEV_APP_NAME} for ${paths.root}.`]);
+  });
+
+  it("stops every recorded launch generation after the runner has crashed", async () => {
+    const { paths } = fixture();
+    const first = resolveDevelopmentLaunchPaths(paths.runtimeDir, "1-1-aaaaaaaa");
+    const second = resolveDevelopmentLaunchPaths(paths.runtimeDir, "1-2-bbbbbbbb");
+    const appBundlePath = NodePath.join(
+      paths.root,
+      "apps",
+      "desktop",
+      ".electron-runtime",
+      `${LOCAL_DEV_APP_NAME}.app`,
+    );
+    const electronBinaryPath = NodePath.join(appBundlePath, "Contents", "MacOS", "Electron");
+    const backendCommandPrefix = `${electronBinaryPath} ${NodePath.join(
+      paths.root,
+      "apps",
+      "server",
+      "dist",
+      "bin.mjs",
+    )}`;
+    const commands = new Map([
+      [1101, `${electronBinaryPath} --first`],
+      [1102, `${backendCommandPrefix} --first`],
+      [
+        1103,
+        `/usr/bin/open -n -W --env SCIENT_DEV_APP_PID_FILE=${first.appPidPath} ${appBundlePath}`,
+      ],
+      [2201, `${electronBinaryPath} --second`],
+      [2202, `${backendCommandPrefix} --second`],
+      [
+        2203,
+        `/usr/bin/open -n -W --env SCIENT_DEV_APP_PID_FILE=${second.appPidPath} ${appBundlePath}`,
+      ],
+    ]);
+    for (const [record, pids] of [
+      [first, { app: 1101, backend: 1102, launcher: 1103 }],
+      [second, { app: 2201, backend: 2202, launcher: 2203 }],
+    ]) {
+      writeDevelopmentProcessPid(record.appPidPath, pids.app);
+      writeDevelopmentProcessPid(record.backendPidPath, pids.backend);
+      writeDevelopmentProcessPid(record.launcherPidPath, pids.launcher);
+    }
+    const alive = new Set(commands.keys());
+    const inspectCommand = (pid) => (alive.has(pid) ? commands.get(pid) : null);
+    const resolveOwnedLaunches = () =>
+      resolveOwnedDevelopmentLaunches(paths, { inspectCommand, inspectChildren: () => [] });
+    const signals = [];
+    const lines = [];
+
+    await stopApp({
+      paths,
+      matchesRunner: () => false,
+      killProcess: (pid, signal) => {
+        signals.push([pid, signal]);
+        alive.delete(pid);
+      },
+      resolveOwnedLaunches,
+      waitUntilStopped: async () => resolveOwnedLaunches().length === 0,
+      unloadService: () => false,
+      writeLine: (line) => lines.push(line),
+    });
+
+    assert.deepEqual(signals, [
+      [1102, "SIGTERM"],
+      [2202, "SIGTERM"],
+      [1101, "SIGTERM"],
+      [2201, "SIGTERM"],
+      [1103, "SIGTERM"],
+      [2203, "SIGTERM"],
+    ]);
+    assert.isFalse(NodeFS.existsSync(first.launchDir));
+    assert.isFalse(NodeFS.existsSync(second.launchDir));
+    assert.deepEqual(lines, [
+      `Stopped orphaned ${LOCAL_DEV_APP_NAME} app processes for ${paths.root}.`,
+    ]);
   });
 });

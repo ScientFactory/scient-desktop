@@ -17,6 +17,7 @@ import { useFileSaveCoordinator } from "./useFileSaveCoordinator";
 
 const environmentId = EnvironmentId.make("save-lifecycle-audit");
 const onPendingChange = vi.fn();
+const onSaveResolutionApplied = vi.fn();
 const defaultProps: Parameters<typeof useFileSaveCoordinator>[0] = {
   environmentId,
   cwd: "/workspace",
@@ -25,7 +26,7 @@ const defaultProps: Parameters<typeof useFileSaveCoordinator>[0] = {
   revision: "revision-1",
   onSaveFailure: vi.fn(),
   onSaveConfirmed: vi.fn(),
-  onSaveResolutionApplied: vi.fn(),
+  onSaveResolutionApplied,
   saveResolution: null,
 };
 let renderer: ReactTestRenderer | null;
@@ -60,6 +61,7 @@ beforeEach(() => {
   writeFile.mockReset().mockResolvedValue(AsyncResult.success({ revision: "revision-2" }));
   confirmFile.mockReset();
   onPendingChange.mockReset();
+  onSaveResolutionApplied.mockReset();
 });
 
 afterEach(async () => {
@@ -114,6 +116,7 @@ describe("file-save React lifecycle", () => {
     await vi.advanceTimersByTimeAsync(500);
     expect(writeFile).toHaveBeenCalledTimes(1);
     expect(onPendingChange).toHaveBeenLastCalledWith("file.txt", false);
+    expect(onSaveResolutionApplied).toHaveBeenCalledExactlyOnceWith("discard");
   });
 
   it("persists editor model changes after StrictMode setup replay", async () => {
