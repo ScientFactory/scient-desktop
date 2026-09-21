@@ -3,8 +3,9 @@ import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
+import * as PlatformError from "effect/PlatformError";
 
-import { discoverCursorSkills } from "./CursorSkills.ts";
+import { makeCursorMachineSkillCatalog, probeCursorSkills } from "./CursorSkills.ts";
 
 const writeSkill = Effect.fn("writeCursorSkill")(function* (
   directory: string,
@@ -18,7 +19,7 @@ const writeSkill = Effect.fn("writeCursorSkill")(function* (
   return yield* fileSystem.realPath(skillPath);
 });
 
-it.layer(NodeServices.layer)("discoverCursorSkills", (it) => {
+it.layer(NodeServices.layer)("probeCursorSkills", (it) => {
   it.effect("discovers global compatibility roots and provider-managed built-ins", () =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;
@@ -41,7 +42,7 @@ it.layer(NodeServices.layer)("discoverCursorSkills", (it) => {
         "description: IDE-only.\nmetadata:\n  surfaces: [ide]",
       );
 
-      assert.deepEqual(yield* discoverCursorSkills(undefined, { HOME: userHome }), [
+      assert.deepEqual(yield* probeCursorSkills(undefined, { HOME: userHome }), [
         {
           name: "builtin-skill",
           displayName: "Built-in skill",
@@ -90,7 +91,7 @@ it.layer(NodeServices.layer)("discoverCursorSkills", (it) => {
         "description: Built-in review.\nmetadata:\n  surfaces: [cli]",
       );
 
-      assert.deepEqual(yield* discoverCursorSkills(cwd, { HOME: userHome }), [
+      assert.deepEqual(yield* probeCursorSkills(cwd, { HOME: userHome }), [
         {
           name: "review",
           description: "Project review.",
@@ -99,6 +100,56 @@ it.layer(NodeServices.layer)("discoverCursorSkills", (it) => {
           enabled: true,
         },
       ]);
+    }),
+  );
+
+  it.effect("rejects a file read failure and keeps the last complete machine catalog", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const userHome = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "t3-cursor-read-failure-",
+      });
+      const skillPath = yield* writeSkill(
+        path.join(userHome, ".cursor", "skills", "review"),
+        "description: Review skill.",
+      );
+      let failureReason: "PermissionDenied" | "NotFound" | undefined;
+      const failingFileSystem = FileSystem.FileSystem.of({
+        ...fileSystem,
+        readFileString: (filePath, options) =>
+          failureReason && filePath === skillPath
+            ? Effect.fail(
+                PlatformError.systemError({
+                  _tag: failureReason,
+                  module: "FileSystem",
+                  method: "readFileString",
+                  pathOrDescriptor: filePath,
+                }),
+              )
+            : fileSystem.readFileString(filePath, options),
+      });
+      const catalog = yield* makeCursorMachineSkillCatalog({ HOME: userHome });
+      const read = catalog.pipe(Effect.provideService(FileSystem.FileSystem, failingFileSystem));
+      const initial = yield* read;
+      assert.equal(initial.length, 1);
+
+      failureReason = "PermissionDenied";
+      assert.deepEqual(yield* read, initial);
+      const freshCatalog = yield* makeCursorMachineSkillCatalog({ HOME: userHome });
+      const failed = yield* freshCatalog.pipe(
+        Effect.provideService(FileSystem.FileSystem, failingFileSystem),
+        Effect.result,
+      );
+      assert.equal(failed._tag, "Failure");
+
+      failureReason = "NotFound";
+      assert.deepEqual(yield* read, initial);
+      failureReason = undefined;
+      assert.deepEqual(
+        yield* freshCatalog.pipe(Effect.provideService(FileSystem.FileSystem, failingFileSystem)),
+        initial,
+      );
     }),
   );
 });

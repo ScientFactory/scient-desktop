@@ -80,8 +80,8 @@ import { type CursorAdapterShape } from "../Services/CursorAdapter.ts";
 import { resolveCursorAcpBaseModelId } from "./CursorProvider.ts";
 import { type EventNdjsonLogger, makeEventNdjsonLogger } from "./EventNdjsonLogger.ts";
 import {
-  discoverCursorSkills,
   hasCursorSkillMention,
+  probeCursorSkills,
   rewriteCursorSkillMentions,
 } from "../Drivers/CursorSkills.ts";
 const encodeUnknownJsonStringExit = Schema.encodeUnknownExit(Schema.fromJsonString(Schema.Unknown));
@@ -1023,19 +1023,21 @@ export function makeCursorAdapter(
           if (rawPrompt) {
             let cursorSkillNames = ctx.cursorSkillNames;
             if (hasCursorSkillMention(rawPrompt) && cursorSkillNames === undefined) {
-              const skills = yield* discoverCursorSkills(
-                ctx.session.cwd,
-                options?.environment,
-              ).pipe(
+              const skills = yield* probeCursorSkills(ctx.session.cwd, options?.environment).pipe(
                 Effect.provideService(FileSystem.FileSystem, fileSystem),
                 Effect.provideService(Path.Path, path),
+                Effect.catch((error) =>
+                  Effect.logWarning(error.message).pipe(Effect.as(undefined)),
+                ),
               );
-              cursorSkillNames = new Set(
-                skills
-                  .filter((skill) => skill.enabled && skill.userInvocable !== false)
-                  .map((skill) => skill.name),
-              );
-              ctx.cursorSkillNames = cursorSkillNames;
+              if (skills !== undefined) {
+                cursorSkillNames = new Set(
+                  skills
+                    .filter((skill) => skill.enabled && skill.userInvocable !== false)
+                    .map((skill) => skill.name),
+                );
+                ctx.cursorSkillNames = cursorSkillNames;
+              }
             }
             const prompt = cursorSkillNames
               ? rewriteCursorSkillMentions(rawPrompt, cursorSkillNames)

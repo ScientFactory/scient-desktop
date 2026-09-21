@@ -28,7 +28,6 @@ import {
   resolveCursorAcpConfigUpdates,
 } from "./CursorProvider.ts";
 import {
-  discoverCursorSkills,
   hasCursorSkillMention,
   probeCursorSkills,
   rewriteCursorSkillMentions,
@@ -364,14 +363,8 @@ describe("Cursor skills", () => {
           "oversized",
           "x".repeat(1_000_001),
         );
-        yield* fileSystem.makeDirectory(path.join(userHome, ".codex"), { recursive: true });
-        yield* fileSystem.writeFileString(
-          path.join(userHome, ".codex", "skills"),
-          "not a directory",
-        );
-
         const canonicalWorkspace = yield* fileSystem.realPath(workspace);
-        const skills = yield* discoverCursorSkills(workspace, { HOME: userHome });
+        const skills = yield* probeCursorSkills(workspace, { HOME: userHome });
         expect(skills).toEqual([
           {
             name: "internal",
@@ -379,12 +372,6 @@ describe("Cursor skills", () => {
             scope: "project",
             enabled: true,
             userInvocable: false,
-          },
-          {
-            name: "oversized",
-            path: path.join(canonicalWorkspace, ".cursor", "skills", "oversized", "SKILL.md"),
-            scope: "project",
-            enabled: true,
           },
           {
             name: "review",
@@ -402,6 +389,11 @@ describe("Cursor skills", () => {
             enabled: true,
           },
         ]);
+        yield* fileSystem.makeDirectory(path.join(userHome, ".codex"), { recursive: true });
+        yield* fileSystem.writeFileString(
+          path.join(userHome, ".codex", "skills"),
+          "not a directory",
+        );
         expect(
           (yield* probeCursorSkills(workspace, { HOME: userHome }).pipe(Effect.result))._tag,
         ).toBe("Failure");
@@ -442,7 +434,7 @@ describe("Cursor skills", () => {
         yield* fileSystem.makeDirectory(root, { recursive: true });
         yield* fileSystem.symlink(path.join(library, "shared-review"), path.join(root, "review"));
 
-        const skills = yield* discoverCursorSkills(workspace, { HOME: userHome });
+        const skills = yield* probeCursorSkills(workspace, { HOME: userHome });
         const canonicalRoot = yield* fileSystem.realPath(root);
         expect(skills).toEqual([
           {
@@ -582,6 +574,23 @@ describe("Cursor command catalog", () => {
             ?.find((entry) => entry.cwd === "/two")
             ?.slashCommands.map((command) => command.name),
         ).toEqual(["compact", "deploy"]);
+        yield* catalog.onAvailableCommands([{ name: "publish", description: "Publish" }], "/one");
+        const afterIncompleteSkillScan = yield* catalog.snapshot.getSnapshot;
+        expect(
+          afterIncompleteSkillScan.workspaceSnapshots?.find((entry) => entry.cwd === "/one"),
+        ).toMatchObject({
+          skills,
+          slashCommands: [{ name: "compact" }, { name: "publish", description: "Publish" }],
+        });
+        yield* catalog.onAvailableCommands(
+          [{ name: "unscanned", description: "Unscanned" }],
+          "/unscanned",
+        );
+        expect(
+          (yield* catalog.snapshot.getSnapshot).workspaceSnapshots?.some(
+            (entry) => entry.cwd === "/unscanned",
+          ),
+        ).toBe(false);
       }),
   );
 });

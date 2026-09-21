@@ -98,7 +98,7 @@ export const makeCursorCommandCatalog = Effect.fn("makeCursorCommandCatalog")(fu
   const onAvailableCommands = Effect.fn("CursorCommandCatalog.onAvailableCommands")(function* (
     commands: ReadonlyArray<EffectAcpSchema.AvailableCommand>,
     cwd: string,
-    skills: ServerProvider["skills"],
+    skills?: ServerProvider["skills"],
   ) {
     const seen = new Set([COMPACT_SLASH_COMMAND.name]);
     const slashCommands = [
@@ -119,12 +119,15 @@ export const makeCursorCommandCatalog = Effect.fn("makeCursorCommandCatalog")(fu
       }),
     ];
     const checkedAt = DateTime.formatIso(yield* DateTime.now);
-    yield* SubscriptionRef.update(workspaces, (entries) =>
-      [
+    yield* SubscriptionRef.update(workspaces, (entries) => {
+      const previous = entries.find((entry) => entry.cwd === cwd);
+      const currentSkills = skills ?? previous?.skills;
+      if (currentSkills === undefined) return entries;
+      return [
         ...entries.filter((entry) => entry.cwd !== cwd),
-        { cwd, checkedAt, slashCommands, skills },
-      ].slice(-16),
-    );
+        { cwd, checkedAt, slashCommands, skills: currentSkills },
+      ].slice(-16);
+    });
   });
   return {
     onAvailableCommands,
