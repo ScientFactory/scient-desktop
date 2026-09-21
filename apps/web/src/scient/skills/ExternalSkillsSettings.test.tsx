@@ -51,6 +51,7 @@ vi.mock("../../components/settings/SettingsSourceStrip", () => ({
 vi.mock("../../components/ui/switch", () => ({
   Switch: ({
     checked,
+    disabled,
     onCheckedChange,
     ...props
   }: {
@@ -63,7 +64,10 @@ vi.mock("../../components/ui/switch", () => ({
       {...props}
       data-switch=""
       data-checked={checked}
-      onClick={() => onCheckedChange(!checked)}
+      disabled={disabled}
+      onClick={() => {
+        if (!disabled) onCheckedChange(!checked);
+      }}
     />
   ),
 }));
@@ -132,7 +136,7 @@ describe("ExternalSkillsSettings activation", () => {
     vi.unstubAllGlobals();
   });
 
-  it("responds immediately without fading or blocking the other switch", async () => {
+  it("blocks only the pending switch without dimming it or blocking another switch", async () => {
     const first = deferredResult();
     const second = deferredResult();
     state.setEnabled.mockReturnValueOnce(first.promise).mockReturnValueOnce(second.promise);
@@ -141,10 +145,10 @@ describe("ExternalSkillsSettings activation", () => {
       switches()[0]?.props.onClick();
     });
     expect(switches().map((item) => item.props["data-checked"])).toEqual([false, true]);
-    expect(renderer.root.findAllByProps({ "data-status": "Personal" })).toHaveLength(2);
-    expect(renderer.root.findAllByProps({ role: "status", children: "Updating" })).toHaveLength(1);
-    expect(switches().every((item) => item.props.disabled === undefined)).toBe(true);
+    expect(renderer.root.findAllByProps({ "data-status": "Personal · Updating" })).toHaveLength(1);
+    expect(switches().map((item) => item.props.disabled)).toEqual([true, false]);
     expect(switches()[0]?.props.className).toContain("transition-none");
+    expect(switches()[0]?.props.className).toContain("data-disabled:opacity-100");
 
     act(() => {
       switches()[0]?.props.onClick();
@@ -155,11 +159,13 @@ describe("ExternalSkillsSettings activation", () => {
       switches()[1]?.props.onClick();
     });
     expect(switches().map((item) => item.props["data-checked"])).toEqual([false, false]);
+    expect(switches().map((item) => item.props.disabled)).toEqual([true, true]);
     expect(state.setEnabled).toHaveBeenCalledTimes(2);
     await act(async () => {
       first.resolve({ _tag: "Success" });
       second.resolve({ _tag: "Success" });
     });
+    expect(switches().map((item) => item.props.disabled)).toEqual([false, false]);
   });
 
   it("reverts a failed write and releases a successful one to the provider snapshot", async () => {
@@ -173,6 +179,7 @@ describe("ExternalSkillsSettings activation", () => {
       failure.resolve({ _tag: "Failure" });
     });
     expect(switches()[0]?.props["data-checked"]).toBe(true);
+    expect(switches()[0]?.props.disabled).toBe(false);
 
     const success = deferredResult();
     state.setEnabled.mockReturnValueOnce(success.promise);
@@ -183,7 +190,7 @@ describe("ExternalSkillsSettings activation", () => {
       success.resolve({ _tag: "Success" });
     });
     expect(switches()[0]?.props["data-checked"]).toBe(false);
-    expect(renderer.root.findAllByProps({ role: "status", children: "Updating" })).toHaveLength(0);
+    expect(renderer.root.findAllByProps({ "data-status": "Personal · Updating" })).toHaveLength(0);
     expect(renderer.root.findAllByProps({ "data-status": "Personal · Deactivated" })).toHaveLength(
       1,
     );

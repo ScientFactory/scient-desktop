@@ -311,9 +311,10 @@ shadow disabled state. The server validates the exact provider instance, skill
 name, and provider-owned path against the latest snapshot before dispatching a
 change, refreshes the provider inventory, and accepts success only when the
 provider's refreshed state confirms the requested value. The switch responds
-immediately without blocking other controls, shows a small pending label beside
-the switch until confirmation, and reverts if the provider rejects it. The
-activation status stays in its usual position.
+immediately without blocking other controls, labels the change as pending until
+confirmation, and reverts if the provider rejects it. Only the pending switch
+is temporarily non-interactive; it retains its appearance and shows the
+blocked cursor on hover.
 
 ## Deliberate phase-one exclusions
 
