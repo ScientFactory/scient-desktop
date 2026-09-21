@@ -384,9 +384,16 @@ export const openCodexAppServerConnection = Effect.fn("openCodexAppServerConnect
 
 export const writeCodexSkillConfig = Effect.fn("writeCodexSkillConfig")(function* (
   client: CodexClient.CodexAppServerClient["Service"],
-  input: { readonly name: string; readonly path: string; readonly enabled: boolean },
+  input: { readonly path: string; readonly enabled: boolean },
 ) {
-  return yield* client.request("skills/config/write", input);
+  // Codex requires exactly one selector. Prefer the absolute path returned by
+  // `skills/list`; names can collide across project, user, system, and plugin
+  // sources.
+  return yield* client.request("skills/config/write", {
+    path: input.path,
+    name: null,
+    enabled: input.enabled,
+  });
 });
 
 export const setCodexSkillEnabled = Effect.fn("setCodexSkillEnabled")(function* (input: {
@@ -402,7 +409,6 @@ export const setCodexSkillEnabled = Effect.fn("setCodexSkillEnabled")(function* 
   const { client } = yield* openCodexAppServerConnection(input);
   return yield* writeCodexSkillConfig(client, {
     enabled: input.enabled,
-    name: input.name,
     path: input.path,
   });
 });

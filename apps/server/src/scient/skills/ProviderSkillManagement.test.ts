@@ -32,16 +32,69 @@ function provider(canSetEnabled = true): ServerProvider {
 }
 
 describe("provider skill management", () => {
+  it.effect("preserves concurrent skill changes that share native settings", () =>
+    Effect.gen(function* () {
+      const base = provider();
+      let snapshot: ServerProvider = {
+        ...base,
+        skills: [
+          ...base.skills,
+          ...base.skills.map((skill) => ({
+            ...skill,
+            name: "second",
+            path: "/skills/second/SKILL.md",
+          })),
+        ],
+      };
+      const management = makeProviderSkillManagement({
+        ...makeProviderRegistryMock([snapshot]),
+        getProviders: Effect.sync(() => [snapshot]),
+        getProviderSkillActionsForInstance: () =>
+          Effect.succeed({
+            setEnabled: (input: { name: string; enabled: boolean }) =>
+              Effect.gen(function* () {
+                const skills = snapshot.skills;
+                yield* Effect.yieldNow;
+                snapshot = {
+                  ...snapshot,
+                  skills: skills.map((skill) =>
+                    skill.name === input.name ? { ...skill, enabled: input.enabled } : skill,
+                  ),
+                };
+                return { effectiveEnabled: input.enabled };
+              }),
+          }),
+        refreshInstance: () => Effect.sync(() => [snapshot]),
+      });
+
+      yield* Effect.all(
+        snapshot.skills.map((skill) =>
+          management.setEnabled({ instanceId, name: skill.name, path: skill.path, enabled: false }),
+        ),
+        { concurrency: "unbounded" },
+      );
+
+      expect(snapshot.skills.map((skill) => skill.enabled)).toEqual([false, false]);
+    }),
+  );
+
   it.effect("validates the snapshot, delegates to the provider, and refreshes", () =>
     Effect.gen(function* () {
       const snapshot = provider();
-      let actionInput: { name: string; path: string; enabled: boolean } | undefined;
+      let actionInput:
+        | { name: string; path: string; scope?: string | undefined; enabled: boolean }
+        | undefined;
       let refreshCount = 0;
       const registry = {
         ...makeProviderRegistryMock([snapshot]),
         getProviderSkillActionsForInstance: () =>
           Effect.succeed({
-            setEnabled: (input: { name: string; path: string; enabled: boolean }) =>
+            setEnabled: (input: {
+              name: string;
+              path: string;
+              scope?: string | undefined;
+              enabled: boolean;
+            }) =>
               Effect.sync(() => {
                 actionInput = input;
                 return { effectiveEnabled: false };
@@ -50,7 +103,12 @@ describe("provider skill management", () => {
         refreshInstance: () =>
           Effect.sync(() => {
             refreshCount += 1;
-            return [snapshot];
+            return [
+              {
+                ...snapshot,
+                skills: snapshot.skills.map((skill) => ({ ...skill, enabled: false })),
+              },
+            ];
           }),
       };
 
@@ -64,10 +122,37 @@ describe("provider skill management", () => {
       expect(actionInput).toEqual({
         name: "review",
         path: "/Users/test/.codex/skills/review/SKILL.md",
+        scope: "user",
         enabled: false,
       });
       expect(refreshCount).toBe(1);
       expect(result.effectiveEnabled).toBe(false);
+    }),
+  );
+
+  it.effect("rejects a change when refreshed provider state does not confirm it", () =>
+    Effect.gen(function* () {
+      const snapshot = provider();
+      const registry = {
+        ...makeProviderRegistryMock([snapshot]),
+        getProviderSkillActionsForInstance: () =>
+          Effect.succeed({
+            setEnabled: () => Effect.succeed({ effectiveEnabled: false }),
+          }),
+        refreshInstance: () => Effect.succeed([snapshot]),
+      };
+
+      const error = yield* Effect.flip(
+        makeProviderSkillManagement(registry).setEnabled({
+          instanceId,
+          name: "review",
+          path: "/Users/test/.codex/skills/review/SKILL.md",
+          enabled: false,
+        }),
+      );
+
+      expect(error.reason).toBe("provider_rejected");
+      expect(error.message).toBe("The provider kept 'review' enabled.");
     }),
   );
 

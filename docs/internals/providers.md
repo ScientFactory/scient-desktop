@@ -148,6 +148,12 @@ the official macOS keychain entry being shared across instances. Profile directo
 `0700` on POSIX. This is file storage, not an encrypted keychain. Windows uses the host profile's
 filesystem permissions.
 
+The private profile links the user's documented loose and provider-managed skill roots. Global
+plugin skills receive a skill-only projection containing each plugin manifest and skill directory;
+plugin MCP servers, hooks, rules, agents, and credentials remain outside the profile. This keeps
+native skill loading available without expanding a provider session's authority as a side effect of
+skill discovery.
+
 The launch environment removes API-key and cloud-billing variables, disables inherited
 environment extension, sets `PYTHONUNBUFFERED=1`, and controls `BROWSER`. A tested Node or
 Electron-as-Node helper prevents the official agent from opening a browser on the environment.

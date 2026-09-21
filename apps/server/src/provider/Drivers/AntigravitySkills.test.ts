@@ -3,9 +3,14 @@ import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
+import * as Schema from "effect/Schema";
 
 import { discoverAntigravitySkills, resolveAntigravityUserHome } from "./AntigravitySkills.ts";
 import { symlinksSupported } from "@t3tools/shared/testing/symlinks";
+
+const encodePluginManifest = Schema.encodeSync(
+  Schema.fromJsonString(Schema.Struct({ name: Schema.String })),
+);
 
 const writeSkill = Effect.fn("writeSkill")(function* (directory: string, contents: string) {
   const fileSystem = yield* FileSystem.FileSystem;
@@ -29,6 +34,82 @@ const makeWorkspace = Effect.fn("makeWorkspace")(function* () {
 });
 
 it.layer(NodeServices.layer)("discoverAntigravitySkills", (it) => {
+  it.effect("discovers only global roots when no workspace is supplied", () =>
+    Effect.gen(function* () {
+      const path = yield* Path.Path;
+      const input = yield* makeWorkspace();
+      const globalPath = yield* writeSkill(
+        path.join(input.userHome, ".gemini", "config", "skills", "global-review"),
+        "---\nname: global-review\ndescription: Review everywhere.\n---\n",
+      );
+      yield* writeSkill(
+        path.join(input.cwd, ".agents", "skills", "project-review"),
+        "---\nname: project-review\n---\n",
+      );
+
+      assert.deepEqual(yield* discoverAntigravitySkills({ userHome: input.userHome }), [
+        {
+          name: "global-review",
+          description: "Review everywhere.",
+          path: globalPath,
+          scope: "user",
+          enabled: true,
+        },
+      ]);
+    }),
+  );
+
+  it.effect("discovers namespaced global and workspace plugin skills", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const input = yield* makeWorkspace();
+      const globalPlugin = path.join(
+        input.userHome,
+        ".gemini",
+        "config",
+        "plugins",
+        "science-folder",
+      );
+      yield* fileSystem.makeDirectory(globalPlugin, { recursive: true });
+      yield* fileSystem.writeFileString(
+        path.join(globalPlugin, "plugin.json"),
+        encodePluginManifest({ name: "science" }),
+      );
+      const globalPluginSkillPath = yield* writeSkill(
+        path.join(globalPlugin, "skills", "literature"),
+        "---\nname: literature\ndescription: Search literature.\n---\n",
+      );
+      const workspacePlugin = path.join(input.cwd, ".agents", "plugins", "analysis-folder");
+      yield* fileSystem.makeDirectory(workspacePlugin, { recursive: true });
+      yield* fileSystem.writeFileString(
+        path.join(workspacePlugin, "plugin.json"),
+        encodePluginManifest({ name: "analysis" }),
+      );
+      const workspacePluginSkillPath = yield* writeSkill(
+        path.join(workspacePlugin, "skills", "statistics"),
+        "---\nname: statistics\ndescription: Analyze data.\n---\n",
+      );
+
+      assert.deepEqual(yield* discoverAntigravitySkills(input), [
+        {
+          name: "analysis:statistics",
+          description: "Analyze data.",
+          path: workspacePluginSkillPath,
+          scope: "plugin",
+          enabled: true,
+        },
+        {
+          name: "science:literature",
+          description: "Search literature.",
+          path: globalPluginSkillPath,
+          scope: "plugin",
+          enabled: true,
+        },
+      ]);
+    }),
+  );
+
   it.effect("does not read user skills from a nested project or from ~/.agents", () =>
     Effect.gen(function* () {
       const path = yield* Path.Path;

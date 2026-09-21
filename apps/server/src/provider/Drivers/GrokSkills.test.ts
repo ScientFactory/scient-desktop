@@ -1,10 +1,13 @@
+import * as NodeServices from "@effect/platform-node/NodeServices";
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
+import * as Path from "effect/Path";
 import * as Sink from "effect/Sink";
 import * as Stream from "effect/Stream";
 import { ChildProcessSpawner } from "effect/unstable/process";
 
-import { discoverGrokSkills } from "./GrokSkills.ts";
+import { discoverGrokSkills, setGrokSkillEnabled, updateGrokDisabledSkills } from "./GrokSkills.ts";
 
 const inspectPayload = (skills: ReadonlyArray<unknown>) => JSON.stringify({ skills });
 
@@ -40,6 +43,8 @@ describe("discoverGrokSkills", () => {
           path: "/home/dev/.grok/installed-plugins/pkg/plug/skills/deploy/SKILL.md",
           scope: "plugin",
           enabled: true,
+          canSetEnabled: true,
+          userInvocable: true,
         },
         {
           name: "writing-docs",
@@ -47,6 +52,8 @@ describe("discoverGrokSkills", () => {
           path: "/home/dev/.grok/skills/writing-docs/SKILL.md",
           scope: "user",
           enabled: true,
+          canSetEnabled: true,
+          userInvocable: true,
         },
       ]);
     }).pipe(
@@ -75,16 +82,26 @@ describe("discoverGrokSkills", () => {
     ),
   );
 
-  it.effect("disables skills the CLI marks as not user-invocable", () =>
+  it.effect("keeps disabled state separate from manual invocation", () =>
     Effect.gen(function* () {
       const skills = yield* discoverGrokSkills({ binaryPath: "grok" }, {});
 
       expect(skills).toEqual([
         {
+          name: "disabled-helper",
+          path: "/opt/grok/bundled/skills/disabled-helper/SKILL.md",
+          scope: "bundled",
+          enabled: false,
+          canSetEnabled: true,
+          userInvocable: true,
+        },
+        {
           name: "internal-helper",
           path: "/opt/grok/bundled/skills/internal-helper/SKILL.md",
           scope: "bundled",
-          enabled: false,
+          enabled: true,
+          canSetEnabled: true,
+          userInvocable: false,
         },
       ]);
     }).pipe(
@@ -92,6 +109,15 @@ describe("discoverGrokSkills", () => {
         ChildProcessSpawner.ChildProcessSpawner,
         makeInspectSpawner(
           inspectPayload([
+            {
+              name: "disabled-helper",
+              source: {
+                type: "bundled",
+                path: "/opt/grok/bundled/skills/disabled-helper/SKILL.md",
+              },
+              disabled: true,
+              userInvocable: true,
+            },
             {
               name: "internal-helper",
               source: {
@@ -171,4 +197,66 @@ describe("discoverGrokSkills", () => {
       expect(failed._tag).toBe("Failure");
     });
   });
+});
+
+describe("updateGrokDisabledSkills", () => {
+  it("changes only the native disabled list and preserves unrelated TOML", () => {
+    const initial = [
+      "# retained comment",
+      "[ui]",
+      'theme = "dark"',
+      "",
+      "[skills] # retained section comment",
+      'paths = ["~/team"]',
+      'disabled = ["kept"] # retained key comment',
+      "",
+    ].join("\n");
+
+    const disabled = updateGrokDisabledSkills(initial, "review", false);
+    expect(disabled).toContain("# retained comment");
+    expect(disabled).toContain('theme = "dark"');
+    expect(disabled).toContain("[skills] # retained section comment");
+    expect(disabled).toContain('paths = ["~/team"]');
+    expect(disabled).toContain('disabled = ["kept", "review"] # retained key comment');
+
+    const enabled = updateGrokDisabledSkills(disabled, "kept", true);
+    expect(enabled).toContain('disabled = ["review"] # retained key comment');
+  });
+
+  it("adds the skills table when absent and rejects an invalid disabled value", () => {
+    expect(updateGrokDisabledSkills('[ui]\ntheme = "dark"\n', "review", false)).toBe(
+      '[ui]\ntheme = "dark"\n[skills]\ndisabled = ["review"]\n',
+    );
+    expect(() =>
+      updateGrokDisabledSkills('[skills]\ndisabled = "review"\n', "review", true),
+    ).toThrow("skills.disabled must be an array of skill names.");
+    expect(() => updateGrokDisabledSkills('skills = "legacy"\n', "review", false)).toThrow(
+      "skills must be a TOML table.",
+    );
+  });
+});
+
+it.layer(NodeServices.layer)("setGrokSkillEnabled", (it) => {
+  it.effect("writes the user config selected by GROK_HOME", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const home = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-grok-skills-" });
+      yield* fileSystem.writeFileString(
+        path.join(home, "config.toml"),
+        "[skills]\ndisabled = []\n",
+      );
+
+      yield* setGrokSkillEnabled({
+        environment: { GROK_HOME: home },
+        cwd: home,
+        name: "review",
+        enabled: false,
+      });
+
+      expect(yield* fileSystem.readFileString(path.join(home, "config.toml"))).toBe(
+        '[skills]\ndisabled = ["review"]\n',
+      );
+    }),
+  );
 });

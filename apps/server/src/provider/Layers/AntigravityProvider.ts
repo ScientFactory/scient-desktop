@@ -124,6 +124,8 @@ interface AntigravityProviderOptions {
     EffectAcpErrors.AcpError | ProviderSetupError
   >;
   readonly supportsTextGeneration: Effect.Effect<boolean>;
+  /** Provider-native global skills visible outside a particular workspace. */
+  readonly discoverGlobalSkills?: Effect.Effect<Result.Result<ServerProvider["skills"], string>>;
   readonly maintenanceCapabilities?: ProviderMaintenanceCapabilities;
   /** Auth type and label published once a session authenticates. */
   readonly auth?: { readonly type: string; readonly label: string };
@@ -182,10 +184,15 @@ export const makeAntigravityProvider = Effect.fn("makeAntigravityProvider")(func
   const checkProvider = Effect.fn("checkAntigravityProvider")(function* () {
     if (!settings.enabled) return yield* getSnapshot;
     const before = yield* SubscriptionRef.get(metadata);
-    const result = yield* options.probe.pipe(
-      Effect.timeoutOption(HEALTH_CHECK_TIMEOUT),
-      Effect.result,
-    );
+    const [result, globalSkillsResult] = yield* Effect.all([
+      options.probe.pipe(Effect.timeoutOption(HEALTH_CHECK_TIMEOUT), Effect.result),
+      options.discoverGlobalSkills ?? Effect.succeed(Result.succeed(before.draft.skills)),
+    ]);
+    const globalSkills = Result.isSuccess(globalSkillsResult)
+      ? globalSkillsResult.success
+      : yield* Effect.logWarning("Antigravity global skill discovery was unavailable.", {
+          cause: globalSkillsResult.failure,
+        }).pipe(Effect.as(before.draft.skills));
     const initialized =
       Result.isSuccess(result) && Option.isSome(result.success) ? result.success.value : undefined;
     const failure = Result.isFailure(result) ? result.failure : undefined;
@@ -231,6 +238,7 @@ export const makeAntigravityProvider = Effect.fn("makeAntigravityProvider")(func
                 supportsTextGeneration: false,
               }
             : {}),
+          ...(!missingInstallation ? { skills: globalSkills } : {}),
           ...(initialized !== undefined
             ? {
                 supportsTextGeneration:
@@ -374,7 +382,6 @@ export const makeAntigravityProvider = Effect.fn("makeAntigravityProvider")(func
             checkedAt: updatedAt,
             models: [],
             slashCommands: [],
-            skills: [],
             workspaceSnapshots: [],
             supportsTextGeneration: false,
           },

@@ -293,21 +293,75 @@ function trimOptional(value: string | null | undefined): string | undefined {
   return trimmed && trimmed.length > 0 ? trimmed : undefined;
 }
 
-function isSkillInsideWorkspace(cwd: string, candidate: string): boolean {
-  const normalizedCandidate = candidate.replaceAll("\\", "/");
-  if (!normalizedCandidate.startsWith("/") && !/^[A-Za-z]:\//.test(normalizedCandidate)) {
-    return true;
-  }
-  const normalizedRoot = cwd.replaceAll("\\", "/").replace(/\/+$/, "").toLowerCase();
-  const normalizedAbsolute = normalizedCandidate.toLowerCase();
+const OPENCODE_PROJECT_SKILL_ROOTS = [
+  ".opencode/skills",
+  ".claude/skills",
+  ".agents/skills",
+] as const;
+
+function normalizeSkillPath(value: string): string {
+  const normalized = value.replaceAll("\\", "/").replace(/^\.\//, "").replace(/\/+$/, "");
+  return /^[A-Za-z]:\//.test(normalized) ? normalized.toLowerCase() : normalized;
+}
+
+function isAbsoluteSkillPath(value: string): boolean {
+  return value.startsWith("/") || /^[A-Za-z]:\//.test(value);
+}
+
+function pathIsInside(root: string, candidate: string): boolean {
+  const normalizedRoot = normalizeSkillPath(root);
+  const normalizedCandidate = normalizeSkillPath(candidate);
   return (
-    normalizedAbsolute === normalizedRoot || normalizedAbsolute.startsWith(`${normalizedRoot}/`)
+    normalizedCandidate === normalizedRoot || normalizedCandidate.startsWith(`${normalizedRoot}/`)
   );
+}
+
+function resolveOpenCodeUserSkillRoots(environment: NodeJS.ProcessEnv): ReadonlyArray<string> {
+  const home = trimOptional(
+    environment.HOME ??
+      environment.USERPROFILE ??
+      (environment.HOMEDRIVE && environment.HOMEPATH
+        ? `${environment.HOMEDRIVE}${environment.HOMEPATH}`
+        : undefined),
+  );
+  if (!home) return [];
+
+  const configHome = trimOptional(environment.XDG_CONFIG_HOME) ?? `${home}/.config`;
+  return [`${configHome}/opencode/skills`, `${home}/.claude/skills`, `${home}/.agents/skills`];
+}
+
+export function resolveOpenCodeSkillScope(input: {
+  readonly cwd: string;
+  readonly environment?: NodeJS.ProcessEnv;
+  readonly path: string;
+}): "app" | "project" | "user" {
+  const normalizedPath = normalizeSkillPath(input.path);
+  if (normalizedPath === "<built-in>" || normalizedPath.startsWith("builtin:")) {
+    return "app";
+  }
+
+  if (!isAbsoluteSkillPath(normalizedPath)) {
+    return OPENCODE_PROJECT_SKILL_ROOTS.some((root) => pathIsInside(root, normalizedPath))
+      ? "project"
+      : "app";
+  }
+
+  const environment = input.environment ?? process.env;
+  if (
+    resolveOpenCodeUserSkillRoots(environment).some((root) => pathIsInside(root, normalizedPath))
+  ) {
+    return "user";
+  }
+
+  const workspaceRoot = normalizeSkillPath(input.cwd);
+  const projectRoots = OPENCODE_PROJECT_SKILL_ROOTS.map((root) => `${workspaceRoot}/${root}`);
+  return projectRoots.some((root) => pathIsInside(root, normalizedPath)) ? "project" : "user";
 }
 
 export function openCodeSkillsToServerProviderSkills(
   input: OpenCodeInventory["skills"] | undefined,
   cwd: string,
+  environment?: NodeJS.ProcessEnv,
 ): ReadonlyArray<ServerProviderSkill> {
   const skills: ServerProviderSkill[] = [];
   for (const skill of input ?? []) {
@@ -321,7 +375,11 @@ export function openCodeSkillsToServerProviderSkills(
     skills.push({
       name,
       path,
-      scope: isSkillInsideWorkspace(cwd, path) ? "project" : "user",
+      scope: resolveOpenCodeSkillScope({
+        cwd,
+        path,
+        ...(environment !== undefined ? { environment } : {}),
+      }),
       enabled: true,
       ...(description ? { description, shortDescription: description } : {}),
     });
@@ -553,7 +611,11 @@ export const checkOpenCodeProviderStatus = Effect.fn("checkOpenCodeProviderStatu
     customModels,
     DEFAULT_OPENCODE_MODEL_CAPABILITIES,
   );
-  const skills = openCodeSkillsToServerProviderSkills(inventoryExit.value.inventory.skills, cwd);
+  const skills = openCodeSkillsToServerProviderSkills(
+    inventoryExit.value.inventory.skills,
+    cwd,
+    resolvedEnvironment,
+  );
   const connectedCount = inventoryExit.value.inventory.providerList.connected.length;
   return buildServerProvider({
     presentation: OPENCODE_PRESENTATION,

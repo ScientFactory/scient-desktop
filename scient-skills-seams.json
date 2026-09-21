@@ -13,6 +13,8 @@
     "apps/server/src/mcp/ScientOperationCatalog.ts",
     "apps/server/src/provider/ScientAwareness.ts",
     "apps/server/src/provider/ScientToolProjection.ts",
+    "apps/server/src/provider/Drivers/DroidDriver.ts",
+    "apps/server/src/provider/Drivers/DroidSkills.ts",
     "apps/server/src/scient/operations/AgentInvocationContext.ts",
     "apps/server/src/scient/operations/AgentOperationDispatcher.ts",
     "apps/server/src/scient/threadQueue/Worker.ts",
@@ -145,9 +147,29 @@
       "purpose": "Read the optional native skill capability from the existing live provider registry."
     },
     {
+      "path": "apps/server/src/provider/Drivers/ClaudeDriver.ts",
+      "anchor": "skillActions",
+      "purpose": "Attach user-scoped Claude skill activation to the exact configured provider instance."
+    },
+    {
+      "path": "apps/server/src/provider/Drivers/ClaudeSkills.ts",
+      "anchor": "setClaudeSkillEnabled",
+      "purpose": "Preserve Claude JSONC settings while changing only reviewed user-scoped on/off overrides."
+    },
+    {
       "path": "apps/server/src/provider/Drivers/CodexDriver.ts",
       "anchor": "skillActions",
       "purpose": "Publish Codex native skill activation only for snapshots backed by its reviewed app-server API."
+    },
+    {
+      "path": "apps/server/src/provider/Drivers/GrokDriver.ts",
+      "anchor": "skillActions",
+      "purpose": "Attach Grok skill activation to the exact configured provider instance."
+    },
+    {
+      "path": "apps/server/src/provider/Drivers/GrokSkills.ts",
+      "anchor": "setGrokSkillEnabled",
+      "purpose": "Preserve unrelated Grok TOML while changing only the native disabled-skill list."
     },
     {
       "path": "apps/server/src/provider/Layers/CodexProvider.ts",
@@ -156,7 +178,7 @@
     },
     {
       "path": "apps/server/src/provider/Layers/OpenCodeProvider.ts",
-      "anchor": "isSkillInsideWorkspace",
+      "anchor": "resolveOpenCodeSkillScope",
       "purpose": "Normalize OpenCode skill scope so project inventory stays out of global skill surfaces."
     },
     {
@@ -226,8 +248,8 @@
     },
     {
       "path": "packages/contracts/src/server.ts",
-      "anchor": "canSetEnabled",
-      "purpose": "Carry the optional provider-native mutation capability in provider snapshots."
+      "anchor": "enabledReadOnlyReason",
+      "purpose": "Carry provider-native mutation capability and truthful read-only explanations in provider snapshots."
     },
     {
       "path": "package.json",

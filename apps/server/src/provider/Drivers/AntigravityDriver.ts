@@ -460,6 +460,12 @@ export const AntigravityDriver: ProviderDriver<AntigravitySettings, AntigravityD
         stampIdentity: classifyModels,
         probe,
         auth: { type: auth.authMethod, label: antigravityAuthLabel(auth.authMethod) },
+        discoverGlobalSkills: discoverAntigravitySkills({ userHome }).pipe(
+          Effect.provideService(FileSystem.FileSystem, fileSystem),
+          Effect.provideService(Path.Path, path),
+          Effect.mapError((cause) => cause.message),
+          Effect.result,
+        ),
         supportsTextGeneration: isAntigravityTextGenerationAvailable(profileDirectory).pipe(
           Effect.provideService(FileSystem.FileSystem, fileSystem),
           Effect.provideService(Path.Path, path),

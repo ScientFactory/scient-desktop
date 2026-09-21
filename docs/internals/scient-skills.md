@@ -277,21 +277,47 @@ exact contextual `scient://` entry remains available for explicit selection.
 reported by each connected provider instance. Providers remain the source of
 truth. Codex supplies its inventory through app-server; Claude uses the Agent
 SDK's skill-only reload response plus narrow filesystem discovery for scope
-metadata; and Antigravity uses metadata-only discovery for its documented skill
-roots.
-Scient does not copy, import, rewrite, or execute those files. Personal,
-provider-bundled, system, and otherwise unclassified global skills are shown;
-project and repository skills stay out of this global page and out of the
-global `$` and `/` menus.
+metadata; Droid uses its official SDK inventory; Grok uses `grok inspect
+--json`; Cursor reads its documented personal compatibility roots and
+provider-managed built-ins; managed Antigravity reads its loose and plugin
+skill roots; and legacy Antigravity asks `agy /skills` for the exact native
+catalog, including provider built-ins. Managed Antigravity projects only plugin
+manifests and skill directories into its isolated profile, leaving plugin MCP
+servers, hooks, rules, agents, and credentials outside the runtime.
+
+External inventory does not import provider skills into Scient's own catalog,
+rewrite their source, or execute them. Personal, provider-bundled, plugin,
+system, and otherwise unclassified global skills are shown; project and
+repository skills stay out of this global page and out of the global `$` and
+`/` menus.
 
 Provider instances share one compact selector and only the selected provider's
-inventory is expanded. Native skill controls are capability-gated: Codex
-currently exposes its reviewed `skills/config/write` API, so its skills can be
-activated or deactivated in Scient. Claude, Antigravity, and OpenCode remain
-read-only because they do not expose an equivalent reviewed mutation API. The
-server validates the exact provider instance, skill name, and provider-owned
-path against the latest snapshot before dispatching a change, then refreshes
-the provider inventory. The UI never predicts success.
+inventory is expanded. Native skill controls are capability-gated:
+
+- Codex uses app-server `skills/config/write`, selecting by the exact reported
+  path rather than an ambiguous name;
+- Droid uses the official SDK's settings ledger. Skills disabled in their own
+  frontmatter or by a different settings level remain read-only because the
+  current surface cannot truthfully override them;
+- Grok updates only the user `config.toml` `[skills].disabled` list and preserves
+  unrelated TOML text; and
+- Claude updates only simple user-scoped `skillOverrides` on/off values while
+  preserving JSONC comments. Project, managed-policy, plugin, and specialized
+  invocation-mode entries remain read-only.
+
+OpenCode, Cursor, Pi, and Antigravity remain read-only until each provider has a
+reviewed, persistent, reversible per-skill mechanism. Scient does not maintain a
+shadow disabled state. The server validates the exact provider instance, skill
+name, and provider-owned path against the latest snapshot before dispatching a
+change, refreshes the provider inventory, and accepts success only when the
+provider's refreshed state confirms the requested value. Native setting changes
+and their readback are serialized on the server so concurrent clients or provider
+instances sharing a configuration cannot overwrite one another's skill changes.
+The switch responds immediately without blocking other controls and shows
+"Updating" in the existing status line until confirmation. Further clicks replace its
+desired state; after each provider-confirmed write, Scient applies only the
+latest remaining choice. Other skills remain usable. After a failed write, Scient attempts to refresh
+the provider state instead of claiming that an unverified choice succeeded.
 
 ## Deliberate phase-one exclusions
 
@@ -311,7 +337,8 @@ Automated coverage must continue to prove:
 2. zero-write project inspection, no scanning of uninitialized folders, and
    atomic explicit lock writes;
 3. exact-lock trust invalidation after any lock-byte change;
-4. no discovery of provider-native skill directories;
+4. provider-native discovery remains isolated from Scient's built-in and
+   project skill registries;
 5. independent transport and awareness decisions: Antigravity and Cursor keep
    MCP list/load/resource access and explicit `$name` selection without a claim
    of qualified automatic discovery;

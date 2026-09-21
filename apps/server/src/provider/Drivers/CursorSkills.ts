@@ -16,6 +16,7 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import * as PlatformError from "effect/PlatformError";
+import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import { parse as parseYamlDocument } from "yaml";
 
@@ -59,12 +60,15 @@ class CursorSkillsProbeError extends Schema.TaggedError<CursorSkillsProbeError>(
 const orUndefined = <A, R>(
   effect: Effect.Effect<A, PlatformError.PlatformError, R>,
   budget?: CursorSkillScanBudget,
+  missingIsIncomplete = false,
 ): Effect.Effect<A | undefined, never, R> =>
   effect.pipe(
     Effect.map((value): A | undefined => value),
     Effect.catchTags({
       PlatformError: (error) => {
-        if (error.reason._tag !== "NotFound" && budget) budget.incomplete = true;
+        if ((missingIsIncomplete || error.reason._tag !== "NotFound") && budget) {
+          budget.incomplete = true;
+        }
         return Effect.void.pipe(Effect.as(undefined));
       },
     }),
@@ -129,7 +133,7 @@ function parseSkillFrontmatter(contents: string): CursorSkillFrontmatter | undef
 
 const discoverSkillsInRoot = Effect.fn("discoverCursorSkillsInRoot")(function* (input: {
   readonly directory: string;
-  readonly scope: "user" | "project";
+  readonly scope: "app" | "user" | "project";
   readonly budget: CursorSkillScanBudget;
 }): Effect.fn.Return<ReadonlyArray<ServerProviderSkill>, never, FileSystem.FileSystem | Path.Path> {
   const fileSystem = yield* FileSystem.FileSystem;
@@ -163,28 +167,37 @@ const discoverSkillsInRoot = Effect.fn("discoverCursorSkillsInRoot")(function* (
     const skillPath = path.join(directory, "SKILL.md");
     const skillInfo = yield* orUndefined(fileSystem.stat(skillPath), input.budget);
     if (skillInfo?.type === "File") {
-      let frontmatter: CursorSkillFrontmatter | undefined = { cliVisible: true };
-      if (skillInfo.size <= MAX_SKILL_BYTES && skillInfo.size <= input.budget.remainingBytes) {
-        const contents = yield* orUndefined(fileSystem.readFileString(skillPath));
+      // Cursor cannot load an oversized skill. Do not invent its metadata or
+      // invocation policy from a file we did not read.
+      if (skillInfo.size <= MAX_SKILL_BYTES) {
+        if (skillInfo.size > input.budget.remainingBytes) {
+          input.budget.exhausted = true;
+          return;
+        }
+        const contents = yield* orUndefined(
+          fileSystem.readFileString(skillPath),
+          input.budget,
+          true,
+        );
         if (contents !== undefined) {
           input.budget.remainingBytes -= skillInfo.size;
-          frontmatter = parseSkillFrontmatter(contents);
+          const frontmatter = parseSkillFrontmatter(contents);
+          const name = path.basename(directory).trim();
+          if (frontmatter?.cliVisible && name) {
+            skills.push({
+              name,
+              path: skillPath,
+              scope: input.scope,
+              enabled: true,
+              ...(frontmatter.displayName && frontmatter.displayName !== name
+                ? { displayName: frontmatter.displayName }
+                : {}),
+              ...(frontmatter.description ? { description: frontmatter.description } : {}),
+              ...(frontmatter.userInvocationOnly ? { userInvocationOnly: true } : {}),
+              ...(frontmatter.userInvocable === false ? { userInvocable: false } : {}),
+            });
+          }
         }
-      }
-      const name = path.basename(directory).trim();
-      if (frontmatter?.cliVisible && name) {
-        skills.push({
-          name,
-          path: skillPath,
-          scope: input.scope,
-          enabled: true,
-          ...(frontmatter.displayName && frontmatter.displayName !== name
-            ? { displayName: frontmatter.displayName }
-            : {}),
-          ...(frontmatter.description ? { description: frontmatter.description } : {}),
-          ...(frontmatter.userInvocationOnly ? { userInvocationOnly: true } : {}),
-          ...(frontmatter.userInvocable === false ? { userInvocable: false } : {}),
-        });
       }
     }
 
@@ -228,7 +241,14 @@ const inspectCursorSkills = Effect.fn("inspectCursorSkills")(function* (
     { directory: path.join(base, ".codex", "skills"), scope },
     { directory: path.join(base, ".claude", "skills"), scope },
   ];
-  const roots = [...(cwd ? rootsBelow(cwd, "project") : []), ...rootsBelow(userHome, "user")];
+  const roots = [
+    ...(cwd ? rootsBelow(cwd, "project") : []),
+    ...rootsBelow(userHome, "user"),
+    // Cursor owns and updates this installed-runtime catalog. Keep it after
+    // project and personal roots so provider defaults never replace a
+    // same-name skill the user can inspect and edit.
+    { directory: path.join(userHome, ".cursor", "skills-cursor"), scope: "app" as const },
+  ];
 
   const skillsByName = new Map<string, ServerProviderSkill>();
   const budget: CursorSkillScanBudget = {
@@ -254,13 +274,6 @@ const inspectCursorSkills = Effect.fn("inspectCursorSkills")(function* (
   };
 });
 
-export const discoverCursorSkills = Effect.fn("discoverCursorSkills")(function* (
-  cwd?: string,
-  environment: NodeJS.ProcessEnv = process.env,
-) {
-  return (yield* inspectCursorSkills(cwd, environment)).skills;
-});
-
 export const probeCursorSkills = Effect.fn("probeCursorSkills")(function* (
   cwd?: string,
   environment: NodeJS.ProcessEnv = process.env,
@@ -273,6 +286,25 @@ export const probeCursorSkills = Effect.fn("probeCursorSkills")(function* (
     });
   }
   return inspection.skills;
+});
+
+/** A failed refresh must not replace a previously complete machine catalog. */
+export const makeCursorMachineSkillCatalog = Effect.fn("makeCursorMachineSkillCatalog")(function* (
+  environment: NodeJS.ProcessEnv = process.env,
+) {
+  const lastComplete = yield* Ref.make<ReadonlyArray<ServerProviderSkill> | undefined>(undefined);
+  return probeCursorSkills(undefined, environment).pipe(
+    Effect.tap((skills) => Ref.set(lastComplete, skills)),
+    Effect.catch((error) =>
+      Ref.get(lastComplete).pipe(
+        Effect.flatMap((previous) =>
+          previous === undefined
+            ? Effect.fail(error)
+            : Effect.logWarning(error.message).pipe(Effect.as(previous)),
+        ),
+      ),
+    ),
+  );
 });
 
 /** Cursor invokes Agent Skills with `/name`; T3 composers insert `$name`. */

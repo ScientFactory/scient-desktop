@@ -123,6 +123,7 @@ export interface ProviderSkillActions {
   readonly setEnabled: (input: {
     readonly name: string;
     readonly path: string;
+    readonly scope?: string | undefined;
     readonly enabled: boolean;
   }) => Effect.Effect<{ readonly effectiveEnabled: boolean }, ProviderSkillActionFailure>;
 }

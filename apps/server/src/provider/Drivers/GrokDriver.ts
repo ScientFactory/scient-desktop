@@ -38,7 +38,7 @@ import {
 } from "../ProviderDriver.ts";
 import type { ServerProviderDraft } from "../providerSnapshot.ts";
 import { mergeProviderInstanceEnvironment } from "../ProviderInstanceEnvironment.ts";
-import { discoverGrokSkills } from "./GrokSkills.ts";
+import { discoverGrokSkills, setGrokSkillEnabled } from "./GrokSkills.ts";
 import { makeManualOnlyProviderMaintenanceCapabilities } from "../providerMaintenance.ts";
 import {
   haveProviderSnapshotSettingsChanged,
@@ -207,6 +207,24 @@ export const GrokDriver: ProviderDriver<GrokSettings, GrokDriverEnv> = {
                 ),
               ),
             ]).pipe(Effect.map(([machineSnapshot, skills]) => ({ ...machineSnapshot, skills })));
+      const skillActions = {
+        setEnabled: (skill: {
+          readonly name: string;
+          readonly path: string;
+          readonly scope?: string | undefined;
+          readonly enabled: boolean;
+        }) =>
+          setGrokSkillEnabled({
+            environment: processEnv,
+            cwd,
+            name: skill.name,
+            enabled: skill.enabled,
+          }).pipe(
+            Effect.provideService(FileSystem.FileSystem, fileSystem),
+            Effect.provideService(Path.Path, path),
+            Effect.mapError((cause) => ({ message: cause.detail, cause })),
+          ),
+      };
 
       return {
         instanceId,
@@ -217,6 +235,7 @@ export const GrokDriver: ProviderDriver<GrokSettings, GrokDriverEnv> = {
         enabled,
         snapshot,
         snapshotForCwd,
+        skillActions,
         adapter,
         textGeneration,
         connectionActions,

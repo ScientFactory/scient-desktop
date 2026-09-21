@@ -4,6 +4,7 @@ import {
   type ProviderSkillSetEnabledResult,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
+import * as Semaphore from "effect/Semaphore";
 
 import type { ProviderRegistryShape } from "../../provider/Services/ProviderRegistry.ts";
 
@@ -22,6 +23,9 @@ const failure = (input: {
 export function makeProviderSkillManagement(
   providerRegistry: ProviderRegistryShape,
 ): ProviderSkillManagementShape {
+  // Different clients and provider instances may write the same native settings
+  // file. Keep each read/write/refresh together; client-side queues alone cannot.
+  const writePermit = Semaphore.makeUnsafe(1);
   const setEnabled: ProviderSkillManagementShape["setEnabled"] = Effect.fn(
     "ProviderSkillManagement.setEnabled",
   )(function* (input) {
@@ -55,10 +59,11 @@ export function makeProviderSkillManagement(
       });
     }
 
-    const result = yield* actions
+    yield* actions
       .setEnabled({
         name: skill.name,
         path: skill.path,
+        ...(skill.scope ? { scope: skill.scope } : {}),
         enabled: input.enabled,
       })
       .pipe(
@@ -71,11 +76,29 @@ export function makeProviderSkillManagement(
         ),
       );
     const refreshedProviders = yield* providerRegistry.refreshInstance(input.instanceId);
+    const refreshedSkill = refreshedProviders
+      .find((candidate) => candidate.instanceId === input.instanceId)
+      ?.skills.find((candidate) => candidate.path === skill.path && candidate.name === skill.name);
+    if (!refreshedSkill) {
+      return yield* failure({
+        instanceId: input.instanceId,
+        reason: "provider_rejected",
+        message: `Scient could not verify '${skill.name}' after the provider refresh.`,
+      });
+    }
+    const effectiveEnabled = refreshedSkill.enabled;
+    if (effectiveEnabled !== input.enabled) {
+      return yield* failure({
+        instanceId: input.instanceId,
+        reason: "provider_rejected",
+        message: `The provider kept '${skill.name}' ${effectiveEnabled ? "enabled" : "disabled"}.`,
+      });
+    }
     return {
-      effectiveEnabled: result.effectiveEnabled,
+      effectiveEnabled,
       providers: refreshedProviders,
     };
   });
 
-  return { setEnabled };
+  return { setEnabled: (input) => writePermit.withPermits(1)(setEnabled(input)) };
 }

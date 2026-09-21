@@ -23,6 +23,8 @@ import * as OpenCodeServerOwner from "../OpenCodeServerOwner.ts";
 import {
   checkOpenCodeProviderStatus,
   openCodeCommandsToServerProviderSlashCommands,
+  openCodeSkillsToServerProviderSkills,
+  resolveOpenCodeSkillScope,
 } from "./OpenCodeProvider.ts";
 import type { OpenCodeInventory } from "../opencodeRuntime.ts";
 import { readOpenCodeGoUsageLimits } from "./openCodeUsageLimits.ts";
@@ -295,6 +297,113 @@ it("keeps native and MCP commands while preserving compaction and separate skill
     [
       { name: "review", description: "Review changes", input: { hint: "$ARGUMENTS" } },
       { name: "mcp:search", input: { hint: "query" } },
+    ],
+  );
+});
+
+it("classifies OpenCode skill roots without treating the user's home as a project", () => {
+  const environment = { HOME: "/Users/test" };
+  NodeAssert.equal(
+    resolveOpenCodeSkillScope({
+      cwd: "/Users/test",
+      environment,
+      path: "/Users/test/.agents/skills/personal/SKILL.md",
+    }),
+    "user",
+  );
+  NodeAssert.equal(
+    resolveOpenCodeSkillScope({
+      cwd: "/Users/test/workspace",
+      environment,
+      path: "/Users/test/workspace/.agents/skills/project/SKILL.md",
+    }),
+    "project",
+  );
+  NodeAssert.equal(
+    resolveOpenCodeSkillScope({
+      cwd: "/Users/test/workspace",
+      environment,
+      path: "<built-in>",
+    }),
+    "app",
+  );
+});
+
+it("supports XDG, relative, and Windows OpenCode skill locations", () => {
+  NodeAssert.equal(
+    resolveOpenCodeSkillScope({
+      cwd: "/work/project",
+      environment: { HOME: "/home/test", XDG_CONFIG_HOME: "/data/config" },
+      path: "/data/config/opencode/skills/global/SKILL.md",
+    }),
+    "user",
+  );
+  NodeAssert.equal(
+    resolveOpenCodeSkillScope({
+      cwd: "/work/project",
+      environment: { HOME: "/home/test" },
+      path: ".opencode/skills/local/SKILL.md",
+    }),
+    "project",
+  );
+  NodeAssert.equal(
+    resolveOpenCodeSkillScope({
+      cwd: "/work/project",
+      environment: { HOME: "/home/test" },
+      path: "provider:bundled-skill",
+    }),
+    "app",
+  );
+  NodeAssert.equal(
+    resolveOpenCodeSkillScope({
+      cwd: "C:\\Users\\Test\\project",
+      environment: { USERPROFILE: "C:\\Users\\Test" },
+      path: "c:\\users\\test\\.agents\\skills\\personal\\SKILL.md",
+    }),
+    "user",
+  );
+  NodeAssert.equal(
+    resolveOpenCodeSkillScope({
+      cwd: "C:\\Users\\Test\\project",
+      environment: { USERPROFILE: "C:\\Users\\Test" },
+      path: "C:\\USERS\\TEST\\PROJECT\\.OPENCODE\\SKILLS\\LOCAL\\SKILL.MD",
+    }),
+    "project",
+  );
+});
+
+it("keeps OpenCode skill conversion stable while applying authoritative scope roots", () => {
+  const skills = openCodeSkillsToServerProviderSkills(
+    [
+      { name: "z-project", description: "Project", location: ".agents/skills/z/SKILL.md" },
+      { name: "builtin", description: "Built in", location: "<built-in>" },
+      {
+        name: "a-personal",
+        description: "Personal",
+        location: "/Users/test/.claude/skills/a/SKILL.md",
+      },
+      { name: "missing-location", description: "Skip", location: "" },
+    ],
+    "/Users/test",
+    { HOME: "/Users/test" },
+  );
+
+  NodeAssert.deepEqual(
+    skills.map(({ name, path, scope, enabled }) => ({ name, path, scope, enabled })),
+    [
+      {
+        name: "a-personal",
+        path: "/Users/test/.claude/skills/a/SKILL.md",
+        scope: "user",
+        enabled: true,
+      },
+      { name: "builtin", path: "<built-in>", scope: "app", enabled: true },
+      {
+        name: "z-project",
+        path: ".agents/skills/z/SKILL.md",
+        scope: "project",
+        enabled: true,
+      },
     ],
   );
 });

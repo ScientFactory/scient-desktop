@@ -21,7 +21,6 @@ it.effect("uses Codex's native skill configuration method", () =>
     } as unknown as CodexClient.CodexAppServerClient["Service"];
 
     const result = yield* writeCodexSkillConfig(client, {
-      name: "review",
       path: "/Users/test/.codex/skills/review/SKILL.md",
       enabled: false,
     });
@@ -30,7 +29,7 @@ it.effect("uses Codex's native skill configuration method", () =>
       {
         method: "skills/config/write",
         input: {
-          name: "review",
+          name: null,
           path: "/Users/test/.codex/skills/review/SKILL.md",
           enabled: false,
         },

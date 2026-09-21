@@ -162,6 +162,21 @@ export const LegacyAntigravityDriver = {
         connectionMethods,
       });
 
+      const discoverSkills = (
+        cwd?: string,
+        fallback: ServerProvider["skills"] = [],
+      ): Effect.Effect<ServerProvider["skills"]> =>
+        discoverAntigravitySkills(effectiveConfig, processEnv, cwd).pipe(
+          Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+          Effect.provideService(Path.Path, path),
+          Effect.catch((cause) =>
+            Effect.logWarning("Antigravity native skill discovery was unavailable.", {
+              ...(cwd ? { cwd } : {}),
+              cause,
+            }).pipe(Effect.as(fallback)),
+          ),
+        );
+
       const adapter = yield* makeAntigravityAdapter(effectiveConfig, {
         environment: processEnv,
         attachmentsDir: serverConfig.attachmentsDir,
@@ -185,7 +200,7 @@ export const LegacyAntigravityDriver = {
       const checkProvider = Effect.all(
         {
           snapshot: checkAntigravityProviderStatus(effectiveConfig, processEnv),
-          skills: discoverAntigravitySkills(processEnv),
+          skills: discoverSkills(),
         },
         { concurrency: "unbounded" },
       ).pipe(
@@ -240,6 +255,16 @@ export const LegacyAntigravityDriver = {
         accentColor,
         enabled,
         snapshot,
+        snapshotForCwd: (cwd) =>
+          !effectiveConfig.enabled
+            ? snapshot.getSnapshot
+            : snapshot.getSnapshot.pipe(
+                Effect.flatMap((machineSnapshot) =>
+                  discoverSkills(cwd, machineSnapshot.skills).pipe(
+                    Effect.map((skills) => ({ ...machineSnapshot, skills })),
+                  ),
+                ),
+              ),
         adapter,
         textGeneration,
         voiceTranscriptCorrection,

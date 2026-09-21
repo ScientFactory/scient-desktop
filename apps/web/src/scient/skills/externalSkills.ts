@@ -64,6 +64,17 @@ export const externalSkillSourceLabel = (source: ProviderSkillSourceKind): strin
   }
 };
 
+export function externalSkillStatus(
+  skill: Pick<ServerProviderSkill, "canSetEnabled" | "enabled" | "enabledReadOnlyReason">,
+  source: ProviderSkillSourceKind,
+): string {
+  return [
+    externalSkillSourceLabel(source),
+    ...(skill.enabled ? [] : ["Deactivated"]),
+    ...(skill.canSetEnabled === true ? [] : [skill.enabledReadOnlyReason ?? "Read-only in Scient"]),
+  ].join(" · ");
+}
+
 export function collectExternalSkillProviders(
   providers: ReadonlyArray<ServerProvider>,
 ): ReadonlyArray<ExternalSkillProviderGroup> {

@@ -119,6 +119,8 @@ export const ServerProviderSkill = Schema.Struct({
   shortDescription: Schema.optional(TrimmedNonEmptyString),
   /** Provider-owned capability. Absent means Scient must render this skill read-only. */
   canSetEnabled: Schema.optional(Schema.Boolean),
+  /** Provider-owned explanation for a skill that cannot be switched in Scient. */
+  enabledReadOnlyReason: Schema.optional(TrimmedNonEmptyString),
   /**
    * The skill is hidden from the agent's own skill tool, so only the user can
    * start it — Claude Code's `disable-model-invocation`. Composers must offer

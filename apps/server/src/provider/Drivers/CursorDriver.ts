@@ -69,7 +69,7 @@ import {
   makeProviderSnapshotSettingsSource,
   type ProviderSnapshotSettings,
 } from "../providerUpdateSettings.ts";
-import { discoverCursorSkills, probeCursorSkills } from "./CursorSkills.ts";
+import { makeCursorMachineSkillCatalog, probeCursorSkills } from "./CursorSkills.ts";
 const decodeCursorSettings = Schema.decodeSync(CursorSettings);
 
 const DRIVER_KIND = ProviderDriverKind.make("cursor");
@@ -214,15 +214,33 @@ export const CursorDriver: ProviderDriver<CursorSettings, CursorDriverEnv> = {
           : undefined;
 
       const discoverModels = yield* makeCursorModelDiscovery(effectiveConfig, effectiveProcessEnv);
+      const machineSkills = yield* makeCursorMachineSkillCatalog(effectiveProcessEnv);
+      const readMachineSkills = machineSkills.pipe(
+        Effect.provideService(FileSystem.FileSystem, fileSystem),
+        Effect.provideService(Path.Path, path),
+        // A skill scan cannot make the provider itself unusable. Before the
+        // first complete scan there is no catalog to preserve; retry on refresh.
+        Effect.catch((error) =>
+          Effect.logWarning(error.message).pipe(Effect.as([] as ServerProvider["skills"])),
+        ),
+      );
       const checkProvider = checkCursorProviderStatus(
         effectiveConfig,
         effectiveProcessEnv,
         discoverModels,
       ).pipe(
         Effect.flatMap((snapshot) =>
-          effectiveConfig.enabled && snapshot.installed && snapshot.auth.status === "authenticated"
-            ? readCursorUsageLimits(effectiveConfig, processEnv).pipe(
-                Effect.map((usageLimits) => ({ ...snapshot, usageLimits })),
+          effectiveConfig.enabled && snapshot.installed
+            ? Effect.all({
+                skills: readMachineSkills,
+                usageLimits:
+                  snapshot.auth.status === "authenticated"
+                    ? readCursorUsageLimits(effectiveConfig, processEnv).pipe(
+                        Effect.map((usageLimits) => ({ usageLimits })),
+                      )
+                    : Effect.succeed({}),
+              }).pipe(
+                Effect.map(({ skills, usageLimits }) => ({ ...snapshot, ...usageLimits, skills })),
               )
             : Effect.succeed(snapshot),
         ),
@@ -281,10 +299,15 @@ export const CursorDriver: ProviderDriver<CursorSettings, CursorDriverEnv> = {
         ...(eventLoggers.native ? { nativeEventLogger: eventLoggers.native } : {}),
         instanceId,
         onAvailableCommands: (commands, cwd) =>
-          discoverCursorSkills(cwd, effectiveProcessEnv).pipe(
+          probeCursorSkills(cwd, effectiveProcessEnv).pipe(
             Effect.provideService(FileSystem.FileSystem, fileSystem),
             Effect.provideService(Path.Path, path),
             Effect.flatMap((skills) => onAvailableCommands(commands, cwd, skills)),
+            Effect.catch((error) =>
+              Effect.logWarning(error.message).pipe(
+                Effect.andThen(onAvailableCommands(commands, cwd)),
+              ),
+            ),
           ),
       });
       const connectionActions = providerConnectionActions

@@ -1,7 +1,7 @@
 import { useAtomValue } from "@effect/atom-react";
 import { ArrowLeftIcon, LibraryBigIcon } from "lucide-react";
 import { Link } from "@tanstack/react-router";
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 
 import { ProviderInstanceIcon } from "../../components/chat/ProviderInstanceIcon";
 import {
@@ -10,11 +10,16 @@ import {
   SettingsSection,
 } from "../../components/settings/settingsLayout";
 import { Switch } from "../../components/ui/switch";
-import { primaryServerProvidersAtom } from "../../state/server";
+import { primaryServerProvidersAtom, serverEnvironment } from "../../state/server";
 import { usePrimaryEnvironmentId } from "../../state/environments";
 import { useAtomCommand } from "../../state/use-atom-command";
+import { toastManager } from "../../components/ui/toast";
 import { AVAILABLE_PROVIDER_OPTIONS } from "../../components/chat/providerIconUtils";
-import { collectExternalSkillProviders, externalSkillSourceLabel } from "./externalSkills";
+import {
+  collectExternalSkillProviders,
+  externalSkillSourceLabel,
+  externalSkillStatus,
+} from "./externalSkills";
 import { setProviderSkillEnabled } from "./scientSkillsState";
 import {
   SettingsSourcePanel,
@@ -28,28 +33,143 @@ function providerLabel(driver: string, displayName: string | undefined): string 
   return AVAILABLE_PROVIDER_OPTIONS.find((option) => option.value === driver)?.label ?? driver;
 }
 
+const skillKey = (environmentId: string | null, instanceId: string, path: string) =>
+  JSON.stringify([environmentId, instanceId, path]);
+
 export function ExternalSkillsSettings() {
   const environmentId = usePrimaryEnvironmentId();
   const providers = useAtomValue(primaryServerProvidersAtom);
   const groups = useMemo(() => collectExternalSkillProviders(providers), [providers]);
   const [expandedInstanceId, setExpandedInstanceId] = useState<string | null>(null);
-  const [pendingPath, setPendingPath] = useState<string | null>(null);
+  const [local, setLocal] = useState({
+    environmentId,
+    providers,
+    pending: {} as Record<string, { enabled: boolean; confirmed: boolean }>,
+  });
+  const inFlight = useRef(new Map<string, { desired: boolean }>());
   const setEnabled = useAtomCommand(setProviderSkillEnabled, { reportFailure: true });
+  const refreshProviders = useAtomCommand(serverEnvironment.refreshProviders, {
+    reportFailure: false,
+  });
   const expandedGroup = groups.find(({ provider }) => provider.instanceId === expandedInstanceId);
 
-  const updateSkill = async (input: {
+  // Keep the switch responsive while the provider writes and verifies its own
+  // setting. Intermediate snapshots cannot settle a newer queued choice.
+  let currentLocal = local;
+  if (local.environmentId !== environmentId) {
+    currentLocal = { environmentId, providers, pending: {} };
+    setLocal(currentLocal);
+  } else {
+    let pending = local.pending;
+    for (const group of groups) {
+      for (const skill of group.provider.skills) {
+        const key = skillKey(environmentId, group.provider.instanceId, skill.path);
+        if (pending[key]?.confirmed && pending[key]?.enabled === skill.enabled) {
+          pending = { ...pending };
+          delete pending[key];
+        }
+      }
+    }
+    if (local.providers !== providers || pending !== local.pending) {
+      currentLocal = { environmentId, providers, pending };
+      setLocal(currentLocal);
+    }
+  }
+  const pendingEnabled = currentLocal.pending;
+
+  const updateSkill = (input: {
     readonly instanceId: (typeof groups)[number]["provider"]["instanceId"];
     readonly name: string;
     readonly path: string;
     readonly enabled: boolean;
   }) => {
-    if (environmentId === null || pendingPath !== null) return;
-    setPendingPath(input.path);
-    try {
-      await setEnabled({ environmentId, input });
-    } finally {
-      setPendingPath(null);
-    }
+    if (environmentId === null) return;
+    const key = skillKey(environmentId, input.instanceId, input.path);
+    const existing = inFlight.current.get(key);
+    const lane = existing ?? { desired: input.enabled };
+    lane.desired = input.enabled;
+    if (!existing) inFlight.current.set(key, lane);
+    setLocal((current) =>
+      current.environmentId === environmentId
+        ? {
+            ...current,
+            pending: { ...current.pending, [key]: { enabled: input.enabled, confirmed: false } },
+          }
+        : current,
+    );
+    if (existing) return;
+
+    const reconcileFailure = async () => {
+      let actual: boolean | undefined;
+      try {
+        const refreshed = await refreshProviders({
+          environmentId,
+          input: { instanceId: input.instanceId },
+        });
+        if (refreshed._tag === "Success") {
+          actual = refreshed.value.providers
+            .find((provider) => provider.instanceId === input.instanceId)
+            ?.skills.find(
+              (skill) => skill.path === input.path && skill.name === input.name,
+            )?.enabled;
+        }
+      } catch {
+        // The provider's current state cannot be verified; report that below.
+      }
+      setLocal((current) => {
+        if (current.environmentId !== environmentId) return current;
+        const pending = { ...current.pending };
+        if (actual === undefined) delete pending[key];
+        else pending[key] = { enabled: actual, confirmed: true };
+        return { ...current, pending };
+      });
+      if (actual !== lane.desired) {
+        toastManager.add({
+          type: "error",
+          title: `Could not update ${input.name}`,
+          description:
+            actual === undefined
+              ? "Scient could not verify this skill's current state."
+              : "The provider did not apply your latest choice.",
+        });
+      }
+    };
+
+    void (async () => {
+      let nextEnabled = input.enabled;
+      try {
+        for (;;) {
+          const result = await setEnabled({
+            environmentId,
+            input: { ...input, enabled: nextEnabled },
+          });
+          if (result._tag === "Failure") {
+            await reconcileFailure();
+            return;
+          }
+          if (lane.desired !== nextEnabled) {
+            nextEnabled = lane.desired;
+            continue;
+          }
+          setLocal((current) =>
+            current.environmentId === environmentId && current.pending[key]
+              ? {
+                  ...current,
+                  pending: {
+                    ...current.pending,
+                    [key]: { enabled: nextEnabled, confirmed: true },
+                  },
+                }
+              : current,
+          );
+          return;
+        }
+      } catch {
+        await reconcileFailure();
+      } finally {
+        inFlight.current.delete(key);
+      }
+    })();
   };
 
   return (
@@ -118,26 +238,30 @@ export function ExternalSkillsSettings() {
                     />
                   ) : null}
                   {expandedGroup.skills.map(({ skill, displayName, description, source }) => {
-                    const pending = pendingPath === skill.path;
+                    const key = skillKey(
+                      environmentId,
+                      expandedGroup.provider.instanceId,
+                      skill.path,
+                    );
+                    const pending = pendingEnabled[key];
+                    const shownEnabled = pending?.enabled ?? skill.enabled;
                     return (
                       <SettingsRow
                         key={skill.path}
                         className="sm:[&>div]:grid-cols-[minmax(0,1fr)_auto] [&>div>div>p]:max-w-none"
                         title={displayName}
                         description={description}
-                        status={`${externalSkillSourceLabel(source)}${
-                          skill.canSetEnabled === true
-                            ? skill.enabled
-                              ? ""
-                              : " · Deactivated"
-                            : " · Read-only in Scient"
-                        }`}
+                        status={
+                          pending && !pending.confirmed
+                            ? `${externalSkillSourceLabel(source)} · Updating`
+                            : externalSkillStatus({ ...skill, enabled: shownEnabled }, source)
+                        }
                         control={
                           skill.canSetEnabled === true ? (
                             <Switch
-                              checked={skill.enabled}
-                              disabled={pending || pendingPath !== null}
-                              aria-label={`${skill.enabled ? "Deactivate" : "Activate"} ${displayName}`}
+                              checked={shownEnabled}
+                              className="transition-none [&_[data-slot=switch-thumb]]:transition-none"
+                              aria-label={`${shownEnabled ? "Deactivate" : "Activate"} ${displayName}`}
                               onCheckedChange={(checked) =>
                                 void updateSkill({
                                   instanceId: expandedGroup.provider.instanceId,
