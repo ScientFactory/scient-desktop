@@ -26,7 +26,7 @@ import {
   type GeneratedDocumentRevisionAttachment,
 } from "../documentArtifacts/GeneratedDocumentStore.ts";
 
-export const LATEX_VISUAL_REVISION_ATTACHMENT = "latex-visual-revision.json";
+const LATEX_VISUAL_REVISION_ATTACHMENT = "latex-visual-revision.json";
 
 const SourceRevision = Schema.String.check(Schema.isPattern(/^sha256:[a-f0-9]{64}$/u));
 
@@ -73,7 +73,7 @@ function normalizeRelativePath(value: string): string {
   return value.replaceAll("\\", "/").replace(/^\.\//u, "");
 }
 
-export const make = Effect.gen(function* () {
+const make = Effect.gen(function* () {
   const path = yield* Path.Path;
   const store = yield* GeneratedDocumentStore;
   const environment = yield* ServerEnvironment.ServerEnvironment;
