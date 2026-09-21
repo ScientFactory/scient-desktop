@@ -41,6 +41,7 @@ let root: Root;
 const onSubmit = vi.fn(() => true);
 const onSubmitAndSend = vi.fn(() => true);
 const onCancel = vi.fn();
+const onDraftChange = vi.fn();
 
 async function render(
   mode: "create" | "edit" = "edit",
@@ -54,6 +55,7 @@ async function render(
         onSubmit={onSubmit}
         {...(options.withSubmitAndSend ? { onSubmitAndSend } : {})}
         onCancel={onCancel}
+        onDraftChange={onDraftChange}
       />,
     ),
   );
@@ -138,6 +140,7 @@ describe("assistant citation comment actions", () => {
     expect(container.querySelector<HTMLTextAreaElement>("textarea")?.value).toBe(
       "Dictated context",
     );
+    expect(onDraftChange).toHaveBeenCalledWith("Dictated context");
     expect(onSubmit).not.toHaveBeenCalled();
   });
 

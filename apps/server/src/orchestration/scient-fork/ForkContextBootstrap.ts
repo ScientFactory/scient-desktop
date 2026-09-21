@@ -9,8 +9,8 @@
  * never silently reinjects after an uncertain outcome.
  */
 import {
-  PROVIDER_SEND_TURN_MAX_ATTACHMENTS,
   PROVIDER_SEND_TURN_MAX_INPUT_CHARS,
+  getProviderAttachmentLimitError,
   NonNegativeInt,
   type ChatAttachment,
   type OrchestrationMessage,
@@ -259,7 +259,7 @@ function selectRetainedAttachments(input: {
         reattachedIds.add(attachment.id);
         continue;
       }
-      if (attachmentsById.size >= PROVIDER_SEND_TURN_MAX_ATTACHMENTS) continue;
+      if (getProviderAttachmentLimitError([...attachmentsById.values(), attachment])) continue;
       attachmentsById.set(attachment.id, attachment);
       reattachedIds.add(attachment.id);
     }
@@ -413,10 +413,11 @@ const make = Effect.gen(function* () {
         input.attachments.map((attachment) => [attachment.id, attachment] as const),
       ).values(),
     ];
-    if (currentAttachments.length > PROVIDER_SEND_TURN_MAX_ATTACHMENTS) {
+    const attachmentLimitError = getProviderAttachmentLimitError(currentAttachments);
+    if (attachmentLimitError) {
       return yield* new ScientForkContextBootstrapError({
         threadId: input.thread.id,
-        detail: `The latest message contains more than ${PROVIDER_SEND_TURN_MAX_ATTACHMENTS} images.`,
+        detail: attachmentLimitError,
       });
     }
 

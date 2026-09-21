@@ -132,6 +132,11 @@ successful pick; its hover glow and badge preview the element and color family t
 
 `rightPanel.toggleMaximized` maximizes or restores the open right panel. It has no default shortcut,
 so add one in **Settings** → **Keybindings** if you want to use it.
+Available context keys are `terminalFocus`, `terminalOpen`, `previewFocus`,
+`previewOpen`, `modelPickerOpen`, `editableFocus`, `isWeb`, and `isDesktop`.
+`editableFocus` is true while a text field, the composer, or another editor has
+the keyboard. `isWeb` is true in a browser tab. `isDesktop` is true in the
+desktop app. Unknown keys evaluate to `false`.
 
 `rightPanel.close` closes the active right panel tab and defaults to `mod+w`. Press it again to close
 the next tab. With the terminal focused, `mod+w` closes the terminal instead, and with nothing left
@@ -161,6 +166,11 @@ always matches the build you are running. Use that rather than a copied list.
 
 `thread.stop` interrupts the running turn in the focused thread. It has no default
 shortcut; assign one in **Settings → Keybindings**.
+
+`thread.undo` (`mod+z` by default) reverses the most recent thread action that is
+still offering **Undo** in a notification, such as an unpin, settle, snooze, or
+archive. Its default rule skips text fields and terminals so native undo keeps
+working there.
 
 `chat.new` may ask you to choose a project when there is more than one.
 `chat.newLocal` skips that chooser. Both use your

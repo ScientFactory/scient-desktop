@@ -40,10 +40,13 @@ There is no document-type allowlist: PDFs, spreadsheets, archives, audio, video,
 code, and files with unfamiliar extensions can all be attached. Images without
 a native image-input path, such as SVG and TIFF, are attached as ordinary files.
 Files must be readable and non-empty, fit the server's displayed size limit,
-and finish uploading before you send.
-
-Images can be up to 10 MB. Other files use the server's advertised limit,
-capped at 50 MB. Each message can contain up to eight attachments in total.
+and finish uploading before you send. Each message can contain up to 100 files.
+Each image can be up to 10 MiB, with at most 80 MiB of images in one message.
+Other files, including videos, can be up to 50 MiB each, subject to the
+environment's upload support and limit. Provider and model limits still
+apply, including images already in the conversation. A video attachment gives
+the agent a file path; it does not enable native video input. Antigravity does
+not accept video attachments.
 
 Attaching a file makes it available to the agent; it does not guarantee that
 every provider can understand every format. Depending on the provider, it
