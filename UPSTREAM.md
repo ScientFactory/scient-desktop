@@ -46,11 +46,11 @@ revision remains literal ancestry of owned `main`; it is not merely a reviewed
 or observed tip.
 
 The current T3 alignment is recorded in
-[`docs/internals/2026-09-20-upstream-sync-0ff87f251d.md`](docs/internals/2026-09-20-upstream-sync-0ff87f251d.md)
+[`docs/internals/2026-09-21-upstream-sync-1de563c149.md`](docs/internals/2026-09-21-upstream-sync-1de563c149.md)
 and in `upstream-state.json`. It extends the previous alignment through
-`d6f291303ddc0c9a14f570266a4d9eff6d431593` with the exact four official commits
-through `0ff87f251dafb32703d5f531e7b248ad0a581ee2`. The history-preserving
-extension merge is `ec14794dc1739984a7106cfd2b261fff132de7c2`, whose second
+`0ff87f251dafb32703d5f531e7b248ad0a581ee2` with the exact 42 official commits
+through `1de563c1491c7d82563e4553bf5bf689ce6adbb9`. The history-preserving
+extension merge is `d8b8f34ca1ccc5ecbdb21e3a79d584854324d3e6`, whose second
 parent is that exact official target.
 
 Automated qualification and source review passed. The requested PR is the delivery boundary;
