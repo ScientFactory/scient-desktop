@@ -1,7 +1,7 @@
 import { useAtomValue } from "@effect/atom-react";
 import { ArrowLeftIcon, LibraryBigIcon } from "lucide-react";
 import { Link } from "@tanstack/react-router";
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 
 import { ProviderInstanceIcon } from "../../components/chat/ProviderInstanceIcon";
 import {
@@ -14,7 +14,11 @@ import { primaryServerProvidersAtom } from "../../state/server";
 import { usePrimaryEnvironmentId } from "../../state/environments";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { AVAILABLE_PROVIDER_OPTIONS } from "../../components/chat/providerIconUtils";
-import { collectExternalSkillProviders, externalSkillStatus } from "./externalSkills";
+import {
+  collectExternalSkillProviders,
+  externalSkillSourceLabel,
+  externalSkillStatus,
+} from "./externalSkills";
 import { setProviderSkillEnabled } from "./scientSkillsState";
 import {
   SettingsSourcePanel,
@@ -28,14 +32,38 @@ function providerLabel(driver: string, displayName: string | undefined): string 
   return AVAILABLE_PROVIDER_OPTIONS.find((option) => option.value === driver)?.label ?? driver;
 }
 
+const skillKey = (instanceId: string, path: string) => JSON.stringify([instanceId, path]);
+
 export function ExternalSkillsSettings() {
   const environmentId = usePrimaryEnvironmentId();
   const providers = useAtomValue(primaryServerProvidersAtom);
   const groups = useMemo(() => collectExternalSkillProviders(providers), [providers]);
   const [expandedInstanceId, setExpandedInstanceId] = useState<string | null>(null);
-  const [pendingPath, setPendingPath] = useState<string | null>(null);
+  const [local, setLocal] = useState({
+    providers,
+    pending: {} as Record<string, { enabled: boolean; confirmed: boolean }>,
+  });
+  const inFlight = useRef(new Set<string>());
   const setEnabled = useAtomCommand(setProviderSkillEnabled, { reportFailure: true });
   const expandedGroup = groups.find(({ provider }) => provider.instanceId === expandedInstanceId);
+
+  // Keep the switch responsive while the provider writes and verifies its own
+  // setting. Once the streamed provider snapshot catches up, it owns the state.
+  let currentLocal = local;
+  if (local.providers !== providers) {
+    const pending = { ...local.pending };
+    for (const group of groups) {
+      for (const skill of group.provider.skills) {
+        const key = skillKey(group.provider.instanceId, skill.path);
+        if (pending[key]?.enabled === skill.enabled) {
+          delete pending[key];
+        }
+      }
+    }
+    currentLocal = { providers, pending };
+    setLocal(currentLocal);
+  }
+  const pendingEnabled = currentLocal.pending;
 
   const updateSkill = async (input: {
     readonly instanceId: (typeof groups)[number]["provider"]["instanceId"];
@@ -43,12 +71,40 @@ export function ExternalSkillsSettings() {
     readonly path: string;
     readonly enabled: boolean;
   }) => {
-    if (environmentId === null || pendingPath !== null) return;
-    setPendingPath(input.path);
+    if (environmentId === null) return;
+    const key = skillKey(input.instanceId, input.path);
+    if (inFlight.current.has(key)) return;
+    inFlight.current.add(key);
+    setLocal((current) => ({
+      ...current,
+      pending: { ...current.pending, [key]: { enabled: input.enabled, confirmed: false } },
+    }));
+    let confirmed = false;
     try {
-      await setEnabled({ environmentId, input });
+      const result = await setEnabled({ environmentId, input });
+      confirmed = result._tag === "Success";
+      if (confirmed) {
+        setLocal((current) =>
+          current.pending[key]
+            ? {
+                ...current,
+                pending: {
+                  ...current.pending,
+                  [key]: { enabled: input.enabled, confirmed: true },
+                },
+              }
+            : current,
+        );
+      }
     } finally {
-      setPendingPath(null);
+      inFlight.current.delete(key);
+      if (!confirmed) {
+        setLocal((current) => {
+          const pending = { ...current.pending };
+          delete pending[key];
+          return { ...current, pending };
+        });
+      }
     }
   };
 
@@ -118,20 +174,26 @@ export function ExternalSkillsSettings() {
                     />
                   ) : null}
                   {expandedGroup.skills.map(({ skill, displayName, description, source }) => {
-                    const pending = pendingPath === skill.path;
+                    const key = skillKey(expandedGroup.provider.instanceId, skill.path);
+                    const pending = pendingEnabled[key];
+                    const shownEnabled = pending?.enabled ?? skill.enabled;
                     return (
                       <SettingsRow
                         key={skill.path}
                         className="sm:[&>div]:grid-cols-[minmax(0,1fr)_auto] [&>div>div>p]:max-w-none"
                         title={displayName}
                         description={description}
-                        status={externalSkillStatus(skill, source)}
+                        status={
+                          pending && !pending.confirmed
+                            ? `${externalSkillSourceLabel(source)} · Updating`
+                            : externalSkillStatus({ ...skill, enabled: shownEnabled }, source)
+                        }
                         control={
                           skill.canSetEnabled === true ? (
                             <Switch
-                              checked={skill.enabled}
-                              disabled={pending || pendingPath !== null}
-                              aria-label={`${skill.enabled ? "Deactivate" : "Activate"} ${displayName}`}
+                              checked={shownEnabled}
+                              className="transition-none [&_[data-slot=switch-thumb]]:transition-none"
+                              aria-label={`${shownEnabled ? "Deactivate" : "Activate"} ${displayName}`}
                               onCheckedChange={(checked) =>
                                 void updateSkill({
                                   instanceId: expandedGroup.provider.instanceId,
