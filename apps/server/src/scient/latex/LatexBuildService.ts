@@ -181,6 +181,8 @@ const CANCELLED_SUMMARY = "Build cancelled.";
 const MISSING_PDF_SUMMARY = "The LaTeX engine reported success but produced no PDF.";
 const SOURCES_CHANGED_DURING_BUILD_SUMMARY =
   "LaTeX sources changed while the document was compiling. Rebuild after the edits settle.";
+const PUBLISHED_PDF_VERIFICATION_SUMMARY =
+  "The published PDF could not be verified against its live document binding.";
 const UNEXPECTED_FAILURE_SUMMARY = "The LaTeX build could not be completed.";
 
 const ACTIVE_STATES: ReadonlySet<ScientLatexBuildState> = new Set([
@@ -254,6 +256,8 @@ interface LatexBuildEntry {
    * build was cancelled and rebuilt can tell that it no longer speaks here.
    */
   readonly generation: number;
+  /** Sequential compile/publication pass within one coalesced build generation. */
+  readonly passId: number;
   /** Absolute, resolved workspace root; every path a client sees is relative to it. */
   readonly workspaceRoot: string;
   readonly rootRelativePath: string;
@@ -271,6 +275,10 @@ interface LatexBuildEntry {
   readonly production: GeneratedDocumentProductionHandle | null;
   readonly handle: ExecutionProcessHandle | null;
 }
+
+type CancellationClaim =
+  | { readonly claimed: false; readonly entry: LatexBuildEntry | null }
+  | { readonly claimed: true; readonly entry: LatexBuildEntry };
 
 /**
  * One document's build-input evidence as this process holds it, plus the stat
@@ -497,9 +505,6 @@ export const make = Effect.gen(function* () {
       return next;
     });
 
-  const updateEntry = (key: string, update: (entry: LatexBuildEntry) => LatexBuildEntry) =>
-    updateEntryWhen(key, () => true, update);
-
   /**
    * The write a build fiber is allowed to make: only while the entry is still
    * the one that fiber was started for. A fiber parked in a package fetch can
@@ -513,6 +518,26 @@ export const make = Effect.gen(function* () {
     update: (entry: LatexBuildEntry) => LatexBuildEntry,
   ) => updateEntryWhen(key, (entry) => entry.generation === generation, update);
 
+  /**
+   * A pass-scoped update cannot let a completed pass speak for the coalesced
+   * successor that reused its generation.
+   */
+  const updateOwnPassEntry = (
+    key: string,
+    generation: number,
+    passId: number,
+    update: (entry: LatexBuildEntry) => LatexBuildEntry,
+  ) =>
+    Ref.modify(entriesRef, (entries) => {
+      const current = entries.get(key);
+      if (current === undefined || current.generation !== generation || current.passId !== passId) {
+        return [false, entries] as const;
+      }
+      const next = new Map(entries);
+      next.set(key, update(current));
+      return [true, next] as const;
+    });
+
   /** True once this build may no longer speak for the entry: cancelled, or replaced. */
   const isSuperseded = (key: string, generation: number) =>
     getEntry(key).pipe(
@@ -521,10 +546,19 @@ export const make = Effect.gen(function* () {
       ),
     );
 
+  const inspectLiveDescriptor = (key: string) =>
+    store.getDescriptor(LogicalDocumentKey.make(key)).pipe(
+      Effect.map((descriptor) => ({ _tag: "read" as const, descriptor })),
+      Effect.catch((error) =>
+        Effect.succeed({ _tag: "read-failed" as const, detail: error.detail }),
+      ),
+    );
+
+  /** Best-effort reads are appropriate only where absence already fails closed. */
   const readLiveDescriptor = (key: string) =>
-    store
-      .getDescriptor(LogicalDocumentKey.make(key))
-      .pipe(Effect.orElseSucceed((): PdfSourceDescriptor | null => null));
+    inspectLiveDescriptor(key).pipe(
+      Effect.map((result) => (result._tag === "read" ? result.descriptor : null)),
+    );
 
   /**
    * A descriptor captured from `publishPdf` is current only while the binding
@@ -752,6 +786,21 @@ export const make = Effect.gen(function* () {
   }) =>
     Effect.gen(function* () {
       const bytes = yield* fileSystem.readFile(input.pdfPath);
+      const failDescriptorVerification = (detail: string, descriptor: PdfSourceDescriptor) =>
+        Effect.logWarning("published latex PDF binding could not be verified", {
+          logicalDocumentKey: input.key,
+          detail,
+        }).pipe(
+          Effect.andThen(
+            finishBuild(input.key, input.generation, (entry) => ({
+              ...entry,
+              state: "failed",
+              descriptor,
+              failureSummary: PUBLISHED_PDF_VERIFICATION_SUMMARY,
+              diagnostics: withFailureReason(input.diagnostics, PUBLISHED_PDF_VERIFICATION_SUMMARY),
+            })),
+          ),
+        );
       const visualAttachment = yield* visualRevisions
         .prepare({
           workspaceRoot: input.workspaceRoot,
@@ -759,7 +808,9 @@ export const make = Effect.gen(function* () {
           sourceRevisions: input.visualSourceRevisions,
         })
         .pipe(
-          Effect.map(Option.some),
+          Effect.map((attachment) =>
+            attachment === null ? Option.none() : Option.some(attachment),
+          ),
           Effect.catch((error) =>
             Effect.logWarning("latex visual revision manifest could not be prepared", {
               logicalDocumentKey: input.key,
@@ -810,7 +861,12 @@ export const make = Effect.gen(function* () {
                     }),
                   ),
                 );
-              let liveDescriptor = yield* readLiveDescriptor(input.key);
+              let liveDescriptorRead = yield* inspectLiveDescriptor(input.key);
+              if (liveDescriptorRead._tag === "read-failed") {
+                yield* failDescriptorVerification(liveDescriptorRead.detail, descriptor);
+                return;
+              }
+              let liveDescriptor = liveDescriptorRead.descriptor;
               if (!isExactLiveDescriptor(descriptor, liveDescriptor)) {
                 yield* finishBuild(input.key, input.generation, (entry) => ({
                   ...entry,
@@ -834,7 +890,12 @@ export const make = Effect.gen(function* () {
               // Evidence persistence is outside the document-store lock. A
               // producer may have claimed the binding while it ran, so verify
               // ownership again before exposing the terminal success state.
-              liveDescriptor = yield* readLiveDescriptor(input.key);
+              liveDescriptorRead = yield* inspectLiveDescriptor(input.key);
+              if (liveDescriptorRead._tag === "read-failed") {
+                yield* failDescriptorVerification(liveDescriptorRead.detail, descriptor);
+                return;
+              }
+              liveDescriptor = liveDescriptorRead.descriptor;
               if (!isExactLiveDescriptor(descriptor, liveDescriptor)) {
                 yield* finishBuild(input.key, input.generation, (entry) => ({
                   ...entry,
@@ -1716,6 +1777,7 @@ export const make = Effect.gen(function* () {
         const next = new Map(entries);
         next.set(key, {
           ...current,
+          passId: current.passId + 1,
           state: "queued",
           startedAtEpochMs,
           finishedAtEpochMs: null,
@@ -1912,14 +1974,18 @@ export const make = Effect.gen(function* () {
       const started = yield* Ref.modify(entriesRef, (entries) => {
         const current = entries.get(target.logicalDocumentKey);
         const next = new Map(entries);
-        if (current !== undefined && ACTIVE_STATES.has(current.state)) {
+        if (current !== undefined && ACTIVE_STATES.has(current.state) && !current.cancelRequested) {
           // Coalesce: one follow-up run regardless of how many saves land.
           next.set(target.logicalDocumentKey, { ...current, pendingRerun: true });
           return [false, next] as const;
         }
+        // Cancellation already owns the active entry. A request arriving after
+        // that linearization point is new work, not a rerun to leave stranded
+        // behind the cancelled pass.
         next.set(target.logicalDocumentKey, {
           logicalDocumentKey: target.logicalDocumentKey,
           generation,
+          passId: 1,
           workspaceRoot: target.workspaceRoot,
           rootRelativePath: target.rootRelativePath,
           state: "queued",
@@ -1983,14 +2049,28 @@ export const make = Effect.gen(function* () {
   const cancel = (input: LatexBuildInput) =>
     Effect.gen(function* () {
       const target = yield* resolveTarget("cancel", input);
-      const entry = yield* getEntry(target.logicalDocumentKey);
+      // Capture and mark one exact pass in a single Ref transition. A completed
+      // pass may hand off to its coalesced successor between arbitrary effects;
+      // a stale snapshot must neither cancel nor revive that successor.
+      const cancellation = yield* Ref.modify(
+        entriesRef,
+        (entries): readonly [CancellationClaim, Map<string, LatexBuildEntry>] => {
+          const current = entries.get(target.logicalDocumentKey) ?? null;
+          if (current === null || !ACTIVE_STATES.has(current.state)) {
+            return [{ claimed: false, entry: current }, entries];
+          }
+          const next = new Map(entries);
+          next.set(target.logicalDocumentKey, {
+            ...current,
+            cancelRequested: true,
+            pendingRerun: false,
+          });
+          return [{ claimed: true, entry: current }, next];
+        },
+      );
+      const entry = cancellation.entry;
       if (entry === null) return yield* syntheticSnapshot(target);
-      if (!ACTIVE_STATES.has(entry.state)) return yield* withToolchain(entry);
-      yield* updateEntry(target.logicalDocumentKey, (current) => ({
-        ...current,
-        cancelRequested: true,
-        pendingRerun: false,
-      }));
+      if (!cancellation.claimed) return yield* withToolchain(entry);
       if (entry.handle !== null) yield* entry.handle.cancel.pipe(Effect.ignoreCause({ log: true }));
       if (entry.production !== null) {
         // A cancel says nothing about the sources, so the production is
@@ -2011,12 +2091,19 @@ export const make = Effect.gen(function* () {
           );
         if (Option.isSome(binding) && productionHasPublished(binding.value, entry.production)) {
           const descriptor = yield* readLiveDescriptor(target.logicalDocumentKey);
-          yield* updateOwnEntry(target.logicalDocumentKey, entry.generation, (current) => ({
-            ...current,
-            cancelRequested: false,
-            descriptor: descriptor ?? current.descriptor,
-          }));
-          return yield* readEntrySnapshot(target.logicalDocumentKey);
+          const publicationWonThisPass = yield* updateOwnPassEntry(
+            target.logicalDocumentKey,
+            entry.generation,
+            entry.passId,
+            (current) => ({
+              ...current,
+              cancelRequested: false,
+              descriptor: descriptor ?? current.descriptor,
+            }),
+          );
+          if (publicationWonThisPass) {
+            return yield* readEntrySnapshot(target.logicalDocumentKey);
+          }
         }
       }
       // Same re-read as `recordFailure`: the snapshot this call returns has to

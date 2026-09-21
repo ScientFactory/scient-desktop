@@ -303,6 +303,11 @@
   cursor: text;
 }
 
+.scient-latex-visual-editable:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: 2px;
+}
+
 .scient-latex-visual-input {
   position: absolute;
   width: 1px;

@@ -28,6 +28,7 @@ export const VISUAL_SOURCE_CHECKPOINT_DELAY_MS = 700;
 
 interface ActiveEdit {
   readonly baseSource: string;
+  readonly focusTarget: HTMLElement;
   readonly presentationRevisionId: string;
   readonly run: VisualRun;
   source: string;
@@ -53,6 +54,12 @@ interface InstalledManifest {
   readonly container: HTMLElement;
   readonly revisionId: string;
   readonly value: VisualEditManifest;
+}
+
+interface InstalledDocumentTextEvidence {
+  readonly container: HTMLElement;
+  readonly revisionId: string;
+  readonly items: readonly string[];
 }
 
 export interface LatexVisualInteractionProps {
@@ -83,6 +90,7 @@ export function LatexVisualInteraction(props: LatexVisualInteractionProps) {
   const completedAnchor = useRef<CompletedEditAnchor | null>(null);
   const mapping = useRef<MappingSession | null>(null);
   const manifest = useRef<InstalledManifest | null>(null);
+  const documentTextEvidence = useRef<InstalledDocumentTextEvidence | null>(null);
   const draftAnchor = useRef<DraftAnchor | null>(null);
   const composing = useRef(false);
   const checkpointTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -311,6 +319,11 @@ export function LatexVisualInteraction(props: LatexVisualInteractionProps) {
         changes: [],
       };
     }
+    let evidence =
+      documentTextEvidence.current?.container === container &&
+      documentTextEvidence.current.revisionId === props.host.revisionId
+        ? documentTextEvidence.current.items
+        : null;
     let queued = false;
     const rebuild = () => {
       queued = false;
@@ -322,12 +335,17 @@ export function LatexVisualInteraction(props: LatexVisualInteractionProps) {
         (latest.current.host.rotation ?? 0) !== 0
       )
         return;
-      const value = createVisualEditManifest(container, session.baseSource);
+      // Dispose the prior affordances before installing replacements on the
+      // same PDF.js spans; otherwise the old cleanup can strip the new focus
+      // metadata immediately after it was attached.
+      manifest.current?.value.dispose();
+      manifest.current = null;
+      if (evidence === null) return;
+      const value = createVisualEditManifest(container, session.baseSource, evidence);
       if (disposed || latest.current.host.container !== container) {
         value.dispose();
         return;
       }
-      manifest.current?.value.dispose();
       manifest.current = {
         container,
         revisionId: session.revisionId,
@@ -340,6 +358,27 @@ export function LatexVisualInteraction(props: LatexVisualInteractionProps) {
       queueMicrotask(rebuild);
     };
     rebuild();
+    if (evidence === null) {
+      void props.host.readDocumentTextItems().then((loaded) => {
+        const session = mapping.current;
+        if (
+          disposed ||
+          loaded === null ||
+          session === null ||
+          loaded.revisionId !== session.revisionId ||
+          latest.current.host.container !== container ||
+          latest.current.host.revisionId !== loaded.revisionId
+        )
+          return;
+        evidence = loaded.items;
+        documentTextEvidence.current = {
+          container,
+          revisionId: session.revisionId,
+          items: loaded.items,
+        };
+        rebuild();
+      });
+    }
     // PDF.js virtualizes pages and populates text layers after its document
     // ready event. Mapping happens at population time, never after a click.
     const observer = new MutationObserver(queueRebuild);
@@ -355,7 +394,14 @@ export function LatexVisualInteraction(props: LatexVisualInteractionProps) {
         manifest.current = null;
       }
     };
-  }, [exactlyCurrent, props.host.container, props.host.revisionId, props.revisionId, props.source]);
+  }, [
+    exactlyCurrent,
+    props.host.container,
+    props.host.readDocumentTextItems,
+    props.host.revisionId,
+    props.revisionId,
+    props.source,
+  ]);
 
   useEffect(() => {
     const container = props.host.container;
@@ -443,11 +489,15 @@ export function LatexVisualInteraction(props: LatexVisualInteractionProps) {
       if (!textarea) return;
       active.current = {
         baseSource: currentSource,
+        focusTarget: hit.span,
         presentationRevisionId: session.revisionId,
         source: currentSource,
         run: match.run,
         text: match.run.text,
-        presentedText: match.run.text,
+        // The anchor describes the page that is actually painted. During
+        // staging, match.run may already contain one or more local edits while
+        // this PDF token still contains the compiled predecessor.
+        presentedText: hit.entry.run.text,
       };
       draftAnchor.current = { span: hit.span, page: pageElement, run: hit.entry.run };
       setDraftGeometry(measureDraftGeometry(container, draftAnchor.current, installed.value));
@@ -456,8 +506,33 @@ export function LatexVisualInteraction(props: LatexVisualInteractionProps) {
       textarea.setSelectionRange(start, end);
       changeEditing(true);
     };
+    const keydown = (event: KeyboardEvent) => {
+      if (
+        event.defaultPrevented ||
+        event.altKey ||
+        event.ctrlKey ||
+        event.metaKey ||
+        (event.key !== "Enter" && event.key !== " " && event.key !== "F2")
+      )
+        return;
+      const target = event.target;
+      const installed = manifest.current;
+      if (
+        !(target instanceof HTMLElement) ||
+        installed === null ||
+        installed.value.entryFor(target) === null
+      )
+        return;
+      event.preventDefault();
+      event.stopPropagation();
+      target.click();
+    };
     container.addEventListener("click", click);
-    return () => container.removeEventListener("click", click);
+    container.addEventListener("keydown", keydown);
+    return () => {
+      container.removeEventListener("click", click);
+      container.removeEventListener("keydown", keydown);
+    };
   }, [changeEditing, checkpoint, props.host.container, retainCompletedAnchor]);
 
   const updateGeometry = useCallback(() => {
@@ -548,7 +623,7 @@ export function LatexVisualInteraction(props: LatexVisualInteractionProps) {
         className={`scient-latex-visual-input${editing && draftGeometry ? " is-active" : ""}`}
         style={editing && draftGeometry ? draftGeometry : undefined}
         aria-label="Edit LaTeX prose on the typeset page"
-        tabIndex={-1}
+        tabIndex={editing ? 0 : -1}
         spellCheck={false}
         onChange={() => {
           const textarea = input.current;
@@ -572,9 +647,13 @@ export function LatexVisualInteraction(props: LatexVisualInteractionProps) {
         }}
         onKeyDown={(event) => {
           if (event.key !== "Escape" || composing.current) return;
+          event.preventDefault();
+          event.stopPropagation();
+          const focusTarget = active.current?.focusTarget;
           finishEditing();
           input.current?.blur();
-          props.host.container?.focus({ preventScroll: true });
+          if (focusTarget?.isConnected) focusTarget.focus({ preventScroll: true });
+          else props.host.container?.focus({ preventScroll: true });
         }}
         // Focus follows clicks and IME windows. It is deliberately not the
         // editing-session boundary; only Escape or leaving the document is.

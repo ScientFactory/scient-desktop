@@ -65,7 +65,12 @@ external editor later requires its own license and dependency review.
    one visibility and retention boundary. Restart restoration occurs only after
    ordinary build evidence proves that exact revision still describes the
    workspace; missing, corrupt, or mismatched Visual evidence fails closed
-   without discrediting the readable PDF.
+   without discrediting the readable PDF. Evidence that cannot fit the document
+   store's attachment budget is omitted before publication, so the valid PDF
+   still commits and remains readable while Visual stays unavailable.
+   Cancellation claims one exact coalesced build pass atomically. A request
+   arriving after that claim starts a fresh generation, and an older committed
+   pass cannot clear the successor's cancellation state.
 2. The normal authorized build-status contract transports those source byte
    identities with the published artifact revision. No new write authority or
    filesystem access is granted to the renderer, and a revision can never
@@ -98,7 +103,11 @@ external editor later requires its own license and dependency review.
 5. `packages/shared/src/latexVisual.ts` projects supported literal prose runs
    and keeps display-to-source boundaries. Normalization is comparison-only.
    Ligatures, escaped punctuation, whitespace and basic TeX punctuation can be
-   matched without normalizing the source file. Ambiguity fails closed.
+   matched without normalizing the source file. Serializer-owned literal
+   commands round-trip back into the same editable run. Opaque-environment
+   scanning ignores commented terminators and accepts verbatim termination only
+   on a delimiter line; an uncertain or missing delimiter consumes the rest as
+   opaque source. Ambiguity fails closed.
 6. A native textarea receives keyboard, clipboard and IME input directly over
    the mapped prose geometry. It uses the PDF text layer's font metrics and
    masks only that prose region while active. The resulting minimal source
@@ -106,10 +115,10 @@ external editor later requires its own license and dependency review.
    characters are escaped as literal prose, not executed as new commands.
    A browser-local, source-aware recovery record is updated before the source
    debounce and remains until the matching file revision is confirmed saved.
-   An unmount, renderer restart, or crash between optimistic buffer acceptance
-   and disk persistence therefore cannot silently drop input. It does not
-   masquerade as saved source: a rejected compare-and-set or failed save is
-   shown as explicit recovery text.
+   Where browser storage accepts that record, an unmount, renderer restart or
+   crash between optimistic buffer acceptance and disk persistence does not
+   silently drop input. It does not masquerade as saved source: a rejected
+   compare-and-set or failed save is shown as explicit recovery text.
 7. Source and Visual share the existing `useFileSaveCoordinator`, with a
    150 ms save debounce, optimistic source cache and expected-revision writes.
    Visual also compare-and-sets against the current in-memory source. Keystrokes
@@ -152,7 +161,9 @@ external editor later requires its own license and dependency review.
 
 Supported: upright left-to-right literal prose; recognized text formatting and
 heading arguments; selecting within a single literal run; insertion, deletion,
-paste, paragraph insertion and native textarea composition. Native undo is
+paste, paragraph insertion and native textarea composition. Qualified PDF text
+is keyboard-focusable and Enter, Space or F2 opens the same native editor;
+Escape checkpoints and returns focus to the originating text. Native undo is
 scoped to the active text-input session, not a new cross-mode undo system.
 
 Opaque: equations, tables, TikZ, verbatim, unknown command paragraphs, dynamic
@@ -167,11 +178,16 @@ Current limitations requiring further product work:
   owner. The user must open that source first. Multi-file, single-canvas
   transactions need a document-level session owner with per-file leases.
 - Cross-formatting selections, equation/table editors, continuous document-wide
-  undo, keyboard-only activation and complete screen-reader page navigation
-  are not finished capabilities of this candidate.
+  undo and complete screen-reader page navigation are not finished capabilities
+  of this candidate.
 - Hyphenated line fragments and short glyph spans can be refused. The active
   paragraph's browser line breaking is provisional and can differ from TeX;
   the exact result returns only after the transaction ends and compiles.
+- Recovery currently serializes the complete intended source synchronously on
+  each native input and falls back to renderer memory if browser storage rejects
+  the write. Before release, replace this with a compact, crash-consistent
+  journal whose commit record is atomic, and surface any loss of durable
+  recovery explicitly; a multi-key partial promotion is not sufficient.
 - Compilation runs on the workspace, not an immutable filesystem snapshot.
   Before/after digests detect ordinary concurrent changes, but are not a proof
   against an adversarial change-and-restore during engine execution. Stronger

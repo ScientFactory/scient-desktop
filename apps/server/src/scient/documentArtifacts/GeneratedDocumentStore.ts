@@ -134,7 +134,8 @@ const IDENTIFIER_NAME = /^[A-Za-z0-9][A-Za-z0-9._:-]*$/u;
 const REVISION_ATTACHMENT_NAME = /^[a-z0-9][a-z0-9._-]{0,127}$/u;
 const RESERVED_REVISION_FILES = new Set(["document.pdf", "metadata.json"]);
 const MAX_REVISION_ATTACHMENTS = 8;
-const MAX_REVISION_ATTACHMENT_BYTES = 1_024 * 1_024;
+/** Shared publication budget for every immutable revision attachment combined. */
+export const MAX_REVISION_ATTACHMENT_BYTES = 1_024 * 1_024;
 
 export class GeneratedDocumentStoreError extends Schema.TaggedError<GeneratedDocumentStoreError>()(
   "GeneratedDocumentStoreError",

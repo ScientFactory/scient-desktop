@@ -24,6 +24,7 @@ import * as ServerConfig from "../../config.ts";
 import * as ServerEnvironment from "../../environment/ServerEnvironment.ts";
 import {
   GeneratedDocumentStore,
+  GeneratedDocumentStoreError,
   layer as storeLayer,
 } from "../documentArtifacts/GeneratedDocumentStore.ts";
 import * as LocalExecutionProcess from "../execution/LocalExecutionProcess.ts";
@@ -43,7 +44,10 @@ import {
 } from "./LatexPackageInstaller.ts";
 import { LatexToolchain } from "./LatexToolchain.ts";
 import { LatexSyncTex } from "./LatexSyncTex.ts";
-import { layer as visualRevisionStoreLayer } from "./LatexVisualRevisionStore.ts";
+import {
+  LatexVisualRevisionStore,
+  layer as visualRevisionStoreLayer,
+} from "./LatexVisualRevisionStore.ts";
 
 /** Byte-for-byte the fixture shape the document store's own tests accept. */
 function minimalPdf(marker: string): Uint8Array {
@@ -247,6 +251,16 @@ const makeHarness = (input: {
   readonly beginProductionGate?: (attempt: number) => Effect.Effect<void>;
   /** Runs after the immutable revision and binding have committed, before the build can finish. */
   readonly publishCommittedGate?: (descriptor: PdfSourceDescriptor) => Effect.Effect<void>;
+  /** Runs before each service-level binding read; tests may inject a typed read failure. */
+  readonly descriptorReadGate?: (
+    attempt: number,
+  ) => Effect.Effect<void, GeneratedDocumentStoreError>;
+  /** Runs before an abandoned production releases its store claim. */
+  readonly abandonProductionGate?: (attempt: number) => Effect.Effect<void>;
+  /** Runs after an abandoned production has released its store claim. */
+  readonly abandonCompletedGate?: () => Effect.Effect<void>;
+  /** Simulates valid Visual evidence that cannot fit the immutable attachment budget. */
+  readonly visualRevisionAttachmentUnavailable?: boolean;
 }) =>
   Effect.gen(function* () {
     const fileSystem = yield* FileSystem.FileSystem;
@@ -362,14 +376,23 @@ const makeHarness = (input: {
     const realStoreLayer = storeLayer.pipe(Layer.provide(serverEnvironment));
     const beginProductionGate = input.beginProductionGate;
     const publishCommittedGate = input.publishCommittedGate;
+    const descriptorReadGate = input.descriptorReadGate;
+    const abandonProductionGate = input.abandonProductionGate;
+    const abandonCompletedGate = input.abandonCompletedGate;
     const gatedStoreLayer =
-      beginProductionGate === undefined && publishCommittedGate === undefined
+      beginProductionGate === undefined &&
+      publishCommittedGate === undefined &&
+      descriptorReadGate === undefined &&
+      abandonProductionGate === undefined &&
+      abandonCompletedGate === undefined
         ? realStoreLayer
         : Layer.effect(
             GeneratedDocumentStore,
             Effect.gen(function* () {
               const underlying = yield* GeneratedDocumentStore;
               const attempts = yield* Ref.make(0);
+              const descriptorReads = yield* Ref.make(0);
+              const abandonAttempts = yield* Ref.make(0);
               return GeneratedDocumentStore.of({
                 ...underlying,
                 beginProduction: (request) =>
@@ -388,18 +411,45 @@ const makeHarness = (input: {
                   publishCommittedGate === undefined
                     ? underlying.publishPdf(request)
                     : underlying.publishPdf(request).pipe(Effect.tap(publishCommittedGate)),
+                getDescriptor: (key) =>
+                  descriptorReadGate === undefined
+                    ? underlying.getDescriptor(key)
+                    : Ref.updateAndGet(descriptorReads, (count) => count + 1).pipe(
+                        Effect.flatMap(descriptorReadGate),
+                        Effect.andThen(underlying.getDescriptor(key)),
+                      ),
+                abandonProduction: (request) => {
+                  const abandoning =
+                    abandonProductionGate === undefined
+                      ? underlying.abandonProduction(request)
+                      : Ref.updateAndGet(abandonAttempts, (count) => count + 1).pipe(
+                          Effect.flatMap(abandonProductionGate),
+                          Effect.andThen(underlying.abandonProduction(request)),
+                        );
+                  return abandonCompletedGate === undefined
+                    ? abandoning
+                    : abandoning.pipe(Effect.tap(abandonCompletedGate));
+                },
               });
             }),
           ).pipe(Layer.provide(realStoreLayer));
 
-    const serviceLayer = Layer.effect(LatexBuildService, makeBuildService).pipe(
-      Layer.provide(syncTexLayer),
-      Layer.provide(
-        visualRevisionStoreLayer.pipe(
+    const visualRevisionLayer = input.visualRevisionAttachmentUnavailable
+      ? Layer.succeed(
+          LatexVisualRevisionStore,
+          LatexVisualRevisionStore.of({
+            prepare: () => Effect.succeed(null),
+            load: () => Effect.succeed(null),
+          }),
+        )
+      : visualRevisionStoreLayer.pipe(
           Layer.provide(gatedStoreLayer),
           Layer.provide(serverEnvironment),
-        ),
-      ),
+        );
+
+    const serviceLayer = Layer.effect(LatexBuildService, makeBuildService).pipe(
+      Layer.provide(syncTexLayer),
+      Layer.provide(visualRevisionLayer),
       Layer.provide(Layer.succeed(LatexPackageInstaller, installer)),
       Layer.provide(Layer.succeed(LocalExecutionProcess.ExecutionProcess, port)),
       Layer.provide(
@@ -1528,6 +1578,32 @@ describe("LatexBuildService", () => {
     }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
   );
 
+  it.live("publishes read-only when revision-scoped Visual evidence cannot be attached", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness({
+        compiles: [
+          {
+            transcript: "",
+            exitCode: 0,
+            pdf: minimalPdf("oversized-visual-proof"),
+            fls: ROOT_RECORDER_MANIFEST,
+          },
+        ],
+        visualRevisionAttachmentUnavailable: true,
+      });
+      yield* Effect.gen(function* () {
+        const service = yield* LatexBuildService;
+        yield* service.requestBuild(harness.buildInput);
+        const finished = yield* awaitTerminal(service, harness.buildInput);
+
+        expect(finished.state).toBe("succeeded");
+        expect(finished.descriptor).toMatchObject({ bindingStatus: "current" });
+        expect(finished.visualSourceRevisions).toEqual({});
+        expect(yield* Ref.get(harness.startCount)).toBe(1);
+      }).pipe(Effect.provide(harness.serviceLayer));
+    }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+  );
+
   it.live("never reuses an earlier recorder or SyncTeX index for a later compile", () =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;
@@ -1935,6 +2011,149 @@ describe("LatexBuildService", () => {
     }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
   );
 
+  it.live("cancels the coalesced pass after its committed predecessor hands off", () =>
+    Effect.gen(function* () {
+      const firstCommitted = yield* Deferred.make<void>();
+      const releaseFirst = yield* Deferred.make<void>();
+      const secondClaimed = yield* Deferred.make<void>();
+      const releaseSecond = yield* Deferred.make<void>();
+      const secondAbandoned = yield* Deferred.make<void>();
+      const publishCount = yield* Ref.make(0);
+      const harness = yield* makeHarness({
+        compiles: [
+          {
+            transcript: "",
+            exitCode: 0,
+            pdf: minimalPdf("committed-first-pass"),
+            fls: ROOT_RECORDER_MANIFEST,
+          },
+          {
+            transcript: "",
+            exitCode: 0,
+            pdf: minimalPdf("must-not-run"),
+            fls: ROOT_RECORDER_MANIFEST,
+          },
+        ],
+        publishCommittedGate: () =>
+          Ref.updateAndGet(publishCount, (count) => count + 1).pipe(
+            Effect.flatMap((count) =>
+              count === 1
+                ? Deferred.succeed(firstCommitted, undefined).pipe(
+                    Effect.andThen(Deferred.await(releaseFirst)),
+                    Effect.asVoid,
+                  )
+                : Effect.void,
+            ),
+          ),
+        beginProductionGate: (attempt) =>
+          attempt === 2
+            ? Deferred.succeed(secondClaimed, undefined).pipe(
+                Effect.andThen(Deferred.await(releaseSecond)),
+                Effect.asVoid,
+              )
+            : Effect.void,
+        abandonCompletedGate: () =>
+          Deferred.succeed(secondAbandoned, undefined).pipe(Effect.asVoid),
+      });
+      yield* Effect.gen(function* () {
+        const service = yield* LatexBuildService;
+        yield* service.requestBuild(harness.buildInput);
+        yield* Deferred.await(firstCommitted);
+
+        const queued = yield* service.requestBuild(harness.buildInput);
+        expect(queued.pendingRerun).toBe(true);
+        yield* Deferred.succeed(releaseFirst, undefined);
+        yield* Deferred.await(secondClaimed);
+
+        const cancelled = yield* service.cancel(harness.buildInput);
+        expect(cancelled.state).toBe("cancelled");
+        expect(cancelled.failureSummary).toBe("Build cancelled.");
+        expect(cancelled.descriptor).toMatchObject({
+          bindingStatus: "current",
+          bindingGeneration: 2,
+        });
+
+        yield* Deferred.succeed(releaseSecond, undefined);
+        // The successor was cancelled before its production handle reached the
+        // entry. It must release that claim without ever reaching the engine.
+        yield* Deferred.await(secondAbandoned);
+        expect(yield* Ref.get(harness.startCount)).toBe(1);
+        expect((yield* service.status(harness.buildInput)).state).toBe("cancelled");
+      }).pipe(Effect.provide(harness.serviceLayer));
+    }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+  );
+
+  it.live("starts a fresh generation for a build requested after cancellation is claimed", () =>
+    Effect.gen(function* () {
+      const firstCommitted = yield* Deferred.make<void>();
+      const releaseFirst = yield* Deferred.make<void>();
+      const cancellationClaimed = yield* Deferred.make<void>();
+      const releaseCancellation = yield* Deferred.make<void>();
+      const cancellationFinished = yield* Deferred.make<void>();
+      const publishCount = yield* Ref.make(0);
+      const harness = yield* makeHarness({
+        compiles: [
+          {
+            transcript: "",
+            exitCode: 0,
+            pdf: minimalPdf("cancelled-generation"),
+            fls: ROOT_RECORDER_MANIFEST,
+          },
+          {
+            transcript: "",
+            exitCode: 0,
+            pdf: minimalPdf("fresh-generation"),
+            fls: ROOT_RECORDER_MANIFEST,
+          },
+        ],
+        publishCommittedGate: () =>
+          Ref.updateAndGet(publishCount, (count) => count + 1).pipe(
+            Effect.flatMap((count) =>
+              count === 1
+                ? Deferred.succeed(firstCommitted, undefined).pipe(
+                    Effect.andThen(Deferred.await(releaseFirst)),
+                    Effect.asVoid,
+                  )
+                : Effect.void,
+            ),
+          ),
+        abandonProductionGate: (attempt) =>
+          attempt === 1
+            ? Deferred.succeed(cancellationClaimed, undefined).pipe(
+                Effect.andThen(Deferred.await(releaseCancellation)),
+                Effect.asVoid,
+              )
+            : Effect.void,
+      });
+      yield* Effect.gen(function* () {
+        const service = yield* LatexBuildService;
+        yield* service.requestBuild(harness.buildInput);
+        yield* Deferred.await(firstCommitted);
+
+        yield* Effect.forkScoped(
+          service
+            .cancel(harness.buildInput)
+            .pipe(Effect.tap(() => Deferred.succeed(cancellationFinished, undefined))),
+        );
+        yield* Deferred.await(cancellationClaimed);
+
+        const restarted = yield* service.requestBuild(harness.buildInput);
+        expect(restarted.pendingRerun).toBe(false);
+        expect(["queued", "running", "publishing"]).toContain(restarted.state);
+
+        yield* Deferred.succeed(releaseCancellation, undefined);
+        yield* Deferred.succeed(releaseFirst, undefined);
+        yield* Deferred.await(cancellationFinished);
+
+        const finished = yield* awaitTerminal(service, harness.buildInput);
+        expect(finished.state).toBe("succeeded");
+        expect(finished.pendingRerun).toBe(false);
+        expect(finished.failureSummary).toBeNull();
+        expect(yield* Ref.get(harness.startCount)).toBe(2);
+      }).pipe(Effect.provide(harness.serviceLayer));
+    }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+  );
+
   it.live("keeps the published PDF current when it cancels a rebuild", () =>
     Effect.gen(function* () {
       const hold = yield* Deferred.make<void>();
@@ -2165,6 +2384,60 @@ describe("LatexBuildService", () => {
         expect(superseded.descriptor).toMatchObject({
           revisionId: publishedDescriptor.revisionId,
           bindingGeneration: 2,
+          bindingStatus: "current",
+        });
+      }).pipe(Effect.provide(harness.serviceLayer));
+    }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+  );
+
+  it.live("reports a binding read failure distinctly from a superseded publication", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness({
+        compiles: [
+          {
+            transcript: "",
+            exitCode: 0,
+            pdf: minimalPdf("committed-before-read-failure"),
+            fls: ROOT_RECORDER_MANIFEST,
+          },
+        ],
+        descriptorReadGate: (attempt) =>
+          attempt === 1
+            ? Effect.fail(
+                new GeneratedDocumentStoreError({
+                  operation: "read-binding",
+                  reason: "filesystem",
+                  detail: "injected binding read failure",
+                }),
+              )
+            : Effect.void,
+      });
+      yield* Effect.gen(function* () {
+        const service = yield* LatexBuildService;
+        const store = yield* GeneratedDocumentStore;
+        yield* service.requestBuild(harness.buildInput);
+        const finished = yield* awaitTerminal(service, harness.buildInput);
+
+        expect(finished.state).toBe("failed");
+        expect(finished.failureSummary).toBe(
+          "The published PDF could not be verified against its live document binding.",
+        );
+        expect(finished.descriptor).toMatchObject({ bindingStatus: "current" });
+        expect(finished.diagnostics).toContainEqual(
+          expect.objectContaining({
+            severity: "error",
+            message: "The published PDF could not be verified against its live document binding.",
+          }),
+        );
+
+        const bound = yield* store.getDescriptor(
+          LogicalDocumentKey.make(finished.logicalDocumentKey),
+        );
+        expect(bound).toMatchObject({
+          revisionId:
+            finished.descriptor?._tag === "generated-pdf"
+              ? finished.descriptor.revisionId
+              : "missing-revision",
           bindingStatus: "current",
         });
       }).pipe(Effect.provide(harness.serviceLayer));

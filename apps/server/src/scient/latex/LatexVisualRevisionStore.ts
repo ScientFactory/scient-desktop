@@ -22,6 +22,7 @@ import * as Schema from "effect/Schema";
 import * as ServerEnvironment from "../../environment/ServerEnvironment.ts";
 import {
   GeneratedDocumentStore,
+  MAX_REVISION_ATTACHMENT_BYTES,
   type GeneratedDocumentRevisionAttachment,
 } from "../documentArtifacts/GeneratedDocumentStore.ts";
 
@@ -57,9 +58,10 @@ export interface PrepareLatexVisualRevisionInput {
 export class LatexVisualRevisionStore extends Context.Service<
   LatexVisualRevisionStore,
   {
+    /** `null` leaves the PDF publishable but deliberately read-only in Visual. */
     readonly prepare: (
       input: PrepareLatexVisualRevisionInput,
-    ) => Effect.Effect<GeneratedDocumentRevisionAttachment, Schema.SchemaError>;
+    ) => Effect.Effect<GeneratedDocumentRevisionAttachment | null, Schema.SchemaError>;
     /** `null` is the only answer for missing, corrupt, evicted, or mismatched evidence. */
     readonly load: (
       input: LatexVisualRevisionRef,
@@ -85,9 +87,14 @@ export const make = Effect.gen(function* () {
       sourceRevisions: input.sourceRevisions,
     };
     const encoded = yield* encodeManifest(manifest);
+    const bytes = new TextEncoder().encode(`${encoded}\n`);
+    // Visual evidence is optional authorization, never a reason to reject a
+    // valid PDF. Refuse it here, before the document store's aggregate
+    // attachment validator would reject the entire immutable publication.
+    if (bytes.byteLength > MAX_REVISION_ATTACHMENT_BYTES) return null;
     return {
       name: LATEX_VISUAL_REVISION_ATTACHMENT,
-      bytes: new TextEncoder().encode(`${encoded}\n`),
+      bytes,
     };
   });
 

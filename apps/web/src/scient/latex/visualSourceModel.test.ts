@@ -69,11 +69,45 @@ describe("lossless visual LaTeX prose projection", () => {
     expect(visualRuns(document(body))).toEqual([]);
   });
 
+  it.each([
+    "\\begin{verbatim}\n% \\end{verbatim}\nHidden text\n\\end{verbatim}\nVisible prose.",
+    "\\begin{verbatim*}\n% \\end{verbatim*}\nHidden text\n\\end{verbatim*}\nVisible prose.",
+    "\\begin{tabular}{c}\n% \\end{tabular}\nHidden text\\\\\n\\end{tabular}\nVisible prose.",
+    "\\begin{tikzpicture}\n% \\end{tikzpicture}\n\\node {Hidden text};\n\\end{tikzpicture}\nVisible prose.",
+    "\\begin{opaque}\n% \\end{opaque}\nHidden text\n\\end{opaque}\nVisible prose.",
+    "\\begin{tabular}{c}\\verb|\\end{tabular}| Hidden text\\end{tabular}\nVisible prose.",
+    "\\begin{minipage}{.8\\linewidth}\n\\begin{verbatim}\n\\end{minipage}\nHidden text\n\\end{verbatim}\n\\end{minipage}\nVisible prose.",
+  ])("ignores fake opaque-environment closers: %s", (body) => {
+    const runs = visualRuns(document(body)).map((run) => run.text);
+    expect(runs).toEqual(["Visible prose."]);
+    expect(runs.join(" ")).not.toContain("Hidden text");
+  });
+
+  it("fails closed when an opaque environment has no provable closing delimiter", () => {
+    expect(
+      visualRuns(document("\\begin{verbatim}\n% \\end{verbatim}\nHidden text\nVisible prose.")),
+    ).toEqual([]);
+  });
+
   it("escapes pasted TeX syntax and encodes paragraph breaks", () => {
     expect(encodeVisualText("\\input{secret} % & _ # $ ~ ^\r\nnext")).toBe(
       "\\textbackslash{}input\\{secret\\} \\% \\& \\_ \\# \\$ \\textasciitilde{} \\textasciicircum{}\n\nnext",
     );
   });
+
+  it.each(["\\", "~", "^", "%", "&", "_", "#", "$", "{", "}"])(
+    "round-trips serializer-owned literal %s back into an editable run",
+    (literal) => {
+      const source = document("Replace this prose.");
+      const replacement = `left${literal}right`;
+      const edited = editVisualRun(source, visualRuns(source)[0]!, replacement);
+      const reparsed = visualRuns(edited);
+      expect(reparsed.map((run) => run.text)).toEqual([replacement]);
+      expect(editVisualRun(edited, reparsed[0]!, "Settled prose.")).toBe(
+        document("Settled prose."),
+      );
+    },
+  );
 
   it("stress-tests 2500 minimal splices and byte preservation", () => {
     let seed = 431;

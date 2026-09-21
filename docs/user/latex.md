@@ -13,18 +13,19 @@ deletion, paste, and native text-input undo operate within the active prose
 region. Escape finishes the edit. Source remains the authoritative `.tex`
 file; changing modes does not create another document or another save queue.
 
-The visible glyphs update after saving and typesetting, not immediately on
-each keystroke. While waiting, the view shows the last compiled page and a
-status message; it never substitutes browser-typeset text. Compile errors
-keep the last successful PDF and appear in the build diagnostics.
+While typing, the active prose region shows immediate provisional text over
+the last compiled page; the untouched page remains the exact PDF. Finish the
+edit to typeset the new exact glyphs, line breaks, and pagination. Compile
+errors keep the last successful PDF and appear in the build diagnostics.
 
 This is a bounded prose-editing implementation, not arbitrary LaTeX WYSIWYG.
 Equations, tables, generated text, unknown macros, ambiguous matches, rotated
 pages, and right-to-left text are not directly editable. Selection cannot
 cross a formatting or protected-source boundary. Text from an included file
-is editable when that file is open; a click from another source names the file
-to open. Use Source for unsupported regions. Opening an older retained build
-may require Rebuild before its source identities can be verified.
+is editable only when that file is open; content owned by another source stays
+read-only until you open that source. Use Source for unsupported regions.
+Opening an older retained build may require Rebuild before its source
+identities can be verified.
 
 ## Build and review
 

@@ -21,6 +21,7 @@ import {
   preparePdfPresentation,
   type PdfPresentationAnchor,
 } from "./pdfPresentation";
+import { readPdfDocumentTextItems } from "./pdfDocumentTextEvidence";
 
 export type PdfReaderPhase = "loading" | "password" | "ready" | "error";
 export type PdfFindPhase = "idle" | "pending" | "found" | "not-found";
@@ -61,6 +62,11 @@ export interface RequestedPdfPresentation {
 
 export interface PresentedPdfSource extends RequestedPdfPresentation {
   readonly container: HTMLDivElement;
+}
+
+export interface PresentedPdfTextEvidence {
+  readonly revisionId: string | null;
+  readonly items: readonly string[];
 }
 
 const INITIAL_STATE: PdfReaderState = {
@@ -135,6 +141,9 @@ export function useScientPdfReader(input: {
   const presentationRef = useRef<
     (PresentedPdfSource & { readonly runtime: ScientPdfRuntime }) | null
   >(null);
+  const documentTextItemsRef = useRef(
+    new WeakMap<ScientPdfRuntime["document"], Promise<readonly string[] | null>>(),
+  );
   const disposePresentedRef = useRef<(() => void) | null>(null);
   const anchorProviderRef = useRef<(() => PdfPresentationAnchor | null) | null>(null);
   const invalidateRef = useRef(input.onSourceInvalidated);
@@ -644,6 +653,21 @@ export function useScientPdfReader(input: {
     [],
   );
 
+  const readDocumentTextItems = useCallback(async (): Promise<PresentedPdfTextEvidence | null> => {
+    const presented = presentationRef.current;
+    if (presented === null) return null;
+    let pending = documentTextItemsRef.current.get(presented.runtime.document);
+    if (pending === undefined) {
+      pending = readPdfDocumentTextItems(presented.runtime.document).catch(() => null);
+      documentTextItemsRef.current.set(presented.runtime.document, pending);
+    }
+    const items = await pending;
+    // A text corpus belongs to the presentation that supplied its immutable
+    // PDFDocumentProxy. Never return an old corpus after an atomic page swap.
+    if (items === null || presentationRef.current !== presented) return null;
+    return { revisionId: presented.revisionId, items };
+  }, []);
+
   const setZoom = useCallback((scale: number) => {
     const runtime = runtimeRef.current;
     if (!runtime) return;
@@ -746,6 +770,7 @@ export function useScientPdfReader(input: {
     goToPage,
     goToSyncPoint,
     syncPointFromClient,
+    readDocumentTextItems,
     setZoom,
     setZoomMode,
     rotate,

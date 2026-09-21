@@ -50,6 +50,18 @@ function textRect(node: Text): DOMRect {
   return range.getBoundingClientRect();
 }
 
+const INTERACTIVE_TARGET_SELECTOR = [
+  "a",
+  "button",
+  "input",
+  "select",
+  "textarea",
+  "summary",
+  "[role='button']",
+  "[role='link']",
+  "[contenteditable]:not([contenteditable='false'])",
+].join(", ");
+
 /** Resolve page whitespace to the nearest unambiguous insertion-bearing text line. */
 export function visualTextHit(
   event: MouseEvent,
@@ -58,6 +70,8 @@ export function visualTextHit(
 ): VisualTextHit | null {
   const target = event.target;
   if (!(target instanceof Element)) return null;
+  const interactive = target.closest(INTERACTIVE_TARGET_SELECTOR);
+  if (interactive && container.contains(interactive)) return null;
   const span = target.closest<HTMLElement>(".textLayer span");
   const direct = span ? textNode(span) : null;
   const directEntry = span ? manifest.entryFor(span) : null;
@@ -95,7 +109,11 @@ export function visualTextHit(
         : event.clientY > rect.bottom
           ? event.clientY - rect.bottom
           : 0;
-    if (dy > Math.max(32, rect.height * 2.5)) continue;
+    // A blank spot is an insertion affordance only inside a bounded halo
+    // around rendered prose. Page margins and distant column whitespace are
+    // not evidence of which source run the user intended to edit.
+    const proximity = Math.max(32, rect.height * 2.5);
+    if (dx > proximity || dy > proximity) continue;
     candidates.push({ node, span: candidate, rect, score: dy * 4 + dx });
   }
   candidates.sort((a, b) => a.score - b.score);

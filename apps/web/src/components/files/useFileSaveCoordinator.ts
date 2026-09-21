@@ -1,5 +1,5 @@
 import type { EnvironmentId } from "@t3tools/contracts";
-import { createRef, useEffect, useMemo, useRef } from "react";
+import { createRef, useEffect, useLayoutEffect, useMemo, useRef } from "react";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import type { FileSaveResolution } from "~/scient/fileSurfaces/useWorkspaceFileRefresh";
 
@@ -38,6 +38,23 @@ export function useFileSaveCoordinator({
 }: FileSaveOptions): Pick<FileSaveCoordinator, "change" | "setSuspended"> {
   const writeFile = useAtomCommand(projectEnvironment.writeFile);
   const latestRevision = useRef(revision);
+  // Parent freshness callbacks may change while Visual owns a suspended buffer.
+  // Route through the latest commit without retiring (and therefore flushing)
+  // the file-identity coordinator.
+  const latestCallbacks = useRef({
+    onPendingChange,
+    onSaveConfirmed,
+    onSaveFailure,
+    onSaveResolutionApplied,
+  });
+  useLayoutEffect(() => {
+    latestCallbacks.current = {
+      onPendingChange,
+      onSaveConfirmed,
+      onSaveFailure,
+      onSaveResolutionApplied,
+    };
+  }, [onPendingChange, onSaveConfirmed, onSaveFailure, onSaveResolutionApplied]);
   useEffect(() => {
     latestRevision.current = revision;
   }, [revision]);
@@ -66,7 +83,8 @@ export function useFileSaveCoordinator({
         const coordinator = new FileSaveCoordinator({
           debounceMs,
           initialRevision: latestRevision.current,
-          onPendingChange: (pending) => onPendingChange(relativePath, pending),
+          onPendingChange: (pending) =>
+            latestCallbacks.current.onPendingChange(relativePath, pending),
           persist: (nextContents, expectedRevision) =>
             writeFile({
               environmentId,
@@ -81,11 +99,19 @@ export function useFileSaveCoordinator({
               confirmedContents,
               result.revision,
             );
-            onSaveConfirmed(relativePath, confirmedContents, result.revision);
+            latestCallbacks.current.onSaveConfirmed(
+              relativePath,
+              confirmedContents,
+              result.revision,
+            );
           },
           onFailure: (contents, result) =>
-            onSaveFailure(relativePath, squashAtomCommandFailure(result), contents),
-          onResolutionApplied: onSaveResolutionApplied,
+            latestCallbacks.current.onSaveFailure(
+              relativePath,
+              squashAtomCommandFailure(result),
+              contents,
+            ),
+          onResolutionApplied: (action) => latestCallbacks.current.onSaveResolutionApplied(action),
         });
         coordinatorRef.current = coordinator;
         return () => {
@@ -94,17 +120,7 @@ export function useFileSaveCoordinator({
         };
       },
     };
-  }, [
-    debounceMs,
-    cwd,
-    environmentId,
-    onPendingChange,
-    onSaveConfirmed,
-    onSaveFailure,
-    onSaveResolutionApplied,
-    relativePath,
-    writeFile,
-  ]);
+  }, [debounceMs, cwd, environmentId, relativePath, writeFile]);
 
   // StrictMode replays effect setup. Retired file sessions stay inert, while the
   // replay gets a fresh coordinator instead of reusing a disposed one.

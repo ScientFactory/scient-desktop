@@ -11,6 +11,7 @@ import * as ServerEnvironment from "../../environment/ServerEnvironment.ts";
 import {
   GeneratedDocumentStore,
   GeneratedDocumentStoreError,
+  MAX_REVISION_ATTACHMENT_BYTES,
 } from "../documentArtifacts/GeneratedDocumentStore.ts";
 import {
   LatexVisualRevisionStore,
@@ -86,6 +87,7 @@ describe("LatexVisualRevisionStore", () => {
           rootRelativePath: "main.tex",
           sourceRevisions,
         });
+        if (attachment === null) return yield* Effect.die("expected bounded visual attachment");
         yield* Ref.update(harness.attachments, (current) =>
           new Map(current).set(revisionKey(firstRevisionId), attachment.bytes),
         );
@@ -130,6 +132,24 @@ describe("LatexVisualRevisionStore", () => {
     }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
   );
 
+  it.effect("refuses evidence that cannot fit the revision attachment budget", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness;
+      yield* Effect.gen(function* () {
+        const service = yield* LatexVisualRevisionStore;
+        expect(
+          yield* service.prepare({
+            workspaceRoot,
+            rootRelativePath: "main.tex",
+            sourceRevisions: {
+              ["x".repeat(MAX_REVISION_ATTACHMENT_BYTES)]: `sha256:${"a".repeat(64)}`,
+            },
+          }),
+        ).toBeNull();
+      }).pipe(Effect.provide(harness.serviceLayer));
+    }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+  );
+
   it.effect("fails closed transiently without destroying retained evidence", () =>
     Effect.gen(function* () {
       const harness = yield* makeHarness;
@@ -140,6 +160,7 @@ describe("LatexVisualRevisionStore", () => {
           rootRelativePath: "main.tex",
           sourceRevisions,
         });
+        if (attachment === null) return yield* Effect.die("expected bounded visual attachment");
         yield* Ref.update(harness.attachments, (current) =>
           new Map(current).set(revisionKey(firstRevisionId), attachment.bytes),
         );

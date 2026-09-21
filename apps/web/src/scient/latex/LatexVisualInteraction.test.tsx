@@ -99,6 +99,13 @@ beforeEach(async () => {
       revisionId: "pdf-one",
       container: pdf,
       ready: true,
+      readDocumentTextItems: async () => ({
+        revisionId: props.host.revisionId,
+        items: Array.from(
+          props.host.container?.querySelectorAll(".textLayer span") ?? [],
+          (span) => span.textContent ?? "",
+        ),
+      }),
       pointFromClient: () => ({ page: 1, x: 35, y: 10 }),
       registerAnchorProvider: (provider) => {
         registeredAnchorProvider = provider;
@@ -130,6 +137,8 @@ afterEach(async () => {
 describe("source-backed PDF visual interaction", () => {
   it("keeps typing local and checkpoints source only after a quiet interval", async () => {
     await click();
+    expect(first.classList.contains("scient-latex-visual-editable")).toBe(true);
+    expect(document.activeElement).toBe(textarea());
     vi.useFakeTimers();
     await type("Hello from smoothly edited Scient.");
     await type("Hello from very smoothly edited Scient.");
@@ -250,6 +259,30 @@ describe("source-backed PDF visual interaction", () => {
     expect(mount.querySelector('[role="status"]')).toBeNull();
   });
 
+  it("activates qualified prose from the keyboard and returns focus on Escape", async () => {
+    first.firstChild!.textContent = "Hello from Scient.";
+    await settleManifest();
+    first.focus();
+    expect(first.getAttribute("aria-keyshortcuts")).toBe("Enter Space F2");
+    await act(() =>
+      first.dispatchEvent(new KeyboardEvent("keydown", { bubbles: true, key: "Enter" })),
+    );
+
+    expect(document.activeElement).toBe(textarea());
+    expect(textarea().tabIndex).toBe(0);
+    await type("Keyboard-edited prose.");
+    await act(() =>
+      textarea().dispatchEvent(new KeyboardEvent("keydown", { bubbles: true, key: "Escape" })),
+    );
+
+    expect(edit).toHaveBeenCalledWith(
+      source,
+      source.replace("Hello from Scient.", "Keyboard-edited prose."),
+    );
+    expect(document.activeElement).toBe(first);
+    expect(textarea().tabIndex).toBe(-1);
+  });
+
   it("keeps unsupported or ambiguous text quietly read-only", async () => {
     const repeated =
       "\\begin{document}\nRepeated prose here.\n\nRepeated prose here.\n\\end{document}\n";
@@ -268,6 +301,26 @@ describe("source-backed PDF visual interaction", () => {
     expect(document.activeElement).not.toBe(textarea());
     expect(edit).not.toHaveBeenCalled();
     expect(mount.querySelector('[role="status"]')).toBeNull();
+  });
+
+  it("keeps a unique fragment read-only when omitted PDF text leaves its run incomplete", async () => {
+    const fragmented = "\\begin{document}\nA unique editable sentence.\n\\end{document}\n";
+    first.textContent = "A";
+    second.textContent = "unique editable sentence.";
+    props = {
+      ...props,
+      source: fragmented,
+      sourceRevision: `sha256:${NodeCrypto.createHash("sha256").update(fragmented).digest("hex")}`,
+      revisionId: "pdf-fragmented",
+      host: { ...props.host, revisionId: "pdf-fragmented" },
+    };
+    await render();
+    await settleManifest();
+
+    expect(second.classList.contains("scient-latex-visual-editable")).toBe(false);
+    await click(second);
+    expect(document.activeElement).not.toBe(textarea());
+    expect(edit).not.toHaveBeenCalled();
   });
 
   it("does not redirect a click on unsupported text to a nearby editable span", async () => {
@@ -328,6 +381,53 @@ describe("source-backed PDF visual interaction", () => {
     props = { ...props, host: { ...props.host, revisionId: "pdf-three" } };
     await render();
     expect(registeredAnchorProvider?.()).toBeNull();
+  });
+
+  it("keeps a re-edit anchor tied to the PDF that is still painted", async () => {
+    await click();
+    await type("First local edit before publication.");
+    await act(() =>
+      textarea().dispatchEvent(new KeyboardEvent("keydown", { bubbles: true, key: "Escape" })),
+    );
+    const firstSource = source.replace(
+      "Hello from Scient.",
+      "First local edit before publication.",
+    );
+
+    // The source has advanced to B, but PDF A remains the atomic presentation
+    // while B is staging. A second click must rebase the editor without
+    // pretending that B's text is already visible on the page.
+    props = {
+      ...props,
+      source: firstSource,
+      sourceRevision: `sha256:${NodeCrypto.createHash("sha256").update(firstSource).digest("hex")}`,
+      ready: false,
+      revisionId: "pdf-two",
+    };
+    await render();
+    await settleManifest();
+    await click();
+    expect(textarea().value).toBe("First local edit before publication.");
+
+    await type("Second local edit before publication.");
+    await act(() =>
+      textarea().dispatchEvent(new KeyboardEvent("keydown", { bubbles: true, key: "Escape" })),
+    );
+    const secondSource = source.replace(
+      "Hello from Scient.",
+      "Second local edit before publication.",
+    );
+    props = {
+      ...props,
+      source: secondSource,
+      sourceRevision: `sha256:${NodeCrypto.createHash("sha256").update(secondSource).digest("hex")}`,
+      revisionId: "pdf-three",
+    };
+    await render();
+
+    expect(edit).toHaveBeenLastCalledWith(firstSource, secondSource);
+    expect(props.host.revisionId).toBe("pdf-one");
+    expect(registeredAnchorProvider?.()).not.toBeNull();
   });
 
   it("ignores a queued manifest rebuild from a container replaced before its microtask", async () => {

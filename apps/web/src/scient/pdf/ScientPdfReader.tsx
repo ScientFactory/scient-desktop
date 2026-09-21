@@ -1,6 +1,7 @@
 import type {
   PdfSourceActions,
   PdfSourceDescriptor,
+  PdfSourceResolution,
   PdfSourceResolver,
 } from "@scientfactory/document-artifacts";
 import { LegendList } from "@legendapp/list/react";
@@ -55,7 +56,12 @@ import {
   type PdfSidebarMode,
 } from "./pdfReaderModel";
 import { pdfReaderSessionDocumentKey, pdfReaderSessionStore } from "./pdfReaderSessionStore";
-import { useScientPdfReader, type RequestedPdfPresentation } from "./useScientPdfReader";
+import { usePresentedPdfSourceBundle } from "./usePresentedPdfSourceBundle";
+import {
+  useScientPdfReader,
+  type PresentedPdfTextEvidence,
+  type RequestedPdfPresentation,
+} from "./useScientPdfReader";
 
 import "pdfjs-dist/legacy/web/pdf_viewer.css";
 import "./scientPdfReader.css";
@@ -148,6 +154,8 @@ export interface PdfInteractionHost {
   readonly rotation?: number;
   readonly container: HTMLDivElement | null;
   readonly ready: boolean;
+  /** Complete text-item evidence for the immutable PDF owning `container`. */
+  readonly readDocumentTextItems: () => Promise<PresentedPdfTextEvidence | null>;
   readonly pointFromClient: (input: {
     pageElement: HTMLElement;
     clientX: number;
@@ -200,8 +208,7 @@ export function ScientPdfReader(props: {
       key={documentKey}
       documentKey={documentKey}
       source={displayed.source}
-      sourceUrl={displayed.asset.url}
-      sourceExpiresAt={displayed.asset.expiresAt}
+      sourceAsset={displayed.asset}
       interactionReady={asset._tag === "Success"}
       sourceNotice={
         asset._tag === "Failure"
@@ -231,9 +238,8 @@ function LoadedScientPdfReader(props: {
   readonly actions: PdfSourceActions;
   readonly documentKey: string;
   readonly source: PdfSourceDescriptor;
+  readonly sourceAsset: Extract<PdfSourceResolution, { readonly _tag: "Success" }>;
   readonly refreshSource: () => void;
-  readonly sourceExpiresAt: number;
-  readonly sourceUrl: string;
   readonly syncNavigation?: PdfSyncNavigation;
 }) {
   const requestedRevisionId =
@@ -260,16 +266,22 @@ function LoadedScientPdfReader(props: {
     documentKey: props.documentKey,
     onSourceInvalidated: props.refreshSource,
     revisionId: requestedRevisionId,
-    sourceUrl: props.sourceUrl,
+    sourceUrl: props.sourceAsset.url,
     container,
     viewerElement,
   });
   const { state } = reader;
+  const presentedSource = usePresentedPdfSourceBundle({
+    documentKey: props.documentKey,
+    source: props.source,
+    asset: props.sourceAsset,
+    presentation: reader.presentation,
+  });
   const currentPresentation =
     props.interactionReady &&
     state.phase === "ready" &&
     reader.presentation?.revisionId === requestedRevisionId &&
-    reader.presentation.sourceUrl === props.sourceUrl;
+    reader.presentation.sourceUrl === props.sourceAsset.url;
   const thumbnailPages = useMemo(
     () => Array.from({ length: state.pageCount }, (_, index) => index + 1),
     [state.pageCount],
@@ -306,19 +318,16 @@ function LoadedScientPdfReader(props: {
   }, [reader.closeSearch]);
 
   const saveCopy = useCallback(async () => {
-    if (saveCopyPendingRef.current) return;
+    if (saveCopyPendingRef.current || presentedSource === null) return;
+    const bundle = presentedSource;
     saveCopyPendingRef.current = true;
     setSavingCopy(true);
     try {
-      const result = await observePdfCopy(EnvironmentId.make(props.source.authority), () =>
-        props.actions.saveCopy(props.source, {
-          url: props.sourceUrl,
-          expiresAt: props.sourceExpiresAt,
-          refresh: props.refreshSource,
-        }),
+      const result = await observePdfCopy(EnvironmentId.make(bundle.source.authority), () =>
+        props.actions.saveCopy(bundle.source, bundle.resolved),
       );
       const presentation = announcePdfSaveCopyResult(result);
-      if (presentation.refreshSource) props.refreshSource();
+      if (presentation.refreshSource) bundle.resolved.refresh();
     } catch {
       toastManager.add({
         type: "error",
@@ -329,7 +338,7 @@ function LoadedScientPdfReader(props: {
       saveCopyPendingRef.current = false;
       setSavingCopy(false);
     }
-  }, [props.actions, props.refreshSource, props.source, props.sourceExpiresAt, props.sourceUrl]);
+  }, [presentedSource, props.actions]);
 
   const clearSourceSyncHintTimers = useCallback(() => {
     if (sourceSyncHintShowTimerRef.current !== null) {
@@ -444,7 +453,8 @@ function LoadedScientPdfReader(props: {
   };
   const canRevealSource =
     props.source.capabilities.canRevealSource && props.actions.revealSource !== undefined;
-  const hasSourceActions = props.source.capabilities.canSaveCopy || canRevealSource;
+  const canSaveCopy = presentedSource?.source.capabilities.canSaveCopy === true;
+  const hasSourceActions = canSaveCopy || canRevealSource;
 
   return (
     <div
@@ -579,7 +589,7 @@ function LoadedScientPdfReader(props: {
               <Search /> Search PDF
             </DropdownMenuItem>
             {hasSourceActions ? <DropdownMenuSeparator /> : null}
-            {props.source.capabilities.canSaveCopy ? (
+            {canSaveCopy ? (
               <DropdownMenuItem disabled={savingCopy} onClick={() => void saveCopy()}>
                 {savingCopy ? <LoaderCircle className="animate-spin" /> : <Download />}
                 {savingCopy ? "Saving copy…" : "Save a copy…"}
@@ -589,8 +599,8 @@ function LoadedScientPdfReader(props: {
               <DropdownMenuItem
                 onClick={() =>
                   props.actions.revealSource?.(props.source, {
-                    url: props.sourceUrl,
-                    expiresAt: props.sourceExpiresAt,
+                    url: props.sourceAsset.url,
+                    expiresAt: props.sourceAsset.expiresAt,
                     refresh: props.refreshSource,
                   })
                 }
@@ -765,6 +775,7 @@ function LoadedScientPdfReader(props: {
             revisionId: reader.presentation?.revisionId ?? null,
             rotation: state.rotation,
             ready: reader.presentation !== null,
+            readDocumentTextItems: reader.readDocumentTextItems,
             pointFromClient: reader.syncPointFromClient,
           })}
           {sourceSyncHintVisible ? (
