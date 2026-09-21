@@ -14,11 +14,7 @@ import { primaryServerProvidersAtom } from "../../state/server";
 import { usePrimaryEnvironmentId } from "../../state/environments";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { AVAILABLE_PROVIDER_OPTIONS } from "../../components/chat/providerIconUtils";
-import {
-  collectExternalSkillProviders,
-  externalSkillSourceLabel,
-  externalSkillStatus,
-} from "./externalSkills";
+import { collectExternalSkillProviders, externalSkillStatus } from "./externalSkills";
 import { setProviderSkillEnabled } from "./scientSkillsState";
 import {
   SettingsSourcePanel,
@@ -183,26 +179,32 @@ export function ExternalSkillsSettings() {
                         className="sm:[&>div]:grid-cols-[minmax(0,1fr)_auto] [&>div>div>p]:max-w-none"
                         title={displayName}
                         description={description}
-                        status={
-                          pending && !pending.confirmed
-                            ? `${externalSkillSourceLabel(source)} · Updating`
-                            : externalSkillStatus({ ...skill, enabled: shownEnabled }, source)
-                        }
+                        status={externalSkillStatus(
+                          { ...skill, enabled: pending?.confirmed ? shownEnabled : skill.enabled },
+                          source,
+                        )}
                         control={
                           skill.canSetEnabled === true ? (
-                            <Switch
-                              checked={shownEnabled}
-                              className="transition-none [&_[data-slot=switch-thumb]]:transition-none"
-                              aria-label={`${shownEnabled ? "Deactivate" : "Activate"} ${displayName}`}
-                              onCheckedChange={(checked) =>
-                                void updateSkill({
-                                  instanceId: expandedGroup.provider.instanceId,
-                                  name: skill.name,
-                                  path: skill.path,
-                                  enabled: Boolean(checked),
-                                })
-                              }
-                            />
+                            <span className="inline-flex items-center gap-2">
+                              {pending && !pending.confirmed ? (
+                                <span role="status" className="text-xs text-muted-foreground">
+                                  Updating
+                                </span>
+                              ) : null}
+                              <Switch
+                                checked={shownEnabled}
+                                className="transition-none [&_[data-slot=switch-thumb]]:transition-none"
+                                aria-label={`${shownEnabled ? "Deactivate" : "Activate"} ${displayName}`}
+                                onCheckedChange={(checked) =>
+                                  void updateSkill({
+                                    instanceId: expandedGroup.provider.instanceId,
+                                    name: skill.name,
+                                    path: skill.path,
+                                    enabled: Boolean(checked),
+                                  })
+                                }
+                              />
+                            </span>
                           ) : undefined
                         }
                       />

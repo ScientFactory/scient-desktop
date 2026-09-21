@@ -141,7 +141,8 @@ describe("ExternalSkillsSettings activation", () => {
       switches()[0]?.props.onClick();
     });
     expect(switches().map((item) => item.props["data-checked"])).toEqual([false, true]);
-    expect(renderer.root.findAllByProps({ "data-status": "Personal · Updating" })).toHaveLength(1);
+    expect(renderer.root.findAllByProps({ "data-status": "Personal" })).toHaveLength(2);
+    expect(renderer.root.findAllByProps({ role: "status", children: "Updating" })).toHaveLength(1);
     expect(switches().every((item) => item.props.disabled === undefined)).toBe(true);
     expect(switches()[0]?.props.className).toContain("transition-none");
 
@@ -182,6 +183,7 @@ describe("ExternalSkillsSettings activation", () => {
       success.resolve({ _tag: "Success" });
     });
     expect(switches()[0]?.props["data-checked"]).toBe(false);
+    expect(renderer.root.findAllByProps({ role: "status", children: "Updating" })).toHaveLength(0);
     expect(renderer.root.findAllByProps({ "data-status": "Personal · Deactivated" })).toHaveLength(
       1,
     );
