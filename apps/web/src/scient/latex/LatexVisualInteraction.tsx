@@ -6,6 +6,13 @@ import {
   visualCharacters,
   type VisualRun,
 } from "@t3tools/shared/latexVisual";
+import { rebaseVisualMatch, sourceChange, type SourceChange } from "./visualEditingSession";
+import {
+  measureDraftGeometry,
+  visualTextHit,
+  type DraftAnchor,
+  type DraftGeometry,
+} from "./visualPageGeometry";
 import { clearVisualDraft, readVisualDraft, retainVisualDraft } from "./visualDrafts";
 import { captureVisualPresentationAnchor } from "./visualPresentationAnchor";
 
@@ -19,6 +26,13 @@ interface ActiveEdit {
   page: number;
 }
 
+interface MappingSession {
+  readonly revisionId: string;
+  readonly baseSource: string;
+  currentSource: string;
+  readonly changes: SourceChange[];
+}
+
 export interface LatexVisualInteractionProps {
   readonly draftKey: string;
   readonly failureMessage?: string | null;
@@ -30,33 +44,14 @@ export interface LatexVisualInteractionProps {
   readonly locate: (point: PdfInverseSyncPoint) => Promise<number | string>;
   /** Compare-and-set against the shared editor buffer, not just its last saved disk revision. */
   readonly onEdit: (expected: string, next: string) => boolean;
-}
-
-/** Geometry comes from PDF.js's invisible text layer. The visible glyphs always remain its canvas. */
-function textHit(event: MouseEvent): { node: Text; offset: number; span: HTMLElement } | null {
-  const target = event.target;
-  if (!(target instanceof Element)) return null;
-  const span = target.closest<HTMLElement>(".textLayer span");
-  const node = span?.firstChild;
-  if (!span || !(node instanceof Text) || span.childNodes.length !== 1 || span.dir === "rtl")
-    return null;
-  const range = document.createRange();
-  let offset = node.length;
-  for (let i = 0; i < node.length; i++) {
-    range.setStart(node, i);
-    range.setEnd(node, i + 1);
-    const rect = range.getBoundingClientRect();
-    if (event.clientX < rect.left + rect.width / 2) {
-      offset = i;
-      break;
-    }
-  }
-  return { node, offset, span };
+  readonly onEditingChange: (editing: boolean) => void;
 }
 
 export function LatexVisualInteraction(props: LatexVisualInteractionProps) {
   const input = useRef<HTMLTextAreaElement>(null);
   const active = useRef<ActiveEdit | null>(null);
+  const mapping = useRef<MappingSession | null>(null);
+  const draftAnchor = useRef<DraftAnchor | null>(null);
   const composing = useRef(false);
   const request = useRef(0);
   const latest = useRef(props);
@@ -74,6 +69,7 @@ export function LatexVisualInteraction(props: LatexVisualInteractionProps) {
   const [selectionRects, setSelectionRects] = useState<
     readonly { left: number; top: number; width: number; height: number }[]
   >([]);
+  const [draftGeometry, setDraftGeometry] = useState<DraftGeometry | null>(null);
 
   useEffect(() => {
     if (!globalThis.crypto?.subtle) {
@@ -97,15 +93,41 @@ export function LatexVisualInteraction(props: LatexVisualInteractionProps) {
       current = false;
     };
   }, [props.source]);
-  const verified =
+  const exactlyCurrent =
     props.host.revisionId === props.revisionId &&
     (props.host.rotation ?? 0) === 0 &&
     props.ready &&
     props.host.ready &&
     sourceHash?.source === props.source &&
     sourceHash.hash === props.sourceRevision;
-  const verifiedRef = useRef(verified);
-  verifiedRef.current = verified;
+  if (
+    exactlyCurrent &&
+    props.revisionId !== null &&
+    mapping.current?.revisionId !== props.revisionId
+  ) {
+    mapping.current = {
+      revisionId: props.revisionId,
+      baseSource: props.source,
+      currentSource: props.source,
+      changes: [],
+    };
+  }
+  const mappingReady =
+    props.host.ready &&
+    (props.host.rotation ?? 0) === 0 &&
+    mapping.current !== null &&
+    mapping.current.revisionId === props.host.revisionId &&
+    mapping.current.currentSource === props.source;
+  const mappingReadyRef = useRef(mappingReady);
+  mappingReadyRef.current = mappingReady;
+  const exactlyCurrentRef = useRef(exactlyCurrent);
+  exactlyCurrentRef.current = exactlyCurrent;
+
+  useEffect(() => {
+    if (!editing) return;
+    props.onEditingChange(true);
+    return () => props.onEditingChange(false);
+  }, [editing, props.onEditingChange]);
 
   function refuse(message: string) {
     const transaction = active.current;
@@ -118,6 +140,8 @@ export function LatexVisualInteraction(props: LatexVisualInteractionProps) {
     setEditing(false);
     setLocating(false);
     setCaret(null);
+    draftAnchor.current = null;
+    setDraftGeometry(null);
     setMessage(message);
   }
 
@@ -125,6 +149,10 @@ export function LatexVisualInteraction(props: LatexVisualInteractionProps) {
   useEffect(() => {
     if (active.current && active.current.source !== props.source) {
       refuse("Source changed outside this edit. Wait for the build, then click to continue.");
+      mapping.current = null;
+    } else if (mapping.current && mapping.current.currentSource !== props.source) {
+      mapping.current = null;
+      setMessage("Source changed outside Visual. Wait for its PDF before editing the page.");
     }
   }, [props.source]);
 
@@ -132,13 +160,14 @@ export function LatexVisualInteraction(props: LatexVisualInteractionProps) {
     const container = props.host.container;
     if (!container) return;
     const click = (event: MouseEvent) => {
-      const hit = textHit(event);
+      const hit = visualTextHit(event, container);
       if (!hit) return;
       if (recoveryRef.current !== null) {
         setMessage("Copy or dismiss the unapplied draft before starting another edit.");
         return;
       }
-      if (!verifiedRef.current) {
+      const session = mapping.current;
+      if (!mappingReadyRef.current || !session) {
         setMessage(
           (latest.current.host.rotation ?? 0) !== 0
             ? "Rotate the page upright to edit text."
@@ -178,9 +207,16 @@ export function LatexVisualInteraction(props: LatexVisualInteractionProps) {
       }
       // Local uniqueness can admit input immediately, but cannot authorize a
       // write. Buffer early keystrokes until revision-scoped SyncTeX agrees.
-      const provisional =
-        endpoints === null ? matchVisualRun(current.source, hit.node.data, hit.offset, null) : null;
+      const provisionalBase =
+        endpoints === null
+          ? matchVisualRun(session.baseSource, hit.node.data, hit.offset, null)
+          : null;
+      const provisional = provisionalBase
+        ? rebaseVisualMatch(provisionalBase, current.source, session.changes)
+        : null;
       if (provisional && input.current) {
+        draftAnchor.current = { span: hit.span, page: pageElement, run: provisionalBase!.run };
+        setDraftGeometry(measureDraftGeometry(container, draftAnchor.current));
         active.current = {
           pending: true,
           baseSource: current.source,
@@ -205,7 +241,8 @@ export function LatexVisualInteraction(props: LatexVisualInteractionProps) {
           if (
             latest.current.source !== current.source ||
             latest.current.revisionId !== current.revisionId ||
-            !verifiedRef.current
+            mapping.current !== session ||
+            !mappingReadyRef.current
           ) {
             refuse("Source or PDF changed during lookup. Pending input was not applied.");
             return;
@@ -214,7 +251,10 @@ export function LatexVisualInteraction(props: LatexVisualInteractionProps) {
             refuse(line);
             return;
           }
-          const match = matchVisualRun(current.source, hit.node.data, hit.offset, line);
+          const baseMatch = matchVisualRun(session.baseSource, hit.node.data, hit.offset, line);
+          const match = baseMatch
+            ? rebaseVisualMatch(baseMatch, current.source, session.changes)
+            : null;
           if (!match) {
             refuse("This region has no unambiguous editable prose mapping. Use Source for it.");
             return;
@@ -238,18 +278,24 @@ export function LatexVisualInteraction(props: LatexVisualInteractionProps) {
           let start = match.offset;
           let end = match.offset;
           if (endpoints) {
-            const anchor = matchVisualRun(
-              current.source,
+            const baseAnchor = matchVisualRun(
+              session.baseSource,
               endpoints.anchorText,
               endpoints.anchorOffset,
               line,
             );
-            const focus = matchVisualRun(
-              current.source,
+            const baseFocus = matchVisualRun(
+              session.baseSource,
               endpoints.focusText,
               endpoints.focusOffset,
               line,
             );
+            const anchor = baseAnchor
+              ? rebaseVisualMatch(baseAnchor, current.source, session.changes)
+              : null;
+            const focus = baseFocus
+              ? rebaseVisualMatch(baseFocus, current.source, session.changes)
+              : null;
             if (
               !anchor ||
               !focus ||
@@ -273,6 +319,8 @@ export function LatexVisualInteraction(props: LatexVisualInteractionProps) {
             presentedText: match.run.text,
             page: point.page,
           };
+          draftAnchor.current = { span: hit.span, page: pageElement, run: baseMatch!.run };
+          setDraftGeometry(measureDraftGeometry(container, draftAnchor.current));
           textarea.value = match.run.text;
           textarea.focus({ preventScroll: true });
           textarea.setSelectionRange(start, end);
@@ -302,8 +350,12 @@ export function LatexVisualInteraction(props: LatexVisualInteractionProps) {
       setSelectionRects([]);
       return;
     }
+    if (draftAnchor.current) {
+      setDraftGeometry(measureDraftGeometry(container, draftAnchor.current));
+      return;
+    }
     // Never guess geometry for text which has not been typeset yet.
-    if (!verifiedRef.current || transaction.source !== latest.current.source) return;
+    if (!exactlyCurrentRef.current || transaction.source !== latest.current.source) return;
     transaction.presentedText = transaction.text;
     const source = visualCharacters(transaction.text);
     const selection = textarea.selectionStart;
@@ -377,7 +429,7 @@ export function LatexVisualInteraction(props: LatexVisualInteractionProps) {
     props.host.scale,
     props.host.rotation,
     props.revisionId,
-    verified,
+    exactlyCurrent,
   ]);
 
   useLayoutEffect(() => {
@@ -416,6 +468,15 @@ export function LatexVisualInteraction(props: LatexVisualInteractionProps) {
       clearVisualDraft(latest.current.draftKey);
       return;
     }
+    const session = mapping.current;
+    if (session === null || session.currentSource !== transaction.source) {
+      setRecovery(textarea.value);
+      setMessage("The visual mapping changed. This edit was preserved for recovery.");
+      active.current = null;
+      setEditing(false);
+      setCaret(null);
+      return;
+    }
     if (!latest.current.onEdit(transaction.source, next)) {
       setRecovery(textarea.value);
       setMessage("Source changed. This edit was not applied; use Source to resolve the conflict.");
@@ -425,9 +486,11 @@ export function LatexVisualInteraction(props: LatexVisualInteractionProps) {
       return;
     }
     clearVisualDraft(latest.current.draftKey);
+    session.changes.push(sourceChange(transaction.source, next));
+    session.currentSource = next;
     transaction.source = next;
     transaction.text = textarea.value;
-    setMessage("Typesetting your changes… the page remains the last compiled PDF.");
+    setMessage("Editing source… the PDF will update when you finish.");
     updateCaret();
   }
 
@@ -435,8 +498,10 @@ export function LatexVisualInteraction(props: LatexVisualInteractionProps) {
     <>
       <div className="scient-latex-visual-status" role="status" aria-live="polite">
         {props.failureMessage ??
-          (editing && verified && !locating
-            ? "Editing text · Escape finishes · page matches the current PDF"
+          (editing && mappingReady && !locating
+            ? exactlyCurrent
+              ? "Editing text · Escape finishes · page matches the current PDF"
+              : "Editing text · Escape finishes · PDF updates when you finish"
             : message)}
       </div>
       {recovery === null ? null : (
@@ -475,12 +540,23 @@ export function LatexVisualInteraction(props: LatexVisualInteractionProps) {
         : null}
       <textarea
         ref={input}
-        className="scient-latex-visual-input"
-        style={{ left: caret?.left ?? 0, top: caret?.top ?? 0 }}
+        className={`scient-latex-visual-input${editing && draftGeometry ? " is-active" : ""}`}
+        style={
+          editing && draftGeometry
+            ? draftGeometry
+            : { left: caret?.left ?? 0, top: caret?.top ?? 0 }
+        }
         aria-label="Edit LaTeX prose on the typeset page"
         tabIndex={-1}
         spellCheck={false}
-        onChange={commit}
+        onChange={() => {
+          const textarea = input.current;
+          if (textarea && draftGeometry) {
+            textarea.style.height = `${draftGeometry.height}px`;
+            textarea.style.height = `${Math.max(draftGeometry.height, textarea.scrollHeight)}px`;
+          }
+          commit();
+        }}
         onSelect={updateCaret}
         onCompositionStart={() => {
           composing.current = true;
@@ -501,6 +577,8 @@ export function LatexVisualInteraction(props: LatexVisualInteractionProps) {
         onBlur={() => {
           setEditing(false);
           setCaret(null);
+          draftAnchor.current = null;
+          setDraftGeometry(null);
         }}
       />
     </>

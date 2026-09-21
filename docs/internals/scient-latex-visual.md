@@ -5,29 +5,30 @@ Owner: ScientFactory. This extends [Scient LaTeX build](scient-latex.md).
 
 ## Decision
 
-Keep `.tex` authoritative and keep PDF as the sole visible typesetting output.
-Offer **Source / Split / Visual / PDF**. Visual and PDF use the same PDF.js
-reader and compiled artifact; Visual adds source-backed input, caret and
-selection, not another layout engine. Export continues to use the existing
-immutable PDF artifact path. There is no new editable file format.
+Keep `.tex` authoritative and the compiled PDF authoritative for settled
+layout. Offer **Source / Split / Visual / PDF**. Visual uses the PDF.js page as
+its stable fidelity layer and temporarily replaces the active, source-mapped
+prose region with a native editing surface. Export continues to use the
+existing immutable PDF artifact path. There is no new editable file format.
 
 Exact typography and immediate feedback are separate requirements. TeX must
-run before exact new line breaks, floats and page breaks are known. This
-candidate chooses exact output with compile latency. It does **not** claim
-pixel-identical instantaneous editing of arbitrary LaTeX, nor universal
-invertibility of TeX output. A changed paragraph can legitimately repaginate
-the document; stable viewport does not mean freezing page breaks.
+run before exact new line breaks, floats and page breaks are known. The active
+prose surface provides immediate browser layout while the untouched page stays
+the exact last PDF. Finishing the edit requests one TeX checkpoint. It does
+**not** claim pixel-identical instantaneous editing of arbitrary LaTeX, nor
+universal invertibility of TeX output. A changed paragraph can legitimately
+repaginate the document; stable viewport does not mean freezing page breaks.
 
 ## Alternatives and evidence
 
-| Architecture                                   | Benefit                                                                           | Cost for Scient                                                                                                      | Decision                                                                |
-| ---------------------------------------------- | --------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------- |
-| Overleaf-style source-backed structured editor | Source preservation, mature editing primitives, useful mathematical controls      | Editing presentation is not the final TeX page                                                                       | Borrow the source-preserving principle, not its primary presentation    |
-| LyX-style native document model                | Strong structural editing and established document UI                             | Different authoritative format; screen typography can differ from output                                             | Wrong authority/fidelity tradeoff for existing `.tex` projects          |
-| HTML/CSS or ProseMirror page recreation        | Responsive familiar text editing                                                  | Second layout engine cannot guarantee the same TeX pagination and package output                                     | Not the fidelity layer                                                  |
-| PDF plus approximate editable paragraph        | Exact when idle, fast approximate typing                                          | Violates the requirement precisely while editing; reconciliation can move text/caret                                 | Not implemented                                                         |
-| Actual PDF plus source-backed input            | Same visible typesetting as export; compatible with existing build infrastructure | Compilation latency; conservative mapping; complex objects need dedicated adapters                                   | Implemented bounded foundation                                          |
-| Engine-integrated incremental typesetting      | Most promising route toward exact and fast updates together                       | Engine-specific provenance, checkpointing, package compatibility and page invalidation are substantial compiler work | Future separately qualified optimization, not an implicit engine switch |
+| Architecture                                   | Benefit                                                                       | Cost for Scient                                                                                                      | Decision                                                                |
+| ---------------------------------------------- | ----------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------- |
+| Overleaf-style source-backed structured editor | Source preservation, mature editing primitives, useful mathematical controls  | Editing presentation is not the final TeX page                                                                       | Borrow the source-preserving principle, not its primary presentation    |
+| LyX-style native document model                | Strong structural editing and established document UI                         | Different authoritative format; screen typography can differ from output                                             | Wrong authority/fidelity tradeoff for existing `.tex` projects          |
+| HTML/CSS or ProseMirror page recreation        | Responsive familiar text editing                                              | Second layout engine cannot guarantee the same TeX pagination and package output                                     | Not the fidelity layer                                                  |
+| PDF plus source-backed editable paragraph      | Exact when settled, immediate direct typing, no page replacement during input | Active paragraph is provisional until TeX confirms it; complex objects need dedicated adapters                       | Implemented bounded foundation                                          |
+| Actual PDF plus hidden keystroke input         | Same visible typesetting as export                                            | New text is invisible until compilation and makes compilation an interaction dependency                              | Rejected after interaction review                                       |
+| Engine-integrated incremental typesetting      | Most promising route toward exact and fast updates together                   | Engine-specific provenance, checkpointing, package compatibility and page invalidation are substantial compiler work | Future separately qualified optimization, not an implicit engine switch |
 
 Primary references, checked during investigation:
 
@@ -63,36 +64,46 @@ external editor later requires its own license and dependency review.
    cancelled; failed stages leave the old presentation intact. Loaded URL and
    revision checks prevent old geometry authorizing new source edits or sync.
 4. A click measures the invisible PDF text layer and asks the existing
-   revision-scoped inverse SyncTeX endpoint for the source line. The actual
-   displayed PDF glyphs are never replaced. The client hashes its current
-   source buffer and requires equality with the build's source identity.
+   revision-scoped inverse SyncTeX endpoint for the source line. Blank space
+   resolves geometrically to the nearest unambiguous line on the same page;
+   an ambiguous column gutter fails closed. The initial client source must
+   match the build identity.
 5. `packages/shared/src/latexVisual.ts` projects supported literal prose runs
    and keeps display-to-source boundaries. Normalization is comparison-only.
    Ligatures, escaped punctuation, whitespace and basic TeX punctuation can be
    matched without normalizing the source file. Ambiguity fails closed.
-6. A native textarea receives keyboard, clipboard and IME input. Only caret
-   and selection are painted over the PDF. The resulting minimal source splice
-   preserves unrelated syntax, comments and whitespace. Pasted TeX control
+6. A native textarea receives keyboard, clipboard and IME input directly over
+   the mapped prose geometry. It uses the PDF text layer's font metrics and
+   masks only that prose region while active. The resulting minimal source
+   splice preserves unrelated syntax, comments and whitespace. Pasted TeX control
    characters are escaped as literal prose, not executed as new commands.
    Globally unique local matches can buffer keystrokes while SyncTeX is in
    flight, but cannot write until it agrees. Rejected or interrupted drafts
    survive mode/tab switches in an environment/file-keyed in-memory recovery
    store. This store is not crash-durable and does not claim to be saved source.
 7. Source and Visual share the existing `useFileSaveCoordinator`, with a
-   150 ms LaTeX debounce, optimistic source cache and expected-revision writes.
-   Visual also compare-and-sets against the current in-memory source. A save
-   confirmation requests the existing coalescing build queue. Failures retain
-   the last successful artifact and existing conflict-resolution UI.
-8. Prepared output and its interaction host are published together before the
+   150 ms save debounce, optimistic source cache and expected-revision writes.
+   Visual also compare-and-sets against the current in-memory source. Saves
+   replace one 1.5-second checkpoint timer instead of compiling. An active
+   Visual transaction suspends that timer and status-currentness polling;
+   leaving the edit requests the latest revision once. Explicit Rebuild remains
+   an override. Failures retain the last successful artifact and existing
+   conflict-resolution UI.
+8. A mapping session pins the source and SyncTeX identity of the displayed PDF.
+   Minimal Visual splices are recorded as positional changes, allowing later
+   clicks on the stable page to rebase into newer source without compiling
+   first. An external source replacement invalidates the session rather than
+   guessing.
+9. Prepared output and its interaction host are published together before the
    next paint; only then is the old runtime disposed. Preparation follows live
    scrolling and zooming instead of imposing an earlier viewport snapshot.
    An optional source-neutral anchor provider lets visual editing keep a
    source-backed visible prose line at its screen Y position. Anchor lookup
    can materialize a nearby page after reflow (within two pages); ambiguity or
    distant restructuring falls back to preserved scroll coordinates. Status
-   notices do not alter viewport dimensions. The active textarea survives and
-   caret lookup spans rendered pages, retaining its previous geometry while
-   new source is not yet typeset. This does not invent uncompiled glyphs.
+   notices do not alter viewport dimensions. The completed editing transaction
+   is anchored through publication so genuine TeX reflow does not reset the
+   viewport to an unrelated page.
 
 ## Supported and explicitly unsupported
 
@@ -115,9 +126,9 @@ Current limitations requiring further product work:
 - Cross-formatting selections, equation/table editors, continuous document-wide
   undo, keyboard-only activation and complete screen-reader page navigation
   are not finished capabilities of this candidate.
-- Hyphenated line fragments and short glyph spans can be refused. Caret
-  geometry is not guessed when the text has not yet been typeset or cannot be
-  uniquely located. The caret may be temporarily absent after reflow.
+- Hyphenated line fragments and short glyph spans can be refused. The active
+  paragraph's browser line breaking is provisional and can differ from TeX;
+  the exact result returns only after the transaction ends and compiles.
 - Compilation runs on the workspace, not an immutable filesystem snapshot.
   Before/after digests detect ordinary concurrent changes, but are not a proof
   against an adversarial change-and-restore during engine execution. Stronger
@@ -130,8 +141,9 @@ Current limitations requiring further product work:
 
 ## Long-term progression and acceptance gates
 
-The immediate review tests the product tradeoff: are exact pages with measured
-compile latency acceptable? Measure edit-to-published and published-to-painted
+The immediate review tests direct-input stability, whitespace caret placement,
+provisional paragraph geometry and the transition back to exact PDF output.
+Measure edit response, edit-finish-to-published and published-to-painted
 latencies on short papers and long projects; do not call a debounce value a
 latency guarantee. User visual review is still required.
 

@@ -11,10 +11,12 @@ const source = "\\documentclass{article}\n\\begin{document}\nHello from Scient.\
 let root: Root;
 let mount: HTMLDivElement;
 let pdf: HTMLDivElement;
+let page: HTMLDivElement;
 let span: HTMLSpanElement;
 let props: LatexVisualInteractionProps;
 const edit = vi.fn<(expected: string, next: string) => boolean>();
 const locate = vi.fn<(point: unknown) => Promise<number | string>>();
+const editingChange = vi.fn<(editing: boolean) => void>();
 
 async function render() {
   await act(() => root.render(<LatexVisualInteraction {...props} />));
@@ -50,9 +52,10 @@ beforeEach(async () => {
   });
   edit.mockReset().mockReturnValue(true);
   locate.mockReset().mockResolvedValue(3);
+  editingChange.mockReset();
   mount = document.createElement("div");
   pdf = document.createElement("div");
-  const page = document.createElement("div");
+  page = document.createElement("div");
   page.className = "page";
   page.dataset.pageNumber = "1";
   const layer = document.createElement("div");
@@ -78,6 +81,7 @@ beforeEach(async () => {
     revisionId: "pdf-one",
     locate,
     onEdit: edit,
+    onEditingChange: editingChange,
   };
   await render();
   await settleHash();
@@ -91,18 +95,26 @@ afterEach(async () => {
   vi.unstubAllGlobals();
 });
 
-describe("exact-output visual interaction", () => {
+describe("source-backed PDF visual interaction", () => {
   it("keeps the caret and focused input while a replacement PDF is being authorized", async () => {
     await click();
-    const caret = mount.querySelector<HTMLElement>(".scient-latex-visual-caret");
-    expect(caret).not.toBeNull();
-    const top = caret!.style.top;
+    expect(textarea().classList.contains("is-active")).toBe(true);
+    const top = textarea().style.top;
     props = { ...props, host: { ...props.host, ready: false } };
     await render();
-    expect(mount.querySelector<HTMLElement>(".scient-latex-visual-caret")?.style.top).toBe(top);
+    expect(textarea().style.top).toBe(top);
     expect(document.activeElement).toBe(textarea());
     await type("Hello from smoothly edited Scient.");
-    expect(mount.querySelector(".scient-latex-visual-caret")).not.toBeNull();
+    expect(textarea().classList.contains("is-active")).toBe(true);
+  });
+  it("holds checkpoint publication for exactly the lifetime of direct input", async () => {
+    await click();
+    expect(editingChange).toHaveBeenLastCalledWith(true);
+
+    await act(() =>
+      textarea().dispatchEvent(new KeyboardEvent("keydown", { bubbles: true, key: "Escape" })),
+    );
+    expect(editingChange).toHaveBeenLastCalledWith(false);
   });
   it("retains unqualified input across a mode or tab unmount", async () => {
     locate.mockImplementation(() => new Promise(() => {}));
@@ -185,6 +197,26 @@ describe("exact-output visual interaction", () => {
     await click();
     expect(locate).not.toHaveBeenCalled();
     expect(edit).not.toHaveBeenCalled();
+  });
+  it("continues mapping clicks against the pinned PDF while Visual source is ahead", async () => {
+    await click();
+    const next = source.replace("Scient.", "Science.");
+    await type("Hello from Science.");
+    props = { ...props, source: next };
+    await render();
+    await settleHash();
+
+    await click();
+    expect(locate).toHaveBeenCalledTimes(2);
+    expect(document.activeElement).toBe(textarea());
+  });
+  it("resolves blank page space to the nearest legal text insertion point", async () => {
+    await act(async () =>
+      page.dispatchEvent(new MouseEvent("click", { bubbles: true, clientX: 200, clientY: 10 })),
+    );
+    expect(locate).toHaveBeenCalledTimes(1);
+    expect(document.activeElement).toBe(textarea());
+    expect(textarea().selectionStart).toBe(textarea().value.length);
   });
   it("rejects superseded asynchronous navigation", async () => {
     let resolve!: (line: number) => void;

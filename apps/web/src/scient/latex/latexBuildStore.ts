@@ -33,6 +33,8 @@ export const LATEX_POLL_INTERVAL_MS = 1_500;
 export const LATEX_CURRENTNESS_POLL_INTERVAL_MS = 15_000;
 /** A transport failure backs the loop off so an unreachable environment is not hammered. */
 export const LATEX_OFFLINE_POLL_INTERVAL_MS = 5_000;
+/** Saves are cheap and frequent; a PDF checkpoint belongs to settled source, not every save. */
+export const LATEX_EDIT_CHECKPOINT_DELAY_MS = 1_500;
 
 export interface LatexBuildTarget {
   readonly environmentId: EnvironmentId;
@@ -130,6 +132,11 @@ interface WatchLoop {
    * spinner on a build that is still queued.
    */
   sequence: number;
+  /** Independent from status polling so saving cannot accidentally become a compile cadence. */
+  rebuildTimer: ReturnType<typeof setTimeout> | null;
+  rebuildPending: boolean;
+  /** Visual input holds publication until its direct-manipulation transaction has ended. */
+  rebuildSuspensions: number;
 }
 
 const loops = new Map<string, WatchLoop>();
@@ -160,6 +167,28 @@ function clearTimer(loop: WatchLoop): void {
   if (loop.timer === null) return;
   clearTimeout(loop.timer);
   loop.timer = null;
+}
+
+function clearRebuildTimer(loop: WatchLoop): void {
+  if (loop.rebuildTimer === null) return;
+  clearTimeout(loop.rebuildTimer);
+  loop.rebuildTimer = null;
+}
+
+function schedulePendingRebuild(
+  key: string,
+  target: LatexBuildTarget,
+  loop: WatchLoop,
+  delayMs: number,
+): void {
+  clearRebuildTimer(loop);
+  if (loop.stopped || !loop.rebuildPending || loop.rebuildSuspensions > 0) return;
+  loop.rebuildTimer = setTimeout(() => {
+    loop.rebuildTimer = null;
+    if (loop.stopped || !loop.rebuildPending || loop.rebuildSuspensions > 0) return;
+    loop.rebuildPending = false;
+    runBuild(key, target, loop);
+  }, delayMs);
 }
 
 function schedulePoll(
@@ -194,6 +223,10 @@ function scheduleFollowUp(
     schedulePoll(key, target, loop, LATEX_POLL_INTERVAL_MS);
     return;
   }
+  if (loop.rebuildPending) {
+    schedulePendingRebuild(key, target, loop, LATEX_EDIT_CHECKPOINT_DELAY_MS);
+    return;
+  }
   // The server's status read verifies persisted build evidence. Saves inside
   // Scient already request a rebuild directly; this slower lane covers writes
   // with no browser event, without paying the active-build cadence forever.
@@ -209,6 +242,15 @@ async function pollStatus(
   buildOnOpen: LatexOpenBuild = "none",
 ): Promise<void> {
   if (loop.stopped) return;
+  const current = useLatexBuildStore.getState().entries[key] ?? EMPTY_ENTRY;
+  // A local edit has already selected the next build revision. Do not let the
+  // server's currentness check turn a harmless status poll into an early build.
+  if (
+    (loop.rebuildPending || loop.rebuildSuspensions > 0) &&
+    !isActiveLatexBuildState(current.snapshot?.state ?? "idle") &&
+    !installUnderway(key)
+  )
+    return;
   // A poll that outlives its slot must not silently drop the cadence with it.
   if (loop.polling) {
     schedulePoll(key, target, loop, LATEX_POLL_INTERVAL_MS, buildOnOpen);
@@ -321,7 +363,16 @@ export function startWatchingLatexBuild(target: LatexBuildTarget): () => void {
     return () => releaseWatcher(key, existing);
   }
 
-  const loop: WatchLoop = { watchers: 1, timer: null, polling: false, stopped: false, sequence: 0 };
+  const loop: WatchLoop = {
+    watchers: 1,
+    timer: null,
+    polling: false,
+    stopped: false,
+    sequence: 0,
+    rebuildTimer: null,
+    rebuildPending: false,
+    rebuildSuspensions: 0,
+  };
   loops.set(key, loop);
   // One probe per opened document: the empty state has to know whether this
   // environment can install an engine before any build has run. Every later
@@ -340,7 +391,46 @@ function releaseWatcher(key: string, loop: WatchLoop): void {
   if (loop.watchers > 0) return;
   loop.stopped = true;
   clearTimer(loop);
+  clearRebuildTimer(loop);
+  if (loop.rebuildPending) pendingRebuilds.add(key);
   if (loops.get(key) === loop) loops.delete(key);
+}
+
+/**
+ * Save-driven checkpointing. Repeated saves replace the pending timer, and an
+ * active Visual transaction holds it until the user has finished editing.
+ */
+export function scheduleLatexRebuild(target: LatexBuildTarget): void {
+  const key = latexBuildKey(target);
+  const loop = loops.get(key);
+  if (!loop) {
+    pendingRebuilds.add(key);
+    return;
+  }
+  loop.rebuildPending = true;
+  clearTimer(loop);
+  schedulePendingRebuild(key, target, loop, LATEX_EDIT_CHECKPOINT_DELAY_MS);
+}
+
+/** Balance calls per mounted Visual interaction. Manual rebuild remains an explicit override. */
+export function setLatexBuildSuspended(target: LatexBuildTarget, suspended: boolean): void {
+  const key = latexBuildKey(target);
+  const loop = loops.get(key);
+  if (!loop || loop.stopped) return;
+  if (suspended) {
+    loop.rebuildSuspensions += 1;
+    clearTimer(loop);
+    clearRebuildTimer(loop);
+    return;
+  }
+  loop.rebuildSuspensions = Math.max(0, loop.rebuildSuspensions - 1);
+  if (loop.rebuildSuspensions !== 0) return;
+  if (loop.rebuildPending) {
+    schedulePendingRebuild(key, target, loop, 0);
+    return;
+  }
+  clearTimer(loop);
+  schedulePoll(key, target, loop, 0);
 }
 
 /**
@@ -367,6 +457,8 @@ export function requestLatexRebuild(
     return;
   }
   pendingRebuilds.delete(key);
+  loop.rebuildPending = false;
+  clearRebuildTimer(loop);
   const entry = useLatexBuildStore.getState().entries[key] ?? EMPTY_ENTRY;
   if (
     options.reprobeToolchain === true &&
@@ -461,6 +553,7 @@ export function resetLatexBuildsForTests(): void {
   for (const [key, loop] of loops) {
     loop.stopped = true;
     clearTimer(loop);
+    clearRebuildTimer(loop);
     loops.delete(key);
   }
   pendingRebuilds.clear();

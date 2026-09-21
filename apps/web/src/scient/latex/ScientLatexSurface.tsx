@@ -50,6 +50,8 @@ import {
   notifyLatexBindingChange,
   requestLatexRebuild,
   requestManagedLatexInstall,
+  scheduleLatexRebuild,
+  setLatexBuildSuspended,
   startWatchingLatexBuild,
   useLatexBuild,
   type LatexBuildTarget,
@@ -466,7 +468,7 @@ export function ScientLatexSurface(props: ScientLatexSurfaceProps) {
     (path: string, contents: string, revision: string) => {
       setSaveError(null);
       onSaveConfirmed(path, contents, revision);
-      requestLatexRebuild(target);
+      scheduleLatexRebuild(target);
     },
     [onSaveConfirmed, target],
   );
@@ -704,6 +706,10 @@ export function ScientLatexSurface(props: ScientLatexSurfaceProps) {
     },
     [build.snapshot, descriptor, props.cwd, props.environmentId, props.relativePath],
   );
+  const handleVisualEditingChange = useCallback(
+    (editing: boolean) => setLatexBuildSuspended(target, editing),
+    [target],
+  );
   const renderVisualInteraction = useCallback(
     (host: PdfInteractionHost) => (
       <LatexVisualInteraction
@@ -725,6 +731,7 @@ export function ScientLatexSurface(props: ScientLatexSurfaceProps) {
         revisionId={descriptorRevision}
         locate={locateVisualSource}
         onEdit={handleVisualEdit}
+        onEditingChange={handleVisualEditingChange}
       />
     ),
     [
@@ -739,6 +746,7 @@ export function ScientLatexSurface(props: ScientLatexSurfaceProps) {
       descriptorRevision,
       locateVisualSource,
       handleVisualEdit,
+      handleVisualEditingChange,
     ],
   );
 

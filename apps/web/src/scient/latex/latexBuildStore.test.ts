@@ -30,6 +30,7 @@ vi.mock("./client", () => ({
 
 import {
   LATEX_CURRENTNESS_POLL_INTERVAL_MS,
+  LATEX_EDIT_CHECKPOINT_DELAY_MS,
   LATEX_OFFLINE_POLL_INTERVAL_MS,
   LATEX_POLL_INTERVAL_MS,
   cancelLatexBuild,
@@ -39,6 +40,8 @@ import {
   requestLatexRebuild,
   requestManagedLatexInstall,
   resetLatexBuildsForTests,
+  scheduleLatexRebuild,
+  setLatexBuildSuspended,
   startWatchingLatexBuild,
 } from "./latexBuildStore";
 
@@ -215,6 +218,57 @@ describe("latexBuildStore", () => {
 
     expect(readLatexBuildStatus).toHaveBeenCalledTimes(2);
     expect(readLatexBuild(target).snapshot?.finishedAtEpochMs).toBe(2);
+    stop();
+  });
+
+  it("coalesces repeated saves into one settled-source checkpoint", async () => {
+    readLatexBuildStatus.mockResolvedValue(snapshot("succeeded"));
+    requestLatexBuild.mockResolvedValue(snapshot("queued"));
+    const stop = startWatchingLatexBuild(target);
+    await settle();
+
+    scheduleLatexRebuild(target);
+    await vi.advanceTimersByTimeAsync(LATEX_EDIT_CHECKPOINT_DELAY_MS - 1);
+    expect(requestLatexBuild).not.toHaveBeenCalled();
+    scheduleLatexRebuild(target);
+    await vi.advanceTimersByTimeAsync(LATEX_EDIT_CHECKPOINT_DELAY_MS - 1);
+    expect(requestLatexBuild).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(1);
+    expect(requestLatexBuild).toHaveBeenCalledTimes(1);
+    stop();
+  });
+
+  it("does not poll or build underneath an active Visual transaction", async () => {
+    readLatexBuildStatus.mockResolvedValue(snapshot("succeeded"));
+    requestLatexBuild.mockResolvedValue(snapshot("queued"));
+    const stop = startWatchingLatexBuild(target);
+    await settle();
+
+    setLatexBuildSuspended(target, true);
+    scheduleLatexRebuild(target);
+    await vi.advanceTimersByTimeAsync(LATEX_CURRENTNESS_POLL_INTERVAL_MS * 2);
+    expect(readLatexBuildStatus).toHaveBeenCalledTimes(1);
+    expect(requestLatexBuild).not.toHaveBeenCalled();
+
+    setLatexBuildSuspended(target, false);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(requestLatexBuild).toHaveBeenCalledTimes(1);
+    stop();
+  });
+
+  it("resumes the external-currentness check after an unchanged Visual transaction", async () => {
+    readLatexBuildStatus.mockResolvedValue(snapshot("succeeded"));
+    const stop = startWatchingLatexBuild(target);
+    await settle();
+
+    setLatexBuildSuspended(target, true);
+    await vi.advanceTimersByTimeAsync(LATEX_CURRENTNESS_POLL_INTERVAL_MS * 2);
+    expect(readLatexBuildStatus).toHaveBeenCalledTimes(1);
+
+    setLatexBuildSuspended(target, false);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(readLatexBuildStatus).toHaveBeenCalledTimes(2);
+    expect(requestLatexBuild).not.toHaveBeenCalled();
     stop();
   });
 
