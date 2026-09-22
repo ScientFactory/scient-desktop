@@ -27,7 +27,12 @@ function createSelectionSurface({
   });
   const element = Object.assign(new EventTarget(), {
     ownerDocument: document,
-    contains: (target: unknown): boolean => target === element,
+    contains: (target: unknown): boolean => target === element || target === buttonIcon,
+    closest: () => null,
+  });
+  const button = new EventTarget();
+  const buttonIcon = Object.assign(new EventTarget(), {
+    closest: (selector: string) => (selector === "button, [role=button]" ? button : null),
   });
   const onSelection = vi.fn();
   const onDismiss = vi.fn();
@@ -67,7 +72,7 @@ function createSelectionSurface({
     Object.defineProperty(press, "target", { value: target });
     document.dispatchEvent(press);
     if (prevented) press.preventDefault();
-    if (target === element && !consumed) element.dispatchEvent(press);
+    if (element.contains(target) && !consumed) element.dispatchEvent(press);
   };
   const focus = (target: EventTarget) => {
     document.activeElement = target;
@@ -101,6 +106,7 @@ function createSelectionSurface({
     view,
     document,
     element,
+    buttonIcon,
     actionElement,
     field,
     onSelection,
@@ -201,6 +207,31 @@ describe("selection action gestures", () => {
     surface.flush();
     expect(surface.onSelection).not.toHaveBeenCalled();
   });
+
+  it.each([1, 2])(
+    "dismisses selection actions when a button is pressed after %i clicks",
+    (detail) => {
+      const surface = createSelectionSurface();
+      surface.down();
+      surface.up({ detail });
+      surface.flush();
+      surface.onSelection.mockClear();
+      surface.onDismiss.mockClear();
+
+      surface.down({ target: surface.buttonIcon });
+      surface.up();
+      surface.change();
+      surface.flush(1000);
+      expect(surface.onDismiss).toHaveBeenCalledWith("interaction");
+      expect(surface.onSelection).not.toHaveBeenCalled();
+
+      surface.down();
+      surface.change();
+      surface.up();
+      surface.flush();
+      expect(surface.onSelection).toHaveBeenCalledOnce();
+    },
+  );
 
   it("ignores nonprimary pointers and non-left mouseup without ending a left drag", () => {
     const surface = createSelectionSurface();
