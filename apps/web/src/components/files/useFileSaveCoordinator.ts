@@ -1,4 +1,4 @@
-import type { EnvironmentId } from "@t3tools/contracts";
+import type { EnvironmentId, ProjectWriteFileResult } from "@t3tools/contracts";
 import { createRef, useEffect, useLayoutEffect, useMemo, useRef } from "react";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import type { FileSaveResolution } from "~/scient/fileSurfaces/useWorkspaceFileRefresh";
@@ -8,8 +8,26 @@ import { useAtomCommand } from "~/state/use-atom-command";
 
 import { FileSaveCoordinator, type FileSaveResolutionAction } from "./fileSaveCoordinator";
 import { confirmProjectFileQueryData } from "./projectFilesQueryState";
+import {
+  WorkspaceFileSessionRegistry,
+  type WorkspaceFileSessionLease,
+} from "./workspaceFileSessionRegistry";
 
 const FILE_SAVE_DEBOUNCE_MS = 500;
+const workspaceFileSessions = new WorkspaceFileSessionRegistry<ProjectWriteFileResult, unknown>();
+
+/** Matches the environment/workspace/path identity used by the optimistic file cache. */
+function workspaceFileSessionKey(input: {
+  readonly environmentId: EnvironmentId;
+  readonly cwd: string;
+  readonly relativePath: string;
+}): string {
+  return JSON.stringify([input.environmentId, input.cwd, input.relativePath]);
+}
+
+export function clearWorkspaceFileSessionsForTests(): void {
+  workspaceFileSessions.clear();
+}
 
 interface FileSaveOptions {
   debounceMs?: number;
@@ -38,9 +56,6 @@ export function useFileSaveCoordinator({
 }: FileSaveOptions): Pick<FileSaveCoordinator, "change" | "setSuspended"> {
   const writeFile = useAtomCommand(projectEnvironment.writeFile);
   const latestRevision = useRef(revision);
-  // Parent freshness callbacks may change while Visual owns a suspended buffer.
-  // Route through the latest commit without retiring (and therefore flushing)
-  // the file-identity coordinator.
   const latestCallbacks = useRef({
     onPendingChange,
     onSaveConfirmed,
@@ -59,39 +74,27 @@ export function useFileSaveCoordinator({
     latestRevision.current = revision;
   }, [revision]);
   const session = useMemo(() => {
-    const coordinatorRef =
-      createRef<
-        Pick<
-          FileSaveCoordinator,
-          | "change"
-          | "setSuspended"
-          | "syncConfirmedFileRevision"
-          | "discardPending"
-          | "retryPending"
-        >
-      >();
+    const leaseRef = createRef<WorkspaceFileSessionLease>();
     return {
-      change: (contents: string) => coordinatorRef.current?.change(contents),
-      setSuspended: (suspended: boolean) => coordinatorRef.current?.setSuspended(suspended),
-      syncRevision: (value: string) => coordinatorRef.current?.syncConfirmedFileRevision(value),
+      change: (contents: string) => leaseRef.current?.change(contents),
+      setSuspended: (suspended: boolean) => leaseRef.current?.setSuspended(suspended),
+      syncRevision: (value: string) => leaseRef.current?.syncConfirmedFileRevision(value),
       resolve: (resolution: FileSaveResolution) => {
-        if (resolution.action === "discard")
-          coordinatorRef.current?.discardPending(resolution.revision);
-        else coordinatorRef.current?.retryPending(resolution.revision);
+        if (resolution.action === "discard") leaseRef.current?.discardPending(resolution.revision);
+        else leaseRef.current?.retryPending(resolution.revision);
       },
       setup: () => {
-        const coordinator = new FileSaveCoordinator({
+        const lease = workspaceFileSessions.acquire({
+          key: workspaceFileSessionKey({ environmentId, cwd, relativePath }),
           debounceMs,
           initialRevision: latestRevision.current,
-          onPendingChange: (pending) =>
-            latestCallbacks.current.onPendingChange(relativePath, pending),
           persist: (nextContents, expectedRevision) =>
             writeFile({
               environmentId,
               input: { cwd, relativePath, contents: nextContents, expectedRevision },
             }),
           revisionFromResult: (result) => result.revision,
-          onConfirmed: (confirmedContents, result) => {
+          onPersisted: (confirmedContents, result) => {
             confirmProjectFileQueryData(
               environmentId,
               cwd,
@@ -99,35 +102,41 @@ export function useFileSaveCoordinator({
               confirmedContents,
               result.revision,
             );
-            latestCallbacks.current.onSaveConfirmed(
-              relativePath,
-              confirmedContents,
-              result.revision,
-            );
           },
-          onFailure: (contents, result) =>
-            latestCallbacks.current.onSaveFailure(
-              relativePath,
-              squashAtomCommandFailure(result),
-              contents,
-            ),
-          onResolutionApplied: (action) => latestCallbacks.current.onSaveResolutionApplied(action),
+          callbacks: {
+            onPendingChange: (pending) =>
+              latestCallbacks.current.onPendingChange(relativePath, pending),
+            onConfirmed: (confirmedContents, result) =>
+              latestCallbacks.current.onSaveConfirmed(
+                relativePath,
+                confirmedContents,
+                result.revision,
+              ),
+            onFailure: (contents, result) =>
+              latestCallbacks.current.onSaveFailure(
+                relativePath,
+                squashAtomCommandFailure(result),
+                contents,
+              ),
+            onResolutionApplied: (action) =>
+              latestCallbacks.current.onSaveResolutionApplied(action),
+          },
         });
-        coordinatorRef.current = coordinator;
+        leaseRef.current = lease;
         return () => {
-          coordinatorRef.current = null;
-          coordinator.dispose();
+          leaseRef.current = null;
+          lease.release();
         };
       },
     };
-  }, [debounceMs, cwd, environmentId, relativePath, writeFile]);
+  }, [cwd, debounceMs, environmentId, relativePath, writeFile]);
 
-  // StrictMode replays effect setup. Retired file sessions stay inert, while the
-  // replay gets a fresh coordinator instead of reusing a disposed one.
+  // StrictMode replays effect setup. Retired leases stay inert, while deferred
+  // final cleanup lets the replay rejoin the same live persistence session.
   useEffect(session.setup, [session]);
   useEffect(() => session.syncRevision(revision), [session, revision]);
   useEffect(() => {
     if (saveResolution?.relativePath === relativePath) session.resolve(saveResolution);
   }, [session, relativePath, saveResolution]);
-  return session;
+  return { change: session.change, setSuspended: session.setSuspended };
 }

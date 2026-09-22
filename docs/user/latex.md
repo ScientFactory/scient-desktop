@@ -27,6 +27,14 @@ read-only until you open that source. Use Source for unsupported regions.
 Opening an older retained build may require Rebuild before its source
 identities can be verified.
 
+## Math insertion
+
+The source editor's **Ω** toolbar provides shared math symbols, fractions, roots,
+and matrices. Its shortcuts and completion behavior are configured in
+**Settings → Shortcuts → Math**, alongside Markdown math.
+See [math authoring](./math-in-chat.md#authoring-math) for defaults and source-safety
+limitations. These controls change LaTeX source; PDF read mode does not insert math.
+
 ## Build and review
 
 Builds happen automatically — save the file and Scient compiles it. Errors and

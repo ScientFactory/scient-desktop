@@ -88,7 +88,7 @@ function SidebarControl() {
       if (event.defaultPrevented) return;
       if (
         event.target instanceof HTMLElement &&
-        event.target.closest("[data-keybinding-capture]")
+        event.target.closest("[data-keybinding-capture]:not([data-document-shortcut-host])")
       ) {
         return;
       }

@@ -25,6 +25,10 @@ export function ContextualConfirmation(props: {
   readonly description: ReactNode;
   readonly confirmLabel: ReactNode;
   readonly onConfirm: () => void;
+  readonly secondaryAction?: {
+    readonly label: ReactNode;
+    readonly onSelect: () => void;
+  };
   readonly destructive?: boolean;
   readonly busy?: boolean;
   readonly side?: Parameters<typeof PopoverPopup>[0]["side"];
@@ -59,9 +63,12 @@ export function ContextualConfirmation(props: {
               size="xs"
               variant="ghost"
               disabled={busy}
-              onClick={() => props.onOpenChange(false)}
+              onClick={() => {
+                props.onOpenChange(false);
+                props.secondaryAction?.onSelect();
+              }}
             >
-              Cancel
+              {props.secondaryAction?.label ?? "Cancel"}
             </Button>
             <Button
               size="xs"

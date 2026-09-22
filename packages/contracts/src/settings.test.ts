@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vite-plus/test";
 import * as Schema from "effect/Schema";
+import { ComputeLanguageId } from "@scientfactory/compute";
 
 import { ProviderDriverKind, ProviderInstanceId } from "./providerInstance.ts";
 import {
@@ -9,6 +10,7 @@ import {
   DEFAULT_CLIENT_SETTINGS,
   DEFAULT_SERVER_SETTINGS,
   DEFAULT_UNIFIED_SETTINGS,
+  resolveScientificComputingLanguageSettings,
   resolveProviderInstanceEnabled,
   ServerSettings,
   ServerSettingsPatch,
@@ -912,6 +914,27 @@ describe("provider enabled defaults", () => {
 });
 
 describe("ServerSettings worktree defaults", () => {
+  it("defaults the thread env mode to inherit and keeps stored values", () => {
+    expect(decodeServerSettings({}).defaultThreadEnvMode).toBeNull();
+    expect(decodeServerSettings({ defaultThreadEnvMode: "worktree" }).defaultThreadEnvMode).toBe(
+      "worktree",
+    );
+    expect(
+      decodeServerSettings({ defaultThreadEnvMode: "remote" }).defaultThreadEnvMode,
+    ).toBeNull();
+    expect(
+      decodeServerSettingsPatch({ defaultThreadEnvMode: null }).defaultThreadEnvMode,
+    ).toBeNull();
+  });
+
+  it("keeps an inherited thread env mode off the wire for older clients", () => {
+    const encode = Schema.encodeSync(ServerSettings);
+    expect("defaultThreadEnvMode" in encode(decodeServerSettings({}))).toBe(false);
+    expect(
+      encode(decodeServerSettings({ defaultThreadEnvMode: "worktree" })).defaultThreadEnvMode,
+    ).toBe("worktree");
+  });
+
   it("defaults start-from-origin on for legacy configs", () => {
     expect(decodeServerSettings({}).newWorktreesStartFromOrigin).toBe(true);
   });
@@ -931,15 +954,51 @@ describe("ServerSettings worktree defaults", () => {
       decodeServerSettingsPatch({ newWorktreesStartFromOrigin: false }).newWorktreesStartFromOrigin,
     ).toBe(false);
   });
+
+  it("defaults worktree submodules to inherit and tolerates unknown modes", () => {
+    expect(decodeServerSettings({}).worktreeSubmodules).toBeNull();
+    expect(decodeServerSettings({ worktreeSubmodules: "top-level" }).worktreeSubmodules).toBe(
+      "top-level",
+    );
+    expect(decodeServerSettings({ worktreeSubmodules: "shallow" }).worktreeSubmodules).toBeNull();
+    expect(decodeServerSettingsPatch({ worktreeSubmodules: null }).worktreeSubmodules).toBeNull();
+  });
 });
 
 describe("ServerSettings scientific computing", () => {
-  it("keeps old settings files valid and leaves every language opt-in", () => {
+  it("enables every language by default while preserving explicit opt-outs", () => {
+    const python = ComputeLanguageId.make("python");
+    const matlab = ComputeLanguageId.make("matlab");
+    const futureLanguage = ComputeLanguageId.make("future-language");
     expect(decodeServerSettings({}).scientificComputing).toEqual({
       schemaVersion: 1,
       languages: {},
     });
     expect(DEFAULT_SERVER_SETTINGS.scientificComputing.languages).toEqual({});
+    expect(
+      resolveScientificComputingLanguageSettings(
+        DEFAULT_SERVER_SETTINGS.scientificComputing,
+        python,
+      ),
+    ).toEqual({ enabled: true, executable: "" });
+    expect(
+      resolveScientificComputingLanguageSettings(
+        DEFAULT_SERVER_SETTINGS.scientificComputing,
+        matlab,
+      ),
+    ).toEqual({ enabled: true, executable: "" });
+    expect(
+      resolveScientificComputingLanguageSettings(
+        DEFAULT_SERVER_SETTINGS.scientificComputing,
+        futureLanguage,
+      ),
+    ).toEqual({ enabled: true, executable: "" });
+    const disabled = decodeServerSettings({
+      scientificComputing: { languages: { python: { enabled: false } } },
+    });
+    expect(
+      resolveScientificComputingLanguageSettings(disabled.scientificComputing, python),
+    ).toEqual({ enabled: false, executable: "" });
   });
 
   it("round-trips independent language preferences without installation state", () => {

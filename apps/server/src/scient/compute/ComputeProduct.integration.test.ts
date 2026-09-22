@@ -27,6 +27,7 @@ import * as LocalDuplexProcess from "../execution/LocalDuplexProcess.ts";
 import * as LocalExecutionProcess from "../execution/LocalExecutionProcess.ts";
 import * as ComputeSessionService from "./ComputeSessionService.ts";
 import { makeComputeRpcGateway } from "./ComputeRpcGateway.ts";
+import { computeWorkspaceResolverForTest } from "./ComputeWorkspaceTestUtils.ts";
 import * as LocalComputeStore from "./LocalComputeStore.ts";
 import * as PythonComputeRuntime from "./PythonComputeRuntime.ts";
 
@@ -105,6 +106,7 @@ describe.runIf(Boolean(TEST_PYTHON))("compute product backend", () => {
         const compute = yield* ComputeSessionService.ComputeSessionService;
         const workspaceFileSystem = yield* WorkspaceFileSystem.WorkspaceFileSystem;
         const gateway = makeComputeRpcGateway({
+          workspaceResolver: computeWorkspaceResolverForTest,
           compute,
           workspaceFileSystem,
           serverSettings: {
@@ -136,6 +138,27 @@ describe.runIf(Boolean(TEST_PYTHON))("compute product backend", () => {
           executable: runtime.profile.executable,
         });
         expect(session.status).toBe("ready");
+
+        // A copy keeps the logical UUID, but must never inherit the live kernel.
+        const copiedRoot = yield* fs.makeTempDirectoryScoped({
+          prefix: "scient-compute-product-copy-",
+        });
+        yield* fs.copy(`${projectRoot}/.scient`, `${copiedRoot}/.scient`);
+        expect(yield* gateway.listSessions({ cwd: copiedRoot })).toEqual([]);
+        const denied = yield* gateway
+          .submitExecution({
+            cwd: copiedRoot,
+            sessionId,
+            executionId: ComputeExecutionId.make("cross-workspace"),
+            expectedGeneration: session.generation,
+            code: "raise Exception('wrong workspace')",
+            source: { _tag: "console" },
+          })
+          .pipe(Effect.flip);
+        expect(denied.reason).toBe("workspace-changed");
+        expect(yield* gateway.listExecutions({ cwd: projectRoot, sessionId, limit: 100 })).toEqual(
+          [],
+        );
 
         const writeId = ComputeExecutionId.make("phase-4-write");
         yield* gateway.submitExecution({
@@ -183,6 +206,176 @@ describe.runIf(Boolean(TEST_PYTHON))("compute product backend", () => {
           output.outputs.some(
             (item) =>
               item._tag === "stream" && item.stream === "stdout" && item.text.includes("42"),
+          ),
+        ).toBe(true);
+
+        const sourceContextLines = [
+          "from pathlib import Path",
+          "print('SOURCE_FILE=' + str(Path(__file__).resolve()))",
+        ];
+        const sourceContextCellCode = sourceContextLines.join("\n");
+        const sourceContextFileCode = ["# %% Source-context body", ...sourceContextLines].join(
+          "\n",
+        );
+        const sourceContextFile = yield* workspaceFileSystem.writeFile({
+          cwd: projectRoot,
+          relativePath: "source_context.py",
+          contents: sourceContextFileCode,
+        });
+        const savedSourceId = ComputeExecutionId.make("phase-4-saved-file-context");
+        yield* gateway.submitExecution({
+          cwd: projectRoot,
+          sessionId,
+          executionId: savedSourceId,
+          expectedGeneration: session.generation,
+          code: sourceContextFileCode,
+          source: {
+            _tag: "document",
+            origin: "file",
+            path: sourceContextFile.relativePath,
+            bufferState: "saved",
+            revision: sourceContextFile.revision,
+            range: null,
+          },
+        });
+        expect(
+          (yield* waitForTerminal(gateway, projectRoot, sessionId, savedSourceId)).result?.status,
+        ).toBe("succeeded");
+        const savedSourceOutput = yield* gateway.listOutputs({
+          cwd: projectRoot,
+          sessionId,
+          executionId: savedSourceId,
+        });
+        expect(
+          savedSourceOutput.outputs.some(
+            (item) =>
+              item._tag === "stream" &&
+              item.stream === "stdout" &&
+              item.text.includes(`${projectRoot}/source_context.py`),
+          ),
+        ).toBe(true);
+
+        const cellSourceId = ComputeExecutionId.make("phase-4-cell-has-no-file-context");
+        yield* gateway.submitExecution({
+          cwd: projectRoot,
+          sessionId,
+          executionId: cellSourceId,
+          expectedGeneration: session.generation,
+          code: sourceContextCellCode,
+          source: {
+            _tag: "document",
+            origin: "cell",
+            path: sourceContextFile.relativePath,
+            bufferState: "saved",
+            revision: sourceContextFile.revision,
+            range: {
+              startLine: 1,
+              startColumn: 0,
+              endLine: 2,
+              endColumn: sourceContextLines[1]!.length,
+            },
+          },
+        });
+        expect(
+          (yield* waitForTerminal(gateway, projectRoot, sessionId, cellSourceId)).result?.status,
+        ).toBe("failed");
+        const cellSourceOutput = yield* gateway.listOutputs({
+          cwd: projectRoot,
+          sessionId,
+          executionId: cellSourceId,
+        });
+        expect(
+          cellSourceOutput.outputs.some(
+            (item) => item._tag === "diagnostic" && item.diagnostic.errorName === "NameError",
+          ),
+        ).toBe(true);
+
+        const dirtySourceId = ComputeExecutionId.make("phase-4-dirty-file-has-no-file-context");
+        yield* gateway.submitExecution({
+          cwd: projectRoot,
+          sessionId,
+          executionId: dirtySourceId,
+          expectedGeneration: session.generation,
+          code: sourceContextFileCode,
+          source: {
+            _tag: "document",
+            origin: "file",
+            path: sourceContextFile.relativePath,
+            bufferState: "dirty",
+            revision: sourceContextFile.revision,
+            range: null,
+          },
+        });
+        expect(
+          (yield* waitForTerminal(gateway, projectRoot, sessionId, dirtySourceId)).result?.status,
+        ).toBe("failed");
+        const dirtySourceOutput = yield* gateway.listOutputs({
+          cwd: projectRoot,
+          sessionId,
+          executionId: dirtySourceId,
+        });
+        expect(
+          dirtySourceOutput.outputs.some(
+            (item) => item._tag === "diagnostic" && item.diagnostic.errorName === "NameError",
+          ),
+        ).toBe(true);
+
+        const seedFileId = ComputeExecutionId.make("phase-4-seed-file-context");
+        yield* gateway.submitExecution({
+          cwd: projectRoot,
+          sessionId,
+          executionId: seedFileId,
+          expectedGeneration: session.generation,
+          code: "__file__ = 'user-sentinel.py'",
+          source: { _tag: "console" },
+        });
+        expect(
+          (yield* waitForTerminal(gateway, projectRoot, sessionId, seedFileId)).result?.status,
+        ).toBe("succeeded");
+        const restoredSourceId = ComputeExecutionId.make("phase-4-restore-file-context");
+        yield* gateway.submitExecution({
+          cwd: projectRoot,
+          sessionId,
+          executionId: restoredSourceId,
+          expectedGeneration: session.generation,
+          code: sourceContextFileCode,
+          source: {
+            _tag: "document",
+            origin: "file",
+            path: sourceContextFile.relativePath,
+            bufferState: "saved",
+            revision: sourceContextFile.revision,
+            range: null,
+          },
+        });
+        expect(
+          (yield* waitForTerminal(gateway, projectRoot, sessionId, restoredSourceId)).result
+            ?.status,
+        ).toBe("succeeded");
+        const inspectRestoredId = ComputeExecutionId.make("phase-4-inspect-restored-file-context");
+        yield* gateway.submitExecution({
+          cwd: projectRoot,
+          sessionId,
+          executionId: inspectRestoredId,
+          expectedGeneration: session.generation,
+          code: "print('RESTORED_FILE=' + __file__)",
+          source: { _tag: "console" },
+        });
+        expect(
+          (yield* waitForTerminal(gateway, projectRoot, sessionId, inspectRestoredId)).result
+            ?.status,
+        ).toBe("succeeded");
+        const restoredSourceOutput = yield* gateway.listOutputs({
+          cwd: projectRoot,
+          sessionId,
+          executionId: inspectRestoredId,
+        });
+        expect(
+          restoredSourceOutput.outputs.some(
+            (item) =>
+              item._tag === "stream" &&
+              item.stream === "stdout" &&
+              item.text.includes("RESTORED_FILE=user-sentinel.py"),
           ),
         ).toBe(true);
 

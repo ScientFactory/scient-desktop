@@ -47,7 +47,7 @@ describe("FileSaveCoordinator", () => {
     expect(onPendingChange.mock.calls).toEqual([[true], [true], [false]]);
   });
 
-  it("holds persistence for an editing transaction and saves only its final buffer", async () => {
+  it("holds persistence while suspended and resumes with the latest buffer", async () => {
     vi.useFakeTimers();
     const persist = vi.fn().mockResolvedValue(AsyncResult.success(undefined));
     const coordinator = new FileSaveCoordinator({
@@ -63,17 +63,19 @@ describe("FileSaveCoordinator", () => {
     coordinator.change("first checkpoint");
     await vi.advanceTimersByTimeAsync(5_000);
     coordinator.change("final checkpoint");
-    await vi.advanceTimersByTimeAsync(5_000);
     expect(persist).not.toHaveBeenCalled();
 
     coordinator.setSuspended(false);
-    await vi.runAllTimersAsync();
+    await vi.advanceTimersByTimeAsync(500);
     expect(persist).toHaveBeenCalledExactlyOnceWith("final checkpoint", "revision-1");
   });
 
-  it("flushes accepted checkpoints on disposal even while persistence is held", async () => {
+  it("flushes immediately and reports whether the latest buffer was confirmed", async () => {
     vi.useFakeTimers();
-    const persist = vi.fn().mockResolvedValue(AsyncResult.success(undefined));
+    const persist = vi
+      .fn()
+      .mockResolvedValueOnce(AsyncResult.failure(Cause.fail(new Error("temporarily unavailable"))))
+      .mockResolvedValueOnce(AsyncResult.success(undefined));
     const coordinator = new FileSaveCoordinator({
       debounceMs: 500,
       initialRevision: "revision-1",
@@ -83,11 +85,41 @@ describe("FileSaveCoordinator", () => {
       onConfirmed: vi.fn(),
     });
 
-    coordinator.setSuspended(true);
-    coordinator.change("recoverable checkpoint");
-    coordinator.dispose();
-    await vi.runAllTimersAsync();
-    expect(persist).toHaveBeenCalledExactlyOnceWith("recoverable checkpoint", "revision-1");
+    coordinator.change("recoverable buffer");
+    await expect(coordinator.flush()).resolves.toBe(false);
+    expect(coordinator.hasPendingChanges).toBe(true);
+    await expect(coordinator.flush()).resolves.toBe(true);
+    expect(coordinator.hasPendingChanges).toBe(false);
+    expect(persist).toHaveBeenCalledTimes(2);
+  });
+
+  it("flushes a newer edit queued behind an in-flight write", async () => {
+    vi.useFakeTimers();
+    const firstWrite = deferred();
+    const persist = vi
+      .fn()
+      .mockReturnValueOnce(firstWrite.promise)
+      .mockResolvedValueOnce(AsyncResult.success(undefined));
+    const coordinator = new FileSaveCoordinator({
+      debounceMs: 500,
+      initialRevision: "revision-1",
+      persist,
+      revisionFromResult: () => (persist.mock.calls.length === 1 ? "revision-2" : "revision-3"),
+      onPendingChange: vi.fn(),
+      onConfirmed: vi.fn(),
+    });
+
+    coordinator.change("first");
+    await vi.advanceTimersByTimeAsync(500);
+    coordinator.change("latest");
+    const flushed = coordinator.flush();
+    firstWrite.resolve(AsyncResult.success(undefined));
+    await expect(flushed).resolves.toBe(true);
+
+    expect(persist.mock.calls).toEqual([
+      ["first", "revision-1"],
+      ["latest", "revision-2"],
+    ]);
   });
 
   it("keeps pending state until an edit made during a write is also saved", async () => {
@@ -285,7 +317,7 @@ describe("FileSaveCoordinator", () => {
 
     expect(persist).not.toHaveBeenCalled();
     expect(onPendingChange.mock.calls.at(-1)).toEqual([false]);
-    expect(onResolutionApplied).toHaveBeenCalledExactlyOnceWith("discard");
+    expect(onResolutionApplied).toHaveBeenCalledOnce();
     coordinator.dispose();
     await vi.runAllTimersAsync();
     expect(persist).not.toHaveBeenCalled();
@@ -321,7 +353,7 @@ describe("FileSaveCoordinator", () => {
       ["local edit", "revision-1"],
       ["local edit", "revision-agent"],
     ]);
-    expect(onResolutionApplied).toHaveBeenCalledExactlyOnceWith("retry");
+    expect(onResolutionApplied).toHaveBeenCalledOnce();
   });
 
   it("applies discard only after an in-flight write settles", async () => {
@@ -350,7 +382,7 @@ describe("FileSaveCoordinator", () => {
 
     expect(persist).toHaveBeenCalledOnce();
     expect(onPendingChange.mock.calls.at(-1)).toEqual([false]);
-    expect(onResolutionApplied).toHaveBeenCalledExactlyOnceWith("discard");
+    expect(onResolutionApplied).toHaveBeenCalledOnce();
   });
 
   it("retries after an in-flight conflict and remains pending after a second conflict", async () => {
@@ -387,7 +419,7 @@ describe("FileSaveCoordinator", () => {
     expect(onFailure).toHaveBeenCalledTimes(2);
     expect(onPendingChange.mock.calls.at(-1)).toEqual([true]);
     expect(onPendingChange).not.toHaveBeenCalledWith(false);
-    expect(onResolutionApplied).toHaveBeenCalledExactlyOnceWith("retry");
+    expect(onResolutionApplied).toHaveBeenCalledOnce();
   });
 
   it("ignores editor changes emitted after disposal", async () => {

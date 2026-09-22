@@ -106,6 +106,7 @@ import {
   type WorktreeSetupSnapshot,
 } from "@t3tools/contracts";
 import { resolveServerBackgroundActivitySettings } from "@t3tools/shared/backgroundActivitySettings";
+import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
 import { HttpRouter, HttpServerRequest, HttpServerRespondable } from "effect/unstable/http";
 import { RpcSerialization, RpcServer } from "effect/unstable/rpc";
 
@@ -156,6 +157,7 @@ import * as GeneratedDocumentStore from "./scient/documentArtifacts/GeneratedDoc
 import { publishBrowserPdfExport } from "./scient/documentArtifacts/BrowserPdfExportPublication.ts";
 import * as AnalysisService from "./scient/analysis/AnalysisService.ts";
 import { makeComputeRpcGateway } from "./scient/compute/ComputeRpcGateway.ts";
+import { WorkspaceBindingResolver } from "./scient/projectScope/WorkspaceBindingResolver.ts";
 import { ScientificRuntimePreferences } from "./scient/compute/ScientificRuntimePreferences.ts";
 import * as ComputeSessionService from "./scient/compute/ComputeSessionService.ts";
 import * as ScientSkillManagement from "./scient/skills/ScientSkillManagement.ts";
@@ -750,6 +752,7 @@ const makeWsRpcLayer = (
       const analysis = yield* AnalysisService.AnalysisService;
       const compute = yield* ComputeSessionService.ComputeSessionService;
       const computeGateway = makeComputeRpcGateway({
+        workspaceResolver: yield* WorkspaceBindingResolver,
         compute,
         serverSettings: yield* ScientificRuntimePreferences,
         workspaceFileSystem,
@@ -1289,6 +1292,35 @@ const makeWsRpcLayer = (
           return output;
         });
 
+      // Project setting > environment setting; null when neither is set so
+      // the driver reads the freshly created checkout's own t3.json (the
+      // branch being checked out may declare something the project root does
+      // not). Settings that fail to load fall through the same way.
+      const resolveBootstrapWorktreeSubmodules = Effect.fnUntraced(function* (input: {
+        readonly threadId: ThreadId;
+        readonly projectId: ProjectId | null;
+      }) {
+        const settings = yield* serverSettings.getSettings.pipe(Effect.orElseSucceed(() => null));
+        if (!settings) return null;
+        // A worktree can also be prepared for an existing thread, whose
+        // project is only known through its shell.
+        const resolvedProjectId =
+          input.projectId ??
+          (yield* projectionSnapshotQuery.getThreadShellById(input.threadId).pipe(
+            Effect.map((thread) => Option.getOrNull(thread)?.projectId ?? null),
+            Effect.orElseSucceed(() => null),
+          ));
+        const project =
+          resolvedProjectId === null
+            ? null
+            : yield* projectionSnapshotQuery.getProjectShellById(resolvedProjectId).pipe(
+                Effect.map(Option.getOrNull),
+                Effect.orElseSucceed(() => null),
+              );
+        return resolveProjectSettings(settings, resolvedProjectId, project).settings
+          .worktreeSubmodules;
+      });
+
       const dispatchBootstrapTurnStart = (
         command: Extract<OrchestrationCommand, { type: "thread.turn.start" }>,
       ): Effect.Effect<{ readonly sequence: number }, OrchestrationDispatchCommandError> =>
@@ -1707,6 +1739,10 @@ const makeWsRpcLayer = (
               }
               yield* worktreeSetupTracker.stageStatus(threadId, "checkout", "running");
               let checkoutTotal: number | null = null;
+              const submodules = yield* resolveBootstrapWorktreeSubmodules({
+                threadId,
+                projectId: targetProjectId ?? null,
+              });
               const worktree = yield* gitWorkflow.createWorktree(
                 {
                   cwd: prepareWorktree.projectCwd,
@@ -1716,6 +1752,7 @@ const makeWsRpcLayer = (
                   path: null,
                 },
                 {
+                  submodules,
                   progress: {
                     // Git has registered the directory at this point, so a
                     // cancel during the submodule step can still remove it.
@@ -1745,6 +1782,13 @@ const makeWsRpcLayer = (
                             worktreeSetupTracker.stageStatus(threadId, "submodules", "running"),
                           ),
                         ),
+                    onSubmodulesDisabled: ({ source }) =>
+                      worktreeSetupTracker.stageStatus(
+                        threadId,
+                        "submodules",
+                        "skipped",
+                        `disabled in ${source}`,
+                      ),
                     onSubmoduleLine: (line) => {
                       const submodulePath = /Submodule path '([^']+)'/.exec(line)?.[1];
                       return submodulePath === undefined

@@ -68,6 +68,7 @@ import {
 import { createPortal } from "react-dom";
 
 import { Button } from "~/components/ui/button";
+import { MathInputTools } from "~/scient/math/input/MathInputTools";
 import { Input } from "~/components/ui/input";
 import {
   MenuRadioGroup,
@@ -1605,6 +1606,11 @@ export function ScientMarkdownControls({
   );
   const active = new Set(snapshot.activeMarks);
   const undoShortcut = scientMarkdownShortcut("undo");
+  const mathPanel = useSyncExternalStore(
+    controller.mathInput.subscribe,
+    controller.mathInput.getSnapshot,
+    controller.mathInput.getSnapshot,
+  );
   const redoShortcut = scientMarkdownShortcut("redo");
   const [linkEditorHandle] = useState(createLinkEditorHandle);
   const dockLinkEditorTriggerId = `scient-markdown-link-dock-${useId()}`;
@@ -1625,6 +1631,11 @@ export function ScientMarkdownControls({
     }
   }, [onExpandedChange, snapshot.linkEditRequest, snapshot.selectionEmpty]);
 
+  useEffect(() => {
+    // A keyboard-opened palette must also work when formatting chrome is closed.
+    if (mathPanel.open && snapshot.editable) onExpandedChange(true);
+  }, [mathPanel.open, onExpandedChange, snapshot.editable]);
+
   // Overflow order: direction goes first, then insert, history (undo covers
   // it), lists, and style. Contextual table tools outlast those groups; core
   // inline formatting is pinned. Displaced groups keep every action in the
@@ -1632,6 +1643,13 @@ export function ScientMarkdownControls({
   const dockGroups: readonly DockGroup[] = !snapshot.editable
     ? []
     : [
+        {
+          id: "math",
+          priority: 90,
+          estimatedWidth: 36,
+          pinned: true,
+          bar: <MathInputTools controller={controller.mathInput} />,
+        },
         {
           id: "history",
           priority: 30,

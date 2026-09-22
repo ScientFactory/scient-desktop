@@ -58,6 +58,13 @@ export const ExecutionEnvironmentPlatform = Schema.Struct({
  */
 export const ThreadEnvMode = Schema.Literals(["local", "worktree"]);
 export type ThreadEnvMode = typeof ThreadEnvMode.Type;
+
+/**
+ * How a new worktree populates git submodules: every nested level, only the
+ * ones this repository declares, or not at all.
+ */
+export const WorktreeSubmodules = Schema.Literals(["recursive", "top-level", "none"]);
+export type WorktreeSubmodules = typeof WorktreeSubmodules.Type;
 export type ExecutionEnvironmentPlatform = typeof ExecutionEnvironmentPlatform.Type;
 
 /** How a server can replace itself with another version when asked over RPC.
@@ -128,6 +135,8 @@ export const ExecutionEnvironmentCapabilities = Schema.Struct({
   usageLimitSources: Schema.optionalKey(Schema.Boolean),
   /** Server persists custom model rates and applies them to usage summaries. */
   usagePriceOverrides: Schema.optionalKey(Schema.Boolean),
+  /** Server can store provider billing credentials and report authoritative spend. */
+  usageAccounting: Schema.optionalKey(Schema.Boolean),
   /** Server understands thread.pin / thread.unpin commands. Same
       version-skew contract as threadSettlement. */
   threadPinning: Schema.optionalKey(Schema.Boolean),

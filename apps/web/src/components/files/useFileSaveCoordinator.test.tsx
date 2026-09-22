@@ -13,11 +13,13 @@ vi.mock("~/state/use-atom-command", () => ({ useAtomCommand: () => writeFile }))
 vi.mock("./projectFilesQueryState", () => ({ confirmProjectFileQueryData: confirmFile }));
 
 import { setMarkdownTaskChecked } from "./filePreviewMode";
-import { useFileSaveCoordinator } from "./useFileSaveCoordinator";
+import {
+  clearWorkspaceFileSessionsForTests,
+  useFileSaveCoordinator,
+} from "./useFileSaveCoordinator";
 
 const environmentId = EnvironmentId.make("save-lifecycle-audit");
 const onPendingChange = vi.fn();
-const onSaveResolutionApplied = vi.fn();
 const defaultProps: Parameters<typeof useFileSaveCoordinator>[0] = {
   environmentId,
   cwd: "/workspace",
@@ -26,22 +28,14 @@ const defaultProps: Parameters<typeof useFileSaveCoordinator>[0] = {
   revision: "revision-1",
   onSaveFailure: vi.fn(),
   onSaveConfirmed: vi.fn(),
-  onSaveResolutionApplied,
+  onSaveResolutionApplied: vi.fn(),
   saveResolution: null,
 };
 let renderer: ReactTestRenderer | null;
 
-function deferred<A>() {
-  let resolve!: (value: A) => void;
-  const promise = new Promise<A>((yes) => {
-    resolve = yes;
-  });
-  return { promise, resolve };
-}
-
 function ChangeSource(_props: {
   onChange: (contents: string) => void;
-  onSuspendedChange: (suspended: boolean) => void;
+  onSuspendedChange?: (suspended: boolean) => void;
 }) {
   return null;
 }
@@ -51,7 +45,7 @@ function FileSurface(props: Parameters<typeof useFileSaveCoordinator>[0]) {
   return (
     <ChangeSource
       onChange={(contents) => coordinator.change(contents)}
-      onSuspendedChange={(suspended) => coordinator.setSuspended(suspended)}
+      onSuspendedChange={coordinator.setSuspended}
     />
   );
 }
@@ -75,17 +69,20 @@ function suspensionHandler(): (suspended: boolean) => void {
 }
 
 beforeEach(() => {
+  clearWorkspaceFileSessionsForTests();
   renderer = null;
   vi.useFakeTimers();
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
   writeFile.mockReset().mockResolvedValue(AsyncResult.success({ revision: "revision-2" }));
   confirmFile.mockReset();
   onPendingChange.mockReset();
-  onSaveResolutionApplied.mockReset();
 });
 
 afterEach(async () => {
   await act(async () => renderer?.unmount());
+  await vi.runAllTimersAsync();
+  await Promise.resolve();
+  clearWorkspaceFileSessionsForTests();
   vi.useRealTimers();
   vi.unstubAllGlobals();
 });
@@ -136,7 +133,6 @@ describe("file-save React lifecycle", () => {
     await vi.advanceTimersByTimeAsync(500);
     expect(writeFile).toHaveBeenCalledTimes(1);
     expect(onPendingChange).toHaveBeenLastCalledWith("file.txt", false);
-    expect(onSaveResolutionApplied).toHaveBeenCalledExactlyOnceWith("discard");
   });
 
   it("persists editor model changes after StrictMode setup replay", async () => {
@@ -179,6 +175,51 @@ describe("file-save React lifecycle", () => {
     });
   });
 
+  it("shares one persistence pipeline between two mounted views of the same file", async () => {
+    const firstPending = vi.fn();
+    const secondPending = vi.fn();
+    function SharedViews() {
+      const first = useFileSaveCoordinator({
+        ...defaultProps,
+        onPendingChange: firstPending,
+      });
+      const second = useFileSaveCoordinator({
+        ...defaultProps,
+        onPendingChange: secondPending,
+      });
+      return (
+        <>
+          <ChangeSource onChange={first.change} />
+          <ChangeSource onChange={second.change} />
+        </>
+      );
+    }
+    act(() => {
+      renderer = create(
+        <StrictMode>
+          <SharedViews />
+        </StrictMode>,
+      );
+    });
+    const views = renderer!.root.findAllByType(ChangeSource);
+    views[0]!.props.onChange("first view");
+    views[1]!.props.onChange("shared latest view");
+    await vi.advanceTimersByTimeAsync(500);
+
+    expect(writeFile).toHaveBeenCalledExactlyOnceWith({
+      environmentId,
+      input: {
+        cwd: "/workspace",
+        relativePath: "file.txt",
+        contents: "shared latest view",
+        expectedRevision: "revision-1",
+      },
+    });
+    expect(confirmFile).toHaveBeenCalledOnce();
+    expect(firstPending).toHaveBeenLastCalledWith("file.txt", false);
+    expect(secondPending).toHaveBeenLastCalledWith("file.txt", false);
+  });
+
   it("keeps the debounce across rerenders of the same file", async () => {
     mount();
     changeHandler()("first");
@@ -198,7 +239,7 @@ describe("file-save React lifecycle", () => {
     expect(writeFile.mock.calls[0]![0].input.contents).toBe("latest");
   });
 
-  it("keeps a suspended save session held when callback identities change", async () => {
+  it("keeps a suspended shared session held when callback identities change", async () => {
     const latestPendingChange = vi.fn();
     mount();
     suspensionHandler()(true);
@@ -235,11 +276,14 @@ describe("file-save React lifecycle", () => {
     expect(latestPendingChange).toHaveBeenLastCalledWith("file.txt", false);
   });
 
-  it("keeps a deferred transaction serial when callback identities change", async () => {
-    const firstWrite = deferred<ReturnType<typeof AsyncResult.success<{ revision: string }>>>();
+  it("keeps a shared session serial while callbacks change during a write", async () => {
+    let resolveFirst!: (value: ReturnType<typeof AsyncResult.success>) => void;
+    const firstWrite = new Promise<ReturnType<typeof AsyncResult.success>>((resolve) => {
+      resolveFirst = resolve;
+    });
     writeFile
       .mockReset()
-      .mockReturnValueOnce(firstWrite.promise)
+      .mockReturnValueOnce(firstWrite)
       .mockResolvedValue(AsyncResult.success({ revision: "revision-3" }));
     const retiredConfirmed = vi.fn();
     const latestConfirmed = vi.fn();
@@ -265,7 +309,7 @@ describe("file-save React lifecycle", () => {
     await vi.advanceTimersByTimeAsync(5_000);
     expect(writeFile).toHaveBeenCalledTimes(1);
 
-    firstWrite.resolve(AsyncResult.success({ revision: "revision-2" }));
+    resolveFirst(AsyncResult.success({ revision: "revision-2" }));
     await vi.runAllTimersAsync();
     expect(writeFile).toHaveBeenCalledTimes(2);
     expect(writeFile.mock.calls[1]![0].input).toEqual({

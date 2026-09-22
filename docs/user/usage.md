@@ -13,7 +13,7 @@ The scan happens inside each connected environment. Raw transcript records stay 
 summarized time, provider, model, token, and cost totals—plus whether each
 source could be read—are sent to the client.
 This page is separate from Scient product analytics and telemetry, and it does not query a provider
-billing API.
+billing API unless you explicitly connect one under **Provider billing**.
 
 Cost is an estimate with explicit provenance. A saved custom price takes precedence. Otherwise,
 Scient uses a cost reported in the transcript when one exists, or prices a recognized model with
@@ -34,6 +34,25 @@ results appear as each one responds.
 
 A Grok turn appears only after the provider writes a completed usage record.
 Unfinished turns may not appear.
+
+## Review OpenRouter spend
+
+Open **Settings → Providers → Provider billing → Connect OpenRouter** on the environment that
+should hold the credential. Enter an OpenRouter management key, not an inference API key. The key
+is stored in that environment's secret store, redacted from settings returned to clients, and used
+by Scient only for OpenRouter's read-only key, credits, workspace, and analytics endpoints. A
+management key can carry administrative privileges outside Scient, so treat it as sensitive and
+prefer an expiration and regular rotation.
+
+**Usage → Spend** shows OpenRouter's authoritative charges by API key and model for the selected
+window: requests, total/prompt/completion/reasoning/cached tokens, total spend, credits and BYOK
+spend, and upstream/cache/data/web cost components. It discovers personal and organization
+workspaces and includes disabled keys with historical activity. OpenRouter reports billing days in
+UTC. A truncated or partly failed sync is called out instead of silently presenting an incomplete
+total; when a later sync fails, the last successful local ledger remains visible as cached data.
+
+Scient continues to retain local pi transcript usage for future reconciliation, but it is not shown
+in the Spend view. Its locally calculated cost is never added to OpenRouter's provider-billed total.
 
 ## Set custom model prices
 

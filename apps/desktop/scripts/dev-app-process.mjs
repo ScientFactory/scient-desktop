@@ -57,7 +57,6 @@ export function makeMacDevelopmentAppLaunchCommand({
   return {
     command: "/usr/bin/open",
     args: [
-      "-n",
       "-W",
       "--env",
       `SCIENT_NEXT_DEV_RUNNER_ACTIVE=1`,
@@ -301,6 +300,25 @@ function inspectChildProcesses(parentPid, { spawnSync = NodeChildProcess.spawnSy
     if (!match || Number.parseInt(match[2], 10) !== parentPid) return [];
     return [{ pid: Number.parseInt(match[1], 10), command: match[3] }];
   });
+}
+
+function inspectProcesses({ spawnSync = NodeChildProcess.spawnSync } = {}) {
+  const result = spawnSync("ps", ["-axo", "pid=,command="], { encoding: "utf8" });
+  if (result.status !== 0) return [];
+  return result.stdout.split(/\r?\n/u).flatMap((line) => {
+    const match = /^\s*(\d+)\s+(.+)$/u.exec(line);
+    if (!match) return [];
+    return [{ pid: Number.parseInt(match[1], 10), command: match[2] }];
+  });
+}
+
+export function findOwnedDevelopmentProcesses({
+  commandPrefix,
+  inspectAllProcesses = inspectProcesses,
+}) {
+  return inspectAllProcesses().filter(
+    ({ command }) => command === commandPrefix || command.startsWith(`${commandPrefix} `),
+  );
 }
 
 export function findOwnedDevelopmentChildProcess({

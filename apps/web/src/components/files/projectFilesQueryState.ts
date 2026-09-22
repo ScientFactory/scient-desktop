@@ -45,7 +45,12 @@ export function subscribeProjectFilesRefresh(
   return appAtomRegistry.subscribe(signal, refresh);
 }
 
-function optimisticFileAtom(environmentId: EnvironmentId, cwd: string, relativePath: string) {
+/** A pending in-app write to the file, overlaying the query until confirmed. */
+export function optimisticFileAtom(
+  environmentId: EnvironmentId,
+  cwd: string,
+  relativePath: string,
+) {
   return projectEnvironment.optimisticFile({ environmentId, cwd, relativePath });
 }
 

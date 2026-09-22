@@ -7,7 +7,11 @@ import type {
   EnvironmentId,
   ScientificComputingLanguageSettings,
 } from "@t3tools/contracts";
-import { ComputeLanguageDescriptor, ComputeLanguageId } from "@t3tools/contracts";
+import {
+  ComputeLanguageDescriptor,
+  ComputeLanguageId,
+  resolveScientificComputingLanguageSettings,
+} from "@t3tools/contracts";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 
 import { useEnvironmentSettings } from "~/hooks/useSettings";
@@ -22,6 +26,7 @@ import pythonLogo from "~/assets/compute/python.svg";
 import matlabLogo from "~/assets/compute/matlab.svg";
 import juliaLogo from "~/assets/compute/julia.svg";
 import rLogo from "~/assets/compute/r.svg";
+import rustLogo from "~/assets/compute/rust.svg";
 import spssLogo from "~/assets/compute/spss.svg";
 import { Button } from "~/components/ui/button";
 import { Input } from "~/components/ui/input";
@@ -69,13 +74,19 @@ const LANGUAGE_LOGOS: Readonly<Record<string, string>> = {
   matlab: matlabLogo,
   julia: juliaLogo,
   r: rLogo,
+  rust: rustLogo,
   spss: spssLogo,
 };
 // Presentation-only previews; these must not become runtime inventory entries.
 const UPCOMING_LANGUAGES = [
   { id: "julia", label: "Julia" },
   { id: "r", label: "R" },
+  { id: "rust", label: "Rust" },
   { id: "spss", label: "SPSS" },
+  { id: "sql", label: "SQL" },
+  { id: "octave", label: "GNU Octave" },
+  { id: "wolfram", label: "Wolfram Language" },
+  { id: "stata", label: "Stata" },
 ] as const;
 
 import { PythonToolkitSettings, type ToolkitChange } from "./PythonToolkitSettings";
@@ -721,7 +732,10 @@ function pendingRuntimeInventory(
   preferences: Readonly<Record<string, ScientificComputingLanguageSettings>>,
 ): ReadonlyArray<ComputeLanguageRuntimeInventory> {
   return PENDING_RUNTIME_DESCRIPTORS.map((descriptor) => {
-    const preference = preferences[descriptor.languageId] ?? { enabled: false, executable: "" };
+    const preference = resolveScientificComputingLanguageSettings(
+      { languages: preferences },
+      descriptor.languageId,
+    );
     return {
       descriptor,
       enabled: preference.enabled,
@@ -807,9 +821,17 @@ function EnvironmentScientificComputingSettings({
     ...displayedLanguages.map((language) => ({
       id: language.descriptor.languageId,
       label: language.descriptor.displayName,
-      detail: preferences.languages[language.descriptor.languageId]?.enabled ? "On" : "Off",
+      detail: resolveScientificComputingLanguageSettings(
+        preferences,
+        language.descriptor.languageId,
+      ).enabled
+        ? "On"
+        : "Off",
     })),
-    ...upcomingLanguages.map((preview) => ({ ...preview, detail: "Coming soon" })),
+    ...upcomingLanguages.map((preview) => ({
+      ...preview,
+      detail: "Coming soon",
+    })),
   ];
   const [collapsed, setCollapsed] = useState(false);
   // Keep the pending action when moving between language disclosures.
@@ -866,10 +888,16 @@ function EnvironmentScientificComputingSettings({
   }, [environmentId, refreshRuntimes]);
 
   const selectedPreference = selectedLanguage
-    ? (preferences.languages[selectedLanguage.descriptor.languageId] ?? {
-        enabled: false,
-        executable: selectedLanguage.configuredExecutable ?? "",
-      })
+    ? {
+        ...resolveScientificComputingLanguageSettings(
+          preferences,
+          selectedLanguage.descriptor.languageId,
+        ),
+        executable:
+          preferences.languages[selectedLanguage.descriptor.languageId]?.executable ??
+          selectedLanguage.configuredExecutable ??
+          "",
+      }
     : null;
   return (
     <SettingsPageContainer>
@@ -926,7 +954,10 @@ function EnvironmentScientificComputingSettings({
                           aria-hidden="true"
                           width={24}
                           height={24}
-                          className="size-6 shrink-0 object-contain"
+                          className={cn(
+                            "size-6 shrink-0 object-contain",
+                            languageId === "rust" && "dark:invert",
+                          )}
                         />
                       ) : (
                         <SigmaIcon className="size-6 shrink-0" />

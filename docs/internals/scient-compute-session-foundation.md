@@ -11,6 +11,42 @@ Release maturity: The continuation is not approved for release; historical basel
 
 ## Current implementation boundary
 
+### Workspace admission and cleanup ownership
+
+Compute's logical project UUID remains a durable storage address, not a grant to
+another checkout's runtime. The desktop RPC gateway resolves the selected root
+through the existing host-registered `WorkspaceBindingResolver`. It supplies an
+internal `WorkspaceScope` receipt; RPC callers cannot manufacture that receipt.
+New session records retain the binding ID, authority generation, canonical root,
+and captured scope revision. All session commands, snapshots, history reads, and
+notification streams are checked against the caller's workspace. Notification
+sequence spaces are also workspace-specific. A session ID cannot be reused in a
+different workspace, even when both roots share a Scient project UUID.
+
+The captured authority is rechecked after asynchronous discovery, before native
+startup, and immediately before execution dispatch, including queued and fresh
+runs. Stale queued work is not executed; the session is retired and its runtime
+closed. Existing transcript/resource addresses are not migrated. Legacy terminal
+history without a binding remains readable only at its recorded root through the
+gateway; it is never adopted as a new live workspace grant.
+
+Compute registers workspace ownership before discovery and releases it only after
+physical runtime cleanup succeeds. Starting, busy, idle, restarting, and stopping
+sessions therefore protect their worktree, including ownership in nested roots.
+Automatic worktree removal holds a reciprocal reservation through the inherited
+eligibility checks and Git removal, preventing a new kernel from starting midway
+through deletion. Failed physical cleanup retains ownership. This coordinates
+Scient-managed automatic cleanup; it is not a filesystem sandbox against external
+deletion or arbitrary user code.
+
+Plotly's embedded deny-network policy inspects nested and flattened attribute
+paths, template image/layer defaults, frames, and both interactive command
+argument sets (including attribute/value updates). Unsupported command methods
+fail closed. The same policy is checked before rendering restored or updated
+figures. Inline raster images and offline interactions remain supported. This
+closes the known policy-validation bypasses; it does not claim a separate browser
+network sandbox or packaged-platform qualification.
+
 ### Execution consolidation candidate (2026-09-15)
 
 This continuation evolves the existing session system; it does not introduce a universal

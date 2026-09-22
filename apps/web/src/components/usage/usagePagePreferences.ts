@@ -4,7 +4,7 @@ import { getLocalStorageItem, setLocalStorageItem } from "../../hooks/useLocalSt
 
 const STORAGE_KEY = "t3code:usage-page-preferences:v1";
 const UsagePagePreferencesSchema = Schema.Struct({
-  metric: Schema.Literals(["cost", "tokens", "limits"]),
+  metric: Schema.Literals(["cost", "tokens", "spend", "limits"]),
   windowDays: Schema.Literals([1, 7, 30, 90]),
 });
 export type UsagePagePreferences = typeof UsagePagePreferencesSchema.Type;
@@ -16,7 +16,14 @@ const DEFAULT_PREFERENCES: UsagePagePreferences = { metric: "limits", windowDays
 
 export function readUsagePagePreferences(): UsagePagePreferences {
   try {
-    return getLocalStorageItem(STORAGE_KEY, UsagePagePreferencesSchema) ?? DEFAULT_PREFERENCES;
+    const stored = getLocalStorageItem(STORAGE_KEY, UsagePagePreferencesSchema);
+    if (stored === null) return DEFAULT_PREFERENCES;
+
+    // Provider accounting is day-granular. Normalize the one combination that
+    // would otherwise present a rolling 24-hour label for UTC calendar-day data.
+    return stored.metric === "spend" && stored.windowDays === 1
+      ? { ...stored, windowDays: 7 }
+      : stored;
   } catch (error) {
     console.error("Could not read Usage page preferences.", error);
     return DEFAULT_PREFERENCES;

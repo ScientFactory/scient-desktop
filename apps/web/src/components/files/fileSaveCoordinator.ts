@@ -32,26 +32,33 @@ export class FileSaveCoordinator<A = unknown, E = unknown> {
   private suspended = false;
   private disposed = false;
   private pendingResolution: PendingResolution | null = null;
+  private activePersist: Promise<void> | null = null;
+  private debounceMs: number;
   private confirmedFileRevision: string;
 
   constructor(private readonly options: FileSaveCoordinatorOptions<A, E>) {
+    this.debounceMs = options.debounceMs;
     this.confirmedFileRevision = options.initialRevision;
   }
 
-  change(contents: string): void {
+  change(contents: string, debounceMs = this.debounceMs): void {
     if (this.disposed) return;
+    this.debounceMs = debounceMs;
     this.latestContents = contents;
     this.latestRevision += 1;
     this.lastChangeAt = Date.now();
     this.options.onPendingChange(true);
-    if (!this.suspended) this.schedule(this.options.debounceMs);
+    if (!this.suspended) this.schedule(this.debounceMs);
+  }
+
+  get hasPendingChanges(): boolean {
+    return this.latestRevision > this.confirmedEditRevision;
   }
 
   /**
-   * Hold workspace persistence while a higher-level editing transaction is
-   * still open. Changes remain pending and `dispose()` still flushes them; a
-   * normal resume observes the original debounce rather than dropping or
-   * duplicating the latest buffer.
+   * Hold persistence while a higher-level edit transaction is incomplete.
+   * The latest buffer remains pending and a final release or disposal still
+   * flushes it.
    */
   setSuspended(suspended: boolean): void {
     if (this.disposed || this.suspended === suspended) return;
@@ -60,14 +67,31 @@ export class FileSaveCoordinator<A = unknown, E = unknown> {
       this.clearTimer();
       return;
     }
-    if (this.latestRevision === this.confirmedEditRevision || this.saving) return;
-    this.schedule(Math.max(0, this.options.debounceMs - (Date.now() - this.lastChangeAt)));
+    if (!this.hasPendingChanges || this.saving) return;
+    this.schedule(Math.max(0, this.debounceMs - (Date.now() - this.lastChangeAt)));
   }
 
   dispose(): void {
+    if (this.disposed) return;
     this.disposed = true;
     this.clearTimer();
-    if (this.latestRevision > this.confirmedEditRevision) void this.persistLatest();
+    void this.flush();
+  }
+
+  /**
+   * Attempt to persist the newest accepted buffer immediately. The result is
+   * `false` when persistence failed and the buffer must remain recoverable.
+   */
+  async flush(): Promise<boolean> {
+    this.clearTimer();
+    if (this.activePersist !== null) {
+      const active = this.activePersist;
+      await active;
+      if (this.activePersist === active) this.activePersist = null;
+    }
+    if (!this.hasPendingChanges) return true;
+    await this.startPersist(true);
+    return !this.hasPendingChanges;
   }
 
   syncConfirmedFileRevision(revision: string): void {
@@ -115,7 +139,7 @@ export class FileSaveCoordinator<A = unknown, E = unknown> {
     if (this.suspended && !this.disposed) return;
     this.timer = setTimeout(() => {
       this.timer = null;
-      void this.persistLatest();
+      void this.startPersist(false);
     }, delay);
   }
 
@@ -125,12 +149,21 @@ export class FileSaveCoordinator<A = unknown, E = unknown> {
     this.timer = null;
   }
 
-  private async persistLatest(): Promise<void> {
-    if (
-      this.saving ||
-      this.latestRevision === this.confirmedEditRevision ||
-      (this.suspended && !this.disposed)
-    )
+  private startPersist(force: boolean): Promise<void> {
+    if (this.activePersist !== null) return this.activePersist;
+    if (!this.hasPendingChanges || (this.suspended && !this.disposed && !force)) {
+      return Promise.resolve();
+    }
+    const operation = this.persistLatest(force);
+    this.activePersist = operation;
+    void operation.finally(() => {
+      if (this.activePersist === operation) this.activePersist = null;
+    });
+    return operation;
+  }
+
+  private async persistLatest(force: boolean): Promise<void> {
+    if (this.saving || !this.hasPendingChanges || (this.suspended && !this.disposed && !force))
       return;
 
     this.saving = true;
@@ -158,12 +191,9 @@ export class FileSaveCoordinator<A = unknown, E = unknown> {
       return;
     }
 
-    const remainingDebounce = Math.max(
-      0,
-      this.options.debounceMs - (Date.now() - this.lastChangeAt),
-    );
+    const remainingDebounce = Math.max(0, this.debounceMs - (Date.now() - this.lastChangeAt));
     if (this.disposed) {
-      void this.persistLatest();
+      await this.persistLatest(true);
     } else {
       this.schedule(remainingDebounce);
     }
