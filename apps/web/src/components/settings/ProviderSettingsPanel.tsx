@@ -1098,6 +1098,7 @@ export function EnvironmentProviderSettings({
         environmentId={environmentId}
         environmentLabel={environmentLabel}
         sources={settings.usageLimitSources}
+        accountingSources={settings.usageAccountingSources}
         readOnly={readOnly}
       />
 

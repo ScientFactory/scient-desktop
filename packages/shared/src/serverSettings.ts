@@ -276,6 +276,7 @@ export function applyServerSettingsPatch(
     worktreeCleanup: worktreeCleanupPatch,
     // Merged per entry below; its `null` removals must not reach deepMerge.
     usageLimitSources: usageLimitSourcesPatch,
+    usageAccountingSources: usageAccountingSourcesPatch,
     usagePriceOverrides: usagePriceOverridesPatch,
     // Entry replacement: deepMerge would keep keys the client meant to clear.
     projectSettingsOverrides: projectSettingsOverridesPatch,
@@ -380,6 +381,14 @@ export function applyServerSettingsPatch(
           usageLimitSources: mergeSettingsEntries(
             current.usageLimitSources,
             usageLimitSourcesPatch,
+          ),
+        }
+      : {}),
+    ...(usageAccountingSourcesPatch !== undefined
+      ? {
+          usageAccountingSources: mergeSettingsEntries(
+            current.usageAccountingSources,
+            usageAccountingSourcesPatch,
           ),
         }
       : {}),

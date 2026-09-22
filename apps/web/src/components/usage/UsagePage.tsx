@@ -62,6 +62,7 @@ import {
 import { WorkspacePageContainer } from "../WorkspacePageContainer";
 import { WorkspacePageHeader } from "../WorkspacePageHeader";
 import { UsageLimitsSection } from "./UsageLimits";
+import { UsageAccountingView } from "./UsageAccountingView";
 import { UsagePriceOverrides } from "./UsagePriceOverrides";
 import { UsageProviderChart, type UsageChartMetric } from "./UsageProviderChart";
 import { PROVIDER_ORDER, PROVIDER_PRESENTATION, providersWithUsage } from "./usageProviders";
@@ -71,10 +72,11 @@ import {
   type UsagePagePreferences,
 } from "./usagePagePreferences";
 
-type UsageMetric = UsageChartMetric | "limits";
+type UsageMetric = UsageChartMetric | "spend" | "limits";
 const METRIC_OPTIONS = [
-  { value: "cost", label: "Cost" },
+  { value: "cost", label: "Estimated" },
   { value: "tokens", label: "Tokens" },
+  { value: "spend", label: "Spend" },
   { value: "limits", label: "Limits" },
 ] as const satisfies readonly { value: UsageMetric; label: string }[];
 
@@ -105,6 +107,10 @@ export function UsagePage() {
   }));
   const metric = preferences.metric;
   const showingLimits = metric === "limits";
+  const showingSpend = metric === "spend";
+  const selectableWindowOptions = showingSpend
+    ? WINDOW_OPTIONS.filter((option) => option.days !== 1)
+    : WINDOW_OPTIONS;
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [limitsNow, setLimitsNow] = useState(() => Date.now());
   const refreshingRef = useRef(false);
@@ -118,12 +124,16 @@ export function UsagePage() {
     properties: {
       metric,
       window: String(windowDays),
-      breakdown: showingLimits ? "other" : breakdown,
+      breakdown: showingLimits || showingSpend ? "other" : breakdown,
     },
   });
   const isPast24Hours = windowDays === 1;
+  const usageWindow = useMemo(
+    () => ({ ...window, ...(showingSpend ? { includeAccounting: true } : {}) }),
+    [showingSpend, window],
+  );
   const { merged, environments, selectedEnvironments, isPending, isPartial, refresh } = useUsage(
-    window,
+    usageWindow,
     selectedEnvironmentIds,
   );
   const presentations = useAtomValue(environmentPresentations.presentationsAtom);
@@ -175,6 +185,7 @@ export function UsagePage() {
     [breakdown, merged.models, metric],
   );
   const activeProviders = useMemo(() => providersWithUsage(merged.providers), [merged.providers]);
+  const chartMetric: UsageChartMetric = metric === "tokens" ? "tokens" : "cost";
   const timeValueColumnWidth = `${60 / (activeProviders.length + 2)}%`;
 
   const selectWindow = (days: number) => {
@@ -189,9 +200,16 @@ export function UsagePage() {
   };
   const selectMetric = (nextMetric: UsageMetric) => {
     if (nextMetric === "limits") setLimitsNow(Date.now());
-    const nextPreferences = { metric: nextMetric, windowDays };
+    const nextWindowDays = nextMetric === "spend" && windowDays === 1 ? 7 : windowDays;
+    const nextPreferences = { metric: nextMetric, windowDays: nextWindowDays };
     setPreferences(nextPreferences);
     saveUsagePagePreferences(nextPreferences);
+    if (nextWindowDays !== windowDays) {
+      setWindowSelection({
+        days: nextWindowDays,
+        window: makeWindow(nextWindowDays, undefined, "day"),
+      });
+    }
   };
   const refreshLimits = async (automatic = false) => {
     try {
@@ -235,7 +253,10 @@ export function UsagePage() {
     }
     refreshingRef.current = true;
     setIsRefreshing(true);
-    void refresh(nextWindow).finally(() => {
+    void refresh({
+      ...nextWindow,
+      ...(showingSpend ? { includeAccounting: true } : {}),
+    }).finally(() => {
       refreshingRef.current = false;
       setIsRefreshing(false);
     });
@@ -262,31 +283,33 @@ export function UsagePage() {
       ? `${formatDateTimeShort(window.sinceTime, window.timeZone)} to ${formatDateTimeShort(window.untilTime, window.timeZone)}`
       : `${formatDayShort(window.sinceDay)} to ${formatDayShort(window.untilDay)}`;
   const topbarContent = (
-    <div className="grid w-full min-w-0 grid-cols-[minmax(0,1fr)_auto] items-center gap-x-3 gap-y-2 py-2 xl:flex">
-      <WorkspaceBreadcrumb ariaLabel="Usage breadcrumb" className="col-span-2 min-w-0">
-        <WorkspaceBreadcrumbItem>
-          <h1>Usage</h1>
-        </WorkspaceBreadcrumbItem>
-        <WorkspaceBreadcrumbSeparator />
-        <WorkspaceBreadcrumbItem current className="min-w-10">
-          <UsageEnvironmentFilter
-            environments={environments}
-            selectedEnvironments={selectedEnvironments}
-            selectedEnvironmentIds={selectedEnvironmentIds}
-            onSelectionChange={setSelectedEnvironmentIds}
-            showUsageStatus={!showingLimits}
-            isPartial={isPartial}
-            duplicateSources={merged.duplicateSources}
-            staleEnvironments={merged.staleEnvironments}
-          />
-        </WorkspaceBreadcrumbItem>
-      </WorkspaceBreadcrumb>
-      {!showingLimits ? (
-        <span className="hidden min-w-0 truncate text-xs text-muted-foreground 2xl:block">
-          {windowLabel}
-        </span>
-      ) : null}
-      <div className="ms-auto hidden min-w-0 items-center justify-end gap-2 xl:flex">
+    <div className="grid w-full min-w-0 grid-cols-[minmax(0,1fr)_auto] items-center gap-x-3 gap-y-2 py-2 xl:grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)]">
+      <div className="col-span-2 flex min-w-0 items-center gap-3 xl:col-span-1">
+        <WorkspaceBreadcrumb ariaLabel="Usage breadcrumb" className="min-w-0">
+          <WorkspaceBreadcrumbItem>
+            <h1>Usage</h1>
+          </WorkspaceBreadcrumbItem>
+          <WorkspaceBreadcrumbSeparator />
+          <WorkspaceBreadcrumbItem current className="min-w-10">
+            <UsageEnvironmentFilter
+              environments={environments}
+              selectedEnvironments={selectedEnvironments}
+              selectedEnvironmentIds={selectedEnvironmentIds}
+              onSelectionChange={setSelectedEnvironmentIds}
+              showUsageStatus={!showingLimits}
+              isPartial={isPartial}
+              duplicateSources={merged.duplicateSources}
+              staleEnvironments={merged.staleEnvironments}
+            />
+          </WorkspaceBreadcrumbItem>
+        </WorkspaceBreadcrumb>
+        {!showingLimits ? (
+          <span className="hidden min-w-0 truncate text-xs text-muted-foreground 2xl:block">
+            {windowLabel}
+          </span>
+        ) : null}
+      </div>
+      <div className="hidden min-w-0 items-center justify-center gap-2 xl:col-start-2 xl:flex">
         <ToggleGroup
           aria-label="Usage metric"
           variant="segmented"
@@ -314,23 +337,24 @@ export function UsagePage() {
             if (value) selectWindow(Number(value));
           }}
         >
-          {WINDOW_OPTIONS.map((option) => (
+          {selectableWindowOptions.map((option) => (
             <Toggle key={option.days} value={String(option.days)}>
               {option.label}
             </Toggle>
           ))}
         </ToggleGroup>
-        <Button
-          onClick={refreshWindow}
-          aria-label={showingLimits ? "Refresh limits" : "Refresh usage"}
-          aria-busy={isRefreshing}
-          disabled={isRefreshing}
-          size="icon-sm"
-          variant="ghost"
-        >
-          <RefreshIcon className="size-3.5" refreshing={isRefreshing} />
-        </Button>
       </div>
+      <Button
+        className="hidden justify-self-end xl:inline-flex"
+        onClick={refreshWindow}
+        aria-label={showingLimits ? "Refresh limits" : "Refresh usage"}
+        aria-busy={isRefreshing}
+        disabled={isRefreshing}
+        size="icon-sm"
+        variant="ghost"
+      >
+        <RefreshIcon className="size-3.5" refreshing={isRefreshing} />
+      </Button>
       <div className="col-span-2 ms-auto flex min-w-0 items-center justify-end gap-1 xl:hidden">
         <Select
           value={metric}
@@ -368,11 +392,11 @@ export function UsagePage() {
             className="w-auto min-w-0"
           >
             <SelectValue>
-              {WINDOW_OPTIONS.find((option) => option.days === windowDays)?.label}
+              {selectableWindowOptions.find((option) => option.days === windowDays)?.label}
             </SelectValue>
           </SelectTrigger>
           <SelectPopup align="end" alignItemWithTrigger={false}>
-            {WINDOW_OPTIONS.map((option) => (
+            {selectableWindowOptions.map((option) => (
               <SelectItem key={option.days} value={String(option.days)}>
                 {option.label}
               </SelectItem>
@@ -412,6 +436,12 @@ export function UsagePage() {
               <UsageLimitsSection selectedEnvironmentIds={selectedEnvironmentIds} now={limitsNow} />
             ) : isPending ? (
               <UsageSkeleton />
+            ) : showingSpend ? (
+              <UsageAccountingView
+                summaries={selectedEnvironments.flatMap((entry) =>
+                  entry.summary === null ? [] : [entry.summary],
+                )}
+              />
             ) : (
               <>
                 <section className="grid gap-6 lg:grid-cols-[minmax(0,18rem)_minmax(0,1fr)]">
@@ -489,7 +519,7 @@ export function UsagePage() {
                       daily={merged.daily}
                       hours={hours}
                       hourly={merged.hourly}
-                      metric={metric}
+                      metric={chartMetric}
                       referenceTime={window.untilTime}
                       resolution={isPast24Hours ? "hour" : "day"}
                       timeZone={window.timeZone}
