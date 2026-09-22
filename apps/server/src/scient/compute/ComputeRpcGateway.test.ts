@@ -18,6 +18,8 @@ import * as FileSystem from "effect/FileSystem";
 import * as Stream from "effect/Stream";
 
 import { extractComputeSourceRange, makeComputeRpcGateway } from "./ComputeRpcGateway.ts";
+import { computeWorkspaceResolverForTest } from "./ComputeWorkspaceTestUtils.ts";
+import { WorkspaceBindingResolutionError } from "../projectScope/WorkspaceBinding.ts";
 import { PYTHON_DATA_AND_FIGURES_TOOLKIT, assessPythonToolkit } from "./PythonToolkitCatalog.ts";
 
 const PYTHON = ComputeLanguageId.make("python");
@@ -189,6 +191,43 @@ const project = Effect.gen(function* () {
 });
 
 describe("compute RPC gateway", () => {
+  it.effect(
+    "does not turn an initialized cwd into authority when the host resolver is absent",
+    () =>
+      Effect.gen(function* () {
+        const initialized = yield* project;
+        const gateway = makeComputeRpcGateway({
+          compute: computeStub({
+            listSessions: () => Effect.die("unverified workspace reached Compute"),
+          }),
+          serverSettings: { getSettings: Effect.succeed(DEFAULT_SERVER_SETTINGS) },
+          workspaceFileSystem: workspace(),
+        });
+        const error = yield* gateway.listSessions({ cwd: initialized.root }).pipe(Effect.flip);
+        expect(error.message).toContain("Workspace authority is unavailable");
+      }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("rejects a workspace that changes after resolution, before any domain operation", () =>
+    Effect.gen(function* () {
+      const initialized = yield* project;
+      const gateway = makeComputeRpcGateway({
+        workspaceResolver: {
+          ...computeWorkspaceResolverForTest,
+          assertCurrentWorkspaceScope: () =>
+            Effect.fail(
+              new WorkspaceBindingResolutionError({ operation: "test", kind: "stale-authority" }),
+            ),
+        },
+        compute: computeStub({ listSessions: () => Effect.die("stale workspace reached Compute") }),
+        serverSettings: { getSettings: Effect.succeed(DEFAULT_SERVER_SETTINGS) },
+        workspaceFileSystem: workspace(),
+      });
+      const error = yield* gateway.listSessions({ cwd: initialized.root }).pipe(Effect.flip);
+      expect(error.reason).toBe("workspace-changed");
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
   it.effect("forwards individual Toolkit intent without inventing a replacement selection", () =>
     Effect.gen(function* () {
       const toolkitChange = {
@@ -203,6 +242,7 @@ describe("compute RPC gateway", () => {
         },
       });
       const gateway = makeComputeRpcGateway({
+        workspaceResolver: computeWorkspaceResolverForTest,
         compute,
         serverSettings: { getSettings: Effect.succeed(DEFAULT_SERVER_SETTINGS) },
         workspaceFileSystem: workspace(),
@@ -211,10 +251,11 @@ describe("compute RPC gateway", () => {
       expect(forwarded).toEqual({ toolkitChange });
     }),
   );
-  it.effect("reads inventory preferences without inspecting or verifying runtimes", () =>
+  it.effect("discovers default-enabled Python without inspecting or verifying runtimes", () =>
     Effect.gen(function* () {
       let enabled: ReadonlySet<unknown> = new Set();
       const gateway = makeComputeRpcGateway({
+        workspaceResolver: computeWorkspaceResolverForTest,
         compute: computeStub({
           runtimeInventory: (input) => {
             enabled = input.enabledLanguageIds;
@@ -235,11 +276,11 @@ describe("compute RPC gateway", () => {
         workspaceFileSystem: workspace(),
       });
       expect((yield* gateway.runtimeInventory()).languages[0]).toMatchObject({
-        enabled: false,
+        enabled: true,
         configuredExecutable: null,
         installations: [],
       });
-      expect(enabled.size).toBe(0);
+      expect(enabled).toEqual(new Set([PYTHON]));
     }),
   );
   it.effect("does not inspect or start a language the user left disabled", () =>
@@ -263,8 +304,20 @@ describe("compute RPC gateway", () => {
         listSessions: () => Effect.succeed([retained]),
       });
       const gateway = makeComputeRpcGateway({
+        workspaceResolver: computeWorkspaceResolverForTest,
         compute,
-        serverSettings: { getSettings: Effect.succeed(DEFAULT_SERVER_SETTINGS) },
+        serverSettings: {
+          getSettings: Effect.succeed({
+            ...DEFAULT_SERVER_SETTINGS,
+            scientificComputing: {
+              ...DEFAULT_SERVER_SETTINGS.scientificComputing,
+              languages: {
+                ...DEFAULT_SERVER_SETTINGS.scientificComputing.languages,
+                [PYTHON]: { enabled: false, executable: "" },
+              },
+            },
+          }),
+        },
         workspaceFileSystem: workspace(),
       });
 
@@ -333,6 +386,7 @@ describe("compute RPC gateway", () => {
           ]),
       });
       const gateway = makeComputeRpcGateway({
+        workspaceResolver: computeWorkspaceResolverForTest,
         compute,
         serverSettings: {
           getSettings: Effect.succeed({
@@ -379,6 +433,7 @@ describe("compute RPC gateway", () => {
         },
       });
       const gateway = makeComputeRpcGateway({
+        workspaceResolver: computeWorkspaceResolverForTest,
         compute,
         serverSettings: {
           getSettings: Effect.succeed({
@@ -435,6 +490,7 @@ describe("compute RPC gateway", () => {
         status: index === 0 ? ("ready" as const) : ("stopped" as const),
       }));
       const gateway = makeComputeRpcGateway({
+        workspaceResolver: computeWorkspaceResolverForTest,
         compute: computeStub({ listSessions: () => Effect.succeed(history) }),
         serverSettings: { getSettings: Effect.succeed(DEFAULT_SERVER_SETTINGS) },
         workspaceFileSystem: workspace(),
@@ -454,6 +510,7 @@ describe("compute RPC gateway", () => {
       const root = yield* fs.makeTempDirectoryScoped({ prefix: "scient-compute-ordinary-" });
       let listCalls = 0;
       const gateway = makeComputeRpcGateway({
+        workspaceResolver: computeWorkspaceResolverForTest,
         compute: computeStub({
           listSessions: () => {
             listCalls += 1;
@@ -474,6 +531,7 @@ describe("compute RPC gateway", () => {
       const initialized = yield* project;
       let inspected: Parameters<GatewayCompute["inspectVariables"]>[0] | null = null;
       const gateway = makeComputeRpcGateway({
+        workspaceResolver: computeWorkspaceResolverForTest,
         compute: computeStub({
           inspectVariables: (input) => {
             inspected = input;
@@ -508,6 +566,7 @@ describe("compute saved-source validation", () => {
       const initialized = yield* project;
       let startCalls = 0;
       const gateway = makeComputeRpcGateway({
+        workspaceResolver: computeWorkspaceResolverForTest,
         compute: computeStub({
           startSession: (input) => {
             startCalls += 1;
@@ -573,6 +632,7 @@ describe("compute saved-source validation", () => {
       const initialized = yield* project;
       let submitCalls = 0;
       const gateway = makeComputeRpcGateway({
+        workspaceResolver: computeWorkspaceResolverForTest,
         compute: computeStub({
           submitExecution: () => {
             submitCalls += 1;
@@ -610,6 +670,7 @@ describe("compute saved-source validation", () => {
       const initialized = yield* project;
       const accepted: Array<Parameters<GatewayCompute["submitExecution"]>[0]> = [];
       const gateway = makeComputeRpcGateway({
+        workspaceResolver: computeWorkspaceResolverForTest,
         compute: computeStub({
           submitExecution: (input) => {
             accepted.push(input);

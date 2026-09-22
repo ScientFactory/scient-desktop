@@ -25,6 +25,7 @@ const DesktopSettingsPatch = Schema.Struct({
     ),
   ),
   mainWindowMaximized: Schema.optionalKey(Schema.Boolean),
+  mainWindowSizeIncreaseApplied: Schema.optionalKey(Schema.Boolean),
   serverExposureMode: Schema.optionalKey(Schema.Literals(["local-only", "network-accessible"])),
   tailscaleServeEnabled: Schema.optionalKey(Schema.Boolean),
   tailscaleServePort: Schema.optionalKey(Schema.Number),
@@ -136,6 +137,7 @@ describe("DesktopSettings", () => {
         localEnvironmentEnabled: true,
         mainWindowBounds: null,
         mainWindowMaximized: false,
+        mainWindowSizeIncreaseApplied: true,
         serverExposureMode: "local-only",
         tailscaleServeEnabled: false,
         tailscaleServePort: 443,
@@ -192,6 +194,7 @@ describe("DesktopSettings", () => {
           localEnvironmentEnabled: true,
           mainWindowBounds: null,
           mainWindowMaximized: false,
+          mainWindowSizeIncreaseApplied: false,
           serverExposureMode: "network-accessible",
           tailscaleServeEnabled: true,
           tailscaleServePort: 8443,
@@ -306,6 +309,7 @@ describe("DesktopSettings", () => {
           localEnvironmentEnabled: true,
           mainWindowBounds: { x: 120, y: 80, width: 1280, height: 900 },
           mainWindowMaximized: false,
+          mainWindowSizeIncreaseApplied: false,
           serverExposureMode: "network-accessible",
           tailscaleServeEnabled: true,
           tailscaleServePort: 8443,
@@ -364,6 +368,7 @@ describe("DesktopSettings", () => {
             localEnvironmentEnabled: true,
             mainWindowBounds: null,
             mainWindowMaximized: false,
+            mainWindowSizeIncreaseApplied: false,
             serverExposureMode: "network-accessible",
             tailscaleServeEnabled: true,
             tailscaleServePort: 8443,
@@ -403,8 +408,92 @@ describe("DesktopSettings", () => {
         assert.deepEqual(persisted, {
           mainWindowBounds: { x: -1200, y: 40, width: 1440, height: 960 },
           mainWindowMaximized: true,
+          mainWindowSizeIncreaseApplied: true,
           serverExposureMode: "network-accessible",
         } satisfies typeof DesktopSettingsPatch.Type);
+      }),
+    ),
+  );
+
+  it.effect("applies legacy window sizing once, then remembers later user resizing", () =>
+    withSettings(
+      Effect.gen(function* () {
+        const environment = yield* DesktopEnvironment.DesktopEnvironment;
+        const fileSystem = yield* FileSystem.FileSystem;
+        const settings = yield* DesktopAppSettings.DesktopAppSettings;
+        yield* writeSettingsPatch({
+          mainWindowBounds: { x: 300, y: 150, width: 1000, height: 700 },
+          mainWindowMaximized: true,
+          serverExposureMode: "network-accessible",
+        });
+
+        assert.isFalse((yield* settings.load).mainWindowSizeIncreaseApplied);
+        const increased = yield* settings.applyMainWindowSizeIncrease({
+          x: 300,
+          y: 150,
+          width: 1280,
+          height: 840,
+        });
+        assert.isTrue(increased.changed);
+        assert.isTrue(increased.settings.mainWindowMaximized);
+        assert.isTrue((yield* settings.load).mainWindowSizeIncreaseApplied);
+        assert.isFalse(
+          (yield* settings.applyMainWindowSizeIncrease({ x: 0, y: 0, width: 1600, height: 900 }))
+            .changed,
+        );
+
+        yield* settings.setMainWindowBounds({ x: 80, y: 40, width: 900, height: 650 }, false);
+        const reloaded = yield* settings.load;
+        assert.deepEqual(reloaded.mainWindowBounds, { x: 80, y: 40, width: 900, height: 650 });
+        assert.isFalse(reloaded.mainWindowMaximized);
+        assert.isTrue(reloaded.mainWindowSizeIncreaseApplied);
+        assert.equal(reloaded.serverExposureMode, "network-accessible");
+        assert.isTrue(
+          (yield* decodeDesktopSettingsPatch(
+            yield* fileSystem.readFileString(environment.desktopSettingsPath),
+          )).mainWindowSizeIncreaseApplied,
+        );
+      }),
+    ),
+  );
+
+  it.effect("marks a legacy profile without saved bounds so a later resize stays chosen", () =>
+    withSettings(
+      Effect.gen(function* () {
+        const settings = yield* DesktopAppSettings.DesktopAppSettings;
+        yield* writeSettingsPatch({ serverExposureMode: "network-accessible" });
+        assert.isFalse((yield* settings.load).mainWindowSizeIncreaseApplied);
+        assert.isTrue((yield* settings.applyMainWindowSizeIncrease(null)).changed);
+        yield* settings.setMainWindowBounds({ x: 40, y: 50, width: 900, height: 650 }, false);
+        assert.deepEqual((yield* settings.load).mainWindowBounds, {
+          x: 40,
+          y: 50,
+          width: 900,
+          height: 650,
+        });
+        assert.isTrue((yield* settings.get).mainWindowSizeIncreaseApplied);
+      }),
+    ),
+  );
+
+  it.effect("keeps legacy bounds and retries later when the one-time write fails", () =>
+    withSettings(
+      Effect.gen(function* () {
+        const environment = yield* DesktopEnvironment.DesktopEnvironment;
+        const fileSystem = yield* FileSystem.FileSystem;
+        const settings = yield* DesktopAppSettings.DesktopAppSettings;
+        const legacyBounds = { x: 70, y: 60, width: 1000, height: 700 };
+        yield* writeSettingsPatch({ mainWindowBounds: legacyBounds });
+        yield* settings.load;
+
+        yield* fileSystem.remove(environment.desktopSettingsPath);
+        yield* fileSystem.makeDirectory(environment.desktopSettingsPath);
+        const failure = yield* settings
+          .applyMainWindowSizeIncrease({ x: 70, y: 60, width: 1280, height: 840 })
+          .pipe(Effect.flip);
+        assert.instanceOf(failure, DesktopAppSettings.DesktopSettingsWriteError);
+        assert.deepEqual((yield* settings.get).mainWindowBounds, legacyBounds);
+        assert.isFalse((yield* settings.get).mainWindowSizeIncreaseApplied);
       }),
     ),
   );
@@ -425,6 +514,7 @@ describe("DesktopSettings", () => {
           localEnvironmentEnabled: true,
           mainWindowBounds: null,
           mainWindowMaximized: false,
+          mainWindowSizeIncreaseApplied: false,
           serverExposureMode: "network-accessible",
           tailscaleServeEnabled: false,
           tailscaleServePort: 443,
@@ -464,6 +554,7 @@ describe("DesktopSettings", () => {
           localEnvironmentEnabled: true,
           mainWindowBounds: null,
           mainWindowMaximized: false,
+          mainWindowSizeIncreaseApplied: false,
           serverExposureMode: "local-only",
           tailscaleServeEnabled: false,
           tailscaleServePort: 443,
@@ -500,6 +591,7 @@ describe("DesktopSettings", () => {
           localEnvironmentEnabled: true,
           mainWindowBounds: null,
           mainWindowMaximized: false,
+          mainWindowSizeIncreaseApplied: false,
           serverExposureMode: "local-only",
           tailscaleServeEnabled: true,
           tailscaleServePort: 443,

@@ -49,6 +49,7 @@ import * as Path from "effect/Path";
 import { ChildProcessSpawner } from "effect/unstable/process";
 import { ServerConfig } from "../config.ts";
 import * as StorageCleanup from "../storageCleanup.ts";
+import { withComputeWorkspaceReservation } from "../scient/compute/ComputeWorkspaceLifetime.ts";
 import { withWorkspaceLease } from "../workspace/workspaceLease.ts";
 import { TerminalManager } from "../terminal/Manager.ts";
 import { GitVcsDriver } from "../vcs/GitVcsDriver.ts";
@@ -1462,6 +1463,9 @@ describe("storage cleanup", () => {
     "session",
     "terminal-cwd",
     "terminal-worktree",
+    "compute",
+    "compute-nested",
+    "deleted-compute",
     "recent",
     "merged",
     "unmerged",
@@ -1500,6 +1504,18 @@ describe("storage cleanup", () => {
           const worktreePath = path.join(config.worktreesDir, "feature");
           yield* fs.makeDirectory(worktreePath, { recursive: true });
           yield* fs.writeFileString(path.join(worktreePath, ".git"), "gitdir: /test/admin");
+          if (
+            protection === "compute" ||
+            protection === "compute-nested" ||
+            protection === "deleted-compute"
+          ) {
+            const ownerRoot =
+              protection === "compute-nested" ? path.join(worktreePath, "nested") : worktreePath;
+            yield* Effect.acquireRelease(
+              withComputeWorkspaceReservation(ownerRoot, Effect.succeed),
+              (release) => release,
+            ).pipe(Effect.asVoid);
+          }
           const secondWorktreePath = path.join(config.worktreesDir, "feature-two");
           if (protection === "unchanged-two-worktrees") {
             yield* fs.makeDirectory(secondWorktreePath);

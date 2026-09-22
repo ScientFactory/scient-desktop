@@ -22,6 +22,8 @@ import { VisualCardDetails, VisualCardToolbar } from "~/scient/presentation/Visu
 import { downloadComputeNativeFigure } from "./ComputeOutputViewDownload";
 import type { ComputeFigurePresentation } from "./computeFigurePresentation";
 
+const computeFigureCommandClassName = cn(compactCommandClassName, "h-6.5 sm:h-5.5");
+
 interface ComputeFigureProps {
   readonly presentation: ComputeFigurePresentation;
   readonly environmentId: EnvironmentId;
@@ -143,14 +145,14 @@ function ComputeFigurePreview(
         data-scient-visual-card
         className={`relative inline-flex min-w-24 max-w-full items-center justify-center rounded-md bg-white ${loaded ? "" : "h-32 w-64"}`}
       >
-        <span className="absolute top-1 right-1 z-10 max-w-full">
+        <span className="absolute -top-3 right-2 z-10 max-w-full">
           <VisualCardToolbar label="Figure actions" appearance="command-group" movement="direct">
             <Tooltip>
               <TooltipTrigger
                 render={
                   <Button
                     aria-label={`Open ${presentation.inline.label} in viewer`}
-                    className={cn("chat-markdown-chrome-action", compactCommandClassName)}
+                    className={cn("chat-markdown-chrome-action", computeFigureCommandClassName)}
                     disabled={!loaded}
                     onClick={openViewer}
                     size="icon-xs"
@@ -168,7 +170,7 @@ function ComputeFigurePreview(
               actions={actions}
               busy={busy}
               run={run}
-              triggerClassName={compactCommandClassName}
+              triggerClassName={computeFigureCommandClassName}
               details={
                 <VisualCardDetails
                   title={presentation.inline.label}

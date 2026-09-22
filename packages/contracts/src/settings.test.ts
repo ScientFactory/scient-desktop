@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vite-plus/test";
 import * as Schema from "effect/Schema";
+import { ComputeLanguageId } from "@scientfactory/compute";
 
 import { ProviderDriverKind, ProviderInstanceId } from "./providerInstance.ts";
 import {
@@ -9,6 +10,7 @@ import {
   DEFAULT_CLIENT_SETTINGS,
   DEFAULT_SERVER_SETTINGS,
   DEFAULT_UNIFIED_SETTINGS,
+  resolveScientificComputingLanguageSettings,
   resolveProviderInstanceEnabled,
   ServerSettings,
   ServerSettingsPatch,
@@ -964,12 +966,39 @@ describe("ServerSettings worktree defaults", () => {
 });
 
 describe("ServerSettings scientific computing", () => {
-  it("keeps old settings files valid and leaves every language opt-in", () => {
+  it("enables every language by default while preserving explicit opt-outs", () => {
+    const python = ComputeLanguageId.make("python");
+    const matlab = ComputeLanguageId.make("matlab");
+    const futureLanguage = ComputeLanguageId.make("future-language");
     expect(decodeServerSettings({}).scientificComputing).toEqual({
       schemaVersion: 1,
       languages: {},
     });
     expect(DEFAULT_SERVER_SETTINGS.scientificComputing.languages).toEqual({});
+    expect(
+      resolveScientificComputingLanguageSettings(
+        DEFAULT_SERVER_SETTINGS.scientificComputing,
+        python,
+      ),
+    ).toEqual({ enabled: true, executable: "" });
+    expect(
+      resolveScientificComputingLanguageSettings(
+        DEFAULT_SERVER_SETTINGS.scientificComputing,
+        matlab,
+      ),
+    ).toEqual({ enabled: true, executable: "" });
+    expect(
+      resolveScientificComputingLanguageSettings(
+        DEFAULT_SERVER_SETTINGS.scientificComputing,
+        futureLanguage,
+      ),
+    ).toEqual({ enabled: true, executable: "" });
+    const disabled = decodeServerSettings({
+      scientificComputing: { languages: { python: { enabled: false } } },
+    });
+    expect(
+      resolveScientificComputingLanguageSettings(disabled.scientificComputing, python),
+    ).toEqual({ enabled: false, executable: "" });
   });
 
   it("round-trips independent language preferences without installation state", () => {

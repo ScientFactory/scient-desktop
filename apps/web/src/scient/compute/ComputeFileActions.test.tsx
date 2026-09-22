@@ -3,6 +3,7 @@ import {
   ComputeLanguageId,
   ComputeSessionGeneration,
   ComputeSessionId,
+  ComputeToolkitId,
   EnvironmentId,
   type ComputeLanguageRuntimeInspection,
   type ComputeManagedRuntimeStatus,
@@ -26,6 +27,13 @@ const mocks = vi.hoisted(() => ({
     open: boolean;
     onOpenChange: (open: boolean) => void;
     onConfirm: () => void;
+    title: ReactNode;
+    description: ReactNode;
+    confirmLabel: ReactNode;
+    secondaryAction?: {
+      label: ReactNode;
+      onSelect: () => void;
+    };
   },
   submit: vi.fn(),
   refresh: vi.fn(),
@@ -94,7 +102,7 @@ vi.mock("~/components/ui/alert-dialog", () => ({
 }));
 vi.mock("~/components/ui/contextual-confirmation", () => ({
   ContextualConfirmation: (props: NonNullable<typeof mocks.confirmation>) => {
-    mocks.confirmation = props;
+    if (props.open || mocks.confirmation === null) mocks.confirmation = props;
     return null;
   },
 }));
@@ -145,11 +153,7 @@ function runtime(
     toolkits: [],
   };
 }
-function render(
-  candidates = [runtime("managed")],
-  contextId: ComputeContextId | undefined = undefined,
-  language = PYTHON_COMPUTE_SOURCE,
-) {
+function setRuntimeCandidates(candidates = [runtime("managed")], language = PYTHON_COMPUTE_SOURCE) {
   mocks.languages = [
     {
       descriptor: {
@@ -160,11 +164,18 @@ function render(
       },
       enabled: true,
       configuredExecutable: null,
-      managedRuntime: null,
+      managedRuntime: mocks.managedStatus,
       toolkits: [],
       runtimes: candidates,
     },
   ];
+}
+function render(
+  candidates = [runtime("managed")],
+  contextId: ComputeContextId | undefined = undefined,
+  language = PYTHON_COMPUTE_SOURCE,
+) {
+  setRuntimeCandidates(candidates, language);
   mocks.markup = renderToStaticMarkup(
     <ComputeFileActions
       language={language}
@@ -183,6 +194,21 @@ function render(
     />,
   );
   return mocks.buttons.findLast((button) => button["aria-label"] === "Run file")!;
+}
+
+function scientificRuntime(source: "managed" | "path", toolkitReady: boolean) {
+  const candidate = runtime(source);
+  return {
+    ...candidate,
+    toolkits: [
+      {
+        toolkitId: ComputeToolkitId.make("python-data-and-figures"),
+        runtime: candidate.profile,
+        readiness: toolkitReady ? ("ready" as const) : ("missing-requirement" as const),
+        missingRequirements: toolkitReady ? [] : ["scipy"],
+      },
+    ],
+  };
 }
 
 describe("Python file run actions", () => {
@@ -224,6 +250,96 @@ describe("Python file run actions", () => {
       code: "print(1)",
     });
   });
+
+  it.each([
+    { decision: "current", executable: "/path/python" },
+    { decision: "managed", executable: "/managed/python" },
+  ])(
+    "waits for an explicit $decision runtime choice before reserving or running",
+    async ({ decision, executable }) => {
+      mocks.managedStatus = {
+        installed: true,
+        selection: "existing",
+        updateAvailable: false,
+        runtimeVersion: "3.12.13",
+        toolkitRevision: "scientific-1",
+        toolkitIds: [ComputeToolkitId.make("python-data-and-figures")],
+        operation: null,
+        failure: null,
+        failureMessage: null,
+      };
+      mocks.start.mockImplementationOnce(
+        ({ input }: { readonly input: { readonly sessionId: ComputeSessionId } }) =>
+          Promise.resolve({
+            _tag: "Success" as const,
+            value: { sessionId: input.sessionId, generation: 1 },
+          }),
+      );
+      setRuntimeCandidates([scientificRuntime("path", false), scientificRuntime("managed", true)]);
+      vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+      const container = document.createElement("div");
+      const root = createRoot(container);
+      try {
+        await act(() =>
+          root.render(
+            <ComputeFileActions
+              language={PYTHON_COMPUTE_SOURCE}
+              environmentId={testEnvironmentId}
+              cwd="/project"
+              relativePath="test.py"
+              contents="print(1)"
+              sourceRevision="revision-1"
+              sourcePending={false}
+              selection={null}
+              editorSelection={null}
+              contextId={testContextId}
+              onRunRequested={mocks.runRequested}
+              onShowMatlabOneShot={vi.fn()}
+              onExecutionSubmitted={vi.fn()}
+            />,
+          ),
+        );
+
+        await act(() => {
+          mocks.buttons
+            .findLast((button) => button["aria-label"] === "Run file")!
+            .onClick?.({} as never);
+        });
+
+        expect(mocks.confirmation).toMatchObject({
+          open: true,
+          title: "Use Scient-managed Python?",
+          description: "Python 3.12.13 · System is missing scientific packages.",
+          confirmLabel: "Use managed",
+          secondaryAction: { label: "Use current" },
+        });
+        expect(mocks.runRequested).not.toHaveBeenCalled();
+        expect(mocks.start).not.toHaveBeenCalled();
+        expect(mocks.submit).not.toHaveBeenCalled();
+        expect(useComputeContextStore.getState().bindings[testContextId]).toBeUndefined();
+
+        await act(async () => {
+          if (decision === "managed") mocks.confirmation!.onConfirm();
+          else mocks.confirmation!.secondaryAction!.onSelect();
+        });
+
+        await vi.waitFor(() => expect(mocks.submit).toHaveBeenCalledOnce());
+        expect(mocks.runRequested).toHaveBeenCalledOnce();
+        expect(mocks.start).toHaveBeenCalledWith({
+          environmentId: testEnvironmentId,
+          input: {
+            cwd: "/project",
+            sessionId: expect.any(String),
+            languageId: "python",
+            executable,
+          },
+        });
+      } finally {
+        await act(() => root.unmount());
+        vi.unstubAllGlobals();
+      }
+    },
+  );
 
   it("reserves a fresh child before its single start-and-run request without replacing the session", async () => {
     ensureComputeContext({

@@ -28,6 +28,7 @@ import * as LocalDuplexProcess from "../execution/LocalDuplexProcess.ts";
 import * as LocalExecutionProcess from "../execution/LocalExecutionProcess.ts";
 import * as ComputeSessionService from "./ComputeSessionService.ts";
 import { makeComputeRpcGateway } from "./ComputeRpcGateway.ts";
+import { computeWorkspaceResolverForTest } from "./ComputeWorkspaceTestUtils.ts";
 import * as LocalComputeStore from "./LocalComputeStore.ts";
 import { MANAGED_PYTHON_VERSION } from "./ManagedPythonProvisioner.ts";
 import * as PythonComputeRuntime from "./PythonComputeRuntime.ts";
@@ -106,6 +107,7 @@ describe.runIf(ENABLED)("Scient-managed Python product", () => {
           const compute = yield* ComputeSessionService.ComputeSessionService;
           const workspaceFileSystem = yield* WorkspaceFileSystem.WorkspaceFileSystem;
           const gateway = makeComputeRpcGateway({
+            workspaceResolver: computeWorkspaceResolverForTest,
             compute,
             workspaceFileSystem,
             serverSettings: {

@@ -48,9 +48,12 @@ truncated payload produces a local source error instead of a misleading WebGL
 fallback. Common named light/dark templates and compatible string title
 shorthand are normalized only in the disposable render copy. Source is bounded to 1,000,000 characters,
 500,000 inspected values, 512 traces, and 2,000 frames before the runtime is
-loaded. Remote images, GeoJSON, map tiles, and Plotly geography topology retain
-Plotly's normal network behavior and are labeled as network content; no CSP
-exception or credential-bearing Scient loader is added.
+loaded. Embedded Plotly surfaces deny network-backed figures: remote images,
+GeoJSON, map tiles, and geography topology require an inline/static alternative.
+The policy also covers template defaults, deferred button/slider commands, and
+restored view state. Offline interactions and inline raster images remain valid.
+No CSP exception or credential-bearing Scient loader is added. This semantic
+validation is not a separate browser network sandbox.
 
 Inline Plotly state is captured before a WebGL view is released offscreen and
 when a figure moves to or returns from the expanded dialog. SVG figures remain

@@ -1,4 +1,5 @@
 import { parse, printParseErrorCode, type ParseError } from "jsonc-parser";
+import { inspectPlotlyNetwork } from "./plotlyNetworkPolicy";
 
 export const MAX_PLOTLY_SOURCE_LENGTH = 1_000_000;
 const MAX_PLOTLY_VALUE_NODES = 500_000;
@@ -180,29 +181,11 @@ function parseErrorMessage(source: string, error: ParseError): string {
   return `Invalid JSON at line ${location.line}, column ${location.column}: ${reason}.`;
 }
 
-function isExternalResourceKey(path: ReadonlyArray<string>, key: string): boolean {
-  if (key === "geojson" || key === "topojsonURL" || key === "url") return true;
-  if (key === "source") {
-    return path.includes("images") || path.includes("layers") || path.includes("map");
-  }
-  return key === "style" && (path.includes("map") || path.includes("mapbox"));
-}
-
-function isInlinePlotlyResource(value: string): boolean {
-  return /^data:image\/(?:gif|jpeg|png|webp);base64,/iu.test(value.trim());
-}
-
-function inspectFigure(root: PlotlyJsonObject): {
-  readonly externalResources: ReadonlyArray<string>;
-  readonly hasMath: boolean;
-} {
+function inspectFigure(root: PlotlyJsonObject): { readonly hasMath: boolean } {
   const stack: Array<{
     readonly depth: number;
-    readonly key: string | null;
-    readonly path: ReadonlyArray<string>;
     readonly value: unknown;
-  }> = [{ depth: 0, key: null, path: [], value: root }];
-  const externalResources = new Set<string>();
+  }> = [{ depth: 0, value: root }];
   let hasMath = false;
   let visitedNodes = 0;
 
@@ -222,20 +205,12 @@ function inspectFigure(root: PlotlyJsonObject): {
 
     if (typeof current.value === "string") {
       if (/\$[^$\n]+\$/u.test(current.value)) hasMath = true;
-      if (
-        current.key != null &&
-        isExternalResourceKey(current.path, current.key) &&
-        current.value.trim().length > 0 &&
-        !isInlinePlotlyResource(current.value)
-      ) {
-        externalResources.add(current.value);
-      }
       continue;
     }
 
     if (Array.isArray(current.value)) {
       for (const value of current.value) {
-        stack.push({ depth: current.depth + 1, key: current.key, path: current.path, value });
+        stack.push({ depth: current.depth + 1, value });
       }
       continue;
     }
@@ -243,17 +218,15 @@ function inspectFigure(root: PlotlyJsonObject): {
 
     validateTypedArraySpec(current.value);
 
-    for (const [key, value] of Object.entries(current.value)) {
+    for (const value of Object.values(current.value)) {
       stack.push({
         depth: current.depth + 1,
-        key,
-        path: [...current.path, key],
         value,
       });
     }
   }
 
-  return { externalResources: [...externalResources], hasMath };
+  return { hasMath };
 }
 
 function objectArray(value: unknown, name: string): ReadonlyArray<PlotlyJsonObject> {
@@ -318,6 +291,7 @@ export function parsePlotlySource(
     layout: optionalObject(parsed.layout, "layout"),
   };
   const inspection = inspectFigure(parsed);
+  const network = inspectPlotlyNetwork(parsed);
   const types = traceTypes(data);
   const hasImplicitScatter = data.some(
     (trace) => typeof trace.type !== "string" || trace.type.trim().length === 0,
@@ -330,7 +304,7 @@ export function parsePlotlySource(
 
   if (
     options.networkAccess !== "allow" &&
-    (inspection.externalResources.length > 0 || hasGeoTopology || hasMapTiles)
+    (network.requiresNetwork || network.unsupportedCommand)
   ) {
     throw new Error(
       "This Plotly figure requires network access, which is blocked in Scient's embedded renderer. Use inline data or a static image instead.",
@@ -338,7 +312,7 @@ export function parsePlotlySource(
   }
 
   return {
-    externalResources: inspection.externalResources,
+    externalResources: network.externalResources,
     figure,
     hasCartesian: hasImplicitScatter || [...types].some((type) => CARTESIAN_TRACE_TYPES.has(type)),
     hasFrames: frames.length > 0,

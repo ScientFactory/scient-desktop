@@ -13,7 +13,10 @@ vi.mock("~/state/use-atom-command", () => ({ useAtomCommand: () => writeFile }))
 vi.mock("./projectFilesQueryState", () => ({ confirmProjectFileQueryData: confirmFile }));
 
 import { setMarkdownTaskChecked } from "./filePreviewMode";
-import { useFileSaveCoordinator } from "./useFileSaveCoordinator";
+import {
+  clearWorkspaceFileSessionsForTests,
+  useFileSaveCoordinator,
+} from "./useFileSaveCoordinator";
 
 const environmentId = EnvironmentId.make("save-lifecycle-audit");
 const onPendingChange = vi.fn();
@@ -30,13 +33,21 @@ const defaultProps: Parameters<typeof useFileSaveCoordinator>[0] = {
 };
 let renderer: ReactTestRenderer | null;
 
-function ChangeSource(_props: { onChange: (contents: string) => void }) {
+function ChangeSource(_props: {
+  onChange: (contents: string) => void;
+  onSuspendedChange?: (suspended: boolean) => void;
+}) {
   return null;
 }
 
 function FileSurface(props: Parameters<typeof useFileSaveCoordinator>[0]) {
   const coordinator = useFileSaveCoordinator(props);
-  return <ChangeSource onChange={(contents) => coordinator.change(contents)} />;
+  return (
+    <ChangeSource
+      onChange={(contents) => coordinator.change(contents)}
+      onSuspendedChange={coordinator.setSuspended}
+    />
+  );
 }
 
 function mount(props = defaultProps) {
@@ -53,7 +64,12 @@ function changeHandler(): (contents: string) => void {
   return renderer!.root.findByType(ChangeSource).props.onChange;
 }
 
+function suspensionHandler(): (suspended: boolean) => void {
+  return renderer!.root.findByType(ChangeSource).props.onSuspendedChange;
+}
+
 beforeEach(() => {
+  clearWorkspaceFileSessionsForTests();
   renderer = null;
   vi.useFakeTimers();
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
@@ -64,6 +80,9 @@ beforeEach(() => {
 
 afterEach(async () => {
   await act(async () => renderer?.unmount());
+  await vi.runAllTimersAsync();
+  await Promise.resolve();
+  clearWorkspaceFileSessionsForTests();
   vi.useRealTimers();
   vi.unstubAllGlobals();
 });
@@ -156,6 +175,51 @@ describe("file-save React lifecycle", () => {
     });
   });
 
+  it("shares one persistence pipeline between two mounted views of the same file", async () => {
+    const firstPending = vi.fn();
+    const secondPending = vi.fn();
+    function SharedViews() {
+      const first = useFileSaveCoordinator({
+        ...defaultProps,
+        onPendingChange: firstPending,
+      });
+      const second = useFileSaveCoordinator({
+        ...defaultProps,
+        onPendingChange: secondPending,
+      });
+      return (
+        <>
+          <ChangeSource onChange={first.change} />
+          <ChangeSource onChange={second.change} />
+        </>
+      );
+    }
+    act(() => {
+      renderer = create(
+        <StrictMode>
+          <SharedViews />
+        </StrictMode>,
+      );
+    });
+    const views = renderer!.root.findAllByType(ChangeSource);
+    views[0]!.props.onChange("first view");
+    views[1]!.props.onChange("shared latest view");
+    await vi.advanceTimersByTimeAsync(500);
+
+    expect(writeFile).toHaveBeenCalledExactlyOnceWith({
+      environmentId,
+      input: {
+        cwd: "/workspace",
+        relativePath: "file.txt",
+        contents: "shared latest view",
+        expectedRevision: "revision-1",
+      },
+    });
+    expect(confirmFile).toHaveBeenCalledOnce();
+    expect(firstPending).toHaveBeenLastCalledWith("file.txt", false);
+    expect(secondPending).toHaveBeenLastCalledWith("file.txt", false);
+  });
+
   it("keeps the debounce across rerenders of the same file", async () => {
     mount();
     changeHandler()("first");
@@ -173,6 +237,89 @@ describe("file-save React lifecycle", () => {
     await vi.advanceTimersByTimeAsync(1);
     expect(writeFile).toHaveBeenCalledTimes(1);
     expect(writeFile.mock.calls[0]![0].input.contents).toBe("latest");
+  });
+
+  it("keeps a suspended shared session held when callback identities change", async () => {
+    const latestPendingChange = vi.fn();
+    mount();
+    suspensionHandler()(true);
+    changeHandler()("held checkpoint");
+
+    act(() =>
+      renderer!.update(
+        <StrictMode>
+          <FileSurface
+            {...defaultProps}
+            onPendingChange={latestPendingChange}
+            onSaveConfirmed={vi.fn()}
+            onSaveFailure={vi.fn()}
+            onSaveResolutionApplied={vi.fn()}
+          />
+        </StrictMode>,
+      ),
+    );
+    changeHandler()("latest held checkpoint");
+    await vi.advanceTimersByTimeAsync(5_000);
+    expect(writeFile).not.toHaveBeenCalled();
+
+    suspensionHandler()(false);
+    await vi.runAllTimersAsync();
+    expect(writeFile).toHaveBeenCalledExactlyOnceWith({
+      environmentId,
+      input: {
+        cwd: "/workspace",
+        relativePath: "file.txt",
+        contents: "latest held checkpoint",
+        expectedRevision: "revision-1",
+      },
+    });
+    expect(latestPendingChange).toHaveBeenLastCalledWith("file.txt", false);
+  });
+
+  it("keeps a shared session serial while callbacks change during a write", async () => {
+    let resolveFirst!: (value: ReturnType<typeof AsyncResult.success>) => void;
+    const firstWrite = new Promise<ReturnType<typeof AsyncResult.success>>((resolve) => {
+      resolveFirst = resolve;
+    });
+    writeFile
+      .mockReset()
+      .mockReturnValueOnce(firstWrite)
+      .mockResolvedValue(AsyncResult.success({ revision: "revision-3" }));
+    const retiredConfirmed = vi.fn();
+    const latestConfirmed = vi.fn();
+    mount({ ...defaultProps, onSaveConfirmed: retiredConfirmed });
+
+    changeHandler()("first checkpoint");
+    await vi.advanceTimersByTimeAsync(500);
+    changeHandler()("queued checkpoint");
+    act(() =>
+      renderer!.update(
+        <StrictMode>
+          <FileSurface
+            {...defaultProps}
+            onPendingChange={vi.fn()}
+            onSaveConfirmed={latestConfirmed}
+            onSaveFailure={vi.fn()}
+            onSaveResolutionApplied={vi.fn()}
+          />
+        </StrictMode>,
+      ),
+    );
+    changeHandler()("latest checkpoint");
+    await vi.advanceTimersByTimeAsync(5_000);
+    expect(writeFile).toHaveBeenCalledTimes(1);
+
+    resolveFirst(AsyncResult.success({ revision: "revision-2" }));
+    await vi.runAllTimersAsync();
+    expect(writeFile).toHaveBeenCalledTimes(2);
+    expect(writeFile.mock.calls[1]![0].input).toEqual({
+      cwd: "/workspace",
+      relativePath: "file.txt",
+      contents: "latest checkpoint",
+      expectedRevision: "revision-2",
+    });
+    expect(retiredConfirmed).not.toHaveBeenCalled();
+    expect(latestConfirmed).toHaveBeenCalledTimes(2);
   });
 
   it("flushes on unmount and ignores a retired editor callback", async () => {

@@ -1,4 +1,74 @@
-import type { ComputeSessionRecord, ComputeLanguageRuntimeInspection } from "@t3tools/contracts";
+import type { ComputeLanguageRuntimeInspection, ComputeSessionRecord } from "@t3tools/contracts";
+
+type ComputeRuntimeProfile = ComputeLanguageRuntimeInspection["runtimes"][number]["profile"];
+
+export const SCIENTIFIC_PYTHON_TOOLKIT_ID = "python-data-and-figures";
+
+function computeRuntimeSourceLabel(source: ComputeRuntimeProfile["source"]): string {
+  switch (source) {
+    case "managed":
+      return "Scient-managed";
+    case "project":
+      return "Project";
+    case "configured":
+      return "Custom";
+    case "path":
+    case "conventional":
+      return "System";
+  }
+}
+
+export function computeRuntimeDisplayLabel(
+  profile: ComputeRuntimeProfile,
+  languageName = "Python",
+): string {
+  const version = profile.languageVersion.trim();
+  return `${version.length > 0 && version !== "unknown" ? `${languageName} ${version}` : languageName} · ${computeRuntimeSourceLabel(profile.source)}`;
+}
+
+export type ComputePreRunRuntimeChoice = {
+  readonly current: ComputeLanguageRuntimeInspection["runtimes"][number];
+  readonly managed: ComputeLanguageRuntimeInspection["runtimes"][number];
+};
+
+/**
+ * Offers a choice only when the automatic Python can run Compute itself but is
+ * missing the required scientific Toolkit and an already-installed managed
+ * runtime has that Toolkit ready. This never installs or changes a preference.
+ */
+export function resolveComputePreRunRuntimeChoice(
+  language: ComputeLanguageRuntimeInspection | null,
+): ComputePreRunRuntimeChoice | null {
+  if (language?.enabled !== true || language.descriptor.languageId !== "python") return null;
+  const current = language.runtimes[0];
+  if (
+    current === undefined ||
+    current.profile.source === "managed" ||
+    current.verification.readiness !== "ready" ||
+    current.toolkits.find((toolkit) => toolkit.toolkitId === SCIENTIFIC_PYTHON_TOOLKIT_ID)
+      ?.readiness !== "missing-requirement"
+  )
+    return null;
+
+  const managedStatus = language.managedRuntime;
+  if (
+    managedStatus?.installed !== true ||
+    managedStatus.operation !== null ||
+    Boolean(managedStatus.failure) ||
+    Boolean(managedStatus.failureMessage) ||
+    managedStatus.toolkitChanges?.some((change) => change.state !== "failed")
+  )
+    return null;
+
+  const managed = language.runtimes.find(
+    (candidate) =>
+      candidate.profile.source === "managed" &&
+      candidate.verification.readiness === "ready" &&
+      candidate.toolkits.find((toolkit) => toolkit.toolkitId === SCIENTIFIC_PYTHON_TOOLKIT_ID)
+        ?.readiness === "ready",
+  );
+  return managed === undefined ? null : { current, managed };
+}
 
 /** Discovery order is the server's preference, not a list to skip until something runs. */
 export function defaultComputeRuntime(languages: ReadonlyArray<ComputeLanguageRuntimeInspection>) {
@@ -141,9 +211,15 @@ export function nudgeComputeFileSplit(
 function computeRuntimePresenceLabel(
   languageName: string,
   version: string | null | undefined,
+  source: ComputeRuntimeProfile["source"] | null | undefined,
 ): string {
   const trimmed = version?.trim();
-  if (trimmed && trimmed !== "unknown") return `${languageName} ${trimmed}`;
+  if (trimmed && trimmed !== "unknown") {
+    const versionLabel = `${languageName} ${trimmed}`;
+    return source === null || source === undefined
+      ? versionLabel
+      : `${versionLabel} · ${computeRuntimeSourceLabel(source)}`;
+  }
   return languageName;
 }
 
@@ -151,6 +227,7 @@ export function resolveComputeRuntimeToolbarState(input: {
   readonly languageId?: string;
   readonly languageName?: string;
   readonly runtimeVersion?: string | null;
+  readonly runtimeSource?: ComputeRuntimeProfile["source"] | null;
   readonly liveSession: ComputeRuntimeToolbarSession | null;
   readonly runtimeInspectionPending: boolean;
   readonly readyRuntimeAvailable: boolean;
@@ -169,7 +246,11 @@ export function resolveComputeRuntimeToolbarState(input: {
   const languageId = input.languageId ?? "python";
   const languageName = input.languageName ?? "Python";
   const session = input.liveSession;
-  const presenceLabel = computeRuntimePresenceLabel(languageName, input.runtimeVersion);
+  const presenceLabel = computeRuntimePresenceLabel(
+    languageName,
+    input.runtimeVersion,
+    input.runtimeSource,
+  );
   if (input.contextLifecycle === "starting") {
     if (input.capacityRecoveryAvailable) {
       return { kind: "status", label: `${languageName} capacity reached`, canRun: true };
