@@ -2226,7 +2226,7 @@ export default function FilePreviewPanel({
             className={cn(
               "flex min-h-0 shrink-0 bg-background",
               previewPath
-                ? "w-[min(22rem,46%)] min-w-64 border-l border-border/60"
+                ? "w-[min(20rem,40%)] min-w-40 border-l border-border/60"
                 : "min-w-0 flex-1",
             )}
           >
