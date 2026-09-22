@@ -67,12 +67,26 @@ describe("Scient LaTeX file-preview seam", () => {
     );
   });
 
-  it("opens successful agent builds on the resolved LaTeX root surface", () => {
+  it("opens successful agent builds on their source while carrying the resolved root", () => {
     expect(automationHostSource).toContain('request.operation === "documentLatexPresent"');
-    expect(automationHostSource).toContain(
-      "openFile(threadRef, input.rootSourcePath, undefined, {",
-    );
+    expect(automationHostSource).toContain("openFile(threadRef, input.sourcePath, undefined, {");
     expect(automationHostSource).toContain('latexPreviewMode: "split"');
+    expect(automationHostSource).toContain("latexRootRelativePath: input.rootSourcePath");
+  });
+
+  it("mounts the editable Visual interaction in both Visual and Split", () => {
+    expect(surfaceSource).toContain('const visualCapable = mode === "visual" || mode === "split";');
+    expect(surfaceSource).toContain(
+      "visualCapable\n                ? { canPublishPresentation, renderInteraction: renderVisualInteraction }",
+    );
+  });
+
+  it("keeps source ownership separate from the root-keyed build target", () => {
+    expect(surfaceSource).toContain("sourceRelativePath: props.relativePath");
+    expect(surfaceSource).toContain("relativePath: resolvedRootRelativePath");
+    expect(surfaceSource).toContain(
+      "build.snapshot?.visualSourceRevisions?.[props.relativePath] ?? null",
+    );
   });
 
   it("hands the surface the save bindings the panel's own editor mount gets", () => {

@@ -37,6 +37,8 @@ import type {
   ScientLatexBuildSnapshot,
   ScientLatexBuildState,
   ScientLatexDiagnostic,
+  ScientLatexResolveRequest,
+  ScientLatexResolveResult,
   ScientLatexToolchainStatus,
 } from "@t3tools/contracts";
 import { HostProcessEnvironment, HostProcessPlatform } from "@t3tools/shared/hostProcess";
@@ -65,6 +67,7 @@ import {
 } from "../documentArtifacts/GeneratedDocumentStore.ts";
 import * as LocalExecutionProcess from "../execution/LocalExecutionProcess.ts";
 import { LatexPackageInstaller } from "./LatexPackageInstaller.ts";
+import { resolveLatexDocument } from "./LatexProjectIndex.ts";
 import { LatexToolchain } from "./LatexToolchain.ts";
 import { LatexSyncTex } from "./LatexSyncTex.ts";
 import { LatexVisualRevisionStore } from "./LatexVisualRevisionStore.ts";
@@ -96,7 +99,7 @@ export interface LatexBuildInput {
 }
 
 export class LatexBuildError extends Schema.TaggedError<LatexBuildError>()("LatexBuildError", {
-  operation: Schema.Literals(["build", "status", "cancel"]),
+  operation: Schema.Literals(["resolve", "build", "status", "cancel"]),
   reason: Schema.Literals(["invalid-path", "document-key-too-long"]),
   detail: Schema.String,
 }) {
@@ -108,6 +111,9 @@ export class LatexBuildError extends Schema.TaggedError<LatexBuildError>()("Late
 export class LatexBuildService extends Context.Service<
   LatexBuildService,
   {
+    readonly resolveDocument: (
+      input: ScientLatexResolveRequest,
+    ) => Effect.Effect<ScientLatexResolveResult, LatexBuildError>;
     readonly requestBuild: (
       input: LatexBuildInput,
     ) => Effect.Effect<ScientLatexBuildSnapshot, LatexBuildError>;
@@ -2200,7 +2206,27 @@ export const make = Effect.gen(function* () {
       return yield* readEntrySnapshot(target.logicalDocumentKey);
     });
 
-  return LatexBuildService.of({ requestBuild, status, cancel });
+  const resolveDocumentRequest = Effect.fn("LatexBuildService.resolveDocument")(function* (
+    input: ScientLatexResolveRequest,
+  ) {
+    return yield* Effect.tryPromise({
+      try: () => resolveLatexDocument(input),
+      catch: (cause) =>
+        new LatexBuildError({
+          operation: "resolve",
+          reason: "invalid-path",
+          detail:
+            cause instanceof Error ? cause.message : "The LaTeX document could not be resolved.",
+        }),
+    });
+  });
+
+  return LatexBuildService.of({
+    resolveDocument: resolveDocumentRequest,
+    requestBuild,
+    status,
+    cancel,
+  });
 });
 
 /**

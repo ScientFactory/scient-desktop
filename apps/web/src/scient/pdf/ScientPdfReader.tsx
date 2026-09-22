@@ -373,6 +373,7 @@ function LoadedScientPdfReader(props: {
     (event: React.MouseEvent<HTMLDivElement>) => {
       if (
         props.syncNavigation?.onInverseSearch === undefined ||
+        props.renderInteraction !== undefined ||
         !currentPresentation ||
         pdfSourceSyncHintLearnedThisSession ||
         event.ctrlKey ||
@@ -403,6 +404,7 @@ function LoadedScientPdfReader(props: {
     },
     [
       props.syncNavigation?.onInverseSearch,
+      props.renderInteraction,
       showSourceSyncHint,
       sourceSyncHintVisible,
       currentPresentation,
@@ -745,6 +747,9 @@ function LoadedScientPdfReader(props: {
               if (!currentPresentation) return;
               const onInverseSearch = props.syncNavigation?.onInverseSearch;
               if (onInverseSearch === undefined) return;
+              // An editable page uses the ordinary click gesture. Keep inverse
+              // search available in Split without making a direct edit also navigate.
+              if (props.renderInteraction !== undefined && !event.ctrlKey && !event.metaKey) return;
               const target = event.target;
               if (!(target instanceof Element)) return;
               const pageElement = target.closest<HTMLElement>(".page[data-page-number]");

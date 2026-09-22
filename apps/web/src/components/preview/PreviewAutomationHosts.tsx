@@ -386,8 +386,9 @@ function PreviewAutomationHost(props: { readonly environmentId: EnvironmentId })
         }
         if (request.operation === "documentLatexPresent") {
           const input = request.input as ControlledLatexPresentRequest;
-          useRightPanelStore.getState().openFile(threadRef, input.rootSourcePath, undefined, {
+          useRightPanelStore.getState().openFile(threadRef, input.sourcePath, undefined, {
             latexPreviewMode: "split",
+            latexRootRelativePath: input.rootSourcePath,
           });
           return {};
         }

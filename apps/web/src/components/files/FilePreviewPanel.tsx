@@ -64,7 +64,11 @@ import { resolveDiffThemeName } from "~/lib/diffRendering";
 import { PREFERRED_HIGHLIGHTER } from "~/lib/syntaxHighlighting";
 import { cn } from "~/lib/utils";
 import { isPreviewSupportedInRuntime } from "~/previewStateStore";
-import type { HtmlFilePresentationRequest, LatexFilePresentationRequest } from "~/rightPanelStore";
+import type {
+  HtmlFilePresentationRequest,
+  LatexFilePresentationRequest,
+  OpenFileOptions,
+} from "~/rightPanelStore";
 import { isAbsolutePath, resolvePathLinkTarget } from "~/terminal-links";
 import { ScrollArea } from "~/components/ui/scroll-area";
 import { Button } from "~/components/ui/button";
@@ -166,8 +170,9 @@ interface FilePreviewPanelProps {
   revealRequestId: number;
   htmlPresentationRequest: HtmlFilePresentationRequest | null;
   latexPresentationRequest: LatexFilePresentationRequest | null;
+  latexRootRelativePath: string | null;
   onOpenFile: (relativePath: string) => void;
-  onOpenFileSource: (relativePath: string, line?: number) => void;
+  onOpenFileSource: (relativePath: string, line?: number, options?: OpenFileOptions) => void;
   onHtmlPresentationRequestHandled: (
     relativePath: string,
     request: HtmlFilePresentationRequest,
@@ -1353,6 +1358,7 @@ export default function FilePreviewPanel({
   revealRequestId,
   htmlPresentationRequest,
   latexPresentationRequest,
+  latexRootRelativePath,
   onOpenFile,
   onOpenFileSource,
   onHtmlPresentationRequestHandled,
@@ -2044,6 +2050,7 @@ export default function FilePreviewPanel({
                   environmentId={environmentId}
                   cwd={cwd}
                   relativePath={relativePath}
+                  latexRootRelativePath={latexRootRelativePath}
                   composerDraftTarget={composerDraftTarget}
                   contents={file.data.contents}
                   revision={file.data.revision}

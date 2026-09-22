@@ -57,6 +57,8 @@ export interface OpenFileOptions {
   readonly fileCitation?: FileCitation;
   readonly htmlPreviewMode?: HtmlFilePresentationRequest["mode"];
   readonly latexPreviewMode?: LatexFilePresentationRequest["mode"];
+  /** Document identity carried by LaTeX navigation while the opened source changes. */
+  readonly latexRootRelativePath?: string;
 }
 
 export interface DeviceTabTarget {
@@ -89,6 +91,7 @@ export type RightPanelSurface =
       revealRequestId: number;
       htmlPresentationRequest?: HtmlFilePresentationRequest;
       latexPresentationRequest?: LatexFilePresentationRequest;
+      latexRootRelativePath?: string;
       /** Transient rendered-text reveal; the quote remains owned by the message. */
       fileCitation?: FileCitation;
       /** Present when the file lives in the thread's attachment store rather
@@ -274,6 +277,9 @@ const fileSurface = (
   revealLine,
   revealRequestId,
   ...(options?.fileCitation ? { fileCitation: options.fileCitation } : {}),
+  ...(options?.latexRootRelativePath === undefined
+    ? {}
+    : { latexRootRelativePath: options.latexRootRelativePath }),
   ...(options?.htmlPreviewMode === undefined
     ? {}
     : {

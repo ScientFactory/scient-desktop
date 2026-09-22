@@ -293,8 +293,31 @@ function makeBuildService(options: {
     current = options.requested ?? current;
     return Effect.succeed(current);
   });
+  const resolveDocument = vi.fn((input: { readonly sourceRelativePath: string }) =>
+    Effect.succeed({
+      _tag: "resolved" as const,
+      sourceRelativePath: input.sourceRelativePath,
+      rootRelativePath: current.rootRelativePath,
+      reason: "self-document" as const,
+      candidates: [
+        {
+          rootRelativePath: current.rootRelativePath,
+          evidence: ["self-document" as const],
+          independentlyCompilable: true,
+        },
+      ],
+      indexGeneration: "latex-handler-test",
+      complete: true,
+      incompleteReasons: [],
+    }),
+  );
   const cancel = vi.fn(() => Effect.succeed(snapshot({ state: "cancelled" })));
-  const service = LatexBuildService.LatexBuildService.of({ requestBuild, status, cancel });
+  const service = LatexBuildService.LatexBuildService.of({
+    resolveDocument,
+    requestBuild,
+    status,
+    cancel,
+  });
   return { service, requestBuild, status, cancel };
 }
 
@@ -493,7 +516,7 @@ describe("Scient LaTeX build handler", () => {
       expect(broker.invoke).toHaveBeenCalledWith(
         expect.objectContaining({
           operation: "documentLatexPresent",
-          input: { rootSourcePath: "main.tex" },
+          input: { sourcePath: "chapters/results.tex", rootSourcePath: "main.tex" },
         }),
       );
     }),

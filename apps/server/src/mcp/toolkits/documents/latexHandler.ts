@@ -243,6 +243,7 @@ const failFromSnapshot = (
 
 const presentLatexDocument = Effect.fn("ScientLatexBuild.present")(function* (
   invocation: AgentInvocationScope,
+  sourcePath: string,
   rootSourcePath: string,
 ) {
   const broker = yield* PreviewAutomationBroker.PreviewAutomationBroker;
@@ -250,7 +251,7 @@ const presentLatexDocument = Effect.fn("ScientLatexBuild.present")(function* (
     .invoke({
       scope: invocation,
       operation: "documentLatexPresent",
-      input: { rootSourcePath },
+      input: { sourcePath, rootSourcePath },
       timeoutMs: 10_000,
     })
     .pipe(
@@ -279,9 +280,25 @@ export const buildScientLatexForInvocation = Effect.fn("ScientLatexBuild.build")
   const builds = yield* LatexBuildService.LatexBuildService;
   const generatedDocuments = yield* GeneratedDocumentStore.GeneratedDocumentStore;
   const fileSystem = yield* FileSystem.FileSystem;
+  const resolution = yield* builds
+    .resolveDocument({
+      workspaceRoot: latexSource.canonicalRoot,
+      sourceRelativePath: latexSource.sourcePath,
+    })
+    .pipe(Effect.mapError((cause) => buildServiceToolError(cause, input)));
+  if (resolution._tag !== "resolved") {
+    const candidates = resolution.candidates.map((candidate) => candidate.rootRelativePath);
+    return yield* toolError(
+      "build-failed",
+      resolution._tag === "ambiguous"
+        ? `The LaTeX source belongs to multiple documents: ${candidates.join(", ")}. Open it from the intended document before building.`
+        : "Scient could not find a complete LaTeX document that includes this source.",
+      { sourcePath: latexSource.sourcePath, outputPath: output.outputPath },
+    );
+  }
   const buildInput = {
     workspaceRoot: latexSource.canonicalRoot,
-    relativePath: latexSource.sourcePath,
+    relativePath: resolution.rootRelativePath,
   } as const;
   const deadline = (yield* Clock.currentTimeMillis) + waitBudgetMs;
   let snapshot = yield* builds
@@ -495,7 +512,11 @@ export const buildScientLatexForInvocation = Effect.fn("ScientLatexBuild.build")
         ),
       ),
     );
-    const presented = yield* presentLatexDocument(invocation, successfulSnapshot.rootRelativePath);
+    const presented = yield* presentLatexDocument(
+      invocation,
+      latexSource.sourcePath,
+      successfulSnapshot.rootRelativePath,
+    );
     return {
       status: "completed",
       sourcePath: latexSource.sourcePath,

@@ -783,7 +783,7 @@ it.effect("routes internal document builds only to a host that advertises the re
         yield* broker.invoke<string>({
           scope,
           operation: "documentLatexPresent",
-          input: { rootSourcePath: "main.tex" },
+          input: { sourcePath: "sections/intro.tex", rootSourcePath: "main.tex" },
         }),
       ).toBe("controlled-renderer");
     }),

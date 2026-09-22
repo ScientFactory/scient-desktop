@@ -68,9 +68,11 @@ interface LatexBuildStoreState {
 
 const useLatexBuildStore = create<LatexBuildStoreState>()(() => ({ entries: {} }));
 
-export function useLatexBuild(target: LatexBuildTarget): LatexBuildStatus {
-  const key = latexBuildKey(target);
-  return useLatexBuildStore((state) => state.entries[key] ?? EMPTY_ENTRY);
+export function useLatexBuild(target: LatexBuildTarget | null): LatexBuildStatus {
+  const key = target === null ? null : latexBuildKey(target);
+  return useLatexBuildStore((state) =>
+    key === null ? EMPTY_ENTRY : (state.entries[key] ?? EMPTY_ENTRY),
+  );
 }
 
 export function readLatexBuild(target: LatexBuildTarget): LatexBuildStatus {

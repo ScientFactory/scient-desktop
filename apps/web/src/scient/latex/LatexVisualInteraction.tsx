@@ -407,6 +407,8 @@ export function LatexVisualInteraction(props: LatexVisualInteractionProps) {
     const container = props.host.container;
     if (!container) return;
     const click = (event: MouseEvent) => {
+      // Split reserves a modified double-click for inverse SyncTeX navigation.
+      if (event.ctrlKey || event.metaKey) return;
       const installed = manifest.current;
       const session = mapping.current;
       const current = latest.current;

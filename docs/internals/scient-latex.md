@@ -65,18 +65,31 @@ upstream-provenance check and the General Chat and analysis seam verifiers.
 
 ## Build lifecycle
 
-**Root resolution.** `resolveLatexRoot` (`latexRoot.ts`) reads only the first
-4,000 characters of the requested file looking for a `% !TEX root = …` magic
-comment; if one names another `.tex`/`.latex`/`.ltx` file, that file — resolved
-relative to the declaring file, not the workspace — is the root. Otherwise a
-file containing `\documentclass` is its own root, and anything else falls back
-to compiling itself, letting the engine's own error name the real problem.
-`LatexBuildService` performs this resolution from a bounded 8 KiB read
-(`ROOT_RESOLUTION_HEAD_BYTES`) of the requested source, so a status poll on a
-large document never reads the whole file. The resolved root is always
-rebased back onto a workspace-relative, forward-slash path, and any resolution
-that would escape the workspace root (`..` walks, a Windows drive-relative
-absolute path) is rejected as `invalid-path`.
+**Root resolution.** `LatexProjectIndex.ts` separates the source file the user
+opened from the document root Scient compiles. Its server-owned bounded scan
+recognizes literal `\input`, `\include`, `\subfile`, `\import`, and `\subimport`
+edges after removing comments and literal environments. It never follows
+symlinks or leaves the workspace. A direct open resolves in this order: a
+`% !TEX root = …` declaration, a document file with `\documentclass` or
+`\begin{document}`, then one unambiguous complete static parent. Navigation from an existing PDF,
+diagnostic, or agent presentation carries that document's root and gives the
+carried context first priority, including when the destination can compile by
+itself. Shared fragments return every candidate and require an explicit choice;
+Scient never picks one because it happened to build most recently. Dynamic
+includes and scan limits make inference incomplete and therefore cannot
+authorize an inferred root. The result carries a content-derived index
+generation and incompleteness reasons so stale asynchronous resolutions cannot
+silently replace a later context.
+
+The opened source remains the editor and save owner. Build watching,
+coalescing, status, cancellation, generated-PDF identity, and rebuilds are all
+keyed by the resolved root. Consequently, opening `sections/introduction.tex`
+can show and edit that source while the typeset page comes from `main.tex`.
+Split mounts the same editable Visual interaction as Visual mode; its left pane
+continues to show the opened source. Cross-file Visual ownership—clicking page
+text owned by a different included file and changing that file directly—still
+requires the document-level multi-buffer session described in the Visual
+design and is not implied by root resolution.
 
 **Logical document key.** Every build, status, and cancel call resolves to
 `latex:<sha256-of-normalized-workspace-root>:<root-relative-path>`, capped at 1,024
@@ -700,8 +713,8 @@ destination. If an engine records only line-level locations for a source line,
 different columns can legitimately return the same candidates; Scient keeps
 the official first candidate instead of inventing a more precise PDF position.
 
-Inverse search starts when a plain PDF double-click selects a word while Split
-is already open. The reader preserves native selection, converts the pointer's
+Inverse search starts with a modified PDF double-click while Split is open;
+plain page clicks belong to the Visual editor. The reader preserves native selection, converts the pointer's
 page position back to top-left big points, asks `synctex edit`, and selects the
 first returned candidate whose input is contained in the workspace. Source-only
 and PDF-only modes never switch layout implicitly. The source pane opens that

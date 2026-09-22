@@ -187,10 +187,11 @@ Current limitations requiring further product work:
 - Opening a fragment with one nearby root that directly `\input`s or
   `\include`s it compiles that root, so the fragment can be edited against the
   complete PDF. Multiple containing roots are reported explicitly and require
-  a `% !TEX root` comment. A click while the root file itself is active does
-  not silently switch the save owner to an included file; true multi-file,
-  single-canvas transactions still need a document-level session owner with
-  per-file leases.
+  an explicit root selection or `% !TEX root` comment. The included source
+  remains the save owner while the resolved root supplies the typeset page. A
+  click on page text owned by a different included file does not silently
+  switch save ownership; true multi-file, single-canvas transactions still
+  need a document-level session owner with per-file leases.
 - Cross-formatting selections, equation/table editors, continuous document-wide
   undo and complete screen-reader page navigation are not finished capabilities
   of this candidate.

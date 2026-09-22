@@ -40,6 +40,7 @@ export type ScientLatexPdfBuildInput = typeof ScientLatexPdfBuildInput.Type;
 
 /** Internal desktop handoff after a successful project LaTeX build. */
 export const ControlledLatexPresentRequest = Schema.Struct({
+  sourcePath: ProjectPath,
   rootSourcePath: ProjectPath,
 });
 export type ControlledLatexPresentRequest = typeof ControlledLatexPresentRequest.Type;
