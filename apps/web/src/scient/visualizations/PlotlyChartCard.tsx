@@ -296,9 +296,7 @@ export function PlotlyChartCard({
             {title}
           </span>
         ) : null}
-        {(parsed?.externalResources.length ?? 0) > 0 ||
-        parsed?.hasGeoTopology ||
-        parsed?.hasMapTiles ? (
+        {parsed?.hasNetworkContent ? (
           <span className="rounded bg-background/70 px-1.5 py-0.5 text-[10px] text-muted-foreground">
             Network content
           </span>

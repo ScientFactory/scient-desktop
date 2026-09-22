@@ -91,45 +91,50 @@ function runtimeFixture(): {
 }
 
 describe("Plotly runtime", () => {
-  it("checks restored state before calling the renderer", async () => {
+  it("restores network-backed state through the renderer", async () => {
     const { runtime, spies } = runtimeFixture();
     const container = { replaceChildren: vi.fn() } as unknown as HTMLElement;
-    await expect(
-      mountPlotlyView({
-        container,
-        parsed: parsedFigure(),
-        runtime,
-        surface: "inline",
-        theme: "light",
-        initialState: {
-          data: [],
-          frames: [],
-          layout: { images: [{ source: "https://example.invalid/image.png" }] },
-        },
-      }),
-    ).rejects.toThrow("requires network access");
-    expect(spies.react).not.toHaveBeenCalled();
+    const mounted = await mountPlotlyView({
+      container,
+      parsed: parsedFigure(),
+      runtime,
+      surface: "inline",
+      theme: "light",
+      initialState: {
+        data: [],
+        frames: [],
+        layout: { images: [{ source: "https://example.invalid/image.png" }] },
+      },
+    });
+
+    expect(spies.react).toHaveBeenCalledOnce();
+    expect(spies.react.mock.calls[0]?.[1]).toMatchObject({
+      layout: { images: [{ source: "https://example.invalid/image.png" }] },
+    });
+    mounted.dispose();
   });
 
-  it("does not let parser allow-mode opt an embedded renderer into network access", async () => {
+  it("mounts network-backed figures instead of rejecting them", async () => {
     const { runtime, spies } = runtimeFixture();
     const parsed = parsePlotlySource(
       JSON.stringify({
         data: [],
         layout: { images: [{ source: "https://example.invalid/image.png" }] },
       }),
-      { networkAccess: "allow" },
     );
-    await expect(
-      mountPlotlyView({
-        container: { replaceChildren: vi.fn() } as unknown as HTMLElement,
-        parsed,
-        runtime,
-        surface: "inline",
-        theme: "light",
-      }),
-    ).rejects.toThrow("requires network access");
-    expect(spies.react).not.toHaveBeenCalled();
+    const mounted = await mountPlotlyView({
+      container: { replaceChildren: vi.fn() } as unknown as HTMLElement,
+      parsed,
+      runtime,
+      surface: "inline",
+      theme: "light",
+    });
+
+    expect(spies.react).toHaveBeenCalledOnce();
+    expect(spies.react.mock.calls[0]?.[1]).toMatchObject({
+      layout: { images: [{ source: "https://example.invalid/image.png" }] },
+    });
+    mounted.dispose();
   });
 
   it("applies host interaction policy without mutating canonical source", () => {

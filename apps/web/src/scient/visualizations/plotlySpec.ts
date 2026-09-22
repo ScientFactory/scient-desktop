@@ -1,5 +1,4 @@
 import { parse, printParseErrorCode, type ParseError } from "jsonc-parser";
-import { inspectPlotlyNetwork } from "./plotlyNetworkPolicy";
 
 export const MAX_PLOTLY_SOURCE_LENGTH = 1_000_000;
 const MAX_PLOTLY_VALUE_NODES = 500_000;
@@ -24,13 +23,9 @@ export interface ParsedPlotlySource {
   readonly hasGeoTopology: boolean;
   readonly hasMapTiles: boolean;
   readonly hasMath: boolean;
+  readonly hasNetworkContent: boolean;
   readonly hasWebGl: boolean;
   readonly warnings: ReadonlyArray<string>;
-}
-
-export interface ParsePlotlySourceOptions {
-  /** Embedded renderers deny network-backed figures unless a qualified surface opts in. */
-  readonly networkAccess?: "allow" | "deny";
 }
 
 const WEB_GL_TRACE_TYPES = new Set([
@@ -111,6 +106,16 @@ const PLOTLY_TYPED_ARRAY_BYTES = new Map<string, number>([
 ]);
 
 const BASE64_PATTERN = /^(?:[A-Za-z\d+/]{4})*(?:[A-Za-z\d+/]{2}==|[A-Za-z\d+/]{3}=)?$/u;
+const INLINE_IMAGE_PATTERN = /^data:image\/(?:gif|jpeg|png|webp);base64,/iu;
+const RESOURCE_CONTAINERS = new Set([
+  "args",
+  "args2",
+  "data",
+  "imagedefaults",
+  "images",
+  "layerdefaults",
+  "layers",
+]);
 
 function isRecord(value: unknown): value is PlotlyJsonObject {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -181,12 +186,49 @@ function parseErrorMessage(source: string, error: ParseError): string {
   return `Invalid JSON at line ${location.line}, column ${location.column}: ${reason}.`;
 }
 
-function inspectFigure(root: PlotlyJsonObject): { readonly hasMath: boolean } {
+/** Plotly update keys may be ordinary JSON keys or dotted/indexed attribute paths. */
+function pathSegments(key: string): ReadonlyArray<string> {
+  return key
+    .split(/[.[\]]+/u)
+    .filter(Boolean)
+    .map((part) => part.replace(/^(mapbox|map)\d+$/u, "$1"));
+}
+
+function isExternalResourceKey(path: ReadonlyArray<string>, key: string): boolean {
+  if (key === "geojson" || key === "topojsonURL" || key === "url") return true;
+  if (key === "source") {
+    return path.some((part) => RESOURCE_CONTAINERS.has(part));
+  }
+  return key === "style" && (path.includes("map") || path.includes("mapbox"));
+}
+
+function isNetworkTraceType(path: ReadonlyArray<string>, key: string, value: string): boolean {
+  if (key !== "type" || path.includes("template")) return false;
+  if (
+    !path.some(
+      (part) => part === "args" || part === "args2" || part === "data" || part === "frames",
+    )
+  ) {
+    return false;
+  }
+  const type = value.trim().toLowerCase();
+  return TILE_MAP_TRACE_TYPES.has(type) || GEO_TOPOLOGY_TRACE_TYPES.has(type);
+}
+
+function inspectFigure(root: PlotlyJsonObject): {
+  readonly externalResources: ReadonlyArray<string>;
+  readonly hasMath: boolean;
+  readonly hasNetworkContent: boolean;
+} {
   const stack: Array<{
     readonly depth: number;
+    readonly key: string | null;
+    readonly path: ReadonlyArray<string>;
     readonly value: unknown;
-  }> = [{ depth: 0, value: root }];
+  }> = [{ depth: 0, key: null, path: [], value: root }];
+  const externalResources = new Set<string>();
   let hasMath = false;
+  let hasNetworkContent = false;
   let visitedNodes = 0;
 
   while (stack.length > 0) {
@@ -205,12 +247,37 @@ function inspectFigure(root: PlotlyJsonObject): { readonly hasMath: boolean } {
 
     if (typeof current.value === "string") {
       if (/\$[^$\n]+\$/u.test(current.value)) hasMath = true;
+      if (current.key != null && isNetworkTraceType(current.path, current.key, current.value)) {
+        hasNetworkContent = true;
+      }
+      if (
+        current.key != null &&
+        isExternalResourceKey(current.path, current.key) &&
+        current.value.trim().length > 0 &&
+        !INLINE_IMAGE_PATTERN.test(current.value.trim())
+      ) {
+        externalResources.add(current.value.trim());
+        hasNetworkContent = true;
+      }
       continue;
     }
 
     if (Array.isArray(current.value)) {
-      for (const value of current.value) {
-        stack.push({ depth: current.depth + 1, value });
+      const attributePath =
+        (current.key === "args" || current.key === "args2") && typeof current.value[0] === "string"
+          ? pathSegments(current.value[0])
+          : [];
+      for (const [index, value] of current.value.entries()) {
+        if (index === 1 && attributePath.length > 0) {
+          stack.push({
+            depth: current.depth + 1,
+            key: attributePath.at(-1) ?? null,
+            path: [...current.path, ...attributePath],
+            value,
+          });
+        } else {
+          stack.push({ ...current, depth: current.depth + 1, value });
+        }
       }
       continue;
     }
@@ -218,15 +285,19 @@ function inspectFigure(root: PlotlyJsonObject): { readonly hasMath: boolean } {
 
     validateTypedArraySpec(current.value);
 
-    for (const value of Object.values(current.value)) {
+    for (const [rawKey, value] of Object.entries(current.value)) {
+      const segments = pathSegments(rawKey);
+      const key = segments.at(-1) ?? rawKey;
       stack.push({
         depth: current.depth + 1,
+        key,
+        path: [...current.path, ...segments],
         value,
       });
     }
   }
 
-  return { hasMath };
+  return { externalResources: [...externalResources], hasMath, hasNetworkContent };
 }
 
 function objectArray(value: unknown, name: string): ReadonlyArray<PlotlyJsonObject> {
@@ -251,10 +322,7 @@ function traceTypes(data: ReadonlyArray<PlotlyJsonObject>): ReadonlySet<string> 
   );
 }
 
-export function parsePlotlySource(
-  source: string,
-  options: ParsePlotlySourceOptions = {},
-): ParsedPlotlySource {
+export function parsePlotlySource(source: string): ParsedPlotlySource {
   if (source.trim().length === 0) throw new Error("The Plotly source is empty.");
   if (source.length > MAX_PLOTLY_SOURCE_LENGTH) {
     throw new Error(
@@ -291,7 +359,6 @@ export function parsePlotlySource(
     layout: optionalObject(parsed.layout, "layout"),
   };
   const inspection = inspectFigure(parsed);
-  const network = inspectPlotlyNetwork(parsed);
   const types = traceTypes(data);
   const hasImplicitScatter = data.some(
     (trace) => typeof trace.type !== "string" || trace.type.trim().length === 0,
@@ -302,23 +369,15 @@ export function parsePlotlySource(
   const hasGeoTopology = [...types].some((type) => GEO_TOPOLOGY_TRACE_TYPES.has(type));
   const hasMapTiles = [...types].some((type) => TILE_MAP_TRACE_TYPES.has(type));
 
-  if (
-    options.networkAccess !== "allow" &&
-    (network.requiresNetwork || network.unsupportedCommand)
-  ) {
-    throw new Error(
-      "This Plotly figure requires network access, which is blocked in Scient's embedded renderer. Use inline data or a static image instead.",
-    );
-  }
-
   return {
-    externalResources: network.externalResources,
+    externalResources: inspection.externalResources,
     figure,
     hasCartesian: hasImplicitScatter || [...types].some((type) => CARTESIAN_TRACE_TYPES.has(type)),
     hasFrames: frames.length > 0,
     hasGeoTopology,
     hasMapTiles,
     hasMath: inspection.hasMath,
+    hasNetworkContent: inspection.hasNetworkContent,
     hasWebGl: [...types].some(
       (type) => WEB_GL_TRACE_TYPES.has(type) || TILE_MAP_TRACE_TYPES.has(type),
     ),
