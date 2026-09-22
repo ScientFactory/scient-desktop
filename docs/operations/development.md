@@ -154,6 +154,11 @@ revision or working diff and reuse that evidence while the candidate is unchange
 can invalidate a result, rerun the affected check; broad shared-runtime, orchestration, packaging,
 or test-harness changes normally need wider requalification.
 See [ci.yml](../../.github/workflows/ci.yml) for hosted checks.
+The required `Test` check includes the native Compute matrix when its inputs
+change, including process ownership, atomic persistence, contracts and dependency
+locks. Unrelated changes skip that matrix; an unresolved diff runs it. The matrix
+also remains manually dispatchable. This uses the existing required check, without
+requiring a separate branch-protection setting for path-dependent jobs.
 The [manual Windows lane](../../.github/workflows/windows-tests.yml) is available for focused
 Windows investigation while that suite is not a required gate.
 

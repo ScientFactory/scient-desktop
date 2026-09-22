@@ -5,7 +5,7 @@
 # The bridge's own unit tests need nothing but a standard library and so run on
 # every pull request from `ci.yml`. What is here needs `jupyter_client`,
 # `ipykernel`, matplotlib, pandas, and a live subprocess tree, which is why it
-# is path-filtered and dispatchable rather than always on.
+# is conditionally called by CI and remains manually dispatchable.
 #
 # The real-kernel matrix deliberately spans macOS, Linux, and Windows. Managed
 # Python remains limited to targets with a published, sealed runtime recipe.
@@ -14,15 +14,6 @@ name: Scient Compute Python Kernel
 on:
   workflow_call:
   workflow_dispatch:
-  pull_request:
-    paths:
-      - ".github/workflows/scient-compute-python-kernel.yml"
-      - "apps/server/src/scient/compute/**"
-      - "apps/server/scripts/compute-recipes.ts"
-      - "apps/server/src/preview/PortScanner*"
-      - "apps/server/src/localEndpoints/**"
-      - "apps/server/src/scient/execution/LocalDuplexProcess.ts"
-      - "packages/scient-compute/**"
 
 permissions:
   contents: read

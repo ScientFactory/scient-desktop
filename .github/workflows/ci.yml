@@ -81,8 +81,8 @@ jobs:
   # and resolve workspace deps from source, so ordering only bought us idle
   # runners between dependency layers. The concurrency limit stays at the
   # default 4 so peak load per runner is unchanged.
-  test:
-    name: Test
+  test_workspaces:
+    name: Test Workspaces
     runs-on: ubuntu-24.04
     # Preserve the existing ceiling while measuring the web suite split.
     timeout-minutes: 20
@@ -124,6 +124,48 @@ jobs:
           vp run --parallel --concurrency-limit 4 --verbose --log grouped \
             --filter '!t3' --filter '!@t3tools/web' --filter '!@t3tools/monorepo' test \
             2>&1 | tee "${{ runner.temp }}/workspace-tests.log"
+
+  compute_changes:
+    name: Compute Changes
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      changed: ${{ steps.detect.outputs.changed }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          sparse-checkout: .github/scripts
+      - name: Test qualification gate
+        run: node --test .github/scripts/compute-ci-gate.test.mjs
+      - name: Detect Compute changes
+        id: detect
+        run: node .github/scripts/compute-ci-gate.mjs detect
+
+  compute_native:
+    needs: compute_changes
+    if: ${{ !cancelled() && needs.compute_changes.outputs.changed != 'false' }}
+    uses: ./.github/workflows/scient-compute-python-kernel.yml
+
+  # Keep the already-required check name. Native failures must block it, while
+  # unrelated PRs may skip native qualification only after a successful diff.
+  test:
+    name: Test
+    needs: [test_workspaces, compute_changes, compute_native]
+    if: ${{ always() }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          sparse-checkout: .github/scripts
+      - name: Require applicable test suites
+        env:
+          WORKSPACE_RESULT: ${{ needs.test_workspaces.result }}
+          DETECTION_RESULT: ${{ needs.compute_changes.result }}
+          COMPUTE_CHANGED: ${{ needs.compute_changes.outputs.changed }}
+          NATIVE_RESULT: ${{ needs.compute_native.result }}
+        run: node .github/scripts/compute-ci-gate.mjs check
 
   # Split the web unit suite across runners so it does not compete with
   # other packages in `test`. Measure the speedup in CI; sharding does not
