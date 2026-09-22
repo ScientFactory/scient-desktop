@@ -361,7 +361,11 @@ Reopening a result never starts a kernel or replays code. Source links in the se
 surface return to the ordinary project editor. Python errors keep their full bounded traceback and
 show project-local frames as source links; dependency and standard-library frames stay readable but
 cannot become filesystem links. Files created by code are ordinary project files;
-writing an SVG or PNG during an execution also snapshots that static figure into the retained result.
+Scient observes new or changed SVG/PNG files during execution and retains verified static figures.
+Discovery is bounded: very large, deep, slow, or unreadable directories can leave some files unchecked.
+In that case, verified figures are still retained alongside a compact coverage warning. The warning
+does not mean the code failed or establish that any figures were lost. A project-file observation
+also does not prove which process wrote the file.
 Changing the project file later does not rewrite what the earlier run displayed. Other generated
 file types remain ordinary project files and are not inferred from their names or printed paths.
 Retained compute history is operational data, not a second project filesystem or a portable result

@@ -695,10 +695,50 @@ describe.runIf(Boolean(TEST_PYTHON))("compute product backend", () => {
         });
         expect(variablesAfterRestart.variables).toEqual([]);
 
+        // A large unrelated output directory must not hide verified root figures.
+        yield* fs.makeDirectory(`${projectRoot}/large`);
+        yield* Effect.forEach(
+          Array.from({ length: 4_100 }, (_, index) => index),
+          (index) => fs.writeFileString(`${projectRoot}/large/${index}.txt`, ""),
+          { concurrency: 32 },
+        );
+        yield* fs.writeFileString(`${projectRoot}/known.svg`, "<svg/>");
+        const partialScanId = ComputeExecutionId.make("partial-project-scan");
+        yield* gateway.submitExecution({
+          cwd: projectRoot,
+          sessionId,
+          executionId: partialScanId,
+          expectedGeneration: restarted.generation,
+          source: { _tag: "console" },
+          code: "from pathlib import Path\nPath('known.svg').write_text('<svg><circle/></svg>')\nPath('new.svg').write_text('<svg/>')",
+        });
+        expect(
+          (yield* waitForTerminal(gateway, projectRoot, sessionId, partialScanId)).result?.status,
+        ).toBe("succeeded");
+        const partialOutputs = yield* gateway.listOutputs({
+          cwd: projectRoot,
+          sessionId,
+          executionId: partialScanId,
+        });
+        expect(
+          partialOutputs.outputs
+            .filter((item) => item._tag === "image")
+            .map((item) => (item.origin?._tag === "project-file" ? item.origin.path : null))
+            .sort(),
+        ).toEqual(["known.svg", "new.svg"]);
+        expect(
+          partialOutputs.outputs.some(
+            (item) =>
+              item._tag === "system" &&
+              item.detail?.includes("Some project files could not be checked"),
+          ),
+        ).toBe(true);
+
         const stopped = yield* gateway.stopSession({
           cwd: projectRoot,
           sessionId,
           expectedGeneration: restarted.generation,
+          onlyIfIdle: true,
         });
         expect(stopped.status).toBe("stopped");
 

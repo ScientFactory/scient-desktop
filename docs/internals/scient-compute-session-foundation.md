@@ -94,6 +94,17 @@ Ordinary Stop/Close retain their interrupting semantics. Confirmed replacement p
 never replays a script, and keeps ownership when cleanup or startup is uncertain. Starting the new
 kernel can still fail after confirmed shutdown; the old in-memory namespace cannot be restored.
 
+Project-image discovery retains bounded before/after evidence rather than treating a partial
+workspace inventory as a total failure. Known files require changed observed metadata; a new file
+requires proven absence in a completely inventoried parent or ancestor. Unobserved baseline files
+are not inferred to be new. Entry, depth, time, and unreadable-path gaps are reported independently
+of safely retained figures. Cooperative scan deadlines return partial coverage before baseline
+admission times out, and collection has an outer deadline. Reads are capped and checked against
+the observed identity and state before retention. Existing image validation, workspace containment,
+count/byte budgets, and immutable history remain in force. `project-file` provenance describes a
+workspace observation, not execution-exclusive writer attribution. This does not guarantee complete
+discovery in arbitrary trees or introduce a watcher/index subsystem.
+
 MATLAB Engine's `quit()` can return before its native process exits, including after a
 figure-heavy session. The bridge captures its own native process identity at startup and
 confirms exit before acknowledging shutdown or starting a replacement. Bounded graceful
