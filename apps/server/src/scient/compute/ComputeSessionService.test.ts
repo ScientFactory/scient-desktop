@@ -54,6 +54,12 @@ import {
   type ComputeSessionServiceOptions,
 } from "./ComputeSessionService.ts";
 import * as LocalComputeStore from "./LocalComputeStore.ts";
+import {
+  ComputeWorkspaceAdmission,
+  type ComputeWorkspaceReceipt,
+} from "./ComputeWorkspaceAdmission.ts";
+import { workspaceScopeForTest } from "../projectScope/WorkspaceBindingTestUtils.ts";
+import { withoutComputeWorkspaceOwners } from "./ComputeWorkspaceLifetime.ts";
 import { normalizePythonDiagnostic } from "./PythonDiagnostic.ts";
 import {
   ComputeProjectOutputObserver,
@@ -546,6 +552,415 @@ const outputsOf = (executionId: ComputeExecutionId | null) =>
 const start = Effect.gen(function* () {
   const service = yield* ComputeSessionService;
   return yield* service.startSession(startInput());
+});
+
+describe("compute workspace ownership", () => {
+  const receipt = (id = "workspace-a", root = process.cwd()): ComputeWorkspaceReceipt => ({
+    scope: workspaceScopeForTest(id, root),
+    assertCurrent: Effect.void,
+  });
+
+  it.effect("isolates every session operation between roots sharing a logical project UUID", () =>
+    Effect.gen(function* () {
+      const test = yield* harness();
+      const owner = receipt();
+      const other = receipt("workspace-b", `${process.cwd()}/other`);
+      yield* test.use(
+        Effect.gen(function* () {
+          const service = yield* ComputeSessionService;
+          yield* start.pipe(Effect.provideService(ComputeWorkspaceAdmission, owner));
+          const command = {
+            projectId: PROJECT_ID,
+            sessionId: SESSION_ID,
+            expectedGeneration: INITIAL_COMPUTE_SESSION_GENERATION,
+          };
+          const denied: Array<
+            Effect.Effect<unknown, ComputeOperationError, ComputeSessionService>
+          > = [
+            service.getSession(command),
+            service.listExecutions(command),
+            service.listOutputs({ ...command, executionId: null }),
+            service.listJournal(command),
+            submit("must not run", "cross-root"),
+            service.cancelExecution({
+              ...command,
+              executionId: ComputeExecutionId.make("cross-root"),
+            }),
+            service.interruptSession(command),
+            service.inspectVariables(command),
+            service.restartSession(command),
+            service.stopSession(command),
+            service.startSession(startInput({ workingDirectory: other.scope.workspaceRoot })),
+          ];
+          for (const operation of denied) {
+            const error = yield* operation.pipe(
+              Effect.asVoid,
+              Effect.provideService(ComputeWorkspaceAdmission, other),
+              Effect.flip,
+            );
+            expect(error.reason).toBe("workspace-changed");
+          }
+          expect(
+            yield* service
+              .listSessions({ projectId: PROJECT_ID })
+              .pipe(Effect.provideService(ComputeWorkspaceAdmission, other)),
+          ).toEqual([]);
+          expect(yield* service.listSessions({ projectId: PROJECT_ID })).toEqual([]);
+          const otherSession = ComputeSessionId.make("other-session");
+          yield* service
+            .startSession(
+              startInput({ sessionId: otherSession, workingDirectory: other.scope.workspaceRoot }),
+            )
+            .pipe(Effect.provideService(ComputeWorkspaceAdmission, other));
+          for (const [authority, sessionId] of [
+            [owner, SESSION_ID],
+            [other, otherSession],
+          ] as const) {
+            const sessions = yield* service
+              .listSessions({ projectId: PROJECT_ID })
+              .pipe(Effect.provideService(ComputeWorkspaceAdmission, authority));
+            expect(sessions.map((session) => session.sessionId)).toEqual([sessionId]);
+            const events = yield* service
+              .subscribeSessions({ projectId: PROJECT_ID })
+              .pipe(Effect.provideService(ComputeWorkspaceAdmission, authority));
+            const initial = yield* Stream.runCollect(Stream.take(events, 1));
+            expect(initial.length).toBe(1);
+            expect(initial[0]).toMatchObject({ session: { sessionId } });
+          }
+          expect(test.submitted()).toEqual([]);
+        }),
+      );
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("rechecks authority after discovery, before opening a runtime", () =>
+    Effect.gen(function* () {
+      const discovered = yield* Deferred.make<void>();
+      const resume = yield* Deferred.make<void>();
+      let valid = true;
+      const authority = {
+        ...receipt(),
+        assertCurrent: Effect.suspend(() =>
+          valid
+            ? Effect.void
+            : Effect.fail(
+                new ComputeOperationError({
+                  operation: "start",
+                  reason: "workspace-changed",
+                  message: "Workspace replaced",
+                }),
+              ),
+        ),
+      };
+      const test = yield* harness({
+        adapter: {
+          discover: () =>
+            Deferred.succeed(discovered, undefined).pipe(
+              Effect.andThen(Deferred.await(resume)),
+              Effect.as([PROFILE]),
+            ),
+        },
+      });
+      yield* test.use(
+        Effect.gen(function* () {
+          const startup = yield* start.pipe(
+            Effect.provideService(ComputeWorkspaceAdmission, authority),
+            Effect.forkChild,
+          );
+          yield* Deferred.await(discovered);
+          valid = false;
+          yield* Deferred.succeed(resume, undefined);
+          const error = yield* Fiber.join(startup).pipe(Effect.flip);
+          expect(error.reason).toBe("workspace-changed");
+          expect(test.opened()).toEqual([]);
+          let removable = false;
+          yield* withoutComputeWorkspaceOwners(
+            process.cwd(),
+            Effect.sync(() => {
+              removable = true;
+            }),
+          );
+          expect(removable).toBe(true);
+        }),
+      );
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("never dispatches queued code after the captured workspace authority changes", () =>
+    Effect.gen(function* () {
+      let valid = true;
+      const owner = receipt();
+      const captured = {
+        ...owner,
+        assertCurrent: Effect.suspend(() =>
+          valid
+            ? Effect.void
+            : Effect.fail(
+                new ComputeOperationError({
+                  operation: "submit",
+                  reason: "workspace-changed",
+                  message: "Workspace replaced",
+                }),
+              ),
+        ),
+      };
+      const test = yield* harness();
+      yield* test.use(
+        Effect.gen(function* () {
+          const service = yield* ComputeSessionService;
+          const store = yield* LocalComputeStore.LocalComputeStore;
+          yield* start.pipe(Effect.provideService(ComputeWorkspaceAdmission, captured));
+          yield* submit("hold", "active").pipe(
+            Effect.provideService(ComputeWorkspaceAdmission, owner),
+          );
+          yield* waitUntil(executionAt(ComputeExecutionId.make("active"), "running")).pipe(
+            Effect.provideService(ComputeWorkspaceAdmission, owner),
+          );
+          yield* submit("must not run", "queued").pipe(
+            Effect.provideService(ComputeWorkspaceAdmission, owner),
+          );
+          valid = false;
+          yield* service
+            .interruptSession({
+              projectId: PROJECT_ID,
+              sessionId: SESSION_ID,
+              expectedGeneration: INITIAL_COMPUTE_SESSION_GENERATION,
+            })
+            .pipe(Effect.provideService(ComputeWorkspaceAdmission, owner));
+          yield* waitUntil(
+            store
+              .loadSession(PROJECT_ID, SESSION_ID)
+              .pipe(Effect.map((session) => (session?.status === "lost" ? session : null))),
+          );
+          expect(test.submitted()).toEqual(["hold"]);
+          yield* waitUntil(Effect.sync(() => (test.closed().length === 1 ? true : null)));
+        }),
+      );
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("keeps cleanup blocked until physical runtime shutdown finishes", () =>
+    Effect.gen(function* () {
+      const entered = yield* Deferred.make<void>();
+      const finish = yield* Deferred.make<void>();
+      const test = yield* harness({
+        transformChannel: (channel) => ({
+          ...channel,
+          shutdown: (input) =>
+            Deferred.succeed(entered, undefined).pipe(
+              Effect.andThen(Deferred.await(finish)),
+              Effect.andThen(channel.shutdown(input)),
+            ),
+        }),
+      });
+      yield* test.use(
+        Effect.gen(function* () {
+          const service = yield* ComputeSessionService;
+          let removed = 0;
+          const cleanup = withoutComputeWorkspaceOwners(
+            process.cwd(),
+            Effect.sync(() => {
+              removed++;
+            }),
+          );
+          yield* start;
+          yield* cleanup;
+          expect(removed).toBe(0);
+          const stopping = yield* service
+            .stopSession({
+              projectId: PROJECT_ID,
+              sessionId: SESSION_ID,
+              expectedGeneration: INITIAL_COMPUTE_SESSION_GENERATION,
+            })
+            .pipe(Effect.forkChild);
+          yield* Deferred.await(entered);
+          yield* cleanup;
+          expect(removed).toBe(0);
+          yield* Deferred.succeed(finish, undefined);
+          yield* Fiber.join(stopping);
+          expect(test.closed()).toEqual([SESSION_ID]);
+          yield* cleanup;
+          expect(removed).toBe(1);
+        }),
+      );
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
+});
+
+describe("compute workspace compatibility", () => {
+  it.effect("protects the workspace while a temporary connection test owns a runtime", () =>
+    Effect.gen(function* () {
+      const opened = yield* Deferred.make<void>();
+      const resume = yield* Deferred.make<void>();
+      const test = yield* harness({
+        connection: "detected",
+        beforeOpen: () =>
+          Deferred.succeed(opened, undefined).pipe(Effect.andThen(Deferred.await(resume))),
+      });
+      yield* test.use(
+        Effect.gen(function* () {
+          const service = yield* ComputeSessionService;
+          let removed = false;
+          const cleanup = withoutComputeWorkspaceOwners(
+            process.cwd(),
+            Effect.sync(() => {
+              removed = true;
+            }),
+          );
+          const verification = yield* service
+            .verifyRuntime({
+              languageId: PYTHON,
+              executable: PROFILE.executable,
+              workingDirectory: process.cwd(),
+              refresh: true,
+            })
+            .pipe(Effect.forkChild);
+          yield* Deferred.await(opened);
+          yield* cleanup;
+          expect(removed).toBe(false);
+          yield* Deferred.succeed(resume, undefined);
+          expect((yield* Fiber.join(verification)).connection).toBe("verified");
+          yield* cleanup;
+          expect(removed).toBe(true);
+          expect(test.closed()).toEqual(test.opened());
+        }),
+      );
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("ends a subscription when its captured workspace authority becomes stale", () =>
+    Effect.gen(function* () {
+      const test = yield* harness();
+      const owner: ComputeWorkspaceReceipt = {
+        scope: workspaceScopeForTest("workspace-a", process.cwd()),
+        assertCurrent: Effect.void,
+      };
+      let valid = true;
+      const subscriber = {
+        ...owner,
+        assertCurrent: Effect.suspend(() =>
+          valid
+            ? Effect.void
+            : Effect.fail(
+                new ComputeOperationError({
+                  operation: "subscribe",
+                  reason: "workspace-changed",
+                  message: "stale",
+                }),
+              ),
+        ),
+      };
+      yield* test.use(
+        Effect.gen(function* () {
+          const service = yield* ComputeSessionService;
+          yield* start.pipe(Effect.provideService(ComputeWorkspaceAdmission, owner));
+          const stream = yield* service
+            .subscribeSessions({ projectId: PROJECT_ID })
+            .pipe(Effect.provideService(ComputeWorkspaceAdmission, subscriber));
+          const first = yield* Deferred.make<void>();
+          const reading = yield* Stream.runCollect(
+            stream.pipe(Stream.tap(() => Deferred.succeed(first, undefined))),
+          ).pipe(Effect.forkChild);
+          yield* Deferred.await(first);
+          valid = false;
+          yield* submit("print(1)", "after-revocation").pipe(
+            Effect.provideService(ComputeWorkspaceAdmission, owner),
+          );
+          expect(yield* Fiber.join(reading)).toHaveLength(1);
+        }),
+      );
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect(
+    "retains legacy terminal history at its original root without adopting a live grant",
+    () =>
+      Effect.gen(function* () {
+        const test = yield* harness();
+        const authority: ComputeWorkspaceReceipt = {
+          scope: workspaceScopeForTest("workspace-a", process.cwd()),
+          assertCurrent: Effect.void,
+        };
+        yield* test.use(
+          Effect.gen(function* () {
+            const service = yield* ComputeSessionService;
+            yield* start;
+            expect(
+              yield* service
+                .listSessions({ projectId: PROJECT_ID })
+                .pipe(Effect.provideService(ComputeWorkspaceAdmission, authority)),
+            ).toEqual([]);
+            yield* service.stopSession({
+              projectId: PROJECT_ID,
+              sessionId: SESSION_ID,
+              expectedGeneration: INITIAL_COMPUTE_SESSION_GENERATION,
+            });
+          }),
+        );
+        yield* test.use(
+          Effect.gen(function* () {
+            const service = yield* ComputeSessionService;
+            const history = yield* service
+              .listSessions({ projectId: PROJECT_ID })
+              .pipe(Effect.provideService(ComputeWorkspaceAdmission, authority));
+            expect(history).toHaveLength(1);
+            expect(history[0]?.workspace).toBeUndefined();
+            const other = {
+              ...authority,
+              scope: workspaceScopeForTest("workspace-b", `${process.cwd()}/other`),
+            };
+            expect(
+              yield* service
+                .listSessions({ projectId: PROJECT_ID })
+                .pipe(Effect.provideService(ComputeWorkspaceAdmission, other)),
+            ).toEqual([]);
+          }),
+        );
+      }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("partitions live sequence numbers as well as snapshots by workspace", () =>
+    Effect.gen(function* () {
+      const test = yield* harness();
+      const owner: ComputeWorkspaceReceipt = {
+        scope: workspaceScopeForTest("workspace-a", process.cwd()),
+        assertCurrent: Effect.void,
+      };
+      const other: ComputeWorkspaceReceipt = {
+        scope: workspaceScopeForTest("workspace-b", `${process.cwd()}/other`),
+        assertCurrent: Effect.void,
+      };
+      yield* test.use(
+        Effect.gen(function* () {
+          const service = yield* ComputeSessionService;
+          yield* start.pipe(Effect.provideService(ComputeWorkspaceAdmission, owner));
+          const events = yield* service
+            .subscribeSessions({ projectId: PROJECT_ID })
+            .pipe(Effect.provideService(ComputeWorkspaceAdmission, owner));
+          yield* service
+            .startSession(
+              startInput({
+                sessionId: ComputeSessionId.make("other"),
+                workingDirectory: other.scope.workspaceRoot,
+              }),
+            )
+            .pipe(Effect.provideService(ComputeWorkspaceAdmission, other));
+          yield* submit("print(1)", "owner-output").pipe(
+            Effect.provideService(ComputeWorkspaceAdmission, owner),
+          );
+          const received = yield* Stream.runCollect(
+            events.pipe(
+              Stream.filter((event) => event._tag !== "session-snapshot"),
+              Stream.take(2),
+            ),
+          );
+          expect(received.map((event) => event.eventSequence)).toEqual([0, 1]);
+          for (const event of received)
+            expect("session" in event ? event.session.sessionId : event.sessionId).toBe(SESSION_ID);
+        }),
+      );
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
 });
 
 describe("compute runtime inspection", () => {
