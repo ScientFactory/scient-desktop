@@ -7,7 +7,7 @@ import { MathInputController, type MathInputSnapshot } from "./controller";
 import { defaultMathBindings } from "./keymap";
 import { normalizeKeys as normalizeMathKeys } from "../../keyboard/keys";
 import { importKeyboardPreferences, reloadKeyboardPreferences } from "../../keyboard/preferences";
-import { mathInputOwnsEvent } from "./ownership";
+import { surfaceOwnsShortcut } from "../../keyboard/ownership";
 
 function fixture(source = "", format: MathInputSnapshot["format"] = "tex", platform = "Linux") {
   let state: MathInputSnapshot = {
@@ -86,12 +86,35 @@ describe("shared math commands", () => {
     expect(f.controller.handle(key("Tab"))).toBe(true);
     expect(f.state().source).toBe("$\\frac{}{}$");
   });
+  it("checks completion ownership without opening UI or mutating source", () => {
+    const f = fixture("$\\iint$", "latex");
+    f.set({ selection: { from: 6, to: 6 } });
+    const snapshot = f.controller.getSnapshot();
+    const listener = vi.fn();
+    f.controller.subscribe(listener);
+    expect(f.controller.owns(key("Tab"))).toBe(true);
+    expect(f.controller.getSnapshot()).toBe(snapshot);
+    expect(listener).not.toHaveBeenCalled();
+    const event = key("Tab");
+    expect(f.controller.handle(event)).toBe(true);
+    expect(event.defaultPrevented).toBe(true);
+    expect(f.controller.getSnapshot().notice).toContain("amsmath");
+    expect(f.edits).toEqual([]);
+  });
+  it("does not claim AltGraph completion", () => {
+    const f = fixture("\\frac");
+    const event = key("Tab");
+    event.getModifierState = (modifier) => modifier === "AltGraph";
+    expect(f.controller.owns(event)).toBe(false);
+    expect(f.controller.handle(event)).toBe(false);
+    expect(f.edits).toEqual([]);
+  });
   it("applies Greek sequences only to the focused enabled editor", () => {
     const f = fixture();
     const input = document.createElement("textarea");
     document.body.append(input);
     const release = f.controller.attach(input);
-    input.addEventListener("keydown", (event) => expect(mathInputOwnsEvent(event)).toBe(false));
+    input.addEventListener("keydown", (event) => expect(surfaceOwnsShortcut(event)).toBe(false));
     input.dispatchEvent(key("m", { altKey: true }));
     input.dispatchEvent(key("g"));
     input.dispatchEvent(key("a"));
@@ -111,7 +134,7 @@ describe("shared math commands", () => {
     const release = f.controller.attach(host);
     let claimed = false;
     const capture = (event: KeyboardEvent) => {
-      claimed = mathInputOwnsEvent(event);
+      claimed = surfaceOwnsShortcut(event);
     };
     window.addEventListener("keydown", capture, true);
     input.dispatchEvent(key("M", { ctrlKey: true, shiftKey: true }));
@@ -241,6 +264,17 @@ describe("source context", () => {
 });
 
 describe("matrix transactions", () => {
+  it("does not repeat structural edits while Enter is held", () => {
+    const f = fixture();
+    expect(f.controller.matrix("pmatrix", 2, 2)).toBe(true);
+    expect(f.controller.handle(key("Enter"))).toBe(true);
+    const source = f.state().source;
+    const repeated = key("Enter", { repeat: true });
+    expect(f.controller.handle(repeated)).toBe(true);
+    expect(repeated.defaultPrevented).toBe(true);
+    expect(f.state().source).toBe(source);
+    expect(f.edits).toHaveLength(2);
+  });
   it("navigates and adds rows from text cells without expanding their ordinary text", () => {
     const source = "\\begin{cases}x & \\text{if x}\\\\y & \\text{otherwise}\\end{cases}";
     const f = fixture(source);

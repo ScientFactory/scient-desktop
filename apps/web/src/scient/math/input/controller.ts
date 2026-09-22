@@ -256,14 +256,16 @@ export class MathInputController {
     const command =
       commands.find((item) => item.completion === match[1]) ??
       (commands.length === 1 ? commands[0] : undefined);
-    return command && (!command.requires || this.allowsPackage(command.requires))
+    return command
       ? { command: command.id, from: selection.from - match[0].length, to: selection.to }
       : null;
   }
 
   owns(event: KeyboardEvent): boolean {
+    if (event.isComposing || event.defaultPrevented || event.getModifierState?.("AltGraph"))
+      return false;
     if (this.context() && this.sequence.peek(event)) return true;
-    if (event.isComposing || event.defaultPrevented || !this.context()) return false;
+    if (!this.context()) return false;
 
     if (
       (event.key === "Tab" || event.key === " ") &&
@@ -325,7 +327,11 @@ export class MathInputController {
       const completion = this.completion();
       if (completion) {
         const command = mathCommand(completion.command)!;
-        if (command.requires && !this.allowsPackage(command.requires)) return false;
+        if (command.requires && !this.allowsPackage(command.requires)) {
+          event.preventDefault();
+          event.stopPropagation();
+          return true;
+        }
         const expanded = commandEdit(command, current.snapshot.source, {
           from: completion.from,
           to: completion.from,
@@ -363,7 +369,9 @@ export class MathInputController {
           to: selection.to,
         });
     }
-    if (!edit || !this.commit(edit, false)) return false;
+    if (!edit) return false;
+    // Hold-to-repeat must not add structural edits such as matrix rows.
+    if (!event.repeat && !this.commit(edit, false)) return false;
     event.preventDefault();
     event.stopPropagation();
     return true;

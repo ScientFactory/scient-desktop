@@ -9,7 +9,7 @@ between them, and drag the divider in split view to resize either side.
 
 The source editor's **Ω** toolbar provides shared math symbols, fractions, roots,
 and matrices. Its shortcuts and completion behavior are configured in
-**Settings → Keybindings → Document and math shortcuts**, alongside Markdown math.
+**Settings → Shortcuts → Math**, alongside Markdown math.
 See [math authoring](./math-in-chat.md#authoring-math) for defaults and source-safety
 limitations. These controls change LaTeX source; PDF read mode does not insert math.
 

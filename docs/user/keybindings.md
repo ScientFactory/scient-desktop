@@ -1,7 +1,7 @@
-# Keybindings
+# Shortcuts
 
-Keybindings let you open common Scient actions without leaving the keyboard.
-Open **Settings → Keybindings** to see configurable commands and the shortcuts used by
+Shortcuts let you open common Scient actions without leaving the keyboard.
+Open **Settings → Shortcuts** to see configurable commands and the shortcuts used by
 the version you are running.
 
 The settings page shows whether a shortcut is built in or customized and warns
@@ -9,13 +9,17 @@ when two active commands conflict. Change a shortcut there, remove a custom
 shortcut, or reset it to the default. Use the command list in the app rather
 than a copied list because available actions can change between versions.
 
-## Document and math shortcuts
+## Shortcut sections
 
-The **Document and math shortcuts** section of the same Keybindings page covers
-Markdown formatting, math authoring, and PDF reading. Filter by category or use
-the page search. **Edit** replaces a command's bindings; **Disable** removes them;
-**Reset** restores that command's preset defaults. A command without a keyboard
-binding is still available from its toolbar when supported by the focused editor.
+The Shortcuts page uses the same source selector as Skills and Scientific
+Computing. Choose **General**, **Markdown**, **Math**, or **PDF** to show only that
+part of the product. General contains application commands; the other sections
+contain document-authoring and reading commands. The selected section stays open.
+
+Use the page search to filter the selected section. Click a document shortcut to
+edit it in place, or use **+** to add an alternative. The row menu can disable a
+command or reset it to its defaults. A command without a keyboard binding remains
+available from its toolbar when supported by the focused editor.
 
 Document preferences belong to this browser or desktop profile and apply to its
 open editors across environments. Application rules above them still belong to
@@ -28,9 +32,11 @@ the application shortcut still works. Nested equation and code inputs retain
 their own text editing. A disabled document binding no longer reserves that key.
 PDF read mode never inserts math.
 
-Use spaces between sequence strokes, such as `alt+m g a`, and commas between
-alternative bindings. **Record sequence** records the keys you press; Escape
-stops recording. `mod` means Command on Mac and Ctrl elsewhere; `ctrl` remains
+Sequences display with spaces between strokes, such as `alt+m g a`. Add alternatives as
+separate shortcuts in the same row. Click a shortcut, then press the keys in its
+inline field; successive keypresses form a sequence. Save the change, or click
+outside the field or press Escape to cancel. `mod` means Command on Mac and Ctrl
+elsewhere; `ctrl` remains
 literal Control on Mac. A pending sequence shows its possible next keys.
 Escape, changing focus out of the editor, changing preferences, or the timeout
 cancels it. An incorrect continuation is consumed without typing into the file.
@@ -41,13 +47,16 @@ overlaps are contextual: the edit form explains when the document takes priority
 Clipboard, select-all, save, and native undo keys cannot be reassigned to authoring
 actions. OS, browser, and native menu reservations cannot be overridden here.
 
-**Math input behavior and preset** controls the supported LyX-style sequences,
+Open **Math input behavior and preset** for the supported LyX-style sequences,
 a minimal palette-only authoring preset, command completion, automatic operators,
-matrix Enter behavior, and sequence timeout. These settings do not alter TeX layout.
+matrix Enter behavior, and sequence timeout. The timeout also applies to Markdown
+and PDF shortcut sequences. These settings do not alter TeX layout.
 See [math authoring](./math-in-chat.md#authoring-math).
 
-Use **Import, export, or restore document shortcuts** for portable, versioned
-authoring preferences. Import validates the complete file before applying it.
+Use the small **Import**, **Export**, and **Restore defaults** actions at the top of
+Markdown, Math, or PDF. These operate on one versioned profile containing all three
+sections and the math behavior settings; they do not change General bindings.
+Import validates the complete file before asking to replace the current profile.
 Legacy math-binding arrays are also accepted; existing legacy storage is retained.
 Conflicting or malformed data is reported rather than partially applied. Another
 window's newer preferences are not silently overwritten by an older edit form.
@@ -174,7 +183,7 @@ successful pick; its hover glow and badge preview the element and color family t
 **Cancel** or `Escape` exits Inspect and clears its selection and spotlight.
 
 `rightPanel.toggleMaximized` maximizes or restores the open right panel. It has no default shortcut,
-so add one in **Settings** → **Keybindings** if you want to use it.
+so add one in **Settings** → **Shortcuts** if you want to use it.
 Available context keys are `terminalFocus`, `terminalOpen`, `previewFocus`,
 `previewOpen`, `modelPickerOpen`, `editableFocus`, `isWeb`, and `isDesktop`.
 `editableFocus` is true while a text field, the composer, or another editor has
@@ -204,11 +213,11 @@ section. Message matches show one labeled excerpt while keeping the thread's pro
 machine context visible. Message search begins after two characters and uses SQLite's ASCII
 case-insensitive matching.
 
-The full command list and the current defaults are shown in **Settings** → **Keybindings**, which
+The full command list and the current defaults are shown in **Settings** → **Shortcuts**, which
 always matches the build you are running. Use that rather than a copied list.
 
 `thread.stop` interrupts the running turn in the focused thread. It has no default
-shortcut; assign one in **Settings → Keybindings**.
+shortcut; assign one in **Settings → Shortcuts**.
 
 `thread.undo` (`mod+z` by default) reverses the actions shown in the notice at the
 bottom of the sidebar, such as unpin, settle, snooze, or archive. Consecutive
@@ -253,5 +262,5 @@ Examples:
 
 Rules are evaluated in array order. For a key press, the last matching rule
 whose condition is true wins, even when an earlier rule belongs to a different
-command. Use the conflict warnings in **Settings → Keybindings** to check the
+command. Use the conflict warnings in **Settings → Shortcuts** to check the
 result after editing the JSON.

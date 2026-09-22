@@ -249,9 +249,7 @@ export function MathInputTools({ controller }: { readonly controller: MathInputC
                   </button>
                 ))}
               </span>
-              <span className="text-xs">
-                Customize in Settings → Keybindings → Document and math shortcuts.
-              </span>
+              <span className="text-xs">Customize in Settings → Shortcuts → Math.</span>
               {error || panel.notice ? <span role="status">{panel.notice || error}</span> : null}
             </span>
           </PopoverPopup>

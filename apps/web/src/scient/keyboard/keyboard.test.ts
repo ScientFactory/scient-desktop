@@ -195,6 +195,31 @@ describe("portable keyboard preferences", () => {
 });
 
 describe("sequence matching and ownership", () => {
+  it.each([false, true])(
+    "dispatches every default binding to its exact command on mac=%s",
+    (mac) => {
+      for (const binding of effectiveSurfaceBindings(defaults, mac)) {
+        const execute = vi.fn(() => true);
+        const sequence = new ShortcutSequence(binding.scope, undefined, mac);
+        const strokes = normalizeKeys(binding.keys, mac).split(" ");
+        for (const [index, stroke] of strokes.entries()) {
+          const parts = stroke.split("+");
+          const value = parts.pop()!;
+          const event = key(value === "plus" ? "+" : value === "space" ? " " : value, {
+            ctrlKey: parts.includes("ctrl"),
+            metaKey: parts.includes("meta"),
+            altKey: parts.includes("alt"),
+            shiftKey: parts.includes("shift"),
+          });
+          expect(sequence.handle(event, execute), binding.keys).toBe(true);
+          expect(event.defaultPrevented, binding.keys).toBe(true);
+          if (index < strokes.length - 1) expect(execute, binding.keys).not.toHaveBeenCalled();
+        }
+        expect(execute, binding.keys).toHaveBeenCalledExactlyOnceWith(binding.command);
+        sequence.cancel();
+      }
+    },
+  );
   it("shows pending keys, executes once, and cancels an invalid continuation without typing", () => {
     const feedback = vi.fn(),
       execute = vi.fn(() => true),

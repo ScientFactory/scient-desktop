@@ -19,10 +19,12 @@ separate. Terminal and preview focus come from their real event paths.
 
 Application bindings retain their environment-owned contract and persistence.
 Authoring overrides and math behavior use a versioned client-profile preference
-under `scient.authoringKeyboard.v1`. Settings presents both in one Keybindings
-location with explicit scope descriptions. No server schema, mobile setting, or
-environment-authority migration is implied. OS-wide Capture settings remain in
-their existing owner.
+under `scient.authoringKeyboard.v1`. Settings presents both in one Shortcuts
+location through the shared source selector: General contains application
+bindings, while Markdown, Math, and PDF contain profile-owned document commands.
+The grouping does not merge their persistence or authority. No server schema,
+mobile setting, or environment-authority migration is implied. OS-wide Capture
+settings remain in their existing owner.
 
 An absent override inherits the preset; an empty array disables a command; a
 nonempty array replaces all defaults. Math and Markdown can overlap in focus and
@@ -37,6 +39,9 @@ snapshot or persisted-data changes. Legacy math arrays migrate on read, preserve
 the old key, and write the new format only on save. Invalid storage leaves the
 default controls usable and shows an error. Import/export includes behavior
 preferences as well as bindings; it does not export environment keybindings.
+The three document sections present one row per command and share the General
+shortcut-pill treatment; the compact profile actions appear in those sections,
+not General. This UI reuse does not combine their persistence owners.
 
 ## Input and renderer boundaries
 
@@ -82,6 +87,18 @@ Shared keyboard tests cover replacement/disable/reset, migration, stale writes,
 platform aliases, context overlap, sequence expiry and invalid continuation,
 composition, focus, and ownership disposal. Settings interaction tests exercise
 actual recording/editing, conflict display, and stale drafts. Markdown, math,
-source-adapter, and PDF regressions qualify the consumers separately. Native
+source-adapter, and PDF regressions qualify the consumers separately. Default
+bindings are exercised through the sequence matcher on both Mac and non-Mac
+platforms. Math ownership checks remain side-effect-free, and held keys do not
+repeat structural edits.
+
+`pnpm --filter @t3tools/web test:layout` is a separate Chromium suite using the
+real settings components and styles. At desktop, tablet, and narrow widths it
+checks the Math card's controls and dropdown menus against the card and viewport,
+and the Restore confirmation against its trigger and viewport. These are explicit
+surface-specific bounds, not a global ban on intentional popover overflow. CI runs
+this suite separately from DOM-only unit tests.
+
+Native
 menu interception and screen-reader behavior require platform interaction tests;
 DOM-only evidence is not sufficient.

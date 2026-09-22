@@ -58,7 +58,7 @@ Default examples:
 
 On Mac, Alt means Option and Control+M is also a math sequence prefix.
 Command+M and Control+Space may be reserved by native menus or input methods.
-Use the toolbar or assign an alternative in **Settings → Keybindings**.
+Use the toolbar or assign an alternative in **Settings → Shortcuts**.
 These are supported LyX-style math sequences, not an implementation of every LyX action.
 
 Inside an equation, typing a recognized command such as `\alpha` then Space or

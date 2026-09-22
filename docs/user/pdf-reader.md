@@ -49,8 +49,8 @@ Keyboard shortcuts inside the reader:
 While PDF search is focused, `Arrow Down` or `Enter` advances to the next
 match. `Arrow Up` or `Shift+Enter` returns to the previous match.
 
-On Mac, Alt is Option. Customize document commands under **Settings → Keybindings →
-Document and math shortcuts → PDF**. Toolbar hints show your effective bindings.
+On Mac, Alt is Option. Customize document commands under **Settings → Shortcuts → PDF**.
+Toolbar hints show your effective bindings.
 Document zoom deliberately differs from `Cmd/Ctrl++`, `Cmd/Ctrl+-`, and
 `Cmd/Ctrl+0`, which remain browser/application zoom. Those native menu keys can
 be intercepted before a document receives them; prefer a non-reserved custom key.

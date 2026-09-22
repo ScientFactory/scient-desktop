@@ -1,8 +1,26 @@
-import { useMemo, useRef, useState, useSyncExternalStore } from "react";
+import { Fragment, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
+import { ChevronDownIcon, EllipsisIcon, PlusIcon } from "lucide-react";
 import type { ResolvedKeybindingsConfig } from "@t3tools/contracts";
 import { Button } from "~/components/ui/button";
 import { Input } from "~/components/ui/input";
-import { surfaceCommands } from "./catalog";
+import { Menu, MenuItem, MenuPopup, MenuTrigger } from "~/components/ui/menu";
+import { Popover, PopoverPopup, PopoverTrigger } from "~/components/ui/popover";
+import { Badge } from "~/components/ui/badge";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "~/components/ui/select";
+import { Switch } from "~/components/ui/switch";
+import { SettingsRow } from "~/components/settings/settingsLayout";
+import {
+  ShortcutKeys,
+  SHORTCUT_PILL_BUTTON_CLASS,
+  SHORTCUT_ROW_CLASS,
+} from "~/components/settings/ShortcutRow";
+import { surfaceCommands, type KeyboardScope } from "./catalog";
 import { eventStroke, isMacKeyboard, labelKeys } from "./keys";
 import {
   DEFAULT_KEYBOARD_PREFERENCES,
@@ -21,10 +39,13 @@ import {
 } from "~/components/settings/KeybindingsSettings.logic";
 
 const NO_APP_BINDINGS: ResolvedKeybindingsConfig = [];
+const MATH_OPTION_ROW_CLASS = `${SHORTCUT_ROW_CLASS} py-2`;
 export function AuthoringKeybindingsSettings({
+  scope,
   query = "",
   appBindings = NO_APP_BINDINGS,
 }: {
+  readonly scope: KeyboardScope;
   readonly query?: string;
   readonly appBindings?: ResolvedKeybindingsConfig;
 }) {
@@ -35,33 +56,48 @@ export function AuthoringKeybindingsSettings({
   );
   const mac = isMacKeyboard();
   const commands = useMemo(() => surfaceCommands(mac), [mac]);
-  const [category, setCategory] = useState("all");
   const [editing, setEditing] = useState<{
     id: string;
+    index: number;
     draft: string;
+    original: string;
+    captured: boolean;
     snapshot: KeyboardPreferencesSnapshot;
   } | null>(null);
-  const [recording, setRecording] = useState(false);
-  const recorderInput = useRef<HTMLInputElement>(null);
+  const importInput = useRef<HTMLInputElement>(null);
+  const editingControl = useRef<HTMLDivElement>(null);
   const [error, setError] = useState("");
-  const [importDraft, setImportDraft] = useState<{
-    text: string;
-    snapshot: KeyboardPreferencesSnapshot;
-  } | null>(null);
-  const effective = effectiveSurfaceBindings(snapshot.preferences, mac);
+  const [restoreOpen, setRestoreOpen] = useState(false);
+  const isEditing = editing !== null;
+  useEffect(() => {
+    if (!isEditing) return;
+    const cancelOutside = (event: PointerEvent) => {
+      const target = event.target;
+      if (!(target instanceof Node) || editingControl.current?.contains(target)) return;
+      if (target instanceof Element && target.closest("[data-authoring-keybinding-menu]")) return;
+      setEditing(null);
+      setError("");
+    };
+    document.addEventListener("pointerdown", cancelOutside, true);
+    return () => document.removeEventListener("pointerdown", cancelOutside, true);
+  }, [isEditing]);
+  const effective = useMemo(
+    () => effectiveSurfaceBindings(snapshot.preferences, mac),
+    [snapshot.preferences, mac],
+  );
+  const keysByCommand = useMemo(() => {
+    const grouped = new Map<string, string[]>();
+    for (const binding of effective) {
+      const keys = grouped.get(binding.command) ?? [];
+      keys.push(binding.keys);
+      grouped.set(binding.command, keys);
+    }
+    return grouped;
+  }, [effective]);
   const visible = commands.filter(
     (command) =>
-      (category === "all" || command.scope === category) &&
-      (
-        command.id +
-        " " +
-        command.label +
-        " " +
-        effective
-          .filter((binding) => binding.command === command.id)
-          .map((binding) => binding.keys)
-          .join(" ")
-      )
+      command.scope === scope &&
+      (command.id + " " + command.label + " " + (keysByCommand.get(command.id)?.join(" ") ?? ""))
         .toLowerCase()
         .includes(query.toLowerCase()),
   );
@@ -82,11 +118,7 @@ export function AuthoringKeybindingsSettings({
     delete overrides[id];
     update({ overrides });
   };
-  const editingKeys =
-    editing?.draft
-      .split(",")
-      .map((key) => key.trim())
-      .filter(Boolean) ?? [];
+  const editingKeys = editing?.captured && editing.draft.trim() ? [editing.draft.trim()] : [];
   const appOverlaps = appBindings
     .filter(
       (binding) =>
@@ -95,345 +127,264 @@ export function AuthoringKeybindingsSettings({
         ) && conditionsOverlap(whenAstToExpression(binding.whenAst), "!terminalFocus"),
     )
     .map((binding) => binding.command);
-  return (
-    <section
-      id="authoring"
-      aria-labelledby="authoring-keybindings-title"
-      className="space-y-3 rounded-lg border p-4"
-    >
-      <h2 id="authoring-keybindings-title" tabIndex={-1} className="text-sm font-medium">
-        Document and math shortcuts
-      </h2>
-      <p className="text-xs text-muted-foreground">
-        Saved in this browser or desktop profile, shared by its editors. Application bindings above
-        retain their environment scope. The focused document owns its commands; PDF read mode never
-        inserts math.
-      </p>
-      {snapshot.migrated ? (
-        <p role="status" className="text-xs">
-          Legacy math shortcuts loaded. Your next save writes the shared format and keeps the
-          original data.
-        </p>
-      ) : null}
-      {snapshot.error || error ? (
-        <p role="alert" className="text-xs text-destructive">
-          {error || snapshot.error}
-        </p>
-      ) : null}
-      <label className="text-xs">
-        Category{" "}
-        <select
-          aria-label="Authoring shortcut category"
-          value={category}
-          onChange={(event) => setCategory(event.target.value)}
-        >
-          <option value="all">All documents</option>
-          <option value="markdown">Markdown</option>
-          <option value="math">Math / TeX</option>
-          <option value="pdf">PDF</option>
-        </select>
-      </label>
-      <p className="text-xs text-muted-foreground">
-        PDF document zoom uses Alt+Up / Alt+Down and Alt+0 by default. Cmd/Ctrl + plus, minus, or 0
-        remains browser/application zoom. Native menus and operating-system shortcuts can intercept
-        custom bindings before Scient receives them.
-      </p>
-      {editing ? (
-        <div className="space-y-2 rounded border p-3" data-keybinding-capture="">
-          <h3 className="text-sm">
-            Edit {commands.find((command) => command.id === editing.id)?.label}
-          </h3>
-          <p className="text-xs text-muted-foreground">
-            Separate alternatives with commas; separate sequence strokes with spaces. Empty disables
-            this command. Saving replaces all its bindings.
-          </p>
-          <Input
-            ref={recorderInput}
-            aria-label="Authoring shortcut keys"
-            value={editing.draft}
-            onChange={(event) => setEditing({ ...editing, draft: event.target.value })}
-            onKeyDown={(event) => {
-              if (!recording) return;
-              event.preventDefault();
-              event.stopPropagation();
-              if (event.key === "Escape") {
-                setRecording(false);
-                return;
+  const beginEditing = (id: string, index: number, draft: string) => {
+    setEditing({ id, index, draft, original: draft, captured: false, snapshot });
+    setError("");
+  };
+  const saveEditing = (keys: readonly string[]) => {
+    if (!editing?.draft.trim()) return;
+    const next = [...keys];
+    next.splice(editing.index, editing.index < keys.length ? 1 : 0, editing.draft.trim());
+    if (
+      save(
+        {
+          ...editing.snapshot.preferences,
+          overrides: { ...editing.snapshot.preferences.overrides, [editing.id]: next },
+        },
+        editing.snapshot,
+      )
+    ) {
+      setEditing(null);
+    }
+  };
+  const removeEditing = (keys: readonly string[]) => {
+    if (!editing || editing.index >= keys.length) return;
+    const next = keys.filter((_, index) => index !== editing.index);
+    if (
+      save(
+        {
+          ...editing.snapshot.preferences,
+          overrides: { ...editing.snapshot.preferences.overrides, [editing.id]: next },
+        },
+        editing.snapshot,
+      )
+    ) {
+      setEditing(null);
+    }
+  };
+  const captureInput = (
+    id: string,
+    label: string,
+    index: number,
+    activeEdit: NonNullable<typeof editing>,
+  ) => (
+    <Input
+      data-keybinding-capture=""
+      autoFocus
+      readOnly
+      aria-label={"Shortcut for " + label}
+      title="Press successive keys for a sequence; Escape cancels"
+      value={activeEdit.captured ? activeEdit.draft : ""}
+      placeholder="Press shortcut"
+      size="sm"
+      className="w-44 font-mono border-primary/70 bg-primary/5"
+      onKeyDown={(event) => {
+        if (event.key === "Tab") return;
+        event.preventDefault();
+        event.stopPropagation();
+        if (event.key === "Escape") {
+          setEditing(null);
+          setError("");
+          return;
+        }
+        if (event.repeat) return;
+        const stroke = eventStroke(event.nativeEvent, true);
+        if (!stroke) return;
+        const portable = stroke.replace(mac ? /^meta\+/u : /^ctrl\+/u, "mod+");
+        setEditing((current) =>
+          current?.id === id && current.index === index
+            ? {
+                ...current,
+                draft: current.captured ? current.draft + " " + portable : portable,
+                captured: true,
               }
-              if (event.repeat) return;
-              const stroke = eventStroke(event.nativeEvent, true);
-              if (!stroke) return;
-              const portable = stroke.replace(mac ? /^meta\+/u : /^ctrl\+/u, "mod+");
-              setEditing({
-                ...editing,
-                draft: editing.draft ? editing.draft + " " + portable : portable,
-              });
-            }}
-          />
-          <div className="flex flex-wrap gap-2">
-            <Button
-              size="sm"
-              variant="outline"
-              onClick={() => {
-                setRecording(!recording);
-                if (!recording) {
-                  setEditing({ ...editing, draft: "" });
-                  recorderInput.current?.focus();
-                }
-              }}
+            : current,
+        );
+      }}
+    />
+  );
+  return (
+    <div data-authoring-scope={scope}>
+      <div className="flex flex-wrap items-center justify-between gap-1 px-3 py-2 sm:px-4">
+        {scope === "math" ? (
+          <Popover>
+            <PopoverTrigger render={<Button size="xs" variant="ghost-muted" className="group" />}>
+              Math input behavior and preset
+              <ChevronDownIcon className="size-3.5 transition-transform group-aria-expanded:rotate-180" />
+            </PopoverTrigger>
+            <PopoverPopup
+              align="start"
+              aria-label="Math input behavior and preset"
+              className="w-[34rem] max-w-[calc(100vw-2rem)] rounded-xl border border-border/60"
+              side="bottom"
+              viewportClassName="p-2 [--viewport-inline-padding:--spacing(2)]"
             >
-              {recording ? "Stop recording" : "Record sequence"}
-            </Button>
-            <Button
-              size="sm"
-              onClick={() => {
-                if (
-                  save(
-                    {
-                      ...editing.snapshot.preferences,
-                      overrides: {
-                        ...editing.snapshot.preferences.overrides,
-                        [editing.id]: editingKeys,
-                      },
-                    },
-                    editing.snapshot,
-                  )
-                ) {
-                  setEditing(null);
-                  setRecording(false);
-                }
-              }}
-            >
-              Save shortcut
-            </Button>
-            <Button
-              size="sm"
-              variant="ghost"
-              onClick={() => {
-                setEditing(null);
-                setRecording(false);
-                setError("");
-              }}
-            >
-              Cancel
-            </Button>
-          </div>
-          {appOverlaps.length ? (
-            <p role="status" className="text-xs">
-              Contextual overlap with application commands: {[...new Set(appOverlaps)].join(", ")}.
-              This authoring command takes priority only in its focused surface.
-            </p>
-          ) : null}
-          {editingKeys.some((key) => /(?:mod|meta)\+m(?: |$)|ctrl\+space/u.test(key)) ? (
-            <p className="text-xs">
-              These keys can also be reserved by the operating system or input method. Keep a usable
-              alternative or use the toolbar.
-            </p>
-          ) : null}
-        </div>
-      ) : null}
-      <div className="max-h-96 overflow-auto">
-        <table className="w-full text-left text-xs">
-          <thead>
-            <tr>
-              <th className="p-2">Action / scope</th>
-              <th className="p-2">Effective shortcut</th>
-              <th className="p-2">Customize</th>
-            </tr>
-          </thead>
-          <tbody>
-            {visible.map((command) => {
-              const keys = effective
-                .filter((binding) => binding.command === command.id)
-                .map((binding) => binding.keys);
-              return (
-                <tr key={command.id} className="border-t">
-                  <td className="p-2">
-                    {command.label}
-                    <div className="text-muted-foreground">
-                      {command.scope} · {command.id}
-                    </div>
-                  </td>
-                  <td className="p-2">
-                    {keys.length ? keys.map((key) => labelKeys(key, mac)).join(" / ") : "Unbound"}
-                    <div className="text-muted-foreground">
-                      {command.id in snapshot.preferences.overrides
-                        ? keys.length
-                          ? "Custom"
-                          : "Disabled"
-                        : "Default"}
-                    </div>
-                  </td>
-                  <td className="p-2">
-                    <div className="flex gap-1">
-                      <Button
-                        size="sm"
-                        variant="ghost"
-                        aria-label={"Edit " + command.id}
-                        onClick={() => {
-                          setEditing({ id: command.id, draft: keys.join(", "), snapshot });
-                          setRecording(false);
-                          setError("");
-                        }}
-                      >
-                        Edit
-                      </Button>
-                      <Button
-                        size="sm"
-                        variant="ghost"
-                        aria-label={"Disable " + command.id}
-                        onClick={() =>
-                          update({
-                            overrides: { ...snapshot.preferences.overrides, [command.id]: [] },
-                          })
+              <div id="math-input-behavior" className="grid gap-x-3 sm:grid-cols-2">
+                <div>
+                  <SettingsRow
+                    className={MATH_OPTION_ROW_CLASS}
+                    title="Math preset"
+                    control={
+                      <Select
+                        value={snapshot.preferences.mathPreset}
+                        onValueChange={(value) =>
+                          update({ mathPreset: value as KeyboardPreferences["mathPreset"] })
                         }
                       >
-                        Disable
-                      </Button>
-                      <Button
-                        size="sm"
-                        variant="ghost"
-                        aria-label={"Reset " + command.id}
-                        onClick={() => resetCommand(command.id)}
+                        <SelectTrigger
+                          size="sm"
+                          className="w-44 max-w-full"
+                          aria-label="Math shortcut preset"
+                        >
+                          <SelectValue>
+                            {snapshot.preferences.mathPreset === "lyx" ? "LyX" : "Minimal"}
+                          </SelectValue>
+                        </SelectTrigger>
+                        <SelectContent align="start" alignItemWithTrigger={false}>
+                          <SelectItem value="lyx">Supported LyX-style sequences</SelectItem>
+                          <SelectItem value="minimal">
+                            Minimal: palette and equation insertion
+                          </SelectItem>
+                        </SelectContent>
+                      </Select>
+                    }
+                  />
+                  <SettingsRow
+                    className={MATH_OPTION_ROW_CLASS}
+                    title="Command completion"
+                    control={
+                      <Select
+                        value={snapshot.preferences.completion}
+                        onValueChange={(value) =>
+                          update({ completion: value as KeyboardPreferences["completion"] })
+                        }
                       >
-                        Reset
-                      </Button>
-                    </div>
-                  </td>
-                </tr>
-              );
-            })}
-          </tbody>
-        </table>
-        {!visible.length ? <p className="p-2 text-xs">No matching document commands.</p> : null}
-      </div>
-      <details className="space-y-2 text-xs">
-        <summary>Math input behavior and preset</summary>
-        <p className="text-muted-foreground">
-          These control authoring behavior, not application shortcuts. Explicit custom bindings
-          override the preset.
-        </p>
-        <label className="block">
-          Math preset{" "}
-          <select
-            aria-label="Math shortcut preset"
-            value={snapshot.preferences.mathPreset}
-            onChange={(event) =>
-              update({ mathPreset: event.target.value as KeyboardPreferences["mathPreset"] })
-            }
-          >
-            <option value="lyx">Supported LyX-style math sequences</option>
-            <option value="minimal">Minimal: palette and equation insertion</option>
-          </select>
-        </label>
-        <label className="block">
-          Command completion{" "}
-          <select
-            aria-label="Math command completion"
-            value={snapshot.preferences.completion}
-            onChange={(event) =>
-              update({ completion: event.target.value as KeyboardPreferences["completion"] })
-            }
-          >
-            <option value="space-tab">Space and Tab</option>
-            <option value="tab">Tab only</option>
-            <option value="off">Off</option>
-          </select>
-        </label>
-        <label className="block">
+                        <SelectTrigger
+                          size="sm"
+                          className="w-full sm:w-40"
+                          aria-label="Math command completion"
+                        >
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent align="start" alignItemWithTrigger={false}>
+                          <SelectItem value="space-tab">Space and Tab</SelectItem>
+                          <SelectItem value="tab">Tab only</SelectItem>
+                          <SelectItem value="off">Off</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    }
+                  />
+                </div>
+                <div className="border-t border-border/40 sm:border-t-0 sm:border-l sm:pl-3">
+                  <SettingsRow
+                    className={MATH_OPTION_ROW_CLASS}
+                    title="Automatic operators"
+                    control={
+                      <Switch
+                        aria-label="Automatic math operators"
+                        checked={snapshot.preferences.automaticOperators}
+                        onCheckedChange={(checked) => update({ automaticOperators: checked })}
+                      />
+                    }
+                  />
+                  <SettingsRow
+                    className={MATH_OPTION_ROW_CLASS}
+                    title="Enter adds a matrix row"
+                    control={
+                      <Switch
+                        aria-label="Enter adds a matrix row"
+                        checked={snapshot.preferences.matrixEnter}
+                        onCheckedChange={(checked) => update({ matrixEnter: checked })}
+                      />
+                    }
+                  />
+                </div>
+                <div className="border-t border-border/40 sm:col-span-2">
+                  <SettingsRow
+                    className={MATH_OPTION_ROW_CLASS}
+                    title="Sequence timeout"
+                    description="Applies to Markdown, Math, and PDF shortcuts."
+                    control={
+                      <Select
+                        value={String(snapshot.preferences.sequenceTimeoutMs)}
+                        onValueChange={(value) => update({ sequenceTimeoutMs: Number(value) })}
+                      >
+                        <SelectTrigger
+                          size="sm"
+                          className="w-full sm:w-32"
+                          aria-label="Shortcut sequence timeout"
+                        >
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent alignItemWithTrigger={false}>
+                          {[
+                            ...new Set([
+                              1000,
+                              2500,
+                              5000,
+                              10000,
+                              snapshot.preferences.sequenceTimeoutMs,
+                            ]),
+                          ]
+                            .sort((a, b) => a - b)
+                            .map((ms) => (
+                              <SelectItem key={ms} value={String(ms)}>
+                                {ms / 1000} seconds
+                              </SelectItem>
+                            ))}
+                        </SelectContent>
+                      </Select>
+                    }
+                  />
+                </div>
+              </div>
+            </PopoverPopup>
+          </Popover>
+        ) : (
+          <span />
+        )}
+        <div
+          className="flex items-center gap-1"
+          role="group"
+          aria-label="Document shortcut profile"
+        >
           <input
-            type="checkbox"
-            checked={snapshot.preferences.automaticOperators}
-            onChange={(event) => update({ automaticOperators: event.target.checked })}
-          />{" "}
-          Replace typed math operators such as -&gt;
-        </label>
-        <label className="block">
-          <input
-            type="checkbox"
-            checked={snapshot.preferences.matrixEnter}
-            onChange={(event) => update({ matrixEnter: event.target.checked })}
-          />{" "}
-          Enter adds a row inside a supported matrix
-        </label>
-        <label className="block">
-          Sequence timeout{" "}
-          <select
-            aria-label="Shortcut sequence timeout"
-            value={snapshot.preferences.sequenceTimeoutMs}
-            onChange={(event) => update({ sequenceTimeoutMs: Number(event.target.value) })}
-          >
-            {[...new Set([1000, 2500, 5000, 10000, snapshot.preferences.sequenceTimeoutMs])]
-              .sort((a, b) => a - b)
-              .map((ms) => (
-                <option key={ms} value={ms}>
-                  {ms / 1000} seconds
-                </option>
-              ))}
-          </select>
-        </label>
-      </details>
-      <details className="space-y-2 text-xs">
-        <summary>Import, export, or restore document shortcuts</summary>
-        <p>
-          Versioned authoring preferences or legacy math JSON. This does not change environment
-          keybindings.json.
-        </p>
-        <input
-          aria-label="Import authoring shortcuts"
-          type="file"
-          accept=".json,application/json"
-          onChange={(event) => {
-            const file = event.target.files?.[0];
-            if (!file) return;
-            const expected = snapshot;
-            if (file.size > 100000) {
-              setError("Shortcut file is too large.");
-              return;
-            }
-            void file
-              .text()
-              .then((text) => {
-                importKeyboardPreferences(text);
-                setImportDraft({ text, snapshot: expected });
-                setError("");
-              })
-              .catch((cause) =>
-                setError(cause instanceof Error ? cause.message : "Import failed."),
-              );
-          }}
-        />
-        {importDraft ? (
-          <div>
-            <textarea
-              className="w-full rounded border p-2 font-mono"
-              rows={6}
-              aria-label="Imported shortcut preferences"
-              value={importDraft.text}
-              onChange={(event) => setImportDraft({ ...importDraft, text: event.target.value })}
-            />
-            <Button
-              size="sm"
-              onClick={() => {
-                try {
-                  if (save(importKeyboardPreferences(importDraft.text), importDraft.snapshot))
-                    setImportDraft(null);
-                } catch (cause) {
-                  setError(cause instanceof Error ? cause.message : "Invalid import.");
-                }
-              }}
-            >
-              Apply import
-            </Button>
-            <Button size="sm" variant="ghost" onClick={() => setImportDraft(null)}>
-              Cancel import
-            </Button>
-          </div>
-        ) : null}
-        <div className="flex gap-2">
+            ref={importInput}
+            hidden
+            aria-label="Import document shortcuts file"
+            type="file"
+            accept=".json,application/json"
+            onChange={(event) => {
+              const file = event.currentTarget.files?.[0];
+              event.currentTarget.value = "";
+              if (!file) return;
+              const expected = snapshot;
+              if (file.size > 100000) {
+                setError("Shortcut file is too large.");
+                return;
+              }
+              void file
+                .text()
+                .then((text) => {
+                  const imported = importKeyboardPreferences(text);
+                  if (
+                    window.confirm(
+                      "Replace Markdown, Math, and PDF shortcuts and math behavior with this file? Application keybindings will not change.",
+                    )
+                  )
+                    save(imported, expected);
+                })
+                .catch((cause) =>
+                  setError(cause instanceof Error ? cause.message : "Import failed."),
+                );
+            }}
+          />
+          <Button size="xs" variant="ghost-muted" onClick={() => importInput.current?.click()}>
+            Import
+          </Button>
           <Button
-            size="sm"
-            variant="outline"
+            size="xs"
+            variant="ghost-muted"
             onClick={() => {
               const url = URL.createObjectURL(
                 new Blob([JSON.stringify(snapshot.preferences, null, 2)], {
@@ -447,29 +398,211 @@ export function AuthoringKeybindingsSettings({
               setTimeout(() => URL.revokeObjectURL(url), 0);
             }}
           >
-            Export document shortcuts
+            Export
           </Button>
-          <Button
-            size="sm"
-            variant="outline"
-            onClick={() => {
-              if (
-                window.confirm(
-                  "Restore document and math shortcut defaults in this profile? Application bindings are unchanged.",
-                )
-              )
-                save(DEFAULT_KEYBOARD_PREFERENCES);
-            }}
-          >
-            Restore document defaults
-          </Button>
+          <Popover open={restoreOpen} onOpenChange={setRestoreOpen}>
+            <PopoverTrigger render={<Button size="xs" variant="ghost-muted" />}>
+              Restore defaults
+            </PopoverTrigger>
+            <PopoverPopup
+              align="end"
+              aria-label="Restore document shortcut defaults"
+              className="w-80 max-w-[calc(100vw-2rem)]"
+              side="bottom"
+            >
+              <div className="space-y-3">
+                <div className="space-y-1">
+                  <p className="text-sm font-medium">Restore defaults?</p>
+                  <p className="text-xs text-muted-foreground">
+                    Reset Markdown, Math, and PDF shortcuts and Math input settings. General
+                    shortcuts stay unchanged.
+                  </p>
+                </div>
+                <div className="flex justify-end gap-1">
+                  <Button size="xs" variant="ghost-muted" onClick={() => setRestoreOpen(false)}>
+                    Cancel
+                  </Button>
+                  <Button
+                    size="xs"
+                    variant="outline"
+                    onClick={() => {
+                      if (save(DEFAULT_KEYBOARD_PREFERENCES)) setRestoreOpen(false);
+                    }}
+                  >
+                    Restore
+                  </Button>
+                </div>
+              </div>
+            </PopoverPopup>
+          </Popover>
         </div>
-      </details>
-      <p className="text-xs text-muted-foreground">
-        Arrow keys, clipboard, ordinary typing, and native editor history remain owned by the
-        focused editor. System-wide capture shortcuts remain in Capture settings. Visual-specific
-        commands become available only through a supported editor adapter.
-      </p>
-    </section>
+      </div>
+      {snapshot.migrated ? (
+        <p role="status" className="px-3 py-1 text-xs text-muted-foreground sm:px-4">
+          Legacy math shortcuts loaded. Your next save writes the shared format and keeps the
+          original data.
+        </p>
+      ) : null}
+      {snapshot.error || error ? (
+        <p role="alert" className="px-3 py-1 text-xs text-destructive sm:px-4">
+          {error || snapshot.error}
+        </p>
+      ) : null}
+      <div>
+        {visible.map((command) => {
+          const keys = keysByCommand.get(command.id) ?? [];
+          const customized = Object.hasOwn(snapshot.preferences.overrides, command.id);
+          const disabled = customized && keys.length === 0;
+          const activeEdit = editing?.id === command.id ? editing : null;
+          const seenKeys = new Map<string, number>();
+          const keyEntries = keys.map((key, index) => {
+            const occurrence = seenKeys.get(key) ?? 0;
+            seenKeys.set(key, occurrence + 1);
+            return { key, index, identity: key + "-" + occurrence };
+          });
+          const hasOverlap = activeEdit?.captured && appOverlaps.length > 0;
+          const reserved =
+            activeEdit?.captured && /(?:mod|meta)\+m(?: |$)|ctrl\+space/u.test(activeEdit.draft);
+          return (
+            <SettingsRow
+              key={command.id}
+              className={SHORTCUT_ROW_CLASS}
+              title={
+                <span className="flex items-center gap-2">
+                  {command.label}
+                  {customized ? (
+                    <Badge
+                      variant="outline"
+                      size="sm"
+                      className="font-normal text-muted-foreground"
+                    >
+                      {disabled ? "Disabled" : "Custom"}
+                    </Badge>
+                  ) : null}
+                </span>
+              }
+              description={
+                hasOverlap || reserved ? (
+                  <span role="status">
+                    {hasOverlap
+                      ? "Also used by an application command; this shortcut takes priority only in its focused document. "
+                      : ""}
+                    {reserved
+                      ? "This shortcut may be reserved by the operating system or input method."
+                      : ""}
+                  </span>
+                ) : undefined
+              }
+              control={
+                <div
+                  ref={activeEdit ? editingControl : undefined}
+                  className="flex flex-wrap items-center justify-end gap-1.5"
+                >
+                  {activeEdit?.captured && activeEdit.draft.trim() !== activeEdit.original ? (
+                    <Button size="sm" onClick={() => saveEditing(keys)}>
+                      Save
+                    </Button>
+                  ) : null}
+                  {keys.length > 0 || customized ? (
+                    <Menu>
+                      <MenuTrigger
+                        render={
+                          <Button
+                            size="icon-sm"
+                            variant="ghost"
+                            className="text-muted-foreground opacity-0 transition-opacity group-focus-within/row:opacity-100 group-hover/row:opacity-100 pointer-coarse:opacity-100"
+                            aria-label={"Actions for " + command.label}
+                          />
+                        }
+                      >
+                        <EllipsisIcon className="size-3.5" />
+                      </MenuTrigger>
+                      <MenuPopup
+                        align="end"
+                        data-authoring-keybinding-menu={activeEdit ? "" : undefined}
+                      >
+                        {activeEdit && activeEdit.index < keys.length ? (
+                          <MenuItem onClick={() => removeEditing(keys)}>Remove shortcut</MenuItem>
+                        ) : null}
+                        {keys.length > 0 ? (
+                          <MenuItem
+                            onClick={() =>
+                              update({
+                                overrides: {
+                                  ...snapshot.preferences.overrides,
+                                  [command.id]: [],
+                                },
+                              })
+                            }
+                          >
+                            Disable
+                          </MenuItem>
+                        ) : null}
+                        {customized ? (
+                          <MenuItem onClick={() => resetCommand(command.id)}>
+                            Reset to default
+                          </MenuItem>
+                        ) : null}
+                      </MenuPopup>
+                    </Menu>
+                  ) : null}
+                  {keys.length > 0 ? (
+                    activeEdit?.index === keys.length ? (
+                      captureInput(command.id, command.label, keys.length, activeEdit)
+                    ) : (
+                      <Button
+                        size="icon-xs"
+                        variant="ghost-muted"
+                        className="opacity-0 transition-opacity group-focus-within/row:opacity-100 group-hover/row:opacity-100 pointer-coarse:opacity-100"
+                        aria-label={"Add shortcut for " + command.label}
+                        onClick={() => beginEditing(command.id, keys.length, "")}
+                      >
+                        <PlusIcon />
+                      </Button>
+                    )
+                  ) : null}
+                  {keyEntries.map(({ key, index, identity }) =>
+                    activeEdit?.index === index ? (
+                      <Fragment key={identity}>
+                        {captureInput(command.id, command.label, index, activeEdit)}
+                      </Fragment>
+                    ) : (
+                      <button
+                        key={identity}
+                        type="button"
+                        className={SHORTCUT_PILL_BUTTON_CLASS}
+                        aria-label={"Edit " + command.id + ": " + labelKeys(key, mac)}
+                        onClick={() => beginEditing(command.id, index, key)}
+                      >
+                        <ShortcutKeys value={key} />
+                      </button>
+                    ),
+                  )}
+                  {keys.length === 0 ? (
+                    activeEdit ? (
+                      captureInput(command.id, command.label, 0, activeEdit)
+                    ) : (
+                      <Button
+                        size="xs"
+                        variant="ghost-muted"
+                        aria-label={"Edit " + command.id}
+                        onClick={() => beginEditing(command.id, 0, "")}
+                      >
+                        {disabled ? "Disabled" : "Assign shortcut"}
+                      </Button>
+                    )
+                  ) : null}
+                </div>
+              }
+            />
+          );
+        })}
+        {visible.length === 0 ? (
+          <p className="px-4 py-12 text-center text-sm text-muted-foreground">
+            No matching document commands.
+          </p>
+        ) : null}
+      </div>
+    </div>
   );
 }

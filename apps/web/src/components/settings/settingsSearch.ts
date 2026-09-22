@@ -95,14 +95,14 @@ export const SETTINGS_SECTION_LABELS: Readonly<Record<SettingsPath, string>> = {
   "/settings/voice": "Voice",
   "/settings/skills": "Skills",
   "/settings/scientific-computing": "Scientific Computing",
-  "/settings/keybindings": "Keybindings",
+  "/settings/keybindings": "Shortcuts",
   "/settings/source-control": "Source Control",
   "/settings/storage": "Storage",
   "/settings/connections": "Connections",
   "/settings/archived": "Archive",
 };
 
-/** Anchor id of the first row bound to `command` on the Keybindings page. */
+/** Anchor id of the first row bound to `command` on the Shortcuts page. */
 export function keybindingSearchAnchorId<Command extends KeybindingCommand>(command: Command) {
   return `keybinding-${command}` as const;
 }
@@ -519,16 +519,16 @@ export const SETTINGS_SEARCH_ITEMS = [
   },
   {
     id: "keybindings",
-    title: "Keybindings",
+    title: "Shortcuts",
     to: "/settings/keybindings",
     searchTerms: [
-      "keyboard shortcuts hotkeys commands bindings json math latex tex markdown pdf symbols matrices alpha beta",
+      "keyboard keybindings shortcuts hotkeys commands bindings json math latex tex markdown pdf symbols matrices alpha beta",
     ],
   },
   ...KEYBINDING_SEARCH_ITEMS,
   {
     id: "authoring",
-    title: "Document and math shortcuts",
+    title: "Markdown, Math, and PDF shortcuts",
     to: "/settings/keybindings",
     searchTerms: [
       "keyboard math latex tex markdown pdf symbols matrices alpha beta completion preset",
