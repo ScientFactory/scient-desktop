@@ -35,9 +35,9 @@ mobile activation, or a product-policy change.
 Before mutation:
 
 - verify the canonical Scient checkout, current `origin/main`, all worktrees, and dirty state;
-- use the exact fetched `origin/main` as the owned base; fast-forward local `main` only when
-  its checkout is clean and that move is safe. A dirty or independently used local `main`
-  must remain untouched and must not block an isolated alignment;
+- use the exact fetched `origin/main` as the owned base when starting the alignment; fast-forward
+  local `main` only when its checkout is clean and that move is safe. A dirty or independently used
+  local `main` must remain untouched and must not block an isolated alignment;
 - fetch `origin` and the official `upstream` remote, and verify upstream's push URL is `DISABLED`;
 - read `AGENTS.md`, `UPSTREAM.md`, `upstream-state.json`, the D4 bootstrap record, and the latest
   dated alignment receipt;
@@ -125,6 +125,29 @@ Do not resolve a substantial conflict by taking one whole side without checking 
 their callers. Preserve immutable migration order; an upstream migration number that collides with a
 shipped Scient migration must be renumbered, never reused.
 
+### If owned main advances during the alignment
+
+Keep the reviewed alignment branch and its original upstream merge. Once that merge is committed
+and the worktree is clean, fetch `origin/main`, freeze its new commit ID, and confirm it contains
+the original owned base. Merge that exact owned-main commit into the alignment branch with
+`git merge --no-ff --no-commit --no-rerere-autoupdate <new-owned-main-sha>`. Inspect both sides of
+new conflicts and all overlapping changes, including cleanly merged files, before staging and
+committing the catch-up. A recorded `rerere` resolution is a proposal to review, not acceptance.
+
+This owned-main catch-up preserves the original merge and its official second parent. Do not
+cherry-pick main's commits, replay the upstream merge, or restart on a fresh branch merely because
+main moved. If the upstream merge is still uncommitted, finish and review it before catching up;
+Git cannot begin another merge while it is in progress. If new main already contains the alignment
+or changes its upstream or protected-policy boundary, reassess the branch rather than applying the
+ordinary catch-up mechanically. Recreate the alignment only when its existing merge cannot be
+safely carried forward, and record the reason.
+
+Review the new owned changes against the composed behavior, run focused checks for their overlap,
+then run the final gates and the upstream provenance check against the resulting candidate and
+current owned main. In the receipt, retain the original owned base and upstream merge ID and also
+record the owned-main commit and catch-up merge ID. The catch-up does not advance `integrationBase`
+or replace `lastRefreshMerge` with an owned-main merge.
+
 ## 4. Audit protected seams
 
 Every alignment explicitly reviews:
@@ -189,8 +212,8 @@ interaction review. Automated checks do not establish visual acceptance.
 
 Create a dated receipt under `docs/internals/` that records:
 
-- exact owned base, previous official boundary, target, range, target tag, merge commit, branch, and
-  disabled upstream push boundary;
+- exact owned base, previous official boundary, target, range, target tag, upstream merge commit,
+  any later owned-main catch-up commits, branch, and disabled upstream push boundary;
 - integrated behavior and any activation held behind a tested compatibility or policy gate
   (not omitted upstream commits);
 - every meaningful conflict composition and any semantic issue found after Git's merge;
