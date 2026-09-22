@@ -83,6 +83,10 @@ const UPCOMING_LANGUAGES = [
   { id: "r", label: "R" },
   { id: "rust", label: "Rust" },
   { id: "spss", label: "SPSS" },
+  { id: "sql", label: "SQL" },
+  { id: "octave", label: "GNU Octave" },
+  { id: "wolfram", label: "Wolfram Language" },
+  { id: "stata", label: "Stata" },
 ] as const;
 
 import { PythonToolkitSettings, type ToolkitChange } from "./PythonToolkitSettings";

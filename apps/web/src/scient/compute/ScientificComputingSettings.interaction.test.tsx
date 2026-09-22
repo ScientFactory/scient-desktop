@@ -746,12 +746,22 @@ describe("Scientific Computing settings interactions", () => {
 
   it("shows only Coming soon for preview languages without changing runtime settings", async () => {
     await render();
-    for (const id of ["julia", "r", "rust", "spss"]) {
+    for (const [id, hasBrandLogo] of [
+      ["julia", true],
+      ["r", true],
+      ["rust", true],
+      ["spss", true],
+      ["sql", false],
+      ["octave", false],
+      ["wolfram", false],
+      ["stata", false],
+    ] as const) {
       const trigger = container.querySelector<HTMLButtonElement>(
         `#scientific-computing-${id}-trigger`,
       )!;
       expect(trigger.textContent).toContain("Coming soon");
-      expect(trigger.querySelector("img")).not.toBeNull();
+      expect(trigger.querySelector("img") !== null).toBe(hasBrandLogo);
+      if (!hasBrandLogo) expect(trigger.querySelector("svg")).not.toBeNull();
       await act(() => trigger.click());
       const panel = container.querySelector<HTMLElement>(`#scientific-computing-${id}`)!;
       expect(panel.hidden).toBe(false);
