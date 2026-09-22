@@ -1,7 +1,12 @@
 # Nati architecture recommendations
 
-Status: product and architecture recommendations for future scoped work. This
-document does not describe behavior implemented by the current pull request.
+Status: target architecture with a first interaction slice implemented in the
+source-derived writing-canvas candidate. The candidate preserves math wrappers,
+opens complete-source math popovers, recognizes a bounded group of structured
+math environments, provides matching Insert actions, expands safe citation and
+reference commands, and refines the writing toolbar. Adapter-based general
+command coverage, post-build measurements and exact browser/PDF parity remain
+future scoped work.
 
 ## Desired experience
 

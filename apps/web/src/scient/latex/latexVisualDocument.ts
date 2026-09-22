@@ -23,7 +23,49 @@ const INLINE_MARKS: Readonly<Record<string, string>> = {
   emph: "italic",
   texttt: "code",
 };
-const INLINE_ATOMS = new Set(["cite", "citep", "citet", "ref", "eqref", "autoref", "label"]);
+const INLINE_ATOMS = new Set([
+  "cite",
+  "citep",
+  "citet",
+  "citeauthor",
+  "citeyear",
+  "ref",
+  "eqref",
+  "autoref",
+  "pageref",
+  "nameref",
+  "label",
+  "url",
+  "footnote",
+  "index",
+]);
+const SOURCE_ONLY_INLINE_COMMANDS = new Set([
+  "begin",
+  "end",
+  "input",
+  "include",
+  "includeonly",
+  "documentclass",
+  "usepackage",
+  "RequirePackage",
+  "write",
+  "openout",
+  "read",
+]);
+const DISPLAY_MATH_ENVIRONMENTS = /^(equation\*?|align\*?|gather\*?)$/u;
+export const STRUCTURED_MATH_ENVIRONMENTS = [
+  "matrix",
+  "bmatrix",
+  "pmatrix",
+  "vmatrix",
+  "Vmatrix",
+  "cases",
+  "aligned",
+] as const;
+const STRUCTURED_MATH_ENVIRONMENT = new RegExp(
+  `^(?:${STRUCTURED_MATH_ENVIRONMENTS.join("|")})$`,
+  "u",
+);
 const ESCAPES: Readonly<Record<string, string>> = {
   "%": "%",
   "&": "&",
@@ -87,7 +129,10 @@ function parseInline(source: string, marks: readonly string[] = []): JSONContent
       const end = findDelimiter(source, "$", index + 1);
       if (end < 0) return null;
       flush();
-      nodes.push({ type: "latexInlineMath", attrs: { tex: source.slice(index + 1, end) } });
+      nodes.push({
+        type: "latexInlineMath",
+        attrs: { tex: source.slice(index + 1, end), wrapper: "dollar" },
+      });
       index = end + 1;
       continue;
     }
@@ -102,7 +147,10 @@ function parseInline(source: string, marks: readonly string[] = []): JSONContent
         const end = findDelimiter(source, "\\)", index + 2);
         if (end < 0) return null;
         flush();
-        nodes.push({ type: "latexInlineMath", attrs: { tex: source.slice(index + 2, end) } });
+        nodes.push({
+          type: "latexInlineMath",
+          attrs: { tex: source.slice(index + 2, end), wrapper: "paren" },
+        });
         index = end + 2;
         continue;
       }
@@ -138,7 +186,7 @@ function parseInline(source: string, marks: readonly string[] = []): JSONContent
         if (children === null) return null;
         flush();
         nodes.push(...children);
-      } else if (INLINE_ATOMS.has(name)) {
+      } else if (!SOURCE_ONLY_INLINE_COMMANDS.has(name) && INLINE_ATOMS.has(name)) {
         flush();
         nodes.push({ type: "latexInlineCommand", attrs: { name, argument, raw } });
       } else {
@@ -242,26 +290,71 @@ function parseList(source: string, depth: number): JSONContent | null {
   return { type: environment === "itemize" ? "bulletList" : "orderedList", content: items };
 }
 
-function parseDisplayMath(source: string): JSONContent | null {
+export interface LatexVisualMathAttributes {
+  readonly tex: string;
+  readonly environment?: string | null;
+  readonly wrapper?: "paren" | "dollar" | "bracket" | "double-dollar";
+}
+
+export function latexVisualMathSource(
+  attributes: LatexVisualMathAttributes,
+  display: boolean,
+): string {
+  const tex = attributes.tex;
+  if (display && attributes.environment)
+    return `\\begin{${attributes.environment}}\n${tex}\n\\end{${attributes.environment}}`;
+  if (display && attributes.wrapper === "double-dollar") return `$$\n${tex}\n$$`;
+  if (display) return `\\[\n${tex}\n\\]`;
+  if (attributes.wrapper === "dollar") return `$${tex}$`;
+  return `\\(${tex}\\)`;
+}
+
+export function parseLatexVisualMathSource(
+  source: string,
+  display: boolean,
+): LatexVisualMathAttributes | null {
   const trimmed = source.trim();
   // MathLive owns mathematical input, not TeX numbering or state-changing
   // commands. Never let a math edit silently drop those semantics.
   if (/\\(?:label|tag|notag|nonumber|newcommand|renewcommand|def|catcode)\b/u.test(trimmed))
     return null;
+  if (!display) {
+    if (trimmed.startsWith("\\(") && trimmed.endsWith("\\)"))
+      return { tex: trimmed.slice(2, -2), wrapper: "paren" };
+    if (
+      trimmed.startsWith("$") &&
+      !trimmed.startsWith("$$") &&
+      trimmed.endsWith("$") &&
+      !trimmed.endsWith("$$")
+    )
+      return { tex: trimmed.slice(1, -1), wrapper: "dollar" };
+    return null;
+  }
   if (trimmed.startsWith("\\[") && trimmed.endsWith("\\]")) {
-    return { type: "latexDisplayMath", attrs: { tex: trimmed.slice(2, -2).trim() } };
+    return { tex: trimmed.slice(2, -2).trim(), wrapper: "bracket" };
   }
   if (trimmed.startsWith("$$") && trimmed.endsWith("$$") && trimmed.length >= 4) {
-    return { type: "latexDisplayMath", attrs: { tex: trimmed.slice(2, -2).trim() } };
+    return { tex: trimmed.slice(2, -2).trim(), wrapper: "double-dollar" };
   }
-  const environment = /^\\begin\{(equation\*?|align\*?|gather\*?)\}([\s\S]*)\\end\{\1\}$/u.exec(
-    trimmed,
-  );
-  if (!environment) return null;
+  const environment = /^\\begin\{([^}]+)\}([\s\S]*)\\end\{\1\}$/u.exec(trimmed);
+  if (!environment || !DISPLAY_MATH_ENVIRONMENTS.test(environment[1]!)) return null;
   return {
-    type: "latexDisplayMath",
-    attrs: { tex: environment[2]!.trim(), environment: environment[1] },
+    tex: environment[2]!.trim(),
+    environment: environment[1]!,
   };
+}
+
+function parseDisplayMath(source: string): JSONContent | null {
+  const attributes = parseLatexVisualMathSource(source, true);
+  return attributes === null ? null : { type: "latexDisplayMath", attrs: attributes };
+}
+
+export function parseStructuredMathEnvironment(source: string): string | null {
+  const trimmed = source.trim();
+  const environment = /^\\begin\{([^}]+)\}([\s\S]*)\\end\{\1\}$/u.exec(trimmed);
+  if (!environment || !STRUCTURED_MATH_ENVIRONMENT.test(environment[1]!)) return null;
+  if (/\\(?:label|tag|newcommand|renewcommand|def|catcode)\b/u.test(trimmed)) return null;
+  return trimmed;
 }
 
 function matchingEnvironmentEnd(source: string, from: number, depth = 0): number | null {
@@ -435,7 +528,14 @@ function escapeText(text: string): string {
 function serializeInline(nodes: readonly JSONContent[] | undefined): string {
   return (nodes ?? [])
     .map((node) => {
-      if (node.type === "latexInlineMath") return `\\(${String(node.attrs?.tex ?? "")}\\)`;
+      if (node.type === "latexInlineMath")
+        return latexVisualMathSource(
+          {
+            tex: String(node.attrs?.tex ?? ""),
+            wrapper: node.attrs?.wrapper === "dollar" ? "dollar" : "paren",
+          },
+          false,
+        );
       if (node.type === "latexInlineCommand") return String(node.attrs?.raw ?? "");
       if (node.type === "hardBreak") return "\\\\\n";
       if (node.type !== "text") return "";
@@ -463,11 +563,14 @@ export function serializeLatexVisualBlock(node: JSONContent): string | null {
     return `\\${command}${star}{${serializeInline(node.content)}}`;
   }
   if (node.type === "latexDisplayMath") {
-    const tex = String(node.attrs?.tex ?? "");
-    const environment = node.attrs?.environment;
-    return environment
-      ? `\\begin{${String(environment)}}\n${tex}\n\\end{${String(environment)}}`
-      : `\\[\n${tex}\n\\]`;
+    return latexVisualMathSource(
+      {
+        tex: String(node.attrs?.tex ?? ""),
+        environment: node.attrs?.environment ? String(node.attrs.environment) : null,
+        wrapper: node.attrs?.wrapper === "double-dollar" ? "double-dollar" : "bracket",
+      },
+      true,
+    );
   }
   if (node.type === "latexRawBlock") return String(node.attrs?.raw ?? "");
   if (node.type === "bulletList" || node.type === "orderedList") {
@@ -499,6 +602,7 @@ function comparableNode(node: JSONContent): ComparableVisualNode {
           return false;
         if (key === "unnumbered" && value === false) return false;
         if (key === "start" && value === 1) return false;
+        if (key === "wrapper" && (value === "paren" || value === "bracket")) return false;
         return true;
       })
       .sort(([left], [right]) => left.localeCompare(right)),

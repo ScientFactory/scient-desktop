@@ -20,6 +20,9 @@ import { readVisualDraft, clearVisualDraft } from "./visualDrafts";
 
 import {
   applyLatexVisualDocumentChange,
+  latexVisualMathSource,
+  parseLatexVisualMathSource,
+  parseStructuredMathEnvironment,
   projectLatexVisualDocument,
   type LatexVisualDocument,
 } from "./latexVisualDocument";
@@ -57,21 +60,51 @@ function useEditorEditable(editor: Editor): boolean {
   );
 }
 
-function LatexMathView({ node, updateAttributes, editor, getPos }: NodeViewProps) {
+function LatexMathView({ node, updateAttributes, editor, getPos, selected }: NodeViewProps) {
   const display = node.type.name === "latexDisplayMath";
   const editable = useEditorEditable(editor);
+  const attributes = {
+    tex: String(node.attrs.tex ?? ""),
+    environment: node.attrs.environment ? String(node.attrs.environment) : null,
+    wrapper: node.attrs.wrapper,
+  } as const;
+  const source = latexVisualMathSource(attributes, display);
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState(source);
+  const [sourceError, setSourceError] = useState(false);
+
+  const applySource = () => {
+    const parsed = parseLatexVisualMathSource(draft, display);
+    if (parsed === null) {
+      setSourceError(true);
+      return;
+    }
+    updateAttributes(parsed);
+    setSourceError(false);
+    setEditing(false);
+  };
   return (
     <NodeViewWrapper
       as={display ? "div" : "span"}
       className={display ? "scient-latex-visual-display-math" : "scient-latex-visual-inline-math"}
       contentEditable={false}
+      data-selected={selected || editing || undefined}
+      onClick={() => {
+        if (editable) {
+          if (!editing) setDraft(source);
+          setEditing(true);
+        }
+      }}
     >
       <LatexMathField
-        value={String(node.attrs.tex ?? "")}
+        value={attributes.tex}
         display={display}
-        disabled={!editable}
+        disabled={!editable || !editing}
         onChange={(tex) => {
-          if (editor.isEditable) updateAttributes({ tex });
+          if (editor.isEditable) {
+            updateAttributes({ tex });
+            setDraft(latexVisualMathSource({ ...attributes, tex }, display));
+          }
           const position = getPos();
           return String(
             (position === undefined ? node : editor.state.doc.nodeAt(position))?.attrs.tex ??
@@ -80,6 +113,61 @@ function LatexMathView({ node, updateAttributes, editor, getPos }: NodeViewProps
           );
         }}
       />
+      {editing ? (
+        <div
+          className="scient-latex-math-source-popover"
+          role="dialog"
+          aria-label="Equation source"
+          onClick={(event) => event.stopPropagation()}
+        >
+          <div className="scient-latex-math-source-heading">
+            <span>LaTeX equation</span>
+            <span>{display ? "Display math" : "Inline math"}</span>
+          </div>
+          <textarea
+            autoFocus
+            aria-label="Complete LaTeX equation source"
+            value={draft}
+            rows={display ? Math.min(10, Math.max(3, draft.split("\n").length)) : 2}
+            onChange={(event) => {
+              setDraft(event.currentTarget.value);
+              setSourceError(false);
+            }}
+            onKeyDown={(event) => {
+              if (event.key === "Escape") {
+                setDraft(source);
+                setSourceError(false);
+                setEditing(false);
+              } else if (event.key === "Enter" && (event.ctrlKey || event.metaKey)) {
+                event.preventDefault();
+                applySource();
+              }
+            }}
+          />
+          {sourceError ? (
+            <div className="scient-latex-math-source-error" role="alert">
+              Keep the complete supported wrapper: $…$, \(…\), $$…$$, \[…\], equation, align or
+              gather.
+            </div>
+          ) : null}
+          <div className="scient-latex-math-source-actions">
+            <span>Ctrl+Enter to apply · Escape to cancel</span>
+            <button
+              type="button"
+              onClick={() => {
+                setDraft(source);
+                setSourceError(false);
+                setEditing(false);
+              }}
+            >
+              Cancel
+            </button>
+            <button type="button" onClick={applySource}>
+              Apply
+            </button>
+          </div>
+        </div>
+      ) : null}
     </NodeViewWrapper>
   );
 }
@@ -146,7 +234,7 @@ const LatexInlineMath = Node.create({
   atom: true,
   selectable: true,
   addAttributes() {
-    return { tex: { default: "" } };
+    return { tex: { default: "" }, wrapper: { default: "paren" } };
   },
   parseHTML() {
     return [{ tag: "span[data-latex-inline-math]" }];
@@ -168,6 +256,7 @@ const LatexDisplayMath = Node.create({
     return {
       tex: { default: "" },
       environment: { default: null },
+      wrapper: { default: "bracket" },
       sourceId: { default: null, rendered: false },
     };
   },
@@ -247,6 +336,14 @@ const extensions = [
   LatexInlineCommand,
   LatexRawBlock,
 ];
+
+const MATH_INSERTIONS = {
+  equation: "E = mc^2",
+  bmatrix: "\\begin{bmatrix}\na & b \\\\\nc & d\n\\end{bmatrix}",
+  pmatrix: "\\begin{pmatrix}\na & b \\\\\nc & d\n\\end{pmatrix}",
+  cases: "\\begin{cases}\nf(x), & x > 0 \\\\\n0, & x = 0\n\\end{cases}",
+  aligned: "\\begin{aligned}\na &= b + c \\\\\nd &= e + f\n\\end{aligned}",
+} as const;
 
 export interface LatexVisualEditorProps {
   readonly draftKey: string;
@@ -336,6 +433,21 @@ export function LatexVisualEditor(props: LatexVisualEditorProps) {
         addProseMirrorPlugins() {
           return [
             new Plugin({
+              appendTransaction(transactions, _previousState, nextState) {
+                if (!transactions.some((transaction) => transaction.docChanged)) return null;
+                const { $from } = nextState.selection;
+                if ($from.parent.type.name !== "paragraph") return null;
+                if (!$from.parent.content.content.every((child) => child.isText)) return null;
+                const tex = parseStructuredMathEnvironment($from.parent.textContent);
+                if (tex === null) return null;
+                const from = $from.before();
+                const to = $from.after();
+                const math = nextState.schema.nodes.latexDisplayMath?.create({
+                  tex,
+                  wrapper: "bracket",
+                });
+                return math ? nextState.tr.replaceWith(from, to, math) : null;
+              },
               filterTransaction(transaction) {
                 if (!transaction.docChanged || applying.current) return true;
                 const change = applyLatexVisualDocumentChange(
@@ -413,6 +525,13 @@ export function LatexVisualEditor(props: LatexVisualEditorProps) {
   const onEditingChange = props.onEditingChange;
   useEffect(() => () => onEditingChange(false), [onEditingChange]);
 
+  const insertDisplayMath = (tex: string) =>
+    editor
+      ?.chain()
+      .focus()
+      .insertContent({ type: "latexDisplayMath", attrs: { tex, wrapper: "bracket" } })
+      .run();
+
   return (
     <div
       className="scient-latex-visual-workspace"
@@ -439,96 +558,111 @@ export function LatexVisualEditor(props: LatexVisualEditorProps) {
         </div>
       )}
       <div className="scient-latex-writing-toolbar" role="toolbar" aria-label="Document formatting">
-        <select
-          aria-label="Paragraph style"
-          disabled={readOnly || recovery !== null || !editor}
-          value={
-            editor?.isActive("heading")
-              ? String(editor.getAttributes("heading").level)
-              : "paragraph"
-          }
-          onChange={(event) => {
-            if (event.target.value === "paragraph") editor?.chain().focus().setParagraph().run();
-            else
+        <div className="scient-latex-toolbar-group" aria-label="Text style">
+          <select
+            aria-label="Paragraph style"
+            disabled={readOnly || recovery !== null || !editor}
+            value={
+              editor?.isActive("heading")
+                ? String(editor.getAttributes("heading").level)
+                : "paragraph"
+            }
+            onChange={(event) => {
+              if (event.target.value === "paragraph") editor?.chain().focus().setParagraph().run();
+              else
+                editor
+                  ?.chain()
+                  .focus()
+                  .setHeading({ level: Number(event.target.value) as 1 | 2 | 3 })
+                  .run();
+            }}
+          >
+            <option value="paragraph">Normal text</option>
+            <option value="1">Heading 1</option>
+            <option value="2">Heading 2</option>
+            <option value="3">Heading 3</option>
+          </select>
+          {[
+            [
+              "Bold",
+              "B",
+              () => editor?.chain().focus().toggleBold().run(),
+              editor?.isActive("bold"),
+            ],
+            [
+              "Italic",
+              "I",
+              () => editor?.chain().focus().toggleItalic().run(),
+              editor?.isActive("italic"),
+            ],
+            [
+              "Bullet list",
+              "• List",
+              () => editor?.chain().focus().toggleBulletList().run(),
+              editor?.isActive("bulletList"),
+            ],
+            [
+              "Numbered list",
+              "1. List",
+              () => editor?.chain().focus().toggleOrderedList().run(),
+              editor?.isActive("orderedList"),
+            ],
+            ["Undo", "↶", () => editor?.chain().focus().undo().run(), false],
+            ["Redo", "↷", () => editor?.chain().focus().redo().run(), false],
+          ].map(([label, text, action, active]) => (
+            <ScientTooltip key={String(label)} content={String(label)}>
+              <button
+                type="button"
+                aria-label={String(label)}
+                aria-pressed={Boolean(active)}
+                disabled={readOnly || !editor}
+                onMouseDown={(event) => event.preventDefault()}
+                onClick={() => (action as () => void)()}
+              >
+                {String(text)}
+              </button>
+            </ScientTooltip>
+          ))}
+        </div>
+        <div className="scient-latex-toolbar-group" aria-label="Insert mathematics">
+          <button
+            type="button"
+            disabled={readOnly}
+            onMouseDown={(event) => event.preventDefault()}
+            onClick={() =>
               editor
                 ?.chain()
                 .focus()
-                .setHeading({ level: Number(event.target.value) as 1 | 2 | 3 })
-                .run();
-          }}
-        >
-          <option value="paragraph">Normal text</option>
-          <option value="1">Heading 1</option>
-          <option value="2">Heading 2</option>
-          <option value="3">Heading 3</option>
-        </select>
-        {[
-          ["Bold", "B", () => editor?.chain().focus().toggleBold().run(), editor?.isActive("bold")],
-          [
-            "Italic",
-            "I",
-            () => editor?.chain().focus().toggleItalic().run(),
-            editor?.isActive("italic"),
-          ],
-          [
-            "Bullet list",
-            "• List",
-            () => editor?.chain().focus().toggleBulletList().run(),
-            editor?.isActive("bulletList"),
-          ],
-          [
-            "Numbered list",
-            "1. List",
-            () => editor?.chain().focus().toggleOrderedList().run(),
-            editor?.isActive("orderedList"),
-          ],
-          ["Undo", "↶", () => editor?.chain().focus().undo().run(), false],
-          ["Redo", "↷", () => editor?.chain().focus().redo().run(), false],
-        ].map(([label, text, action, active]) => (
-          <ScientTooltip key={String(label)} content={String(label)}>
-            <button
-              type="button"
-              aria-label={String(label)}
-              aria-pressed={Boolean(active)}
-              disabled={readOnly || !editor}
-              onMouseDown={(event) => event.preventDefault()}
-              onClick={() => (action as () => void)()}
-            >
-              {String(text)}
-            </button>
-          </ScientTooltip>
-        ))}
-        <span className="scient-latex-toolbar-divider" />
-        <button
-          type="button"
-          disabled={readOnly}
-          onMouseDown={(event) => event.preventDefault()}
-          onClick={() =>
-            editor
-              ?.chain()
-              .focus()
-              .insertContent({ type: "latexInlineMath", attrs: { tex: "x" } })
-              .run()
-          }
-        >
-          Inline math
-        </button>
-        <button
-          type="button"
-          disabled={readOnly}
-          onMouseDown={(event) => event.preventDefault()}
-          onClick={() =>
-            editor
-              ?.chain()
-              .focus()
-              .insertContent({ type: "latexDisplayMath", attrs: { tex: "E = mc^2" } })
-              .run()
-          }
-        >
-          Equation
-        </button>
-        <button type="button" onClick={props.onOpenSource}>
-          Edit LaTeX
+                .insertContent({
+                  type: "latexInlineMath",
+                  attrs: { tex: "x", wrapper: "paren" },
+                })
+                .run()
+            }
+          >
+            Inline math
+          </button>
+          <select
+            aria-label="Insert equation or math environment"
+            disabled={readOnly}
+            value=""
+            onChange={(event) => {
+              const key = event.currentTarget.value as keyof typeof MATH_INSERTIONS;
+              if (key) insertDisplayMath(MATH_INSERTIONS[key]);
+              event.currentTarget.value = "";
+            }}
+          >
+            <option value="">Insert…</option>
+            <option value="equation">Display equation</option>
+            <option value="bmatrix">Bracket matrix</option>
+            <option value="pmatrix">Parentheses matrix</option>
+            <option value="cases">Cases</option>
+            <option value="aligned">Aligned equations</option>
+          </select>
+        </div>
+        <div className="scient-latex-toolbar-spacer" />
+        <button className="scient-latex-source-button" type="button" onClick={props.onOpenSource}>
+          Source
         </button>
       </div>
       <div className="scient-latex-visual-summary" role="status">
@@ -545,11 +679,11 @@ export function LatexVisualEditor(props: LatexVisualEditorProps) {
       <details className="scient-latex-writing-help">
         <summary>What can I edit here?</summary>
         <p>
-          Text, headings, bold, italic, code, nested lists, simple citation/reference keys and
-          equations. Click an equation to edit its structure; use its keyboard button for math
-          symbols. Tables, custom commands, labelled equations and other source-only blocks stay
-          protected. Use Source for these. Page breaks, numbering and macro output are verified in
-          PDF after Rebuild.
+          Write text, headings, formatting, lists, citations, references and equations directly.
+          Click rendered math to open its complete LaTeX source and math keyboard. Insert matrices,
+          cases and aligned equations from the Insert menu, or type a complete supported environment
+          to convert it. Source-only blocks stay protected. Page breaks, numbering, packages and
+          macro output are verified in PDF after Rebuild.
         </p>
       </details>
       {notice === null ? null : (

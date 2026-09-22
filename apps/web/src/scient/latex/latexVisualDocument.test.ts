@@ -3,6 +3,9 @@ import { describe, expect, it } from "vite-plus/test";
 import {
   adoptLatexVisualContent,
   applyLatexVisualDocumentChange,
+  latexVisualMathSource,
+  parseLatexVisualMathSource,
+  parseStructuredMathEnvironment,
   projectLatexVisualDocument,
 } from "./latexVisualDocument";
 import { latexPreviewRebuildReason } from "./latexPreviewPolicy";
@@ -132,6 +135,36 @@ describe("source-derived writing projection", () => {
     const nodes = structuredClone(projectLatexVisualDocument(source).content.content!);
     nodes[0]!.attrs!.tex = "\\frac{x}{2}";
     expect(edit(source, nodes)?.source).toBe(source.replace("x^2", "\\frac{x}{2}"));
+  });
+
+  it("preserves inline and display math wrappers while editing", () => {
+    const source = document("Inline $x$ here.\n\n$$\ny^2\n$$");
+    const nodes = structuredClone(projectLatexVisualDocument(source).content.content!);
+    nodes[0]!.content![1]!.attrs!.tex = "z";
+    nodes[1]!.attrs!.tex = "z^2";
+    expect(edit(source, nodes)?.source).toBe(document("Inline $z$ here.\n\n$$\nz^2\n$$"));
+  });
+
+  it("validates complete math source and structured environments", () => {
+    expect(parseLatexVisualMathSource("$x+1$", false)).toEqual({
+      tex: "x+1",
+      wrapper: "dollar",
+    });
+    expect(parseLatexVisualMathSource("x+1", false)).toBeNull();
+    expect(
+      latexVisualMathSource({ tex: "a &= b", environment: "align", wrapper: "bracket" }, true),
+    ).toContain("\\begin{align}");
+    expect(parseStructuredMathEnvironment("\\begin{bmatrix}a&b\\end{bmatrix}")).not.toBeNull();
+    expect(parseStructuredMathEnvironment("\\begin{unknown}x\\end{unknown}")).toBeNull();
+  });
+
+  it("shows expanded safe commands while retaining unknown and structural commands as source", () => {
+    const projection = projectLatexVisualDocument(
+      document("See \\citeauthor{key} on \\pageref{page}.\n\n\\foo{value}\n\n\\input{chapter}"),
+    );
+    expect(projection.blocks[0]!.node.type).toBe("paragraph");
+    expect(projection.blocks[1]!.node.type).toBe("latexRawBlock");
+    expect(projection.blocks[2]!.node.type).toBe("latexRawBlock");
   });
 
   it("does not interpret a commented environment end or a verbatim document end", () => {

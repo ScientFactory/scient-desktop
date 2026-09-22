@@ -107,6 +107,28 @@ describe("writing editor source transactions", () => {
     expect(current).toContain("\\(x^2\\)");
   });
 
+  it("opens complete math source without replacing the rendered equation", async () => {
+    await mount("Inline $x^2$ here");
+    const equation = container.querySelector(".scient-latex-visual-inline-math") as HTMLElement;
+    await act(async () => equation.click());
+    const source = container.querySelector(
+      "textarea[aria-label='Complete LaTeX equation source']",
+    ) as HTMLTextAreaElement;
+    expect(source.value).toBe("$x^2$");
+    expect(container.textContent).toContain("x^2");
+  });
+
+  it("converts a completely typed supported math environment", async () => {
+    await mount("Replace me");
+    const matrix = "\\begin{bmatrix}\na & b \\\\\nc & d\n\\end{bmatrix}";
+    await act(async () => {
+      editor().commands.selectAll();
+      editor().commands.insertContent(matrix);
+    });
+    expect(editor().getJSON().content?.[0]?.type).toBe("latexDisplayMath");
+    expect(current).toContain(`\\[\n${matrix}\n\\]`);
+  });
+
   it("rejects a destructive transaction spanning protected source", async () => {
     await mount("Hello\n\n\\custom{keep}");
     const before = current;

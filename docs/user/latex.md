@@ -10,7 +10,18 @@ between them, and drag the divider in split view to resize either side.
 Visual is a source-derived writing canvas, not an editable PDF. You can start
 writing before installing or running TeX. Its toolbar supports paragraphs,
 three heading levels, bold, italic, lists, undo/redo and inserting equations.
-Click an equation to edit it with structured math input and its math keyboard.
+Math normally stays rendered in the document. Click a formula to open an
+anchored editor showing its complete LaTeX, including `$`, `$$`, `\(`, `\[`, or
+the surrounding equation environment. Apply commits the source as one editor
+transaction; Escape cancels it. The same popover enables structured math input
+and its math keyboard.
+
+The Insert menu creates display equations, bracket or parenthesis matrices,
+cases, and aligned equations. You can also type a complete `matrix`, `bmatrix`,
+`pmatrix`, `vmatrix`, `Vmatrix`, `cases`, or `aligned` environment on an otherwise
+empty visual paragraph; Scient converts it only after the matching `\end{...}`
+is complete. Unsupported or malformed environments remain ordinary text or
+protected source rather than being partially rewritten.
 Source remains the authoritative `.tex` file. Source and Visual share the same
 revision-checked save queue; switching views does not create a second document.
 
@@ -26,8 +37,9 @@ these; the visual editor does not silently normalize or discard them. A visual
 edit cannot delete across a protected block. Open an included file to edit its
 contents; the established root still controls the PDF build.
 
-Simple citation and reference commands are editable as keys, not resolved
-bibliography output. Preamble, macro and global-layout edits show a rebuild
+Common citation and reference commands, including author/year and page
+references, are editable as keys, not resolved bibliography output. Preamble,
+macro and global-layout edits show a rebuild
 notice. After a crash or interrupted save, a recovered draft is offered as
 copyable source, never automatically written over a newer file.
 
