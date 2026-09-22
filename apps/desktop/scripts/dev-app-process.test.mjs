@@ -6,6 +6,7 @@ import { afterEach, assert, describe, it } from "vite-plus/test";
 
 import {
   findOwnedDevelopmentChildProcess,
+  findOwnedDevelopmentProcesses,
   makeMacDevelopmentAppLaunchCommand,
   readOwnedDevelopmentAppProcess,
   resolveDevelopmentAppDisplayName,
@@ -45,7 +46,8 @@ describe("macOS development app process ownership", () => {
       pidFilePath: "/tmp/electron.pid",
     });
     assert.equal(command.command, "/usr/bin/open");
-    assert.deepEqual(command.args.slice(0, 2), ["-n", "-W"]);
+    assert.equal(command.args[0], "-W");
+    assert.notInclude(command.args, "-n");
     assert.include(command.args, "SCIENT_NEXT_DEV_RUNNER_ACTIVE=1");
     assert.include(command.args, "SCIENT_DEV_APP_PID_FILE=/tmp/electron.pid");
     assert.notInclude(command.args.join(" "), "PROVIDER_TOKEN");
@@ -99,6 +101,31 @@ describe("macOS development app process ownership", () => {
       command: `${commandPrefix} --bootstrap-fd 3`,
       parentPid: 4321,
     });
+  });
+
+  it("discovers every process with the exact worktree-owned command prefix", () => {
+    const commandPrefix =
+      "/repo/apps/desktop/.electron-runtime/Scient.app/Contents/MacOS/Electron --t3code-dev-root=/repo/apps/desktop /repo/apps/desktop/dist-electron/main.cjs";
+
+    assert.deepEqual(
+      findOwnedDevelopmentProcesses({
+        commandPrefix,
+        inspectAllProcesses: () => [
+          { pid: 101, command: commandPrefix },
+          { pid: 102, command: `${commandPrefix} --remote-debugging-port=9000` },
+          {
+            pid: 103,
+            command:
+              "/repo/apps/desktop/.electron-runtime/Scient.app/Contents/MacOS/Electron /repo/apps/server/dist/bin.mjs",
+          },
+          { pid: 104, command: `/other${commandPrefix}` },
+        ],
+      }),
+      [
+        { pid: 101, command: commandPrefix },
+        { pid: 102, command: `${commandPrefix} --remote-debugging-port=9000` },
+      ],
+    );
   });
 
   it("uses a concise automatic label while keeping stable canonical", () => {

@@ -14,6 +14,7 @@ import {
 } from "../ui/alert-dialog";
 import { Button } from "../ui/button";
 import { AddUsageLimitSourceDialog } from "./AddUsageLimitSourceDialog";
+import { AddUsageAccountingSourceDialog } from "./AddUsageAccountingSourceDialog";
 import { searchableSetting } from "./settingsSearch";
 import { SettingsRow, SettingsSection } from "./settingsLayout";
 
@@ -22,15 +23,18 @@ export function UsageProviderSettings({
   environmentId,
   environmentLabel,
   sources,
+  accountingSources,
   readOnly,
 }: {
   readonly environmentId: EnvironmentId;
   readonly environmentLabel: string;
   readonly sources: UnifiedSettings["usageLimitSources"];
+  readonly accountingSources: UnifiedSettings["usageAccountingSources"];
   readonly readOnly: boolean;
 }) {
   const updateSettings = useUpdateEnvironmentSettings(environmentId);
   const [adding, setAdding] = useState(false);
+  const [addingAccounting, setAddingAccounting] = useState(false);
   const entries = Object.entries(sources);
 
   return (
@@ -74,12 +78,55 @@ export function UsageProviderSettings({
           })
         )}
       </SettingsSection>
+      <SettingsSection
+        title="Provider billing"
+        headerAction={
+          !readOnly ? (
+            <Button size="xs" variant="outline" onClick={() => setAddingAccounting(true)}>
+              <PlusIcon className="size-3" aria-hidden />
+              Connect OpenRouter
+            </Button>
+          ) : null
+        }
+      >
+        {Object.entries(accountingSources).length === 0 ? (
+          <SettingsRow
+            title="No billing source connected."
+            description="Connect a management key to see provider-billed spend by API key and model. Scient uses it only for read-only accounting requests."
+          />
+        ) : (
+          Object.entries(accountingSources).map(([id, source]) => (
+            <SettingsRow
+              key={id}
+              title={source.label?.trim() || "OpenRouter"}
+              description={`OpenRouter analytics${source.enabled ? "" : " · Disabled"} · Management key stored`}
+              control={
+                !readOnly ? (
+                  <RemoveUsageProviderButton
+                    label={source.label?.trim() || "OpenRouter"}
+                    detail="Its stored management key will be deleted from this server. Cached billing rows stay local but no longer appear in Usage."
+                    actionLabel="Remove source"
+                    onConfirm={() => updateSettings({ usageAccountingSources: { [id]: null } })}
+                  />
+                ) : null
+              }
+            />
+          ))
+        )}
+      </SettingsSection>
       {adding && !readOnly ? (
         <AddUsageLimitSourceDialog
           open
           onOpenChange={setAdding}
           environmentId={environmentId}
           environmentLabel={environmentLabel}
+        />
+      ) : null}
+      {addingAccounting && !readOnly ? (
+        <AddUsageAccountingSourceDialog
+          open
+          onOpenChange={setAddingAccounting}
+          environmentId={environmentId}
         />
       ) : null}
     </>
@@ -89,9 +136,13 @@ export function UsageProviderSettings({
 /** Removing a hub deletes its stored management key, so it requires confirmation. */
 function RemoveUsageProviderButton({
   label,
+  detail = "The hub's management key is deleted from this server. Its accounts leave the Limits view; the hub itself is untouched.",
+  actionLabel = "Remove hub",
   onConfirm,
 }: {
   readonly label: string;
+  readonly detail?: string;
+  readonly actionLabel?: string;
   readonly onConfirm: () => void;
 }) {
   const [open, setOpen] = useState(false);
@@ -104,11 +155,7 @@ function RemoveUsageProviderButton({
         <AlertDialogPopup>
           <AlertDialogHeader>
             <AlertDialogTitle>Remove {label}?</AlertDialogTitle>
-            <AlertDialogDescription>
-              The hub's management key is deleted from this server. Its accounts leave the Limits
-              view; the hub itself is untouched. Add it again with the URL and key to bring them
-              back.
-            </AlertDialogDescription>
+            <AlertDialogDescription>{detail}</AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogClose render={<Button variant="outline" />}>Cancel</AlertDialogClose>
@@ -119,7 +166,7 @@ function RemoveUsageProviderButton({
                 onConfirm();
               }}
             >
-              Remove hub
+              {actionLabel}
             </Button>
           </AlertDialogFooter>
         </AlertDialogPopup>

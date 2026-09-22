@@ -10,6 +10,7 @@ import {
   resolveProviderInstanceEnabled,
   ServerSettings,
   ServerSettingsPatch,
+  UsageAccountingSourceId,
 } from "@t3tools/contracts";
 import { createModelSelection } from "@t3tools/shared/model";
 import { assert, it } from "@effect/vitest";
@@ -65,6 +66,23 @@ const makeFailingSecretStoreLayer = (cause: ServerSecretStore.SecretStoreError) 
     }),
   );
 
+it("redacts OpenRouter accounting management keys from client settings", () => {
+  const sourceId = UsageAccountingSourceId.make("openrouter");
+  const redacted = ServerSettingsModule.redactServerSettingsForClient({
+    ...DEFAULT_SERVER_SETTINGS,
+    usageAccountingSources: {
+      [sourceId]: {
+        kind: "openrouter",
+        label: "Billing",
+        managementKey: "never-return-this-key",
+        enabled: true,
+      },
+    },
+  });
+  assert.equal(redacted.usageAccountingSources[sourceId]?.managementKey, "••••••");
+  assert.equal(JSON.stringify(redacted).includes("never-return-this-key"), false);
+});
+
 const recordProviderUsage = (provider: string, instanceId: string | null = provider) =>
   Effect.gen(function* () {
     const sql = yield* SqlClient.SqlClient;
@@ -116,6 +134,57 @@ it.layer(NodeServices.layer)("server settings", (it) => {
         },
       ],
     });
+
+  it.effect(
+    "persists, preserves, and removes OpenRouter accounting keys through the secret store",
+    () =>
+      Effect.gen(function* () {
+        const service = yield* ServerSettingsModule.ServerSettingsService;
+        const config = yield* ServerConfig.ServerConfig;
+        const fs = yield* FileSystem.FileSystem;
+        const sourceId = UsageAccountingSourceId.make("openrouter-primary");
+
+        yield* service.updateSettings({
+          usageAccountingSources: {
+            [sourceId]: {
+              kind: "openrouter",
+              label: "Primary",
+              managementKey: "management-secret",
+              enabled: true,
+            },
+          },
+        });
+        assert.equal(
+          (yield* service.getSettings).usageAccountingSources[sourceId]?.managementKey,
+          "management-secret",
+        );
+        const persisted = yield* fs.readFileString(config.settingsPath);
+        assert.notInclude(persisted, "management-secret");
+        assert.include(persisted, "••••••");
+
+        yield* service.updateSettings({
+          usageAccountingSources: {
+            [sourceId]: {
+              kind: "openrouter",
+              label: "Renamed",
+              managementKey: "••••••",
+              enabled: true,
+            },
+          },
+        });
+        const preserved = (yield* service.getSettings).usageAccountingSources[sourceId];
+        assert.equal(preserved?.managementKey, "management-secret");
+        assert.equal(preserved?.label, "Renamed");
+
+        const secretFiles = (yield* fs.readDirectory(config.secretsDir)).filter((name) =>
+          name.startsWith("usage-accounting-source-"),
+        );
+        assert.lengthOf(secretFiles, 1);
+        yield* service.updateSettings({ usageAccountingSources: { [sourceId]: null } });
+        assert.isUndefined((yield* service.getSettings).usageAccountingSources[sourceId]);
+        assert.isFalse(yield* fs.exists(`${config.secretsDir}/${secretFiles[0]}`));
+      }).pipe(Effect.provide(makeServerSettingsLayer())),
+  );
 
   it.effect("persists setup evidence once; settings and runtime reads never fetch metadata", () =>
     Effect.gen(function* () {

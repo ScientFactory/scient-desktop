@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { buildPeriodColumns, niceScale } from "./UsageProviderChart";
+import { buildPeriodColumns } from "./UsageProviderChart";
+import { niceScale } from "./usageChartGeometry";
 import { providersWithUsage } from "./usageProviders";
 
 describe("niceScale", () => {
@@ -89,6 +90,7 @@ describe("buildPeriodColumns", () => {
       { provider: "codex", value: 10 },
       { provider: "claude", value: 20 },
       { provider: "grok", value: 0 },
+      { provider: "pi", value: 0 },
     ]);
   });
 
