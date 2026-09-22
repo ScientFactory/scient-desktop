@@ -47,6 +47,81 @@ describe("FileSaveCoordinator", () => {
     expect(onPendingChange.mock.calls).toEqual([[true], [true], [false]]);
   });
 
+  it("holds persistence while suspended and resumes with the latest buffer", async () => {
+    vi.useFakeTimers();
+    const persist = vi.fn().mockResolvedValue(AsyncResult.success(undefined));
+    const coordinator = new FileSaveCoordinator({
+      debounceMs: 500,
+      initialRevision: "revision-1",
+      persist,
+      revisionFromResult: () => "revision-2",
+      onPendingChange: vi.fn(),
+      onConfirmed: vi.fn(),
+    });
+
+    coordinator.setSuspended(true);
+    coordinator.change("first checkpoint");
+    await vi.advanceTimersByTimeAsync(5_000);
+    coordinator.change("final checkpoint");
+    expect(persist).not.toHaveBeenCalled();
+
+    coordinator.setSuspended(false);
+    await vi.advanceTimersByTimeAsync(500);
+    expect(persist).toHaveBeenCalledExactlyOnceWith("final checkpoint", "revision-1");
+  });
+
+  it("flushes immediately and reports whether the latest buffer was confirmed", async () => {
+    vi.useFakeTimers();
+    const persist = vi
+      .fn()
+      .mockResolvedValueOnce(AsyncResult.failure(Cause.fail(new Error("temporarily unavailable"))))
+      .mockResolvedValueOnce(AsyncResult.success(undefined));
+    const coordinator = new FileSaveCoordinator({
+      debounceMs: 500,
+      initialRevision: "revision-1",
+      persist,
+      revisionFromResult: () => "revision-2",
+      onPendingChange: vi.fn(),
+      onConfirmed: vi.fn(),
+    });
+
+    coordinator.change("recoverable buffer");
+    await expect(coordinator.flush()).resolves.toBe(false);
+    expect(coordinator.hasPendingChanges).toBe(true);
+    await expect(coordinator.flush()).resolves.toBe(true);
+    expect(coordinator.hasPendingChanges).toBe(false);
+    expect(persist).toHaveBeenCalledTimes(2);
+  });
+
+  it("flushes a newer edit queued behind an in-flight write", async () => {
+    vi.useFakeTimers();
+    const firstWrite = deferred();
+    const persist = vi
+      .fn()
+      .mockReturnValueOnce(firstWrite.promise)
+      .mockResolvedValueOnce(AsyncResult.success(undefined));
+    const coordinator = new FileSaveCoordinator({
+      debounceMs: 500,
+      initialRevision: "revision-1",
+      persist,
+      revisionFromResult: () => (persist.mock.calls.length === 1 ? "revision-2" : "revision-3"),
+      onPendingChange: vi.fn(),
+      onConfirmed: vi.fn(),
+    });
+
+    coordinator.change("first");
+    await vi.advanceTimersByTimeAsync(500);
+    coordinator.change("latest");
+    const flushed = coordinator.flush();
+    firstWrite.resolve(AsyncResult.success(undefined));
+    await expect(flushed).resolves.toBe(true);
+
+    expect(persist.mock.calls).toEqual([
+      ["first", "revision-1"],
+      ["latest", "revision-2"],
+    ]);
+  });
+
   it("keeps pending state until an edit made during a write is also saved", async () => {
     vi.useFakeTimers();
     const firstWrite = deferred();

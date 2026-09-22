@@ -54,6 +54,11 @@ describe("settings sidebar order", () => {
       paths.indexOf("/settings/scientific-computing") + 1,
     );
   });
+
+  it("shows Shortcuts without changing the existing route", () => {
+    expect(SETTINGS_SECTION_LABELS["/settings/keybindings"]).toBe("Shortcuts");
+    expect(searchSettings("keybindings").some((item) => item.id === "keybindings")).toBe(true);
+  });
 });
 
 describe("searchSettings", () => {

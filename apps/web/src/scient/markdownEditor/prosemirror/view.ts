@@ -84,7 +84,11 @@ import type {
   ScientMarkdownFootnoteContextMenuHandler,
   ScientMarkdownFootnoteContextMenuRequest,
 } from "../footnoteContextMenu";
-import { matchesScientMarkdownShortcut } from "../shortcuts";
+import { matchesScientMarkdownShortcut, SCIENT_MARKDOWN_COMMAND_SHORTCUTS } from "../shortcuts";
+import { ShortcutSequence } from "../../keyboard/sequence";
+import { registerShortcutClaim } from "../../keyboard/ownership";
+import { subscribeKeyboardPreferences } from "../../keyboard/preferences";
+import { markdownMathController } from "~/scient/math/input/markdownAdapter";
 
 export interface ScientMarkdownUploadedImage {
   readonly src: string;
@@ -289,6 +293,27 @@ function accessibilityAttributes(
  * view props in place and never recreate, parse, or transact the document.
  */
 export class ScientMarkdownEditorView {
+  readonly mathInput = markdownMathController(() => this.editorView);
+  private keyboardStatus: HTMLSpanElement | null = null;
+  private readonly keyboardSequence = new ShortcutSequence("markdown", (hint) => {
+    if (this.keyboardStatus) this.keyboardStatus.textContent = hint;
+  });
+  private releaseKeyboard: (() => void) | null = null;
+  executeKeyboardCommand(command: string): boolean {
+    const id = command.replace(/^markdown\./u, "");
+    if (id === "find") {
+      this.requestFind();
+      return true;
+    }
+    if (!modeIsEditable(this.mode)) return false;
+    if (id === "link") return this.requestLinkEdit();
+    if (id === "duplicateBlock") return this.executeBlock("duplicate");
+    if (id === "moveBlockUp") return this.executeBlock("move-up");
+    if (id === "moveBlockDown") return this.executeBlock("move-down");
+    const mapped = SCIENT_MARKDOWN_COMMAND_SHORTCUTS.find(([shortcut]) => shortcut === id);
+    return mapped ? this.execute(mapped[1]) : false;
+  }
+  private releaseMathInput: (() => void) | null = null;
   readonly session: ScientProseMirrorSession;
   private editorView: EditorView | null = null;
   private mode: MarkdownDocumentMode;
@@ -360,6 +385,34 @@ export class ScientMarkdownEditorView {
   mount(element: HTMLElement): EditorView {
     if (this.editorView !== null) return this.editorView;
     this.editorView = new EditorView(element, this.directProps());
+    this.keyboardStatus = document.createElement("span");
+    this.keyboardStatus.setAttribute("role", "status");
+    this.keyboardStatus.className = "text-xs text-muted-foreground";
+    element.append(this.keyboardStatus);
+    const releaseClaim = registerShortcutClaim(
+      this.editorView.dom,
+      (event) =>
+        !(
+          event.target instanceof HTMLElement && event.target.closest("input,textarea,.cm-editor")
+        ) && this.keyboardSequence.peek(event) !== null,
+    );
+    const refreshKeys = subscribeKeyboardPreferences(() => {
+      this.keyboardSequence.cancel();
+      this.publishSnapshot();
+    });
+    const blurKeys = () => this.keyboardSequence.cancel();
+    this.editorView.dom.addEventListener("focusout", blurKeys);
+    this.releaseKeyboard = () => {
+      releaseClaim();
+      refreshKeys();
+      this.editorView?.dom.removeEventListener("focusout", blurKeys);
+    };
+    this.releaseMathInput = this.mathInput.attach(
+      this.editorView.dom,
+      (event) =>
+        event.target instanceof HTMLElement &&
+        !event.target.closest("input, textarea, .cm-editor, [data-scient-math-tools]"),
+    );
     this.syncNodeViewEditability();
     this.refreshFootnoteNodeViews();
     this.publishSnapshot();
@@ -908,6 +961,13 @@ export class ScientMarkdownEditorView {
   }
 
   destroy(): void {
+    this.releaseKeyboard?.();
+    this.releaseKeyboard = null;
+    this.keyboardSequence.cancel();
+    this.keyboardStatus?.remove();
+    this.keyboardStatus = null;
+    this.releaseMathInput?.();
+    this.releaseMathInput = null;
     this.cancelPendingLinkOpen();
     this.stopTrackingLinkPointer();
     this.editorView?.destroy();
@@ -1727,6 +1787,8 @@ export class ScientMarkdownEditorView {
 
   private handleEditorKeyDown(event: KeyboardEvent): boolean {
     if (event.isComposing) return false;
+    if (this.keyboardSequence.handle(event, (command) => this.executeKeyboardCommand(command)))
+      return true;
     if (event.key === "ContextMenu" || (event.shiftKey && event.key === "F10")) {
       const image = this.selectedImageView();
       if (image?.showContextMenu(new MouseEvent("contextmenu"))) {

@@ -13,6 +13,7 @@ import {
 
 import { shortcutKeyFromEvent } from "../../keybindings";
 import { isMacPlatform } from "../../lib/utils";
+import { conditionsOverlap, appKeysEqual } from "../../scient/keyboard/conflicts";
 
 export type KeybindingSource = "Default" | "Custom" | "Project";
 
@@ -34,6 +35,9 @@ export type KeybindingCommandOption = KeybindingCommand;
 const CORE_WHEN_VARIABLES = [
   "terminalFocus",
   "terminalOpen",
+  "markdownFocus",
+  "pdfFocus",
+  "textInputFocus",
   "isWeb",
   "isDesktop",
   "true",
@@ -149,7 +153,7 @@ function keybindingRowId(command: KeybindingCommand, key: string, when: string):
 }
 
 function conflictsWithWhen(leftWhen: string, rightWhen: string): boolean {
-  return leftWhen.length === 0 || rightWhen.length === 0 || leftWhen === rightWhen;
+  return conditionsOverlap(leftWhen, rightWhen);
 }
 
 export function keybindingConflictLabels(
@@ -161,7 +165,11 @@ export function keybindingConflictLabels(
   for (const candidate of rows) {
     if (
       candidate.id !== input.rowId &&
-      candidate.key === input.key &&
+      appKeysEqual(
+        candidate.key,
+        input.key,
+        isMacPlatform(typeof navigator === "undefined" ? "" : navigator.platform),
+      ) &&
       conflictsWithWhen(candidate.when, input.when)
     ) {
       conflicts.push(commandLabel(candidate.command));

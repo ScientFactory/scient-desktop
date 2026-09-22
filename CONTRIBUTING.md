@@ -26,6 +26,24 @@ repository and link`.
 See the [development runbook](docs/operations/development.md#first-checkout) for the initial checkout,
 development commands, tests, and platform-specific desktop packaging prerequisites.
 
+### Run a development app
+
+Use the [dev-app guide](docs/operations/local-dev-app.md#contributor-quickstart)
+to create an isolated feature worktree, launch its app, verify readiness, and
+stop only that candidate. Choose the instructions for your host:
+
+- [macOS managed app](docs/operations/local-dev-app.md#daily-commands): background
+  start, status, logs, and stop.
+- [Windows desktop app](docs/operations/local-dev-app-windows.md): native
+  PowerShell launch in a retained foreground terminal; no managed background
+  launcher yet.
+- [Agent-assisted workflow and shared skill](docs/operations/local-dev-app.md#agent-assisted-development):
+  optional assistance, not a prerequisite for running the commands yourself.
+
+Keep the app available while a reviewer is using it. Share the branch, commit,
+platform, and verification results with the PR; never share provider keys or
+copy your installed app's profile into a development worktree.
+
 ## Read This First
 
 We are not actively accepting contributions right now.

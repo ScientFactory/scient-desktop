@@ -42,6 +42,25 @@ const session = {
 };
 
 describe("compute session record", () => {
+  it("preserves the existing workspace receipt without migrating legacy records", () => {
+    const bound = {
+      ...session,
+      workspace: {
+        bindingId: "workspace-1",
+        authorityGeneration: 1,
+        workspaceRoot: "/projects/one",
+        scopeRevision: 2,
+      },
+    };
+    expect(encodeSession(decodeSession(bound))).toEqual(bound);
+    expect(decodeSession(session).workspace).toBeUndefined();
+    expect(() =>
+      decodeSession({ ...bound, workspace: { ...bound.workspace, authorityGeneration: 0 } }),
+    ).toThrow();
+    expect(() =>
+      decodeSession({ ...bound, workspace: { ...bound.workspace, scopeRevision: 0 } }),
+    ).toThrow();
+  });
   it("survives a round trip through the form it is stored in", () => {
     const decoded = decodeSession(session);
     // The stored form is what a later version has to read back, so equality

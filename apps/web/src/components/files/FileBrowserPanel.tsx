@@ -11,12 +11,12 @@ import type {
 import { FileTree, useFileTree, useFileTreeSearch, useFileTreeSelector } from "@pierre/trees/react";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import { serializeComposerFileLink } from "@t3tools/shared/composerTrigger";
-import { ChevronsDownUpIcon, ChevronsUpDownIcon, MoreHorizontal } from "lucide-react";
+import { ChevronsDownUpIcon, ChevronsUpDownIcon, MoreHorizontal, SearchIcon } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { cn } from "~/lib/utils";
 
 import { Button } from "~/components/ui/button";
-import { InputGroup, InputGroupInput } from "~/components/ui/input-group";
+import { InputGroup, InputGroupAddon, InputGroupInput } from "~/components/ui/input-group";
 import {
   Menu,
   MenuGroup,
@@ -26,6 +26,7 @@ import {
   MenuRadioItem,
   MenuTrigger,
 } from "~/components/ui/menu";
+import { Popover, PopoverPopup, PopoverTrigger } from "~/components/ui/popover";
 import { toastManager } from "~/components/ui/toast";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "~/components/ui/tooltip";
 import { useComposerHandleContext } from "~/composerHandleContext";
@@ -159,27 +160,72 @@ function FileSearchField(props: {
   onValueChange: (value: string) => void;
   value: string;
 }) {
+  const renderSearchInput = (autoFocus = false) => (
+    <InputGroupInput
+      type="search"
+      name={props.name}
+      size="sm"
+      value={props.value}
+      aria-label={props.ariaLabel}
+      placeholder="Search files"
+      className="placeholder:text-placeholder/80"
+      spellCheck={false}
+      autoFocus={autoFocus}
+      onChange={(event) => props.onValueChange(event.target.value)}
+      onKeyDown={(event) => {
+        if (event.key !== "Escape") return;
+        props.onClose();
+        event.currentTarget.blur();
+      }}
+    />
+  );
+
   return (
-    <InputGroup
-      variant="ghost"
-      className="h-7 min-w-0 flex-1 has-[input:focus-visible,textarea:focus-visible]:border-ring has-[input:focus-visible,textarea:focus-visible]:ring-0"
-    >
-      <InputGroupInput
-        type="search"
-        name={props.name}
-        size="sm"
-        value={props.value}
-        aria-label={props.ariaLabel}
-        placeholder="Search files"
-        spellCheck={false}
-        onChange={(event) => props.onValueChange(event.target.value)}
-        onKeyDown={(event) => {
-          if (event.key !== "Escape") return;
-          props.onClose();
-          event.currentTarget.blur();
-        }}
-      />
-    </InputGroup>
+    <>
+      <InputGroup
+        variant="ghost"
+        className="h-7 min-w-0 flex-1 has-[input:focus-visible,textarea:focus-visible]:border-ring has-[input:focus-visible,textarea:focus-visible]:ring-0 @max-[14rem]/file-browser-header:hidden"
+      >
+        <InputGroupAddon>
+          <SearchIcon aria-hidden className="size-3.5" />
+        </InputGroupAddon>
+        {renderSearchInput()}
+      </InputGroup>
+      <Popover>
+        <PopoverTrigger
+          render={
+            <Button
+              type="button"
+              size="icon-xs"
+              variant="ghost"
+              className="hidden shrink-0 @max-[14rem]/file-browser-header:inline-flex"
+              aria-label={props.ariaLabel}
+              title={props.ariaLabel}
+            />
+          }
+        >
+          <SearchIcon aria-hidden className="size-3.5" />
+        </PopoverTrigger>
+        <PopoverPopup
+          side="top"
+          align="end"
+          alignOffset={8}
+          sideOffset={6}
+          viewportClassName="p-0"
+          className="w-48 max-w-[calc(100vw-2rem)] rounded-none! border-0! bg-transparent! p-0 shadow-none! before:hidden"
+        >
+          <InputGroup
+            variant="ghost"
+            className="h-7 min-w-0 has-[input:focus-visible,textarea:focus-visible]:border-ring has-[input:focus-visible,textarea:focus-visible]:ring-0"
+          >
+            <InputGroupAddon>
+              <SearchIcon aria-hidden className="size-3.5" />
+            </InputGroupAddon>
+            {renderSearchInput(true)}
+          </InputGroup>
+        </PopoverPopup>
+      </Popover>
+    </>
   );
 }
 
@@ -614,7 +660,7 @@ export default function FileBrowserPanel({
       data-file-browser-panel={`${environmentId}:${cwd}`}
     >
       <div
-        className="flex h-10 min-h-10 shrink-0 items-center gap-1 border-b border-border/60 bg-background px-2 in-data-[preview-panel-mode=inline]:mb-2 in-data-[preview-panel-mode=inline]:h-8 in-data-[preview-panel-mode=inline]:min-h-8 in-data-[preview-panel-mode=inline]:border-b-transparent in-data-[preview-panel-mode=inline]:pt-1"
+        className="@container/file-browser-header flex h-10 min-h-10 shrink-0 items-center gap-1 border-b border-border/60 bg-background px-2 in-data-[preview-panel-mode=inline]:mb-2 in-data-[preview-panel-mode=inline]:h-8 in-data-[preview-panel-mode=inline]:min-h-8 in-data-[preview-panel-mode=inline]:border-b-transparent in-data-[preview-panel-mode=inline]:pt-1"
         data-surface-subheader
       >
         <RefreshFilesButton
@@ -638,45 +684,47 @@ export default function FileBrowserPanel({
           onValueChange={handleSearchValueChange}
           onClose={handleSearchClose}
         />
-        {loadedDirectoryPaths.length > 0 ? (
-          <Tooltip>
-            <TooltipTrigger
-              render={
-                <Button
-                  type="button"
-                  size="icon-xs"
-                  variant="ghost"
-                  aria-label={
-                    allLoadedDirectoriesExpanded
-                      ? "Collapse loaded folders"
-                      : "Expand loaded folders"
-                  }
-                  onClick={toggleLoadedDirectories}
-                />
+        <div className="ms-auto flex shrink-0 items-center gap-1">
+          {loadedDirectoryPaths.length > 0 ? (
+            <Tooltip>
+              <TooltipTrigger
+                render={
+                  <Button
+                    type="button"
+                    size="icon-xs"
+                    variant="ghost"
+                    aria-label={
+                      allLoadedDirectoriesExpanded
+                        ? "Collapse loaded folders"
+                        : "Expand loaded folders"
+                    }
+                    onClick={toggleLoadedDirectories}
+                  />
+                }
+              >
+                {allLoadedDirectoriesExpanded ? (
+                  <ChevronsDownUpIcon className="size-3.5" />
+                ) : (
+                  <ChevronsUpDownIcon className="size-3.5" />
+                )}
+              </TooltipTrigger>
+              <TooltipPopup>
+                {allLoadedDirectoriesExpanded ? "Collapse loaded folders" : "Expand loaded folders"}
+              </TooltipPopup>
+            </Tooltip>
+          ) : null}
+          <WorkspaceFilesMenu
+            view={directoryView}
+            onViewChange={(nextView) => {
+              if (nextView === "ordinary") {
+                DIRECTORY_VIEW_BY_WORKSPACE.delete(workspaceSessionKey);
+              } else {
+                DIRECTORY_VIEW_BY_WORKSPACE.set(workspaceSessionKey, nextView);
               }
-            >
-              {allLoadedDirectoriesExpanded ? (
-                <ChevronsDownUpIcon className="size-3.5" />
-              ) : (
-                <ChevronsUpDownIcon className="size-3.5" />
-              )}
-            </TooltipTrigger>
-            <TooltipPopup>
-              {allLoadedDirectoriesExpanded ? "Collapse loaded folders" : "Expand loaded folders"}
-            </TooltipPopup>
-          </Tooltip>
-        ) : null}
-        <WorkspaceFilesMenu
-          view={directoryView}
-          onViewChange={(nextView) => {
-            if (nextView === "ordinary") {
-              DIRECTORY_VIEW_BY_WORKSPACE.delete(workspaceSessionKey);
-            } else {
-              DIRECTORY_VIEW_BY_WORKSPACE.set(workspaceSessionKey, nextView);
-            }
-            setDirectoryView(nextView);
-          }}
-        />
+              setDirectoryView(nextView);
+            }}
+          />
+        </div>
       </div>
       <div className="sr-only" aria-live="polite">
         {isSearching

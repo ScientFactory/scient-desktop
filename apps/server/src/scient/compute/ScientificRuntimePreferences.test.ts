@@ -9,7 +9,7 @@ const MATLAB = ComputeLanguageId.make("matlab");
 const PYTHON = ComputeLanguageId.make("python");
 
 describe("scientific runtime preference ownership", () => {
-  it.effect("reads a legacy MATLAB choice without rewriting it or enabling compute", () =>
+  it.effect("reads a legacy MATLAB choice without rewriting it", () =>
     Effect.gen(function* () {
       const settings = yield* ServerSettingsService;
       const legacy = vi.fn(() =>
@@ -19,7 +19,7 @@ describe("scientific runtime preference ownership", () => {
         readRuntimeExecutablePath: legacy,
       });
       expect((yield* preferences.getSettings).scientificComputing.languages[MATLAB]).toEqual({
-        enabled: false,
+        enabled: true,
         executable: "/legacy/matlab",
       });
       expect((yield* settings.getSettings).scientificComputing.languages[MATLAB]).toBeUndefined();

@@ -13,10 +13,23 @@ const CURRENCY = new Intl.NumberFormat("en-US", {
   maximumFractionDigits: 2,
 });
 
+const PRECISE_CURRENCY = new Intl.NumberFormat("en-US", {
+  style: "currency",
+  currency: "USD",
+  minimumFractionDigits: 2,
+  maximumFractionDigits: 4,
+});
+
 const INTEGER = new Intl.NumberFormat("en-US");
 
 export function formatUsd(value: number): string {
   return CURRENCY.format(value);
+}
+
+/** Keeps small non-zero estimates visible without adding noise to normal spend totals. */
+export function formatUsdPrecise(value: number): string {
+  if (Math.abs(value) > 0 && Math.abs(value) < 0.0001) return `${value < 0 ? "-" : ""}<$0.0001`;
+  return PRECISE_CURRENCY.format(value);
 }
 
 export function formatCount(value: number): string {

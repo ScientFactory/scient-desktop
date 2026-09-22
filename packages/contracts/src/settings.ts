@@ -13,6 +13,7 @@ import {
   TrimmedString,
 } from "./baseSchemas.ts";
 import { UsageLimitSourceId } from "./usageLimitSourceId.ts";
+import { UsageAccountingSourceId } from "./usageAccountingSourceId.ts";
 import { EnvironmentMachineKind, ThreadEnvMode, WorktreeSubmodules } from "./environment.ts";
 import { KeybindingShortcut } from "./keybindings.ts";
 import {
@@ -972,6 +973,20 @@ export const UsageLimitSourceConfig = Schema.Struct({
 });
 export type UsageLimitSourceConfig = typeof UsageLimitSourceConfig.Type;
 
+/**
+ * A provider-authoritative billing source. This is intentionally separate
+ * from quota hubs: accounting has different credentials, retention, and
+ * partial-failure semantics. Additional provider adapters can extend this
+ * discriminated union without changing the UI's stored-source model.
+ */
+export const UsageAccountingSourceConfig = Schema.Struct({
+  kind: Schema.Literal("openrouter"),
+  label: Schema.optional(TrimmedNonEmptyString),
+  managementKey: TrimmedString.pipe(Schema.withDecodingDefault(Effect.succeed(""))),
+  enabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
+});
+export type UsageAccountingSourceConfig = typeof UsageAccountingSourceConfig.Type;
+
 export const ObservabilitySettings = Schema.Struct({
   otlpTracesUrl: TrimmedString.pipe(Schema.withDecodingDefault(Effect.succeed(""))),
   otlpMetricsUrl: TrimmedString.pipe(Schema.withDecodingDefault(Effect.succeed(""))),
@@ -1047,7 +1062,9 @@ export type BackgroundActivitySettings = typeof BackgroundActivitySettings.Type;
  * mutates a runtime, and never rewrites an existing compute session.
  */
 export const ScientificComputingLanguageSettings = Schema.Struct({
-  enabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+  // SCIENT-FORK:START — supported languages are discoverable unless explicitly disabled.
+  enabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
+  // SCIENT-FORK:END
   executable: TrimmedString.pipe(Schema.withDecodingDefault(Effect.succeed(""))),
 });
 export type ScientificComputingLanguageSettings = typeof ScientificComputingLanguageSettings.Type;
@@ -1062,6 +1079,13 @@ export const ScientificComputingSettings = Schema.Struct({
   ),
 }).pipe(Schema.withDecodingDefault(Effect.succeed({})));
 export type ScientificComputingSettings = typeof ScientificComputingSettings.Type;
+
+/** Missing means "use the product default"; a persisted per-language choice always wins. */
+export const resolveScientificComputingLanguageSettings = (
+  settings: Pick<ScientificComputingSettings, "languages">,
+  languageId: ComputeLanguageId,
+): ScientificComputingLanguageSettings =>
+  settings.languages[languageId] ?? DEFAULT_SCIENTIFIC_COMPUTING_LANGUAGE_SETTINGS;
 
 /**
  * Server settings a project may override. Every other server setting is
@@ -1385,6 +1409,9 @@ export const ServerSettings = Schema.Struct({
   usageLimitSources: Schema.Record(UsageLimitSourceId, UsageLimitSourceConfig).pipe(
     Schema.withDecodingDefault(Effect.succeed({})),
   ),
+  usageAccountingSources: Schema.Record(UsageAccountingSourceId, UsageAccountingSourceConfig).pipe(
+    Schema.withDecodingDefault(Effect.succeed({})),
+  ),
   /** Exact model IDs, applied to past and future usage on this environment. */
   usagePriceOverrides: Schema.Record(TrimmedNonEmptyString, UsageModelPriceOverride).pipe(
     Schema.withDecodingDefault(Effect.succeed({})),
@@ -1684,6 +1711,9 @@ export const ServerSettingsPatch = Schema.Struct({
   // echoed back yet. `null` removes; the server merges into its current map.
   usageLimitSources: Schema.optionalKey(
     Schema.Record(UsageLimitSourceId, Schema.NullOr(UsageLimitSourceConfig)),
+  ),
+  usageAccountingSources: Schema.optionalKey(
+    Schema.Record(UsageAccountingSourceId, Schema.NullOr(UsageAccountingSourceConfig)),
   ),
   /** Each entry replaces one model's rates; `null` restores automatic pricing. */
   usagePriceOverrides: Schema.optionalKey(

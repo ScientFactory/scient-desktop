@@ -111,6 +111,11 @@
       "purpose": "Provide analysis, compute, and execution services to the shared server layer."
     },
     {
+      "path": "apps/server/src/storageCleanup.ts",
+      "anchor": "withoutComputeWorkspaceOwners",
+      "purpose": "Keep automatic worktree cleanup from removing a workspace while Compute still owns a runtime rooted there."
+    },
+    {
       "path": "apps/server/src/workspace/WorkspaceFileSystem.ts",
       "anchor": "watchFile",
       "purpose": "Expose generic revision-aware reads, conditional writes, and exact-file watching."

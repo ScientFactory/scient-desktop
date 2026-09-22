@@ -4,6 +4,7 @@ import { DOMSerializer, type Node as ProseMirrorNode } from "prosemirror-model";
 import { EditorState, NodeSelection, TextSelection, type Transaction } from "prosemirror-state";
 import { DecorationSet, type EditorView } from "prosemirror-view";
 import { describe, expect, it, vi } from "vite-plus/test";
+import { history } from "prosemirror-history";
 
 vi.mock("~/scient/math/ScientMath", () => ({
   getScientKatexRuntimePromise: () => Promise.reject(new Error("chunk unavailable")),
@@ -14,7 +15,7 @@ vi.mock("~/scient/math/ScientMath", () => ({
 import { createScientMathNodeView } from "./mathNodeView";
 import { scientMarkdownSchema } from "../prosemirror/schema";
 
-function inlineMathFixture(tex = "x^2") {
+function inlineMathFixture(tex = "x^2", withHistory = false) {
   const node = scientMarkdownSchema.nodes.inline_math!.create({
     delimiter: "$",
     display: false,
@@ -25,7 +26,11 @@ function inlineMathFixture(tex = "x^2") {
   const paragraph = scientMarkdownSchema.nodes.paragraph!.create(null, [before, node, after]);
   const doc = scientMarkdownSchema.nodes.doc!.create(null, paragraph);
   const position = 1 + before.nodeSize;
-  let state = EditorState.create({ doc, selection: TextSelection.create(doc, 1) });
+  let state = EditorState.create({
+    doc,
+    selection: TextSelection.create(doc, 1),
+    plugins: withHistory ? [history()] : [],
+  });
   const dispatch = vi.fn((transaction: Transaction) => {
     state = state.apply(transaction);
   });
@@ -39,11 +44,52 @@ function inlineMathFixture(tex = "x^2") {
   } as unknown as EditorView;
   const nodeView = createScientMathNodeView(node, view, () => position);
   document.body.append(nodeView.dom);
-  const editor = nodeView.dom.querySelector<HTMLInputElement>("input")!;
+  const editor = nodeView.dom.querySelector<HTMLTextAreaElement>("textarea")!;
   return { dispatch, editor, nodeView, position, state: () => state };
 }
 
 describe("Scient math node view", () => {
+  it("uses document history for equation typing and never falls back to textarea history", () => {
+    const { editor, nodeView, position, state } = inlineMathFixture("x^2", true);
+    nodeView.selectNode?.();
+    editor.value = "x^3";
+    editor.dispatchEvent(new InputEvent("input", { bubbles: true }));
+    expect(state().doc.nodeAt(position)?.attrs.tex).toBe("x^3");
+    for (const [key, expected] of [
+      ["z", "x^2"],
+      ["y", "x^3"],
+      ["z", "x^2"],
+      ["z", "x^2"],
+    ] as const) {
+      const event = new KeyboardEvent("keydown", {
+        key,
+        ctrlKey: true,
+        bubbles: true,
+        cancelable: true,
+      });
+      editor.dispatchEvent(event);
+      expect(event.defaultPrevented).toBe(true);
+      expect(editor.value).toBe(expected);
+      expect(state().doc.nodeAt(position)?.attrs.tex).toBe(expected);
+    }
+    nodeView.destroy?.();
+    document.body.replaceChildren();
+  });
+  it("keeps multiline inline matrices intact while navigating cells", () => {
+    const tex = "\\begin{pmatrix}\n{} & {} \\\\\n{} & {}\n\\end{pmatrix}";
+    const { editor, nodeView } = inlineMathFixture(tex);
+    nodeView.selectNode?.();
+    editor.focus();
+    editor.setSelectionRange(tex.indexOf("{}") + 1, tex.indexOf("{}") + 1);
+    const before = editor.selectionStart;
+    editor.dispatchEvent(
+      new KeyboardEvent("keydown", { key: "Tab", bubbles: true, cancelable: true }),
+    );
+    expect(editor.value).toBe(tex);
+    expect(editor.selectionStart).toBeGreaterThan(before);
+    nodeView.destroy?.();
+    document.body.replaceChildren();
+  });
   it("settles a rejected runtime load as invalid instead of remaining pending", async () => {
     const node = {
       attrs: { tex: "x^2" },

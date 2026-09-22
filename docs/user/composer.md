@@ -75,7 +75,7 @@ place.
 
 Use `Cmd+Shift+Enter` on macOS or `Ctrl+Shift+Enter` on Windows and Linux to send
 the oldest queued message now. Change `thread.steerQueuedMessage` in
-**Settings → Keybindings** to use another shortcut. It leaves the current draft
+**Settings → Shortcuts** to use another shortcut. It leaves the current draft
 in the composer and waits if the agent needs an approval or an answer.
 
 ## Queue messages offline on mobile

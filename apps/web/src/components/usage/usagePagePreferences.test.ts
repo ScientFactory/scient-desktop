@@ -35,6 +35,14 @@ describe("Usage page preferences", () => {
     }
   });
 
+  it("normalizes provider billing away from the unsupported 24-hour window", () => {
+    saveUsagePagePreferences({ metric: "spend", windowDays: 1 });
+    expect(readUsagePagePreferences()).toEqual({ metric: "spend", windowDays: 7 });
+
+    saveUsagePagePreferences({ metric: "spend", windowDays: 30 });
+    expect(readUsagePagePreferences()).toEqual({ metric: "spend", windowDays: 30 });
+  });
+
   it.each([
     "not-json",
     '{"metric":"unknown","windowDays":7}',

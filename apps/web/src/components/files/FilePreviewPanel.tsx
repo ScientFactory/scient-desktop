@@ -19,6 +19,8 @@ import {
   isWorkspaceVideoPreviewPath,
 } from "@t3tools/shared/filePreview";
 import { Editor } from "@pierre/diffs/editor";
+import { sourceMathController, sourceMathOwnsEvent } from "~/scient/math/input/sourceAdapter";
+import { MathInputTools } from "~/scient/math/input/MathInputTools";
 import { EditProvider, File, type FileOptions, Virtualizer } from "@pierre/diffs/react";
 import { DiffWorkerPoolProvider } from "../DiffWorkerPoolProvider";
 import {
@@ -953,6 +955,21 @@ function EditableFileEditor({
       onEditorSelectionChange(editor.getState().selections?.at(-1) ?? null);
     });
   }, [editor, onEditorSelectionChange]);
+  const mathEditable = useRef(!editingBlocked);
+  mathEditable.current = !editingBlocked;
+  const mathInput = useMemo(() => {
+    const format = /\.tex$/iu.test(relativePath)
+      ? "latex"
+      : /\.(?:md|markdown)$/iu.test(relativePath)
+        ? "markdown"
+        : null;
+    return format ? sourceMathController(editor, format, () => mathEditable.current) : null;
+  }, [editor, relativePath]);
+  useEffect(() => {
+    const host = surfaceRef.current;
+    if (!host || !mathInput) return;
+    return mathInput.attach(host, sourceMathOwnsEvent);
+  }, [mathInput]);
   reportEditorSelectionRef.current = reportEditorSelection;
 
   useEffect(() => {
@@ -1133,7 +1150,7 @@ function EditableFileEditor({
       <EditProvider editor={editor}>
         <div
           ref={surfaceRef}
-          className="flex min-h-0 flex-1"
+          className="relative flex min-h-0 flex-1"
           onCompositionEnd={() =>
             queueMicrotask(() =>
               externalBindings.current.externalPersistence?.resumeExternalUpdates(),
@@ -1153,6 +1170,11 @@ function EditableFileEditor({
             onRunShortcut(editor.getState().selections?.at(-1) ?? null);
           }}
         >
+          {mathInput && !editingBlocked ? (
+            <div className="scient-math-source-toolbar">
+              <MathInputTools controller={mathInput} />
+            </div>
+          ) : null}
           <Virtualizer
             className="file-preview-virtualizer min-h-0 flex-1 overflow-auto"
             config={{
@@ -2204,7 +2226,7 @@ export default function FilePreviewPanel({
             className={cn(
               "flex min-h-0 shrink-0 bg-background",
               previewPath
-                ? "w-[min(22rem,46%)] min-w-64 border-l border-border/60"
+                ? "w-[min(20rem,40%)] min-w-40 border-l border-border/60"
                 : "min-w-0 flex-1",
             )}
           >

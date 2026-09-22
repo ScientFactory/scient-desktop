@@ -33,10 +33,14 @@ export function attachVisualCardToolbarDrag(
     // Read together, then write once. Translation does not resize the chart.
     const bounds = card.getBoundingClientRect();
     const rect = toolbar.getBoundingClientRect();
-    const minX = bounds.left + CARD_INSET - (rect.left - position.x);
-    const minY = bounds.top + CARD_INSET - (rect.top - position.y);
-    const maxX = minX + Math.max(0, bounds.width - rect.width - CARD_INSET * 2);
-    const maxY = minY + Math.max(0, bounds.height - rect.height - CARD_INSET * 2);
+    const baseLeft = rect.left - position.x;
+    const baseTop = rect.top - position.y;
+    // Keep the authored position legal even when the design intentionally
+    // overhangs a card edge, while still clamping movement to the card.
+    const minX = Math.min(0, bounds.left + CARD_INSET - baseLeft);
+    const minY = Math.min(0, bounds.top + CARD_INSET - baseTop);
+    const maxX = Math.max(0, bounds.right - CARD_INSET - (baseLeft + rect.width));
+    const maxY = Math.max(0, bounds.bottom - CARD_INSET - (baseTop + rect.height));
     const clamped = {
       x: Math.max(minX, Math.min(maxX, next.x)),
       y: Math.max(minY, Math.min(maxY, next.y)),

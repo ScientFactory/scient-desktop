@@ -2,10 +2,14 @@ import {
   ChevronDownIcon,
   CircleXIcon,
   EllipsisIcon,
+  FileIcon,
   FileJsonIcon,
+  FileTextIcon,
+  KeyboardIcon,
   MinusIcon,
   PlusIcon,
   SearchIcon,
+  SigmaIcon,
   TriangleAlertIcon,
   XIcon,
 } from "lucide-react";
@@ -20,6 +24,7 @@ import {
   useReducer,
   useRef,
   useState,
+  useSyncExternalStore,
 } from "react";
 import {
   type KeybindingCommand,
@@ -42,7 +47,6 @@ import { useSettingsScope } from "./SettingsScopeContext";
 import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
 import { Input } from "../ui/input";
-import { Kbd, KbdGroup } from "../ui/kbd";
 import { Menu, MenuItem, MenuPopup, MenuTrigger } from "../ui/menu";
 import { Popover, PopoverContent, PopoverTrigger } from "../ui/popover";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../ui/select";
@@ -65,43 +69,32 @@ import {
   whenAstToExpression,
   whenNodeRemoveLabel,
 } from "./KeybindingsSettings.logic";
-import { SettingsPageContainer, SettingsRow, SettingsSection } from "./settingsLayout";
+import {
+  SettingsPageContainer,
+  SettingsRow,
+  SettingsSearchTarget,
+  SettingsSection,
+} from "./settingsLayout";
 import { keybindingSearchAnchorId, searchableSetting } from "./settingsSearch";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { useAtomCommand } from "../../state/use-atom-command";
+import { AuthoringKeybindingsSettings } from "../../scient/keyboard/AuthoringKeybindingsSettings";
+import { ShortcutKeys, SHORTCUT_PILL_BUTTON_CLASS, SHORTCUT_ROW_CLASS } from "./ShortcutRow";
+import { surfaceCommands, type KeyboardScope } from "../../scient/keyboard/catalog";
+import { isMacKeyboard } from "../../scient/keyboard/keys";
+import {
+  effectiveSurfaceBindings,
+  getKeyboardPreferences,
+  subscribeKeyboardPreferences,
+} from "../../scient/keyboard/preferences";
+import {
+  SettingsSourceGroup,
+  SettingsSourcePanel,
+  SettingsSourceStrip,
+  SettingsSourceStripItem,
+} from "./SettingsSourceStrip";
 
-function KeybindingPill({ value }: { value: string }) {
-  // Keys dedupe repeated parts; a literal "+" in a shortcut splits into empty strings.
-  const seenParts = new Map<string, number>();
-  const parts = value.split("+").map((part) => {
-    const seen = seenParts.get(part) ?? 0;
-    seenParts.set(part, seen + 1);
-    return { part, key: seen === 0 ? part : `${part}-${seen}` };
-  });
-  return (
-    <KbdGroup className="bg-transparent p-0 shadow-none">
-      {parts.map(({ part, key }) => (
-        <Kbd key={key} className="min-w-6 justify-center px-1.5">
-          {part === "mod"
-            ? navigator.platform.toLowerCase().includes("mac")
-              ? "⌘"
-              : "Ctrl"
-            : part === "shift"
-              ? "⇧"
-              : part === "alt"
-                ? navigator.platform.toLowerCase().includes("mac")
-                  ? "⌥"
-                  : "Alt"
-                : part === "ctrl"
-                  ? "⌃"
-                  : part.length === 1
-                    ? part.toUpperCase()
-                    : part}
-        </Kbd>
-      ))}
-    </KbdGroup>
-  );
-}
+type KeybindingSection = "general" | KeyboardScope;
 
 function ExpandableHeaderSearch({
   query,
@@ -130,13 +123,13 @@ function ExpandableHeaderSearch({
                 size="icon-xs"
                 variant="ghost-muted"
                 onClick={() => onOpenChange(true)}
-                aria-label="Search keybindings"
+                aria-label="Search shortcuts"
               >
                 <SearchIcon />
               </Button>
             }
           />
-          <TooltipPopup side="top">Search keybindings</TooltipPopup>
+          <TooltipPopup side="top">Search shortcuts</TooltipPopup>
         </Tooltip>
       </>
     );
@@ -161,8 +154,8 @@ function ExpandableHeaderSearch({
             onOpenChange(false);
           }
         }}
-        placeholder="Search keybindings"
-        aria-label="Search keybindings"
+        placeholder="Search shortcuts"
+        aria-label="Search shortcuts"
         className="w-44 [&_[data-slot=input]]:pl-7"
         size="sm"
       />
@@ -862,12 +855,9 @@ function KeybindingKeyControl({
           type="button"
           onClick={() => setDraft({ isRecording: true })}
           aria-label={`Edit shortcut for ${commandLabel(row.command)}: ${formatShortcutLabel(row.binding.shortcut)}`}
-          className={cn(
-            "inline-flex h-8 cursor-pointer items-center rounded-md border border-transparent px-1.5 sm:h-7 outline-none transition-colors hover:border-border/70 hover:bg-accent focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/24",
-            pillClassName,
-          )}
+          className={cn(SHORTCUT_PILL_BUTTON_CLASS, pillClassName)}
         >
-          <KeybindingPill value={row.key} />
+          <ShortcutKeys value={row.key} />
         </button>
       ) : (
         <Input
@@ -1045,7 +1035,7 @@ function KeybindingSettingsRow(props: KeybindingRowProps) {
   return (
     <SettingsRow
       id={anchorId}
-      className="group/row rounded-none"
+      className={SHORTCUT_ROW_CLASS}
       title={<KeybindingRowTitle row={row} />}
       description={<KeybindingRowWhen row={row} editor={editor} variables={variables} />}
       control={
@@ -1255,7 +1245,7 @@ function NewKeybindingSettingsRow(props: NewKeybindingProps) {
 
   return (
     <SettingsRow
-      className="rounded-none bg-muted/15"
+      className={cn("bg-muted/15", SHORTCUT_ROW_CLASS)}
       title="New keybinding"
       description={
         <span className="flex h-6 items-center gap-1.5">
@@ -1296,7 +1286,7 @@ function KeybindingsList(props: KeybindingsListProps) {
     props;
   const newProps: NewKeybindingProps = {
     commandOptions,
-    allRows: rows,
+    allRows: rowActions.allRows,
     variables: rowActions.variables,
     isSaving: savingCommand !== null,
     onSave: rowActions.onSave,
@@ -1327,14 +1317,14 @@ function KeybindingsList(props: KeybindingsListProps) {
       ))}
       {rows.length === 0 && !isAddingBinding ? (
         <div className="px-4 py-12 text-center text-sm text-muted-foreground">
-          No keybindings match your search.
+          No shortcuts match your search.
         </div>
       ) : null}
     </div>
   );
 }
 
-/** Shown in the browser build only; the desktop app receives every shortcut. */
+/** Browser reservations are additional to OS and native-menu reservations. */
 function BrowserKeybindingNotice() {
   return (
     <div className="flex items-center gap-2 px-3 py-2.5 text-[12px] leading-[1.45] text-muted-foreground sm:px-4">
@@ -1371,19 +1361,29 @@ export function KeybindingsSettingsPanel() {
   );
   const [query, setQuery] = useState("");
   const [isSearchOpen, setIsSearchOpen] = useState(false);
+  // The search-target context is provided by this panel's own page container,
+  // so the jump target is read from the route hash here.
+  const searchTargetId = useLocation({ select: (location) => location.hash.replace(/^#/, "") });
+  const [selectedSection, setSelectedSection] = useState<KeybindingSection>(
+    searchTargetId === "authoring" ? "math" : "general",
+  );
   const searchInputRef = useRef<HTMLInputElement>(null);
   const [savingCommand, setSavingCommand] = useState<KeybindingCommand | null>(null);
   const [isAddingBinding, setIsAddingBinding] = useState(false);
   const rows = useMemo(() => buildKeybindingRows(keybindings, query), [keybindings, query]);
-  // The search-target context is provided by this panel's own page container,
-  // so the jump target is read from the route hash here.
-  const searchTargetId = useLocation({ select: (location) => location.hash.replace(/^#/, "") });
+  const allRows = useMemo(() => buildKeybindingRows(keybindings, ""), [keybindings]);
   const [handledSearchTargetId, setHandledSearchTargetId] = useState(searchTargetId);
 
   // A settings-search jump must not be hidden by the page's own filter.
   if (searchTargetId !== handledSearchTargetId) {
     setHandledSearchTargetId(searchTargetId);
-    if (searchTargetId.startsWith("keybinding-")) setQuery("");
+    if (searchTargetId.startsWith("keybinding-")) {
+      setQuery("");
+      setSelectedSection("general");
+    } else if (searchTargetId === "authoring") {
+      setQuery("");
+      setSelectedSection("math");
+    }
   }
   const commandOptions = useMemo(() => buildKeybindingCommandOptions(keybindings), [keybindings]);
   const whenVariables = useMemo(() => buildWhenVariableOptions(), []);
@@ -1512,16 +1512,63 @@ export function KeybindingsSettingsPanel() {
 
   const cancelAdd = useCallback(() => setIsAddingBinding(false), []);
 
+  const authoringCommands = useMemo(() => surfaceCommands(isMacKeyboard()), []);
+  const authoringPreferences = useSyncExternalStore(
+    subscribeKeyboardPreferences,
+    getKeyboardPreferences,
+    getKeyboardPreferences,
+  );
+  const authoringBindings = useMemo(
+    () => effectiveSurfaceBindings(authoringPreferences.preferences, isMacKeyboard()),
+    [authoringPreferences.preferences],
+  );
+  const authoringKeysByCommand = useMemo(() => {
+    const grouped = new Map<string, string[]>();
+    for (const binding of authoringBindings) {
+      const keys = grouped.get(binding.command) ?? [];
+      keys.push(binding.keys);
+      grouped.set(binding.command, keys);
+    }
+    return grouped;
+  }, [authoringBindings]);
+  const authoringCounts = useMemo(
+    () =>
+      Object.fromEntries(
+        (["markdown", "math", "pdf"] as const).map((scope) => [
+          scope,
+          authoringCommands.filter((command) => command.scope === scope).length,
+        ]),
+      ) as Record<KeyboardScope, number>,
+    [authoringCommands],
+  );
+  const visibleAuthoringCount =
+    selectedSection === "general"
+      ? 0
+      : authoringCommands.filter(
+          (command) =>
+            command.scope === selectedSection &&
+            `${command.id} ${command.label} ${authoringKeysByCommand.get(command.id)?.join(" ") ?? ""}`
+              .toLowerCase()
+              .includes(query.toLowerCase()),
+        ).length;
+  const visibleCount =
+    selectedSection === "general" ? rows.length + (isAddingBinding ? 1 : 0) : visibleAuthoringCount;
   const bindingsCount = (
     <span className="text-[11px] text-muted-foreground">
-      {rows.length + (isAddingBinding ? 1 : 0)}{" "}
-      {rows.length + (isAddingBinding ? 1 : 0) === 1 ? "binding" : "bindings"}
+      {visibleCount}{" "}
+      {selectedSection === "general"
+        ? visibleCount === 1
+          ? "binding"
+          : "bindings"
+        : visibleCount === 1
+          ? "command"
+          : "commands"}
     </span>
   );
 
   const listProps: KeybindingsListProps = {
     rows,
-    allRows: rows,
+    allRows,
     commandOptions,
     variables: whenVariables,
     savingCommand,
@@ -1536,6 +1583,7 @@ export function KeybindingsSettingsPanel() {
     <SettingsPageContainer>
       <SettingsSection
         {...searchableSetting("keybindings")}
+        variant="plain"
         headerAction={
           <div className="flex items-center gap-1.5">
             <ExpandableHeaderSearch
@@ -1546,45 +1594,118 @@ export function KeybindingsSettingsPanel() {
               inputRef={searchInputRef}
               collapsedAccessory={bindingsCount}
             />
-            <Tooltip>
-              <TooltipTrigger
-                render={
-                  <Button
-                    type="button"
-                    size="icon-xs"
-                    variant="ghost-muted"
-                    onClick={() => setIsAddingBinding(true)}
-                    aria-label="Add keybinding"
-                  >
-                    <PlusIcon />
-                  </Button>
-                }
-              />
-              <TooltipPopup side="top">Add keybinding</TooltipPopup>
-            </Tooltip>
-            <Tooltip>
-              <TooltipTrigger
-                render={
-                  <Button
-                    type="button"
-                    size="icon-xs"
-                    variant="ghost-muted"
-                    disabled={!keybindingsConfigPath}
-                    onClick={openKeybindingsFile}
-                    aria-label="Open keybindings.json"
-                  >
-                    <FileJsonIcon />
-                  </Button>
-                }
-              />
-              <TooltipPopup side="top">Open keybindings.json</TooltipPopup>
-            </Tooltip>
+            {selectedSection === "general" ? (
+              <>
+                <Tooltip>
+                  <TooltipTrigger
+                    render={
+                      <Button
+                        type="button"
+                        size="icon-xs"
+                        variant="ghost-muted"
+                        onClick={() => setIsAddingBinding(true)}
+                        aria-label="Add keybinding"
+                      >
+                        <PlusIcon />
+                      </Button>
+                    }
+                  />
+                  <TooltipPopup side="top">Add application keybinding</TooltipPopup>
+                </Tooltip>
+                <Tooltip>
+                  <TooltipTrigger
+                    render={
+                      <Button
+                        type="button"
+                        size="icon-xs"
+                        variant="ghost-muted"
+                        disabled={!keybindingsConfigPath}
+                        onClick={openKeybindingsFile}
+                        aria-label="Open keybindings.json"
+                      >
+                        <FileJsonIcon />
+                      </Button>
+                    }
+                  />
+                  <TooltipPopup side="top">Open application keybindings file</TooltipPopup>
+                </Tooltip>
+              </>
+            ) : null}
           </div>
         }
       >
-        {!isElectron ? <BrowserKeybindingNotice /> : null}
-
-        <KeybindingsList {...listProps} />
+        <SettingsSearchTarget id="authoring" className="px-3 sm:px-4">
+          <SettingsSourceGroup activePanelId={`keybindings-${selectedSection}`}>
+            <SettingsSourceStrip label="Shortcut sections">
+              {(
+                [
+                  {
+                    id: "general" as const,
+                    label: "General",
+                    detail: `${allRows.length} application bindings`,
+                    icon: <KeyboardIcon className="size-6 shrink-0" />,
+                  },
+                  {
+                    id: "markdown" as const,
+                    label: "Markdown",
+                    detail: `${authoringCounts.markdown} commands`,
+                    icon: <FileTextIcon className="size-6 shrink-0" />,
+                  },
+                  {
+                    id: "math" as const,
+                    label: "Math",
+                    detail: `${authoringCounts.math} commands`,
+                    icon: <SigmaIcon className="size-6 shrink-0" />,
+                  },
+                  {
+                    id: "pdf" as const,
+                    label: "PDF",
+                    detail: `${authoringCounts.pdf} commands`,
+                    icon: <FileIcon className="size-6 shrink-0" />,
+                  },
+                ] satisfies ReadonlyArray<{
+                  id: KeybindingSection;
+                  label: string;
+                  detail: string;
+                  icon: ReactNode;
+                }>
+              ).map((section, index) => (
+                <SettingsSourceStripItem
+                  key={section.id}
+                  id={`keybindings-${section.id}-trigger`}
+                  controls={`keybindings-${section.id}`}
+                  expanded={selectedSection === section.id}
+                  separated={index > 0}
+                  label={section.label}
+                  detail={section.detail}
+                  icon={section.icon}
+                  onToggle={() => {
+                    setSelectedSection(section.id);
+                    setIsAddingBinding(false);
+                  }}
+                />
+              ))}
+            </SettingsSourceStrip>
+            <SettingsSourcePanel
+              id={`keybindings-${selectedSection}`}
+              aria-labelledby={`keybindings-${selectedSection}-trigger`}
+            >
+              {selectedSection === "general" ? (
+                <>
+                  {!isElectron ? <BrowserKeybindingNotice /> : null}
+                  <KeybindingsList {...listProps} />
+                </>
+              ) : (
+                <AuthoringKeybindingsSettings
+                  key={selectedSection}
+                  scope={selectedSection}
+                  query={query}
+                  appBindings={keybindings}
+                />
+              )}
+            </SettingsSourcePanel>
+          </SettingsSourceGroup>
+        </SettingsSearchTarget>
       </SettingsSection>
     </SettingsPageContainer>
   );

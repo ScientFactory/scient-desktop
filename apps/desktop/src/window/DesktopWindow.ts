@@ -159,6 +159,7 @@ function getInitialWindowBackgroundColor(shouldUseDarkColors: boolean): string {
 }
 
 type DisplayBounds = Pick<Electron.Rectangle, "x" | "y" | "width" | "height">;
+type DisplayArea = { readonly bounds: DisplayBounds; readonly workArea: DisplayBounds };
 
 function windowFitsWithinDisplay(
   windowBounds: DesktopAppSettings.DesktopWindowBounds,
@@ -187,14 +188,75 @@ function windowBoundsEqual(
 export function resolveInitialMainWindowBounds(
   persistedBounds: DesktopAppSettings.DesktopWindowBounds | null,
   displays: readonly DisplayBounds[],
-): DesktopAppSettings.DesktopWindowBounds | typeof DesktopAppSettings.DEFAULT_MAIN_WINDOW_SIZE {
+  defaultWorkArea?: DisplayBounds,
+): DesktopAppSettings.DesktopWindowBounds | { readonly width: number; readonly height: number } {
   if (
     persistedBounds !== null &&
     displays.some((display) => windowFitsWithinDisplay(persistedBounds, display))
   ) {
     return persistedBounds;
   }
-  return DesktopAppSettings.DEFAULT_MAIN_WINDOW_SIZE;
+  if (defaultWorkArea === undefined) {
+    return DesktopAppSettings.DEFAULT_MAIN_WINDOW_SIZE;
+  }
+  return {
+    width: Math.max(
+      DesktopAppSettings.MIN_MAIN_WINDOW_SIZE.width,
+      Math.min(DesktopAppSettings.DEFAULT_MAIN_WINDOW_SIZE.width, defaultWorkArea.width),
+    ),
+    height: Math.max(
+      DesktopAppSettings.MIN_MAIN_WINDOW_SIZE.height,
+      Math.min(DesktopAppSettings.DEFAULT_MAIN_WINDOW_SIZE.height, defaultWorkArea.height),
+    ),
+  };
+}
+
+export function resolveOneTimeMainWindowSizeIncrease(
+  persistedBounds: DesktopAppSettings.DesktopWindowBounds | null,
+  displays: readonly DisplayArea[],
+  primaryDisplay: DisplayArea,
+): DesktopAppSettings.DesktopWindowBounds | null {
+  if (persistedBounds === null) return null;
+
+  const currentDisplay = displays.find((display) =>
+    windowFitsWithinDisplay(persistedBounds, display.bounds),
+  );
+  const display = currentDisplay ?? primaryDisplay;
+  const { workArea } = display;
+  const initialBounds = currentDisplay === undefined ? null : persistedBounds;
+  const width = Math.max(
+    initialBounds?.width ?? DesktopAppSettings.MIN_MAIN_WINDOW_SIZE.width,
+    Math.min(DesktopAppSettings.DEFAULT_MAIN_WINDOW_SIZE.width, workArea.width),
+  );
+  const height = Math.max(
+    initialBounds?.height ?? DesktopAppSettings.MIN_MAIN_WINDOW_SIZE.height,
+    Math.min(DesktopAppSettings.DEFAULT_MAIN_WINDOW_SIZE.height, workArea.height),
+  );
+  if (initialBounds !== null && width === initialBounds.width && height === initialBounds.height) {
+    return initialBounds;
+  }
+  // Preserve a larger saved dimension; use the full display only when that
+  // dimension already exceeds its usable work area.
+  const horizontalArea = width <= workArea.width ? workArea : display.bounds;
+  const verticalArea = height <= workArea.height ? workArea : display.bounds;
+  return {
+    x: Math.min(
+      Math.max(
+        initialBounds?.x ?? workArea.x + Math.floor((workArea.width - width) / 2),
+        horizontalArea.x,
+      ),
+      horizontalArea.x + horizontalArea.width - width,
+    ),
+    y: Math.min(
+      Math.max(
+        initialBounds?.y ?? workArea.y + Math.floor((workArea.height - height) / 2),
+        verticalArea.y,
+      ),
+      verticalArea.y + verticalArea.height - height,
+    ),
+    width,
+    height,
+  };
 }
 
 // A self-contained "Connecting to WSL" splash, shown immediately in wsl-only
@@ -372,13 +434,13 @@ export const make = Effect.gen(function* () {
     const iconPaths = yield* assets.iconPaths;
     const iconOption = getIconOption(iconPaths, environment.platform);
     const shouldUseDarkColors = yield* electronTheme.shouldUseDarkColors;
-    const persistedSettings = yield* desktopSettings.get;
-    const persistedBounds = persistedSettings.mainWindowBounds;
+    let persistedSettings = yield* desktopSettings.get;
     const displayBoundsResult = yield* Effect.sync(() => {
       try {
         return {
           _tag: "Success" as const,
-          bounds: Electron.screen.getAllDisplays().map((display) => display.bounds),
+          displays: Electron.screen.getAllDisplays(),
+          primaryDisplay: Electron.screen.getPrimaryDisplay(),
         };
       } catch (cause) {
         return { _tag: "Failure" as const, cause };
@@ -386,19 +448,44 @@ export const make = Effect.gen(function* () {
     });
     const displayBounds =
       displayBoundsResult._tag === "Success"
-        ? displayBoundsResult.bounds
+        ? displayBoundsResult.displays.map((display) => display.bounds)
         : yield* logWindowWarning("failed to read connected displays; using defaults", {
             cause: displayBoundsResult.cause,
           }).pipe(Effect.as<readonly Electron.Rectangle[]>([]));
-    const initialBounds = resolveInitialMainWindowBounds(persistedBounds, displayBounds);
+    if (
+      !persistedSettings.mainWindowSizeIncreaseApplied &&
+      displayBoundsResult._tag === "Success"
+    ) {
+      const increasedBounds = resolveOneTimeMainWindowSizeIncrease(
+        persistedSettings.mainWindowBounds,
+        displayBoundsResult.displays,
+        displayBoundsResult.primaryDisplay,
+      );
+      persistedSettings = yield* desktopSettings.applyMainWindowSizeIncrease(increasedBounds).pipe(
+        Effect.map((change) => change.settings),
+        Effect.catch((error) =>
+          logWindowWarning("failed to persist one-time main window size increase", {
+            message: error.message,
+          }).pipe(Effect.as(persistedSettings)),
+        ),
+      );
+    }
+    const persistedBounds = persistedSettings.mainWindowBounds;
+    const initialBounds = resolveInitialMainWindowBounds(
+      persistedBounds,
+      displayBounds,
+      displayBoundsResult._tag === "Success"
+        ? displayBoundsResult.primaryDisplay.workArea
+        : undefined,
+    );
     const restoredPersistedBounds = persistedBounds !== null && initialBounds === persistedBounds;
-    if (persistedBounds !== null && initialBounds === DesktopAppSettings.DEFAULT_MAIN_WINDOW_SIZE) {
+    if (persistedBounds !== null && !restoredPersistedBounds) {
       yield* logWindowWarning("saved main window bounds could not be restored; using defaults");
     }
     const window = yield* electronWindow.create({
       ...initialBounds,
-      minWidth: 840,
-      minHeight: 620,
+      minWidth: DesktopAppSettings.MIN_MAIN_WINDOW_SIZE.width,
+      minHeight: DesktopAppSettings.MIN_MAIN_WINDOW_SIZE.height,
       show: false,
       autoHideMenuBar: true,
       ...(environment.platform === "darwin" ? { disableAutoHideCursor: true } : {}),

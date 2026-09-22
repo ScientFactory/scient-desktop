@@ -32,6 +32,8 @@ export interface DesktopSettings {
   readonly linuxPasswordStore: LinuxPasswordStorePreference;
   readonly mainWindowBounds: DesktopWindowBounds | null;
   readonly mainWindowMaximized: boolean;
+  // An absent on-disk marker identifies profiles created before the size increase.
+  readonly mainWindowSizeIncreaseApplied: boolean;
   readonly serverExposureMode: DesktopServerExposureMode;
   readonly tailscaleServeEnabled: boolean;
   readonly tailscaleServePort: number;
@@ -61,7 +63,7 @@ export interface DesktopSettingsChange {
 }
 
 const DEFAULT_TAILSCALE_SERVE_PORT = 443;
-const MIN_MAIN_WINDOW_SIZE = {
+export const MIN_MAIN_WINDOW_SIZE = {
   width: 840,
   height: 620,
 } as const;
@@ -73,8 +75,8 @@ export const DesktopWindowBoundsSchema = Schema.Struct({
 });
 export type DesktopWindowBounds = typeof DesktopWindowBoundsSchema.Type;
 export const DEFAULT_MAIN_WINDOW_SIZE = {
-  width: 1100,
-  height: 780,
+  width: 1280,
+  height: 840,
 } as const;
 
 export const DEFAULT_DESKTOP_SETTINGS: DesktopSettings = {
@@ -82,6 +84,7 @@ export const DEFAULT_DESKTOP_SETTINGS: DesktopSettings = {
   linuxPasswordStore: DEFAULT_LINUX_PASSWORD_STORE,
   mainWindowBounds: null,
   mainWindowMaximized: false,
+  mainWindowSizeIncreaseApplied: true,
   serverExposureMode: "local-only",
   tailscaleServeEnabled: false,
   tailscaleServePort: DEFAULT_TAILSCALE_SERVE_PORT,
@@ -105,6 +108,7 @@ const DesktopSettingsDocument = Schema.Struct({
   linuxPasswordStore: Schema.optionalKey(Schema.Unknown),
   mainWindowBounds: Schema.optionalKey(Schema.NullOr(DesktopWindowBoundsDocument)),
   mainWindowMaximized: Schema.optionalKey(Schema.Boolean),
+  mainWindowSizeIncreaseApplied: Schema.optionalKey(Schema.Boolean),
   serverExposureMode: Schema.optionalKey(DesktopServerExposureModeSchema),
   tailscaleServeEnabled: Schema.optionalKey(Schema.Boolean),
   tailscaleServePort: Schema.optionalKey(Schema.Number),
@@ -168,6 +172,9 @@ export class DesktopAppSettings extends Context.Service<
     readonly setMainWindowBounds: (
       bounds: DesktopWindowBounds,
       isMaximized: boolean,
+    ) => Effect.Effect<DesktopSettingsChange, DesktopSettingsWriteError>;
+    readonly applyMainWindowSizeIncrease: (
+      bounds: DesktopWindowBounds | null,
     ) => Effect.Effect<DesktopSettingsChange, DesktopSettingsWriteError>;
     readonly setServerExposureMode: (
       mode: DesktopServerExposureMode,
@@ -259,6 +266,7 @@ function normalizeDesktopSettingsDocument(
     linuxPasswordStore: normalizeLinuxPasswordStorePreference(parsed.linuxPasswordStore),
     mainWindowBounds,
     mainWindowMaximized: mainWindowBounds !== null && parsed.mainWindowMaximized === true,
+    mainWindowSizeIncreaseApplied: parsed.mainWindowSizeIncreaseApplied === true,
     serverExposureMode:
       parsed.serverExposureMode === "network-accessible" ? "network-accessible" : "local-only",
     tailscaleServeEnabled: parsed.tailscaleServeEnabled === true,
@@ -291,6 +299,11 @@ function toDesktopSettingsDocument(
   }
   if (settings.mainWindowMaximized) {
     document.mainWindowMaximized = true;
+  }
+  if (settings.mainWindowSizeIncreaseApplied) {
+    // Do not omit this just because fresh profiles default to true: absence
+    // means an older profile still needs its one-time window size increase.
+    document.mainWindowSizeIncreaseApplied = true;
   }
   if (settings.serverExposureMode !== defaults.serverExposureMode) {
     document.serverExposureMode = settings.serverExposureMode;
@@ -348,6 +361,20 @@ function setMainWindowBounds(
         ...settings,
         mainWindowBounds: bounds,
         mainWindowMaximized: isMaximized,
+      };
+}
+
+function applyMainWindowSizeIncrease(
+  settings: DesktopSettings,
+  bounds: DesktopWindowBounds | null,
+): DesktopSettings {
+  return settings.mainWindowSizeIncreaseApplied
+    ? settings
+    : {
+        ...settings,
+        mainWindowBounds: bounds,
+        mainWindowMaximized: bounds !== null && settings.mainWindowMaximized,
+        mainWindowSizeIncreaseApplied: true,
       };
 }
 
@@ -616,6 +643,10 @@ export const make = Effect.gen(function* () {
           },
         }),
       ),
+    applyMainWindowSizeIncrease: (bounds) =>
+      persist((settings) => applyMainWindowSizeIncrease(settings, bounds)).pipe(
+        Effect.withSpan("desktop.settings.applyMainWindowSizeIncrease"),
+      ),
     setServerExposureMode: (mode) =>
       persist((settings) => setServerExposureMode(settings, mode)).pipe(
         Effect.withSpan("desktop.settings.setServerExposureMode", { attributes: { mode } }),
@@ -685,6 +716,8 @@ export const layerTest = (initialSettings: DesktopSettings = DEFAULT_DESKTOP_SET
         load: SynchronizedRef.get(settingsRef),
         setMainWindowBounds: (bounds, isMaximized) =>
           update((settings) => setMainWindowBounds(settings, bounds, isMaximized)),
+        applyMainWindowSizeIncrease: (bounds) =>
+          update((settings) => applyMainWindowSizeIncrease(settings, bounds)),
         setServerExposureMode: (mode) =>
           update((settings) => setServerExposureMode(settings, mode)),
         setTailscaleServe: (input) => update((settings) => setTailscaleServe(settings, input)),
