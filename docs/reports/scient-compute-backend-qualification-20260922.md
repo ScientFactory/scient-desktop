@@ -33,8 +33,8 @@ alive.
 
 Local evidence is retained outside Git under:
 
-- `/Users/yaacov/AAA/Compute Test/qa-output/review-runs/2026-09-22-backend-qualification-final/python`
-- `/Users/yaacov/AAA/Compute Test/qa-output/review-runs/2026-09-22-backend-qualification-final/matlab`
+- `/Users/yaacov/AAA/Compute Test/qa-output/review-runs/2026-09-22-backend-qualification-rebased/python`
+- `/Users/yaacov/AAA/Compute Test/qa-output/review-runs/2026-09-22-backend-qualification-rebased/matlab`
 
 ### Focused real-process integration
 
