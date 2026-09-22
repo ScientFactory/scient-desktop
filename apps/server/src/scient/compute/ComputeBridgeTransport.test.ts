@@ -23,8 +23,10 @@ import {
 import * as Cause from "effect/Cause";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 import * as Queue from "effect/Queue";
+import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 
@@ -68,6 +70,9 @@ interface FakeBridge {
   readonly exitWith: (code: number) => Effect.Effect<void>;
   readonly cancels: () => number;
   readonly failCancellation: () => void;
+  readonly stallCancellation: () => void;
+  readonly cancellationStarted: Effect.Effect<void>;
+  readonly allowCancellation: Effect.Effect<void>;
   readonly respond: (responder: Responder) => void;
 }
 
@@ -157,11 +162,14 @@ const makeFakeBridge = Effect.fn("makeFakeBridge")(function* () {
   const stdout = yield* Queue.unbounded<Uint8Array, DuplexProcessError | Cause.Done>();
   const stderr = yield* Queue.unbounded<Uint8Array, DuplexProcessError | Cause.Done>();
   const exited = yield* Deferred.make<number, DuplexProcessError>();
+  const cancellationStarted = yield* Deferred.make<void>();
+  const cancellationAllowed = yield* Deferred.make<void>();
   const received: ComputeProtocolMessage[] = [];
   const inboundDecoder = makeComputeFrameDecoder();
   let outboundSequence = 0;
   let cancels = 0;
   let cancellationFails = false;
+  let cancellationStalled = false;
   let responder: Responder = healthyResponder(
     (command) => (command.payload as { ownerToken: string }).ownerToken,
   );
@@ -201,13 +209,16 @@ const makeFakeBridge = Effect.fn("makeFakeBridge")(function* () {
         }
       }),
     exitCode: Deferred.await(exited),
-    cancelProcessTree: Effect.suspend(() => {
+    cancelProcessTree: Effect.gen(function* () {
       cancels += 1;
-      return cancellationFails
-        ? Effect.fail(
-            new DuplexProcessError({ operation: "cancel", message: "simulated cleanup failure" }),
-          )
-        : Effect.void;
+      yield* Deferred.succeed(cancellationStarted, undefined);
+      if (cancellationStalled) yield* Deferred.await(cancellationAllowed);
+      if (cancellationFails) {
+        return yield* new DuplexProcessError({
+          operation: "cancel",
+          message: "simulated cleanup failure",
+        });
+      }
     }),
   };
 
@@ -223,6 +234,11 @@ const makeFakeBridge = Effect.fn("makeFakeBridge")(function* () {
     failCancellation: () => {
       cancellationFails = true;
     },
+    stallCancellation: () => {
+      cancellationStalled = true;
+    },
+    cancellationStarted: Deferred.await(cancellationStarted),
+    allowCancellation: Deferred.succeed(cancellationAllowed, undefined).pipe(Effect.asVoid),
     respond: (next) => {
       responder = next;
     },
@@ -1252,6 +1268,48 @@ describe("jupyter bridge loss", () => {
         expect(event.reason).toContain("code 9");
       }),
     ),
+  );
+
+  it.effect("finishes loss cleanup when its owning scope closes concurrently", () =>
+    Effect.gen(function* () {
+      const bridge = yield* makeFakeBridge();
+      bridge.stallCancellation();
+      let releases = 0;
+      const ownerScope = yield* Scope.make("sequential");
+      const channel = yield* openChannel(bridge, {
+        prepareKernelEndpoints: () =>
+          Effect.succeed({
+            ports: {
+              ip: "127.0.0.1" as const,
+              shell: 43_001,
+              iopub: 43_002,
+              stdin: 43_003,
+              heartbeat: 43_004,
+              control: 43_005,
+            },
+            handoff: Effect.void,
+            release: Effect.sync(() => {
+              releases += 1;
+            }),
+          }),
+      }).pipe(Scope.provide(ownerScope));
+      const reader = yield* makeReader(channel);
+      yield* reader.next;
+
+      yield* bridge.exitWith(9);
+      const event = yield* reader.next;
+      expect(event._tag).toBe("lost");
+      yield* bridge.cancellationStarted;
+
+      const closing = yield* Scope.close(ownerScope, Exit.void).pipe(Effect.exit, Effect.forkChild);
+      yield* Effect.yieldNow;
+      yield* bridge.allowCancellation;
+      const closeExit = yield* Fiber.join(closing);
+
+      expect(Exit.isSuccess(closeExit)).toBe(true);
+      expect(bridge.cancels()).toBe(1);
+      expect(releases).toBe(1);
+    }),
   );
 
   it.effect("fails a command in flight when the session is lost", () =>

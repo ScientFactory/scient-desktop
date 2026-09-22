@@ -86,12 +86,80 @@ The runner accepts an arbitrary external corpus and explicit runtime path. It
 does not embed local fixtures, install packages, change runtime preferences, or
 create a production code path.
 
+### Hosted Windows test-harness finding
+
+The first Windows matrix run started real Python 3.10 and 3.12 kernels,
+completed ordinary executions, and reported injected bridge/kernel loss. The
+loss cases nevertheless failed before all cleanup assertions. A second run
+proved this was not merely an event-forwarding race: the transport publishes
+`lost` before process cleanup completes, so the consumer can close the owning
+scope while the loss observer is cleaning up. That interruption was cached as
+the result of process cancellation. The ownership finalizer then received the
+same interrupted result instead of a completed cleanup; on some runs this also
+contaminated the following fresh-session case.
+
+The fix makes the transport's single cleanup gate uninterruptible. Process-tree
+cancellation and endpoint release now finish as one ownership operation before
+scope cancellation is observed; concurrent callers still share the same cached
+result, and genuine cleanup failures still fail scope closure. A deterministic
+unit test closes the owner scope while cancellation is deliberately stalled and
+requires cleanup and endpoint release to complete. No timeout, cleanup
+assertion, or platform-specific skip was weakened. The focused real-kernel and
+fresh-run files pass locally against the fully provisioned managed runtime;
+Windows acceptance remains the hosted exact-head rerun described below.
+
+### Hosted Windows atomic-replacement finding
+
+After the cleanup fix, the complete bridge-loss and kernel-death suite passes
+on Windows. Python 3.12 also passes the following fresh-session suite. Python
+3.10 reproducibly reached the first fresh execution's `accepted` event and then
+lost the session while recording that event. Rendering the complete Effect
+cause identified the exact failure: Windows returned `EPERM` while atomically
+renaming a staged execution result over `result.json`, which the test was
+concurrently reading. The failed persistence transition correctly ended the
+session, but a transient destination lock should not have been treated as
+permanent data loss.
+
+The shared atomic-text replacement primitive now retries only Windows
+`EPERM`, `EACCES`, and `EBUSY` rename failures with bounded exponential
+backoff. Other platforms and error codes still fail immediately, cancellation
+still interrupts backoff, and the staged file remains private until one rename
+succeeds. Tests cover eventual replacement, immediate permanent/non-Windows
+failure, bounded exhaustion, cancellation, and temporary-file cleanup. Hosted
+Python 3.10 remains an acceptance blocker until the exact-head matrix proves
+the fix.
+
+### Count-based unit-test wait finding
+
+The ordinary server suite separately reproduced the report's earlier
+`waitUntil` concern. Its 1,000 event-loop yields were a count, not an elapsed
+timeout, and could all complete under CI load before a real filesystem callback
+made the awaited state durable. The helper now uses a ten-second host-time
+deadline while continuing to yield to Effect fibers and Node callbacks. This
+keeps the test bounded and compatible with the Effect test clock without
+turning runner speed into correctness.
+
+### Hosted macOS listener-observation finding
+
+The exact-head macOS Python 3.12 run completed kernel restart and registered
+all five protected endpoints, but the port-scanner integration test assumed
+two immediate `lsof` scans were enough for macOS to publish the restarted
+kernel PID. The configured fixture remained the only probed URL; only the
+metadata-observation assertion raced the operating system.
+
+The test now drives configured scans through its existing bounded eventual
+predicate until `lsof` observes the expected process. It still requires the
+new PID, five protected Compute endpoints, no scanner-owned endpoints, no
+unconfigured network traffic, unchanged transcripts, and complete process
+cleanup. Production scanner behavior and timeouts are unchanged.
+
 ## Platform boundary
 
 Local native execution covers macOS arm64 only. Hosted CI already qualifies
 managed Python on macOS and Linux and system Python at both supported-version
-edges. This change extends the system-Python matrix to Windows; Windows remains
-unqualified until those hosted jobs pass on the exact pull-request head.
+edges. This change extends the system-Python matrix to Windows. Windows
+acceptance is the hosted Python 3.10 and 3.12 result on the exact pull-request
+head; the local macOS run is not substituted for it.
 
 Managed Python on Windows is out of scope because there is no published,
 sealed Windows managed-runtime recipe. MATLAB remains a licensed local pass;

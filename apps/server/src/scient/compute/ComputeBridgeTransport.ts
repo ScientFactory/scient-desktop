@@ -363,31 +363,33 @@ export function makeComputeBridgeTransport(
             const cleanupOwnedProcess = (
               operation: ComputeTransportError["operation"],
             ): Effect.Effect<void, ComputeTransportError> =>
-              cleanupGate.withPermits(1)(
-                Effect.suspend(() => {
-                  if (MutableRef.get(cleanupComplete)) return Effect.void;
-                  const handle = MutableRef.get(handleRef);
-                  const cleanup =
-                    handle === null
-                      ? (endpointLease?.release ?? Effect.void)
-                      : handle.cancelProcessTree.pipe(
-                          Effect.mapError((cause) =>
-                            transportError(
-                              operation,
-                              "Failed to stop the compute bridge process tree.",
-                              cause,
+              Effect.uninterruptible(
+                cleanupGate.withPermits(1)(
+                  Effect.suspend(() => {
+                    if (MutableRef.get(cleanupComplete)) return Effect.void;
+                    const handle = MutableRef.get(handleRef);
+                    const cleanup =
+                      handle === null
+                        ? (endpointLease?.release ?? Effect.void)
+                        : handle.cancelProcessTree.pipe(
+                            Effect.mapError((cause) =>
+                              transportError(
+                                operation,
+                                "Failed to stop the compute bridge process tree.",
+                                cause,
+                              ),
                             ),
-                          ),
-                          Effect.tap(() => endpointLease?.release ?? Effect.void),
-                        );
-                  return cleanup.pipe(
-                    Effect.tap(() =>
-                      Effect.sync(() => {
-                        MutableRef.set(cleanupComplete, true);
-                      }),
-                    ),
-                  );
-                }),
+                            Effect.tap(() => endpointLease?.release ?? Effect.void),
+                          );
+                    return cleanup.pipe(
+                      Effect.tap(() =>
+                        Effect.sync(() => {
+                          MutableRef.set(cleanupComplete, true);
+                        }),
+                      ),
+                    );
+                  }),
+                ),
               );
 
             const setup = Effect.gen(function* () {
