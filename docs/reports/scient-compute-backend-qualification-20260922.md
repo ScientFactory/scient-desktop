@@ -108,6 +108,30 @@ assertion, or platform-specific skip was weakened. The focused real-kernel and
 fresh-run files pass locally against the fully provisioned managed runtime;
 Windows acceptance remains the hosted exact-head rerun described below.
 
+### Hosted Windows persistence finding under investigation
+
+After the cleanup fix, the complete bridge-loss and kernel-death suite passes
+on Windows. Python 3.12 also passes the following fresh-session suite. Python
+3.10 reproducibly reaches the first fresh execution's `accepted` event and then
+loses the session while recording that event. The current structured log
+collapses the typed Effect cause to `[Object]`, so it does not identify the
+failing filesystem operation or Windows error code.
+
+The existing error log now renders the complete Effect cause. This is
+diagnostic hardening rather than a guessed recovery policy: the next hosted
+run must identify the exact operation before production persistence behavior
+is changed. The Python 3.10 failure remains an acceptance blocker.
+
+### Count-based unit-test wait finding
+
+The ordinary server suite separately reproduced the report's earlier
+`waitUntil` concern. Its 1,000 event-loop yields were a count, not an elapsed
+timeout, and could all complete under CI load before a real filesystem callback
+made the awaited state durable. The helper now uses a ten-second host-time
+deadline while continuing to yield to Effect fibers and Node callbacks. This
+keeps the test bounded and compatible with the Effect test clock without
+turning runner speed into correctness.
+
 ## Platform boundary
 
 Local native execution covers macOS arm64 only. Hosted CI already qualifies

@@ -73,6 +73,7 @@ import {
   type ComputeRuntimeVerification,
 } from "@scientfactory/compute";
 import { HostProcessEnvironment } from "@t3tools/shared/hostProcess";
+import * as Cause from "effect/Cause";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
@@ -2080,7 +2081,7 @@ const make = Effect.gen(function* () {
             projectId: live.projectId,
             sessionId: live.sessionId,
             event: event._tag,
-            cause,
+            cause: Cause.pretty(cause),
           }).pipe(
             Effect.andThen(endSessionUnderLease(live, "Unable to record runtime state.")),
             Effect.ignore,
