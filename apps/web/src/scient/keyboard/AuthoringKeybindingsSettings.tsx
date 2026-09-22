@@ -68,6 +68,7 @@ export function AuthoringKeybindingsSettings({
   const editingControl = useRef<HTMLDivElement>(null);
   const [error, setError] = useState("");
   const [restoreOpen, setRestoreOpen] = useState(false);
+  const [mathOptionsCard, setMathOptionsCard] = useState<HTMLDivElement | null>(null);
   const isEditing = editing !== null;
   useEffect(() => {
     if (!isEditing) return;
@@ -213,6 +214,7 @@ export function AuthoringKeybindingsSettings({
               <ChevronDownIcon className="size-3.5 transition-transform group-aria-expanded:rotate-180" />
             </PopoverTrigger>
             <PopoverPopup
+              ref={setMathOptionsCard}
               align="start"
               aria-label="Math input behavior and preset"
               className="w-[34rem] max-w-[calc(100vw-2rem)] rounded-xl border border-border/60"
@@ -240,7 +242,12 @@ export function AuthoringKeybindingsSettings({
                             {snapshot.preferences.mathPreset === "lyx" ? "LyX" : "Minimal"}
                           </SelectValue>
                         </SelectTrigger>
-                        <SelectContent align="start" alignItemWithTrigger={false}>
+                        <SelectContent
+                          align="start"
+                          alignItemWithTrigger={false}
+                          collisionBoundary={mathOptionsCard ?? undefined}
+                          popupClassName="max-w-(--available-width)"
+                        >
                           <SelectItem value="lyx">Supported LyX-style sequences</SelectItem>
                           <SelectItem value="minimal">
                             Minimal: palette and equation insertion
@@ -266,7 +273,12 @@ export function AuthoringKeybindingsSettings({
                         >
                           <SelectValue />
                         </SelectTrigger>
-                        <SelectContent align="start" alignItemWithTrigger={false}>
+                        <SelectContent
+                          align="start"
+                          alignItemWithTrigger={false}
+                          collisionBoundary={mathOptionsCard ?? undefined}
+                          popupClassName="max-w-(--available-width)"
+                        >
                           <SelectItem value="space-tab">Space and Tab</SelectItem>
                           <SelectItem value="tab">Tab only</SelectItem>
                           <SelectItem value="off">Off</SelectItem>
@@ -316,7 +328,11 @@ export function AuthoringKeybindingsSettings({
                         >
                           <SelectValue />
                         </SelectTrigger>
-                        <SelectContent alignItemWithTrigger={false}>
+                        <SelectContent
+                          alignItemWithTrigger={false}
+                          collisionBoundary={mathOptionsCard ?? undefined}
+                          popupClassName="max-w-(--available-width)"
+                        >
                           {[
                             ...new Set([
                               1000,
