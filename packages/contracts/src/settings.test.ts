@@ -226,6 +226,27 @@ describe("ClaudeSettings auto-compaction", () => {
 });
 
 describe("ClientSettings typography defaults", () => {
+  it("defaults old settings to regular weight without adding a patch value", () => {
+    expect(decodeClientSettings({}).fontWeightInterface).toBe(400);
+    expect(decodeClientSettingsPatch({})).not.toHaveProperty("fontWeightInterface");
+  });
+
+  it.each([300, 400, 500])("preserves interface weight %s", (fontWeightInterface) => {
+    expect(decodeClientSettings({ fontWeightInterface }).fontWeightInterface).toBe(
+      fontWeightInterface,
+    );
+    expect(decodeClientSettingsPatch({ fontWeightInterface }).fontWeightInterface).toBe(
+      fontWeightInterface,
+    );
+  });
+
+  it.each([0, 299, 350, 501, 700, 900, 400.5, "400", "bold", null, Number.NaN, Infinity])(
+    "rejects unsupported interface weight %s at both boundaries",
+    (fontWeightInterface) => {
+      expect(() => decodeClientSettings({ fontWeightInterface })).toThrow();
+      expect(() => decodeClientSettingsPatch({ fontWeightInterface })).toThrow();
+    },
+  );
   it("uses the Scient comfortable-reading profile", () => {
     expect(DEFAULT_CLIENT_SETTINGS).toMatchObject({
       fontSizeInterface: 17,

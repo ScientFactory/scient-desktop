@@ -260,7 +260,7 @@ export const SETTINGS_SEARCH_ITEMS = [
     id: "interface-font",
     title: "Interface font",
     to: "/settings/appearance",
-    searchTerms: ["typography family size system sans"],
+    searchTerms: ["typography family size text weight thickness light regular medium system sans"],
   },
   {
     id: "prompt-font",

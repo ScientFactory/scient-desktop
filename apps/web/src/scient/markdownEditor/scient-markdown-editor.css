@@ -212,7 +212,7 @@
   padding: 1.25rem 1.5rem 5rem;
   color: color-mix(in oklab, var(--foreground) 80%, transparent);
   font-family: var(--font-sans);
-  font-size: 0.875rem;
+  font-size: var(--scient-font-size-markdown-body);
   line-height: 1.625;
   outline: none;
   overflow-wrap: anywhere;
@@ -294,21 +294,21 @@
 }
 
 .scient-markdown-document h1 {
-  font-size: 1.25rem;
+  font-size: var(--scient-font-size-markdown-h1);
 }
 
 .scient-markdown-document h2 {
-  font-size: 1.125rem;
+  font-size: var(--scient-font-size-markdown-h2);
 }
 
 .scient-markdown-document h3 {
-  font-size: 1rem;
+  font-size: var(--scient-font-size-markdown-h3);
 }
 
 .scient-markdown-document h4,
 .scient-markdown-document h5,
 .scient-markdown-document h6 {
-  font-size: 0.875rem;
+  font-size: var(--scient-font-size-markdown-body);
 }
 
 .scient-markdown-document h6 {
@@ -412,7 +412,7 @@
   padding: 0.1rem 0.35rem;
   color: var(--contrast-foreground);
   font-family: var(--font-mono);
-  font-size: 0.75rem;
+  font-size: var(--scient-font-size-markdown-secondary);
 }
 
 .scient-markdown-document pre {
@@ -466,13 +466,13 @@
 .scient-markdown-code-language {
   color: color-mix(in srgb, var(--code-foreground, var(--foreground)) 72%, transparent);
   font-family: var(--font-mono);
-  font-size: 0.6875rem;
+  font-size: var(--scient-font-size-markdown-marker);
 }
 
 .scient-markdown-code-load-error {
   padding: 0 0.8rem 0.75rem;
   color: var(--muted-foreground);
-  font-size: 0.75rem;
+  font-size: var(--scient-font-size-markdown-secondary);
 }
 
 .scient-markdown-code-load-error button {
@@ -658,7 +658,7 @@
   border-collapse: collapse;
   overflow-wrap: normal;
   word-break: normal;
-  font-size: 0.75rem;
+  font-size: var(--scient-font-size-markdown-secondary);
   font-variant-numeric: tabular-nums;
 }
 
@@ -756,7 +756,9 @@
 }
 
 sup.scient-markdown-reference {
-  font-size: 0.72em;
+  /* The parent already grew by .03rem; compensate for the .72 scale so the
+     marker's total increase is also .03rem, rather than compounding it. */
+  font-size: calc(0.72em + (1 - 0.72) * 0.03rem);
 }
 
 .scient-markdown-reference[data-scient-markdown-reference="footnote_reference"] {
@@ -873,7 +875,7 @@ sup.scient-markdown-reference {
   border-inline-start: 2px solid var(--border);
   padding-inline-start: 0.75rem;
   color: var(--muted-foreground);
-  font-size: 0.82rem;
+  font-size: var(--scient-font-size-markdown-editor-footnote);
 }
 
 .scient-markdown-footnote-definition .scient-markdown-reference-label {
@@ -916,7 +918,7 @@ sup.scient-markdown-reference {
   color: var(--popover-foreground);
   box-shadow: 0 0.25rem 0.75rem color-mix(in oklab, black 16%, transparent);
   font-family: var(--font-sans);
-  font-size: 0.7rem;
+  font-size: 0.73rem;
   font-weight: 400;
   line-height: 1;
   white-space: nowrap;
@@ -975,7 +977,7 @@ sup.scient-markdown-reference {
   background: color-mix(in oklab, var(--warning) 7%, var(--background));
   padding: 0.4rem 0.55rem;
   color: var(--muted-foreground);
-  font-size: 0.72rem;
+  font-size: 0.75rem;
 }
 
 .scient-markdown-rich-fence-retained strong {
@@ -993,7 +995,7 @@ sup.scient-markdown-reference {
   background: color-mix(in oklab, var(--muted) 55%, transparent);
   padding-inline: 0.6rem;
   color: var(--muted-foreground);
-  font-size: 0.75rem;
+  font-size: var(--scient-font-size-markdown-secondary);
 }
 
 .scient-markdown-search-match {
@@ -1072,7 +1074,7 @@ sup.scient-markdown-reference {
   padding: 0;
   color: var(--muted-foreground);
   caret-color: var(--foreground);
-  font-size: 0.75rem;
+  font-size: var(--scient-font-size-markdown-secondary);
   line-height: 1.45;
   text-align: center;
   unicode-bidi: plaintext;
@@ -1090,7 +1092,7 @@ sup.scient-markdown-reference {
   align-items: center;
   justify-content: center;
   color: var(--muted-foreground);
-  font-size: 0.75rem;
+  font-size: var(--scient-font-size-markdown-secondary);
 }
 
 .scient-markdown-image[data-standalone="true"] .scient-markdown-image-placeholder {
@@ -1176,7 +1178,7 @@ sup.scient-markdown-reference {
   padding: 0.375rem 0.75rem 0;
   color: color-mix(in srgb, var(--code-foreground, var(--foreground)) 72%, transparent);
   font-family: var(--font-mono);
-  font-size: 0.6875rem;
+  font-size: var(--scient-font-size-markdown-marker);
   font-weight: 400;
   letter-spacing: 0;
   text-transform: none;
@@ -1260,7 +1262,7 @@ sup.scient-markdown-reference {
   background: color-mix(in oklab, var(--warning) 9%, var(--background));
   padding: 0.2rem 0.4rem;
   color: var(--muted-foreground);
-  font-size: 0.68rem;
+  font-size: 0.71rem;
 }
 
 .scient-markdown-math-retained[hidden] {

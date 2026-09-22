@@ -6,6 +6,7 @@ import {
   clampInterfaceFontSize,
   clampPromptFontSize,
   cssFontFamilies,
+  cssFontFamilyName,
   resolveDefaultFamilyLabel,
   resolveTerminalFontPreference,
   resolveTerminalFontSizePreference,
@@ -45,6 +46,23 @@ describe("cssFontFamilies", () => {
   it("quotes names that are not single CSS idents", () => {
     expect(cssFontFamilies("3270 Nerd Font")).toBe('"3270 Nerd Font"');
     expect(cssFontFamilies("M+ 1m")).toBe('"M+ 1m"');
+  });
+});
+
+describe("cssFontFamilyName", () => {
+  it("quotes one exact family instead of interpreting its punctuation", () => {
+    expect(cssFontFamilyName("Bodoni 72")).toBe('"Bodoni 72"');
+    expect(cssFontFamilyName("Family, Alternate")).toBe('"Family, Alternate"');
+  });
+
+  it("escapes CSS string delimiters and control characters", () => {
+    expect(cssFontFamilyName('A "Quoted" \\ Family')).toBe('"A \\"Quoted\\" \\\\ Family"');
+    expect(cssFontFamilyName("Line\nBreak")).toBe('"Line\\a Break"');
+  });
+
+  it("returns null for an empty family", () => {
+    expect(cssFontFamilyName("")).toBeNull();
+    expect(cssFontFamilyName("   ")).toBeNull();
   });
 });
 

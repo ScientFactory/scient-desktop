@@ -93,6 +93,7 @@ function loadDiffPreviewHtml(theme: DiffThemeName): Promise<readonly string[]> {
 // follows the active theme exactly like the real diff panel does.
 const DIFF_PREVIEW_THEME_BRIDGE = `
   :host {
+    font-weight: var(--font-weight-monospace, inherit);
     color: var(--code-foreground);
     background-color: var(--code-background);
     --diffs-fg: var(--code-foreground);

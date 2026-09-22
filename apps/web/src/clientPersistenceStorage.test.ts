@@ -38,6 +38,14 @@ afterEach(() => {
 });
 
 describe("clientPersistenceStorage", () => {
+  it.each([300, 400, 500] as const)("reloads interface weight %s", async (fontWeightInterface) => {
+    getTestWindow();
+    const { writeBrowserClientSettings } = await import("./clientPersistenceStorage");
+    writeBrowserClientSettings({ ...DEFAULT_CLIENT_SETTINGS, fontWeightInterface });
+    vi.resetModules();
+    const { readBrowserClientSettings } = await import("./clientPersistenceStorage");
+    expect(readBrowserClientSettings()?.fontWeightInterface).toBe(fontWeightInterface);
+  });
   it("persists client settings in browser storage", async () => {
     getTestWindow();
     const { readBrowserClientSettings, writeBrowserClientSettings } =
