@@ -51,6 +51,10 @@ Terminology: `docs/internals/glossary.md`.
 - Follow `docs/operations/local-dev-app.md` for desktop lifecycle operations.
   Stable and feature candidates have separate identities and state; never
   repoint the stable launcher to a feature checkout as a shortcut.
+  The shared `.scient/skills/scient-dev-app/SKILL.md` routes agent-assisted
+  lifecycle work to that guide and its Windows instructions. Read it when
+  launching, verifying, restarting, or stopping a candidate; it does not grant
+  permission to do those things during a read-only inspection.
 - Never kill processes by broad name or path pattern. An agent's own command
   line may contain the worktree path. Use the owning candidate's lifecycle
   commands; a matching name or working directory alone does not prove ownership.
