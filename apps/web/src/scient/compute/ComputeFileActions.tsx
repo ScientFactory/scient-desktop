@@ -54,9 +54,12 @@ import {
 } from "./computeSourceSlices";
 import { stopComputeContext, mergeComputeSessionRecords } from "./computeContextCoordinator";
 import {
+  computeRuntimeDisplayLabel,
   defaultComputeRuntime,
   isComputeCapacityReachedError,
+  resolveComputePreRunRuntimeChoice,
   resolveComputeRuntimeToolbarState,
+  SCIENTIFIC_PYTHON_TOOLKIT_ID,
   computeRuntimeSetupActionLabel,
 } from "./computeFileSurfaceModel";
 import {
@@ -79,6 +82,12 @@ import type { ComputeSourceLanguage } from "./computeSourceLanguage";
 import { useComputeFilePresentationStore } from "./computeFilePresentationStore";
 
 type ComputeRunKind = "selection" | "cell" | "file";
+type PendingComputeRun = {
+  readonly kind: ComputeRunKind;
+  readonly slice: ComputeCodeSlice;
+  readonly currentExecutable: string;
+  readonly managedExecutable: string;
+};
 
 export interface ComputeFileActionsHandle {
   readonly runFile: () => void;
@@ -136,6 +145,10 @@ export const ComputeFileActions = forwardRef<ComputeFileActionsHandle, ComputeFi
       readonly session: ComputeSessionRecord;
     } | null>(null);
     const capacityAnchor = useRef<HTMLButtonElement | null>(null);
+    const primaryRunAnchor = useRef<HTMLButtonElement | null>(null);
+    const [pendingRuntimeChoice, setPendingRuntimeChoice] = useState<PendingComputeRun | null>(
+      null,
+    );
     const stoppingForFresh = useRef(false);
     const [startRetryAvailable, setStartRetryAvailable] = useState(false);
     const [switchTarget, setSwitchTarget] = useState<{
@@ -192,9 +205,10 @@ export const ComputeFileActions = forwardRef<ComputeFileActionsHandle, ComputeFi
       props.environmentId,
       (settings) => settings.scientificComputing,
     );
-    const languageInspection = runtimes.data?.languages.find(
-      (language) => language.descriptor.languageId === props.language.languageId,
-    );
+    const languageInspection =
+      runtimes.data?.languages.find(
+        (language) => language.descriptor.languageId === props.language.languageId,
+      ) ?? null;
     const languagePreference = resolveScientificComputingLanguageSettings(
       scientificComputing,
       props.language.languageId,
@@ -303,24 +317,21 @@ export const ComputeFileActions = forwardRef<ComputeFileActionsHandle, ComputeFi
       );
     }, [allSessions, contextSessionId, props.contextId]);
     const readyRuntime = useMemo(
-      () =>
-        defaultComputeRuntime(
-          runtimes.data?.languages.filter(
-            (language) => language.descriptor.languageId === props.language.languageId,
-          ) ?? [],
-        ),
-      [runtimes.data, props.language.languageId],
+      () => defaultComputeRuntime(languageInspection === null ? [] : [languageInspection]),
+      [languageInspection],
+    );
+    const preRunRuntimeChoice = useMemo(
+      () => resolveComputePreRunRuntimeChoice(languageInspection),
+      [languageInspection],
     );
     const activeRuntime =
       liveSession === null || liveSession.runtime === null
         ? readyRuntime
-        : (runtimes.data?.languages
-            .find((language) => language.descriptor.languageId === props.language.languageId)
-            ?.runtimes.find(
-              (candidate) => candidate.profile.executable === liveSession.runtime?.executable,
-            ) ?? null);
+        : (languageInspection?.runtimes.find(
+            (candidate) => candidate.profile.executable === liveSession.runtime?.executable,
+          ) ?? null);
     const scientificToolkit = activeRuntime?.toolkits.find(
-      (toolkit) => toolkit.toolkitId === "python-data-and-figures",
+      (toolkit) => toolkit.toolkitId === SCIENTIFIC_PYTHON_TOOLKIT_ID,
     );
     const missingScientificPackages =
       scientificToolkit?.readiness === "missing-requirement"
@@ -335,6 +346,11 @@ export const ComputeFileActions = forwardRef<ComputeFileActionsHandle, ComputeFi
       languageName: props.language.displayName,
       runtimeVersion:
         liveSession?.runtime?.languageVersion ?? readyRuntime?.profile.languageVersion ?? null,
+      runtimeSource:
+        activeRuntime?.profile.source ??
+        liveSession?.runtime?.source ??
+        readyRuntime?.profile.source ??
+        null,
       liveSession,
       runtimeInspectionPending: runtimes.isPending || refreshing,
       readyRuntimeAvailable: readyRuntime !== null,
@@ -492,7 +508,11 @@ export const ComputeFileActions = forwardRef<ComputeFileActionsHandle, ComputeFi
 
     const onExecutionSubmitted = props.onExecutionSubmitted;
     const run = useCallback(
-      async (kind: ComputeRunKind, slice: ComputeCodeSlice | null) => {
+      async (
+        kind: ComputeRunKind,
+        slice: ComputeCodeSlice | null,
+        requestedExecutable?: string,
+      ) => {
         if (slice === null || operation !== null || refreshing || switching) return;
         // Keyboard shortcuts and the empty-results action use this same path;
         // a disabled toolbar must not be bypassed through an imperative handle.
@@ -510,6 +530,20 @@ export const ComputeFileActions = forwardRef<ComputeFileActionsHandle, ComputeFi
           });
           return;
         }
+        if (
+          liveSession === null &&
+          requestedExecutable === undefined &&
+          preRunRuntimeChoice !== null
+        ) {
+          setPendingRuntimeChoice({
+            kind,
+            slice,
+            currentExecutable: preRunRuntimeChoice.current.profile.executable,
+            managedExecutable: preRunRuntimeChoice.managed.profile.executable,
+          });
+          return;
+        }
+        setPendingRuntimeChoice(null);
         setOperation(kind);
 
         let session = liveSession;
@@ -606,8 +640,9 @@ export const ComputeFileActions = forwardRef<ComputeFileActionsHandle, ComputeFi
               cwd: props.cwd,
               sessionId,
               languageId: runtime.profile.languageId,
-              // Resolve the current default on the server; a cached toolbar is not a user override.
-              executable: null,
+              // Null preserves server-side default resolution. A non-null value
+              // is the runtime explicitly chosen immediately before this Run.
+              executable: requestedExecutable ?? null,
             },
           });
           if (started._tag !== "Success") {
@@ -723,8 +758,25 @@ export const ComputeFileActions = forwardRef<ComputeFileActionsHandle, ComputeFi
         getSession,
         props.contextId,
         stopSession,
+        preRunRuntimeChoice,
       ],
     );
+
+    const runWithChosenRuntime = useCallback(
+      (executable: string) => {
+        const pending = pendingRuntimeChoice;
+        setPendingRuntimeChoice(null);
+        if (pending !== null) void run(pending.kind, pending.slice, executable);
+      },
+      [pendingRuntimeChoice, run],
+    );
+
+    const runtimeChoiceOpen =
+      pendingRuntimeChoice !== null &&
+      liveSession === null &&
+      preRunRuntimeChoice !== null &&
+      pendingRuntimeChoice.currentExecutable === preRunRuntimeChoice.current.profile.executable &&
+      pendingRuntimeChoice.managedExecutable === preRunRuntimeChoice.managed.profile.executable;
 
     const lineSelectionSlice =
       props.selection === null ? null : computeLineSelection(props.contents, props.selection);
@@ -1102,6 +1154,7 @@ export const ComputeFileActions = forwardRef<ComputeFileActionsHandle, ComputeFi
             <ScientTooltip content={primaryRunTooltip}>
               <span className="inline-flex">
                 <Button
+                  ref={primaryRunAnchor}
                   size="xs"
                   variant="outline"
                   className="rounded-r-none px-1.5 @[15rem]/python-file-actions:px-[calc(--spacing(2)-1px)]"
@@ -1195,6 +1248,23 @@ export const ComputeFileActions = forwardRef<ComputeFileActionsHandle, ComputeFi
             </Menu>
           </div>
         </div>
+        {preRunRuntimeChoice === null ? null : (
+          <ContextualConfirmation
+            open={runtimeChoiceOpen}
+            onOpenChange={(open) => {
+              if (!open) setPendingRuntimeChoice(null);
+            }}
+            anchor={primaryRunAnchor}
+            title="Use Scient-managed Python?"
+            description={`${computeRuntimeDisplayLabel(preRunRuntimeChoice.current.profile, props.language.displayName)} is missing scientific packages.`}
+            confirmLabel="Use managed"
+            secondaryAction={{
+              label: "Use current",
+              onSelect: () => runWithChosenRuntime(preRunRuntimeChoice.current.profile.executable),
+            }}
+            onConfirm={() => runWithChosenRuntime(preRunRuntimeChoice.managed.profile.executable)}
+          />
+        )}
         <ContextualConfirmation
           open={freshStopTarget !== null}
           onOpenChange={(open) => {
