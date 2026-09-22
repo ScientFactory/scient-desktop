@@ -39,13 +39,13 @@ through deletion. Failed physical cleanup retains ownership. This coordinates
 Scient-managed automatic cleanup; it is not a filesystem sandbox against external
 deletion or arbitrary user code.
 
-Plotly's embedded deny-network policy inspects nested and flattened attribute
-paths, template image/layer defaults, frames, and both interactive command
-argument sets (including attribute/value updates). Unsupported command methods
-fail closed. The same policy is checked before rendering restored or updated
-figures. Inline raster images and offline interactions remain supported. This
-closes the known policy-validation bypasses; it does not claim a separate browser
-network sandbox or packaged-platform qualification.
+Plotly figures use the same non-blocking browser resource behavior in Compute as
+they do in chat. Known remote resources and active map or geography traces are
+classified for the compact `Network content` disclosure, while initial figures,
+interactive commands, and restored state remain renderable. Structural source,
+trace, frame, nesting, and typed-array bounds remain enforced before Plotly is
+loaded. Browser CORS and the desktop renderer's existing sandbox still apply;
+resource classification is not an authorization boundary.
 
 ### Execution consolidation candidate (2026-09-15)
 
