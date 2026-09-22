@@ -197,19 +197,19 @@ describe("compute figure presentation", () => {
   it("waits for image decoding, then opens the existing following viewer directly", async () => {
     const presentation = figure();
     const { container } = await fixture(presentation);
-    expect(
-      container.querySelector<HTMLElement>("[aria-label='Figure actions']")?.dataset.slot,
-    ).toBe("compact-command-group");
-    const toolbarPositioner = container.querySelector<HTMLElement>(
-      "[aria-label='Figure actions']",
-    )?.parentElement;
-    expect(toolbarPositioner?.classList.contains("-top-3")).toBe(true);
-    expect(toolbarPositioner?.classList.contains("right-2")).toBe(true);
-    expect(button("Move figure actions").hidden).toBe(false);
-    expect(button("Open Figure 1 in viewer").classList.contains("h-6.5")).toBe(true);
-    expect(button("Open Figure 1 in viewer").classList.contains("sm:h-5.5")).toBe(true);
-    expect(button("More image actions").classList.contains("h-6.5")).toBe(true);
-    expect(button("More image actions").classList.contains("sm:h-5.5")).toBe(true);
+    const card = container.querySelector<HTMLElement>("[data-scient-visual-card]")!;
+    const header = container.querySelector<HTMLElement>("[data-scient-compute-figure-header]")!;
+    const toolbar = container.querySelector<HTMLElement>("[aria-label='Figure actions']")!;
+    expect(card.classList.contains("flex-col")).toBe(true);
+    expect(card.classList.contains("overflow-hidden")).toBe(true);
+    expect(header.classList.contains("h-6.5")).toBe(true);
+    expect(header.classList.contains("border-b")).toBe(true);
+    expect(header.textContent).toContain("Figure 1");
+    expect(toolbar.getAttribute("role")).toBe("group");
+    expect(toolbar.dataset.slot).toBeUndefined();
+    expect(container.querySelector("[data-scient-toolbar-move]")).toBeNull();
+    expect(button("Open Figure 1 in viewer").classList.contains("size-5.5")).toBe(true);
+    expect(button("More image actions").classList.contains("size-5.5")).toBe(true);
     expect(button("View Figure 1").disabled).toBe(true);
     expect(container.textContent).toContain("Loading figure");
     await loaded(container);
@@ -222,52 +222,16 @@ describe("compute figure presentation", () => {
     expect(document.body.textContent).not.toContain("Download MATLAB FIG");
     expect(document.body.textContent).not.toContain("Move controls");
   });
-  it("keeps the direct drag handle mounted while moving the compact action card", async () => {
+  it("keeps the fixed header separate from the loading figure body", async () => {
     const { container } = await fixture();
     const card = container.querySelector<HTMLElement>("[data-scient-visual-card]")!;
-    const toolbar = container.querySelector<HTMLElement>("[aria-label='Figure actions']")!;
-    const handle = button("Move figure actions");
-    const description = document.getElementById(handle.getAttribute("aria-describedby")!);
-    expect(description?.className).toContain("sr-only");
-    expect(description?.textContent).toContain("Use arrow keys to move");
-    const captured = new Set<number>();
-    handle.setPointerCapture = vi.fn((pointerId: number) => captured.add(pointerId));
-    handle.hasPointerCapture = vi.fn((pointerId: number) => captured.has(pointerId));
-    handle.releasePointerCapture = vi.fn((pointerId: number) => captured.delete(pointerId));
-    card.getBoundingClientRect = () =>
-      ({ left: 100, top: 100, right: 500, bottom: 400, width: 400, height: 300 }) as DOMRect;
-    toolbar.getBoundingClientRect = () => {
-      const [x = 0, y = 0] = toolbar.style.translate
-        ? toolbar.style.translate.split(" ").map(Number.parseFloat)
-        : [];
-      return {
-        left: 392 + x,
-        top: 88 + y,
-        right: 492 + x,
-        bottom: 120 + y,
-        width: 100,
-        height: 32,
-      } as DOMRect;
-    };
-    const pointer = (type: string, clientX: number, clientY: number) =>
-      handle.dispatchEvent(
-        new PointerEvent(type, {
-          bubbles: true,
-          button: 0,
-          cancelable: true,
-          clientX,
-          clientY,
-          isPrimary: true,
-          pointerId: 7,
-        }),
-      );
-    await act(() => pointer("pointerdown", 400, 120));
-    expect(button("Move figure actions")).toBe(handle);
-    expect(captured.has(7)).toBe(true);
-    await act(() => pointer("pointermove", 340, 180));
-    await act(() => pointer("pointerup", 340, 180));
-    expect(toolbar.style.translate).toBe("-60px 60px");
-    expect(captured.size).toBe(0);
+    const header = container.querySelector<HTMLElement>("[data-scient-compute-figure-header]")!;
+    const body = container.querySelector<HTMLElement>("[data-scient-compute-figure-body]")!;
+    expect([...card.children]).toEqual([header, body]);
+    expect(body.classList.contains("h-32")).toBe(true);
+    expect(body.classList.contains("w-64")).toBe(true);
+    expect(header.querySelector("[role=status]")).toBeNull();
+    expect(body.querySelector("[role=status]")?.textContent).toContain("Loading figure");
   });
   it("retries decoding even when the signed URL does not change", async () => {
     const { container } = await fixture();
@@ -332,9 +296,7 @@ describe("compute figure presentation", () => {
   it("keeps observed-file provenance in overflow metadata instead of the command group", async () => {
     const { container } = await fixture(figure(), true);
     expect(container.querySelector("[role=note]")).toBeNull();
-    expect(
-      container.querySelectorAll('[data-slot="compact-command-group-separator"]'),
-    ).toHaveLength(1);
+    expect(container.querySelector('[data-slot="compact-command-group-separator"]')).toBeNull();
     expect(container.textContent).not.toContain("Observed project file");
     await menu();
     expect(document.body.textContent).toContain("Observed project file; creator not verified");
