@@ -121,6 +121,13 @@ export const ComputeSessionCommandInput = Schema.Struct({
 });
 export type ComputeSessionCommandInput = typeof ComputeSessionCommandInput.Type;
 
+/** Replacement admission; ordinary Stop still interrupts running and queued work. */
+export const ComputeStopSessionInput = Schema.Struct({
+  ...ComputeSessionCommandInput.fields,
+  onlyIfIdle: Schema.optional(Schema.Boolean),
+});
+export type ComputeStopSessionInput = typeof ComputeStopSessionInput.Type;
+
 export const ComputeExecutionCommandInput = Schema.Struct({
   projectId: ComputeProjectId,
   sessionId: ComputeSessionId,

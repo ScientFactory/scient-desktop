@@ -86,6 +86,30 @@ beforeEach(() => {
 });
 
 describe("confirmed compute context replacement", () => {
+  it("preserves newly busy work and never retries a rejected replacement as ordinary Stop", async () => {
+    const input = commands();
+    const stopSession = vi.fn(async () =>
+      failure(Object.assign(new Error("Session is busy"), { reason: "session-not-running" })),
+    );
+    const result = await replaceComputeContextSession({
+      ...input,
+      stopSession,
+      getSession: async () => success({ ...expectedSession, activity: "busy" }),
+    });
+    expect(result.kind).toBe("failed");
+    expect(stopSession).toHaveBeenCalledExactlyOnceWith({
+      environmentId,
+      input: {
+        cwd: "/project",
+        sessionId,
+        expectedGeneration: generation,
+        onlyIfIdle: true,
+      },
+    });
+    expect(input.startSession).not.toHaveBeenCalled();
+    expect(getComputeContext(contextId)).toMatchObject({ lifecycle: "live", sessionId });
+  });
+
   it("checks first, confirms cleanup, then starts one explicit runtime on the same host and owner", async () => {
     const input = commands();
     expect(await replaceComputeContextSession(input)).toEqual({

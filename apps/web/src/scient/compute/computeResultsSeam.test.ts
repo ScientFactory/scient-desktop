@@ -121,10 +121,9 @@ describe("compute result surface seam", () => {
     expect(pythonActionsSource).not.toContain("Check again");
     expect(pythonActionsSource).toContain("computeRuntimeSetupActionLabel");
     expect(pythonActionsSource).toContain('runtimeToolbar.kind === "switch"');
-    expect(pythonActionsSource).toContain("the next run uses the");
-    expect(pythonActionsSource).toContain(
-      "{props.language.displayName} selected in Scientific Computing settings",
-    );
+    expect(pythonActionsSource).toContain("replaceComputeContextSession");
+    expect(pythonActionsSource).toContain("switchTarget?.label");
+    expect(pythonActionsSource).toContain("executable: target.executable");
     expect(pythonActionsSource).not.toContain("Settings2");
     expect(pythonActionsSource).toContain("props.onShowMatlabOneShot");
     expect(pythonActionsSource).toContain("pinRuntimeChrome");

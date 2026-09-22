@@ -70,6 +70,7 @@ export interface ComputeContextCloseInput {
       readonly cwd: string;
       readonly sessionId: ComputeSessionId;
       readonly expectedGeneration: ComputeSessionGeneration;
+      readonly onlyIfIdle?: boolean;
     };
   }) => Promise<StopResult>;
   readonly getSession: (input: {
@@ -143,6 +144,7 @@ export async function stopComputeContext(
 
 async function stopOwnedComputeContext(
   input: ComputeContextCloseInput,
+  onlyIfIdle = false,
 ): Promise<ComputeContextCloseResult> {
   const binding = getComputeContext(input.contextId);
   if (binding?.batchRunId !== undefined) {
@@ -180,7 +182,12 @@ async function stopOwnedComputeContext(
     try {
       stopped = await input.stopSession({
         environmentId: binding.environmentId,
-        input: { cwd: binding.cwd, sessionId, expectedGeneration },
+        input: {
+          cwd: binding.cwd,
+          sessionId,
+          expectedGeneration,
+          ...(onlyIfIdle ? { onlyIfIdle: true } : {}),
+        },
       });
     } catch (error) {
       const message = thrownError(error);
@@ -245,6 +252,33 @@ async function stopOwnedComputeContext(
       useComputeContextStore.getState().markCloseFailed({ contextId: input.contextId, error });
       return { closed: false, contextId: input.contextId, error };
     }
+    // A replacement never retries against a newer generation or leaves a busy owner closing.
+    if (onlyIfIdle) {
+      const rejection = stopped._tag === "Failure" ? squashAtomCommandFailure(stopped) : null;
+      useComputeContextStore.getState().markCloseFailed({
+        contextId: input.contextId,
+        error: "Session replacement was not admitted.",
+      });
+      if (
+        typeof rejection === "object" &&
+        rejection !== null &&
+        "reason" in rejection &&
+        rejection.reason === "session-not-running" &&
+        current.value.status === "ready" &&
+        replacements.get(input.contextId)?.cancelled !== true
+      ) {
+        useComputeContextStore.getState().clearCloseFailure(input.contextId);
+        useComputeContextStore.getState().observeSession(input.contextId, current.value);
+      }
+      return {
+        closed: false,
+        contextId: input.contextId,
+        error:
+          stopped._tag === "Failure"
+            ? resultError(stopped)
+            : "Session replacement was not admitted.",
+      };
+    }
     if (current.value.generation === expectedGeneration || attempt === 1) {
       const error =
         stopped._tag === "Success"
@@ -301,6 +335,8 @@ export async function replaceComputeContextSession(
   if (
     binding === null ||
     expected.lifetime === "fresh" ||
+    expected.status !== "ready" ||
+    expected.activity !== "idle" ||
     binding.parentContextId !== undefined ||
     binding.lifecycle !== "live" ||
     binding.sessionId !== expected.sessionId ||
@@ -326,7 +362,7 @@ export async function replaceComputeContextSession(
     ) {
       return { kind: "cancelled" };
     }
-    const closed = await stopOwnedComputeContext(input);
+    const closed = await stopOwnedComputeContext(input, true);
     if (!closed.closed)
       return { kind: "failed", error: closed.error ?? "Shutdown was not confirmed." };
     const stopped = getComputeContext(input.contextId);

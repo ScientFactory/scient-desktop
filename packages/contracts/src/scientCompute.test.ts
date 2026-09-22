@@ -7,12 +7,20 @@ import {
   ComputeRuntimeInventory,
   ComputeManagedRuntimeInput,
   ComputeStartProjectSessionInput,
+  ComputeStopProjectSessionInput,
 } from "./scientCompute.ts";
 
 const decodeRuntimeInspection = Schema.decodeUnknownSync(ComputeRuntimeInspection);
 const decodeRuntimeInventory = Schema.decodeUnknownSync(ComputeRuntimeInventory);
 
 describe("scient compute contracts", () => {
+  it("preserves conditional-stop admission without changing ordinary Stop payloads", () => {
+    const decode = Schema.decodeUnknownSync(ComputeStopProjectSessionInput);
+    const command = { cwd: "/project", sessionId: "owned", expectedGeneration: 1 };
+    expect(decode(command)).toEqual(command);
+    expect(decode({ ...command, onlyIfIdle: true })).toEqual({ ...command, onlyIfIdle: true });
+    expect(() => decode({ ...command, onlyIfIdle: "true" })).toThrow();
+  });
   it("accepts only bounded reviewed Toolkit identities and explicit first-install selection", () => {
     const decode = Schema.decodeUnknownSync(ComputeManagedRuntimeInput);
     expect(

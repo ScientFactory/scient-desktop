@@ -194,6 +194,12 @@ export const ComputeProjectSessionCommandInput = Schema.Struct({
 });
 export type ComputeProjectSessionCommandInput = typeof ComputeProjectSessionCommandInput.Type;
 
+export const ComputeStopProjectSessionInput = Schema.Struct({
+  ...ComputeProjectSessionCommandInput.fields,
+  onlyIfIdle: Schema.optional(Schema.Boolean),
+});
+export type ComputeStopProjectSessionInput = typeof ComputeStopProjectSessionInput.Type;
+
 export const ComputeSubmitProjectExecutionInput = Schema.Struct({
   cwd: ComputeCwd,
   sessionId: ComputeSessionId,

@@ -359,6 +359,7 @@ import {
   ComputeProjectExecutionCommandInput,
   ComputeProjectInput,
   ComputeProjectSessionCommandInput,
+  ComputeStopProjectSessionInput,
   ComputeProjectSessionInput,
   ComputeRuntimeInspection,
   ComputeRuntimeInventory,
@@ -1375,7 +1376,7 @@ const WsComputeRestartSessionRpc = Rpc.make(WS_METHODS.computeRestartSession, {
 });
 
 const WsComputeStopSessionRpc = Rpc.make(WS_METHODS.computeStopSession, {
-  payload: ComputeProjectSessionCommandInput,
+  payload: ComputeStopProjectSessionInput,
   success: ComputeSessionRecord,
   error: ComputeRpcError,
 });

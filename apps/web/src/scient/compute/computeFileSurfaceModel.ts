@@ -267,6 +267,10 @@ export function resolveComputeRuntimeToolbarState(input: {
     return { kind: "status", label: `${languageName} close needs retry`, canRun: false };
   }
   if (session !== null) {
+    const currentLabel =
+      session.runtime === null
+        ? languageName
+        : `${languageName} · ${computeRuntimeSourceLabel(session.runtime.source)}`;
     if (session.languageId !== languageId) {
       return { kind: "status", label: `${session.label} active`, canRun: false };
     }
@@ -274,7 +278,7 @@ export function resolveComputeRuntimeToolbarState(input: {
       return { kind: "status", label: `${languageName} ${session.status}`, canRun: false };
     }
     if (session.activity === "busy") {
-      return { kind: "status", label: `${languageName} running`, canRun: true };
+      return { kind: "status", label: `${currentLabel} · Running`, canRun: true };
     }
     if (
       !input.runtimeInspectionPending &&
@@ -282,11 +286,11 @@ export function resolveComputeRuntimeToolbarState(input: {
       input.preferredRuntimeExecutable !== null &&
       session.runtime.executable !== input.preferredRuntimeExecutable
     ) {
-      return { kind: "switch", label: `Switch ${languageName}`, canRun: true };
+      return { kind: "switch", label: currentLabel, canRun: true };
     }
     return {
       kind: "status",
-      label: languageName,
+      label: currentLabel,
       canRun: true,
       ...(input.scientificPackagesMissing ? { note: SCIENTIFIC_PACKAGES_NOTE } : {}),
     };
