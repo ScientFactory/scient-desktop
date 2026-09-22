@@ -3,6 +3,7 @@ import {
   classifyMatlabSource,
   ComputeExecutionId,
   ComputeSessionId,
+  resolveScientificComputingLanguageSettings,
   TERMINAL_COMPUTE_SESSION_STATUSES,
 } from "@t3tools/contracts";
 import {
@@ -194,10 +195,10 @@ export const ComputeFileActions = forwardRef<ComputeFileActionsHandle, ComputeFi
     const languageInspection = runtimes.data?.languages.find(
       (language) => language.descriptor.languageId === props.language.languageId,
     );
-    const languagePreference = scientificComputing.languages[props.language.languageId] ?? {
-      enabled: false,
-      executable: "",
-    };
+    const languagePreference = resolveScientificComputingLanguageSettings(
+      scientificComputing,
+      props.language.languageId,
+    );
     const managedRuntime = useComputeManagedRuntime({
       environmentId: props.environmentId,
       languageId: props.language.languageId,

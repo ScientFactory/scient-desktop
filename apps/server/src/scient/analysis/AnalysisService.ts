@@ -69,10 +69,7 @@ import { promoteAnalysisRun } from "./AnalysisRunPromotion.ts";
 import * as LocalAnalysisStore from "./LocalAnalysisStore.ts";
 import { ScientificRuntimePreferences } from "../compute/ScientificRuntimePreferences.ts";
 import * as ComputeHostCapacity from "../compute/ComputeHostCapacity.ts";
-import {
-  ComputeLanguageId,
-  DEFAULT_SCIENTIFIC_COMPUTING_LANGUAGE_SETTINGS,
-} from "@t3tools/contracts";
+import { ComputeLanguageId, resolveScientificComputingLanguageSettings } from "@t3tools/contracts";
 import type { ResolvedAnalysisArtifactRepresentation } from "./LocalAnalysisStore.ts";
 import * as LocalExecutionProcess from "../execution/LocalExecutionProcess.ts";
 import {
@@ -1348,9 +1345,10 @@ const make = Effect.gen(function* () {
             analysisError("start", "operation-failed", "Unable to read runtime settings.", cause),
           ),
         );
-        const preference =
-          settings.scientificComputing.languages[ComputeLanguageId.make(adapter.kind)] ??
-          DEFAULT_SCIENTIFIC_COMPUTING_LANGUAGE_SETTINGS;
+        const preference = resolveScientificComputingLanguageSettings(
+          settings.scientificComputing,
+          ComputeLanguageId.make(adapter.kind),
+        );
         if (!preference.enabled)
           return yield* analysisError(
             "start",

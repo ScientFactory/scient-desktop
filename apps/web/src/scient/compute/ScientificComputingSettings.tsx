@@ -7,7 +7,11 @@ import type {
   EnvironmentId,
   ScientificComputingLanguageSettings,
 } from "@t3tools/contracts";
-import { ComputeLanguageDescriptor, ComputeLanguageId } from "@t3tools/contracts";
+import {
+  ComputeLanguageDescriptor,
+  ComputeLanguageId,
+  resolveScientificComputingLanguageSettings,
+} from "@t3tools/contracts";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 
 import { useEnvironmentSettings } from "~/hooks/useSettings";
@@ -721,7 +725,10 @@ function pendingRuntimeInventory(
   preferences: Readonly<Record<string, ScientificComputingLanguageSettings>>,
 ): ReadonlyArray<ComputeLanguageRuntimeInventory> {
   return PENDING_RUNTIME_DESCRIPTORS.map((descriptor) => {
-    const preference = preferences[descriptor.languageId] ?? { enabled: false, executable: "" };
+    const preference = resolveScientificComputingLanguageSettings(
+      { languages: preferences },
+      descriptor.languageId,
+    );
     return {
       descriptor,
       enabled: preference.enabled,
@@ -807,9 +814,17 @@ function EnvironmentScientificComputingSettings({
     ...displayedLanguages.map((language) => ({
       id: language.descriptor.languageId,
       label: language.descriptor.displayName,
-      detail: preferences.languages[language.descriptor.languageId]?.enabled ? "On" : "Off",
+      detail: resolveScientificComputingLanguageSettings(
+        preferences,
+        language.descriptor.languageId,
+      ).enabled
+        ? "On"
+        : "Off",
     })),
-    ...upcomingLanguages.map((preview) => ({ ...preview, detail: "Coming soon" })),
+    ...upcomingLanguages.map((preview) => ({
+      ...preview,
+      detail: "Coming soon",
+    })),
   ];
   const [collapsed, setCollapsed] = useState(false);
   // Keep the pending action when moving between language disclosures.
@@ -866,10 +881,16 @@ function EnvironmentScientificComputingSettings({
   }, [environmentId, refreshRuntimes]);
 
   const selectedPreference = selectedLanguage
-    ? (preferences.languages[selectedLanguage.descriptor.languageId] ?? {
-        enabled: false,
-        executable: selectedLanguage.configuredExecutable ?? "",
-      })
+    ? {
+        ...resolveScientificComputingLanguageSettings(
+          preferences,
+          selectedLanguage.descriptor.languageId,
+        ),
+        executable:
+          preferences.languages[selectedLanguage.descriptor.languageId]?.executable ??
+          selectedLanguage.configuredExecutable ??
+          "",
+      }
     : null;
   return (
     <SettingsPageContainer>

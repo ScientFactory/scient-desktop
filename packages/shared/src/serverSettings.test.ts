@@ -1,4 +1,5 @@
 import {
+  ComputeLanguageId,
   DEFAULT_SERVER_SETTINGS,
   ProjectId,
   ProviderDriverKind,
@@ -24,6 +25,20 @@ import {
 const FOLDED_SERVER_SETTINGS = { ...DEFAULT_SERVER_SETTINGS, projectSettingsFolded: true };
 
 describe("serverSettings helpers", () => {
+  it("preserves an explicit scientific-language opt-out across narrow updates", () => {
+    const python = ComputeLanguageId.make("python");
+    const disabled = applyServerSettingsPatch(DEFAULT_SERVER_SETTINGS, {
+      scientificComputing: {
+        languages: { [python]: { enabled: false, executable: "/usr/bin/python3" } },
+      },
+    });
+    expect(
+      applyServerSettingsPatch(disabled, {
+        scientificComputing: { languages: { [python]: { executable: "" } } },
+      }).scientificComputing.languages[python],
+    ).toEqual({ enabled: false, executable: "" });
+  });
+
   it("changes a cleanup rule without replacing the machine's other rules", () => {
     const enabled = applyServerSettingsPatch(DEFAULT_SERVER_SETTINGS, {
       storageCleanup: { worktreeAfterDays: 8, worktreeOnMerge: true, logsAfterDays: 30 },

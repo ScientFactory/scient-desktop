@@ -1040,7 +1040,9 @@ export type BackgroundActivitySettings = typeof BackgroundActivitySettings.Type;
  * mutates a runtime, and never rewrites an existing compute session.
  */
 export const ScientificComputingLanguageSettings = Schema.Struct({
-  enabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+  // SCIENT-FORK:START — supported languages are discoverable unless explicitly disabled.
+  enabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
+  // SCIENT-FORK:END
   executable: TrimmedString.pipe(Schema.withDecodingDefault(Effect.succeed(""))),
 });
 export type ScientificComputingLanguageSettings = typeof ScientificComputingLanguageSettings.Type;
@@ -1055,6 +1057,13 @@ export const ScientificComputingSettings = Schema.Struct({
   ),
 }).pipe(Schema.withDecodingDefault(Effect.succeed({})));
 export type ScientificComputingSettings = typeof ScientificComputingSettings.Type;
+
+/** Missing means "use the product default"; a persisted per-language choice always wins. */
+export const resolveScientificComputingLanguageSettings = (
+  settings: Pick<ScientificComputingSettings, "languages">,
+  languageId: ComputeLanguageId,
+): ScientificComputingLanguageSettings =>
+  settings.languages[languageId] ?? DEFAULT_SCIENTIFIC_COMPUTING_LANGUAGE_SETTINGS;
 
 /**
  * Server settings a project may override. Every other server setting is

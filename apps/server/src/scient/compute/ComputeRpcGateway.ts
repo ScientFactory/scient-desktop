@@ -23,9 +23,8 @@ import {
   type ComputeStartProjectSessionInput,
   type ComputeSubmitProjectExecutionInput,
   type ComputeVerifyRuntimeInput,
-  DEFAULT_SCIENTIFIC_COMPUTING_LANGUAGE_SETTINGS,
+  resolveScientificComputingLanguageSettings,
   type ServerSettings as ServerSettingsValue,
-  type ScientificComputingLanguageSettings,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 
@@ -81,16 +80,6 @@ function gatewayError(
     message,
     ...(cause === undefined ? {} : { cause }),
   });
-}
-
-function languageSettings(
-  settings: Pick<ServerSettingsValue, "scientificComputing">,
-  languageId: ComputeLanguageId,
-): ScientificComputingLanguageSettings {
-  return (
-    settings.scientificComputing.languages[languageId] ??
-    DEFAULT_SCIENTIFIC_COMPUTING_LANGUAGE_SETTINGS
-  );
 }
 
 export function makeComputeRpcGateway(input: {
@@ -206,7 +195,10 @@ export function makeComputeRpcGateway(input: {
       );
     }
     const settings = yield* readSettings(operation);
-    const preference = languageSettings(settings, languageId);
+    const preference = resolveScientificComputingLanguageSettings(
+      settings.scientificComputing,
+      languageId,
+    );
     if (!preference.enabled) {
       return yield* gatewayError(
         operation,
@@ -222,7 +214,10 @@ export function makeComputeRpcGateway(input: {
     const preferences = Object.fromEntries(
       input.compute.runtimeDescriptors.map((descriptor) => [
         descriptor.languageId,
-        languageSettings(settings, descriptor.languageId),
+        resolveScientificComputingLanguageSettings(
+          settings.scientificComputing,
+          descriptor.languageId,
+        ),
       ]),
     );
     const languages = yield* input.compute.runtimeInventory({
@@ -250,7 +245,10 @@ export function makeComputeRpcGateway(input: {
     const preferences = Object.fromEntries(
       input.compute.runtimeDescriptors.map((descriptor) => [
         descriptor.languageId,
-        languageSettings(settings, descriptor.languageId),
+        resolveScientificComputingLanguageSettings(
+          settings.scientificComputing,
+          descriptor.languageId,
+        ),
       ]),
     );
     const inspected = yield* input.compute.inspectRuntimes({

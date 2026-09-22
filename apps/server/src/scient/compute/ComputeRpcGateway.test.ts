@@ -251,7 +251,7 @@ describe("compute RPC gateway", () => {
       expect(forwarded).toEqual({ toolkitChange });
     }),
   );
-  it.effect("reads inventory preferences without inspecting or verifying runtimes", () =>
+  it.effect("discovers default-enabled Python without inspecting or verifying runtimes", () =>
     Effect.gen(function* () {
       let enabled: ReadonlySet<unknown> = new Set();
       const gateway = makeComputeRpcGateway({
@@ -276,11 +276,11 @@ describe("compute RPC gateway", () => {
         workspaceFileSystem: workspace(),
       });
       expect((yield* gateway.runtimeInventory()).languages[0]).toMatchObject({
-        enabled: false,
+        enabled: true,
         configuredExecutable: null,
         installations: [],
       });
-      expect(enabled.size).toBe(0);
+      expect(enabled).toEqual(new Set([PYTHON]));
     }),
   );
   it.effect("does not inspect or start a language the user left disabled", () =>
@@ -306,7 +306,18 @@ describe("compute RPC gateway", () => {
       const gateway = makeComputeRpcGateway({
         workspaceResolver: computeWorkspaceResolverForTest,
         compute,
-        serverSettings: { getSettings: Effect.succeed(DEFAULT_SERVER_SETTINGS) },
+        serverSettings: {
+          getSettings: Effect.succeed({
+            ...DEFAULT_SERVER_SETTINGS,
+            scientificComputing: {
+              ...DEFAULT_SERVER_SETTINGS.scientificComputing,
+              languages: {
+                ...DEFAULT_SERVER_SETTINGS.scientificComputing.languages,
+                [PYTHON]: { enabled: false, executable: "" },
+              },
+            },
+          }),
+        },
         workspaceFileSystem: workspace(),
       });
 
