@@ -131,6 +131,8 @@ jobs:
     timeout-minutes: 5
     outputs:
       changed: ${{ steps.detect.outputs.changed }}
+      real_kernel: ${{ steps.detect.outputs.real_kernel }}
+      managed_python: ${{ steps.detect.outputs.managed_python }}
     steps:
       - uses: actions/checkout@v6
         with:
@@ -146,6 +148,9 @@ jobs:
     needs: compute_changes
     if: ${{ !cancelled() && needs.compute_changes.outputs.changed != 'false' }}
     uses: ./.github/workflows/scient-compute-python-kernel.yml
+    with:
+      real_kernel: ${{ needs.compute_changes.outputs.real_kernel != 'false' }}
+      managed_python: ${{ needs.compute_changes.outputs.managed_python != 'false' }}
 
   # Keep the already-required check name. Native failures must block it, while
   # unrelated PRs may skip native qualification only after a successful diff.

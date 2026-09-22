@@ -13,7 +13,23 @@ name: Scient Compute Python Kernel
 
 on:
   workflow_call:
+    inputs:
+      real_kernel:
+        type: boolean
+        default: true
+      managed_python:
+        type: boolean
+        default: true
   workflow_dispatch:
+    inputs:
+      real_kernel:
+        description: Run the real-kernel OS and Python-version matrix
+        type: boolean
+        default: true
+      managed_python:
+        description: Provision and qualify managed Python toolkits
+        type: boolean
+        default: true
 
 permissions:
   contents: read
@@ -24,6 +40,7 @@ concurrency:
 
 jobs:
   managed_python:
+    if: ${{ inputs.managed_python }}
     name: Managed Python toolkits / ${{ matrix.runner }}
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 30
@@ -68,6 +85,7 @@ jobs:
         run: vp test run src/scient/compute/ManagedPythonProduct.live.test.ts src/scient/compute/ComputeRecipe.live.test.ts --maxWorkers=1
 
   real_kernel:
+    if: ${{ inputs.real_kernel }}
     name: Real kernel / ${{ matrix.runner }} / Python ${{ matrix.python }}
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 20
