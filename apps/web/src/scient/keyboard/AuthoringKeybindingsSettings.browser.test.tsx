@@ -40,6 +40,18 @@ function bounds(element: Element): DOMRect {
   return rect;
 }
 
+async function settledBounds(element: Element): Promise<DOMRect> {
+  // Visibility alone does not mean the popover's opening scale/position
+  // transition has finished. Compare stable geometry, not an earlier frame.
+  await expect.poll(() => element.hasAttribute("data-starting-style")).toBe(false);
+  await Promise.all(
+    (element.parentElement ?? element)
+      .getAnimations({ subtree: true })
+      .map((animation) => animation.finished),
+  );
+  return bounds(element);
+}
+
 function expectInsideViewport(rect: DOMRect) {
   expect(rect.left).toBeGreaterThanOrEqual(0);
   expect(rect.top).toBeGreaterThanOrEqual(0);
@@ -62,7 +74,7 @@ it.each([1280, 700, 390])("keeps Math menus inside their card at %ipx", async (w
   const card = document
     .querySelector("#math-input-behavior")!
     .closest("[data-slot=popover-popup]")!;
-  const cardRect = bounds(card);
+  const cardRect = await settledBounds(card);
   expectInsideViewport(cardRect);
   for (const control of card.querySelectorAll("button")) {
     expectHorizontallyInside(bounds(control), cardRect);
@@ -79,11 +91,11 @@ it.each([1280, 700, 390])("keeps Math menus inside their card at %ipx", async (w
       (candidate) => candidate.getBoundingClientRect().width > 0,
     );
     expect(menu).toBeTruthy();
-    const menuRect = bounds(menu!);
+    const menuRect = await settledBounds(menu!);
     expectInsideViewport(menuRect);
     // These menus are intentionally wider than their triggers, but must not
     // spill out of the surrounding Math card as they did before.
-    expectHorizontallyInside(menuRect, cardRect);
+    expectHorizontallyInside(menuRect, bounds(card));
     await page.getByRole("option").first().click();
   }
 });
@@ -103,7 +115,7 @@ it.each([1280, 700, 390])("anchors Restore confirmation to its button at %ipx", 
   const triggerRect = bounds(
     document.querySelector('[data-slot="popover-trigger"][aria-expanded="true"]')!,
   );
-  const popupRect = bounds(
+  const popupRect = await settledBounds(
     document.querySelector(
       '[data-slot="popover-popup"][aria-label="Restore document shortcut defaults"]',
     )!,
