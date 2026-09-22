@@ -9,6 +9,58 @@ import type { ScientReleaseNote } from "./model";
  */
 export const SCIENT_RELEASE_NOTES = [
   {
+    version: "0.6.16",
+    publishedAt: "2026-09-22",
+    format: "paragraphs",
+    headline: "More control over your workspace and providers.",
+    highlights: [
+      {
+        id: "provider-skills-0616",
+        title: "Discover and manage provider skills more reliably",
+        description:
+          "Discover skills when needed instead of adding them to every prompt. Provider catalogs and native activation are more reliable, with state readback after changes.",
+      },
+      {
+        id: "openrouter-spend-0616",
+        title: "Understand OpenRouter usage and spend",
+        description:
+          "Optionally connect a management key to see provider-reported spend, usage, requests, model and key breakdowns, trends, and budgets. Cached or incomplete data is marked.",
+      },
+      {
+        id: "shortcuts-and-math-0616",
+        title: "Customize shortcuts and math input",
+        description:
+          "Markdown, math, and PDF shortcuts share one settings system. Rebind, disable, or restore them without losing editing and undo behavior.",
+      },
+      {
+        id: "scientific-computing-0616",
+        title: "More dependable scientific-computing workflows",
+        description:
+          "Compute sessions protect workspace ownership and runtime lifetimes, keep deferred visualizations offline, and offer clearer Python runtime choices.",
+      },
+      {
+        id: "shared-file-sessions-0616",
+        title: "Safer editing across multiple file views",
+        description:
+          "Shared saving for a file opened in several views reduces conflicting writes, stale revisions, and lost buffers.",
+      },
+      {
+        id: "workspace-layout-0616",
+        title: "A more comfortable workspace",
+        description:
+          "Small windows enlarge once; right panels and file explorers can be narrower while compact search remains usable.",
+      },
+      {
+        id: "appearance-typography-0616",
+        title: "More control over typography",
+        description:
+          "Interface weight choices, clearer font defaults, accurate previews, and improved conversation and Markdown reading scale.",
+      },
+    ],
+    alsoIncluded:
+      "Reliability improvements across pull-request actions, worktrees, updates, the composer, attachments, the sidebar, mobile surfaces, accessibility, and source control.",
+  },
+  {
     version: "0.6.15",
     publishedAt: "2026-09-20",
     format: "paragraphs",
