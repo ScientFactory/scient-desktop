@@ -138,6 +138,7 @@ and capability owners.
 - [Scient-specific capability catalog](./reports/scient-specific-capabilities.md)
 - [Scient PR and evolution ledger](./reports/scient-pr-and-evolution-ledger.md)
 - [Scient/T3 divergence, integration, provenance, and retirements](./reports/scient-t3-divergence-integration-and-retirements.md)
+- [Compute backend qualification (2026-09-22)](./reports/scient-compute-backend-qualification-20260922.md)
 
 ### Historical delivery and migration records
 
@@ -157,6 +158,7 @@ Follow their linked successors for current behavior.
 ### Runbooks
 
 - [Scient local dev app](./operations/local-dev-app.md)
+- [Compute backend qualification](./operations/compute-backend-qualification.md)
 - [Windows dev app](./operations/local-dev-app-windows.md)
 - [Release](./operations/release.md)
 - [Managed provider runtime updates](./operations/managed-provider-runtime-updates.md)

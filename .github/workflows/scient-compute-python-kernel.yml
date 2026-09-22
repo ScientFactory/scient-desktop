@@ -7,13 +7,8 @@
 # `ipykernel`, matplotlib, pandas, and a live subprocess tree, which is why it
 # is path-filtered and dispatchable rather than always on.
 #
-# The matrix is deliberately the platforms this suite has been observed to pass
-# on. Windows is absent because it is unverified, not because it is expected to
-# fail: the bridge already degrades to no signal handlers there (an asyncio loop
-# on Windows implements none of them) and falls back to the `shutdown` command,
-# and `interrupt_kernel` takes a different path again. Adding a `windows-2025`
-# entry is the way to find out, and belongs in its own change so that a red
-# result reads as news about Windows rather than as a broken workflow.
+# The real-kernel matrix deliberately spans macOS, Linux, and Windows. Managed
+# Python remains limited to targets with a published, sealed runtime recipe.
 name: Scient Compute Python Kernel
 
 on:
@@ -88,7 +83,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        runner: [ubuntu-24.04, macos-15]
+        runner: [ubuntu-24.04, macos-15, windows-2025]
         # Both ends of the supported range, because the failures this suite
         # catches are version-dependent asyncio and kernel-startup behaviour:
         # 3.10 is the floor the runtime adapter enforces, 3.12 is what a current

@@ -20,6 +20,7 @@
   "ownedFiles": [
     "apps/server/scripts/compute-recipes.ts",
     "apps/server/scripts/publish-compute-recipe.ts",
+    "apps/server/scripts/qualify-compute-backend.ts",
     "apps/server/src/telemetry/ComputeOutputAnalytics.ts",
     "apps/server/src/orchestration/scient-fork/migrations/005_AnalysisRunIndex.ts",
     "apps/server/src/orchestration/scient-fork/migrations/006_AnalysisRunProjectionState.ts",
