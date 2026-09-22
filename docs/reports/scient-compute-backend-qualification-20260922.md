@@ -139,6 +139,20 @@ deadline while continuing to yield to Effect fibers and Node callbacks. This
 keeps the test bounded and compatible with the Effect test clock without
 turning runner speed into correctness.
 
+### Hosted macOS listener-observation finding
+
+The exact-head macOS Python 3.12 run completed kernel restart and registered
+all five protected endpoints, but the port-scanner integration test assumed
+two immediate `lsof` scans were enough for macOS to publish the restarted
+kernel PID. The configured fixture remained the only probed URL; only the
+metadata-observation assertion raced the operating system.
+
+The test now drives configured scans through its existing bounded eventual
+predicate until `lsof` observes the expected process. It still requires the
+new PID, five protected Compute endpoints, no scanner-owned endpoints, no
+unconfigured network traffic, unchanged transcripts, and complete process
+cleanup. Production scanner behavior and timeouts are unchanged.
+
 ## Platform boundary
 
 Local native execution covers macOS arm64 only. Hosted CI already qualifies
