@@ -47,7 +47,7 @@ describe("PlotlyChartCard server fallback", () => {
     expect(html).toContain("&quot;data&quot;");
   });
 
-  it("blocks network-backed figures before mounting Plotly", () => {
+  it("discloses network-backed figures without blocking them", () => {
     const html = renderToStaticMarkup(
       createElement(PlotlyChartCard, {
         language: "plotly",
@@ -60,9 +60,9 @@ describe("PlotlyChartCard server fallback", () => {
       }),
     );
 
-    expect(html).toContain("Unable to render this Plotly figure");
-    expect(html).toContain("requires network access, which is blocked");
-    expect(html).not.toContain("Network content");
+    expect(html).toContain("Network content");
+    expect(html).toContain("Figure will render when visible");
+    expect(html).not.toContain("Unable to render this Plotly figure");
   });
 
   it("gives identical figures independent accessible descriptions", () => {
