@@ -35,13 +35,41 @@ mobile activation, or a product-policy change.
 Before mutation:
 
 - verify the canonical Scient checkout, current `origin/main`, all worktrees, and dirty state;
-- fast-forward local `main` to `origin/main` without overwriting unrelated work;
+- use the exact fetched `origin/main` as the owned base; fast-forward local `main` only when
+  its checkout is clean and that move is safe. A dirty or independently used local `main`
+  must remain untouched and must not block an isolated alignment;
 - fetch `origin` and the official `upstream` remote, and verify upstream's push URL is `DISABLED`;
 - read `AGENTS.md`, `UPSTREAM.md`, `upstream-state.json`, the D4 bootstrap record, and the latest
   dated alignment receipt;
 - record the owned base, previous `integrationBase`, exact upstream target, commit count, tag
   relationship, and branch name; and
 - create a dedicated short-lived worktree and `codex/` branch from the exact owned base.
+
+The helper can inventory the frozen range and create that worktree without touching a dirty
+checkout. Fetch both remotes explicitly first; it never fetches or assumes local remote-tracking
+refs are fresh:
+
+```sh
+git fetch origin main
+git fetch upstream main
+pnpm alignment:plan --base origin/main --target upstream/main
+# Copy the complete base and target SHAs from the plan:
+pnpm alignment:start --base <owned-base-sha> --target <official-target-sha> \
+  --worktree <new-absolute-path> --branch codex/<alignment-name>
+```
+
+`plan` only reads repository state and simulates the merge with temporary, isolated Git objects.
+It checks that the owned base contains current `origin/main`, the prior integration is in both
+histories, the target belongs to official `upstream/main`, and upstream push remains disabled.
+It reports the complete official commit range, changed paths, all overlapping paths, and predicted
+textual conflicts. `--format json` provides the complete machine-readable inventory.
+For read-only qualification against an older base already in current owned history,
+`plan --historical --base <old-sha> --target <old-target-sha>` permits that base;
+`start` never accepts `--historical`.
+`start` requires full frozen SHAs, creates a new dedicated worktree, and runs Git's ordinary
+`--no-ff --no-commit --no-rerere-autoupdate` merge. A clean merge remains uncommitted; a conflict
+remains unresolved. It does not stage, advance the cursor, commit, push, or accept a resolution.
+If a post-creation step fails, the new worktree is retained for inspection.
 
 An observed tip is not an integrated tip. Never update `integrationBase` merely because a commit was
 reviewed or fetched.
@@ -55,7 +83,13 @@ web/desktop/mobile clients, release and operations, dependencies, and documentat
 Compare upstream-touched paths with Scient-modified paths and simulate the merge to locate textual
 conflicts. This predicts work; it does not prove safety. Auto-merged overlapping files require the
 same semantic review as conflict files because Git can concatenate incompatible assumptions without
-raising a marker.
+raising a marker. In particular, trace single-owner mounts and coordinator registration through
+their callers; a clean merge can mount the same behavior twice.
+
+Git's recorded conflict resolutions (`rerere`) may fill a working-tree file, but `start` leaves
+the index unresolved until the agent inspects and stages it. Reuse is not acceptance evidence.
+If the old resolution no longer fits, resolve normally; do not preserve an obsolete implementation
+to make reuse possible.
 
 Before implementation, identify any upstream change that would require a major Scient product
 decision—for example enabling a new publication channel, changing user-data identity, weakening a
@@ -67,6 +101,9 @@ an enabled client. Report that decision instead of choosing it implicitly.
 Merge the exact official target with `--no-ff`. Preserve the official target as the second parent.
 Keep unrelated feature work out of the branch. Ordinary donor commits remain unchanged in ancestry;
 Scient-specific composition belongs in the merge result or a narrow follow-up commit.
+Every commit in the frozen range is integrated. The classifications below decide how to compose
+behavior and whether a capability may be activated; they are not a menu for selecting upstream
+commits or dropping an advancement.
 
 Classify each overlap before resolving it:
 
@@ -128,6 +165,21 @@ git diff --cached --check
 git diff --check
 ```
 
+The four Scient seam commands now share one snapshot/diff implementation and their existing
+manifests. During composition, run
+`pnpm alignment:seams:check --base <owned-base-sha> --upstream-ref <official-target-sha>`;
+add `--snapshot index` for staged content or `--head <candidate-sha>` for an exact commit.
+Without `--base`, the result checks current locators only and explicitly does **not** audit a
+changed-file diff. The local snapshot uses private temporary Git index/objects and includes
+deletions and non-ignored untracked files. Reference snapshots under `.repos/` are counted but
+not scanned as product code. The command reports `passed`, `review-needed`, `failed`, or
+`unavailable`; it proves neither behavior nor ancestry. A moved locator is a review signal:
+trace the new implementation and callers, update the manifest only after establishing the same
+behavior, then rerun the behavioral tests. Never remove an assertion just to turn the gate green.
+The existing per-feature commands, including CI entry points, now use this same implementation;
+they are not independent fallbacks. If it needs repair, continue independent review, repair it
+with equivalent evidence, and do not claim the affected gate passed prematurely.
+
 Run additional focused gates required by the range, including mobile native checks, release smoke,
 provenance, migration, and provider seam tests where applicable. User-facing desktop behavior also
 requires an isolated synthetic-state app from the exact candidate head and a proportional visual and
@@ -139,7 +191,8 @@ Create a dated receipt under `docs/internals/` that records:
 
 - exact owned base, previous official boundary, target, range, target tag, merge commit, branch, and
   disabled upstream push boundary;
-- adopted behavior and deliberately deferred behavior;
+- integrated behavior and any activation held behind a tested compatibility or policy gate
+  (not omitted upstream commits);
 - every meaningful conflict composition and any semantic issue found after Git's merge;
 - protected-boundary results and temporary compatibility gates;
 - exact verification performed, including skipped platform or live-provider checks; and
