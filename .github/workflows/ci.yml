@@ -169,6 +169,32 @@ jobs:
           if-no-files-found: ignore
           retention-days: 14
 
+  test_web_layout:
+    name: Test Web layout
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          sparse-checkout: |
+            /*
+            !/.repos/
+          sparse-checkout-cone-mode: false
+
+      - name: Setup Vite+
+        uses: voidzero-dev/setup-vp@v1
+        with:
+          node-version-file: package.json
+          cache: true
+          run-install: true
+
+      - name: Install Chromium
+        run: apps/web/node_modules/.bin/playwright install --with-deps --only-shell chromium
+
+      - name: Test layout
+        run: vp run --filter @t3tools/web test:layout
+
   # apps/server sets `fileParallelism: false`, so its test files run strictly
   # one at a time. Sharding spreads them over separate runners instead of
   # separate workers, so no two server test files ever share a machine and the
