@@ -8,6 +8,8 @@
 import {
   DEFAULT_CODE_FONT_SIZE,
   DEFAULT_INTERFACE_FONT_SIZE,
+  DEFAULT_INTERFACE_FONT_WEIGHT,
+  type InterfaceFontWeight,
   DEFAULT_PROMPT_FONT_SIZE,
   MAX_CODE_FONT_SIZE,
   MAX_INTERFACE_FONT_SIZE,
@@ -76,6 +78,7 @@ export interface AppearanceFontPreferences {
   readonly code: string;
   readonly composer: string;
   readonly sizeInterface: number;
+  readonly weightInterface: InterfaceFontWeight;
   readonly sizePrompt: number;
   readonly sizeCode: number;
   /** Grayscale `antialiased` rendering; false keeps the heavier platform default. */
@@ -110,6 +113,16 @@ export function applyAppearanceFontVariables(
   }
 
   root.style.fontSize = `${clampInterfaceFontSize(preferences.sizeInterface)}px`;
+  root.style.setProperty("--font-weight-interface", String(preferences.weightInterface));
+  // Preserve the existing cascade at the default. When prose weight changes,
+  // monospace surfaces retain their normal weight and their own emphasis.
+  if (preferences.weightInterface === DEFAULT_INTERFACE_FONT_WEIGHT) {
+    root.style.removeProperty("--font-weight-monospace");
+    root.style.removeProperty("--font-weight-emphasis");
+  } else {
+    root.style.setProperty("--font-weight-monospace", "400");
+    root.style.setProperty("--font-weight-emphasis", "700");
+  }
   root.style.setProperty("--font-size-prompt", `${clampPromptFontSize(preferences.sizePrompt)}px`);
   const code = clampCodeFontSize(preferences.sizeCode);
   root.style.setProperty("--font-size-code", `${code}px`);

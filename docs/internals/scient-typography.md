@@ -6,6 +6,15 @@ The product reading defaults are 17 px interface text,
 Users can still change every existing appearance preference; persisted choices
 remain authoritative.
 
+Interface text weight offers Light (300), Regular (400, the existing default),
+and Medium (500). It applies to ordinary interface and conversation text; the
+prompt inherits it in both simple and advanced typography modes. Explicit
+medium, semibold, bold, and Markdown emphasis retain their existing styling.
+Monospace code, file/diff bodies, and the canvas terminal keep their own weights.
+The preference is client-local, independent of light/dark palettes, and resets
+with the Interface font row or Restore Defaults. Available font faces determine
+how closely each requested weight can be rendered.
+
 Most of the interface uses `rem` units and therefore follows the interface
 preference without component changes. The small number of important surfaces
 that use fixed pixels or render inside dependency shadow roots consume the

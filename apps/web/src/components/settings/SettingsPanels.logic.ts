@@ -94,15 +94,17 @@ type TypographySettings = Pick<
   | "fontFamilyCode"
   | "fontFamilyTerminal"
   | "fontSizeInterface"
+  | "fontWeightInterface"
   | "fontSizePrompt"
   | "fontSizeCode"
   | "fontSizeTerminal"
 >;
 
-/** Labels the font rows whose family or size differs from the defaults. */
+/** Labels the font rows whose typography differs from the defaults. */
 export function getChangedTypographySettingLabels(settings: TypographySettings): string[] {
   return [
     ...(settings.fontFamilySans !== DEFAULT_UNIFIED_SETTINGS.fontFamilySans ||
+    settings.fontWeightInterface !== DEFAULT_UNIFIED_SETTINGS.fontWeightInterface ||
     settings.fontSizeInterface !== DEFAULT_UNIFIED_SETTINGS.fontSizeInterface
       ? ["Interface font"]
       : []),

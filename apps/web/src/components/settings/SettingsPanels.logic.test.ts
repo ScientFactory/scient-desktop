@@ -56,6 +56,11 @@ describe("desktop update channel selector", () => {
 });
 
 describe("typography settings restore", () => {
+  it.each([300, 500] as const)("detects a weight-only change of %s", (fontWeightInterface) => {
+    expect(
+      getChangedTypographySettingLabels({ ...DEFAULT_UNIFIED_SETTINGS, fontWeightInterface }),
+    ).toEqual(["Interface font"]);
+  });
   it("detects family and size changes by font row", () => {
     expect(getChangedTypographySettingLabels(DEFAULT_UNIFIED_SETTINGS)).toEqual([]);
     expect(

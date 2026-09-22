@@ -23,6 +23,7 @@ import {
   DEFAULT_CONTENT_DIRECTION,
   DEFAULT_ENVIRONMENT_IDENTIFICATION_MODE,
   DEFAULT_UNIFIED_SETTINGS,
+  InterfaceFontWeight,
   type ContentDirection,
   type DiffLayout,
   type EnvironmentIdentificationMode,
@@ -695,6 +696,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       settings.fontFamilyTerminal,
       settings.fontSizeCode,
       settings.fontSizeInterface,
+      settings.fontWeightInterface,
       settings.fontSizePrompt,
       settings.fontSizeTerminal,
       settings.glassOpacity,
@@ -824,6 +826,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       fontFamilyCode: DEFAULT_UNIFIED_SETTINGS.fontFamilyCode,
       fontFamilyTerminal: DEFAULT_UNIFIED_SETTINGS.fontFamilyTerminal,
       fontSizeInterface: DEFAULT_UNIFIED_SETTINGS.fontSizeInterface,
+      fontWeightInterface: DEFAULT_UNIFIED_SETTINGS.fontWeightInterface,
       fontSizePrompt: DEFAULT_UNIFIED_SETTINGS.fontSizePrompt,
       fontSizeCode: DEFAULT_UNIFIED_SETTINGS.fontSizeCode,
       fontSizeTerminal: DEFAULT_UNIFIED_SETTINGS.fontSizeTerminal,
@@ -1562,6 +1565,7 @@ function InterfaceFontRow({ preview }: { preview?: ReactNode }) {
         updateSettings({
           fontFamilySans: DEFAULT_UNIFIED_SETTINGS.fontFamilySans,
           fontSizeInterface: DEFAULT_UNIFIED_SETTINGS.fontSizeInterface,
+          fontWeightInterface: DEFAULT_UNIFIED_SETTINGS.fontWeightInterface,
         })
       }
       size={{
@@ -1571,6 +1575,10 @@ function InterfaceFontRow({ preview }: { preview?: ReactNode }) {
         value: settings.fontSizeInterface,
         defaultValue: DEFAULT_UNIFIED_SETTINGS.fontSizeInterface,
         onChange: (fontSizeInterface) => updateSettings({ fontSizeInterface }),
+      }}
+      weight={{
+        value: settings.fontWeightInterface,
+        onChange: (fontWeightInterface) => updateSettings({ fontWeightInterface }),
       }}
       {...(preview !== undefined ? { preview } : {})}
     />
@@ -1859,6 +1867,7 @@ function FontFamilySettingsRow({
   onReset,
   requireMonospace = false,
   size,
+  weight,
 }: {
   id?: string;
   title: string;
@@ -1872,6 +1881,10 @@ function FontFamilySettingsRow({
   onValueChange: (value: string) => void;
   onReset: () => void;
   requireMonospace?: boolean;
+  weight?: {
+    value: InterfaceFontWeight;
+    onChange: (value: InterfaceFontWeight) => void;
+  };
   size: {
     label: string;
     min: number;
@@ -1936,7 +1949,9 @@ function FontFamilySettingsRow({
     onReset();
   };
   const resetAction =
-    value !== defaultValue || size.value !== size.defaultValue ? (
+    value !== defaultValue ||
+    size.value !== size.defaultValue ||
+    (weight !== undefined && weight.value !== DEFAULT_UNIFIED_SETTINGS.fontWeightInterface) ? (
       <SettingResetButton label={title.toLowerCase()} onClick={resetToDefault} />
     ) : null;
   const fontEnumeration = useFontEnumeration();
@@ -2005,8 +2020,16 @@ function FontFamilySettingsRow({
       />
     );
   const control = (
-    <div className="flex w-full items-center gap-2 sm:w-auto">
-      <div className="min-w-0 flex-1 sm:w-44 sm:flex-none">{familyControl}</div>
+    <div
+      className={
+        weight
+          ? "grid w-full grid-cols-2 items-center gap-2 sm:w-64"
+          : "flex w-full items-center gap-2 sm:w-auto"
+      }
+    >
+      <div className={weight ? "col-span-2 min-w-0" : "min-w-0 flex-1 sm:w-44 sm:flex-none"}>
+        {familyControl}
+      </div>
       <Select
         value={String(size.value)}
         onValueChange={(next) => {
@@ -2017,7 +2040,11 @@ function FontFamilySettingsRow({
           }
         }}
       >
-        <SelectTrigger size="sm" className="w-22 shrink-0" aria-label={size.label}>
+        <SelectTrigger
+          size="sm"
+          className={weight ? "w-full min-w-0" : "w-22 shrink-0"}
+          aria-label={size.label}
+        >
           <SelectValue>{size.value} px</SelectValue>
         </SelectTrigger>
         <SelectPopup align="end" alignItemWithTrigger={false}>
@@ -2030,6 +2057,26 @@ function FontFamilySettingsRow({
           )}
         </SelectPopup>
       </Select>
+      {weight ? (
+        <Select
+          value={String(weight.value)}
+          onValueChange={(next) => {
+            const parsed = typeof next === "string" ? Number(next) : null;
+            if (isInterfaceFontWeight(parsed)) weight.onChange(parsed);
+          }}
+        >
+          <SelectTrigger size="sm" className="w-full min-w-0" aria-label="Interface text weight">
+            <SelectValue>{INTERFACE_FONT_WEIGHT_LABELS[weight.value]}</SelectValue>
+          </SelectTrigger>
+          <SelectPopup align="end" alignItemWithTrigger={false}>
+            {InterfaceFontWeight.literals.map((value) => (
+              <SelectItem hideIndicator key={value} value={String(value)}>
+                {INTERFACE_FONT_WEIGHT_LABELS[value]} — {value}
+              </SelectItem>
+            ))}
+          </SelectPopup>
+        </Select>
+      ) : null}
     </div>
   );
   return (
@@ -2046,6 +2093,13 @@ function FontFamilySettingsRow({
 }
 
 const AUTO_SETTLE_DEFAULT_DAYS = DEFAULT_UNIFIED_SETTINGS.sidebarAutoSettleAfterDays ?? 3;
+
+const isInterfaceFontWeight = Schema.is(InterfaceFontWeight);
+const INTERFACE_FONT_WEIGHT_LABELS: Record<InterfaceFontWeight, string> = {
+  300: "Light",
+  400: "Regular",
+  500: "Medium",
+};
 
 function AutoSettleDaysInput({
   value,

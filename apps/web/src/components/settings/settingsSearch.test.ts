@@ -136,6 +136,13 @@ describe("searchSettings", () => {
     expect(searchSettings("   ", ITEMS)).toEqual([]);
   });
 
+  it.each(["font weight", "text thickness"])("finds interface typography by %s", (query) => {
+    expect(searchSettings(query)[0]).toMatchObject({
+      id: "interface-font",
+      to: "/settings/appearance",
+    });
+  });
+
   it("hides desktop-only settings from browser search", () => {
     expect(SETTINGS_SEARCH_ITEMS.some((item) => item.id === "quit-confirmation")).toBe(true);
     expect(searchSettings("hold to quit")).toEqual([]);

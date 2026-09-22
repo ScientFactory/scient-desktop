@@ -131,6 +131,10 @@ export const InterfaceFontSize = Schema.Int.check(
 export type InterfaceFontSize = typeof InterfaceFontSize.Type;
 export const DEFAULT_INTERFACE_FONT_SIZE: InterfaceFontSize = 17;
 
+export const InterfaceFontWeight = Schema.Literals([300, 400, 500]);
+export type InterfaceFontWeight = typeof InterfaceFontWeight.Type;
+export const DEFAULT_INTERFACE_FONT_WEIGHT: InterfaceFontWeight = 400;
+
 export const MIN_PROMPT_FONT_SIZE = 12;
 export const MAX_PROMPT_FONT_SIZE = 20;
 export const PromptFontSize = Schema.Int.check(
@@ -388,6 +392,9 @@ export const ClientSettingsSchema = Schema.Struct({
   ),
   fontSizeInterface: InterfaceFontSize.pipe(
     Schema.withDecodingDefault(Effect.succeed(DEFAULT_INTERFACE_FONT_SIZE)),
+  ),
+  fontWeightInterface: InterfaceFontWeight.pipe(
+    Schema.withDecodingDefault(Effect.succeed(DEFAULT_INTERFACE_FONT_WEIGHT)),
   ),
   fontSizePrompt: PromptFontSize.pipe(
     Schema.withDecodingDefault(Effect.succeed(DEFAULT_PROMPT_FONT_SIZE)),
@@ -1715,6 +1722,7 @@ export const ClientSettingsPatch = Schema.Struct({
   glassOpacity: Schema.optionalKey(GlassOpacity),
   onboardingCompletedAt: Schema.optionalKey(Schema.NullOr(Schema.String)),
   fontSizeInterface: Schema.optionalKey(InterfaceFontSize),
+  fontWeightInterface: Schema.optionalKey(InterfaceFontWeight),
   fontSizePrompt: Schema.optionalKey(PromptFontSize),
   fontSizeCode: Schema.optionalKey(CodeFontSize),
   fontSizeTerminal: Schema.optionalKey(TerminalFontSize),
