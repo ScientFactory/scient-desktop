@@ -10,7 +10,7 @@ import * as NodeURL from "node:url";
 // measured baseline because the product already has deliberate styling at many call sites.
 // Lower the ceiling when you migrate a file, and delete this script when the rule becomes an
 // error.
-export const RESTYLE_CEILING = 1728;
+export const RESTYLE_CEILING = 1727;
 
 const RULE = "shadcn(no-restyle)";
 

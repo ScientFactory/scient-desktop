@@ -19,9 +19,6 @@ import { VisualCardDetails } from "~/scient/presentation/VisualCardToolbar";
 import { downloadComputeNativeFigure } from "./ComputeOutputViewDownload";
 import type { ComputeFigurePresentation } from "./computeFigurePresentation";
 
-const computeFigureActionClassName =
-  "chat-markdown-chrome-action size-5.5 rounded-[4px] text-muted-foreground hover:text-foreground";
-
 interface ComputeFigureProps {
   readonly presentation: ComputeFigurePresentation;
   readonly environmentId: EnvironmentId;
@@ -163,12 +160,11 @@ function ComputeFigurePreview(
                 render={
                   <Button
                     aria-label={`Open ${presentation.inline.label} in viewer`}
-                    className={computeFigureActionClassName}
                     disabled={!loaded}
                     onClick={openViewer}
-                    size="icon-xs"
+                    size="icon-header"
                     type="button"
-                    variant="ghost"
+                    variant="chrome-action"
                   />
                 }
               >
@@ -180,7 +176,8 @@ function ComputeFigurePreview(
               actions={actions}
               busy={busy}
               run={run}
-              triggerClassName={computeFigureActionClassName}
+              triggerSize="icon-header"
+              triggerVariant="chrome-action"
               details={
                 <VisualCardDetails
                   title={presentation.inline.label}

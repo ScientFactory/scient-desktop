@@ -210,6 +210,13 @@ describe("compute figure presentation", () => {
     expect(container.querySelector("[data-scient-toolbar-move]")).toBeNull();
     expect(button("Open Figure 1 in viewer").classList.contains("size-5.5")).toBe(true);
     expect(button("More image actions").classList.contains("size-5.5")).toBe(true);
+    for (const label of ["Open Figure 1 in viewer", "More image actions"]) {
+      const classes = button(label).classList;
+      expect(classes.contains("rounded-[4px]")).toBe(true);
+      expect(classes.contains("text-muted-foreground")).toBe(true);
+      expect(classes.contains("chat-markdown-chrome-action")).toBe(true);
+      expect(classes.contains("sm:size-6")).toBe(false);
+    }
     expect(button("View Figure 1").disabled).toBe(true);
     expect(container.textContent).toContain("Loading figure");
     await loaded(container);
