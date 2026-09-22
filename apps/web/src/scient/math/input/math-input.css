@@ -1,0 +1,93 @@
+.scient-math-tools {
+  display: inline-flex;
+  position: relative;
+  align-items: center;
+  font: 13px/1.4 var(--font-sans, sans-serif);
+  direction: ltr;
+  vertical-align: middle;
+}
+.scient-math-tools button {
+  cursor: pointer;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  padding: 3px 7px;
+  background: var(--background);
+  color: var(--foreground);
+  font: inherit;
+}
+.scient-math-tools button:hover {
+  background: var(--accent);
+}
+.scient-math-tools button:focus-visible,
+.scient-math-tools input:focus-visible,
+.scient-math-tools select:focus-visible,
+.scient-math-tools textarea:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: 2px;
+}
+.scient-math-palette {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  width: min(420px, 85vw);
+  max-height: 70vh;
+  overflow: auto;
+  padding: 12px;
+  color: var(--foreground);
+  background: var(--popover, var(--background));
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: 0 6px 24px #0003;
+  text-align: start;
+  white-space: normal;
+}
+.scient-math-palette-heading,
+.scient-math-palette-actions,
+.scient-math-matrix-picker {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+.scient-math-palette-heading {
+  justify-content: space-between;
+}
+.scient-math-palette input,
+.scient-math-palette select,
+.scient-math-palette textarea {
+  background: var(--background);
+  color: var(--foreground);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 5px;
+  font: inherit;
+}
+.scient-math-symbols {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 4px;
+  max-height: 230px;
+  overflow: auto;
+}
+.scient-math-symbols button {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.scient-math-matrix-picker label {
+  display: flex;
+  gap: 4px;
+  align-items: center;
+}
+.scient-math-matrix-picker input {
+  width: 52px;
+}
+.scient-math-source-toolbar {
+  position: absolute;
+  inset-block-start: 4px;
+  inset-inline-end: 20px;
+  z-index: 30;
+}
+.scient-markdown-document.is-read .scient-markdown-math-tools-host,
+.scient-markdown-document.is-read .scient-markdown-math-source {
+  display: none;
+}

@@ -17,8 +17,10 @@ Prefer a container? See [Dev container](../internals/devcontainer.md) for VS Cod
 
 ## Choosing a dev process
 
-Use `vp run dev` for server and web. For persistent isolated Electron candidates, follow the
-[Scient local dev app runbook](./local-dev-app.md) and use `pnpm dev:app:start` in the exact worktree.
+Use `vp run dev` for server and web. For isolated Electron candidates, start with the
+[Scient dev-app quickstart](./local-dev-app.md#contributor-quickstart).
+macOS supports persistent `pnpm dev:app:start`; Windows uses the
+[foreground desktop workflow](./local-dev-app-windows.md), not the macOS service commands.
 `dev:server` and `dev:web` start those processes separately.
 See the [mobile README](../../apps/mobile/README.md) for native builds and Metro.
 

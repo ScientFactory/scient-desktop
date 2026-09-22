@@ -19,6 +19,7 @@ import {
 } from "./ScientMarkdownWorkspaceSurface";
 import { ScientMarkdownEditorView } from "./prosemirror/view";
 import { scientMarkdownShortcut } from "./shortcuts";
+import { surfaceOwnsShortcut } from "../keyboard/ownership";
 import { useActivePendingSurfaceDeparture } from "../fileSurfaces/usePendingSurfaceDeparture";
 
 type TestSurfaceProps = Omit<ScientMarkdownWorkspaceSurfaceProps, "persistence"> & {
@@ -1368,9 +1369,10 @@ describe("ScientMarkdownWorkspaceSurface", () => {
     const commandPaletteToggle = vi.fn();
     const onSidebarShortcut = (event: KeyboardEvent) => {
       if (!event.ctrlKey || event.key.toLocaleLowerCase() !== "b") return;
+      if (surfaceOwnsShortcut(event)) return;
       if (
         event.target instanceof HTMLElement &&
-        event.target.closest("[data-keybinding-capture]")
+        event.target.closest("[data-keybinding-capture]:not([data-document-shortcut-host])")
       ) {
         return;
       }
@@ -1541,7 +1543,8 @@ describe("ScientMarkdownWorkspaceSurface", () => {
       )!;
       mathInput.focus();
       const sourceBeforeNestedKeys = controller.session.session.draftSource;
-      for (const key of ["a", "z", "c", "x", "v", "b"] as const) {
+      // Equation undo now uses the owning ProseMirror history; other native keys stay local.
+      for (const key of ["a", "c", "x", "v", "b"] as const) {
         const event = new KeyboardEvent("keydown", {
           key,
           code: `Key${key.toUpperCase()}`,

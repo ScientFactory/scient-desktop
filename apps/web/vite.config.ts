@@ -1,5 +1,6 @@
 import * as NodeZlib from "node:zlib";
 
+import { playwright } from "@vitest/browser-playwright";
 import react, { reactCompilerPreset } from "@vitejs/plugin-react";
 import babel from "@rolldown/plugin-babel";
 import { tanstackRouter } from "@tanstack/router-plugin/vite";
@@ -92,12 +93,27 @@ const unitTestProject = {
   test: {
     name: "unit",
     include: ["src/**/*.test.{ts,tsx}"],
+    exclude: ["src/**/*.browser.test.{ts,tsx}"],
     // The web runtime suite exercises auth bootstrap, saved environments,
     // and websocket subscription lifecycles. Under the full monorepo test
     // run, those async tests can exceed Vitest's default 5s budget.
     hookTimeout: 15_000,
     testTimeout: 15_000,
     setupFiles: ["../../packages/shared/src/testing/longTempDir.ts"],
+  },
+} satisfies TestProjectInlineConfiguration;
+
+const layoutTestProject = {
+  extends: true,
+  test: {
+    name: "layout",
+    include: ["src/**/*.browser.test.{ts,tsx}"],
+    browser: {
+      enabled: true,
+      headless: true,
+      provider: playwright(),
+      instances: [{ browser: "chromium" }],
+    },
   },
 } satisfies TestProjectInlineConfiguration;
 
@@ -209,6 +225,19 @@ export default defineConfig(() => {
         "effect/Array",
         "effect/Order",
         "react-dom/client",
+        ...(process.env.VITEST
+          ? [
+              "@base-ui/react/autocomplete",
+              "@base-ui/react/collapsible",
+              "@base-ui/react/combobox",
+              "@base-ui/react/direction-provider",
+              "@base-ui/react/scroll-area",
+              "@pierre/diffs/utils/parsePatchFiles",
+              "@pierre/trees",
+              "effect/unstable/reactivity/AsyncResult",
+              "zustand/vanilla/shallow",
+            ]
+          : []),
       ],
     },
     define: {
@@ -300,7 +329,7 @@ export default defineConfig(() => {
       sourcemap: buildSourcemap,
     },
     test: {
-      projects: [defineProject(unitTestProject)],
+      projects: [defineProject(unitTestProject), defineProject(layoutTestProject)],
     },
   };
 });

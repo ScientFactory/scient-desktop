@@ -713,7 +713,7 @@ describe("ScientMarkdownEditorView", () => {
     const displayMath = view.dom.querySelector<HTMLElement>(
       '[data-scient-markdown-math="display"]',
     );
-    const inlineSource = inlineMath?.querySelector<HTMLInputElement>("input");
+    const inlineSource = inlineMath?.querySelector<HTMLTextAreaElement>("textarea");
     const displaySource = displayMath?.querySelector<HTMLTextAreaElement>("textarea");
 
     inlineMath

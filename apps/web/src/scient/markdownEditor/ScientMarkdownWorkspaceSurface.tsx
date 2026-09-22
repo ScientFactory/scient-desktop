@@ -1,6 +1,7 @@
 import { useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore } from "react";
 
 import { readLocalApi } from "~/localApi";
+import { attachShortcutHost } from "../keyboard/host";
 import type { FileCitation } from "@t3tools/contracts";
 import { MarkdownCitationActions } from "./MarkdownCitationActions";
 import type { MarkdownCitationSource, MarkdownCiteHandler } from "./markdownCitation";
@@ -86,6 +87,7 @@ export function ScientMarkdownWorkspaceSurface(props: ScientMarkdownWorkspaceSur
 
   const [chromeExpanded, setChromeExpanded] = useState(false);
   const controllerRef = useRef<ScientMarkdownEditorView | null>(null);
+  const shortcutHost = useRef<HTMLDivElement>(null);
   const activeViewRef = useRef(false);
   const composingRef = useRef(false);
   useLayoutEffect(() => {
@@ -251,8 +253,38 @@ export function ScientMarkdownWorkspaceSurface(props: ScientMarkdownWorkspaceSur
     controllerRef.current = null;
   });
 
+  useEffect(() => {
+    const host = shortcutHost.current;
+    return host
+      ? attachShortcutHost(host, "markdown", {
+          native: (event, command) =>
+            targetOwnsTextEditing(event.target) &&
+            command !== "markdown.find" &&
+            command !== "markdown.link",
+          execute: (command, event) => {
+            if (command === "markdown.find") {
+              controller.requestFind(
+                event.target instanceof HTMLElement && targetOwnsTextEditing(event.target)
+                  ? event.target
+                  : null,
+              );
+              return true;
+            }
+            if (targetOwnsTextEditing(event.target)) return true;
+            return controller.executeKeyboardCommand(command);
+          },
+          accepts: (event) =>
+            !(
+              event.target instanceof Element &&
+              event.target.closest("[data-keybinding-capture]:not([data-document-shortcut-host])")
+            ),
+        })
+      : undefined;
+  }, [controller]);
   return (
     <div
+      ref={shortcutHost}
+      data-document-shortcut-host=""
       className="scient-markdown-workspace"
       data-keybinding-capture=""
       onCompositionStartCapture={() => {
