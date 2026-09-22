@@ -4,6 +4,7 @@ import {
   getFontFamilyPreference,
   getFontPickerDisplayLabel,
   getFontPickerItems,
+  getFontPickerPreviewFontFamily,
 } from "./FontFamilyPicker.logic";
 
 const pickerItems = (query: string) =>
@@ -39,5 +40,19 @@ describe("font family picker defaults", () => {
   it("persists the semantic default as unset and an explicit matching family by name", () => {
     expect(getFontFamilyPreference(DEFAULT_FONT_VALUE)).toBe("");
     expect(getFontFamilyPreference("SF Pro")).toBe("SF Pro");
+  });
+
+  it("previews the semantic default with its real stack, not its human-readable name", () => {
+    const systemStack = '-apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif';
+    expect(getFontPickerPreviewFontFamily(DEFAULT_FONT_VALUE, systemStack)).toBe(systemStack);
+  });
+
+  it("previews an installed family as one exact name with the real default fallback", () => {
+    expect(getFontPickerPreviewFontFamily("Bodoni 72", "system-ui, sans-serif")).toBe(
+      '"Bodoni 72", system-ui, sans-serif',
+    );
+    expect(getFontPickerPreviewFontFamily("Family, Alternate", "system-ui, sans-serif")).toBe(
+      '"Family, Alternate", system-ui, sans-serif',
+    );
   });
 });

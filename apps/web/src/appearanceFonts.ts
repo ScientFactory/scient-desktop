@@ -62,6 +62,35 @@ function quoteFontFamilyName(name: string): string {
 }
 
 /**
+ * Serialize one exact font family for a CSS `font-family` declaration.
+ *
+ * Unlike `cssFontFamilies`, this does not interpret commas as a fallback
+ * list. Local Font Access returns individual family names, so quoting the
+ * complete value is necessary for names containing spaces, digits, commas,
+ * quotes, or backslashes.
+ */
+export function cssFontFamilyName(input: string): string | null {
+  const family = input.trim();
+  if (family.length === 0) return null;
+  let escaped = "";
+  for (const character of family) {
+    const codePoint = character.codePointAt(0);
+    if (character === "\\") {
+      escaped += "\\\\";
+    } else if (character === '"') {
+      escaped += '\\"';
+    } else if (codePoint === 0) {
+      escaped += "\uFFFD";
+    } else if (codePoint !== undefined && (codePoint <= 0x1f || codePoint === 0x7f)) {
+      escaped += `\\${codePoint.toString(16)} `;
+    } else {
+      escaped += character;
+    }
+  }
+  return `"${escaped}"`;
+}
+
+/**
  * Normalize a user-entered family (single name or comma-separated list) into a
  * safe CSS font-family list, or null when the input is effectively empty.
  */

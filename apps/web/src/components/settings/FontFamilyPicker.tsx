@@ -18,6 +18,7 @@ import {
   getFontFamilyPreference,
   getFontPickerDisplayLabel,
   getFontPickerItems,
+  getFontPickerPreviewFontFamily,
 } from "./FontFamilyPicker.logic";
 
 function supportsFontEnumeration(): boolean {
@@ -111,6 +112,7 @@ export function FontFamilyPicker({
   ariaLabel,
   triggerClassName,
   defaultFamily,
+  defaultPreviewFontFamily,
   defaultOptionLabel,
   selectedFamily,
   requireMonospace = false,
@@ -121,6 +123,8 @@ export function FontFamilyPicker({
   triggerClassName?: string;
   /** What an unset preference renders as, e.g. "Menlo". */
   defaultFamily: string;
+  /** CSS stack that an unset preference actually uses. */
+  defaultPreviewFontFamily: string;
   /** Semantic meaning of an unset preference, e.g. "System default". */
   defaultOptionLabel: string;
   /** Committed family name; empty string means the default is in use. */
@@ -168,10 +172,11 @@ export function FontFamilyPicker({
   const renderItem = (item: string, index: number) => {
     const isDefault = item === DEFAULT_FONT_VALUE;
     const family = isDefault ? defaultFamily : item;
+    const previewFontFamily = getFontPickerPreviewFontFamily(item, defaultPreviewFontFamily);
     return (
       <ComboboxItem hideIndicator index={index} key={item} value={item}>
         <div className="flex w-full min-w-0 items-center justify-between gap-2">
-          <span className="min-w-0 truncate" style={{ fontFamily: family }}>
+          <span className="min-w-0 truncate" style={{ fontFamily: previewFontFamily }}>
             {isDefault ? defaultOptionLabel : family}
           </span>
           <span className="flex shrink-0 items-center gap-1.5">

@@ -1,4 +1,17 @@
+import { cssFontFamilyName } from "../../appearanceFonts";
+
 export const DEFAULT_FONT_VALUE = "__default__";
+
+export function getFontPickerPreviewFontFamily(
+  item: string,
+  defaultPreviewFontFamily: string,
+): string {
+  if (item === DEFAULT_FONT_VALUE) return defaultPreviewFontFamily;
+  const exactFamily = cssFontFamilyName(item);
+  return exactFamily === null
+    ? defaultPreviewFontFamily
+    : `${exactFamily}, ${defaultPreviewFontFamily}`;
+}
 
 export function getFontPickerItems(input: {
   readonly families: readonly string[];

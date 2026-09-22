@@ -1558,6 +1558,7 @@ function InterfaceFontRow({ preview }: { preview?: ReactNode }) {
       {...searchableSetting("interface-font")}
       description="Everything outside code blocks and the terminal."
       defaultFamily={defaults.sans}
+      defaultPreviewFontFamily={DEFAULT_SANS_FONT_STACK}
       defaultOptionLabel="System default"
       defaultValue={DEFAULT_UNIFIED_SETTINGS.fontFamilySans}
       value={settings.fontFamilySans}
@@ -1595,6 +1596,7 @@ function PromptFontRow() {
       {...searchableSetting("prompt-font")}
       description="Only the box you write prompts in. Mono works well here."
       defaultFamily={defaults.interfaceFamily}
+      defaultPreviewFontFamily="var(--font-sans)"
       defaultOptionLabel="Same as interface"
       defaultValue={DEFAULT_UNIFIED_SETTINGS.fontFamilyComposer}
       value={settings.fontFamilyComposer}
@@ -1636,6 +1638,7 @@ function CodeFontRow({
       {...(title !== undefined ? { title } : {})}
       description={description}
       defaultFamily={defaults.code}
+      defaultPreviewFontFamily={DEFAULT_CODE_FONT_STACK}
       defaultOptionLabel="Default monospace"
       defaultValue={DEFAULT_UNIFIED_SETTINGS.fontFamilyCode}
       value={settings.fontFamilyCode}
@@ -1669,6 +1672,7 @@ function TerminalFontRow() {
       {...searchableSetting("terminal-font")}
       description="Terminal output, independent from code blocks and diffs."
       defaultFamily={defaults.code}
+      defaultPreviewFontFamily={DEFAULT_CODE_FONT_STACK}
       defaultOptionLabel="Default monospace"
       defaultValue={DEFAULT_UNIFIED_SETTINGS.fontFamilyTerminal}
       value={settings.fontFamilyTerminal}
@@ -1864,6 +1868,7 @@ function FontFamilySettingsRow({
   title,
   description,
   defaultFamily,
+  defaultPreviewFontFamily,
   defaultOptionLabel,
   defaultValue,
   preview,
@@ -1879,6 +1884,8 @@ function FontFamilySettingsRow({
   description: string;
   /** What an unset preference renders as, e.g. "Menlo". */
   defaultFamily: string;
+  /** CSS stack that the unset preference actually uses. */
+  defaultPreviewFontFamily: string;
   /** Semantic meaning of the unset preference shown in the picker. */
   defaultOptionLabel: string;
   /** The persisted family value supplied by the unified settings defaults. */
@@ -1973,6 +1980,7 @@ function FontFamilySettingsRow({
         ariaLabel={`${title} family`}
         {...(weight ? { triggerClassName: "min-w-0 px-2" } : {})}
         defaultFamily={defaultFamily}
+        defaultPreviewFontFamily={defaultPreviewFontFamily}
         defaultOptionLabel={defaultOptionLabel}
         selectedFamily={trimmed}
         requireMonospace={requireMonospace}
