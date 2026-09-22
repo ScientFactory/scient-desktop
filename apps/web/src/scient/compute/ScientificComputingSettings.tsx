@@ -26,6 +26,7 @@ import pythonLogo from "~/assets/compute/python.svg";
 import matlabLogo from "~/assets/compute/matlab.svg";
 import juliaLogo from "~/assets/compute/julia.svg";
 import rLogo from "~/assets/compute/r.svg";
+import rustLogo from "~/assets/compute/rust.svg";
 import spssLogo from "~/assets/compute/spss.svg";
 import { Button } from "~/components/ui/button";
 import { Input } from "~/components/ui/input";
@@ -73,12 +74,14 @@ const LANGUAGE_LOGOS: Readonly<Record<string, string>> = {
   matlab: matlabLogo,
   julia: juliaLogo,
   r: rLogo,
+  rust: rustLogo,
   spss: spssLogo,
 };
 // Presentation-only previews; these must not become runtime inventory entries.
 const UPCOMING_LANGUAGES = [
   { id: "julia", label: "Julia" },
   { id: "r", label: "R" },
+  { id: "rust", label: "Rust" },
   { id: "spss", label: "SPSS" },
 ] as const;
 
@@ -947,7 +950,10 @@ function EnvironmentScientificComputingSettings({
                           aria-hidden="true"
                           width={24}
                           height={24}
-                          className="size-6 shrink-0 object-contain"
+                          className={cn(
+                            "size-6 shrink-0 object-contain",
+                            languageId === "rust" && "dark:invert",
+                          )}
                         />
                       ) : (
                         <SigmaIcon className="size-6 shrink-0" />

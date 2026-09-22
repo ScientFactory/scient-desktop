@@ -746,7 +746,7 @@ describe("Scientific Computing settings interactions", () => {
 
   it("shows only Coming soon for preview languages without changing runtime settings", async () => {
     await render();
-    for (const id of ["julia", "r", "spss"]) {
+    for (const id of ["julia", "r", "rust", "spss"]) {
       const trigger = container.querySelector<HTMLButtonElement>(
         `#scientific-computing-${id}-trigger`,
       )!;

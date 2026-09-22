@@ -2,8 +2,11 @@
 
 Scient can run Python and MATLAB from an initialized project without turning the project into a
 notebook or installing a second copy of its files. Both use the same session, source, results, and
-history controls. Each language remains optional; MATLAB requires a user-installed, licensed
-runtime and a compatible Engine host. See [Run a MATLAB file](matlab-run-file.md) for its setup and
+history controls. Implemented language adapters—currently Python and MATLAB—are enabled by default
+so Scient can offer a compatible runtime already available on the server. Enablement does not
+download a runtime, install packages, create a managed environment, acquire a license, or start a
+session, and each language can still be disabled individually. MATLAB requires a user-installed,
+licensed runtime and a compatible Engine host. See [Run a MATLAB file](matlab-run-file.md) for its setup and
 **Run MATLAB batch**, available in the same file's Run menu and Results pane.
 
 ## Set up a runtime
@@ -64,7 +67,8 @@ and survives navigation, but not a server restart. A failed request can be retri
 Cancel immediately shows **Cancelling…** and prevents repeated clicks while the request is pending.
 For an active build, feedback remains while shutdown and cleanup finish; a failed cancellation
 restores the control so you can try again.
-Julia, R, and SPSS appear as **Coming soon** previews only, with no setup or execution controls.
+Julia, R, Rust, and SPSS appear as **Coming soon** previews only. They do not represent detected
+runtimes or enabled language adapters and have no setup, configuration, or execution controls.
 Supported languages use the same rows for Enable and Default runtime. Installations follow as
 ordinary rows with their known version and a quiet **Default** marker for new sessions. An unknown
 version says **Version not checked**; opening Settings does not execute Python to fill it in.
@@ -361,9 +365,13 @@ package.
 Scientific code runs with the filesystem and network authority of the selected Scient server
 environment. It is not sandboxed. Only run code you trust, especially when the server is remote.
 
-Python is disabled by default until a user enables it or explicitly starts managed setup. R, Julia,
-arbitrary package installation, notebook editing, rich executable HTML/widgets, rich variable
-drill-down/table browsing, and portable stateful compute-result promotion remain future work.
+Implemented language adapters are enabled by default, but enablement only allows Scient to discover
+and offer an existing compatible runtime. It does not provision a runtime, install packages, create
+an environment, acquire a license, or start code. Every setup or mutation remains an explicit user
+action, and each implemented language can be disabled individually. R, Julia, Rust, and SPSS are
+presentation-only previews rather than implemented adapters; arbitrary package installation,
+notebook editing, rich executable HTML/widgets, rich variable drill-down/table browsing, and
+portable stateful compute-result promotion also remain future work.
 
 ### Run fresh and MATLAB batch
 
