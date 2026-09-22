@@ -46,18 +46,20 @@ revision remains literal ancestry of owned `main`; it is not merely a reviewed
 or observed tip.
 
 The current T3 alignment is recorded in
-[`docs/internals/2026-09-22-upstream-sync-aff9318bf4.md`](docs/internals/2026-09-22-upstream-sync-aff9318bf4.md)
-and in `upstream-state.json`. It extends the previous alignment through
-`9a609a4e444ba739d6fcd607769d68b679b0bcc5` with the exact 7 official commits
-through `aff9318bf46beaf05cc7155b428d3f0b8711efd2`. The history-preserving
-extension merge is `7c8197ae12bf0076de0bec61b5d0e463021ca497`, whose second
-parent is that exact official target and whose first parent is the latest
-Scient main `02f8826b4f5be8462845dd2d43beaa5e1b56856d`.
+[`docs/internals/2026-09-23-upstream-sync-d7819c1881.md`](docs/internals/2026-09-23-upstream-sync-d7819c1881.md)
+and in `upstream-state.json`. It extends the previous official integration tip
+`aff9318bf46beaf05cc7155b428d3f0b8711efd2` with 30 official commits through
+`d7819c18813fa03b033cc1c9472c9acc0ffc0618`. The history-preserving merge is
+`719f452a4633af276ed9f5e219ced8de43863d49`, whose second parent is that exact
+official target and whose first parent is the latest fetched owned main
+`38681f131d0c2ab852b56c6d9c4b24b13cc901b6`.
 
-Automated qualification and source review passed. The requested PR is the delivery boundary;
-release publication remains separate. The [preceding alignment](docs/internals/2026-09-18-upstream-sync-3fd5d643.md)
-and all earlier official ancestry remain literal history. Later observed upstream tips do not
-move `integrationBase` by themselves.
+Automated qualification and source review passed. The alignment is delivered
+as an unmerged draft PR for review; release publication remains separate. The
+[preceding alignment](docs/internals/2026-09-22-upstream-sync-aff9318bf4.md),
+[earlier receipt](docs/internals/2026-09-18-upstream-sync-3fd5d643.md), and all
+earlier official ancestry remain literal history. Later observed upstream
+tips do not move `integrationBase` by themselves.
 
 ## Receiving T3 updates
 
