@@ -97,8 +97,8 @@ function DraftStartError({ onRetry }: { readonly onRetry: () => void }) {
     <SidebarInset className="h-dvh min-h-0 overflow-hidden overscroll-y-none">
       <Empty className="flex-1">
         <EmptyHeader className="max-w-md">
-          <EmptyTitle className="text-foreground">Couldn’t start a new thread</EmptyTitle>
-          <EmptyDescription className="mt-2 text-muted-foreground/78">
+          <EmptyTitle>Couldn’t start a new thread</EmptyTitle>
+          <EmptyDescription>
             The project is still available. Try opening the draft again.
           </EmptyDescription>
           <div className="mt-5 flex justify-center">
@@ -151,9 +151,7 @@ function HostedStaticOnboardingState() {
                 Start the {APP_DISPLAY_NAME} desktop app or command-line server on that machine and
                 keep it running.
               </EmptyDescription>
-              <EmptyDescription className="mt-2 leading-relaxed text-muted-foreground/78">
-                {description}
-              </EmptyDescription>
+              <EmptyDescription>{description}</EmptyDescription>
               <div className="mt-6 flex justify-center">
                 <Button render={<Link to="/settings/connections" />} size="sm">
                   <PlusIcon className="size-4" />

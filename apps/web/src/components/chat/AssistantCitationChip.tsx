@@ -214,7 +214,8 @@ export function CitationChip({
               aria-label={
                 commentEditor.mode === "create" ? "Add citation to chat" : "Edit citation comment"
               }
-              className="w-72 max-w-[calc(100vw-1rem)]"
+              width="md"
+              className="max-w-[calc(100vw-1rem)]"
               viewportClassName="p-3"
               onPointerDown={(event) => event.stopPropagation()}
             >

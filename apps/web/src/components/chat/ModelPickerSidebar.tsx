@@ -184,7 +184,6 @@ export const ModelPickerSidebar = memo(function ModelPickerSidebar(props: {
                     side={PICKER_TOOLTIP_SIDE}
                     sideOffset={PICKER_TOOLTIP_SIDE_OFFSET}
                     align="center"
-                    className={PICKER_TOOLTIP_CLASS}
                   >
                     Favorites
                   </TooltipPopup>
