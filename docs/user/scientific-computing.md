@@ -137,9 +137,10 @@ other user-owned installations are never repaired or removed.
 
 Before a session starts, the file header names the interpreter it found (**Python 3.12**,
 **MATLAB R2026a**) when you can run. That listing is a package check, not proof a Jupyter or Engine
-session already started. A live idle session uses the shorter **Python** or **MATLAB** status, and a
-busy session says it is running. Selecting this compact status always opens Scientific Computing for
-that server; it never expands into a full-path card.
+session already started. A live session identifies its current environment, such as **Python · System**
+or **Python · Scient-managed**, and adds **Running** while busy. The tooltip includes its version and
+executable. The compact status opens Scientific Computing, or offers an explicit switch when a
+different ready default is available; it never expands into a full-path card.
 If setup fails for the runtime the file needs, the header shows a one-line status with a copy control and a details toggle; it
 never wraps a stack or path across **Run**. A code error remains a result of that execution; it does
 not make a healthy Python or MATLAB runtime unready. The refresh control in Scientific Computing
@@ -148,8 +149,11 @@ without reloading the app. **Test** in the installation menu starts and closes a
 a package check is not a successful test.
 **Repair** rebuilds a damaged Scient-managed generation; it is not how you recover from a failed
 Test. Scient never swaps the interpreter beneath a live session. If the selected Python changes
-while a session is open, the header offers **Switch Python**; confirmation stops the old namespace,
-keeps its run history, and lets the next run start with the newly selected environment.
+while a session is open, select its environment label or **Switch Python environment…** in the run
+menu. Confirmation names the replacement environment, checks its availability, and starts a new
+session only after the old idle session has stopped. Current variables are cleared; run history is
+kept. A busy session is not stopped by switching, and no code is automatically rerun. Changing a
+default alone never replaces a live session or overrides a deliberate per-tab choice.
 
 Setup, repair, removal, and runtime-selection changes update open compute views automatically,
 even if you leave Settings before setup finishes. Use the Settings refresh after Python, MATLAB, or

@@ -3459,6 +3459,68 @@ describe("compute session generations", () => {
 });
 
 describe("compute session endings", () => {
+  it.effect("rejects idle-only replacement after new work is admitted, without cancelling it", () =>
+    Effect.gen(function* () {
+      const test = yield* harness();
+      yield* test.use(
+        Effect.gen(function* () {
+          const service = yield* ComputeSessionService;
+          const session = yield* start;
+          expect(session.activity).toBe("idle");
+          yield* submit("hold", "running-during-choice");
+          yield* waitUntil(
+            executionAt(ComputeExecutionId.make("running-during-choice"), "running"),
+          );
+          yield* submit("print(1)", "queued-during-choice");
+          const command = {
+            projectId: PROJECT_ID,
+            sessionId: SESSION_ID,
+            expectedGeneration: session.generation,
+          };
+          const error = yield* service
+            .stopSession({ ...command, onlyIfIdle: true })
+            .pipe(Effect.flip);
+          expect(error.reason).toBe("session-not-running");
+          expect(test.closed()).toEqual([]);
+          const executions = yield* service.listExecutions({
+            projectId: PROJECT_ID,
+            sessionId: SESSION_ID,
+          });
+          expect(executions.map((execution) => execution.result?.status).sort()).toEqual([
+            "queued",
+            "running",
+          ]);
+          // Explicit Stop must retain its normal interrupting semantics.
+          expect((yield* service.stopSession(command)).status).toBe("stopped");
+          expect(test.closed()).toEqual([SESSION_ID]);
+        }),
+      );
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("allows an idle-only replacement and rejects stale generations", () =>
+    Effect.gen(function* () {
+      const test = yield* harness();
+      yield* test.use(
+        Effect.gen(function* () {
+          const service = yield* ComputeSessionService;
+          const session = yield* start;
+          const command = { projectId: PROJECT_ID, sessionId: SESSION_ID, onlyIfIdle: true };
+          yield* service
+            .stopSession({
+              ...command,
+              expectedGeneration: nextComputeSessionGeneration(session.generation),
+            })
+            .pipe(Effect.flip);
+          expect(test.closed()).toEqual([]);
+          expect(
+            (yield* service.stopSession({ ...command, expectedGeneration: session.generation }))
+              .status,
+          ).toBe("stopped");
+        }),
+      );
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
   it.effect("stops a session, measures what it left behind, and refuses later commands", () =>
     Effect.gen(function* () {
       const test = yield* harness();

@@ -52,7 +52,11 @@ import {
   type ComputeCodeSlice,
   type ComputeTextRange,
 } from "./computeSourceSlices";
-import { stopComputeContext, mergeComputeSessionRecords } from "./computeContextCoordinator";
+import {
+  stopComputeContext,
+  mergeComputeSessionRecords,
+  replaceComputeContextSession,
+} from "./computeContextCoordinator";
 import {
   computeRuntimeDisplayLabel,
   defaultComputeRuntime,
@@ -153,6 +157,9 @@ export const ComputeFileActions = forwardRef<ComputeFileActionsHandle, ComputeFi
     const [startRetryAvailable, setStartRetryAvailable] = useState(false);
     const [switchTarget, setSwitchTarget] = useState<{
       readonly environmentId: EnvironmentId;
+      readonly contextId: ComputeContextId;
+      readonly executable: string;
+      readonly label: string;
       readonly session: ComputeSessionRecord;
     } | null>(null);
     const contextBinding = useComputeContextStore((state) =>
@@ -370,8 +377,14 @@ export const ComputeFileActions = forwardRef<ComputeFileActionsHandle, ComputeFi
       [props.contents, props.language.languageId, props.relativePath],
     );
     const requestRuntimeSwitch = () => {
-      if (liveSession !== null) {
-        setSwitchTarget({ environmentId: props.environmentId, session: liveSession });
+      if (liveSession !== null && readyRuntime !== null && props.contextId !== undefined) {
+        setSwitchTarget({
+          environmentId: props.environmentId,
+          contextId: props.contextId,
+          executable: readyRuntime.profile.executable,
+          label: computeRuntimeDisplayLabel(readyRuntime.profile, props.language.displayName),
+          session: liveSession,
+        });
       }
     };
 
@@ -470,38 +483,63 @@ export const ComputeFileActions = forwardRef<ComputeFileActionsHandle, ComputeFi
       if (switchTarget === null || switching) return;
       const target = switchTarget;
       setSwitching(true);
-      const result = await stopSession({
-        environmentId: target.environmentId,
-        input: {
-          cwd: target.session.workingDirectory,
-          sessionId: target.session.sessionId,
-          expectedGeneration: target.session.generation,
-        },
-      });
-      setSwitching(false);
-      if (result._tag !== "Success") {
-        if (!isAtomCommandInterrupted(result))
-          reportFailure(`Unable to switch ${props.language.displayName}`, result);
-        return;
-      }
-      if (props.contextId !== undefined) {
-        useComputeContextStore.getState().markSessionTerminal({
-          contextId: props.contextId,
-          sessionId: target.session.sessionId,
-          generation: target.session.generation,
+      try {
+        const result = await replaceComputeContextSession({
+          contextId: target.contextId,
+          expectedSession: target.session,
+          replacementSessionId: ComputeSessionId.make(randomUUID()),
+          getSession,
+          stopSession,
+          startSession,
+          prepareRuntime: async () => {
+            const refreshed = await refreshRuntimes({
+              environmentId: target.environmentId,
+              input: { cwd: target.session.workingDirectory, refresh: true },
+            });
+            const runtime =
+              refreshed._tag === "Success"
+                ? refreshed.value.languages
+                    .find(
+                      (language) =>
+                        language.descriptor.languageId === target.session.languageId &&
+                        language.enabled,
+                    )
+                    ?.runtimes.find(
+                      (candidate) =>
+                        candidate.profile.executable === target.executable &&
+                        candidate.verification.readiness === "ready",
+                    )
+                : undefined;
+            if (runtime === undefined)
+              throw new Error(
+                "The selected environment is no longer ready. Refresh environments and try again.",
+              );
+            return { languageId: runtime.profile.languageId, executable: target.executable };
+          },
         });
+        if (result.kind === "failed") {
+          toastManager.add({
+            type: "error",
+            title: "Unable to switch environment",
+            description: result.error,
+          });
+          return;
+        }
+        setSwitchTarget(null);
+      } finally {
+        setSwitching(false);
+        refreshSessions();
+        refreshEvents();
+        refreshRuntimeInspection();
       }
-      setSwitchTarget(null);
-      refreshSessions();
-      refreshEvents();
-      refreshRuntimeInspection();
     }, [
       refreshEvents,
       refreshRuntimeInspection,
       refreshSessions,
       stopSession,
-      props.language.displayName,
-      props.contextId,
+      getSession,
+      startSession,
+      refreshRuntimes,
       switchTarget,
       switching,
     ]);
@@ -1020,7 +1058,15 @@ export const ComputeFileActions = forwardRef<ComputeFileActionsHandle, ComputeFi
     const runMenuDisabled =
       busy ||
       (props.language.languageId !== "matlab" && !runtimeToolbar.canRun && readyRuntime === null);
-    const runtimeNote = runtimeToolbar.kind === "status" ? runtimeToolbar.note : undefined;
+    const runtimeNote =
+      [
+        liveSession?.runtime
+          ? `${computeRuntimeDisplayLabel(liveSession.runtime, props.language.displayName)} — ${liveSession.runtime.executable}`
+          : null,
+        runtimeToolbar.kind === "status" ? runtimeToolbar.note : null,
+      ]
+        .filter(Boolean)
+        .join(" — ") || undefined;
     const primaryRunTooltip = primaryRunBlocked
       ? (matlabFileCapability?.reason ?? "This definition is called from a script.")
       : primary.slice === null
@@ -1122,8 +1168,9 @@ export const ComputeFileActions = forwardRef<ComputeFileActionsHandle, ComputeFi
                 size="xs"
                 variant="ghost-muted"
                 className="h-6 min-w-0 max-w-full px-1 text-[11px] font-normal"
-                title={`Stop the current session and use the selected ${props.language.displayName}`}
-                disabled={switching}
+                title={`${runtimeNote ?? ""} — Switch to the selected ${props.language.displayName} environment`}
+                aria-label={`Switch ${props.language.displayName} environment`}
+                disabled={switching || props.contextId === undefined}
                 onClick={requestRuntimeSwitch}
               >
                 <span className="truncate">{runtimeToolbar.label}</span>
@@ -1288,9 +1335,8 @@ export const ComputeFileActions = forwardRef<ComputeFileActionsHandle, ComputeFi
             <AlertDialogHeader>
               <AlertDialogTitle>Switch {props.language.displayName} environment?</AlertDialogTitle>
               <AlertDialogDescription>
-                This stops the current {props.language.displayName} session and clears its in-memory
-                variables. Run history remains available, and the next run uses the{" "}
-                {props.language.displayName} selected in Scientific Computing settings.
+                Use {switchTarget?.label}? Current variables will be cleared. Run history is kept;
+                no code is rerun.
               </AlertDialogDescription>
             </AlertDialogHeader>
             <AlertDialogFooter>

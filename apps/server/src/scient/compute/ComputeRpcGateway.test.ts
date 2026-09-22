@@ -191,6 +191,30 @@ const project = Effect.gen(function* () {
 });
 
 describe("compute RPC gateway", () => {
+  it.effect("preserves idle-only stop admission through the workspace gateway", () =>
+    Effect.gen(function* () {
+      const initialized = yield* project;
+      let idleOnly: boolean | undefined;
+      const gateway = makeComputeRpcGateway({
+        workspaceResolver: computeWorkspaceResolverForTest,
+        compute: computeStub({
+          stopSession: (input) => {
+            idleOnly = input.onlyIfIdle;
+            return Effect.succeed(record(input.projectId, input.sessionId));
+          },
+        }),
+        serverSettings: { getSettings: Effect.succeed(DEFAULT_SERVER_SETTINGS) },
+        workspaceFileSystem: workspace(),
+      });
+      yield* gateway.stopSession({
+        cwd: initialized.root,
+        sessionId: ComputeSessionId.make("session"),
+        expectedGeneration: INITIAL_COMPUTE_SESSION_GENERATION,
+        onlyIfIdle: true,
+      });
+      expect(idleOnly).toBe(true);
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
   it.effect(
     "does not turn an initialized cwd into authority when the host resolver is absent",
     () =>
