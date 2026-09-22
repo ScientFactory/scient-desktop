@@ -24,7 +24,7 @@ export function DelimitedTablePreview(props: {
       ) : null}
       <div className="min-h-0 flex-1 overflow-auto">
         <table
-          className="min-w-full border-separate border-spacing-0 text-xs"
+          className="min-w-full border-separate border-spacing-0 scient-reading-ui text-xs"
           aria-label={props.name}
         >
           {header ? (

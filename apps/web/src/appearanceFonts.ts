@@ -8,6 +8,8 @@
 import {
   DEFAULT_CODE_FONT_SIZE,
   DEFAULT_INTERFACE_FONT_SIZE,
+  DEFAULT_INTERFACE_FONT_WEIGHT,
+  type InterfaceFontWeight,
   DEFAULT_PROMPT_FONT_SIZE,
   MAX_CODE_FONT_SIZE,
   MAX_INTERFACE_FONT_SIZE,
@@ -60,6 +62,35 @@ function quoteFontFamilyName(name: string): string {
 }
 
 /**
+ * Serialize one exact font family for a CSS `font-family` declaration.
+ *
+ * Unlike `cssFontFamilies`, this does not interpret commas as a fallback
+ * list. Local Font Access returns individual family names, so quoting the
+ * complete value is necessary for names containing spaces, digits, commas,
+ * quotes, or backslashes.
+ */
+export function cssFontFamilyName(input: string): string | null {
+  const family = input.trim();
+  if (family.length === 0) return null;
+  let escaped = "";
+  for (const character of family) {
+    const codePoint = character.codePointAt(0);
+    if (character === "\\") {
+      escaped += "\\\\";
+    } else if (character === '"') {
+      escaped += '\\"';
+    } else if (codePoint === 0) {
+      escaped += "\uFFFD";
+    } else if (codePoint !== undefined && (codePoint <= 0x1f || codePoint === 0x7f)) {
+      escaped += `\\${codePoint.toString(16)} `;
+    } else {
+      escaped += character;
+    }
+  }
+  return `"${escaped}"`;
+}
+
+/**
  * Normalize a user-entered family (single name or comma-separated list) into a
  * safe CSS font-family list, or null when the input is effectively empty.
  */
@@ -76,6 +107,7 @@ export interface AppearanceFontPreferences {
   readonly code: string;
   readonly composer: string;
   readonly sizeInterface: number;
+  readonly weightInterface: InterfaceFontWeight;
   readonly sizePrompt: number;
   readonly sizeCode: number;
   /** Grayscale `antialiased` rendering; false keeps the heavier platform default. */
@@ -110,6 +142,16 @@ export function applyAppearanceFontVariables(
   }
 
   root.style.fontSize = `${clampInterfaceFontSize(preferences.sizeInterface)}px`;
+  root.style.setProperty("--font-weight-interface", String(preferences.weightInterface));
+  // Preserve the existing cascade at the default. When prose weight changes,
+  // monospace surfaces retain their normal weight and their own emphasis.
+  if (preferences.weightInterface === DEFAULT_INTERFACE_FONT_WEIGHT) {
+    root.style.removeProperty("--font-weight-monospace");
+    root.style.removeProperty("--font-weight-emphasis");
+  } else {
+    root.style.setProperty("--font-weight-monospace", "400");
+    root.style.setProperty("--font-weight-emphasis", "700");
+  }
   root.style.setProperty("--font-size-prompt", `${clampPromptFontSize(preferences.sizePrompt)}px`);
   const code = clampCodeFontSize(preferences.sizeCode);
   root.style.setProperty("--font-size-code", `${code}px`);

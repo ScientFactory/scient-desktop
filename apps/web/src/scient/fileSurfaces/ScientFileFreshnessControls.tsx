@@ -66,7 +66,7 @@ export function ScientFileFreshnessNotices(props: {
     <>
       {visibleNotice ? (
         <div
-          className="flex shrink-0 items-center gap-2 border-b border-warning/24 bg-warning-surface px-3 py-2 text-[11px] text-warning-foreground"
+          className="flex shrink-0 items-center gap-2 border-b border-warning/24 bg-warning-surface px-3 py-2 scient-reading-micro text-warning-foreground"
           role="status"
         >
           <AlertTriangle className="size-3.5 shrink-0" aria-hidden="true" />
@@ -105,7 +105,7 @@ export function ScientFileFreshnessNotices(props: {
       ) : null}
       {visibleSaveError && !visibleNotice ? (
         <div
-          className="flex shrink-0 items-center gap-2 border-b border-destructive/20 bg-destructive/5 px-3 py-2 text-[11px] text-destructive"
+          className="flex shrink-0 items-center gap-2 border-b border-destructive/20 bg-destructive/5 px-3 py-2 scient-reading-micro text-destructive"
           role="alert"
         >
           <AlertTriangle className="size-3.5 shrink-0" aria-hidden="true" />
@@ -127,7 +127,7 @@ export function ScientFileFreshnessNotices(props: {
       ) : null}
       {props.relativePath && props.readError && props.hasFallbackData ? (
         <div
-          className="flex shrink-0 items-center gap-2 border-b border-destructive/20 bg-destructive/5 px-3 py-2 text-[11px] text-destructive"
+          className="flex shrink-0 items-center gap-2 border-b border-destructive/20 bg-destructive/5 px-3 py-2 scient-reading-micro text-destructive"
           role="alert"
         >
           <AlertTriangle className="size-3.5 shrink-0" aria-hidden="true" />

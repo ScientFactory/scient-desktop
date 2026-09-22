@@ -48,7 +48,7 @@ describe("rich Markdown preview presentation parity", () => {
       "chat-markdown w-full min-w-0 text-sm leading-relaxed text-foreground/[calc(80%+var(--appearance-contrast-boost)/5)]",
     );
     expect(cssSource).toMatch(
-      /\.scient-markdown-document \{[^}]*width: min\(100%, 56rem\)[^}]*padding: 1\.25rem 1\.5rem 5rem;[^}]*color: color-mix\(in oklab, var\(--foreground\) 80%, transparent\)[^}]*font-size: 0\.875rem[^}]*line-height: 1\.625[^}]*white-space: pre-wrap/su,
+      /\.scient-markdown-document \{[^}]*width: min\(100%, 56rem\)[^}]*padding: 1\.25rem 1\.5rem 5rem;[^}]*color: color-mix\(in oklab, var\(--foreground\) 80%, transparent\)[^}]*font-size: var\(--scient-font-size-markdown-body\)[^}]*line-height: 1\.625[^}]*white-space: pre-wrap/su,
     );
     expect(cssSource).not.toContain("text-wrap: balance");
   });
@@ -57,20 +57,24 @@ describe("rich Markdown preview presentation parity", () => {
     for (const declaration of [
       "margin: 1.25rem 0 0.5rem",
       "font-weight: 600",
-      "font-size: 1.25rem",
-      "font-size: 1.125rem",
+      "font-size: var(--scient-font-size-markdown-h1)",
+      "font-size: var(--scient-font-size-markdown-h2)",
       "margin: 0.65rem 0",
       "color: var(--info-foreground)",
       "padding-left: 0.8rem",
-      "font-size: 0.75rem",
+      "font-size: var(--scient-font-size-markdown-secondary)",
     ]) {
       expect(previewCssSource).toContain(declaration);
     }
     expect(cssSource).toMatch(
       /\.scient-markdown-document h1,[^}]*margin-block: 1\.25rem 0\.5rem[^}]*font-weight: 600[^}]*line-height: 1\.3/su,
     );
-    expect(cssSource).toMatch(/\.scient-markdown-document h1 \{\s*font-size: 1\.25rem/su);
-    expect(cssSource).toMatch(/\.scient-markdown-document h2 \{\s*font-size: 1\.125rem/su);
+    expect(cssSource).toMatch(
+      /\.scient-markdown-document h1 \{\s*font-size: var\(--scient-font-size-markdown-h1\)/su,
+    );
+    expect(cssSource).toMatch(
+      /\.scient-markdown-document h2 \{\s*font-size: var\(--scient-font-size-markdown-h2\)/su,
+    );
     expect(cssSource).toMatch(/\.scient-markdown-document p,[^}]*margin-block: 0\.65rem/su);
     expect(cssSource).toMatch(
       /\.scient-markdown-document\.is-read a,[^}]*color: var\(--info-foreground\)[^}]*text-decoration: none/su,
@@ -79,7 +83,7 @@ describe("rich Markdown preview presentation parity", () => {
       /\.scient-markdown-document blockquote \{[^}]*padding-inline-start: 0\.8rem[^}]*border-inline-start: 2px solid var\(--contrast-border\)[^}]*color: var\(--contrast-muted-foreground\)/su,
     );
     expect(cssSource).toMatch(
-      /\.scient-markdown-document :not\(pre\) > code \{[^}]*border: 1px solid var\(--contrast-border\)[^}]*font-size: 0\.75rem/su,
+      /\.scient-markdown-document :not\(pre\) > code \{[^}]*border: 1px solid var\(--contrast-border\)[^}]*font-size: var\(--scient-font-size-markdown-secondary\)/su,
     );
     expect(cssSource).toMatch(
       /\.scient-markdown-image-render \{[^}]*max-height: min\(30rem, 70vh\)/su,
@@ -88,7 +92,7 @@ describe("rich Markdown preview presentation parity", () => {
 
   it("uses the same interrupted row separators while retaining editor-only table affordances", () => {
     expect(cssSource).toMatch(
-      /\.scient-markdown-document table \{[^}]*min-width: max-content[^}]*font-size: 0\.75rem/su,
+      /\.scient-markdown-document table \{[^}]*min-width: max-content[^}]*font-size: var\(--scient-font-size-markdown-secondary\)/su,
     );
     expect(cssSource).toMatch(
       /\.scient-markdown-document th,[^}]*min-width: 5rem[^}]*border-block-end: 1px solid transparent[^}]*background-position: center bottom[^}]*background-repeat: no-repeat[^}]*background-size: calc\(100% - 1rem\) 1px/su,

@@ -1663,6 +1663,7 @@ body {
   /* Reference the theme token (not a literal stack) so the Settings ->
      Appearance runtime override of --font-sans reaches all interface text. */
   font-family: var(--font-sans);
+  font-weight: var(--font-weight-interface, 400);
   margin: 0;
   padding: 0;
 }
@@ -1739,6 +1740,26 @@ body {
 pre,
 code {
   font-family: var(--font-mono);
+}
+
+@layer base {
+  /* Explicit font-medium/semibold/bold utilities still own emphasis. */
+  pre,
+  code,
+  kbd,
+  samp,
+  .font-mono,
+  diffs-container,
+  .scient-markdown-code-block,
+  .scient-markdown-source-island-editor,
+  .scient-markdown-reference-source,
+  .scient-markdown-math-source {
+    font-weight: var(--font-weight-monospace, inherit);
+  }
+  b,
+  strong {
+    font-weight: var(--font-weight-emphasis, bolder);
+  }
 }
 
 /* Code blocks in chat carry the size preference. Scoped to chat markdown
@@ -1865,6 +1886,17 @@ code {
 
 /* Chat markdown rendering */
 
+.chat-markdown,
+.scient-markdown-document {
+  --text-sm: var(--scient-font-size-markdown-body);
+  --text-xs: var(--scient-font-size-markdown-secondary);
+  --text-sm--line-height: calc(1.25 / 0.905);
+  --text-xs--line-height: calc(1 / 0.78);
+  --scient-font-size-inline-file-chip: calc(14px + 0.03rem);
+  --scient-font-size-code-label: var(--scient-font-size-markdown-marker);
+  font-size: var(--scient-font-size-markdown-body);
+}
+
 .chat-markdown > :first-child {
   margin-top: 0;
 }
@@ -1895,21 +1927,21 @@ code {
 }
 
 .chat-markdown h1 {
-  font-size: 1.25rem;
+  font-size: var(--scient-font-size-markdown-h1);
 }
 
 .chat-markdown h2 {
-  font-size: 1.125rem;
+  font-size: var(--scient-font-size-markdown-h2);
 }
 
 .chat-markdown h3 {
-  font-size: 1rem;
+  font-size: var(--scient-font-size-markdown-h3);
 }
 
 .chat-markdown h4,
 .chat-markdown h5,
 .chat-markdown h6 {
-  font-size: 0.875rem;
+  font-size: var(--scient-font-size-markdown-body);
 }
 
 .chat-markdown h6 {
@@ -2000,7 +2032,7 @@ code {
   border-top: 1px solid var(--contrast-border);
   padding-top: 0.75rem;
   color: var(--contrast-muted-foreground);
-  font-size: 0.75rem;
+  font-size: var(--scient-font-size-markdown-secondary);
 }
 
 .chat-markdown section[data-footnotes] ol {
@@ -2019,7 +2051,7 @@ code {
   justify-content: center;
   border-radius: 0.25rem;
   text-decoration: none;
-  font-size: 0.6875rem;
+  font-size: var(--scient-font-size-markdown-marker);
   font-weight: 600;
 }
 
@@ -2029,7 +2061,7 @@ code {
   background: var(--muted);
   padding: 0.1rem 0.35rem;
   color: var(--contrast-foreground);
-  font-size: 0.75rem;
+  font-size: var(--scient-font-size-markdown-secondary);
 }
 
 .chat-markdown .chat-markdown-file-link,
@@ -2126,7 +2158,7 @@ code {
   border-collapse: collapse;
   overflow-wrap: normal;
   word-break: normal;
-  font-size: 0.75rem;
+  font-size: var(--scient-font-size-markdown-secondary);
 }
 
 .chat-markdown th,

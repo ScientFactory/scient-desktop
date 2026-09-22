@@ -37,6 +37,33 @@ afterEach(() => {
 });
 
 describe("client settings hydration", () => {
+  it("persists rapid weight changes and the final reset in order across hydration", async () => {
+    persistenceMocks.getClientSettings.mockResolvedValue({
+      ...DEFAULT_CLIENT_SETTINGS,
+      fontFamilySans: "Georgia",
+      fontSizeInterface: 19,
+      fontWeightInterface: 500,
+    });
+    const weights = Array.from(
+      { length: 60 },
+      (_, index) => ([300, 500, 400] as const)[index % 3]!,
+    );
+    await Promise.all(
+      weights.map((fontWeightInterface) => persistClientSettingsPatch({ fontWeightInterface })),
+    );
+    expect(persistenceMocks.getClientSettings).toHaveBeenCalledOnce();
+    expect(
+      persistenceMocks.setClientSettings.mock.calls.map(
+        ([settings]) => settings.fontWeightInterface,
+      ),
+    ).toEqual(weights);
+    expect(getClientSettings()).toMatchObject({
+      fontWeightInterface: 400,
+      fontFamilySans: "Georgia",
+      fontSizeInterface: 19,
+    });
+    expect(persistenceMocks.setClientSettings.mock.lastCall?.[0]).toEqual(getClientSettings());
+  });
   const savedSettings = {
     ...DEFAULT_CLIENT_SETTINGS,
     timestampFormat: "12-hour" as const,
