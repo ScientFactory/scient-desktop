@@ -444,6 +444,136 @@ function nextBlockEnd(body: string, from: number): number {
   return body.length;
 }
 
+function previewText(source: string): string {
+  let value = source.replace(/%[^\r\n]*/gu, " ");
+  for (let pass = 0; pass < 8; pass++) {
+    const previous = value;
+    value = value
+      .replace(/\\href\{[^{}]*\}\{([^{}]*)\}/gu, "$1")
+      .replace(
+        /\\(?:textbf|textit|emph|texttt|textsc|underline|mbox|url|footnote)\{([^{}]*)\}/gu,
+        "$1",
+      );
+    if (value === previous) break;
+  }
+  return value
+    .replace(/\$\$|\\\[|\\\]|\\\(|\\\)|\$/gu, "")
+    .replace(/\\(?:toprule|midrule|bottomrule|hline|centering|small|footnotesize)\b/gu, " ")
+    .replace(/\\(?:cite\w*|ref|eqref|autoref|pageref|label)\{([^{}]*)\}/gu, "$1")
+    .replace(/\\([%&_#${}])/gu, "$1")
+    .replace(/~/gu, " ")
+    .replace(/\\\\/gu, " ")
+    .replace(/\\[A-Za-z]+\*?/gu, " ")
+    .replace(/[{}]/gu, "")
+    .replace(/\s+/gu, " ")
+    .trim();
+}
+
+function parseDescriptionPreview(source: string): JSONContent | null {
+  const opening = /^\\begin\{description\}(?:\[[^\]]*\])?/u.exec(source.trim());
+  if (!opening || !source.trim().endsWith("\\end{description}")) return null;
+  const trimmed = source.trim();
+  const body = trimmed.slice(opening[0].length, trimmed.lastIndexOf("\\end{description}"));
+  const item = /\\item\s*\[([^\]]+)\]/gu;
+  const matches = [...body.matchAll(item)];
+  if (matches.length === 0 || matches.length > 100) return null;
+  const items = matches.map((match, index) => {
+    const from = match.index! + match[0].length;
+    const to = index + 1 < matches.length ? matches[index + 1]!.index! : body.length;
+    return {
+      label: previewText(match[1]!),
+      body: previewText(body.slice(from, to)),
+    };
+  });
+  if (items.some((entry) => !entry.label || !entry.body)) return null;
+  return {
+    type: "latexRichPreview",
+    attrs: { kind: "description", raw: source, items, caption: null, rows: null },
+  };
+}
+
+function commandArgument(source: string, command: string): string | null {
+  const match = new RegExp(`\\\\${command}\\s*\\{`, "u").exec(source);
+  if (!match) return null;
+  const opening = match.index + match[0].lastIndexOf("{");
+  const close = closingBrace(source, opening);
+  return close === null ? null : source.slice(opening + 1, close);
+}
+
+function tabularBody(source: string): string | null {
+  const opening = /\\begin\{(tabularx|tabular|tabulary|longtable)\}/u.exec(source);
+  if (!opening) return null;
+  const name = opening[1]!;
+  let cursor = opening.index + opening[0].length;
+  const argumentsToSkip = name === "tabularx" || name === "tabulary" ? 2 : 1;
+  for (let index = 0; index < argumentsToSkip; index++) {
+    while (/\s/u.test(source[cursor] ?? "")) cursor++;
+    if (source[cursor] !== "{") return null;
+    const close = closingBrace(source, cursor);
+    if (close === null) return null;
+    cursor = close + 1;
+  }
+  const end = source.lastIndexOf(`\\end{${name}}`);
+  return end <= cursor ? null : source.slice(cursor, end);
+}
+
+function splitTable(source: string, delimiter: "row" | "cell"): string[] {
+  const values: string[] = [];
+  let from = 0;
+  let depth = 0;
+  for (let index = 0; index < source.length; index++) {
+    if (source[index] === "%") {
+      const newline = source.indexOf("\n", index);
+      if (newline < 0) break;
+      index = newline;
+      continue;
+    }
+    if (source[index] === "{") depth++;
+    else if (source[index] === "}") depth = Math.max(0, depth - 1);
+    else if (depth === 0 && delimiter === "cell" && source[index] === "&") {
+      values.push(source.slice(from, index));
+      from = index + 1;
+    } else if (
+      depth === 0 &&
+      delimiter === "row" &&
+      source[index] === "\\" &&
+      source[index + 1] === "\\"
+    ) {
+      values.push(source.slice(from, index));
+      index++;
+      from = index + 1;
+    } else if (source[index] === "\\") index++;
+  }
+  values.push(source.slice(from));
+  return values;
+}
+
+function parseTablePreview(source: string): JSONContent | null {
+  if (!/\\begin\{(?:table\*?|tabularx|tabular|tabulary|longtable)\}/u.test(source)) return null;
+  const body = tabularBody(source);
+  if (body === null || body.length > 100_000) return null;
+  const rows = splitTable(body, "row")
+    .map((row) => splitTable(row, "cell").map(previewText))
+    .filter((row) => row.some(Boolean))
+    .slice(0, 100);
+  const width = Math.max(0, ...rows.map((row) => row.length));
+  if (rows.length === 0 || width === 0 || width > 20) return null;
+  return {
+    type: "latexRichPreview",
+    attrs: {
+      kind: "table",
+      raw: source,
+      caption: previewText(commandArgument(source, "caption") ?? "Table"),
+      rows,
+      items: null,
+    },
+  };
+}
+
+function parseRichPreview(source: string): JSONContent | null {
+  return parseDescriptionPreview(source) ?? parseTablePreview(source);
+}
+
 function classifyBlock(source: string, depth: number): JSONContent | null {
   if (source.trim() === "\\par") return { type: "paragraph", content: [] };
   return (
@@ -482,8 +612,9 @@ export function projectLatexVisualDocument(source: string, depth = 0): LatexVisu
         raw,
       );
     const classified = dynamicSyntax ? null : classifyBlock(raw, depth);
+    const preview = classified === null && !dynamicSyntax ? parseRichPreview(raw) : null;
     const node = withSourceId(
-      classified ?? { type: "latexRawBlock", attrs: { raw, label: "Raw LaTeX" } },
+      classified ?? preview ?? { type: "latexRawBlock", attrs: { raw, label: "Raw LaTeX" } },
       id,
     );
     blocks.push({ id, from, to, node, source: raw, editable: classified !== null });

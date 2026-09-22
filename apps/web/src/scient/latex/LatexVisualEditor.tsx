@@ -226,6 +226,75 @@ function LatexRawBlockView({ node }: NodeViewProps) {
   );
 }
 
+function withStableKeys<T>(values: T[], serialize: (value: T) => string) {
+  const occurrences = new Map<string, number>();
+  return values.map((value) => {
+    const serialized = serialize(value);
+    const occurrence = occurrences.get(serialized) ?? 0;
+    occurrences.set(serialized, occurrence + 1);
+    return { key: `${serialized}\u0000${occurrence}`, value };
+  });
+}
+
+function LatexRichPreviewView({ node, selected }: NodeViewProps) {
+  const kind = node.attrs.kind === "table" ? "table" : "description";
+  const items = Array.isArray(node.attrs.items)
+    ? (node.attrs.items as { label?: unknown; body?: unknown }[])
+    : [];
+  const rows = Array.isArray(node.attrs.rows)
+    ? (node.attrs.rows as unknown[]).filter(Array.isArray).map((row) => row.map(String))
+    : [];
+  const caption = String(node.attrs.caption ?? "Table");
+  const keyedItems = withStableKeys(items, (item) => JSON.stringify([item.label, item.body]));
+  const keyedRows = withStableKeys(rows, (row) => JSON.stringify(row));
+  return (
+    <NodeViewWrapper
+      className="scient-latex-rich-preview"
+      data-kind={kind}
+      data-selected={selected || undefined}
+      contentEditable={false}
+    >
+      <div className="scient-latex-rich-preview-label">
+        <span>{kind === "table" ? "Table preview" : "Description list"}</span>
+        <span>Protected source · edit in Source</span>
+      </div>
+      {kind === "description" ? (
+        <dl>
+          {keyedItems.map(({ key, value: item }) => (
+            <div key={key}>
+              <dt>{String(item.label ?? "")}</dt>
+              <dd>{String(item.body ?? "")}</dd>
+            </div>
+          ))}
+        </dl>
+      ) : (
+        <figure>
+          <figcaption>{caption}</figcaption>
+          <div className="scient-latex-rich-table-scroll">
+            <table>
+              <tbody>
+                {keyedRows.map(({ key, value: row }, rowIndex) => (
+                  <tr key={key}>
+                    {withStableKeys(row, String).map(({ key: cellKey, value: cell }) =>
+                      rowIndex === 0 ? (
+                        <th key={cellKey} scope="col">
+                          {cell}
+                        </th>
+                      ) : (
+                        <td key={cellKey}>{cell}</td>
+                      ),
+                    )}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </figure>
+      )}
+    </NodeViewWrapper>
+  );
+}
+
 const LatexInlineMath = Node.create({
   name: "latexInlineMath",
   group: "inline",
@@ -319,6 +388,32 @@ const LatexRawBlock = Node.create({
   },
 });
 
+const LatexRichPreview = Node.create({
+  name: "latexRichPreview",
+  group: "block",
+  atom: true,
+  selectable: true,
+  addAttributes() {
+    return {
+      kind: { default: "description" },
+      raw: { default: "" },
+      items: { default: null },
+      rows: { default: null },
+      caption: { default: null },
+      sourceId: { default: null, rendered: false },
+    };
+  },
+  parseHTML() {
+    return [{ tag: "div[data-latex-rich-preview]" }];
+  },
+  renderHTML({ HTMLAttributes }) {
+    return ["div", { ...HTMLAttributes, "data-latex-rich-preview": "" }];
+  },
+  addNodeView() {
+    return ReactNodeViewRenderer(LatexRichPreviewView);
+  },
+});
+
 const extensions = [
   StarterKit.configure({
     heading: { levels: [1, 2, 3] },
@@ -335,6 +430,7 @@ const extensions = [
   LatexDisplayMath,
   LatexInlineCommand,
   LatexRawBlock,
+  LatexRichPreview,
 ];
 
 const MATH_INSERTIONS = {

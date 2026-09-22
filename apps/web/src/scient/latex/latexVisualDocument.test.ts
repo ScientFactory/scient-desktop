@@ -167,6 +167,50 @@ describe("source-derived writing projection", () => {
     expect(projection.blocks[2]!.node.type).toBe("latexRawBlock");
   });
 
+  it("projects description lists as protected document content", () => {
+    const source = document(`\\begin{description}[style=nextline,leftmargin=2.7cm]
+  \\item[Algorithms] Design algorithms and prove their correctness.
+  \\item[Complexity theory] Study resources and limits of efficient computation.
+\\end{description}`);
+    const projection = projectLatexVisualDocument(source);
+    expect(projection.blocks[0]!.node.type).toBe("latexRichPreview");
+    expect(projection.blocks[0]!.editable).toBe(false);
+    expect(projection.blocks[0]!.node.attrs?.items).toEqual([
+      { label: "Algorithms", body: "Design algorithms and prove their correctness." },
+      {
+        label: "Complexity theory",
+        body: "Study resources and limits of efficient computation.",
+      },
+    ]);
+    expect(edit(source, [paragraph("replacement")])).toBeNull();
+  });
+
+  it("projects table and tabularx source as a protected readable table", () => {
+    const source = document(`\\begin{table}[htbp]
+\\centering
+\\caption{Research options.}
+\\label{tab:areas}
+\\begin{tabularx}{\\textwidth}{@{}p{2.7cm} X@{}}
+\\toprule
+\\textbf{Area} & \\textbf{Evidence} \\\\
+\\midrule
+Theory & Proofs and formal models \\\\
+Systems & Prototypes and measurements \\\\
+\\bottomrule
+\\end{tabularx}
+\\end{table}`);
+    const projection = projectLatexVisualDocument(source);
+    expect(projection.blocks[0]!.node.type).toBe("latexRichPreview");
+    expect(projection.blocks[0]!.node.attrs?.caption).toBe("Research options.");
+    expect(projection.blocks[0]!.node.attrs?.rows).toEqual([
+      ["Area", "Evidence"],
+      ["Theory", "Proofs and formal models"],
+      ["Systems", "Prototypes and measurements"],
+    ]);
+    expect(source).toContain(projection.blocks[0]!.source);
+    expect(projection.blocks[0]!.source).toContain("\\end{table}");
+  });
+
   it("does not interpret a commented environment end or a verbatim document end", () => {
     const source = document(
       "\\begin{verbatim}\n\\end{document}\n\\end{verbatim}\n\nHello\n\n\\begin{unknown}\n% \\end{unknown}\nkeep\n\\end{unknown}",

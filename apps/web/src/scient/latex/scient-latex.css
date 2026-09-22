@@ -351,6 +351,96 @@
   font: 12px/1.6 var(--font-mono);
 }
 
+.scient-latex-rich-preview {
+  margin: 1.4em 0;
+  border: 1px solid #d7dde5;
+  border-radius: 7px;
+  background: #fbfcfe;
+  overflow: hidden;
+}
+.scient-latex-rich-preview[data-selected="true"] {
+  border-color: #8eb1d8;
+  box-shadow: 0 0 0 2px #dceafb;
+}
+.scient-latex-rich-preview-label {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 6px 10px;
+  border-bottom: 1px solid #e1e6ec;
+  background: #f3f6fa;
+  color: #68798c;
+  font: 10px/1.5 var(--font-sans);
+}
+.scient-latex-rich-preview-label > :first-child {
+  color: #35465a;
+  font-weight: 600;
+}
+.scient-latex-rich-preview dl {
+  margin: 0;
+  padding: 10px 14px 12px;
+}
+.scient-latex-rich-preview dl > div {
+  display: grid;
+  grid-template-columns: minmax(120px, 0.28fr) minmax(0, 1fr);
+  gap: 12px;
+  padding: 7px 0;
+  border-bottom: 1px solid #e8ebef;
+}
+.scient-latex-rich-preview dl > div:last-child {
+  border-bottom: 0;
+}
+.scient-latex-rich-preview dt {
+  font-weight: 700;
+}
+.scient-latex-rich-preview dd {
+  margin: 0;
+}
+.scient-latex-rich-preview figure {
+  margin: 0;
+  padding: 11px 13px 14px;
+}
+.scient-latex-rich-preview figcaption {
+  margin: 0 0 9px;
+  text-align: center;
+  font-size: 0.92em;
+  font-weight: 600;
+}
+.scient-latex-rich-table-scroll {
+  max-width: 100%;
+  overflow-x: auto;
+}
+.scient-latex-rich-preview table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.78em;
+  line-height: 1.4;
+}
+.scient-latex-rich-preview th,
+.scient-latex-rich-preview td {
+  min-width: 110px;
+  padding: 7px 8px;
+  border-bottom: 1px solid #dfe4ea;
+  text-align: left;
+  vertical-align: top;
+}
+.scient-latex-rich-preview th {
+  border-top: 2px solid #58697c;
+  border-bottom: 1px solid #8996a5;
+  background: #f7f9fb;
+  font-weight: 700;
+}
+.scient-latex-rich-preview tr:last-child td {
+  border-bottom: 2px solid #58697c;
+}
+
+@media (max-width: 720px) {
+  .scient-latex-rich-preview dl > div {
+    grid-template-columns: 1fr;
+    gap: 2px;
+  }
+}
+
 .scient-latex-surface button:not(:disabled) {
   cursor: pointer;
 }

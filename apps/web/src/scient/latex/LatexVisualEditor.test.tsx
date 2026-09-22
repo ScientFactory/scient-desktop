@@ -129,6 +129,26 @@ describe("writing editor source transactions", () => {
     expect(current).toContain(`\\[\n${matrix}\n\\]`);
   });
 
+  it("renders protected descriptions and tables instead of raw source", async () => {
+    await mount(`\\begin{description}[style=nextline]
+\\item[Algorithms] Design and prove algorithms.
+\\item[Complexity] Study computational limits.
+\\end{description}
+
+\\begin{table}
+\\caption{Research options.}
+\\begin{tabular}{ll}
+Area & Evidence \\\\
+Theory & Proofs \\\\
+\\end{tabular}
+\\end{table}`);
+    expect(container.textContent).toContain("Algorithms");
+    expect(container.textContent).toContain("Design and prove algorithms.");
+    expect(container.textContent).toContain("Research options.");
+    expect(container.querySelectorAll(".scient-latex-rich-preview")).toHaveLength(2);
+    expect(container.querySelector(".scient-latex-visual-raw")).toBeNull();
+  });
+
   it("rejects a destructive transaction spanning protected source", async () => {
     await mount("Hello\n\n\\custom{keep}");
     const before = current;
